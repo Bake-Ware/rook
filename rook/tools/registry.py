@@ -18,6 +18,7 @@ from .agents import AgentPool, SpawnAgentTool, CheckAgentsTool
 from .terminals import TerminalPool, TerminalCreateTool, TerminalSendTool, TerminalReadTool, TerminalListTool, TerminalKillTool
 from .remote import RemoteExecTool, RemoteListTool, RemoteUpdateTool, RemoteUninstallTool
 from .channels import ChannelBridge, SendMessageTool, ListChannelsTool
+from .custom import CreateToolTool, DeleteToolTool, load_custom_tools
 from ..remote.bootstrap import CombinedServer
 
 log = logging.getLogger(__name__)
@@ -106,6 +107,13 @@ class ToolRegistry:
         self.channel_bridge = ChannelBridge()
         self.register(SendMessageTool(self.channel_bridge, self.memory_store))
         self.register(ListChannelsTool(self.memory_store))
+
+        # Custom tools (model-created, persisted)
+        self.register(CreateToolTool(self))
+        self.register(DeleteToolTool(self))
+        loaded = load_custom_tools(self)
+        if loaded:
+            log.info("Loaded %d custom tools", loaded)
 
     def register(self, tool: Tool) -> None:
         defn = tool.definition()
