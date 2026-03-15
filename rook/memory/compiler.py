@@ -77,7 +77,7 @@ You are talking to bake on a REMOTE machine called '{worker_name}'.
 - DO NOT use the 'shell' tool — that runs on kaiju, not '{worker_name}'.
 - To run commands on '{worker_name}', use remote_exec with worker='{worker_name}'.
 - When the user says 'this machine' they mean '{worker_name}'.
-- To post to Discord, use send_message with platform='discord' and channel='1241432073487515731'.
+- To post to Discord, use send_message with platform='discord'. Check list_channels for the channel ID.
 !! END SESSION CONTEXT !!"""
         elif session_id == "cli":
             core += f"\nCurrent session: Local CLI on kaiju"

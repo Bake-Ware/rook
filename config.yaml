@@ -49,7 +49,7 @@ voice:
 
 discord:
   open_channels:
-    - "1241432073487515731"  # BakeForge #general
+    - ""  # Discord channel ID
 
   # Multi-bot: each bot gets its own identity and token
   bots:
@@ -63,14 +63,14 @@ discord:
 
 search:
   provider: searxng
-  url: https://searxng.bake.systems
+  url: https://searxng.example.com
 
 remote:
   port: 7005
-  psk: "r00k-kaiju-2026"  # pre-shared key for worker auth
-  domain: rook.bake.systems
-  web_user: bake
-  web_pass: poop
+  psk: ""  # pre-shared key for worker auth
+  domain: rook.example.com
+  web_user: ""
+  web_pass: ""
 
 tasks:
   max_concurrent: 4
