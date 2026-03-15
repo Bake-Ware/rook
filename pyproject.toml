@@ -1,0 +1,28 @@
+[project]
+name = "rook"
+version = "0.1.0"
+description = "Personal AI agent with voice, tools, and memory"
+requires-python = ">=3.11"
+dependencies = [
+    "openai>=1.0",
+    "anthropic>=0.40",
+    "discord.py[voice]>=2.4",
+    "pyyaml>=6.0",
+    "aiohttp>=3.9",
+    "aiosqlite>=0.20",
+    "kuzu>=0.7",
+    "watchdog>=4.0",
+]
+
+[project.optional-dependencies]
+voice = [
+    "pyannote.audio>=3.3",
+    "webrtcvad>=2.0.10",
+]
+
+[project.scripts]
+rook = "rook.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

@@ -1,0 +1,76 @@
+models:
+  local:
+    provider: openai-compat
+    endpoint: http://localhost:1234/v1
+    model: qwen3.5-9b-claude-4.6-opus-reasoning-distilled
+    context_length: 262144
+
+  local-big:
+    provider: openai-compat
+    endpoint: http://localhost:1234/v1
+    model: qwen3.5-27b-claude-4.6-opus-reasoning-distilled
+    context_length: 262144
+
+  opus:
+    provider: anthropic
+    endpoint: https://api.anthropic.com
+    key_env: ANTHROPIC_API_KEY
+    model: claude-opus-4-6
+
+  sonnet:
+    provider: anthropic
+    endpoint: https://api.anthropic.com
+    key_env: ANTHROPIC_API_KEY
+    model: claude-sonnet-4-6
+
+default_model: local-big
+
+aliases:
+  big: local-big
+  cheap: local
+  small: local
+  smart: opus
+  fast: sonnet
+
+memory:
+  sqlite_path: ./data/rook.db
+  graph_path: ./data/knowledge
+  obsidian_vault: ~/Notes
+  tier_size: 8000
+  promote_threshold: 3
+  concrete_threshold: 6
+
+voice:
+  stt: whisper
+  tts: soprano
+  soprano_url: http://localhost:8002
+  whisper_url: http://localhost:8001
+  vad_threshold: 0.5
+
+discord:
+  open_channels:
+    - "1241432073487515731"  # BakeForge #general
+
+  # Multi-bot: each bot gets its own identity and token
+  bots:
+    rook:
+      token_env: ROOK_DISCORD_TOKEN
+    soujourn:
+      token_env: SOUJOURN_DISCORD_TOKEN
+
+  # Triage model — used to decide which bot responds
+  triage_model: local-big
+
+search:
+  provider: searxng
+  url: https://searxng.bake.systems
+
+remote:
+  port: 7005
+  psk: "r00k-kaiju-2026"  # pre-shared key for worker auth
+  domain: rook.bake.systems
+  web_user: bake
+  web_pass: poop
+
+tasks:
+  max_concurrent: 4
