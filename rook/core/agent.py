@@ -16,6 +16,7 @@ from .router import Router
 from ..tools.registry import ToolRegistry
 from ..memory.compiler import compile_system_prompt
 from ..memory.extractor import FactExtractor
+from ..modules.loader import ModuleLoader
 
 log = logging.getLogger(__name__)
 
@@ -134,6 +135,7 @@ class Agent:
         self.fact_store = self.tools.fact_store
         self.scheduler = self.tools.scheduler
         self.agent_pool = self.tools.agent_pool
+        self.module_loader = ModuleLoader()
         self.conversations: dict[str, Conversation] = {}
         self.bot_name: str = "Rook"
         self.peers: list[str] = []
@@ -204,31 +206,22 @@ class Agent:
             log.error("Agent synthesis failed: %s", e)
 
     async def start_services(self) -> None:
-        """Start scheduler + remote worker server. Call after event loop is running."""
-        self.scheduler.start()
-
-        # Wire worker connect/disconnect/chat to channel registration
-        self.tools.remote_server._on_worker_connect = self._on_worker_connect
-        self.tools.remote_server._on_worker_disconnect = self._on_worker_disconnect
-        self.tools.remote_server._on_worker_chat = self._on_worker_chat
-        await self.tools.remote_server.start()
-
-        # Register channel senders on the bridge
+        """Start all modules. Call after event loop is running."""
+        # Register Discord channel sender on the bridge
         bridge = self.tools.channel_bridge
 
-        # Discord sender
         async def discord_send(channel_id: str, message: str) -> None:
             if self._notify_callback:
                 await self._notify_callback(channel_id, message)
         bridge.register_sender("discord", discord_send)
 
-        # Worker sender (sends chat_response to a worker by name or id)
-        async def worker_send(worker_name: str, message: str) -> None:
-            worker = self.tools.remote_server.get_worker(worker_name)
-            if worker:
-                await worker.ws.send_json({"type": "chat_response", "content": message})
-        bridge.register_sender("worker", worker_send)
+        # Register module management tools
+        from ..tools.modules import ListModulesTool, CreateModuleTool
+        self.tools.register(ListModulesTool(self.module_loader))
+        self.tools.register(CreateModuleTool(self.module_loader, self))
 
+        # Load and start all modules
+        await self.module_loader.load_all(self, self.config)
         log.info("All services started")
 
     def _on_worker_connect(self, name: str, platform: str, hostname: str, worker_id: str) -> None:
