@@ -19,6 +19,8 @@ from .terminals import TerminalPool, TerminalCreateTool, TerminalSendTool, Termi
 from .remote import RemoteExecTool, RemoteListTool, RemoteUpdateTool, RemoteUninstallTool
 from .channels import ChannelBridge, SendMessageTool, ListChannelsTool
 from .custom import CreateToolTool, DeleteToolTool, load_custom_tools
+from .goals import SetGoalTool, CompleteStepTool, UpdatePlanTool
+from ..memory.goals import GoalStore
 from ..remote.bootstrap import CombinedServer
 
 log = logging.getLogger(__name__)
@@ -105,6 +107,12 @@ class ToolRegistry:
         for t_cls in [TerminalCreateTool, TerminalSendTool, TerminalReadTool, TerminalListTool, TerminalKillTool]:
             t = t_cls(self.terminal_pool)
             self._advanced_tools[t.definition().name] = t
+
+        # Goals
+        self.goal_store = GoalStore(self.memory_store._db)
+        self.register(SetGoalTool(self.goal_store))
+        self.register(CompleteStepTool(self.goal_store))
+        self.register(UpdatePlanTool(self.goal_store))
 
         # Custom tools
         self.register(CreateToolTool(self))

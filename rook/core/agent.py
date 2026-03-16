@@ -15,6 +15,7 @@ _JSON_BLOB_RE = re.compile(r'^\s*\{["\'](?:name|type|function).*?\}\s*$', re.DOT
 from .config import Config
 from .router import Router
 from ..tools.registry import ToolRegistry
+from ..tools.base import ToolResult
 from ..memory.compiler import compile_system_prompt
 from ..memory.extractor import FactExtractor
 from ..modules.loader import ModuleLoader
@@ -312,6 +313,7 @@ class Agent:
             recent_agent_results=self.agent_pool.recent_completed(),
             active_channels=self.tools.memory_store.list_channels(),
             anthropic_quota=self.router._anthropic_quota,
+            active_goals=self.tools.goal_store.render_active(),
         )
 
     def get_conversation(self, session_id: str) -> Conversation:
@@ -369,7 +371,7 @@ class Agent:
         return response_text
 
     async def _handle_delegated(self, text: str, session_id: str) -> str:
-        """Main conversation handler — full tool loop with notifications."""
+        """Main conversation handler — full tool loop with notifications and goal self-stimulation."""
         conv = self.get_conversation(session_id)
 
         self.fact_store.scan_for_references(text)
@@ -391,7 +393,56 @@ class Agent:
 
         ctx_len = self.router.get_active(session_id).context_length
         conv.trim(max_tokens=ctx_len)
+
+        # Self-stimulation: if there's an active goal with unchecked steps, keep going
+        asyncio.create_task(self._goal_loop(session_id))
+
         return response_text
+
+    async def _goal_loop(self, session_id: str) -> None:
+        """Self-stimulation loop — keeps working toward active goals."""
+        max_auto_rounds = 10  # safety limit
+
+        for _ in range(max_auto_rounds):
+            await asyncio.sleep(2)  # brief pause between rounds
+
+            goal = self.tools.goal_store.get_active()
+            if not goal or goal.is_complete or goal.status != "active":
+                return
+
+            next_step = goal.next_step
+            if not next_step:
+                return
+
+            log.info("Goal self-stim: [%s] next step: %s", goal.id, next_step.description[:60])
+
+            # Inject continuation prompt
+            stimulus = (
+                f"[SYSTEM: Continue working on your goal. "
+                f"Next step: {next_step.description}. "
+                f"Do it now, then call complete_step with the result.]"
+            )
+
+            try:
+                response = await self.handle_message(stimulus, session_id=session_id)
+                # Notify the channel
+                if self._notify_callback and session_id.startswith("discord:"):
+                    channel_id = session_id.split(":", 1)[1]
+                    if response:
+                        await self._notify_callback(channel_id, response)
+                elif session_id.startswith("worker:"):
+                    worker_name = session_id.split(":", 1)[1]
+                    worker = self.tools.remote_server.get_worker(worker_name)
+                    if worker and not worker.ws.closed and response:
+                        await worker.ws.send_json({"type": "chat_response", "content": response})
+            except Exception as e:
+                log.error("Goal self-stim failed: %s", e)
+                return
+
+            # Check if goal was completed or paused during this round
+            goal = self.tools.goal_store.get_active()
+            if not goal or goal.status != "active":
+                return
 
     async def _maintenance(self, user_msg: str, assistant_msg: str, session_id: str) -> None:
         """Background maintenance cycle — runs after response is sent."""
@@ -417,11 +468,19 @@ class Agent:
 
         for round_num in range(MAX_TOOL_ROUNDS):
             try:
-                response = await self.router.chat_with_tools(
-                    messages=conv.messages,
-                    tools=self.tools.openai_tools(),
-                    session_id=session_id,
+                log.info("Agent loop round %d for session %s", round_num, session_id[:20])
+                response = await asyncio.wait_for(
+                    self.router.chat_with_tools(
+                        messages=conv.messages,
+                        tools=self.tools.openai_tools(),
+                        session_id=session_id,
+                    ),
+                    timeout=180,
                 )
+            except asyncio.TimeoutError:
+                entry = self.router.get_active(session_id)
+                log.error("LLM call timed out (round %d, model=%s)", round_num, entry.name)
+                return "The model took too long to respond. Try a simpler request or switch models."
             except Exception as e:
                 entry = self.router.get_active(session_id)
                 log.error("LLM call failed (round %d): %s", round_num, e)
@@ -455,8 +514,17 @@ class Agent:
                             args = {}
 
                     log.info("Tool call [%s]: %s(%s)", tc["id"][:8], name, args)
-                    await self._notify_tool(session_id, name, args)
-                    result = await self.tools.execute(name, args)
+                    # Fire-and-forget notification (don't let it stall the loop)
+                    asyncio.create_task(self._notify_tool(session_id, name, args))
+                    # Execute tool with timeout
+                    try:
+                        result = await asyncio.wait_for(
+                            self.tools.execute(name, args),
+                            timeout=120,
+                        )
+                    except asyncio.TimeoutError:
+                        log.error("Tool '%s' timed out after 120s", name)
+                        result = ToolResult(success=False, output="", error=f"Tool '{name}' timed out")
 
                     output = result.output
                     if result.error:
@@ -467,6 +535,7 @@ class Agent:
                 continue
 
             # Text response
+            log.info("Agent loop round %d: text response received", round_num)
             text = response.get("content") or ""
             text = _JSON_BLOB_RE.sub("", _TOOLCALL_RE.sub("", _THINK_RE.sub("", text))).strip()
             conv.add_assistant(content=text)

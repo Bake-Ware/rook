@@ -36,6 +36,7 @@ def compile_system_prompt(
     recent_agent_results: list[dict] | None = None,
     active_channels: list[dict] | None = None,
     anthropic_quota: dict | None = None,
+    active_goals: str | None = None,
 ) -> str:
     """Assemble the full system prompt with memory tiers and status."""
 
@@ -139,7 +140,14 @@ Total:        {total_used:,} / {context_length:,} tokens ({pct}% used)"""
             lines.append(f"  {ch.get('platform')}:{ch.get('platform_id')} — {ch.get('name', '?')} ({ch.get('modality', 'text')})")
         channel_block = "\n".join(lines)
 
+    # Active goals
+    goal_block = ""
+    if active_goals:
+        goal_block = f"\n=== ACTIVE PLAN ===\n{active_goals}\nWork the next unchecked step. Use complete_step when done. Update the plan if needed."
+
     parts = [core, status_block, concrete_block, working_block, volatile_block]
+    if goal_block:
+        parts.insert(1, goal_block)  # Right after core, before memory status
     if channel_block:
         parts.append(channel_block)
     if job_block:
