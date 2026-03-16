@@ -9,7 +9,8 @@ import re
 from typing import Any
 
 _THINK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
-_TOOLCALL_RE = re.compile(r"<tool_call>.*?</tool_call>\s*", re.DOTALL)
+_TOOLCALL_RE = re.compile(r"</?tool_call>.*?(?:</tool_call>)?\s*", re.DOTALL)
+_JSON_BLOB_RE = re.compile(r'^\s*\{["\'](?:name|type|function).*?\}\s*$', re.DOTALL | re.MULTILINE)
 
 from .config import Config
 from .router import Router
@@ -368,7 +369,7 @@ class Agent:
         return response_text
 
     async def _handle_delegated(self, text: str, session_id: str) -> str:
-        """Delegated mode — spawn a sub-agent for tool work, main stays responsive."""
+        """Main conversation handler — full tool loop with notifications."""
         conv = self.get_conversation(session_id)
 
         self.fact_store.scan_for_references(text)
@@ -379,86 +380,18 @@ class Agent:
         # Log user message
         self.fact_store.log_conversation(session_id, "user", text)
 
-        # First LLM call — no tools, just conversational response + delegation decision
-        # The model sees the full context and decides what to say and what to delegate
-        delegate_prompt = (
-            "Respond to the user naturally. If you need to use tools (search, run commands, "
-            "check memory, remote exec, etc.), describe what you'll do briefly and use spawn_agent "
-            "to delegate the work. The agent will report back and you'll relay results. "
-            "For simple conversation that needs no tools, just respond directly."
-        )
-        conv.messages[0]["content"] = system_prompt + "\n\n" + delegate_prompt
-
-        try:
-            response = await self.router.chat_with_tools(
-                messages=conv.messages,
-                tools=self.tools.openai_tools(),
-                session_id=session_id,
-            )
-        except Exception as e:
-            return f"Error: {e}"
-
-        # Handle tool calls (spawn_agent, memory tools, etc.)
-        if response.get("tool_calls"):
-            tool_calls = response["tool_calls"]
-            conv.add_assistant(
-                content=response.get("content"),
-                tool_calls=[
-                    {
-                        "id": tc["id"],
-                        "type": "function",
-                        "function": {
-                            "name": tc["name"],
-                            "arguments": json.dumps(tc["arguments"]) if isinstance(tc["arguments"], dict) else tc["arguments"],
-                        },
-                    }
-                    for tc in tool_calls
-                ],
-            )
-
-            for tc in tool_calls:
-                name = tc["name"]
-                args = tc["arguments"]
-                if isinstance(args, str):
-                    try:
-                        args = json.loads(args)
-                    except json.JSONDecodeError:
-                        args = {}
-
-                log.info("Delegated tool call [%s]: %s(%s)", tc["id"][:8], name, args)
-                await self._notify_tool(session_id, name, args)
-                result = await self.tools.execute(name, args)
-
-                output = result.output
-                if result.error:
-                    output = f"ERROR: {result.error}\n{output}" if output else f"ERROR: {result.error}"
-                conv.add_tool_result(tc["id"], name, output)
-
-            # Get final response after tool results
-            try:
-                final = await self.router.chat_with_tools(
-                    messages=conv.messages,
-                    tools=None,
-                    session_id=session_id,
-                )
-                text_response = final.get("content") or ""
-            except Exception as e:
-                text_response = f"Error getting response: {e}"
-        else:
-            text_response = response.get("content") or ""
-
-        text_response = _TOOLCALL_RE.sub("", _THINK_RE.sub("", text_response)).strip()
-        conv.add_assistant(content=text_response)
+        # Run the full agent loop with tool notifications
+        response_text = await self._agent_loop(conv, session_id)
 
         # Log and maintain
-        self.fact_store.log_conversation(session_id, "assistant", text_response)
+        self.fact_store.log_conversation(session_id, "assistant", response_text)
         asyncio.create_task(self._maintenance(
-            conv.last_user_message(), text_response, session_id,
+            conv.last_user_message(), response_text, session_id,
         ))
 
         ctx_len = self.router.get_active(session_id).context_length
         conv.trim(max_tokens=ctx_len)
-        return text_response
+        return response_text
 
     async def _maintenance(self, user_msg: str, assistant_msg: str, session_id: str) -> None:
         """Background maintenance cycle — runs after response is sent."""
@@ -535,7 +468,7 @@ class Agent:
 
             # Text response
             text = response.get("content") or ""
-            text = _TOOLCALL_RE.sub("", _THINK_RE.sub("", text)).strip()
+            text = _JSON_BLOB_RE.sub("", _TOOLCALL_RE.sub("", _THINK_RE.sub("", text))).strip()
             conv.add_assistant(content=text)
             ctx_len = self.router.get_active(session_id).context_length
             conv.trim(max_tokens=ctx_len)
@@ -551,7 +484,7 @@ class Agent:
                 session_id=session_id,
             )
             text = response.get("content") or "Sorry, I couldn't complete that request."
-            text = _TOOLCALL_RE.sub("", _THINK_RE.sub("", text)).strip()
+            text = _JSON_BLOB_RE.sub("", _TOOLCALL_RE.sub("", _THINK_RE.sub("", text))).strip()
             conv.add_assistant(content=text)
             ctx_len = self.router.get_active(session_id).context_length
             conv.trim(max_tokens=ctx_len)

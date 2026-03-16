@@ -31,12 +31,33 @@ class MemoryStore:
         self._db.row_factory = sqlite3.Row
         self._init_sqlite()
 
-        # Init KùzuDB
-        self._graph_db = kuzu.Database(str(self.graph_path))
-        self._graph_conn = kuzu.Connection(self._graph_db)
-        self._init_graph()
+        # Init KùzuDB (with retry on stale lock)
+        self._graph_db = None
+        self._graph_conn = None
+        try:
+            self._graph_db = kuzu.Database(str(self.graph_path))
+            self._graph_conn = kuzu.Connection(self._graph_db)
+            self._init_graph()
+        except RuntimeError as e:
+            if "lock" in str(e).lower():
+                log.warning("Graph DB locked, removing stale lock and retrying...")
+                import os
+                for f in [str(self.graph_path), str(self.graph_path) + ".wal"]:
+                    try:
+                        os.remove(f)
+                    except OSError:
+                        pass
+                try:
+                    self._graph_db = kuzu.Database(str(self.graph_path))
+                    self._graph_conn = kuzu.Connection(self._graph_db)
+                    self._init_graph()
+                except Exception as e2:
+                    log.error("Graph DB init failed after retry: %s — running without graph", e2)
+            else:
+                log.error("Graph DB init failed: %s — running without graph", e)
 
-        log.info("Memory store initialized: sqlite=%s, graph=%s", self.sqlite_path, self.graph_path)
+        log.info("Memory store initialized: sqlite=%s, graph=%s (active=%s)",
+                 self.sqlite_path, self.graph_path, self._graph_conn is not None)
 
     def _init_sqlite(self) -> None:
         """Create default tables if they don't exist."""
@@ -173,6 +194,8 @@ class MemoryStore:
 
     def graph_query(self, cypher: str) -> list[dict]:
         """Execute a Cypher query on the knowledge graph."""
+        if not self._graph_conn:
+            raise RuntimeError("Graph DB not available")
         try:
             result = self._graph_conn.execute(cypher)
             rows = []
@@ -185,6 +208,8 @@ class MemoryStore:
 
     def graph_add_entity(self, name: str, entity_type: str, properties: dict | None = None) -> None:
         """Add or update an entity node."""
+        if not self._graph_conn:
+            raise RuntimeError("Graph DB not available")
         props_json = json.dumps(properties or {})
         self._graph_conn.execute(
             "MERGE (e:Entity {name: $name}) SET e.type = $type, e.properties = $props",
@@ -193,6 +218,8 @@ class MemoryStore:
 
     def graph_add_relation(self, from_entity: str, to_entity: str, relation: str, properties: dict | None = None) -> None:
         """Add a relationship between two entities."""
+        if not self._graph_conn:
+            raise RuntimeError("Graph DB not available")
         props_json = json.dumps(properties or {})
         self._graph_conn.execute(
             """

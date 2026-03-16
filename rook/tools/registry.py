@@ -42,6 +42,8 @@ class ToolRegistry:
         concrete_threshold: int = 6,
     ):
         self._tools: dict[str, Tool] = {}
+
+        # Core tools (always available)
         self.register(ShellTool())
         self.register(ReadFileTool())
         self.register(WriteFileTool())
@@ -49,13 +51,8 @@ class ToolRegistry:
         self.register(WebSearchTool(searxng_url))
         self.register(WebFetchTool())
 
-        # Base memory tools (SQLite + graph)
+        # Memory backend
         self.memory_store = MemoryStore(sqlite_path, graph_path)
-        self.register(SQLQueryTool(self.memory_store))
-        self.register(GraphQueryTool(self.memory_store))
-        self.register(GraphStoreTool(self.memory_store))
-
-        # Fact store (3-tier memory kernel)
         self.fact_store = FactStore(
             self.memory_store._db,
             tier_size=tier_size,
@@ -63,19 +60,13 @@ class ToolRegistry:
             concrete_threshold=concrete_threshold,
         )
 
-        # Wire remember tool to add directly to working tier
+        # Memory tools (consolidated — remember, recall, promote/demote via remember)
         self.register(RememberTool(self.memory_store, self.fact_store))
         self.register(RecallTool(self.memory_store))
-
-        # Memory kernel tools
-        self.register(MemoryPromoteTool(self.fact_store))
-        self.register(MemoryDemoteTool(self.fact_store))
         self.register(MemorySearchTool(self.fact_store))
-        self.register(ContextStatusTool(self.fact_store))
 
         # Scheduler
         self.scheduler = Scheduler(self.memory_store._db)
-
         self.register(ScheduleJobTool(self.scheduler))
         self.register(ListJobsTool(self.scheduler))
         self.register(RemoveJobTool(self.scheduler))
@@ -83,17 +74,8 @@ class ToolRegistry:
         # Sub-agents
         self.agent_pool = AgentPool()
         self.register(SpawnAgentTool(self.agent_pool))
-        self.register(CheckAgentsTool(self.agent_pool))
 
-        # Persistent terminals
-        self.terminal_pool = TerminalPool()
-        self.register(TerminalCreateTool(self.terminal_pool))
-        self.register(TerminalSendTool(self.terminal_pool))
-        self.register(TerminalReadTool(self.terminal_pool))
-        self.register(TerminalListTool(self.terminal_pool))
-        self.register(TerminalKillTool(self.terminal_pool))
-
-        # Remote workers (combined HTTP + WS on one port)
+        # Remote workers
         self.remote_server = CombinedServer(
             port=remote_port, auth_token=remote_auth_token or "",
             domain=remote_domain, web_user=remote_web_user, web_pass=remote_web_pass,
@@ -101,16 +83,31 @@ class ToolRegistry:
         self.register(RemoteExecTool(self.remote_server))
         self.register(RemoteListTool(self.remote_server))
         self.register(RemoteUpdateTool(self.remote_server))
-        self.register(RemoteUninstallTool(self.remote_server))
 
-        # Cross-channel bridge
+        # Cross-channel
         self.channel_bridge = ChannelBridge()
         self.register(SendMessageTool(self.channel_bridge, self.memory_store))
         self.register(ListChannelsTool(self.memory_store))
 
-        # Custom tools (model-created, persisted)
+        # Advanced tools (available but not in main list — model can use db_query, graph, terminals via shell/write_file)
+        self._advanced_tools: dict[str, Tool] = {}
+        for tool_cls in [SQLQueryTool, GraphQueryTool, GraphStoreTool]:
+            t = tool_cls(self.memory_store)
+            self._advanced_tools[t.definition().name] = t
+        self._advanced_tools["memory_promote"] = MemoryPromoteTool(self.fact_store)
+        self._advanced_tools["memory_demote"] = MemoryDemoteTool(self.fact_store)
+        self._advanced_tools["context_status"] = ContextStatusTool(self.fact_store)
+        self._advanced_tools["check_agents"] = CheckAgentsTool(self.agent_pool)
+        self._advanced_tools["remote_uninstall"] = RemoteUninstallTool(self.remote_server)
+
+        # Terminal tools (advanced)
+        self.terminal_pool = TerminalPool()
+        for t_cls in [TerminalCreateTool, TerminalSendTool, TerminalReadTool, TerminalListTool, TerminalKillTool]:
+            t = t_cls(self.terminal_pool)
+            self._advanced_tools[t.definition().name] = t
+
+        # Custom tools
         self.register(CreateToolTool(self))
-        self.register(DeleteToolTool(self))
         loaded = load_custom_tools(self)
         if loaded:
             log.info("Loaded %d custom tools", loaded)
@@ -123,7 +120,7 @@ class ToolRegistry:
         return self._tools.get(name)
 
     async def execute(self, name: str, arguments: dict[str, Any]) -> ToolResult:
-        tool = self._tools.get(name)
+        tool = self._tools.get(name) or self._advanced_tools.get(name)
         if not tool:
             return ToolResult(success=False, output="", error=f"Unknown tool: {name}")
         try:

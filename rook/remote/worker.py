@@ -468,25 +468,48 @@ async def connect(server: str, name: str, token: str,
                 hb_task = asyncio.create_task(heartbeat())
 
                 # Chat input loop — runs concurrently with command listener
+                # Handles multi-line pastes by buffering with a short timeout
                 async def input_loop():
+                    import select as _select
+
+                    def _read_paste():
+                        """Read first line with prompt, then drain any buffered paste lines."""
+                        first = input(" ~ ")
+                        lines = [first]
+                        # Check if more data is waiting (paste)
+                        try:
+                            while _select.select([sys.stdin], [], [], 0.05)[0]:
+                                extra = sys.stdin.readline()
+                                if extra:
+                                    lines.append(extra.rstrip("\n"))
+                                else:
+                                    break
+                        except (OSError, ValueError):
+                            pass  # select not supported (Windows)
+                        return "\n".join(lines)
+
                     loop = asyncio.get_event_loop()
                     while True:
                         try:
-                            line = await loop.run_in_executor(None, lambda: input(" ~ "))
-                            line = line.strip()
-                            if not line:
+                            content = await loop.run_in_executor(None, _read_paste)
+                            content = content.strip()
+                            if not content:
                                 continue
-                            if line.lower() in ("/quit", "/exit", "quit", "exit"):
+                            if content.lower() in ("/quit", "/exit", "quit", "exit"):
                                 print("[r00k] Bye.")
                                 nonlocal _user_quit
                                 _user_quit = True
                                 await ws.close()
                                 return
-                            # Send chat message to Rook
-                            print(" ♖ ...", end="", flush=True)
+                            # Show line count for pastes
+                            line_count = content.count("\n") + 1
+                            if line_count > 1:
+                                print(f" ♖ ... ({line_count} lines)", end="", flush=True)
+                            else:
+                                print(" ♖ ...", end="", flush=True)
                             await ws.send(json.dumps({
                                 "type": "chat",
-                                "content": line,
+                                "content": content,
                             }))
                         except (EOFError, KeyboardInterrupt):
                             return

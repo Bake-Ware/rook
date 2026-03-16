@@ -105,20 +105,19 @@ def create_bot(agent: Agent, config: Config) -> commands.Bot:
             modality="text",
         )
 
-        # Editable status message for tool notifications
-        status_msg = None
-        status_lines = []
+        # Tool notifications — each tool gets its own line, marked done when complete
+        current_status_msg = None
 
         async def tool_notify(msg: str) -> None:
-            nonlocal status_msg, status_lines
-            status_lines.append(msg)
-            # Keep last 10 lines
-            display = "\n".join(status_lines[-10:])
+            nonlocal current_status_msg
             try:
-                if status_msg is None:
-                    status_msg = await message.channel.send(display)
-                else:
-                    await status_msg.edit(content=display)
+                # Mark previous as done
+                if current_status_msg:
+                    old_content = current_status_msg.content
+                    if not old_content.endswith(" done"):
+                        await current_status_msg.edit(content=old_content + " done")
+                # New status message
+                current_status_msg = await message.channel.send(msg)
             except Exception:
                 pass
 
@@ -132,10 +131,12 @@ def create_bot(agent: Agent, config: Config) -> commands.Bot:
                 channel=str(message.channel),
             )
 
-        # Clean up status message — delete it since the real response is coming
-        if status_msg:
+        # Mark last status as done
+        if current_status_msg:
             try:
-                await status_msg.delete()
+                old_content = current_status_msg.content
+                if not old_content.endswith(" done"):
+                    await current_status_msg.edit(content=old_content + " done")
             except Exception:
                 pass
 
