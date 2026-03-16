@@ -193,7 +193,7 @@ class Router:
             raise RuntimeError("No valid Anthropic OAuth token. Run `claude` to authenticate.")
         client = anthropic.AsyncAnthropic(
             auth_token=token,
-            default_headers={"anthropic-beta": "oauth-2025-04-20"},
+            default_headers={"anthropic-beta": "claude-code-20250219,oauth-2025-04-20,prompt-caching-scope-2026-01-05"},
         )
 
         # Convert OpenAI message format to Anthropic format
