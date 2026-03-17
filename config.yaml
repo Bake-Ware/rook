@@ -25,6 +25,16 @@ models:
 
 default_model: local-big
 
+pipeline:
+  pre_context:
+    enabled: true
+    model: local       # curates memory before main call
+  main:
+    model: local-big   # the model that responds (overridden by !use)
+  post_context:
+    enabled: true
+    model: local       # extracts facts after response
+
 aliases:
   big: local-big
   cheap: local

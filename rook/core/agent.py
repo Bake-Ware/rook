@@ -20,6 +20,7 @@ from ..memory.compiler import compile_system_prompt
 from ..memory.extractor import FactExtractor
 from ..memory.curator import ContextCurator
 from ..modules.loader import ModuleLoader
+from .pipeline import PipelineConfig
 
 log = logging.getLogger(__name__)
 
@@ -212,18 +213,28 @@ class Agent:
         self._notify_callback = None  # set by Discord interface
         self._tool_notify: dict[str, Any] = {}  # session_id -> async callback(msg)
 
-        # Extractor and curator use the local model
-        model_spec = config.models.get(config.default_model, {})
-        local_endpoint = model_spec.get("endpoint", "http://localhost:1234/v1")
-        local_model = model_spec.get("model", "")
+        # Pipeline config — per-stage model selection
+        self.pipeline = PipelineConfig.from_config(config)
+
+        # Resolve pre/post context models from pipeline config
+        def _resolve_model_spec(model_name: str) -> tuple[str, str]:
+            spec = config.models.get(model_name, {})
+            return (
+                spec.get("endpoint", "http://localhost:1234/v1"),
+                spec.get("model", ""),
+            )
+
+        pre_endpoint, pre_model = _resolve_model_spec(self.pipeline.pre_context.model)
+        post_endpoint, post_model = _resolve_model_spec(self.pipeline.post_context.model)
+
         self.extractor = FactExtractor(
-            endpoint=local_endpoint,
-            model=local_model,
+            endpoint=post_endpoint,
+            model=post_model,
             fact_store=self.fact_store,
         )
         self.curator = ContextCurator(
-            endpoint=local_endpoint,
-            model=local_model,
+            endpoint=pre_endpoint,
+            model=pre_model,
         )
 
         # Wire scheduler handler
@@ -367,6 +378,25 @@ class Agent:
         except Exception:
             pass
 
+    def update_pipeline(self, stage: str, **kwargs) -> str:
+        """Update pipeline config at runtime."""
+        result = self.pipeline.update(stage, **kwargs)
+
+        # Re-resolve models if changed
+        def _resolve(model_name: str) -> tuple[str, str]:
+            spec = self.config.models.get(model_name, {})
+            return spec.get("endpoint", "http://localhost:1234/v1"), spec.get("model", "")
+
+        if "model" in kwargs:
+            if stage == "pre_context":
+                ep, m = _resolve(self.pipeline.pre_context.model)
+                self.curator = ContextCurator(endpoint=ep, model=m)
+            elif stage == "post_context":
+                ep, m = _resolve(self.pipeline.post_context.model)
+                self.extractor = FactExtractor(endpoint=ep, model=m, fact_store=self.fact_store)
+
+        return result
+
     def set_identity(self, bot_name: str, peers: list[str] | None = None) -> None:
         self.bot_name = bot_name
         self.peers = peers or []
@@ -390,6 +420,7 @@ class Agent:
             anthropic_quota=self.router._anthropic_quota,
             active_goals=self.tools.goal_store.render_active(),
             curated_facts=curated_facts,
+            pipeline_config=self.pipeline.to_dict(),
         )
 
     def get_conversation(self, session_id: str) -> Conversation:
@@ -452,18 +483,16 @@ class Agent:
 
         self.fact_store.scan_for_references(text)
 
-        # Curate context for expensive models (Anthropic)
-        active_model = self.router.get_active(session_id)
+        # Pre-context stage: curate memory if enabled
         curated = None
-        if active_model.provider == "anthropic":
+        if self.pipeline.pre_context.enabled:
             try:
                 curated = await self.curator.curate(text, self.fact_store)
-                log.info("Curated context: %d concrete, %d working, %d volatile",
-                         len(curated.get("concrete", [])),
-                         len(curated.get("working", [])),
-                         len(curated.get("volatile", [])))
+                log.info("Pre-context: curated %d/%d facts",
+                         sum(len(v) for v in curated.values()),
+                         len(self.fact_store.concrete) + len(self.fact_store.working) + len(self.fact_store.volatile))
             except Exception as e:
-                log.error("Curation failed, using full context: %s", e)
+                log.error("Pre-context curation failed: %s", e)
 
         system_prompt = self._compile_system_prompt(conv, session_id, curated_facts=curated)
         conv.set_system(system_prompt)
@@ -537,8 +566,9 @@ class Agent:
     async def _maintenance(self, user_msg: str, assistant_msg: str, session_id: str) -> None:
         """Background maintenance cycle — runs after response is sent."""
         try:
-            # Extract facts from the exchange
-            await self.extractor.extract_and_store(user_msg, assistant_msg)
+            # Post-context stage: extract facts if enabled
+            if self.pipeline.post_context.enabled:
+                await self.extractor.extract_and_store(user_msg, assistant_msg)
 
             # Scan assistant response for references to bump access counts
             self.fact_store.scan_for_references(assistant_msg)

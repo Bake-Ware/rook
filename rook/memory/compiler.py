@@ -38,6 +38,7 @@ def compile_system_prompt(
     anthropic_quota: dict | None = None,
     active_goals: str | None = None,
     curated_facts: dict | None = None,
+    pipeline_config: dict | None = None,
 ) -> str:
     """Assemble the full system prompt with memory tiers and status."""
 
@@ -52,6 +53,18 @@ def compile_system_prompt(
     now = datetime.now()
     core += f"\n\nCurrent time: {now.strftime('%Y-%m-%d %H:%M:%S %A')}"
     core += f"\nSystem: {get_system_stats()}"
+
+    # Pipeline config
+    if pipeline_config:
+        pre = pipeline_config.get("pre_context", {})
+        post = pipeline_config.get("post_context", {})
+        main = pipeline_config.get("main", {})
+        parts_p = [f"main:{main.get('model', '?')}"]
+        if pre.get("enabled"):
+            parts_p.insert(0, f"pre:{pre.get('model', '?')}")
+        if post.get("enabled"):
+            parts_p.append(f"post:{post.get('model', '?')}")
+        core += f"\nPipeline: {' → '.join(parts_p)}"
 
     # Anthropic quota (from last API call headers)
     if anthropic_quota:
