@@ -176,6 +176,19 @@ class MemoryStore:
         cursor.row_factory = sqlite3.Row
         return [dict(row) for row in cursor.fetchall()]
 
+    def cleanup_stale_channels(self, max_age_hours: int = 24) -> int:
+        """Remove channels not seen in max_age_hours. Returns count removed."""
+        import time
+        cutoff = time.time() - (max_age_hours * 3600)
+        # Don't remove discord channels (they're permanent)
+        cursor = self._db.execute(
+            "DELETE FROM channels WHERE platform != 'discord' AND last_active < ?",
+            (cutoff,),
+        )
+        count = cursor.rowcount
+        self._db.commit()
+        return count
+
     # -- SQLite operations --
 
     def sql_execute(self, query: str, params: tuple = ()) -> list[dict]:

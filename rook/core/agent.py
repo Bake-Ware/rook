@@ -327,9 +327,18 @@ class Agent:
         log.info("Worker registered as channel: %s (%s/%s)", name, platform, hostname)
 
     def _on_worker_disconnect(self, name: str, worker_id: str) -> None:
-        """Update channel on disconnect."""
-        self.tools.memory_store.touch_channel("worker", name)
-        log.info("Worker channel disconnected: %s", name)
+        """Clean up channel on disconnect. Ephemeral channels (-cli) get deleted."""
+        if name.endswith("-cli"):
+            # CLI sessions are ephemeral — remove on disconnect
+            self.tools.memory_store._db.execute(
+                "DELETE FROM channels WHERE platform = ? AND platform_id = ?",
+                ("worker", name),
+            )
+            self.tools.memory_store._db.commit()
+            log.info("Worker channel removed (ephemeral): %s", name)
+        else:
+            self.tools.memory_store.touch_channel("worker", name)
+            log.info("Worker channel disconnected: %s", name)
 
     async def _on_worker_chat(self, worker_name: str, content: str, worker_id: str) -> str:
         """Handle a chat message from a remote worker."""
@@ -576,6 +585,11 @@ class Agent:
 
             # Scan assistant response for references to bump access counts
             self.fact_store.scan_for_references(assistant_msg)
+
+            # Periodic channel cleanup (every maintenance cycle is fine, it's cheap)
+            stale = self.tools.memory_store.cleanup_stale_channels(max_age_hours=24)
+            if stale:
+                log.info("Cleaned %d stale channels", stale)
 
             # Check for auto-promotions
             self.fact_store.check_promotions()

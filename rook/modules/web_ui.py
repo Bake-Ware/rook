@@ -270,6 +270,8 @@ async def _ws_ui_handler(request: web.Request) -> web.WebSocketResponse:
                 break
     finally:
         _ui_clients.pop(ws_id, None)
+        # Touch the channel so it stays fresh while connected, stale cleanup handles the rest
+        _agent.tools.memory_store.touch_channel("web", "dashboard")
         log.info("Web UI client disconnected: %s", ws_id)
 
     return ws
