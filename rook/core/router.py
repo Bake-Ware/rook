@@ -268,4 +268,6 @@ class Router:
             if env_backup is not None:
                 os.environ["CLAUDECODE"] = env_backup
 
+        if not result_text:
+            log.warning("Anthropic SDK returned no text for model=%s, prompt_len=%d", entry.model, len(prompt))
         return {"content": result_text or "No response from model.", "tool_calls": None}

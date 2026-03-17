@@ -66,6 +66,9 @@ def compile_system_prompt(
             parts_p.append(f"post:{post.get('model', '?')}")
         core += f"\nPipeline: {' → '.join(parts_p)}"
 
+    # Note: Anthropic models (via Agent SDK) can't call Rook's tools directly.
+    # When using opus/sonnet, just respond with text. Tool actions are handled by the local model.
+
     # Anthropic quota (from last API call headers)
     if anthropic_quota:
         parts_q = []

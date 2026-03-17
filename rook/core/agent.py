@@ -599,10 +599,13 @@ class Agent:
         for round_num in range(MAX_TOOL_ROUNDS):
             try:
                 log.info("Agent loop round %d for session %s", round_num, session_id[:20])
+                # Anthropic via SDK doesn't support Rook's tools — text-only mode
+                active = self.router.get_active(session_id)
+                tools = self.tools.openai_tools() if active.provider != "anthropic" else None
                 response = await asyncio.wait_for(
                     self.router.chat_with_tools(
                         messages=conv.messages,
-                        tools=self.tools.openai_tools(),
+                        tools=tools,
                         session_id=session_id,
                     ),
                     timeout=180,
