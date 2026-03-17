@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>♖ ROOK</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --bg: #0d1117; --surface: #161b22; --border: #30363d;
+  --text: #c9d1d9; --text-dim: #8b949e; --accent: #58a6ff;
+  --green: #3fb950; --red: #f85149; --yellow: #d29922;
+  --font: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+}
+body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 13px; height: 100vh; display: flex; flex-direction: column; }
+a { color: var(--accent); text-decoration: none; }
+
+/* Top bar */
+.topbar { display: flex; align-items: center; gap: 16px; padding: 8px 16px; background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.topbar .logo { font-size: 18px; font-weight: bold; }
+.topbar .stat { color: var(--text-dim); font-size: 11px; }
+.topbar .stat b { color: var(--text); }
+.topbar select { background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 4px 8px; border-radius: 4px; font-family: var(--font); font-size: 12px; }
+
+/* Main layout */
+.main { display: flex; flex: 1; overflow: hidden; }
+
+/* Sidebar */
+.sidebar { width: 260px; background: var(--surface); border-right: 1px solid var(--border); overflow-y: auto; flex-shrink: 0; padding: 12px; }
+.sidebar h3 { color: var(--text-dim); font-size: 10px; text-transform: uppercase; letter-spacing: 1px; margin: 16px 0 6px 0; }
+.sidebar h3:first-child { margin-top: 0; }
+.sidebar .item { padding: 4px 0; font-size: 12px; color: var(--text-dim); }
+.sidebar .item b { color: var(--text); }
+.sidebar .item.online::before { content: '●'; color: var(--green); margin-right: 6px; }
+.sidebar .item.offline::before { content: '●'; color: var(--red); margin-right: 6px; }
+.badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; }
+.badge.v { background: #1a1a2e; color: var(--yellow); }
+.badge.w { background: #1a2e1a; color: var(--green); }
+.badge.c { background: #2e1a1a; color: var(--accent); }
+
+/* Pipeline */
+.pipeline { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; margin: 4px 0; }
+.pipeline .stage { padding: 3px 8px; border-radius: 4px; font-size: 11px; border: 1px solid var(--border); }
+.pipeline .stage.on { border-color: var(--green); color: var(--green); }
+.pipeline .stage.off { border-color: var(--border); color: var(--text-dim); opacity: 0.5; }
+.pipeline .arrow { color: var(--text-dim); }
+.pipeline select { background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 2px 4px; border-radius: 3px; font-size: 10px; font-family: var(--font); }
+.pipeline label { font-size: 10px; color: var(--text-dim); cursor: pointer; }
+.pipeline input[type=checkbox] { margin-right: 2px; }
+
+/* Chat area */
+.chat { flex: 1; display: flex; flex-direction: column; }
+.messages { flex: 1; overflow-y: auto; padding: 16px; }
+.msg { margin-bottom: 12px; max-width: 85%; }
+.msg.user { margin-left: auto; }
+.msg .bubble { padding: 8px 12px; border-radius: 8px; line-height: 1.5; white-space: pre-wrap; word-wrap: break-word; }
+.msg.user .bubble { background: #1f3a5f; color: var(--text); border-bottom-right-radius: 2px; }
+.msg.rook .bubble { background: var(--surface); border: 1px solid var(--border); border-bottom-left-radius: 2px; }
+.msg.tool .bubble { background: transparent; color: var(--text-dim); font-size: 11px; padding: 2px 8px; border-left: 2px solid var(--border); }
+.msg.tool .bubble.done { border-left-color: var(--green); }
+.msg.error .bubble { background: #2d1418; color: var(--red); border: 1px solid #f8514933; }
+
+/* Input */
+.input-area { padding: 12px 16px; border-top: 1px solid var(--border); background: var(--surface); display: flex; gap: 8px; }
+.input-area textarea { flex: 1; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; font-family: var(--font); font-size: 13px; resize: none; min-height: 40px; max-height: 120px; }
+.input-area textarea:focus { outline: none; border-color: var(--accent); }
+.input-area button { background: var(--accent); color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-family: var(--font); font-size: 13px; }
+.input-area button:hover { opacity: 0.9; }
+
+@media (max-width: 768px) {
+  .sidebar { display: none; }
+  .topbar .stat { display: none; }
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <span class="logo">♖ ROOK</span>
+  <select id="model-select" onchange="switchModel(this.value)"></select>
+  <span class="stat" id="sys-stats"></span>
+  <span class="stat" id="quota-stats"></span>
+</div>
+
+<div class="main">
+  <div class="sidebar">
+    <h3>Pipeline</h3>
+    <div id="pipeline-config"></div>
+
+    <h3>Workers</h3>
+    <div id="workers-list"><div class="item">loading...</div></div>
+
+    <h3>Memory</h3>
+    <div id="memory-stats"></div>
+
+    <h3>Goals</h3>
+    <div id="goals-list"><div class="item">none</div></div>
+
+    <h3>Jobs</h3>
+    <div id="jobs-list"><div class="item">none</div></div>
+
+    <h3>Channels</h3>
+    <div id="channels-list"></div>
+  </div>
+
+  <div class="chat">
+    <div class="messages" id="messages"></div>
+    <div class="input-area">
+      <textarea id="input" placeholder="Talk to Rook..." rows="1" onkeydown="handleKey(event)"></textarea>
+      <button onclick="sendMessage()">Send</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const wsUrl = `ws${location.protocol === 'https:' ? 's' : ''}://${location.host}/ws/ui`;
+let ws = null;
+let models = [];
+
+function connectWS() {
+  ws = new WebSocket(wsUrl);
+  ws.onopen = () => addMsg('system', 'Connected to Rook');
+  ws.onclose = () => { addMsg('system', 'Disconnected. Reconnecting...'); setTimeout(connectWS, 3000); };
+  ws.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    if (data.type === 'response') addMsg('rook', data.content);
+    else if (data.type === 'tool_status') addToolStatus(data.content);
+    else if (data.type === 'error') addMsg('error', data.content);
+  };
+}
+
+function addMsg(type, content) {
+  const div = document.createElement('div');
+  div.className = `msg ${type}`;
+  div.innerHTML = `<div class="bubble">${escapeHtml(content)}</div>`;
+  document.getElementById('messages').appendChild(div);
+  scrollBottom();
+}
+
+function addToolStatus(content) {
+  // Find last tool message and mark done, or add new
+  const msgs = document.getElementById('messages');
+  const last = msgs.querySelector('.msg.tool:last-child .bubble:not(.done)');
+  if (last) last.classList.add('done');
+  const div = document.createElement('div');
+  div.className = 'msg tool';
+  div.innerHTML = `<div class="bubble">${escapeHtml(content)}</div>`;
+  msgs.appendChild(div);
+  scrollBottom();
+}
+
+function sendMessage() {
+  const input = document.getElementById('input');
+  const text = input.value.trim();
+  if (!text || !ws || ws.readyState !== 1) return;
+  addMsg('user', text);
+  ws.send(JSON.stringify({ type: 'chat', content: text }));
+  input.value = '';
+  input.style.height = 'auto';
+}
+
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  // Auto-resize
+  setTimeout(() => { e.target.style.height = 'auto'; e.target.style.height = e.target.scrollHeight + 'px'; }, 0);
+}
+
+function escapeHtml(t) {
+  return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function scrollBottom() {
+  const m = document.getElementById('messages');
+  m.scrollTop = m.scrollHeight;
+}
+
+// Dashboard refresh
+async function refresh() {
+  try {
+    const [status, workers, goals, jobs, channels] = await Promise.all([
+      fetch('/api/status').then(r => r.json()),
+      fetch('/api/workers').then(r => r.json()),
+      fetch('/api/goals').then(r => r.json()),
+      fetch('/api/jobs').then(r => r.json()),
+      fetch('/api/channels').then(r => r.json()),
+    ]);
+
+    // System stats
+    document.getElementById('sys-stats').innerHTML = status.system || '';
+
+    // Quota
+    const q = status.quota || {};
+    const q5 = q['5h-utilization'], q7 = q['7d-utilization'];
+    document.getElementById('quota-stats').innerHTML = q5 ? `Quota: <b>${(q5*100).toFixed(0)}%</b> 5h | <b>${(q7*100).toFixed(0)}%</b> 7d` : '';
+
+    // Model select
+    if (models.length === 0) {
+      const ml = await fetch('/api/models').then(r => r.json());
+      models = ml;
+      const sel = document.getElementById('model-select');
+      sel.innerHTML = ml.map(m => `<option value="${m.name}" ${m.name === status.model.name ? 'selected' : ''}>${m.name} (${m.model})</option>`).join('');
+    }
+
+    // Pipeline
+    renderPipeline(status.pipeline);
+
+    // Workers
+    const wl = document.getElementById('workers-list');
+    wl.innerHTML = workers.length ? workers.map(w =>
+      `<div class="item ${w.alive ? 'online' : 'offline'}"><b>${w.name}</b> ${w.platform} ${w.connected}</div>`
+    ).join('') : '<div class="item">none connected</div>';
+
+    // Memory
+    const mem = status.memory;
+    document.getElementById('memory-stats').innerHTML = `
+      <div class="item"><span class="badge v">V</span> ${mem.volatile.count} facts (${mem.volatile.tokens} tok)</div>
+      <div class="item"><span class="badge w">W</span> ${mem.working.count} facts (${mem.working.tokens} tok)</div>
+      <div class="item"><span class="badge c">C</span> ${mem.concrete.count} facts (${mem.concrete.tokens} tok)</div>
+    `;
+
+    // Goals
+    const gl = document.getElementById('goals-list');
+    gl.innerHTML = goals.length ? goals.map(g =>
+      `<div class="item"><b>${g.title}</b> [${g.status}] ${g.progress}</div>`
+    ).join('') : '<div class="item">none</div>';
+
+    // Jobs
+    const jl = document.getElementById('jobs-list');
+    jl.innerHTML = jobs.length ? jobs.map(j =>
+      `<div class="item"><b>${j.name}</b> ${j.cron} ${j.enabled ? '✓' : '✗'}</div>`
+    ).join('') : '<div class="item">none</div>';
+
+    // Channels
+    const cl = document.getElementById('channels-list');
+    cl.innerHTML = channels.map(c =>
+      `<div class="item">${c.platform}:${c.name || c.platform_id} (${c.modality})</div>`
+    ).join('');
+
+  } catch (e) { console.error('Refresh failed:', e); }
+}
+
+function renderPipeline(p) {
+  const c = document.getElementById('pipeline-config');
+  c.innerHTML = `
+    <div class="pipeline">
+      <label><input type="checkbox" ${p.pre_context.enabled ? 'checked' : ''} onchange="toggleStage('pre_context', this.checked)"> Pre</label>
+      <select onchange="stageModel('pre_context', this.value)">${models.map(m => `<option value="${m.name}" ${m.name === p.pre_context.model ? 'selected' : ''}>${m.name}</option>`).join('')}</select>
+      <span class="arrow">→</span>
+      <span class="stage on">Main</span>
+      <select onchange="stageModel('main', this.value)">${models.map(m => `<option value="${m.name}" ${m.name === p.main.model ? 'selected' : ''}>${m.name}</option>`).join('')}</select>
+      <span class="arrow">→</span>
+      <label><input type="checkbox" ${p.post_context.enabled ? 'checked' : ''} onchange="toggleStage('post_context', this.checked)"> Post</label>
+      <select onchange="stageModel('post_context', this.value)">${models.map(m => `<option value="${m.name}" ${m.name === p.post_context.model ? 'selected' : ''}>${m.name}</option>`).join('')}</select>
+    </div>
+  `;
+}
+
+async function toggleStage(stage, enabled) {
+  await fetch('/api/pipeline', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ stage, enabled }) });
+  refresh();
+}
+
+async function stageModel(stage, model) {
+  await fetch('/api/pipeline', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ stage, model }) });
+  refresh();
+}
+
+async function switchModel(model) {
+  await fetch('/api/model', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ model, session_id: 'web:default' }) });
+  refresh();
+}
+
+// Init
+connectWS();
+refresh();
+setInterval(refresh, 5000);
+document.getElementById('input').focus();
+</script>
+</body>
+</html>

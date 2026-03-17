@@ -143,11 +143,23 @@ class CombinedServer:
         self._app.router.add_get("/health", self._health)
         self._runner: web.AppRunner | None = None
 
+        # Register web UI routes before server starts
+        try:
+            from ..modules.web_ui import register_routes
+            register_routes(self._app)
+        except Exception as e:
+            log.warning("Web UI routes not registered: %s", e)
+
     @web.middleware
     async def _basic_auth_middleware(self, request: web.Request, handler):
         """Basic auth on HTTP endpoints. WS and health are exempt."""
         # Skip auth for WS upgrade, health, and if no creds configured
-        if request.path in ("/ws", "/health", "/worker", "/worker.py") or not self.web_user:
+        # No auth for WS (worker), health, worker bootstrap
+        exempt = ("/ws", "/health", "/worker", "/worker.py")
+        # UI WebSocket needs to be exempt (auth handled by browser session)
+        if request.path == "/ws/ui":
+            return await handler(request)
+        if any(request.path == p or request.path.startswith(p + "/") for p in exempt) or not self.web_user:
             return await handler(request)
 
         import base64
@@ -187,7 +199,12 @@ class CombinedServer:
         # Only auto-serve bootstrap at /worker, not /
         # / always shows the help page
 
-        # Browser or plain request — show instructions
+        # Browser — redirect to UI
+        accept = request.headers.get("Accept", "")
+        if "text/html" in accept:
+            raise web.HTTPFound("/ui")
+
+        # CLI — show instructions
         text = f"""
   R ☠ ☠ K  Remote Worker
   ========================
