@@ -319,7 +319,7 @@ class Agent:
         """Register a remote worker as a communication channel."""
         self.tools.memory_store.register_channel(
             platform="worker",
-            platform_id=worker_id,
+            platform_id=name,  # use name, not UUID — prevents duplicates on reconnect
             session_id=f"worker:{name}",
             name=f"{name} ({hostname})",
             modality="shell",
@@ -328,7 +328,7 @@ class Agent:
 
     def _on_worker_disconnect(self, name: str, worker_id: str) -> None:
         """Update channel on disconnect."""
-        self.tools.memory_store.touch_channel("worker", worker_id)
+        self.tools.memory_store.touch_channel("worker", name)
         log.info("Worker channel disconnected: %s", name)
 
     async def _on_worker_chat(self, worker_name: str, content: str, worker_id: str) -> str:

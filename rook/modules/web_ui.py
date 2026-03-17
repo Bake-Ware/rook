@@ -236,10 +236,10 @@ async def _ws_ui_handler(request: web.Request) -> web.WebSocketResponse:
 
     _agent._tool_notify[session_id] = tool_notify
 
-    # Register as channel
+    # Register as channel (stable ID so reconnects don't create duplicates)
     _agent.tools.memory_store.register_channel(
         platform="web",
-        platform_id=ws_id,
+        platform_id="dashboard",
         session_id=session_id,
         name="Web UI",
         modality="text",
