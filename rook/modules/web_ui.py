@@ -76,6 +76,10 @@ async def _api_status(request: web.Request) -> web.Response:
     from ..memory.sysinfo import get_system_stats
     status = _agent.fact_store.status()
     active = _agent.router.get_active()
+    # Active tasks count
+    active_agents = sum(1 for a in _agent.agent_pool._agents.values() if a.status == "running")
+    active_goals = len([g for g in _agent.tools.goal_store._goals.values() if g.status == "active"])
+
     return web.json_response({
         "system": get_system_stats(),
         "model": {"name": active.name, "model": active.model, "provider": active.provider},
@@ -84,6 +88,9 @@ async def _api_status(request: web.Request) -> web.Response:
         "quota": _agent.router._anthropic_quota,
         "workers": len(_agent.tools.remote_server._workers),
         "facts_total": len(_agent.fact_store.volatile) + len(_agent.fact_store.working) + len(_agent.fact_store.concrete),
+        "busy": active_agents > 0,
+        "active_agents": active_agents,
+        "active_goals": active_goals,
     })
 
 

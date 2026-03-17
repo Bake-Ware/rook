@@ -398,6 +398,13 @@ class Agent:
 
     def update_pipeline(self, stage: str, **kwargs) -> str:
         """Update pipeline config at runtime."""
+        # Validate: pre/post context must use local (openai-compat) models
+        if stage in ("pre_context", "post_context") and "model" in kwargs:
+            model_name = kwargs["model"]
+            spec = self.config.models.get(model_name, {})
+            if spec.get("provider") == "anthropic":
+                return f"Error: {stage} must use a local model, not {model_name} (Anthropic)"
+
         result = self.pipeline.update(stage, **kwargs)
 
         # Re-resolve models if changed

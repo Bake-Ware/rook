@@ -80,6 +80,7 @@ a { color: var(--accent); text-decoration: none; }
   <span class="stat" id="sys-stats"></span>
   <span class="stat" id="quota-stats"></span>
   <span class="stat" id="pipeline-summary"></span>
+  <span class="stat" id="activity-indicator"></span>
 </div>
 
 <div class="main">
@@ -220,6 +221,12 @@ async function refresh() {
     if (pp.post_context.enabled) pparts.push(pp.post_context.model);
     updateEl('pipeline-summary', pparts.join(' → '));
 
+    // Activity indicator
+    const busy = status.busy || status.active_agents > 0;
+    updateEl('activity-indicator', busy
+      ? `<span style="color:var(--yellow)">● working (${status.active_agents} agents)</span>`
+      : '<span style="color:var(--green)">● idle</span>');
+
     // Pipeline — only re-render if changed
     const ppKey = JSON.stringify(pp);
     if (_prev.pipeline !== ppKey) {
@@ -287,23 +294,24 @@ async function refresh() {
 
 function renderPipeline(p) {
   const c = document.getElementById('pipeline-config');
-  const opts = (sel) => models.map(m => `<option value="${m.name}" ${m.name === sel ? 'selected' : ''}>${m.name}</option>`).join('');
+  const allOpts = (sel) => models.map(m => `<option value="${m.name}" ${m.name === sel ? 'selected' : ''}>${m.name}</option>`).join('');
+  const localOpts = (sel) => models.filter(m => m.provider === 'openai-compat').map(m => `<option value="${m.name}" ${m.name === sel ? 'selected' : ''}>${m.name}</option>`).join('');
   c.innerHTML = `
     <div class="pipeline">
       <label><input type="checkbox" ${p.pre_context.enabled ? 'checked' : ''} onchange="toggleStage('pre_context', this.checked)"> Pre</label>
-      <select onchange="stageModel('pre_context', this.value)">${opts(p.pre_context.model)}</select>
+      <select onchange="stageModel('pre_context', this.value)">${localOpts(p.pre_context.model)}</select>
     </div>
     <div class="pipeline">
       <span class="stage on">Main</span>
-      <select onchange="stageModel('main', this.value)">${opts(p.main.model)}</select>
+      <select onchange="stageModel('main', this.value)">${allOpts(p.main.model)}</select>
     </div>
     <div class="pipeline">
       <label><input type="checkbox" ${p.post_context.enabled ? 'checked' : ''} onchange="toggleStage('post_context', this.checked)"> Post</label>
-      <select onchange="stageModel('post_context', this.value)">${opts(p.post_context.model)}</select>
+      <select onchange="stageModel('post_context', this.value)">${localOpts(p.post_context.model)}</select>
     </div>
     <div class="pipeline">
       <span class="stage on">Agents</span>
-      <select onchange="stageModel('agents', this.value)">${opts(p.agents ? p.agents.model : p.main.model)}</select>
+      <select onchange="stageModel('agents', this.value)">${allOpts(p.agents ? p.agents.model : p.main.model)}</select>
     </div>
   `;
 }
