@@ -15,28 +15,28 @@ log = logging.getLogger(__name__)
 
 _THINK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
 
-_EXTRACTION_PROMPT = """Extract key facts from this conversation exchange. Return a JSON array of objects with:
-- "fact": the specific information (be precise — include exact values, URLs, names, numbers)
-- "category": one of these EXACT values:
-  STABLE (will persist long-term):
-    "url" — URLs, endpoints, API addresses
-    "credential" — passwords, tokens, API keys, login info
-    "config" — ports, IPs, hostnames, paths, env vars, versions that matter
-    "command" — useful command syntax, CLI patterns
-    "preference" — user preferences, directives, how they want things done
-  TRANSIENT (stays short-term only):
-    "concept" — ideas, explanations, temporary observations
-    "decision" — choices made in this conversation
-    "reference" — things mentioned but not critical to remember
-    "general" — anything else
-- "importance": 0.0 to 1.0 (1.0 = credentials/URLs, 0.3 = casual mention)
+_EXTRACTION_PROMPT = """You manage long-term memory for an AI assistant. Extract ONLY facts that will be useful weeks or months from now.
 
-IMPORTANT: Only use stable categories (url, credential, config, command, preference) for information that does NOT change. Temporary states, errors, current status, connection issues = use transient categories.
+Return a JSON array. Each object:
+- "fact": A COMPLETE, self-contained statement. Include ALL context needed to understand it later without any conversation history. Bad: "192.168.1.168". Good: "starscream (Proxmox server) is at 192.168.1.168, SSH as root with password Jamison1129!"
+- "category": EXACTLY one of:
+    "url" — URLs, endpoints, domains
+    "credential" — passwords, tokens, API keys, SSH creds
+    "config" — IPs, hostnames, hardware specs, software versions, paths, ports
+    "command" — CLI commands, syntax patterns worth remembering
+    "preference" — how the user wants things done, standing instructions
+    "general" — anything that doesn't fit above (will NOT be promoted to long-term)
+- "importance": 0.0-1.0
 
-Only extract facts worth remembering. Skip greetings, filler, errors, status messages, and things already obvious.
-If there are no notable facts, return an empty array: []
+RULES:
+- Be VERBOSE in the fact text. It must make sense standalone with zero context.
+- ONLY extract things that are PERMANENTLY true: hostnames, IPs, credentials, hardware, software versions, user preferences.
+- NEVER extract: current connection status, error messages, what tools were called, task progress, temporary states, what just happened in conversation.
+- NEVER duplicate information already covered by an existing fact. If unsure, skip it.
+- If nothing worth remembering permanently was discussed, return []
+- Most conversations should return [] — only extract when genuinely new permanent info appears.
 
-Return ONLY the JSON array, no other text."""
+Return ONLY the JSON array."""
 
 
 class FactExtractor:
@@ -90,9 +90,15 @@ class FactExtractor:
             category = f.get("category", "general")
             importance = float(f.get("importance", 0.5))
 
-            # Skip error messages, request IDs, and other noise
-            noise_patterns = ["error code:", "request_id", "req_01", "internal server error",
-                              "timed out", "401", "500", "failed to"]
+            # Skip noise — transient states, errors, status, tool output
+            noise_patterns = [
+                "error code:", "request_id", "req_01", "internal server error",
+                "timed out", "401", "500", "failed to", "not found",
+                "connected", "disconnected", "reconnect", "online", "offline",
+                "worker id:", "agent id:", "spawned", "completed",
+                "module is loaded", "module started", "service is",
+                "currently", "right now", "just now", "still",
+            ]
             if any(p in fact_text.lower() for p in noise_patterns):
                 continue
 

@@ -15,10 +15,17 @@ log = logging.getLogger(__name__)
 
 _THINK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
 
-_CURATION_PROMPT = """You are a context filter. Given a user message and a list of stored facts, return ONLY the IDs of facts that are relevant to answering this message. Be selective — only include facts the assistant actually needs.
+_CURATION_PROMPT = """You filter memory for an AI assistant. Given a user message and stored facts, return ONLY the fact IDs the assistant NEEDS to respond to THIS specific message.
 
-Return a JSON array of relevant fact IDs. If none are relevant, return [].
-Return ONLY the JSON array, nothing else."""
+Be AGGRESSIVE about filtering:
+- If the user says "hi" or casual chat, return [] — no facts needed.
+- Only include a fact if NOT having it would cause a wrong or incomplete answer.
+- Credentials/IPs only if the message involves connecting to that specific machine.
+- Preferences only if the message relates to behavior/style.
+- Never include everything "just in case".
+
+Return a JSON array of fact IDs. Return [] if none are needed.
+ONLY the JSON array."""
 
 
 class ContextCurator:
