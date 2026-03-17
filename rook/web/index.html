@@ -326,11 +326,6 @@ function timeSince(ts) {
   return Math.floor(s/86400) + 'd ago';
 }
 
-async function deleteChannel(platform, platformId) {
-  await fetch(`/api/channels/${platform}/${platformId}`, { method: 'DELETE' });
-  refresh();
-}
-
 // Fact management
 async function showFacts(tier, noToggle) {
   const det = document.getElementById('facts-detail');
@@ -381,34 +376,38 @@ async function saveFact(id, newText, el, oldText) {
 
 async function promoteFact(id) {
   await fetch(`/api/facts/${id}/promote`, { method: 'POST' });
+  // Re-render just the facts list
   const tier = document.getElementById('facts-detail').dataset.tier;
-  if (tier) showFacts(tier);
-  refresh();
+  if (tier) showFacts(tier, true);
 }
 
 async function demoteFact(id) {
   await fetch(`/api/facts/${id}/demote`, { method: 'POST' });
   const tier = document.getElementById('facts-detail').dataset.tier;
-  if (tier) showFacts(tier);
-  refresh();
+  if (tier) showFacts(tier, true);
 }
 
 async function deleteFact(id) {
+  // Remove from DOM immediately
+  const el = document.getElementById(`ft-${id}`);
+  if (el) el.closest('.item').remove();
   await fetch(`/api/facts/${id}`, { method: 'DELETE' });
-  const tier = document.getElementById('facts-detail').dataset.tier;
-  if (tier) showFacts(tier);
-  refresh();
 }
 
 async function goalAction(id, action) {
   if (action === 'delete') await fetch(`/api/goals/${id}`, { method: 'DELETE' });
   else if (action === 'pause') await fetch(`/api/goals/${id}/pause`, { method: 'POST' });
-  refresh();
+  _prev.goals = '';  // invalidate cache so next refresh picks it up
 }
 
 async function deleteJob(id) {
   await fetch(`/api/jobs/${id}`, { method: 'DELETE' });
-  refresh();
+  _prev.jobs = '';
+}
+
+async function deleteChannel(platform, platformId) {
+  await fetch(`/api/channels/${platform}/${platformId}`, { method: 'DELETE' });
+  _prev.channels = '';
 }
 
 // Init
