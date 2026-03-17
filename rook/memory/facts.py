@@ -207,22 +207,35 @@ class FactStore:
         )
         self._db.commit()
 
+    # Categories that are eligible for promotion beyond volatile
+    PROMOTABLE_CATEGORIES = {"url", "credential", "config", "command", "preference"}
+
     # -- Promotion --
+
+    def _is_promotable(self, fact: MemoryFact) -> bool:
+        """Only promote facts with stable, long-lived categories."""
+        return fact.category in self.PROMOTABLE_CATEGORIES
 
     def check_promotions(self) -> list[str]:
         """Check all facts for promotion eligibility. Returns log of actions."""
         actions = []
 
-        # Volatile → Working
-        to_promote = [f for f in self.volatile if f.access_count >= self.promote_threshold]
+        # Volatile → Working (only promotable categories)
+        to_promote = [
+            f for f in self.volatile
+            if f.access_count >= self.promote_threshold and self._is_promotable(f)
+        ]
         for f in to_promote:
             self.volatile.remove(f)
             self.working.append(f)
             actions.append(f"Promoted to working: {f.fact[:60]}")
             log.info("Auto-promote volatile→working: %s (accesses=%d)", f.fact[:60], f.access_count)
 
-        # Working → Concrete
-        to_promote = [f for f in self.working if f.access_count >= self.concrete_threshold]
+        # Working → Concrete (only promotable categories)
+        to_promote = [
+            f for f in self.working
+            if f.access_count >= self.concrete_threshold and self._is_promotable(f)
+        ]
         for f in to_promote:
             self.working.remove(f)
             self.concrete.append(f)

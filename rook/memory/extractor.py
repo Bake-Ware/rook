@@ -17,10 +17,23 @@ _THINK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
 
 _EXTRACTION_PROMPT = """Extract key facts from this conversation exchange. Return a JSON array of objects with:
 - "fact": the specific information (be precise — include exact values, URLs, names, numbers)
-- "category": one of "url", "credential", "config", "concept", "decision", "preference", "reference", "general"
-- "importance": 0.0 to 1.0 (1.0 = critical like credentials/URLs, 0.3 = casual mention)
+- "category": one of these EXACT values:
+  STABLE (will persist long-term):
+    "url" — URLs, endpoints, API addresses
+    "credential" — passwords, tokens, API keys, login info
+    "config" — ports, IPs, hostnames, paths, env vars, versions that matter
+    "command" — useful command syntax, CLI patterns
+    "preference" — user preferences, directives, how they want things done
+  TRANSIENT (stays short-term only):
+    "concept" — ideas, explanations, temporary observations
+    "decision" — choices made in this conversation
+    "reference" — things mentioned but not critical to remember
+    "general" — anything else
+- "importance": 0.0 to 1.0 (1.0 = credentials/URLs, 0.3 = casual mention)
 
-Only extract facts worth remembering. Skip greetings, filler, and things already obvious from context.
+IMPORTANT: Only use stable categories (url, credential, config, command, preference) for information that does NOT change. Temporary states, errors, current status, connection issues = use transient categories.
+
+Only extract facts worth remembering. Skip greetings, filler, errors, status messages, and things already obvious.
 If there are no notable facts, return an empty array: []
 
 Return ONLY the JSON array, no other text."""
