@@ -259,18 +259,38 @@ class Router:
             if anthropic_tools:
                 kwargs["tools"] = anthropic_tools
 
-            raw_response = await client.messages.with_raw_response.create(**kwargs)
-            response = raw_response.parse()
+            # Retry on 500/529 with exponential backoff (like Claude Code does)
+            import asyncio as _asyncio
+            response = None
+            for attempt in range(5):
+                try:
+                    raw_response = await client.messages.with_raw_response.create(**kwargs)
+                    response = raw_response.parse()
 
-            # Capture rate limit headers
-            try:
-                self._anthropic_quota = {
-                    k.replace("anthropic-ratelimit-unified-", ""): v
-                    for k, v in raw_response.headers.items()
-                    if k.startswith("anthropic-ratelimit")
-                }
-            except Exception:
-                pass
+                    # Capture rate limit headers
+                    try:
+                        self._anthropic_quota = {
+                            k.replace("anthropic-ratelimit-unified-", ""): v
+                            for k, v in raw_response.headers.items()
+                            if k.startswith("anthropic-ratelimit")
+                        }
+                    except Exception:
+                        pass
+                    break  # success
+                except anthropic.InternalServerError:
+                    if attempt < 4:
+                        wait = (2 ** attempt) + 1  # 2, 3, 5, 9 seconds
+                        log.warning("Anthropic 500, retrying in %ds (attempt %d/5)", wait, attempt + 1)
+                        await _asyncio.sleep(wait)
+                    else:
+                        raise
+                except anthropic.APIStatusError as e:
+                    if e.status_code == 529 and attempt < 4:
+                        wait = (2 ** attempt) + 1
+                        log.warning("Anthropic 529 (overloaded), retrying in %ds (attempt %d/5)", wait, attempt + 1)
+                        await _asyncio.sleep(wait)
+                    else:
+                        raise
         finally:
             await client.close()
 

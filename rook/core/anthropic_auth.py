@@ -83,6 +83,13 @@ class AnthropicAuth:
         if self._access_token and not self.is_expired:
             return self._access_token
 
+        # Token expired — try reload from disk first (Claude Code login may have refreshed it)
+        self._load_credentials()
+        if self._access_token and not self.is_expired:
+            log.info("Picked up refreshed token from disk")
+            return self._access_token
+
+        # Still expired — try refresh ourselves
         if self._refresh_token:
             await self._refresh()
 
