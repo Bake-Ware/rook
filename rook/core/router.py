@@ -179,139 +179,98 @@ class Router:
             ]
         return result
 
+    @staticmethod
+    def _clean_schema(schema: dict[str, Any]) -> dict[str, Any]:
+        """Clean a JSON schema to be Anthropic 2020-12 compliant."""
+        schema = dict(schema)
+
+        # Remove unsupported keys
+        for key in ["default", "examples", "patternProperties", "$schema", "additionalProperties"]:
+            schema.pop(key, None)
+
+        # Ensure properties exists for object types
+        if schema.get("type") == "object" and not schema.get("properties"):
+            schema["properties"] = {"_dummy": {"type": "string", "description": "unused"}}
+
+        # Recursively clean nested properties
+        if "properties" in schema:
+            cleaned_props = {}
+            for k, v in schema["properties"].items():
+                if isinstance(v, dict):
+                    v = dict(v)
+                    for rm_key in ["default", "examples", "patternProperties"]:
+                        v.pop(rm_key, None)
+                    # Recurse for nested objects
+                    if v.get("type") == "object" and "properties" in v:
+                        v = Router._clean_schema(v)
+                cleaned_props[k] = v
+            schema["properties"] = cleaned_props
+
+        # Clean items for array types
+        if "items" in schema and isinstance(schema["items"], dict):
+            schema["items"] = Router._clean_schema(schema["items"])
+
+        return schema
+
     async def _anthropic_chat(
         self,
         entry: ModelEntry,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
     ) -> dict[str, Any]:
-        import anthropic
+        """Use Claude Agent SDK to call Anthropic models via Claude Code subscription."""
+        import os
+        import anyio
+        from claude_agent_sdk import query
 
-        # Use OAuth token from Claude Code subscription
-        token = await self._anthropic_auth.get_token()
-        if not token:
-            raise RuntimeError("No valid Anthropic OAuth token. Run `claude` to authenticate.")
-        client = anthropic.AsyncAnthropic(
-            auth_token=token,
-            default_headers={"anthropic-beta": "claude-code-20250219,oauth-2025-04-20,prompt-caching-scope-2026-01-05"},
-        )
-
-        # Convert OpenAI message format to Anthropic format
-        system_prompt = None
-        anthropic_messages = []
+        # Build prompt from messages
+        system_prompt = ""
+        conversation = []
         for msg in messages:
             if msg["role"] == "system":
                 system_prompt = msg["content"]
+            elif msg["role"] == "user":
+                conversation.append(f"User: {msg.get('content', '')}")
+            elif msg["role"] == "assistant":
+                content = msg.get("content", "")
+                if content:
+                    conversation.append(f"Assistant: {content}")
             elif msg["role"] == "tool":
-                # Anthropic uses tool_result content blocks
-                anthropic_messages.append({
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": msg["tool_call_id"],
-                            "content": msg["content"],
-                        }
-                    ],
-                })
-            elif msg["role"] == "assistant" and msg.get("tool_calls"):
-                # Convert tool calls to Anthropic content blocks
-                content: list[dict[str, Any]] = []
-                if msg.get("content"):
-                    content.append({"type": "text", "text": msg["content"]})
-                for tc in msg["tool_calls"]:
-                    args = tc["function"]["arguments"]
-                    if isinstance(args, str):
-                        args = json.loads(args)
-                    content.append({
-                        "type": "tool_use",
-                        "id": tc["id"],
-                        "name": tc["function"]["name"],
-                        "input": args,
-                    })
-                anthropic_messages.append({"role": "assistant", "content": content})
-            else:
-                anthropic_messages.append({
-                    "role": msg["role"],
-                    "content": msg.get("content", ""),
-                })
+                conversation.append(f"Tool result ({msg.get('name', '?')}): {msg.get('content', '')}")
 
-        # Convert OpenAI tool format to Anthropic
-        anthropic_tools = None
-        if tools:
-            anthropic_tools = [
-                {
-                    "name": t["function"]["name"],
-                    "description": t["function"]["description"],
-                    "input_schema": t["function"]["parameters"],
-                }
-                for t in tools
-            ]
+        # Build the prompt — system context + conversation + latest user message
+        prompt_parts = []
+        if system_prompt:
+            prompt_parts.append(f"System context:\n{system_prompt}\n")
+        if conversation:
+            prompt_parts.append("Conversation so far:\n" + "\n".join(conversation[-20:]))  # last 20 exchanges
+
+        prompt = "\n\n".join(prompt_parts)
+
+        # Ensure CLAUDECODE is unset so SDK can launch
+        env_backup = os.environ.pop("CLAUDECODE", None)
 
         try:
-            kwargs: dict[str, Any] = {
-                "model": entry.model,
-                "messages": anthropic_messages,
-                "max_tokens": 4096,
-            }
-            if system_prompt:
-                kwargs["system"] = system_prompt
-            if anthropic_tools:
-                kwargs["tools"] = anthropic_tools
-
-            # Retry on 500/529 with exponential backoff (like Claude Code does)
-            import asyncio as _asyncio
-            response = None
-            for attempt in range(5):
-                try:
-                    raw_response = await client.messages.with_raw_response.create(**kwargs)
-                    response = raw_response.parse()
-
-                    # Capture rate limit headers
-                    try:
-                        self._anthropic_quota = {
-                            k.replace("anthropic-ratelimit-unified-", ""): v
-                            for k, v in raw_response.headers.items()
-                            if k.startswith("anthropic-ratelimit")
-                        }
-                    except Exception:
-                        pass
-                    break  # success
-                except anthropic.InternalServerError:
-                    if attempt < 4:
-                        wait = (2 ** attempt) + 1  # 2, 3, 5, 9 seconds
-                        log.warning("Anthropic 500, retrying in %ds (attempt %d/5)", wait, attempt + 1)
-                        await _asyncio.sleep(wait)
-                    else:
-                        raise
-                except anthropic.APIStatusError as e:
-                    if e.status_code == 529 and attempt < 4:
-                        wait = (2 ** attempt) + 1
-                        log.warning("Anthropic 529 (overloaded), retrying in %ds (attempt %d/5)", wait, attempt + 1)
-                        await _asyncio.sleep(wait)
-                    else:
-                        raise
+            result_text = ""
+            async for msg in query(
+                prompt=prompt,
+                options={
+                    "max_turns": 1,
+                    "system_prompt": system_prompt[:10000] if system_prompt else None,
+                    "model": entry.model,
+                },
+            ):
+                # Extract text from AssistantMessage
+                msg_type = type(msg).__name__
+                if msg_type == "AssistantMessage" and hasattr(msg, "content"):
+                    for block in msg.content:
+                        if hasattr(block, "text"):
+                            result_text += block.text
+                elif msg_type == "ResultMessage" and hasattr(msg, "result"):
+                    if not result_text and msg.result:
+                        result_text = msg.result
         finally:
-            await client.close()
+            if env_backup is not None:
+                os.environ["CLAUDECODE"] = env_backup
 
-        # Normalize Anthropic response to our format
-        result: dict[str, Any] = {"content": None, "tool_calls": None}
-
-        text_parts = []
-        tool_calls = []
-        for block in response.content:
-            if block.type == "text":
-                text_parts.append(block.text)
-            elif block.type == "tool_use":
-                tool_calls.append({
-                    "id": block.id,
-                    "name": block.name,
-                    "arguments": block.input,
-                })
-
-        if text_parts:
-            result["content"] = "\n".join(text_parts)
-        if tool_calls:
-            result["tool_calls"] = tool_calls
-
-        return result
+        return {"content": result_text or "No response from model.", "tool_calls": None}
