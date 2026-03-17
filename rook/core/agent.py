@@ -216,9 +216,9 @@ class Agent:
         # Pipeline config — per-stage model selection, persisted to DB
         self.pipeline = PipelineConfig.from_config(config, db=self.tools.memory_store._db)
 
-        # Set the main model from pipeline (may differ from config default if persisted)
+        # Set the global model from pipeline (persisted)
         if self.pipeline.main.model:
-            self.router._sessions["default"] = self.pipeline.main.model
+            self.router._global_model = self.pipeline.main.model
             log.info("Pipeline main model: %s", self.pipeline.main.model)
 
         # Resolve pre/post context models from pipeline config
@@ -413,13 +413,8 @@ class Agent:
                 ep, m = _resolve(self.pipeline.post_context.model)
                 self.extractor = FactExtractor(endpoint=ep, model=m, fact_store=self.fact_store)
             elif stage == "main":
-                # Update the router's default for all sessions
-                model_name = self.pipeline.main.model
-                for sid in list(self.router._sessions.keys()):
-                    self.router.set_active(sid, model_name)
-                # Also set the default so new sessions get it
-                self.router._sessions["default"] = model_name
-                log.info("Main model set globally: %s", model_name)
+                self.router._global_model = self.pipeline.main.model
+                log.info("Main model set globally: %s", self.pipeline.main.model)
 
         return result
 
@@ -465,10 +460,11 @@ class Agent:
         Main conversations delegate tool work to sub-agents.
         Sub-agent sessions (agent:*) run tools directly.
         """
-        # Check for model switch
+        # Check for model switch — updates pipeline (persisted)
         if switch_to := self.router.detect_switch(text):
             entry = self.router.set_active(session_id, switch_to)
             if entry:
+                self.pipeline.update("main", model=entry.name)
                 switch_msg = f"Switched to **{entry.name}** ({entry.model})."
                 stripped = text.strip()
                 if re.match(r"^(use|switch\s+to|swap\s+to)\s+\S+[.!?]?$", stripped, re.I):

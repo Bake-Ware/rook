@@ -44,7 +44,7 @@ class Router:
     def __init__(self, config: Config):
         self.config = config
         self._entries: dict[str, ModelEntry] = {}
-        self._sessions: dict[str, str] = {}  # session_id -> model name
+        self._global_model: str = ""  # set by pipeline
         self._anthropic_auth = AnthropicAuth()
         self._anthropic_quota: dict[str, Any] = {}  # latest rate limit info
         self._build_entries()
@@ -93,21 +93,19 @@ class Router:
         return None
 
     def get_active(self, session_id: str = "default") -> ModelEntry:
-        """Get the active model for a session."""
-        name = self._sessions.get(session_id, self.config.default_model)
+        """Get the active model. Global — pipeline.main.model is the source of truth."""
+        name = self._global_model or self.config.default_model
         entry = self.resolve(name)
-        if not entry:
-            entry = self.resolve(self.config.default_model)
         if not entry:
             entry = next(iter(self._entries.values()))
         return entry
 
     def set_active(self, session_id: str, name: str) -> ModelEntry | None:
-        """Switch the active model for a session. Returns the entry or None."""
+        """Switch the global active model. Returns the entry or None."""
         entry = self.resolve(name)
         if entry:
-            self._sessions[session_id] = entry.name
-            log.info("Session %s switched to model: %s", session_id, entry.name)
+            self._global_model = entry.name
+            log.info("Global model switched to: %s", entry.name)
         return entry
 
     def list_models(self) -> list[dict[str, str]]:
