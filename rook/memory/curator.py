@@ -1,4 +1,4 @@
-"""Context curator — uses fast local model to select relevant memory for each message."""
+"""Context curator — uses the router to select relevant memory for each message."""
 
 from __future__ import annotations
 
@@ -6,8 +6,6 @@ import json
 import logging
 import re
 from typing import Any
-
-from openai import AsyncOpenAI
 
 from .facts import FactStore
 
@@ -29,11 +27,11 @@ ONLY the JSON array."""
 
 
 class ContextCurator:
-    """Pre-filters memory facts for relevance before sending to expensive models."""
+    """Pre-filters memory facts for relevance using the router."""
 
-    def __init__(self, endpoint: str, model: str):
-        self.endpoint = endpoint
-        self.model = model
+    def __init__(self, router, model_name: str):
+        self.router = router
+        self.model_name = model_name
 
     async def curate(self, user_message: str, fact_store: FactStore,
                      session_context: str = "") -> dict[str, list]:
@@ -50,21 +48,26 @@ class ContextCurator:
         if not all_facts:
             return {"concrete": [], "working": [], "volatile": []}
 
-        # Build the fact list for the model
         fact_list = "\n".join(f"[{f['id']}] ({f['tier']}/{f['category']}) {f['fact']}" for f in all_facts)
-
         prompt = f"User message: {user_message}\n\nStored facts:\n{fact_list}"
 
-        client = AsyncOpenAI(base_url=self.endpoint, api_key="not-needed")
+        messages = [
+            {"role": "system", "content": _CURATION_PROMPT},
+            {"role": "user", "content": prompt},
+        ]
+
         try:
-            response = await client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": _CURATION_PROMPT},
-                    {"role": "user", "content": prompt},
-                ],
-                max_tokens=500,
-            )
+            entry = self.router.resolve(self.model_name)
+            if not entry:
+                log.error("Curator model '%s' not found", self.model_name)
+                return {"concrete": list(fact_store.concrete), "working": list(fact_store.working), "volatile": list(fact_store.volatile)}
+
+            if entry.provider == "anthropic":
+                response = await self.router._anthropic_chat(entry, messages, None)
+            else:
+                response = await self.router._openai_chat(entry, messages, None)
+
+            raw = response.get("content") or "[]"
         except Exception as e:
             log.error("Curation call failed: %s — using all facts", e)
             return {
@@ -72,15 +75,11 @@ class ContextCurator:
                 "working": list(fact_store.working),
                 "volatile": list(fact_store.volatile),
             }
-        finally:
-            await client.close()
 
-        raw = response.choices[0].message.content or "[]"
         raw = _THINK_RE.sub("", raw).strip()
         selected_ids = self._parse_ids(raw)
 
         if not selected_ids:
-            # Model said nothing relevant — still include concrete (always important)
             return {
                 "concrete": list(fact_store.concrete),
                 "working": [],
@@ -90,7 +89,6 @@ class ContextCurator:
         log.info("Curator selected %d/%d facts for: %s",
                  len(selected_ids), len(all_facts), user_message[:60])
 
-        # Filter each tier
         selected_set = set(selected_ids)
         return {
             "concrete": [f for f in fact_store.concrete if f.id in selected_set],
@@ -99,7 +97,6 @@ class ContextCurator:
         }
 
     def _parse_ids(self, raw: str) -> list[str]:
-        """Parse JSON array of IDs from model response."""
         raw = raw.strip()
         if raw.startswith("```"):
             raw = re.sub(r"^```\w*\n?", "", raw)

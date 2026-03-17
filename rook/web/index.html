@@ -294,24 +294,23 @@ async function refresh() {
 
 function renderPipeline(p) {
   const c = document.getElementById('pipeline-config');
-  const allOpts = (sel) => models.map(m => `<option value="${m.name}" ${m.name === sel ? 'selected' : ''}>${m.name}</option>`).join('');
-  const localOpts = (sel) => models.filter(m => m.provider === 'openai-compat').map(m => `<option value="${m.name}" ${m.name === sel ? 'selected' : ''}>${m.name}</option>`).join('');
+  const opts = (sel) => models.map(m => `<option value="${m.name}" ${m.name === sel ? 'selected' : ''}>${m.name}</option>`).join('');
   c.innerHTML = `
     <div class="pipeline">
       <label><input type="checkbox" ${p.pre_context.enabled ? 'checked' : ''} onchange="toggleStage('pre_context', this.checked)"> Pre</label>
-      <select onchange="stageModel('pre_context', this.value)">${localOpts(p.pre_context.model)}</select>
+      <select onchange="stageModel('pre_context', this.value)">${opts(p.pre_context.model)}</select>
     </div>
     <div class="pipeline">
       <span class="stage on">Main</span>
-      <select onchange="stageModel('main', this.value)">${allOpts(p.main.model)}</select>
+      <select onchange="stageModel('main', this.value)">${opts(p.main.model)}</select>
     </div>
     <div class="pipeline">
       <label><input type="checkbox" ${p.post_context.enabled ? 'checked' : ''} onchange="toggleStage('post_context', this.checked)"> Post</label>
-      <select onchange="stageModel('post_context', this.value)">${localOpts(p.post_context.model)}</select>
+      <select onchange="stageModel('post_context', this.value)">${opts(p.post_context.model)}</select>
     </div>
     <div class="pipeline">
       <span class="stage on">Agents</span>
-      <select onchange="stageModel('agents', this.value)">${allOpts(p.agents ? p.agents.model : p.main.model)}</select>
+      <select onchange="stageModel('agents', this.value)">${opts(p.agents ? p.agents.model : p.main.model)}</select>
     </div>
   `;
 }

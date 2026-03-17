@@ -221,25 +221,15 @@ class Agent:
             self.router._global_model = self.pipeline.main.model
             log.info("Pipeline main model: %s", self.pipeline.main.model)
 
-        # Resolve pre/post context models from pipeline config
-        def _resolve_model_spec(model_name: str) -> tuple[str, str]:
-            spec = config.models.get(model_name, {})
-            return (
-                spec.get("endpoint", "http://localhost:1234/v1"),
-                spec.get("model", ""),
-            )
-
-        pre_endpoint, pre_model = _resolve_model_spec(self.pipeline.pre_context.model)
-        post_endpoint, post_model = _resolve_model_spec(self.pipeline.post_context.model)
-
+        # Extractor and curator use the router — works with any model type
         self.extractor = FactExtractor(
-            endpoint=post_endpoint,
-            model=post_model,
+            router=self.router,
+            model_name=self.pipeline.post_context.model,
             fact_store=self.fact_store,
         )
         self.curator = ContextCurator(
-            endpoint=pre_endpoint,
-            model=pre_model,
+            router=self.router,
+            model_name=self.pipeline.pre_context.model,
         )
 
         # Wire scheduler handler
@@ -398,27 +388,13 @@ class Agent:
 
     def update_pipeline(self, stage: str, **kwargs) -> str:
         """Update pipeline config at runtime."""
-        # Validate: pre/post context must use local (openai-compat) models
-        if stage in ("pre_context", "post_context") and "model" in kwargs:
-            model_name = kwargs["model"]
-            spec = self.config.models.get(model_name, {})
-            if spec.get("provider") == "anthropic":
-                return f"Error: {stage} must use a local model, not {model_name} (Anthropic)"
-
         result = self.pipeline.update(stage, **kwargs)
-
-        # Re-resolve models if changed
-        def _resolve(model_name: str) -> tuple[str, str]:
-            spec = self.config.models.get(model_name, {})
-            return spec.get("endpoint", "http://localhost:1234/v1"), spec.get("model", "")
 
         if "model" in kwargs:
             if stage == "pre_context":
-                ep, m = _resolve(self.pipeline.pre_context.model)
-                self.curator = ContextCurator(endpoint=ep, model=m)
+                self.curator.model_name = self.pipeline.pre_context.model
             elif stage == "post_context":
-                ep, m = _resolve(self.pipeline.post_context.model)
-                self.extractor = FactExtractor(endpoint=ep, model=m, fact_store=self.fact_store)
+                self.extractor.model_name = self.pipeline.post_context.model
             elif stage == "main":
                 self.router._global_model = self.pipeline.main.model
                 log.info("Main model set globally: %s", self.pipeline.main.model)

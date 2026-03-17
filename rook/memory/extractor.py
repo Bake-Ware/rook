@@ -7,8 +7,6 @@ import logging
 import re
 from typing import Any
 
-from openai import AsyncOpenAI
-
 from .facts import FactStore
 
 log = logging.getLogger(__name__)
@@ -40,41 +38,41 @@ Return ONLY the JSON array."""
 
 
 class FactExtractor:
-    """Extracts facts from conversation exchanges using an LLM call."""
+    """Extracts facts from conversation exchanges using the router."""
 
-    def __init__(self, endpoint: str, model: str, fact_store: FactStore):
-        self.endpoint = endpoint
-        self.model = model
+    def __init__(self, router, model_name: str, fact_store: FactStore):
+        self.router = router
+        self.model_name = model_name
         self.fact_store = fact_store
 
     async def extract_and_store(self, user_message: str, assistant_response: str) -> list[dict]:
-        """Extract facts from the latest exchange and push to volatile.
-
-        Returns the list of extracted facts for logging.
-        """
+        """Extract facts from the latest exchange and push to volatile."""
         exchange = f"User: {user_message}\n\nAssistant: {assistant_response}"
 
-        # Truncate very long exchanges
         if len(exchange) > 8000:
             exchange = exchange[:8000] + "\n... (truncated)"
 
-        client = AsyncOpenAI(base_url=self.endpoint, api_key="not-needed")
+        messages = [
+            {"role": "system", "content": _EXTRACTION_PROMPT},
+            {"role": "user", "content": exchange},
+        ]
+
         try:
-            response = await client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": _EXTRACTION_PROMPT},
-                    {"role": "user", "content": exchange},
-                ],
-                max_tokens=1000,
-            )
+            # Use the router — handles OpenAI-compat and Anthropic transparently
+            entry = self.router.resolve(self.model_name)
+            if not entry:
+                log.error("Extractor model '%s' not found", self.model_name)
+                return []
+
+            if entry.provider == "anthropic":
+                response = await self.router._anthropic_chat(entry, messages, None)
+            else:
+                response = await self.router._openai_chat(entry, messages, None)
+
+            raw = response.get("content") or ""
         except Exception as e:
             log.error("Fact extraction LLM call failed: %s", e)
             return []
-        finally:
-            await client.close()
-
-        raw = response.choices[0].message.content or ""
         raw = _THINK_RE.sub("", raw).strip()
 
         # Parse JSON from response
