@@ -35,9 +35,17 @@ def register_routes(app) -> None:
     app.router.add_get("/api/pipeline", _api_pipeline)
     app.router.add_post("/api/pipeline", _api_pipeline_update)
     app.router.add_post("/api/model", _api_model_switch)
+
+    # CRUD endpoints
+    app.router.add_post("/api/facts/{fact_id}/promote", _api_fact_promote)
+    app.router.add_post("/api/facts/{fact_id}/demote", _api_fact_demote)
+    app.router.add_delete("/api/facts/{fact_id}", _api_fact_delete)
+    app.router.add_delete("/api/goals/{goal_id}", _api_goal_delete)
+    app.router.add_post("/api/goals/{goal_id}/pause", _api_goal_pause)
+    app.router.add_delete("/api/jobs/{job_id}", _api_job_delete)
     app.router.add_get("/ws/ui", _ws_ui_handler)
-    app.router.add_get("/ui", _serve_index)
     app.router.add_get("/ui/{path:.*}", _serve_static)
+    # Note: / route is handled by the bootstrap server, we override it there
 
 
 async def start(agent: Any, config: Any) -> None:
@@ -122,6 +130,51 @@ async def _api_pipeline_update(request: web.Request) -> web.Response:
     kwargs = {k: v for k, v in data.items() if k != "stage"}
     result = _agent.update_pipeline(stage, **kwargs)
     return web.json_response({"result": result, "pipeline": _agent.pipeline.to_dict()})
+
+
+async def _api_fact_promote(request: web.Request) -> web.Response:
+    fact_id = request.match_info["fact_id"]
+    result = _agent.fact_store.promote(fact_id=fact_id)
+    _agent.fact_store.flush_to_db()
+    return web.json_response({"result": result})
+
+
+async def _api_fact_demote(request: web.Request) -> web.Response:
+    fact_id = request.match_info["fact_id"]
+    result = _agent.fact_store.demote(fact_id=fact_id)
+    _agent.fact_store.flush_to_db()
+    return web.json_response({"result": result})
+
+
+async def _api_fact_delete(request: web.Request) -> web.Response:
+    fact_id = request.match_info["fact_id"]
+    # Remove from all tiers
+    for tier in [_agent.fact_store.volatile, _agent.fact_store.working, _agent.fact_store.concrete]:
+        tier[:] = [f for f in tier if f.id != fact_id]
+    _agent.fact_store._archive_fact_by_id(fact_id) if hasattr(_agent.fact_store, '_archive_fact_by_id') else None
+    _agent.fact_store.flush_to_db()
+    # Also remove from DB
+    _agent.fact_store._db.execute("DELETE FROM memory_facts WHERE id = ?", (fact_id,))
+    _agent.fact_store._db.commit()
+    return web.json_response({"result": f"Fact {fact_id} deleted"})
+
+
+async def _api_goal_delete(request: web.Request) -> web.Response:
+    goal_id = request.match_info["goal_id"]
+    result = _agent.tools.goal_store.fail_goal(goal_id, "Deleted from dashboard")
+    return web.json_response({"result": result})
+
+
+async def _api_goal_pause(request: web.Request) -> web.Response:
+    goal_id = request.match_info["goal_id"]
+    result = _agent.tools.goal_store.pause_goal(goal_id)
+    return web.json_response({"result": result})
+
+
+async def _api_job_delete(request: web.Request) -> web.Response:
+    job_id = request.match_info["job_id"]
+    result = _agent.tools.scheduler.remove_job(job_id)
+    return web.json_response({"result": "removed" if result else "not found"})
 
 
 async def _api_model_switch(request: web.Request) -> web.Response:

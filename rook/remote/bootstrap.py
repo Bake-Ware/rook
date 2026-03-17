@@ -199,10 +199,16 @@ class CombinedServer:
         # Only auto-serve bootstrap at /worker, not /
         # / always shows the help page
 
-        # Browser — redirect to UI
+        # Browser — serve dashboard directly
         accept = request.headers.get("Accept", "")
         if "text/html" in accept:
-            raise web.HTTPFound("/ui")
+            try:
+                from ..modules.web_ui import WEB_DIR
+                index_path = WEB_DIR / "index.html"
+                if index_path.exists():
+                    return web.Response(text=index_path.read_text(encoding="utf-8"), content_type="text/html")
+            except Exception:
+                pass
 
         # CLI — show instructions
         text = f"""

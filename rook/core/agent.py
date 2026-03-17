@@ -213,8 +213,8 @@ class Agent:
         self._notify_callback = None  # set by Discord interface
         self._tool_notify: dict[str, Any] = {}  # session_id -> async callback(msg)
 
-        # Pipeline config — per-stage model selection
-        self.pipeline = PipelineConfig.from_config(config)
+        # Pipeline config — per-stage model selection, persisted to DB
+        self.pipeline = PipelineConfig.from_config(config, db=self.tools.memory_store._db)
 
         # Resolve pre/post context models from pipeline config
         def _resolve_model_spec(model_name: str) -> tuple[str, str]:
@@ -256,6 +256,10 @@ class Agent:
 
     async def _run_sub_agent(self, prompt: str, session_id: str) -> str:
         """Execute a sub-agent prompt in its own conversation."""
+        # Set the agent model for this session
+        agent_model = self.pipeline.agents.model
+        if agent_model:
+            self.router.set_active(session_id, agent_model)
         return await self.handle_message(prompt, session_id=session_id)
 
     def _inherit_notify(self, parent_session_id: str, child_session_id: str) -> None:

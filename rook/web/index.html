@@ -210,24 +210,25 @@ async function refresh() {
       `<div class="item ${w.alive ? 'online' : 'offline'}"><b>${w.name}</b> ${w.platform} ${w.connected}</div>`
     ).join('') : '<div class="item">none connected</div>';
 
-    // Memory
+    // Memory — clickable to expand facts
     const mem = status.memory;
     document.getElementById('memory-stats').innerHTML = `
-      <div class="item"><span class="badge v">V</span> ${mem.volatile.count} facts (${mem.volatile.tokens} tok)</div>
-      <div class="item"><span class="badge w">W</span> ${mem.working.count} facts (${mem.working.tokens} tok)</div>
-      <div class="item"><span class="badge c">C</span> ${mem.concrete.count} facts (${mem.concrete.tokens} tok)</div>
+      <div class="item" style="cursor:pointer" onclick="showFacts('volatile')"><span class="badge v">V</span> ${mem.volatile.count} facts (${mem.volatile.tokens} tok)</div>
+      <div class="item" style="cursor:pointer" onclick="showFacts('working')"><span class="badge w">W</span> ${mem.working.count} facts (${mem.working.tokens} tok)</div>
+      <div class="item" style="cursor:pointer" onclick="showFacts('concrete')"><span class="badge c">C</span> ${mem.concrete.count} facts (${mem.concrete.tokens} tok)</div>
+      <div id="facts-detail"></div>
     `;
 
     // Goals
     const gl = document.getElementById('goals-list');
     gl.innerHTML = goals.length ? goals.map(g =>
-      `<div class="item"><b>${g.title}</b> [${g.status}] ${g.progress}</div>`
+      `<div class="item"><b>${g.title}</b> [${g.status}] ${g.progress} <a href="#" onclick="goalAction('${g.id}','pause');return false">⏸</a> <a href="#" onclick="goalAction('${g.id}','delete');return false">✕</a></div>`
     ).join('') : '<div class="item">none</div>';
 
     // Jobs
     const jl = document.getElementById('jobs-list');
     jl.innerHTML = jobs.length ? jobs.map(j =>
-      `<div class="item"><b>${j.name}</b> ${j.cron} ${j.enabled ? '✓' : '✗'}</div>`
+      `<div class="item"><b>${j.name}</b> ${j.cron} ${j.enabled ? '✓' : '✗'} <a href="#" onclick="deleteJob('${j.id}');return false">✕</a></div>`
     ).join('') : '<div class="item">none</div>';
 
     // Channels
@@ -241,16 +242,23 @@ async function refresh() {
 
 function renderPipeline(p) {
   const c = document.getElementById('pipeline-config');
+  const opts = (sel) => models.map(m => `<option value="${m.name}" ${m.name === sel ? 'selected' : ''}>${m.name}</option>`).join('');
   c.innerHTML = `
     <div class="pipeline">
       <label><input type="checkbox" ${p.pre_context.enabled ? 'checked' : ''} onchange="toggleStage('pre_context', this.checked)"> Pre</label>
-      <select onchange="stageModel('pre_context', this.value)">${models.map(m => `<option value="${m.name}" ${m.name === p.pre_context.model ? 'selected' : ''}>${m.name}</option>`).join('')}</select>
-      <span class="arrow">→</span>
+      <select onchange="stageModel('pre_context', this.value)">${opts(p.pre_context.model)}</select>
+    </div>
+    <div class="pipeline">
       <span class="stage on">Main</span>
-      <select onchange="stageModel('main', this.value)">${models.map(m => `<option value="${m.name}" ${m.name === p.main.model ? 'selected' : ''}>${m.name}</option>`).join('')}</select>
-      <span class="arrow">→</span>
+      <select onchange="stageModel('main', this.value)">${opts(p.main.model)}</select>
+    </div>
+    <div class="pipeline">
       <label><input type="checkbox" ${p.post_context.enabled ? 'checked' : ''} onchange="toggleStage('post_context', this.checked)"> Post</label>
-      <select onchange="stageModel('post_context', this.value)">${models.map(m => `<option value="${m.name}" ${m.name === p.post_context.model ? 'selected' : ''}>${m.name}</option>`).join('')}</select>
+      <select onchange="stageModel('post_context', this.value)">${opts(p.post_context.model)}</select>
+    </div>
+    <div class="pipeline">
+      <span class="stage on">Agents</span>
+      <select onchange="stageModel('agents', this.value)">${opts(p.agents ? p.agents.model : p.main.model)}</select>
     </div>
   `;
 }
@@ -267,6 +275,55 @@ async function stageModel(stage, model) {
 
 async function switchModel(model) {
   await fetch('/api/model', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ model, session_id: 'web:default' }) });
+  refresh();
+}
+
+// Fact management
+async function showFacts(tier) {
+  const facts = await fetch(`/api/facts?tier=${tier}`).then(r => r.json());
+  const det = document.getElementById('facts-detail');
+  if (det.dataset.tier === tier) { det.innerHTML = ''; det.dataset.tier = ''; return; }
+  det.dataset.tier = tier;
+  det.innerHTML = facts.map(f => `
+    <div class="item" style="font-size:11px;padding:2px 0;border-bottom:1px solid var(--border)">
+      <span style="color:var(--text-dim)">[${f.id}]</span> ${escapeHtml(f.fact.substring(0,80))}
+      <br><a href="#" onclick="promoteFact('${f.id}');return false">↑</a>
+      <a href="#" onclick="demoteFact('${f.id}');return false">↓</a>
+      <a href="#" onclick="deleteFact('${f.id}');return false">✕</a>
+      <span style="color:var(--text-dim)">${f.category} ×${f.access_count}</span>
+    </div>
+  `).join('');
+}
+
+async function promoteFact(id) {
+  await fetch(`/api/facts/${id}/promote`, { method: 'POST' });
+  const tier = document.getElementById('facts-detail').dataset.tier;
+  if (tier) showFacts(tier);
+  refresh();
+}
+
+async function demoteFact(id) {
+  await fetch(`/api/facts/${id}/demote`, { method: 'POST' });
+  const tier = document.getElementById('facts-detail').dataset.tier;
+  if (tier) showFacts(tier);
+  refresh();
+}
+
+async function deleteFact(id) {
+  await fetch(`/api/facts/${id}`, { method: 'DELETE' });
+  const tier = document.getElementById('facts-detail').dataset.tier;
+  if (tier) showFacts(tier);
+  refresh();
+}
+
+async function goalAction(id, action) {
+  if (action === 'delete') await fetch(`/api/goals/${id}`, { method: 'DELETE' });
+  else if (action === 'pause') await fetch(`/api/goals/${id}/pause`, { method: 'POST' });
+  refresh();
+}
+
+async function deleteJob(id) {
+  await fetch(`/api/jobs/${id}`, { method: 'DELETE' });
   refresh();
 }
 

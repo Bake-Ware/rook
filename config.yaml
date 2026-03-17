@@ -23,6 +23,12 @@ models:
     key_env: ANTHROPIC_API_KEY
     model: claude-sonnet-4-6
 
+  haiku:
+    provider: anthropic
+    endpoint: https://api.anthropic.com
+    key_env: ANTHROPIC_API_KEY
+    model: claude-haiku-4-5-20251001
+
 default_model: local-big
 
 pipeline:
@@ -41,6 +47,8 @@ aliases:
   small: local
   smart: opus
   fast: sonnet
+  tiny: haiku
+  cheapest: haiku
 
 memory:
   sqlite_path: ./data/rook.db
