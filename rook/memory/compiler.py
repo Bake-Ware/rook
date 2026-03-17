@@ -37,6 +37,7 @@ def compile_system_prompt(
     active_channels: list[dict] | None = None,
     anthropic_quota: dict | None = None,
     active_goals: str | None = None,
+    curated_facts: dict | None = None,
 ) -> str:
     """Assemble the full system prompt with memory tiers and status."""
 
@@ -108,10 +109,23 @@ Total:        {total_used:,} / {context_length:,} tokens ({pct}% used)"""
     elif pct >= 70:
         status_block += "\n! Context pressure high. Consider what can be archived."
 
-    # Render tiers
-    concrete_block = f"\n=== CONCRETE (long-term) ===\n{fact_store.render_tier(fact_store.concrete)}"
-    working_block = f"\n=== WORKING (mid-term) ===\n{fact_store.render_tier(fact_store.working)}"
-    volatile_block = f"\n=== VOLATILE (short-term) ===\n{fact_store.render_tier(fact_store.volatile)}"
+    # Render tiers — use curated facts if provided (pre-filtered for relevance)
+    if curated_facts:
+        concrete_list = curated_facts.get("concrete", [])
+        working_list = curated_facts.get("working", [])
+        volatile_list = curated_facts.get("volatile", [])
+        total_curated = len(concrete_list) + len(working_list) + len(volatile_list)
+        total_all = len(fact_store.concrete) + len(fact_store.working) + len(fact_store.volatile)
+        curated_note = f" (curated: {total_curated}/{total_all} relevant)"
+    else:
+        concrete_list = fact_store.concrete
+        working_list = fact_store.working
+        volatile_list = fact_store.volatile
+        curated_note = ""
+
+    concrete_block = f"\n=== CONCRETE{curated_note} ===\n{fact_store.render_tier(concrete_list)}"
+    working_block = f"\n=== WORKING ===\n{fact_store.render_tier(working_list)}"
+    volatile_block = f"\n=== VOLATILE ===\n{fact_store.render_tier(volatile_list)}"
 
     # Recent job results
     job_block = ""

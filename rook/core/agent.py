@@ -18,6 +18,7 @@ from ..tools.registry import ToolRegistry
 from ..tools.base import ToolResult
 from ..memory.compiler import compile_system_prompt
 from ..memory.extractor import FactExtractor
+from ..memory.curator import ContextCurator
 from ..modules.loader import ModuleLoader
 
 log = logging.getLogger(__name__)
@@ -211,12 +212,18 @@ class Agent:
         self._notify_callback = None  # set by Discord interface
         self._tool_notify: dict[str, Any] = {}  # session_id -> async callback(msg)
 
-        # Extractor uses the same model endpoint as the active model
+        # Extractor and curator use the local model
         model_spec = config.models.get(config.default_model, {})
+        local_endpoint = model_spec.get("endpoint", "http://localhost:1234/v1")
+        local_model = model_spec.get("model", "")
         self.extractor = FactExtractor(
-            endpoint=model_spec.get("endpoint", "http://localhost:1234/v1"),
-            model=model_spec.get("model", ""),
+            endpoint=local_endpoint,
+            model=local_model,
             fact_store=self.fact_store,
+        )
+        self.curator = ContextCurator(
+            endpoint=local_endpoint,
+            model=local_model,
         )
 
         # Wire scheduler handler
@@ -365,7 +372,8 @@ class Agent:
         self.peers = peers or []
         log.info("Identity set: %s (peers: %s)", bot_name, self.peers)
 
-    def _compile_system_prompt(self, conv: Conversation, session_id: str) -> str:
+    def _compile_system_prompt(self, conv: Conversation, session_id: str,
+                               curated_facts: dict | None = None) -> str:
         """Build the system prompt with current memory state."""
         ctx_len = self.router.get_active(session_id).context_length
         return compile_system_prompt(
@@ -381,6 +389,7 @@ class Agent:
             active_channels=self.tools.memory_store.list_channels(),
             anthropic_quota=self.router._anthropic_quota,
             active_goals=self.tools.goal_store.render_active(),
+            curated_facts=curated_facts,
         )
 
     def get_conversation(self, session_id: str) -> Conversation:
@@ -442,7 +451,21 @@ class Agent:
         conv = self.get_conversation(session_id)
 
         self.fact_store.scan_for_references(text)
-        system_prompt = self._compile_system_prompt(conv, session_id)
+
+        # Curate context for expensive models (Anthropic)
+        active_model = self.router.get_active(session_id)
+        curated = None
+        if active_model.provider == "anthropic":
+            try:
+                curated = await self.curator.curate(text, self.fact_store)
+                log.info("Curated context: %d concrete, %d working, %d volatile",
+                         len(curated.get("concrete", [])),
+                         len(curated.get("working", [])),
+                         len(curated.get("volatile", [])))
+            except Exception as e:
+                log.error("Curation failed, using full context: %s", e)
+
+        system_prompt = self._compile_system_prompt(conv, session_id, curated_facts=curated)
         conv.set_system(system_prompt)
         conv.add_user(text)
 

@@ -220,8 +220,7 @@ class Router:
     ) -> dict[str, Any]:
         """Use Claude Agent SDK to call Anthropic models via Claude Code subscription."""
         import os
-        import anyio
-        from claude_agent_sdk import query
+        from claude_agent_sdk import query, ClaudeAgentOptions
 
         # Build prompt from messages
         system_prompt = ""
@@ -252,14 +251,12 @@ class Router:
 
         try:
             result_text = ""
-            async for msg in query(
-                prompt=prompt,
-                options={
-                    "max_turns": 1,
-                    "system_prompt": system_prompt[:10000] if system_prompt else None,
-                    "model": entry.model,
-                },
-            ):
+            opts = ClaudeAgentOptions(
+                max_turns=1,
+                system_prompt=system_prompt[:10000] if system_prompt else None,
+                model=entry.model,
+            )
+            async for msg in query(prompt=prompt, options=opts):
                 # Extract text from AssistantMessage
                 msg_type = type(msg).__name__
                 if msg_type == "AssistantMessage" and hasattr(msg, "content"):
