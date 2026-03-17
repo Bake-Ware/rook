@@ -20,6 +20,7 @@ log = logging.getLogger(__name__)
 
 _agent = None
 _ui_clients: dict[str, web.WebSocketResponse] = {}  # ws_id -> ws
+_pending_responses: list[str] = []  # responses that couldn't be sent (WS was dead)
 WEB_DIR = Path(__file__).resolve().parents[1] / "web"
 
 
@@ -254,6 +255,12 @@ async def _ws_ui_handler(request: web.Request) -> web.WebSocketResponse:
 
     log.info("Web UI client connected: %s", ws_id)
 
+    # Send any pending responses from previous dead connections
+    while _pending_responses:
+        pending = _pending_responses.pop(0)
+        if not ws.closed:
+            await ws.send_json({"type": "response", "content": pending})
+
     try:
         async for raw_msg in ws:
             if raw_msg.type == aiohttp.WSMsgType.TEXT:
@@ -262,15 +269,27 @@ async def _ws_ui_handler(request: web.Request) -> web.WebSocketResponse:
                     if data.get("type") == "chat":
                         content = data.get("content", "")
                         if content:
-                            async def _handle(ws_ref, msg, sid):
+                            async def _handle(msg, sid):
                                 try:
                                     response = await _agent.handle_message(msg, session_id=sid)
-                                    if not ws_ref.closed:
-                                        await ws_ref.send_json({"type": "response", "content": response})
+                                    log.info("Web chat response: %s", response[:80] if response else "EMPTY")
+                                    # Try to send to ANY connected web UI client
+                                    sent = False
+                                    for cid, cws in list(_ui_clients.items()):
+                                        if not cws.closed:
+                                            await cws.send_json({"type": "response", "content": response})
+                                            sent = True
+                                            break
+                                    if not sent:
+                                        _pending_responses.append(response)
+                                        log.warning("No web UI client available, queued response")
                                 except Exception as e:
-                                    if not ws_ref.closed:
-                                        await ws_ref.send_json({"type": "error", "content": str(e)})
-                            asyncio.create_task(_handle(ws, content, session_id))
+                                    log.error("Web chat handler error: %s", e)
+                                    for cid, cws in list(_ui_clients.items()):
+                                        if not cws.closed:
+                                            await cws.send_json({"type": "error", "content": str(e)})
+                                            break
+                            asyncio.create_task(_handle(content, session_id))
                 except json.JSONDecodeError:
                     pass
             elif raw_msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSE):

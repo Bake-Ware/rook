@@ -123,10 +123,22 @@ const wsUrl = `ws${location.protocol === 'https:' ? 's' : ''}://${location.host}
 let ws = null;
 let models = [];
 
+let _pendingResponse = null;  // store response if WS was dead when it arrived
+
 function connectWS() {
   ws = new WebSocket(wsUrl);
-  ws.onopen = () => addMsg('system', 'Connected to Rook');
-  ws.onclose = () => { addMsg('system', 'Disconnected. Reconnecting...'); setTimeout(connectWS, 3000); };
+  ws.onopen = () => {
+    addMsg('system', 'Connected to Rook');
+    // Client-side keepalive every 15s
+    if (ws._ping) clearInterval(ws._ping);
+    ws._ping = setInterval(() => { if (ws.readyState === 1) ws.send('{"type":"ping"}'); }, 15000);
+    // Check if there's a pending response from a dead WS
+    if (_pendingResponse) { addMsg('rook', _pendingResponse); _pendingResponse = null; }
+  };
+  ws.onclose = () => {
+    if (ws._ping) clearInterval(ws._ping);
+    setTimeout(connectWS, 2000);
+  };
   ws.onmessage = (e) => {
     const data = JSON.parse(e.data);
     if (data.type === 'response') addMsg('rook', data.content);
