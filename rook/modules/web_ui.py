@@ -39,7 +39,9 @@ def register_routes(app) -> None:
     # CRUD endpoints
     app.router.add_post("/api/facts/{fact_id}/promote", _api_fact_promote)
     app.router.add_post("/api/facts/{fact_id}/demote", _api_fact_demote)
+    app.router.add_patch("/api/facts/{fact_id}", _api_fact_edit)
     app.router.add_delete("/api/facts/{fact_id}", _api_fact_delete)
+    app.router.add_delete("/api/channels/{platform}/{platform_id}", _api_channel_delete)
     app.router.add_delete("/api/goals/{goal_id}", _api_goal_delete)
     app.router.add_post("/api/goals/{goal_id}/pause", _api_goal_pause)
     app.router.add_delete("/api/jobs/{job_id}", _api_job_delete)
@@ -144,6 +146,36 @@ async def _api_fact_demote(request: web.Request) -> web.Response:
     result = _agent.fact_store.demote(fact_id=fact_id)
     _agent.fact_store.flush_to_db()
     return web.json_response({"result": result})
+
+
+async def _api_fact_edit(request: web.Request) -> web.Response:
+    fact_id = request.match_info["fact_id"]
+    data = await request.json()
+    new_text = data.get("fact", "")
+    if not new_text:
+        return web.json_response({"error": "fact text required"}, status=400)
+    # Find and update in all tiers
+    for tier in [_agent.fact_store.volatile, _agent.fact_store.working, _agent.fact_store.concrete]:
+        for f in tier:
+            if f.id == fact_id:
+                f.fact = new_text
+                _agent.fact_store.flush_to_db()
+                return web.json_response({"result": "updated"})
+    return web.json_response({"error": "fact not found"}, status=404)
+
+
+async def _api_channel_delete(request: web.Request) -> web.Response:
+    platform = request.match_info["platform"]
+    platform_id = request.match_info["platform_id"]
+    try:
+        _agent.tools.memory_store._db.execute(
+            "DELETE FROM channels WHERE platform = ? AND platform_id = ?",
+            (platform, platform_id),
+        )
+        _agent.tools.memory_store._db.commit()
+        return web.json_response({"result": "deleted"})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
 
 
 async def _api_fact_delete(request: web.Request) -> web.Response:

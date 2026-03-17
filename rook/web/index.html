@@ -77,9 +77,9 @@ a { color: var(--accent); text-decoration: none; }
 
 <div class="topbar">
   <span class="logo">♖ ROOK</span>
-  <select id="model-select" onchange="switchModel(this.value)"></select>
   <span class="stat" id="sys-stats"></span>
   <span class="stat" id="quota-stats"></span>
+  <span class="stat" id="pipeline-summary"></span>
 </div>
 
 <div class="main">
@@ -193,13 +193,18 @@ async function refresh() {
     const q5 = q['5h-utilization'], q7 = q['7d-utilization'];
     document.getElementById('quota-stats').innerHTML = q5 ? `Quota: <b>${(q5*100).toFixed(0)}%</b> 5h | <b>${(q7*100).toFixed(0)}%</b> 7d` : '';
 
-    // Model select
+    // Load models list once
     if (models.length === 0) {
-      const ml = await fetch('/api/models').then(r => r.json());
-      models = ml;
-      const sel = document.getElementById('model-select');
-      sel.innerHTML = ml.map(m => `<option value="${m.name}" ${m.name === status.model.name ? 'selected' : ''}>${m.name} (${m.model})</option>`).join('');
+      models = await fetch('/api/models').then(r => r.json());
     }
+
+    // Pipeline summary in top bar
+    const pp = status.pipeline;
+    const parts = [];
+    if (pp.pre_context.enabled) parts.push(pp.pre_context.model);
+    parts.push(`<b>${pp.main.model}</b>`);
+    if (pp.post_context.enabled) parts.push(pp.post_context.model);
+    document.getElementById('pipeline-summary').innerHTML = parts.join(' → ');
 
     // Pipeline
     renderPipeline(status.pipeline);
@@ -210,14 +215,18 @@ async function refresh() {
       `<div class="item ${w.alive ? 'online' : 'offline'}"><b>${w.name}</b> ${w.platform} ${w.connected}</div>`
     ).join('') : '<div class="item">none connected</div>';
 
-    // Memory — clickable to expand facts
+    // Memory — clickable to expand facts (preserve expanded state)
     const mem = status.memory;
-    document.getElementById('memory-stats').innerHTML = `
+    const memEl = document.getElementById('memory-stats');
+    const expandedTier = memEl.dataset.expanded || '';
+    memEl.innerHTML = `
       <div class="item" style="cursor:pointer" onclick="showFacts('volatile')"><span class="badge v">V</span> ${mem.volatile.count} facts (${mem.volatile.tokens} tok)</div>
       <div class="item" style="cursor:pointer" onclick="showFacts('working')"><span class="badge w">W</span> ${mem.working.count} facts (${mem.working.tokens} tok)</div>
       <div class="item" style="cursor:pointer" onclick="showFacts('concrete')"><span class="badge c">C</span> ${mem.concrete.count} facts (${mem.concrete.tokens} tok)</div>
       <div id="facts-detail"></div>
     `;
+    // Re-expand if was expanded before refresh
+    if (expandedTier) showFacts(expandedTier, true);
 
     // Goals
     const gl = document.getElementById('goals-list');
@@ -233,9 +242,15 @@ async function refresh() {
 
     // Channels
     const cl = document.getElementById('channels-list');
-    cl.innerHTML = channels.map(c =>
-      `<div class="item">${c.platform}:${c.name || c.platform_id} (${c.modality})</div>`
-    ).join('');
+    cl.innerHTML = channels.map(c => {
+      const age = c.last_active ? timeSince(c.last_active) : '?';
+      return `<div class="item">
+        <b>${c.name || c.platform_id}</b>
+        <span style="color:var(--text-dim)">${c.platform}/${c.modality}</span>
+        <span style="color:var(--text-dim);font-size:10px">${age}</span>
+        <a href="#" onclick="deleteChannel('${c.platform}','${c.platform_id}');return false" title="Remove">✕</a>
+      </div>`;
+    }).join('');
 
   } catch (e) { console.error('Refresh failed:', e); }
 }
@@ -273,26 +288,65 @@ async function stageModel(stage, model) {
   refresh();
 }
 
-async function switchModel(model) {
-  await fetch('/api/model', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ model, session_id: 'web:default' }) });
+function timeSince(ts) {
+  const s = Math.floor(Date.now()/1000 - ts);
+  if (s < 60) return s + 's ago';
+  if (s < 3600) return Math.floor(s/60) + 'm ago';
+  if (s < 86400) return Math.floor(s/3600) + 'h ago';
+  return Math.floor(s/86400) + 'd ago';
+}
+
+async function deleteChannel(platform, platformId) {
+  await fetch(`/api/channels/${platform}/${platformId}`, { method: 'DELETE' });
   refresh();
 }
 
 // Fact management
-async function showFacts(tier) {
-  const facts = await fetch(`/api/facts?tier=${tier}`).then(r => r.json());
+async function showFacts(tier, noToggle) {
   const det = document.getElementById('facts-detail');
-  if (det.dataset.tier === tier) { det.innerHTML = ''; det.dataset.tier = ''; return; }
+  const memEl = document.getElementById('memory-stats');
+  // Toggle off if clicking same tier (unless re-expanding after refresh)
+  if (!noToggle && det.dataset.tier === tier) {
+    det.innerHTML = ''; det.dataset.tier = ''; memEl.dataset.expanded = '';
+    return;
+  }
+  const facts = await fetch(`/api/facts?tier=${tier}`).then(r => r.json());
   det.dataset.tier = tier;
+  memEl.dataset.expanded = tier;
   det.innerHTML = facts.map(f => `
-    <div class="item" style="font-size:11px;padding:2px 0;border-bottom:1px solid var(--border)">
-      <span style="color:var(--text-dim)">[${f.id}]</span> ${escapeHtml(f.fact.substring(0,80))}
-      <br><a href="#" onclick="promoteFact('${f.id}');return false">↑</a>
-      <a href="#" onclick="demoteFact('${f.id}');return false">↓</a>
-      <a href="#" onclick="deleteFact('${f.id}');return false">✕</a>
+    <div class="item" style="font-size:11px;padding:3px 0;border-bottom:1px solid var(--border)">
+      <span style="color:var(--text-dim)">[${f.id}]</span>
+      <span class="fact-text" id="ft-${f.id}" onclick="editFact('${f.id}',this)" style="cursor:text">${escapeHtml(f.fact.substring(0,120))}</span>
+      <br>
+      <a href="#" onclick="promoteFact('${f.id}');return false" title="Promote">↑</a>
+      <a href="#" onclick="demoteFact('${f.id}');return false" title="Demote">↓</a>
+      <a href="#" onclick="deleteFact('${f.id}');return false" title="Delete">✕</a>
       <span style="color:var(--text-dim)">${f.category} ×${f.access_count}</span>
     </div>
   `).join('');
+}
+
+function editFact(id, el) {
+  const current = el.textContent;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = current;
+  input.style.cssText = 'width:100%;background:var(--bg);color:var(--text);border:1px solid var(--accent);padding:2px 4px;font-family:var(--font);font-size:11px;border-radius:3px;';
+  input.onblur = () => saveFact(id, input.value, el, current);
+  input.onkeydown = (e) => { if (e.key === 'Enter') input.blur(); if (e.key === 'Escape') { el.textContent = current; } };
+  el.textContent = '';
+  el.appendChild(input);
+  input.focus();
+}
+
+async function saveFact(id, newText, el, oldText) {
+  if (newText === oldText || !newText.trim()) { el.textContent = oldText; return; }
+  await fetch(`/api/facts/${id}`, {
+    method: 'PATCH',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ fact: newText.trim() }),
+  });
+  el.textContent = newText.trim();
 }
 
 async function promoteFact(id) {
