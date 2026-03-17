@@ -81,13 +81,18 @@ class Conversation:
         return sum(1 for m in self.messages if m["role"] != "system")
 
     def trim(self, max_tokens: int = 128000) -> None:
-        """Sliding window: keep system prompt + most recent messages that fit."""
+        """Sliding window: keep system prompt + most recent messages that fit.
+
+        Preserves tool_use/tool_result pairs — never splits them.
+        Also ensures conversation starts with a user message (Anthropic requirement).
+        """
         system = [m for m in self.messages if m["role"] == "system"]
         rest = [m for m in self.messages if m["role"] != "system"]
 
         system_tokens = sum(self._estimate_tokens(m) for m in system)
         budget = max_tokens - system_tokens
 
+        # Walk backwards, keeping messages
         kept = []
         used = 0
         for msg in reversed(rest):
@@ -98,7 +103,69 @@ class Conversation:
             used += t
 
         kept.reverse()
+
+        # Fix broken tool pairs: if we have a tool_result without its tool_use,
+        # or a tool_use assistant message without its tool_results, drop them
+        kept = self._fix_tool_pairs(kept)
+
+        # Ensure first message is a user message (Anthropic requirement)
+        while kept and kept[0]["role"] not in ("user",):
+            kept.pop(0)
+
         self.messages = system + kept
+
+    @staticmethod
+    def _fix_tool_pairs(messages: list[dict]) -> list[dict]:
+        """Remove orphaned tool_use and tool_result messages."""
+        # Collect all tool_call IDs from assistant messages
+        tool_use_ids = set()
+        for m in messages:
+            if m["role"] == "assistant" and m.get("tool_calls"):
+                for tc in m["tool_calls"]:
+                    tc_id = tc.get("id") or tc.get("function", {}).get("id", "")
+                    if tc_id:
+                        tool_use_ids.add(tc_id)
+
+        # Collect all tool_result IDs
+        tool_result_ids = set()
+        for m in messages:
+            if m["role"] == "tool":
+                tc_id = m.get("tool_call_id", "")
+                if tc_id:
+                    tool_result_ids.add(tc_id)
+
+        # Find which IDs have both halves
+        complete_ids = tool_use_ids & tool_result_ids
+
+        # Filter: keep non-tool messages, and tool messages only if their pair is complete
+        fixed = []
+        for m in messages:
+            if m["role"] == "tool":
+                if m.get("tool_call_id", "") in complete_ids:
+                    fixed.append(m)
+            elif m["role"] == "assistant" and m.get("tool_calls"):
+                # Keep if at least one tool call has a matching result
+                has_match = any(
+                    (tc.get("id") or tc.get("function", {}).get("id", "")) in complete_ids
+                    for tc in m["tool_calls"]
+                )
+                if has_match:
+                    # Filter to only matched tool calls
+                    m = dict(m)
+                    m["tool_calls"] = [
+                        tc for tc in m["tool_calls"]
+                        if (tc.get("id") or tc.get("function", {}).get("id", "")) in complete_ids
+                    ]
+                    fixed.append(m)
+                elif m.get("content"):
+                    # Keep as text-only if it had content
+                    m = dict(m)
+                    del m["tool_calls"]
+                    fixed.append(m)
+            else:
+                fixed.append(m)
+
+        return fixed
 
     def last_user_message(self) -> str:
         """Get the most recent user message content."""
