@@ -216,6 +216,11 @@ class Agent:
         # Pipeline config — per-stage model selection, persisted to DB
         self.pipeline = PipelineConfig.from_config(config, db=self.tools.memory_store._db)
 
+        # Set the main model from pipeline (may differ from config default if persisted)
+        if self.pipeline.main.model:
+            self.router._sessions["default"] = self.pipeline.main.model
+            log.info("Pipeline main model: %s", self.pipeline.main.model)
+
         # Resolve pre/post context models from pipeline config
         def _resolve_model_spec(model_name: str) -> tuple[str, str]:
             spec = config.models.get(model_name, {})
@@ -407,6 +412,14 @@ class Agent:
             elif stage == "post_context":
                 ep, m = _resolve(self.pipeline.post_context.model)
                 self.extractor = FactExtractor(endpoint=ep, model=m, fact_store=self.fact_store)
+            elif stage == "main":
+                # Update the router's default for all sessions
+                model_name = self.pipeline.main.model
+                for sid in list(self.router._sessions.keys()):
+                    self.router.set_active(sid, model_name)
+                # Also set the default so new sessions get it
+                self.router._sessions["default"] = model_name
+                log.info("Main model set globally: %s", model_name)
 
         return result
 
