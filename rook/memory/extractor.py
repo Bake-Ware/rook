@@ -77,6 +77,12 @@ class FactExtractor:
             category = f.get("category", "general")
             importance = float(f.get("importance", 0.5))
 
+            # Skip error messages, request IDs, and other noise
+            noise_patterns = ["error code:", "request_id", "req_01", "internal server error",
+                              "timed out", "401", "500", "failed to"]
+            if any(p in fact_text.lower() for p in noise_patterns):
+                continue
+
             # Check for duplicates across all tiers
             if self._is_duplicate(fact_text):
                 continue
