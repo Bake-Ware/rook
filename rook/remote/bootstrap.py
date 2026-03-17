@@ -140,6 +140,11 @@ class CombinedServer:
         self._app.router.add_get("/worker", self._worker_bootstrap)
         self._app.router.add_get("/worker.py", self._worker_script)
         self._app.router.add_get("/ws", self._websocket_handler)
+        # Auth routes (handled by middleware, these are just route stubs)
+        async def _noop(r): return web.Response(text="")
+        self._app.router.add_get("/login", _noop)
+        self._app.router.add_post("/login", _noop)
+        self._app.router.add_get("/logout", _noop)
         self._app.router.add_get("/health", self._health)
         self._runner: web.AppRunner | None = None
 
@@ -150,34 +155,98 @@ class CombinedServer:
         except Exception as e:
             log.warning("Web UI routes not registered: %s", e)
 
+    def _make_session_cookie(self) -> str:
+        """Generate a session token from credentials."""
+        import hashlib
+        return hashlib.sha256(f"{self.web_user}:{self.web_pass}:r00k".encode()).hexdigest()[:32]
+
     @web.middleware
     async def _basic_auth_middleware(self, request: web.Request, handler):
-        """Basic auth on HTTP endpoints. WS and health are exempt."""
-        # Skip auth for WS upgrade, health, and if no creds configured
-        # No auth for WS (worker), health, worker bootstrap
+        """Auth via cookie session or basic auth. WS and health exempt."""
+        import base64
+
+        # Always exempt
         exempt = ("/ws", "/health", "/worker", "/worker.py")
-        # UI WebSocket needs to be exempt (auth handled by browser session)
         if request.path == "/ws/ui":
             return await handler(request)
         if any(request.path == p or request.path.startswith(p + "/") for p in exempt) or not self.web_user:
             return await handler(request)
 
-        import base64
+        # Login endpoint
+        if request.path == "/login" and request.method == "POST":
+            try:
+                data = await request.post()
+                user = data.get("user", "")
+                passwd = data.get("pass", "")
+                if user == self.web_user and passwd == self.web_pass:
+                    resp = web.HTTPFound("/")
+                    resp.set_cookie("rook_session", self._make_session_cookie(),
+                                    max_age=30 * 86400, httponly=True, samesite="Lax")
+                    raise resp
+            except web.HTTPFound:
+                raise
+            except Exception:
+                pass
+            return web.Response(text=self._login_page("Invalid credentials"), content_type="text/html")
+
+        if request.path == "/login":
+            return web.Response(text=self._login_page(), content_type="text/html")
+
+        if request.path == "/logout":
+            resp = web.HTTPFound("/login")
+            resp.del_cookie("rook_session")
+            raise resp
+
+        # Check session cookie
+        session = request.cookies.get("rook_session", "")
+        if session == self._make_session_cookie():
+            return await handler(request)
+
+        # Check basic auth (for API/curl)
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Basic "):
             try:
                 decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
                 user, passwd = decoded.split(":", 1)
                 if user == self.web_user and passwd == self.web_pass:
-                    return await handler(request)
+                    resp = await handler(request)
+                    resp.set_cookie("rook_session", self._make_session_cookie(),
+                                    max_age=30 * 86400, httponly=True, samesite="Lax")
+                    return resp
             except Exception:
                 pass
+
+        # No valid auth — redirect to login page for browsers, 401 for API
+        accept = request.headers.get("Accept", "")
+        if "text/html" in accept:
+            raise web.HTTPFound("/login")
 
         return web.Response(
             status=401,
             headers={"WWW-Authenticate": 'Basic realm="r00k"'},
             text="Unauthorized",
         )
+
+    def _login_page(self, error: str = "") -> str:
+        return f"""<!DOCTYPE html>
+<html><head><title>♖ ROOK Login</title>
+<style>
+body {{ background: #0d1117; color: #c9d1d9; font-family: monospace; display: flex; justify-content: center; align-items: center; height: 100vh; }}
+.box {{ background: #161b22; border: 1px solid #30363d; padding: 32px; border-radius: 8px; width: 300px; }}
+h2 {{ margin-bottom: 16px; }}
+input {{ width: 100%; padding: 8px; margin: 4px 0 12px 0; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 4px; font-family: monospace; }}
+button {{ width: 100%; padding: 8px; background: #58a6ff; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-family: monospace; }}
+.err {{ color: #f85149; font-size: 12px; margin-bottom: 8px; }}
+</style></head>
+<body><div class="box">
+<h2>♖ ROOK</h2>
+{"<div class='err'>" + error + "</div>" if error else ""}
+<form method="POST" action="/login">
+<input name="user" placeholder="Username" autofocus>
+<input name="pass" type="password" placeholder="Password">
+<button type="submit">Login</button>
+</form>
+</div></body></html>"""
 
     async def start(self) -> None:
         self._runner = web.AppRunner(self._app)
