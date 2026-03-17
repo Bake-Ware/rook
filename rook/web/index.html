@@ -91,7 +91,12 @@ a { color: var(--accent); text-decoration: none; }
     <div id="workers-list"><div class="item">loading...</div></div>
 
     <h3>Memory</h3>
-    <div id="memory-stats"></div>
+    <div id="memory-stats">
+      <div class="item" style="cursor:pointer" onclick="showFacts('volatile')"><span class="badge v">V</span> <span id="mem-v-count">...</span></div>
+      <div class="item" style="cursor:pointer" onclick="showFacts('working')"><span class="badge w">W</span> <span id="mem-w-count">...</span></div>
+      <div class="item" style="cursor:pointer" onclick="showFacts('concrete')"><span class="badge c">C</span> <span id="mem-c-count">...</span></div>
+      <div id="facts-detail"></div>
+    </div>
 
     <h3>Goals</h3>
     <div id="goals-list"><div class="item">none</div></div>
@@ -174,7 +179,16 @@ function scrollBottom() {
   m.scrollTop = m.scrollHeight;
 }
 
-// Dashboard refresh
+// State cache for diffing
+let _prev = {};
+
+// Update element only if content changed
+function updateEl(id, html) {
+  const el = document.getElementById(id);
+  if (el && el.innerHTML !== html) el.innerHTML = html;
+}
+
+// Dashboard refresh — surgical updates, no full rebuild
 async function refresh() {
   try {
     const [status, workers, goals, jobs, channels] = await Promise.all([
@@ -186,12 +200,12 @@ async function refresh() {
     ]);
 
     // System stats
-    document.getElementById('sys-stats').innerHTML = status.system || '';
+    updateEl('sys-stats', status.system || '');
 
     // Quota
     const q = status.quota || {};
     const q5 = q['5h-utilization'], q7 = q['7d-utilization'];
-    document.getElementById('quota-stats').innerHTML = q5 ? `Quota: <b>${(q5*100).toFixed(0)}%</b> 5h | <b>${(q7*100).toFixed(0)}%</b> 7d` : '';
+    updateEl('quota-stats', q5 ? `Quota: <b>${(q5*100).toFixed(0)}%</b> 5h | <b>${(q7*100).toFixed(0)}%</b> 7d` : '');
 
     // Load models list once
     if (models.length === 0) {
@@ -200,57 +214,73 @@ async function refresh() {
 
     // Pipeline summary in top bar
     const pp = status.pipeline;
-    const parts = [];
-    if (pp.pre_context.enabled) parts.push(pp.pre_context.model);
-    parts.push(`<b>${pp.main.model}</b>`);
-    if (pp.post_context.enabled) parts.push(pp.post_context.model);
-    document.getElementById('pipeline-summary').innerHTML = parts.join(' → ');
+    const pparts = [];
+    if (pp.pre_context.enabled) pparts.push(pp.pre_context.model);
+    pparts.push(`<b>${pp.main.model}</b>`);
+    if (pp.post_context.enabled) pparts.push(pp.post_context.model);
+    updateEl('pipeline-summary', pparts.join(' → '));
 
-    // Pipeline
-    renderPipeline(status.pipeline);
+    // Pipeline — only re-render if changed
+    const ppKey = JSON.stringify(pp);
+    if (_prev.pipeline !== ppKey) {
+      _prev.pipeline = ppKey;
+      renderPipeline(pp);
+    }
 
-    // Workers
-    const wl = document.getElementById('workers-list');
-    wl.innerHTML = workers.length ? workers.map(w =>
-      `<div class="item ${w.alive ? 'online' : 'offline'}"><b>${w.name}</b> ${w.platform} ${w.connected}</div>`
-    ).join('') : '<div class="item">none connected</div>';
+    // Workers — only if changed
+    const wKey = JSON.stringify(workers);
+    if (_prev.workers !== wKey) {
+      _prev.workers = wKey;
+      updateEl('workers-list', workers.length ? workers.map(w =>
+        `<div class="item ${w.alive ? 'online' : 'offline'}"><b>${w.name}</b> ${w.platform} ${w.connected}</div>`
+      ).join('') : '<div class="item">none connected</div>');
+    }
 
-    // Memory — clickable to expand facts (preserve expanded state)
+    // Memory counters — update counts without touching the facts detail
     const mem = status.memory;
-    const memEl = document.getElementById('memory-stats');
-    const expandedTier = memEl.dataset.expanded || '';
-    memEl.innerHTML = `
-      <div class="item" style="cursor:pointer" onclick="showFacts('volatile')"><span class="badge v">V</span> ${mem.volatile.count} facts (${mem.volatile.tokens} tok)</div>
-      <div class="item" style="cursor:pointer" onclick="showFacts('working')"><span class="badge w">W</span> ${mem.working.count} facts (${mem.working.tokens} tok)</div>
-      <div class="item" style="cursor:pointer" onclick="showFacts('concrete')"><span class="badge c">C</span> ${mem.concrete.count} facts (${mem.concrete.tokens} tok)</div>
-      <div id="facts-detail"></div>
-    `;
-    // Re-expand if was expanded before refresh
-    if (expandedTier) showFacts(expandedTier, true);
+    const memKey = `${mem.volatile.count}:${mem.working.count}:${mem.concrete.count}`;
+    if (_prev.memKey !== memKey) {
+      _prev.memKey = memKey;
+      const vc = document.getElementById('mem-v-count');
+      const wc = document.getElementById('mem-w-count');
+      const cc = document.getElementById('mem-c-count');
+      if (vc) vc.textContent = `${mem.volatile.count} facts (${mem.volatile.tokens} tok)`;
+      if (wc) wc.textContent = `${mem.working.count} facts (${mem.working.tokens} tok)`;
+      if (cc) cc.textContent = `${mem.concrete.count} facts (${mem.concrete.tokens} tok)`;
+    }
 
-    // Goals
-    const gl = document.getElementById('goals-list');
-    gl.innerHTML = goals.length ? goals.map(g =>
-      `<div class="item"><b>${g.title}</b> [${g.status}] ${g.progress} <a href="#" onclick="goalAction('${g.id}','pause');return false">⏸</a> <a href="#" onclick="goalAction('${g.id}','delete');return false">✕</a></div>`
-    ).join('') : '<div class="item">none</div>';
+    // Goals — only if changed
+    const gKey = JSON.stringify(goals);
+    if (_prev.goals !== gKey) {
+      _prev.goals = gKey;
+      updateEl('goals-list', goals.length ? goals.map(g =>
+        `<div class="item"><b>${g.title}</b> [${g.status}] ${g.progress} <a href="#" onclick="goalAction('${g.id}','pause');return false">⏸</a> <a href="#" onclick="goalAction('${g.id}','delete');return false">✕</a></div>`
+      ).join('') : '<div class="item">none</div>');
+    }
 
-    // Jobs
-    const jl = document.getElementById('jobs-list');
-    jl.innerHTML = jobs.length ? jobs.map(j =>
-      `<div class="item"><b>${j.name}</b> ${j.cron} ${j.enabled ? '✓' : '✗'} <a href="#" onclick="deleteJob('${j.id}');return false">✕</a></div>`
-    ).join('') : '<div class="item">none</div>';
+    // Jobs — only if changed
+    const jKey = JSON.stringify(jobs);
+    if (_prev.jobs !== jKey) {
+      _prev.jobs = jKey;
+      updateEl('jobs-list', jobs.length ? jobs.map(j =>
+        `<div class="item"><b>${j.name}</b> ${j.cron} ${j.enabled ? '✓' : '✗'} <a href="#" onclick="deleteJob('${j.id}');return false">✕</a></div>`
+      ).join('') : '<div class="item">none</div>');
+    }
 
-    // Channels
-    const cl = document.getElementById('channels-list');
-    cl.innerHTML = channels.map(c => {
-      const age = c.last_active ? timeSince(c.last_active) : '?';
-      return `<div class="item">
-        <b>${c.name || c.platform_id}</b>
-        <span style="color:var(--text-dim)">${c.platform}/${c.modality}</span>
-        <span style="color:var(--text-dim);font-size:10px">${age}</span>
-        <a href="#" onclick="deleteChannel('${c.platform}','${c.platform_id}');return false" title="Remove">✕</a>
-      </div>`;
-    }).join('');
+    // Channels — only if changed
+    const cKey = JSON.stringify(channels);
+    if (_prev.channels !== cKey) {
+      _prev.channels = cKey;
+      updateEl('channels-list', channels.map(c => {
+        const age = c.last_active ? timeSince(c.last_active) : '?';
+        return `<div class="item">
+          <b>${c.name || c.platform_id}</b>
+          <span style="color:var(--text-dim)">${c.platform}/${c.modality}</span>
+          <span style="color:var(--text-dim);font-size:10px">${age}</span>
+          <a href="#" onclick="deleteChannel('${c.platform}','${c.platform_id}');return false" title="Remove">✕</a>
+        </div>`;
+      }).join(''));
+    }
 
   } catch (e) { console.error('Refresh failed:', e); }
 }
