@@ -234,10 +234,18 @@ async function refresh() {
     updateEl('pipeline-summary', pparts.join(' → '));
 
     // Activity indicator
-    const busy = status.busy || status.active_agents > 0;
-    updateEl('activity-indicator', busy
-      ? `<span style="color:var(--yellow)">● working (${status.active_agents} agents)</span>`
-      : '<span style="color:var(--green)">● idle</span>');
+    const reqs = status.active_requests || 0;
+    const agents = status.active_agents || 0;
+    let activityHtml;
+    if (reqs > 0 || agents > 0) {
+      const parts = [];
+      if (reqs > 0) parts.push(`${reqs} request${reqs > 1 ? 's' : ''}`);
+      if (agents > 0) parts.push(`${agents} agent${agents > 1 ? 's' : ''}`);
+      activityHtml = `<span style="color:var(--yellow)">● ${parts.join(', ')}</span>`;
+    } else {
+      activityHtml = '<span style="color:var(--green)">● idle</span>';
+    }
+    updateEl('activity-indicator', activityHtml);
 
     // Pipeline — only re-render if changed
     const ppKey = JSON.stringify(pp);

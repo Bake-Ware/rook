@@ -80,6 +80,7 @@ async def _api_status(request: web.Request) -> web.Response:
     # Active tasks count
     active_agents = sum(1 for a in _agent.agent_pool._agents.values() if a.status == "running")
     active_goals = len([g for g in _agent.tools.goal_store._goals.values() if g.status == "active"])
+    active_requests = _agent._active_requests
 
     return web.json_response({
         "system": get_system_stats(),
@@ -89,7 +90,8 @@ async def _api_status(request: web.Request) -> web.Response:
         "quota": _agent.router._anthropic_quota,
         "workers": len(_agent.tools.remote_server._workers),
         "facts_total": len(_agent.fact_store.volatile) + len(_agent.fact_store.working) + len(_agent.fact_store.concrete),
-        "busy": active_agents > 0,
+        "busy": active_requests > 0 or active_agents > 0,
+        "active_requests": active_requests,
         "active_agents": active_agents,
         "active_goals": active_goals,
     })

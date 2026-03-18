@@ -212,6 +212,7 @@ class Agent:
         self.peers: list[str] = []
         self._notify_callback = None  # set by Discord interface
         self._tool_notify: dict[str, Any] = {}  # session_id -> async callback(msg)
+        self._active_requests: int = 0  # count of in-flight message handlers
 
         # Pipeline config — per-stage model selection, persisted to DB
         self.pipeline = PipelineConfig.from_config(config, db=self.tools.memory_store._db)
@@ -484,6 +485,13 @@ class Agent:
 
     async def _handle_delegated(self, text: str, session_id: str) -> str:
         """Main conversation handler — full tool loop with notifications and goal self-stimulation."""
+        self._active_requests += 1
+        try:
+            return await self.__handle_delegated_inner(text, session_id)
+        finally:
+            self._active_requests = max(0, self._active_requests - 1)
+
+    async def __handle_delegated_inner(self, text: str, session_id: str) -> str:
         conv = self.get_conversation(session_id)
 
         self.fact_store.scan_for_references(text)
