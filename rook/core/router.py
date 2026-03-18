@@ -164,7 +164,21 @@ class Router:
             await client.close()
 
         choice = response.choices[0]
-        result: dict[str, Any] = {"content": choice.message.content, "tool_calls": None}
+        content = choice.message.content
+
+        # Retry once if empty response and no tool calls
+        if not content and not choice.message.tool_calls:
+            log.warning("OpenAI-compat returned empty, retrying (model=%s)", entry.model)
+            try:
+                client2 = AsyncOpenAI(base_url=entry.endpoint, api_key=entry.api_key or "not-needed")
+                response2 = await client2.chat.completions.create(**kwargs)
+                await client2.close()
+                choice = response2.choices[0]
+                content = choice.message.content
+            except Exception as e:
+                log.error("Retry failed: %s", e)
+
+        result: dict[str, Any] = {"content": content, "tool_calls": None}
 
         if choice.message.tool_calls:
             result["tool_calls"] = [
@@ -268,6 +282,24 @@ class Router:
             if env_backup is not None:
                 os.environ["CLAUDECODE"] = env_backup
 
+        # Retry once if empty response
         if not result_text:
-            log.warning("Anthropic SDK returned no text for model=%s, prompt_len=%d", entry.model, len(prompt))
+            log.warning("Anthropic SDK returned empty, retrying (model=%s)", entry.model)
+            env_backup2 = os.environ.pop("CLAUDECODE", None)
+            try:
+                async for msg in query(prompt=prompt, options=opts):
+                    msg_type = type(msg).__name__
+                    if msg_type == "AssistantMessage" and hasattr(msg, "content"):
+                        for block in msg.content:
+                            if hasattr(block, "text"):
+                                result_text += block.text
+                    elif msg_type == "ResultMessage" and hasattr(msg, "result"):
+                        if not result_text and msg.result:
+                            result_text = msg.result
+            except Exception as e:
+                log.error("Retry also failed: %s", e)
+            finally:
+                if env_backup2 is not None:
+                    os.environ["CLAUDECODE"] = env_backup2
+
         return {"content": result_text or "No response from model.", "tool_calls": None}
