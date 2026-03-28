@@ -762,6 +762,121 @@ def _escape(s: str) -> str:
     return s.replace("\\", "\\\\").replace("'", "\\'")
 
 
+# ── Broadcast / Session Streaming ────────────────────────────────────────────
+
+BROADCAST_DB = Path.home() / ".rook" / "broadcast.db"
+
+
+def _broadcast_db() -> sqlite3.Connection:
+    BROADCAST_DB.parent.mkdir(parents=True, exist_ok=True)
+    db = sqlite3.connect(str(BROADCAST_DB))
+    db.row_factory = sqlite3.Row
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS broadcasts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            message TEXT NOT NULL,
+            project TEXT DEFAULT '',
+            channel_id TEXT DEFAULT '',
+            timestamp REAL
+        );
+        CREATE TABLE IF NOT EXISTS live_sessions (
+            session_id TEXT PRIMARY KEY,
+            description TEXT DEFAULT '',
+            project TEXT DEFAULT '',
+            cwd TEXT DEFAULT '',
+            discord_channel TEXT DEFAULT '',
+            started_at REAL,
+            last_activity REAL,
+            status TEXT DEFAULT 'active'
+        );
+    """)
+    db.commit()
+    return db
+
+
+@mcp.tool()
+async def rook_broadcast(message: str, project: str = "") -> str:
+    """Broadcast a message to Discord. The Discord bot picks this up and posts it.
+
+    Use this to announce what you're working on, share findings, or request attention.
+    If a project is specified and a Discord channel exists for it, the message goes there.
+    Otherwise it goes to the general Rook activity channel.
+
+    Args:
+        message: The message to broadcast (supports markdown).
+        project: Project name to route to a project-specific channel.
+    """
+    db = _broadcast_db()
+    db.execute("INSERT INTO broadcasts (session_id, message, project, timestamp) VALUES (?,?,?,?)",
+               ("mcp", message, project, time.time()))
+    db.commit()
+    return f"Broadcast sent." + (f" (project: {project})" if project else "")
+
+
+@mcp.tool()
+async def rook_stream_start(description: str, project: str = "", cwd: str = "") -> str:
+    """Register this CC session for live streaming to Discord.
+
+    The Discord bot will create a channel and stream your output there in real-time.
+    Other users can watch and interact through Discord.
+
+    Args:
+        description: What this session is doing (e.g. "DROGA run 8 training").
+        project: Project name (used for channel naming).
+        cwd: Working directory (auto-detected if empty).
+    """
+    import uuid
+    session_id = str(uuid.uuid4())[:8]
+    db = _broadcast_db()
+    db.execute(
+        "INSERT OR REPLACE INTO live_sessions (session_id, description, project, cwd, started_at, last_activity, status) VALUES (?,?,?,?,?,?,?)",
+        (session_id, description, project, cwd or str(Path.cwd()), time.time(), time.time(), "active"),
+    )
+    db.commit()
+    # Also broadcast the start
+    db.execute("INSERT INTO broadcasts (session_id, message, project, timestamp) VALUES (?,?,?,?)",
+               (session_id, f"Session started: {description}", project, time.time()))
+    db.commit()
+    return f"Streaming session registered: {session_id}\nDiscord bot will create a channel for this session.\nUse rook_stream_update to post updates."
+
+
+@mcp.tool()
+async def rook_stream_update(message: str, session_id: str = "") -> str:
+    """Post an update to the live stream. Shows up in the Discord channel following this session.
+
+    Args:
+        message: Update message (supports markdown).
+        session_id: Session ID from rook_stream_start. Empty = broadcast to all.
+    """
+    db = _broadcast_db()
+    if session_id:
+        db.execute("UPDATE live_sessions SET last_activity=? WHERE session_id=?",
+                   (time.time(), session_id))
+    db.execute("INSERT INTO broadcasts (session_id, message, timestamp) VALUES (?,?,?)",
+               (session_id or "mcp", message, time.time()))
+    db.commit()
+    return "Update posted."
+
+
+@mcp.tool()
+async def rook_stream_end(session_id: str, summary: str = "") -> str:
+    """End a live streaming session.
+
+    Args:
+        session_id: Session ID from rook_stream_start.
+        summary: Final summary of what was accomplished.
+    """
+    db = _broadcast_db()
+    db.execute("UPDATE live_sessions SET status='done', last_activity=? WHERE session_id=?",
+               (time.time(), session_id))
+    if summary:
+        db.execute("INSERT INTO broadcasts (session_id, message, timestamp) VALUES (?,?,?)",
+                   (session_id, f"Session complete: {summary}", time.time()))
+    db.commit()
+    return f"Session {session_id} ended." + (f" Summary: {summary}" if summary else "")
+
+
 # ── Extraction Tool ──────────────────────────────────────────────────────────
 
 @mcp.tool()

@@ -114,15 +114,22 @@ def _format_lookup_discord(results: dict) -> str:
 class DiscordNode:
     """Discord bot that participates in the Rook network."""
 
-    def __init__(self, token: str, hub_url: str, open_channels: list[str] | None = None):
+    def __init__(self, token: str, hub_url: str, open_channels: list[str] | None = None,
+                 guild_id: int | None = None):
         self.token = token
         self.hub_url = hub_url
         self.open_channels = set(open_channels or [])
+        self.guild_id = guild_id
         self.client: RookClient | None = None
 
         # CC session IDs per channel — persists conversation via --resume
         self._channel_sessions: dict[str, str] = {}
         self._channel_locks: dict[str, asyncio.Lock] = {}
+
+        # Broadcast polling state
+        self._last_broadcast_id: int = 0
+        # Map session_id → discord channel ID for live streams
+        self._stream_channels: dict[str, int] = {}
 
         # Discord bot
         intents = discord.Intents.default()
@@ -139,6 +146,38 @@ class DiscordNode:
         async def on_ready():
             log.info("Discord connected as %s", bot.user)
 
+            # Find the guild
+            if self.guild_id:
+                guild = bot.get_guild(self.guild_id)
+            elif bot.guilds:
+                guild = bot.guilds[0]
+            else:
+                guild = None
+            self._guild = guild
+            log.info("Guild: %s", guild.name if guild else "none")
+
+            # Find or create the rook-activity channel
+            if guild:
+                self._activity_channel = discord.utils.get(guild.text_channels, name="rook-activity")
+                if not self._activity_channel:
+                    # Find or create a Rook category
+                    category = discord.utils.get(guild.categories, name="Rook")
+                    if not category:
+                        try:
+                            category = await guild.create_category("Rook")
+                        except Exception as e:
+                            log.warning("Couldn't create Rook category: %s", e)
+                            category = None
+                    try:
+                        self._activity_channel = await guild.create_text_channel(
+                            "rook-activity", category=category,
+                            topic="Rook broadcast feed — CC session updates and announcements",
+                        )
+                        log.info("Created #rook-activity")
+                    except Exception as e:
+                        log.warning("Couldn't create #rook-activity: %s", e)
+                        self._activity_channel = None
+
             # Connect to hub
             self.client = RookClient(hub_url=self.hub_url)
             await self.client.start()
@@ -148,6 +187,9 @@ class DiscordNode:
                 log.info("Hub graph: %s", stats)
             else:
                 log.warning("Hub not reachable — running in offline mode")
+
+            # Start broadcast poller
+            asyncio.create_task(self._poll_broadcasts())
 
         @bot.event
         async def on_message(message: discord.Message):
@@ -203,18 +245,28 @@ class DiscordNode:
             """Show available commands."""
             await ctx.send(
                 "**Rook Commands**\n"
-                "Just talk to me — I'm a full Claude Code session with tools, files, and shell access.\n"
+                "Talk to me — I'm a full Claude Code session with tools, files, and shell access.\n"
                 "Each channel gets its own persistent conversation.\n\n"
-                "**Commands**\n"
+                "**Chat**\n"
+                "`!new_session` — Clear conversation context, start fresh\n\n"
+                "**Knowledge Graph**\n"
                 "`!lookup <topic>` — Search the knowledge graph\n"
                 "`!project [name]` — Show project status and recent activity\n"
                 "`!search <query>` — Search synced claude.ai conversations\n"
-                "`!stats` — Show hub graph statistics\n"
-                "`!remember <key> <value>` — Store a fact in shared memory\n"
-                "`!recall [query]` — Search shared memory\n"
-                "`!index_channel [n]` — Index last N messages from this channel into the graph\n"
-                "`!new_session` — Clear conversation context, start fresh\n"
-                "`!rook` — This help message"
+                "`!stats` — Hub graph statistics\n\n"
+                "**Memory**\n"
+                "`!remember <key> <value>` — Store a fact\n"
+                "`!recall [query]` — Search shared memory\n\n"
+                "**Live Sessions**\n"
+                "`!sessions` — List running CC sessions\n"
+                "`!follow [id]` — Follow a session (creates a channel, streams output)\n"
+                "`!detach` — Stop following a session in this channel\n\n"
+                "**Index**\n"
+                "`!index_channel [n]` — Index last N messages into the graph\n\n"
+                "CC sessions can also push to Discord:\n"
+                "• `rook_broadcast` — post a message\n"
+                "• `rook_stream_start` — register for live streaming\n"
+                "• `rook_stream_update` — post updates to the stream"
             )
 
         @bot.command(name="lookup")
@@ -315,6 +367,94 @@ class DiscordNode:
             channel_id = str(ctx.channel.id)
             await self._kill_channel_session(channel_id)
             await ctx.send("Session cleared. Next message starts a new conversation.")
+
+        @bot.command(name="sessions")
+        async def cmd_sessions(ctx: commands.Context):
+            """List running CC sessions that can be followed."""
+            import sqlite3
+            db_path = Path.home() / ".rook" / "broadcast.db"
+            if not db_path.exists():
+                await ctx.send("No active sessions.")
+                return
+            db = sqlite3.connect(str(db_path))
+            db.row_factory = sqlite3.Row
+            rows = db.execute(
+                "SELECT session_id, description, project, status, discord_channel FROM live_sessions ORDER BY last_activity DESC LIMIT 10"
+            ).fetchall()
+            db.close()
+            if not rows:
+                await ctx.send("No active sessions.")
+                return
+            lines = ["**Live Sessions**\n"]
+            for r in rows:
+                status_icon = "🟢" if r["status"] == "active" else "⚫"
+                ch = f" → <#{r['discord_channel']}>" if r["discord_channel"] else ""
+                lines.append(f"{status_icon} `{r['session_id']}` {r['description']}{ch}")
+            await ctx.send("\n".join(lines))
+
+        @bot.command(name="follow")
+        async def cmd_follow(ctx: commands.Context, session_id: str = ""):
+            """Follow a running CC session — creates a channel and streams output."""
+            import sqlite3
+            db_path = Path.home() / ".rook" / "broadcast.db"
+            if not db_path.exists():
+                await ctx.send("No sessions to follow.")
+                return
+            db = sqlite3.connect(str(db_path))
+            db.row_factory = sqlite3.Row
+
+            if not session_id:
+                # Show active sessions
+                rows = db.execute(
+                    "SELECT session_id, description, project FROM live_sessions WHERE status='active' ORDER BY last_activity DESC LIMIT 5"
+                ).fetchall()
+                db.close()
+                if not rows:
+                    await ctx.send("No active sessions. CC sessions register with `rook_stream_start`.")
+                    return
+                lines = ["**Active sessions — pick one:**\n"]
+                for r in rows:
+                    lines.append(f"`!follow {r['session_id']}` — {r['description']}")
+                await ctx.send("\n".join(lines))
+                return
+
+            # Find the session
+            row = db.execute("SELECT * FROM live_sessions WHERE session_id=?", (session_id,)).fetchone()
+            if not row:
+                db.close()
+                await ctx.send(f"Session `{session_id}` not found.")
+                return
+
+            # Create channel if it doesn't have one
+            if not row["discord_channel"]:
+                channel = await self._create_stream_channel(session_id, row["description"], row["project"])
+                if channel:
+                    db.execute("UPDATE live_sessions SET discord_channel=? WHERE session_id=?",
+                               (str(channel.id), session_id))
+                    db.commit()
+                    await ctx.send(f"Following session `{session_id}` in <#{channel.id}>")
+                else:
+                    await ctx.send("Failed to create channel.")
+            else:
+                await ctx.send(f"Session `{session_id}` is already streaming in <#{row['discord_channel']}>")
+
+            db.close()
+
+        @bot.command(name="detach")
+        async def cmd_detach(ctx: commands.Context):
+            """Stop following a session in this channel (channel stays as a log)."""
+            channel_id = ctx.channel.id
+            # Find which session this channel is following
+            detached = None
+            for sid, cid in list(self._stream_channels.items()):
+                if cid == channel_id:
+                    del self._stream_channels[sid]
+                    detached = sid
+                    break
+            if detached:
+                await ctx.send(f"Detached from session `{detached}`. Channel preserved as log.")
+            else:
+                await ctx.send("This channel isn't following a session.")
 
         @bot.command(name="remember")
         async def cmd_remember(ctx: commands.Context, key: str, *, value: str):
@@ -470,6 +610,109 @@ class DiscordNode:
         """Clear the session for a channel."""
         self._channel_sessions.pop(channel_id, None)
         log.info("Session cleared for channel %s", channel_id)
+
+    # ── Broadcast poller ─────────────────────────────────────────────────
+
+    async def _poll_broadcasts(self):
+        """Poll the broadcast DB for new messages and route to Discord."""
+        import sqlite3
+        db_path = Path.home() / ".rook" / "broadcast.db"
+
+        while True:
+            await asyncio.sleep(2)
+            try:
+                if not db_path.exists():
+                    continue
+
+                db = sqlite3.connect(str(db_path))
+                db.row_factory = sqlite3.Row
+
+                # Get new broadcasts since last poll
+                rows = db.execute(
+                    "SELECT id, session_id, message, project, timestamp FROM broadcasts WHERE id > ? ORDER BY id",
+                    (self._last_broadcast_id,),
+                ).fetchall()
+
+                for row in rows:
+                    self._last_broadcast_id = row["id"]
+                    await self._route_broadcast(
+                        session_id=row["session_id"],
+                        message=row["message"],
+                        project=row["project"] or "",
+                    )
+
+                # Check for new live sessions that need channels
+                live = db.execute(
+                    "SELECT session_id, description, project FROM live_sessions WHERE status='active' AND discord_channel=''"
+                ).fetchall()
+
+                for session in live:
+                    channel = await self._create_stream_channel(
+                        session["session_id"], session["description"], session["project"],
+                    )
+                    if channel:
+                        db.execute("UPDATE live_sessions SET discord_channel=? WHERE session_id=?",
+                                   (str(channel.id), session["session_id"]))
+                        db.commit()
+
+                db.close()
+
+            except Exception as e:
+                log.error("Broadcast poll error: %s", e)
+
+    async def _route_broadcast(self, session_id: str, message: str, project: str):
+        """Route a broadcast message to the right Discord channel."""
+        # Check if this session has a dedicated stream channel
+        if session_id in self._stream_channels:
+            channel = self.bot.get_channel(self._stream_channels[session_id])
+            if channel:
+                for chunk in split_message(message):
+                    await channel.send(chunk)
+                return
+
+        # Otherwise post to #rook-activity
+        if hasattr(self, '_activity_channel') and self._activity_channel:
+            prefix = f"**[{project}]** " if project else ""
+            for chunk in split_message(f"{prefix}{message}"):
+                await self._activity_channel.send(chunk)
+
+    async def _create_stream_channel(self, session_id: str, description: str,
+                                     project: str) -> discord.TextChannel | None:
+        """Create a Discord channel for a live CC session stream."""
+        guild = getattr(self, '_guild', None)
+        if not guild:
+            return None
+
+        # Find or create Rook category
+        category = discord.utils.get(guild.categories, name="Rook")
+        if not category:
+            try:
+                category = await guild.create_category("Rook")
+            except Exception:
+                category = None
+
+        # Channel name from project or session ID
+        name = f"cc-{project}" if project else f"cc-{session_id}"
+        name = re.sub(r'[^a-z0-9-]', '-', name.lower())[:90]
+
+        try:
+            channel = await guild.create_text_channel(
+                name, category=category,
+                topic=f"Live CC session: {description} [{session_id}]",
+            )
+            self._stream_channels[session_id] = channel.id
+            log.info("Created stream channel #%s for session %s", name, session_id)
+
+            await channel.send(
+                f"**CC Session Started**\n"
+                f"**Session:** `{session_id}`\n"
+                f"**Task:** {description}\n"
+                f"Updates will stream here. Type in this channel to send input."
+            )
+            return channel
+        except Exception as e:
+            log.error("Failed to create stream channel: %s", e)
+            return None
 
     @staticmethod
     def _extract_keywords(text: str) -> str:
