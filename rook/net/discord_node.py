@@ -120,8 +120,8 @@ class DiscordNode:
         self.open_channels = set(open_channels or [])
         self.client: RookClient | None = None
 
-        # Persistent CC subprocesses per channel — full interactive mode
-        self._channel_procs: dict[str, asyncio.subprocess.Process] = {}
+        # CC session IDs per channel — persists conversation via --resume
+        self._channel_sessions: dict[str, str] = {}
         self._channel_locks: dict[str, asyncio.Lock] = {}
 
         # Discord bot
@@ -311,10 +311,10 @@ class DiscordNode:
 
         @bot.command(name="new_session")
         async def cmd_new_session(ctx: commands.Context):
-            """Kill the current CC session and start fresh (clears conversation context)."""
+            """Start a fresh CC session for this channel (clears conversation context)."""
             channel_id = str(ctx.channel.id)
             await self._kill_channel_session(channel_id)
-            await ctx.send("Session cleared. Next message starts fresh.")
+            await ctx.send("Session cleared. Next message starts a new conversation.")
 
         @bot.command(name="remember")
         async def cmd_remember(ctx: commands.Context, key: str, *, value: str):
@@ -381,95 +381,54 @@ class DiscordNode:
 
         return response
 
-    async def _get_cc_proc(self, channel_id: str) -> asyncio.subprocess.Process:
-        """Get or create a persistent interactive CC subprocess for a channel."""
-        proc = self._channel_procs.get(channel_id)
-        if proc and proc.returncode is None:
-            return proc
-
-        # Start a new interactive CC process with stream-json I/O
-        from ..cli.cc_tmux import _find_claude_binary
-        claude_bin = _find_claude_binary()
-
-        cmd = (
-            f'"{claude_bin}" --output-format stream-json --input-format stream-json'
-            f' --verbose --name "discord-{channel_id}"'
-            f' --dangerously-skip-permissions'
-        )
-
-        if sys.platform == "win32":
-            proc = await asyncio.create_subprocess_shell(
-                cmd,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=str(Path.home()),
-            )
-        else:
-            parts = cmd.split()
-            proc = await asyncio.create_subprocess_exec(
-                *parts,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=str(Path.home()),
-            )
-
-        self._channel_procs[channel_id] = proc
-        if channel_id not in self._channel_locks:
-            self._channel_locks[channel_id] = asyncio.Lock()
-
-        log.info("Started CC process for channel %s (pid=%d)", channel_id, proc.pid)
-
-        # Consume the init messages (system, rate_limit) without blocking
-        asyncio.create_task(self._drain_stderr(proc, channel_id))
-
-        return proc
-
-    async def _drain_stderr(self, proc: asyncio.subprocess.Process, channel_id: str):
-        """Continuously drain stderr to prevent buffer deadlock."""
-        try:
-            while proc.returncode is None:
-                line = await proc.stderr.readline()
-                if not line:
-                    break
-                text = line.decode("utf-8", errors="replace").rstrip()
-                if text and "no stdin data" not in text.lower() and "warning" not in text.lower():
-                    log.debug("CC stderr [%s]: %s", channel_id[:6], text[:100])
-        except Exception:
-            pass
-
     async def _cc_send(self, channel_id: str, prompt: str) -> str:
-        """Send a message to a persistent interactive CC session.
+        """Send a message via CC --print --resume.
 
-        The CC process stays alive between messages — full tool calling,
-        multi-step reasoning, conversation memory.
+        Each invocation is a full CC tool loop (chained tool calls work).
+        Session persists on disk between invocations via --session-id / --resume.
         """
+        import uuid
+        from ..cli.cc_tmux import _find_claude_binary, render_stream_json
+
         lock = self._channel_locks.get(channel_id)
         if not lock:
             lock = asyncio.Lock()
             self._channel_locks[channel_id] = lock
 
         async with lock:
-            proc = await self._get_cc_proc(channel_id)
+            claude_bin = _find_claude_binary()
+            session_id = self._channel_sessions.get(channel_id)
+            escaped = prompt.replace('"', '\\"')
 
-            if proc.returncode is not None:
-                # Process died — remove and retry once
-                self._channel_procs.pop(channel_id, None)
-                proc = await self._get_cc_proc(channel_id)
+            if session_id:
+                cmd = f'"{claude_bin}" -p "{escaped}" --resume {session_id} --output-format stream-json --verbose'
+            else:
+                session_id = str(uuid.uuid4())
+                self._channel_sessions[channel_id] = session_id
+                cmd = f'"{claude_bin}" -p "{escaped}" --session-id {session_id} --name "discord-{channel_id}" --output-format stream-json --verbose'
 
-            # Send message via stream-json input format
-            input_msg = json.dumps({"type": "user_message", "content": prompt}) + "\n"
-            try:
-                proc.stdin.write(input_msg.encode("utf-8"))
-                await proc.stdin.drain()
-            except Exception as e:
-                log.error("Failed to send to CC [%s]: %s", channel_id[:6], e)
-                self._channel_procs.pop(channel_id, None)
-                return "CC session died — try again."
+            log.info("CC [%s] session=%s prompt=%s", channel_id[:6], session_id[:8], prompt[:60])
 
-            # Read response — collect text until we see result or message_stop
-            from ..cli.cc_tmux import render_stream_json
+            if sys.platform == "win32":
+                proc = await asyncio.create_subprocess_shell(
+                    cmd,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=str(Path.home()),
+                )
+            else:
+                proc = await asyncio.create_subprocess_exec(
+                    *[claude_bin, "-p", prompt,
+                      *(["--resume", session_id] if self._channel_sessions.get(channel_id) == session_id and channel_id in self._channel_sessions else ["--session-id", session_id, "--name", f"discord-{channel_id}"]),
+                      "--output-format", "stream-json", "--verbose"],
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=str(Path.home()),
+                )
+
+            # Read response
             text_parts = []
             try:
                 while True:
@@ -479,43 +438,38 @@ class DiscordNode:
                     raw = line.decode("utf-8", errors="replace").rstrip()
                     if not raw:
                         continue
-
-                    try:
-                        event = json.loads(raw)
-                        event_type = event.get("type", "")
-
-                        # End of response markers
-                        if event_type == "result":
-                            result_text = event.get("result", "")
-                            if result_text:
-                                text_parts.append(result_text)
-                            break
-
-                        # Accumulate text deltas
-                        t = render_stream_json(raw, print_it=False)
-                        if t:
-                            text_parts.append(t)
-
-                    except json.JSONDecodeError:
-                        text_parts.append(raw)
-
+                    t = render_stream_json(raw, print_it=False)
+                    if t:
+                        text_parts.append(t)
             except asyncio.TimeoutError:
-                text_parts.append("\n(response timed out after 3 minutes)")
+                proc.kill()
+                text_parts.append("\n(timed out after 3 minutes)")
 
-            return "".join(text_parts).strip() or "No response."
-
-    async def _kill_channel_session(self, channel_id: str):
-        """Kill the CC process for a channel."""
-        proc = self._channel_procs.pop(channel_id, None)
-        if proc and proc.returncode is None:
+            # Wait for exit
             try:
-                proc.terminate()
-                await asyncio.sleep(1)
-                if proc.returncode is None:
-                    proc.kill()
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                proc.kill()
+
+            # Check for session errors
+            stderr = ""
+            try:
+                stderr_data = await proc.stderr.read()
+                stderr = stderr_data.decode("utf-8", errors="replace")
             except Exception:
                 pass
-            log.info("Killed CC process for channel %s", channel_id)
+
+            if "Could not find session" in stderr or "not found" in stderr.lower():
+                self._channel_sessions.pop(channel_id, None)
+                log.warning("Session expired for channel %s, will create new next time", channel_id[:6])
+
+            response = "".join(text_parts).strip()
+            return response or "No response."
+
+    async def _kill_channel_session(self, channel_id: str):
+        """Clear the session for a channel."""
+        self._channel_sessions.pop(channel_id, None)
+        log.info("Session cleared for channel %s", channel_id)
 
     @staticmethod
     def _extract_keywords(text: str) -> str:
