@@ -41,6 +41,9 @@ _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 def clean_response(text: str) -> str:
     text = _THINK_RE.sub("", text)
+    # Strip CC stderr noise
+    text = re.sub(r"---\s*STDERR\s*---.*", "", text, flags=re.DOTALL)
+    text = re.sub(r"Warning: no stdin data.*", "", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
 
@@ -328,12 +331,21 @@ class DiscordNode:
         if raw:
             parts = []
             for line in raw.splitlines():
+                # Skip stderr noise
+                if line.startswith("--- STDERR") or "no stdin data" in line.lower() or "Warning:" in line:
+                    continue
                 t = render_stream_json(line, print_it=False)
                 if t:
                     parts.append(t)
-            return "".join(parts) or "No response."
+            response = "".join(parts).strip()
+            if response:
+                return response
 
-        return session.get("last_output", "No response.")
+        last = session.get("last_output", "")
+        # Clean stderr from last_output too
+        if last and "--- STDERR" in last:
+            last = last.split("--- STDERR")[0].strip()
+        return last or "No response."
 
     @staticmethod
     def _extract_keywords(text: str) -> str:
