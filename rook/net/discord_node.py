@@ -538,35 +538,35 @@ class DiscordNode:
         async with lock:
             claude_bin = _find_claude_binary()
             session_id = self._channel_sessions.get(channel_id)
-            escaped = prompt.replace('"', '\\"')
 
-            if session_id:
-                cmd = f'"{claude_bin}" -p "{escaped}" --resume {session_id} --output-format stream-json --verbose'
-            else:
+            if not session_id:
                 session_id = str(uuid.uuid4())
                 self._channel_sessions[channel_id] = session_id
-                cmd = f'"{claude_bin}" -p "{escaped}" --session-id {session_id} --name "discord-{channel_id}" --output-format stream-json --verbose'
 
             log.info("CC [%s] session=%s prompt=%s", channel_id[:6], session_id[:8], prompt[:60])
 
-            if sys.platform == "win32":
-                proc = await asyncio.create_subprocess_shell(
-                    cmd,
-                    stdin=asyncio.subprocess.PIPE,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    cwd=str(Path.home()),
-                )
+            # Track whether this session has been used before (for --resume vs --session-id)
+            if not hasattr(self, '_used_sessions'):
+                self._used_sessions = set()
+
+            is_new = session_id not in self._used_sessions
+
+            args = [claude_bin, "-p", prompt,
+                    "--output-format", "stream-json", "--verbose"]
+            if is_new:
+                args.extend(["--session-id", session_id, "--name", f"discord-{channel_id}"])
+                self._used_sessions.add(session_id)
             else:
-                proc = await asyncio.create_subprocess_exec(
-                    *[claude_bin, "-p", prompt,
-                      *(["--resume", session_id] if self._channel_sessions.get(channel_id) == session_id and channel_id in self._channel_sessions else ["--session-id", session_id, "--name", f"discord-{channel_id}"]),
-                      "--output-format", "stream-json", "--verbose"],
-                    stdin=asyncio.subprocess.PIPE,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    cwd=str(Path.home()),
-                )
+                args.extend(["--resume", session_id])
+
+            # create_subprocess_exec passes args directly — no shell escaping needed
+            proc = await asyncio.create_subprocess_exec(
+                *args,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(Path.home()),
+            )
 
             # Read response
             text_parts = []
