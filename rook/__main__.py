@@ -5,21 +5,70 @@ from __future__ import annotations
 import sys
 
 
+SUBCOMMANDS = {
+    "sessions": "Browse Claude Code session history",
+    "history":  "Browse Claude Code session history",
+    "tmux":     "Manage Claude Code sessions (spawn, attach, kill)",
+    "hub":      "Start the Rook hub server",
+    "sync":     "Sync Claude.ai cloud conversations",
+    "extract":  "Extract concepts from conversations (local model)",
+}
+
+
 def main() -> None:
+    # No args or help — show available commands
+    if len(sys.argv) <= 1 or sys.argv[1] in ("-h", "--help", "help"):
+        print("Rook — Knowledge graph and session network for Claude Code\n")
+        print("Usage: rook <command> [args]\n")
+        print("Commands:")
+        for cmd, desc in SUBCOMMANDS.items():
+            if cmd == "history":
+                continue
+            print(f"  {cmd:12s} {desc}")
+        print(f"  {'agent':12s} Start Rook 1.0 agent (Discord/CLI, requires full deps)")
+        print(f"\nMCP server:  python -m rook.mcp_server")
+        print(f"Hub server:  python -m rook.net.hub")
+        return
+
     # Lightweight subcommands — no heavy imports needed
-    if len(sys.argv) > 1 and sys.argv[1] in ("sessions", "history"):
+    if sys.argv[1] in ("sessions", "history"):
         from .cli.cc_history import main as history_main
         sys.argv = [sys.argv[0]] + sys.argv[2:]
         history_main()
         return
 
-    if len(sys.argv) > 1 and sys.argv[1] == "tmux":
+    if sys.argv[1] == "tmux":
         from .cli.cc_tmux import main as tmux_main
         sys.argv = [sys.argv[0]] + sys.argv[2:]
         tmux_main()
         return
 
-    # Full agent mode — heavy imports here
+    if sys.argv[1] == "hub":
+        from .net.hub import main as hub_main
+        sys.argv = [sys.argv[0]] + sys.argv[2:]
+        hub_main()
+        return
+
+    if sys.argv[1] == "sync":
+        from .cli.cloud_sync import main as sync_main
+        sys.argv = [sys.argv[0]] + sys.argv[2:]
+        sync_main()
+        return
+
+    if sys.argv[1] == "extract":
+        from .cli.extractor import main as extract_main
+        sys.argv = [sys.argv[0]] + sys.argv[2:]
+        extract_main()
+        return
+
+    if sys.argv[1] != "agent":
+        print(f"Unknown command: {sys.argv[1]}")
+        print("Run 'rook' for available commands.")
+        return
+
+    # Full agent mode — heavy imports here (rook agent --cli / rook agent)
+    sys.argv = [sys.argv[0]] + sys.argv[2:]  # strip "agent" subcommand
+
     import argparse
     import asyncio
     import logging
