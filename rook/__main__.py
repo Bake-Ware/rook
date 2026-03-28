@@ -25,7 +25,6 @@ def main() -> None:
             if cmd == "history":
                 continue
             print(f"  {cmd:12s} {desc}")
-        print(f"  {'agent':12s} Start Rook 1.0 agent (Discord/CLI, requires full deps)")
         print(f"\nMCP server:  python -m rook.mcp_server")
         print(f"Hub server:  python -m rook.net.hub")
         return
