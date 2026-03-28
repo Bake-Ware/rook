@@ -120,6 +120,9 @@ class DiscordNode:
         self.open_channels = set(open_channels or [])
         self.client: RookClient | None = None
 
+        # CC session IDs per channel — persists conversation across messages
+        self._channel_sessions: dict[str, str] = {}
+
         # Discord bot
         intents = discord.Intents.default()
         intents.message_content = True
@@ -261,6 +264,38 @@ class DiscordNode:
             else:
                 await ctx.send(f"No results for `{query}`.")
 
+        @bot.command(name="index_channel")
+        async def cmd_index_channel(ctx: commands.Context, limit: int = 200):
+            """Index this channel's message history into the knowledge graph."""
+            if not self.client:
+                await ctx.send("Hub not connected.")
+                return
+            await ctx.send(f"Indexing last {limit} messages from #{ctx.channel}...")
+            indexed = 0
+            async for msg in ctx.channel.history(limit=limit):
+                if msg.author.bot and msg.author != bot.user:
+                    continue
+                text = msg.content
+                if not text or len(text) < 10:
+                    continue
+                keywords = self._extract_keywords(text)
+                if keywords:
+                    await self.client.rpc(METHOD_INDEX, {
+                        "concepts": keywords,
+                        "source_type": "discord",
+                        "source_location": f"{ctx.channel.id}/{msg.id}",
+                        "source_title": f"Discord #{ctx.channel} — {msg.author.display_name}",
+                    }, timeout=5)
+                    indexed += 1
+            await ctx.send(f"Indexed {indexed} messages from #{ctx.channel}.")
+
+        @bot.command(name="new_session")
+        async def cmd_new_session(ctx: commands.Context):
+            """Start a fresh CC session for this channel (clear conversation history)."""
+            channel_id = str(ctx.channel.id)
+            old = self._channel_sessions.pop(channel_id, None)
+            await ctx.send(f"New session started." + (f" (previous: {old[:8]})" if old else ""))
+
         @bot.command(name="remember")
         async def cmd_remember(ctx: commands.Context, key: str, *, value: str):
             """Store a fact in shared memory."""
@@ -288,64 +323,122 @@ class DiscordNode:
     async def _handle_message(self, text: str, message: discord.Message) -> str:
         """Handle a Discord message through the hub.
 
-        Flow: lookup first → if enough context, respond using CC → index findings
+        Uses persistent CC sessions per channel — conversation context carries over.
+        Looks up the graph for context before responding. Indexes afterward.
         """
-        if not self.client or not self.client._transport.connected:
-            return "Hub offline — can't process messages right now."
+        channel_id = str(message.channel.id)
 
-        # 1. Lookup first — what does the graph know about this?
-        keywords = self._extract_keywords(text)
+        # 1. Graph lookup for context injection
         lookup_context = ""
-        if keywords:
-            for kw in keywords.split(",")[:3]:
-                result = await self.client.rpc(METHOD_LOOKUP, {"query": kw.strip()}, timeout=5)
-                if isinstance(result, dict):
-                    formatted = _format_lookup_discord(result)
-                    if formatted and "No existing knowledge" not in formatted:
-                        lookup_context += f"\n{formatted}"
+        if self.client and self.client._transport.connected:
+            keywords = self._extract_keywords(text)
+            if keywords:
+                for kw in keywords.split(",")[:3]:
+                    result = await self.client.rpc(METHOD_LOOKUP, {"query": kw.strip()}, timeout=5)
+                    if isinstance(result, dict):
+                        formatted = _format_lookup_discord(result)
+                        if formatted and "No existing knowledge" not in formatted:
+                            lookup_context += f"\n{formatted}"
 
-        # 2. Spawn a CC session to handle the message with context
-        from .client import get_client
-        from ..cli.cc_tmux import SessionManager
-
-        mgr = SessionManager()
+        # 2. Build prompt — inject graph context if we have it
         prompt = text
         if lookup_context:
-            prompt = f"Context from knowledge graph:\n{lookup_context}\n\nUser message: {text}"
+            prompt = f"[Rook context: {lookup_context.strip()}]\n\n{text}"
 
-        short = await mgr.spawn(prompt, print_output=False)
+        # 3. Run through CC with persistent session
+        response = await self._cc_send(channel_id, prompt)
 
-        # Wait for completion (up to 60s)
-        for _ in range(120):
-            await asyncio.sleep(0.5)
-            session = mgr.get_session(short)
-            if session and session["status"] != "running":
-                break
+        # 4. Index the exchange into the graph (fire and forget)
+        if self.client and self.client._transport.connected:
+            keywords = self._extract_keywords(text + " " + response)
+            if keywords:
+                asyncio.create_task(self.client.rpc(METHOD_INDEX, {
+                    "concepts": keywords,
+                    "source_type": "discord",
+                    "source_location": channel_id,
+                    "source_title": f"Discord #{message.channel}",
+                }, timeout=5))
 
-        session = mgr.get_session(short)
-        if not session:
-            return "Failed to process message."
+        return response
 
-        from ..cli.cc_tmux import render_stream_json
-        raw = mgr.read_output(short, tail=100)
-        if raw:
-            parts = []
-            for line in raw.splitlines():
-                # Skip stderr noise
-                if line.startswith("--- STDERR") or "no stdin data" in line.lower() or "Warning:" in line:
+    async def _cc_send(self, channel_id: str, prompt: str) -> str:
+        """Send a message to a persistent CC session for this channel.
+
+        First message creates the session. Subsequent messages resume it.
+        """
+        import shutil
+        import uuid
+        from ..cli.cc_tmux import _find_claude_binary, render_stream_json
+
+        claude_bin = _find_claude_binary()
+        session_id = self._channel_sessions.get(channel_id)
+
+        # Build command
+        escaped = prompt.replace('"', '\\"')
+        if session_id:
+            # Resume existing session
+            cmd = f'"{claude_bin}" -p "{escaped}" --resume {session_id} --output-format stream-json --verbose'
+        else:
+            # New session — generate a UUID and name it
+            session_id = str(uuid.uuid4())
+            self._channel_sessions[channel_id] = session_id
+            cmd = f'"{claude_bin}" -p "{escaped}" --session-id {session_id} --name "discord-{channel_id}" --output-format stream-json --verbose'
+
+        if sys.platform == "win32":
+            proc = await asyncio.create_subprocess_shell(
+                cmd,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(Path.home()),
+            )
+        else:
+            # Split for exec on non-Windows
+            parts = cmd.split()
+            proc = await asyncio.create_subprocess_exec(
+                *parts,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(Path.home()),
+            )
+
+        # Read output
+        text_parts = []
+        try:
+            while True:
+                line = await asyncio.wait_for(proc.stdout.readline(), timeout=120)
+                if not line:
+                    break
+                raw = line.decode("utf-8", errors="replace").rstrip()
+                if not raw:
                     continue
-                t = render_stream_json(line, print_it=False)
+                t = render_stream_json(raw, print_it=False)
                 if t:
-                    parts.append(t)
-            response = "".join(parts).strip()
-            if response:
-                return response
+                    text_parts.append(t)
+        except asyncio.TimeoutError:
+            proc.kill()
+            text_parts.append("\n(timed out)")
 
-        last = session.get("last_output", "")
-        # Clean stderr from last_output too
-        if last and "--- STDERR" in last:
-            last = last.split("--- STDERR")[0].strip()
-        return last or "No response."
+        try:
+            await proc.wait()
+        except Exception:
+            pass
+
+        response = "".join(text_parts).strip()
+
+        # If resume failed (session expired), clear it and the next message creates fresh
+        if not response or proc.returncode != 0:
+            stderr = ""
+            try:
+                stderr = (await proc.stderr.read()).decode("utf-8", errors="replace")
+            except Exception:
+                pass
+            if "Could not find session" in stderr or "not found" in stderr.lower():
+                self._channel_sessions.pop(channel_id, None)
+                log.warning("Session %s expired for channel %s, will create new", session_id[:8], channel_id)
+
+        return response or "No response."
 
     @staticmethod
     def _extract_keywords(text: str) -> str:
