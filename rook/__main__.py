@@ -10,6 +10,7 @@ SUBCOMMANDS = {
     "history":  "Browse Claude Code session history",
     "tmux":     "Manage Claude Code sessions (spawn, attach, kill)",
     "hub":      "Start the Rook hub server",
+    "discord":  "Start the Discord bot (connects to hub)",
     "sync":     "Sync Claude.ai cloud conversations",
     "extract":  "Extract concepts from conversations (local model)",
 }
@@ -46,6 +47,12 @@ def main() -> None:
         from .net.hub import main as hub_main
         sys.argv = [sys.argv[0]] + sys.argv[2:]
         hub_main()
+        return
+
+    if sys.argv[1] == "discord":
+        from .net.discord_node import main as discord_main
+        sys.argv = [sys.argv[0]] + sys.argv[2:]
+        discord_main()
         return
 
     if sys.argv[1] == "sync":
