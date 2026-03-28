@@ -488,25 +488,9 @@ class DiscordNode:
         """
         channel_id = str(message.channel.id)
 
-        # 1. Graph lookup for context injection
-        lookup_context = ""
-        if self.client and self.client._transport.connected:
-            keywords = self._extract_keywords(text)
-            if keywords:
-                for kw in keywords.split(",")[:3]:
-                    result = await self.client.rpc(METHOD_LOOKUP, {"query": kw.strip()}, timeout=5)
-                    if isinstance(result, dict):
-                        formatted = _format_lookup_discord(result)
-                        if formatted and "No existing knowledge" not in formatted:
-                            lookup_context += f"\n{formatted}"
-
-        # 2. Build prompt — inject graph context if we have it
-        prompt = text
-        if lookup_context:
-            prompt = f"[Rook context: {lookup_context.strip()}]\n\n{text}"
-
-        # 3. Run through CC with persistent session
-        response = await self._cc_send(channel_id, prompt)
+        # Just pass the message straight to CC — no context injection
+        # CC has its own tools (including Rook MCP) to look things up when needed
+        response = await self._cc_send(channel_id, text)
 
         # 4. Index the exchange into the graph (fire and forget)
         if self.client and self.client._transport.connected:
