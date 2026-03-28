@@ -120,8 +120,9 @@ class DiscordNode:
         self.open_channels = set(open_channels or [])
         self.client: RookClient | None = None
 
-        # CC session IDs per channel — persists conversation across messages
-        self._channel_sessions: dict[str, str] = {}
+        # Persistent CC subprocesses per channel — full interactive mode
+        self._channel_procs: dict[str, asyncio.subprocess.Process] = {}
+        self._channel_locks: dict[str, asyncio.Lock] = {}
 
         # Discord bot
         intents = discord.Intents.default()
@@ -196,6 +197,25 @@ class DiscordNode:
 
     def _setup_commands(self):
         bot = self.bot
+
+        @bot.command(name="rook")
+        async def cmd_help(ctx: commands.Context):
+            """Show available commands."""
+            await ctx.send(
+                "**Rook Commands**\n"
+                "Just talk to me — I'm a full Claude Code session with tools, files, and shell access.\n"
+                "Each channel gets its own persistent conversation.\n\n"
+                "**Commands**\n"
+                "`!lookup <topic>` — Search the knowledge graph\n"
+                "`!project [name]` — Show project status and recent activity\n"
+                "`!search <query>` — Search synced claude.ai conversations\n"
+                "`!stats` — Show hub graph statistics\n"
+                "`!remember <key> <value>` — Store a fact in shared memory\n"
+                "`!recall [query]` — Search shared memory\n"
+                "`!index_channel [n]` — Index last N messages from this channel into the graph\n"
+                "`!new_session` — Clear conversation context, start fresh\n"
+                "`!rook` — This help message"
+            )
 
         @bot.command(name="lookup")
         async def cmd_lookup(ctx: commands.Context, *, query: str):
@@ -291,10 +311,10 @@ class DiscordNode:
 
         @bot.command(name="new_session")
         async def cmd_new_session(ctx: commands.Context):
-            """Start a fresh CC session for this channel (clear conversation history)."""
+            """Kill the current CC session and start fresh (clears conversation context)."""
             channel_id = str(ctx.channel.id)
-            old = self._channel_sessions.pop(channel_id, None)
-            await ctx.send(f"New session started." + (f" (previous: {old[:8]})" if old else ""))
+            await self._kill_channel_session(channel_id)
+            await ctx.send("Session cleared. Next message starts fresh.")
 
         @bot.command(name="remember")
         async def cmd_remember(ctx: commands.Context, key: str, *, value: str):
@@ -361,28 +381,21 @@ class DiscordNode:
 
         return response
 
-    async def _cc_send(self, channel_id: str, prompt: str) -> str:
-        """Send a message to a persistent CC session for this channel.
+    async def _get_cc_proc(self, channel_id: str) -> asyncio.subprocess.Process:
+        """Get or create a persistent interactive CC subprocess for a channel."""
+        proc = self._channel_procs.get(channel_id)
+        if proc and proc.returncode is None:
+            return proc
 
-        First message creates the session. Subsequent messages resume it.
-        """
-        import shutil
-        import uuid
-        from ..cli.cc_tmux import _find_claude_binary, render_stream_json
-
+        # Start a new interactive CC process with stream-json I/O
+        from ..cli.cc_tmux import _find_claude_binary
         claude_bin = _find_claude_binary()
-        session_id = self._channel_sessions.get(channel_id)
 
-        # Build command
-        escaped = prompt.replace('"', '\\"')
-        if session_id:
-            # Resume existing session
-            cmd = f'"{claude_bin}" -p "{escaped}" --resume {session_id} --output-format stream-json --verbose'
-        else:
-            # New session — generate a UUID and name it
-            session_id = str(uuid.uuid4())
-            self._channel_sessions[channel_id] = session_id
-            cmd = f'"{claude_bin}" -p "{escaped}" --session-id {session_id} --name "discord-{channel_id}" --output-format stream-json --verbose'
+        cmd = (
+            f'"{claude_bin}" --output-format stream-json --input-format stream-json'
+            f' --verbose --name "discord-{channel_id}"'
+            f' --dangerously-skip-permissions'
+        )
 
         if sys.platform == "win32":
             proc = await asyncio.create_subprocess_shell(
@@ -393,7 +406,6 @@ class DiscordNode:
                 cwd=str(Path.home()),
             )
         else:
-            # Split for exec on non-Windows
             parts = cmd.split()
             proc = await asyncio.create_subprocess_exec(
                 *parts,
@@ -403,42 +415,107 @@ class DiscordNode:
                 cwd=str(Path.home()),
             )
 
-        # Read output
-        text_parts = []
+        self._channel_procs[channel_id] = proc
+        if channel_id not in self._channel_locks:
+            self._channel_locks[channel_id] = asyncio.Lock()
+
+        log.info("Started CC process for channel %s (pid=%d)", channel_id, proc.pid)
+
+        # Consume the init messages (system, rate_limit) without blocking
+        asyncio.create_task(self._drain_stderr(proc, channel_id))
+
+        return proc
+
+    async def _drain_stderr(self, proc: asyncio.subprocess.Process, channel_id: str):
+        """Continuously drain stderr to prevent buffer deadlock."""
         try:
-            while True:
-                line = await asyncio.wait_for(proc.stdout.readline(), timeout=120)
+            while proc.returncode is None:
+                line = await proc.stderr.readline()
                 if not line:
                     break
-                raw = line.decode("utf-8", errors="replace").rstrip()
-                if not raw:
-                    continue
-                t = render_stream_json(raw, print_it=False)
-                if t:
-                    text_parts.append(t)
-        except asyncio.TimeoutError:
-            proc.kill()
-            text_parts.append("\n(timed out)")
-
-        try:
-            await proc.wait()
+                text = line.decode("utf-8", errors="replace").rstrip()
+                if text and "no stdin data" not in text.lower() and "warning" not in text.lower():
+                    log.debug("CC stderr [%s]: %s", channel_id[:6], text[:100])
         except Exception:
             pass
 
-        response = "".join(text_parts).strip()
+    async def _cc_send(self, channel_id: str, prompt: str) -> str:
+        """Send a message to a persistent interactive CC session.
 
-        # If resume failed (session expired), clear it and the next message creates fresh
-        if not response or proc.returncode != 0:
-            stderr = ""
+        The CC process stays alive between messages — full tool calling,
+        multi-step reasoning, conversation memory.
+        """
+        lock = self._channel_locks.get(channel_id)
+        if not lock:
+            lock = asyncio.Lock()
+            self._channel_locks[channel_id] = lock
+
+        async with lock:
+            proc = await self._get_cc_proc(channel_id)
+
+            if proc.returncode is not None:
+                # Process died — remove and retry once
+                self._channel_procs.pop(channel_id, None)
+                proc = await self._get_cc_proc(channel_id)
+
+            # Send message via stream-json input format
+            input_msg = json.dumps({"type": "user_message", "content": prompt}) + "\n"
             try:
-                stderr = (await proc.stderr.read()).decode("utf-8", errors="replace")
+                proc.stdin.write(input_msg.encode("utf-8"))
+                await proc.stdin.drain()
+            except Exception as e:
+                log.error("Failed to send to CC [%s]: %s", channel_id[:6], e)
+                self._channel_procs.pop(channel_id, None)
+                return "CC session died — try again."
+
+            # Read response — collect text until we see result or message_stop
+            from ..cli.cc_tmux import render_stream_json
+            text_parts = []
+            try:
+                while True:
+                    line = await asyncio.wait_for(proc.stdout.readline(), timeout=180)
+                    if not line:
+                        break
+                    raw = line.decode("utf-8", errors="replace").rstrip()
+                    if not raw:
+                        continue
+
+                    try:
+                        event = json.loads(raw)
+                        event_type = event.get("type", "")
+
+                        # End of response markers
+                        if event_type == "result":
+                            result_text = event.get("result", "")
+                            if result_text:
+                                text_parts.append(result_text)
+                            break
+
+                        # Accumulate text deltas
+                        t = render_stream_json(raw, print_it=False)
+                        if t:
+                            text_parts.append(t)
+
+                    except json.JSONDecodeError:
+                        text_parts.append(raw)
+
+            except asyncio.TimeoutError:
+                text_parts.append("\n(response timed out after 3 minutes)")
+
+            return "".join(text_parts).strip() or "No response."
+
+    async def _kill_channel_session(self, channel_id: str):
+        """Kill the CC process for a channel."""
+        proc = self._channel_procs.pop(channel_id, None)
+        if proc and proc.returncode is None:
+            try:
+                proc.terminate()
+                await asyncio.sleep(1)
+                if proc.returncode is None:
+                    proc.kill()
             except Exception:
                 pass
-            if "Could not find session" in stderr or "not found" in stderr.lower():
-                self._channel_sessions.pop(channel_id, None)
-                log.warning("Session %s expired for channel %s, will create new", session_id[:8], channel_id)
-
-        return response or "No response."
+            log.info("Killed CC process for channel %s", channel_id)
 
     @staticmethod
     def _extract_keywords(text: str) -> str:
