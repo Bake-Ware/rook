@@ -556,12 +556,14 @@ class DiscordNode:
                 args.extend(["--resume", session_id])
 
             # create_subprocess_exec passes args directly — no shell escaping needed
+            # Large limit on stdout to handle huge tool results (vault reads, etc.)
             proc = await asyncio.create_subprocess_exec(
                 *args,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(Path.home()),
+                limit=10 * 1024 * 1024,  # 10MB line buffer
             )
 
             # Read response
