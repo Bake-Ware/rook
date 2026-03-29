@@ -535,14 +535,17 @@ class DiscordNode:
 
             is_new = session_id not in self._used_sessions
 
-            # Build MCP config JSON for the rook server
-            mcp_config = json.dumps({"mcpServers": {"rook": {
-                "type": "stdio", "command": "python", "args": ["-m", "rook.mcp_server"]
-            }}})
+            # Write MCP config to a file (passing JSON via args gets mangled)
+            mcp_config_path = Path.home() / ".rook" / "mcp-config.json"
+            mcp_config_path.parent.mkdir(parents=True, exist_ok=True)
+            if not mcp_config_path.exists():
+                mcp_config_path.write_text(json.dumps({"mcpServers": {"rook": {
+                    "type": "stdio", "command": "python", "args": ["-m", "rook.mcp_server"]
+                }}}), encoding="utf-8")
 
             args = [claude_bin, "-p", prompt,
                     "--output-format", "stream-json", "--verbose",
-                    "--mcp-config", mcp_config,
+                    "--mcp-config", str(mcp_config_path),
                     "--add-dir", "C:\\"]
             if is_new:
                 args.extend(["--session-id", session_id, "--name", f"discord-{channel_id}"])
