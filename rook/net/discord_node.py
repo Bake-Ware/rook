@@ -223,19 +223,7 @@ class DiscordNode:
                     "source_title": f"Discord #{message.channel}",
                 }, timeout=5)
 
-            async with message.channel.typing():
-                response = await self._handle_message(text, message)
-
-            if not response:
-                return
-
-            response = clean_response(response)
-            chunks = split_message(response)
-            for i, chunk in enumerate(chunks):
-                if i == 0:
-                    await message.reply(chunk)
-                else:
-                    await message.channel.send(chunk)
+            await self._handle_message(text, message)
 
     def _setup_commands(self):
         bot = self.bot
@@ -480,39 +468,15 @@ class DiscordNode:
             else:
                 await ctx.send("Nothing found." if query else "Empty.")
 
-    async def _handle_message(self, text: str, message: discord.Message) -> str:
-        """Handle a Discord message through the hub.
+    async def _handle_message(self, text: str, message: discord.Message):
+        """Handle a Discord message — streams CC output to Discord in real-time.
 
-        Uses persistent CC sessions per channel — conversation context carries over.
-        Looks up the graph for context before responding. Indexes afterward.
+        Tool calls show as status messages (♖ tool_name: args... ✓)
+        Final response posted as a reply.
         """
         channel_id = str(message.channel.id)
-
-        # Just pass the message straight to CC — no context injection
-        # CC has its own tools (including Rook MCP) to look things up when needed
-        response = await self._cc_send(channel_id, text)
-
-        # 4. Index the exchange into the graph (fire and forget)
-        if self.client and self.client._transport.connected:
-            keywords = self._extract_keywords(text + " " + response)
-            if keywords:
-                asyncio.create_task(self.client.rpc(METHOD_INDEX, {
-                    "concepts": keywords,
-                    "source_type": "discord",
-                    "source_location": channel_id,
-                    "source_title": f"Discord #{message.channel}",
-                }, timeout=5))
-
-        return response
-
-    async def _cc_send(self, channel_id: str, prompt: str) -> str:
-        """Send a message via CC --print --resume.
-
-        Each invocation is a full CC tool loop (chained tool calls work).
-        Session persists on disk between invocations via --session-id / --resume.
-        """
         import uuid
-        from ..cli.cc_tmux import _find_claude_binary, render_stream_json
+        from ..cli.cc_tmux import _find_claude_binary
 
         lock = self._channel_locks.get(channel_id)
         if not lock:
@@ -522,29 +486,23 @@ class DiscordNode:
         async with lock:
             claude_bin = _find_claude_binary()
             session_id = self._channel_sessions.get(channel_id)
-
             if not session_id:
                 session_id = str(uuid.uuid4())
                 self._channel_sessions[channel_id] = session_id
 
-            log.info("CC [%s] session=%s prompt=%s", channel_id[:6], session_id[:8], prompt[:60])
+            log.info("CC [%s] session=%s prompt=%s", channel_id[:6], session_id[:8], text[:60])
 
-            # Track whether this session has been used before (for --resume vs --session-id)
-            if not hasattr(self, '_used_sessions'):
-                self._used_sessions = set()
-
-            is_new = session_id not in self._used_sessions
-
-            # Write MCP config to a file — use the same python that has rook installed
             mcp_config_path = Path.home() / ".rook" / "mcp-config.json"
             mcp_config_path.parent.mkdir(parents=True, exist_ok=True)
-            # Find the python that can import rook
-            rook_python = sys.executable  # This process can import rook, so use its python
             mcp_config_path.write_text(json.dumps({"mcpServers": {"rook": {
-                "type": "stdio", "command": rook_python, "args": ["-m", "rook.mcp_server"]
+                "type": "stdio", "command": sys.executable, "args": ["-m", "rook.mcp_server"]
             }}}), encoding="utf-8")
 
-            args = [claude_bin, "-p", prompt,
+            if not hasattr(self, '_used_sessions'):
+                self._used_sessions = set()
+            is_new = session_id not in self._used_sessions
+
+            args = [claude_bin, "-p", text,
                     "--output-format", "stream-json", "--verbose",
                     "--mcp-config", str(mcp_config_path),
                     "--add-dir", "C:\\",
@@ -555,19 +513,19 @@ class DiscordNode:
             else:
                 args.extend(["--resume", session_id])
 
-            # create_subprocess_exec passes args directly — no shell escaping needed
-            # Large limit on stdout to handle huge tool results (vault reads, etc.)
             proc = await asyncio.create_subprocess_exec(
                 *args,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(Path.home()),
-                limit=10 * 1024 * 1024,  # 10MB line buffer
+                limit=10 * 1024 * 1024,
             )
 
-            # Read response
-            text_parts = []
+            # Live stream to Discord
+            status_msg = None
+            response_text = ""
+
             try:
                 while True:
                     line = await asyncio.wait_for(proc.stdout.readline(), timeout=180)
@@ -576,33 +534,111 @@ class DiscordNode:
                     raw = line.decode("utf-8", errors="replace").rstrip()
                     if not raw:
                         continue
-                    t = render_stream_json(raw, print_it=False)
-                    if t:
-                        text_parts.append(t)
-            except asyncio.TimeoutError:
-                proc.kill()
-                text_parts.append("\n(timed out after 3 minutes)")
 
-            # Wait for exit
+                    try:
+                        event = json.loads(raw)
+                        event_type = event.get("type", "")
+
+                        if event_type == "assistant":
+                            msg_content = event.get("message", {}).get("content", [])
+                            if isinstance(msg_content, list):
+                                for block in msg_content:
+                                    bt = block.get("type", "")
+
+                                    if bt == "tool_use":
+                                        name = block.get("name", "?")
+                                        inp = block.get("input", {})
+
+                                        # Format tool info compactly
+                                        if name == "Bash":
+                                            detail = inp.get("command", "")[:80]
+                                        elif name in ("Read", "Glob", "Grep"):
+                                            detail = inp.get("file_path", inp.get("pattern", inp.get("path", "")))[:80]
+                                        elif name in ("Edit", "Write"):
+                                            detail = inp.get("file_path", "")[:80]
+                                        elif name.startswith("mcp__rook__"):
+                                            name = name.replace("mcp__rook__", "")
+                                            detail = str(inp)[:60]
+                                        else:
+                                            detail = str(inp)[:60]
+
+                                        # Mark previous status done
+                                        if status_msg:
+                                            try:
+                                                old = status_msg.content
+                                                if not old.endswith(" ✓"):
+                                                    await status_msg.edit(content=old + " ✓")
+                                            except Exception:
+                                                pass
+
+                                        try:
+                                            status_msg = await message.channel.send(f"♖ `{name}` {detail}")
+                                        except Exception:
+                                            pass
+
+                                    elif bt == "text":
+                                        t = block.get("text", "")
+                                        if t:
+                                            response_text += t
+
+                        elif event_type == "result":
+                            result = event.get("result", "")
+                            if result:
+                                response_text = result
+
+                    except json.JSONDecodeError:
+                        pass
+
+            except asyncio.TimeoutError:
+                response_text += "\n(timed out)"
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+
+            # Mark last status done
+            if status_msg:
+                try:
+                    old = status_msg.content
+                    if not old.endswith(" ✓"):
+                        await status_msg.edit(content=old + " ✓")
+                except Exception:
+                    pass
+
+            # Post final response
+            if response_text:
+                response_text = clean_response(response_text)
+                for i, chunk in enumerate(split_message(response_text)):
+                    if i == 0:
+                        await message.reply(chunk)
+                    else:
+                        await message.channel.send(chunk)
+            else:
+                await message.reply("No response.")
+
+            # Cleanup
             try:
                 await asyncio.wait_for(proc.wait(), timeout=5)
             except asyncio.TimeoutError:
                 proc.kill()
 
-            # Check for session errors
-            stderr = ""
             try:
-                stderr_data = await proc.stderr.read()
-                stderr = stderr_data.decode("utf-8", errors="replace")
+                stderr = (await proc.stderr.read()).decode("utf-8", errors="replace")
+                if "Could not find session" in stderr:
+                    self._channel_sessions.pop(channel_id, None)
             except Exception:
                 pass
 
-            if "Could not find session" in stderr or "not found" in stderr.lower():
-                self._channel_sessions.pop(channel_id, None)
-                log.warning("Session expired for channel %s, will create new next time", channel_id[:6])
-
-            response = "".join(text_parts).strip()
-            return response or "No response."
+            # Index exchange
+            if self.client and self.client._transport.connected:
+                keywords = self._extract_keywords(text)
+                if keywords:
+                    asyncio.create_task(self.client.rpc(METHOD_INDEX, {
+                        "concepts": keywords,
+                        "source_type": "discord",
+                        "source_location": channel_id,
+                        "source_title": f"Discord #{message.channel}",
+                    }, timeout=5))
 
     async def _kill_channel_session(self, channel_id: str):
         """Clear the session for a channel."""
