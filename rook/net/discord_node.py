@@ -542,7 +542,8 @@ class DiscordNode:
 
             args = [claude_bin, "-p", prompt,
                     "--output-format", "stream-json", "--verbose",
-                    "--mcp-config", mcp_config]
+                    "--mcp-config", mcp_config,
+                    "--add-dir", "C:\\"]
             if is_new:
                 args.extend(["--session-id", session_id, "--name", f"discord-{channel_id}"])
                 self._used_sessions.add(session_id)
