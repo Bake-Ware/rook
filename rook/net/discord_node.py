@@ -535,13 +535,14 @@ class DiscordNode:
 
             is_new = session_id not in self._used_sessions
 
-            # Write MCP config to a file (passing JSON via args gets mangled)
+            # Write MCP config to a file — use the same python that has rook installed
             mcp_config_path = Path.home() / ".rook" / "mcp-config.json"
             mcp_config_path.parent.mkdir(parents=True, exist_ok=True)
-            if not mcp_config_path.exists():
-                mcp_config_path.write_text(json.dumps({"mcpServers": {"rook": {
-                    "type": "stdio", "command": "python", "args": ["-m", "rook.mcp_server"]
-                }}}), encoding="utf-8")
+            # Find the python that can import rook
+            rook_python = sys.executable  # This process can import rook, so use its python
+            mcp_config_path.write_text(json.dumps({"mcpServers": {"rook": {
+                "type": "stdio", "command": rook_python, "args": ["-m", "rook.mcp_server"]
+            }}}), encoding="utf-8")
 
             args = [claude_bin, "-p", prompt,
                     "--output-format", "stream-json", "--verbose",
