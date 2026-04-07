@@ -6,3 +6,20 @@ data/
 dist/
 build/
 .venv/
+
+# Secrets
+firmware/include/secrets.h
+
+# PlatformIO
+firmware/.pio/
+firmware/.vscode/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+.DS_Store
