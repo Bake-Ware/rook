@@ -2,10 +2,20 @@
 
 import asyncio
 import base64
+import logging
 import os
+import sys
 
 from mcp.server.fastmcp import FastMCP
 from .bridge import RookBridge
+
+# MCP servers must only use stderr for logging (stdout is JSON-RPC).
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [rook-kvm] %(message)s",
+    stream=sys.stderr,
+)
+log = logging.getLogger("rook-kvm")
 
 BRIDGE_HOST = os.environ.get("ROOK_BRIDGE_HOST", "192.168.1.138")
 BRIDGE_PORT = int(os.environ.get("ROOK_BRIDGE_PORT", "80"))
@@ -37,6 +47,21 @@ async def send_key_combo(modifiers: list[str], key: str) -> str:
     await bridge.key_combo(modifiers, key)
     combo = "+".join(modifiers + [key])
     return f"Sent {combo}"
+
+
+@mcp.tool()
+async def send_consumer_key(key: str) -> str:
+    """Send a Consumer Control HID code (TV remote-style keys).
+
+    Works on TVs, monitors, OSes that respect USB HID Consumer Control.
+    No mouse — this drives volume, mute, media transport, power.
+
+    Args:
+        key: One of — volume_up, volume_down, mute, play_pause, next, prev,
+             stop, power, brightness_up, brightness_down, home, back.
+    """
+    result = await bridge.consumer(key=key)
+    return f"Consumer {key} sent (code 0x{result.get('code',0):04X})"
 
 
 @mcp.tool()
@@ -214,6 +239,72 @@ async def reboot_to_bootloader() -> str:
 
 
 @mcp.tool()
+async def ota_flash(firmware_path: str = "") -> str:
+    """Wirelessly flash a new firmware image. Streams firmware.bin over HTTP
+    to the device's /ota route. Device reboots into the new image on success.
+
+    Args:
+        firmware_path: Absolute path to firmware.bin. Defaults to the
+                       PlatformIO build artifact for the t-dongle-s3 env.
+    """
+    if not firmware_path:
+        firmware_path = "/home/bake/Projects/R00K/firmware/.pio/build/t-dongle-s3/firmware.bin"
+    result = await bridge.ota(firmware_path)
+    if result.get("response_lost"):
+        return f"OTA upload sent ({result['uploaded_bytes']} bytes). Device rebooted before responding (expected). Re-check /status in ~10s."
+    return f"OTA complete: {result.get('written',result['uploaded_bytes'])} bytes written. Device rebooting."
+
+
+@mcp.tool()
+async def get_config_page() -> str:
+    """Fetch the rendered HTML of the /config admin page. Useful for previewing
+    current settings without opening a browser. Auth handled automatically."""
+    html = await bridge.get_config()
+    return html
+
+
+@mcp.tool()
+async def update_config(
+    ap_ssid: str = "", ap_pass: str = "",
+    sta_ssid: str = "", sta_pass: str = "",
+    admin_user: str = "", admin_pass: str = "",
+) -> str:
+    """Update one or more persistent device settings. Empty strings are skipped.
+    Device reboots after save — any unchanged-network reconnection takes ~10s.
+
+    Args:
+        ap_ssid: New SSID for the dongle's own AP (RookBridge by default).
+        ap_pass: New AP password (>= 8 chars for WPA2, else open).
+        sta_ssid: SSID of the upstream WiFi the dongle joins.
+        sta_pass: STA password.
+        admin_user: New HTTP basic-auth username for /config and /ota.
+        admin_pass: New HTTP basic-auth password.
+    """
+    fields = {k: v for k, v in {
+        "ap_ssid": ap_ssid, "ap_pass": ap_pass,
+        "sta_ssid": sta_ssid, "sta_pass": sta_pass,
+        "admin_user": admin_user, "admin_pass": admin_pass,
+    }.items() if v}
+    if not fields:
+        return "No fields to update."
+    result = await bridge.set_config(**fields)
+    note = " (response lost during reboot — expected)" if result.get("response_lost") else ""
+    return f"Updated {', '.join(result['updated'])}.{note} Device rebooting."
+
+
+@mcp.tool()
+async def factory_reset() -> str:
+    """Wipe persisted device settings (NVS) and reboot with compile-time defaults.
+
+    Warning: Resets admin credentials, AP/STA SSID and passwords to factory
+    values. Only use if locked out or migrating between devices.
+    """
+    result = await bridge.factory_reset()
+    note = " (response lost — expected)" if result.get("response_lost") else ""
+    return f"Factory reset triggered.{note} Device rebooting with compile-time defaults."
+
+
+@mcp.tool()
 async def take_screenshot(timeout: int = 30) -> str:
     """Capture a screenshot from the target Linux machine.
 
@@ -285,4 +376,10 @@ async def download_drop_file(path: str) -> str:
 
 
 def main():
+    log.info("rook-kvm MCP starting (bridge=%s)", BRIDGE_HOST)
     mcp.run()
+    log.info("rook-kvm MCP exited")
+
+
+if __name__ == "__main__":
+    main()

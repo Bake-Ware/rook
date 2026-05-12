@@ -2,15 +2,29 @@
 
 import asyncio
 import json
+import os
 import httpx
 
 
 class RookBridge:
     """Async client for the ESP32-S3 firmware's REST + WebSocket API."""
 
-    def __init__(self, host: str = "192.168.1.138", port: int = 80, timeout: float = 10.0):
+    def __init__(
+        self,
+        host: str | None = None,
+        port: int = 80,
+        timeout: float = 10.0,
+        admin_user: str | None = None,
+        admin_pass: str | None = None,
+    ):
+        host = host or os.environ.get("ROOK_BRIDGE_HOST", "192.168.1.138")
+        admin_user = admin_user or os.environ.get("ROOK_ADMIN_USER", "bake")
+        admin_pass = admin_pass or os.environ.get("ROOK_ADMIN_PASS", "poop")
         self.base_url = f"http://{host}:{port}"
         self.ws_url = f"ws://{host}:{port}/telesthete/stream"
+        # Basic auth: single round-trip, avoids re-upload on multipart /ota.
+        # Server accepts both Basic and Digest via request->authenticate().
+        self._auth = httpx.BasicAuth(admin_user, admin_pass)
         self._client = httpx.AsyncClient(timeout=timeout)
         self._ws = None
         self._serial_buffer: list[str] = []
@@ -89,6 +103,43 @@ class RookBridge:
         resp.raise_for_status()
         return resp.json()
 
+    async def consumer(self, key: str | None = None, code: int | None = None) -> dict:
+        body: dict = {}
+        if key is not None:
+            body["key"] = key
+        if code is not None:
+            body["code"] = code
+        resp = await self._client.post(f"{self.base_url}/consumer", json=body)
+        resp.raise_for_status()
+        return resp.json()
+
+    async def ota(self, firmware_path: str, timeout: float = 180.0) -> dict:
+        """Wireless flash. Posts firmware.bin as raw body to /ota.
+        Device reboots into new image on success."""
+        from pathlib import Path
+        p = Path(firmware_path)
+        size = p.stat().st_size
+        data_bytes = p.read_bytes()  # buffer fully so Content-Length is set
+        try:
+            resp = await self._client.post(
+                f"{self.base_url}/ota",
+                content=data_bytes,
+                headers={"Content-Type": "application/octet-stream"},
+                auth=self._auth,
+                timeout=timeout,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except (
+            httpx.ReadError,
+            httpx.RemoteProtocolError,
+            httpx.ReadTimeout,
+            httpx.ConnectError,
+        ) as e:
+            data = {"ok": True, "response_lost": True, "exception": f"{type(e).__name__}: {e}"}
+        data["uploaded_bytes"] = size
+        return data
+
     # ---- HTTP: Serial (legacy, kept for backwards compat) ----
 
     async def read_serial(self) -> dict:
@@ -166,10 +217,45 @@ class RookBridge:
         treat that as success."""
         try:
             resp = await self._client.post(
-                f"{self.base_url}/flash_mode", timeout=3.0,
+                f"{self.base_url}/flash_mode", timeout=3.0, auth=self._auth,
             )
             resp.raise_for_status()
             return resp.json()
+        except (httpx.ReadError, httpx.RemoteProtocolError, httpx.ConnectError):
+            return {"ok": True, "response_lost": True}
+
+    async def get_config(self) -> str:
+        """Fetch the rendered HTML config page (admin auth)."""
+        resp = await self._client.get(f"{self.base_url}/config", auth=self._auth)
+        resp.raise_for_status()
+        return resp.text
+
+    async def set_config(self, **fields) -> dict:
+        """Update one or more settings (admin auth).
+
+        Accepts: ap_ssid, ap_pass, sta_ssid, sta_pass, admin_user, admin_pass.
+        Device reboots after save — connection drop expected.
+        """
+        try:
+            resp = await self._client.post(
+                f"{self.base_url}/config",
+                data=fields,
+                auth=self._auth,
+                timeout=5.0,
+            )
+            resp.raise_for_status()
+            return {"ok": True, "updated": list(fields.keys())}
+        except (httpx.ReadError, httpx.RemoteProtocolError, httpx.ConnectError):
+            return {"ok": True, "updated": list(fields.keys()), "response_lost": True}
+
+    async def factory_reset(self) -> dict:
+        """Wipe NVS settings and reboot (admin auth)."""
+        try:
+            resp = await self._client.post(
+                f"{self.base_url}/factory_reset", auth=self._auth, timeout=5.0,
+            )
+            resp.raise_for_status()
+            return {"ok": True}
         except (httpx.ReadError, httpx.RemoteProtocolError, httpx.ConnectError):
             return {"ok": True, "response_lost": True}
 

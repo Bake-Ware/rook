@@ -11,6 +11,7 @@
 #include "device_mode.h"
 #include "button.h"
 #include "msc.h"
+#include "settings.h"
 
 AsyncWebServer server(HTTP_PORT);
 
@@ -29,6 +30,7 @@ void setup() {
     USB.manufacturerName("Rook");
     CDCSerial.begin(115200);
     Keyboard.begin();
+    Consumer.begin();
 
     if (mode == STORAGE_MODE_MSC) {
         bool ok = initMSC();
@@ -37,6 +39,9 @@ void setup() {
     }
 
     USB.begin();
+
+    // Load runtime settings from NVS (falls back to compile-time defaults)
+    initSettings();
 
     // WiFi (permanent APSTA)
     setupWifi();

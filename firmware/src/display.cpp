@@ -45,50 +45,50 @@ void displayTask(void* param) {
         tft.setCursor(76, 6);
         tft.printf("KVM v%s", ROOK_FW_VERSION);
 
-        // WiFi
-        tft.setCursor(4, 22);
+        // WiFi badge (compact, right of header)
+        tft.setTextSize(1);
+        tft.setCursor(126, 6);
         tft.setTextColor(wifiOk ? 0x67E0 : ST77XX_RED);
-        tft.printf("WiFi: %s %s", mode, wifiOk ? "OK" : "DOWN");
+        tft.print(mode);
 
-        // IP
-        tft.setCursor(4, 32);
+        // IP — HUGE (size 3 = 18x24 px). Split into 2 lines at the last dot
+        // so the final octet stands out.  e.g. "192.168.1." / "138"
+        tft.setTextSize(3);
         tft.setTextColor(ST77XX_WHITE);
-        tft.print(ip);
+        int lastDot = ip.lastIndexOf('.');
+        String top = (lastDot > 0) ? ip.substring(0, lastDot + 1) : ip;
+        String bot = (lastDot > 0) ? ip.substring(lastDot + 1) : String("");
+        int topX = (160 - (int)top.length() * 18) / 2;
+        int botX = (160 - (int)bot.length() * 18) / 2;
+        if (topX < 0) topX = 0;
+        if (botX < 0) botX = 0;
+        tft.setCursor(topX, 20);
+        tft.print(top);
+        // Last octet in lime for emphasis
+        tft.setTextColor(0x67E0);
+        tft.setCursor(botX, 46);
+        tft.print(bot);
 
-        // TF card / storage mode
-        tft.setCursor(4, 44);
-        if (currentStorageMode() == STORAGE_MODE_MSC) {
-            tft.setTextColor(0xFD20);  // orange — drive mounted on host
-            tft.print("TF: USB drive");
-        } else if (isStorageReady()) {
-            tft.setTextColor(0x67E0);
-            tft.printf("TF: %lluMB", getStorageTotalMB());
-        } else {
-            tft.setTextColor(0xB596);
-            tft.print("TF: none");
-        }
+        tft.setTextSize(1);
 
-        // WS + HTTP + transfer + HID indicator
-        tft.setCursor(4, 56);
+        // Compact status row at the bottom (y=72): TF + WS/HTTP + HID badge
+        unsigned long sec = millis() / 1000;
+        tft.setCursor(4, 72);
+        tft.setTextColor(0xB596);
         if (fileTransferActive) {
             tft.setTextColor(0x67E0);
-            tft.printf("Xfer: %uB", (unsigned)fileTransferBytes);
+            tft.printf("Xfer:%uB", (unsigned)fileTransferBytes);
         } else {
-            tft.setTextColor(0xB596);
-            tft.printf("WS:%d HTTP:%u", wsSerial.count(), getHttpRequestCount());
+            tft.printf("%lum%02lus W:%d H:%u",
+                       sec / 60, sec % 60,
+                       wsSerial.count(), getHttpRequestCount());
         }
-        // HID kill-switch badge (right-aligned on row 56)
+        // HID kill-switch badge (right edge)
         if (!hidEnabled()) {
-            tft.setCursor(118, 56);
+            tft.setCursor(140, 72);
             tft.setTextColor(ST77XX_RED);
-            tft.print("HID!");
+            tft.print("X");
         }
-
-        // Uptime
-        unsigned long sec = millis() / 1000;
-        tft.setCursor(4, 68);
-        tft.setTextColor(0xB596);
-        tft.printf("Up: %lum %lus", sec / 60, sec % 60);
 
         digitalWrite(LCD_BL, LOW);  // keep backlight alive
         vTaskDelay(pdMS_TO_TICKS(1000));

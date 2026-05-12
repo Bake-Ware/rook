@@ -19,7 +19,7 @@
 #define BUTTON_HOLD_IGNORE_MS 1500   // ignore continuous holds (prevent repeat fires)
 
 // ---- Firmware version ----
-#define ROOK_FW_VERSION "0.3.0"
+#define ROOK_FW_VERSION "0.4.0"
 
 // ---- TF Card (SD_MMC 4-bit) ----
 #define SDMMC_CLK   12

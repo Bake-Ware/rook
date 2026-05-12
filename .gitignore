@@ -9,6 +9,8 @@ build/
 
 # Secrets
 firmware/include/secrets.h
+lgtv
+webos_rsa
 
 # PlatformIO
 firmware/.pio/
