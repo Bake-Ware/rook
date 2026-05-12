@@ -13,6 +13,14 @@
 // ---- HID ----
 #define DEFAULT_KEY_DELAY_MS 10
 
+// ---- Button (GPIO 0, active-low with pull-up) ----
+#define BUTTON_PIN          0
+#define BUTTON_DEBOUNCE_MS  50
+#define BUTTON_HOLD_IGNORE_MS 1500   // ignore continuous holds (prevent repeat fires)
+
+// ---- Firmware version ----
+#define ROOK_FW_VERSION "0.3.0"
+
 // ---- TF Card (SD_MMC 4-bit) ----
 #define SDMMC_CLK   12
 #define SDMMC_CMD   16

@@ -125,20 +125,92 @@ async def run_command(cmd: str, timeout: int = 10, serial_device: str = "/dev/tt
 
 @mcp.tool()
 async def get_status() -> str:
-    """Get the Rook KVM bridge device status."""
+    """Get the Rook KVM bridge device status, including storage mode and HID state."""
     status = await bridge.status()
     lines = [
         f"Device:  {status.get('device', '?')}",
         f"Version: {status.get('version', '?')}",
         f"WiFi:    {status.get('wifi_mode', '?')} @ {status.get('ip', '?')}",
-        f"Serial:  {status.get('serial_buffered', 0)} bytes buffered",
-        f"Storage: {status.get('storage', 'unknown')}",
+    ]
+    if status.get("ap_ip"):
+        lines.append(f"  AP IP: {status['ap_ip']}")
+    lines += [
+        f"Storage mode: {status.get('storage_mode', '?')}",
+        f"HID enabled:  {status.get('hid_enabled', '?')}",
+        f"Serial:       {status.get('serial_buffered', 0)} bytes buffered",
+        f"Storage:      {status.get('storage', 'unknown')}",
     ]
     if status.get("storage") == "ok":
         lines.append(f"  Total: {status.get('storage_total_mb', '?')}MB")
         lines.append(f"  Used:  {status.get('storage_used_mb', '?')}MB")
     lines.append(f"Uptime:  {status.get('uptime_ms', 0) / 1000:.1f}s")
     return "\n".join(lines)
+
+
+@mcp.tool()
+async def get_device_mode() -> str:
+    """Return the current SD-card ownership mode: 'internal' or 'msc'.
+
+    - 'internal': firmware owns the SD card; /telesthete/drop endpoints work.
+    - 'msc': host PC owns the SD card via USB Mass Storage; firmware file ops return 503.
+    """
+    result = await bridge.get_mode()
+    return result.get("mode", "?")
+
+
+@mcp.tool()
+async def set_device_mode(mode: str) -> str:
+    """Switch storage mode between 'internal' and 'msc'. **The device will reboot.**
+
+    Boot takes ~3-5 seconds; subsequent calls may fail until it's back online.
+    Use the physical button on the dongle for the same effect (short press toggles).
+
+    Args:
+        mode: 'internal' or 'msc'
+    """
+    if mode not in ("internal", "msc"):
+        return f"error: mode must be 'internal' or 'msc', got {mode!r}"
+    result = await bridge.set_mode(mode)
+    note = " (response was lost — device is rebooting, this is normal)" if result.get("response_lost") else ""
+    return f"Switching to mode={result.get('mode', mode)}; device rebooting{note}."
+
+
+@mcp.tool()
+async def get_hid_enabled() -> str:
+    """Return whether HID input (typing/keys) is currently enabled on the dongle."""
+    result = await bridge.get_hid_enabled()
+    return "enabled" if result.get("enabled") else "disabled"
+
+
+@mcp.tool()
+async def set_hid_enabled(enabled: bool) -> str:
+    """Toggle the HID kill-switch. When disabled, /type and /key return 503.
+
+    Useful as a safety lock when running exploratory work on the target —
+    prevents runaway keystrokes. Runtime change, no reboot.
+
+    Args:
+        enabled: True to allow HID input, False to disable it.
+    """
+    result = await bridge.set_hid_enabled(enabled)
+    return f"HID {'enabled' if result.get('enabled') else 'disabled'}"
+
+
+@mcp.tool()
+async def reboot_to_bootloader() -> str:
+    """Reboot the dongle into ROM bootloader mode (USB VID:PID 303A:1001).
+
+    Lets the host flash firmware via esptool/PlatformIO without manually
+    holding the BOOT button while plugging in.
+
+    Workflow: call this tool → device enumerates as bootloader → run
+    `pio run -t upload` → after flashing, **unplug and replug the dongle
+    once** to power-cycle (the RTC flag is sticky across soft resets but
+    clears on power loss).
+    """
+    result = await bridge.reboot_to_bootloader()
+    note = " (HTTP response was lost as device rebooted — expected)" if result.get("response_lost") else ""
+    return f"Device rebooting into ROM bootloader.{note} After flashing, unplug + replug to boot the new firmware."
 
 
 @mcp.tool()

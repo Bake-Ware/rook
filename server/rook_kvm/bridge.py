@@ -125,6 +125,54 @@ class RookBridge:
         resp = await self._client.delete(f"{self.base_url}/telesthete/drop/{path}")
         resp.raise_for_status()
 
+    # ---- HTTP: Device Mode + HID kill-switch ----
+
+    async def get_mode(self) -> dict:
+        resp = await self._client.get(f"{self.base_url}/mode")
+        resp.raise_for_status()
+        return resp.json()
+
+    async def set_mode(self, mode: str) -> dict:
+        """Switch storage mode. Causes the device to reboot — the HTTP
+        response is sent before reboot, but if it doesn't arrive cleanly,
+        treat as success (dongle is rebooting into the new mode)."""
+        try:
+            resp = await self._client.post(
+                f"{self.base_url}/mode", json={"mode": mode},
+                timeout=3.0,
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except (httpx.ReadError, httpx.RemoteProtocolError, httpx.ConnectError):
+            # Device rebooted before HTTP could finalize — that's a success
+            return {"mode": mode, "rebooting": True, "response_lost": True}
+
+    async def get_hid_enabled(self) -> dict:
+        resp = await self._client.get(f"{self.base_url}/hid")
+        resp.raise_for_status()
+        return resp.json()
+
+    async def set_hid_enabled(self, enabled: bool) -> dict:
+        resp = await self._client.post(
+            f"{self.base_url}/hid", json={"enabled": bool(enabled)},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def reboot_to_bootloader(self) -> dict:
+        """Trigger the device into ROM bootloader mode (USB download mode)
+        via software, so the host can flash via esptool without holding the
+        physical BOOT button. The HTTP response may be lost mid-reboot;
+        treat that as success."""
+        try:
+            resp = await self._client.post(
+                f"{self.base_url}/flash_mode", timeout=3.0,
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except (httpx.ReadError, httpx.RemoteProtocolError, httpx.ConnectError):
+            return {"ok": True, "response_lost": True}
+
     async def close(self):
         if self._ws:
             await self._ws.close()

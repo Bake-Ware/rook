@@ -3,6 +3,7 @@
 #include "serial_buf.h"
 #include "storage.h"
 #include "config.h"
+#include "device_mode.h"
 #include <ArduinoJson.h>
 #include <AsyncJson.h>
 #include <WiFi.h>
@@ -33,17 +34,30 @@ static void handleStatus(AsyncWebServerRequest* req) {
     hit();
     JsonDocument doc;
     doc["device"] = TELESTHETE_NAME;
-    doc["version"] = "0.2.0";
+    doc["version"] = ROOK_FW_VERSION;
     doc["uptime_ms"] = millis();
-    doc["wifi_mode"] = (WiFi.getMode() == WIFI_AP) ? "AP" : "STA";
-    doc["ip"] = (WiFi.getMode() == WIFI_AP)
-        ? WiFi.softAPIP().toString()
-        : WiFi.localIP().toString();
+
+    wifi_mode_t wm = WiFi.getMode();
+    const char* wmName = "OFF";
+    if (wm == WIFI_AP_STA) wmName = "APSTA";
+    else if (wm == WIFI_AP) wmName = "AP";
+    else if (wm == WIFI_STA) wmName = "STA";
+    doc["wifi_mode"] = wmName;
+    doc["ip"] = WiFi.localIP().toString();
+    doc["ap_ip"] = WiFi.softAPIP().toString();
     doc["serial_buffered"] = serialBufLen;
-    doc["storage"] = isStorageReady() ? "ok" : "none";
-    if (isStorageReady()) {
-        doc["storage_total_mb"] = getStorageTotalMB();
-        doc["storage_used_mb"] = getStorageUsedMB();
+
+    doc["storage_mode"] = storageModeName(currentStorageMode());
+    doc["hid_enabled"] = hidEnabled();
+
+    if (currentStorageMode() == STORAGE_MODE_INTERNAL) {
+        doc["storage"] = isStorageReady() ? "ok" : "none";
+        if (isStorageReady()) {
+            doc["storage_total_mb"] = getStorageTotalMB();
+            doc["storage_used_mb"] = getStorageUsedMB();
+        }
+    } else {
+        doc["storage"] = "host_owned";
     }
     sendJson(req, 200, doc);
 }
@@ -76,9 +90,25 @@ static void handleSerialClear(AsyncWebServerRequest* req) {
     sendJson(req, 200, doc);
 }
 
+// ---- Mode ----
+static void handleModeGet(AsyncWebServerRequest* req) {
+    hit();
+    JsonDocument doc;
+    doc["mode"] = storageModeName(currentStorageMode());
+    sendJson(req, 200, doc);
+}
+
+static void handleHidGet(AsyncWebServerRequest* req) {
+    hit();
+    JsonDocument doc;
+    doc["enabled"] = hidEnabled();
+    sendJson(req, 200, doc);
+}
+
 // ---- File/Drop Handlers ----
 static void handleDropList(AsyncWebServerRequest* req) {
     hit();
+    if (currentStorageMode() == STORAGE_MODE_MSC) return sendError(req, 503, "card_in_msc");
     if (!isStorageReady()) return sendError(req, 503, "no storage");
 
     File root = SD_MMC.open("/drop");
@@ -99,9 +129,9 @@ static void handleDropList(AsyncWebServerRequest* req) {
 
 static void handleDropDownload(AsyncWebServerRequest* req) {
     hit();
+    if (currentStorageMode() == STORAGE_MODE_MSC) return sendError(req, 503, "card_in_msc");
     if (!isStorageReady()) return sendError(req, 503, "no storage");
 
-    // Extract path after /telesthete/drop/ or /files/
     String uri = req->url();
     String path;
     if (uri.startsWith("/telesthete/drop/"))
@@ -117,6 +147,7 @@ static void handleDropDownload(AsyncWebServerRequest* req) {
 
 static void handleDropDelete(AsyncWebServerRequest* req) {
     hit();
+    if (currentStorageMode() == STORAGE_MODE_MSC) return sendError(req, 503, "card_in_msc");
     if (!isStorageReady()) return sendError(req, 503, "no storage");
 
     String uri = req->url();
@@ -135,11 +166,12 @@ static void handleDropDelete(AsyncWebServerRequest* req) {
     sendJson(req, 200, doc);
 }
 
-// ---- JSON Body Handlers (use AsyncCallbackJsonWebHandler) ----
+// ---- JSON Body Handlers ----
 static void setupJsonRoutes(AsyncWebServer& server) {
-    // POST /type + /telesthete/channel/type
+    // POST /type — HID type, gated by kill-switch
     auto typeHandler = [](AsyncWebServerRequest* req, JsonVariant& json) {
         hit();
+        if (!hidEnabled()) return sendError(req, 503, "hid_disabled");
         const char* text = json["text"];
         if (!text) return sendError(req, 400, "missing 'text'");
         int delayMs = json["delay_ms"] | DEFAULT_KEY_DELAY_MS;
@@ -155,9 +187,10 @@ static void setupJsonRoutes(AsyncWebServer& server) {
     server.addHandler(new AsyncCallbackJsonWebHandler("/type", typeHandler));
     server.addHandler(new AsyncCallbackJsonWebHandler("/telesthete/channel/type", typeHandler));
 
-    // POST /key + /telesthete/channel/key
+    // POST /key — HID key combo, gated by kill-switch
     auto keyHandler = [](AsyncWebServerRequest* req, JsonVariant& json) {
         hit();
+        if (!hidEnabled()) return sendError(req, 503, "hid_disabled");
         JsonArray mods = json["modifiers"].as<JsonArray>();
         if (mods) {
             for (JsonVariant m : mods) {
@@ -183,7 +216,7 @@ static void setupJsonRoutes(AsyncWebServer& server) {
     server.addHandler(new AsyncCallbackJsonWebHandler("/key", keyHandler));
     server.addHandler(new AsyncCallbackJsonWebHandler("/telesthete/channel/key", keyHandler));
 
-    // POST /serial + /telesthete/stream/write
+    // POST /serial — write to CDC
     auto serialWriteHandler = [](AsyncWebServerRequest* req, JsonVariant& json) {
         hit();
         const char* data = json["data"];
@@ -195,6 +228,40 @@ static void setupJsonRoutes(AsyncWebServer& server) {
     };
     server.addHandler(new AsyncCallbackJsonWebHandler("/serial", serialWriteHandler));
     server.addHandler(new AsyncCallbackJsonWebHandler("/telesthete/stream/write", serialWriteHandler));
+
+    // POST /mode — switch storage mode (reboots).
+    // Body: {"mode": "internal" | "msc"}
+    auto modeHandler = [](AsyncWebServerRequest* req, JsonVariant& json) {
+        hit();
+        const char* m = json["mode"];
+        if (!m) return sendError(req, 400, "missing 'mode'");
+        StorageMode target;
+        if (strcmp(m, "internal") == 0)      target = STORAGE_MODE_INTERNAL;
+        else if (strcmp(m, "msc") == 0)      target = STORAGE_MODE_MSC;
+        else return sendError(req, 400, "bad mode");
+
+        JsonDocument resp;
+        resp["mode"] = storageModeName(target);
+        resp["rebooting"] = true;
+        sendJson(req, 200, resp);
+        // schedule reboot after this response has had a chance to flush
+        delay(50);
+        rebootIntoMode(target);  // does not return
+    };
+    server.addHandler(new AsyncCallbackJsonWebHandler("/mode", modeHandler));
+
+    // POST /hid — toggle HID kill-switch.
+    // Body: {"enabled": true|false}
+    auto hidSetHandler = [](AsyncWebServerRequest* req, JsonVariant& json) {
+        hit();
+        if (!json["enabled"].is<bool>()) return sendError(req, 400, "missing 'enabled' bool");
+        bool on = json["enabled"].as<bool>();
+        setHidEnabled(on);
+        JsonDocument resp;
+        resp["enabled"] = on;
+        sendJson(req, 200, resp);
+    };
+    server.addHandler(new AsyncCallbackJsonWebHandler("/hid", hidSetHandler));
 }
 
 // ---- Route Registration ----
@@ -211,19 +278,32 @@ void setupHttpRoutes(AsyncWebServer& server) {
     server.on("/serial/clear", HTTP_POST, handleSerialClear);
     server.on("/telesthete/stream/clear", HTTP_POST, handleSerialClear);
 
-    // JSON body routes
+    // Mode / HID kill-switch (GET)
+    server.on("/mode", HTTP_GET, handleModeGet);
+    server.on("/hid", HTTP_GET, handleHidGet);
+
+    // POST /flash_mode — software-trigger ROM bootloader entry.
+    // Caller flashes via esptool without holding GPIO 0.
+    server.on("/flash_mode", HTTP_POST, [](AsyncWebServerRequest* req) {
+        hit();
+        JsonDocument resp;
+        resp["ok"] = true;
+        resp["message"] = "rebooting into ROM bootloader (VID:PID 303A:1001)";
+        sendJson(req, 200, resp);
+        delay(150);  // let HTTP response flush
+        rebootIntoBootloader();  // does not return
+    });
+
+    // JSON body routes (type, key, serial-write, mode POST, hid POST)
     setupJsonRoutes(server);
 
     // Catch-all handles drop routes + 404
     server.onNotFound([](AsyncWebServerRequest* req) {
         String uri = req->url();
-        // Drop list
         if ((uri == "/telesthete/drop" || uri == "/files") && req->method() == HTTP_GET) {
             handleDropList(req);
-        // Drop download
         } else if ((uri.startsWith("/telesthete/drop/") || uri.startsWith("/files/")) && req->method() == HTTP_GET) {
             handleDropDownload(req);
-        // Drop delete
         } else if ((uri.startsWith("/telesthete/drop/") || uri.startsWith("/files/")) && req->method() == HTTP_DELETE) {
             handleDropDelete(req);
         } else {

@@ -8,42 +8,63 @@
 #include "http_routes.h"
 #include "ws.h"
 #include "display.h"
+#include "device_mode.h"
+#include "button.h"
+#include "msc.h"
 
 AsyncWebServer server(HTTP_PORT);
 
 void setup() {
     Serial.begin(115200);
-    Serial.println("\n=== Rook KVM Bridge v0.2.0 ===");
+    Serial.printf("\n=== Rook KVM Bridge v%s ===\n", ROOK_FW_VERSION);
 
-    // USB composite: HID keyboard + CDC serial
+    // Read persistent storage mode FIRST — it determines USB composite shape.
+    StorageMode mode = loadStorageMode();
+    Serial.printf("Storage mode (boot): %s\n", storageModeName(mode));
+
+    // USB composite — base classes always present, MSC conditionally added.
     USB.VID(0x1209);
     USB.PID(0x0001);
     USB.productName("Rook KVM Bridge");
     USB.manufacturerName("Rook");
     CDCSerial.begin(115200);
     Keyboard.begin();
+
+    if (mode == STORAGE_MODE_MSC) {
+        bool ok = initMSC();
+        Serial.printf("MSC init: %s\n", ok ? "ok" : "failed");
+        // If MSC fails (no card / SDMMC error), fall through with HID+CDC only.
+    }
+
     USB.begin();
 
-    // WiFi
+    // WiFi (permanent APSTA)
     setupWifi();
 
-    // TF Card
-    if (initStorage()) {
-        Serial.printf("TF card: %lluMB\n", getStorageTotalMB());
+    // Filesystem (only in internal mode — MSC mode keeps the card at block level)
+    if (mode == STORAGE_MODE_INTERNAL) {
+        if (initStorage()) {
+            Serial.printf("TF card: %lluMB\n", getStorageTotalMB());
+        } else {
+            Serial.println("TF card: not found");
+        }
     } else {
-        Serial.println("TF card: not found");
+        Serial.println("TF card: owned by host (MSC)");
     }
+
+    // Button (GPIO 0) — short press toggles storage mode (reboots)
+    setupButton();
 
     // HTTP + WebSocket
     setupHttpRoutes(server);
     setupWebSocket(server);
     server.begin();
 
-    // Backlight on early
+    // Backlight on (active low)
     pinMode(LCD_BL, OUTPUT);
     digitalWrite(LCD_BL, LOW);
 
-    // LCD on core 0
+    // LCD task on core 0
     xTaskCreatePinnedToCore(displayTask, "display", 8192, NULL, 1, NULL, 0);
 
     Serial.println("Ready.");
@@ -53,4 +74,5 @@ void loop() {
     pollCDC();
     pushSerialToWs();
     wsSerial.cleanupClients();
+    pollButton();
 }
