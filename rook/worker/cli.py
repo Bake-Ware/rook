@@ -21,6 +21,10 @@ def main() -> None:
     ap.add_argument("--enable", default="",
                     help="comma-separated plugin module names to load; "
                          "default = all builtins")
+    ap.add_argument("--name", default=None,
+                    help="human-readable worker name (default: hostname)")
+    ap.add_argument("--announce-interval", type=float, default=30.0,
+                    help="seconds between announce broadcasts")
     ap.add_argument("--bind-port", type=int, default=0,
                     help="local UDP bind port (0 = ephemeral)")
     ap.add_argument("--keepalive", type=float, default=20.0,
@@ -45,7 +49,8 @@ def main() -> None:
     )
 
     enabled = [s.strip() for s in args.enable.split(",") if s.strip()] or None
-    worker = Worker(transport=transport, enabled=enabled)
+    worker = Worker(transport=transport, enabled=enabled, name=args.name,
+                    announce_interval=args.announce_interval)
 
     async def runner() -> int:
         loop = asyncio.get_running_loop()
