@@ -173,3 +173,13 @@ This project aligns with the Telesthete transport abstraction:
 - **Drop** (`/telesthete/drop/*`) — file storage on TF card
 
 All legacy paths (`/status`, `/type`, `/key`, `/serial`) remain as aliases.
+
+## TODO — Future Ideas
+
+- **BT tether to phone for internet** — let the dongle pair with a phone over
+  Bluetooth (PAN/Tether profile) and use that link as its uplink. Default
+  uplink to BT-tether so the dongle can phone home to the Telesthete hub
+  without ever joining a local WiFi. Likely path: NimBLE-Arduino stack +
+  BT-Classic PAN client. WiFi STA stays as a fallback / power-saving option.
+  Needed when STA isn't an option (e.g., guest network, captive portal, no
+  WiFi creds provisioned).
