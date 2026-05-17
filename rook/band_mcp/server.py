@@ -19,15 +19,74 @@ import logging
 import os
 import sys
 
+from mcp.server.auth.settings import (
+    AuthSettings,
+    ClientRegistrationOptions,
+    RevocationOptions,
+)
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
+from pydantic import AnyHttpUrl
 
 from .client import BandClient
+from .oauth import InMemoryProvider, StaticTokenVerifier, build_oauth_routes
 
 log = logging.getLogger("rook.band_mcp.server")
 
 
-def build_server(client: BandClient) -> FastMCP:
-    mcp = FastMCP("rook-band")
+def build_server(client: BandClient,
+                 allowed_hosts: list[str] | None = None,
+                 public_url: str | None = None,
+                 auth_password: str | None = None,
+                 persist_path: str | None = None,
+                 preset_client_id: str | None = None,
+                 preset_client_secret: str | None = None,
+                 preset_redirect_uris: list[str] | None = None,
+                 ) -> tuple[FastMCP, InMemoryProvider | None]:
+    """Build the FastMCP server. If `auth_password` is set, OAuth is wired with
+    persistence at `persist_path`. If `preset_client_id`/`preset_client_secret`
+    are set, that client is pre-installed (claude.ai uses those creds instead
+    of dynamic registration)."""
+    sec = TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=list(allowed_hosts or []) + [
+            "127.0.0.1", "127.0.0.1:8765", "localhost", "localhost:8765",
+        ],
+    )
+
+    provider: InMemoryProvider | None = None
+    auth_settings: AuthSettings | None = None
+    if public_url and auth_password:
+        preset = None
+        if preset_client_id and preset_client_secret:
+            preset = (preset_client_id, preset_client_secret,
+                      preset_redirect_uris or [
+                          "https://claude.ai/api/mcp/auth_callback",
+                          "https://claude.ai/api/oauth/callback",
+                      ])
+        provider = InMemoryProvider(
+            auth_password=auth_password,
+            persist_path=persist_path,
+            preset_client=preset,
+        )
+        auth_settings = AuthSettings(
+            issuer_url=AnyHttpUrl(public_url),
+            resource_server_url=AnyHttpUrl(public_url + "/mcp"),
+            client_registration_options=ClientRegistrationOptions(
+                enabled=True,
+                valid_scopes=["rook"],
+                default_scopes=["rook"],
+            ),
+            revocation_options=RevocationOptions(enabled=True),
+            required_scopes=["rook"],
+        )
+
+    mcp = FastMCP(
+        "rook-band",
+        transport_security=sec,
+        auth_server_provider=provider,
+        auth=auth_settings,
+    )
 
     @mcp.tool()
     async def rook_workers() -> str:
@@ -89,7 +148,7 @@ def build_server(client: BandClient) -> FastMCP:
                                   timeout=timeout)
         return json.dumps(reply, indent=2)
 
-    return mcp
+    return mcp, provider
 
 
 async def _amain(args) -> None:
@@ -97,9 +156,63 @@ async def _amain(args) -> None:
                         hub_port=args.hub_port)
     await client.start()
 
-    mcp = build_server(client)
-    # FastMCP's streamable_http_app returns a starlette ASGI app
+    allowed_hosts = [h.strip() for h in (args.allowed_hosts or "").split(",")
+                     if h.strip()]
+    mcp, provider = build_server(
+        client,
+        allowed_hosts=allowed_hosts,
+        public_url=args.public_url,
+        auth_password=args.auth_password,
+        persist_path=args.persist_path,
+        preset_client_id=args.client_id,
+        preset_client_secret=args.client_secret,
+    )
     app = mcp.streamable_http_app()
+    if provider is not None:
+        # Prepend so our lenient /token and /oauth/authorize shadow MCP's.
+        extras = build_oauth_routes(provider)
+        for r in reversed(extras):
+            app.router.routes.insert(0, r)
+
+        from starlette.types import ASGIApp, Receive, Scope, Send
+        class _TokenDebug:
+            """Log POST bodies + 4xx responses on /token to diagnose OAuth.
+
+            Intentionally noisy. Strip once OAuth is healthy."""
+
+            def __init__(self, app: ASGIApp) -> None:
+                self.app = app
+
+            async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+                if scope["type"] != "http" or scope.get("path") != "/token":
+                    await self.app(scope, receive, send)
+                    return
+                req_body = bytearray()
+
+                async def recv_wrap():
+                    msg = await receive()
+                    if msg["type"] == "http.request":
+                        req_body.extend(msg.get("body", b""))
+                    return msg
+
+                resp_status = {"code": 0}
+                resp_body = bytearray()
+
+                async def send_wrap(msg):
+                    if msg["type"] == "http.response.start":
+                        resp_status["code"] = msg["status"]
+                    elif msg["type"] == "http.response.body":
+                        resp_body.extend(msg.get("body", b""))
+                    await send(msg)
+
+                await self.app(scope, recv_wrap, send_wrap)
+                hdrs = {k.decode().lower(): v.decode() for k, v in scope["headers"]}
+                authz = hdrs.get("authorization", "(none)")
+                log.info("[/token] auth=%s body=%s status=%s resp=%s",
+                         authz[:80], req_body.decode(errors="replace")[:400],
+                         resp_status["code"], resp_body.decode(errors="replace")[:400])
+
+        app = _TokenDebug(app)
 
     import uvicorn
     config = uvicorn.Config(app, host=args.bind_host, port=args.bind_port,
@@ -121,6 +234,28 @@ def main() -> None:
                     help="band pre-shared key (or env ROOK_BAND_PSK)")
     ap.add_argument("--bind", default="127.0.0.1:8765",
                     help="HTTP bind host:port for the MCP server")
+    ap.add_argument("--allowed-hosts",
+                    default=os.environ.get("ROOK_ALLOWED_HOSTS", ""),
+                    help="comma-separated public Host headers to accept "
+                         "(e.g. mcp.bakeforge.com). Loopback always allowed.")
+    ap.add_argument("--public-url",
+                    default=os.environ.get("ROOK_MCP_PUBLIC_URL", ""),
+                    help="public https URL (e.g. https://mcp.bakeforge.com). "
+                         "Advertised in OAuth metadata for resource-server "
+                         "discovery.")
+    ap.add_argument("--auth-password",
+                    default=os.environ.get("ROOK_MCP_AUTH_PASSWORD", ""),
+                    help="admin password gating OAuth /authorize.")
+    ap.add_argument("--persist-path",
+                    default=os.environ.get("ROOK_MCP_PERSIST",
+                                            "/var/lib/rook-band-mcp/oauth.json"),
+                    help="JSON file for persistent OAuth clients + tokens.")
+    ap.add_argument("--client-id",
+                    default=os.environ.get("ROOK_MCP_CLIENT_ID", ""),
+                    help="pre-installed OAuth client id (claude.ai paste-target).")
+    ap.add_argument("--client-secret",
+                    default=os.environ.get("ROOK_MCP_CLIENT_SECRET", ""),
+                    help="pre-installed OAuth client secret.")
     ap.add_argument("-v", "--verbose", action="count", default=0)
     args = ap.parse_args()
 
