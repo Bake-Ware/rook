@@ -1,9 +1,16 @@
 """Telesthete-hub transport — UDP, hub-routed, band-id addressable.
 
-Every outbound packet goes to the configured hub address. The hub forwards to
-all other peers in the same band (matched by the 16-byte band_id). The
-worker thus auto-registers on first send and stays registered while it
-keeps sending (the hub evicts idle peers after ~60s).
+Every outbound packet goes to the configured hub address. The hub forwards
+to all other peers in the same band (matched by the 16-byte band_id). The
+worker auto-registers on first send and stays registered while it keeps
+sending (the hub evicts idle peers after ~60s).
+
+Messages larger than one UDP datagram are fragmented at the Channel layer
+per SPEC §6.4 ("Maximum packet payload: 1024 bytes — fragments larger
+sends"). Each fragment is a self-contained Telesthete CHANNEL frame with
+its own AEAD; the receiver decrypts each frame and feeds the cleartext
+chunk through :class:`rook.worker.wire.Reassembler` to recover the full
+message.
 
 This intentionally bypasses the LAN-broadcast discovery in
 ``telesthete.transport.udp.UDPTransport`` — discovery is the hub's job.
@@ -23,9 +30,16 @@ from telesthete.protocol.framing import (
     unpack_packet,
 )
 
+from ..wire import Fragmenter, Reassembler, HEADER_SIZE as FRAG_HEADER
 from .base import OnMessage
 
 log = logging.getLogger("rook.worker.transports.telesthete-hub")
+
+
+# A bare 1-byte payload still goes through the fragmenter (single fragment)
+# so the wire shape is uniform. Receiver detects keepalives by examining
+# the assembled payload, not by sniffing inside frames.
+_KEEPALIVE_PAYLOAD = b"\x00"
 
 
 class TelestheteHubTransport:
@@ -51,6 +65,9 @@ class TelestheteHubTransport:
         self._tasks: list[asyncio.Task] = []
         self._stopping = False
 
+        self._fragmenter = Fragmenter()
+        self._reassembler = Reassembler()
+
     # -- lifecycle -----------------------------------------------------------
 
     async def start(self, on_message: OnMessage) -> None:
@@ -59,13 +76,15 @@ class TelestheteHubTransport:
         self._sock.bind(("0.0.0.0", self._bind_port))
         self._sock.setblocking(False)
         log.info(
-            "telesthete-hub transport up: hub=%s:%d band_id=%s local=%s",
-            self._hub[0], self._hub[1], self.band_id.hex()[:16], self._sock.getsockname(),
+            "telesthete-hub transport up: hub=%s:%d band_id=%s local=%s "
+            "frag_overhead=%dB",
+            self._hub[0], self._hub[1], self.band_id.hex()[:16],
+            self._sock.getsockname(), FRAG_HEADER,
         )
 
-        # Implicit registration: send a zero-payload Channel frame so the hub
-        # learns our (NAT'd) address before any real traffic.
-        await self.send(b"\x00")  # 1-byte payload satisfies min-packet rule
+        # Implicit registration: send a zero-payload frame so the hub learns
+        # our (NAT'd) address before any real traffic.
+        await self.send(_KEEPALIVE_PAYLOAD)
 
         loop = asyncio.get_running_loop()
         self._tasks = [
@@ -93,20 +112,27 @@ class TelestheteHubTransport:
     # -- send/recv -----------------------------------------------------------
 
     async def send(self, payload: bytes, peer_id: tuple | None = None) -> None:
+        """Fragment + encrypt + send. Big payloads are split across multiple
+        Telesthete CHANNEL frames per SPEC §6.4."""
         if self._sock is None:
             raise RuntimeError("transport not started")
-        self._seq += 1
-        seq = self._seq
-        ciphertext = self._crypto.encrypt(seq, payload)
-        frame = pack_packet(
-            band_id=self.band_id,
-            channel_type=ChannelType.CHANNEL,
-            channel_id=0,
-            sequence=seq,
-            ciphertext=ciphertext,
-        )
+        chunks = self._fragmenter.split(payload)
         loop = asyncio.get_running_loop()
-        await loop.sock_sendto(self._sock, frame, self._hub)
+        for chunk in chunks:
+            self._seq += 1
+            seq = self._seq
+            ciphertext = self._crypto.encrypt(seq, chunk)
+            frame = pack_packet(
+                band_id=self.band_id,
+                channel_type=ChannelType.CHANNEL,
+                channel_id=0,
+                sequence=seq,
+                ciphertext=ciphertext,
+            )
+            await loop.sock_sendto(self._sock, frame, self._hub)
+        if len(chunks) > 1:
+            log.debug("sent %d-fragment message (%d B payload)",
+                      len(chunks), len(payload))
 
     async def _recv_loop(self) -> None:
         assert self._sock is not None
@@ -128,20 +154,21 @@ class TelestheteHubTransport:
                 log.debug("bad frame from hub: %s", e)
                 continue
             if pkt.band_id != self.band_id:
-                continue  # not our band; hub shouldn't send these but be defensive
+                continue
             try:
-                plaintext = self._crypto.decrypt(pkt.sequence, pkt.ciphertext)
+                cleartext = self._crypto.decrypt(pkt.sequence, pkt.ciphertext)
             except Exception as e:
                 log.debug("decrypt failed seq=%d: %s", pkt.sequence, e)
                 continue
-            if plaintext == b"\x00":
-                # peer-registration ping; ignore
+            # cleartext is a fragment chunk — feed it through the reassembler.
+            assembled = self._reassembler.feed(cleartext)
+            if assembled is None:
+                continue
+            if assembled == _KEEPALIVE_PAYLOAD:
                 continue
             if self._on_message is not None:
                 try:
-                    # peer_id is opaque — use (band_id, channel_id) as a coarse
-                    # bucket. The hub hides the real peer addr.
-                    await self._on_message(plaintext, (pkt.channel_id,))
+                    await self._on_message(assembled, (pkt.channel_id,))
                 except Exception:
                     log.exception("on_message handler raised")
 
@@ -150,7 +177,7 @@ class TelestheteHubTransport:
             try:
                 await asyncio.sleep(self._keepalive)
                 if not self._stopping:
-                    await self.send(b"\x00")
+                    await self.send(_KEEPALIVE_PAYLOAD)
             except asyncio.CancelledError:
                 break
             except Exception:
