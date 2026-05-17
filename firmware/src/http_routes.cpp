@@ -373,6 +373,17 @@ void setupHttpRoutes(AsyncWebServer& server) {
             "<label>SSID<input name=sta_ssid value=\"" + escapeAttr(s.sta_ssid) + "\"></label>"
             "<label>Password<input name=sta_pass value=\"" + escapeAttr(s.sta_pass) + "\"></label>"
             "</fieldset>"
+            "<fieldset><legend>Phone Hotspot (fallback)</legend>"
+            "<small>If primary WiFi fails, dongle joins this hotspot. Leave blank to disable.</small>"
+            "<label>SSID<input name=phone_ssid value=\"" + escapeAttr(s.phone_ssid) + "\"></label>"
+            "<label>Password<input name=phone_pass value=\"" + escapeAttr(s.phone_pass) + "\"></label>"
+            "</fieldset>"
+            "<fieldset><legend>Telesthete Hub</legend>"
+            "<label>Hub Host<input name=hub_host value=\"" + escapeAttr(s.hub_host) + "\"></label>"
+            "<label>Hub Port<input name=hub_port type=number value=\"" + String(s.hub_port) + "\"></label>"
+            "<label>Band PSK<input name=band_psk value=\"" + escapeAttr(s.band_psk) + "\"></label>"
+            "<label>Worker Name<input name=worker_name value=\"" + escapeAttr(s.worker_name) + "\"></label>"
+            "</fieldset>"
             "<fieldset><legend>Admin (Basic Auth on /config and /factory_reset)</legend>"
             "<label>Username<input name=admin_user value=\"" + escapeAttr(s.admin_user) + "\"></label>"
             "<label>Password<input name=admin_pass value=\"" + escapeAttr(s.admin_pass) + "\"></label>"
@@ -398,6 +409,14 @@ void setupHttpRoutes(AsyncWebServer& server) {
         pull("sta_pass",   s.sta_pass);
         pull("admin_user", s.admin_user);
         pull("admin_pass", s.admin_pass);
+        pull("hub_host",   s.hub_host);
+        if (req->hasParam("hub_port", true)) {
+            s.hub_port = (uint16_t)req->getParam("hub_port", true)->value().toInt();
+        }
+        pull("band_psk",   s.band_psk);
+        pull("worker_name", s.worker_name);
+        pull("phone_ssid", s.phone_ssid);
+        pull("phone_pass", s.phone_pass);
         updateSettings(s);
         req->send(200, "text/html",
             "<html><body style='font-family:system-ui;background:#111;color:#eee;"

@@ -5,6 +5,7 @@
 #include "http_routes.h"
 #include "ws.h"
 #include "device_mode.h"
+#include "telesthete.h"
 #include <WiFi.h>
 #include <SPI.h>
 #include <Adafruit_GFX.h>
@@ -108,6 +109,13 @@ void displayTask(void* param) {
             tft.setTextColor(ST77XX_RED);
             tft.print("X");
         }
+
+        // Hub-status badge — single letter after the STA mode indicator on
+        // the top row. Lime = OK, red = no recent traffic.
+        bool hubOk = telestheteHubOk();
+        tft.setCursor(74, 20);
+        tft.setTextColor(hubOk ? 0x67E0 : ST77XX_RED);
+        tft.print(hubOk ? "H" : "h");
 
         // ---- Sample collection ----
         // Network: HTTP request delta + current WS connection count.

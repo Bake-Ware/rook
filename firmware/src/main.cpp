@@ -12,6 +12,7 @@
 #include "button.h"
 #include "msc.h"
 #include "settings.h"
+#include "telesthete.h"
 
 AsyncWebServer server(HTTP_PORT);
 
@@ -71,6 +72,9 @@ void setup() {
 
     // LCD task on core 0
     xTaskCreatePinnedToCore(displayTask, "display", 8192, NULL, 1, NULL, 0);
+
+    // Telesthete band worker (announces to hub, answers RPC)
+    setupTelesthete();
 
     Serial.println("Ready.");
 }

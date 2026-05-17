@@ -174,6 +174,33 @@ This project aligns with the Telesthete transport abstraction:
 
 All legacy paths (`/status`, `/type`, `/key`, `/serial`) remain as aliases.
 
+## v0.5.0 — 2026-05-17 — Telesthete band worker
+
+Dongle now self-registers as a worker on the Telesthete band at boot,
+exposing `info.*` and `kvm.*` capabilities (host, uptime, ping, type, key,
+consumer, hid.set/get). Reachable from the Claude MCP connector at
+`https://mcp.bakeforge.com/mcp` without any LAN access to the dongle.
+
+Wire: XSalsa20-Poly1305 (NaCl secretbox construction) byte-for-byte
+compatible with the Python reference, 27-byte band-id header + 21-byte
+fragmentation envelope per SPEC §6.4. Single-fragment send only for v1;
+multi-fragment inbound is dropped with a debug log. Crypto is implemented
+in-firmware with poly1305-donna-32 + an inline Salsa20 / HSalsa20 because
+the ESP32 Arduino mbedTLS is built with `MBEDTLS_POLY1305_C` disabled.
+
+WiFi: primary STA tries for 15s, then falls back to the optional phone
+hotspot (set via `/config`). AP stays up the whole time as a rescue path.
+
+Settings persisted in NVS, all overridable from `/config`: `hub_host`
+(default `hub.bakeforge.com`), `hub_port` (7474), `band_psk`,
+`worker_name` (auto = `rook-kvm-<mac suffix>`), `phone_ssid`,
+`phone_pass`. DNS record `hub.bakeforge.com → 151.145.63.234` lives in
+Cloudflare (TTL 300, unproxied).
+
+LCD: added a single-char hub indicator `H` / `h` (lime / red) on the
+top-row metadata strip — solid lime means the dongle has heard from any
+band peer within the last 60s.
+
 ## TODO — Future Ideas
 
 - **BT tether to phone for internet** — let the dongle pair with a phone over

@@ -8,6 +8,16 @@ struct DeviceSettings {
     String sta_pass;
     String admin_user;
     String admin_pass;
+
+    // Telesthete hub + band
+    String hub_host;
+    uint16_t hub_port;
+    String band_psk;
+    String worker_name;
+
+    // Phone hotspot fallback
+    String phone_ssid;
+    String phone_pass;
 };
 
 // Load from NVS on boot, falling back to compile-time defaults (secrets.h).
