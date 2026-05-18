@@ -20,6 +20,7 @@
 #include "config.h"
 #include "settings.h"
 #include "hid.h"
+#include "ble_hid.h"
 #include "device_mode.h"
 
 #include <Arduino.h>
@@ -491,6 +492,7 @@ static const char* CAPS_LIST[] = {
     "info.host", "info.uptime", "info.ping",
     "kvm.type", "kvm.key", "kvm.consumer",
     "kvm.hid.set", "kvm.hid.get",
+    "bthid.type", "bthid.key", "bthid.consumer", "bthid.status",
 };
 static const size_t CAPS_LIST_N = sizeof(CAPS_LIST) / sizeof(CAPS_LIST[0]);
 
@@ -504,6 +506,7 @@ static void announce() {
     JsonArray plugins = doc["plugins"].to<JsonArray>();
     plugins.add("info");
     plugins.add("kvm");
+    plugins.add("bthid");
     String out;
     serializeJson(doc, out);
     send_string(out);
@@ -630,6 +633,60 @@ static void cap_kvm_hid_get(const char* msg_id) {
     reply_ok(msg_id, r);
 }
 
+// ---- BT HID caps ----
+
+static void cap_bthid_status(const char* msg_id) {
+    JsonDocument r;
+    r["connected"] = bleHidConnected();
+    reply_ok(msg_id, r);
+}
+
+static void cap_bthid_type(const char* msg_id, JsonVariant args) {
+    const char* text = args["text"];
+    if (!text) { reply_err(msg_id, "missing 'text'"); return; }
+    int delay_ms = args["delay_ms"] | DEFAULT_KEY_DELAY_MS;
+    size_t typed = bleHidType(text, delay_ms);
+    if (typed == 0 && strlen(text) > 0) {
+        reply_err(msg_id, "no BLE host connected");
+        return;
+    }
+    JsonDocument r;
+    r["typed"] = (uint32_t)typed;
+    reply_ok(msg_id, r);
+}
+
+static void cap_bthid_key(const char* msg_id, JsonVariant args) {
+    const char* key = args["key"];
+    JsonArray mods_arr = args["modifiers"].as<JsonArray>();
+    const char* mods[8] = {nullptr};
+    size_t mods_n = 0;
+    if (mods_arr) {
+        for (JsonVariant m : mods_arr) {
+            if (mods_n >= 8) break;
+            mods[mods_n++] = m.as<const char*>();
+        }
+    }
+    if (!bleHidKey(key, mods, mods_n)) {
+        reply_err(msg_id, "no BLE host connected");
+        return;
+    }
+    JsonDocument r;
+    r["ok"] = true;
+    reply_ok(msg_id, r);
+}
+
+static void cap_bthid_consumer(const char* msg_id, JsonVariant args) {
+    const char* name = args["key"];
+    if (!name) { reply_err(msg_id, "missing 'key'"); return; }
+    if (!bleHidConsumer(name, 0)) {
+        reply_err(msg_id, "unknown consumer key or BLE not connected");
+        return;
+    }
+    JsonDocument r;
+    r["ok"] = true;
+    reply_ok(msg_id, r);
+}
+
 static void dispatch(const uint8_t* payload, size_t len) {
     if (len == 1 && payload[0] == 0x00) {
         // keepalive sentinel — ignore
@@ -649,14 +706,18 @@ static void dispatch(const uint8_t* payload, size_t len) {
     const char* msg_id = doc["id"];
     JsonVariant args = doc["args"];
 
-    if      (strcmp(cap, "info.host")   == 0) cap_info_host(msg_id);
-    else if (strcmp(cap, "info.uptime") == 0) cap_info_uptime(msg_id);
-    else if (strcmp(cap, "info.ping")   == 0) cap_info_ping(msg_id, args);
-    else if (strcmp(cap, "kvm.type")    == 0) cap_kvm_type(msg_id, args);
-    else if (strcmp(cap, "kvm.key")     == 0) cap_kvm_key(msg_id, args);
-    else if (strcmp(cap, "kvm.consumer")== 0) cap_kvm_consumer(msg_id, args);
-    else if (strcmp(cap, "kvm.hid.set") == 0) cap_kvm_hid_set(msg_id, args);
-    else if (strcmp(cap, "kvm.hid.get") == 0) cap_kvm_hid_get(msg_id);
+    if      (strcmp(cap, "info.host")     == 0) cap_info_host(msg_id);
+    else if (strcmp(cap, "info.uptime")   == 0) cap_info_uptime(msg_id);
+    else if (strcmp(cap, "info.ping")     == 0) cap_info_ping(msg_id, args);
+    else if (strcmp(cap, "kvm.type")      == 0) cap_kvm_type(msg_id, args);
+    else if (strcmp(cap, "kvm.key")       == 0) cap_kvm_key(msg_id, args);
+    else if (strcmp(cap, "kvm.consumer")  == 0) cap_kvm_consumer(msg_id, args);
+    else if (strcmp(cap, "kvm.hid.set")   == 0) cap_kvm_hid_set(msg_id, args);
+    else if (strcmp(cap, "kvm.hid.get")   == 0) cap_kvm_hid_get(msg_id);
+    else if (strcmp(cap, "bthid.status")  == 0) cap_bthid_status(msg_id);
+    else if (strcmp(cap, "bthid.type")    == 0) cap_bthid_type(msg_id, args);
+    else if (strcmp(cap, "bthid.key")     == 0) cap_bthid_key(msg_id, args);
+    else if (strcmp(cap, "bthid.consumer")== 0) cap_bthid_consumer(msg_id, args);
     else if (target) {
         // only reply with "unknown" when addressed directly, to avoid
         // spamming the band when peers issue open calls.

@@ -6,6 +6,7 @@
 #include "ws.h"
 #include "device_mode.h"
 #include "telesthete.h"
+#include "ble_hid.h"
 #include <WiFi.h>
 #include <SPI.h>
 #include <Adafruit_GFX.h>
@@ -70,9 +71,18 @@ void displayTask(void* param) {
         tft.setCursor(2, 2);
         tft.print("R00K");
         tft.setTextSize(1);
-        tft.setTextColor(0xB596);
+        // Left: connected SSID (truncated). Replaces firmware version on
+        // the chrome — version is still in /status.
         tft.setCursor(2, 20);
-        tft.printf("v%s", ROOK_FW_VERSION);
+        if (staConnected) {
+            tft.setTextColor(0x67E0);
+            String ssid = WiFi.SSID();
+            if (ssid.length() > 8) ssid = ssid.substring(0, 8);
+            tft.print(ssid);
+        } else {
+            tft.setTextColor(0xB596);
+            tft.print("no-sta");
+        }
         tft.setCursor(62, 20);
         tft.setTextColor(wifiOk ? 0x67E0 : ST77XX_RED);
         tft.print(mode);
@@ -116,6 +126,16 @@ void displayTask(void* param) {
         tft.setCursor(74, 20);
         tft.setTextColor(hubOk ? 0x67E0 : ST77XX_RED);
         tft.print(hubOk ? "H" : "h");
+
+        // BLE HID dot — solid blue when a host is paired+connected, blinking
+        // 1Hz while advertising and waiting. We toggle a static flag each
+        // render instead of sampling millis(), so the 1s redraw period
+        // doesn't alias.
+        static bool ble_blink_phase = false;
+        ble_blink_phase = !ble_blink_phase;
+        bool bleConn = bleHidConnected();
+        bool show = bleConn || ble_blink_phase;
+        if (show) tft.fillCircle(53, 9, 4, 0x041F);  // ST77XX blue
 
         // ---- Sample collection ----
         // Network: HTTP request delta + current WS connection count.

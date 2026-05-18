@@ -2,6 +2,7 @@
 #include "config.h"
 #include <Preferences.h>
 #include <WiFi.h>
+#include <ArduinoJson.h>
 
 #ifndef ADMIN_USER
 #define ADMIN_USER "bake"
@@ -53,7 +54,35 @@ void initSettings() {
     g.worker_name = p.getString("worker_name", defaultWorkerName());
     g.phone_ssid  = p.getString("phone_ssid", PHONE_SSID);
     g.phone_pass  = p.getString("phone_pass", PHONE_PASS);
+    g.wifi_networks = p.getString("wifi_nets", "");
     p.end();
+
+    // First-boot seed: build wifi_networks from the legacy single-STA +
+    // phone-hotspot fields plus the firmware's prioritized defaults. Later
+    // edits go through /config and persist as JSON in `wifi_nets`.
+    if (g.wifi_networks.length() == 0) {
+        JsonDocument doc;
+        JsonArray arr = doc.to<JsonArray>();
+        auto addNet = [&](const String& ssid, const String& pass, int prio) {
+            if (ssid.length() == 0) return;
+            JsonObject o = arr.add<JsonObject>();
+            o["ssid"] = ssid;
+            o["pass"] = pass;
+            o["priority"] = prio;
+        };
+        // Firmware-shipped defaults, highest priority first.
+        addNet("bifrost", "1234567890", 1);
+        addNet(g.sta_ssid, g.sta_pass, 5);
+        addNet(g.phone_ssid, g.phone_pass, 9);
+        String out;
+        serializeJson(doc, out);
+        g.wifi_networks = out;
+
+        Preferences pw;
+        pw.begin(NS, false);
+        pw.putString("wifi_nets", out);
+        pw.end();
+    }
 }
 
 const DeviceSettings& getSettings() { return g; }
@@ -73,6 +102,7 @@ void updateSettings(const DeviceSettings& s) {
     p.putString("worker_name", s.worker_name);
     p.putString("phone_ssid", s.phone_ssid);
     p.putString("phone_pass", s.phone_pass);
+    p.putString("wifi_nets",  s.wifi_networks);
     p.end();
     g = s;
 }

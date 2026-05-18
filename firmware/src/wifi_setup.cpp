@@ -1,11 +1,40 @@
 #include "wifi_setup.h"
 #include <WiFi.h>
+#include <ArduinoJson.h>
+#include <algorithm>
+#include <vector>
 #include "settings.h"
 
-static const uint32_t PRIMARY_WAIT_MS = 15000;
+static const uint32_t PER_NET_WAIT_MS = 15000;
 
-// Try primary STA. If it doesn't associate, fall back to the phone hotspot
-// (if configured). AP stays up the whole time as a rescue path.
+struct WifiNet {
+    String ssid;
+    String pass;
+    int priority;
+};
+
+static std::vector<WifiNet> parseNetworks(const String& json) {
+    std::vector<WifiNet> out;
+    if (json.length() == 0) return out;
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, json);
+    if (err) {
+        Serial.printf("wifi: wifi_networks parse failed: %s\n", err.c_str());
+        return out;
+    }
+    if (!doc.is<JsonArray>()) return out;
+    for (JsonObject o : doc.as<JsonArray>()) {
+        WifiNet n;
+        n.ssid = String(o["ssid"].as<const char*>() ? o["ssid"].as<const char*>() : "");
+        n.pass = String(o["pass"].as<const char*>() ? o["pass"].as<const char*>() : "");
+        n.priority = o["priority"] | 100;
+        if (n.ssid.length()) out.push_back(n);
+    }
+    std::sort(out.begin(), out.end(),
+              [](const WifiNet& a, const WifiNet& b) { return a.priority < b.priority; });
+    return out;
+}
+
 void setupWifi() {
     const auto& s = getSettings();
     WiFi.mode(WIFI_AP_STA);
@@ -17,25 +46,20 @@ void setupWifi() {
             WiFi.softAP(s.ap_ssid.c_str());
     }
 
-    if (s.sta_ssid.length()) {
-        Serial.printf("WiFi STA: trying %s\n", s.sta_ssid.c_str());
-        WiFi.begin(s.sta_ssid.c_str(), s.sta_pass.c_str());
-        uint32_t t0 = millis();
-        while (WiFi.status() != WL_CONNECTED && (millis() - t0) < PRIMARY_WAIT_MS) {
-            delay(250);
-        }
-    }
+    auto nets = parseNetworks(s.wifi_networks);
+    Serial.printf("WiFi: %u remembered network(s) to try\n", (unsigned)nets.size());
 
-    if (WiFi.status() != WL_CONNECTED && s.phone_ssid.length()) {
-        Serial.printf("WiFi STA: primary failed, trying phone hotspot %s\n",
-                      s.phone_ssid.c_str());
+    for (const auto& n : nets) {
+        Serial.printf("WiFi STA: trying p%d '%s'\n", n.priority, n.ssid.c_str());
         WiFi.disconnect(false, true);
-        delay(200);
-        WiFi.begin(s.phone_ssid.c_str(), s.phone_pass.c_str());
+        delay(150);
+        WiFi.begin(n.ssid.c_str(), n.pass.c_str());
         uint32_t t0 = millis();
-        while (WiFi.status() != WL_CONNECTED && (millis() - t0) < PRIMARY_WAIT_MS) {
+        while (WiFi.status() != WL_CONNECTED && (millis() - t0) < PER_NET_WAIT_MS) {
             delay(250);
         }
+        if (WiFi.status() == WL_CONNECTED) break;
+        Serial.printf("WiFi STA: '%s' failed, next\n", n.ssid.c_str());
     }
 
     if (WiFi.status() == WL_CONNECTED) {
@@ -43,6 +67,6 @@ void setupWifi() {
                       WiFi.localIP().toString().c_str(),
                       WiFi.SSID().c_str());
     } else {
-        Serial.println("WiFi STA: no connection, AP-only");
+        Serial.println("WiFi STA: no network associated, AP-only");
     }
 }

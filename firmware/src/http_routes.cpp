@@ -5,6 +5,7 @@
 #include "config.h"
 #include "device_mode.h"
 #include "settings.h"
+#include "ble_hid.h"
 #include <ArduinoJson.h>
 #include <AsyncJson.h>
 #include <WiFi.h>
@@ -74,6 +75,7 @@ static void handleStatus(AsyncWebServerRequest* req) {
 
     doc["storage_mode"] = storageModeName(currentStorageMode());
     doc["hid_enabled"] = hidEnabled();
+    doc["bthid_connected"] = bleHidConnected();
 
     if (currentStorageMode() == STORAGE_MODE_INTERNAL) {
         doc["storage"] = isStorageReady() ? "ok" : "none";
@@ -369,14 +371,11 @@ void setupHttpRoutes(AsyncWebServer& server) {
             "<label>SSID<input name=ap_ssid value=\"" + escapeAttr(s.ap_ssid) + "\"></label>"
             "<label>Password (>=8 chars for WPA2)<input name=ap_pass value=\"" + escapeAttr(s.ap_pass) + "\"></label>"
             "</fieldset>"
-            "<fieldset><legend>Station (home WiFi)</legend>"
-            "<label>SSID<input name=sta_ssid value=\"" + escapeAttr(s.sta_ssid) + "\"></label>"
-            "<label>Password<input name=sta_pass value=\"" + escapeAttr(s.sta_pass) + "\"></label>"
-            "</fieldset>"
-            "<fieldset><legend>Phone Hotspot (fallback)</legend>"
-            "<small>If primary WiFi fails, dongle joins this hotspot. Leave blank to disable.</small>"
-            "<label>SSID<input name=phone_ssid value=\"" + escapeAttr(s.phone_ssid) + "\"></label>"
-            "<label>Password<input name=phone_pass value=\"" + escapeAttr(s.phone_pass) + "\"></label>"
+            "<fieldset><legend>Remembered WiFi Networks</legend>"
+            "<small>JSON list of {ssid, pass, priority}. Lower priority is tried first.</small>"
+            "<label>Networks<textarea name=wifi_networks rows=6 style=\"font-family:monospace;font-size:.85em\">"
+            + escapeAttr(s.wifi_networks) +
+            "</textarea></label>"
             "</fieldset>"
             "<fieldset><legend>Telesthete Hub</legend>"
             "<label>Hub Host<input name=hub_host value=\"" + escapeAttr(s.hub_host) + "\"></label>"
@@ -405,8 +404,6 @@ void setupHttpRoutes(AsyncWebServer& server) {
         };
         pull("ap_ssid",    s.ap_ssid);
         pull("ap_pass",    s.ap_pass);
-        pull("sta_ssid",   s.sta_ssid);
-        pull("sta_pass",   s.sta_pass);
         pull("admin_user", s.admin_user);
         pull("admin_pass", s.admin_pass);
         pull("hub_host",   s.hub_host);
@@ -415,8 +412,7 @@ void setupHttpRoutes(AsyncWebServer& server) {
         }
         pull("band_psk",   s.band_psk);
         pull("worker_name", s.worker_name);
-        pull("phone_ssid", s.phone_ssid);
-        pull("phone_pass", s.phone_pass);
+        pull("wifi_networks", s.wifi_networks);
         updateSettings(s);
         req->send(200, "text/html",
             "<html><body style='font-family:system-ui;background:#111;color:#eee;"

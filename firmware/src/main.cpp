@@ -13,6 +13,7 @@
 #include "msc.h"
 #include "settings.h"
 #include "telesthete.h"
+#include "ble_hid.h"
 
 AsyncWebServer server(HTTP_PORT);
 
@@ -75,6 +76,9 @@ void setup() {
 
     // Telesthete band worker (announces to hub, answers RPC)
     setupTelesthete();
+
+    // BLE HID peripheral — phones/PCs pair to dongle as a wireless keyboard.
+    setupBleHid();
 
     Serial.println("Ready.");
 }
