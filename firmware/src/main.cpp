@@ -14,6 +14,7 @@
 #include "settings.h"
 #include "telesthete.h"
 #include "ble_hid.h"
+#include "serial_cli.h"
 
 AsyncWebServer server(HTTP_PORT);
 
@@ -81,6 +82,7 @@ void setup() {
     setupBleHid();
 
     Serial.println("Ready.");
+    serialCliGreet();
 }
 
 void loop() {
@@ -88,4 +90,5 @@ void loop() {
     pushSerialToWs();
     wsSerial.cleanupClients();
     pollButton();
+    pollSerialCli();
 }

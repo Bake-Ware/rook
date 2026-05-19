@@ -14,3 +14,6 @@ extern char fileTransferName[65];
 extern volatile size_t fileTransferBytes;
 
 void pollCDC();
+
+// CLI input ring fed by pollCDC. Returns next byte or -1 if empty.
+int cliReadByte();

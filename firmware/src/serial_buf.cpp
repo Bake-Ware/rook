@@ -94,7 +94,37 @@ static void endFileTransfer(bool success) {
     matchLen = 0;
 }
 
+// Parallel ring buffer for the serial CLI. processByte() pushes every
+// SERIAL_NORMAL byte here in addition to the WS-stream buffer so the TUI
+// can read keystrokes while websocket clients keep tunneling.
+#define CLI_RING_SIZE 256
+static volatile uint8_t cliRing[CLI_RING_SIZE];
+static volatile uint16_t cliHead = 0, cliTail = 0;
+static portMUX_TYPE cliMux = portMUX_INITIALIZER_UNLOCKED;
+
+static void cliPush(char c) {
+    taskENTER_CRITICAL(&cliMux);
+    uint16_t next = (cliHead + 1) % CLI_RING_SIZE;
+    if (next != cliTail) {
+        cliRing[cliHead] = (uint8_t)c;
+        cliHead = next;
+    }  // drop on full
+    taskEXIT_CRITICAL(&cliMux);
+}
+
+int cliReadByte() {
+    int out = -1;
+    taskENTER_CRITICAL(&cliMux);
+    if (cliTail != cliHead) {
+        out = cliRing[cliTail];
+        cliTail = (cliTail + 1) % CLI_RING_SIZE;
+    }
+    taskEXIT_CRITICAL(&cliMux);
+    return out;
+}
+
 static void addToSerialBuf(char c) {
+    cliPush(c);
     taskENTER_CRITICAL(&bufMux);
     if (serialBufLen < SERIAL_BUF_SIZE - 1)
         serialBuf[serialBufLen++] = c;
