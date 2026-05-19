@@ -21,7 +21,8 @@ function Find-DonglePort {
     $pnp = Get-PnpDevice -Class Ports -ErrorAction SilentlyContinue
     foreach ($d in $pnp) {
         if ($d.InstanceId -match 'VID_1209&PID_0001') {
-            $com = ($d.FriendlyName -match '\((COM\d+)\)') ? $Matches[1] : $null
+            $com = $null
+            if ($d.FriendlyName -match '\((COM\d+)\)') { $com = $Matches[1] }
             if ($com) { return $com }
         }
     }
