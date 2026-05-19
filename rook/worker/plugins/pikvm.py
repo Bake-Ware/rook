@@ -119,15 +119,37 @@ class PiKvmPlugin(Plugin):
     # ---- screencap ------------------------------------------------------
 
     @capability("snap")
-    async def _snap(self) -> dict:
+    async def _snap(self, preview: bool = True,
+                    quality: int | None = None) -> dict:
         """Grab a still JPEG from the PiKVM streamer.
 
-        Returns ``{ok, content_type, body_b64, body_bytes}``. The image is
-        base64-encoded — decode on the client side.
+        Args:
+            preview: ``True`` (default) requests the 256x144 thumbnail.
+                Set ``False`` for a full-resolution capture — note that on
+                ~80KB images the reply spans ~110 UDP fragments, so loss
+                tolerance is low. Use full-res only when you actually need
+                the pixels.
+            quality: optional JPEG quality 1..100. ``None`` lets PiKVM pick.
+
+        Returns ``{ok, status, content_type, body_b64, body_bytes}``. The
+        image is base64-encoded — decode on the client side.
+
+        If the streamer reports an error JSON body (e.g. no video source),
+        the reply surfaces as ``{ok:false, error, json:{...}}`` instead of
+        the bogus base64 wrapper.
         """
-        resp = await _request("GET", "/api/streamer/snapshot",
-                              query={"save": "0", "load": "0"})
-        return _decode_body(resp, max_text=0)
+        query: dict = {"save": "0", "load": "0"}
+        if preview:
+            query["preview"] = "1"
+        if quality is not None:
+            query["quality"] = str(int(quality))
+        resp = await _request("GET", "/api/streamer/snapshot", query=query)
+        decoded = _decode_body(resp, max_text=0)
+        # Catch the "200 OK + JSON error" case and re-shape it as a proper error.
+        if decoded.get("content_type", "").startswith("application/json"):
+            decoded["ok"] = False
+            decoded["error"] = "streamer returned json error (no video?)"
+        return decoded
 
     # ---- HID ------------------------------------------------------------
 
