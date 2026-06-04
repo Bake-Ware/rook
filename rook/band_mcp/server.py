@@ -28,6 +28,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import AnyHttpUrl
 
+from .api_tokens_ui import build_api_token_routes
 from .client import BandClient
 from .oauth import InMemoryProvider, StaticTokenVerifier, build_oauth_routes
 
@@ -170,7 +171,7 @@ async def _amain(args) -> None:
     app = mcp.streamable_http_app()
     if provider is not None:
         # Prepend so our lenient /token and /oauth/authorize shadow MCP's.
-        extras = build_oauth_routes(provider)
+        extras = build_oauth_routes(provider) + build_api_token_routes(provider)
         for r in reversed(extras):
             app.router.routes.insert(0, r)
 

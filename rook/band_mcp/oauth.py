@@ -45,6 +45,7 @@ log = logging.getLogger("rook.band_mcp.oauth")
 _CODE_TTL = 300            # 5 min
 _ACCESS_TTL = 3600         # 1 hr
 _REFRESH_TTL = 86400 * 30  # 30 days
+_ADMIN_SESSION_TTL = 1800  # 30 min — UI-only session for /tokens page
 
 
 class StaticTokenVerifier(TokenVerifier):
@@ -90,6 +91,12 @@ class InMemoryProvider(OAuthAuthorizationServerProvider):
         self._access: dict[str, AccessToken] = {}
         self._refresh: dict[str, RefreshToken] = {}
         self._pending: dict[str, tuple[OAuthClientInformationFull, AuthorizationParams]] = {}
+        # API tokens for headless agents. Keyed by full token. Each value:
+        #   {token, id, name, scopes, created_at, last_used_at, expires_at}
+        # expires_at = None means no expiry.
+        self._api_tokens: dict[str, dict[str, Any]] = {}
+        # Admin UI sessions for /tokens page. session_id -> expires_at.
+        self._admin_sessions: dict[str, int] = {}
         self._lock = asyncio.Lock()
 
         if persist_path:
@@ -130,8 +137,13 @@ class InMemoryProvider(OAuthAuthorizationServerProvider):
             self._access[t["token"]] = AccessToken(**t)
         for t in data.get("refresh", []):
             self._refresh[t["token"]] = RefreshToken(**t)
-        log.info("loaded oauth state: clients=%d access=%d refresh=%d",
-                 len(self._clients), len(self._access), len(self._refresh))
+        for t in data.get("api_tokens", []):
+            tok = t.get("token")
+            if tok:
+                self._api_tokens[tok] = t
+        log.info("loaded oauth state: clients=%d access=%d refresh=%d api=%d",
+                 len(self._clients), len(self._access), len(self._refresh),
+                 len(self._api_tokens))
 
     def _save(self) -> None:
         if not self._persist_path:
@@ -142,6 +154,7 @@ class InMemoryProvider(OAuthAuthorizationServerProvider):
                 "clients": [c.model_dump(mode="json") for c in self._clients.values()],
                 "access": [t.model_dump(mode="json") for t in self._access.values()],
                 "refresh": [t.model_dump(mode="json") for t in self._refresh.values()],
+                "api_tokens": list(self._api_tokens.values()),
             }
             d = os.path.dirname(self._persist_path) or "."
             os.makedirs(d, exist_ok=True)
@@ -270,14 +283,106 @@ class InMemoryProvider(OAuthAuthorizationServerProvider):
 
     async def load_access_token(self, token: str) -> AccessToken | None:
         at = self._access.get(token)
-        if at is None or at.expires_at < self._now():
+        if at is not None and at.expires_at >= self._now():
+            return at
+        # Fall through to API tokens — long-lived bearers for headless agents.
+        api = self._api_tokens.get(token)
+        if api is None:
             return None
-        return at
+        exp = api.get("expires_at")
+        if exp is not None and exp < self._now():
+            return None
+        api["last_used_at"] = self._now()
+        # Skip _save() here — would write on every authenticated request.
+        return AccessToken(
+            token=token,
+            client_id=api.get("client_id", "api"),
+            scopes=api.get("scopes") or ["rook"],
+            expires_at=exp,
+            resource=None,
+        )
 
     async def revoke_token(self, token: AccessToken | RefreshToken) -> None:
         self._access.pop(token.token, None)
         self._refresh.pop(token.token, None)
+        self._api_tokens.pop(token.token, None)
         self._save()
+
+    # -- API tokens (headless-agent bearers) ---------------------------------
+
+    def list_api_tokens(self) -> list[dict[str, Any]]:
+        """Return token metadata (token secret elided) for the management UI."""
+        out = []
+        for t in self._api_tokens.values():
+            out.append({
+                "id": t.get("id"),
+                "name": t.get("name"),
+                "created_at": t.get("created_at"),
+                "last_used_at": t.get("last_used_at"),
+                "expires_at": t.get("expires_at"),
+                "preview": (t.get("token", "")[:8] + "…"
+                            + t.get("token", "")[-4:]) if t.get("token") else "",
+            })
+        out.sort(key=lambda x: x.get("created_at") or 0, reverse=True)
+        return out
+
+    def mint_api_token(self, name: str,
+                       ttl_seconds: int | None = None,
+                       scopes: list[str] | None = None) -> dict[str, Any]:
+        """Create a new long-lived API token. The secret is returned ONCE —
+        the caller must show it to the user immediately; we only keep enough
+        to identify + revoke it afterwards."""
+        secret = secrets.token_urlsafe(32)
+        tok_id = secrets.token_hex(4)
+        entry = {
+            "token": secret,
+            "id": tok_id,
+            "name": (name or "unnamed")[:64],
+            "scopes": scopes or ["rook"],
+            "client_id": "api",
+            "created_at": self._now(),
+            "last_used_at": None,
+            "expires_at": (self._now() + ttl_seconds) if ttl_seconds else None,
+        }
+        self._api_tokens[secret] = entry
+        self._save()
+        log.info("api token minted: id=%s name=%s ttl=%s",
+                 tok_id, entry["name"], ttl_seconds)
+        return entry
+
+    def revoke_api_token(self, token_id: str) -> bool:
+        for tok, entry in list(self._api_tokens.items()):
+            if entry.get("id") == token_id:
+                self._api_tokens.pop(tok, None)
+                self._save()
+                log.info("api token revoked: id=%s name=%s",
+                         token_id, entry.get("name"))
+                return True
+        return False
+
+    # -- admin UI sessions ---------------------------------------------------
+
+    def admin_login(self, password: str) -> str | None:
+        if not self.verify_password(password):
+            return None
+        sid = secrets.token_urlsafe(24)
+        self._admin_sessions[sid] = self._now() + _ADMIN_SESSION_TTL
+        return sid
+
+    def admin_session_ok(self, session_id: str | None) -> bool:
+        if not session_id:
+            return False
+        exp = self._admin_sessions.get(session_id)
+        if exp is None:
+            return False
+        if exp < self._now():
+            self._admin_sessions.pop(session_id, None)
+            return False
+        return True
+
+    def admin_logout(self, session_id: str | None) -> None:
+        if session_id:
+            self._admin_sessions.pop(session_id, None)
 
 
 # ---------- Starlette route helpers ----------
