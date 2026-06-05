@@ -23,6 +23,7 @@ import logging
 import socket
 from typing import Optional
 
+import aiohttp
 from telesthete.protocol.crypto import BandCrypto
 from telesthete.protocol.framing import (
     ChannelType,
@@ -52,14 +53,23 @@ class TelestheteHubTransport:
         hub_port: int = 7474,
         keepalive_secs: float = 20.0,
         bind_port: int = 0,
+        use_ws: bool = False,
     ) -> None:
         self._crypto = BandCrypto(psk)
         self.band_id = self._crypto.band_id
         self._hub = (hub_host, hub_port)
         self._keepalive = keepalive_secs
         self._bind_port = bind_port
+        self._use_ws = use_ws
 
+        # UDP transport (for LAN peers)
         self._sock: Optional[socket.socket] = None
+        
+        # WS transport (for remote workers through cloudflare tunnel)
+        self._ws_session: Optional[aiohttp.ClientSession] = None
+        self._ws_conn: Optional[aiohttp.ClientWebSocketResponse] = None
+        self._ws_url: str = f"ws://{hub_host}:{hub_port}/band"
+
         self._on_message: Optional[OnMessage] = None
         self._seq = 0
         self._tasks: list[asyncio.Task] = []
@@ -72,25 +82,40 @@ class TelestheteHubTransport:
 
     async def start(self, on_message: OnMessage) -> None:
         self._on_message = on_message
-        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self._sock.bind(("0.0.0.0", self._bind_port))
-        self._sock.setblocking(False)
-        log.info(
-            "telesthete-hub transport up: hub=%s:%d band_id=%s local=%s "
-            "frag_overhead=%dB",
-            self._hub[0], self._hub[1], self.band_id.hex()[:16],
-            self._sock.getsockname(), FRAG_HEADER,
-        )
+        
+        if self._use_ws:
+            # Use WS transport for remote workers through cloudflare tunnel
+            log.info(
+                "telesthete-hub transport up (WS): hub=%s:%d band_id=%s",
+                self._hub[0], self._hub[1], self.band_id.hex()[:16],
+            )
+            # Connect to the WS endpoint on the hub
+            self._ws_session = aiohttp.ClientSession()
+            ws_conn = await self._ws_session.ws_connect(self._ws_url)
+            self._ws_conn = ws_conn
+            self._tasks.append(asyncio.create_task(self._ws_recv_loop(ws_conn)))
+        else:
+            # Use UDP transport for LAN peers
+            self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self._sock.bind(("0.0.0.0", self._bind_port))
+            self._sock.setblocking(False)
+            log.info(
+                "telesthete-hub transport up: hub=%s:%d band_id=%s local=%s "
+                "frag_overhead=%dB",
+                self._hub[0], self._hub[1], self.band_id.hex()[:16],
+                self._sock.getsockname(), FRAG_HEADER,
+            )
 
         # Implicit registration: send a zero-payload frame so the hub learns
         # our (NAT'd) address before any real traffic.
         await self.send(_KEEPALIVE_PAYLOAD)
 
         loop = asyncio.get_running_loop()
-        self._tasks = [
-            loop.create_task(self._recv_loop()),
-            loop.create_task(self._keepalive_loop()),
-        ]
+        if not self._use_ws:
+            self._tasks.append(
+                loop.create_task(self._recv_loop()),
+            )
+        self._tasks.append(loop.create_task(self._keepalive_loop()))
 
     async def stop(self) -> None:
         self._stopping = True
@@ -107,6 +132,10 @@ class TelestheteHubTransport:
             except Exception:
                 pass
         self._sock = None
+        if self._ws_session is not None:
+            await self._ws_session.close()
+            self._ws_session = None
+        self._ws_conn = None
         log.info("telesthete-hub transport down")
 
     # -- send/recv -----------------------------------------------------------
@@ -114,7 +143,7 @@ class TelestheteHubTransport:
     async def send(self, payload: bytes, peer_id: tuple | None = None) -> None:
         """Fragment + encrypt + send. Big payloads are split across multiple
         Telesthete CHANNEL frames per SPEC §6.4."""
-        if self._sock is None:
+        if self._sock is None and self._ws_conn is None:
             raise RuntimeError("transport not started")
         chunks = self._fragmenter.split(payload)
         loop = asyncio.get_running_loop()
@@ -129,10 +158,54 @@ class TelestheteHubTransport:
                 sequence=seq,
                 ciphertext=ciphertext,
             )
-            await loop.sock_sendto(self._sock, frame, self._hub)
+            if self._use_ws and self._ws_conn is not None:
+                await self._ws_conn.send_bytes(frame)
+            elif self._sock is not None:
+                await loop.sock_sendto(self._sock, frame, self._hub)
         if len(chunks) > 1:
             log.debug("sent %d-fragment message (%d B payload)",
                       len(chunks), len(payload))
+
+    async def _ws_recv_loop(self, ws_conn: aiohttp.ClientWebSocketResponse) -> None:
+        """Receive encrypted Band packets from the hub via WS."""
+        while not self._stopping:
+            try:
+                msg = await ws_conn.receive()
+                if msg.type == aiohttp.WSMsgType.BINARY:
+                    data = msg.data
+                    if len(data) < 27:
+                        continue
+                    try:
+                        pkt = unpack_packet(data)
+                    except Exception as e:
+                        log.debug("bad frame from hub: %s", e)
+                        continue
+                    if pkt.band_id != self.band_id:
+                        continue
+                    try:
+                        cleartext = self._crypto.decrypt(pkt.sequence, pkt.ciphertext)
+                    except Exception as e:
+                        log.debug("decrypt failed seq=%d: %s", pkt.sequence, e)
+                        continue
+                    # cleartext is a fragment chunk — feed it through the reassembler.
+                    assembled = self._reassembler.feed(cleartext)
+                    if assembled is None:
+                        continue
+                    if assembled == _KEEPALIVE_PAYLOAD:
+                        continue
+                    if self._on_message is not None:
+                        try:
+                            await self._on_message(assembled, (pkt.channel_id,))
+                        except Exception:
+                            log.exception("on_message handler raised")
+                elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                    break
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                log.warning("WS recv error: %s", e)
+                await asyncio.sleep(0.1)
+                continue
 
     async def _recv_loop(self) -> None:
         assert self._sock is not None

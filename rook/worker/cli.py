@@ -29,6 +29,8 @@ def main() -> None:
                     help="local UDP bind port (0 = ephemeral)")
     ap.add_argument("--keepalive", type=float, default=20.0,
                     help="seconds between transport keepalives")
+    ap.add_argument("--ws", action="store_true",
+                    help="use WebSocket instead of UDP for hub connection (for cloudflare tunnel)")
     ap.add_argument("-v", "--verbose", action="count", default=0)
     args = ap.parse_args()
 
@@ -40,13 +42,18 @@ def main() -> None:
     if not port:
         ap.error("--hub must be host:port")
 
-    transport = TelestheteHubTransport(
-        psk=args.psk,
-        hub_host=host,
-        hub_port=int(port),
-        keepalive_secs=args.keepalive,
-        bind_port=args.bind_port,
-    )
+    if args.ws:
+        from .transports.telesthete_hub import TelestheteHubTransport
+        transport = TelestheteHubTransport(
+            psk=args.psk, hub_host=host, hub_port=int(port),
+            keepalive_secs=args.keepalive, bind_port=args.bind_port, use_ws=True,
+        )
+    else:
+        from .transports.telesthete_hub import TelestheteHubTransport
+        transport = TelestheteHubTransport(
+            psk=args.psk, hub_host=host, hub_port=int(port),
+            keepalive_secs=args.keepalive, bind_port=args.bind_port,
+        )
 
     enabled = [s.strip() for s in args.enable.split(",") if s.strip()] or None
     worker = Worker(transport=transport, enabled=enabled, name=args.name,

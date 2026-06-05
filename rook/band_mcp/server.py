@@ -169,6 +169,16 @@ async def _amain(args) -> None:
         preset_client_secret=args.client_secret,
     )
     app = mcp.streamable_http_app()
+
+    # Wire up WS bridge for remote Telesthete Band workers.
+    ws_bridge: WSBandBridge | None = None
+    try:
+        from .ws_band import WSBandBridge
+        ws_bridge = WSBandBridge(app, args.hub_host, args.hub_port, args.psk)
+        ws_bridge.start()
+    except Exception as e:
+        log.warning("WS band bridge failed to start: %s", e)
+
     if provider is not None:
         # Prepend so our lenient /token and /oauth/authorize shadow MCP's.
         extras = build_oauth_routes(provider) + build_api_token_routes(provider)
@@ -224,6 +234,9 @@ async def _amain(args) -> None:
     try:
         await server.serve()
     finally:
+        # Tear down WS bridge before stopping transport.
+        if ws_bridge is not None:
+            await ws_bridge.stop()
         await client.stop()
 
 
