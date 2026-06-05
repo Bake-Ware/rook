@@ -50,6 +50,9 @@ if (-not (Test-Path "$venv\\Scripts\\python.exe")) {{
     python -m venv "$venv"
 }}
 $vpy = "$venv\\Scripts\\python.exe"
+# pythonw.exe is the windowless interpreter — the worker runs with NO console window.
+$vpyw = "$venv\\Scripts\\pythonw.exe"
+if (-not (Test-Path $vpyw)) {{ $vpyw = $vpy }}  # fallback if pythonw is absent
 & $vpy -m ensurepip --upgrade 2>$null
 & $vpy -m pip install --quiet --upgrade pip 2>$null
 
@@ -77,7 +80,7 @@ Write-Host "[r00k] HID backend: native Windows SendInput (no extra setup needed)
 
 # Register as Scheduled Task so worker restarts at every logon
 $workerArgs = "`"$pyz`" --hub mcp.bakeforge.com:443 --ws --psk {band_psk} --name $env:COMPUTERNAME"
-$action = New-ScheduledTaskAction -Execute $vpy -Argument $workerArgs
+$action = New-ScheduledTaskAction -Execute $vpyw -Argument $workerArgs
 $trigger = New-ScheduledTaskTrigger -AtLogon
 $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit 0
 Register-ScheduledTask -TaskName "RookBandWorker" -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest -Force | Out-Null
@@ -244,9 +247,6 @@ fi
 pkill -f "band-worker.pyz" 2>/dev/null || true
 sleep 1
 
-# Ensure the HID backend is installed + running before the worker comes up
-setup_hid_linux
-
 # Install as systemd --user service for persistence across reboots
 if command -v systemctl &>/dev/null && systemctl --user show-environment >/dev/null 2>&1; then
     mkdir -p ~/.config/systemd/user
@@ -287,6 +287,12 @@ else
         exit 1
     fi
 fi
+
+# HID backend setup runs LAST, on purpose: the worker is already on the band, so a
+# slow/hung/failed ydotool install (e.g. a stalled pacman) can never strand it.
+# The worker detects its backend lazily on the first hid.* call, by which time
+# ydotool is installed — so no restart is needed.
+setup_hid_linux
 '''
 
 
