@@ -11,6 +11,8 @@ from .registry import CapabilityRegistry
 
 log = logging.getLogger("rook.worker.plugin")
 
+_UNSET = object()  # sentinel: distinguishes "no PLUGIN export" from "PLUGIN = None"
+
 
 def capability(suffix: str = "") -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Mark a `Plugin` method as a capability.
@@ -75,9 +77,14 @@ def load_plugins(package_name: str, registry: CapabilityRegistry,
         if enabled is not None and info.name not in enabled:
             continue
         mod = importlib.import_module(f"{package_name}.{info.name}")
-        plugin_obj = getattr(mod, "PLUGIN", None)
-        if plugin_obj is None:
+        plugin_obj = getattr(mod, "PLUGIN", _UNSET)
+        if plugin_obj is _UNSET:
             log.warning("%s.%s: no PLUGIN export, skipping", package_name, info.name)
+            continue
+        if plugin_obj is None:
+            # Intentional opt-out: the module decided it shouldn't load here
+            # (e.g. an optional integration whose dependency isn't present).
+            log.debug("%s.%s: PLUGIN is None, not active on this host", package_name, info.name)
             continue
         plugin = plugin_obj() if isinstance(plugin_obj, type) else plugin_obj
         if not isinstance(plugin, Plugin):
