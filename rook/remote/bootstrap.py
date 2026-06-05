@@ -62,6 +62,19 @@ $pyz = "$env:USERPROFILE\\.rook-band-worker\\band-worker.pyz"
 New-Item -ItemType Directory -Force -Path (Split-Path $pyz) | Out-Null
 Invoke-WebRequest -Uri "https://{domain}/band-worker.pyz" -OutFile $pyz
 
+# Stop any existing worker FIRST — avoids duplicate processes and stale worker-ids
+# lingering on the band (each worker process announces a fresh random id).
+Write-Host "[r00k] stopping any existing band worker..."
+Stop-ScheduledTask -TaskName "RookBandWorker" -ErrorAction SilentlyContinue
+Get-CimInstance Win32_Process -Filter "Name like '%python%'" -ErrorAction SilentlyContinue |
+    Where-Object {{ $_.CommandLine -like "*band-worker.pyz*" }} |
+    ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}
+Start-Sleep -Seconds 1
+
+# HID backend: Windows is native — hid.* uses SendInput via user32.dll (no install).
+# The task runs at logon in the interactive session, so input injection works.
+Write-Host "[r00k] HID backend: native Windows SendInput (no extra setup needed)."
+
 # Register as Scheduled Task so worker restarts at every logon
 $workerArgs = "`"$pyz`" --hub mcp.bakeforge.com:443 --ws --psk {band_psk} --name $env:COMPUTERNAME"
 $action = New-ScheduledTaskAction -Execute $vpy -Argument $workerArgs
@@ -109,6 +122,58 @@ install_curl() {{
             sudo pacman -Sy --noconfirm curl
         elif command -v pkg &>/dev/null; then
             pkg install -y curl
+        fi
+    fi
+}}
+
+# ---- HID backend (Linux): ydotool + ydotoold so hid.* works out of the box ----
+# Wayland needs ydotool (xdotool is X11-only); ydotool also covers X11. Mac/Windows
+# use their own native backends; Termux/Android does not use this path.
+setup_hid_linux() {{
+    [ "$(uname -s)" = "Linux" ] || return 0
+    case "$PREFIX" in /data/data/com.termux*) return 0 ;; esac
+
+    if ! command -v ydotool &>/dev/null; then
+        echo "[r00k] installing ydotool (HID backend)..."
+        if command -v apt-get &>/dev/null; then sudo apt-get install -y -qq ydotool || true
+        elif command -v dnf &>/dev/null; then sudo dnf install -y ydotool || true
+        elif command -v pacman &>/dev/null; then sudo pacman -Sy --noconfirm ydotool || true
+        elif command -v apk &>/dev/null; then sudo apk add ydotool || true
+        else echo "[r00k] WARNING: no known package manager for ydotool; HID unavailable"; fi
+    fi
+    command -v ydotool &>/dev/null || {{ echo "[r00k] WARNING: ydotool missing; HID disabled"; return 0; }}
+
+    # /dev/uinput access. Active seat sessions get an ACL automatically; the udev
+    # rule + input group cover headless and post-reboot. All best-effort (sudo).
+    sudo modprobe uinput 2>/dev/null || true
+    if [ ! -e /etc/udev/rules.d/99-rook-uinput.rules ]; then
+        echo 'KERNEL=="uinput", MODE="0660", GROUP="input", OPTIONS+="static_node=uinput"' | sudo tee /etc/udev/rules.d/99-rook-uinput.rules >/dev/null 2>&1 || true
+        sudo udevadm control --reload-rules 2>/dev/null || true
+        sudo udevadm trigger /dev/uinput 2>/dev/null || true
+    fi
+    sudo usermod -aG input "$USER" 2>/dev/null || true
+
+    # ydotoold as our own user service (portable across distro unit naming).
+    if command -v systemctl &>/dev/null && systemctl --user show-environment >/dev/null 2>&1; then
+        mkdir -p ~/.config/systemd/user
+        cat > ~/.config/systemd/user/rook-ydotoold.service << RKYD
+[Unit]
+Description=ydotoold (rook HID backend daemon)
+
+[Service]
+ExecStart=$(command -v ydotoold)
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+RKYD
+        systemctl --user daemon-reload
+        systemctl --user enable --now rook-ydotoold.service 2>/dev/null || true
+        if systemctl --user is-active --quiet rook-ydotoold.service; then
+            echo "[r00k] HID backend ready (ydotool + ydotoold)."
+        else
+            echo "[r00k] WARNING: ydotoold inactive — HID may need a relogin for /dev/uinput access."
         fi
     fi
 }}
@@ -179,14 +244,17 @@ fi
 pkill -f "band-worker.pyz" 2>/dev/null || true
 sleep 1
 
+# Ensure the HID backend is installed + running before the worker comes up
+setup_hid_linux
+
 # Install as systemd --user service for persistence across reboots
 if command -v systemctl &>/dev/null && systemctl --user show-environment >/dev/null 2>&1; then
     mkdir -p ~/.config/systemd/user
     cat > ~/.config/systemd/user/rook-band-worker.service << ROOKSVC
 [Unit]
 Description=Rook Band Worker
-After=network-online.target
-Wants=network-online.target
+After=network-online.target rook-ydotoold.service
+Wants=network-online.target rook-ydotoold.service
 
 [Service]
 ExecStart=$WORKER_CMD
