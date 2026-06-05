@@ -169,6 +169,16 @@ chmod +x "$PYZ"
 WORKER_NAME=$(hostname)
 WORKER_CMD="$VPY $PYZ --hub mcp.bakeforge.com:443 --ws --psk {band_psk} --name $WORKER_NAME"
 
+# Stop any existing worker FIRST — avoids duplicate processes and stale worker-ids
+# lingering on the band (each worker process announces a fresh random id).
+echo "[r00k] stopping any existing band worker..."
+if command -v systemctl &>/dev/null && systemctl --user show-environment >/dev/null 2>&1; then
+    systemctl --user stop rook-band-worker 2>/dev/null || true
+fi
+# kill stray nohup/foreground worker processes (any install mode)
+pkill -f "band-worker.pyz" 2>/dev/null || true
+sleep 1
+
 # Install as systemd --user service for persistence across reboots
 if command -v systemctl &>/dev/null && systemctl --user show-environment >/dev/null 2>&1; then
     mkdir -p ~/.config/systemd/user
