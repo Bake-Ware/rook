@@ -188,10 +188,26 @@ WantedBy=default.target
 ROOKSVC
     systemctl --user daemon-reload
     systemctl --user enable --now rook-band-worker
-    echo "[r00k] Band worker installed (systemd user service: rook-band-worker)."
+    # Enable lingering so the service survives logout/reboot (best-effort)
+    loginctl enable-linger "$USER" 2>/dev/null || sudo loginctl enable-linger "$USER" 2>/dev/null || true
+    sleep 2
+    if systemctl --user is-active --quiet rook-band-worker; then
+        echo "[r00k] Band worker RUNNING (systemd user service: rook-band-worker)."
+    else
+        echo "[r00k] WARNING: systemd service didn't start — falling back to nohup."
+        nohup $WORKER_CMD >> ~/.rook-band-worker/worker.log 2>&1 &
+        echo "[r00k] Band worker started in background (PID $!). Log: ~/.rook-band-worker/worker.log"
+    fi
 else
-    nohup $WORKER_CMD >> /tmp/rook_band_worker.log 2>&1 &
-    echo "[r00k] Band worker started in background (PID $!). Log: /tmp/rook_band_worker.log"
+    nohup $WORKER_CMD >> ~/.rook-band-worker/worker.log 2>&1 &
+    sleep 2
+    if kill -0 $! 2>/dev/null; then
+        echo "[r00k] Band worker RUNNING in background (PID $!). Log: ~/.rook-band-worker/worker.log"
+    else
+        echo "[r00k] ERROR: worker exited immediately. Check: ~/.rook-band-worker/worker.log"
+        tail -n 20 ~/.rook-band-worker/worker.log 2>/dev/null
+        exit 1
+    fi
 fi
 '''
 
