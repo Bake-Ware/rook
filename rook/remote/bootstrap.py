@@ -43,30 +43,28 @@ if (-not (Get-Command python -ErrorAction SilentlyContinue)) {{
 
 Write-Host "[r00k] Python: $(python --version)"
 
-# Ensure pip exists — some Python builds ship without it
-python -m pip --version 2>$null
-if ($LASTEXITCODE -ne 0) {{
-    Write-Host "[r00k] pip missing — bootstrapping..."
-    python -m ensurepip --upgrade 2>$null
-    python -m pip --version 2>$null
-    if ($LASTEXITCODE -ne 0) {{
-        $getpip = "$env:TEMP\\get-pip.py"
-        Invoke-WebRequest -Uri "https://bootstrap.pypa.io/get-pip.py" -OutFile $getpip
-        python $getpip
-    }}
+# Use a dedicated venv — avoids PEP 668 and missing/broken system pip.
+$venv = "$env:USERPROFILE\\.rook-band-worker\\venv"
+if (-not (Test-Path "$venv\\Scripts\\python.exe")) {{
+    Write-Host "[r00k] creating venv at $venv ..."
+    python -m venv "$venv"
 }}
+$vpy = "$venv\\Scripts\\python.exe"
+& $vpy -m ensurepip --upgrade 2>$null
+& $vpy -m pip install --quiet --upgrade pip 2>$null
 
-# Install required dependencies (prebuilt wheels — no compiler needed)
-python -m pip install --quiet --user pynacl aiohttp websockets
+# Install required dependencies into the venv (prebuilt wheels — no compiler needed)
+Write-Host "[r00k] installing dependencies (pynacl aiohttp websockets)..."
+& $vpy -m pip install --quiet pynacl aiohttp websockets
 
 # Download band-worker bundle
-$pyz = "$env:TEMP\\rook_band_worker.pyz"
+$pyz = "$env:USERPROFILE\\.rook-band-worker\\band-worker.pyz"
+New-Item -ItemType Directory -Force -Path (Split-Path $pyz) | Out-Null
 Invoke-WebRequest -Uri "https://{domain}/band-worker.pyz" -OutFile $pyz
 
 # Register as Scheduled Task so worker restarts at every logon
-$pythonExe = (& python -c "import sys; print(sys.executable)").Trim()
 $workerArgs = "`"$pyz`" --hub mcp.bakeforge.com:443 --ws --psk {band_psk} --name $env:COMPUTERNAME"
-$action = New-ScheduledTaskAction -Execute $pythonExe -Argument $workerArgs
+$action = New-ScheduledTaskAction -Execute $vpy -Argument $workerArgs
 $trigger = New-ScheduledTaskTrigger -AtLogon
 $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit 0
 Register-ScheduledTask -TaskName "RookBandWorker" -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest -Force | Out-Null
@@ -136,40 +134,40 @@ fi
 
 echo "[r00k] Python: $($PYTHON --version)"
 
-# Ensure pip exists — minimal Python builds ship without it ("No module named pip")
-if ! $PYTHON -m pip --version &>/dev/null; then
-    echo "[r00k] pip missing — bootstrapping..."
-    # 1) stdlib ensurepip
-    $PYTHON -m ensurepip --upgrade &>/dev/null || true
-    # 2) distro package if ensurepip unavailable
-    if ! $PYTHON -m pip --version &>/dev/null; then
-        if command -v apt-get &>/dev/null; then sudo apt-get install -y -qq python3-pip
-        elif command -v dnf &>/dev/null; then sudo dnf install -y python3-pip
-        elif command -v pacman &>/dev/null; then sudo pacman -Sy --noconfirm python-pip
-        elif command -v apk &>/dev/null; then sudo apk add py3-pip
-        elif command -v pkg &>/dev/null; then pkg install -y python-pip || true
+# Use a dedicated venv — sidesteps PEP 668 (externally-managed), missing system pip,
+# and --user path quirks. The venv always gets its own pip via ensurepip.
+VENV="$HOME/.rook-band-worker/venv"
+if [ ! -x "$VENV/bin/python" ]; then
+    echo "[r00k] creating venv at $VENV ..."
+    if ! $PYTHON -m venv "$VENV" 2>/dev/null; then
+        # venv module missing — install it, then retry
+        if command -v apt-get &>/dev/null; then sudo apt-get install -y -qq python3-venv || true
+        elif command -v pacman &>/dev/null; then sudo pacman -Sy --noconfirm python || true
         fi
-    fi
-    # 3) last resort: get-pip.py
-    if ! $PYTHON -m pip --version &>/dev/null; then
-        curl -fsSL https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip.py && $PYTHON /tmp/get-pip.py --user
+        $PYTHON -m venv "$VENV" || {{ echo "[r00k] ERROR: could not create venv"; exit 1; }}
     fi
 fi
-if ! $PYTHON -m pip --version &>/dev/null; then
-    echo "[r00k] ERROR: could not bootstrap pip. Install pip manually and re-run."
-    exit 1
-fi
+VPY="$VENV/bin/python"
 
-# Install required dependencies (prebuilt wheels — no compiler needed)
-$PYTHON -m pip install --quiet --user pynacl aiohttp websockets
+# Ensure pip inside the venv (ensurepip is bundled with venv; belt-and-suspenders)
+"$VPY" -m ensurepip --upgrade &>/dev/null || true
+"$VPY" -m pip install --quiet --upgrade pip &>/dev/null || true
+
+# Install required dependencies into the venv (prebuilt wheels — no compiler needed)
+echo "[r00k] installing dependencies (pynacl aiohttp websockets)..."
+"$VPY" -m pip install --quiet pynacl aiohttp websockets || {{
+    echo "[r00k] ERROR: dependency install failed. See output above."
+    exit 1
+}}
 
 # Download band-worker bundle
-PYZ=/tmp/rook_band_worker.pyz
+PYZ="$HOME/.rook-band-worker/band-worker.pyz"
+mkdir -p "$HOME/.rook-band-worker"
 curl -fsSL https://{domain}/band-worker.pyz -o "$PYZ"
 chmod +x "$PYZ"
 
 WORKER_NAME=$(hostname)
-WORKER_CMD="$PYTHON $PYZ --hub mcp.bakeforge.com:443 --ws --psk {band_psk} --name $WORKER_NAME"
+WORKER_CMD="$VPY $PYZ --hub mcp.bakeforge.com:443 --ws --psk {band_psk} --name $WORKER_NAME"
 
 # Install as systemd --user service for persistence across reboots
 if command -v systemctl &>/dev/null && systemctl --user show-environment >/dev/null 2>&1; then
