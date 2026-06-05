@@ -25,3 +25,4 @@ firmware/.vscode/
 # OS
 Thumbs.db
 .DS_Store
+rook/remote/band-worker.pyz

@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 WORKER_SCRIPT = (Path(__file__).parent / "worker.py").read_text(encoding="utf-8")
 
 PS_BOOTSTRAP = '''
-# R00K Worker Bootstrap (Windows)
+# R00K Band Worker Bootstrap (Windows)
 $ErrorActionPreference = "Stop"
 
 # Install Python if missing
@@ -38,22 +38,33 @@ if (-not (Get-Command python -ErrorAction SilentlyContinue)) {{
         Start-Process -Wait -FilePath $pyInstaller -ArgumentList "/quiet", "InstallAllUsers=1", "PrependPath=1"
         Remove-Item $pyInstaller
     }}
-    # Refresh PATH
     $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
 }}
 
 Write-Host "[r00k] Python: $(python --version)"
 
-# Download and run worker
-$wk = "$env:TEMP\\rook_worker.py"
-Invoke-WebRequest -Uri "https://{domain}/worker.py" -OutFile $wk
-python $wk --server wss://{domain}/ws --token "{token}" --name "$env:COMPUTERNAME"
+# Install required dependencies (prebuilt wheels — no compiler needed)
+python -m pip install --quiet --user pynacl aiohttp websockets
+
+# Download band-worker bundle
+$pyz = "$env:TEMP\\rook_band_worker.pyz"
+Invoke-WebRequest -Uri "https://{domain}/band-worker.pyz" -OutFile $pyz
+
+# Register as Scheduled Task so worker restarts at every logon
+$pythonExe = (& python -c "import sys; print(sys.executable)").Trim()
+$workerArgs = "`"$pyz`" --hub mcp.bakeforge.com:443 --ws --psk {band_psk} --name $env:COMPUTERNAME"
+$action = New-ScheduledTaskAction -Execute $pythonExe -Argument $workerArgs
+$trigger = New-ScheduledTaskTrigger -AtLogon
+$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit 0
+Register-ScheduledTask -TaskName "RookBandWorker" -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest -Force | Out-Null
+Start-ScheduledTask -TaskName "RookBandWorker"
+Write-Host "[r00k] Band worker installed as Scheduled Task (RookBandWorker)."
 '''
 
 BASH_BOOTSTRAP = '''#!/bin/bash
 set -e
 
-# R00K Worker Bootstrap (Linux/Mac/Termux)
+# R00K Band Worker Bootstrap (Linux/Mac/Termux)
 
 install_python() {{
     echo "[r00k] Python not found. Installing..."
@@ -68,7 +79,6 @@ install_python() {{
     elif command -v brew &>/dev/null; then
         brew install python3
     elif command -v pkg &>/dev/null; then
-        # Termux
         pkg install -y python curl
     else
         echo "[r00k] ERROR: No supported package manager found."
@@ -92,10 +102,8 @@ install_curl() {{
     fi
 }}
 
-# Ensure curl exists first
 install_curl
 
-# Ensure Python exists
 PYTHON=""
 if command -v python3 &>/dev/null; then
     PYTHON=python3
@@ -115,22 +123,56 @@ fi
 
 echo "[r00k] Python: $($PYTHON --version)"
 
-# Download and run worker
-curl -sL https://{domain}/worker.py -o /tmp/rook_worker.py
-$PYTHON /tmp/rook_worker.py --server wss://{domain}/ws --token "{token}" --name "$(hostname)"
+# Install required dependencies (prebuilt wheels — no compiler needed)
+$PYTHON -m pip install --quiet --user pynacl aiohttp websockets
+
+# Download band-worker bundle
+PYZ=/tmp/rook_band_worker.pyz
+curl -fsSL https://{domain}/band-worker.pyz -o "$PYZ"
+chmod +x "$PYZ"
+
+WORKER_NAME=$(hostname)
+WORKER_CMD="$PYTHON $PYZ --hub mcp.bakeforge.com:443 --ws --psk {band_psk} --name $WORKER_NAME"
+
+# Install as systemd --user service for persistence across reboots
+if command -v systemctl &>/dev/null && systemctl --user show-environment >/dev/null 2>&1; then
+    mkdir -p ~/.config/systemd/user
+    cat > ~/.config/systemd/user/rook-band-worker.service << ROOKSVC
+[Unit]
+Description=Rook Band Worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=$WORKER_CMD
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+ROOKSVC
+    systemctl --user daemon-reload
+    systemctl --user enable --now rook-band-worker
+    echo "[r00k] Band worker installed (systemd user service: rook-band-worker)."
+else
+    nohup $WORKER_CMD >> /tmp/rook_band_worker.log 2>&1 &
+    echo "[r00k] Band worker started in background (PID $!). Log: /tmp/rook_band_worker.log"
+fi
 '''
 
 
 class CombinedServer:
     """Single-port server: HTTP for bootstrap + WebSocket for worker connections."""
 
-    def __init__(self, port: int = 7005, auth_token: str = "", domain: str = "rook.bake.systems",
-                 web_user: str = "", web_pass: str = ""):
+    def __init__(self, port: int = 7005, auth_token: str = "", domain: str = "rook.bakeforge.com",
+                 web_user: str = "", web_pass: str = "",
+                 band_psk: str = "rook-bakenet-default-2026"):
         self.port = port
         self.auth_token = auth_token
         self.domain = domain
         self.web_user = web_user
         self.web_pass = web_pass
+        self.band_psk = band_psk
         self._workers: dict[str, RemoteWorker] = {}
         self._on_worker_connect = None
         self._on_worker_disconnect = None
@@ -139,6 +181,7 @@ class CombinedServer:
         self._app.router.add_get("/", self._index)
         self._app.router.add_get("/worker", self._worker_bootstrap)
         self._app.router.add_get("/worker.py", self._worker_script)
+        self._app.router.add_get("/band-worker.pyz", self._band_worker_pyz)
         self._app.router.add_get("/ws", self._websocket_handler)
         # Auth routes (handled by middleware, these are just route stubs)
         async def _noop(r): return web.Response(text="")
@@ -166,7 +209,7 @@ class CombinedServer:
         import base64
 
         # Always exempt
-        exempt = ("/ws", "/health", "/worker", "/worker.py")
+        exempt = ("/ws", "/health", "/worker", "/worker.py", "/band-worker.pyz")
         if request.path == "/ws/ui":
             return await handler(request)
         if any(request.path == p or request.path.startswith(p + "/") for p in exempt) or not self.web_user:
@@ -281,36 +324,47 @@ button {{ width: 100%; padding: 8px; background: #58a6ff; color: #fff; border: n
 
         # CLI — show instructions
         text = f"""
-  R ☠ ☠ K  Remote Worker
-  ========================
+  R ☠ ☠ K  Band Worker Installer
+  =================================
 
   Linux / Mac:
-    curl -sL https://{self.domain}/worker | bash
+    curl -fsSL https://{self.domain}/worker | bash
 
   Windows (PowerShell):
     iex (irm https://{self.domain}/worker)
 
-  Manual:
-    curl -sL https://{self.domain}/worker.py -o worker.py
-    python3 worker.py --server wss://{self.domain}/ws --name mypc
-
   Endpoints:
-    /worker     bootstrap script (auto-detects OS)
-    /worker.py  raw python worker script
-    /ws         websocket endpoint for workers
-    /health     server status
+    /worker           bootstrap script (auto-detects OS)
+    /band-worker.pyz  self-contained band-worker zipapp
+    /worker.py        legacy exec-worker script
+    /ws               legacy websocket endpoint
+    /health           server status
 """
         return web.Response(text=text, content_type="text/plain")
 
     async def _worker_bootstrap(self, request: web.Request) -> web.Response:
         ua = request.headers.get("User-Agent", "").lower()
-        kw = {"token": self.auth_token, "domain": self.domain}
+        kw = {"domain": self.domain, "band_psk": self.band_psk}
         if "powershell" in ua:
             return web.Response(text=PS_BOOTSTRAP.format(**kw), content_type="text/plain")
         return web.Response(text=BASH_BOOTSTRAP.format(**kw), content_type="text/plain")
 
     async def _worker_script(self, request: web.Request) -> web.Response:
         return web.Response(text=WORKER_SCRIPT, content_type="text/plain")
+
+    async def _band_worker_pyz(self, request: web.Request) -> web.Response:
+        pyz_path = Path(__file__).parent / "band-worker.pyz"
+        if not pyz_path.exists():
+            return web.Response(
+                status=404,
+                text="band-worker.pyz not built yet. Run: python3 rook/remote/build_band_worker.py",
+            )
+        data = pyz_path.read_bytes()
+        return web.Response(
+            body=data,
+            content_type="application/octet-stream",
+            headers={"Content-Disposition": "attachment; filename=band-worker.pyz"},
+        )
 
     async def _health(self, request: web.Request) -> web.Response:
         return web.Response(text=json.dumps({
@@ -509,3 +563,47 @@ class AioHttpWorker:
         except asyncio.TimeoutError:
             self._pending.pop(req_id, None)
             return {"stdout": "", "stderr": "Uninstall timed out", "returncode": -1}
+
+
+def _cli_main() -> None:
+    """Argparse entry point: python -m rook.remote.bootstrap [options]."""
+    import argparse
+
+    ap = argparse.ArgumentParser(description="Rook band-worker installer server")
+    ap.add_argument("--port", type=int, default=7005, help="HTTP listen port")
+    ap.add_argument("--domain", default="rook.bakeforge.com", help="Public domain for installer URLs")
+    ap.add_argument("--psk", default="rook-bakenet-default-2026",
+                    dest="band_psk", help="Band pre-shared key embedded in bootstrap scripts")
+    ap.add_argument("--token", default="", help="Legacy exec-worker auth token")
+    ap.add_argument("--web-user", default="", help="Web UI username (empty = no auth)")
+    ap.add_argument("--web-pass", default="", help="Web UI password")
+    args = ap.parse_args()
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s: %(message)s",
+    )
+
+    server = CombinedServer(
+        port=args.port,
+        domain=args.domain,
+        band_psk=args.band_psk,
+        auth_token=args.token,
+        web_user=args.web_user,
+        web_pass=args.web_pass,
+    )
+
+    async def _run() -> None:
+        await server.start()
+        try:
+            await asyncio.Event().wait()
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            pass
+        finally:
+            await server.stop()
+
+    asyncio.run(_run())
+
+
+if __name__ == "__main__":
+    _cli_main()
