@@ -68,7 +68,9 @@ class TelestheteHubTransport:
         # WS transport (for remote workers through cloudflare tunnel)
         self._ws_session: Optional[aiohttp.ClientSession] = None
         self._ws_conn: Optional[aiohttp.ClientWebSocketResponse] = None
-        self._ws_url: str = f"ws://{hub_host}:{hub_port}/band"
+        # Port 443 (or 8443) is TLS at the edge — must use wss://, not plaintext ws://.
+        _scheme = "wss" if hub_port in (443, 8443) else "ws"
+        self._ws_url: str = f"{_scheme}://{hub_host}:{hub_port}/band"
 
         self._on_message: Optional[OnMessage] = None
         self._seq = 0
