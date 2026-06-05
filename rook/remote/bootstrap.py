@@ -43,6 +43,19 @@ if (-not (Get-Command python -ErrorAction SilentlyContinue)) {{
 
 Write-Host "[r00k] Python: $(python --version)"
 
+# Ensure pip exists — some Python builds ship without it
+python -m pip --version 2>$null
+if ($LASTEXITCODE -ne 0) {{
+    Write-Host "[r00k] pip missing — bootstrapping..."
+    python -m ensurepip --upgrade 2>$null
+    python -m pip --version 2>$null
+    if ($LASTEXITCODE -ne 0) {{
+        $getpip = "$env:TEMP\\get-pip.py"
+        Invoke-WebRequest -Uri "https://bootstrap.pypa.io/get-pip.py" -OutFile $getpip
+        python $getpip
+    }}
+}}
+
 # Install required dependencies (prebuilt wheels — no compiler needed)
 python -m pip install --quiet --user pynacl aiohttp websockets
 
@@ -122,6 +135,30 @@ else
 fi
 
 echo "[r00k] Python: $($PYTHON --version)"
+
+# Ensure pip exists — minimal Python builds ship without it ("No module named pip")
+if ! $PYTHON -m pip --version &>/dev/null; then
+    echo "[r00k] pip missing — bootstrapping..."
+    # 1) stdlib ensurepip
+    $PYTHON -m ensurepip --upgrade &>/dev/null || true
+    # 2) distro package if ensurepip unavailable
+    if ! $PYTHON -m pip --version &>/dev/null; then
+        if command -v apt-get &>/dev/null; then sudo apt-get install -y -qq python3-pip
+        elif command -v dnf &>/dev/null; then sudo dnf install -y python3-pip
+        elif command -v pacman &>/dev/null; then sudo pacman -Sy --noconfirm python-pip
+        elif command -v apk &>/dev/null; then sudo apk add py3-pip
+        elif command -v pkg &>/dev/null; then pkg install -y python-pip || true
+        fi
+    fi
+    # 3) last resort: get-pip.py
+    if ! $PYTHON -m pip --version &>/dev/null; then
+        curl -fsSL https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip.py && $PYTHON /tmp/get-pip.py --user
+    fi
+fi
+if ! $PYTHON -m pip --version &>/dev/null; then
+    echo "[r00k] ERROR: could not bootstrap pip. Install pip manually and re-run."
+    exit 1
+fi
 
 # Install required dependencies (prebuilt wheels — no compiler needed)
 $PYTHON -m pip install --quiet --user pynacl aiohttp websockets
