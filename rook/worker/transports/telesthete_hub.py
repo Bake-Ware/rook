@@ -84,18 +84,19 @@ class TelestheteHubTransport:
 
     async def start(self, on_message: OnMessage) -> None:
         self._on_message = on_message
-        
+        loop = asyncio.get_running_loop()
+
         if self._use_ws:
-            # Use WS transport for remote workers through cloudflare tunnel
+            # Use WS transport for remote workers through the cloudflare tunnel.
             log.info(
                 "telesthete-hub transport up (WS): hub=%s:%d band_id=%s",
                 self._hub[0], self._hub[1], self.band_id.hex()[:16],
             )
-            # Connect to the WS endpoint on the hub
             self._ws_session = aiohttp.ClientSession()
-            ws_conn = await self._ws_session.ws_connect(self._ws_url)
-            self._ws_conn = ws_conn
-            self._tasks.append(asyncio.create_task(self._ws_recv_loop(ws_conn)))
+            # Establish the first connection now (best-effort); the manage loop
+            # owns every subsequent (re)connect so an idle/dropped link recovers.
+            await self._ws_connect_once()
+            self._tasks.append(loop.create_task(self._ws_manage_loop()))
         else:
             # Use UDP transport for LAN peers
             self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -107,16 +108,11 @@ class TelestheteHubTransport:
                 self._hub[0], self._hub[1], self.band_id.hex()[:16],
                 self._sock.getsockname(), FRAG_HEADER,
             )
+            # Implicit registration: send a zero-payload frame so the hub learns
+            # our (NAT'd) address before any real traffic.
+            await self.send(_KEEPALIVE_PAYLOAD)
+            self._tasks.append(loop.create_task(self._recv_loop()))
 
-        # Implicit registration: send a zero-payload frame so the hub learns
-        # our (NAT'd) address before any real traffic.
-        await self.send(_KEEPALIVE_PAYLOAD)
-
-        loop = asyncio.get_running_loop()
-        if not self._use_ws:
-            self._tasks.append(
-                loop.create_task(self._recv_loop()),
-            )
         self._tasks.append(loop.create_task(self._keepalive_loop()))
 
     async def stop(self) -> None:
@@ -145,7 +141,7 @@ class TelestheteHubTransport:
     async def send(self, payload: bytes, peer_id: tuple | None = None) -> None:
         """Fragment + encrypt + send. Big payloads are split across multiple
         Telesthete CHANNEL frames per SPEC §6.4."""
-        if self._sock is None and self._ws_conn is None:
+        if not self._use_ws and self._sock is None:
             raise RuntimeError("transport not started")
         chunks = self._fragmenter.split(payload)
         loop = asyncio.get_running_loop()
@@ -160,16 +156,75 @@ class TelestheteHubTransport:
                 sequence=seq,
                 ciphertext=ciphertext,
             )
-            if self._use_ws and self._ws_conn is not None:
-                await self._ws_conn.send_bytes(frame)
+            if self._use_ws:
+                conn = self._ws_conn
+                if conn is None:
+                    # Mid-reconnect: drop this frame. Announces (30s) and
+                    # keepalives (20s) retry, so the worker re-registers once
+                    # the link is back — no fatal error to the caller.
+                    log.debug("WS not connected; dropping outbound frame")
+                    return
+                try:
+                    await conn.send_bytes(frame)
+                except Exception as e:
+                    log.warning("WS send failed (%s); marking link down", e)
+                    self._ws_conn = None  # manage loop reconnects
+                    return
             elif self._sock is not None:
                 await loop.sock_sendto(self._sock, frame, self._hub)
         if len(chunks) > 1:
             log.debug("sent %d-fragment message (%d B payload)",
                       len(chunks), len(payload))
 
+    async def _ws_connect_once(self) -> bool:
+        """(Re)establish the WS connection to the hub and re-register.
+
+        ``heartbeat`` makes aiohttp send WS PING frames so the link survives the
+        Cloudflare edge's idle timeout and dead connections surface promptly as
+        a close/timeout (which drives a reconnect). Returns True on success.
+        """
+        if self._ws_session is None or self._stopping:
+            return False
+        try:
+            conn = await self._ws_session.ws_connect(self._ws_url, heartbeat=20.0)
+        except Exception as e:
+            log.warning("WS connect to %s failed: %s", self._ws_url, e)
+            return False
+        self._ws_conn = conn
+        # Implicit re-registration so the hub re-learns us immediately; the
+        # worker's announce loop then re-advertises caps with the same id.
+        try:
+            await self.send(_KEEPALIVE_PAYLOAD)
+        except Exception:
+            pass
+        return True
+
+    async def _ws_manage_loop(self) -> None:
+        """Own the WS connection's whole lifecycle: serve the recv loop while
+        connected, and reconnect with capped backoff whenever the link drops.
+        Without this, an idle connection closed by the edge never came back and
+        the worker silently fell off the band."""
+        backoff = 1.0
+        while not self._stopping:
+            if self._ws_conn is None:
+                if not await self._ws_connect_once():
+                    await asyncio.sleep(min(backoff, 30.0))
+                    backoff = min(backoff * 2, 30.0)
+                    continue
+                backoff = 1.0
+                log.info("WS (re)connected to hub")
+            conn = self._ws_conn
+            if conn is not None:
+                await self._ws_recv_loop(conn)  # returns when the link drops
+            self._ws_conn = None
+            if not self._stopping:
+                log.warning("WS link down — reconnecting")
+                await asyncio.sleep(1.0)
+
     async def _ws_recv_loop(self, ws_conn: aiohttp.ClientWebSocketResponse) -> None:
-        """Receive encrypted Band packets from the hub via WS."""
+        """Receive encrypted Band packets from the hub via WS. Returns (rather
+        than looping forever) when the connection drops, so the manage loop can
+        reconnect."""
         while not self._stopping:
             try:
                 msg = await ws_conn.receive()
@@ -205,9 +260,8 @@ class TelestheteHubTransport:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                log.warning("WS recv error: %s", e)
-                await asyncio.sleep(0.1)
-                continue
+                log.warning("WS recv error: %s — dropping link", e)
+                break
 
     async def _recv_loop(self) -> None:
         assert self._sock is not None

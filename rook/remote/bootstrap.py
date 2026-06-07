@@ -465,11 +465,15 @@ button {{ width: 100%; padding: 8px; background: #58a6ff; color: #fff; border: n
   Linux / Mac:
     curl -fsSL https://{self.domain}/worker | bash
 
-  Windows (PowerShell):
+  Windows (PowerShell, on Windows only):
     iex (irm https://{self.domain}/worker)
 
+  Force a variant (if auto-detect guesses wrong):
+    curl -fsSL "https://{self.domain}/worker?os=unix" | bash
+    iex (irm "https://{self.domain}/worker?os=windows")
+
   Endpoints:
-    /worker           bootstrap script (auto-detects OS)
+    /worker           bootstrap script (auto-detects OS; ?os=windows|unix to force)
     /band-worker.pyz  self-contained band-worker zipapp
     /worker.py        legacy exec-worker script
     /ws               legacy websocket endpoint
@@ -480,7 +484,21 @@ button {{ width: 100%; padding: 8px; background: #58a6ff; color: #fff; border: n
     async def _worker_bootstrap(self, request: web.Request) -> web.Response:
         ua = request.headers.get("User-Agent", "").lower()
         kw = {"domain": self.domain, "band_psk": self.band_psk}
-        if "powershell" in ua:
+        # Explicit override wins, for determinism: /worker?os=windows|unix
+        os_q = request.query.get("os", "").lower()
+        if os_q in ("windows", "win"):
+            want_ps = True
+        elif os_q in ("unix", "linux", "mac", "macos", "darwin", "posix"):
+            want_ps = False
+        else:
+            # PowerShell is cross-platform (pwsh on Linux/macOS), so "powershell"
+            # in the UA alone is NOT enough — only serve the Windows installer
+            # when the client is actually running on Windows. Everything else
+            # (curl, wget, browsers, pwsh-on-Linux) gets the bash script.
+            is_ps = ("powershell" in ua) or ("pwsh" in ua)
+            on_windows = ("windows" in ua) or ("win32" in ua) or ("win64" in ua)
+            want_ps = is_ps and on_windows
+        if want_ps:
             return web.Response(text=PS_BOOTSTRAP.format(**kw), content_type="text/plain")
         return web.Response(text=BASH_BOOTSTRAP.format(**kw), content_type="text/plain")
 
