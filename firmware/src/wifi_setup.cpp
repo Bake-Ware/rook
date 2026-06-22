@@ -1,8 +1,24 @@
 #include "wifi_setup.h"
 #include <WiFi.h>
+#include <ESPmDNS.h>
 #include <ArduinoJson.h>
 #include <algorithm>
 #include "settings.h"
+#include "config.h"  // ROOK_MDNS_HOST — mDNS hostname
+
+// (Re)start mDNS so the dongle is reachable as ROOK_MDNS_HOST.local even when
+// DHCP moves its IP. Safe to call on every (re)connect; ends a prior responder
+// first so the STA address binding refreshes.
+static void ensureMdns() {
+    MDNS.end();
+    if (MDNS.begin(ROOK_MDNS_HOST)) {
+        MDNS.addService("http", "tcp", HTTP_PORT);
+        Serial.printf("mDNS: %s.local -> %s\n",
+                      ROOK_MDNS_HOST, WiFi.localIP().toString().c_str());
+    } else {
+        Serial.println("mDNS: begin failed");
+    }
+}
 
 static const uint32_t PER_NET_WAIT_MS = 8000;
 static const uint32_t MONITOR_PERIOD_MS = 45000;
@@ -170,6 +186,7 @@ static void connectFromList() {
         Serial.printf("WiFi STA: connected ip=%s ssid=%s\n",
                       WiFi.localIP().toString().c_str(),
                       WiFi.SSID().c_str());
+        ensureMdns();
     } else {
         Serial.println("WiFi STA: no network associated, AP-only (monitor will retry)");
     }
@@ -214,6 +231,7 @@ static void wifiMonitorTask(void*) {
                 Serial.printf("WiFi: now on %s ip=%s\n",
                               WiFi.SSID().c_str(),
                               WiFi.localIP().toString().c_str());
+                ensureMdns();
                 acted = true;
                 break;
             }

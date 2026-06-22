@@ -19,7 +19,10 @@
 #define BUTTON_HOLD_IGNORE_MS 1500   // ignore continuous holds (prevent repeat fires)
 
 // ---- Firmware version ----
-#define ROOK_FW_VERSION "0.5.0"
+// 0.6.3: re-commits the source for the flashed-but-uncommitted 0.6.2 image
+// (master already carried every 0.6.x feature; only this #define lagged) and
+// adds mDNS so the host can reach the dongle by name across DHCP changes.
+#define ROOK_FW_VERSION "0.6.3"
 
 // ---- TF Card (SD_MMC 4-bit) ----
 #define SDMMC_CLK   12
@@ -44,3 +47,6 @@
 
 // ---- Telesthete ----
 #define TELESTHETE_NAME "rook-kvm"
+
+// ---- mDNS hostname (reachable as ROOK_MDNS_HOST.local) ----
+#define ROOK_MDNS_HOST "rook-dongle"
