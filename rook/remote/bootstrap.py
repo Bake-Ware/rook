@@ -181,6 +181,62 @@ RKYD
     fi
 }}
 
+# ---- Termux/Android: native deps + persistence helper --------------------
+IS_TERMUX=0
+case "$PREFIX" in /data/data/com.termux*) IS_TERMUX=1 ;; esac
+
+setup_termux_service() {{
+    # Persist via termux-services (runit). Falls back to nohup this session if
+    # runsvdir isn't supervising yet (first install before a Termux restart).
+    pkg install -y termux-services >/dev/null 2>&1 || true
+    SVDIR="$PREFIX/var/service/rook-band-worker"
+    mkdir -p "$SVDIR"
+    cat > "$SVDIR/run" << TXSVC
+#!$PREFIX/bin/sh
+termux-wake-lock 2>/dev/null || true
+exec $WORKER_CMD 2>&1
+TXSVC
+    chmod +x "$SVDIR/run"
+
+    # Termux:Boot autostart (no-op unless the Termux:Boot addon is installed):
+    # bring up runsvdir on boot so it supervises our service.
+    mkdir -p "$HOME/.termux/boot"
+    cat > "$HOME/.termux/boot/rook-band-worker" << TXBOOT
+#!$PREFIX/bin/sh
+termux-wake-lock 2>/dev/null || true
+. $PREFIX/etc/profile.d/start-services.sh 2>/dev/null || true
+TXBOOT
+    chmod +x "$HOME/.termux/boot/rook-band-worker"
+
+    if command -v sv >/dev/null 2>&1 && pgrep -x runsvdir >/dev/null 2>&1; then
+        sv up rook-band-worker 2>/dev/null || true
+        sleep 2
+        if sv status rook-band-worker 2>/dev/null | grep -q "^run"; then
+            echo "[r00k] Band worker RUNNING (termux-service: rook-band-worker)."
+            return 0
+        fi
+    fi
+    termux-wake-lock 2>/dev/null || true
+    nohup $WORKER_CMD >> "$HOME/.rook-band-worker/worker.log" 2>&1 &
+    sleep 2
+    if kill -0 $! 2>/dev/null; then
+        echo "[r00k] Band worker RUNNING (nohup PID $!). Log: ~/.rook-band-worker/worker.log"
+        echo "[r00k] TIP: restart Termux once so runsvdir supervises rook-band-worker across restarts."
+    else
+        echo "[r00k] ERROR: worker exited immediately. Check ~/.rook-band-worker/worker.log"
+        tail -n 20 "$HOME/.rook-band-worker/worker.log" 2>/dev/null
+        exit 1
+    fi
+}}
+
+if [ "$IS_TERMUX" = "1" ]; then
+    echo "[r00k] Termux detected — installing native deps (libsodium, termux-api)..."
+    pkg install -y libsodium termux-api >/dev/null 2>&1 || true
+    # pynacl: link Termux's prebuilt libsodium instead of compiling the bundled
+    # copy, whose configure mis-detects memset_explicit on Android API < 34.
+    export SODIUM_INSTALL=system
+fi
+
 install_curl
 
 PYTHON=""
@@ -235,6 +291,11 @@ curl -fsSL https://{domain}/band-worker.pyz -o "$PYZ"
 chmod +x "$PYZ"
 
 WORKER_NAME=$(hostname)
+if [ "$IS_TERMUX" = "1" ]; then
+    # Termux hostname is always "localhost" — use the device model instead.
+    MODEL=$(getprop ro.product.model 2>/dev/null | tr ' ' '-')
+    [ -n "$MODEL" ] && WORKER_NAME="$MODEL"
+fi
 WORKER_CMD="$VPY $PYZ --hub mcp.bakeforge.com:443 --ws --psk {band_psk} --name $WORKER_NAME"
 
 # Stop any existing worker FIRST — avoids duplicate processes and stale worker-ids
@@ -243,12 +304,17 @@ echo "[r00k] stopping any existing band worker..."
 if command -v systemctl &>/dev/null && systemctl --user show-environment >/dev/null 2>&1; then
     systemctl --user stop rook-band-worker 2>/dev/null || true
 fi
+if [ "$IS_TERMUX" = "1" ] && command -v sv >/dev/null 2>&1; then
+    sv down rook-band-worker 2>/dev/null || true
+fi
 # kill stray nohup/foreground worker processes (any install mode)
 pkill -f "band-worker.pyz" 2>/dev/null || true
 sleep 1
 
-# Install as systemd --user service for persistence across reboots
-if command -v systemctl &>/dev/null && systemctl --user show-environment >/dev/null 2>&1; then
+# Persistence: termux-services on Android, systemd --user on Linux, nohup otherwise
+if [ "$IS_TERMUX" = "1" ]; then
+    setup_termux_service
+elif command -v systemctl &>/dev/null && systemctl --user show-environment >/dev/null 2>&1; then
     mkdir -p ~/.config/systemd/user
     cat > ~/.config/systemd/user/rook-band-worker.service << ROOKSVC
 [Unit]
