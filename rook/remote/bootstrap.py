@@ -407,9 +407,16 @@ class CombinedServer:
             log.warning("Web UI routes not registered: %s", e)
 
     def _make_session_cookie(self) -> str:
-        """Derive the session token from the dashboard password."""
+        """Derive the session token from the dashboard credentials."""
         import hashlib
-        return hashlib.sha256(f"{self.web_pass}:r00k-dash".encode()).hexdigest()[:32]
+        return hashlib.sha256(f"{self.web_user}:{self.web_pass}:r00k-dash".encode()).hexdigest()[:32]
+
+    def _check_creds(self, user: str, passwd: str) -> bool:
+        """Validate login. Username is enforced only when one is configured,
+        so a bare password still works for password-only setups."""
+        if self.web_user:
+            return user == self.web_user and passwd == self.web_pass
+        return passwd == self.web_pass
 
     @web.middleware
     async def _basic_auth_middleware(self, request: web.Request, handler):
@@ -430,11 +437,11 @@ class CombinedServer:
         if any(request.path == p or request.path.startswith(p + "/") for p in exempt) or not self.web_pass:
             return await handler(request)
 
-        # Login endpoint — password only.
+        # Login endpoint — username + password.
         if request.path == "/login" and request.method == "POST":
             try:
                 data = await request.post()
-                if data.get("pass", "") == self.web_pass:
+                if self._check_creds(data.get("user", ""), data.get("pass", "")):
                     resp = web.HTTPFound("/")
                     resp.set_cookie("rook_session", self._make_session_cookie(),
                                     max_age=30 * 86400, httponly=True, samesite="Lax")
@@ -443,7 +450,7 @@ class CombinedServer:
                 raise
             except Exception:
                 pass
-            return web.Response(text=self._login_page("Wrong password"), content_type="text/html")
+            return web.Response(text=self._login_page("Invalid credentials"), content_type="text/html")
 
         if request.path == "/login":
             return web.Response(text=self._login_page(), content_type="text/html")
@@ -464,7 +471,7 @@ class CombinedServer:
             try:
                 decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
                 user, _, passwd = decoded.partition(":")
-                if self.web_pass in (passwd, user):
+                if self._check_creds(user, passwd):
                     resp = await handler(request)
                     resp.set_cookie("rook_session", self._make_session_cookie(),
                                     max_age=30 * 86400, httponly=True, samesite="Lax")
@@ -500,10 +507,11 @@ button:hover{{background:#22b88f}}
 </style></head>
 <body><div class="box">
 <h1>♖ ROOK</h1>
-<p>Band control panel. Enter the admin password.</p>
+<p>Band control panel. Sign in to continue.</p>
 {err}
 <form method="POST" action="/login">
-<input name="pass" type="password" placeholder="Admin password" autofocus required>
+<input name="user" placeholder="Username" autofocus required autocomplete="username">
+<input name="pass" type="password" placeholder="Password" required autocomplete="current-password">
 <button type="submit">Sign in</button>
 </form>
 </div></body></html>"""
