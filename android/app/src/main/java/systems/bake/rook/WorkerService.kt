@@ -37,7 +37,7 @@ class WorkerService : Service() {
         val psk = intent?.getStringExtra(EXTRA_PSK) ?: BuildConfig.DEFAULT_PSK
         val name = intent?.getStringExtra(EXTRA_NAME) ?: defaultName()
 
-        startForeground(NOTIF_ID, buildNotification("on band as $name"))
+        startForegroundCompat(NOTIF_ID, buildNotification("on band as $name"))
         acquireWakeLock()
         startWorker(hub, psk, name)
         // START_STICKY: Android restarts us (with a null intent) if killed; the
@@ -112,7 +112,7 @@ class WorkerService : Service() {
             .build()
     }
 
-    private fun startForeground(id: Int, n: Notification) {
+    private fun startForegroundCompat(id: Int, n: Notification) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(
                 id, n,

@@ -383,6 +383,7 @@ class CombinedServer:
         self._app.router.add_get("/worker", self._worker_bootstrap)
         self._app.router.add_get("/worker.py", self._worker_script)
         self._app.router.add_get("/band-worker.pyz", self._band_worker_pyz)
+        self._app.router.add_get("/apk", self._worker_apk)
         self._app.router.add_get("/ws", self._websocket_handler)
         # Auth routes (handled by middleware, these are just route stubs)
         async def _noop(r): return web.Response(text="")
@@ -410,7 +411,7 @@ class CombinedServer:
         import base64
 
         # Always exempt
-        exempt = ("/ws", "/health", "/worker", "/worker.py", "/band-worker.pyz")
+        exempt = ("/ws", "/health", "/worker", "/worker.py", "/band-worker.pyz", "/apk")
         if request.path == "/ws/ui":
             return await handler(request)
         if any(request.path == p or request.path.startswith(p + "/") for p in exempt) or not self.web_user:
@@ -583,6 +584,22 @@ button {{ width: 100%; padding: 8px; background: #58a6ff; color: #fff; border: n
             body=data,
             content_type="application/octet-stream",
             headers={"Content-Disposition": "attachment; filename=band-worker.pyz"},
+        )
+
+    async def _worker_apk(self, request: web.Request) -> web.Response:
+        """Serve the native Android worker APK (built by android/, dropped here)."""
+        apk_path = Path(__file__).parent / "rook-worker.apk"
+        if not apk_path.exists():
+            return web.Response(
+                status=404,
+                text="rook-worker.apk not built yet. Build android/ and drop the APK here.",
+            )
+        return web.FileResponse(
+            apk_path,
+            headers={
+                "Content-Disposition": "attachment; filename=rook-worker.apk",
+                "Content-Type": "application/vnd.android.package-archive",
+            },
         )
 
     async def _health(self, request: web.Request) -> web.Response:
