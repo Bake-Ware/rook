@@ -110,6 +110,13 @@ object ScreenCaptureBridge {
         projection?.let { return it }
         val mgr = ctx.getSystemService(Context.MEDIA_PROJECTION_SERVICE)
             as MediaProjectionManager
-        return mgr.getMediaProjection(code, data).also { projection = it }
+        val mp = mgr.getMediaProjection(code, data) ?: return null
+        // Android 14+ (API 34) requires a registered callback before
+        // createVirtualDisplay(), else IllegalStateException.
+        mp.registerCallback(object : MediaProjection.Callback() {
+            override fun onStop() { projection = null }
+        }, Handler(Looper.getMainLooper()))
+        projection = mp
+        return mp
     }
 }
