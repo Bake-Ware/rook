@@ -367,13 +367,17 @@ class CombinedServer:
 
     def __init__(self, port: int = 7005, auth_token: str = "", domain: str = "rook.bakeforge.com",
                  web_user: str = "", web_pass: str = "",
-                 band_psk: str = "rook-bakenet-default-2026"):
+                 band_psk: str = "rook-bakenet-default-2026",
+                 hub_host: str = "127.0.0.1", hub_port: int = 7474):
         self.port = port
         self.auth_token = auth_token
         self.domain = domain
         self.web_user = web_user
         self.web_pass = web_pass
         self.band_psk = band_psk
+        self.hub_host = hub_host
+        self.hub_port = hub_port
+        self._band = None  # BandClient — joins the hub to track workers + invoke caps
         self._workers: dict[str, RemoteWorker] = {}
         self._on_worker_connect = None
         self._on_worker_disconnect = None
@@ -384,6 +388,8 @@ class CombinedServer:
         self._app.router.add_get("/worker.py", self._worker_script)
         self._app.router.add_get("/band-worker.pyz", self._band_worker_pyz)
         self._app.router.add_get("/apk", self._worker_apk)
+        self._app.router.add_get("/api/band/workers", self._api_band_workers)
+        self._app.router.add_post("/api/band/call", self._api_band_call)
         self._app.router.add_get("/ws", self._websocket_handler)
         # Auth routes (handled by middleware, these are just route stubs)
         async def _noop(r): return web.Response(text="")
@@ -401,29 +407,34 @@ class CombinedServer:
             log.warning("Web UI routes not registered: %s", e)
 
     def _make_session_cookie(self) -> str:
-        """Generate a session token from credentials."""
+        """Derive the session token from the dashboard password."""
         import hashlib
-        return hashlib.sha256(f"{self.web_user}:{self.web_pass}:r00k".encode()).hexdigest()[:32]
+        return hashlib.sha256(f"{self.web_pass}:r00k-dash".encode()).hexdigest()[:32]
 
     @web.middleware
     async def _basic_auth_middleware(self, request: web.Request, handler):
-        """Auth via cookie session or basic auth. WS and health exempt."""
+        """Password-only gate, mirroring the MCP /tokens endpoint.
+
+        A single shared password (``web_pass``) unlocks the dashboard. Once
+        entered it sets a session cookie; headless callers can pass the
+        password via HTTP Basic auth (in either the user or pass field).
+        Installer/health endpoints stay public. Auth is off when no password
+        is configured.
+        """
         import base64
 
-        # Always exempt
+        # Always public: worker bootstrap/artifacts, health, websockets.
         exempt = ("/ws", "/health", "/worker", "/worker.py", "/band-worker.pyz", "/apk")
         if request.path == "/ws/ui":
             return await handler(request)
-        if any(request.path == p or request.path.startswith(p + "/") for p in exempt) or not self.web_user:
+        if any(request.path == p or request.path.startswith(p + "/") for p in exempt) or not self.web_pass:
             return await handler(request)
 
-        # Login endpoint
+        # Login endpoint — password only.
         if request.path == "/login" and request.method == "POST":
             try:
                 data = await request.post()
-                user = data.get("user", "")
-                passwd = data.get("pass", "")
-                if user == self.web_user and passwd == self.web_pass:
+                if data.get("pass", "") == self.web_pass:
                     resp = web.HTTPFound("/")
                     resp.set_cookie("rook_session", self._make_session_cookie(),
                                     max_age=30 * 86400, httponly=True, samesite="Lax")
@@ -432,7 +443,7 @@ class CombinedServer:
                 raise
             except Exception:
                 pass
-            return web.Response(text=self._login_page("Invalid credentials"), content_type="text/html")
+            return web.Response(text=self._login_page("Wrong password"), content_type="text/html")
 
         if request.path == "/login":
             return web.Response(text=self._login_page(), content_type="text/html")
@@ -447,13 +458,13 @@ class CombinedServer:
         if session == self._make_session_cookie():
             return await handler(request)
 
-        # Check basic auth (for API/curl)
+        # Check basic auth (for API/curl): password in either field.
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Basic "):
             try:
                 decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
-                user, passwd = decoded.split(":", 1)
-                if user == self.web_user and passwd == self.web_pass:
+                user, _, passwd = decoded.partition(":")
+                if self.web_pass in (passwd, user):
                     resp = await handler(request)
                     resp.set_cookie("rook_session", self._make_session_cookie(),
                                     max_age=30 * 86400, httponly=True, samesite="Lax")
@@ -473,23 +484,27 @@ class CombinedServer:
         )
 
     def _login_page(self, error: str = "") -> str:
+        err = f'<div class="err">{error}</div>' if error else ""
         return f"""<!DOCTYPE html>
-<html><head><title>♖ ROOK Login</title>
+<html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>♖ ROOK</title>
 <style>
-body {{ background: #0d1117; color: #c9d1d9; font-family: monospace; display: flex; justify-content: center; align-items: center; height: 100vh; }}
-.box {{ background: #161b22; border: 1px solid #30363d; padding: 32px; border-radius: 8px; width: 300px; }}
-h2 {{ margin-bottom: 16px; }}
-input {{ width: 100%; padding: 8px; margin: 4px 0 12px 0; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 4px; font-family: monospace; }}
-button {{ width: 100%; padding: 8px; background: #58a6ff; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-family: monospace; }}
-.err {{ color: #f85149; font-size: 12px; margin-bottom: 8px; }}
+body{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#0b0f14;color:#e6edf3;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0}}
+.box{{background:#11161d;border:1px solid #222c38;padding:32px;border-radius:10px;width:300px;box-shadow:0 8px 40px rgba(0,0,0,.4)}}
+h1{{font-size:1.4rem;margin:0 0 4px;color:#2dd4a7}}
+p{{color:#7d8896;font-size:.8rem;margin:0 0 18px}}
+input{{width:100%;box-sizing:border-box;padding:10px;margin:0 0 12px;background:#0b0f14;color:#e6edf3;border:1px solid #222c38;border-radius:6px;font-family:inherit;font-size:.95rem}}
+button{{width:100%;padding:10px;background:#1a9e7a;color:#fff;border:0;border-radius:6px;cursor:pointer;font-family:inherit;font-size:.95rem}}
+button:hover{{background:#22b88f}}
+.err{{color:#f76a6a;font-size:.8rem;margin-bottom:10px}}
 </style></head>
 <body><div class="box">
-<h2>♖ ROOK</h2>
-{"<div class='err'>" + error + "</div>" if error else ""}
+<h1>♖ ROOK</h1>
+<p>Band control panel. Enter the admin password.</p>
+{err}
 <form method="POST" action="/login">
-<input name="user" placeholder="Username" autofocus>
-<input name="pass" type="password" placeholder="Password">
-<button type="submit">Login</button>
+<input name="pass" type="password" placeholder="Admin password" autofocus required>
+<button type="submit">Sign in</button>
 </form>
 </div></body></html>"""
 
@@ -500,7 +515,26 @@ button {{ width: 100%; padding: 8px; background: #58a6ff; color: #fff; border: n
         await site.start()
         log.info("Remote server on port %d (HTTP + WebSocket)", self.port)
 
+        # Join the band so the dashboard can list workers + invoke caps.
+        # Best-effort: a missing/unreachable hub must not take down the
+        # installer server (the bootstrap endpoints don't need the band).
+        try:
+            from ..band_mcp.client import BandClient
+            self._band = BandClient(psk=self.band_psk, hub_host=self.hub_host,
+                                    hub_port=self.hub_port)
+            await self._band.start()
+            log.info("band client joined hub %s:%d", self.hub_host, self.hub_port)
+        except Exception as e:
+            log.warning("band client failed to start (%s); dashboard band view disabled", e)
+            self._band = None
+
     async def stop(self) -> None:
+        if self._band is not None:
+            try:
+                await self._band.stop()
+            except Exception:
+                log.exception("band client stop failed")
+            self._band = None
         if self._runner:
             await self._runner.cleanup()
 
@@ -602,10 +636,54 @@ button {{ width: 100%; padding: 8px; background: #58a6ff; color: #fff; border: n
             },
         )
 
+    async def _api_band_workers(self, request: web.Request) -> web.Response:
+        """Live band roster from our hub-joined BandClient."""
+        import time
+        if self._band is None:
+            return web.json_response({"error": "band client not connected"}, status=503)
+        now = time.time()
+        out = []
+        for w in self._band.workers.values():
+            out.append({
+                "worker_id": w["worker_id"],
+                "name": w.get("name"),
+                "caps": w.get("caps", []),
+                "plugins": w.get("plugins", []),
+                "last_seen_age_secs": round(now - w.get("last_seen", 0.0), 2),
+            })
+        out.sort(key=lambda x: x["name"] or "")
+        return web.json_response(out)
+
+    async def _api_band_call(self, request: web.Request) -> web.Response:
+        """Invoke a capability on the band and return the worker's reply."""
+        if self._band is None:
+            return web.json_response({"error": "band client not connected"}, status=503)
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json body"}, status=400)
+        cap = data.get("cap")
+        if not cap:
+            return web.json_response({"error": "cap required"}, status=400)
+        args = data.get("args") or {}
+        target = data.get("worker_id") or data.get("target")
+        try:
+            timeout = float(data.get("timeout", 15.0))
+        except (TypeError, ValueError):
+            timeout = 15.0
+        try:
+            reply = await self._band.call(cap=cap, args=args, target=target, timeout=timeout)
+            return web.json_response(reply)
+        except asyncio.TimeoutError:
+            return web.json_response({"ok": False, "error": "timeout waiting for reply"}, status=504)
+        except Exception as e:
+            return web.json_response({"ok": False, "error": f"{type(e).__name__}: {e}"}, status=500)
+
     async def _health(self, request: web.Request) -> web.Response:
         return web.Response(text=json.dumps({
             "status": "ok",
             "workers": len(self._workers),
+            "band_workers": len(self._band.workers) if self._band else 0,
         }), content_type="application/json")
 
     # -- WebSocket endpoint --
@@ -811,8 +889,10 @@ def _cli_main() -> None:
     ap.add_argument("--psk", default="rook-bakenet-default-2026",
                     dest="band_psk", help="Band pre-shared key embedded in bootstrap scripts")
     ap.add_argument("--token", default="", help="Legacy exec-worker auth token")
-    ap.add_argument("--web-user", default="", help="Web UI username (empty = no auth)")
-    ap.add_argument("--web-pass", default="", help="Web UI password")
+    ap.add_argument("--web-user", default="", help="(legacy, unused) Web UI username")
+    ap.add_argument("--web-pass", default="", help="Dashboard admin password (empty = no auth)")
+    ap.add_argument("--hub-host", default="127.0.0.1", help="Telesthete hub host for the dashboard band client")
+    ap.add_argument("--hub-port", type=int, default=7474, help="Telesthete hub port")
     args = ap.parse_args()
 
     logging.basicConfig(
@@ -827,6 +907,8 @@ def _cli_main() -> None:
         auth_token=args.token,
         web_user=args.web_user,
         web_pass=args.web_pass,
+        hub_host=args.hub_host,
+        hub_port=args.hub_port,
     )
 
     async def _run() -> None:
