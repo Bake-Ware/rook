@@ -1,0 +1,29 @@
+[Unit]
+Description=Rook worker — PiKVM band agent
+After=network-online.target kvmd.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/rook-worker.env
+WorkingDirectory=/opt/rook-worker/src
+ExecStart=/opt/rook-worker/venv/bin/python -m rook.worker \
+    --hub ${ROOK_HUB} \
+    --psk ${ROOK_BAND_PSK} \
+    --enable info,pikvm \
+    --name ${ROOK_WORKER_NAME} \
+    -v
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/log
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

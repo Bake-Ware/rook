@@ -1,0 +1,12 @@
+# Staged in by stage_worker.py — generated, not source.
+app/src/main/python/rook/
+app/src/main/python/telesthete/
+
+# Gradle / Android Studio
+.gradle/
+build/
+local.properties
+*.iml
+.idea/
+.cxx/
+__pycache__/

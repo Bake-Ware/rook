@@ -1,0 +1,81 @@
+plugins {
+    id "com.android.application"
+    id "org.jetbrains.kotlin.android"
+    id "com.chaquo.python"
+}
+
+android {
+    namespace "systems.bake.rook"
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "systems.bake.rook"
+        minSdk 26          // foreground service + AccessibilityService + MediaProjection
+        targetSdk 34
+        versionCode 1
+        versionName "0.1.0"
+
+        // Chaquopy: only the ABIs you intend to run on. arm64 covers modern phones;
+        // x86_64 is handy for the emulator. Trim to shrink the APK.
+        ndk {
+            abiFilters "arm64-v8a", "x86_64"
+        }
+
+        // Default band settings — overridable at runtime in MainActivity and
+        // persisted to SharedPreferences. Keep the PSK out of VCS in real builds.
+        buildConfigField "String", "DEFAULT_HUB", "\"hub.example.com:443\""
+        buildConfigField "String", "DEFAULT_PSK", "\"\""
+    }
+
+    buildFeatures {
+        buildConfig true
+        viewBinding true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+        }
+    }
+}
+
+chaquopy {
+    defaultConfig {
+        version "3.11"
+
+        pip {
+            // Native deps — Chaquopy ships prebuilt wheels for these, so no NDK
+            // compile of libsodium (the exact thing that broke under Termux).
+            install "pynacl"
+            install "aiohttp"
+            install "websockets"
+        }
+
+        // worker_entry.start(...) is the bridge entrypoint the service calls.
+    }
+
+    sourceSets {
+        getByName("main") {
+            // src/main/python holds worker_entry.py + the rook_android.* native
+            // plugins. The rook.worker and telesthete.protocol packages are
+            // staged in by `python stage_worker.py` (run before each build).
+            srcDir "src/main/python"
+        }
+    }
+}
+
+dependencies {
+    implementation "androidx.core:core-ktx:1.13.1"
+    implementation "androidx.appcompat:appcompat:1.7.0"
+    implementation "com.google.android.material:material:1.12.0"
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1"
+}

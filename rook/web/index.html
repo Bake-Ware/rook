@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>♖ ROOK — band</title>
+<style>
+  :root{
+    --bg:#0b0f14; --panel:#11161d; --line:#222c38; --line2:#2b3947;
+    --fg:#e6edf3; --dim:#7d8896; --accent:#2dd4a7; --accent2:#1a9e7a;
+    --warn:#f76a6a; --chip:#16202b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--bg);color:var(--fg)}
+  header{display:flex;align-items:center;gap:14px;padding:14px 20px;border-bottom:1px solid var(--line);position:sticky;top:0;background:rgba(11,15,20,.92);backdrop-filter:blur(6px);z-index:5}
+  header h1{font-size:1.15rem;margin:0;color:var(--accent);letter-spacing:.5px}
+  .count{font-size:.85rem;color:var(--dim)}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--accent);margin-right:6px;box-shadow:0 0 8px var(--accent)}
+  .dot.off{background:var(--warn);box-shadow:none}
+  .spacer{flex:1}
+  header a, header .meta{color:var(--dim);font-size:.8rem;text-decoration:none}
+  header a:hover{color:var(--fg)}
+  main{padding:20px;max-width:1100px;margin:0 auto}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:14px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;transition:border-color .15s}
+  .card:hover{border-color:var(--line2)}
+  .card .top{display:flex;align-items:baseline;gap:8px}
+  .card .name{font-size:1.05rem;font-weight:600;color:var(--fg);word-break:break-all}
+  .card .age{margin-left:auto;font-size:.72rem;color:var(--dim);white-space:nowrap}
+  .card .age.stale{color:var(--warn)}
+  .plugins{margin:8px 0 4px;display:flex;flex-wrap:wrap;gap:5px}
+  .chip{background:var(--chip);border:1px solid var(--line);border-radius:20px;padding:2px 9px;font-size:.72rem;color:var(--dim)}
+  .caps{font-size:.72rem;color:var(--dim);margin:6px 0}
+  .actions{display:flex;gap:7px;margin-top:10px;flex-wrap:wrap}
+  button{font-family:inherit;font-size:.8rem;padding:6px 12px;border-radius:6px;border:1px solid var(--line2);background:#152029;color:var(--fg);cursor:pointer}
+  button:hover:not(:disabled){border-color:var(--accent2);color:var(--accent)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  button.primary{background:var(--accent2);border-color:var(--accent2);color:#fff}
+  button.primary:hover:not(:disabled){background:var(--accent);color:#04130d}
+  .empty{color:var(--dim);text-align:center;padding:60px 0;font-size:.95rem}
+  .overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;z-index:20;padding:20px}
+  .overlay.show{display:flex}
+  .modal{background:var(--panel);border:1px solid var(--line2);border-radius:10px;max-width:min(900px,95vw);max-height:90vh;overflow:auto;padding:16px 18px;width:100%}
+  .modal .mhead{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+  .modal .mhead h3{margin:0;font-size:1rem;color:var(--accent)}
+  .modal .close{margin-left:auto;background:none;border:0;color:var(--dim);font-size:1.3rem;cursor:pointer;padding:0 4px}
+  .modal pre{background:#0b0f14;border:1px solid var(--line);border-radius:6px;padding:12px;overflow:auto;font-size:.8rem;white-space:pre-wrap;word-break:break-word;margin:0}
+  .modal img{max-width:100%;border-radius:6px;border:1px solid var(--line)}
+  .modal .err{color:var(--warn)}
+  .row{display:flex;gap:8px;margin-bottom:10px}
+  .row input{flex:1;padding:8px;background:#0b0f14;color:var(--fg);border:1px solid var(--line2);border-radius:6px;font-family:inherit}
+  .spin{display:inline-block;width:14px;height:14px;border:2px solid var(--line2);border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  /* nav */
+  nav{display:flex;gap:4px}
+  nav .tab{background:none;border:1px solid transparent;color:var(--dim);padding:5px 12px;border-radius:6px;cursor:pointer;font-family:inherit;font-size:.85rem}
+  nav .tab:hover{color:var(--fg)}
+  nav .tab.active{color:var(--accent);border-color:var(--line2);background:var(--panel)}
+  .links{display:flex;gap:14px;align-items:center}
+  .links a{color:var(--dim);font-size:.8rem;text-decoration:none}
+  .links a:hover{color:var(--accent)}
+  /* install view */
+  .doc{max-width:760px}
+  .doc h2{color:var(--accent);font-size:1.05rem;margin:26px 0 8px;border-bottom:1px solid var(--line);padding-bottom:6px}
+  .doc h2:first-child{margin-top:0}
+  .doc p{color:var(--dim);font-size:.88rem;line-height:1.55}
+  .doc ol{color:var(--dim);font-size:.88rem;line-height:1.7;padding-left:20px}
+  .doc code{background:var(--chip);padding:1px 6px;border-radius:4px;color:var(--accent)}
+  .cmd{position:relative;background:#0b0f14;border:1px solid var(--line2);border-radius:8px;padding:12px 44px 12px 14px;margin:8px 0;font-size:.85rem;overflow-x:auto;white-space:pre}
+  .cmd .cp{position:absolute;top:8px;right:8px;padding:3px 8px;font-size:.7rem}
+  .pill{display:inline-block;background:var(--chip);border:1px solid var(--line2);border-radius:6px;padding:6px 12px;color:var(--accent);text-decoration:none;font-size:.85rem;margin:4px 8px 4px 0}
+  .pill:hover{border-color:var(--accent2)}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+<header>
+  <h1>♖ ROOK</h1>
+  <nav>
+    <button class="tab active" id="tab-band" onclick="showView('band')">Band</button>
+    <button class="tab" id="tab-install" onclick="showView('install')">Install</button>
+  </nav>
+  <span class="count"><span id="dot" class="dot off"></span><span id="count">connecting…</span></span>
+  <span class="spacer"></span>
+  <span class="meta" id="sysmeta"></span>
+  <span class="links">
+    <a id="link-tokens" href="#" target="_blank" rel="noopener">Tokens ↗</a>
+    <a id="link-apk" href="/apk">APK ↓</a>
+    <a href="/logout">Sign out</a>
+  </span>
+</header>
+<main>
+  <div id="view-band">
+    <div id="grid" class="grid"></div>
+    <div id="empty" class="empty" style="display:none"></div>
+  </div>
+
+  <div id="view-install" class="doc" hidden>
+    <h2>What is a worker?</h2>
+    <p>A worker is a small agent that joins the ROOK band and exposes capabilities
+    (<code>shell</code>, <code>files</code>, <code>screenshot</code>, <code>hid</code>, …).
+    Once installed it appears on the <b>Band</b> tab, where you can snapshot, run shell, and more.</p>
+
+    <h2>Linux / macOS</h2>
+    <p>One line. Auto-installs Python deps, joins the band, and persists across reboots.</p>
+    <div class="cmd" id="cmd-unix"></div>
+
+    <h2>Windows (PowerShell, run on Windows)</h2>
+    <div class="cmd" id="cmd-win"></div>
+
+    <h2>Android — native app (recommended)</h2>
+    <p>A real APK with a foreground service: real screen capture (MediaProjection) and
+    rootless input (Accessibility).</p>
+    <ol>
+      <li>On the phone, open <a class="pill" id="link-apk2" href="/apk">Download APK ↓</a></li>
+      <li>Tap the file → allow “install unknown apps” for your browser → <b>Install</b>.</li>
+      <li>Open <b>Rook Worker</b>, tap <b>Start worker</b> (hub/PSK prefilled).</li>
+      <li>Grant <b>screen capture</b>, <b>accessibility</b>, and <b>ignore battery optimization</b>.</li>
+    </ol>
+
+    <h2>Android — Termux (headless)</h2>
+    <p>If you prefer a terminal worker instead of the app:</p>
+    <div class="cmd" id="cmd-termux"></div>
+
+    <h2>API tokens</h2>
+    <p>Headless agents authenticate to <code>/mcp</code> with a bearer token. Mint and revoke them here:</p>
+    <p><a class="pill" id="link-tokens2" href="#" target="_blank" rel="noopener">Open token manager ↗</a></p>
+  </div>
+</main>
+
+<div class="overlay" id="overlay" onclick="if(event.target===this)closeModal()">
+  <div class="modal">
+    <div class="mhead"><h3 id="mtitle"></h3><button class="close" onclick="closeModal()">×</button></div>
+    <div id="mbody"></div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+let workers = [];
+
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+function ageStr(s){ if(s==null)return '—'; if(s<60)return Math.round(s)+'s'; if(s<3600)return Math.round(s/60)+'m'; return Math.round(s/3600)+'h'; }
+
+async function loadWorkers(){
+  try{
+    const r = await fetch('/api/band/workers',{headers:{'Accept':'application/json'}});
+    if(r.status===503){ setStatus(false,'band offline'); return; }
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    workers = await r.json();
+    render();
+    setStatus(true, workers.length+' on band');
+  }catch(e){ setStatus(false,'error: '+e.message); }
+}
+
+function setStatus(ok,txt){
+  $('#dot').className = 'dot'+(ok?'':' off');
+  $('#count').textContent = txt;
+}
+
+function render(){
+  const grid = $('#grid'), empty = $('#empty');
+  if(!workers.length){
+    grid.innerHTML=''; empty.style.display='block';
+    empty.textContent='No workers on the band right now.';
+    return;
+  }
+  empty.style.display='none';
+  grid.innerHTML = workers.map(w=>{
+    const caps = w.caps||[];
+    const has = c => caps.includes(c);
+    const stale = (w.last_seen_age_secs||0) > 60;
+    const plugins = (w.plugins||[]).map(p=>'<span class="chip">'+esc(p)+'</span>').join('');
+    const wid = esc(w.worker_id);
+    const snap = has('screenshot.capture') ? '<button class="primary" onclick="snap(\''+wid+'\')">snap</button>':'';
+    const sh = has('shell.exec') ? '<button onclick="shell(\''+wid+'\')">shell</button>':'';
+    const inf = has('info.host') ? '<button onclick="info(\''+wid+'\')">info</button>':'';
+    return '<div class="card">'
+      + '<div class="top"><span class="name">'+esc(w.name||w.worker_id)+'</span>'
+      + '<span class="age '+(stale?'stale':'')+'">↻ '+ageStr(w.last_seen_age_secs)+'</span></div>'
+      + '<div class="caps">'+caps.length+' capabilities · <span style="opacity:.7">'+esc(wid.slice(0,12))+'</span></div>'
+      + '<div class="plugins">'+plugins+'</div>'
+      + '<div class="actions">'+snap+sh+inf+'<button onclick="showCaps(\''+wid+'\')">caps</button></div>'
+      + '</div>';
+  }).join('');
+}
+
+function openModal(title){ $('#mtitle').innerHTML=title; $('#overlay').classList.add('show'); }
+function setBody(html){ $('#mbody').innerHTML=html; }
+function closeModal(){ $('#overlay').classList.remove('show'); }
+function workerName(wid){ const w=workers.find(x=>x.worker_id===wid); return w?(w.name||wid):wid; }
+
+async function bandCall(cap,worker_id,args,timeout){
+  const r = await fetch('/api/band/call',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({cap:cap,worker_id:worker_id,args:args||{},timeout:timeout||20})
+  });
+  return r.json();
+}
+
+async function snap(wid){
+  openModal('📸 '+esc(workerName(wid))+' <span class="spin"></span>');
+  setBody('<p style="color:var(--dim)">capturing…</p>');
+  const reply = await bandCall('screenshot.capture',wid,{quality:75},30);
+  const res = reply.result||{};
+  $('#mtitle').innerHTML = '📸 '+esc(workerName(wid));
+  if(res.ok && res.data){
+    setBody('<img src="data:image/'+(res.format||'jpeg')+';base64,'+res.data+'">');
+  }else{
+    setBody('<pre class="err">'+esc(res.error||reply.error||'capture failed')+'</pre>');
+  }
+}
+
+async function info(wid){
+  openModal('ℹ️ '+esc(workerName(wid))+' <span class="spin"></span>');
+  setBody('');
+  const reply = await bandCall('info.host',wid,{},10);
+  $('#mtitle').innerHTML = 'ℹ️ '+esc(workerName(wid));
+  setBody('<pre>'+esc(JSON.stringify(reply.result==null?reply:reply.result,null,2))+'</pre>');
+}
+
+function showCaps(wid){
+  const w = workers.find(x=>x.worker_id===wid);
+  openModal('⚙️ '+esc(workerName(wid)));
+  setBody('<pre>'+esc((w.caps||[]).join('\n'))+'</pre>');
+}
+
+function shell(wid){
+  openModal('▶ shell · '+esc(workerName(wid)));
+  setBody('<div class="row"><input id="cmd" placeholder="command (e.g. uname -a)" autofocus>'
+    + '<button class="primary" onclick="runShell(\''+esc(wid)+'\')">run</button></div>'
+    + '<pre id="shout" style="display:none"></pre>');
+  const inp=$('#cmd'); inp.focus();
+  inp.addEventListener('keydown',e=>{if(e.key==='Enter')runShell(wid);});
+}
+
+async function runShell(wid){
+  const cmd = $('#cmd').value.trim(); if(!cmd) return;
+  const out=$('#shout'); out.style.display='block'; out.className=''; out.textContent='running…';
+  const reply = await bandCall('shell.exec',wid,{cmd:cmd,timeout:30},35);
+  const r = reply.result||{};
+  if(r.ok===false||reply.ok===false){ out.className='err'; out.textContent=r.error||reply.error||'error'; return; }
+  const parts=[];
+  if(r.stdout) parts.push(r.stdout);
+  if(r.stderr) parts.push('[stderr]\n'+r.stderr);
+  out.textContent = (parts.join('\n')||'(no output)')+'\n\n[exit '+r.code+']';
+}
+
+async function loadMeta(){
+  try{
+    const r=await fetch('/api/status',{headers:{'Accept':'application/json'}});
+    if(!r.ok) return; const s=await r.json();
+    if(s.model) $('#sysmeta').textContent = s.model.name+' · '+s.model.model;
+  }catch(e){}
+}
+
+function showView(name){
+  $('#view-band').hidden = name!=='band';
+  $('#view-install').hidden = name!=='install';
+  $('#tab-band').classList.toggle('active', name==='band');
+  $('#tab-install').classList.toggle('active', name==='install');
+}
+
+function setCmd(id,text){
+  const el=document.getElementById(id); if(!el) return;
+  el.textContent=text;
+  const b=document.createElement('button');
+  b.className='cp'; b.textContent='copy';
+  b.onclick=()=>{navigator.clipboard.writeText(text).then(()=>{b.textContent='copied';setTimeout(()=>b.textContent='copy',1200);});};
+  el.appendChild(b);
+}
+
+function wireLinks(){
+  const origin=location.origin;
+  const tokensUrl=location.protocol+'//'+location.host.replace(/^rook\./,'mcp.')+'/tokens';
+  $('#link-tokens').href=tokensUrl;
+  const t2=document.getElementById('link-tokens2'); if(t2) t2.href=tokensUrl;
+  setCmd('cmd-unix', 'curl -fsSL '+origin+'/worker | bash');
+  setCmd('cmd-win',  'iex (irm '+origin+'/worker)');
+  setCmd('cmd-termux','pkg install -y curl && curl -fsSL '+origin+'/worker | bash');
+}
+
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
+wireLinks();
+loadWorkers(); loadMeta();
+setInterval(loadWorkers, 4000);
+</script>
+</body>
+</html>

@@ -1,0 +1,29 @@
+__pycache__/
+*.pyc
+.env
+data/
+*.egg-info/
+dist/
+build/
+.venv/
+
+# Secrets
+firmware/include/secrets.h
+lgtv
+webos_rsa
+
+# PlatformIO
+firmware/.pio/
+firmware/.vscode/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+.DS_Store
+rook/remote/band-worker.pyz
+rook/remote/rook-worker.apk
