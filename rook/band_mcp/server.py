@@ -29,13 +29,13 @@ from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import AnyHttpUrl
 
 from .api_tokens_ui import build_api_token_routes
-from .client import BandClient
+from .client import BandClient, MultiBandClient
 from .oauth import InMemoryProvider, StaticTokenVerifier, build_oauth_routes
 
 log = logging.getLogger("rook.band_mcp.server")
 
 
-def build_server(client: BandClient,
+def build_server(client: "BandClient | MultiBandClient",
                  allowed_hosts: list[str] | None = None,
                  public_url: str | None = None,
                  auth_password: str | None = None,
@@ -104,6 +104,7 @@ def build_server(client: BandClient,
             out.append({
                 "worker_id": w["worker_id"],
                 "name": w.get("name"),
+                "band": w.get("band"),
                 "caps": w.get("caps", []),
                 "plugins": w.get("plugins", []),
                 "last_seen_age_secs": round(now - w.get("last_seen", 0.0), 2),
@@ -153,8 +154,8 @@ def build_server(client: BandClient,
 
 
 async def _amain(args) -> None:
-    client = BandClient(psk=args.psk, hub_host=args.hub_host,
-                        hub_port=args.hub_port)
+    client = MultiBandClient(psks=args.psks, hub_host=args.hub_host,
+                             hub_port=args.hub_port)
     await client.start()
 
     allowed_hosts = [h.strip() for h in (args.allowed_hosts or "").split(",")
@@ -174,7 +175,9 @@ async def _amain(args) -> None:
     ws_bridge: WSBandBridge | None = None
     try:
         from .ws_band import WSBandBridge
-        ws_bridge = WSBandBridge(app, args.hub_host, args.hub_port, args.psk)
+        # The WS /band bridge forwards raw encrypted packets and is band-agnostic,
+        # so a single bridge serves every band; the psk arg is unused.
+        ws_bridge = WSBandBridge(app, args.hub_host, args.hub_port, args.psks[0])
         ws_bridge.start()
     except Exception as e:
         log.warning("WS band bridge failed to start: %s", e)
@@ -245,7 +248,9 @@ def main() -> None:
     ap.add_argument("--hub", default="127.0.0.1:7474",
                     help="telesthete hub host:port")
     ap.add_argument("--psk", default=os.environ.get("ROOK_BAND_PSK"),
-                    help="band pre-shared key (or env ROOK_BAND_PSK)")
+                    help="band pre-shared key (or env ROOK_BAND_PSK). Accepts a "
+                         "comma-separated list to join several bands on one hub "
+                         "at once — e.g. during a PSK rotation: --psk new,old")
     ap.add_argument("--bind", default="127.0.0.1:8765",
                     help="HTTP bind host:port for the MCP server")
     ap.add_argument("--allowed-hosts",
@@ -275,6 +280,8 @@ def main() -> None:
 
     if not args.psk:
         ap.error("--psk or env ROOK_BAND_PSK is required")
+    # One or more PSKs (comma-separated) → one band each, all on the same hub.
+    args.psks = [p.strip() for p in args.psk.split(",") if p.strip()]
 
     level = logging.WARNING - 10 * args.verbose
     logging.basicConfig(level=max(level, logging.DEBUG),

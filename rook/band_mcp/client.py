@@ -159,3 +159,112 @@ class BandClient:
                 break
             except Exception:
                 log.exception("gc loop failed")
+
+
+class MultiBandClient:
+    """Join several bands (one PSK each) over a single shared hub.
+
+    The Telesthete hub relays by ``band_id`` and holds no PSK, so one hub
+    carries many bands at once. This wraps one :class:`BandClient` per PSK and
+    presents the same surface as a single client — a merged ``workers`` roster
+    (each entry tagged with the ``band`` it was seen on) and a ``call()`` that
+    routes to the band hosting the target worker. Used to run a new band
+    alongside an old one during a PSK rotation, then drop the old PSK.
+
+    ``build_server`` treats this interchangeably with :class:`BandClient`.
+    """
+
+    def __init__(self, psks, hub_host: str = "127.0.0.1",
+                 hub_port: int = 7474) -> None:
+        deduped: list[str] = []
+        for p in psks:
+            p = (p or "").strip()
+            if p and p not in deduped:
+                deduped.append(p)
+        if not deduped:
+            raise ValueError("MultiBandClient requires at least one PSK")
+        self._clients = [
+            BandClient(psk=p, hub_host=hub_host, hub_port=hub_port)
+            for p in deduped
+        ]
+        self.hub_host = hub_host
+        self.hub_port = hub_port
+
+    async def start(self) -> None:
+        for c in self._clients:
+            await c.start()
+            # Short band-id fingerprint, for tagging the merged roster.
+            c.label = c.transport.band_id.hex()[:8]
+        log.info("multi-band client up: %d band(s) [%s] on hub %s:%d",
+                 len(self._clients),
+                 ", ".join(getattr(c, "label", "?") for c in self._clients),
+                 self.hub_host, self.hub_port)
+
+    async def stop(self) -> None:
+        for c in self._clients:
+            try:
+                await c.stop()
+            except Exception:
+                log.exception("band client stop failed")
+
+    @property
+    def workers(self) -> dict[str, WorkerEntry]:
+        """Union of every band's roster. If a worker is briefly visible on two
+        bands (mid-migration), the freshest sighting wins."""
+        merged: dict[str, WorkerEntry] = {}
+        for c in self._clients:
+            label = getattr(c, "label", "?")
+            for wid, w in c.workers.items():
+                prev = merged.get(wid)
+                if prev is None or w.get("last_seen", 0.0) >= prev.get("last_seen", 0.0):
+                    entry = WorkerEntry(w)
+                    entry["band"] = label
+                    merged[wid] = entry
+        return merged
+
+    def _client_for(self, worker_id: str) -> "BandClient | None":
+        """The band where ``worker_id`` was most recently seen."""
+        best: BandClient | None = None
+        best_seen = -1.0
+        for c in self._clients:
+            w = c.workers.get(worker_id)
+            if w and w.get("last_seen", 0.0) > best_seen:
+                best, best_seen = c, w.get("last_seen", 0.0)
+        return best
+
+    async def call(self, cap: str, args: dict | None = None,
+                   target: str | None = None, timeout: float = 15.0) -> dict:
+        # Known target → send only on its band.
+        if target:
+            c = self._client_for(target)
+            if c is not None:
+                return await c.call(cap=cap, args=args, target=target, timeout=timeout)
+        # Otherwise race across all bands; first real reply wins.
+        if len(self._clients) == 1:
+            return await self._clients[0].call(cap=cap, args=args, target=target, timeout=timeout)
+        tasks = [asyncio.create_task(c.call(cap=cap, args=args, target=target, timeout=timeout))
+                 for c in self._clients]
+        try:
+            result: dict | None = None
+            err: Exception | None = None
+            pending = set(tasks)
+            while pending and result is None:
+                done, pending = await asyncio.wait(
+                    pending, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+                if not done:
+                    break  # overall timeout
+                for t in done:
+                    try:
+                        result = t.result()
+                        break
+                    except Exception as e:
+                        err = e
+            if result is not None:
+                return result
+            if err is not None:
+                raise err
+            raise asyncio.TimeoutError
+        finally:
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
