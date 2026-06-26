@@ -125,13 +125,21 @@ class Worker:
                 log.exception("announce failed")
 
     async def run(self) -> None:
-        await self.transport.start(self._on_message)
+        # on_connect=self.announce: re-announce every time the transport's link
+        # (re)establishes, so a dropped+restored band connection re-registers
+        # us instead of leaving us silently off the band.
+        await self.transport.start(self._on_message, on_connect=self.announce)
         for p in self.plugins:
             try:
                 await p.start()
             except Exception:
                 log.exception("plugin %s start failed", p.NAMESPACE)
-        await self.announce()
+        try:
+            await self.announce()
+        except Exception:
+            # A WS transport may still be connecting; on_connect and the
+            # announce loop will register us as soon as the link is up.
+            log.debug("initial announce deferred (transport not ready yet)")
         self._announce_task = asyncio.create_task(self._announce_loop())
         log.info("worker up: id=%s name=%s caps=%s",
                  self.worker_id, self.name, self.registry.list())
