@@ -132,15 +132,34 @@ class HermesPlugin(Plugin):
 
     @capability("skills.list")
     async def _skills_list(self) -> dict:
-        """List installed skills. Returns {ok, skills} with structured entries."""
+        """List installed skills. Returns {ok, skills} with structured entries.
+
+        ``hermes skills list`` renders a Rich box-drawing table; parse its
+        data rows (cells split on the ``│`` column separator) into
+        {name, category, source, trust, status} dicts.
+        """
         res = await self._cli(["skills", "list"], timeout=30.0)
         if res.get("ok"):
-            lines = [l for l in res["stdout"].strip().split("\n") if l.strip()]
             skills = []
-            for line in lines:
-                parts = line.split(None, 1)
-                if len(parts) >= 2 and not line.startswith("==="):
-                    skills.append({"name": parts[0], "description": parts[1]})
+            for line in res["stdout"].split("\n"):
+                if "│" not in line:  # not a table data row (header uses ┃)
+                    continue
+                cells = [c.strip() for c in line.split("│")]
+                # drop only the outer border cells, keep interior blanks
+                # (some skills have an empty category column)
+                if cells and cells[0] == "":
+                    cells = cells[1:]
+                if cells and cells[-1] == "":
+                    cells = cells[:-1]
+                if len(cells) < 5 or cells[0] in ("", "Name"):  # skip header
+                    continue
+                skills.append({
+                    "name": cells[0],
+                    "category": cells[1],
+                    "source": cells[2],
+                    "trust": cells[3],
+                    "status": cells[4],
+                })
             res["skills"] = skills
         return res
 
@@ -198,7 +217,8 @@ class HermesPlugin(Plugin):
     async def start(self) -> None:
         """Log that this agent is ready on the Rook network."""
         if _config_path() and shutil.which("hermes"):
-            print(f"[hermes] plugin loaded — {self._status()}")
+            print(f"[hermes] plugin loaded — config={_config_path()} "
+                  f"binary={shutil.which('hermes')}")
         else:
             print("[hermes] plugin skipped — Hermes not installed on this machine")
 
