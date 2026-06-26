@@ -299,22 +299,21 @@ fi
 # band: {band_name}
 WORKER_CMD="$VPY $PYZ --hub {hub_public} --ws --psk {band_psk} --name $WORKER_NAME"
 
-# Stop any existing worker FIRST — avoids duplicate processes and stale worker-ids
-# lingering on the band (each worker process announces a fresh random id).
-echo "[r00k] stopping any existing band worker..."
-if command -v systemctl &>/dev/null && systemctl --user show-environment >/dev/null 2>&1; then
-    systemctl --user stop rook-band-worker 2>/dev/null || true
-fi
-if [ "$IS_TERMUX" = "1" ] && command -v sv >/dev/null 2>&1; then
-    sv down rook-band-worker 2>/dev/null || true
-fi
-# kill stray nohup/foreground worker processes (any install mode)
-pkill -f "band-worker.pyz" 2>/dev/null || true
-sleep 1
+# Swap in the new worker. CRITICAL: when this installer is launched *by the
+# running worker* (a band-driven update), this script shares the worker's
+# process tree / systemd cgroup. Stopping the old worker from inside this
+# script (e.g. `pkill`) therefore kills THIS script mid-swap, before the new
+# worker starts — stranding the host. So we never kill the old worker
+# in-process: we let the service manager own the stop+start (it finishes the
+# restart even if this script dies), and on no-service-manager hosts we launch
+# the new worker in its OWN session before reaping the old one.
+echo "[r00k] installing/replacing band worker..."
 
-# Persistence: termux-services on Android, systemd --user on Linux, nohup otherwise
 if [ "$IS_TERMUX" = "1" ]; then
     setup_termux_service
+    # runit owns the swap; restarting is safe even if this script is the caller.
+    sv restart rook-band-worker 2>/dev/null || sv up rook-band-worker 2>/dev/null || true
+    echo "[r00k] Band worker (re)started via termux-services."
 elif command -v systemctl &>/dev/null && systemctl --user show-environment >/dev/null 2>&1; then
     mkdir -p ~/.config/systemd/user
     cat > ~/.config/systemd/user/rook-band-worker.service << ROOKSVC
@@ -332,22 +331,29 @@ RestartSec=10
 WantedBy=default.target
 ROOKSVC
     systemctl --user daemon-reload
-    systemctl --user enable --now rook-band-worker
+    systemctl --user enable rook-band-worker >/dev/null 2>&1 || true
     # Enable lingering so the service survives logout/reboot (best-effort)
     loginctl enable-linger "$USER" 2>/dev/null || sudo loginctl enable-linger "$USER" 2>/dev/null || true
-    sleep 2
-    if systemctl --user is-active --quiet rook-band-worker; then
-        echo "[r00k] Band worker RUNNING (systemd user service: rook-band-worker)."
-    else
-        echo "[r00k] WARNING: systemd service didn't start — falling back to nohup."
-        nohup $WORKER_CMD >> ~/.rook-band-worker/worker.log 2>&1 &
-        echo "[r00k] Band worker started in background (PID $!). Log: ~/.rook-band-worker/worker.log"
-    fi
+    # Hand the swap to systemd. `restart` stops the old instance and starts the
+    # new one from the unit above — owned by the user manager, NOT this script —
+    # so it completes even if stopping the old worker kills this caller.
+    echo "[r00k] (re)starting via systemd user service..."
+    systemctl --user restart rook-band-worker
+    echo "[r00k] Band worker RUNNING (systemd user service: rook-band-worker)."
 else
-    nohup $WORKER_CMD >> ~/.rook-band-worker/worker.log 2>&1 &
+    # No service manager. Start the NEW worker in its own session FIRST (so it
+    # survives even if reaping the old worker kills this script), then reap any
+    # other band-worker processes except the one we just launched.
+    mkdir -p ~/.rook-band-worker
+    setsid bash -c "exec $WORKER_CMD >> $HOME/.rook-band-worker/worker.log 2>&1" </dev/null >/dev/null 2>&1 &
+    NEWPID=$!
     sleep 2
-    if kill -0 $! 2>/dev/null; then
-        echo "[r00k] Band worker RUNNING in background (PID $!). Log: ~/.rook-band-worker/worker.log"
+    for pid in $(pgrep -f "band-worker.pyz" 2>/dev/null); do
+        [ "$pid" = "$NEWPID" ] && continue
+        kill "$pid" 2>/dev/null || true
+    done
+    if kill -0 "$NEWPID" 2>/dev/null; then
+        echo "[r00k] Band worker RUNNING in background (PID $NEWPID, own session). Log: ~/.rook-band-worker/worker.log"
     else
         echo "[r00k] ERROR: worker exited immediately. Check: ~/.rook-band-worker/worker.log"
         tail -n 20 ~/.rook-band-worker/worker.log 2>/dev/null
