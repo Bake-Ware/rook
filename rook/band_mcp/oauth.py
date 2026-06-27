@@ -81,11 +81,16 @@ class InMemoryProvider(OAuthAuthorizationServerProvider):
 
     def __init__(self, auth_password: str,
                  persist_path: str | None = None,
-                 preset_client: tuple[str, str, list[str]] | None = None) -> None:
+                 preset_client: tuple[str, str, list[str]] | None = None,
+                 static_token: str | None = None) -> None:
         if not auth_password:
             raise ValueError("auth_password required")
         self._password = auth_password
         self._persist_path = persist_path
+        # Optional fixed bearer accepted alongside OAuth/API tokens, so a
+        # header-only client can authenticate without the OAuth flow. Set via
+        # ROOK_MCP_STATIC_TOKEN. Ignored if too short to be a real secret.
+        self._static_token = static_token if (static_token and len(static_token) >= 16) else None
         self._clients: dict[str, OAuthClientInformationFull] = {}
         self._codes: dict[str, AuthorizationCode] = {}
         self._access: dict[str, AccessToken] = {}
@@ -282,6 +287,10 @@ class InMemoryProvider(OAuthAuthorizationServerProvider):
     # -- access tokens -------------------------------------------------------
 
     async def load_access_token(self, token: str) -> AccessToken | None:
+        # Fixed static bearer (no OAuth dance) — checked first, constant-time.
+        if self._static_token and secrets.compare_digest(self._static_token, token or ""):
+            return AccessToken(token=token, client_id="static",
+                               scopes=["rook"], expires_at=None, resource=None)
         at = self._access.get(token)
         if at is not None and at.expires_at >= self._now():
             return at
