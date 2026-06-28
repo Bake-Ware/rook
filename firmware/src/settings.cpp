@@ -34,7 +34,7 @@ static String defaultWorkerName() {
     uint8_t mac[6];
     WiFi.macAddress(mac);
     char buf[24];
-    snprintf(buf, sizeof(buf), "rook-kvm-%02x%02x%02x",
+    snprintf(buf, sizeof(buf), "rookdongle-%02x%02x%02x",
              mac[3], mac[4], mac[5]);
     return String(buf);
 }

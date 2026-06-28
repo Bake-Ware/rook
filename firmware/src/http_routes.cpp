@@ -365,7 +365,7 @@ void setupHttpRoutes(AsyncWebServer& server) {
             ".row{display:flex;gap:.6em}.row>*{flex:1}"
             "small{color:#888}</style></head><body>"
             "<h1>Rook Config</h1>"
-            "<small>Device: rook-kvm v" ROOK_FW_VERSION " — saving reboots the device.</small>"
+            "<small>Device: rook dongle v" ROOK_FW_VERSION " — saving reboots the device.</small>"
             "<form method=POST action=/config>"
             "<fieldset><legend>Access Point</legend>"
             "<label>SSID<input name=ap_ssid value=\"" + escapeAttr(s.ap_ssid) + "\"></label>"

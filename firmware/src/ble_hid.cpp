@@ -54,7 +54,7 @@ static const MediaKeyReport* lookupMedia(const char* name) {
 
 void setupBleHid() {
     const auto& s = getSettings();
-    String name = s.worker_name.length() ? s.worker_name : String("rook-kvm");
+    String name = s.worker_name.length() ? s.worker_name : String("rookdongle");
     // BleKeyboard manages BLEDevice::init internally and advertises as a
     // proper HOGP keyboard (appearance=0x03C1, HID service 0x1812). Phones
     // will list it under "pair new device" and bind cleanly.

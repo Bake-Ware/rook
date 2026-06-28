@@ -29,7 +29,7 @@ void setup() {
     // USB composite — base classes always present, MSC conditionally added.
     USB.VID(0x1209);
     USB.PID(0x0001);
-    USB.productName("Rook KVM Bridge");
+    USB.productName("Rook Dongle");
     USB.manufacturerName("Rook");
     CDCSerial.begin(115200);
     Keyboard.begin();

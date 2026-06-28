@@ -762,7 +762,7 @@ static void recv_one(uint8_t* udp_buf, size_t udp_len) {
 
 static void telestheteTask(void* arg) {
     const auto& s = getSettings();
-    g_worker_name = s.worker_name.length() ? s.worker_name : String("rook-kvm");
+    g_worker_name = s.worker_name.length() ? s.worker_name : String("rookdongle");
 
     // Generate worker_id: 16 random bytes as hex.
     uint8_t wid[16];
