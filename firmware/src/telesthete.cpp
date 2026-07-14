@@ -1,20 +1,25 @@
-// Telesthete band worker — UDP, XSalsa20-Poly1305 AEAD (NaCl secretbox
-// construction, wire-compatible with PyNaCl's nacl.secret.SecretBox), 27-byte
-// header + 21-byte fragmentation envelope per SPEC §6.4. We only emit
-// single-fragment messages (all our replies fit comfortably under 1003 B
-// plaintext); inbound multi-fragment frames are dropped with a debug log.
+// Telesthete band worker — UDP, ChaCha20-Poly1305 AEAD (IETF/RFC 8439, the
+// current Telesthete baseline suite per SPEC §3.2), 27-byte header + 21-byte
+// fragmentation envelope per SPEC §6.4. We only emit single-fragment messages
+// (all our replies fit comfortably under 1003 B plaintext); inbound
+// multi-fragment frames are dropped with a debug log.
 //
 // Crypto stack:
-//     - SHA-256 (mbedtls) for band_id derivation
+//     - SHA-256 (mbedtls) for band_id = SHA256(psk)[:16]
 //     - HMAC-SHA-256 (mbedtls) for HKDF key derivation
-//     - Salsa20 core in plain C (column + row rounds, 10 double-rounds)
-//     - HSalsa20 for the XSalsa20 subkey
-//     - Poly1305 (mbedtls) for the MAC
+//       (salt="telesthete-v1", info="encryption-chacha20-poly1305")
+//     - ChaCha20-Poly1305 IETF for the AEAD — self-contained (this core's
+//       precompiled mbedcrypto omits chacha/poly1305): ChaCha20 in plain C
+//       plus the Poly1305 below, assembled per RFC 8439
 //
-// XSalsa20-Poly1305 (NaCl) wire shape per frame:
-//     ciphertext_wire = tag(16) || ciphertext_xor
-// where ciphertext_xor = plaintext XOR keystream[32..]; the first 32 bytes
-// of the XSalsa20 keystream are the one-time Poly1305 key.
+// Wire shape per frame (SPEC §3.2):
+//     nonce = 4 zero bytes || 8-byte BE sequence   (96-bit)
+//     AAD   = { channel_type, channel_id_hi, channel_id_lo }
+//     ciphertext_wire = ciphertext || tag(16)      (tag TRAILING)
+//
+// NOTE: the legacy XSalsa20-Poly1305/secretbox code below (Salsa20 core,
+// HSalsa20, Poly1305, secretbox_*) is retained but DEAD — the fleet migrated
+// off it. See aead_encrypt/aead_decrypt for the live path.
 
 #include "telesthete.h"
 #include "config.h"
@@ -22,6 +27,9 @@
 #include "hid.h"
 #include "ble_hid.h"
 #include "device_mode.h"
+#include "serial_buf.h"
+
+#include <mbedtls/base64.h>
 
 #include <Arduino.h>
 #include <WiFi.h>
@@ -349,9 +357,11 @@ static void derive_band_id_and_key(const String& psk) {
     memcpy(g_band_id, hash, 16);
 
     // HKDF-SHA256 to derive 32-byte AEAD key.
-    // salt = "telesthete-v1"; info = "encryption"
+    // salt = "telesthete-v1"; info = "encryption-" + cipher_id (SPEC §3.1).
+    // The active suite is the mandatory baseline ChaCha20-Poly1305, so each
+    // suite gets a distinct key. This MUST match the deployed hub/band-mcp.
     const uint8_t salt[] = "telesthete-v1";
-    const uint8_t info[] = "encryption";
+    const uint8_t info[] = "encryption-chacha20-poly1305";
     uint8_t prk[32];
 
     const mbedtls_md_info_t* md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
@@ -413,6 +423,146 @@ static void make_xchacha_nonce(uint8_t nonce[24], uint64_t sequence) {
     nonce[23] = (uint8_t)(sequence);
 }
 
+// ---- ChaCha20-Poly1305 (IETF, RFC 8439) — active AEAD suite -------------
+//
+// This is the current Telesthete baseline (SPEC §3.2), replacing the legacy
+// XSalsa20-Poly1305/secretbox stack above (now dead code). The deployed hub
+// and band-mcp speak ONLY this suite, so the dongle must too.
+//
+//     nonce = 4 zero bytes || 8-byte BE sequence          (96-bit, SPEC §3.2)
+//     AAD   = EMPTY (b"")                                  (see note below)
+//     wire  = ciphertext || tag(16)                       (tag TRAILING)
+//
+// NOTE on AAD: although the Telesthete channel.py layer binds a 3-byte AAD
+// {channel_type, channel_id_hi, channel_id_lo}, rook's own band transport
+// (rook/worker/transports/telesthete_hub.py) bypasses that layer and calls
+// BandCrypto.encrypt/decrypt with NO associated_data — so the real on-wire
+// AAD for the fleet is empty. We must match that exactly or every frame fails
+// its Poly1305 tag at band-mcp.
+
+// 12-byte IETF nonce: 4 zero bytes || sequence (8 bytes BE).
+static void make_aead_nonce(uint8_t nonce[12], uint64_t sequence) {
+    nonce[0] = nonce[1] = nonce[2] = nonce[3] = 0;
+    nonce[4]  = (uint8_t)(sequence >> 56);
+    nonce[5]  = (uint8_t)(sequence >> 48);
+    nonce[6]  = (uint8_t)(sequence >> 40);
+    nonce[7]  = (uint8_t)(sequence >> 32);
+    nonce[8]  = (uint8_t)(sequence >> 24);
+    nonce[9]  = (uint8_t)(sequence >> 16);
+    nonce[10] = (uint8_t)(sequence >> 8);
+    nonce[11] = (uint8_t)(sequence);
+}
+
+// ChaCha20 (IETF, RFC 8439) — self-contained: this Arduino-ESP32 core's
+// precompiled mbedcrypto ships WITHOUT chacha/poly1305, so we implement the
+// AEAD here using the Poly1305 already present above.
+#define QR_C(a, b, c, d) do { \
+    a += b; d ^= a; d = ROTL32(d, 16); \
+    c += d; b ^= c; b = ROTL32(b, 12); \
+    a += b; d ^= a; d = ROTL32(d,  8); \
+    c += d; b ^= c; b = ROTL32(b,  7); \
+} while (0)
+
+// One 64-byte ChaCha20 keystream block for (key, 12-byte nonce, 32-bit counter).
+static void chacha20_block(uint8_t out[64], const uint8_t key[32],
+                           const uint8_t nonce12[12], uint32_t counter) {
+    static const uint32_t sigma[4] = {
+        0x61707865u, 0x3320646eu, 0x79622d32u, 0x6b206574u
+    };
+    uint32_t in_[16];
+    in_[0] = sigma[0]; in_[1] = sigma[1]; in_[2] = sigma[2]; in_[3] = sigma[3];
+    for (int i = 0; i < 8; i++) in_[4 + i] = load32_le(key + i * 4);
+    in_[12] = counter;
+    in_[13] = load32_le(nonce12 + 0);
+    in_[14] = load32_le(nonce12 + 4);
+    in_[15] = load32_le(nonce12 + 8);
+
+    uint32_t x[16];
+    memcpy(x, in_, 64);
+    for (int i = 0; i < 10; i++) {
+        // column rounds
+        QR_C(x[0], x[4], x[ 8], x[12]);
+        QR_C(x[1], x[5], x[ 9], x[13]);
+        QR_C(x[2], x[6], x[10], x[14]);
+        QR_C(x[3], x[7], x[11], x[15]);
+        // diagonal rounds
+        QR_C(x[0], x[5], x[10], x[15]);
+        QR_C(x[1], x[6], x[11], x[12]);
+        QR_C(x[2], x[7], x[ 8], x[13]);
+        QR_C(x[3], x[4], x[ 9], x[14]);
+    }
+    for (int i = 0; i < 16; i++) store32_le(out + i * 4, x[i] + in_[i]);
+}
+
+// XOR ChaCha20 keystream (starting at block `counter`) over `len` bytes.
+static void chacha20_xor(uint8_t* out, const uint8_t* in_, size_t len,
+                         const uint8_t key[32], const uint8_t nonce12[12],
+                         uint32_t counter) {
+    uint8_t ks[64];
+    size_t off = 0;
+    while (off < len) {
+        chacha20_block(ks, key, nonce12, counter++);
+        size_t n = len - off;
+        if (n > 64) n = 64;
+        for (size_t i = 0; i < n; i++) out[off + i] = in_[off + i] ^ ks[i];
+        off += n;
+    }
+}
+
+// RFC 8439 §2.8 Poly1305 tag over our EMPTY-AAD framing (rook's transport
+// passes no AAD): mac_data = ciphertext || pad16(ct) || le64(0) || le64(ct_len).
+// Returns false only on allocation failure.
+static bool chacha20poly1305_tag(uint8_t out_tag[16], const uint8_t otk[32],
+                                 const uint8_t* ct, size_t ct_len) {
+    size_t pad = (16 - (ct_len & 15)) & 15;
+    size_t mlen = ct_len + pad + 16;  // + le64(aad_len=0) + le64(ct_len)
+    uint8_t* m = (uint8_t*)malloc(mlen);
+    if (!m) return false;
+    size_t o = 0;
+    if (ct_len) memcpy(m + o, ct, ct_len);
+    o += ct_len;
+    memset(m + o, 0, pad);
+    o += pad;
+    for (int i = 0; i < 8; i++) m[o++] = 0;              // le64(aad_len = 0)
+    uint64_t cl = ct_len;
+    for (int i = 0; i < 8; i++) m[o++] = (uint8_t)(cl >> (8 * i));  // le64(ct_len)
+    poly1305_mac(otk, m, mlen, out_tag);
+    free(m);
+    return true;
+}
+
+// out_wire must hold pt_len + 16 bytes: ciphertext(pt_len) || tag(16).
+static bool aead_encrypt(uint8_t* out_wire,
+                         const uint8_t key[32], uint64_t sequence,
+                         const uint8_t* plaintext, size_t pt_len) {
+    uint8_t nonce[12];
+    make_aead_nonce(nonce, sequence);
+    uint8_t block0[64];
+    chacha20_block(block0, key, nonce, 0);            // counter 0 → Poly1305 key
+    uint8_t* ct = out_wire;
+    chacha20_xor(ct, plaintext, pt_len, key, nonce, 1);
+    return chacha20poly1305_tag(out_wire + pt_len, block0, ct, pt_len);
+}
+
+// wire = ciphertext || tag(16); writes wire_len-16 plaintext bytes on success.
+static bool aead_decrypt(uint8_t* out_pt,
+                         const uint8_t key[32], uint64_t sequence,
+                         const uint8_t* wire, size_t wire_len) {
+    if (wire_len < 16) return false;
+    size_t ct_len = wire_len - 16;
+    uint8_t nonce[12];
+    make_aead_nonce(nonce, sequence);
+    uint8_t block0[64];
+    chacha20_block(block0, key, nonce, 0);
+    uint8_t want[16];
+    if (!chacha20poly1305_tag(want, block0, wire, ct_len)) return false;
+    uint8_t diff = 0;
+    for (int i = 0; i < 16; i++) diff |= want[i] ^ wire[ct_len + i];
+    if (diff != 0) return false;                      // auth failure
+    chacha20_xor(out_pt, wire, ct_len, key, nonce, 1);
+    return true;
+}
+
 // Single-fragment plaintext = FRAG_HEADER(version, fid, seq=0, total=1) || payload.
 static void wrap_fragment(uint8_t* out, const uint8_t* payload, size_t pt_len,
                           const uint8_t fid[16]) {
@@ -458,10 +608,7 @@ static void send_payload(const uint8_t* payload, size_t pt_len) {
     if (!wire) { free(plain); return; }
 
     uint64_t seq = ++g_seq;
-    uint8_t nonce[24];
-    make_xchacha_nonce(nonce, seq);
-
-    if (!secretbox_encrypt(wire, g_aead_key, nonce, plain, plain_len)) {
+    if (!aead_encrypt(wire, g_aead_key, seq, plain, plain_len)) {
         free(plain); free(wire);
         return;
     }
@@ -493,6 +640,7 @@ static const char* CAPS_LIST[] = {
     "kvm.type", "kvm.key", "kvm.consumer",
     "kvm.hid.set", "kvm.hid.get",
     "bthid.type", "bthid.key", "bthid.consumer", "bthid.status",
+    "serial.write", "serial.read", "serial.status",
 };
 static const size_t CAPS_LIST_N = sizeof(CAPS_LIST) / sizeof(CAPS_LIST[0]);
 
@@ -507,6 +655,7 @@ static void announce() {
     plugins.add("info");
     plugins.add("kvm");
     plugins.add("bthid");
+    plugins.add("serial");
     String out;
     serializeJson(doc, out);
     send_string(out);
@@ -687,6 +836,55 @@ static void cap_bthid_consumer(const char* msg_id, JsonVariant args) {
     reply_ok(msg_id, r);
 }
 
+// ---- serial (CDC console bridge) ---------------------------------------
+// The dongle's USB CDC port faces the HOST it is plugged into; with a getty
+// bound to that port on the host these caps are a full login console.
+// serial.read drains the same ring the /telesthete/stream WebSocket uses —
+// whichever consumer drains first wins (fine for a single operator).
+
+static void cap_serial_write(const char* msg_id, JsonVariant args) {
+    const char* data = args["data"];
+    if (!data) { reply_err(msg_id, "missing 'data'"); return; }
+    size_t n = CDCSerial.write((const uint8_t*)data, strlen(data));
+    JsonDocument r;
+    r["written"] = (uint32_t)n;
+    reply_ok(msg_id, r);
+}
+
+static void cap_serial_read(const char* msg_id, JsonVariant args) {
+    // 600 raw -> 800 b64 keeps the reply inside the single-fragment
+    // plaintext budget (1003 B) with envelope headroom.
+    size_t maxN = args["max"] | 512;
+    if (maxN > 600) maxN = 600;
+
+    uint8_t raw[600];
+    taskENTER_CRITICAL(&bufMux);
+    size_t n = serialBufLen < maxN ? serialBufLen : maxN;
+    memcpy(raw, serialBuf, n);
+    size_t remaining = serialBufLen - n;
+    if (remaining > 0) memmove(serialBuf, serialBuf + n, remaining);
+    serialBufLen = remaining;
+    taskEXIT_CRITICAL(&bufMux);
+
+    unsigned char b64[820];
+    size_t b64len = 0;
+    mbedtls_base64_encode(b64, sizeof(b64) - 1, &b64len, raw, n);
+    b64[b64len] = '\0';
+
+    JsonDocument r;
+    r["b64"] = (const char*)b64;
+    r["n"] = (uint32_t)n;
+    r["remaining"] = (uint32_t)remaining;
+    reply_ok(msg_id, r);
+}
+
+static void cap_serial_status(const char* msg_id) {
+    JsonDocument r;
+    r["buffered"] = (uint32_t)serialBufLen;
+    r["file_transfer"] = (bool)fileTransferActive;
+    reply_ok(msg_id, r);
+}
+
 static void dispatch(const uint8_t* payload, size_t len) {
     if (len == 1 && payload[0] == 0x00) {
         // keepalive sentinel — ignore
@@ -718,6 +916,9 @@ static void dispatch(const uint8_t* payload, size_t len) {
     else if (strcmp(cap, "bthid.type")    == 0) cap_bthid_type(msg_id, args);
     else if (strcmp(cap, "bthid.key")     == 0) cap_bthid_key(msg_id, args);
     else if (strcmp(cap, "bthid.consumer")== 0) cap_bthid_consumer(msg_id, args);
+    else if (strcmp(cap, "serial.write")  == 0) cap_serial_write(msg_id, args);
+    else if (strcmp(cap, "serial.read")   == 0) cap_serial_read(msg_id, args);
+    else if (strcmp(cap, "serial.status") == 0) cap_serial_status(msg_id);
     else if (target) {
         // only reply with "unknown" when addressed directly, to avoid
         // spamming the band when peers issue open calls.
@@ -739,10 +940,7 @@ static void recv_one(uint8_t* udp_buf, size_t udp_len) {
     uint8_t* plain = (uint8_t*)malloc(pt_len);
     if (!plain) return;
 
-    uint8_t nonce[24];
-    make_xchacha_nonce(nonce, sequence);
-
-    if (!secretbox_decrypt(plain, g_aead_key, nonce, wire, wire_len)) {
+    if (!aead_decrypt(plain, g_aead_key, sequence, wire, wire_len)) {
         free(plain);
         return;
     }
