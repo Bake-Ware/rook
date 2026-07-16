@@ -54,6 +54,14 @@ class Plugin:
             out[full] = attr
         return out
 
+    def available(self) -> bool:
+        """Whether this plugin can actually function on this host. Override to
+        gate on a backend or config (a display for screenshots, an input tool
+        for HID, PIKVM_URL, etc.) — returning False skips loading it, so the
+        worker never announces capabilities it can't fulfill. Checked once at
+        worker start; a worker.restart re-evaluates it."""
+        return True
+
     async def start(self) -> None:
         return None
 
@@ -90,6 +98,14 @@ def load_plugins(package_name: str, registry: CapabilityRegistry,
         if not isinstance(plugin, Plugin):
             log.warning("%s.%s: PLUGIN is not a Plugin instance, skipping",
                         package_name, info.name)
+            continue
+        try:
+            if not plugin.available():
+                log.info("%s.%s: backend/config not present here, skipping",
+                         package_name, info.name)
+                continue
+        except Exception:
+            log.exception("%s.%s: available() raised, skipping", package_name, info.name)
             continue
         for dotpath, fn in plugin.caps().items():
             registry.register(dotpath, fn)

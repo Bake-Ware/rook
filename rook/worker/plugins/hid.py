@@ -213,6 +213,11 @@ def _win_send_input_sync(keys: list[tuple[int, bool]] | None = None,
 class HidPlugin(Plugin):
     NAMESPACE = "hid"
 
+    def available(self) -> bool:
+        # Only advertise HID where an input-injection backend actually exists
+        # (xdotool/ydotool/wtype/evdev on Linux, native on win/android).
+        return _detect_backend() != "none"
+
     def __init__(self) -> None:
         super().__init__()
         self._backend: str | None = None

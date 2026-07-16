@@ -227,6 +227,26 @@ async def _dispatch(quality: int, region: tuple[int, int, int, int] | None) -> d
 class ScreenshotPlugin(Plugin):
     NAMESPACE = "screenshot"
 
+    def available(self) -> bool:
+        if _is_termux():
+            return bool(shutil.which("termux-camera-photo"))
+        if sys.platform == "win32":
+            try:
+                import mss  # noqa: F401
+                return True
+            except ImportError:
+                try:
+                    import pyautogui  # noqa: F401
+                    return True
+                except ImportError:
+                    return False
+        if sys.platform.startswith("linux"):
+            if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+                return False  # headless / no logged-in graphical session
+            return any(shutil.which(t) for t in
+                       ("grim", "spectacle", "gnome-screenshot", "scrot", "import"))
+        return False
+
     @capability("capture")
     async def _capture(self, quality: int = 85) -> dict:
         """Capture the full primary display as a JPEG."""

@@ -116,6 +116,11 @@ def _decode_body(resp: dict, max_text: int = 64_000) -> dict:
 class PiKvmPlugin(Plugin):
     NAMESPACE = "pikvm"
 
+    def available(self) -> bool:
+        # Only load where a PiKVM is explicitly configured — otherwise every
+        # worker would falsely advertise pikvm.* against https://localhost.
+        return "PIKVM_URL" in os.environ
+
     # ---- screencap ------------------------------------------------------
 
     @capability("snap")
