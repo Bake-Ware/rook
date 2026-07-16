@@ -481,6 +481,7 @@ async function runTerm(cmd){
 /* ---- run any capability ---- */
 const SCHEMA={};                 // worker_id -> caps.describe result (cached)
 let CAPM=null;                    // current modal {wid, cap, params|null}
+const DANGER=new Set(['worker.restart','worker.update','worker.reconfigure']); // never auto-run
 async function capSchema(wid){
   if(wid in SCHEMA) return SCHEMA[wid];
   try{ const r=await bandCall('caps.describe',wid,{},10);
@@ -493,6 +494,14 @@ async function openCapModal(wid,cap){
   setBody('<div class="capform"><div style="color:var(--dim);font-size:.82rem"><span class="spin"></span> loading schema…</div></div>');
   const sc=await capSchema(wid), info=sc&&sc[cap], params=info&&info.params;
   CAPM={wid,cap,params:params||null};
+  const help=info&&info.doc?`<div class="caphelp">${esc(info.doc)}</div>`:'';
+  // zero-argument caps: run immediately on click (skip the form). Destructive
+  // ones still get a deliberate button.
+  if(Array.isArray(params) && params.length===0 && !DANGER.has(cap)){
+    setBody(`<div class="capform">${help}<div id="capout" class="capout"><span class="spin"></span> running…</div></div>`);
+    bandCall(cap,wid,{},30).then(reply=>renderCapResult($('#capout'),cap,reply));
+    return;
+  }
   let form;
   if(params&&params.length){
     form=params.map(p=>{
@@ -504,7 +513,6 @@ async function openCapModal(wid,cap){
     }).join('');
   } else if(params){ form='<div style="color:var(--dim);font-size:.82rem">no arguments — just run it</div>'; }
   else { form='<div class="caphelp">no schema (older worker or firmware) — pass args as JSON</div><label class="cf"><span>args (JSON)</span><textarea id="cf-json" placeholder="{}">{}</textarea></label>'; }
-  const help=info&&info.doc?`<div class="caphelp">${esc(info.doc)}</div>`:'';
   setBody(`<div class="capform">${help}${form}<div class="caprun"><button class="primary" onclick="runCap()">run</button><span style="color:var(--dim2);font-size:.72rem">enter to run</span></div><div id="capout" class="capout"></div></div>`);
   document.querySelectorAll('.capform input').forEach(el=>el.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();runCap();}}));
   document.querySelectorAll('.capform textarea').forEach(el=>el.addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();runCap();}}));

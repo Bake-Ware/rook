@@ -214,9 +214,14 @@ class HidPlugin(Plugin):
     NAMESPACE = "hid"
 
     def available(self) -> bool:
-        # Only advertise HID where an input-injection backend actually exists
-        # (xdotool/ydotool/wtype/evdev on Linux, native on win/android).
-        return _detect_backend() != "none"
+        if _detect_backend() == "none":
+            return False
+        # On Linux, HID needs a graphical session just like screenshots — no
+        # point injecting keystrokes/mouse on a headless box. Native win/android
+        # backends imply a UI.
+        if sys.platform.startswith("linux"):
+            return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+        return True
 
     def __init__(self) -> None:
         super().__init__()
