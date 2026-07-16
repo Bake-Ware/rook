@@ -1,374 +1,453 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>♖ ROOK — band</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>♖ ROOK</title>
 <style>
   :root{
-    --bg:#0b0f14; --panel:#11161d; --line:#222c38; --line2:#2b3947;
-    --fg:#e6edf3; --dim:#7d8896; --accent:#2dd4a7; --accent2:#1a9e7a;
-    --warn:#f76a6a; --chip:#16202b;
+    --bg:#0a0e13; --panel:#111823; --panel2:#0e141d; --line:#1e2a38; --line2:#28384a;
+    --fg:#e6edf3; --dim:#7d8896; --dim2:#5b6672;
+    --accent:#2dd4a7; --accent-dim:#1a9e7a; --warn:#f5b041; --bad:#f76a6a; --blue:#5aa9e6; --chip:#16202c;
   }
   *{box-sizing:border-box}
-  body{margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--bg);color:var(--fg)}
-  header{display:flex;align-items:center;gap:14px;padding:14px 20px;border-bottom:1px solid var(--line);position:sticky;top:0;background:rgba(11,15,20,.92);backdrop-filter:blur(6px);z-index:5}
-  header h1{font-size:1.15rem;margin:0;color:var(--accent);letter-spacing:.5px}
-  .count{font-size:.85rem;color:var(--dim)}
-  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--accent);margin-right:6px;box-shadow:0 0 8px var(--accent)}
-  .dot.off{background:var(--warn);box-shadow:none}
-  .spacer{flex:1}
-  header a, header .meta{color:var(--dim);font-size:.8rem;text-decoration:none}
-  header a:hover{color:var(--fg)}
-  main{padding:20px;max-width:1100px;margin:0 auto}
-  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:14px}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;transition:border-color .15s}
-  .card:hover{border-color:var(--line2)}
-  .card .top{display:flex;align-items:baseline;gap:8px}
-  .card .name{font-size:1.05rem;font-weight:600;color:var(--fg);word-break:break-all}
-  .card .age{margin-left:auto;font-size:.72rem;color:var(--dim);white-space:nowrap}
-  .card .age.stale{color:var(--warn)}
-  .plugins{margin:8px 0 4px;display:flex;flex-wrap:wrap;gap:5px}
-  .chip{background:var(--chip);border:1px solid var(--line);border-radius:20px;padding:2px 9px;font-size:.72rem;color:var(--dim)}
-  .caps{font-size:.72rem;color:var(--dim);margin:6px 0}
-  .ver{color:#2dd4a7;font-weight:600}
-  .actions{display:flex;gap:7px;margin-top:10px;flex-wrap:wrap}
-  button{font-family:inherit;font-size:.8rem;padding:6px 12px;border-radius:6px;border:1px solid var(--line2);background:#152029;color:var(--fg);cursor:pointer}
-  button:hover:not(:disabled){border-color:var(--accent2);color:var(--accent)}
-  button:disabled{opacity:.4;cursor:not-allowed}
-  button.primary{background:var(--accent2);border-color:var(--accent2);color:#fff}
-  button.primary:hover:not(:disabled){background:var(--accent);color:#04130d}
-  .empty{color:var(--dim);text-align:center;padding:60px 0;font-size:.95rem}
-  .overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;z-index:20;padding:20px}
-  .overlay.show{display:flex}
-  .modal{background:var(--panel);border:1px solid var(--line2);border-radius:10px;max-width:min(900px,95vw);max-height:90vh;overflow:auto;padding:16px 18px;width:100%}
-  .modal .mhead{display:flex;align-items:center;gap:10px;margin-bottom:10px}
-  .modal .mhead h3{margin:0;font-size:1rem;color:var(--accent)}
-  .modal .close{margin-left:auto;background:none;border:0;color:var(--dim);font-size:1.3rem;cursor:pointer;padding:0 4px}
-  .modal pre{background:#0b0f14;border:1px solid var(--line);border-radius:6px;padding:12px;overflow:auto;font-size:.8rem;white-space:pre-wrap;word-break:break-word;margin:0}
-  .modal img{max-width:100%;border-radius:6px;border:1px solid var(--line)}
-  .modal .err{color:var(--warn)}
-  .row{display:flex;gap:8px;margin-bottom:10px}
-  .row input{flex:1;padding:8px;background:#0b0f14;color:var(--fg);border:1px solid var(--line2);border-radius:6px;font-family:inherit}
-  .spin{display:inline-block;width:14px;height:14px;border:2px solid var(--line2);border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
-  @keyframes sp{to{transform:rotate(360deg)}}
-  /* nav */
-  nav{display:flex;gap:4px}
-  nav .tab{background:none;border:1px solid transparent;color:var(--dim);padding:5px 12px;border-radius:6px;cursor:pointer;font-family:inherit;font-size:.85rem}
-  nav .tab:hover{color:var(--fg)}
-  nav .tab.active{color:var(--accent);border-color:var(--line2);background:var(--panel)}
-  .links{display:flex;gap:14px;align-items:center}
-  .links a{color:var(--dim);font-size:.8rem;text-decoration:none}
-  .links a:hover{color:var(--accent)}
-  /* install view */
-  .doc{max-width:760px}
-  .doc h2{color:var(--accent);font-size:1.05rem;margin:26px 0 8px;border-bottom:1px solid var(--line);padding-bottom:6px}
-  .doc h2:first-child{margin-top:0}
-  .doc p{color:var(--dim);font-size:.88rem;line-height:1.55}
-  .doc ol{color:var(--dim);font-size:.88rem;line-height:1.7;padding-left:20px}
-  .doc code{background:var(--chip);padding:1px 6px;border-radius:4px;color:var(--accent)}
-  .cmd{position:relative;background:#0b0f14;border:1px solid var(--line2);border-radius:8px;padding:12px 44px 12px 14px;margin:8px 0;font-size:.85rem;overflow-x:auto;white-space:pre}
-  .cmd .cp{position:absolute;top:8px;right:8px;padding:3px 8px;font-size:.7rem}
-  .pill{display:inline-block;background:var(--chip);border:1px solid var(--line2);border-radius:6px;padding:6px 12px;color:var(--accent);text-decoration:none;font-size:.85rem;margin:4px 8px 4px 0}
-  .pill:hover{border-color:var(--accent2)}
-  .bandbar{display:flex;align-items:center;gap:8px;margin-bottom:14px;font-size:.85rem;color:var(--dim)}
-  .bandbar select{font-family:inherit;font-size:.85rem;padding:6px 10px;border-radius:6px;border:1px solid var(--line2);background:#152029;color:var(--fg);cursor:pointer}
   [hidden]{display:none!important}
+  html,body{margin:0;height:100%}
+  body{font-family:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+    background:radial-gradient(1400px 700px at 85% -12%, #0f1826 0%, var(--bg) 55%);
+    color:var(--fg);font-size:14px;line-height:1.4;-webkit-font-smoothing:antialiased}
+  a{color:inherit}
+
+  .topbar{display:flex;align-items:center;gap:18px;padding:12px 26px;border-bottom:1px solid var(--line);
+    background:rgba(10,14,19,.78);backdrop-filter:blur(8px);position:sticky;top:0;z-index:20;flex-wrap:wrap}
+  .brand{font-size:1.2rem;color:var(--accent);font-weight:600;letter-spacing:.5px;white-space:nowrap}
+  nav{display:flex;gap:4px}
+  nav a{color:var(--dim);text-decoration:none;font-size:.85rem;padding:7px 13px;border-radius:7px;cursor:pointer}
+  nav a:hover{color:var(--fg);background:#131d2a}
+  nav a.active{color:var(--accent);background:#0f1d19}
+  .spacer{flex:1}
+  select,input{font-family:inherit;font-size:.82rem;color:var(--fg);background:var(--panel2);
+    border:1px solid var(--line2);border-radius:7px;padding:7px 10px;outline:none}
+  select:focus,input:focus{border-color:var(--accent-dim)}
+  input.filter{width:160px}
+  .iconbtn{cursor:pointer;color:var(--dim);background:var(--panel2);border:1px solid var(--line2);border-radius:7px;padding:6px 10px;font-size:.85rem}
+  .iconbtn:hover{color:var(--fg);border-color:var(--accent-dim)}
+  .live{display:flex;align-items:center;gap:7px;color:var(--dim);font-size:.75rem;white-space:nowrap}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--accent);animation:p 2.4s infinite}
+  .dot.off{background:var(--bad);animation:none}
+  @keyframes p{0%{box-shadow:0 0 0 0 rgba(45,212,167,.45)}70%{box-shadow:0 0 0 7px rgba(45,212,167,0)}100%{box-shadow:0 0 0 0 rgba(45,212,167,0)}}
+  .signout{color:var(--dim);text-decoration:none;font-size:.82rem;padding:7px 12px;border:1px solid var(--line);border-radius:7px}
+  .signout:hover{color:var(--bad);border-color:#3a2530}
+
+  .wrap{padding:20px 26px 60px}
+
+  /* add-band popover */
+  .addform{position:absolute;right:26px;top:56px;z-index:30;background:var(--panel);border:1px solid var(--line2);
+    border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;width:280px;box-shadow:0 12px 40px rgba(0,0,0,.5)}
+  .addform input{width:100%}
+  .addform .r{display:flex;gap:8px} .addform .msg{color:var(--dim);font-size:.74rem;min-height:14px}
+
+  /* stat row */
+  .stats{display:flex;gap:12px;align-items:stretch;margin-bottom:16px;flex-wrap:wrap}
+  .tile{background:linear-gradient(180deg,var(--panel) 0%,var(--panel2) 100%);
+    border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+  .tile.mini{flex:0 0 auto;min-width:118px;display:flex;flex-direction:column;justify-content:center}
+  .tile.mini .k{font-size:1.75rem;font-weight:600;line-height:1}
+  .tile.mini .l{color:var(--dim);font-size:.66rem;text-transform:uppercase;letter-spacing:1px;margin-top:6px}
+  .tile.online .k{color:var(--accent)} .tile.stale .k{color:var(--warn)}
+  .tile.ver{flex:0 0 auto;width:250px;display:flex;flex-direction:column;justify-content:center}
+  .tile.ver .l{color:var(--dim);font-size:.66rem;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
+  .verbar{display:flex;height:9px;border-radius:6px;overflow:hidden;background:var(--panel2);border:1px solid var(--line)}
+  .verbar span{display:block;height:100%}
+  .verleg{display:flex;flex-direction:column;gap:3px;margin-top:8px;font-size:.72rem;color:var(--dim)}
+  .verleg b{color:var(--fg)} .vdot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px}
+  .tile.hb{flex:1;min-width:220px;padding:11px 16px 12px;display:flex;flex-direction:column}
+  .hb .l{display:flex;justify-content:space-between;align-items:center;margin-bottom:9px;
+    color:var(--dim);font-size:.66rem;text-transform:uppercase;letter-spacing:1px}
+  .hb .l .hint{color:var(--dim2);letter-spacing:0;text-transform:none;font-size:.68rem}
+
+  .bars{display:flex;align-items:flex-end;gap:4px;height:74px;flex:1}
+  .bar{flex:1 1 0;min-width:5px;position:relative;height:100%;cursor:pointer}
+  .bar .fill{position:absolute;bottom:0;left:0;right:0;height:60%;border-radius:4px 4px 2px 2px;
+    background:linear-gradient(180deg, color-mix(in srgb,var(--c) 55%,white) 0%, var(--c) 42%, color-mix(in srgb,var(--c) 55%,black) 100%);
+    box-shadow:0 0 7px color-mix(in srgb,var(--c) 55%,transparent), inset 0 1px 0 rgba(255,255,255,.25);
+    transition:filter .18s ease, box-shadow .18s ease}
+  .bar .peak{position:absolute;left:0;right:0;bottom:60%;height:2px;border-radius:2px;
+    background:#eafff8;box-shadow:0 0 7px rgba(150,255,225,.8);opacity:.8}
+  .bar.beat .fill{filter:brightness(1.7) saturate(1.15);box-shadow:0 0 16px color-mix(in srgb,var(--c) 80%,transparent)}
+  .bar.hl .fill{outline:1px solid #eafff8}
+
+  .listhead{display:flex;align-items:center;gap:14px;padding:2px 16px 8px;color:var(--dim2);
+    font-size:.68rem;text-transform:uppercase;letter-spacing:1px}
+  .list{background:var(--panel2);border:1px solid var(--line);border-radius:12px;overflow:hidden;min-height:60px}
+  .empty{padding:26px 16px;color:var(--dim);text-align:center}
+  .item{border-top:1px solid var(--line)} .item:first-child{border-top:0}
+  .item.hl{background:#0e1c17;box-shadow:inset 3px 0 0 var(--accent)}
+  .row{display:flex;align-items:center;gap:14px;padding:11px 16px;cursor:pointer;transition:background .12s}
+  .row:hover{background:#0f1a26} .item.open .row{background:#0f1a26}
+  .st{width:9px;height:9px;border-radius:50%;flex:0 0 auto;transition:background .3s}
+  .caret{color:var(--dim2);width:12px;flex:0 0 auto;transition:transform .15s;font-size:.7rem}
+  .item.open>.row .caret{transform:rotate(90deg);color:var(--accent)}
+  .name{flex:1;min-width:0;display:flex;align-items:center;gap:9px}
+  .name .n{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .name .id{color:var(--dim2);font-size:.72rem}
+  .tagfw{font-size:.64rem;color:var(--warn);border:1px solid #3a2f18;background:#1c150a;border-radius:5px;padding:1px 6px}
+  .ver{font-size:.78rem;color:var(--accent);font-weight:600;width:118px;flex:0 0 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ver.old{color:var(--warn)} .ver.none{color:var(--dim2)}
+  .seen{width:150px;flex:0 0 auto;display:flex;align-items:center;gap:9px}
+  .seenbar{flex:1;height:6px;border-radius:4px;background:#0a121b;border:1px solid var(--line);overflow:hidden}
+  .seenbar i{display:block;height:100%;width:60%;background:var(--accent);border-radius:4px}
+  .seen .t{width:34px;text-align:right;color:var(--dim);font-size:.72rem}
+  .acts{width:210px;flex:0 0 auto;display:flex;gap:6px;justify-content:flex-end;opacity:0;transition:opacity .12s}
+  .row:hover .acts,.item.open .acts{opacity:1}
+  .acts button{padding:4px 9px;font-size:.73rem;border-radius:6px;background:var(--chip);border:1px solid var(--line2);color:var(--dim);cursor:pointer}
+  .acts button:hover{color:var(--fg);border-color:var(--accent-dim)} .acts button.primary{color:var(--accent)}
+
+  .detail{max-height:0;overflow:hidden;transition:max-height .24s ease}
+  .item.open>.detail{max-height:560px}
+  .detail-in{padding:2px 16px 15px 42px}
+  .meta{color:var(--dim2);font-size:.72rem;margin-bottom:10px}
+  .cggrid{display:flex;flex-wrap:wrap;gap:8px}
+  .cg{border:1px solid var(--line2);background:#0c151f;border-radius:8px;overflow:hidden;align-self:flex-start}
+  .cg-head{display:flex;align-items:center;gap:8px;padding:6px 11px;cursor:pointer;user-select:none}
+  .cg-head:hover{background:#111e2b}
+  .cg-caret{color:var(--dim2);font-size:.62rem;transition:transform .15s}
+  .cg.open .cg-caret{transform:rotate(90deg);color:var(--accent)}
+  .cg-head b{color:var(--accent);font-weight:600;font-size:.8rem}
+  .cg-count{color:var(--dim2);font-size:.72rem}
+  .cg-body{max-height:0;overflow:hidden;transition:max-height .2s ease}
+  .cg.open .cg-body{max-height:300px}
+  .cg-body-in{display:flex;flex-wrap:wrap;gap:5px;padding:2px 11px 10px}
+  .mcap{font-size:.72rem;color:var(--dim);background:var(--chip);border:1px solid var(--line);border-radius:6px;padding:2px 7px}
+
+  /* install view */
+  .install{max-width:760px}
+  .install h2{font-size:1rem;color:var(--fg);margin:0 0 4px}
+  .install p{color:var(--dim);font-size:.85rem;margin:0 0 16px}
+  .cmd{position:relative;background:var(--panel2);border:1px solid var(--line);border-radius:9px;
+    padding:12px 14px;margin:0 0 12px;font-size:.84rem;color:var(--accent);white-space:pre-wrap;word-break:break-all}
+  .cmd .lbl{color:var(--dim);font-size:.68rem;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:6px}
+  .cp{position:absolute;right:10px;top:10px;background:var(--chip);border:1px solid var(--line2);color:var(--dim);
+    border-radius:6px;padding:3px 9px;font-size:.72rem;cursor:pointer}
+  .cp:hover{color:var(--fg)}
+  .ilinks{display:flex;gap:10px;margin-top:8px}
+  .ilinks a{text-decoration:none;background:var(--chip);border:1px solid var(--line2);color:var(--fg);
+    border-radius:8px;padding:9px 14px;font-size:.85rem}
+  .ilinks a:hover{border-color:var(--accent-dim)}
+
+  /* modal */
+  .overlay{position:fixed;inset:0;background:rgba(4,8,12,.72);display:none;align-items:center;justify-content:center;z-index:50;padding:20px}
+  .overlay.show{display:flex}
+  .modal{background:var(--panel);border:1px solid var(--line2);border-radius:14px;max-width:900px;width:100%;
+    max-height:88vh;overflow:auto;box-shadow:0 20px 70px rgba(0,0,0,.6)}
+  .modal .mh{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel)}
+  .modal .mh .x{cursor:pointer;color:var(--dim);font-size:1.2rem} .modal .mh .x:hover{color:var(--fg)}
+  .mbody{padding:16px 18px}
+  .mbody img{max-width:100%;border-radius:8px;display:block}
+  .mbody pre{white-space:pre-wrap;word-break:break-word;font-size:.82rem;color:var(--fg);margin:0}
+  .mbody pre.err{color:var(--bad)}
+  .mbody .row2{display:flex;gap:8px;margin-bottom:10px}
+  .mbody .row2 input{flex:1}
+  .mbody button.primary{background:var(--accent-dim);border:0;color:#04120d;font-weight:600;border-radius:7px;padding:8px 14px;cursor:pointer}
+  .spin{display:inline-block;width:11px;height:11px;border:2px solid var(--line2);border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;vertical-align:middle}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .foot{margin-top:14px;color:var(--dim2);font-size:.72rem;text-align:center}
 </style>
 </head>
 <body>
-<header>
-  <h1>♖ ROOK</h1>
-  <nav>
-    <button class="tab active" id="tab-band" onclick="showView('band')">Band</button>
-    <button class="tab" id="tab-install" onclick="showView('install')">Install</button>
-  </nav>
-  <span class="count"><span id="dot" class="dot off"></span><span id="count">connecting…</span></span>
-  <span class="spacer"></span>
-  <span class="meta" id="sysmeta"></span>
-  <span class="links">
-    <a id="link-tokens" href="#" target="_blank" rel="noopener">Tokens ↗</a>
-    <a id="link-apk" href="/apk">APK ↓</a>
-    <a href="/logout">Sign out</a>
-  </span>
-</header>
-<main>
-  <div id="view-band">
-    <div class="bandbar">
-      <label for="bandsel">Band:</label>
-      <select id="bandsel" onchange="onBandChange()"><option value="">All bands</option></select>
-      <button id="rmband-btn" onclick="removeBand()" hidden>remove</button>
-      <button id="addband-btn" onclick="toggleAddBand()">+ add band</button>
-      <span id="addband-form" hidden>
-        <input id="ab-name" placeholder="name" size="10" autocomplete="off">
-        <input id="ab-psk" type="password" placeholder="psk" size="20" autocomplete="off">
-        <button class="primary" onclick="addBand()">save</button>
-        <span id="ab-msg" style="font-size:.78rem"></span>
-      </span>
+  <div class="topbar">
+    <div class="brand">♖ ROOK</div>
+    <nav>
+      <a id="tab-workers" class="active" onclick="showView('workers')">Workers</a>
+      <a id="tab-install" onclick="showView('install')">Install</a>
+      <a id="link-tokens" target="_blank" rel="noopener">Tokens</a>
+      <a href="/apk">APK</a>
+    </nav>
+    <div class="spacer"></div>
+    <span class="live"><span class="dot" id="dot"></span><span id="count">…</span></span>
+    <select id="bandsel" onchange="onBandChange()"><option value="">All bands</option></select>
+    <button class="iconbtn" title="add band" onclick="toggleAddBand()">+</button>
+    <button class="iconbtn" id="rmband-btn" title="remove band" hidden onclick="removeBand()">−</button>
+    <input class="filter" id="filter" placeholder="filter…" oninput="applyFilter()">
+    <a class="signout" href="/logout">Sign out</a>
+  </div>
+
+  <div class="addform" id="addband-form" hidden>
+    <div style="color:var(--dim);font-size:.72rem">Add a band by PSK</div>
+    <input id="ab-name" placeholder="name (optional)">
+    <input id="ab-psk" type="password" placeholder="band PSK" autocomplete="off">
+    <div class="r"><button class="iconbtn" onclick="addBand()">add</button><button class="iconbtn" onclick="toggleAddBand()">close</button></div>
+    <div class="msg" id="ab-msg"></div>
+  </div>
+
+  <div class="wrap">
+    <!-- WORKERS VIEW -->
+    <div id="view-workers">
+      <section class="stats">
+        <div class="tile mini"><div class="k" id="k-total">0</div><div class="l">workers</div></div>
+        <div class="tile mini online"><div class="k" id="k-online">0</div><div class="l">online</div></div>
+        <div class="tile mini stale"><div class="k" id="k-stale">0</div><div class="l">stale</div></div>
+        <div class="tile ver">
+          <div class="l">version spread</div>
+          <div class="verbar" id="verbar"></div>
+          <div class="verleg" id="verleg"></div>
+        </div>
+        <div class="tile hb">
+          <div class="l"><span>heartbeats · live</span><span class="hint">hover a bar → find its worker</span></div>
+          <div class="bars" id="bars"></div>
+        </div>
+      </section>
+
+      <div class="listhead">
+        <span style="width:12px"></span><span style="width:9px"></span>
+        <span style="flex:1">worker</span><span style="width:118px">version</span>
+        <span style="width:150px">heartbeat</span><span style="width:210px"></span>
+      </div>
+      <div class="list" id="list"></div>
+      <div class="empty" id="empty" style="display:none"></div>
+      <div class="foot" id="foot"></div>
     </div>
-    <div id="grid" class="grid"></div>
-    <div id="empty" class="empty" style="display:none"></div>
+
+    <!-- INSTALL VIEW -->
+    <div id="view-install" hidden>
+      <div class="install">
+        <h2>Add a worker</h2>
+        <p>Run the one-liner on any machine to join it to the band.</p>
+        <div class="cmd"><span class="lbl">Linux / macOS</span><span id="cmd-unix"></span></div>
+        <div class="cmd"><span class="lbl">Windows (PowerShell)</span><span id="cmd-win"></span></div>
+        <div class="cmd"><span class="lbl">Termux / Android</span><span id="cmd-termux"></span></div>
+        <div class="ilinks">
+          <a href="/apk">⬇ Android APK</a>
+          <a id="link-tokens2" target="_blank" rel="noopener">API tokens ↗</a>
+        </div>
+      </div>
+    </div>
   </div>
 
-  <div id="view-install" class="doc" hidden>
-    <h2>What is a worker?</h2>
-    <p>A worker is a small agent that joins the ROOK band and exposes capabilities
-    (<code>shell</code>, <code>files</code>, <code>screenshot</code>, <code>hid</code>, …).
-    Once installed it appears on the <b>Band</b> tab, where you can snapshot, run shell, and more.</p>
-
-    <h2>Linux / macOS</h2>
-    <p>One line. Auto-installs Python deps, joins the band, and persists across reboots.</p>
-    <div class="cmd" id="cmd-unix"></div>
-
-    <h2>Windows (PowerShell, run on Windows)</h2>
-    <div class="cmd" id="cmd-win"></div>
-
-    <h2>Android — native app (recommended)</h2>
-    <p>A real APK with a foreground service: real screen capture (MediaProjection) and
-    rootless input (Accessibility).</p>
-    <ol>
-      <li>On the phone, open <a class="pill" id="link-apk2" href="/apk">Download APK ↓</a></li>
-      <li>Tap the file → allow “install unknown apps” for your browser → <b>Install</b>.</li>
-      <li>Open <b>Rook Worker</b>, tap <b>Start worker</b> (hub/PSK prefilled).</li>
-      <li>Grant <b>screen capture</b>, <b>accessibility</b>, and <b>ignore battery optimization</b>.</li>
-    </ol>
-
-    <h2>Android — Termux (headless)</h2>
-    <p>If you prefer a terminal worker instead of the app:</p>
-    <div class="cmd" id="cmd-termux"></div>
-
-    <h2>API tokens</h2>
-    <p>Headless agents authenticate to <code>/mcp</code> with a bearer token. Mint and revoke them here:</p>
-    <p><a class="pill" id="link-tokens2" href="#" target="_blank" rel="noopener">Open token manager ↗</a></p>
+  <div class="overlay" id="overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal">
+      <div class="mh"><div id="mtitle"></div><div class="x" onclick="closeModal()">✕</div></div>
+      <div class="mbody" id="mbody"></div>
+    </div>
   </div>
-</main>
-
-<div class="overlay" id="overlay" onclick="if(event.target===this)closeModal()">
-  <div class="modal">
-    <div class="mhead"><h3 id="mtitle"></h3><button class="close" onclick="closeModal()">×</button></div>
-    <div id="mbody"></div>
-  </div>
-</div>
 
 <script>
-const $ = s => document.querySelector(s);
-let workers = [];
-let bands = [];
-let curBand = '';   // '' = all bands
-
-async function loadBands(){
-  try{
-    const r = await fetch('/api/bands',{headers:{'Accept':'application/json'}});
-    if(!r.ok) return;
-    bands = await r.json();
-    const sel = $('#bandsel'); if(!sel) return;
-    const keep = sel.value;
-    sel.innerHTML = '<option value="">All bands</option>'
-      + bands.map(b=>'<option value="'+esc(b.id)+'">'+esc(b.name)+' ('+esc(b.id)+')</option>').join('');
-    sel.value = keep;            // preserve selection across refreshes
-    curBand = sel.value;
-    updateRemoveBtn();
-  }catch(e){}
-}
-
-function onBandChange(){ curBand = $('#bandsel').value; updateRemoveBtn(); render(); }
-
-function updateRemoveBtn(){
-  const b = bands.find(x=>x.id===curBand);
-  const removable = !!curBand && b && !b.primary;
-  const btn = $('#rmband-btn'); if(btn) btn.hidden = !removable;
-}
-
-async function removeBand(){
-  const b = bands.find(x=>x.id===curBand); if(!b) return;
-  if(!confirm('Remove band "'+b.name+'" ('+b.id+') from the dashboard?')) return;
-  try{
-    const r = await fetch('/api/bands/'+encodeURIComponent(curBand),{method:'DELETE'});
-    const d = await r.json();
-    if(!r.ok){ alert(d.error || ('HTTP '+r.status)); return; }
-    curBand=''; $('#bandsel').value='';
-    await loadBands(); onBandChange();
-  }catch(e){ alert('error: '+e.message); }
-}
-
-function toggleAddBand(){
-  const f = $('#addband-form'); f.hidden = !f.hidden;
-  if(!f.hidden) $('#ab-name').focus();
-}
-
-async function addBand(){
-  const name = $('#ab-name').value.trim();
-  const psk  = $('#ab-psk').value.trim();
-  const msg  = $('#ab-msg');
-  if(!psk){ msg.textContent = 'psk required'; return; }
-  msg.textContent = 'adding…';
-  try{
-    const r = await fetch('/api/bands',{
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({name:name, psk:psk})
-    });
-    const d = await r.json();
-    if(!r.ok){ msg.textContent = d.error || ('HTTP '+r.status); return; }
-    $('#ab-psk').value=''; $('#ab-name').value='';
-    msg.textContent = 'added '+d.name+' ('+d.id+')';
-    await loadBands();
-    $('#bandsel').value = d.id; onBandChange();
-    setTimeout(()=>{ $('#addband-form').hidden=true; msg.textContent=''; }, 1800);
-  }catch(e){ msg.textContent = 'error: '+e.message; }
-}
-
-function shownWorkers(){ return curBand ? workers.filter(w=>w.band===curBand) : workers; }
+const $=s=>document.querySelector(s);
+const clock=()=>performance.now()/1000;
+const HB_WINDOW=60;                       // heartbeat bar drains over 60s → 0
+let workers=[], bands=[], curBand='', filterStr='';
+const M=new Map();                        // worker_id -> row state
+let dirty=false;
+const listEl=$('#list'), barsEl=$('#bars'), emptyEl=$('#empty');
 
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
-function ageStr(s){ if(s==null)return '—'; if(s<60)return Math.round(s)+'s'; if(s<3600)return Math.round(s/60)+'m'; return Math.round(s/3600)+'h'; }
+function col(f){return f>0.5?'#2dd4a7':f>0.22?'#f5b041':'#f76a6a'}
+function groupCaps(caps){
+  const g={}; (caps||[]).forEach(c=>{const p=c.split('.')[0]; (g[p]=g[p]||[]).push(c.slice(p.length+1)||'*')});
+  return Object.entries(g).sort((a,b)=>b[1].length-a[1].length);
+}
+
+/* ---- bands ---- */
+async function loadBands(){
+  try{
+    const r=await fetch('/api/bands',{headers:{'Accept':'application/json'}}); if(!r.ok)return;
+    bands=await r.json();
+    const sel=$('#bandsel'), keep=sel.value;
+    sel.innerHTML='<option value="">All bands</option>'+bands.map(b=>`<option value="${esc(b.id)}">${esc(b.name)} (${esc(b.id)})</option>`).join('');
+    sel.value=keep; curBand=sel.value; updateRemoveBtn();
+  }catch(e){}
+}
+function onBandChange(){ curBand=$('#bandsel').value; updateRemoveBtn(); dirty=true; reconcile(); }
+function updateRemoveBtn(){ const b=bands.find(x=>x.id===curBand); $('#rmband-btn').hidden=!(curBand&&b&&!b.primary); }
+async function removeBand(){
+  const b=bands.find(x=>x.id===curBand); if(!b)return;
+  if(!confirm(`Remove band "${b.name}" (${b.id})?`))return;
+  try{ const r=await fetch('/api/bands/'+encodeURIComponent(curBand),{method:'DELETE'}); const d=await r.json();
+    if(!r.ok){alert(d.error||('HTTP '+r.status));return;} curBand='';$('#bandsel').value=''; await loadBands(); onBandChange();
+  }catch(e){alert('error: '+e.message);}
+}
+function toggleAddBand(){ const f=$('#addband-form'); f.hidden=!f.hidden; if(!f.hidden)$('#ab-name').focus(); }
+async function addBand(){
+  const name=$('#ab-name').value.trim(), psk=$('#ab-psk').value.trim(), msg=$('#ab-msg');
+  if(!psk){msg.textContent='psk required';return;} msg.textContent='adding…';
+  try{
+    const r=await fetch('/api/bands',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,psk})});
+    const d=await r.json(); if(!r.ok){msg.textContent=d.error||('HTTP '+r.status);return;}
+    $('#ab-psk').value='';$('#ab-name').value=''; msg.textContent=`added ${d.name} (${d.id})`;
+    await loadBands(); $('#bandsel').value=d.id; onBandChange();
+    setTimeout(()=>{$('#addband-form').hidden=true;msg.textContent='';},1600);
+  }catch(e){msg.textContent='error: '+e.message;}
+}
+
+/* ---- workers ---- */
+function shown(){ let l=curBand?workers.filter(w=>w.band===curBand):workers;
+  if(filterStr) l=l.filter(w=>(w.name||w.worker_id).toLowerCase().includes(filterStr)); return l; }
+function setStatus(ok,txt){ $('#dot').className='dot'+(ok?'':' off'); $('#count').textContent=txt; }
 
 async function loadWorkers(){
   try{
-    const r = await fetch('/api/band/workers',{headers:{'Accept':'application/json'}});
+    const r=await fetch('/api/band/workers',{headers:{'Accept':'application/json'}});
     if(r.status===503){ setStatus(false,'band offline'); return; }
     if(!r.ok) throw new Error('HTTP '+r.status);
-    workers = await r.json();
-    render();
-    setStatus(true, shownWorkers().length+' on band');
+    workers=await r.json(); reconcile();
+    setStatus(true, shown().length+' on band');
   }catch(e){ setStatus(false,'error: '+e.message); }
 }
 
-function setStatus(ok,txt){
-  $('#dot').className = 'dot'+(ok?'':' off');
-  $('#count').textContent = txt;
+function buildRow(w){
+  const wrap=document.createElement('div'); wrap.className='item'; wrap.dataset.id=w.worker_id;
+  wrap.innerHTML=`
+    <div class="row">
+      <span class="caret">▸</span><span class="st"></span>
+      <span class="name"><span class="n">${esc(w.name||w.worker_id)}</span><span class="id">${esc(w.worker_id.slice(0,8))}</span></span>
+      <span class="ver"></span>
+      <span class="seen"><span class="seenbar"><i></i></span><span class="t"></span></span>
+      <span class="acts"></span>
+    </div>
+    <div class="detail"><div class="detail-in"><div class="meta"></div><div class="cggrid"></div></div></div>`;
+  const row=wrap.querySelector('.row');
+  row.addEventListener('click',()=>wrap.classList.toggle('open'));
+  const bar=document.createElement('div'); bar.className='bar'; bar.title=w.name||w.worker_id;
+  bar.innerHTML='<span class="fill"></span><span class="peak"></span>';
+  const idx=[...M.keys()].length;
+  bar.addEventListener('mouseenter',()=>{wrap.classList.add('hl');bar.classList.add('hl')});
+  bar.addEventListener('mouseleave',()=>{wrap.classList.remove('hl');bar.classList.remove('hl')});
+  return { w, wrap, row, bar,
+    st:wrap.querySelector('.st'), verEl:wrap.querySelector('.ver'),
+    sb:wrap.querySelector('.seenbar i'), tt:wrap.querySelector('.seen .t'),
+    acts:wrap.querySelector('.acts'), meta:wrap.querySelector('.meta'), cg:wrap.querySelector('.cggrid'),
+    fill:bar.querySelector('.fill'), peakEl:bar.querySelector('.peak'),
+    lastSeenAbs:clock()-(w.last_seen_age_secs||0), peak:0.6, beatT:-9, capsSig:'' };
 }
-
-function render(){
-  const grid = $('#grid'), empty = $('#empty');
-  const list = shownWorkers();
-  if(!list.length){
-    grid.innerHTML=''; empty.style.display='block';
-    empty.textContent = curBand ? 'No workers on this band right now.'
-                                : 'No workers on the band right now.';
-    return;
+function updateMeta(m,w){
+  m.w=w;
+  const fw=(w.plugins||[]).some(p=>['kvm','bthid','serial'].includes(p)) || /^0\./.test(w.version||'');
+  const vcls = w.version? (fw?'ver old':'ver') : 'ver none';
+  m.verEl.className=vcls; m.verEl.textContent = w.version? 'v'+w.version : '—';
+  m.wrap.querySelector('.name').innerHTML=`<span class="n">${esc(w.name||w.worker_id)}</span><span class="id">${esc(w.worker_id.slice(0,8))}</span>`+(fw?'<span class="tagfw">firmware</span>':'');
+  // actions (gated by caps)
+  const caps=w.caps||[], has=c=>caps.includes(c); const a=[];
+  if(has('screenshot.capture')) a.push(`<button class="primary" data-a="snap">snap</button>`);
+  if(has('shell.exec')) a.push(`<button data-a="shell">shell</button>`);
+  if(has('info.host')) a.push(`<button data-a="info">info</button>`);
+  m.acts.innerHTML=a.join('');
+  m.acts.querySelectorAll('button').forEach(b=>b.onclick=e=>{e.stopPropagation();
+    ({snap,shell,info})[b.dataset.a](w.worker_id);});
+  // caps groups (rebuild only if changed)
+  const sig=caps.join(','); if(sig!==m.capsSig){ m.capsSig=sig;
+    m.meta.textContent=`worker_id ${w.worker_id} · ${caps.length} capabilities`;
+    m.cg.innerHTML=groupCaps(caps).map(g=>`<div class="cg"><div class="cg-head"><span class="cg-caret">▸</span><b>${esc(g[0])}</b><span class="cg-count">${g[1].length}</span></div><div class="cg-body"><div class="cg-body-in">${g[1].map(x=>`<span class="mcap">${esc(x)}</span>`).join('')}</div></div></div>`).join('');
+    m.cg.querySelectorAll('.cg').forEach(cg=>cg.querySelector('.cg-head').onclick=()=>cg.classList.toggle('open'));
   }
-  empty.style.display='none';
-  grid.innerHTML = list.map(w=>{
-    const caps = w.caps||[];
-    const has = c => caps.includes(c);
-    const stale = (w.last_seen_age_secs||0) > 60;
-    const plugins = (w.plugins||[]).map(p=>'<span class="chip">'+esc(p)+'</span>').join('');
-    const wid = esc(w.worker_id);
-    const ver = w.version ? ' · <span class="ver" title="bundle version">v'+esc(w.version)+'</span>' : '';
-    const snap = has('screenshot.capture') ? '<button class="primary" onclick="snap(\''+wid+'\')">snap</button>':'';
-    const sh = has('shell.exec') ? '<button onclick="shell(\''+wid+'\')">shell</button>':'';
-    const inf = has('info.host') ? '<button onclick="info(\''+wid+'\')">info</button>':'';
-    return '<div class="card">'
-      + '<div class="top"><span class="name">'+esc(w.name||w.worker_id)+'</span>'
-      + '<span class="age '+(stale?'stale':'')+'">↻ '+ageStr(w.last_seen_age_secs)+'</span></div>'
-      + '<div class="caps">'+caps.length+' capabilities · <span style="opacity:.7">'+esc(wid.slice(0,12))+'</span>'+ver+'</div>'
-      + '<div class="plugins">'+plugins+'</div>'
-      + '<div class="actions">'+snap+sh+inf+'<button onclick="showCaps(\''+wid+'\')">caps</button></div>'
-      + '</div>';
-  }).join('');
+  m.bar.title=w.name||w.worker_id;
 }
 
-function openModal(title){ $('#mtitle').innerHTML=title; $('#overlay').classList.add('show'); }
-function setBody(html){ $('#mbody').innerHTML=html; }
-function closeModal(){ $('#overlay').classList.remove('show'); }
-function workerName(wid){ const w=workers.find(x=>x.worker_id===wid); return w?(w.name||wid):wid; }
-
-async function bandCall(cap,worker_id,args,timeout){
-  const r = await fetch('/api/band/call',{
-    method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({cap:cap,worker_id:worker_id,args:args||{},timeout:timeout||20})
+function reconcile(){
+  const list=shown(), seen=new Set();
+  list.forEach(w=>{
+    seen.add(w.worker_id);
+    let m=M.get(w.worker_id);
+    const lsa=clock()-(w.last_seen_age_secs||0);
+    if(!m){ m=buildRow(w); M.set(w.worker_id,m); updateMeta(m,w); dirty=true; }
+    else { if(lsa>m.lastSeenAbs+0.75) m.beatT=clock(); updateMeta(m,w); }
+    m.lastSeenAbs=lsa;
   });
-  return r.json();
-}
-
-async function snap(wid){
-  openModal('📸 '+esc(workerName(wid))+' <span class="spin"></span>');
-  setBody('<p style="color:var(--dim)">capturing…</p>');
-  const reply = await bandCall('screenshot.capture',wid,{quality:75},30);
-  const res = reply.result||{};
-  $('#mtitle').innerHTML = '📸 '+esc(workerName(wid));
-  if(res.ok && res.data){
-    setBody('<img src="data:image/'+(res.format||'jpeg')+';base64,'+res.data+'">');
-  }else{
-    setBody('<pre class="err">'+esc(res.error||reply.error||'capture failed')+'</pre>');
+  for(const [id,m] of M){ if(!seen.has(id)){ m.wrap.remove(); m.bar.remove(); M.delete(id); dirty=true; } }
+  if(dirty){ // (re)order by name
+    const ord=list.slice().sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+    ord.forEach(w=>{ const m=M.get(w.worker_id); if(m){ listEl.appendChild(m.wrap); barsEl.appendChild(m.bar); } });
+    dirty=false;
   }
+  emptyEl.style.display=list.length?'none':'block';
+  emptyEl.textContent=curBand?'No workers on this band.':'No workers on the band.';
+  $('#foot').textContent=(curBand?('band '+curBand):'all bands')+' · '+list.length+' workers';
+  versionSpread(list);
 }
 
+function versionSpread(list){
+  const c={}; list.forEach(w=>{const v=w.version||'none'; c[v]=(c[v]||0)+1;});
+  const ent=Object.entries(c).sort((a,b)=>b[1]-a[1]); const total=list.length||1;
+  const palette=['var(--accent)','var(--blue)','var(--warn)','#a78bfa','#e06c9f'];
+  const colFor=v=>v==='none'?'var(--dim2)':(/^0\./.test(v)?'var(--warn)':palette[ent.findIndex(e=>e[0]===v)%palette.length]);
+  $('#verbar').innerHTML=ent.map(e=>`<span style="width:${e[1]/total*100}%;background:${colFor(e[0])}"></span>`).join('');
+  $('#verleg').innerHTML=ent.slice(0,4).map(e=>`<span><i class="vdot" style="background:${colFor(e[0])}"></i>${e[0]==='none'?'no version':(e[0].length>16?'v'+e[0].slice(0,14)+'…':'v'+e[0])} <b>×${e[1]}</b></span>`).join('');
+}
+
+/* ---- rAF: drive bars/dots/counts from real last_seen ---- */
+function frame(){
+  const t=clock(); let online=0,stale=0,total=0;
+  for(const [,m] of M){
+    total++;
+    const f=Math.max(0,Math.min(1,1-(t-m.lastSeenAbs)/HB_WINDOW)), c=col(f);
+    m.peak=Math.max(f,m.peak-0.0037);
+    m.fill.style.setProperty('--c',c); m.fill.style.height=Math.max(4,f*100)+'%';
+    m.peakEl.style.bottom=Math.max(4,m.peak*100)+'%'; m.peakEl.style.background=col(m.peak);
+    m.bar.classList.toggle('beat', t-m.beatT<0.22);
+    m.sb.style.width=(f*100).toFixed(1)+'%'; m.sb.style.background=c;
+    m.st.style.background=c; m.tt.textContent=Math.round(f*HB_WINDOW)+'s';
+    if(f<=0.001) stale++; else online++;
+  }
+  $('#k-total').textContent=total; $('#k-online').textContent=online; $('#k-stale').textContent=stale;
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+/* ---- actions (modal) ---- */
+function openModal(title){ $('#mtitle').innerHTML=title; $('#overlay').classList.add('show'); }
+function setBody(h){ $('#mbody').innerHTML=h; } function closeModal(){ $('#overlay').classList.remove('show'); }
+function wname(wid){ const w=workers.find(x=>x.worker_id===wid); return w?(w.name||wid):wid; }
+async function bandCall(cap,wid,args,timeout){
+  const r=await fetch('/api/band/call',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({cap,worker_id:wid,args:args||{},timeout:timeout||20})}); return r.json();
+}
+async function snap(wid){
+  openModal('📸 '+esc(wname(wid))+' <span class="spin"></span>'); setBody('<p style="color:var(--dim)">capturing…</p>');
+  const reply=await bandCall('screenshot.capture',wid,{quality:75},30), res=reply.result||{};
+  $('#mtitle').innerHTML='📸 '+esc(wname(wid));
+  setBody(res.ok&&res.data?`<img src="data:image/${res.format||'jpeg'};base64,${res.data}">`:`<pre class="err">${esc(res.error||reply.error||'capture failed')}</pre>`);
+}
 async function info(wid){
-  openModal('ℹ️ '+esc(workerName(wid))+' <span class="spin"></span>');
-  setBody('');
-  const reply = await bandCall('info.host',wid,{},10);
-  $('#mtitle').innerHTML = 'ℹ️ '+esc(workerName(wid));
+  openModal('ℹ️ '+esc(wname(wid))+' <span class="spin"></span>'); setBody('');
+  const reply=await bandCall('info.host',wid,{},10);
+  $('#mtitle').innerHTML='ℹ️ '+esc(wname(wid));
   setBody('<pre>'+esc(JSON.stringify(reply.result==null?reply:reply.result,null,2))+'</pre>');
 }
-
-function showCaps(wid){
-  const w = workers.find(x=>x.worker_id===wid);
-  openModal('⚙️ '+esc(workerName(wid)));
-  setBody('<pre>'+esc((w.caps||[]).join('\n'))+'</pre>');
-}
-
 function shell(wid){
-  openModal('▶ shell · '+esc(workerName(wid)));
-  setBody('<div class="row"><input id="cmd" placeholder="command (e.g. uname -a)" autofocus>'
-    + '<button class="primary" onclick="runShell(\''+esc(wid)+'\')">run</button></div>'
-    + '<pre id="shout" style="display:none"></pre>');
-  const inp=$('#cmd'); inp.focus();
-  inp.addEventListener('keydown',e=>{if(e.key==='Enter')runShell(wid);});
+  openModal('▶ shell · '+esc(wname(wid)));
+  setBody('<div class="row2"><input id="cmd" placeholder="command (e.g. uname -a)" autofocus><button class="primary" onclick="runShell(\''+esc(wid)+'\')">run</button></div><pre id="shout" style="display:none"></pre>');
+  const inp=$('#cmd'); inp.focus(); inp.addEventListener('keydown',e=>{if(e.key==='Enter')runShell(wid);});
 }
-
 async function runShell(wid){
-  const cmd = $('#cmd').value.trim(); if(!cmd) return;
+  const cmd=$('#cmd').value.trim(); if(!cmd)return;
   const out=$('#shout'); out.style.display='block'; out.className=''; out.textContent='running…';
-  const reply = await bandCall('shell.exec',wid,{cmd:cmd,timeout:30},35);
-  const r = reply.result||{};
+  const reply=await bandCall('shell.exec',wid,{cmd,timeout:30},35), r=reply.result||{};
   if(r.ok===false||reply.ok===false){ out.className='err'; out.textContent=r.error||reply.error||'error'; return; }
-  const parts=[];
-  if(r.stdout) parts.push(r.stdout);
-  if(r.stderr) parts.push('[stderr]\n'+r.stderr);
-  out.textContent = (parts.join('\n')||'(no output)')+'\n\n[exit '+r.code+']';
+  const p=[]; if(r.stdout)p.push(r.stdout); if(r.stderr)p.push('[stderr]\n'+r.stderr);
+  out.textContent=(p.join('\n')||'(no output)')+'\n\n[exit '+r.code+']';
 }
 
-async function loadMeta(){
-  try{
-    const r=await fetch('/api/status',{headers:{'Accept':'application/json'}});
-    if(!r.ok) return; const s=await r.json();
-    if(s.model) $('#sysmeta').textContent = s.model.name+' · '+s.model.model;
-  }catch(e){}
+/* ---- views / install ---- */
+function showView(v){
+  $('#view-workers').hidden=v!=='workers'; $('#view-install').hidden=v!=='install';
+  $('#tab-workers').classList.toggle('active',v==='workers'); $('#tab-install').classList.toggle('active',v==='install');
 }
-
-function showView(name){
-  $('#view-band').hidden = name!=='band';
-  $('#view-install').hidden = name!=='install';
-  $('#tab-band').classList.toggle('active', name==='band');
-  $('#tab-install').classList.toggle('active', name==='install');
+function applyFilter(){ filterStr=$('#filter').value.toLowerCase().trim(); dirty=true; reconcile(); }
+function setCmd(id,text){ const el=document.getElementById(id); if(!el)return; el.textContent=text;
+  const b=document.createElement('button'); b.className='cp'; b.textContent='copy';
+  b.onclick=e=>{e.stopPropagation();navigator.clipboard.writeText(text).then(()=>{b.textContent='copied';setTimeout(()=>b.textContent='copy',1200);});};
+  el.parentNode.appendChild(b);
 }
-
-function setCmd(id,text){
-  const el=document.getElementById(id); if(!el) return;
-  el.textContent=text;
-  const b=document.createElement('button');
-  b.className='cp'; b.textContent='copy';
-  b.onclick=()=>{navigator.clipboard.writeText(text).then(()=>{b.textContent='copied';setTimeout(()=>b.textContent='copy',1200);});};
-  el.appendChild(b);
-}
-
 function wireLinks(){
-  const origin=location.origin;
-  const tokensUrl=location.protocol+'//'+location.host.replace(/^rook\./,'mcp.')+'/tokens';
-  $('#link-tokens').href=tokensUrl;
-  const t2=document.getElementById('link-tokens2'); if(t2) t2.href=tokensUrl;
-  setCmd('cmd-unix', 'curl -fsSL '+origin+'/worker | bash');
-  setCmd('cmd-win',  'iex (irm '+origin+'/worker)');
+  const origin=location.origin, tokensUrl=location.protocol+'//'+location.host.replace(/^rook\./,'mcp.')+'/tokens';
+  $('#link-tokens').href=tokensUrl; const t2=$('#link-tokens2'); if(t2)t2.href=tokensUrl;
+  setCmd('cmd-unix','curl -fsSL '+origin+'/worker | bash');
+  setCmd('cmd-win','iex (irm '+origin+'/worker)');
   setCmd('cmd-termux','pkg install -y curl && curl -fsSL '+origin+'/worker | bash');
 }
 
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
-wireLinks();
-loadBands();
-loadWorkers(); loadMeta();
-setInterval(loadWorkers, 4000);
-setInterval(loadBands, 20000);
+wireLinks(); loadBands(); loadWorkers();
+setInterval(loadWorkers,3000); setInterval(loadBands,20000);
 </script>
 </body>
 </html>
