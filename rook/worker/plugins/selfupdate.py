@@ -42,6 +42,7 @@ _SVC = "rook-band-worker"
 _POLL_SECS = float(os.environ.get("ROOK_UPDATE_POLL", "300"))  # manifest check interval
 _HEALTH_SECS = 60.0        # stay alive this long post-swap before declaring success
 _MAX_BOOT_ATTEMPTS = 3     # boots into a new build without health before rolling back
+_UA = "rook-worker"        # Cloudflare blocks the default urllib User-Agent
 
 
 def _is_termux() -> bool:
@@ -186,7 +187,9 @@ class SelfUpdatePlugin(Plugin):
     async def _http_get(self, url: str, timeout: float) -> bytes:
         def _f() -> bytes:
             import urllib.request
-            with urllib.request.urlopen(url, timeout=timeout) as r:
+            # Explicit UA: Cloudflare 403s the default "Python-urllib/x" agent.
+            req = urllib.request.Request(url, headers={"User-Agent": _UA})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
                 return r.read()
         return await asyncio.get_event_loop().run_in_executor(None, _f)
 
@@ -417,7 +420,8 @@ class SelfUpdatePlugin(Plugin):
 
         def _fetch() -> None:
             import urllib.request
-            with urllib.request.urlopen(url, timeout=60) as r:
+            req = urllib.request.Request(url, headers={"User-Agent": _UA})
+            with urllib.request.urlopen(req, timeout=60) as r:
                 data = r.read()
             tmp.write_bytes(data)
             os.replace(tmp, dest)
