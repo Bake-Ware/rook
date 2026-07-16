@@ -174,6 +174,31 @@
   .spin{display:inline-block;width:11px;height:11px;border:2px solid var(--line2);border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;vertical-align:middle}
   @keyframes sp{to{transform:rotate(360deg)}}
   .foot{margin-top:14px;color:var(--dim2);font-size:.72rem;text-align:center}
+
+  /* ---- mobile ---- */
+  @media(max-width:640px){
+    .wrap{padding:14px 12px 50px}
+    .topbar{padding:10px 13px;gap:9px 13px}
+    nav a{padding:6px 10px}
+    input.filter{flex:1;width:auto;min-width:90px}
+    /* stats: 3 mini tiles on one row, version + heartbeats full width below */
+    .stats{gap:9px}
+    .tile{padding:11px 13px}
+    .tile.mini{flex:1 1 0;min-width:0}
+    .tile.mini .k{font-size:1.5rem}
+    .tile.ver,.tile.hb{flex:1 1 100%;width:auto}
+    /* worker rows: wrap into two lines so nothing overlaps */
+    .listhead{display:none}
+    .row{flex-wrap:wrap;row-gap:8px;column-gap:10px;padding:11px 13px;align-items:center}
+    .name{flex:1 1 60%;min-width:0}
+    .ver{width:auto;flex:0 0 auto;order:3;font-size:.74rem}
+    .seen{width:auto;flex:1 1 130px;order:4}
+    .acts{flex:1 1 100%;order:5;opacity:1;justify-content:flex-start;gap:8px}
+    .acts button{padding:6px 12px}
+    .detail-in{padding:2px 12px 14px 30px}
+    .addform{left:12px;right:12px;width:auto}
+    .modal{max-height:92vh}
+  }
 </style>
 </head>
 <body>
