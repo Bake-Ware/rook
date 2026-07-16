@@ -649,6 +649,7 @@ static void announce() {
     doc["kind"] = "announce";
     doc["worker_id"] = g_worker_id;
     doc["name"] = g_worker_name;
+    doc["version"] = ROOK_FW_VERSION;   // shown in the dashboard card (firmware version)
     JsonArray caps = doc["caps"].to<JsonArray>();
     for (size_t i = 0; i < CAPS_LIST_N; i++) caps.add(CAPS_LIST[i]);
     JsonArray plugins = doc["plugins"].to<JsonArray>();
