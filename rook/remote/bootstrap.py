@@ -400,7 +400,21 @@ class CombinedServer:
             self.domain = _s["pyz_domain"]
         if _s.get("band_name"):
             self.band_name = _s["band_name"]
-        self._band = None  # BandClient — joins the hub to track workers + invoke caps
+        self._band = None  # MultiBandClient — joins the hub to track workers + invoke caps
+        # Known bands for the dashboard selector. PSKs stay server-side; the UI
+        # only ever sees the band_id label (first 8 hex of SHA256(PSK)[:16]).
+        self._bands = setup_store.load_bands()
+        self._band_names: dict[str, str] = {}  # band_id label -> friendly name
+        self._primary_label = ""               # the configured band; not removable
+        try:
+            from telesthete.protocol.crypto import derive_band_id
+            for _b in self._bands:
+                _lbl = derive_band_id(_b["psk"]).hex()[:8]
+                self._band_names.setdefault(_lbl, _b["name"])
+            if self.band_psk:
+                self._primary_label = derive_band_id(self.band_psk).hex()[:8]
+        except Exception:
+            log.warning("could not derive band labels; selector names may be blank")
         self._workers: dict[str, RemoteWorker] = {}
         self._on_worker_connect = None
         self._on_worker_disconnect = None
@@ -411,6 +425,9 @@ class CombinedServer:
         self._app.router.add_get("/worker.py", self._worker_script)
         self._app.router.add_get("/band-worker.pyz", self._band_worker_pyz)
         self._app.router.add_get("/apk", self._worker_apk)
+        self._app.router.add_get("/api/bands", self._api_bands)
+        self._app.router.add_post("/api/bands", self._api_add_band)
+        self._app.router.add_delete("/api/bands/{id}", self._api_remove_band)
         self._app.router.add_get("/api/band/workers", self._api_band_workers)
         self._app.router.add_post("/api/band/call", self._api_band_call)
         self._app.router.add_get("/ws", self._websocket_handler)
@@ -637,11 +654,13 @@ button:hover{{background:#22b88f}}
         # Best-effort: a missing/unreachable hub must not take down the
         # installer server (the bootstrap endpoints don't need the band).
         try:
-            from ..band_mcp.client import BandClient
-            self._band = BandClient(psk=self.band_psk, hub_host=self.hub_host,
-                                    hub_port=self.hub_port)
+            from ..band_mcp.client import MultiBandClient
+            psks = [b["psk"] for b in self._bands] or [self.band_psk]
+            self._band = MultiBandClient(psks=psks, hub_host=self.hub_host,
+                                         hub_port=self.hub_port)
             await self._band.start()
-            log.info("band client joined hub %s:%d", self.hub_host, self.hub_port)
+            log.info("band client joined hub %s:%d (%d band(s))",
+                     self.hub_host, self.hub_port, len(psks))
         except Exception as e:
             log.warning("band client failed to start (%s); dashboard band view disabled", e)
             self._band = None
@@ -755,19 +774,93 @@ button:hover{{background:#22b88f}}
             },
         )
 
+    async def _api_bands(self, request: web.Request) -> web.Response:
+        """Known bands for the dashboard selector: ``[{id, name}]`` where ``id``
+        is the band_id label. Raw PSKs are never sent to the browser."""
+        out = [{"id": lbl, "name": name, "primary": lbl == self._primary_label}
+               for lbl, name in self._band_names.items()]
+        out.sort(key=lambda x: x["name"])
+        return web.json_response(out)
+
+    async def _api_add_band(self, request: web.Request) -> web.Response:
+        """Add a band by PSK (authenticated dashboard users only). The PSK is
+        persisted server-side in setup.json (gitignored) and never echoed back;
+        the band is joined live so its workers appear without a restart."""
+        if self._band is None:
+            return web.json_response({"error": "band client not connected"}, status=503)
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json body"}, status=400)
+        name = (data.get("name") or "").strip() or "band"
+        psk = (data.get("psk") or "").strip()
+        if not psk:
+            return web.json_response({"error": "psk required"}, status=400)
+        try:
+            from telesthete.protocol.crypto import derive_band_id
+            label = derive_band_id(psk).hex()[:8]
+        except Exception as e:
+            return web.json_response({"error": f"crypto unavailable: {e}"}, status=500)
+
+        from . import setup_store
+        # Persist as an extra band (primary stays derived from band_psk). Dedupe.
+        extras = [b for b in setup_store.load_bands() if b["psk"] != self.band_psk]
+        if psk != self.band_psk and all(b["psk"] != psk for b in extras):
+            extras.append({"name": name, "psk": psk})
+            setup_store.save_bands(extras)
+        self._band_names[label] = name
+        self._bands = setup_store.load_bands()
+        try:
+            await self._band.add_band(psk)
+        except Exception as e:
+            log.warning("live join of band %s failed: %s", label, e)
+        return web.json_response({"id": label, "name": name})
+
+    async def _api_remove_band(self, request: web.Request) -> web.Response:
+        """Remove a band by band_id label. The primary (configured) band can't
+        be removed — that's the dashboard's own band."""
+        label = request.match_info.get("id", "")
+        if not label:
+            return web.json_response({"error": "id required"}, status=400)
+        if label == self._primary_label:
+            return web.json_response({"error": "cannot remove the primary band"}, status=400)
+        from . import setup_store
+        try:
+            from telesthete.protocol.crypto import derive_band_id
+            extras = [b for b in setup_store.load_bands()
+                      if b["psk"] != self.band_psk
+                      and derive_band_id(b["psk"]).hex()[:8] != label]
+        except Exception as e:
+            return web.json_response({"error": f"crypto unavailable: {e}"}, status=500)
+        setup_store.save_bands(extras)
+        self._band_names.pop(label, None)
+        if self._band is not None:
+            try:
+                await self._band.remove_band(label)
+            except Exception as e:
+                log.warning("live leave of band %s failed: %s", label, e)
+        return web.json_response({"removed": label})
+
     async def _api_band_workers(self, request: web.Request) -> web.Response:
-        """Live band roster from our hub-joined BandClient."""
+        """Live band roster from our hub-joined MultiBandClient. Each worker is
+        tagged with the ``band`` (band_id label) it was seen on; an optional
+        ``?band=<id>`` query filters to one band."""
         import time
         if self._band is None:
             return web.json_response({"error": "band client not connected"}, status=503)
+        want = request.query.get("band") or ""
         now = time.time()
         out = []
         for w in self._band.workers.values():
+            band = w.get("band")
+            if want and band != want:
+                continue
             out.append({
                 "worker_id": w["worker_id"],
                 "name": w.get("name"),
                 "caps": w.get("caps", []),
                 "plugins": w.get("plugins", []),
+                "band": band,
                 "last_seen_age_secs": round(now - w.get("last_seen", 0.0), 2),
             })
         out.sort(key=lambda x: x["name"] or "")

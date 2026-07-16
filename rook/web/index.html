@@ -70,6 +70,8 @@
   .cmd .cp{position:absolute;top:8px;right:8px;padding:3px 8px;font-size:.7rem}
   .pill{display:inline-block;background:var(--chip);border:1px solid var(--line2);border-radius:6px;padding:6px 12px;color:var(--accent);text-decoration:none;font-size:.85rem;margin:4px 8px 4px 0}
   .pill:hover{border-color:var(--accent2)}
+  .bandbar{display:flex;align-items:center;gap:8px;margin-bottom:14px;font-size:.85rem;color:var(--dim)}
+  .bandbar select{font-family:inherit;font-size:.85rem;padding:6px 10px;border-radius:6px;border:1px solid var(--line2);background:#152029;color:var(--fg);cursor:pointer}
   [hidden]{display:none!important}
 </style>
 </head>
@@ -91,6 +93,18 @@
 </header>
 <main>
   <div id="view-band">
+    <div class="bandbar">
+      <label for="bandsel">Band:</label>
+      <select id="bandsel" onchange="onBandChange()"><option value="">All bands</option></select>
+      <button id="rmband-btn" onclick="removeBand()" hidden>remove</button>
+      <button id="addband-btn" onclick="toggleAddBand()">+ add band</button>
+      <span id="addband-form" hidden>
+        <input id="ab-name" placeholder="name" size="10" autocomplete="off">
+        <input id="ab-psk" type="password" placeholder="psk" size="20" autocomplete="off">
+        <button class="primary" onclick="addBand()">save</button>
+        <span id="ab-msg" style="font-size:.78rem"></span>
+      </span>
+    </div>
     <div id="grid" class="grid"></div>
     <div id="empty" class="empty" style="display:none"></div>
   </div>
@@ -138,6 +152,71 @@
 <script>
 const $ = s => document.querySelector(s);
 let workers = [];
+let bands = [];
+let curBand = '';   // '' = all bands
+
+async function loadBands(){
+  try{
+    const r = await fetch('/api/bands',{headers:{'Accept':'application/json'}});
+    if(!r.ok) return;
+    bands = await r.json();
+    const sel = $('#bandsel'); if(!sel) return;
+    const keep = sel.value;
+    sel.innerHTML = '<option value="">All bands</option>'
+      + bands.map(b=>'<option value="'+esc(b.id)+'">'+esc(b.name)+' ('+esc(b.id)+')</option>').join('');
+    sel.value = keep;            // preserve selection across refreshes
+    curBand = sel.value;
+    updateRemoveBtn();
+  }catch(e){}
+}
+
+function onBandChange(){ curBand = $('#bandsel').value; updateRemoveBtn(); render(); }
+
+function updateRemoveBtn(){
+  const b = bands.find(x=>x.id===curBand);
+  const removable = !!curBand && b && !b.primary;
+  const btn = $('#rmband-btn'); if(btn) btn.hidden = !removable;
+}
+
+async function removeBand(){
+  const b = bands.find(x=>x.id===curBand); if(!b) return;
+  if(!confirm('Remove band "'+b.name+'" ('+b.id+') from the dashboard?')) return;
+  try{
+    const r = await fetch('/api/bands/'+encodeURIComponent(curBand),{method:'DELETE'});
+    const d = await r.json();
+    if(!r.ok){ alert(d.error || ('HTTP '+r.status)); return; }
+    curBand=''; $('#bandsel').value='';
+    await loadBands(); onBandChange();
+  }catch(e){ alert('error: '+e.message); }
+}
+
+function toggleAddBand(){
+  const f = $('#addband-form'); f.hidden = !f.hidden;
+  if(!f.hidden) $('#ab-name').focus();
+}
+
+async function addBand(){
+  const name = $('#ab-name').value.trim();
+  const psk  = $('#ab-psk').value.trim();
+  const msg  = $('#ab-msg');
+  if(!psk){ msg.textContent = 'psk required'; return; }
+  msg.textContent = 'adding…';
+  try{
+    const r = await fetch('/api/bands',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({name:name, psk:psk})
+    });
+    const d = await r.json();
+    if(!r.ok){ msg.textContent = d.error || ('HTTP '+r.status); return; }
+    $('#ab-psk').value=''; $('#ab-name').value='';
+    msg.textContent = 'added '+d.name+' ('+d.id+')';
+    await loadBands();
+    $('#bandsel').value = d.id; onBandChange();
+    setTimeout(()=>{ $('#addband-form').hidden=true; msg.textContent=''; }, 1800);
+  }catch(e){ msg.textContent = 'error: '+e.message; }
+}
+
+function shownWorkers(){ return curBand ? workers.filter(w=>w.band===curBand) : workers; }
 
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 function ageStr(s){ if(s==null)return '—'; if(s<60)return Math.round(s)+'s'; if(s<3600)return Math.round(s/60)+'m'; return Math.round(s/3600)+'h'; }
@@ -149,7 +228,7 @@ async function loadWorkers(){
     if(!r.ok) throw new Error('HTTP '+r.status);
     workers = await r.json();
     render();
-    setStatus(true, workers.length+' on band');
+    setStatus(true, shownWorkers().length+' on band');
   }catch(e){ setStatus(false,'error: '+e.message); }
 }
 
@@ -160,13 +239,15 @@ function setStatus(ok,txt){
 
 function render(){
   const grid = $('#grid'), empty = $('#empty');
-  if(!workers.length){
+  const list = shownWorkers();
+  if(!list.length){
     grid.innerHTML=''; empty.style.display='block';
-    empty.textContent='No workers on the band right now.';
+    empty.textContent = curBand ? 'No workers on this band right now.'
+                                : 'No workers on the band right now.';
     return;
   }
   empty.style.display='none';
-  grid.innerHTML = workers.map(w=>{
+  grid.innerHTML = list.map(w=>{
     const caps = w.caps||[];
     const has = c => caps.includes(c);
     const stale = (w.last_seen_age_secs||0) > 60;
@@ -282,8 +363,10 @@ function wireLinks(){
 
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
 wireLinks();
+loadBands();
 loadWorkers(); loadMeta();
 setInterval(loadWorkers, 4000);
+setInterval(loadBands, 20000);
 </script>
 </body>
 </html>
