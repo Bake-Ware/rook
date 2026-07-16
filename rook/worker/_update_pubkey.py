@@ -11,4 +11,4 @@ public half is safe to commit and is what every worker uses to verify a
 manifest's signature before swapping its bundle.
 """
 
-PUBKEY_B64 = ""
+PUBKEY_B64 = "D5hj75uLaN91Ml6cBIvZ+ZCTjCgtntiMNz48lNrHROw="
