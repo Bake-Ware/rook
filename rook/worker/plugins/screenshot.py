@@ -54,42 +54,61 @@ async def _linux_capture(quality: int, region: tuple[int, int, int, int] | None)
         return {"ok": False, "error": "no DISPLAY/WAYLAND_DISPLAY set"}
     fd, path = tempfile.mkstemp(suffix=".jpg", prefix="rook-shot-")
     os.close(fd)
+    wl = bool(os.environ.get("WAYLAND_DISPLAY"))
+
+    # Screenshot tooling is compositor-specific — wlroots→grim, KDE→spectacle,
+    # GNOME→gnome-screenshot, X11→scrot/import. Build an ordered list of every
+    # available backend and try each until one produces a non-empty file, so a
+    # box where (say) grim exists but the compositor rejects wlr-screencopy
+    # still succeeds via spectacle.
+    backends: list[tuple[str, list[str]]] = []
+    if wl and shutil.which("grim"):
+        g = ["grim", "-t", "jpeg", "-q", str(quality)]
+        if region:
+            x, y, w, h = region
+            g += ["-g", f"{x},{y} {w}x{h}"]
+        backends.append(("grim", g + [path]))
+    if not region and shutil.which("spectacle"):
+        backends.append(("spectacle", ["spectacle", "-b", "-n", "-o", path]))
+    if not region and shutil.which("gnome-screenshot"):
+        backends.append(("gnome-screenshot", ["gnome-screenshot", "-f", path]))
+    if shutil.which("scrot"):
+        s = ["scrot", "-q", str(quality), "-o"]
+        if region:
+            x, y, w, h = region
+            s += ["-a", f"{x},{y},{w},{h}"]
+        backends.append(("scrot", s + [path]))
+    if shutil.which("import"):
+        i = ["import", "-window", "root", "-quality", str(quality)]
+        if region:
+            x, y, w, h = region
+            i += ["-crop", f"{w}x{h}+{x}+{y}"]
+        backends.append(("import", i + [path]))
+
+    if not backends:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        return {"ok": False, "error": "no screenshot backend (install grim / spectacle / scrot / imagemagick)"}
+
+    errs = []
     try:
-        if os.environ.get("WAYLAND_DISPLAY") and shutil.which("grim"):
-            # Wayland-native (wlroots) grabber. scrot/import are X11-only and
-            # can't grab the root window under Wayland.
-            cmd = ["grim", "-t", "jpeg", "-q", str(quality)]
-            if region:
-                x, y, w, h = region
-                cmd += ["-g", f"{x},{y} {w}x{h}"]
-            cmd.append(path)
-            code, _, err = await _run(cmd)
-            if code != 0:
-                return {"ok": False, "error": f"grim failed: {err.decode(errors='replace').strip()}"}
-        elif shutil.which("scrot"):
-            cmd = ["scrot", "-q", str(quality), "-o"]
-            if region:
-                x, y, w, h = region
-                cmd += ["-a", f"{x},{y},{w},{h}"]
-            cmd.append(path)
-            code, _, err = await _run(cmd)
-            if code != 0:
-                return {"ok": False, "error": f"scrot failed: {err.decode(errors='replace').strip()}"}
-        elif shutil.which("import"):
-            # ImageMagick. -window root grabs the whole screen; -crop for region.
-            cmd = ["import", "-window", "root", "-quality", str(quality)]
-            if region:
-                x, y, w, h = region
-                cmd += ["-crop", f"{w}x{h}+{x}+{y}"]
-            cmd.append(path)
-            code, _, err = await _run(cmd)
-            if code != 0:
-                return {"ok": False, "error": f"import failed: {err.decode(errors='replace').strip()}"}
-        else:
-            return {"ok": False, "error": "no screenshot backend (install scrot or imagemagick)"}
-        with open(path, "rb") as f:
-            data = f.read()
-        return _pack(data)
+        for name, cmd in backends:
+            try:
+                code, _, err = await _run(cmd, timeout=15)
+            except Exception as e:
+                errs.append(f"{name}: {type(e).__name__}: {e}")
+                continue
+            if code == 0 and os.path.exists(path) and os.path.getsize(path) > 0:
+                with open(path, "rb") as f:
+                    return _pack(f.read())
+            errs.append(f"{name}: {err.decode(errors='replace').strip() or f'exit {code}'}")
+            try:
+                open(path, "wb").close()   # clear for the next backend
+            except OSError:
+                pass
+        return {"ok": False, "error": "all screenshot backends failed — " + " | ".join(errs)}
     finally:
         try:
             os.unlink(path)
