@@ -26,4 +26,8 @@ firmware/.vscode/
 Thumbs.db
 .DS_Store
 rook/remote/band-worker.pyz
+rook/remote/band-worker.json
 rook/remote/rook-worker.apk
+
+# OTA update signing key (private half — never commit; default lives in ~/.config/rook/)
+update-signing-key

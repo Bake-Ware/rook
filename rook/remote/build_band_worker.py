@@ -58,10 +58,9 @@ def compute_build() -> tuple[int, str, str]:
         return 0, "", "0.dev"
 
 
-def _stamp_build_info(worker_dst: Path) -> str:
+def _stamp_build_info(worker_dst: Path, build: int, commit: str,
+                      version: str, built_at: str) -> None:
     """Overwrite the bundled _build_info.py with the real build stamp."""
-    build, commit, version = compute_build()
-    built_at = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     (worker_dst / "_build_info.py").write_text(
         '"""Generated at bundle time by build_band_worker.py — do not edit."""\n'
         "from __future__ import annotations\n\n"
@@ -73,7 +72,35 @@ def _stamp_build_info(worker_dst: Path) -> str:
         '    return {"version": VERSION, "build": BUILD, "commit": COMMIT, "built_at": BUILT_AT}\n',
         encoding="utf-8",
     )
-    return version
+
+
+def _write_manifest(build: int, commit: str, version: str, built_at: str) -> Path:
+    """Compute the pyz hash and write a signed manifest next to it."""
+    import hashlib
+    h = hashlib.sha256()
+    with open(OUTPUT, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    manifest = {
+        "schema": 1,
+        "build": build,
+        "version": version,
+        "commit": commit,
+        "built_at": built_at,
+        "filename": OUTPUT.name,
+        "sha256": h.hexdigest(),
+        "size": OUTPUT.stat().st_size,
+    }
+    import sys as _sys
+    _sys.path.insert(0, str(REPO_ROOT))
+    from rook.remote.update_keys import sign_manifest
+    manifest = sign_manifest(manifest)
+    import json
+    manifest_path = OUTPUT.with_suffix(".json")
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    signed = "signed" if manifest.get("sig") else "UNSIGNED"
+    print(f"Manifest: {manifest_path}  ({signed})")
+    return manifest_path
 
 
 def build() -> Path:
@@ -85,6 +112,9 @@ def build() -> Path:
             "Expected at /root/repos/telesthete/telesthete"
         )
 
+    build_num, commit, version = compute_build()
+    built_at = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+
     with tempfile.TemporaryDirectory() as tmp:
         t = Path(tmp)
 
@@ -95,7 +125,7 @@ def build() -> Path:
         rook_dst.mkdir()
         (rook_dst / "__init__.py").write_text('__version__ = "0.1.0"\n', encoding="utf-8")
         _copy_pkg(WORKER_SRC, rook_dst / "worker")
-        version = _stamp_build_info(rook_dst / "worker")
+        _stamp_build_info(rook_dst / "worker", build_num, commit, version, built_at)
 
         # telesthete.protocol package (only protocol/ is imported by rook.worker)
         tel_dst = t / "telesthete"
@@ -111,6 +141,7 @@ def build() -> Path:
 
     size = OUTPUT.stat().st_size
     print(f"Built: {OUTPUT}  v{version}  ({size:,} bytes)")
+    _write_manifest(build_num, commit, version, built_at)
     return OUTPUT
 
 

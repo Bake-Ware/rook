@@ -424,6 +424,7 @@ class CombinedServer:
         self._app.router.add_get("/worker", self._worker_bootstrap)
         self._app.router.add_get("/worker.py", self._worker_script)
         self._app.router.add_get("/band-worker.pyz", self._band_worker_pyz)
+        self._app.router.add_get("/band-worker.json", self._band_worker_manifest)
         self._app.router.add_get("/apk", self._worker_apk)
         self._app.router.add_get("/api/bands", self._api_bands)
         self._app.router.add_post("/api/bands", self._api_add_band)
@@ -474,7 +475,8 @@ class CombinedServer:
         from . import setup_store
 
         # Always public: worker bootstrap/artifacts, health, websockets.
-        exempt = ("/ws", "/health", "/worker", "/worker.py", "/band-worker.pyz", "/apk")
+        exempt = ("/ws", "/health", "/worker", "/worker.py", "/band-worker.pyz",
+                  "/band-worker.json", "/apk")
         is_exempt = request.path == "/ws/ui" or any(
             request.path == p or request.path.startswith(p + "/") for p in exempt)
 
@@ -756,6 +758,21 @@ button:hover{{background:#22b88f}}
             body=data,
             content_type="application/octet-stream",
             headers={"Content-Disposition": "attachment; filename=band-worker.pyz"},
+        )
+
+    async def _band_worker_manifest(self, request: web.Request) -> web.Response:
+        """Serve the signed OTA manifest (band-worker.json) next to the pyz.
+        Public + no-cache so converging workers always see the current build."""
+        manifest_path = Path(__file__).parent / "band-worker.json"
+        if not manifest_path.exists():
+            return web.Response(
+                status=404,
+                text="band-worker.json not built yet. Run: python3 rook/remote/build_band_worker.py",
+            )
+        return web.Response(
+            body=manifest_path.read_bytes(),
+            content_type="application/json",
+            headers={"Cache-Control": "no-store"},
         )
 
     async def _worker_apk(self, request: web.Request) -> web.Response:
