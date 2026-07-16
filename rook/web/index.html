@@ -130,6 +130,8 @@
   .cf textarea{min-height:62px;resize:vertical}
   .caprun{display:flex;align-items:center;gap:12px}
   .capout{margin-top:4px} .capout img{max-width:100%;border-radius:8px} .capout pre{margin:0}
+  .caphelp{color:var(--dim);font-size:.79rem;line-height:1.5;padding:9px 12px;background:#0c151f;border:1px solid var(--line);border-radius:8px}
+  .cf .pt{color:var(--dim2);font-size:.66rem;font-weight:400}
   /* terminal */
   .term{background:#070b10;border:1px solid var(--line);border-radius:8px;padding:12px;height:46vh;overflow:auto;
     font-size:.82rem;white-space:pre-wrap;word-break:break-word;line-height:1.45}
@@ -477,41 +479,51 @@ async function runTerm(cmd){
 }
 
 /* ---- run any capability ---- */
-const CAP_ARGS={
-  'shell.exec':[{n:'cmd',ph:'uname -a',big:1},{n:'timeout',ph:'30',type:'number'},{n:'cwd',ph:'(optional)'}],
-  'shell.which':[{n:'name',ph:'python3'}],'shell.env.get':[{n:'name',ph:'PATH'}],'shell.env.list':[{n:'prefix',ph:'(optional)'}],
-  'file.read':[{n:'path',ph:'/etc/hostname'},{n:'encoding',ph:'utf-8'},{n:'max_bytes',ph:'8388608',type:'number'}],
-  'file.write':[{n:'path',ph:'/tmp/x'},{n:'content',big:1},{n:'append',ph:'false'}],
-  'file.list':[{n:'path',ph:'.'},{n:'recursive',ph:'false'},{n:'include_hidden',ph:'true'}],
-  'file.search':[{n:'pattern',ph:'regex'},{n:'path',ph:'.'},{n:'glob',ph:'*'}],'file.exists':[{n:'path'}],
-  'hid.type':[{n:'text',big:1}],'hid.key_combo':[{n:'keys',ph:'ctrl+alt+t'}],
-  'hid.mouse.move':[{n:'x',type:'number'},{n:'y',type:'number'}],
-  'screenshot.capture':[{n:'quality',ph:'75',type:'number'}],
-  'screenshot.capture_region':[{n:'x',type:'number'},{n:'y',type:'number'},{n:'w',type:'number'},{n:'h',type:'number'}],
-  'pikvm.power':[{n:'action',ph:'on | off | reset'}],'pikvm.key':[{n:'key',ph:'Enter'}],
-  'cec.send':[{n:'addr',ph:'0'},{n:'opcode',ph:'0x36'},{n:'operands',ph:'(optional)'}],'cec.raw':[{n:'cmd',ph:'send 0 36'}],
-  'worker.hold':[{n:'enable',ph:'true'}],'worker.reconfigure':[{n:'hub',ph:'(optional)'},{n:'name',ph:'(optional)'}],
-  'worker.update':[{n:'url',ph:'(optional)'}],
-};
-function openCapModal(wid,cap){
-  const spec=CAP_ARGS[cap];
+const SCHEMA={};                 // worker_id -> caps.describe result (cached)
+let CAPM=null;                    // current modal {wid, cap, params|null}
+async function capSchema(wid){
+  if(wid in SCHEMA) return SCHEMA[wid];
+  try{ const r=await bandCall('caps.describe',wid,{},10);
+    SCHEMA[wid]=(r&&r.result&&typeof r.result==='object'&&!Array.isArray(r.result))?r.result:null;
+  }catch(e){ SCHEMA[wid]=null; }
+  return SCHEMA[wid];
+}
+async function openCapModal(wid,cap){
   openModal('▶ '+esc(cap)+' · '+esc(wname(wid)));
-  const form=spec?spec.map(a=>`<label class="cf"><span>${esc(a.n)}</span>${a.big?`<textarea id="cf-${a.n}" placeholder="${esc(a.ph||'')}"></textarea>`:`<input id="cf-${a.n}" type="${a.type||'text'}" placeholder="${esc(a.ph||'')}">`}</label>`).join('')
-    :`<label class="cf"><span>args (JSON)</span><textarea id="cf-json" placeholder="{}">{}</textarea></label>`;
-  setBody(`<div class="capform">${form}<div class="caprun"><button class="primary" onclick="runCap('${esc(wid)}','${esc(cap)}',${spec?1:0})">run</button><span style="color:var(--dim2);font-size:.72rem">enter to run</span></div><div id="capout" class="capout"></div></div>`);
-  const go=()=>runCap(wid,cap,spec?1:0);
-  document.querySelectorAll('.capform input').forEach(el=>el.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();go();}}));
-  document.querySelectorAll('.capform textarea').forEach(el=>el.addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();go();}}));
+  setBody('<div class="capform"><div style="color:var(--dim);font-size:.82rem"><span class="spin"></span> loading schema…</div></div>');
+  const sc=await capSchema(wid), info=sc&&sc[cap], params=info&&info.params;
+  CAPM={wid,cap,params:params||null};
+  let form;
+  if(params&&params.length){
+    form=params.map(p=>{
+      const big=['cmd','content','text','script'].includes(p.name);
+      const ph=p.required?'required':(p.default!=null?'default: '+p.default:'optional');
+      const t=p.type?`<span class="pt">${esc(p.type)}</span>`:'';
+      const req=p.required?' <b style="color:var(--warn)">*</b>':'';
+      return `<label class="cf"><span>${esc(p.name)}${req} ${t}</span>${big?`<textarea id="cf-${esc(p.name)}" placeholder="${esc(ph)}"></textarea>`:`<input id="cf-${esc(p.name)}" placeholder="${esc(ph)}">`}</label>`;
+    }).join('');
+  } else if(params){ form='<div style="color:var(--dim);font-size:.82rem">no arguments — just run it</div>'; }
+  else { form='<div class="caphelp">no schema (older worker or firmware) — pass args as JSON</div><label class="cf"><span>args (JSON)</span><textarea id="cf-json" placeholder="{}">{}</textarea></label>'; }
+  const help=info&&info.doc?`<div class="caphelp">${esc(info.doc)}</div>`:'';
+  setBody(`<div class="capform">${help}${form}<div class="caprun"><button class="primary" onclick="runCap()">run</button><span style="color:var(--dim2);font-size:.72rem">enter to run</span></div><div id="capout" class="capout"></div></div>`);
+  document.querySelectorAll('.capform input').forEach(el=>el.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();runCap();}}));
+  document.querySelectorAll('.capform textarea').forEach(el=>el.addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();runCap();}}));
   const f=document.querySelector('.capform input,.capform textarea'); if(f)f.focus();
 }
-function runCap(wid,cap,known){
-  const out=$('#capout'); let args;
+function coerce(v,t){ t=t||'';
+  if(/bool/.test(t)) return v==='true'||v==='1'||v==='yes';
+  if(/int/.test(t)) return parseInt(v,10);
+  if(/float/.test(t)) return Number(v);
+  if(/list|dict|\[|\{/.test(t)){ try{return JSON.parse(v)}catch(e){return v} }
+  return v;
+}
+function runCap(){
+  const {wid,cap,params}=CAPM, out=$('#capout'); let args={};
   try{
-    if(known){ args={}; CAP_ARGS[cap].forEach(a=>{ const el=$('#cf-'+a.n); if(!el)return; let v=el.value.trim(); if(v==='')return;
-      if(a.type==='number')v=Number(v); else if(v==='true')v=true; else if(v==='false')v=false; args[a.n]=v; }); }
-    else args=JSON.parse($('#cf-json').value||'{}');
+    if(params===null){ args=JSON.parse($('#cf-json').value||'{}'); }
+    else params.forEach(p=>{ const el=$('#cf-'+p.name); if(!el)return; const v=el.value.trim(); if(v==='')return; args[p.name]=coerce(v,p.type); });
   }catch(e){ out.innerHTML='<pre class="err">invalid args: '+esc(e.message)+'</pre>'; return; }
-  const timeout=(Number(args.timeout)||25)+5;   // wait a bit longer than the cap's own timeout
+  const timeout=(Number(args.timeout)||25)+5;
   out.innerHTML='<span class="spin"></span> running…';
   bandCall(cap,wid,args,timeout).then(reply=>renderCapResult(out,cap,reply));
 }
