@@ -44,7 +44,32 @@ async def _run(cmd: list[str], timeout: float = 10.0) -> tuple[int, bytes, bytes
 
 def _pack(data: bytes) -> dict[str, Any]:
     import base64
-    return {"ok": True, "format": "jpeg", "data": base64.b64encode(data).decode("ascii")}
+    return {"ok": True, "format": "jpeg", "data": base64.b64encode(data).decode("ascii"),
+            "bytes": len(data)}
+
+
+async def _shrink(path: str, quality: int, max_dim: int = 1600) -> None:
+    """Downscale + re-encode the capture in place so the base64 payload stays
+    small enough to relay reliably over the band. Some grabbers (e.g. spectacle)
+    ignore the quality flag and emit multi-hundred-KB frames. Best-effort via
+    ImageMagick; a no-op if it isn't installed."""
+    conv = shutil.which("magick") or shutil.which("convert")
+    if not conv:
+        return
+    out = path + ".s.jpg"
+    try:
+        code, _, _ = await _run(
+            [conv, path, "-resize", f"{max_dim}x{max_dim}>", "-quality", str(quality), out],
+            timeout=10)
+        if code == 0 and os.path.exists(out) and os.path.getsize(out) > 0:
+            os.replace(out, path)
+    except Exception:
+        pass
+    finally:
+        try:
+            os.unlink(out)
+        except OSError:
+            pass
 
 
 # ---------- Linux -----------------------------------------------------------
@@ -101,6 +126,7 @@ async def _linux_capture(quality: int, region: tuple[int, int, int, int] | None)
                 errs.append(f"{name}: {type(e).__name__}: {e}")
                 continue
             if code == 0 and os.path.exists(path) and os.path.getsize(path) > 0:
+                await _shrink(path, quality)
                 with open(path, "rb") as f:
                     return _pack(f.read())
             errs.append(f"{name}: {err.decode(errors='replace').strip() or f'exit {code}'}")
