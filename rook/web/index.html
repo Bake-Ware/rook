@@ -189,10 +189,11 @@
     .tile.ver,.tile.hb{flex:1 1 100%;width:auto}
     /* worker rows: wrap into two lines so nothing overlaps */
     .listhead{display:none}
-    .row{flex-wrap:wrap;row-gap:8px;column-gap:10px;padding:11px 13px;align-items:center}
-    .name{flex:1 1 60%;min-width:0}
-    .ver{width:auto;flex:0 0 auto;order:3;font-size:.74rem}
-    .seen{width:auto;flex:1 1 130px;order:4}
+    .row{flex-wrap:wrap;row-gap:9px;column-gap:11px;padding:12px 13px;align-items:center}
+    .st{width:11px;height:11px}          /* the dot is the heartbeat on mobile */
+    .name{flex:1 1 auto;min-width:0}
+    .ver{width:auto;flex:0 0 auto;order:3;font-size:.76rem}
+    .seen{display:none}                  /* no per-row bar; the dot fades/colors instead */
     .acts{flex:1 1 100%;order:5;opacity:1;justify-content:flex-start;gap:8px}
     .acts button{padding:6px 12px}
     .detail-in{padding:2px 12px 14px 30px}
@@ -432,7 +433,8 @@ function frame(){
     m.peakEl.style.bottom=Math.max(4,m.peak*100)+'%'; m.peakEl.style.background=col(m.peak);
     m.bar.classList.toggle('beat', t-m.beatT<0.22);
     m.sb.style.width=(f*100).toFixed(1)+'%'; m.sb.style.background=c;
-    m.st.style.background=c; m.tt.textContent=Math.round(f*HB_WINDOW)+'s';
+    m.st.style.background=c; m.st.style.opacity=(0.28+0.72*f).toFixed(2);
+    m.tt.textContent=Math.round(f*HB_WINDOW)+'s';
     if(f<=0.001) stale++; else online++;
   }
   $('#k-total').textContent=total; $('#k-online').textContent=online; $('#k-stale').textContent=stale;
