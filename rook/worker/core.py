@@ -104,12 +104,15 @@ class Worker:
         return msg_id
 
     async def announce(self) -> None:
+        from ._build_info import BUILD, VERSION
         msg = {
             "kind": "announce",
             "worker_id": self.worker_id,
             "name": self.name,
             "caps": self.registry.list(),
             "plugins": [p.NAMESPACE for p in self.plugins],
+            "version": VERSION,
+            "build": BUILD,
         }
         await self.transport.send(json.dumps(msg).encode())
 

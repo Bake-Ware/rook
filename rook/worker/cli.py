@@ -9,15 +9,19 @@ import signal
 import sys
 
 from .core import Worker
-from .transports.telesthete_hub import TelestheteHubTransport
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(prog="rook-worker")
     ap.add_argument("--hub", default="hub.example.com:443",
                     help="hub host:port (default: bakenet hub)")
-    ap.add_argument("--psk", required=True,
+    ap.add_argument("--psk", default=None,
                     help="band pre-shared key (must match peers)")
+    ap.add_argument("--version", action="store_true",
+                    help="print the bundle version and exit")
+    ap.add_argument("--selftest", action="store_true",
+                    help="load all plugins offline, print version, exit 0 "
+                         "(used as a pre-swap smoke test by OTA self-update)")
     ap.add_argument("--enable", default="",
                     help="comma-separated plugin module names to load; "
                          "default = all builtins")
@@ -33,6 +37,26 @@ def main() -> None:
                     help="use WebSocket instead of UDP for hub connection (for cloudflare tunnel)")
     ap.add_argument("-v", "--verbose", action="count", default=0)
     args = ap.parse_args()
+
+    from ._build_info import VERSION
+
+    if args.version:
+        print(VERSION)
+        return
+
+    if args.selftest:
+        # Import + construct the plugin registry offline (no transport, no band).
+        # A broken/incompatible bundle fails here with a non-zero exit — which is
+        # exactly what the OTA self-update checks before swapping a downloaded pyz.
+        from .registry import CapabilityRegistry
+        from .plugin import load_plugins
+        reg = CapabilityRegistry()
+        plugins = load_plugins("rook.worker.plugins", reg, None)
+        print(f"selftest OK v{VERSION}: {len(plugins)} plugins, {len(reg.list())} caps")
+        return
+
+    if not args.psk:
+        ap.error("--psk is required")
 
     level = logging.WARNING - 10 * args.verbose
     logging.basicConfig(level=max(level, logging.DEBUG),

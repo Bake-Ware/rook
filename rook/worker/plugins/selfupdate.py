@@ -53,6 +53,7 @@ class SelfUpdatePlugin(Plugin):
 
     @capability("status")
     def _status(self) -> dict:
+        from .._build_info import as_dict as _build
         return {
             "pid": os.getpid(),
             "python": sys.executable,
@@ -60,6 +61,7 @@ class SelfUpdatePlugin(Plugin):
             "pyz": str(_PYZ),
             "pyz_exists": _PYZ.exists(),
             "supervisor": _supervisor(),
+            **_build(),
         }
 
     # -- lifecycle -----------------------------------------------------------
