@@ -195,6 +195,10 @@ def _session_meta(p: Path) -> dict:
 class ClaudeHistoryPlugin(Plugin):
     NAMESPACE = "claude-history"
 
+    def available(self) -> bool:
+        # Only where Claude Code history actually lives on this host.
+        return _default_root().is_dir()
+
     @capability("pull")
     def _pull(self, machine: str | None = None, path: str | None = None,
               limit: int = 50) -> dict:
