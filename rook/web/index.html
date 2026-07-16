@@ -118,7 +118,27 @@
   .cg-body{max-height:0;overflow:hidden;transition:max-height .2s ease}
   .cg.open .cg-body{max-height:300px}
   .cg-body-in{display:flex;flex-wrap:wrap;gap:5px;padding:2px 11px 10px}
-  .mcap{font-size:.72rem;color:var(--dim);background:var(--chip);border:1px solid var(--line);border-radius:6px;padding:2px 7px}
+  .mcap{font-size:.72rem;color:var(--dim);background:var(--chip);border:1px solid var(--line);border-radius:6px;padding:2px 7px;cursor:pointer}
+  .mcap:hover{color:var(--accent);border-color:var(--accent-dim);background:#0f1d19}
+  .mcap::after{content:" ▸";color:var(--dim2);font-size:.62rem}
+  .capform{display:flex;flex-direction:column;gap:11px}
+  .cf{display:flex;flex-direction:column;gap:4px}
+  .cf>span{color:var(--dim);font-size:.72rem}
+  .cf.inline{flex-direction:row;align-items:center;gap:9px}
+  .cf input,.cf textarea{width:100%;font-family:inherit;font-size:.84rem;background:var(--panel2);border:1px solid var(--line2);border-radius:7px;padding:8px 10px;color:var(--fg);outline:none}
+  .cf input:focus,.cf textarea:focus{border-color:var(--accent-dim)}
+  .cf textarea{min-height:62px;resize:vertical}
+  .caprun{display:flex;align-items:center;gap:12px}
+  .capout{margin-top:4px} .capout img{max-width:100%;border-radius:8px} .capout pre{margin:0}
+  /* terminal */
+  .term{background:#070b10;border:1px solid var(--line);border-radius:8px;padding:12px;height:46vh;overflow:auto;
+    font-size:.82rem;white-space:pre-wrap;word-break:break-word;line-height:1.45}
+  .term .cl{color:var(--fg)} .term .cl .p{color:var(--accent);font-weight:600}
+  .term pre{margin:1px 0 9px;color:#cdd6df} .term pre.err{color:var(--bad)}
+  .term .hintline{color:var(--dim2);font-size:.72rem;margin-bottom:8px}
+  .termin{display:flex;align-items:center;gap:8px;margin-top:9px;background:var(--panel2);border:1px solid var(--line2);border-radius:8px;padding:8px 11px}
+  .termin .prompt{color:var(--accent);font-weight:600;white-space:nowrap}
+  .termin input{flex:1;background:transparent;border:0;outline:none;color:var(--fg);font-family:inherit;font-size:.86rem}
 
   /* install view */
   .install{max-width:760px}
@@ -336,8 +356,9 @@ function updateMeta(m,w){
   // caps groups (rebuild only if changed)
   const sig=caps.join(','); if(sig!==m.capsSig){ m.capsSig=sig;
     m.meta.textContent=`worker_id ${w.worker_id} · ${caps.length} capabilities`;
-    m.cg.innerHTML=groupCaps(caps).map(g=>`<div class="cg"><div class="cg-head"><span class="cg-caret">▸</span><b>${esc(g[0])}</b><span class="cg-count">${g[1].length}</span></div><div class="cg-body"><div class="cg-body-in">${g[1].map(x=>`<span class="mcap">${esc(x)}</span>`).join('')}</div></div></div>`).join('');
+    m.cg.innerHTML=groupCaps(caps).map(g=>`<div class="cg"><div class="cg-head"><span class="cg-caret">▸</span><b>${esc(g[0])}</b><span class="cg-count">${g[1].length}</span></div><div class="cg-body"><div class="cg-body-in">${g[1].map(x=>{const full=x==='*'?g[0]:g[0]+'.'+x;return `<span class="mcap" title="run ${esc(full)}" data-cap="${esc(full)}">${esc(x)}</span>`}).join('')}</div></div></div>`).join('');
     m.cg.querySelectorAll('.cg').forEach(cg=>cg.querySelector('.cg-head').onclick=()=>cg.classList.toggle('open'));
+    m.cg.querySelectorAll('.mcap').forEach(el=>el.onclick=e=>{e.stopPropagation();openCapModal(w.worker_id,el.dataset.cap);});
   }
   m.bar.title=w.name||w.worker_id;
 }
@@ -412,18 +433,95 @@ async function info(wid){
   $('#mtitle').innerHTML='ℹ️ '+esc(wname(wid));
   setBody('<pre>'+esc(JSON.stringify(reply.result==null?reply:reply.result,null,2))+'</pre>');
 }
+/* ---- terminal shell ---- */
+let TERM=null;
+function shq(s){return "'"+String(s).replace(/'/g,"'\\''")+"'";}
+function promptStr(cwd){ if(!cwd)return '$'; const b=cwd.split('/').filter(Boolean).pop()||'/'; return (b.length>18?'…'+b.slice(-16):b)+' $'; }
 function shell(wid){
   openModal('▶ shell · '+esc(wname(wid)));
-  setBody('<div class="row2"><input id="cmd" placeholder="command (e.g. uname -a)" autofocus><button class="primary" onclick="runShell(\''+esc(wid)+'\')">run</button></div><pre id="shout" style="display:none"></pre>');
-  const inp=$('#cmd'); inp.focus(); inp.addEventListener('keydown',e=>{if(e.key==='Enter')runShell(wid);});
+  setBody('<div class="hintline">real shell · cd persists · ↑/↓ history · ctrl-l clear</div><div class="term" id="term"></div><div class="termin"><span class="prompt" id="tprompt">$</span><input id="tcmd" autocomplete="off" spellcheck="false" autofocus></div>');
+  TERM={wid, cwd:'', hist:[], hi:0, term:$('#term'), inp:$('#tcmd'), prompt:$('#tprompt')};
+  TERM.inp.addEventListener('keydown',onTermKey); TERM.inp.focus(); termInit();
 }
-async function runShell(wid){
-  const cmd=$('#cmd').value.trim(); if(!cmd)return;
-  const out=$('#shout'); out.style.display='block'; out.className=''; out.textContent='running…';
-  const reply=await bandCall('shell.exec',wid,{cmd,timeout:30},35), r=reply.result||{};
-  if(r.ok===false||reply.ok===false){ out.className='err'; out.textContent=r.error||reply.error||'error'; return; }
-  const p=[]; if(r.stdout)p.push(r.stdout); if(r.stderr)p.push('[stderr]\n'+r.stderr);
-  out.textContent=(p.join('\n')||'(no output)')+'\n\n[exit '+r.code+']';
+async function termInit(){
+  const r=await bandCall('shell.exec',TERM.wid,{cmd:'pwd',timeout:10},15); const cwd=((r.result||{}).stdout||'').trim();
+  if(cwd&&TERM){ TERM.cwd=cwd; TERM.prompt.textContent=promptStr(cwd); }
+}
+function termLine(cwd,cmd){ const d=document.createElement('div'); d.className='cl'; d.innerHTML='<span class="p">'+esc(promptStr(cwd))+'</span> '+esc(cmd); TERM.term.appendChild(d); }
+function termOut(t,err){ const p=document.createElement('pre'); if(err)p.className='err'; p.textContent=t; TERM.term.appendChild(p); }
+function termScroll(){ TERM.term.scrollTop=TERM.term.scrollHeight; }
+function onTermKey(e){
+  if(e.key==='Enter'){ const c=TERM.inp.value; TERM.inp.value=''; if(c.trim()){TERM.hist.push(c);TERM.hi=TERM.hist.length;} runTerm(c); }
+  else if(e.key==='ArrowUp'){ e.preventDefault(); if(TERM.hi>0){TERM.hi--;TERM.inp.value=TERM.hist[TERM.hi]||'';} }
+  else if(e.key==='ArrowDown'){ e.preventDefault(); if(TERM.hi<TERM.hist.length-1){TERM.hi++;TERM.inp.value=TERM.hist[TERM.hi]||'';}else{TERM.hi=TERM.hist.length;TERM.inp.value='';} }
+  else if(e.ctrlKey&&(e.key==='l'||e.key==='L')){ e.preventDefault(); TERM.term.innerHTML=''; }
+}
+async function runTerm(cmd){
+  const c=cmd.trim(); if(!c) return; termLine(TERM.cwd,cmd); termScroll();
+  if(c==='clear'){ TERM.term.innerHTML=''; return; }
+  const cd=c.match(/^cd(?:\s+(.*))?$/);
+  if(cd){ const tgt=(cd[1]||'~').trim()||'~';
+    const r=await bandCall('shell.exec',TERM.wid,{cmd:'cd '+shq(tgt)+' && pwd',cwd:TERM.cwd||undefined,timeout:10},15); const res=r.result||{};
+    if(res.ok!==false&&res.code===0&&(res.stdout||'').trim()){ TERM.cwd=res.stdout.trim(); TERM.prompt.textContent=promptStr(TERM.cwd); }
+    else termOut((res.stderr||res.error||r.error||('cd: '+tgt+': not found')).trim(),true);
+    termScroll(); return;
+  }
+  const busy=document.createElement('pre'); busy.innerHTML='<span class="spin"></span>'; TERM.term.appendChild(busy); termScroll();
+  const r=await bandCall('shell.exec',TERM.wid,{cmd:c,cwd:TERM.cwd||undefined,timeout:30},35); busy.remove(); const res=r.result||{};
+  if(res.stdout===undefined&&res.stderr===undefined&&r.ok===false){ termOut(res.error||r.error||'error',true); termScroll(); return; }
+  const p=[]; if(res.stdout)p.push(res.stdout.replace(/\n+$/,'')); if(res.stderr)p.push(res.stderr.replace(/\n+$/,''));
+  const txt=p.join('\n');
+  if(txt) termOut(txt, res.code!==0 && !res.stdout);
+  else if(res.code!==0) termOut('[exit '+res.code+']',true);
+  termScroll();
+}
+
+/* ---- run any capability ---- */
+const CAP_ARGS={
+  'shell.exec':[{n:'cmd',ph:'uname -a',big:1},{n:'timeout',ph:'30',type:'number'},{n:'cwd',ph:'(optional)'}],
+  'shell.which':[{n:'name',ph:'python3'}],'shell.env.get':[{n:'name',ph:'PATH'}],'shell.env.list':[{n:'prefix',ph:'(optional)'}],
+  'file.read':[{n:'path',ph:'/etc/hostname'},{n:'encoding',ph:'utf-8'},{n:'max_bytes',ph:'8388608',type:'number'}],
+  'file.write':[{n:'path',ph:'/tmp/x'},{n:'content',big:1},{n:'append',ph:'false'}],
+  'file.list':[{n:'path',ph:'.'},{n:'recursive',ph:'false'},{n:'include_hidden',ph:'true'}],
+  'file.search':[{n:'pattern',ph:'regex'},{n:'path',ph:'.'},{n:'glob',ph:'*'}],'file.exists':[{n:'path'}],
+  'hid.type':[{n:'text',big:1}],'hid.key_combo':[{n:'keys',ph:'ctrl+alt+t'}],
+  'hid.mouse.move':[{n:'x',type:'number'},{n:'y',type:'number'}],
+  'screenshot.capture':[{n:'quality',ph:'75',type:'number'}],
+  'screenshot.capture_region':[{n:'x',type:'number'},{n:'y',type:'number'},{n:'w',type:'number'},{n:'h',type:'number'}],
+  'pikvm.power':[{n:'action',ph:'on | off | reset'}],'pikvm.key':[{n:'key',ph:'Enter'}],
+  'cec.send':[{n:'addr',ph:'0'},{n:'opcode',ph:'0x36'},{n:'operands',ph:'(optional)'}],'cec.raw':[{n:'cmd',ph:'send 0 36'}],
+  'worker.hold':[{n:'enable',ph:'true'}],'worker.reconfigure':[{n:'hub',ph:'(optional)'},{n:'name',ph:'(optional)'}],
+  'worker.update':[{n:'url',ph:'(optional)'}],
+};
+function openCapModal(wid,cap){
+  const spec=CAP_ARGS[cap];
+  openModal('▶ '+esc(cap)+' · '+esc(wname(wid)));
+  const form=spec?spec.map(a=>`<label class="cf"><span>${esc(a.n)}</span>${a.big?`<textarea id="cf-${a.n}" placeholder="${esc(a.ph||'')}"></textarea>`:`<input id="cf-${a.n}" type="${a.type||'text'}" placeholder="${esc(a.ph||'')}">`}</label>`).join('')
+    :`<label class="cf"><span>args (JSON)</span><textarea id="cf-json" placeholder="{}">{}</textarea></label>`;
+  setBody(`<div class="capform">${form}<div class="caprun"><button class="primary" onclick="runCap('${esc(wid)}','${esc(cap)}',${spec?1:0})">run</button><span style="color:var(--dim2);font-size:.72rem">enter to run</span></div><div id="capout" class="capout"></div></div>`);
+  const go=()=>runCap(wid,cap,spec?1:0);
+  document.querySelectorAll('.capform input').forEach(el=>el.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();go();}}));
+  document.querySelectorAll('.capform textarea').forEach(el=>el.addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();go();}}));
+  const f=document.querySelector('.capform input,.capform textarea'); if(f)f.focus();
+}
+function runCap(wid,cap,known){
+  const out=$('#capout'); let args;
+  try{
+    if(known){ args={}; CAP_ARGS[cap].forEach(a=>{ const el=$('#cf-'+a.n); if(!el)return; let v=el.value.trim(); if(v==='')return;
+      if(a.type==='number')v=Number(v); else if(v==='true')v=true; else if(v==='false')v=false; args[a.n]=v; }); }
+    else args=JSON.parse($('#cf-json').value||'{}');
+  }catch(e){ out.innerHTML='<pre class="err">invalid args: '+esc(e.message)+'</pre>'; return; }
+  const timeout=(Number(args.timeout)||25)+5;   // wait a bit longer than the cap's own timeout
+  out.innerHTML='<span class="spin"></span> running…';
+  bandCall(cap,wid,args,timeout).then(reply=>renderCapResult(out,cap,reply));
+}
+function renderCapResult(out,cap,reply){
+  const res=reply.result;
+  if(res==null){ out.innerHTML='<pre class="err">'+esc(reply.error||'no reply')+'</pre>'; return; }
+  if(res.data&&(res.format||/screenshot|snap/.test(cap))){ out.innerHTML='<img src="data:image/'+(res.format||'jpeg')+';base64,'+res.data+'">'; return; }
+  if(res.stdout!==undefined||res.stderr!==undefined){ const p=[]; if(res.stdout)p.push(res.stdout); if(res.stderr)p.push('[stderr]\n'+res.stderr);
+    out.innerHTML='<pre class="'+(res.ok===false?'err':'')+'">'+esc((p.join('\n')||'(no output)')+(res.code!==undefined?'\n[exit '+res.code+']':''))+'</pre>'; return; }
+  out.innerHTML='<pre class="'+(res.ok===false?'err':'')+'">'+esc(JSON.stringify(res,null,2))+'</pre>';
 }
 
 /* ---- views / install ---- */
