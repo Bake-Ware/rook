@@ -79,7 +79,7 @@ Start-Sleep -Seconds 1
 Write-Host "[r00k] HID backend: native Windows SendInput (no extra setup needed)."
 
 # Register as Scheduled Task so worker restarts at every logon  (band: {band_name})
-$workerArgs = "`"$pyz`" --hub {hub_public} --ws --psk {band_psk} --name $env:COMPUTERNAME"
+$workerArgs = "`"$pyz`" --hub {hub_public} --ws --psk {band_psk} --name $env:COMPUTERNAME --update-url https://{domain}/band-worker.json"
 $action = New-ScheduledTaskAction -Execute $vpyw -Argument $workerArgs
 $trigger = New-ScheduledTaskTrigger -AtLogon
 $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit 0
@@ -297,7 +297,7 @@ if [ "$IS_TERMUX" = "1" ]; then
     [ -n "$MODEL" ] && WORKER_NAME="$MODEL"
 fi
 # band: {band_name}
-WORKER_CMD="$VPY $PYZ --hub {hub_public} --ws --psk {band_psk} --name $WORKER_NAME"
+WORKER_CMD="$VPY $PYZ --hub {hub_public} --ws --psk {band_psk} --name $WORKER_NAME --update-url https://{domain}/band-worker.json"
 
 # Swap in the new worker. CRITICAL: when this installer is launched *by the
 # running worker* (a band-driven update), this script shares the worker's

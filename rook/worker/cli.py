@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import signal
 import sys
 
@@ -35,6 +36,10 @@ def main() -> None:
                     help="seconds between transport keepalives")
     ap.add_argument("--ws", action="store_true",
                     help="use WebSocket instead of UDP for hub connection (for cloudflare tunnel)")
+    ap.add_argument("--update-url", default=os.environ.get("ROOK_UPDATE_URL", ""),
+                    help="signed manifest URL for OTA self-update "
+                         "(e.g. https://rook.example.com/band-worker.json). "
+                         "Empty = auto-update disabled.")
     ap.add_argument("-v", "--verbose", action="count", default=0)
     args = ap.parse_args()
 
@@ -57,6 +62,10 @@ def main() -> None:
 
     if not args.psk:
         ap.error("--psk is required")
+
+    # Expose the manifest URL to the selfupdate plugin (reads ROOK_UPDATE_URL).
+    if args.update_url:
+        os.environ["ROOK_UPDATE_URL"] = args.update_url
 
     level = logging.WARNING - 10 * args.verbose
     logging.basicConfig(level=max(level, logging.DEBUG),

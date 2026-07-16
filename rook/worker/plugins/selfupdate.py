@@ -18,9 +18,11 @@ Capabilities:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 
 from ..plugin import Plugin, capability
@@ -30,8 +32,16 @@ log = logging.getLogger("rook.worker.plugins.selfupdate")
 _HOME = Path(os.path.expanduser("~"))
 _WORKER_DIR = _HOME / ".rook-band-worker"
 _PYZ = _WORKER_DIR / "band-worker.pyz"
+_PREV = _WORKER_DIR / "band-worker.pyz.prev"     # previous bundle, for rollback
+_STATE = _WORKER_DIR / "update_state.json"       # in-flight update tracking
+_HOLD = _WORKER_DIR / "hold"                      # presence pins this node (no auto-update)
 _UNIT = _HOME / ".config" / "systemd" / "user" / "rook-band-worker.service"
 _SVC = "rook-band-worker"
+
+# OTA convergence tuning.
+_POLL_SECS = float(os.environ.get("ROOK_UPDATE_POLL", "300"))  # manifest check interval
+_HEALTH_SECS = 60.0        # stay alive this long post-swap before declaring success
+_MAX_BOOT_ATTEMPTS = 3     # boots into a new build without health before rolling back
 
 
 def _is_termux() -> bool:
@@ -48,6 +58,51 @@ def _supervisor() -> str:
 
 class SelfUpdatePlugin(Plugin):
     NAMESPACE = "worker"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._stopping = False
+        self._converge_task: asyncio.Task | None = None
+        self._health_task: asyncio.Task | None = None
+
+    # -- lifecycle: OTA convergence ------------------------------------------
+
+    async def start(self) -> None:
+        """Finalize any in-flight update, then start the converge loop.
+
+        The loop is inert unless ROOK_UPDATE_URL is set (opt-in per node, done
+        by the installer), and it fails closed on manifest signature/hash — so
+        auto-update never runs on an unconfigured or untrusted input."""
+        try:
+            await self._boot_check()
+        except Exception:
+            log.exception("update boot-check failed")
+        self._converge_task = asyncio.create_task(self._converge_loop())
+
+    async def stop(self) -> None:
+        self._stopping = True
+        for t in (self._converge_task, self._health_task):
+            if t is not None:
+                t.cancel()
+
+    @capability("check")
+    async def _check(self, force: bool = False) -> dict:
+        """Check the signed manifest now and update if a newer build is
+        published (bypasses the poll interval). ``force=true`` overrides a hold
+        pin for this explicit call. Used to drive canary rollouts."""
+        return await self._check_and_update(force=force)
+
+    @capability("hold")
+    def _hold(self, enable: bool = True) -> dict:
+        """Pin this node so it won't auto-update (survives restarts). Use to
+        freeze critical hosts / the dongle box. ``worker.check(force=true)``
+        still updates it on explicit demand."""
+        _WORKER_DIR.mkdir(parents=True, exist_ok=True)
+        if enable:
+            _HOLD.write_text(f"held at {int(time.time())}\n")
+        else:
+            _HOLD.unlink(missing_ok=True)
+        return {"ok": True, "held": enable}
 
     # -- introspection -------------------------------------------------------
 
@@ -112,6 +167,180 @@ class SelfUpdatePlugin(Plugin):
         self._schedule_restart(new_argv)
         return {"ok": True, "supervisor": _supervisor(), "notes": notes,
                 "persisted_unit": persisted, "restarting": True}
+
+    # -- OTA convergence internals -------------------------------------------
+
+    @staticmethod
+    def _manifest_url() -> str:
+        return os.environ.get("ROOK_UPDATE_URL", "").strip()
+
+    async def _http_get(self, url: str, timeout: float) -> bytes:
+        def _f() -> bytes:
+            import urllib.request
+            with urllib.request.urlopen(url, timeout=timeout) as r:
+                return r.read()
+        return await asyncio.get_event_loop().run_in_executor(None, _f)
+
+    async def _converge_loop(self) -> None:
+        """Poll the manifest and self-update when a newer signed build appears.
+        Inert if no manifest URL is configured."""
+        import random
+        if not self._manifest_url():
+            return
+        await asyncio.sleep(5 + random.random() * 10)  # small startup jitter
+        while not self._stopping:
+            try:
+                res = await self._check_and_update()
+                if res.get("action") == "updated":
+                    return  # restart scheduled; stop polling from this process
+            except Exception:
+                log.exception("converge check failed")
+            # jittered interval so a fleet doesn't stampede the installer
+            await asyncio.sleep(_POLL_SECS * (1.0 + random.random() * 0.2))
+
+    async def _check_and_update(self, *, force: bool = False) -> dict:
+        from .._build_info import BUILD
+        from .._update_verify import verify_manifest, sha256_file
+
+        if _HOLD.exists() and not force:
+            return {"ok": True, "action": "held", "build": BUILD}
+        url = self._manifest_url()
+        if not url:
+            return {"ok": False, "error": "no manifest url (ROOK_UPDATE_URL unset)"}
+        try:
+            manifest = json.loads(await self._http_get(url, timeout=15))
+        except Exception as e:
+            return {"ok": False, "error": f"manifest fetch failed: {type(e).__name__}: {e}"}
+        if not verify_manifest(manifest):
+            log.warning("update manifest failed signature verification; ignoring")
+            return {"ok": False, "error": "manifest signature invalid (fail-closed)"}
+
+        target = int(manifest.get("build", 0))
+        if target <= BUILD:
+            return {"ok": True, "action": "up-to-date", "build": BUILD}
+
+        from urllib.parse import urljoin
+        pyz_url = urljoin(url, manifest.get("filename", "band-worker.pyz"))
+        _WORKER_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = _WORKER_DIR / "band-worker.pyz.dl"
+        try:
+            tmp.write_bytes(await self._http_get(pyz_url, timeout=120))
+        except Exception as e:
+            return {"ok": False, "error": f"bundle download failed: {type(e).__name__}: {e}"}
+        if sha256_file(tmp) != manifest.get("sha256"):
+            tmp.unlink(missing_ok=True)
+            return {"ok": False, "error": "sha256 mismatch (fail-closed)"}
+        if not await self._smoke_test(tmp):
+            tmp.unlink(missing_ok=True)
+            return {"ok": False, "error": "downloaded bundle failed --selftest; not swapping"}
+
+        try:
+            import shutil
+            if _PYZ.exists():
+                shutil.copy2(_PYZ, _PREV)   # keep the old bundle for rollback
+            os.replace(tmp, _PYZ)
+            os.chmod(_PYZ, 0o755)
+        except Exception as e:
+            tmp.unlink(missing_ok=True)
+            return {"ok": False, "error": f"swap failed: {type(e).__name__}: {e}"}
+
+        self._write_state({"stage": "swapped", "target_build": target,
+                           "prev_build": BUILD, "attempts": 0, "at": int(time.time())})
+        log.info("updated bundle build %s -> %s; restarting", BUILD, target)
+        self._schedule_restart(self._current_argv())
+        return {"ok": True, "action": "updated", "from_build": BUILD,
+                "to_build": target, "restarting": True}
+
+    async def _smoke_test(self, pyz_path: Path) -> bool:
+        """Run the downloaded bundle's --selftest in a subprocess. A broken or
+        incompatible bundle exits non-zero here, so we never swap it in."""
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable, str(pyz_path), "--selftest",
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        except Exception:
+            log.exception("smoke test could not start")
+            return False
+        try:
+            rc = await asyncio.wait_for(proc.wait(), timeout=60)
+        except asyncio.TimeoutError:
+            proc.kill()
+            return False
+        return rc == 0
+
+    # -- post-restart health / rollback --------------------------------------
+
+    def _read_state(self) -> dict | None:
+        try:
+            return json.loads(_STATE.read_text())
+        except Exception:
+            return None
+
+    def _write_state(self, d: dict) -> None:
+        _WORKER_DIR.mkdir(parents=True, exist_ok=True)
+        _STATE.write_text(json.dumps(d))
+
+    def _clear_state(self) -> None:
+        _STATE.unlink(missing_ok=True)
+
+    async def _boot_check(self) -> None:
+        """On startup, resolve any in-flight update: confirm the new build is
+        healthy (and drop .prev), or roll back after too many failed boots."""
+        from .._build_info import BUILD
+        st = self._read_state()
+        if not st:
+            return
+        if st.get("stage") not in ("swapped", "verifying"):
+            self._clear_state()
+            return
+        target = st.get("target_build")
+        if BUILD == target:
+            st["attempts"] = int(st.get("attempts", 0)) + 1
+            st["stage"] = "verifying"
+            if st["attempts"] > _MAX_BOOT_ATTEMPTS:
+                log.error("build %s failed to stay healthy after %d boots; rolling back",
+                          target, st["attempts"] - 1)
+                await self._rollback(st)
+                return
+            self._write_state(st)
+            self._health_task = asyncio.create_task(self._finalize_health(target))
+        else:
+            # Running some other build than intended (manual reconfigure, etc.).
+            log.info("update state target=%s but running build=%s; clearing", target, BUILD)
+            self._clear_state()
+
+    async def _finalize_health(self, target: int) -> None:
+        try:
+            await asyncio.sleep(_HEALTH_SECS)
+        except asyncio.CancelledError:
+            return
+        st = self._read_state()
+        if st and st.get("target_build") == target:
+            self._clear_state()
+            try:
+                _PREV.unlink(missing_ok=True)
+            except Exception:
+                pass
+            log.info("update to build %s verified healthy", target)
+
+    async def _rollback(self, st: dict) -> None:
+        if not _PREV.exists():
+            log.error("rollback requested but no .prev bundle; clearing state")
+            self._clear_state()
+            return
+        try:
+            import shutil
+            shutil.copy2(_PREV, _PYZ)
+            os.chmod(_PYZ, 0o755)
+        except Exception:
+            log.exception("rollback copy failed")
+            self._clear_state()
+            return
+        self._write_state({"stage": "rolledback", "target_build": st.get("prev_build"),
+                           "prev_build": st.get("target_build"), "attempts": 0,
+                           "at": int(time.time())})
+        log.warning("rolled back to previous bundle; restarting")
+        self._schedule_restart(self._current_argv())
 
     # -- internals -----------------------------------------------------------
 
