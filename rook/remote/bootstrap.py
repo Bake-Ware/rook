@@ -401,6 +401,7 @@ class CombinedServer:
         if _s.get("band_name"):
             self.band_name = _s["band_name"]
         self._band = None  # MultiBandClient — joins the hub to track workers + invoke caps
+        self._push_task = None  # background: push signed manifest to behind workers
         # Known bands for the dashboard selector. PSKs stay server-side; the UI
         # only ever sees the band_id label (first 8 hex of SHA256(PSK)[:16]).
         self._bands = setup_store.load_bands()
@@ -663,11 +664,62 @@ button:hover{{background:#22b88f}}
             await self._band.start()
             log.info("band client joined hub %s:%d (%d band(s))",
                      self.hub_host, self.hub_port, len(psks))
+            if os.environ.get("ROOK_PUSH_UPDATES", "1") != "0":
+                self._push_task = asyncio.create_task(self._push_loop())
         except Exception as e:
             log.warning("band client failed to start (%s); dashboard band view disabled", e)
             self._band = None
 
+    async def _push_loop(self) -> None:
+        """Auto-converge: push the current signed manifest to apply-capable
+        workers reporting an older build. Fail-closed — no-op until a *signed*
+        manifest exists, and it only targets workers advertising worker.apply."""
+        manifest_path = Path(__file__).parent / "band-worker.json"
+        pushed: dict[str, tuple] = {}      # worker_id -> (target_build, ts)
+        REPUSH_SECS = 180.0                # don't re-push the same build too soon
+        while True:
+            try:
+                await asyncio.sleep(20.0)
+                if self._band is None:
+                    continue
+                try:
+                    manifest = json.loads(manifest_path.read_text())
+                except Exception:
+                    continue
+                if not manifest.get("sig"):
+                    continue  # unsigned -> workers would reject; don't bother
+                target = int(manifest.get("build", 0))
+                if target <= 0:
+                    continue
+                now = time.time()
+                for wid, w in list(self._band.workers.items()):
+                    if "worker.apply" not in (w.get("caps") or []):
+                        continue  # can't receive an in-band push yet
+                    b = w.get("build")
+                    if not isinstance(b, int) or b >= target:
+                        continue
+                    last = pushed.get(wid)
+                    if last and last[0] == target and (now - last[1]) < REPUSH_SECS:
+                        continue
+                    pushed[wid] = (target, now)
+                    name = w.get("name", wid)
+                    log.info("push update %s: build %s -> %s", name, b, target)
+                    try:
+                        reply = await self._band.call(
+                            "worker.apply", args={"manifest": manifest},
+                            target=wid, timeout=30)
+                        log.info("push %s reply: %s", name, reply.get("result", reply))
+                    except Exception as e:
+                        log.warning("push to %s failed: %s", name, e)
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                log.exception("push loop error")
+
     async def stop(self) -> None:
+        if self._push_task is not None:
+            self._push_task.cancel()
+            self._push_task = None
         if self._band is not None:
             try:
                 await self._band.stop()

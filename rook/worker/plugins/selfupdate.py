@@ -92,6 +92,15 @@ class SelfUpdatePlugin(Plugin):
         pin for this explicit call. Used to drive canary rollouts."""
         return await self._check_and_update(force=force)
 
+    @capability("apply")
+    async def _apply(self, manifest: dict) -> dict:
+        """Apply a signed update manifest pushed in-band by the controller.
+        The ed25519 signature is verified before anything happens, so being on
+        the band is not enough to trigger it — only a validly signed manifest is."""
+        if not isinstance(manifest, dict):
+            return {"ok": False, "error": "manifest must be an object"}
+        return await self._apply_manifest(manifest)
+
     @capability("hold")
     def _hold(self, enable: bool = True) -> dict:
         """Pin this node so it won't auto-update (survives restarts). Use to
@@ -199,11 +208,7 @@ class SelfUpdatePlugin(Plugin):
             await asyncio.sleep(_POLL_SECS * (1.0 + random.random() * 0.2))
 
     async def _check_and_update(self, *, force: bool = False) -> dict:
-        from .._build_info import BUILD
-        from .._update_verify import verify_manifest, sha256_file
-
-        if _HOLD.exists() and not force:
-            return {"ok": True, "action": "held", "build": BUILD}
+        """Poll path: fetch the manifest from ROOK_UPDATE_URL, then apply it."""
         url = self._manifest_url()
         if not url:
             return {"ok": False, "error": "no manifest url (ROOK_UPDATE_URL unset)"}
@@ -211,6 +216,18 @@ class SelfUpdatePlugin(Plugin):
             manifest = json.loads(await self._http_get(url, timeout=15))
         except Exception as e:
             return {"ok": False, "error": f"manifest fetch failed: {type(e).__name__}: {e}"}
+        return await self._apply_manifest(manifest, force=force, base_url=url)
+
+    async def _apply_manifest(self, manifest: dict, *, force: bool = False,
+                              base_url: str | None = None) -> dict:
+        """Apply a signed manifest — from the poll loop OR pushed in-band via
+        worker.apply. Verifies signature + hash + selftest before swapping, so
+        the delivery channel is untrusted; only the signature grants the swap."""
+        from .._build_info import BUILD
+        from .._update_verify import verify_manifest, sha256_file
+
+        if _HOLD.exists() and not force:
+            return {"ok": True, "action": "held", "build": BUILD}
         if not verify_manifest(manifest):
             log.warning("update manifest failed signature verification; ignoring")
             return {"ok": False, "error": "manifest signature invalid (fail-closed)"}
@@ -219,8 +236,16 @@ class SelfUpdatePlugin(Plugin):
         if target <= BUILD:
             return {"ok": True, "action": "up-to-date", "build": BUILD}
 
-        from urllib.parse import urljoin
-        pyz_url = urljoin(url, manifest.get("filename", "band-worker.pyz"))
+        # Download origin: a signed `url` in the manifest wins (self-contained
+        # push); otherwise derive from the manifest's own URL / ROOK_UPDATE_URL.
+        pyz_url = manifest.get("url")
+        if not pyz_url:
+            base = base_url or self._manifest_url()
+            if base:
+                from urllib.parse import urljoin
+                pyz_url = urljoin(base, manifest.get("filename", "band-worker.pyz"))
+        if not pyz_url:
+            return {"ok": False, "error": "no download url (manifest lacks url and ROOK_UPDATE_URL unset)"}
         _WORKER_DIR.mkdir(parents=True, exist_ok=True)
         tmp = _WORKER_DIR / "band-worker.pyz.dl"
         try:

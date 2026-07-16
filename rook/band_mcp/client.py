@@ -104,6 +104,8 @@ class BandClient:
             "name": msg.get("name", wid),
             "caps": list(msg.get("caps", [])),
             "plugins": list(msg.get("plugins", [])),
+            "version": msg.get("version"),
+            "build": msg.get("build"),
             "last_seen": time.time(),
         })
         if wid not in self.workers:

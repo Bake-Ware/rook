@@ -91,6 +91,13 @@ def _write_manifest(build: int, commit: str, version: str, built_at: str) -> Pat
         "sha256": h.hexdigest(),
         "size": OUTPUT.stat().st_size,
     }
+    # Optional self-contained download URL (signed) so an in-band push doesn't
+    # depend on the target worker having ROOK_UPDATE_URL configured. The build
+    # host sets ROOK_PUBLIC_BASE (e.g. https://rook.example.com).
+    import os as _os
+    base = _os.environ.get("ROOK_PUBLIC_BASE", "").strip().rstrip("/")
+    if base:
+        manifest["url"] = f"{base}/{OUTPUT.name}"
     import sys as _sys
     _sys.path.insert(0, str(REPO_ROOT))
     from rook.remote.update_keys import sign_manifest
