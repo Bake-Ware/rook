@@ -498,8 +498,8 @@ async function openCapModal(wid,cap){
   // zero-argument caps: run immediately on click (skip the form). Destructive
   // ones still get a deliberate button.
   if(Array.isArray(params) && params.length===0 && !DANGER.has(cap)){
-    setBody(`<div class="capform">${help}<div id="capout" class="capout"><span class="spin"></span> running…</div></div>`);
-    bandCall(cap,wid,{},30).then(reply=>renderCapResult($('#capout'),cap,reply));
+    setBody(`<div class="capform">${help}<div class="caprun"><button class="primary" onclick="runCap()">run</button><span style="color:var(--dim2);font-size:.72rem">no args</span></div><div id="capout" class="capout"></div></div>`);
+    runCap();   // auto-run once; the button re-runs it
     return;
   }
   let form;
