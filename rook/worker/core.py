@@ -24,6 +24,8 @@ class Worker:
         self.transport = transport
         self.registry = CapabilityRegistry()
         self.plugins: list[Plugin] = load_plugins(plugins_pkg, self.registry, enabled)
+        # Introspection: lets the dashboard build accurate call forms.
+        self.registry.register("caps.describe", self._caps_describe)
         self.worker_id = uuid.uuid4().hex
         self.name = name or socket.gethostname()
         self._announce_interval = announce_interval
@@ -103,6 +105,10 @@ class Worker:
         await self.transport.send(json.dumps(msg).encode())
         return msg_id
 
+    def _caps_describe(self) -> dict:
+        """Arg schema + docstring for every capability on this worker (for the UI)."""
+        return self.registry.describe()
+
     async def announce(self) -> None:
         from ._build_info import BUILD, VERSION
         msg = {
@@ -117,9 +123,12 @@ class Worker:
         await self.transport.send(json.dumps(msg).encode())
 
     async def _announce_loop(self) -> None:
+        import random
         while not self._stopping:
             try:
-                await asyncio.sleep(self._announce_interval)
+                # Jitter each interval (±20%) so a fleet that (re)started together
+                # de-phases instead of announcing in a synchronized burst.
+                await asyncio.sleep(self._announce_interval * (0.8 + random.random() * 0.4))
                 if not self._stopping:
                     await self.announce()
             except asyncio.CancelledError:

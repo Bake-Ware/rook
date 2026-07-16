@@ -37,6 +37,34 @@ class CapabilityRegistry:
     def list(self) -> list[str]:
         return sorted(self._caps.keys())
 
+    def describe(self) -> dict:
+        """Introspect every handler for the UI: for each cap, its docstring plus
+        its parameters (name / required / default / type). Skips self and
+        *args/**kwargs. Used by the dashboard to build accurate call forms."""
+        def _jsonable(v):
+            return v if isinstance(v, (str, int, float, bool)) or v is None else str(v)
+        out: dict[str, Any] = {}
+        for name, fn in self._caps.items():
+            params = []
+            try:
+                sig = inspect.signature(fn)
+                for p in sig.parameters.values():
+                    if p.name == "self" or p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD):
+                        continue
+                    required = p.default is inspect.Parameter.empty
+                    ann = p.annotation
+                    typ = (None if ann is inspect.Parameter.empty
+                           else getattr(ann, "__name__", None) or str(ann).replace("typing.", ""))
+                    params.append({"name": p.name, "required": required,
+                                   "default": None if required else _jsonable(p.default),
+                                   "type": typ})
+            except (ValueError, TypeError):
+                pass
+            doc = (inspect.getdoc(fn) or "").strip()
+            out[name] = {"doc": doc.split("\n\n")[0].replace("\n", " ").strip(),
+                         "params": params}
+        return out
+
     async def call(self, dotpath: str, **kwargs: Any) -> Any:
         fn = self._caps.get(dotpath)
         if fn is None:

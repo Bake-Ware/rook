@@ -55,7 +55,18 @@ async def _linux_capture(quality: int, region: tuple[int, int, int, int] | None)
     fd, path = tempfile.mkstemp(suffix=".jpg", prefix="rook-shot-")
     os.close(fd)
     try:
-        if shutil.which("scrot"):
+        if os.environ.get("WAYLAND_DISPLAY") and shutil.which("grim"):
+            # Wayland-native (wlroots) grabber. scrot/import are X11-only and
+            # can't grab the root window under Wayland.
+            cmd = ["grim", "-t", "jpeg", "-q", str(quality)]
+            if region:
+                x, y, w, h = region
+                cmd += ["-g", f"{x},{y} {w}x{h}"]
+            cmd.append(path)
+            code, _, err = await _run(cmd)
+            if code != 0:
+                return {"ok": False, "error": f"grim failed: {err.decode(errors='replace').strip()}"}
+        elif shutil.which("scrot"):
             cmd = ["scrot", "-q", str(quality), "-o"]
             if region:
                 x, y, w, h = region
