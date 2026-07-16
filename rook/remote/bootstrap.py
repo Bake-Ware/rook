@@ -930,6 +930,8 @@ button:hover{{background:#22b88f}}
                 "caps": w.get("caps", []),
                 "plugins": w.get("plugins", []),
                 "band": band,
+                "version": w.get("version"),
+                "build": w.get("build"),
                 "last_seen_age_secs": round(now - w.get("last_seen", 0.0), 2),
             })
         out.sort(key=lambda x: x["name"] or "")

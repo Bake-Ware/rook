@@ -31,6 +31,7 @@
   .plugins{margin:8px 0 4px;display:flex;flex-wrap:wrap;gap:5px}
   .chip{background:var(--chip);border:1px solid var(--line);border-radius:20px;padding:2px 9px;font-size:.72rem;color:var(--dim)}
   .caps{font-size:.72rem;color:var(--dim);margin:6px 0}
+  .ver{color:#2dd4a7;font-weight:600}
   .actions{display:flex;gap:7px;margin-top:10px;flex-wrap:wrap}
   button{font-family:inherit;font-size:.8rem;padding:6px 12px;border-radius:6px;border:1px solid var(--line2);background:#152029;color:var(--fg);cursor:pointer}
   button:hover:not(:disabled){border-color:var(--accent2);color:var(--accent)}
@@ -253,13 +254,14 @@ function render(){
     const stale = (w.last_seen_age_secs||0) > 60;
     const plugins = (w.plugins||[]).map(p=>'<span class="chip">'+esc(p)+'</span>').join('');
     const wid = esc(w.worker_id);
+    const ver = w.version ? ' · <span class="ver" title="bundle version">v'+esc(w.version)+'</span>' : '';
     const snap = has('screenshot.capture') ? '<button class="primary" onclick="snap(\''+wid+'\')">snap</button>':'';
     const sh = has('shell.exec') ? '<button onclick="shell(\''+wid+'\')">shell</button>':'';
     const inf = has('info.host') ? '<button onclick="info(\''+wid+'\')">info</button>':'';
     return '<div class="card">'
       + '<div class="top"><span class="name">'+esc(w.name||w.worker_id)+'</span>'
       + '<span class="age '+(stale?'stale':'')+'">↻ '+ageStr(w.last_seen_age_secs)+'</span></div>'
-      + '<div class="caps">'+caps.length+' capabilities · <span style="opacity:.7">'+esc(wid.slice(0,12))+'</span></div>'
+      + '<div class="caps">'+caps.length+' capabilities · <span style="opacity:.7">'+esc(wid.slice(0,12))+'</span>'+ver+'</div>'
       + '<div class="plugins">'+plugins+'</div>'
       + '<div class="actions">'+snap+sh+inf+'<button onclick="showCaps(\''+wid+'\')">caps</button></div>'
       + '</div>';
