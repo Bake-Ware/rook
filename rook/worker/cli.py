@@ -8,6 +8,7 @@ import logging
 import os
 import signal
 import sys
+import time
 
 from .core import Worker
 
@@ -62,6 +63,29 @@ def main() -> None:
 
     if not args.psk:
         ap.error("--psk is required")
+
+    # Deauth gate: a worker that received a signed worker.deauth parks itself
+    # OFF the band (no transport, no announce) instead of rejoining. Runs after
+    # --version/--selftest (so OTA bundle validation still works on a banned
+    # node) but before any band contact. The flag survives reboots; clearing
+    # ~/.rook-band-worker/banned and restarting rejoins.
+    from .plugins.selfupdate import is_banned, ban_info
+    if is_banned():
+        logging.basicConfig(level=logging.WARNING,
+                            format="%(asctime)s %(name)s %(levelname)s: %(message)s")
+        info = ban_info()
+        logging.getLogger("rook.worker").warning(
+            "DEAUTHED from band (at=%s reason=%r) — staying dormant, NOT joining. "
+            "Clear ~/.rook-band-worker/banned and restart to rejoin.",
+            info.get("at"), info.get("reason", ""))
+        # Park quietly so we don't busy-loop under a service manager's Restart
+        # policy; a stop signal (systemctl stop) wakes us to exit.
+        try:
+            signal.pause()          # POSIX: block until a signal
+        except (AttributeError, ValueError):
+            while True:
+                time.sleep(3600)    # Windows / no signal.pause
+        return
 
     # Expose the manifest URL to the selfupdate plugin (reads ROOK_UPDATE_URL).
     if args.update_url:

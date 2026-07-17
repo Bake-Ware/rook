@@ -406,6 +406,7 @@ class CombinedServer:
         # Known bands for the dashboard selector. PSKs stay server-side; the UI
         # only ever sees the band_id label (first 8 hex of SHA256(PSK)[:16]).
         self._bands = setup_store.load_bands()
+        self._bans = setup_store.load_bans()   # deauthed workers (by name / worker_id)
         self._band_names: dict[str, str] = {}  # band_id label -> friendly name
         self._primary_label = ""               # the configured band; not removable
         try:
@@ -433,6 +434,9 @@ class CombinedServer:
         self._app.router.add_delete("/api/bands/{id}", self._api_remove_band)
         self._app.router.add_get("/api/band/workers", self._api_band_workers)
         self._app.router.add_post("/api/band/call", self._api_band_call)
+        self._app.router.add_get("/api/band/bans", self._api_bans)
+        self._app.router.add_post("/api/band/ban", self._api_ban)
+        self._app.router.add_post("/api/band/unban", self._api_unban)
         self._app.router.add_get("/ws", self._websocket_handler)
         # Auth routes (handled by middleware, these are just route stubs)
         async def _noop(r): return web.Response(text="")
@@ -694,6 +698,8 @@ button:hover{{background:#22b88f}}
                     continue
                 now = time.time()
                 for wid, w in list(self._band.workers.items()):
+                    if self._ban_match(w.get("name"), wid):
+                        continue  # deauthed — never feed a banned node updates
                     if "worker.apply" not in (w.get("caps") or []):
                         continue  # can't receive an in-band push yet
                     b = w.get("build")
@@ -934,6 +940,9 @@ button:hover{{background:#22b88f}}
                 "version": w.get("version"),
                 "build": w.get("build"),
                 "last_seen_age_secs": round(now - w.get("last_seen", 0.0), 2),
+                # deauthed nodes normally park off-band and vanish from the roster;
+                # flag any still lingering (not yet parked / uncooperative).
+                "banned": self._ban_match(w.get("name"), w.get("worker_id")),
             })
         out.sort(key=lambda x: x["name"] or "")
         return web.json_response(out)
@@ -951,6 +960,12 @@ button:hover{{background:#22b88f}}
             return web.json_response({"error": "cap required"}, status=400)
         args = data.get("args") or {}
         target = data.get("worker_id") or data.get("target")
+        # Refuse to drive a deauthed worker (its name may persist across restarts).
+        if target:
+            tw = self._band.workers.get(target) if self._band else None
+            if self._ban_match(tw.get("name") if tw else None, target):
+                return web.json_response(
+                    {"ok": False, "error": "worker is deauthed (banned)"}, status=403)
         try:
             timeout = float(data.get("timeout", 15.0))
         except (TypeError, ValueError):
@@ -962,6 +977,111 @@ button:hover{{background:#22b88f}}
             return web.json_response({"ok": False, "error": "timeout waiting for reply"}, status=504)
         except Exception as e:
             return web.json_response({"ok": False, "error": f"{type(e).__name__}: {e}"}, status=500)
+
+    # -- deauth / ban --------------------------------------------------------
+
+    def _ban_match(self, name: str | None, worker_id: str | None) -> bool:
+        """True if a worker with this (name, worker_id) is on the deauth list.
+        Name is the durable match (survives a worker restart); worker_id is exact."""
+        for b in self._bans:
+            if worker_id and b.get("worker_id") and b["worker_id"] == worker_id:
+                return True
+            if name and b.get("name") and b["name"] == name:
+                return True
+        return False
+
+    def _sign_deauth(self, worker_id: str, name: str, reason: str) -> dict | None:
+        """An ed25519-signed worker.deauth payload, signed with the same OTA
+        key. None if this host holds no signing key (then it's denylist-only)."""
+        from .update_keys import load_signing_key, _canonical_payload
+        import base64
+        sk = load_signing_key()
+        if sk is None:
+            return None
+        body = {"worker_id": worker_id, "name": name,
+                "issued_at": int(time.time()), "reason": reason[:500]}
+        sig = sk.sign(_canonical_payload(body)).signature
+        return {**body, "sig": base64.b64encode(sig).decode("ascii")}
+
+    async def _api_bans(self, request: web.Request) -> web.Response:
+        """The current deauth list (for the dashboard 'Banned' view)."""
+        return web.json_response(self._bans)
+
+    async def _api_ban(self, request: web.Request) -> web.Response:
+        """Deauth a worker: add it to the persistent controller denylist (hidden,
+        no OTA pushes, calls refused) AND send it a signed worker.deauth so a
+        cooperative node parks itself off-band. Body: {worker_id?, name?, reason?}."""
+        if self._band is None:
+            return web.json_response({"error": "band client not connected"}, status=503)
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json body"}, status=400)
+        worker_id = str(data.get("worker_id") or "").strip()
+        name = str(data.get("name") or "").strip()
+        reason = str(data.get("reason") or "").strip()
+        if not worker_id and not name:
+            return web.json_response({"error": "worker_id or name required"}, status=400)
+        # Fill in whichever of (name, worker_id) is missing from the live roster.
+        live = self._band.workers.get(worker_id) if worker_id else None
+        if live is None and name:
+            for w in self._band.workers.values():
+                if w.get("name") == name:
+                    live = w
+                    break
+        if live is not None:
+            name = name or (live.get("name") or "")
+            worker_id = worker_id or (live.get("worker_id") or "")
+
+        # 1) Denylist first — always works, so even if the in-band deauth misses,
+        #    the worker is immediately hidden, cut off from calls, and no longer
+        #    receives OTA pushes.
+        if not self._ban_match(name or None, worker_id or None):
+            self._bans.append({"name": name, "worker_id": worker_id,
+                               "at": int(time.time()), "reason": reason})
+            try:
+                setup_store.save_bans(self._bans)
+            except Exception:
+                log.exception("failed to persist ban list")
+
+        # 2) Best-effort signed deauth so a cooperative worker parks off-band.
+        deauth = self._sign_deauth(worker_id, name, reason)
+        if deauth is None:
+            sent = {"ok": False, "error": "no signing key on host — controller denylist only"}
+            log.warning("ban %s: no signing key; denylist only", name or worker_id)
+        elif worker_id:
+            try:
+                sent = await self._band.call("worker.deauth", args={"payload": deauth},
+                                             target=worker_id, timeout=20)
+            except Exception as e:
+                sent = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        else:
+            sent = {"ok": False, "error": "worker offline — denylisted, will park if it returns"}
+        return web.json_response({"ok": True,
+                                  "banned": {"name": name, "worker_id": worker_id},
+                                  "deauth_sent": sent})
+
+    async def _api_unban(self, request: web.Request) -> web.Response:
+        """Remove a worker from the controller denylist. NOTE: a cooperative node
+        that already parked itself off-band must be revived locally (clear
+        ~/.rook-band-worker/banned + restart) — the controller can't reach a
+        dormant node in-band. Body: {worker_id?, name?}."""
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json body"}, status=400)
+        worker_id = str(data.get("worker_id") or "").strip()
+        name = str(data.get("name") or "").strip()
+        before = len(self._bans)
+        self._bans = [b for b in self._bans
+                      if not ((worker_id and b.get("worker_id") == worker_id)
+                              or (name and b.get("name") == name))]
+        try:
+            setup_store.save_bans(self._bans)
+        except Exception:
+            log.exception("failed to persist ban list")
+        return web.json_response({"ok": True, "removed": before - len(self._bans),
+                                  "note": "revive a dormant node locally to rejoin"})
 
     async def _health(self, request: web.Request) -> web.Response:
         return web.Response(text=json.dumps({

@@ -107,6 +107,13 @@
   .item.open>.detail{max-height:560px}
   .detail-in{padding:2px 16px 15px 42px}
   .meta{color:var(--dim2);font-size:.72rem;margin-bottom:10px}
+  .banrow{margin-top:12px}
+  button.danger.sm{padding:5px 11px;font-size:.72rem;border-radius:6px;cursor:pointer;
+    background:rgba(247,106,106,.09);border:1px solid rgba(247,106,106,.35);color:#f76a6a}
+  button.danger.sm:hover{background:rgba(247,106,106,.18);border-color:#f76a6a}
+  .banbadge{display:inline-block;margin-right:10px;font-size:.72rem;font-weight:600;color:#f76a6a;
+    letter-spacing:.03em;vertical-align:middle}
+  .item.banned{opacity:.6} .item.banned .row{border-left:2px solid #f76a6a}
   .cggrid{display:flex;flex-wrap:wrap;gap:8px}
   .cg{border:1px solid var(--line2);background:#0c151f;border-radius:8px;overflow:hidden;align-self:flex-start}
   .cg-head{display:flex;align-items:center;gap:8px;padding:6px 11px;cursor:pointer;user-select:none}
@@ -352,7 +359,7 @@ function buildRow(w){
       <span class="seen"><span class="seenbar"><i></i></span><span class="t"></span></span>
       <span class="acts"></span>
     </div>
-    <div class="detail"><div class="detail-in"><div class="meta"></div><div class="cggrid"></div></div></div>`;
+    <div class="detail"><div class="detail-in"><div class="meta"></div><div class="cggrid"></div><div class="banrow"></div></div></div>`;
   const row=wrap.querySelector('.row');
   row.addEventListener('click',()=>wrap.classList.toggle('open'));
   const bar=document.createElement('div'); bar.className='bar'; bar.title=w.name||w.worker_id;
@@ -364,6 +371,7 @@ function buildRow(w){
     st:wrap.querySelector('.st'), verEl:wrap.querySelector('.ver'),
     sb:wrap.querySelector('.seenbar i'), tt:wrap.querySelector('.seen .t'),
     acts:wrap.querySelector('.acts'), meta:wrap.querySelector('.meta'), cg:wrap.querySelector('.cggrid'),
+    banrow:wrap.querySelector('.banrow'), bannedSig:null,
     fill:bar.querySelector('.fill'), peakEl:bar.querySelector('.peak'),
     lastSeenAbs:clock()-(w.last_seen_age_secs||0), peak:0.6, beatT:-9, capsSig:'' };
 }
@@ -388,7 +396,37 @@ function updateMeta(m,w){
     m.cg.querySelectorAll('.cg').forEach(cg=>cg.querySelector('.cg-head').onclick=()=>cg.classList.toggle('open'));
     m.cg.querySelectorAll('.mcap').forEach(el=>el.onclick=e=>{e.stopPropagation();openCapModal(w.worker_id,el.dataset.cap);});
   }
+  // deauth / ban control — ungated by caps, reflects w.banned. Only pyz workers
+  // can self-park (firmware has no worker.deauth), so hide it for firmware.
+  const canDeauth=has('worker.restart');
+  const bsig=w.banned?'b':(canDeauth?'d':'x');
+  if(bsig!==m.bannedSig){ m.bannedSig=bsig;
+    m.wrap.classList.toggle('banned',!!w.banned);
+    m.banrow.innerHTML = w.banned
+      ? `<span class="banbadge">⛔ deauthed</span><button class="danger sm" data-a="unban">remove ban</button>`
+      : (canDeauth?`<button class="danger sm" data-a="deauth">⛔ deauth / ban this worker</button>`:'');
+    const btn=m.banrow.querySelector('button');
+    if(btn) btn.onclick=e=>{e.stopPropagation(); (m.w.banned?unban:ban)(m.w.worker_id,m.w.name);};
+  }
   m.bar.title=w.name||w.worker_id;
+}
+async function ban(wid,name){
+  const reason=prompt(`Deauth / ban "${name||wid}"?\n\nSends a SIGNED order so the worker parks itself off-band, and hides it here (no updates, calls refused). A cooperative worker obeys; revive it later locally.\n\nOptional reason:`);
+  if(reason===null)return;
+  try{
+    const r=await fetch('/api/band/ban',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({worker_id:wid,name,reason})});
+    const d=await r.json(); if(!r.ok){alert('ban failed: '+(d.error||('HTTP '+r.status)));return;}
+    const s=d.deauth_sent||{}; if(s.ok===false&&s.error) alert('Denylisted here, but the in-band order did not confirm:\n'+s.error);
+    dirty=true; loadWorkers();
+  }catch(e){alert('ban error: '+e.message);}
+}
+async function unban(wid,name){
+  if(!confirm(`Remove "${name||wid}" from the deauth list?\n\nNote: a worker that already parked itself off-band must be revived locally — clear ~/.rook-band-worker/banned and restart it.`))return;
+  try{
+    const r=await fetch('/api/band/unban',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({worker_id:wid,name})});
+    const d=await r.json(); if(!r.ok){alert('unban failed: '+(d.error||('HTTP '+r.status)));return;}
+    dirty=true; loadWorkers();
+  }catch(e){alert('unban error: '+e.message);}
 }
 
 function reconcile(){

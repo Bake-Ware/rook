@@ -5,14 +5,40 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import socket
 import uuid
+from pathlib import Path
 
 from .plugin import Plugin, load_plugins
 from .registry import CapabilityRegistry
 from .transports.base import Transport
 
 log = logging.getLogger("rook.worker.core")
+
+_WORKER_ID_FILE = Path(os.path.expanduser("~")) / ".rook-band-worker" / "worker_id"
+
+
+def stable_worker_id() -> str:
+    """A worker_id that survives restarts, so a node keeps ONE identity on the
+    band. Two reasons this matters: (1) each restart used to mint a fresh uuid,
+    leaving ghost duplicate rows in the dashboard until the old one aged out;
+    (2) durable bans (worker.deauth) need to name a target that a restart can't
+    shed. Persisted under the worker state dir; falls back to an ephemeral id if
+    that dir isn't writable (better a transient id than a crash)."""
+    try:
+        wid = _WORKER_ID_FILE.read_text().strip()
+        if wid:
+            return wid
+    except Exception:
+        pass
+    wid = uuid.uuid4().hex
+    try:
+        _WORKER_ID_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _WORKER_ID_FILE.write_text(wid + "\n")
+    except Exception:
+        log.warning("could not persist worker_id; using an ephemeral one")
+    return wid
 
 
 class Worker:
@@ -26,7 +52,7 @@ class Worker:
         self.plugins: list[Plugin] = load_plugins(plugins_pkg, self.registry, enabled)
         # Introspection: lets the dashboard build accurate call forms.
         self.registry.register("caps.describe", self._caps_describe)
-        self.worker_id = uuid.uuid4().hex
+        self.worker_id = stable_worker_id()
         self.name = name or socket.gethostname()
         self._announce_interval = announce_interval
         self._stopping = False

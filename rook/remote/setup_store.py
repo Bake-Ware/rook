@@ -112,6 +112,55 @@ def save_bands(bands: list[dict]) -> None:
         pass
 
 
+def load_bans() -> list[dict]:
+    """Deauthed workers: ``[{"name", "worker_id", "at", "reason"}, ...]``.
+
+    Keyed primarily by ``name`` (stable across restarts) with ``worker_id`` as a
+    secondary match, so a banned node stays banned in the controller's view even
+    if it restarts with a fresh session. Persisted in setup.json (gitignored)."""
+    p = setup_path()
+    if not p.exists():
+        return []
+    try:
+        raw = json.loads(p.read_text()).get("bans", []) or []
+    except Exception:
+        return []
+    return [b for b in raw if isinstance(b, dict)]
+
+
+def save_bans(bans: list[dict]) -> None:
+    """Persist the deauth list. Dedupes by (name, worker_id)."""
+    p = setup_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    existing: dict = {}
+    if p.exists():
+        try:
+            existing = json.loads(p.read_text())
+        except Exception:
+            existing = {}
+    clean: list[dict] = []
+    seen: set = set()
+    for b in bans or []:
+        if not isinstance(b, dict):
+            continue
+        key = (str(b.get("name") or ""), str(b.get("worker_id") or ""))
+        if key == ("", "") or key in seen:
+            continue
+        seen.add(key)
+        clean.append({
+            "name": str(b.get("name") or ""),
+            "worker_id": str(b.get("worker_id") or ""),
+            "at": int(b.get("at", 0) or 0),
+            "reason": str(b.get("reason") or "")[:500],
+        })
+    existing["bans"] = clean
+    p.write_text(json.dumps(existing, indent=2) + "\n")
+    try:
+        p.chmod(0o600)
+    except OSError:
+        pass
+
+
 def is_configured() -> bool:
     """The band is usable once it has both a PSK and a public hub address."""
     d = load()

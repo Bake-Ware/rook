@@ -13,6 +13,7 @@ Capabilities:
     worker.restart                        — clean restart, same config
     worker.reconfigure(hub?, psk?, name?) — repoint at a new band, then restart
     worker.update(url?, hub?, psk?, name?) — fetch a new bundle, then restart
+    worker.deauth(payload)                — ed25519-signed remove/ban from band
 """
 
 from __future__ import annotations
@@ -35,6 +36,8 @@ _PYZ = _WORKER_DIR / "band-worker.pyz"
 _PREV = _WORKER_DIR / "band-worker.pyz.prev"     # previous bundle, for rollback
 _STATE = _WORKER_DIR / "update_state.json"       # in-flight update tracking
 _HOLD = _WORKER_DIR / "hold"                      # presence pins this node (no auto-update)
+_BANNED = _WORKER_DIR / "banned"                  # presence = deauthed; refuse to rejoin
+_WORKER_ID_FILE = _WORKER_DIR / "worker_id"       # stable identity (see core.stable_worker_id)
 _UNIT = _HOME / ".config" / "systemd" / "user" / "rook-band-worker.service"
 _SVC = "rook-band-worker"
 
@@ -55,6 +58,28 @@ def _supervisor() -> str:
     if _is_termux():
         return "runit"
     return "exec"
+
+
+def _my_worker_id() -> str | None:
+    """This node's stable worker_id (written by core.stable_worker_id)."""
+    try:
+        return _WORKER_ID_FILE.read_text().strip() or None
+    except Exception:
+        return None
+
+
+def is_banned() -> bool:
+    """True if this node has been deauthed (worker.deauth). Checked at boot by
+    the CLI so a banned worker parks itself off-band instead of rejoining."""
+    return _BANNED.exists()
+
+
+def ban_info() -> dict:
+    """Details of the standing ban, or ``{}`` if not banned."""
+    try:
+        return json.loads(_BANNED.read_text())
+    except Exception:
+        return {"at": 0} if _BANNED.exists() else {}
 
 
 class SelfUpdatePlugin(Plugin):
@@ -113,6 +138,54 @@ class SelfUpdatePlugin(Plugin):
         else:
             _HOLD.unlink(missing_ok=True)
         return {"ok": True, "held": enable}
+
+    @capability("deauth")
+    async def _deauth(self, payload: dict) -> dict:
+        """Remove/ban this worker from the band — but ONLY on an ed25519-signed
+        order from the controller. Being on the band (knowing the shared PSK) is
+        not enough: ``payload`` is verified against the same signing key as OTA
+        manifests, and is bound to THIS node's stable worker_id so a signed order
+        for one worker can't be replayed against another.
+
+        payload = {"worker_id": "<target>", "name": "<label>", "issued_at":
+                   <unix>, "reason": "...", "sig": "<base64 ed25519>"}
+
+        On success the node persists a ``banned`` flag and restarts into the CLI
+        boot gate, which parks it OFF the band (no transport, no announce). The
+        flag survives reboots; clear ``~/.rook-band-worker/banned`` and restart
+        to rejoin.
+
+        LIMITATION: this stops a COOPERATIVE worker (one running this code). A
+        compromised node running modified code can ignore it and keep using the
+        shared PSK — the controller still hides/ignores it and denies it commands
+        and updates, but truly evicting a hostile node needs per-worker identity
+        or a PSK rotation."""
+        from .._update_verify import verify_manifest
+        if not isinstance(payload, dict):
+            return {"ok": False, "error": "payload must be an object"}
+        if not verify_manifest(payload):
+            # Fail closed: unsigned or wrong key → refuse.
+            return {"ok": False, "error": "invalid or missing signature"}
+        mine = _my_worker_id()
+        target = payload.get("worker_id")
+        if target and mine and target != mine:
+            return {"ok": False, "error": "worker_id mismatch (not this worker)"}
+        issued = payload.get("issued_at")
+        if isinstance(issued, (int, float)) and abs(time.time() - issued) > 86400:
+            # Reject ancient captured orders; window is generous for clock skew.
+            return {"ok": False, "error": "signed order too old"}
+        _WORKER_DIR.mkdir(parents=True, exist_ok=True)
+        _BANNED.write_text(json.dumps({
+            "at": int(time.time()),
+            "reason": str(payload.get("reason", ""))[:500],
+        }) + "\n")
+        log.warning("deauthed from band (reason=%r); restarting into dormant mode",
+                    payload.get("reason", ""))
+        # Ack first, then restart INTO the boot gate — the fresh process sees the
+        # banned flag and parks off-band. (Same deferred-restart trick as the
+        # rest of this plugin so the caller gets the reply before we drop.)
+        self._schedule_restart(self._current_argv())
+        return {"ok": True, "worker_id": mine, "banned": True, "restarting": True}
 
     # -- introspection -------------------------------------------------------
 
