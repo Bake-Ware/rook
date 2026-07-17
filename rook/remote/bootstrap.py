@@ -429,6 +429,7 @@ class CombinedServer:
         self._app.router.add_get("/band-worker.pyz", self._band_worker_pyz)
         self._app.router.add_get("/band-worker.json", self._band_worker_manifest)
         self._app.router.add_get("/apk", self._worker_apk)
+        self._app.router.add_get("/rook", self._band_cli)        # the `rook band` TUI as a standalone script
         self._app.router.add_get("/api/bands", self._api_bands)
         self._app.router.add_post("/api/bands", self._api_add_band)
         self._app.router.add_delete("/api/bands/{id}", self._api_remove_band)
@@ -482,7 +483,7 @@ class CombinedServer:
 
         # Always public: worker bootstrap/artifacts, health, websockets.
         exempt = ("/ws", "/health", "/worker", "/worker.py", "/band-worker.pyz",
-                  "/band-worker.json", "/apk")
+                  "/band-worker.json", "/apk", "/rook")
         is_exempt = request.path == "/ws/ui" or any(
             request.path == p or request.path.startswith(p + "/") for p in exempt)
 
@@ -1082,6 +1083,22 @@ button:hover{{background:#22b88f}}
             log.exception("failed to persist ban list")
         return web.json_response({"ok": True, "removed": before - len(self._bans),
                                   "note": "revive a dormant node locally to rejoin"})
+
+    async def _band_cli(self, request: web.Request) -> web.Response:
+        """Serve the `rook band` terminal control panel as a standalone script.
+
+        Install:  curl -fsSL https://<host>/rook -o ~/.local/bin/rook && chmod +x ~/.local/bin/rook
+        Then run: rook
+        """
+        p = Path(__file__).resolve().parents[1] / "cli" / "band_tui.py"
+        try:
+            text = p.read_text()
+        except Exception:
+            return web.Response(status=404, text="# band cli unavailable\n")
+        if not text.startswith("#!"):
+            text = "#!/usr/bin/env python3\n" + text
+        return web.Response(text=text, content_type="text/x-python",
+                            headers={"Content-Disposition": 'inline; filename="rook"'})
 
     async def _health(self, request: web.Request) -> web.Response:
         return web.Response(text=json.dumps({

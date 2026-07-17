@@ -1,4 +1,8 @@
+#!/usr/bin/env python3
 """`rook band` — a full-screen terminal control panel for the worker band.
+
+Self-contained: pure Python stdlib (curses + urllib), so it runs anywhere as a
+single file — install it as `rook` and just run `rook`.
 
 Talks to the rook-remote dashboard API (the same source the web dashboard uses),
 so it sees the full roster regardless of how each worker is connected. Shows a
@@ -475,27 +479,70 @@ def _fmt(r) -> str:
 # entry
 # -----------------------------------------------------------------------------
 
+from pathlib import Path
+
+_CONF = Path(os.path.expanduser("~")) / ".config" / "rook" / "band.conf"
+
+
+def _load_conf() -> dict:
+    d: dict = {}
+    try:
+        for ln in _CONF.read_text().splitlines():
+            ln = ln.strip()
+            if ln and not ln.startswith("#") and "=" in ln:
+                k, v = ln.split("=", 1)
+                d[k.strip()] = v.strip()
+    except Exception:
+        pass
+    return d
+
+
+def _save_conf(url: str, user: str, password: str) -> bool:
+    try:
+        _CONF.parent.mkdir(parents=True, exist_ok=True)
+        _CONF.write_text("# rook band — dashboard connection (this file is chmod 600)\n"
+                         f"url={url}\nuser={user}\npass={password}\n")
+        os.chmod(_CONF, 0o600)
+        return True
+    except Exception:
+        return False
+
+
 def main() -> None:
     import argparse
-    ap = argparse.ArgumentParser(prog="rook band",
+    import sys
+    # Installed as a standalone `rook`, so accept both `rook` and `rook band`.
+    if len(sys.argv) > 1 and sys.argv[1] in ("band", "tui"):
+        del sys.argv[1]
+    ap = argparse.ArgumentParser(prog="rook",
                                  description="Terminal control panel for the worker band")
-    ap.add_argument("--url", default=os.environ.get("ROOK_WEB_URL", "https://rook.bakeforge.com"),
-                    help="rook-remote dashboard URL (or ROOK_WEB_URL)")
-    ap.add_argument("--user", default=os.environ.get("ROOK_WEB_USER", "bake"),
-                    help="dashboard username (or ROOK_WEB_USER)")
-    ap.add_argument("--pass", dest="password", default=os.environ.get("ROOK_WEB_PASS"),
-                    help="dashboard password (or ROOK_WEB_PASS; prompted if omitted)")
+    ap.add_argument("--url", help="dashboard URL (default: saved config or https://rook.bakeforge.com)")
+    ap.add_argument("--user", help="dashboard username (default: saved config or 'bake')")
+    ap.add_argument("--pass", dest="password", help="dashboard password (default: saved config, else prompt)")
+    ap.add_argument("--reset", action="store_true", help="ignore saved config and re-enter connection details")
     args = ap.parse_args()
 
-    password = args.password
+    conf = {} if args.reset else _load_conf()
+    url = args.url or os.environ.get("ROOK_WEB_URL") or conf.get("url") or "https://rook.bakeforge.com"
+    user = args.user or os.environ.get("ROOK_WEB_USER") or conf.get("user") or "bake"
+    password = args.password or os.environ.get("ROOK_WEB_PASS") or conf.get("pass")
+    had_saved = bool(conf.get("pass")) and not args.reset
+
     if not password:
-        password = getpass.getpass(f"password for {args.user}@{args.url}: ")
-    band = BandHTTP(args.url, args.user, password)
-    print(f"connecting to {args.url} …")
+        try:
+            password = getpass.getpass(f"password for {user}@{url}: ")
+        except (EOFError, KeyboardInterrupt):
+            raise SystemExit("\naborted")
+
+    band = BandHTTP(url, user, password)
+    print(f"connecting to {url} …")
     err = band.check()
     if err:
-        raise SystemExit(f"cannot reach band API at {args.url}: {err}")
-    label = args.url.split("://", 1)[-1]
+        raise SystemExit(f"cannot reach band API at {url}: {err}\n"
+                         "(re-run with --reset to change connection details)")
+    if not had_saved and _save_conf(url, user, password):
+        print(f"✓ saved connection to {_CONF} — next time just run `rook`")
+    label = url.split("://", 1)[-1]
     curses.wrapper(UI(band, label).loop)
 
 
