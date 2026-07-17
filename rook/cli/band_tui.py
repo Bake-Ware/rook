@@ -471,37 +471,46 @@ class UI:
         import textwrap
         scr.erase()
         h, w = scr.getmaxyx()
+        if h < 4 or w < 20:
+            scr.refresh()
+            return
+
+        def put(y, x, text, attr=0):
+            # Never touch the last cell of the last row (writing it raises
+            # curses.error and would crash the whole TUI); clamp + swallow.
+            n = w - 1 - x
+            if n <= 0 or y >= h:
+                return
+            try:
+                scr.addnstr(y, x, text[:n], n, attr)
+            except curses.error:
+                pass
+
         sw = min(30, max(16, w // 4))
-        scr.addnstr(0, 0, (f" ROOK CHAT · {active[1]}/{active[2]} · ↑↓ switch · esc leave ")
-                    .ljust(w)[:w], w, curses.A_REVERSE)
-        # sidebar
-        scr.addnstr(1, 0, " chats on band".ljust(sw)[:sw], sw, curses.A_BOLD)
+        put(0, 0, f" ROOK CHAT · {active[1]}/{active[2]} · ↑↓ switch · esc leave ".ljust(w),
+            curses.A_REVERSE)
+        put(1, 0, " chats on band".ljust(sw), curses.A_BOLD)
         for i, e in enumerate(side[:h - 3]):
-            sel = i == sidesel
-            label = f" {e['name']}/{e['room']}"
-            scr.addnstr(2 + i, 0, label.ljust(sw)[:sw], sw,
-                        curses.A_REVERSE if sel else curses.A_NORMAL)
+            put(2 + i, 0, f" {e['name']}/{e['room']}".ljust(sw),
+                curses.A_REVERSE if i == sidesel else curses.A_NORMAL)
         for y in range(1, h - 1):
             try:
                 scr.addch(y, sw, curses.ACS_VLINE)
             except curses.error:
                 pass
-        # conversation
         cx, cw = sw + 2, w - sw - 2
         rows = []
         for m in msgs:
             mine = m.get("sender") == _ME
             who = "you" if mine else str(m.get("sender"))
-            wrapped = textwrap.wrap(str(m.get("text", "")), max(8, cw - 13)) or [""]
-            for j, seg in enumerate(wrapped):
+            for j, seg in enumerate(textwrap.wrap(str(m.get("text", "")), max(8, cw - 13)) or [""]):
                 head = f"{who + ':':<11}" if j == 0 else " " * 11
                 rows.append((head + " " + seg, mine))
         for i, (line, mine) in enumerate(rows[-(h - 4):]):
-            scr.addnstr(2 + i, cx, line[:cw], cw,
-                        curses.color_pair(1) if mine else curses.A_NORMAL)
-        scr.addnstr(h - 1, cx, ("> " + inp).ljust(cw)[:cw], cw, curses.A_BOLD)
+            put(2 + i, cx, line, curses.color_pair(1) if mine else curses.A_NORMAL)
+        put(h - 1, cx, ("> " + inp).ljust(cw), curses.A_BOLD)
         try:
-            scr.move(h - 1, min(cx + 2 + len(inp), w - 1))
+            scr.move(h - 1, min(cx + 2 + len(inp), w - 2))
         except curses.error:
             pass
         scr.refresh()
