@@ -33,38 +33,66 @@ def _room_file(room: str) -> Path:
     return _CHATDIR / f"{safe}.jsonl"
 
 
-# The chat client that runs in the popped-up terminal on the worker. Pure stdlib.
-# Tails the shared transcript in a thread and appends the human's lines to it.
+# The chat client that runs in the popped-up terminal on the worker. A small
+# self-contained curses app (stdlib): message area + input line, tails the shared
+# transcript and appends the human's lines to it.
 _RECV_CLIENT = r'''#!/usr/bin/env python3
-import sys, os, json, time, threading
+import sys, os, json, time, curses, textwrap
 path, me = sys.argv[1], sys.argv[2]
-os.makedirs(os.path.dirname(path), exist_ok=True)
-open(path, "a").close()
-def tail():
-    seen = 0
+os.makedirs(os.path.dirname(path), exist_ok=True); open(path, "a").close()
+
+def load():
+    out = []
+    try:
+        for ln in open(path).read().splitlines():
+            try: out.append(json.loads(ln))
+            except Exception: pass
+    except Exception: pass
+    return out
+
+def send(text):
+    with open(path, "a") as fh:
+        fh.write(json.dumps({"ts": int(time.time()), "sender": me, "text": text}) + "\n")
+
+def run(scr):
+    curses.curs_set(1); scr.timeout(350)
+    curses.start_color(); curses.use_default_colors()
+    curses.init_pair(1, curses.COLOR_CYAN, -1)     # them
+    curses.init_pair(2, curses.COLOR_GREEN, -1)    # me
+    curses.init_pair(3, curses.COLOR_YELLOW, -1)   # meta
+    inp = ""
     while True:
-        try:
-            lines = open(path).read().splitlines()
-        except Exception:
-            lines = []
-        for ln in lines[seen:]:
-            try: m = json.loads(ln)
-            except Exception: continue
-            if m.get("sender") != me:
-                sys.stdout.write("\r\033[K\033[1m%s:\033[0m %s\n> " % (m.get("sender"), m.get("text")))
-                sys.stdout.flush()
-        seen = len(lines)
-        time.sleep(0.5)
-threading.Thread(target=tail, daemon=True).start()
-print("\033[1m── rook chat ──\033[0m  you are %r · type and press enter · Ctrl-C to close\n" % me)
-try:
-    while True:
-        t = input("> ")
-        if not t.strip(): continue
-        with open(path, "a") as fh:
-            fh.write(json.dumps({"ts": int(time.time()), "sender": me, "text": t}) + "\n")
-except (EOFError, KeyboardInterrupt):
-    print("\nchat closed.")
+        h, w = scr.getmaxyx(); scr.erase()
+        title = " rook chat — you are %s " % me
+        scr.addnstr(0, 0, title.ljust(w), w, curses.A_REVERSE)
+        scr.addnstr(1, 0, "─" * w, w, curses.color_pair(3))
+        # wrap + render the last messages that fit
+        rows = []
+        for m in load():
+            mine = m.get("sender") == me
+            who = "you" if mine else str(m.get("sender"))
+            for j, seg in enumerate(textwrap.wrap(m.get("text", ""), max(10, w - 14)) or [""]):
+                head = ("%-10s " % (who + ":")) if j == 0 else " " * 11
+                rows.append((head + seg, curses.color_pair(2 if mine else 1)))
+        area = h - 4
+        for i, (line, attr) in enumerate(rows[-area:]):
+            scr.addnstr(2 + i, 0, line, w - 1, attr)
+        scr.addnstr(h - 2, 0, "─" * w, w, curses.color_pair(3))
+        scr.addnstr(h - 1, 0, ("> " + inp)[:w - 1].ljust(w - 1), w - 1, curses.A_BOLD)
+        scr.move(h - 1, min(2 + len(inp), w - 1))
+        scr.refresh()
+        try: k = scr.getch()
+        except KeyboardInterrupt: break
+        if k == -1: continue
+        if k in (10, 13):
+            if inp.strip(): send(inp)
+            inp = ""
+        elif k in (curses.KEY_BACKSPACE, 127, 8): inp = inp[:-1]
+        elif k == 27: break
+        elif 32 <= k <= 126: inp += chr(k)
+
+try: curses.wrapper(run)
+except Exception: pass
 '''
 
 
@@ -135,6 +163,36 @@ class ChatPlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
         return {"ok": True}
+
+    @capability("rooms")
+    def _rooms(self) -> dict:
+        """List chat rooms on this worker with a last-message preview — the band
+        CLI aggregates these across workers into its chat sidebar."""
+        out = []
+        if _CHATDIR.exists():
+            for f in sorted(_CHATDIR.glob("*.jsonl")):
+                msgs = []
+                try:
+                    for ln in f.read_text().splitlines():
+                        try:
+                            msgs.append(json.loads(ln))
+                        except Exception:
+                            continue
+                except Exception:
+                    continue
+                if not msgs:
+                    continue
+                last = msgs[-1]
+                out.append({
+                    "room": f.stem,
+                    "count": len(msgs),
+                    "last_ts": last.get("ts", 0),
+                    "last_sender": last.get("sender"),
+                    "last_text": str(last.get("text", ""))[:120],
+                    "participants": sorted({m.get("sender") for m in msgs if m.get("sender")}),
+                })
+        out.sort(key=lambda r: r.get("last_ts", 0), reverse=True)
+        return {"ok": True, "rooms": out}
 
     @capability("poll")
     def _poll(self, room: str, since: float = 0.0) -> dict:

@@ -47,7 +47,7 @@ class MsgPlugin(Plugin):
     NAMESPACE = "msg"
 
     @capability("send")
-    async def _send(self, text: str, sender: str = "band") -> dict:
+    async def _send(self, text: str, sender: str = "operator") -> dict:
         """Deliver a text message to this worker: store it in the inbox and try a
         desktop notification. ``sender`` labels who it's from."""
         text = str(text or "")

@@ -387,82 +387,124 @@ class UI:
         self.popup(scr, f"notify → {w.get('name')}", str(note))
 
     def act_chat(self, scr, w: dict) -> None:
-        """Two-way chat: pop a window on the worker and open a chat pane here."""
+        """Open the chat UI: start (or resume) a room with this worker, with a
+        sidebar of every chat on the band."""
         if "chat.send" not in (w.get("caps") or []):
-            self.popup(scr, "chat", "this worker has no chat.* (needs build ≥35)")
+            self.popup(scr, "chat", "this worker has no chat.* (needs build ≥37)")
             return
         room = "op" + str(int(time.time()))
         self.status = "opening chat…"
         self.draw(scr)
-        o = self.band.call("chat.open", worker_id=w["worker_id"],
-                           args={"room": room, "me": w.get("name")}, timeout=20)
-        ores = o.get("result", o)
-        spawned = bool(isinstance(ores, dict) and ores.get("spawned"))
-        self._chat_pane(scr, w, room, spawned)
+        self.band.call("chat.open", worker_id=w["worker_id"],
+                       args={"room": room, "me": w.get("name")}, timeout=20)
+        self._chat_ui(scr, w["worker_id"], w.get("name") or w["worker_id"], room)
         self.status = "connected"
 
-    def _chat_pane(self, scr, w: dict, room: str, spawned: bool) -> None:
-        h, wd = scr.getmaxyx()
-        win = curses.newwin(h - 2, wd - 2, 1, 1)
-        win.keypad(True)
-        win.timeout(200)
-        msgs: list[tuple] = []
-        last = 0.0
+    def _chat_workers(self) -> list:
+        return [r for r in self.rows if "chat.rooms" in (r.get("caps") or [])]
+
+    def _chat_sidebar(self, active: tuple) -> list:
+        """Every chat on the band: chat.rooms across chat-capable workers."""
+        entries = []
+        for r in self._chat_workers():
+            res = self.band.call("chat.rooms", worker_id=r["worker_id"], timeout=8).get("result", {})
+            if not isinstance(res, dict):
+                continue
+            for room in (res.get("rooms") or []):
+                entries.append({"wid": r["worker_id"], "name": r.get("name") or r["worker_id"],
+                                "room": room.get("room"), "last_ts": room.get("last_ts", 0) or 0,
+                                "last_text": room.get("last_text", "")})
+        if not any(e["wid"] == active[0] and e["room"] == active[2] for e in entries):
+            entries.append({"wid": active[0], "name": active[1], "room": active[2],
+                            "last_ts": 0, "last_text": "(new)"})
+        entries.sort(key=lambda e: e["last_ts"], reverse=True)
+        return entries
+
+    def _chat_ui(self, scr, awid: str, aname: str, aroom: str) -> None:
+        curses.curs_set(1)
+        active = (awid, aname, aroom)
+        side = self._chat_sidebar(active)
+        sidesel = next((i for i, e in enumerate(side)
+                        if e["wid"] == active[0] and e["room"] == active[2]), 0)
+        msgs: list = []
+        since = 0.0
         inp = ""
-        hint = (f"↳ chat window opened on {w.get('name')}" if spawned
-                else f"no window on {w.get('name')} (no display) — they read via inbox")
-
-        def redraw():
-            win.erase()
-            win.box()
-            win.addnstr(0, 2, f" chat · {w.get('name')} · esc to leave ", wd - 6, curses.A_BOLD)
-            area = (h - 2) - 4
-            y = 1
-            for snd, txt in msgs[-area:]:
-                me = snd == _ME
-                line = f"{'you' if me else snd}: {txt}"
-                win.addnstr(y, 2, line[:wd - 5], wd - 5,
-                            curses.color_pair(1) if me else curses.A_NORMAL)
-                y += 1
-            win.addnstr(h - 4, 2, hint[:wd - 5], wd - 5, curses.A_DIM)
-            win.addnstr(h - 3, 1, ("> " + inp)[:wd - 4].ljust(wd - 4), wd - 4, curses.A_REVERSE)
-            win.refresh()
-
-        redraw()
-        last_poll = 0.0
+        last_side = last_poll = 0.0
+        scr.timeout(300)
         while True:
             now = time.time()
+            if now - last_side > 3.0:
+                last_side = now
+                side = self._chat_sidebar(active)
+                sidesel = next((i for i, e in enumerate(side)
+                                if e["wid"] == active[0] and e["room"] == active[2]), sidesel)
             if now - last_poll > 0.8:
                 last_poll = now
-                r = self.band.call("chat.poll", worker_id=w["worker_id"],
-                                   args={"room": room, "since": last}, timeout=10)
-                res = r.get("result", r)
-                if isinstance(res, dict) and res.get("ok"):
-                    new = res.get("messages", [])
-                    for m in new:
-                        msgs.append((m.get("sender", "?"), m.get("text", "")))
-                        last = max(last, float(m.get("ts", 0)))
-                    if new:
-                        redraw()
-            k = win.getch()
+                res = self.band.call("chat.poll", worker_id=active[0],
+                                     args={"room": active[2], "since": since}, timeout=8).get("result", {})
+                if isinstance(res, dict):
+                    for m in (res.get("messages") or []):
+                        msgs.append(m)
+                        since = max(since, float(m.get("ts", 0)))
+            self._chat_draw(scr, active, side, sidesel, msgs, inp)
+            k = scr.getch()
             if k == -1:
                 continue
-            if k == 27:                       # esc
+            if k == 27:                                   # esc — leave chat
                 return
+            elif k in (curses.KEY_UP, curses.KEY_DOWN) and side:
+                sidesel = (sidesel + (1 if k == curses.KEY_DOWN else -1)) % len(side)
+                e = side[sidesel]
+                active = (e["wid"], e["name"], e["room"])
+                msgs, since, last_poll = [], 0.0, 0.0     # switch conversation
             elif k in (curses.KEY_ENTER, 10, 13):
                 if inp.strip():
-                    self.band.call("chat.send", worker_id=w["worker_id"],
-                                   args={"room": room, "text": inp, "sender": _ME},
-                                   timeout=10)
-                    inp = ""      # echo comes back via poll (single source of truth)
-                    last_poll = 0.0
-                redraw()
+                    self.band.call("chat.send", worker_id=active[0],
+                                   args={"room": active[2], "text": inp, "sender": _ME}, timeout=8)
+                    inp, last_poll = "", 0.0              # echo returns via poll
             elif k in (curses.KEY_BACKSPACE, 127, 8):
                 inp = inp[:-1]
-                redraw()
             elif 32 <= k <= 126:
                 inp += chr(k)
-                redraw()
+
+    def _chat_draw(self, scr, active, side, sidesel, msgs, inp) -> None:
+        import textwrap
+        scr.erase()
+        h, w = scr.getmaxyx()
+        sw = min(30, max(16, w // 4))
+        scr.addnstr(0, 0, (f" ROOK CHAT · {active[1]}/{active[2]} · ↑↓ switch · esc leave ")
+                    .ljust(w)[:w], w, curses.A_REVERSE)
+        # sidebar
+        scr.addnstr(1, 0, " chats on band".ljust(sw)[:sw], sw, curses.A_BOLD)
+        for i, e in enumerate(side[:h - 3]):
+            sel = i == sidesel
+            label = f" {e['name']}/{e['room']}"
+            scr.addnstr(2 + i, 0, label.ljust(sw)[:sw], sw,
+                        curses.A_REVERSE if sel else curses.A_NORMAL)
+        for y in range(1, h - 1):
+            try:
+                scr.addch(y, sw, curses.ACS_VLINE)
+            except curses.error:
+                pass
+        # conversation
+        cx, cw = sw + 2, w - sw - 2
+        rows = []
+        for m in msgs:
+            mine = m.get("sender") == _ME
+            who = "you" if mine else str(m.get("sender"))
+            wrapped = textwrap.wrap(str(m.get("text", "")), max(8, cw - 13)) or [""]
+            for j, seg in enumerate(wrapped):
+                head = f"{who + ':':<11}" if j == 0 else " " * 11
+                rows.append((head + " " + seg, mine))
+        for i, (line, mine) in enumerate(rows[-(h - 4):]):
+            scr.addnstr(2 + i, cx, line[:cw], cw,
+                        curses.color_pair(1) if mine else curses.A_NORMAL)
+        scr.addnstr(h - 1, cx, ("> " + inp).ljust(cw)[:cw], cw, curses.A_BOLD)
+        try:
+            scr.move(h - 1, min(cx + 2 + len(inp), w - 1))
+        except curses.error:
+            pass
+        scr.refresh()
 
     def act_deauth(self, scr, w: dict) -> None:
         name = w.get("name") or ""

@@ -996,6 +996,11 @@ button:hover{{background:#22b88f}}
         if not cap:
             return web.json_response({"error": "cap required"}, status=400)
         args = data.get("args") or {}
+        # Attribute chat/notify sent through the dashboard API. The band CLI sets
+        # its own sender (the client hostname); the MCP sets "MCP"; a bare web
+        # dashboard call falls back to "dashboard".
+        if cap in ("chat.send", "msg.send") and isinstance(args, dict):
+            args.setdefault("sender", "dashboard")
         target = data.get("worker_id") or data.get("target")
         # Refuse to drive a deauthed worker (its name may persist across restarts).
         if target:
