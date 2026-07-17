@@ -6,6 +6,7 @@ import sys
 
 
 SUBCOMMANDS = {
+    "band":     "Terminal control panel for the worker band (live view, run/manage caps)",
     "sessions": "Browse Claude Code session history",
     "history":  "Browse Claude Code session history",
     "tmux":     "Manage Claude Code sessions (spawn, attach, kill)",
@@ -31,6 +32,12 @@ def main() -> None:
         return
 
     # Lightweight subcommands — no heavy imports needed
+    if sys.argv[1] == "band":
+        from .cli.band_tui import main as band_main
+        sys.argv = [sys.argv[0]] + sys.argv[2:]
+        band_main()
+        return
+
     if sys.argv[1] in ("sessions", "history"):
         from .cli.cc_history import main as history_main
         sys.argv = [sys.argv[0]] + sys.argv[2:]

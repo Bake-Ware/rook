@@ -49,9 +49,18 @@ class Worker:
                  announce_interval: float = 30.0) -> None:
         self.transport = transport
         self.registry = CapabilityRegistry()
-        self.plugins: list[Plugin] = load_plugins(plugins_pkg, self.registry, enabled)
+        self.plugins_pkg = plugins_pkg
+        # Persisted runtime disables (via worker.plugin.disable) are honoured at
+        # boot so a disabled plugin is never loaded in the first place.
+        from .admin import load_disabled, WorkerAdmin
+        self.plugins: list[Plugin] = load_plugins(
+            plugins_pkg, self.registry, enabled, disabled=load_disabled())
         # Introspection: lets the dashboard build accurate call forms.
         self.registry.register("caps.describe", self._caps_describe)
+        # Runtime cap administration: worker.plugin.* + customcap.* + re-hydrate
+        # persisted custom command-caps (cmd.*).
+        self.admin = WorkerAdmin(self.registry, self.plugins, plugins_pkg)
+        self.admin.register_caps()
         self.worker_id = stable_worker_id()
         self.name = name or socket.gethostname()
         self._announce_interval = announce_interval

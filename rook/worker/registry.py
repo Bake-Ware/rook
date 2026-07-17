@@ -23,13 +23,18 @@ class CapabilityRegistry:
     def __init__(self) -> None:
         self._caps: dict[str, Handler] = {}
 
-    def register(self, dotpath: str, fn: Handler) -> None:
+    def register(self, dotpath: str, fn: Handler, replace: bool = False) -> None:
         if not dotpath:
             raise ValueError("capability dotpath cannot be empty")
-        if dotpath in self._caps:
+        if dotpath in self._caps and not replace:
             raise ValueError(f"capability already registered: {dotpath}")
         self._caps[dotpath] = fn
         log.debug("registered capability %s", dotpath)
+
+    def unregister(self, dotpath: str) -> bool:
+        """Drop a capability. Returns True if it was present. Used for runtime
+        plugin disable and custom-cap teardown."""
+        return self._caps.pop(dotpath, None) is not None
 
     def has(self, dotpath: str) -> bool:
         return dotpath in self._caps

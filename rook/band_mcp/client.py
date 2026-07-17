@@ -45,9 +45,9 @@ class WorkerEntry(dict):
 
 class BandClient:
     def __init__(self, psk: str, hub_host: str = "127.0.0.1",
-                 hub_port: int = 7474) -> None:
+                 hub_port: int = 7474, use_ws: bool = False) -> None:
         self.transport = TelestheteHubTransport(
-            psk=psk, hub_host=hub_host, hub_port=hub_port,
+            psk=psk, hub_host=hub_host, hub_port=hub_port, use_ws=use_ws,
         )
         self.workers: dict[str, WorkerEntry] = {}
         self._pending: dict[str, asyncio.Future] = {}
@@ -177,7 +177,7 @@ class MultiBandClient:
     """
 
     def __init__(self, psks, hub_host: str = "127.0.0.1",
-                 hub_port: int = 7474) -> None:
+                 hub_port: int = 7474, use_ws: bool = False) -> None:
         deduped: list[str] = []
         for p in psks:
             p = (p or "").strip()
@@ -186,7 +186,7 @@ class MultiBandClient:
         if not deduped:
             raise ValueError("MultiBandClient requires at least one PSK")
         self._clients = [
-            BandClient(psk=p, hub_host=hub_host, hub_port=hub_port)
+            BandClient(psk=p, hub_host=hub_host, hub_port=hub_port, use_ws=use_ws)
             for p in deduped
         ]
         self.hub_host = hub_host

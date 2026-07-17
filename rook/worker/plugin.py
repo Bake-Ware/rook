@@ -36,6 +36,7 @@ class Plugin:
     """
 
     NAMESPACE: str = ""
+    _module: str = ""   # source module stem; set by load_plugins / admin enable
 
     def __init__(self) -> None:
         if not self.NAMESPACE:
@@ -70,17 +71,24 @@ class Plugin:
 
 
 def load_plugins(package_name: str, registry: CapabilityRegistry,
-                 enabled: list[str] | None = None) -> list[Plugin]:
+                 enabled: list[str] | None = None,
+                 disabled: set[str] | None = None) -> list[Plugin]:
     """Import every module under `package_name`, instantiate any `Plugin` it
     exports as ``PLUGIN`` (class or instance), register its capabilities, and
     return the live plugin instances.
 
     `enabled` filters by plugin module name (the file's stem). `None` = all.
+    `disabled` is a set of module names to skip (persisted runtime disables);
+    it wins over `enabled`.
     """
     pkg = importlib.import_module(package_name)
+    disabled = disabled or set()
     instances: list[Plugin] = []
     for info in pkgutil.iter_modules(pkg.__path__):
         if info.name.startswith("_"):
+            continue
+        if info.name in disabled:
+            log.info("%s.%s: disabled (persisted), skipping", package_name, info.name)
             continue
         if enabled is not None and info.name not in enabled:
             continue
@@ -107,6 +115,7 @@ def load_plugins(package_name: str, registry: CapabilityRegistry,
         except Exception:
             log.exception("%s.%s: available() raised, skipping", package_name, info.name)
             continue
+        plugin._module = info.name  # so runtime admin can map module -> plugin
         for dotpath, fn in plugin.caps().items():
             registry.register(dotpath, fn)
         instances.append(plugin)
