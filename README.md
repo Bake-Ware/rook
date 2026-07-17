@@ -53,6 +53,8 @@ Built-in plugins:
 | `kvm.* · bthid.* · serial.*` | ESP32 dongle: USB-HID, Bluetooth-HID, serial passthrough |
 | `deluge.*` | list / add / pause / resume / remove torrents; pull files over the band |
 | `chat.* · msg.*` | two-way chat and one-way desktop notifications |
+| `claude-history.*` | search / export local Claude Code sessions (where present) |
+| `hermes.*` | drive a co-located hermes agent — chat / run / skills / memory (on hosts that run one) |
 | `worker.*` | `restart`, `reconfigure`, signed `apply`/`deauth`, `hold`, runtime `plugin.enable/disable` |
 | `caps.describe` | introspect every cap's args (powers the call forms) |
 
