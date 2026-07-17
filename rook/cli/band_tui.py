@@ -131,6 +131,12 @@ class UI:
         self.schema_cache: dict[str, dict] = {}
         self.status = "connected"
         self.chats: list = []      # aggregated band chats, for the side panel
+        # detail-pane (cap tree) focus + navigation
+        self.focus = "list"        # "list" or "detail"
+        self.cap_sel = 0
+        self.cap_top = 0
+        self.cap_expanded: set[str] = set()
+        self._detail_wid = None    # reset tree state when the selected worker changes
 
     # -- data ----------------------------------------------------------------
 
@@ -221,7 +227,7 @@ class UI:
             if chats_h:
                 self._panel_chats(scr, top + box_h - chats_h, rx, chats_h, rw)
 
-        keys = ("↑↓ select · c call · e plugins · n cap · "
+        keys = ("↑↓ select · → caps · c call · e plugins · n cap · "
                 "t notify · m chat · x deauth · / filter · q quit")
         foot = f" filter: {self.filter}▏  {keys}" if self.filter else " " + keys
         self._put(scr, h - 1, 0, foot, curses.A_DIM)
@@ -249,18 +255,77 @@ class UI:
             line("⛔ DEAUTHED (banned)", curses.color_pair(3))
         line("plugins  " + " ".join(w.get("plugins") or []), curses.A_DIM)
         ln += 1
-        caps = sorted(w.get("caps") or [])
+        # capabilities tree — navigable when this pane is focused
+        focused = self.focus == "detail"
+        items = self._detail_items(w)
+        hint = "↑↓ · → expand/call · ← back" if focused else "→ to browse"
+        line(f"{len(w.get('caps') or [])} caps   {hint}", curses.A_BOLD | (curses.color_pair(4) if focused else 0))
+        avail = bottom - ln
+        if items and avail > 0:
+            self.cap_sel = max(0, min(self.cap_sel, len(items) - 1))
+            if self.cap_sel < self.cap_top:
+                self.cap_top = self.cap_sel
+            elif self.cap_sel >= self.cap_top + avail:
+                self.cap_top = self.cap_sel - avail + 1
+            for idx in range(self.cap_top, min(self.cap_top + avail, len(items))):
+                it = items[idx]
+                sel = focused and idx == self.cap_sel
+                if it[0] == "group":
+                    car = "▾" if it[1] in self.cap_expanded else "▸"
+                    txt = f"{car} {it[1]} ({len(it[2])})"
+                    self._put(scr, ln, ix, txt.ljust(iw) if sel else txt,
+                              curses.A_REVERSE if sel else curses.color_pair(4) | curses.A_BOLD)
+                else:
+                    sub = it[1].split(".", 1)[1] if "." in it[1] else it[1]
+                    self._put(scr, ln, ix, (f"    {sub}").ljust(iw) if sel else f"    {sub}",
+                              curses.A_REVERSE if sel else curses.A_DIM)
+                ln += 1
+
+    def _detail_items(self, w) -> list:
+        """Flat tree for the detail pane: ('group', prefix, [full caps]) plus,
+        for expanded prefixes, ('func', full_cap, prefix)."""
         groups: dict[str, list[str]] = {}
-        for c in caps:
-            p, _, rest = c.partition(".")
-            groups.setdefault(p, []).append(rest or "*")
-        line(f"{len(caps)} capabilities", curses.A_BOLD)
-        for g, subs in groups.items():
-            if ln >= bottom:
-                break
-            self._put(scr, ln, ix, g, curses.color_pair(4) | curses.A_BOLD)
-            self._put(scr, ln, ix + len(g) + 1, " ".join(subs)[:iw - len(g) - 1], curses.A_DIM)
-            ln += 1
+        for c in sorted(w.get("caps") or []):
+            p, _, _r = c.partition(".")
+            groups.setdefault(p, []).append(c)
+        items: list = []
+        for p, caps in groups.items():
+            items.append(("group", p, caps))
+            if p in self.cap_expanded:
+                for full in caps:
+                    items.append(("func", full, p))
+        return items
+
+    def _detail_keys(self, scr, w, k) -> None:
+        """Navigate the cap tree in the focused detail pane."""
+        items = self._detail_items(w)
+        if not items:
+            self.focus = "list"
+            return
+        self.cap_sel = max(0, min(self.cap_sel, len(items) - 1))
+        it = items[self.cap_sel]
+        if k == 27:                                    # esc → back to list
+            self.focus = "list"
+        elif k in (curses.KEY_DOWN, ord("j")):
+            self.cap_sel = min(len(items) - 1, self.cap_sel + 1)
+        elif k in (curses.KEY_UP, ord("k")):
+            self.cap_sel = max(0, self.cap_sel - 1)
+        elif k in (curses.KEY_LEFT, ord("h")):
+            if it[0] == "func":                        # collapse group, select it
+                self.cap_expanded.discard(it[2])
+                ni = self._detail_items(w)
+                self.cap_sel = next((i for i, x in enumerate(ni)
+                                     if x[0] == "group" and x[1] == it[2]), 0)
+            elif it[1] in self.cap_expanded:
+                self.cap_expanded.discard(it[1])
+            else:
+                self.focus = "list"                    # already collapsed → exit
+        elif k in (curses.KEY_RIGHT, curses.KEY_ENTER, 10, 13, ord("l")):
+            if it[0] == "group":
+                self.cap_expanded.add(it[1])
+                self.cap_sel += 1                      # step into first function
+            else:
+                self._run_cap(scr, w, it[1])           # → call the function
 
     def _panel_chats(self, scr, y, x, height, width) -> None:
         self._box(scr, y, x, height, width, f"chats ({len(self.chats)})")
@@ -394,9 +459,12 @@ class UI:
     def act_call(self, scr, w: dict) -> None:
         caps = sorted(w.get("caps") or [])
         idx = self.picker(scr, f"run cap on {w.get('name')}", caps)
-        if idx is None:
-            return
-        cap = caps[idx]
+        if idx is not None:
+            self._run_cap(scr, w, caps[idx])
+
+    def _run_cap(self, scr, w: dict, cap: str) -> None:
+        """Prompt for a cap's args (from its schema), confirm if dangerous, call
+        it, and show the reply. Shared by the 'c' picker and the detail tree."""
         schema = self.schema(w).get(cap, {})
         args: dict = {}
         for p in schema.get("params", []):
@@ -652,13 +720,26 @@ class UI:
                 return
             if k == -1:
                 continue
-            w = self.cur()
-            if k in (ord("q"),):
+            if k == ord("q"):
                 return
-            elif k in (curses.KEY_UP, ord("k")):
+            w = self.cur()
+            # reset the cap tree when the selected worker changes
+            wid = w["worker_id"] if w else None
+            if wid != self._detail_wid:
+                self._detail_wid = wid
+                self.cap_sel = self.cap_top = 0
+                self.cap_expanded = set()
+            # detail pane owns the keys while focused
+            if self.focus == "detail" and w:
+                self._detail_keys(scr, w, k)
+                continue
+            if k in (curses.KEY_UP, ord("k")):
                 self.sel = max(0, self.sel - 1)
             elif k in (curses.KEY_DOWN, ord("j")):
                 self.sel = min(len(self.rows) - 1, self.sel + 1)
+            elif k in (curses.KEY_RIGHT, ord("l")) and w and (w.get("caps")):
+                self.focus = "detail"                  # → move focus to detail pane
+                self.cap_sel = self.cap_top = 0
             elif k in (curses.KEY_ENTER, 10, 13) and w:
                 self.act_call(scr, w)
             elif k == ord("r"):
