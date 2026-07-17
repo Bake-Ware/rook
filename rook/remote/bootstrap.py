@@ -291,7 +291,8 @@ mkdir -p "$HOME/.rook-band-worker"
 curl -fsSL https://{domain}/band-worker.pyz -o "$PYZ"
 chmod +x "$PYZ"
 
-WORKER_NAME=$(hostname)
+WORKER_NAME="$(hostname 2>/dev/null || uname -n 2>/dev/null || cat /etc/hostname 2>/dev/null)"
+[ -z "$WORKER_NAME" ] && WORKER_NAME="${{HOSTNAME:-rook-worker}}"
 if [ "$IS_TERMUX" = "1" ]; then
     # Termux hostname is always "localhost" — use the device model instead.
     MODEL=$(getprop ro.product.model 2>/dev/null | tr ' ' '-')
