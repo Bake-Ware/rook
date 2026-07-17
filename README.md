@@ -1,10 +1,8 @@
 # Rook
 
-**A self-updating mesh of worker agents you drive from a web dashboard, a terminal control panel, or an MCP — over an encrypted peer-to-peer band.**
+**A self-updating mesh of worker agents you drive from a web dashboard, a terminal control panel, or via MCP — over an encrypted peer-to-peer band.**
 
-Rook turns any set of machines — Linux, Windows, macOS, Android/Termux, even an ESP32 dongle — into a **band**: a fleet of lightweight workers that expose *capabilities* (run a shell command, grab a screenshot, drive HID/KVM, manage torrents, chat, …) over an encrypted mesh. You control the whole fleet from a browser, a terminal, or from Claude via MCP — and the fleet **updates itself over the air**.
-
-It grew out of a personal AI agent (Discord bot + memory kernel, still here — see [The agent](#the-agent)), but the center of gravity today is the band and its control planes.
+Rook turns any set of machines — Linux, Windows, Android/Termux, even an ESP32 dongle — into a **band**: a fleet of lightweight workers that expose *capabilities* (run a shell command, grab a screenshot, drive HID/KVM, manage torrents, chat, …) over an encrypted mesh. You control the whole fleet from a browser, a terminal, or via MCP — and the fleet **updates itself over the air**.
 
 ![Rook dashboard](docs/img/dashboard.png)
 
@@ -18,7 +16,6 @@ It grew out of a personal AI agent (Discord bot + memory kernel, still here — 
 - [OTA self-update](#ota-self-update)
 - [Security](#security)
 - [Install](#install)
-- [The agent](#the-agent)
 - [Repository layout](#repository-layout)
 
 ---
@@ -33,11 +30,11 @@ A **band** is a group of workers that share one pre-shared key (PSK). Everything
 - **Stable identity.** Each worker persists a `worker_id` across restarts, so it keeps one row in the dashboard and can be durably addressed.
 
 ```
-  browser ─┐                              ┌─ worker: cachyrig  (shell, screenshot, hid, hermes, …)
-  rook TUI ─┼─ dashboard / MCP ─ hub ─────┼─ worker: sparky    (deluge, screenshot, hid, …)
-  Claude ──┘        (relay)               ├─ worker: soundwave  ┐ Proxmox host, one worker per LXC
-                                          ├─ worker: pihole     ┤ (pihole / neo4j / postgres / …)
-                                          └─ worker: rookdongle  ESP32 firmware (KVM/HID over BLE)
+  browser  ─┐                             ┌─ worker: gateway   (shell · file · info)
+  rook band ─┼─ control plane ─ hub ──────┼─ worker: media     (deluge · screenshot · hid)
+  MCP       ─┘   (relay, no keys)         ├─ worker: db-host    ┐ Proxmox host, one worker
+                                          ├─ worker: db-01      ┤ per LXC (db · cache · dns)
+                                          └─ worker: kvm-dongle  ESP32 firmware (HID/KVM)
 ```
 
 ## Capabilities
@@ -56,8 +53,6 @@ Built-in plugins:
 | `kvm.* · bthid.* · serial.*` | ESP32 dongle: USB-HID, Bluetooth-HID, serial passthrough |
 | `deluge.*` | list / add / pause / resume / remove torrents; pull files over the band |
 | `chat.* · msg.*` | two-way chat and one-way desktop notifications |
-| `claude-history.*` | search / export local Claude Code sessions |
-| `hermes.*` | drive a co-located [hermes](#the-agent) agent (chat, run, skills, memory) |
 | `worker.*` | `restart`, `reconfigure`, signed `apply`/`deauth`, `hold`, runtime `plugin.enable/disable` |
 | `caps.describe` | introspect every cap's args (powers the call forms) |
 
@@ -99,7 +94,7 @@ Two flavors, both worker-gated:
 
 ### MCP
 
-Expose the band to Claude as tools:
+Expose the band as MCP tools:
 
 ```
 rook_workers()                       # live roster
@@ -127,7 +122,7 @@ Ship a build → commit → rebuild the signed bundle → the running push loop 
 
 ## Install
 
-**A worker** (Linux / macOS / Termux):
+**A worker** (Linux / Termux):
 
 ```sh
 curl -fsSL https://<your-host>/worker | bash
@@ -135,34 +130,16 @@ curl -fsSL https://<your-host>/worker | bash
 
 Windows (PowerShell) and a native Android APK are served from the same host (`/worker.py`, `/apk`). The **`rook band` TUI** installs with `curl -fsSL https://<your-host>/rook | bash` (see above).
 
-## The agent
-
-Rook's original half is a personal AI agent, still included and usable:
-
-- **Multi-model routing** between local LLMs (LM Studio) and Anthropic (Claude), switchable in natural language, with OAuth for Claude Code subscriptions.
-- **3-tier memory kernel** — volatile / working / concrete fact tiers with automatic extraction, promotion, and persistence.
-- **Discord bot** — a full tool-calling agent with editable status messages and cross-channel awareness.
-- **Sub-agents, persistent terminals, a cron/one-shot job scheduler, and a knowledge graph** (KuzuDB alongside SQLite).
-
-```sh
-git clone https://github.com/Bake-Ware/rook.git && cd rook && pip install -e .
-python -m rook          # Discord mode
-python -m rook --cli    # local CLI
-```
-
-Agent workers expose themselves to the band via the `hermes.*` capabilities, so you can chat with or task an agent from the dashboard, the TUI, or MCP.
-
 ## Repository layout
 
 ```
 rook/
   worker/          band worker: core, transports (telesthete), plugins, OTA self-update
     plugins/       shell, file, info, screenshot, hid, pikvm, deluge, chat, msg, …
-  band_mcp/        band client + the R00K MCP server (rook_workers/caps/call)
+  band_mcp/        band client + the MCP server (rook_workers/caps/call)
   remote/          installer / controller (dashboard API, OTA build + push, deauth)
   web/             the dashboard (index.html)
   cli/             band_tui.py — the `rook band` terminal control panel
-  core/ modules/ interfaces/   the agent (models, memory, Discord, tools)
 firmware/          ESP32 T-Dongle-S3 firmware (telesthete over UDP, BLE/USB HID)
 docs/img/          screenshots
 ```
