@@ -85,10 +85,10 @@ A btop-inspired, zero-dependency curses TUI (pure stdlib). Framed panels: a work
 
 ![rook band TUI](docs/img/tui.png)
 
-Install it as a single self-contained command (it just needs `python3`):
+Install it (see [Install](#install)) — it only needs `python3`:
 
 ```sh
-curl -fsSL https://<your-host>/rook | bash
+curl -fsSL https://<your-host>/install | bash -s -- cli
 # then just: rook
 ```
 
@@ -131,13 +131,19 @@ Ship a build → commit → rebuild the signed bundle → the running push loop 
 
 ## Install
 
-**A worker** (Linux / Termux):
+One installer, selectable target — a **worker** (a controlled node), the **`rook band` CLI** (the controller), or **both**:
 
 ```sh
-curl -fsSL https://<your-host>/worker | bash
+# interactive — asks what to install
+curl -fsSL https://<your-host>/install | bash
+
+# unattended — pass the target (worker | cli | both)
+curl -fsSL https://<your-host>/install | bash -s -- worker
+curl -fsSL https://<your-host>/install | bash -s -- cli
+curl -fsSL https://<your-host>/install | bash -s -- both
 ```
 
-Windows (PowerShell) and a native Android APK are served from the same host (`/worker.py`, `/apk`). The **`rook band` TUI** installs with `curl -fsSL https://<your-host>/rook | bash` (see above).
+The **worker** installs as a background service and joins the band. The **CLI** needs only `python3` and installs the single `rook` command — for a fully unattended CLI install set `ROOK_WEB_PASS` (and optionally `ROOK_WEB_USER`) so it doesn't prompt. Windows (PowerShell) and a native Android worker APK are served from the same host (`/worker.py`, `/apk`).
 
 ## Repository layout
 

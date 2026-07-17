@@ -370,51 +370,80 @@ setup_hid_linux
 '''
 
 
-# `curl -fsSL https://<host>/rook | bash` — installs the band TUI as `rook`.
-# stdin is the curl pipe, so all interactive prompts read from /dev/tty.
-_ROOK_INSTALLER = r'''#!/usr/bin/env bash
+# `curl -fsSL https://<host>/install | bash` — one installer, selectable target.
+#   interactive : prompts worker / cli / both
+#   unattended  : `... | bash -s -- worker|cli|both`  (or ROOK_INSTALL=…)
+# stdin is the curl pipe, so interactive prompts read from /dev/tty.
+_INSTALL_SCRIPT = r'''#!/usr/bin/env bash
 set -euo pipefail
 BASE="${ROOK_BASE:-__BASE__}"
 DEST="${ROOK_BIN:-$HOME/.local/bin}"
 CONF="$HOME/.config/rook/band.conf"
-PY="$(command -v python3 || command -v python || true)"
-[ -z "$PY" ] && { echo "[rook] python3 is required" >&2; exit 1; }
-mkdir -p "$DEST" "$(dirname "$CONF")"
-echo "[rook] installing TUI -> $DEST/rook"
-if ! curl -fsSL "$BASE/rook.py" -o "$DEST/rook"; then
-  echo "[rook] ERROR: could not download $BASE/rook.py" >&2
-  exit 1
-fi
-if ! head -1 "$DEST/rook" | grep -q python; then
-  echo "[rook] ERROR: downloaded file is not the TUI (got):" >&2
-  head -3 "$DEST/rook" >&2
-  rm -f "$DEST/rook"
-  exit 1
-fi
-chmod +x "$DEST/rook"
-echo "[rook] installed $(wc -l < "$DEST/rook") lines"
-if grep -q '^pass=' "$CONF" 2>/dev/null; then
-  echo "[rook] using saved login ($CONF)"      # re-install: keep existing creds
-elif [ -r /dev/tty ]; then
-  WU="${ROOK_WEB_USER:-bake}"
-  printf "[rook] dashboard password (user %s): " "$WU" > /dev/tty
-  read -rs WP < /dev/tty || true; printf "\n" > /dev/tty
-  if [ -n "${WP:-}" ]; then
-    ( umask 077; printf '# rook band connection (chmod 600)\nurl=%s\nuser=%s\npass=%s\n' "$BASE" "$WU" "$WP" > "$CONF" )
-    chmod 600 "$CONF"
-    echo "[rook] saved login -> $CONF"
+
+TARGET="${1:-${ROOK_INSTALL:-}}"
+if [ -z "$TARGET" ]; then
+  if [ -r /dev/tty ]; then
+    {
+      echo "[rook] what do you want to install?"
+      echo "  1) worker  — make this machine a band node (controlled remotely)"
+      echo "  2) cli     — the 'rook band' terminal control panel (drive the fleet)"
+      echo "  3) both"
+      printf "[rook] choice [1/2/3]: "
+    } > /dev/tty
+    read -r c < /dev/tty || true
+    case "$c" in 1) TARGET=worker;; 3) TARGET=both;; *) TARGET=cli;; esac
+  else
+    TARGET=cli
   fi
 fi
-case ":$PATH:" in
-  *":$DEST:"*) ;;
-  *) echo "[rook] NOTE: $DEST is not on your PATH — add it (bash/zsh):";
-     echo "        echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.profile";
-     echo "        (fish: fish_add_path ~/.local/bin)" ;;
+case "$TARGET" in tui|controller|dashboard) TARGET=cli;; node|agent) TARGET=worker;; esac
+
+install_worker() {
+  echo "[rook] installing band worker…"
+  curl -fsSL "$BASE/worker" | bash
+}
+
+install_cli() {
+  PY="$(command -v python3 || command -v python || true)"
+  [ -z "$PY" ] && { echo "[rook] python3 is required for the CLI" >&2; return 1; }
+  mkdir -p "$DEST" "$(dirname "$CONF")"
+  echo "[rook] installing CLI -> $DEST/rook"
+  if ! curl -fsSL "$BASE/rook.py" -o "$DEST/rook"; then
+    echo "[rook] ERROR: could not download $BASE/rook.py" >&2; return 1; fi
+  if ! head -1 "$DEST/rook" | grep -q python; then
+    echo "[rook] ERROR: downloaded file is not the CLI" >&2; rm -f "$DEST/rook"; return 1; fi
+  chmod +x "$DEST/rook"
+  if grep -q '^pass=' "$CONF" 2>/dev/null; then
+    echo "[rook] using saved login ($CONF)"
+  elif [ -n "${ROOK_WEB_PASS:-}" ]; then
+    ( umask 077; printf '# rook band connection (chmod 600)\nurl=%s\nuser=%s\npass=%s\n' "$BASE" "${ROOK_WEB_USER:-bake}" "$ROOK_WEB_PASS" > "$CONF" )
+    chmod 600 "$CONF"; echo "[rook] saved login (from ROOK_WEB_PASS)"
+  elif [ -r /dev/tty ]; then
+    WU="${ROOK_WEB_USER:-bake}"
+    printf "[rook] dashboard password (user %s): " "$WU" > /dev/tty
+    read -rs WP < /dev/tty || true; printf "\n" > /dev/tty
+    if [ -n "${WP:-}" ]; then
+      ( umask 077; printf '# rook band connection (chmod 600)\nurl=%s\nuser=%s\npass=%s\n' "$BASE" "$WU" "$WP" > "$CONF" )
+      chmod 600 "$CONF"; echo "[rook] saved login -> $CONF"
+    fi
+  else
+    echo "[rook] no credentials set — run 'rook' later to configure"
+  fi
+  case ":$PATH:" in *":$DEST:"*) ;; *)
+    echo "[rook] NOTE: $DEST is not on your PATH — add it:";
+    echo "        echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.profile   (fish: fish_add_path ~/.local/bin)" ;;
+  esac
+  hash -r 2>/dev/null || true
+}
+
+case "$TARGET" in
+  worker) install_worker ;;
+  cli)    install_cli ;;
+  both)   install_worker; install_cli ;;
+  *) echo "[rook] unknown target '$TARGET' — use: worker | cli | both" >&2; exit 2 ;;
 esac
-# make a freshly-added command visible in the current shell
-hash -r 2>/dev/null || true
-echo "[rook] done — launching (next time just run: rook)"
-if [ -r /dev/tty ]; then exec "$DEST/rook" < /dev/tty; else echo "[rook] run: rook"; fi
+echo "[rook] done."
+[ "$TARGET" != worker ] && [ -x "$DEST/rook" ] && echo "[rook] run:  rook"
 '''
 
 
@@ -477,8 +506,9 @@ class CombinedServer:
         self._app.router.add_get("/band-worker.pyz", self._band_worker_pyz)
         self._app.router.add_get("/band-worker.json", self._band_worker_manifest)
         self._app.router.add_get("/apk", self._worker_apk)
-        self._app.router.add_get("/rook", self._band_installer)  # curl | bash installer for the TUI
-        self._app.router.add_get("/rook.py", self._band_cli)     # the standalone TUI script itself
+        self._app.router.add_get("/install", self._installer)    # unified installer (worker | cli | both)
+        self._app.router.add_get("/rook", self._installer)       # alias (back-compat)
+        self._app.router.add_get("/rook.py", self._band_cli)     # the standalone CLI script itself
         self._app.router.add_get("/api/bands", self._api_bands)
         self._app.router.add_post("/api/bands", self._api_add_band)
         self._app.router.add_delete("/api/bands/{id}", self._api_remove_band)
@@ -532,7 +562,7 @@ class CombinedServer:
 
         # Always public: worker bootstrap/artifacts, health, websockets.
         exempt = ("/ws", "/health", "/worker", "/worker.py", "/band-worker.pyz",
-                  "/band-worker.json", "/apk", "/rook", "/rook.py")
+                  "/band-worker.json", "/apk", "/install", "/rook", "/rook.py")
         is_exempt = request.path == "/ws/ui" or any(
             request.path == p or request.path.startswith(p + "/") for p in exempt)
 
@@ -1152,12 +1182,11 @@ button:hover{{background:#22b88f}}
                             headers={"Content-Disposition": 'inline; filename="rook"',
                                      "Cache-Control": "no-store"})
 
-    async def _band_installer(self, request: web.Request) -> web.Response:
-        """`curl -fsSL https://<host>/rook | bash` — install the TUI as `rook`,
-        ask for the dashboard login (from the terminal, since stdin is the pipe),
-        save it, and launch."""
+    async def _installer(self, request: web.Request) -> web.Response:
+        """`curl -fsSL https://<host>/install | bash` — one installer, selectable
+        target (worker | cli | both), interactive or `bash -s -- <target>`."""
         base = f"https://{self.domain}"
-        script = _ROOK_INSTALLER.replace("__BASE__", base)
+        script = _INSTALL_SCRIPT.replace("__BASE__", base)
         return web.Response(text=script, content_type="text/x-shellscript",
                             headers={"Content-Disposition": 'inline; filename="rook-install.sh"',
                                      "Cache-Control": "no-store"})
