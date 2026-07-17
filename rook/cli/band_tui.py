@@ -131,6 +131,7 @@ class UI:
         self.filter = ""
         self.schema_cache: dict[str, dict] = {}
         self.status = "connected"
+        self.chats: list = []      # aggregated band chats, for the side panel
 
     # -- data ----------------------------------------------------------------
 
@@ -155,36 +156,89 @@ class UI:
 
     # -- drawing -------------------------------------------------------------
 
+    # -- framed (btop-style) rendering --------------------------------------
+
+    def _put(self, scr, y, x, text, attr=0) -> None:
+        """Guarded write — clamps to width and never touches the last cell
+        (which raises curses.error and would crash the whole TUI)."""
+        h, w = scr.getmaxyx()
+        n = w - 1 - x
+        if y < 0 or y >= h or x < 0 or n <= 0:
+            return
+        try:
+            scr.addnstr(y, x, text[:n], n, attr)
+        except curses.error:
+            pass
+
+    def _box(self, scr, y, x, height, width, title="") -> None:
+        if height < 2 or width < 2:
+            return
+        c = curses.color_pair(4)     # hermes-cyan border
+        self._put(scr, y, x, "╭" + "─" * (width - 2) + "╮", c)
+        for i in range(1, height - 1):
+            self._put(scr, y + i, x, "│", c)
+            self._put(scr, y + i, x + width - 1, "│", c)
+        self._put(scr, y + height - 1, x, "╰" + "─" * (width - 2) + "╯", c)
+        if title:
+            self._put(scr, y, x + 2, f" {title} ", c | curses.A_BOLD)
+
     def draw(self, scr) -> None:
         scr.erase()
         h, w = scr.getmaxyx()
+        if h < 6 or w < 34:
+            self._put(scr, 0, 0, "terminal too small", curses.A_BOLD)
+            scr.refresh()
+            return
         online = sum(1 for r in self.rows if r.get("age", 999) < 90)
-        head = f" ROOK BAND · {self.hub_label} · {len(self.rows)} workers · {online} online"
-        keys = "[↑↓]sel [enter]expand [c]all [e]plugins [n]ewcap [t]notify [m]chat [x]deauth [/]filter [q]uit "
-        scr.attron(curses.A_REVERSE)
-        scr.addnstr(0, 0, head.ljust(w), w)
-        scr.attroff(curses.A_REVERSE)
-        scr.addnstr(h - 1, 0, keys[:w - 1].ljust(w - 1), w - 1, curses.A_DIM)
-        if self.filter:
-            scr.addnstr(h - 1, 0, f" filter: {self.filter}▏".ljust(w - 1), w - 1)
+        gold, cyan = curses.color_pair(2), curses.color_pair(4)
+        # header / brand (hermes flair)
+        self._put(scr, 0, 0, " ☤ ROOK BAND ", cyan | curses.A_BOLD | curses.A_REVERSE)
+        self._put(scr, 0, 14, f"hermes · {self.hub_label}", gold)
+        right = (self.status if self.status and self.status != "connected"
+                 else f"{len(self.rows)}w · {online} online")
+        self._put(scr, 0, w - len(right) - 1, right, curses.A_BOLD)
 
-        # Build a flat display list: worker rows, with cap lines when expanded.
-        y = 2
+        show_chats = w >= 94 and bool(self.chats)
+        side_w = 34 if show_chats else 0
+        main_w = w - side_w
+        top, box_h = 1, h - 2
+
+        # workers panel
+        self._box(scr, top, 0, box_h, main_w, f"workers ({len(self.rows)})")
+        inner_x, inner_w, inner_h = 2, main_w - 4, box_h - 2
         lines = self._flatten()
-        # keep selection visible
         sel_line = next((i for i, ln in enumerate(lines)
                          if ln[0] == "w" and ln[2] == self.sel), 0)
-        vis = h - 3
         if sel_line < self.top:
             self.top = sel_line
-        elif sel_line >= self.top + vis:
-            self.top = sel_line - vis + 1
-        for ln in lines[self.top:self.top + vis]:
-            self._draw_line(scr, y, w, ln)
+        elif sel_line >= self.top + inner_h:
+            self.top = sel_line - inner_h + 1
+        y = top + 1
+        for ln in lines[self.top:self.top + inner_h]:
+            self._draw_line(scr, y, inner_x, inner_w, ln)
             y += 1
-        if self.status:
-            scr.addnstr(h - 2, 0, (" " + self.status)[:w - 1].ljust(w - 1), w - 1,
-                        curses.A_BOLD)
+
+        # chats panel — two lines per chat: title, then a dim preview
+        if show_chats:
+            self._box(scr, top, main_w, box_h, side_w, f"chats ({len(self.chats)})")
+            cx, cw = main_w + 2, side_w - 4
+            cy = top + 1
+            for ch in self.chats:
+                if cy >= top + 1 + inner_h:
+                    break
+                self._put(scr, cy, cx, f"{ch['name']}/{ch['room']}"[:cw], curses.A_BOLD)
+                cy += 1
+                if cy < top + 1 + inner_h:
+                    who = ch.get("last_sender") or ""
+                    prev = f"{who}: {ch.get('last_text','')}" if who else str(ch.get("last_text", ""))
+                    self._put(scr, cy, cx, "  " + prev[:cw - 2], curses.A_DIM)
+                    cy += 1
+
+        # footer
+        keys = ("↑↓ sel · enter expand · c call · e plugins · n cap · "
+                "t notify · m chat · x deauth · / filter · q quit")
+        foot = f" filter: {self.filter}▏  {keys}" if self.filter else " " + keys
+        self._put(scr, h - 1, 0, foot, curses.A_DIM)
         scr.refresh()
 
     def _flatten(self):
@@ -201,25 +255,36 @@ class UI:
                     out.append(("c", f"{g}: " + "  ".join(subs), i))
         return out
 
-    def _draw_line(self, scr, y, w, ln) -> None:
+    def _draw_line(self, scr, y, x0, width, ln) -> None:
         kind = ln[0]
-        if kind == "c":
-            scr.addnstr(y, 4, ln[1][:w - 5], w - 5, curses.A_DIM)
+        if kind == "c":                       # expanded cap group line
+            self._put(scr, y, x0 + 2, ln[1][:width - 2], curses.A_DIM)
             return
         r = ln[1]
         i = ln[2]
         age = r.get("age", 999)
         dot = "●" if age < 90 else "○"
         col = curses.color_pair(1 if age < 20 else 2 if age < 55 else 3)
-        name = (r.get("name") or r["worker_id"])[:18]
-        ver = ("v" + str(r.get("version")))[:12] if r.get("version") else "—"
+        name = (r.get("name") or r["worker_id"])[:16]
+        ver = ("v" + str(r.get("version")))[:11] if r.get("version") else "—"
         ncap = len(r.get("caps") or [])
-        banned = " BANNED" if r.get("banned") else ""
+        banned = "⛔" if r.get("banned") else ""
         car = "▾" if r["worker_id"] in self.expanded else "▸"
         bar = self._bar(age)
-        line = f" {car} {dot} {name:<18} {ver:<12} {ncap:>3} caps  {bar}{banned}"
-        attr = curses.A_REVERSE if i == self.sel else curses.A_NORMAL
-        scr.addnstr(y, 0, line[:w - 1].ljust(w - 1), w - 1, attr | (col if i != self.sel else 0))
+        plain = f"{car} {dot} {name:<16} {ver:<11} {ncap:>3}c  {bar} {banned}"
+        if i == self.sel:                     # selected: full-row highlight
+            self._put(scr, y, x0, plain.ljust(width), curses.A_REVERSE)
+            return
+        # unselected: colored segments (dot+bar = freshness, version = gold)
+        x = x0
+        self._put(scr, y, x, f"{car} ", curses.A_DIM); x += 2
+        self._put(scr, y, x, f"{dot} ", col); x += 2
+        self._put(scr, y, x, f"{name:<16} ", curses.A_BOLD); x += 17
+        self._put(scr, y, x, f"{ver:<11} ", curses.color_pair(2)); x += 12
+        self._put(scr, y, x, f"{ncap:>3}c  ", 0); x += 6
+        self._put(scr, y, x, bar, col); x += len(bar) + 1
+        if banned:
+            self._put(scr, y, x, "⛔", curses.color_pair(3))
 
     @staticmethod
     def _bar(age: float) -> str:
@@ -400,24 +465,30 @@ class UI:
         self._chat_ui(scr, w["worker_id"], w.get("name") or w["worker_id"], room)
         self.status = "connected"
 
-    def _chat_workers(self) -> list:
-        return [r for r in self.rows if "chat.rooms" in (r.get("caps") or [])]
-
-    def _chat_sidebar(self, active: tuple) -> list:
-        """Every chat on the band: chat.rooms across chat-capable workers."""
-        entries = []
-        for r in self._chat_workers():
-            res = self.band.call("chat.rooms", worker_id=r["worker_id"], timeout=8).get("result", {})
+    def _all_chats(self) -> list:
+        """Every chat on the band: chat.rooms across chat-capable workers,
+        newest-active first. Used by the main-view panel and the chat sidebar."""
+        out = []
+        for r in self.rows:
+            if "chat.rooms" not in (r.get("caps") or []):
+                continue
+            res = self.band.call("chat.rooms", worker_id=r["worker_id"], timeout=6).get("result", {})
             if not isinstance(res, dict):
                 continue
             for room in (res.get("rooms") or []):
-                entries.append({"wid": r["worker_id"], "name": r.get("name") or r["worker_id"],
-                                "room": room.get("room"), "last_ts": room.get("last_ts", 0) or 0,
-                                "last_text": room.get("last_text", "")})
+                out.append({"wid": r["worker_id"], "name": r.get("name") or r["worker_id"],
+                            "room": room.get("room"), "last_ts": room.get("last_ts", 0) or 0,
+                            "last_text": room.get("last_text", ""),
+                            "last_sender": room.get("last_sender")})
+        out.sort(key=lambda e: e["last_ts"], reverse=True)
+        return out
+
+    def _chat_sidebar(self, active: tuple) -> list:
+        entries = self._all_chats()
         if not any(e["wid"] == active[0] and e["room"] == active[2] for e in entries):
             entries.append({"wid": active[0], "name": active[1], "room": active[2],
-                            "last_ts": 0, "last_text": "(new)"})
-        entries.sort(key=lambda e: e["last_ts"], reverse=True)
+                            "last_ts": 0, "last_text": "(new)", "last_sender": None})
+            entries.sort(key=lambda e: e["last_ts"], reverse=True)
         return entries
 
     def _chat_ui(self, scr, awid: str, aname: str, aroom: str) -> None:
@@ -545,12 +616,17 @@ class UI:
         curses.init_pair(1, curses.COLOR_GREEN, -1)
         curses.init_pair(2, curses.COLOR_YELLOW, -1)
         curses.init_pair(3, curses.COLOR_RED, -1)
-        last = 0.0
+        curses.init_pair(4, curses.COLOR_CYAN, -1)     # hermes-cyan borders/brand
+        last = last_chat = 0.0
         while True:
             now = time.time()
             if now - last > 0.8:
                 self.refresh()
                 last = now
+            # refresh the chats panel less often, and only when it's shown
+            if now - last_chat > 5.0 and scr.getmaxyx()[1] >= 94:
+                self.chats = self._all_chats()
+                last_chat = now
             self.draw(scr)
             try:
                 k = scr.getch()
