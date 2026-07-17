@@ -403,9 +403,23 @@ install_worker() {
   curl -fsSL "$BASE/worker" | bash
 }
 
+ensure_python() {
+  command -v python3 >/dev/null 2>&1 && return 0
+  echo "[rook] python3 not found — installing…"
+  local SUDO=""; [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1 && SUDO="sudo"
+  if command -v apt-get >/dev/null 2>&1; then $SUDO apt-get update -qq && $SUDO apt-get install -y -qq python3 curl
+  elif command -v dnf >/dev/null 2>&1; then $SUDO dnf install -y python3 curl
+  elif command -v pacman >/dev/null 2>&1; then $SUDO pacman -Sy --noconfirm python curl
+  elif command -v apk >/dev/null 2>&1; then $SUDO apk add python3 curl
+  elif command -v zypper >/dev/null 2>&1; then $SUDO zypper -n install python3 curl
+  elif command -v brew >/dev/null 2>&1; then brew install python3
+  elif command -v pkg >/dev/null 2>&1; then pkg install -y python curl
+  else echo "[rook] ERROR: no supported package manager — install python3 manually and re-run" >&2; return 1; fi
+  command -v python3 >/dev/null 2>&1
+}
+
 install_cli() {
-  PY="$(command -v python3 || command -v python || true)"
-  [ -z "$PY" ] && { echo "[rook] python3 is required for the CLI" >&2; return 1; }
+  ensure_python || { echo "[rook] python3 is required for the CLI" >&2; return 1; }
   mkdir -p "$DEST" "$(dirname "$CONF")"
   echo "[rook] installing CLI -> $DEST/rook"
   if ! curl -fsSL "$BASE/rook.py" -o "$DEST/rook"; then
