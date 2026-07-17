@@ -383,7 +383,9 @@ mkdir -p "$DEST" "$(dirname "$CONF")"
 echo "[rook] installing TUI -> $DEST/rook"
 curl -fsSL "$BASE/rook.py" -o "$DEST/rook"
 chmod +x "$DEST/rook"
-if [ -r /dev/tty ]; then
+if grep -q '^pass=' "$CONF" 2>/dev/null; then
+  echo "[rook] using saved login ($CONF)"      # re-install: keep existing creds
+elif [ -r /dev/tty ]; then
   WU="${ROOK_WEB_USER:-bake}"
   printf "[rook] dashboard password (user %s): " "$WU" > /dev/tty
   read -rs WP < /dev/tty || true; printf "\n" > /dev/tty
