@@ -370,6 +370,41 @@ setup_hid_linux
 '''
 
 
+# `curl -fsSL https://<host>/rook | bash` — installs the band TUI as `rook`.
+# stdin is the curl pipe, so all interactive prompts read from /dev/tty.
+_ROOK_INSTALLER = r'''#!/usr/bin/env bash
+set -euo pipefail
+BASE="${ROOK_BASE:-__BASE__}"
+DEST="${ROOK_BIN:-$HOME/.local/bin}"
+CONF="$HOME/.config/rook/band.conf"
+PY="$(command -v python3 || command -v python || true)"
+[ -z "$PY" ] && { echo "[rook] python3 is required" >&2; exit 1; }
+mkdir -p "$DEST" "$(dirname "$CONF")"
+echo "[rook] installing TUI -> $DEST/rook"
+curl -fsSL "$BASE/rook.py" -o "$DEST/rook"
+chmod +x "$DEST/rook"
+if [ -r /dev/tty ]; then
+  DEFU="bake"
+  printf "[rook] dashboard user [%s]: " "$DEFU" > /dev/tty
+  read -r WU < /dev/tty || true; WU="${WU:-$DEFU}"
+  printf "[rook] dashboard password: " > /dev/tty
+  read -rs WP < /dev/tty || true; printf "\n" > /dev/tty
+  if [ -n "${WP:-}" ]; then
+    ( umask 077; printf '# rook band connection (chmod 600)\nurl=%s\nuser=%s\npass=%s\n' "$BASE" "$WU" "$WP" > "$CONF" )
+    chmod 600 "$CONF"
+    echo "[rook] saved login -> $CONF"
+  fi
+fi
+case ":$PATH:" in
+  *":$DEST:"*) ;;
+  *) echo "[rook] NOTE: $DEST is not on your PATH. Add it, e.g.:";
+     echo "        echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.zshrc" ;;
+esac
+echo "[rook] done — launching (next time just run: rook)"
+if [ -r /dev/tty ]; then exec "$DEST/rook" < /dev/tty; else echo "[rook] run: rook"; fi
+'''
+
+
 class CombinedServer:
     """Single-port server: HTTP for bootstrap + WebSocket for worker connections."""
 
@@ -429,7 +464,8 @@ class CombinedServer:
         self._app.router.add_get("/band-worker.pyz", self._band_worker_pyz)
         self._app.router.add_get("/band-worker.json", self._band_worker_manifest)
         self._app.router.add_get("/apk", self._worker_apk)
-        self._app.router.add_get("/rook", self._band_cli)        # the `rook band` TUI as a standalone script
+        self._app.router.add_get("/rook", self._band_installer)  # curl | bash installer for the TUI
+        self._app.router.add_get("/rook.py", self._band_cli)     # the standalone TUI script itself
         self._app.router.add_get("/api/bands", self._api_bands)
         self._app.router.add_post("/api/bands", self._api_add_band)
         self._app.router.add_delete("/api/bands/{id}", self._api_remove_band)
@@ -483,7 +519,7 @@ class CombinedServer:
 
         # Always public: worker bootstrap/artifacts, health, websockets.
         exempt = ("/ws", "/health", "/worker", "/worker.py", "/band-worker.pyz",
-                  "/band-worker.json", "/apk", "/rook")
+                  "/band-worker.json", "/apk", "/rook", "/rook.py")
         is_exempt = request.path == "/ws/ui" or any(
             request.path == p or request.path.startswith(p + "/") for p in exempt)
 
@@ -1085,11 +1121,8 @@ button:hover{{background:#22b88f}}
                                   "note": "revive a dormant node locally to rejoin"})
 
     async def _band_cli(self, request: web.Request) -> web.Response:
-        """Serve the `rook band` terminal control panel as a standalone script.
-
-        Install:  curl -fsSL https://<host>/rook -o ~/.local/bin/rook && chmod +x ~/.local/bin/rook
-        Then run: rook
-        """
+        """Serve the `rook band` terminal control panel as a standalone script
+        (the payload the /rook installer downloads)."""
         p = Path(__file__).resolve().parents[1] / "cli" / "band_tui.py"
         try:
             text = p.read_text()
@@ -1099,6 +1132,15 @@ button:hover{{background:#22b88f}}
             text = "#!/usr/bin/env python3\n" + text
         return web.Response(text=text, content_type="text/x-python",
                             headers={"Content-Disposition": 'inline; filename="rook"'})
+
+    async def _band_installer(self, request: web.Request) -> web.Response:
+        """`curl -fsSL https://<host>/rook | bash` — install the TUI as `rook`,
+        ask for the dashboard login (from the terminal, since stdin is the pipe),
+        save it, and launch."""
+        base = f"https://{self.domain}"
+        script = _ROOK_INSTALLER.replace("__BASE__", base)
+        return web.Response(text=script, content_type="text/x-shellscript",
+                            headers={"Content-Disposition": 'inline; filename="rook-install.sh"'})
 
     async def _health(self, request: web.Request) -> web.Response:
         return web.Response(text=json.dumps({
