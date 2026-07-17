@@ -362,24 +362,35 @@ class UI:
 
     def act_message(self, scr, w: dict) -> None:
         caps = w.get("caps") or []
-        chat = "hermes.chat" if "hermes.chat" in caps else (
-               "hermes.run" if "hermes.run" in caps else None)
-        if not chat:
-            self.popup(scr, "message", "this worker has no chat capability "
-                       "(needs hermes.chat / hermes.run)")
+        if not ({"hermes.chat", "hermes.run", "msg.send"} & set(caps)):
+            self.popup(scr, "message", "this worker has no messaging cap "
+                       "(needs msg.send or hermes.chat)")
             return
         msg = self.prompt(scr, f"message → {w.get('name')}")
         if not msg:
             return
         self.status = "sending…"
         self.draw(scr)
-        key = "message" if chat == "hermes.chat" else "prompt"
-        r = self.band.call(chat, worker_id=w["worker_id"],
-                           args={key: msg}, timeout=120)
-        res = r.get("result", r)
-        reply = (res.get("answer") or res.get("stdout") or _fmt(r)
-                 if isinstance(res, dict) else _fmt(r))
-        self.popup(scr, f"{w.get('name')} replies", str(reply))
+        if "hermes.chat" in caps or "hermes.run" in caps:
+            # conversational: send to the agent and show its reply
+            cap = "hermes.chat" if "hermes.chat" in caps else "hermes.run"
+            key = "message" if cap == "hermes.chat" else "prompt"
+            r = self.band.call(cap, worker_id=w["worker_id"], args={key: msg}, timeout=120)
+            res = r.get("result", r)
+            reply = (res.get("answer") or res.get("stdout") or _fmt(r)
+                     if isinstance(res, dict) else _fmt(r))
+            self.popup(scr, f"{w.get('name')} replies", str(reply))
+        else:
+            # plain text delivery (inbox + best-effort desktop notification)
+            r = self.band.call("msg.send", worker_id=w["worker_id"],
+                               args={"text": msg, "sender": "rook band"}, timeout=15)
+            res = r.get("result", r)
+            if isinstance(res, dict) and res.get("ok"):
+                note = "delivered ✓" + (" (desktop notification shown)"
+                                        if res.get("notified") else " (stored in inbox)")
+            else:
+                note = _fmt(r)
+            self.popup(scr, f"message → {w.get('name')}", str(note))
         self.status = "connected"
 
     def act_deauth(self, scr, w: dict) -> None:
