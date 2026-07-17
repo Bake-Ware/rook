@@ -156,7 +156,7 @@ class UI:
         h, w = scr.getmaxyx()
         online = sum(1 for r in self.rows if r.get("age", 999) < 90)
         head = f" ROOK BAND · {self.hub_label} · {len(self.rows)} workers · {online} online"
-        keys = "[↑↓]sel [enter]expand [c]all [e]plugins [n]ewcap [m]sg [x]deauth [/]filter [q]uit "
+        keys = "[↑↓]sel [enter]expand [c]all [e]plugins [n]ewcap [t]notify [m]chat [x]deauth [/]filter [q]uit "
         scr.attron(curses.A_REVERSE)
         scr.addnstr(0, 0, head.ljust(w), w)
         scr.attroff(curses.A_REVERSE)
@@ -364,38 +364,101 @@ class UI:
         self.schema_cache.pop(w["worker_id"], None)
         self.popup(scr, "customcap.add", _fmt(r))
 
-    def act_message(self, scr, w: dict) -> None:
-        caps = w.get("caps") or []
-        if not ({"hermes.chat", "hermes.run", "msg.send"} & set(caps)):
-            self.popup(scr, "message", "this worker has no messaging cap "
-                       "(needs msg.send or hermes.chat)")
+    def act_notify(self, scr, w: dict) -> None:
+        """One-way toast: pop a desktop notification on the worker (msg.send)."""
+        if "msg.send" not in (w.get("caps") or []):
+            self.popup(scr, "notify", "this worker has no msg.send (needs build ≥34)")
             return
-        msg = self.prompt(scr, f"message → {w.get('name')}")
+        msg = self.prompt(scr, f"notify → {w.get('name')}")
         if not msg:
             return
-        self.status = "sending…"
-        self.draw(scr)
-        if "hermes.chat" in caps or "hermes.run" in caps:
-            # conversational: send to the agent and show its reply
-            cap = "hermes.chat" if "hermes.chat" in caps else "hermes.run"
-            key = "message" if cap == "hermes.chat" else "prompt"
-            r = self.band.call(cap, worker_id=w["worker_id"], args={key: msg}, timeout=120)
-            res = r.get("result", r)
-            reply = (res.get("answer") or res.get("stdout") or _fmt(r)
-                     if isinstance(res, dict) else _fmt(r))
-            self.popup(scr, f"{w.get('name')} replies", str(reply))
+        r = self.band.call("msg.send", worker_id=w["worker_id"],
+                           args={"text": msg, "sender": "rook band"}, timeout=15)
+        res = r.get("result", r)
+        if isinstance(res, dict) and res.get("ok"):
+            note = "sent ✓" + (" (desktop notification shown)"
+                               if res.get("notified") else " (stored in inbox)")
         else:
-            # plain text delivery (inbox + best-effort desktop notification)
-            r = self.band.call("msg.send", worker_id=w["worker_id"],
-                               args={"text": msg, "sender": "rook band"}, timeout=15)
-            res = r.get("result", r)
-            if isinstance(res, dict) and res.get("ok"):
-                note = "delivered ✓" + (" (desktop notification shown)"
-                                        if res.get("notified") else " (stored in inbox)")
-            else:
-                note = _fmt(r)
-            self.popup(scr, f"message → {w.get('name')}", str(note))
+            note = _fmt(r)
+        self.popup(scr, f"notify → {w.get('name')}", str(note))
+
+    def act_chat(self, scr, w: dict) -> None:
+        """Two-way chat: pop a window on the worker and open a chat pane here."""
+        if "chat.send" not in (w.get("caps") or []):
+            self.popup(scr, "chat", "this worker has no chat.* (needs build ≥35)")
+            return
+        room = "op" + str(int(time.time()))
+        self.status = "opening chat…"
+        self.draw(scr)
+        o = self.band.call("chat.open", worker_id=w["worker_id"],
+                           args={"room": room, "me": w.get("name")}, timeout=20)
+        ores = o.get("result", o)
+        spawned = bool(isinstance(ores, dict) and ores.get("spawned"))
+        self._chat_pane(scr, w, room, spawned)
         self.status = "connected"
+
+    def _chat_pane(self, scr, w: dict, room: str, spawned: bool) -> None:
+        h, wd = scr.getmaxyx()
+        win = curses.newwin(h - 2, wd - 2, 1, 1)
+        win.keypad(True)
+        win.timeout(200)
+        msgs: list[tuple] = []
+        last = 0.0
+        inp = ""
+        hint = (f"↳ chat window opened on {w.get('name')}" if spawned
+                else f"no window on {w.get('name')} (no display) — they read via inbox")
+
+        def redraw():
+            win.erase()
+            win.box()
+            win.addnstr(0, 2, f" chat · {w.get('name')} · esc to leave ", wd - 6, curses.A_BOLD)
+            area = (h - 2) - 4
+            y = 1
+            for snd, txt in msgs[-area:]:
+                me = snd == "rook band"
+                line = f"{'you' if me else snd}: {txt}"
+                win.addnstr(y, 2, line[:wd - 5], wd - 5,
+                            curses.color_pair(1) if me else curses.A_NORMAL)
+                y += 1
+            win.addnstr(h - 4, 2, hint[:wd - 5], wd - 5, curses.A_DIM)
+            win.addnstr(h - 3, 1, ("> " + inp)[:wd - 4].ljust(wd - 4), wd - 4, curses.A_REVERSE)
+            win.refresh()
+
+        redraw()
+        last_poll = 0.0
+        while True:
+            now = time.time()
+            if now - last_poll > 0.8:
+                last_poll = now
+                r = self.band.call("chat.poll", worker_id=w["worker_id"],
+                                   args={"room": room, "since": last}, timeout=10)
+                res = r.get("result", r)
+                if isinstance(res, dict) and res.get("ok"):
+                    new = res.get("messages", [])
+                    for m in new:
+                        msgs.append((m.get("sender", "?"), m.get("text", "")))
+                        last = max(last, float(m.get("ts", 0)))
+                    if new:
+                        redraw()
+            k = win.getch()
+            if k == -1:
+                continue
+            if k == 27:                       # esc
+                return
+            elif k in (curses.KEY_ENTER, 10, 13):
+                if inp.strip():
+                    self.band.call("chat.send", worker_id=w["worker_id"],
+                                   args={"room": room, "text": inp, "sender": "rook band"},
+                                   timeout=10)
+                    inp = ""      # echo comes back via poll (single source of truth)
+                    last_poll = 0.0
+                redraw()
+            elif k in (curses.KEY_BACKSPACE, 127, 8):
+                inp = inp[:-1]
+                redraw()
+            elif 32 <= k <= 126:
+                inp += chr(k)
+                redraw()
 
     def act_deauth(self, scr, w: dict) -> None:
         name = w.get("name") or ""
@@ -461,8 +524,10 @@ class UI:
                 self.act_plugins(scr, w)
             elif w and k == ord("n"):
                 self.act_newcap(scr, w)
+            elif w and k == ord("t"):
+                self.act_notify(scr, w)
             elif w and k == ord("m"):
-                self.act_message(scr, w)
+                self.act_chat(scr, w)
             elif w and k == ord("x"):
                 self.act_deauth(scr, w)
 
