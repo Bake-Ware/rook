@@ -22,9 +22,13 @@ import curses
 import getpass
 import json
 import os
+import socket
 import time
 import urllib.error
 import urllib.request
+
+# How this client labels its outgoing chat/notify messages: the machine name.
+_ME = socket.gethostname()
 
 
 # -----------------------------------------------------------------------------
@@ -117,7 +121,7 @@ DANGER = {"worker.restart", "worker.update", "worker.reconfigure", "worker.deaut
 
 
 class UI:
-    def __init__(self, band: BandThread, hub_label: str) -> None:
+    def __init__(self, band: "BandHTTP", hub_label: str) -> None:
         self.band = band
         self.hub_label = hub_label
         self.rows: list[dict] = []
@@ -373,7 +377,7 @@ class UI:
         if not msg:
             return
         r = self.band.call("msg.send", worker_id=w["worker_id"],
-                           args={"text": msg, "sender": "rook band"}, timeout=15)
+                           args={"text": msg, "sender": _ME}, timeout=15)
         res = r.get("result", r)
         if isinstance(res, dict) and res.get("ok"):
             note = "sent ✓" + (" (desktop notification shown)"
@@ -415,7 +419,7 @@ class UI:
             area = (h - 2) - 4
             y = 1
             for snd, txt in msgs[-area:]:
-                me = snd == "rook band"
+                me = snd == _ME
                 line = f"{'you' if me else snd}: {txt}"
                 win.addnstr(y, 2, line[:wd - 5], wd - 5,
                             curses.color_pair(1) if me else curses.A_NORMAL)
@@ -448,7 +452,7 @@ class UI:
             elif k in (curses.KEY_ENTER, 10, 13):
                 if inp.strip():
                     self.band.call("chat.send", worker_id=w["worker_id"],
-                                   args={"room": room, "text": inp, "sender": "rook band"},
+                                   args={"room": room, "text": inp, "sender": _ME},
                                    timeout=10)
                     inp = ""      # echo comes back via poll (single source of truth)
                     last_poll = 0.0

@@ -172,6 +172,11 @@ def build_server(client: "BandClient | MultiBandClient",
         ``{"id","from","ok":true,"result":...}`` or
         ``{"id","from","ok":false,"error":"..."}``.
         """
+        # Messages sent through the MCP identify their origin as "MCP" (unless
+        # the caller set an explicit sender), so chat/notify show who's talking.
+        if cap in ("chat.send", "msg.send"):
+            args = dict(args or {})
+            args.setdefault("sender", "MCP")
         reply = await client.call(cap=cap, args=args, target=worker_id,
                                   timeout=timeout)
         return json.dumps(reply, indent=2)
