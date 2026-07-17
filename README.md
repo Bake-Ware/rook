@@ -23,7 +23,7 @@ Rook turns any set of machines — Linux, Windows, Android/Termux, even an ESP32
 
 ## The band
 
-A **band** is a group of workers that share one pre-shared key (PSK). Everything rides on [**telesthete**](https://pypi.org/project/telesthete/), a small encrypted transport:
+A **band** is a group of workers that share one pre-shared key (PSK). Everything rides on [**telesthete**](https://github.com/Bake-Ware/telesthete), a small encrypted transport:
 
 - **Membership by PSK.** `band_id = SHA256(PSK)[:16]` is the cleartext routing label; the AEAD key is derived from the PSK (ChaCha20-Poly1305). Knowing the PSK = being on the band.
 - **Hub-and-spoke over a blind relay.** Workers connect out (UDP on the LAN, or WebSocket through a Cloudflare tunnel for anything remote) to a **hub** that relays band traffic by `band_id` — it holds no key and can't read the payloads.
