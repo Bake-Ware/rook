@@ -384,10 +384,8 @@ echo "[rook] installing TUI -> $DEST/rook"
 curl -fsSL "$BASE/rook.py" -o "$DEST/rook"
 chmod +x "$DEST/rook"
 if [ -r /dev/tty ]; then
-  DEFU="bake"
-  printf "[rook] dashboard user [%s]: " "$DEFU" > /dev/tty
-  read -r WU < /dev/tty || true; WU="${WU:-$DEFU}"
-  printf "[rook] dashboard password: " > /dev/tty
+  WU="${ROOK_WEB_USER:-bake}"
+  printf "[rook] dashboard password (user %s): " "$WU" > /dev/tty
   read -rs WP < /dev/tty || true; printf "\n" > /dev/tty
   if [ -n "${WP:-}" ]; then
     ( umask 077; printf '# rook band connection (chmod 600)\nurl=%s\nuser=%s\npass=%s\n' "$BASE" "$WU" "$WP" > "$CONF" )
