@@ -60,34 +60,32 @@ async def _console(command: str, timeout: float = 30.0) -> tuple[int, str, str]:
     return await _run(exe, command, timeout=timeout)
 
 
+# `deluge-console info` state letters.
+_STATES = {"S": "Seeding", "D": "Downloading", "P": "Paused", "Q": "Queued",
+           "C": "Checking", "E": "Error", "U": "Allocating", "M": "Moving"}
+
+
 def _parse_info(out: str) -> list[dict]:
-    """Best-effort parse of `deluge-console info` into structured torrents."""
+    """Parse `deluge-console info` (compact form)::
+
+        [S]   100% <name> <40-char hash>
+            DL: 4.5 G (0 B) UL: 71.6 M (0 B) ETA: -
+    """
     torrents: list[dict] = []
-    cur: dict = {}
+    cur: dict | None = None
     for line in out.splitlines():
-        if line.startswith("Name: "):
+        m = re.match(r"^\[(.)\]\s+([\d.]+)%\s+(.*?)\s+([0-9a-fA-F]{40})\s*$", line)
+        if m:
             if cur:
                 torrents.append(cur)
-            cur = {"name": line[6:].strip()}
-        elif line.startswith("ID: "):
-            cur["id"] = line[4:].strip()
-        elif line.startswith("State: "):
-            parts = line.split()
-            cur["state"] = parts[1] if len(parts) > 1 else line[7:].strip()
-            m = re.search(r"Down Speed:\s*([^\s].*?Up Speed:\s*[^\s]+\S*)", line)
-            if m:
-                cur["speed"] = m.group(1)
-        elif line.strip().startswith("Progress:"):
-            m = re.search(r"([\d.]+)%", line)
-            if m:
-                cur["progress"] = float(m.group(1))
-        elif line.startswith("Size: "):
-            cur["size"] = line[6:].split("Ratio:")[0].strip()
-            r = re.search(r"Ratio:\s*([\d.\-]+)", line)
-            if r:
-                cur["ratio"] = r.group(1)
-        elif line.startswith("Seeds: "):
-            cur["seeds_peers"] = line.strip()
+            cur = {"state": _STATES.get(m.group(1), m.group(1)),
+                   "progress": float(m.group(2)),
+                   "name": m.group(3).strip(), "id": m.group(4)}
+            continue
+        d = re.search(r"DL:\s*(.+?)\s+UL:\s*(.+?)\s+ETA:\s*(.+?)\s*$", line)
+        if d and cur is not None:
+            cur["downloaded"], cur["uploaded"], cur["eta"] = (
+                d.group(1).strip(), d.group(2).strip(), d.group(3).strip())
     if cur:
         torrents.append(cur)
     return torrents
