@@ -127,7 +127,6 @@ class UI:
         self.rows: list[dict] = []
         self.sel = 0
         self.top = 0
-        self.expanded: set[str] = set()
         self.filter = ""
         self.schema_cache: dict[str, dict] = {}
         self.status = "connected"
@@ -198,68 +197,87 @@ class UI:
                  else f"{len(self.rows)}w · {online} online")
         self._put(scr, 0, w - len(right) - 1, right, curses.A_BOLD)
 
-        show_chats = w >= 94 and bool(self.chats)
-        side_w = 34 if show_chats else 0
-        main_w = w - side_w
         top, box_h = 1, h - 2
+        two_col = w >= 76
+        left_w = min(max(38, int(w * 0.44)), w - 30) if two_col else w
 
-        # workers panel
-        self._box(scr, top, 0, box_h, main_w, f"workers ({len(self.rows)})")
-        inner_x, inner_w, inner_h = 2, main_w - 4, box_h - 2
-        lines = self._flatten()
-        sel_line = next((i for i, ln in enumerate(lines)
-                         if ln[0] == "w" and ln[2] == self.sel), 0)
-        if sel_line < self.top:
-            self.top = sel_line
-        elif sel_line >= self.top + inner_h:
-            self.top = sel_line - inner_h + 1
+        # workers list (left)
+        self._box(scr, top, 0, box_h, left_w, f"workers ({len(self.rows)})")
+        inner_x, inner_w, inner_h = 2, left_w - 4, box_h - 2
+        if self.sel < self.top:
+            self.top = self.sel
+        elif self.sel >= self.top + inner_h:
+            self.top = self.sel - inner_h + 1
         y = top + 1
-        for ln in lines[self.top:self.top + inner_h]:
-            self._draw_line(scr, y, inner_x, inner_w, ln)
+        for idx in range(self.top, min(self.top + inner_h, len(self.rows))):
+            self._draw_line(scr, y, inner_x, inner_w, ("w", self.rows[idx], idx))
             y += 1
 
-        # chats panel — two lines per chat: title, then a dim preview
-        if show_chats:
-            self._box(scr, top, main_w, box_h, side_w, f"chats ({len(self.chats)})")
-            cx, cw = main_w + 2, side_w - 4
-            cy = top + 1
-            for ch in self.chats:
-                if cy >= top + 1 + inner_h:
-                    break
-                self._put(scr, cy, cx, f"{ch['name']}/{ch['room']}"[:cw], curses.A_BOLD)
-                cy += 1
-                if cy < top + 1 + inner_h:
-                    who = ch.get("last_sender") or ""
-                    prev = f"{who}: {ch.get('last_text','')}" if who else str(ch.get("last_text", ""))
-                    self._put(scr, cy, cx, "  " + prev[:cw - 2], curses.A_DIM)
-                    cy += 1
+        # right column: selected-worker detail (top) + chats (bottom)
+        if two_col:
+            rx, rw = left_w, w - left_w
+            chats_h = max(4, min(box_h // 2, len(self.chats) * 2 + 2)) if self.chats else 0
+            self._panel_detail(scr, top, rx, box_h - chats_h, rw, self.cur())
+            if chats_h:
+                self._panel_chats(scr, top + box_h - chats_h, rx, chats_h, rw)
 
-        # footer
-        keys = ("↑↓ sel · enter expand · c call · e plugins · n cap · "
+        keys = ("↑↓ select · c call · e plugins · n cap · "
                 "t notify · m chat · x deauth · / filter · q quit")
         foot = f" filter: {self.filter}▏  {keys}" if self.filter else " " + keys
         self._put(scr, h - 1, 0, foot, curses.A_DIM)
         scr.refresh()
 
-    def _flatten(self):
-        out = []
-        for i, r in enumerate(self.rows):
-            out.append(("w", r, i))
-            if r["worker_id"] in self.expanded:
-                caps = sorted(r.get("caps") or [])
-                groups: dict[str, list[str]] = {}
-                for c in caps:
-                    p, _, rest = c.partition(".")
-                    groups.setdefault(p, []).append(rest or "*")
-                for g, subs in groups.items():
-                    out.append(("c", f"{g}: " + "  ".join(subs), i))
-        return out
+    def _panel_detail(self, scr, y, x, height, width, w) -> None:
+        self._box(scr, y, x, height, width, (w.get("name") if w else None) or "no selection")
+        if not w or width < 10 or height < 3:
+            return
+        ix, iw, bottom = x + 2, width - 4, y + height - 1
+        ln = y + 1
+
+        def line(txt, attr=0):
+            nonlocal ln
+            if ln < bottom:
+                self._put(scr, ln, ix, txt[:iw], attr)
+                ln += 1
+
+        age = w.get("age", 999)
+        fresh = curses.color_pair(1 if age < 20 else 2 if age < 55 else 3)
+        line(f"{'● online' if age < 90 else '○ stale'} · {age:.0f}s ago", fresh)
+        line(f"version  v{w.get('version','?')}", curses.color_pair(2))
+        line(f"id       {w.get('worker_id','')}", curses.A_DIM)
+        if w.get("banned"):
+            line("⛔ DEAUTHED (banned)", curses.color_pair(3))
+        line("plugins  " + " ".join(w.get("plugins") or []), curses.A_DIM)
+        ln += 1
+        caps = sorted(w.get("caps") or [])
+        groups: dict[str, list[str]] = {}
+        for c in caps:
+            p, _, rest = c.partition(".")
+            groups.setdefault(p, []).append(rest or "*")
+        line(f"{len(caps)} capabilities", curses.A_BOLD)
+        for g, subs in groups.items():
+            if ln >= bottom:
+                break
+            self._put(scr, ln, ix, g, curses.color_pair(4) | curses.A_BOLD)
+            self._put(scr, ln, ix + len(g) + 1, " ".join(subs)[:iw - len(g) - 1], curses.A_DIM)
+            ln += 1
+
+    def _panel_chats(self, scr, y, x, height, width) -> None:
+        self._box(scr, y, x, height, width, f"chats ({len(self.chats)})")
+        cx, cw, bottom = x + 2, width - 4, y + height - 1
+        cy = y + 1
+        for ch in self.chats:
+            if cy >= bottom:
+                break
+            self._put(scr, cy, cx, f"{ch['name']}/{ch['room']}"[:cw], curses.A_BOLD)
+            cy += 1
+            if cy < bottom:
+                who = ch.get("last_sender") or ""
+                prev = f"{who}: {ch.get('last_text','')}" if who else str(ch.get("last_text", ""))
+                self._put(scr, cy, cx, "  " + prev[:cw - 2], curses.A_DIM)
+                cy += 1
 
     def _draw_line(self, scr, y, x0, width, ln) -> None:
-        kind = ln[0]
-        if kind == "c":                       # expanded cap group line
-            self._put(scr, y, x0 + 2, ln[1][:width - 2], curses.A_DIM)
-            return
         r = ln[1]
         i = ln[2]
         age = r.get("age", 999)
@@ -269,7 +287,7 @@ class UI:
         ver = ("v" + str(r.get("version")))[:11] if r.get("version") else "—"
         ncap = len(r.get("caps") or [])
         banned = "⛔" if r.get("banned") else ""
-        car = "▾" if r["worker_id"] in self.expanded else "▸"
+        car = "›" if i == self.sel else " "
         bar = self._bar(age)
         plain = f"{car} {dot} {name:<16} {ver:<11} {ncap:>3}c  {bar} {banned}"
         if i == self.sel:                     # selected: full-row highlight
@@ -641,9 +659,8 @@ class UI:
                 self.sel = max(0, self.sel - 1)
             elif k in (curses.KEY_DOWN, ord("j")):
                 self.sel = min(len(self.rows) - 1, self.sel + 1)
-            elif k in (curses.KEY_ENTER, 10, 13, ord(" ")) and w:
-                wid = w["worker_id"]
-                self.expanded.symmetric_difference_update({wid})
+            elif k in (curses.KEY_ENTER, 10, 13) and w:
+                self.act_call(scr, w)
             elif k == ord("r"):
                 self.refresh()
             elif k == ord("/"):
