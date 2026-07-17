@@ -12,6 +12,7 @@ Rook turns any set of machines — Linux, Windows, Android/Termux, even an ESP32
 
 - [The band](#the-band)
 - [Capabilities](#capabilities)
+- [Integrations](#integrations) — Deluge · PiKVM · hermes · Claude Code · microcontroller HID/serial
 - [Control planes](#control-planes) — [dashboard](#web-dashboard) · [`rook band` TUI](#rook-band--terminal-control-panel) · [chat](#chat--messaging) · [MCP](#mcp)
 - [OTA self-update](#ota-self-update)
 - [Security](#security)
@@ -50,15 +51,21 @@ Built-in plugins:
 | `info.*` | host, uptime, ping |
 | `screenshot.*` | cross-platform display capture (X11 / wlroots / KDE / GNOME / Windows / Android) |
 | `hid.*` | type / key-combo / mouse on the local display |
-| `kvm.* · bthid.* · serial.*` | ESP32 dongle: USB-HID, Bluetooth-HID, serial passthrough |
-| `deluge.*` | list / add / pause / resume / remove torrents; pull files over the band |
 | `chat.* · msg.*` | two-way chat and one-way desktop notifications |
-| `claude-history.*` | search / export local Claude Code sessions (where present) |
-| `hermes.*` | drive a co-located hermes agent — chat / run / skills / memory (on hosts that run one) |
 | `worker.*` | `restart`, `reconfigure`, signed `apply`/`deauth`, `hold`, runtime `plugin.enable/disable` |
 | `caps.describe` | introspect every cap's args (powers the call forms) |
 
 **Custom command-caps.** Define your own cap that runs a shell command with parameter substitution — e.g. `cmd.deploy` → `systemctl restart {svc}` — persisted per-worker and re-registered on boot. Argument *values* are shell-escaped, so a caller can't break out of the template.
+
+## Integrations
+
+On top of the generic caps, Rook ships purpose-built integrations for specific apps and hardware. Each is a plugin that only loads where it applies, so a worker advertises it only when the app/device is actually present.
+
+- **Deluge** — `deluge.*`: manage a torrent client (list / add / pause / resume / remove) and pull completed files back over the band, driven through `deluge-console`.
+- **PiKVM** — `pikvm.*`: control a [PiKVM](https://pikvm.org) through its REST API — snapshot the captured screen, send keyboard/mouse, ATX power actions, or hit any `/api/*` endpoint as a passthrough.
+- **hermes** — `hermes.*`: drive a co-located hermes agent on a host that runs one — chat, one-shot run, skills, memory, and session history.
+- **Claude Code** — `claude-history.*`: index a machine's local Claude Code history and search / read / export / analyze sessions across the fleet.
+- **Microcontroller as HID / serial** — the ESP32 T-Dongle-S3 firmware turns a cheap dongle into a remote input device: USB-HID (`kvm.*`) and Bluetooth-HID (`bthid.*`) keystrokes and consumer keys into a target machine, plus a serial passthrough (`serial.*`). It speaks telesthete over UDP directly — no host agent required.
 
 ## Control planes
 
