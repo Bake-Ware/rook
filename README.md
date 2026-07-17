@@ -2,14 +2,35 @@
 
 **A self-updating mesh of worker agents you drive from a web dashboard, a terminal control panel, or via MCP — over an encrypted peer-to-peer band.**
 
-Rook turns any set of machines — Linux, Windows, Android/Termux, even an ESP32 dongle — into a **band**: a fleet of lightweight workers that expose *capabilities* (run a shell command, grab a screenshot, drive HID/KVM, manage torrents, chat, …) over an encrypted mesh. You control the whole fleet from a browser, a terminal, or via MCP — and the fleet **updates itself over the air**.
-
 ![Rook dashboard](docs/img/dashboard.png)
+
+## What is this?
+
+Rook lets you **run things on all your machines from one place**. You install a tiny background program on each computer you want to reach — a home server, a Raspberry Pi, a gaming PC, a cloud box, a phone, even a small USB dongle — and they all quietly link up over an encrypted connection. From then on you get one live view of every machine and can tell any of them to do something — run a command, grab a screenshot, restart a service, manage downloads, type on another computer, send a message — and get the answer back right away.
+
+It's **end-to-end encrypted**, the machines **update themselves** (so you never patch each one by hand), and you can **remove a machine from the group with one click**.
+
+## What it's for
+
+- **One control panel for all your machines** — instead of juggling a dozen SSH sessions and browser tabs.
+- **Reaching machines you normally can't** — behind a home router, on another network, or on the road — because they dial *out* to a shared meeting point instead of you dialing *in*.
+- **Doing the boring stuff everywhere at once** — updates, restarts, and health checks across the whole fleet.
+- **Letting an AI assistant help run your machines**, through the same safe controls you use.
+
+## Good use cases
+
+- **Homelab / self-hosting** — watch and control your Pi-hole, NAS, database, media box, etc. from one dashboard, and push an update to all of them at once.
+- **Remote help** — hop onto a family member's or a remote office machine to run a fix or grab a screenshot, with nothing to set up on their end.
+- **Downloads on the go** — check and manage torrents on your media server from your phone.
+- **Keyboard/mouse over the network** — a cheap USB dongle plugged into a machine lets you type into it or send key combos remotely, even during boot/BIOS where normal remote tools can't reach.
+- **A quick line to your machines** — ping a box (or the person sitting at it) and get a reply, right from the dashboard or terminal.
+- **AI-run operations** — let an assistant list your machines and carry out tasks on them through a controlled interface.
 
 ---
 
 ## Table of contents
 
+- [What is this?](#what-is-this) · [what it's for](#what-its-for) · [use cases](#good-use-cases)
 - [The band](#the-band)
 - [Capabilities](#capabilities)
 - [Integrations](#integrations) — Deluge · PiKVM · hermes · Claude Code · microcontroller HID/serial
