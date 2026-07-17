@@ -381,8 +381,18 @@ PY="$(command -v python3 || command -v python || true)"
 [ -z "$PY" ] && { echo "[rook] python3 is required" >&2; exit 1; }
 mkdir -p "$DEST" "$(dirname "$CONF")"
 echo "[rook] installing TUI -> $DEST/rook"
-curl -fsSL "$BASE/rook.py" -o "$DEST/rook"
+if ! curl -fsSL "$BASE/rook.py" -o "$DEST/rook"; then
+  echo "[rook] ERROR: could not download $BASE/rook.py" >&2
+  exit 1
+fi
+if ! head -1 "$DEST/rook" | grep -q python; then
+  echo "[rook] ERROR: downloaded file is not the TUI (got):" >&2
+  head -3 "$DEST/rook" >&2
+  rm -f "$DEST/rook"
+  exit 1
+fi
 chmod +x "$DEST/rook"
+echo "[rook] installed $(wc -l < "$DEST/rook") lines"
 if grep -q '^pass=' "$CONF" 2>/dev/null; then
   echo "[rook] using saved login ($CONF)"      # re-install: keep existing creds
 elif [ -r /dev/tty ]; then
@@ -397,9 +407,12 @@ elif [ -r /dev/tty ]; then
 fi
 case ":$PATH:" in
   *":$DEST:"*) ;;
-  *) echo "[rook] NOTE: $DEST is not on your PATH. Add it, e.g.:";
-     echo "        echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.zshrc" ;;
+  *) echo "[rook] NOTE: $DEST is not on your PATH — add it (bash/zsh):";
+     echo "        echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.profile";
+     echo "        (fish: fish_add_path ~/.local/bin)" ;;
 esac
+# make a freshly-added command visible in the current shell
+hash -r 2>/dev/null || true
 echo "[rook] done — launching (next time just run: rook)"
 if [ -r /dev/tty ]; then exec "$DEST/rook" < /dev/tty; else echo "[rook] run: rook"; fi
 '''
@@ -1136,7 +1149,8 @@ button:hover{{background:#22b88f}}
         if not text.startswith("#!"):
             text = "#!/usr/bin/env python3\n" + text
         return web.Response(text=text, content_type="text/x-python",
-                            headers={"Content-Disposition": 'inline; filename="rook"'})
+                            headers={"Content-Disposition": 'inline; filename="rook"',
+                                     "Cache-Control": "no-store"})
 
     async def _band_installer(self, request: web.Request) -> web.Response:
         """`curl -fsSL https://<host>/rook | bash` — install the TUI as `rook`,
@@ -1145,7 +1159,8 @@ button:hover{{background:#22b88f}}
         base = f"https://{self.domain}"
         script = _ROOK_INSTALLER.replace("__BASE__", base)
         return web.Response(text=script, content_type="text/x-shellscript",
-                            headers={"Content-Disposition": 'inline; filename="rook-install.sh"'})
+                            headers={"Content-Disposition": 'inline; filename="rook-install.sh"',
+                                     "Cache-Control": "no-store"})
 
     async def _health(self, request: web.Request) -> web.Response:
         return web.Response(text=json.dumps({
