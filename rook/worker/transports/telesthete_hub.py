@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
 import socket
 from typing import Optional
 
@@ -74,7 +75,19 @@ class TelestheteHubTransport:
 
         self._on_message: Optional[OnMessage] = None
         self._on_connect: Optional[OnConnect] = None
-        self._seq = 0
+        # SECURITY: the band key is HKDF(PSK) — one static key shared by every
+        # peer — and the AEAD nonce is just 4 zero bytes || this 8-byte counter
+        # (telesthete crypto.nonce_from_seq). If every peer started at 0, they'd
+        # all reuse the same (key, nonce) pairs (peer A's seq=1 == peer B's
+        # seq=1), which is catastrophic for ChaCha20-Poly1305/AES-GCM: keystream
+        # reuse leaks plaintext and Poly1305/GHASH one-time-key reuse enables MAC
+        # forgery (→ command injection) — all without needing the PSK. Seeding
+        # the counter with 63 bits of CSPRNG randomness makes cross-peer and
+        # cross-restart nonce collisions negligible (~M·N²/2⁶³). Wire-compatible:
+        # the sequence travels in the frame and the receiver derives the nonce
+        # from it, so an un-upgraded peer still interops. 63 (not 64) bits leaves
+        # headroom so the +=1 counter can never wrap past 2⁶⁴ in any real session.
+        self._seq = secrets.randbits(63)
         self._tasks: list[asyncio.Task] = []
         self._inflight: set[asyncio.Task] = set()
         self._stopping = False
