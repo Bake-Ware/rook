@@ -71,6 +71,7 @@ Built-in plugins:
 | `file.*` | read / write / list / search (base64 for binaries) |
 | `info.*` | host, uptime, ping |
 | `screenshot.*` | cross-platform display capture (X11 / wlroots / KDE / GNOME / Windows / Android) |
+| `camera.*` | grab a still photo from a webcam / capture device (`list` + `snap` by camera) |
 | `hid.*` | type / key-combo / mouse on the local display |
 | `chat.* · msg.*` | two-way chat and one-way desktop notifications |
 | `worker.*` | `restart`, `reconfigure`, signed `apply`/`deauth`, `hold`, runtime `plugin.enable/disable` |
