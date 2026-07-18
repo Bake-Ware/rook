@@ -210,6 +210,12 @@
 </style>
 </head>
 <body>
+  <!-- decoy fields soak up browser/password-manager autofill so it never lands
+       in the filter box (off-screen, not focusable) -->
+  <input type="text" name="username" autocomplete="username" tabindex="-1" aria-hidden="true"
+         style="position:absolute;left:-9999px;top:-9999px;opacity:0;height:0;width:0;pointer-events:none">
+  <input type="password" name="password" autocomplete="current-password" tabindex="-1" aria-hidden="true"
+         style="position:absolute;left:-9999px;top:-9999px;opacity:0;height:0;width:0;pointer-events:none">
   <div class="topbar">
     <div class="brand">♖ ROOK</div>
     <nav>
@@ -223,9 +229,10 @@
     <select id="bandsel" onchange="onBandChange()"><option value="">All bands</option></select>
     <button class="iconbtn" title="add band" onclick="toggleAddBand()">+</button>
     <button class="iconbtn" id="rmband-btn" title="remove band" hidden onclick="removeBand()">−</button>
-    <input class="filter" id="filter" name="rook-filter" type="search" placeholder="filter…"
+    <input class="filter" id="filter" name="rook-filter-box" type="search" placeholder="filter…"
            autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
-           data-1p-ignore data-lpignore="true" oninput="applyFilter()">
+           data-1p-ignore data-lpignore="true" data-form-type="other"
+           readonly onfocus="this.removeAttribute('readonly')" oninput="applyFilter()">
     <a class="signout" href="/logout">Sign out</a>
   </div>
 
