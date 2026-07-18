@@ -6,7 +6,7 @@
 
 ## What is this?
 
-Rook lets you **run things on all your machines from one place**. You install a tiny background program on each computer you want to reach — a home server, a Raspberry Pi, a gaming PC, a cloud box, a phone, even a small USB dongle — and they all quietly link up over an encrypted connection. From then on you get one live view of every machine and can tell any of them to do something — run a command, grab a screenshot, restart a service, manage downloads, type on another computer, send a message — and get the answer back right away.
+Rook lets you **run things on all your machines from one place**. You install a tiny background program on each computer you want to reach — a home server, a Raspberry Pi, a gaming PC, a cloud box, a phone, even a small USB dongle — and they all quietly link up over an encrypted connection. From then on you get one live view of every machine and can tell any of them to do something — run a command, grab a screenshot or a webcam photo, restart a service, manage downloads, type on another computer, send a message — and get the answer back right away.
 
 It's **end-to-end encrypted**, the machines **update themselves** (so you never patch each one by hand), and you can **remove a machine from the group with one click**.
 
@@ -172,7 +172,7 @@ The **worker** installs as a background service and joins the band. The **CLI** 
 ```
 rook/
   worker/          band worker: core, transports (telesthete), plugins, OTA self-update
-    plugins/       shell, file, info, screenshot, hid, pikvm, deluge, chat, msg, …
+    plugins/       shell, file, info, screenshot, camera, hid, pikvm, deluge, chat, msg, …
   band_mcp/        band client + the MCP server (rook_workers/caps/call)
   remote/          installer / controller (dashboard API, OTA build + push, deauth)
   web/             the dashboard (index.html)
