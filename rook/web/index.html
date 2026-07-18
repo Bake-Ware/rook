@@ -223,7 +223,9 @@
     <select id="bandsel" onchange="onBandChange()"><option value="">All bands</option></select>
     <button class="iconbtn" title="add band" onclick="toggleAddBand()">+</button>
     <button class="iconbtn" id="rmband-btn" title="remove band" hidden onclick="removeBand()">−</button>
-    <input class="filter" id="filter" placeholder="filter…" oninput="applyFilter()">
+    <input class="filter" id="filter" name="rook-filter" type="search" placeholder="filter…"
+           autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+           data-1p-ignore data-lpignore="true" oninput="applyFilter()">
     <a class="signout" href="/logout">Sign out</a>
   </div>
 
