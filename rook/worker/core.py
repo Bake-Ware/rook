@@ -66,6 +66,31 @@ class Worker:
         self._announce_interval = announce_interval
         self._stopping = False
         self._announce_task: asyncio.Task | None = None
+        # Binary sub-protocol handlers (e.g. in-band OTA over telesthete Drop).
+        # The band carries JSON capability messages by default, but some
+        # features ride binary telesthete packets on other channel types; a
+        # plugin registers a handler that claims those before JSON parsing.
+        # Each returns True if it consumed the payload.
+        self._binary_handlers: list = []
+        # Let plugins that need to send/receive raw band traffic (not just
+        # answer capability calls) grab a handle to us. Opt-in via bind_worker.
+        for p in self.plugins:
+            bind = getattr(p, "bind_worker", None)
+            if callable(bind):
+                try:
+                    bind(self)
+                except Exception:
+                    log.exception("plugin %s bind_worker failed", p.NAMESPACE)
+
+    def register_binary_handler(self, handler) -> None:
+        """Register a callable(payload: bytes, peer_id: tuple) -> bool that gets
+        first crack at every inbound payload; returning True consumes it."""
+        self._binary_handlers.append(handler)
+
+    async def send_raw(self, packet_bytes: bytes) -> None:
+        """Send an already-framed binary packet onto the band (used by binary
+        sub-protocols like OTA-over-Drop)."""
+        await self.transport.send(packet_bytes)
 
     async def _on_message(self, payload: bytes, peer_id: tuple) -> None:
         """Top-level dispatch. Capability requests look like:
@@ -82,6 +107,15 @@ class Worker:
         Anything without a ``cap`` field (announces, replies, foreign chatter)
         is dropped silently — we are not a sink.
         """
+        # Binary sub-protocols (OTA-over-Drop, …) get first crack — they ride
+        # non-JSON telesthete packets that json.loads would just reject.
+        for handler in self._binary_handlers:
+            try:
+                if handler(payload, peer_id):
+                    return
+            except Exception:
+                log.exception("binary handler raised")
+
         try:
             msg = json.loads(payload)
         except Exception:
