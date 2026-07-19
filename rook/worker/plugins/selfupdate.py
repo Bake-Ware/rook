@@ -90,6 +90,99 @@ class SelfUpdatePlugin(Plugin):
         self._stopping = False
         self._converge_task: asyncio.Task | None = None
         self._health_task: asyncio.Task | None = None
+        # In-band OTA (telesthete Drop) state, wired by bind_worker.
+        self._worker = None
+        self._ota_rx = None          # active OtaDropReceiver, if a push is running
+        self._ota_manifest: dict = {}
+
+    # -- in-band OTA over telesthete Drop ------------------------------------
+
+    def bind_worker(self, worker) -> None:
+        """Grab a handle to the Worker so we can receive in-band bundle pushes
+        (raw Drop packets) and send REQUEST/DONE back onto the band. Called once
+        at worker start."""
+        self._worker = worker
+        worker.register_binary_handler(self._ota_binary)
+
+    def _ota_binary(self, payload: bytes, peer_id: tuple) -> bool:
+        """Feed inbound telesthete DROP packets to the active receiver. Returns
+        True (consumed) for any DROP-channel packet on our band."""
+        if self._worker is None or self._ota_rx is None:
+            return False
+        from ..ota_drop import is_drop_packet
+        if not is_drop_packet(payload, self._worker.transport.band_id):
+            return False
+        self._ota_rx.feed(payload)
+        return True
+
+    @capability("ota_begin")
+    async def _ota_begin(self, manifest: dict, drop_id: int = 0) -> dict:
+        """Arm this worker to receive a bundle pushed **in band** over telesthete
+        Drop (§8), for the given ``drop_id``. The ed25519-signed manifest is
+        verified up front — being on the band is not enough — and its build must
+        be newer. The controller then offers the bytes; we pull, verify sha256
+        against the manifest, smoke-test, swap, and restart. The delivery channel
+        is untrusted; only the signature + hash grant the swap."""
+        from .._build_info import BUILD
+        from .._update_verify import verify_manifest
+        from ..ota_drop import OtaDropReceiver
+
+        if self._worker is None:
+            return {"ok": False, "error": "worker not bound (no transport)"}
+        if not isinstance(manifest, dict):
+            return {"ok": False, "error": "manifest must be an object"}
+        if not verify_manifest(manifest):
+            return {"ok": False, "error": "manifest signature invalid (fail-closed)"}
+        target = int(manifest.get("build", 0))
+        if target <= BUILD and not _HOLD.exists():
+            # Nothing to do — tell the controller so it doesn't bother offering.
+            return {"ok": True, "action": "up-to-date", "build": BUILD}
+        if self._ota_rx is not None:
+            return {"ok": False, "error": "an in-band update is already in progress"}
+
+        self._ota_manifest = dict(manifest)
+        rx = OtaDropReceiver(
+            band_id=self._worker.transport.band_id,
+            drop_id=int(drop_id),
+            send_coro=self._worker.send_raw,
+        )
+        rx.on_complete(self._on_ota_complete)
+        rx.start()
+        self._ota_rx = rx
+        log.info("in-band OTA armed: drop_id=%d target_build=%s", drop_id, target)
+        return {"ok": True, "action": "receiving", "drop_id": int(drop_id),
+                "from_build": BUILD, "to_build": target}
+
+    def _on_ota_complete(self, data: bytes, sha_ok: bool) -> None:
+        # Called from the Drop receiver when the file is whole + self-consistent.
+        asyncio.ensure_future(self._finish_inband(data, sha_ok))
+
+    async def _finish_inband(self, data: bytes, sha_ok: bool) -> None:
+        from .._build_info import BUILD
+        from .._update_verify import sha256_file
+        manifest = self._ota_manifest
+        rx, self._ota_rx = self._ota_rx, None   # clear active state either way
+        if rx is not None:
+            rx.stop()
+        if not sha_ok:
+            log.warning("in-band OTA: received bundle failed internal verify; discarding")
+            return
+        target = int(manifest.get("build", 0))
+        _WORKER_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = _WORKER_DIR / "band-worker.pyz.inband"
+        try:
+            tmp.write_bytes(data)
+        except Exception:
+            log.exception("in-band OTA: could not stage received bundle")
+            return
+        # The signed manifest's sha256 is the trust anchor — the Drop transport
+        # is untrusted, exactly like the HTTP download path.
+        if sha256_file(tmp) != manifest.get("sha256"):
+            tmp.unlink(missing_ok=True)
+            log.warning("in-band OTA: sha256 mismatch vs signed manifest; discarding")
+            return
+        res = await self._swap_and_restart(tmp, target, BUILD)
+        log.info("in-band OTA result: %s", res)
 
     # -- lifecycle: OTA convergence ------------------------------------------
 
@@ -331,10 +424,16 @@ class SelfUpdatePlugin(Plugin):
         if sha256_file(tmp) != manifest.get("sha256"):
             tmp.unlink(missing_ok=True)
             return {"ok": False, "error": "sha256 mismatch (fail-closed)"}
+        return await self._swap_and_restart(tmp, target, BUILD)
+
+    async def _swap_and_restart(self, tmp: Path, target: int, from_build: int) -> dict:
+        """Smoke-test the staged bundle, swap it in (keeping .prev for rollback),
+        record the update state, and schedule a restart. Shared by the HTTP
+        manifest path and the in-band Drop push — both stage a verified file
+        here after their own sha256 check."""
         if not await self._smoke_test(tmp):
             tmp.unlink(missing_ok=True)
-            return {"ok": False, "error": "downloaded bundle failed --selftest; not swapping"}
-
+            return {"ok": False, "error": "bundle failed --selftest; not swapping"}
         try:
             import shutil
             if _PYZ.exists():
@@ -346,10 +445,10 @@ class SelfUpdatePlugin(Plugin):
             return {"ok": False, "error": f"swap failed: {type(e).__name__}: {e}"}
 
         self._write_state({"stage": "swapped", "target_build": target,
-                           "prev_build": BUILD, "attempts": 0, "at": int(time.time())})
-        log.info("updated bundle build %s -> %s; restarting", BUILD, target)
+                           "prev_build": from_build, "attempts": 0, "at": int(time.time())})
+        log.info("updated bundle build %s -> %s; restarting", from_build, target)
         self._schedule_restart(self._current_argv())
-        return {"ok": True, "action": "updated", "from_build": BUILD,
+        return {"ok": True, "action": "updated", "from_build": from_build,
                 "to_build": target, "restarting": True}
 
     async def _smoke_test(self, pyz_path: Path) -> bool:

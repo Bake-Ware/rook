@@ -53,6 +53,9 @@ class BandClient:
         self._pending: dict[str, asyncio.Future] = {}
         self._stopping = False
         self._gc_task: asyncio.Task | None = None
+        # Active in-band OTA push (telesthete Drop), if any. Inbound
+        # REQUEST/DONE packets from the receiving worker route here.
+        self._ota_sender = None
 
     async def start(self) -> None:
         await self.transport.start(self._on_message)
@@ -78,6 +81,14 @@ class BandClient:
     # -- inbound -------------------------------------------------------------
 
     async def _on_message(self, payload: bytes, peer_id: tuple) -> None:
+        # In-band OTA (telesthete Drop) REQUEST/DONE come back as binary DROP
+        # packets; route them to the active push before JSON parsing.
+        if self._ota_sender is not None:
+            from ..worker.ota_drop import is_drop_packet
+            if is_drop_packet(payload, self.transport.band_id):
+                self._ota_sender.feed(payload)
+                return
+
         try:
             msg = json.loads(payload)
         except Exception:
@@ -145,6 +156,54 @@ class BandClient:
             return await asyncio.wait_for(fut, timeout=timeout)
         finally:
             self._pending.pop(mid, None)
+
+    async def push_update(self, worker_id: str, bundle: bytes, manifest: dict,
+                          *, drop_id: int = 0, name: str = "band-worker.pyz",
+                          begin_timeout: float = 15.0,
+                          transfer_timeout: float = 300.0) -> dict:
+        """Push a worker bundle **in band** over telesthete Drop (§8), instead of
+        making the worker fetch it over HTTP. Use when the target has no path to
+        the installer/CDN (strict NAT, blocked egress).
+
+        Flow: (1) call ``worker.ota_begin`` with the ed25519-signed ``manifest``
+        so the worker verifies the signature and arms a Drop receiver; (2) offer
+        the bytes and serve the chunks it requests; (3) return once the worker
+        reports its sha-verified DONE (it then swaps + restarts on its own).
+
+        ``manifest`` must be the same signed object the worker verifies (build,
+        sha256, …). Returns a status dict.
+        """
+        from ..worker.ota_drop import OtaDropSender
+
+        begin = await self.call("worker.ota_begin",
+                                args={"manifest": manifest, "drop_id": drop_id},
+                                target=worker_id, timeout=begin_timeout)
+        # The reply envelope's "ok" only says the capability ran; the worker's
+        # own verdict is in result["ok"] (fails closed on a bad signature).
+        if not begin.get("ok"):
+            return {"ok": False, "stage": "begin", "reply": begin}
+        result = begin.get("result", {}) or {}
+        if not result.get("ok"):
+            # Worker declined: bad manifest signature, already in progress, …
+            return {"ok": False, "stage": "begin", "result": result}
+        if result.get("action") != "receiving":
+            # Up-to-date (or held) — nothing to transfer, but not a failure.
+            return {"ok": True, "stage": "begin", "result": result}
+
+        if self._ota_sender is not None:
+            return {"ok": False, "error": "another in-band push is already active"}
+
+        sender = OtaDropSender(self.transport.band_id, drop_id, name, bundle,
+                               self.transport.send)
+        self._ota_sender = sender
+        try:
+            sender.offer()
+            ok = await sender.wait(timeout=transfer_timeout)
+            return {"ok": bool(ok), "stage": "transfer",
+                    "sha256": sender.sha256, "chunks": sender.total_chunks,
+                    "verified": bool(ok)}
+        finally:
+            self._ota_sender = None
 
     async def _gc_loop(self) -> None:
         while not self._stopping:

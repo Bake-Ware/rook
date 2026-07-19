@@ -117,7 +117,7 @@ class BandHTTP:
 # -----------------------------------------------------------------------------
 
 DANGER = {"worker.restart", "worker.update", "worker.reconfigure", "worker.deauth",
-          "worker.apply"}
+          "worker.apply", "worker.ota_begin"}
 
 
 class UI:
