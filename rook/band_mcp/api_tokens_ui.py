@@ -1,16 +1,16 @@
 """Admin-gated /tokens UI for issuing long-lived API tokens.
 
-Headless agents (cron jobs, daemons, CI) can't run an interactive OAuth
-flow, but they can carry a single ``Authorization: Bearer <token>`` header.
-This module provides the management page where the operator (you) mints
-those bearers, lists them, and revokes them. The minted tokens flow through
-the existing ``InMemoryProvider.load_access_token`` path, so MCP-side
-verification is unchanged.
+Headless agents (cron jobs, daemons, CI) can't do an interactive login, but
+they can carry a single ``Authorization: Bearer <token>`` header. This module
+provides the management page where the operator (you) mints those bearers,
+lists them, and revokes them. The minted tokens flow through
+``TokenStore.verify_bearer`` (see :mod:`tokens`), so MCP-side verification
+picks them up automatically.
 
 Auth model:
-    - The same admin password used for OAuth ``/oauth/authorize`` gates this
-      page. Once entered, you get a short-lived signed session cookie
-      (``rook_admin``) that lets you mint/revoke without re-prompting.
+    - A single admin password gates this page. Once entered, you get a
+      short-lived signed session cookie (``rook_admin``) that lets you
+      mint/revoke without re-prompting.
     - The minted API tokens themselves have no expiry by default; pass a
       ``ttl`` (seconds) on creation to bound them.
     - Secrets are shown to the operator EXACTLY ONCE, via a one-shot URL
@@ -29,10 +29,10 @@ from starlette.responses import HTMLResponse, RedirectResponse, Response
 from starlette.routing import Route
 
 if TYPE_CHECKING:
-    from .oauth import InMemoryProvider
+    from .tokens import TokenStore
 
 ADMIN_COOKIE = "rook_admin"
-_COOKIE_MAX_AGE = 1800  # mirror _ADMIN_SESSION_TTL in oauth.py
+_COOKIE_MAX_AGE = 1800  # mirror _ADMIN_SESSION_TTL in tokens.py
 
 
 _LOGIN_HTML = """<!doctype html>
@@ -49,7 +49,7 @@ small{{color:#888;font-size:.85rem}}
 <body>
 <h1>Rook MCP — API tokens</h1>
 <p><small>Issue long-lived bearer tokens for headless agents that can't
-do an interactive OAuth login. Enter the admin password to continue.</small></p>
+do an interactive login. Enter the admin password to continue.</small></p>
 {err}
 <form method="POST" action="/tokens/auth">
 <input type="password" name="password" autofocus required placeholder="Admin password"/>
@@ -160,7 +160,7 @@ def _index_html(tokens: list[dict], minted_secret: str | None,
     )
 
 
-def _is_admin(request: Request, provider: "InMemoryProvider") -> bool:
+def _is_admin(request: Request, provider: "TokenStore") -> bool:
     sid = request.cookies.get(ADMIN_COOKIE)
     return provider.admin_session_ok(sid)
 
@@ -171,7 +171,7 @@ def _redirect_with_secret(secret: str, name: str) -> Response:
     return RedirectResponse(f"/tokens?{qs}", status_code=303)
 
 
-def build_api_token_routes(provider: "InMemoryProvider") -> list[Route]:
+def build_api_token_routes(provider: "TokenStore") -> list[Route]:
     async def index(request: Request) -> Response:
         if not _is_admin(request, provider):
             return HTMLResponse(_LOGIN_HTML.format(err=""))

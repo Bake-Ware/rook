@@ -57,9 +57,11 @@ if (-not (Test-Path $vpyw)) {{ $vpyw = $vpy }}  # fallback if pythonw is absent
 & $vpy -m ensurepip --upgrade 2>$null
 & $vpy -m pip install --quiet --upgrade pip 2>$null
 
-# Install required dependencies into the venv (prebuilt wheels — no compiler needed)
-Write-Host "[r00k] installing dependencies (pynacl aiohttp websockets)..."
-& $vpy -m pip install --quiet pynacl aiohttp websockets
+# Install required dependencies into the venv (prebuilt wheels — no compiler needed).
+# mss+pillow back screenshot.* (see rook/worker/plugins/screenshot.py); hid.* needs
+# nothing extra — it's stdlib ctypes SendInput.
+Write-Host "[r00k] installing dependencies (pynacl aiohttp websockets mss pillow)..."
+& $vpy -m pip install --quiet pynacl aiohttp websockets mss pillow
 
 # Download band-worker bundle
 $pyz = "$env:USERPROFILE\\.rook-band-worker\\band-worker.pyz"

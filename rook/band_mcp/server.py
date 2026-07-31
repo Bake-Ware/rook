@@ -19,18 +19,14 @@ import logging
 import os
 import sys
 
-from mcp.server.auth.settings import (
-    AuthSettings,
-    ClientRegistrationOptions,
-    RevocationOptions,
-)
+from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import AnyHttpUrl
 
 from .api_tokens_ui import build_api_token_routes
 from .client import BandClient, MultiBandClient
-from .oauth import InMemoryProvider, StaticTokenVerifier, build_oauth_routes
+from .tokens import StoreTokenVerifier, TokenStore
 
 log = logging.getLogger("rook.band_mcp.server")
 
@@ -38,23 +34,18 @@ log = logging.getLogger("rook.band_mcp.server")
 def build_server(client: "BandClient | MultiBandClient",
                  allowed_hosts: list[str] | None = None,
                  public_url: str | None = None,
-                 auth_password: str | None = None,
+                 admin_password: str | None = None,
                  persist_path: str | None = None,
-                 preset_client_id: str | None = None,
-                 preset_client_secret: str | None = None,
-                 preset_redirect_uris: list[str] | None = None,
                  static_token: str | None = None,
-                 ) -> tuple[FastMCP, InMemoryProvider | None]:
-    """Build the FastMCP server.
+                 ) -> tuple[FastMCP, TokenStore]:
+    """Build the FastMCP server. Bearer-token-only auth — no OAuth.
 
-    Auth modes (mutually exclusive):
-      * ``static_token`` set → bearer-token-only (resource-server) mode. The
-        server validates ``Authorization: Bearer <static_token>`` and exposes
-        NO OAuth endpoints — clients just carry the header, no login/registration
-        dance. This is the simplest path; returns ``provider=None``.
-      * else ``public_url`` + ``auth_password`` → full OAuth authorization-server
-        mode (claude.ai connector does the registration/authorize flow), with
-        long-lived API tokens via /tokens and persistence at ``persist_path``.
+    The server validates ``Authorization: Bearer <token>`` against either a
+    fixed ``static_token`` or a token minted through the password-gated
+    ``/tokens`` admin page (``admin_password`` gates that page; tokens
+    persist at ``persist_path``). No OAuth authorization-server routes
+    (register/authorize/token) are ever mounted — clients just carry the
+    header, no login/registration dance.
     """
     sec = TransportSecuritySettings(
         enable_dns_rebinding_protection=True,
@@ -63,54 +54,21 @@ def build_server(client: "BandClient | MultiBandClient",
         ],
     )
 
-    provider: InMemoryProvider | None = None
-    token_verifier: StaticTokenVerifier | None = None
+    store = TokenStore(admin_password=admin_password, persist_path=persist_path,
+                       static_token=static_token or None)
+    token_verifier = StoreTokenVerifier(store)
     auth_settings: AuthSettings | None = None
-    if public_url and auth_password:
-        # OAuth authorization-server mode. A configured static_token (and any
-        # token minted at /tokens) ALSO validates as a plain bearer via the
-        # provider, so this one server serves BOTH OAuth clients (which do the
-        # registration/authorize flow) and header-only clients (which just send
-        # Authorization: Bearer <token>) at the same time.
-        preset = None
-        if preset_client_id and preset_client_secret:
-            preset = (preset_client_id, preset_client_secret,
-                      preset_redirect_uris or [
-                          "https://claude.ai/api/mcp/auth_callback",
-                          "https://claude.ai/api/oauth/callback",
-                      ])
-        provider = InMemoryProvider(
-            auth_password=auth_password,
-            persist_path=persist_path,
-            preset_client=preset,
-            static_token=static_token,
-        )
+    if public_url:
+        # Resource-server metadata only (no authorization-server advertised).
         auth_settings = AuthSettings(
             issuer_url=AnyHttpUrl(public_url),
             resource_server_url=AnyHttpUrl(public_url + "/mcp"),
-            client_registration_options=ClientRegistrationOptions(
-                enabled=True,
-                valid_scopes=["rook"],
-                default_scopes=["rook"],
-            ),
-            revocation_options=RevocationOptions(enabled=True),
             required_scopes=["rook"],
         )
-    elif static_token:
-        # No OAuth configured, but a static token is — run as a pure resource
-        # server: validate the bearer, expose NO OAuth endpoints.
-        token_verifier = StaticTokenVerifier(static_token)
-        if public_url:
-            auth_settings = AuthSettings(
-                issuer_url=AnyHttpUrl(public_url),
-                resource_server_url=AnyHttpUrl(public_url + "/mcp"),
-                required_scopes=["rook"],
-            )
 
     mcp = FastMCP(
         "rook-band",
         transport_security=sec,
-        auth_server_provider=provider,
         token_verifier=token_verifier,
         auth=auth_settings,
     )
@@ -181,7 +139,7 @@ def build_server(client: "BandClient | MultiBandClient",
                                   timeout=timeout)
         return json.dumps(reply, indent=2)
 
-    return mcp, provider
+    return mcp, store
 
 
 async def _amain(args) -> None:
@@ -191,14 +149,12 @@ async def _amain(args) -> None:
 
     allowed_hosts = [h.strip() for h in (args.allowed_hosts or "").split(",")
                      if h.strip()]
-    mcp, provider = build_server(
+    mcp, store = build_server(
         client,
         allowed_hosts=allowed_hosts,
         public_url=args.public_url,
-        auth_password=args.auth_password,
+        admin_password=args.admin_password,
         persist_path=args.persist_path,
-        preset_client_id=args.client_id,
-        preset_client_secret=args.client_secret,
         static_token=args.static_token or None,
     )
     app = mcp.streamable_http_app()
@@ -214,51 +170,11 @@ async def _amain(args) -> None:
     except Exception as e:
         log.warning("WS band bridge failed to start: %s", e)
 
-    if provider is not None:
-        # Prepend so our lenient /token and /oauth/authorize shadow MCP's.
-        extras = build_oauth_routes(provider) + build_api_token_routes(provider)
-        for r in reversed(extras):
-            app.router.routes.insert(0, r)
-
-        from starlette.types import ASGIApp, Receive, Scope, Send
-        class _TokenDebug:
-            """Log POST bodies + 4xx responses on /token to diagnose OAuth.
-
-            Intentionally noisy. Strip once OAuth is healthy."""
-
-            def __init__(self, app: ASGIApp) -> None:
-                self.app = app
-
-            async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-                if scope["type"] != "http" or scope.get("path") != "/token":
-                    await self.app(scope, receive, send)
-                    return
-                req_body = bytearray()
-
-                async def recv_wrap():
-                    msg = await receive()
-                    if msg["type"] == "http.request":
-                        req_body.extend(msg.get("body", b""))
-                    return msg
-
-                resp_status = {"code": 0}
-                resp_body = bytearray()
-
-                async def send_wrap(msg):
-                    if msg["type"] == "http.response.start":
-                        resp_status["code"] = msg["status"]
-                    elif msg["type"] == "http.response.body":
-                        resp_body.extend(msg.get("body", b""))
-                    await send(msg)
-
-                await self.app(scope, recv_wrap, send_wrap)
-                hdrs = {k.decode().lower(): v.decode() for k, v in scope["headers"]}
-                authz = hdrs.get("authorization", "(none)")
-                log.info("[/token] auth=%s body=%s status=%s resp=%s",
-                         authz[:80], req_body.decode(errors="replace")[:400],
-                         resp_status["code"], resp_body.decode(errors="replace")[:400])
-
-        app = _TokenDebug(app)
+    # /tokens admin UI (mint/list/revoke bearer tokens). No OAuth routes are
+    # ever mounted — FastMCP itself only registers MCP transport endpoints
+    # since we passed token_verifier, not auth_server_provider.
+    for r in reversed(build_api_token_routes(store)):
+        app.router.routes.insert(0, r)
 
     import uvicorn
     config = uvicorn.Config(app, host=args.bind_host, port=args.bind_port,
@@ -292,26 +208,22 @@ def main() -> None:
     ap.add_argument("--public-url",
                     default=os.environ.get("ROOK_MCP_PUBLIC_URL", ""),
                     help="public https URL (e.g. https://mcp.example.com). "
-                         "Advertised in OAuth metadata for resource-server "
-                         "discovery.")
-    ap.add_argument("--auth-password",
+                         "Advertised as resource-server metadata for MCP "
+                         "clients — no OAuth authorization-server metadata "
+                         "is ever advertised.")
+    ap.add_argument("--admin-password",
                     default=os.environ.get("ROOK_MCP_AUTH_PASSWORD", ""),
-                    help="admin password gating OAuth /authorize.")
+                    help="admin password gating the /tokens mint/revoke UI.")
     ap.add_argument("--persist-path",
                     default=os.environ.get("ROOK_MCP_PERSIST",
                                             "/var/lib/rook-band-mcp/oauth.json"),
-                    help="JSON file for persistent OAuth clients + tokens.")
-    ap.add_argument("--client-id",
-                    default=os.environ.get("ROOK_MCP_CLIENT_ID", ""),
-                    help="pre-installed OAuth client id (claude.ai paste-target).")
-    ap.add_argument("--client-secret",
-                    default=os.environ.get("ROOK_MCP_CLIENT_SECRET", ""),
-                    help="pre-installed OAuth client secret.")
+                    help="JSON file for persistent API tokens.")
     ap.add_argument("--static-token",
                     default=os.environ.get("ROOK_MCP_STATIC_TOKEN", ""),
-                    help="bearer-token-only auth: clients send "
-                         "'Authorization: Bearer <token>' and NO OAuth endpoints "
-                         "are exposed. Takes precedence over the OAuth flow.")
+                    help="fixed bearer token clients send as "
+                         "'Authorization: Bearer <token>' — the simplest "
+                         "single-integration auth path. Tokens minted via "
+                         "/tokens also work at the same time.")
     ap.add_argument("-v", "--verbose", action="count", default=0)
     args = ap.parse_args()
 

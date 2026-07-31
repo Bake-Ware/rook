@@ -22,6 +22,7 @@ import asyncio
 import json
 import logging
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -40,6 +41,7 @@ _BANNED = _WORKER_DIR / "banned"                  # presence = deauthed; refuse 
 _WORKER_ID_FILE = _WORKER_DIR / "worker_id"       # stable identity (see core.stable_worker_id)
 _UNIT = _HOME / ".config" / "systemd" / "user" / "rook-band-worker.service"
 _SVC = "rook-band-worker"
+_WIN_TASK = "RookBandWorker"      # matches PS_BOOTSTRAP's Register-ScheduledTask name
 
 # OTA convergence tuning.
 _POLL_SECS = float(os.environ.get("ROOK_UPDATE_POLL", "300"))  # manifest check interval
@@ -52,11 +54,17 @@ def _is_termux() -> bool:
     return "com.termux" in os.environ.get("PREFIX", "") or bool(os.environ.get("TERMUX_VERSION"))
 
 
+def _is_windows() -> bool:
+    return sys.platform == "win32"
+
+
 def _supervisor() -> str:
     if _UNIT.exists():
         return "systemd-user"
     if _is_termux():
         return "runit"
+    if _is_windows():
+        return "windows-task"     # informational only — live restart still uses os.execv
     return "exec"
 
 
@@ -564,8 +572,11 @@ class SelfUpdatePlugin(Plugin):
         return argv
 
     def _persist(self, argv: list[str]) -> bool:
-        """Write the new launch command into the systemd --user unit so it
-        survives restarts/reboots. No-op (returns False) when not systemd."""
+        """Write the new launch command into the systemd --user unit (or the
+        Windows Scheduled Task) so it survives restarts/reboots/logons.
+        No-op (returns False) when neither applies."""
+        if _is_windows():
+            return self._persist_windows(argv)
         if not _UNIT.exists():
             return False
         try:
@@ -584,6 +595,34 @@ class SelfUpdatePlugin(Plugin):
             return True
         except Exception:
             log.exception("failed to persist unit")
+            return False
+
+    def _persist_windows(self, argv: list[str]) -> bool:
+        """Rewrite the RookBandWorker Scheduled Task's action so a hub/psk/name
+        change from worker.reconfigure survives the next logon — the Task
+        Scheduler equivalent of rewriting the systemd unit's ExecStart. Live
+        restart still goes through os.execv (see _do_restart); this only
+        affects what runs on the NEXT AtLogon trigger."""
+        import shutil
+        ps = shutil.which("powershell") or shutil.which("pwsh")
+        if not ps:
+            return False
+        exe, *rest = argv
+
+        def esc(s: str) -> str:
+            return s.replace("'", "''")
+
+        arg_str = " ".join(f'"{esc(a)}"' for a in rest)
+        script = (
+            f"$a = New-ScheduledTaskAction -Execute '{esc(exe)}' -Argument '{arg_str}'; "
+            f"Set-ScheduledTask -TaskName '{_WIN_TASK}' -Action $a"
+        )
+        try:
+            r = subprocess.run([ps, "-NoProfile", "-NonInteractive", "-Command", script],
+                               capture_output=True, timeout=15)
+            return r.returncode == 0
+        except Exception:
+            log.exception("failed to persist scheduled task")
             return False
 
     async def _download(self, url: str, dest: Path) -> None:

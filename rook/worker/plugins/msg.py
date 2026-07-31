@@ -17,6 +17,7 @@ import asyncio
 import json
 import os
 import shutil
+import sys
 import time
 from pathlib import Path
 
@@ -28,6 +29,8 @@ _MAX_KEEP = 500      # trim the inbox to the most recent N on write
 
 async def _notify(title: str, body: str) -> bool:
     """Best-effort desktop notification; never raises."""
+    if sys.platform == "win32":
+        return await _notify_windows(title, body)
     if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
         return False
     exe = shutil.which("notify-send")
@@ -38,6 +41,38 @@ async def _notify(title: str, body: str) -> bool:
             exe, "-a", "rook", title, body,
             stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
         await asyncio.wait_for(proc.wait(), 5)
+        return proc.returncode == 0
+    except Exception:
+        return False
+
+
+async def _notify_windows(title: str, body: str) -> bool:
+    """Balloon-tip notification via .NET NotifyIcon (no extra deps — ships
+    with every Windows install). The icon has to stay alive for the balloon
+    to render, so the script sleeps briefly before disposing it."""
+    ps = shutil.which("powershell") or shutil.which("pwsh")
+    if not ps:
+        return False
+
+    def esc(s: str) -> str:
+        return s.replace("'", "''")
+
+    script = (
+        "Add-Type -AssemblyName System.Windows.Forms,System.Drawing; "
+        "$n = New-Object System.Windows.Forms.NotifyIcon; "
+        "$n.Icon = [System.Drawing.SystemIcons]::Information; "
+        "$n.Visible = $true; "
+        f"$n.BalloonTipTitle = '{esc(title)}'; "
+        f"$n.BalloonTipText = '{esc(body)}'; "
+        "$n.ShowBalloonTip(5000); "
+        "Start-Sleep -Seconds 4; "
+        "$n.Dispose()"
+    )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            ps, "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script,
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        await asyncio.wait_for(proc.wait(), 8)
         return proc.returncode == 0
     except Exception:
         return False
