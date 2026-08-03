@@ -24,6 +24,25 @@ PS_BOOTSTRAP = '''
 # R00K Band Worker Bootstrap (Windows)
 $ErrorActionPreference = "Stop"
 
+# Self-elevate if not already Administrator — Register-ScheduledTask below
+# needs -RunLevel Highest, which requires it. Relaunching ourselves elevated
+# means the one-liner just works without the user having to know to
+# right-click "Run as Administrator" first; this triggers a UAC prompt they
+# have to accept once.
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {{
+    Write-Host "[r00k] not running elevated — relaunching as Administrator (accept the UAC prompt)..."
+    $cmd = "iex (irm 'https://{domain}/worker?os=windows')"
+    try {{
+        $p = Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $cmd) -Verb RunAs -Wait -PassThru
+        exit $p.ExitCode
+    }} catch {{
+        Write-Host "[r00k] ERROR: could not elevate (UAC declined, or this account has no admin rights)."
+        Write-Host "[r00k] Re-run from an elevated PowerShell instead: right-click PowerShell -> Run as Administrator, then re-run the iex command."
+        exit 1
+    }}
+}}
+
 # Resolve a WORKING python — prefer the `py` launcher, which is immune to the
 # Microsoft Store "python.exe" App Execution Alias stub that Windows 10/11 put
 # on PATH by default. That stub makes `Get-Command python` succeed even with
