@@ -79,7 +79,9 @@ def build_server(client: "BandClient | MultiBandClient",
 
         Returns a JSON array of objects: ``{worker_id, name, caps, plugins,
         last_seen_age_secs}``. Workers re-announce every 30s; entries are
-        evicted after ~90s of silence.
+        evicted after ~90s of silence. Either ``worker_id`` or ``name`` can
+        be passed to ``rook_call`` to target a worker; ids change whenever a
+        worker restarts, names are stable.
         """
         import time
         now = time.time()
@@ -112,31 +114,98 @@ def build_server(client: "BandClient | MultiBandClient",
                for c, ws in sorted(by_cap.items())]
         return json.dumps(out, indent=2)
 
+    def _fail(msg: str) -> str:
+        return json.dumps({"ok": False, "error": msg}, indent=2)
+
+    def _resolve_target(spec: str) -> tuple[str | None, str | None]:
+        """Resolve a worker id OR name to a live worker id.
+
+        Returns ``(worker_id, None)`` on success, ``(None, error)`` otherwise.
+        """
+        roster = client.workers
+        spec = spec.strip()
+        if spec in roster:
+            return spec, None
+        named = sorted(wid for wid, w in roster.items()
+                       if (w.get("name") or "").lower() == spec.lower())
+        if len(named) == 1:
+            return named[0], None
+        if len(named) > 1:
+            return None, (f"worker name {spec!r} is ambiguous — {len(named)} live "
+                          f"workers share it: {named}. Pass one of these ids.")
+        known = sorted({w.get("name") or wid for wid, w in roster.items()})
+        return None, (f"unknown worker {spec!r}: not a live worker id or name. "
+                      f"Live workers: {', '.join(known) or 'none'}. Ids change "
+                      f"when a worker restarts — re-check rook_workers.")
+
     @mcp.tool()
     async def rook_call(cap: str, args: dict | None = None,
                         worker_id: str | None = None,
+                        worker: str | None = None,
                         timeout: float = 15.0) -> str:
         """Invoke a capability on the band and return the reply.
 
         Args:
             cap: dot-namespaced capability name (e.g. ``"shell.exec"``).
             args: keyword arguments passed to the handler.
-            worker_id: target a specific worker by id. If omitted, the first
-                worker on the band that has the capability replies; if more
-                than one worker has it, the first reply wins.
+            worker_id: target worker — accepts the hex id from ``rook_workers``
+                OR the worker name (e.g. ``"kaiju"``); names are resolved
+                against the live roster. If omitted, the first worker on the
+                band that has the capability replies (first reply wins) — so
+                always pass a target when it matters which machine runs this.
+            worker: alias for ``worker_id`` (same id-or-name resolution).
             timeout: seconds to wait for the reply.
 
         Returns the reply dict as JSON: either
         ``{"id","from","ok":true,"result":...}`` or
-        ``{"id","from","ok":false,"error":"..."}``.
+        ``{"id","from","ok":false,"error":"..."}``. Targeting mistakes
+        (unknown worker, missing capability, no reply) come back the same
+        way, as ``{"ok": false, "error": "<explanation>"}``.
         """
+        roster = client.workers
+        spec = worker_id or worker
+        if worker_id and worker and worker_id.strip() != worker.strip():
+            return _fail(f"worker_id={worker_id!r} and worker={worker!r} "
+                         f"disagree — pass just one of them.")
+
+        target: str | None = None
+        if spec:
+            target, err = _resolve_target(spec)
+            if err:
+                return _fail(err)
+            w = roster[target]
+            if cap not in w.get("caps", []):
+                holders = sorted({ww.get("name") or wid
+                                  for wid, ww in roster.items()
+                                  if cap in ww.get("caps", [])})
+                return _fail(f"worker {w.get('name')!r} ({target[:8]}…) does not "
+                             f"have capability {cap!r}. Workers that do: "
+                             f"{', '.join(holders) or 'none on the band'}.")
+        elif not any(cap in w.get("caps", []) for w in roster.values()):
+            prefix = cap.split(".", 1)[0] + "."
+            similar = sorted({c for w in roster.values()
+                              for c in w.get("caps", [])
+                              if c.startswith(prefix)})
+            hint = f" Similar caps: {', '.join(similar)}." if similar else ""
+            return _fail(f"no live worker has capability {cap!r}.{hint} "
+                         f"See rook_caps for the full list.")
+
         # Messages sent through the MCP identify their origin as "MCP" (unless
         # the caller set an explicit sender), so chat/notify show who's talking.
         if cap in ("chat.send", "msg.send"):
             args = dict(args or {})
             args.setdefault("sender", "MCP")
-        reply = await client.call(cap=cap, args=args, target=worker_id,
-                                  timeout=timeout)
+        try:
+            reply = await client.call(cap=cap, args=args, target=target,
+                                      timeout=timeout)
+        except asyncio.TimeoutError:
+            where = (f"worker {roster[target].get('name')!r}" if target in roster
+                     else "any worker") if target else f"any worker with {cap!r}"
+            return _fail(f"no reply from {where} within {timeout:.0f}s. The "
+                         f"worker may be offline or still executing — a slow "
+                         f"call keeps running and its side effects may still "
+                         f"land, so check its output before retrying. For "
+                         f"long-running caps raise `timeout`.")
         return json.dumps(reply, indent=2)
 
     return mcp, store
