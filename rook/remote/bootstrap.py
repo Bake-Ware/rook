@@ -23,6 +23,10 @@ WORKER_SCRIPT = (Path(__file__).parent / "worker.py").read_text(encoding="utf-8"
 PS_BOOTSTRAP = '''
 # R00K Band Worker Bootstrap (Windows)
 $ErrorActionPreference = "Stop"
+# Suppress the progress bar: it speeds up Invoke-WebRequest a lot AND avoids a
+# "reading the console output buffer" crash when the installer runs headless /
+# with redirected output (automation, RMM, remote shells).
+$ProgressPreference = "SilentlyContinue"
 
 # Self-elevate if not already Administrator - Register-ScheduledTask below
 # needs -RunLevel Highest, which requires it. Relaunching ourselves elevated
@@ -550,6 +554,9 @@ echo "[rook] done."
 # str.format so the PowerShell braces don't need doubling.
 PS_CLI_BOOTSTRAP = r'''# R00K Band CLI (rook) installer - Windows
 $ErrorActionPreference = "Stop"
+# Suppress the progress bar (faster downloads + no console-buffer crash when run
+# headless / with redirected output, e.g. automation or a remote shell).
+$ProgressPreference = "SilentlyContinue"
 
 # Resolve a WORKING python (ignore the Microsoft Store python.exe alias stub;
 # prefer the `py` launcher). Mirrors the worker installer's resolver.
