@@ -48,19 +48,20 @@ def load_disabled() -> set[str]:
     """Persisted set of disabled plugin module names. Read at boot by the Worker
     so disabled plugins are never loaded in the first place."""
     try:
-        return set(json.loads(_PLUGIN_STATE.read_text()).get("disabled", []))
+        return set(json.loads(_PLUGIN_STATE.read_text(encoding="utf-8")).get("disabled", []))
     except Exception:
         return set()
 
 
 def _save_disabled(names: set[str]) -> None:
     _WORKER_DIR.mkdir(parents=True, exist_ok=True)
-    _PLUGIN_STATE.write_text(json.dumps({"disabled": sorted(names)}, indent=2) + "\n")
+    _PLUGIN_STATE.write_text(json.dumps({"disabled": sorted(names)}, indent=2) + "\n",
+                             encoding="utf-8")
 
 
 def _load_custom() -> dict:
     try:
-        d = json.loads(_CUSTOM_STATE.read_text())
+        d = json.loads(_CUSTOM_STATE.read_text(encoding="utf-8"))
         return d if isinstance(d, dict) else {}
     except Exception:
         return {}
@@ -68,7 +69,7 @@ def _load_custom() -> dict:
 
 def _save_custom(defs: dict) -> None:
     _WORKER_DIR.mkdir(parents=True, exist_ok=True)
-    _CUSTOM_STATE.write_text(json.dumps(defs, indent=2) + "\n")
+    _CUSTOM_STATE.write_text(json.dumps(defs, indent=2) + "\n", encoding="utf-8")
 
 
 class WorkerAdmin:

@@ -71,7 +71,7 @@ def _supervisor() -> str:
 def _my_worker_id() -> str | None:
     """This node's stable worker_id (written by core.stable_worker_id)."""
     try:
-        return _WORKER_ID_FILE.read_text().strip() or None
+        return _WORKER_ID_FILE.read_text(encoding="utf-8").strip() or None
     except Exception:
         return None
 
@@ -85,7 +85,7 @@ def is_banned() -> bool:
 def ban_info() -> dict:
     """Details of the standing ban, or ``{}`` if not banned."""
     try:
-        return json.loads(_BANNED.read_text())
+        return json.loads(_BANNED.read_text(encoding="utf-8"))
     except Exception:
         return {"at": 0} if _BANNED.exists() else {}
 
@@ -235,7 +235,7 @@ class SelfUpdatePlugin(Plugin):
         still updates it on explicit demand."""
         _WORKER_DIR.mkdir(parents=True, exist_ok=True)
         if enable:
-            _HOLD.write_text(f"held at {int(time.time())}\n")
+            _HOLD.write_text(f"held at {int(time.time())}\n", encoding="utf-8")
         else:
             _HOLD.unlink(missing_ok=True)
         return {"ok": True, "held": enable}
@@ -279,7 +279,7 @@ class SelfUpdatePlugin(Plugin):
         _BANNED.write_text(json.dumps({
             "at": int(time.time()),
             "reason": str(payload.get("reason", ""))[:500],
-        }) + "\n")
+        }) + "\n", encoding="utf-8")
         log.warning("deauthed from band (reason=%r); restarting into dormant mode",
                     payload.get("reason", ""))
         # Ack first, then restart INTO the boot gate — the fresh process sees the
@@ -480,13 +480,13 @@ class SelfUpdatePlugin(Plugin):
 
     def _read_state(self) -> dict | None:
         try:
-            return json.loads(_STATE.read_text())
+            return json.loads(_STATE.read_text(encoding="utf-8"))
         except Exception:
             return None
 
     def _write_state(self, d: dict) -> None:
         _WORKER_DIR.mkdir(parents=True, exist_ok=True)
-        _STATE.write_text(json.dumps(d))
+        _STATE.write_text(json.dumps(d), encoding="utf-8")
 
     def _clear_state(self) -> None:
         _STATE.unlink(missing_ok=True)
@@ -580,7 +580,7 @@ class SelfUpdatePlugin(Plugin):
         if not _UNIT.exists():
             return False
         try:
-            text = _UNIT.read_text()
+            text = _UNIT.read_text(encoding="utf-8")
             execstart = "ExecStart=" + " ".join(argv)
             out, replaced = [], False
             for line in text.splitlines():
@@ -591,7 +591,7 @@ class SelfUpdatePlugin(Plugin):
                     out.append(line)
             if not replaced:
                 return False
-            _UNIT.write_text("\n".join(out) + "\n")
+            _UNIT.write_text("\n".join(out) + "\n", encoding="utf-8")
             return True
         except Exception:
             log.exception("failed to persist unit")

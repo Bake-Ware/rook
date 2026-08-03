@@ -94,9 +94,9 @@ class MsgPlugin(Plugin):
             _INBOX.parent.mkdir(parents=True, exist_ok=True)
             lines = []
             if _INBOX.exists():
-                lines = _INBOX.read_text().splitlines()[-(_MAX_KEEP - 1):]
-            lines.append(json.dumps(entry))
-            _INBOX.write_text("\n".join(lines) + "\n")
+                lines = _INBOX.read_text(encoding="utf-8", errors="replace").splitlines()[-(_MAX_KEEP - 1):]
+            lines.append(json.dumps(entry, ensure_ascii=False))
+            _INBOX.write_text("\n".join(lines) + "\n", encoding="utf-8")
             stored = True
         except Exception as e:
             stored = False
@@ -111,7 +111,7 @@ class MsgPlugin(Plugin):
             return {"ok": True, "messages": []}
         out = []
         try:
-            for ln in _INBOX.read_text().splitlines()[-int(limit):]:
+            for ln in _INBOX.read_text(encoding="utf-8", errors="replace").splitlines()[-int(limit):]:
                 try:
                     out.append(json.loads(ln))
                 except Exception:

@@ -18,7 +18,6 @@ not supplied, so it never lands in shell history.
 from __future__ import annotations
 
 import base64
-import curses
 import getpass
 import json
 import os
@@ -26,6 +25,14 @@ import socket
 import time
 import urllib.error
 import urllib.request
+
+# curses is stdlib on POSIX but NOT on Windows — there it ships as the separate
+# `windows-curses` package. Import defensively so a missing module produces a
+# clear, actionable message from main() instead of an import-time traceback.
+try:
+    import curses
+except ImportError:
+    curses = None  # handled in main()
 
 # How this client labels its outgoing chat/notify messages: the machine name.
 _ME = socket.gethostname()
@@ -781,7 +788,7 @@ _CONF = Path(os.path.expanduser("~")) / ".config" / "rook" / "band.conf"
 def _load_conf() -> dict:
     d: dict = {}
     try:
-        for ln in _CONF.read_text().splitlines():
+        for ln in _CONF.read_text(encoding="utf-8").splitlines():
             ln = ln.strip()
             if ln and not ln.startswith("#") and "=" in ln:
                 k, v = ln.split("=", 1)
@@ -795,7 +802,7 @@ def _save_conf(url: str, user: str, password: str) -> bool:
     try:
         _CONF.parent.mkdir(parents=True, exist_ok=True)
         _CONF.write_text("# rook band — dashboard connection (this file is chmod 600)\n"
-                         f"url={url}\nuser={user}\npass={password}\n")
+                         f"url={url}\nuser={user}\npass={password}\n", encoding="utf-8")
         os.chmod(_CONF, 0o600)
         return True
     except Exception:
@@ -805,6 +812,26 @@ def _save_conf(url: str, user: str, password: str) -> bool:
 def main() -> None:
     import argparse
     import sys
+
+    # UTF-8 stdio so the ☤ brand / box-drawing / worker names never crash the
+    # console on Windows (cp1252). No-op on already-UTF-8 POSIX terminals.
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+    # curses is required for the full-screen UI. On Windows it's the separate
+    # `windows-curses` package; if it's absent, say exactly how to fix it
+    # rather than dying with "No module named '_curses'".
+    if curses is None:
+        hint = ("pip install windows-curses" if sys.platform == "win32"
+                else "install your platform's python curses module")
+        raise SystemExit(
+            "rook: the 'curses' module is unavailable, so the terminal UI can't "
+            f"start.\nInstall it with:  {hint}\n"
+            "(the Windows installer normally does this for you.)")
+
     # Installed as a standalone `rook`, so accept both `rook` and `rook band`.
     if len(sys.argv) > 1 and sys.argv[1] in ("band", "tui"):
         del sys.argv[1]

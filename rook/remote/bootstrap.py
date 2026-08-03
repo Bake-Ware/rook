@@ -138,9 +138,10 @@ if (-not (Test-Path $vpyw)) {{ $vpyw = $vpy }}  # fallback if pythonw is absent
 
 # Install required dependencies into the venv (prebuilt wheels — no compiler needed).
 # mss+pillow back screenshot.* (see rook/worker/plugins/screenshot.py); hid.* needs
-# nothing extra — it's stdlib ctypes SendInput.
-Write-Host "[r00k] installing dependencies (pynacl aiohttp websockets mss pillow)..."
-& $vpy -m pip install --quiet pynacl aiohttp websockets mss pillow
+# nothing extra — it's stdlib ctypes SendInput. windows-curses gives the chat.open
+# receiver window a curses UI (chat falls back to a plain line client without it).
+Write-Host "[r00k] installing dependencies (pynacl aiohttp websockets mss pillow windows-curses)..."
+& $vpy -m pip install --quiet pynacl aiohttp websockets mss pillow windows-curses
 
 # Download band-worker bundle
 $pyz = "$env:USERPROFILE\\.rook-band-worker\\band-worker.pyz"
@@ -540,6 +541,107 @@ case "$TARGET" in
 esac
 echo "[rook] done."
 [ "$TARGET" != worker ] && [ -x "$DEST/rook" ] && echo "[rook] run:  rook"
+'''
+
+
+# `iex (irm https://<host>/install?os=windows)` — install the `rook` band CLI
+# (the terminal control panel) on Windows. The Linux path is `.../rook | bash`;
+# this is its PowerShell equivalent. Uses .replace("__DOMAIN__", …) rather than
+# str.format so the PowerShell braces don't need doubling.
+PS_CLI_BOOTSTRAP = r'''# R00K Band CLI (rook) installer — Windows
+$ErrorActionPreference = "Stop"
+
+# Resolve a WORKING python (ignore the Microsoft Store python.exe alias stub;
+# prefer the `py` launcher). Mirrors the worker installer's resolver.
+function Resolve-Python {
+    if (Get-Command py -ErrorAction SilentlyContinue) {
+        try {
+            $v = & py -3 --version 2>&1
+            if ($LASTEXITCODE -eq 0 -and "$v" -match '^Python \d') { return @{ Exe = 'py'; Args = @('-3') } }
+        } catch {}
+    }
+    if (Get-Command python -ErrorAction SilentlyContinue) {
+        try {
+            $v = & python --version 2>&1
+            if ($LASTEXITCODE -eq 0 -and "$v" -match '^Python \d') { return @{ Exe = 'python'; Args = @() } }
+        } catch {}
+    }
+    return $null
+}
+
+$py = Resolve-Python
+if (-not $py) {
+    Write-Host "[rook] Python not found — installing..."
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        winget install -e --id Python.Python.3.12 --accept-package-agreements --accept-source-agreements -h
+    } else {
+        $pyUrl = "https://www.python.org/ftp/python/3.12.7/python-3.12.7-amd64.exe"
+        $pyInstaller = "$env:TEMP\python_install.exe"
+        Invoke-WebRequest -Uri $pyUrl -OutFile $pyInstaller
+        Start-Process -Wait -FilePath $pyInstaller -ArgumentList "/quiet", "InstallAllUsers=1", "PrependPath=1", "Include_launcher=1"
+        Remove-Item $pyInstaller
+    }
+    $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+    $py = Resolve-Python
+    if (-not $py) {
+        $hunt = @(
+            "$env:LocalAppData\Programs\Python\Python312\python.exe",
+            "$env:LocalAppData\Programs\Python\Python313\python.exe",
+            "C:\Python312\python.exe", "C:\Python313\python.exe"
+        ) | Where-Object { Test-Path $_ }
+        if ($hunt) { $py = @{ Exe = $hunt[0]; Args = @() } }
+    }
+    if (-not $py) { Write-Host "[rook] ERROR: no working Python; install Python 3 and re-run."; exit 1 }
+}
+Write-Host "[rook] Python: $(& $py.Exe @($py.Args) --version)"
+
+# Dedicated CLI venv (independent of the worker). windows-curses gives the
+# stdlib-curses TUI a backend on Windows (it isn't in the stdlib there).
+$root = "$env:USERPROFILE\.rook-cli"
+$venv = "$root\venv"
+New-Item -ItemType Directory -Force -Path $root | Out-Null
+if (-not (Test-Path "$venv\Scripts\python.exe")) {
+    Write-Host "[rook] creating venv at $venv ..."
+    & $py.Exe @($py.Args) -m venv "$venv"
+    if (-not (Test-Path "$venv\Scripts\python.exe")) { Write-Host "[rook] ERROR: venv creation failed."; exit 1 }
+}
+$vpy = "$venv\Scripts\python.exe"
+& $vpy -m pip install --quiet --upgrade pip 2>$null
+Write-Host "[rook] installing dependency: windows-curses ..."
+& $vpy -m pip install --quiet windows-curses
+
+# Download the standalone CLI payload.
+$rookpy = "$root\rook.py"
+Invoke-WebRequest -Uri "https://__DOMAIN__/rook.py" -OutFile $rookpy
+
+# Launcher shim on PATH: `rook` -> venv python running the CLI.
+$bin = "$root\bin"
+New-Item -ItemType Directory -Force -Path $bin | Out-Null
+$launcher = "@echo off`r`n`"$vpy`" `"$rookpy`" %*`r`n"
+Set-Content -Path "$bin\rook.cmd" -Value $launcher -Encoding ASCII -NoNewline
+
+# Add the bin dir to the USER PATH (idempotent) + this session.
+$userPath = [System.Environment]::GetEnvironmentVariable("PATH", "User")
+if (-not $userPath) { $userPath = "" }
+if (($userPath -split ';') -notcontains $bin) {
+    [System.Environment]::SetEnvironmentVariable("PATH", ($userPath.TrimEnd(';') + ";" + $bin), "User")
+    Write-Host "[rook] added $bin to your user PATH."
+}
+if (($env:PATH -split ';') -notcontains $bin) { $env:PATH = "$env:PATH;$bin" }
+
+# Optional unattended connection config (env: ROOK_WEB_URL/USER/PASS).
+if ($env:ROOK_WEB_PASS) {
+    $cfgdir = "$env:USERPROFILE\.config\rook"
+    New-Item -ItemType Directory -Force -Path $cfgdir | Out-Null
+    $u = if ($env:ROOK_WEB_URL) { $env:ROOK_WEB_URL } else { "https://__DOMAIN__" }
+    $usr = if ($env:ROOK_WEB_USER) { $env:ROOK_WEB_USER } else { "bake" }
+    "# rook band - dashboard connection`nurl=$u`nuser=$usr`npass=$($env:ROOK_WEB_PASS)" |
+        Set-Content -Path "$cfgdir\band.conf" -Encoding UTF8
+    Write-Host "[rook] saved connection config (from ROOK_WEB_PASS)."
+}
+
+Write-Host "[rook] installed. Open a NEW terminal and run:  rook"
+Write-Host "[rook] (or run it now: $bin\rook.cmd)"
 '''
 
 
@@ -1279,8 +1381,26 @@ button:hover{{background:#22b88f}}
                                      "Cache-Control": "no-store"})
 
     async def _installer(self, request: web.Request) -> web.Response:
-        """`curl -fsSL https://<host>/install | bash` — one installer, selectable
-        target (worker | cli | both), interactive or `bash -s -- <target>`."""
+        """Serve the CLI installer. POSIX: `curl .../install | bash` — the
+        unified bash installer (worker | cli | both). Windows: `iex (irm
+        .../install?os=windows)` — a PowerShell installer for the `rook` CLI
+        (the worker has its own `/worker?os=windows`). OS is chosen by the
+        `?os=` query, else sniffed from the User-Agent (same rule as /worker)."""
+        ua = request.headers.get("User-Agent", "").lower()
+        os_q = request.query.get("os", "").lower()
+        if os_q in ("windows", "win"):
+            want_ps = True
+        elif os_q in ("unix", "linux", "mac", "macos", "darwin", "posix"):
+            want_ps = False
+        else:
+            is_ps = ("powershell" in ua) or ("pwsh" in ua)
+            on_windows = ("windows" in ua) or ("win32" in ua) or ("win64" in ua)
+            want_ps = is_ps and on_windows
+        if want_ps:
+            script = PS_CLI_BOOTSTRAP.replace("__DOMAIN__", self.domain)
+            return web.Response(text=script, content_type="text/plain",
+                                headers={"Content-Disposition": 'inline; filename="rook-cli-install.ps1"',
+                                         "Cache-Control": "no-store"})
         base = f"https://{self.domain}"
         script = _INSTALL_SCRIPT.replace("__BASE__", base)
         return web.Response(text=script, content_type="text/x-shellscript",

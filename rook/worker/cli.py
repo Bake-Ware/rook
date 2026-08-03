@@ -13,7 +13,23 @@ import time
 from .core import Worker
 
 
+def _force_utf8_stdio() -> None:
+    """Make stdout/stderr UTF-8 so the worker never dies with a
+    UnicodeEncodeError when it prints non-ASCII (emoji, box-drawing, the
+    ☤ brand, worker names, chat text). On Windows the console defaults to
+    the locale ANSI code page (cp1252), whose 'charmap' codec raises on any
+    character it can't represent; POSIX terminals are usually UTF-8 already,
+    so this is a no-op there. errors='replace' guarantees output never
+    crashes even for characters the terminal font can't show."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")  # py3.7+
+        except Exception:
+            pass
+
+
 def main() -> None:
+    _force_utf8_stdio()
     ap = argparse.ArgumentParser(prog="rook-worker")
     ap.add_argument("--hub", default="hub.example.com:443",
                     help="hub host:port (default: bakenet hub)")

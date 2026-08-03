@@ -27,7 +27,7 @@ def stable_worker_id() -> str:
     shed. Persisted under the worker state dir; falls back to an ephemeral id if
     that dir isn't writable (better a transient id than a crash)."""
     try:
-        wid = _WORKER_ID_FILE.read_text().strip()
+        wid = _WORKER_ID_FILE.read_text(encoding="utf-8").strip()
         if wid:
             return wid
     except Exception:
@@ -35,7 +35,7 @@ def stable_worker_id() -> str:
     wid = uuid.uuid4().hex
     try:
         _WORKER_ID_FILE.parent.mkdir(parents=True, exist_ok=True)
-        _WORKER_ID_FILE.write_text(wid + "\n")
+        _WORKER_ID_FILE.write_text(wid + "\n", encoding="utf-8")
     except Exception:
         log.warning("could not persist worker_id; using an ephemeral one")
     return wid

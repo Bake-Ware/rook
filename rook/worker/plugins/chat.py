@@ -37,8 +37,18 @@ def _room_file(room: str) -> Path:
 # two-panel layout as the operator's `rook band` chat pane (sidebar of the local
 # rooms + conversation + input) so both ends look identical. Pure stdlib; reads
 # rooms straight from the JSONL transcripts in the chat dir.
+#
+# Cross-platform: forces UTF-8 stdio + utf-8 file I/O (Windows consoles/text
+# files default to cp1252, which crashes on emoji/box-drawing), and if the
+# curses module is unavailable (Windows without the `windows-curses` package)
+# falls back to a plain line-based client so chat still works everywhere.
 _RECV_CLIENT = r'''#!/usr/bin/env python3
-import sys, os, json, time, curses, textwrap, glob
+import sys, os, json, time, glob, threading
+
+for _s in (sys.stdout, sys.stderr):
+    try: _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception: pass
+
 chatdir, me = sys.argv[1], sys.argv[2]
 room = sys.argv[3] if len(sys.argv) > 3 else None
 os.makedirs(chatdir, exist_ok=True)
@@ -46,9 +56,10 @@ os.makedirs(chatdir, exist_ok=True)
 def load(r):
     out = []
     try:
-        for ln in open(os.path.join(chatdir, r + ".jsonl")).read().splitlines():
-            try: out.append(json.loads(ln))
-            except Exception: pass
+        with open(os.path.join(chatdir, r + ".jsonl"), encoding="utf-8", errors="replace") as fh:
+            for ln in fh.read().splitlines():
+                try: out.append(json.loads(ln))
+                except Exception: pass
     except Exception: pass
     return out
 
@@ -63,75 +74,140 @@ def rooms():
     return out
 
 def send(r, text):
-    with open(os.path.join(chatdir, r + ".jsonl"), "a") as fh:
-        fh.write(json.dumps({"ts": int(time.time()), "sender": me, "text": text}) + "\n")
+    with open(os.path.join(chatdir, r + ".jsonl"), "a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"ts": int(time.time()), "sender": me, "text": text}, ensure_ascii=False) + "\n")
 
-def run(scr):
+def run_curses(curses):
     global room
-    curses.curs_set(1); scr.timeout(400)
-    curses.start_color(); curses.use_default_colors()
-    curses.init_pair(1, curses.COLOR_GREEN, -1)    # me
-    curses.init_pair(4, curses.COLOR_CYAN, -1)     # accents
-    inp = ""
-    while True:
-        rs = rooms()
-        if room is None and rs: room = rs[0]["room"]
-        if room is None: room = "chat"
-        sidesel = next((i for i, e in enumerate(rs) if e["room"] == room), 0)
-        h, w = scr.getmaxyx(); scr.erase()
-        sw = min(30, max(16, w // 4))
-        def put(y, x, t, a=0):
-            n = w - 1 - x
-            if 0 <= y < h and n > 0:
-                try: scr.addnstr(y, x, t[:n], n, a)
+    def _ui(scr):
+        global room
+        import textwrap
+        curses.curs_set(1); scr.timeout(400)
+        curses.start_color(); curses.use_default_colors()
+        curses.init_pair(1, curses.COLOR_GREEN, -1)    # me
+        curses.init_pair(4, curses.COLOR_CYAN, -1)     # accents
+        inp = ""
+        while True:
+            rs = rooms()
+            if room is None and rs: room = rs[0]["room"]
+            if room is None: room = "chat"
+            sidesel = next((i for i, e in enumerate(rs) if e["room"] == room), 0)
+            h, w = scr.getmaxyx(); scr.erase()
+            sw = min(30, max(16, w // 4))
+            def put(y, x, t, a=0):
+                n = w - 1 - x
+                if 0 <= y < h and n > 0:
+                    try: scr.addnstr(y, x, t[:n], n, a)
+                    except curses.error: pass
+            put(0, 0, (" ROOK CHAT - %s/%s - up/down switch - Ctrl-C close " % (me, room)).ljust(w),
+                curses.A_REVERSE)
+            put(1, 0, " chats".ljust(sw), curses.A_BOLD)
+            for i, e in enumerate(rs[:h - 3]):
+                put(2 + i, 0, (" " + e["room"]).ljust(sw), curses.A_REVERSE if i == sidesel else 0)
+            for y in range(1, h - 1):
+                try: scr.addch(y, sw, curses.ACS_VLINE)
                 except curses.error: pass
-        put(0, 0, (" ROOK CHAT · %s/%s · ↑↓ switch · Ctrl-C close " % (me, room)).ljust(w),
-            curses.A_REVERSE)
-        put(1, 0, " chats".ljust(sw), curses.A_BOLD)
-        for i, e in enumerate(rs[:h - 3]):
-            put(2 + i, 0, (" " + e["room"]).ljust(sw), curses.A_REVERSE if i == sidesel else 0)
-        for y in range(1, h - 1):
-            try: scr.addch(y, sw, curses.ACS_VLINE)
+            cx, cw = sw + 2, w - sw - 2
+            rowlines = []
+            for m in load(room):
+                mine = m.get("sender") == me
+                who = "you" if mine else str(m.get("sender"))
+                for j, seg in enumerate(textwrap.wrap(str(m.get("text", "")), max(8, cw - 13)) or [""]):
+                    head = ("%-11s" % (who + ":")) if j == 0 else " " * 11
+                    rowlines.append((head + " " + seg, mine))
+            for i, (line, mine) in enumerate(rowlines[-(h - 4):]):
+                put(2 + i, cx, line, curses.color_pair(1) if mine else 0)
+            put(h - 1, cx, ("> " + inp).ljust(cw), curses.A_BOLD)
+            try: scr.move(h - 1, min(cx + 2 + len(inp), w - 2))
             except curses.error: pass
-        cx, cw = sw + 2, w - sw - 2
-        rowlines = []
-        for m in load(room):
-            mine = m.get("sender") == me
-            who = "you" if mine else str(m.get("sender"))
-            for j, seg in enumerate(textwrap.wrap(str(m.get("text", "")), max(8, cw - 13)) or [""]):
-                head = ("%-11s" % (who + ":")) if j == 0 else " " * 11
-                rowlines.append((head + " " + seg, mine))
-        for i, (line, mine) in enumerate(rowlines[-(h - 4):]):
-            put(2 + i, cx, line, curses.color_pair(1) if mine else 0)
-        put(h - 1, cx, ("> " + inp).ljust(cw), curses.A_BOLD)
-        try: scr.move(h - 1, min(cx + 2 + len(inp), w - 2))
-        except curses.error: pass
-        scr.refresh()
-        try: k = scr.getch()
-        except KeyboardInterrupt: break
-        if k == -1: continue
-        if k in (10, 13):
-            if inp.strip(): send(room, inp)
-            inp = ""
-        elif k == curses.KEY_UP and rs:
-            room = rs[max(0, sidesel - 1)]["room"]
-        elif k == curses.KEY_DOWN and rs:
-            room = rs[min(len(rs) - 1, sidesel + 1)]["room"]
-        elif k in (curses.KEY_BACKSPACE, 127, 8): inp = inp[:-1]
-        elif 32 <= k <= 126: inp += chr(k)
+            scr.refresh()
+            try: k = scr.getch()
+            except KeyboardInterrupt: break
+            if k == -1: continue
+            if k in (10, 13):
+                if inp.strip(): send(room, inp)
+                inp = ""
+            elif k == curses.KEY_UP and rs:
+                room = rs[max(0, sidesel - 1)]["room"]
+            elif k == curses.KEY_DOWN and rs:
+                room = rs[min(len(rs) - 1, sidesel + 1)]["room"]
+            elif k in (curses.KEY_BACKSPACE, 127, 8): inp = inp[:-1]
+            elif 32 <= k <= 126: inp += chr(k)
+    curses.wrapper(_ui)
 
-try: curses.wrapper(run)
-except Exception: pass
+def run_plain():
+    # No curses (e.g. Windows without windows-curses): a simple line client.
+    # A background thread prints new messages as they arrive; the main thread
+    # blocks on input() for replies.
+    global room
+    if room is None:
+        rs = rooms(); room = rs[0]["room"] if rs else "chat"
+    print("=" * 60)
+    print(" ROOK CHAT  (room: %s, you are: %s)" % (room, me))
+    print(" Type a message and press Enter to send. Ctrl-C to close.")
+    print("=" * 60)
+    for m in load(room):
+        who = "you" if m.get("sender") == me else str(m.get("sender"))
+        print("%s: %s" % (who, m.get("text", "")))
+    seen = {id(x): None for x in []}
+    last_ts = [max([m.get("ts", 0) for m in load(room)] or [0])]
+    stop = threading.Event()
+    def watcher():
+        while not stop.is_set():
+            time.sleep(1.0)
+            newest = last_ts[0]
+            for m in load(room):
+                if m.get("ts", 0) > last_ts[0] and m.get("sender") != me:
+                    print("\n%s: %s" % (str(m.get("sender")), m.get("text", "")))
+                    print("> ", end="", flush=True)
+                if m.get("ts", 0) > newest:
+                    newest = m.get("ts", 0)
+            last_ts[0] = newest
+    t = threading.Thread(target=watcher, daemon=True); t.start()
+    try:
+        while True:
+            line = input("> ")
+            if line.strip():
+                send(room, line)
+                last_ts[0] = int(time.time())
+    except (EOFError, KeyboardInterrupt):
+        stop.set()
+
+try:
+    import curses
+    run_curses(curses)
+except ImportError:
+    run_plain()
+except Exception:
+    pass
 '''
 
 
 def _spawn_terminal(script: str, chatdir: str, me: str, room: str, title: str) -> str | None:
     """Best-effort: open a terminal window running the chat client. Returns the
     terminal it used, or None if no display / no terminal emulator."""
-    if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
-        return None
     py = sys.executable or "python3"
     cmd = [py, script, chatdir, me, room]
+
+    # Windows: no DISPLAY concept — spawn a console window directly. Prefer
+    # Windows Terminal (wt), else a plain `cmd` window via `start`.
+    if sys.platform == "win32":
+        if shutil.which("wt"):
+            try:
+                subprocess.Popen(["wt", "-w", "0", "new-tab", "--title", title] + cmd,
+                                 creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
+                return "wt"
+            except Exception:
+                pass
+        try:
+            # A fresh console window that stays open running the client.
+            subprocess.Popen(cmd, creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
+            return "cmd"
+        except Exception:
+            return None
+
+    if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        return None
     joined = " ".join(shlex.quote(c) for c in cmd)
     candidates = [
         ["konsole", "-p", "tabtitle=" + title, "-e"] + cmd,
@@ -168,7 +244,7 @@ class ChatPlugin(Plugin):
         # Write the client script once (per boot) and spawn a terminal for it.
         client = _CHATDIR / "_recv_client.py"
         try:
-            client.write_text(_RECV_CLIENT)
+            client.write_text(_RECV_CLIENT, encoding="utf-8")
             os.chmod(client, 0o755)
         except Exception as e:
             return {"ok": False, "error": f"could not write client: {e}"}
@@ -187,8 +263,11 @@ class ChatPlugin(Plugin):
         _CHATDIR.mkdir(parents=True, exist_ok=True)
         entry = {"ts": int(time.time()), "sender": str(sender)[:64], "text": text[:4000]}
         try:
-            with open(_room_file(room), "a") as fh:
-                fh.write(json.dumps(entry) + "\n")
+            # utf-8 + ensure_ascii=False so the transcript is real UTF-8 that
+            # reads back identically on any platform (Windows text I/O defaults
+            # to cp1252, which would otherwise mangle non-ASCII on read-back).
+            with open(_room_file(room), "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
         return {"ok": True}
@@ -202,7 +281,7 @@ class ChatPlugin(Plugin):
             for f in sorted(_CHATDIR.glob("*.jsonl")):
                 msgs = []
                 try:
-                    for ln in f.read_text().splitlines():
+                    for ln in f.read_text(encoding="utf-8", errors="replace").splitlines():
                         try:
                             msgs.append(json.loads(ln))
                         except Exception:
@@ -233,7 +312,7 @@ class ChatPlugin(Plugin):
         out = []
         last = float(since)
         try:
-            for ln in f.read_text().splitlines():
+            for ln in f.read_text(encoding="utf-8", errors="replace").splitlines():
                 try:
                     m = json.loads(ln)
                 except Exception:
