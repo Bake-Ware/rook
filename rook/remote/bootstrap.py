@@ -24,11 +24,33 @@ PS_BOOTSTRAP = '''
 # R00K Band Worker Bootstrap (Windows)
 $ErrorActionPreference = "Stop"
 
-# Install Python if missing
-if (-not (Get-Command python -ErrorAction SilentlyContinue)) {{
-    Write-Host "[r00k] Python not found. Installing..."
+# Resolve a WORKING python — prefer the `py` launcher, which is immune to the
+# Microsoft Store "python.exe" App Execution Alias stub that Windows 10/11 put
+# on PATH by default. That stub makes `Get-Command python` succeed even with
+# no real Python installed, and `python --version` silently prints nothing —
+# which used to make this script believe Python was already there and crash
+# later at venv creation with no real interpreter behind it.
+function Resolve-Python {{
+    if (Get-Command py -ErrorAction SilentlyContinue) {{
+        try {{
+            $v = & py -3 --version 2>&1
+            if ($LASTEXITCODE -eq 0 -and "$v" -match '^Python \\d') {{ return @{{ Exe = 'py'; Args = @('-3') }} }}
+        }} catch {{}}
+    }}
+    if (Get-Command python -ErrorAction SilentlyContinue) {{
+        try {{
+            $v = & python --version 2>&1
+            if ($LASTEXITCODE -eq 0 -and "$v" -match '^Python \\d') {{ return @{{ Exe = 'python'; Args = @() }} }}
+        }} catch {{}}
+    }}
+    return $null
+}}
+
+$py = Resolve-Python
+if (-not $py) {{
+    Write-Host "[r00k] Python not found (or only the Microsoft Store stub is on PATH). Installing..."
     if (Get-Command winget -ErrorAction SilentlyContinue) {{
-        winget install Python.Python.3.12 --accept-package-agreements --accept-source-agreements -h
+        winget install -e --id Python.Python.3.12 --accept-package-agreements --accept-source-agreements -h
     }} elseif (Get-Command choco -ErrorAction SilentlyContinue) {{
         choco install python3 -y
     }} else {{
@@ -36,19 +58,44 @@ if (-not (Get-Command python -ErrorAction SilentlyContinue)) {{
         $pyUrl = "https://www.python.org/ftp/python/3.12.7/python-3.12.7-amd64.exe"
         $pyInstaller = "$env:TEMP\\python_install.exe"
         Invoke-WebRequest -Uri $pyUrl -OutFile $pyInstaller
-        Start-Process -Wait -FilePath $pyInstaller -ArgumentList "/quiet", "InstallAllUsers=1", "PrependPath=1"
+        Start-Process -Wait -FilePath $pyInstaller -ArgumentList "/quiet", "InstallAllUsers=1", "PrependPath=1", "Include_launcher=1"
         Remove-Item $pyInstaller
     }}
     $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+    $py = Resolve-Python
+    if (-not $py) {{
+        # PATH refresh doesn't always take effect in THIS process even after a
+        # successful install — hunt well-known install locations directly.
+        $hunt = @(
+            "$env:LocalAppData\\Programs\\Python\\Python312\\python.exe",
+            "$env:LocalAppData\\Programs\\Python\\Python313\\python.exe",
+            "C:\\Python312\\python.exe",
+            "C:\\Python313\\python.exe",
+            "$env:ProgramFiles\\Python312\\python.exe",
+            "$env:ProgramFiles\\Python313\\python.exe"
+        ) | Where-Object {{ Test-Path $_ }}
+        if ($hunt) {{ $py = @{{ Exe = $hunt[0]; Args = @() }} }}
+    }}
+    if (-not $py) {{
+        Write-Host "[r00k] ERROR: Python install did not produce a working interpreter."
+        Write-Host "[r00k] If running 'python' opens the Microsoft Store, disable the alias:"
+        Write-Host "[r00k]   Settings -> Apps -> Advanced app settings -> App execution aliases -> turn OFF python.exe/python3.exe"
+        Write-Host "[r00k] then re-run: iex (irm `"https://{domain}/worker?os=windows`")"
+        exit 1
+    }}
 }}
 
-Write-Host "[r00k] Python: $(python --version)"
+Write-Host "[r00k] Python: $(& $py.Exe @($py.Args) --version)"
 
 # Use a dedicated venv — avoids PEP 668 and missing/broken system pip.
 $venv = "$env:USERPROFILE\\.rook-band-worker\\venv"
 if (-not (Test-Path "$venv\\Scripts\\python.exe")) {{
     Write-Host "[r00k] creating venv at $venv ..."
-    python -m venv "$venv"
+    & $py.Exe @($py.Args) -m venv "$venv"
+    if (-not (Test-Path "$venv\\Scripts\\python.exe")) {{
+        Write-Host "[r00k] ERROR: venv creation failed — $venv\\Scripts\\python.exe was not created."
+        exit 1
+    }}
 }}
 $vpy = "$venv\\Scripts\\python.exe"
 # pythonw.exe is the windowless interpreter — the worker runs with NO console window.
