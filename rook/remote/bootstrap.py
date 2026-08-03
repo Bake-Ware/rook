@@ -24,7 +24,7 @@ PS_BOOTSTRAP = '''
 # R00K Band Worker Bootstrap (Windows)
 $ErrorActionPreference = "Stop"
 
-# Self-elevate if not already Administrator — Register-ScheduledTask below
+# Self-elevate if not already Administrator - Register-ScheduledTask below
 # needs -RunLevel Highest, which requires it. Relaunching ourselves elevated
 # means the one-liner just works without the user having to know to
 # right-click "Run as Administrator" first; this triggers a UAC prompt they
@@ -36,13 +36,13 @@ $ErrorActionPreference = "Stop"
 # network, then spawns an elevated copy of itself doing the same thing
 # again" is close to a textbook privilege-escalating fileless-loader shape
 # and is exactly what tripped Defender's ML heuristic (Commando.A!ml) during
-# testing — the base one-liner alone is a far more common, lower-risk
+# testing - the base one-liner alone is a far more common, lower-risk
 # pattern (same one Chocolatey/Scoop/rustup use). Writing to disk first
 # doesn't hide anything from AMSI/content scanning, it just avoids that
 # specific self-propagating-elevation process-creation signature.
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {{
-    Write-Host "[r00k] not running elevated — relaunching as Administrator (accept the UAC prompt)..."
+    Write-Host "[r00k] not running elevated - relaunching as Administrator (accept the UAC prompt)..."
     try {{
         $tmp = Join-Path $env:TEMP "rook-worker-install.ps1"
         Invoke-WebRequest -Uri "https://{domain}/worker?os=windows" -OutFile $tmp
@@ -56,10 +56,10 @@ if (-not $isAdmin) {{
     }}
 }}
 
-# Resolve a WORKING python — prefer the `py` launcher, which is immune to the
+# Resolve a WORKING python - prefer the `py` launcher, which is immune to the
 # Microsoft Store "python.exe" App Execution Alias stub that Windows 10/11 put
 # on PATH by default. That stub makes `Get-Command python` succeed even with
-# no real Python installed, and `python --version` silently prints nothing —
+# no real Python installed, and `python --version` silently prints nothing -
 # which used to make this script believe Python was already there and crash
 # later at venv creation with no real interpreter behind it.
 function Resolve-Python {{
@@ -97,7 +97,7 @@ if (-not $py) {{
     $py = Resolve-Python
     if (-not $py) {{
         # PATH refresh doesn't always take effect in THIS process even after a
-        # successful install — hunt well-known install locations directly.
+        # successful install - hunt well-known install locations directly.
         $hunt = @(
             "$env:LocalAppData\\Programs\\Python\\Python312\\python.exe",
             "$env:LocalAppData\\Programs\\Python\\Python313\\python.exe",
@@ -119,26 +119,26 @@ if (-not $py) {{
 
 Write-Host "[r00k] Python: $(& $py.Exe @($py.Args) --version)"
 
-# Use a dedicated venv — avoids PEP 668 and missing/broken system pip.
+# Use a dedicated venv - avoids PEP 668 and missing/broken system pip.
 $venv = "$env:USERPROFILE\\.rook-band-worker\\venv"
 if (-not (Test-Path "$venv\\Scripts\\python.exe")) {{
     Write-Host "[r00k] creating venv at $venv ..."
     & $py.Exe @($py.Args) -m venv "$venv"
     if (-not (Test-Path "$venv\\Scripts\\python.exe")) {{
-        Write-Host "[r00k] ERROR: venv creation failed — $venv\\Scripts\\python.exe was not created."
+        Write-Host "[r00k] ERROR: venv creation failed - $venv\\Scripts\\python.exe was not created."
         exit 1
     }}
 }}
 $vpy = "$venv\\Scripts\\python.exe"
-# pythonw.exe is the windowless interpreter — the worker runs with NO console window.
+# pythonw.exe is the windowless interpreter - the worker runs with NO console window.
 $vpyw = "$venv\\Scripts\\pythonw.exe"
 if (-not (Test-Path $vpyw)) {{ $vpyw = $vpy }}  # fallback if pythonw is absent
 & $vpy -m ensurepip --upgrade 2>$null
 & $vpy -m pip install --quiet --upgrade pip 2>$null
 
-# Install required dependencies into the venv (prebuilt wheels — no compiler needed).
+# Install required dependencies into the venv (prebuilt wheels - no compiler needed).
 # mss+pillow back screenshot.* (see rook/worker/plugins/screenshot.py); hid.* needs
-# nothing extra — it's stdlib ctypes SendInput. windows-curses gives the chat.open
+# nothing extra - it's stdlib ctypes SendInput. windows-curses gives the chat.open
 # receiver window a curses UI (chat falls back to a plain line client without it).
 Write-Host "[r00k] installing dependencies (pynacl aiohttp websockets mss pillow windows-curses)..."
 & $vpy -m pip install --quiet pynacl aiohttp websockets mss pillow windows-curses
@@ -148,7 +148,7 @@ $pyz = "$env:USERPROFILE\\.rook-band-worker\\band-worker.pyz"
 New-Item -ItemType Directory -Force -Path (Split-Path $pyz) | Out-Null
 Invoke-WebRequest -Uri "https://{domain}/band-worker.pyz" -OutFile $pyz
 
-# Stop any existing worker FIRST — avoids duplicate processes and stale worker-ids
+# Stop any existing worker FIRST - avoids duplicate processes and stale worker-ids
 # lingering on the band (each worker process announces a fresh random id).
 Write-Host "[r00k] stopping any existing band worker..."
 Stop-ScheduledTask -TaskName "RookBandWorker" -ErrorAction SilentlyContinue
@@ -157,7 +157,7 @@ Get-CimInstance Win32_Process -Filter "Name like '%python%'" -ErrorAction Silent
     ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}
 Start-Sleep -Seconds 1
 
-# HID backend: Windows is native — hid.* uses SendInput via user32.dll (no install).
+# HID backend: Windows is native - hid.* uses SendInput via user32.dll (no install).
 # The task runs at logon in the interactive session, so input injection works.
 Write-Host "[r00k] HID backend: native Windows SendInput (no extra setup needed)."
 
@@ -548,7 +548,7 @@ echo "[rook] done."
 # (the terminal control panel) on Windows. The Linux path is `.../rook | bash`;
 # this is its PowerShell equivalent. Uses .replace("__DOMAIN__", …) rather than
 # str.format so the PowerShell braces don't need doubling.
-PS_CLI_BOOTSTRAP = r'''# R00K Band CLI (rook) installer — Windows
+PS_CLI_BOOTSTRAP = r'''# R00K Band CLI (rook) installer - Windows
 $ErrorActionPreference = "Stop"
 
 # Resolve a WORKING python (ignore the Microsoft Store python.exe alias stub;
@@ -571,7 +571,7 @@ function Resolve-Python {
 
 $py = Resolve-Python
 if (-not $py) {
-    Write-Host "[rook] Python not found — installing..."
+    Write-Host "[rook] Python not found - installing..."
     if (Get-Command winget -ErrorAction SilentlyContinue) {
         winget install -e --id Python.Python.3.12 --accept-package-agreements --accept-source-agreements -h
     } else {
