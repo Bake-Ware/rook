@@ -239,11 +239,19 @@ async def _amain(args) -> None:
     except Exception as e:
         log.warning("WS band bridge failed to start: %s", e)
 
-    # /tokens admin UI (mint/list/revoke bearer tokens). No OAuth routes are
-    # ever mounted — FastMCP itself only registers MCP transport endpoints
-    # since we passed token_verifier, not auth_server_provider.
+    # /tokens admin UI (mint/list/revoke bearer tokens).
     for r in reversed(build_api_token_routes(store)):
         app.router.routes.insert(0, r)
+
+    # Thin OAuth front-door for claude.ai's web connector (which won't take a
+    # bare bearer header). The client secret it asks for IS a rook token, and
+    # the access_token it gets back is that same token — no separate OAuth
+    # lifecycle, tokens stay the single source of truth. Wraps the whole app so
+    # /authorize, /token, and the auth-server metadata are always public;
+    # everything else (/mcp, /tokens) passes straight through. See oauth_shim.
+    if args.public_url:
+        from .oauth_shim import OAuthShim
+        app = OAuthShim(app, store, args.public_url)
 
     import uvicorn
     config = uvicorn.Config(app, host=args.bind_host, port=args.bind_port,
@@ -277,9 +285,10 @@ def main() -> None:
     ap.add_argument("--public-url",
                     default=os.environ.get("ROOK_MCP_PUBLIC_URL", ""),
                     help="public https URL (e.g. https://mcp.example.com). "
-                         "Advertised as resource-server metadata for MCP "
-                         "clients — no OAuth authorization-server metadata "
-                         "is ever advertised.")
+                         "Advertised as resource-server metadata, and enables "
+                         "the thin OAuth front-door (oauth_shim) so claude.ai's "
+                         "web connector can attach using a rook token as the "
+                         "client secret.")
     ap.add_argument("--admin-password",
                     default=os.environ.get("ROOK_MCP_AUTH_PASSWORD", ""),
                     help="admin password gating the /tokens mint/revoke UI.")
