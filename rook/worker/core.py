@@ -10,7 +10,7 @@ import socket
 import uuid
 from pathlib import Path
 
-from . import audit
+from . import audit, context
 from .plugin import Plugin, load_plugins
 from .registry import CapabilityRegistry
 from .transports.base import Transport
@@ -155,6 +155,10 @@ class Worker:
             await self._reply(msg_id, {"ok": False, "error": "args must be an object"})
             return
 
+        # Expose the caller identity to the handler for its duration (memory
+        # write-ownership, chat attribution, later ACLs). Reset after so it
+        # never leaks into an unrelated dispatch.
+        tok = context.caller_identity.set(identity)
         try:
             result = await self.registry.call(cap, **args)
             audit.record(cap, identity, args, ok=True, msg_id=msg_id, target=target)
@@ -169,6 +173,8 @@ class Worker:
                          target=target, error=f"{type(e).__name__}: {e}")
             await self._reply(msg_id, {"ok": False,
                                         "error": f"{type(e).__name__}: {e}"})
+        finally:
+            context.caller_identity.reset(tok)
 
     async def _reply(self, msg_id: str | None, body: dict) -> None:
         body = {"from": self.worker_id, **body}
