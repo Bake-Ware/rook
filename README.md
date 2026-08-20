@@ -167,6 +167,21 @@ curl -fsSL https://<your-host>/install | bash -s -- both
 
 The **worker** installs as a background service and joins the band. The **CLI** installs the single `rook` command (pulling in `python3` via the system package manager if it's missing) — for a fully unattended CLI install set `ROOK_WEB_PASS` (and optionally `ROOK_WEB_USER`) so it doesn't prompt. Windows (PowerShell) and a native Android worker APK are served from the same host (`/worker.py`, `/apk`).
 
+### Run your own hub
+
+The **hub** is the band relay — a dumb `band_id` forwarder that holds no keys. Stand one up from the same host with a short wizard that populates the vars, installs a hardened systemd unit, and starts it:
+
+```sh
+# interactive — prompts for bind address, TTL, prune interval, log level, user
+curl -fsSL https://<your-host>/hub | bash
+
+# unattended — take defaults (override any var via the environment)
+curl -fsSL https://<your-host>/hub | bash -s -- --yes
+HUB_BIND=0.0.0.0:7474 curl -fsSL https://<your-host>/hub | bash -s -- --yes
+```
+
+It fetches a prebuilt binary for the host's architecture when one is available and otherwise builds from source with `cargo` — auto-installing `git`, a Rust toolchain, and a C linker through the system package manager as needed. Tune a running hub by editing `/etc/telesthete-hub.env` and `systemctl restart telesthete-hub`; point workers at it with `--hub <hub-host>:7474`.
+
 ## Repository layout
 
 ```

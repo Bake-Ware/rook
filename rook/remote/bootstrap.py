@@ -652,6 +652,221 @@ Write-Host "[rook] (or run it now: $bin\rook.cmd)"
 '''
 
 
+# `curl -fsSL https://<host>/hub | bash` — stand up a telesthete-hub (the band
+# relay) on this machine. A short wizard populates the vars, then it installs the
+# binary + a hardened systemd unit and starts it. Non-interactive: pass `--yes`
+# (or set HUB_YES=1) and override any var via the environment (HUB_BIND, …).
+#
+# Binary acquisition, in order: (1) prebuilt from the host for this arch, else
+# (2) `cargo build` from the public source if a Rust toolchain is present.
+_HUB_INSTALL_SCRIPT = r'''#!/usr/bin/env bash
+set -euo pipefail
+BASE="${ROOK_BASE:-__BASE__}"
+SRC_REPO="${HUB_SRC_REPO:-https://github.com/Bake-Ware/telesthete}"
+
+# Vars — an env value skips its prompt (so unattended installs just set these).
+HUB_BIND="${HUB_BIND:-}"
+HUB_PEER_TTL_SECS="${HUB_PEER_TTL_SECS:-}"
+HUB_PRUNE_SECS="${HUB_PRUNE_SECS:-}"
+RUST_LOG="${RUST_LOG:-}"
+HUB_USER="${HUB_USER:-}"
+PREFIX="${HUB_PREFIX:-/usr/local/bin}"
+ASSUME_YES="${HUB_YES:-}"
+if [ "${1:-}" = "-y" ] || [ "${1:-}" = "--yes" ]; then ASSUME_YES=1; fi
+
+say(){ echo "[hub] $*"; }
+die(){ echo "[hub] ERROR: $*" >&2; exit 1; }
+
+SUDO=""
+if [ "$(id -u)" -ne 0 ]; then
+  command -v sudo >/dev/null 2>&1 || die "run as root, or install sudo"
+  SUDO="sudo"
+fi
+
+# ---- dependency install (same spirit as the worker bootstrap) -----------
+PKG=""
+for m in apt-get dnf pacman apk zypper brew pkg; do
+  command -v "$m" >/dev/null 2>&1 && { PKG="$m"; break; }
+done
+
+# ensure_cmd <command> <apt> <dnf> <pacman> <apk> <zypper> <brew> <pkg>
+# Installs the right package for the detected manager only if <command> is missing.
+ensure_cmd(){
+  local cmd="$1"; shift
+  command -v "$cmd" >/dev/null 2>&1 && return 0
+  say "installing dependency: $cmd"
+  case "$PKG" in
+    apt-get) $SUDO apt-get update -qq && $SUDO apt-get install -y -qq "$1" ;;
+    dnf)     $SUDO dnf install -y "$2" ;;
+    pacman)  $SUDO pacman -Sy --noconfirm "$3" ;;
+    apk)     $SUDO apk add "$4" ;;
+    zypper)  $SUDO zypper -n install "$5" ;;
+    brew)    brew install "$6" ;;
+    pkg)     $SUDO pkg install -y "$7" ;;
+    *) say "WARNING: no known package manager to install $cmd"; return 1 ;;
+  esac
+  command -v "$cmd" >/dev/null 2>&1
+}
+
+# curl is needed to fetch the binary — install it before anything else.
+ensure_cmd curl curl curl curl curl curl curl curl || die "curl is required and could not be installed"
+
+# ask VAR "prompt" "default" — env-provided value wins; --yes/no-tty takes default.
+ask(){
+  local __v="$1" __p="$2" __d="$3" __cur __in
+  eval "__cur=\${$__v}"
+  if [ -n "$__cur" ]; then return; fi
+  if [ -n "$ASSUME_YES" ] || [ ! -r /dev/tty ]; then eval "$__v=\$__d"; return; fi
+  printf "[hub] %s [%s]: " "$__p" "$__d" > /dev/tty
+  read -r __in < /dev/tty || true
+  [ -z "$__in" ] && __in="$__d"
+  eval "$__v=\$__in"
+}
+
+say "telesthete-hub installer — the band relay (dumb band_id forwarder, holds no keys)"
+ask HUB_BIND          "UDP bind address (host:port)"    "0.0.0.0:7474"
+ask HUB_PEER_TTL_SECS "peer idle eviction, seconds"     "60"
+ask HUB_PRUNE_SECS    "eviction sweep interval, seconds" "10"
+ask RUST_LOG          "log level (error|warn|info|debug)" "info"
+ask HUB_USER          "service user"                    "telesthete"
+
+ARCH="$(uname -m)"
+TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+BIN="$TMP/telesthete-hub"
+
+is_elf(){ head -c4 "$1" 2>/dev/null | grep -qa $'\x7fELF'; }
+
+# Match the ELF e_machine field (offset 18, 2 bytes) to the host arch, so we
+# never install a wrong-arch binary — WITHOUT executing it. (An exec-based
+# check breaks on hosts that mount /tmp noexec, exactly the hardened boxes a
+# relay tends to run on.) systemd's start + is-active is the real liveness gate.
+elf_arch_ok(){
+  command -v od >/dev/null 2>&1 || return 0   # can't inspect -> trust arch-gated download
+  local m; m=$(od -An -tu2 -j18 -N2 "$1" 2>/dev/null | tr -d ' ')
+  local want
+  case "$ARCH" in
+    x86_64|amd64)        want=62  ;;
+    aarch64|arm64)       want=183 ;;
+    armv7l|armv6l|arm)   want=40  ;;
+    i386|i486|i586|i686) want=3   ;;
+    riscv64)             want=243 ;;
+    ppc64le)             want=21  ;;
+    s390x)               want=22  ;;
+    *) return 0 ;;                            # unknown host arch -> don't block
+  esac
+  [ "$m" = "$want" ]
+}
+
+acquire_prebuilt(){
+  say "fetching prebuilt binary for $ARCH…"
+  curl -fsSL "$BASE/telesthete-hub?arch=$ARCH" -o "$BIN" 2>/dev/null || return 1
+  is_elf "$BIN" || return 1                   # a 404/HTML body is not an ELF
+  elf_arch_ok "$BIN" || { say "prebuilt is not $ARCH — building from source instead"; return 1; }
+  chmod +x "$BIN"
+  return 0
+}
+
+acquire_cargo(){
+  say "no usable prebuilt for $ARCH — building from source with cargo"
+  # Build deps: git (fetch), a C compiler+linker (cargo links via cc), and the
+  # Rust toolchain. Install any that are missing, package-manager permitting.
+  ensure_cmd git git git git git git git git || return 1
+  if ! command -v cc >/dev/null 2>&1 && ! command -v gcc >/dev/null 2>&1; then
+    ensure_cmd gcc build-essential gcc base-devel build-base gcc gcc gcc || \
+      ensure_cmd cc build-essential clang base-devel build-base clang clang clang || true
+  fi
+  ensure_cmd cargo cargo cargo rust cargo cargo rust rust || {
+    say "no Rust toolchain and none installable — cannot build from source"; return 1; }
+  say "building telesthete-hub (this can take a minute or two)…"
+  git clone --depth 1 "$SRC_REPO" "$TMP/src" >/dev/null 2>&1 || return 1
+  ( cd "$TMP/src/rust" && cargo build --release -p telesthitium ) || return 1
+  [ -x "$TMP/src/rust/target/release/telesthete-hub" ] || return 1
+  cp "$TMP/src/rust/target/release/telesthete-hub" "$BIN"; chmod +x "$BIN"; return 0
+}
+
+acquire_prebuilt || acquire_cargo || die "could not obtain a telesthete-hub binary for $ARCH \
+(no prebuilt, and no cargo+git to build). Build it manually from $SRC_REPO — rust/, \
+'cargo build --release -p telesthitium' — and re-run, or drop the binary at $PREFIX/telesthete-hub."
+
+say "installing binary -> $PREFIX/telesthete-hub"
+$SUDO install -m 0755 "$BIN" "$PREFIX/telesthete-hub"
+
+# System service account: no home, no login shell.
+if ! id "$HUB_USER" >/dev/null 2>&1; then
+  say "creating system user '$HUB_USER'"
+  $SUDO useradd --system --no-create-home --shell /usr/sbin/nologin "$HUB_USER" 2>/dev/null \
+    || $SUDO useradd --system --no-create-home "$HUB_USER" 2>/dev/null || true
+fi
+
+# The wizard's values live in an EnvironmentFile; the unit reads them, so
+# re-running or editing this file + `systemctl restart` re-tunes the hub.
+say "writing /etc/telesthete-hub.env"
+$SUDO tee /etc/telesthete-hub.env >/dev/null <<ENV
+HUB_BIND=$HUB_BIND
+HUB_PEER_TTL_SECS=$HUB_PEER_TTL_SECS
+HUB_PRUNE_SECS=$HUB_PRUNE_SECS
+RUST_LOG=$RUST_LOG
+ENV
+$SUDO chmod 0644 /etc/telesthete-hub.env
+
+if command -v systemctl >/dev/null 2>&1; then
+  say "installing hardened systemd unit"
+  $SUDO tee /etc/systemd/system/telesthete-hub.service >/dev/null <<UNIT
+[Unit]
+Description=Telesthete Hub — discovery + relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$HUB_USER
+EnvironmentFile=-/etc/telesthete-hub.env
+ExecStart=$PREFIX/telesthete-hub
+Restart=on-failure
+RestartSec=3s
+
+# Sandboxing
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+AmbientCapabilities=
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  $SUDO systemctl daemon-reload
+  $SUDO systemctl enable --now telesthete-hub >/dev/null 2>&1 || $SUDO systemctl restart telesthete-hub || true
+  sleep 1
+  if $SUDO systemctl is-active --quiet telesthete-hub; then
+    say "telesthete-hub RUNNING on $HUB_BIND  (systemd: telesthete-hub)"
+    say "logs:   journalctl -u telesthete-hub -f"
+    say "tune:   edit /etc/telesthete-hub.env, then systemctl restart telesthete-hub"
+  else
+    say "service failed to start — recent logs:"
+    $SUDO systemctl status telesthete-hub --no-pager -l 2>/dev/null | tail -20 || true
+    exit 1
+  fi
+else
+  say "no systemd here — start it yourself:"
+  echo "    HUB_BIND=$HUB_BIND HUB_PEER_TTL_SECS=$HUB_PEER_TTL_SECS HUB_PRUNE_SECS=$HUB_PRUNE_SECS RUST_LOG=$RUST_LOG $PREFIX/telesthete-hub"
+fi
+say "done. Point workers at this host:  --hub <this-host>:${HUB_BIND##*:}"
+'''
+
+
 class CombinedServer:
     """Single-port server: HTTP for bootstrap + WebSocket for worker connections."""
 
@@ -714,6 +929,8 @@ class CombinedServer:
         self._app.router.add_get("/install", self._installer)    # unified installer (worker | cli | both)
         self._app.router.add_get("/rook", self._installer)       # alias (back-compat)
         self._app.router.add_get("/rook.py", self._band_cli)     # the standalone CLI script itself
+        self._app.router.add_get("/hub", self._hub_installer)    # stand up a telesthete-hub (band relay)
+        self._app.router.add_get("/telesthete-hub", self._hub_binary)  # prebuilt hub binary (arch-gated)
         self._app.router.add_get("/api/bands", self._api_bands)
         self._app.router.add_post("/api/bands", self._api_add_band)
         self._app.router.add_delete("/api/bands/{id}", self._api_remove_band)
@@ -767,7 +984,8 @@ class CombinedServer:
 
         # Always public: worker bootstrap/artifacts, health, websockets.
         exempt = ("/ws", "/health", "/worker", "/worker.py", "/band-worker.pyz",
-                  "/band-worker.json", "/apk", "/install", "/rook", "/rook.py")
+                  "/band-worker.json", "/apk", "/install", "/rook", "/rook.py",
+                  "/hub", "/telesthete-hub")
         is_exempt = request.path == "/ws/ui" or any(
             request.path == p or request.path.startswith(p + "/") for p in exempt)
 
@@ -1056,7 +1274,14 @@ button:hover{{background:#22b88f}}
     curl -fsSL "https://{self.domain}/worker?os=unix" | bash
     iex (irm "https://{self.domain}/worker?os=windows")
 
+  Stand up a hub (band relay):
+    curl -fsSL https://{self.domain}/hub | bash            # wizard
+    curl -fsSL https://{self.domain}/hub | bash -s -- --yes # unattended
+
   Endpoints:
+    /install          unified installer (worker | cli | both)
+    /hub              telesthete-hub installer (wizard; --yes for unattended)
+    /telesthete-hub   prebuilt hub binary (?arch=x86_64), else built from source
     /worker           bootstrap script (auto-detects OS; ?os=windows|unix to force)
     /band-worker.pyz  self-contained band-worker zipapp
     /worker.py        legacy exec-worker script
@@ -1413,6 +1638,37 @@ button:hover{{background:#22b88f}}
         return web.Response(text=script, content_type="text/x-shellscript",
                             headers={"Content-Disposition": 'inline; filename="rook-install.sh"',
                                      "Cache-Control": "no-store"})
+
+    async def _hub_installer(self, request: web.Request) -> web.Response:
+        """`curl -fsSL https://<host>/hub | bash` — stand up a telesthete-hub
+        (the band relay) with a short wizard, hardened systemd unit, and auto
+        dependency install. `bash -s -- --yes` (or env vars) for unattended."""
+        base = f"https://{self.domain}"
+        script = _HUB_INSTALL_SCRIPT.replace("__BASE__", base)
+        return web.Response(text=script, content_type="text/x-shellscript",
+                            headers={"Content-Disposition": 'inline; filename="hub-install.sh"',
+                                     "Cache-Control": "no-store"})
+
+    async def _hub_binary(self, request: web.Request) -> web.Response:
+        """Serve a prebuilt ``telesthete-hub`` for the caller's arch, if one was
+        dropped next to this module. Files are named ``telesthete-hub-<arch>``
+        (e.g. ``telesthete-hub-x86_64``); a bare ``telesthete-hub`` is a generic
+        fallback. 404 → the /hub installer builds from source via cargo instead."""
+        d = Path(__file__).parent
+        arch = (request.query.get("arch") or "").strip()
+        # Only allow simple arch tokens in the filename (no path traversal).
+        candidates = []
+        if arch and all(c.isalnum() or c in ("_", "-") for c in arch):
+            candidates.append(d / f"telesthete-hub-{arch}")
+        candidates.append(d / "telesthete-hub")
+        for p in candidates:
+            if p.exists() and p.is_file():
+                return web.FileResponse(p, headers={
+                    "Content-Disposition": "attachment; filename=telesthete-hub",
+                    "Content-Type": "application/octet-stream",
+                })
+        return web.Response(status=404,
+                            text="no prebuilt telesthete-hub for this arch — /hub will build from source")
 
     async def _health(self, request: web.Request) -> web.Response:
         return web.Response(text=json.dumps({

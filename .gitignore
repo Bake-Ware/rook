@@ -31,3 +31,7 @@ rook/remote/rook-worker.apk
 
 # OTA update signing key (private half — never commit; default lives in ~/.config/rook/)
 update-signing-key
+
+# Prebuilt telesthete-hub binaries served by /telesthete-hub (built from Bake-Ware/telesthete)
+rook/remote/telesthete-hub
+rook/remote/telesthete-hub-*
