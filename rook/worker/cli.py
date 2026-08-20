@@ -107,6 +107,33 @@ def main() -> None:
     if args.update_url:
         os.environ["ROOK_UPDATE_URL"] = args.update_url
 
+    # Remote config overrides (design §1). Auto-revert a stranded pending config
+    # first, then apply env-gates BEFORE plugins load (so a pushed ROOK_WAKE_CMD/
+    # ROOK_MEMORY_VAULT actually turns the cap on) and merge simple settings over
+    # the installer args (the pushed config is the override, so it wins).
+    from . import wconfig
+    reverted = wconfig.boot_reconcile()
+    if reverted:
+        logging.getLogger("rook.worker").warning(reverted)
+    _cfg = wconfig.load()
+    wconfig.apply_env(_cfg)
+    if _cfg.get("name"):
+        args.name = _cfg["name"]
+    if _cfg.get("announce_interval"):
+        try:
+            args.announce_interval = float(_cfg["announce_interval"])
+        except (TypeError, ValueError):
+            pass
+    if _cfg.get("hub"):
+        args.hub = str(_cfg["hub"])
+    if _cfg.get("psk"):
+        args.psk = str(_cfg["psk"])
+    if _cfg.get("log_level"):
+        _lvl = str(_cfg["log_level"]).upper()
+        if _lvl in ("DEBUG", "INFO", "WARNING", "ERROR"):
+            args.verbose = max(args.verbose, {"ERROR": 0, "WARNING": 0,
+                                              "INFO": 1, "DEBUG": 2}[_lvl])
+
     level = logging.WARNING - 10 * args.verbose
     logging.basicConfig(level=max(level, logging.DEBUG),
                         format="%(asctime)s %(name)s %(levelname)s: %(message)s")

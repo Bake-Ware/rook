@@ -446,6 +446,81 @@ def build_server(client: "BandClient | MultiBandClient",
                          f"{timeout:.0f}s (it may still be spawning).")
         return json.dumps(reply, indent=2)
 
+    # -- worker config (commit-confirmed OTA) --------------------------------
+
+    @mcp.tool()
+    async def rook_config_get(worker: str) -> str:
+        """Read a worker's active config overrides + pending/confirm state."""
+        target, err = _resolve_target(worker)
+        if err:
+            return _fail(err)
+        try:
+            reply = await client.call(cap="worker.config_get", target=target,
+                                      timeout=15.0, identity=_caller_identity())
+        except asyncio.TimeoutError:
+            return _fail(f"no reply from {worker!r}")
+        return json.dumps(reply, indent=2)
+
+    @mcp.tool()
+    async def rook_config_apply(worker: str, settings: dict,
+                                confirm_within: float = 120.0) -> str:
+        """Push config to a worker and confirm it, commit-confirmed (design §1).
+
+        ``settings`` may include ``name``, ``announce_interval``, ``log_level``,
+        ``hub``, ``psk``, and ``env`` (dict) — e.g. remotely enable the wake cap
+        with ``{"env": {"ROOK_WAKE_CMD": "claude -p {prompt_file}"}}`` or the
+        memory vault with ``{"env": {"ROOK_MEMORY_VAULT": "/home/you/vault"}}``.
+
+        The worker stages the config, restarts under it, and must be reconfirmed
+        within ``confirm_within`` seconds or it AUTO-REVERTS to its prior config.
+        This tool drives that: it applies, waits for the worker to come back on
+        the band, verifies it, then confirms — so a change that strands the
+        worker rolls back on its own. Returns the final state.
+        """
+        target, err = _resolve_target(worker)
+        if err:
+            return _fail(err)
+        if not isinstance(settings, dict) or not settings:
+            return _fail("settings must be a non-empty object")
+        import time as _t
+        epoch = int(_t.time())
+        ident = _caller_identity()
+        try:
+            applied = await client.call(
+                cap="worker.config_apply", target=target, timeout=15.0,
+                identity=ident,
+                args={"settings": settings, "epoch": epoch,
+                      "confirm_within": confirm_within})
+        except asyncio.TimeoutError:
+            return _fail(f"no reply from {worker!r} on config_apply")
+        if not (applied.get("result") or {}).get("ok", applied.get("ok")):
+            return json.dumps({"ok": False, "stage": "apply", "reply": applied}, indent=2)
+
+        # Wait for the worker to restart and come back, then confirm. If it
+        # never returns, the worker's own watchdog reverts after the deadline.
+        deadline = _t.time() + min(confirm_within, 110.0)
+        await asyncio.sleep(4.0)  # let it go down + restart
+        last_err = "worker did not return"
+        while _t.time() < deadline:
+            try:
+                got = await client.call(cap="worker.config_get", target=target,
+                                        timeout=8.0, identity=ident)
+                res = got.get("result") or {}
+                if res.get("epoch") == epoch or (res.get("config") or {}).get("epoch") == epoch:
+                    conf = await client.call(
+                        cap="worker.config_confirm", target=target, timeout=10.0,
+                        identity=ident, args={"epoch": epoch})
+                    return json.dumps({"ok": True, "epoch": epoch,
+                                       "confirmed": conf.get("result", conf),
+                                       "config": res.get("config")}, indent=2)
+                last_err = f"worker back but at epoch {res.get('epoch')}, not {epoch}"
+            except asyncio.TimeoutError:
+                last_err = "worker still down (restarting)"
+            await asyncio.sleep(4.0)
+        return json.dumps({"ok": False, "stage": "confirm", "epoch": epoch,
+                           "error": f"{last_err}; worker will auto-revert to its "
+                                    f"prior config at its deadline"}, indent=2)
+
     return mcp, store
 
 
