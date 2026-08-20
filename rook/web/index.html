@@ -167,6 +167,24 @@
   /* modal */
   .overlay{position:fixed;inset:0;background:rgba(4,8,12,.72);display:none;align-items:center;justify-content:center;z-index:50;padding:20px}
   .overlay.show{display:flex}
+  .chatwrap{display:flex;gap:14px;height:calc(100vh - 130px)}
+  .chatside{width:250px;flex-shrink:0;display:flex;flex-direction:column;overflow:hidden}
+  .chathead{display:flex;justify-content:space-between;align-items:center;color:var(--dim);font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;padding:4px 2px}
+  .roomlist{background:var(--panel2);border:1px solid var(--line);border-radius:10px;overflow-y:auto;flex:1;min-height:40px}
+  .roomrow{padding:8px 11px;border-bottom:1px solid var(--line);cursor:pointer}
+  .roomrow:hover{background:var(--panel)} .roomrow.sel{background:var(--panel);border-left:2px solid #22b88f}
+  .roomrow .rt{font-size:.85rem;display:flex;align-items:center;gap:6px}
+  .roomrow .rp{font-size:.72rem;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+  .badge{background:#22b88f;color:#04140e;border-radius:9px;font-size:.66rem;padding:0 6px;font-weight:600}
+  .pdot{width:7px;height:7px;border-radius:50%;background:#3a4a5a;display:inline-block} .pdot.on{background:#22b88f}
+  .chatmain{flex:1;display:flex;flex-direction:column;background:var(--panel2);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .chattitle{padding:11px 15px;border-bottom:1px solid var(--line);font-size:.9rem;font-weight:600}
+  .chatlog{flex:1;overflow-y:auto;padding:14px 15px;display:flex;flex-direction:column;gap:8px}
+  .cmsg{max-width:75%;padding:7px 11px;border-radius:10px;background:var(--panel);border:1px solid var(--line2);font-size:.85rem;line-height:1.35}
+  .cmsg.mine{align-self:flex-end;background:#123528;border-color:#1d5540}
+  .cmsg .who{display:block;font-size:.68rem;color:var(--dim);margin-bottom:2px}
+  .chatinput{display:flex;gap:8px;padding:11px;border-top:1px solid var(--line)}
+  .chatinput input{flex:1}
   .modal{background:var(--panel);border:1px solid var(--line2);border-radius:14px;max-width:900px;width:100%;
     max-height:88vh;overflow:auto;box-shadow:0 20px 70px rgba(0,0,0,.6)}
   .modal .mh{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel)}
@@ -220,6 +238,7 @@
     <div class="brand">♖ ROOK</div>
     <nav>
       <a id="tab-workers" class="active" onclick="showView('workers')">Workers</a>
+      <a id="tab-chat" onclick="showView('chat')">Chat</a>
       <a id="tab-install" onclick="showView('install')">Install</a>
       <a id="link-tokens" target="_blank" rel="noopener">Tokens</a>
       <a href="/apk">APK</a>
@@ -270,6 +289,29 @@
       <div class="list" id="list"></div>
       <div class="empty" id="empty" style="display:none"></div>
       <div class="foot" id="foot"></div>
+    </div>
+
+    <!-- CHAT VIEW -->
+    <div id="view-chat" hidden>
+      <div class="chatwrap">
+        <div class="chatside">
+          <div class="chathead">
+            <span>rooms</span>
+            <button class="iconbtn" title="new room" onclick="newRoom()">+</button>
+          </div>
+          <div id="roomlist" class="roomlist"></div>
+          <div class="chathead" style="margin-top:10px"><span>online</span></div>
+          <div id="preslist" class="roomlist"></div>
+        </div>
+        <div class="chatmain">
+          <div id="chattitle" class="chattitle">select a room</div>
+          <div id="chatlog" class="chatlog"></div>
+          <div class="chatinput">
+            <input id="chatbox" placeholder="message… (@mention to address)" onkeydown="if(event.key==='Enter')sendChat()" disabled>
+            <button class="iconbtn" onclick="sendChat()">send</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- INSTALL VIEW -->
@@ -620,9 +662,58 @@ function renderCapResult(out,cap,reply){
 
 /* ---- views / install ---- */
 function showView(v){
-  $('#view-workers').hidden=v!=='workers'; $('#view-install').hidden=v!=='install';
-  $('#tab-workers').classList.toggle('active',v==='workers'); $('#tab-install').classList.toggle('active',v==='install');
+  for(const n of ['workers','chat','install']){
+    $('#view-'+n).hidden=v!==n; $('#tab-'+n).classList.toggle('active',v===n);
+  }
+  if(v==='chat'){ startChat(); } else { stopChat(); }
 }
+
+/* ---- chat panel ---- */
+let curRoom=null, chatTimer=null, lastSeq=0;
+async function jget(u){ const r=await fetch(u,{headers:{'Accept':'application/json'}}); return r.ok?r.json():null; }
+async function jpost(u,b){ const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}); return r.ok?r.json():null; }
+function startChat(){ loadRooms(); loadPresence(); if(chatTimer)clearInterval(chatTimer);
+  chatTimer=setInterval(()=>{ loadRooms(); loadPresence(); if(curRoom)pollRoom(); },3000); }
+function stopChat(){ if(chatTimer){clearInterval(chatTimer);chatTimer=null;} }
+async function loadRooms(){
+  const d=await jget('/api/chat/rooms'); if(!d||!d.rooms)return;
+  $('#roomlist').innerHTML=d.rooms.map(r=>
+    `<div class="roomrow${r.room===curRoom?' sel':''}" onclick="openRoom('${r.room}','${esc(r.title)}')">
+       <div class="rt">${esc(r.title)}${r.unread?`<span class="badge">${r.unread}</span>`:''}</div>
+       <div class="rp">${esc((r.last_sender||'')+': '+(r.last_text||''))}</div></div>`).join('')
+    || '<div class="rp" style="padding:8px">no rooms yet — + to start</div>';
+}
+async function loadPresence(){
+  const d=await jget('/api/presence'); if(!d||!d.agents)return;
+  $('#preslist').innerHTML=d.agents.map(a=>
+    `<div class="roomrow" onclick="mention('${esc(a.identity)}')"><div class="rt">
+      <span class="pdot${a.online?' on':''}"></span>${esc(a.identity)}</div></div>`).join('')
+    || '<div class="rp" style="padding:8px">nobody online</div>';
+}
+async function openRoom(id,title){ curRoom=id; lastSeq=0; $('#chattitle').textContent=title;
+  $('#chatbox').disabled=false; $('#chatlog').innerHTML=''; loadRooms();
+  const d=await jget('/api/chat/read?room='+encodeURIComponent(id)); renderMsgs(d,true); }
+async function pollRoom(){ if(!curRoom)return;
+  const d=await jget('/api/chat/read?room='+encodeURIComponent(curRoom)+'&since='+lastSeq); renderMsgs(d,false); }
+function renderMsgs(d,reset){ if(!d||!d.messages)return; const log=$('#chatlog');
+  if(reset)log.innerHTML='';
+  for(const m of d.messages){ lastSeq=Math.max(lastSeq,m.seq);
+    const mine=(m.sender||'').startsWith('user:');
+    const el=document.createElement('div'); el.className='cmsg'+(mine?' mine':'');
+    el.innerHTML=`<span class="who">${esc(m.sender||'?')}</span>${esc(m.text)}`; log.appendChild(el); }
+  if(d.messages.length)log.scrollTop=log.scrollHeight;
+}
+function mention(id){ const b=$('#chatbox'); b.value=(b.value?b.value+' ':'')+'@'+id.replace(/^agent:|^user:/,''); b.focus(); }
+async function sendChat(){ const b=$('#chatbox'); const t=b.value.trim(); if(!t||!curRoom)return;
+  // parse @mentions -> identities present in the room's online/agents by suffix match
+  const ments=[]; const d=await jget('/api/presence');
+  (t.match(/@([\w:-]+)/g)||[]).forEach(m=>{ const q=m.slice(1);
+    const hit=(d&&d.agents||[]).find(a=>a.identity.endsWith(q)||a.identity.endsWith(':'+q)); if(hit)ments.push(hit.identity); });
+  b.value=''; await jpost('/api/chat/send',{room:curRoom,text:t,mention:ments,expects_reply:ments.length>0}); pollRoom();
+}
+async function newRoom(){ const title=prompt('Room title:'); if(!title)return;
+  const inv=prompt('Invite (comma-separated identities, e.g. agent:hermes_sojourn):','')||'';
+  const d=await jpost('/api/chat/start',{title,invite:inv}); if(d&&d.room){ await loadRooms(); openRoom(d.room,title); } }
 function applyFilter(){ filterStr=$('#filter').value.toLowerCase().trim(); dirty=true; reconcile(); }
 function setCmd(id,text){ const el=document.getElementById(id); if(!el)return; el.textContent=text;
   const b=document.createElement('button'); b.className='cp'; b.textContent='copy';

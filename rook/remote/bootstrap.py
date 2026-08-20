@@ -899,6 +899,15 @@ class CombinedServer:
         if _s.get("band_name"):
             self.band_name = _s["band_name"]
         self._band = None  # MultiBandClient — joins the hub to track workers + invoke caps
+        # Shared site chat store — same sqlite file band_mcp serves over MCP, so
+        # the dashboard chat panel and MCP agents share one set of rooms.
+        self._chat = None
+        try:
+            from ..band_mcp.chat_rooms import ChatStore
+            chat_db = os.environ.get("ROOK_CHAT_DB", "/var/lib/rook-band-mcp/chat.db")
+            self._chat = ChatStore(chat_db)
+        except Exception:
+            log.warning("chat store unavailable; dashboard chat disabled", exc_info=True)
         self._push_task = None  # background: push signed manifest to behind workers
         # Known bands for the dashboard selector. PSKs stay server-side; the UI
         # only ever sees the band_id label (first 8 hex of SHA256(PSK)[:16]).
@@ -939,6 +948,13 @@ class CombinedServer:
         self._app.router.add_get("/api/band/bans", self._api_bans)
         self._app.router.add_post("/api/band/ban", self._api_ban)
         self._app.router.add_post("/api/band/unban", self._api_unban)
+        # Chat panel — reads/writes the same site chat store band_mcp serves
+        # over MCP (shared sqlite), so the dashboard mirrors the rook CLI chat.
+        self._app.router.add_get("/api/chat/rooms", self._api_chat_rooms)
+        self._app.router.add_get("/api/chat/read", self._api_chat_read)
+        self._app.router.add_post("/api/chat/send", self._api_chat_send)
+        self._app.router.add_post("/api/chat/start", self._api_chat_start)
+        self._app.router.add_get("/api/presence", self._api_presence)
         self._app.router.add_get("/ws", self._websocket_handler)
         # Auth routes (handled by middleware, these are just route stubs)
         async def _noop(r): return web.Response(text="")
@@ -1597,6 +1613,63 @@ button:hover{{background:#22b88f}}
             log.exception("failed to persist ban list")
         return web.json_response({"ok": True, "removed": before - len(self._bans),
                                   "note": "revive a dormant node locally to rejoin"})
+
+    # -- chat panel (shared site chat store) ---------------------------------
+
+    _OPERATOR = "user:operator"   # dashboard identity for chat attribution
+
+    async def _api_chat_rooms(self, request: web.Request) -> web.Response:
+        if self._chat is None:
+            return web.json_response({"error": "chat unavailable"}, status=503)
+        return web.json_response(self._chat.rooms_for(self._OPERATOR))
+
+    async def _api_chat_read(self, request: web.Request) -> web.Response:
+        if self._chat is None:
+            return web.json_response({"error": "chat unavailable"}, status=503)
+        room = request.query.get("room", "")
+        try:
+            since = int(request.query.get("since", "0"))
+        except ValueError:
+            since = 0
+        return web.json_response(
+            self._chat.read(room, self._OPERATOR, since_seq=since))
+
+    async def _api_chat_send(self, request: web.Request) -> web.Response:
+        if self._chat is None:
+            return web.json_response({"error": "chat unavailable"}, status=503)
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json body"}, status=400)
+        room = str(data.get("room") or "").strip()
+        text = str(data.get("text") or "")
+        mention = data.get("mention") or []
+        if isinstance(mention, str):
+            mention = [m.strip() for m in mention.split(",") if m.strip()]
+        self._chat.touch(self._OPERATOR)
+        return web.json_response(self._chat.send(
+            room, self._OPERATOR, text, mention,
+            bool(data.get("expects_reply"))))
+
+    async def _api_chat_start(self, request: web.Request) -> web.Response:
+        if self._chat is None:
+            return web.json_response({"error": "chat unavailable"}, status=503)
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json body"}, status=400)
+        invite = data.get("invite") or []
+        if isinstance(invite, str):
+            invite = [s.strip() for s in invite.split(",") if s.strip()]
+        self._chat.touch(self._OPERATOR)
+        return web.json_response(self._chat.start(
+            str(data.get("title") or "chat"), self._OPERATOR, invite))
+
+    async def _api_presence(self, request: web.Request) -> web.Response:
+        if self._chat is None:
+            return web.json_response({"error": "chat unavailable"}, status=503)
+        self._chat.touch(self._OPERATOR)
+        return web.json_response({"agents": self._chat.online()})
 
     async def _band_cli(self, request: web.Request) -> web.Response:
         """Serve the `rook band` terminal control panel as a standalone script
