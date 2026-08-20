@@ -228,17 +228,22 @@ Status as of 2026-08-20 (fleet on build 76):
    TODO on the sojourn side.
 4. **Handoffs** — ✅ SHIPPED + verified live. `band_mcp/sessions.py`,
    `rook_handoff_save/get/list`, read-time freshness banners.
-5. **Settings wizard + config OTA** (commit-confirmed) — ⏳ TODO. Server-side
-   wizard is straightforward; the commit-confirmed worker apply is the careful
-   part (can strand a worker) — do with an operator watching.
-6. **Chat v2** — ⏳ TODO. Rooms + voicemail-on-envelope are server-side; the
-   wake cap is worker-side (spawns agent sessions — verify behavior with an
-   operator present). Replaces the per-worker JSONL `chat.py`.
-7. **Federation** — ⏳ TODO. Independent; Rust/telesthete side; networking risk
-   best exercised interactively.
+5. **Settings wizard + config OTA** (commit-confirmed) — ✅ SHIPPED + verified
+   live. rook/worker/wconfig.py + plugins/config.py; env-gate push remotely
+   enables gated caps (verified: enabled agent.wake on bakenetca via
+   rook_config_apply). Stranding auto-reverts (verified).
+6. **Chat v2** — ✅ SHIPPED + verified live. band_mcp/chat_rooms.py (rooms,
+   presence, voicemail-on-envelope) + worker plugins/wake.py (agent.wake) +
+   dashboard chat panel sharing the same sqlite store. Verified: mention
+   routing, wake→spawn (wake-proof), dashboard↔MCP shared room.
+7. **Federation** — ✅ CODE COMPLETE (telesthete b6290c7), tested (3 integration
+   tests + full suite green), NOT YET DEPLOYED to the production hub. Off by
+   default (zero hot-path cost unused); enable per-hub via HUB_FED_* env.
+   Deploying = rebuild + restart the live hub (brief fleet reconnect blip) —
+   hold until a second hub actually exists, since it's inert until then.
 
-The four shipped items form the identity/memory/session foundation the
-remaining three build on.
+All seven features implemented. Only the federation *hub-binary deploy* is
+pending (deliberately — inert until a 2nd hub, and a hub restart is fleet-wide).
 
 ## Deployment notes
 
