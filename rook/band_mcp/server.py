@@ -67,6 +67,11 @@ def build_server(client: "BandClient | MultiBandClient",
         base = os.path.dirname(persist_path) if persist_path else "/var/lib/rook-band-mcp"
         journal_path = os.path.join(base or ".", "journal.db")
     journal = Journal(journal_path)
+
+    # Handoff / universal-session store — shares the journal's dir + thread ids.
+    from .sessions import SessionStore
+    sessions = SessionStore(os.path.join(
+        os.path.dirname(journal_path) or ".", "sessions.db"))
     auth_settings: AuthSettings | None = None
     if public_url:
         # Resource-server metadata only (no authorization-server advertised).
@@ -288,6 +293,48 @@ def build_server(client: "BandClient | MultiBandClient",
             ok=(False if only_failures else None), limit=limit,
             include_reply=bool(call_id))
         return json.dumps({"count": len(entries), "entries": entries}, indent=2)
+
+    @mcp.tool()
+    async def rook_handoff_save(goal: str, thread_id: str | None = None,
+                                state: str = "", decisions: list | str | None = None,
+                                next_steps: list | str | None = None,
+                                artifacts: list | str | None = None,
+                                supersedes: list | str | None = None,
+                                transcript_ref: str | None = None) -> str:
+        """Save a handoff so any agent can pick this session up later.
+
+        A handoff is the structured state of a piece of work — not a full
+        transcript. Provide the ``goal``, the current ``state`` (where things
+        stand), ``decisions`` made, ``next_steps``, and any ``artifacts``
+        touched (files, hosts, URLs). Omit ``thread_id`` to start a new thread
+        (one is returned); pass an existing ``thread_id`` to update it — the
+        prior handoff becomes history and this becomes current. Write one at the
+        end of a work session, or whenever you hand off to another agent.
+        """
+        res = sessions.save(
+            thread_id=thread_id, author=_caller_identity(), goal=goal, state=state,
+            decisions=decisions, next_steps=next_steps, artifacts=artifacts,
+            supersedes=supersedes, transcript_ref=transcript_ref)
+        return json.dumps(res, indent=2)
+
+    @mcp.tool()
+    async def rook_handoff_get(thread_id: str) -> str:
+        """Fetch a session's current handoff to continue it.
+
+        Returns the current handoff plus prior (superseded) ones as history.
+        EVERY handoff carries a ``freshness`` banner — heed it: a ``SUPERSEDED``
+        or ``STALE`` marker means the state may no longer be true, so verify
+        before acting on it rather than treating it as current fact.
+        """
+        return json.dumps(sessions.get(thread_id), indent=2)
+
+    @mcp.tool()
+    async def rook_handoff_list(limit: int = 20, active_only: bool = True) -> str:
+        """List recent session threads (latest handoff per thread) with their
+        goals and freshness. Use this to find a thread to resume; then
+        rook_handoff_get(thread_id) for its full state."""
+        return json.dumps(sessions.list_recent(limit=limit, active_only=active_only),
+                          indent=2)
 
     return mcp, store
 
