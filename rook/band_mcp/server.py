@@ -70,8 +70,12 @@ def build_server(client: "BandClient | MultiBandClient",
 
     # Handoff / universal-session store — shares the journal's dir + thread ids.
     from .sessions import SessionStore
-    sessions = SessionStore(os.path.join(
-        os.path.dirname(journal_path) or ".", "sessions.db"))
+    _store_dir = os.path.dirname(journal_path) or "."
+    sessions = SessionStore(os.path.join(_store_dir, "sessions.db"))
+
+    # Site-hosted chat rooms + presence + voicemail (design §3).
+    from .chat_rooms import ChatStore
+    chat = ChatStore(os.path.join(_store_dir, "chat.db"))
     auth_settings: AuthSettings | None = None
     if public_url:
         # Resource-server metadata only (no authorization-server advertised).
@@ -256,6 +260,12 @@ def build_server(client: "BandClient | MultiBandClient",
         # fetch it back with rook_journal(call_id=...).
         if isinstance(reply, dict):
             reply = {**reply, "_journal_id": cid}
+            # Voicemail piggyback: an identified caller learns about unread chat
+            # on its next call, no polling. Presence is touched below.
+            unread = chat.unread_summary(identity)
+            if unread:
+                reply["_unread_chat"] = unread
+        chat.touch(identity)
         return json.dumps(reply, indent=2)
 
     @mcp.tool()
@@ -335,6 +345,106 @@ def build_server(client: "BandClient | MultiBandClient",
         rook_handoff_get(thread_id) for its full state."""
         return json.dumps(sessions.list_recent(limit=limit, active_only=active_only),
                           indent=2)
+
+    # -- chat rooms (agent backroom) -----------------------------------------
+
+    @mcp.tool()
+    async def rook_chat_start(title: str, invite: list | str | None = None) -> str:
+        """Start a chat room (a thread) and invite participants.
+
+        ``invite`` is a list of identities (e.g. ``["agent:hermes_sojourn"]``)
+        or a comma string. You're added automatically. Returns the room id —
+        use it with rook_chat_send / rook_chat_read. The room id doubles as a
+        thread_id shared with handoffs and the journal."""
+        inv = ([s.strip() for s in invite.split(",")] if isinstance(invite, str)
+               else list(invite or []))
+        chat.touch(_caller_identity())
+        return json.dumps(chat.start(title, _caller_identity(), inv), indent=2)
+
+    @mcp.tool()
+    async def rook_chat_send(room: str, text: str,
+                             mention: list | str | None = None,
+                             expects_reply: bool = False) -> str:
+        """Post a message to a room.
+
+        ``mention`` (list or comma string) is routing metadata, not text: in a
+        room of 3+ only mentioned participants are expected to respond; in a
+        2-party room the other party is implicit. Mentioning someone not in the
+        room auto-invites them. Set ``expects_reply`` when you want an answer.
+        The reply tells you who was addressed and which of them are ``offline``
+        (they'll get a voicemail notice on their next call; use rook_chat_wake
+        to make an offline agent respond now)."""
+        ment = ([s.strip() for s in mention.split(",")] if isinstance(mention, str)
+                else list(mention or []))
+        ident = _caller_identity()
+        chat.touch(ident)
+        sender = ident if ident != "anonymous" else "MCP"
+        return json.dumps(chat.send(room, sender, text, ment, expects_reply), indent=2)
+
+    @mcp.tool()
+    async def rook_chat_read(room: str, since_seq: int = 0) -> str:
+        """Read messages in a room newer than ``since_seq`` (0 = from the start)
+        and mark them read. Returns messages with their ``seq`` — pass the
+        ``last_seq`` back as ``since_seq`` next time to page forward."""
+        ident = _caller_identity()
+        chat.touch(ident)
+        return json.dumps(chat.read(room, ident, since_seq=since_seq), indent=2)
+
+    @mcp.tool()
+    async def rook_chat_rooms() -> str:
+        """List your chat rooms, newest-active first, with unread counts."""
+        ident = _caller_identity()
+        chat.touch(ident)
+        return json.dumps(chat.rooms_for(ident), indent=2)
+
+    @mcp.tool()
+    async def rook_presence() -> str:
+        """Who's reachable: identities seen recently over the MCP (``online``
+        if within ~90s) plus, for reference, the live band workers. Use this to
+        see who can respond in chat before mentioning or waking them."""
+        chat.touch(_caller_identity())
+        import time as _t
+        now = _t.time()
+        workers = [{"name": w.get("name"), "worker_id": wid,
+                    "last_seen_age_secs": round(now - w.get("last_seen", 0.0), 1)}
+                   for wid, w in client.workers.items()]
+        return json.dumps({"agents": chat.online(), "workers": workers}, indent=2)
+
+    @mcp.tool()
+    async def rook_chat_wake(room: str, worker: str, note: str | None = None,
+                             timeout: float = 20.0) -> str:
+        """Wake an agent to respond in a room now (a deliberate act, not a
+        mention).
+
+        Calls the ``agent.wake`` capability on ``worker`` — a machine set up to
+        spawn an agent session (e.g. a claude-code or hermes box). It's handed
+        the room id and recent transcript and joins as a normal session, posting
+        back via chat. Only works if ``worker`` exposes ``agent.wake`` (host set
+        ``ROOK_WAKE_CMD``); otherwise the mention/voicemail path already applies.
+        A worker whose agent is already attending may decline (black-hole)."""
+        target, err = _resolve_target(worker)
+        if err:
+            return _fail(err)
+        w = client.workers.get(target, {})
+        if "agent.wake" not in w.get("caps", []):
+            return _fail(f"worker {worker!r} does not expose agent.wake — it "
+                         f"isn't set up to spawn an agent (needs ROOK_WAKE_CMD). "
+                         f"The offline agent will still see a voicemail notice.")
+        tail = chat.read(room, None, since_seq=0, mark=False, limit=30)
+        if not tail.get("ok"):
+            return _fail(tail.get("error", "no such room"))
+        ident = _caller_identity()
+        chat.touch(ident)
+        wake_args = {"room": room, "thread_id": room, "title": tail.get("title"),
+                     "transcript": tail.get("messages", []),
+                     "woken_by": ident, "note": note or ""}
+        try:
+            reply = await client.call(cap="agent.wake", args=wake_args,
+                                      target=target, timeout=timeout, identity=ident)
+        except asyncio.TimeoutError:
+            return _fail(f"agent.wake on {worker!r} did not confirm within "
+                         f"{timeout:.0f}s (it may still be spawning).")
+        return json.dumps(reply, indent=2)
 
     return mcp, store
 
