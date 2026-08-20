@@ -37,6 +37,7 @@ def build_server(client: "BandClient | MultiBandClient",
                  admin_password: str | None = None,
                  persist_path: str | None = None,
                  static_token: str | None = None,
+                 journal_path: str | None = None,
                  ) -> tuple[FastMCP, TokenStore]:
     """Build the FastMCP server. Bearer-token-only auth — no OAuth.
 
@@ -57,6 +58,15 @@ def build_server(client: "BandClient | MultiBandClient",
     store = TokenStore(admin_password=admin_password, persist_path=persist_path,
                        static_token=static_token or None)
     token_verifier = StoreTokenVerifier(store)
+
+    # Call journal — persistent record of every band call fired through the MCP
+    # so long-running / timed-out output doesn't vanish. Defaults next to the
+    # token persist file; falls back to a temp path if that dir isn't set.
+    from .journal import Journal
+    if journal_path is None:
+        base = os.path.dirname(persist_path) if persist_path else "/var/lib/rook-band-mcp"
+        journal_path = os.path.join(base or ".", "journal.db")
+    journal = Journal(journal_path)
     auth_settings: AuthSettings | None = None
     if public_url:
         # Resource-server metadata only (no authorization-server advertised).
@@ -217,18 +227,67 @@ def build_server(client: "BandClient | MultiBandClient",
         if cap in ("chat.send", "msg.send"):
             args = dict(args or {})
             args.setdefault("sender", identity if identity != "anonymous" else "MCP")
+        worker_name = (roster[target].get("name") if target in roster else target)
         try:
             reply = await client.call(cap=cap, args=args, target=target,
                                       timeout=timeout, identity=identity)
         except asyncio.TimeoutError:
             where = (f"worker {roster[target].get('name')!r}" if target in roster
                      else "any worker") if target else f"any worker with {cap!r}"
-            return _fail(f"no reply from {where} within {timeout:.0f}s. The "
-                         f"worker may be offline or still executing — a slow "
-                         f"call keeps running and its side effects may still "
-                         f"land, so check its output before retrying. For "
-                         f"long-running caps raise `timeout`.")
+            # A timeout is exactly the "falls into the ether" case — journal it
+            # so the call is at least on the record even though we got no reply.
+            timeout_reply = {"ok": False, "timeout": True,
+                             "error": f"no reply within {timeout:.0f}s"}
+            cid = journal.record(cap=cap, worker=worker_name, identity=identity,
+                                 args=args, reply=timeout_reply)
+            return _fail(f"no reply from {where} within {timeout:.0f}s "
+                         f"(journal id {cid}). The worker may be offline or "
+                         f"still executing — a slow call keeps running and its "
+                         f"side effects may still land, so check its output "
+                         f"before retrying. For long-running caps raise `timeout`.")
+        cid = journal.record(cap=cap, worker=worker_name, identity=identity,
+                             args=args, reply=reply)
+        # Surface the journal id so a caller that later loses this output can
+        # fetch it back with rook_journal(call_id=...).
+        if isinstance(reply, dict):
+            reply = {**reply, "_journal_id": cid}
         return json.dumps(reply, indent=2)
+
+    @mcp.tool()
+    async def rook_journal(call_id: str | None = None,
+                           worker: str | None = None,
+                           cap_prefix: str | None = None,
+                           since_secs: float | None = None,
+                           only_failures: bool = False,
+                           limit: int = 30) -> str:
+        """Query the call journal — the persistent record of every ``rook_call``
+        fired through this MCP, so output from a long-running or timed-out call
+        isn't lost when the tool result is discarded.
+
+        Args:
+            call_id: fetch one specific call (from a prior reply's
+                ``_journal_id``) — returns it WITH its full stored output.
+            worker: filter to calls targeting this worker name.
+            cap_prefix: filter by capability prefix (e.g. ``"shell."``).
+            since_secs: only calls newer than this many seconds ago.
+            only_failures: restrict to calls that failed or timed out.
+            limit: max entries (listings omit the full reply body to stay
+                light; a single ``call_id`` lookup always includes it).
+
+        Returns a JSON object ``{count, entries:[...]}``. Each entry:
+        ``{call_id, ts, identity, cap, worker, thread_id, ok, error?}``, plus
+        ``reply`` when a single call_id was requested. Use this to recover
+        "what did that call actually return" after the fact.
+        """
+        since = None
+        if since_secs is not None:
+            import time as _t
+            since = _t.time() - float(since_secs)
+        entries = journal.query(
+            call_id=call_id, worker=worker, cap_prefix=cap_prefix, since=since,
+            ok=(False if only_failures else None), limit=limit,
+            include_reply=bool(call_id))
+        return json.dumps({"count": len(entries), "entries": entries}, indent=2)
 
     return mcp, store
 
@@ -247,6 +306,7 @@ async def _amain(args) -> None:
         admin_password=args.admin_password,
         persist_path=args.persist_path,
         static_token=args.static_token or None,
+        journal_path=args.journal_path or None,
     )
     app = mcp.streamable_http_app()
 
@@ -324,6 +384,10 @@ def main() -> None:
                          "'Authorization: Bearer <token>' — the simplest "
                          "single-integration auth path. Tokens minted via "
                          "/tokens also work at the same time.")
+    ap.add_argument("--journal-path",
+                    default=os.environ.get("ROOK_MCP_JOURNAL", ""),
+                    help="sqlite file for the call journal (default: "
+                         "journal.db next to --persist-path).")
     ap.add_argument("-v", "--verbose", action="count", default=0)
     args = ap.parse_args()
 
