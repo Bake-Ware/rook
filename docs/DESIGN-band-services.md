@@ -215,15 +215,30 @@ contradiction to a live human, capture the ruling as the terminal write.*
 
 ## Build order (dependencies, not preference)
 
+Status as of 2026-08-20 (fleet on build 76):
+
 1. **Identity threading** — token names into the band envelope + audit log.
-   Small; everything else wants it. *(in progress)*
-2. **Settings wizard + config OTA** (commit-confirmed).
-3. **Journal** — immediate pain relief, no dependencies.
-4. **Chat v2** — rooms, voicemail, wake cap, site chat UI.
-5. **Memory vault** — post-its, indexes, caps; curator cron interface documented
-   for sojourn.
-6. **Federation** — independent; Rust/telesthete side.
-7. **Handoffs** — mostly formalization; threads exist by then.
+   ✅ SHIPPED + verified live. `band_mcp` stamps `agent:<token-name>`; worker
+   `audit.py` + `log.*` caps; `context.py` contextvar exposes identity to caps.
+2. **Journal** — ✅ SHIPPED + verified live. `band_mcp/journal.py`,
+   `rook_journal` tool, `_journal_id` on every `rook_call`.
+3. **Memory vault** — ✅ SHIPPED + verified live. `worker/plugins/memory.py`
+   (band cap, gated on `ROOK_MEMORY_VAULT`, hosted on bakenetcanada). Post-its +
+   supersede/capstone + currency flag. Curator cron interface (sojourn) still
+   TODO on the sojourn side.
+4. **Handoffs** — ✅ SHIPPED + verified live. `band_mcp/sessions.py`,
+   `rook_handoff_save/get/list`, read-time freshness banners.
+5. **Settings wizard + config OTA** (commit-confirmed) — ⏳ TODO. Server-side
+   wizard is straightforward; the commit-confirmed worker apply is the careful
+   part (can strand a worker) — do with an operator watching.
+6. **Chat v2** — ⏳ TODO. Rooms + voicemail-on-envelope are server-side; the
+   wake cap is worker-side (spawns agent sessions — verify behavior with an
+   operator present). Replaces the per-worker JSONL `chat.py`.
+7. **Federation** — ⏳ TODO. Independent; Rust/telesthete side; networking risk
+   best exercised interactively.
+
+The four shipped items form the identity/memory/session foundation the
+remaining three build on.
 
 ## Deployment notes
 
