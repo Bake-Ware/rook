@@ -139,8 +139,12 @@ class BandClient:
     # -- outbound ------------------------------------------------------------
 
     async def call(self, cap: str, args: dict | None = None,
-                   target: str | None = None, timeout: float = 15.0) -> dict:
+                   target: str | None = None, timeout: float = 15.0,
+                   identity: str | None = None) -> dict:
         """Send a capability call and wait for the first matching reply.
+
+        ``identity`` is the caller's identity (from the bearer-token name);
+        it rides in the envelope so the target worker can audit who called.
 
         Returns the reply dict (``{"id", "from", "ok", "result"|"error"}``).
         Raises ``asyncio.TimeoutError`` on no reply.
@@ -151,6 +155,8 @@ class BandClient:
         msg: dict = {"id": mid, "cap": cap, "args": args or {}}
         if target:
             msg["target"] = target
+        if identity:
+            msg["identity"] = identity
         await self.transport.send(json.dumps(msg).encode())
         try:
             return await asyncio.wait_for(fut, timeout=timeout)
@@ -294,16 +300,20 @@ class MultiBandClient:
         return best
 
     async def call(self, cap: str, args: dict | None = None,
-                   target: str | None = None, timeout: float = 15.0) -> dict:
+                   target: str | None = None, timeout: float = 15.0,
+                   identity: str | None = None) -> dict:
         # Known target → send only on its band.
         if target:
             c = self._client_for(target)
             if c is not None:
-                return await c.call(cap=cap, args=args, target=target, timeout=timeout)
+                return await c.call(cap=cap, args=args, target=target,
+                                    timeout=timeout, identity=identity)
         # Otherwise race across all bands; first real reply wins.
         if len(self._clients) == 1:
-            return await self._clients[0].call(cap=cap, args=args, target=target, timeout=timeout)
-        tasks = [asyncio.create_task(c.call(cap=cap, args=args, target=target, timeout=timeout))
+            return await self._clients[0].call(cap=cap, args=args, target=target,
+                                               timeout=timeout, identity=identity)
+        tasks = [asyncio.create_task(c.call(cap=cap, args=args, target=target,
+                                            timeout=timeout, identity=identity))
                  for c in self._clients]
         try:
             result: dict | None = None

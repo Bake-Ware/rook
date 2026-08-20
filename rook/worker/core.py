@@ -10,6 +10,7 @@ import socket
 import uuid
 from pathlib import Path
 
+from . import audit
 from .plugin import Plugin, load_plugins
 from .registry import CapabilityRegistry
 from .transports.base import Transport
@@ -132,27 +133,40 @@ class Worker:
             return  # addressed to another worker
 
         msg_id = msg.get("id")
+        # Caller identity carried in the envelope (band client stamps it from
+        # the bearer-token name; see rook.band_mcp). Audit-first: we log who
+        # called what regardless of whether any cap gates on it yet.
+        identity = msg.get("identity")
 
         # If we don't own the cap and the request wasn't aimed at us, stay
         # silent so the band doesn't get spammed with one error per worker.
         if not self.registry.has(cap):
             if target == self.worker_id:
+                audit.record(cap, identity, None, ok=False, msg_id=msg_id,
+                             target=target, error="unknown capability")
                 await self._reply(msg_id, {"ok": False,
                                             "error": f"unknown capability: {cap}"})
             return
 
         args = msg.get("args", {}) or {}
         if not isinstance(args, dict):
+            audit.record(cap, identity, None, ok=False, msg_id=msg_id,
+                         target=target, error="args must be an object")
             await self._reply(msg_id, {"ok": False, "error": "args must be an object"})
             return
 
         try:
             result = await self.registry.call(cap, **args)
+            audit.record(cap, identity, args, ok=True, msg_id=msg_id, target=target)
             await self._reply(msg_id, {"ok": True, "result": result})
         except TypeError as e:
+            audit.record(cap, identity, args, ok=False, msg_id=msg_id,
+                         target=target, error=f"bad args: {e}")
             await self._reply(msg_id, {"ok": False, "error": f"bad args: {e}"})
         except Exception as e:
             log.exception("capability %s raised", cap)
+            audit.record(cap, identity, args, ok=False, msg_id=msg_id,
+                         target=target, error=f"{type(e).__name__}: {e}")
             await self._reply(msg_id, {"ok": False,
                                         "error": f"{type(e).__name__}: {e}"})
 

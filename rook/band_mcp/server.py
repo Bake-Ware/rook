@@ -117,6 +117,26 @@ def build_server(client: "BandClient | MultiBandClient",
     def _fail(msg: str) -> str:
         return json.dumps({"ok": False, "error": msg}, indent=2)
 
+    def _caller_identity() -> str:
+        """Identity to stamp on band calls, derived from the authenticated
+        bearer token's name (resolved from the raw token via the TokenStore).
+        Shape is ``agent:<token-name>`` so worker audit logs read cleanly;
+        falls back to ``anonymous`` when there's no auth context (e.g. a local
+        unguarded run). This is the breadcrumb the worker records — not an
+        access gate. Keyed off ``AccessToken.token`` rather than a ``subject``/
+        ``claims`` field so it's robust across ``mcp`` versions."""
+        try:
+            from mcp.server.auth.middleware.auth_context import get_access_token
+            tok = get_access_token()
+            raw = getattr(tok, "token", None) if tok is not None else None
+            if raw:
+                name = store.identity_for(raw)
+                if name:
+                    return f"agent:{name}"
+        except Exception:
+            pass
+        return "anonymous"
+
     def _resolve_target(spec: str) -> tuple[str | None, str | None]:
         """Resolve a worker id OR name to a live worker id.
 
@@ -190,14 +210,16 @@ def build_server(client: "BandClient | MultiBandClient",
             return _fail(f"no live worker has capability {cap!r}.{hint} "
                          f"See rook_caps for the full list.")
 
-        # Messages sent through the MCP identify their origin as "MCP" (unless
-        # the caller set an explicit sender), so chat/notify show who's talking.
+        identity = _caller_identity()
+        # Messages sent through the MCP identify their origin by the caller's
+        # token identity (falling back to "MCP"), so chat/notify show who's
+        # talking instead of a generic label.
         if cap in ("chat.send", "msg.send"):
             args = dict(args or {})
-            args.setdefault("sender", "MCP")
+            args.setdefault("sender", identity if identity != "anonymous" else "MCP")
         try:
             reply = await client.call(cap=cap, args=args, target=target,
-                                      timeout=timeout)
+                                      timeout=timeout, identity=identity)
         except asyncio.TimeoutError:
             where = (f"worker {roster[target].get('name')!r}" if target in roster
                      else "any worker") if target else f"any worker with {cap!r}"

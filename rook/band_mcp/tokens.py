@@ -144,6 +144,22 @@ class TokenStore:
             resource=None,
         )
 
+    def identity_for(self, token: str) -> str | None:
+        """The human identity behind a bearer token, for stamping band calls
+        so workers can audit who called. Returns the token's name for a minted
+        API token, ``"static"`` for the fixed static token, or ``None`` if the
+        token is unknown. Kept separate from :meth:`verify_bearer` (and keyed
+        off the raw token) so it works regardless of which ``AccessToken``
+        fields the installed ``mcp`` version happens to carry."""
+        if not token:
+            return None
+        if self._static_token and secrets.compare_digest(self._static_token, token):
+            return "static"
+        api = self._api_tokens.get(token)
+        if api is None:
+            return None
+        return api.get("name") or api.get("id") or "api"
+
     # -- API tokens (headless-agent bearers) ---------------------------------
 
     def list_api_tokens(self) -> list[dict[str, Any]]:
