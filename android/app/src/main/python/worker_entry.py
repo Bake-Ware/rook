@@ -42,7 +42,18 @@ def _attach_native_plugins(worker) -> None:
     from rook_android.plugins.screen import AndroidScreenPlugin
     from rook_android.plugins.hid_a11y import AndroidHidPlugin
     from rook_android.plugins.battery_android import AndroidBatteryPlugin
-    for plugin in (AndroidScreenPlugin(), AndroidHidPlugin(), AndroidBatteryPlugin()):
+    from rook_android.plugins.notify_android import AndroidNotifyPlugin
+    from rook_android.plugins.ui_android import AndroidUiPlugin
+    from rook_android.plugins.sms_android import AndroidSmsPlugin
+    from rook_android.plugins.contacts_android import AndroidContactsPlugin
+    from rook_android.plugins.calllog_android import AndroidCallLogPlugin
+    from rook_android.plugins.location_android import AndroidLocationPlugin
+    from rook_android.plugins.device_android import AndroidDevicePlugin
+    natives = (AndroidScreenPlugin(), AndroidHidPlugin(), AndroidBatteryPlugin(),
+               AndroidNotifyPlugin(), AndroidUiPlugin(), AndroidSmsPlugin(),
+               AndroidContactsPlugin(), AndroidCallLogPlugin(),
+               AndroidLocationPlugin(), AndroidDevicePlugin())
+    for plugin in natives:
         # battery gates on a readable battery; screen/hid are always available()
         # (they report readiness per-call). Never announce a cap we can't back.
         try:
