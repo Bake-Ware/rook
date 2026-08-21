@@ -18,6 +18,35 @@ from .server import RemoteWorker
 
 log = logging.getLogger(__name__)
 
+import re as _re
+_HERMES_ANSI = _re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_HERMES_BOX = "─│╱╲╳┌┐└┘├┤┬┴┼═║╔╗╚╝╠╣╦╩╬▀▄█▌▐░▒▓⚕☤┊⚡•·"
+_HERMES_FOOTER = ("resume this session", "session:", "duration:", "messages:",
+                  "hermes --resume")
+
+
+def _clean_hermes_stdout(text: str) -> str:
+    """Extract hermes's reply from its TUI stdout: strip ANSI + box drawing,
+    keep the lines between the ``⚕ Hermes`` banner and the session footer.
+    (Mirrors band_mcp's cleaner so the dashboard wake posts clean prose.)"""
+    text = _HERMES_ANSI.sub("", str(text or ""))
+    lines = []
+    for raw in text.replace("\r", "\n").split("\n"):
+        ln = "".join(c for c in raw if c not in _HERMES_BOX).strip()
+        if ln:
+            lines.append(ln)
+    banner = next((i for i, ln in enumerate(lines) if ln.lower() == "hermes"), -1)
+    if banner >= 0:
+        body = []
+        for ln in lines[banner + 1:]:
+            if ln.lower().startswith(_HERMES_FOOTER):
+                break
+            body.append(ln)
+        return " ".join(body).strip()
+    kept = [ln for ln in lines
+            if not ln.lower().startswith(("query:", "initializing agent") + _HERMES_FOOTER)]
+    return " ".join(kept).strip()
+
 WORKER_SCRIPT = (Path(__file__).parent / "worker.py").read_text(encoding="utf-8")
 
 PS_BOOTSTRAP = '''
@@ -954,6 +983,7 @@ class CombinedServer:
         self._app.router.add_get("/api/chat/read", self._api_chat_read)
         self._app.router.add_post("/api/chat/send", self._api_chat_send)
         self._app.router.add_post("/api/chat/start", self._api_chat_start)
+        self._app.router.add_post("/api/chat/wake", self._api_chat_wake)
         self._app.router.add_get("/api/presence", self._api_presence)
         self._app.router.add_get("/ws", self._websocket_handler)
         # Auth routes (handled by middleware, these are just route stubs)
@@ -1670,6 +1700,62 @@ button:hover{{background:#22b88f}}
             return web.json_response({"error": "chat unavailable"}, status=503)
         self._chat.touch(self._OPERATOR)
         return web.json_response({"agents": self._chat.online()})
+
+    async def _api_chat_wake(self, request: web.Request) -> web.Response:
+        """Wake an agent to reply in a room. For a hermes box (hermes.chat cap)
+        we hand it the transcript and post its reply back; otherwise we try the
+        agent.wake cap. Same bridge as band_mcp's rook_chat_wake, over the
+        dashboard's own band client."""
+        if self._chat is None or self._band is None:
+            return web.json_response({"error": "chat/band unavailable"}, status=503)
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json body"}, status=400)
+        room = str(data.get("room") or "").strip()
+        worker = str(data.get("worker") or "").strip()
+        if not room or not worker:
+            return web.json_response({"error": "room and worker required"}, status=400)
+        # Resolve the worker + its caps from the live roster (name or id).
+        roster = self._band.workers
+        wid = None
+        for k, w in roster.items():
+            if k == worker or (w.get("name") or "").lower() == worker.lower():
+                wid = k
+                break
+        if wid is None:
+            return web.json_response({"ok": False, "error": f"unknown worker {worker!r}"})
+        caps = roster[wid].get("caps", [])
+        wname = roster[wid].get("name") or worker
+        tail = self._chat.read(room, None, since_seq=0, mark=False, limit=30)
+        transcript = tail.get("messages", []) if tail.get("ok") else []
+        try:
+            if "hermes.chat" in caps:
+                convo = "\n".join(f"[{m.get('sender')}] {m.get('text')}" for m in transcript)
+                prompt = (f"You're a participant in rook chat room "
+                          f"'{tail.get('title') or room}'. Read the conversation "
+                          f"and reply with your contribution — plain prose to the "
+                          f"room.\n\n--- conversation ---\n{convo}\n--- end ---")
+                reply = await self._band.call(cap="hermes.chat",
+                                              args={"message": prompt},
+                                              target=wid, timeout=120.0)
+                res = reply.get("result") or {}
+                ans = _clean_hermes_stdout(res.get("stdout", "")) if isinstance(res, dict) else ""
+                if not ans:
+                    return web.json_response({"ok": False, "error": "hermes gave no parseable reply"})
+                self._chat.send(room, f"agent:hermes_{wname}", ans, [], False)
+                return web.json_response({"ok": True, "via": "hermes.chat", "worker": wname})
+            if "agent.wake" in caps:
+                wake_args = {"room": room, "thread_id": room,
+                             "title": tail.get("title"), "transcript": transcript,
+                             "woken_by": self._OPERATOR, "note": ""}
+                reply = await self._band.call(cap="agent.wake", args=wake_args,
+                                              target=wid, timeout=20.0)
+                return web.json_response({"ok": True, "via": "agent.wake", "reply": reply})
+        except Exception as e:
+            return web.json_response({"ok": False, "error": f"{type(e).__name__}: {e}"})
+        return web.json_response({"ok": False,
+                                  "error": f"{wname} exposes neither hermes.chat nor agent.wake"})
 
     async def _band_cli(self, request: web.Request) -> web.Response:
         """Serve the `rook band` terminal control panel as a standalone script
