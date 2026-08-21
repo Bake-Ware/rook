@@ -95,6 +95,14 @@ class MainActivity : AppCompatActivity() {
             ))
         }
 
+        b.btnGrantOverlay.setOnClickListener {
+            startActivity(Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:$packageName")
+            ))
+            status("enable 'Display over other apps' → lets device.wake turn the screen on")
+        }
+
         maybeRequestNotifications()
     }
 

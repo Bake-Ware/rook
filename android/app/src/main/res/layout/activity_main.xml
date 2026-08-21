@@ -72,6 +72,12 @@
             android:layout_height="wrap_content"
             android:text="@string/grant_perms" />
 
+        <Button
+            android:id="@+id/btnGrantOverlay"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/grant_overlay" />
+
         <TextView
             android:id="@+id/status"
             android:layout_width="match_parent"

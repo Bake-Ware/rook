@@ -20,6 +20,8 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- lets device.wake start the wake activity from the background (Android 10+) -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <application
         android:allowBackup="true"
@@ -43,6 +45,16 @@
             android:name=".WorkerService"
             android:exported="false"
             android:foregroundServiceType="dataSync|mediaProjection" />
+
+        <!-- Turns the screen on from the background (device.wake). -->
+        <activity
+            android:name=".WakeActivity"
+            android:exported="false"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
         <!-- Rootless HID via AccessibilityService (gestures + text input). -->
         <service

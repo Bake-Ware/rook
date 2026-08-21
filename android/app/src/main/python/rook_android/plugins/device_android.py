@@ -50,6 +50,33 @@ class AndroidDevicePlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
+    @capability("wake")
+    def _wake(self, dismiss_keyguard: bool = False, hold_ms: int = 1200) -> dict:
+        """Turn the screen ON (and show over the keyguard) so the accessibility
+        service can interact with the lock screen. Needs 'Display over other
+        apps'. With dismiss_keyguard, also surfaces the PIN pad (Android won't
+        bypass a secured lock — it just brings the credential UI up)."""
+        ctx = app_context()
+        if ctx is None:
+            return {"ok": False, "error": "not an Android host"}
+        try:
+            # Refuse quietly-broken case: overlay perm missing -> background
+            # activity start is blocked on Android 10+.
+            Settings = jclass("android.provider.Settings")
+            if not Settings.canDrawOverlays(ctx):
+                return {"ok": False, "error": "grant 'Display over other apps' in the app first"}
+            Intent = jclass("android.content.Intent")
+            ComponentName = jclass("android.content.ComponentName")
+            i = Intent()
+            i.setComponent(ComponentName(ctx, "systems.bake.rook.WakeActivity"))
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            i.putExtra("dismiss", bool(dismiss_keyguard))
+            i.putExtra("hold_ms", int(hold_ms))
+            ctx.startActivity(i)
+            return {"ok": True, "dismiss_keyguard": bool(dismiss_keyguard)}
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
     @capability("vibrate")
     def _vibrate(self, ms: int = 300) -> dict:
         """Buzz the phone for ``ms`` milliseconds."""
