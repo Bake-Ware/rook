@@ -19,6 +19,14 @@ class BootReceiver : BroadcastReceiver() {
         val psk = prefs.getString("psk", BuildConfig.DEFAULT_PSK)!!
         val fallback = (android.os.Build.MODEL ?: "android").replace(' ', '-')
         val name = prefs.getString("name", fallback)!!
-        WorkerService.start(context, hub, psk, name)
+        // Android 14+ forbids starting a dataSync foreground service straight from
+        // BOOT_COMPLETED (ForegroundServiceStartNotAllowedException). Don't let
+        // that crash the boot broadcast — the worker is START_STICKY and the user
+        // can also start it from the app. Best-effort autostart only.
+        try {
+            WorkerService.start(context, hub, psk, name)
+        } catch (t: Throwable) {
+            android.util.Log.w("RookBootReceiver", "autostart on boot not permitted", t)
+        }
     }
 }

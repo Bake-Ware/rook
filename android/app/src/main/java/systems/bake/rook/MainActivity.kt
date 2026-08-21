@@ -24,6 +24,19 @@ class MainActivity : AppCompatActivity() {
             if (res.resultCode == RESULT_OK && res.data != null) {
                 ScreenCaptureBridge.setProjection(this, res.resultCode, res.data!!)
                 status("screen capture: granted")
+                // If the worker is already running, re-issue start so the
+                // foreground service re-registers now WITH the mediaProjection
+                // type (createVirtualDisplay needs an mediaProjection-typed FGS
+                // on Android 14+). If it isn't running yet, the type is picked up
+                // the next time Start is pressed.
+                val prefs = getSharedPreferences("rook", MODE_PRIVATE)
+                if (prefs.getBoolean("autostart", false)) {
+                    val hub = b.hub.text.toString().trim()
+                    val psk = b.psk.text.toString().trim()
+                    val name = b.name.text.toString().trim()
+                        .ifEmpty { (Build.MODEL ?: "android").replace(' ', '-') }
+                    WorkerService.start(this, hub, psk, name)
+                }
             } else {
                 status("screen capture: denied")
             }
@@ -74,6 +87,19 @@ class MainActivity : AppCompatActivity() {
                 Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
                 Uri.parse("package:$packageName")
             ))
+        }
+
+        maybeRequestNotifications()
+    }
+
+    private val notifPermLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* best-effort */ }
+
+    private fun maybeRequestNotifications() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            notifPermLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 

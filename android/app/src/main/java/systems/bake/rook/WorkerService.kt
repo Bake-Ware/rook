@@ -33,15 +33,22 @@ class WorkerService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val hub = intent?.getStringExtra(EXTRA_HUB) ?: BuildConfig.DEFAULT_HUB
-        val psk = intent?.getStringExtra(EXTRA_PSK) ?: BuildConfig.DEFAULT_PSK
-        val name = intent?.getStringExtra(EXTRA_NAME) ?: defaultName()
+        // On a START_STICKY restart the intent is null. Fall back to the last
+        // SAVED band settings rather than the (empty) BuildConfig defaults, so a
+        // killed worker actually reconnects instead of coming back with a blank
+        // PSK. A re-issued start with a real intent (e.g. after the user grants
+        // screen capture) refreshes the foreground type — see startForegroundCompat.
+        val prefs = getSharedPreferences("rook", MODE_PRIVATE)
+        val hub = intent?.getStringExtra(EXTRA_HUB)
+            ?: prefs.getString("hub", BuildConfig.DEFAULT_HUB) ?: BuildConfig.DEFAULT_HUB
+        val psk = intent?.getStringExtra(EXTRA_PSK)
+            ?: prefs.getString("psk", BuildConfig.DEFAULT_PSK) ?: BuildConfig.DEFAULT_PSK
+        val name = intent?.getStringExtra(EXTRA_NAME)
+            ?: prefs.getString("name", defaultName()) ?: defaultName()
 
         startForegroundCompat(NOTIF_ID, buildNotification("on band as $name"))
         acquireWakeLock()
         startWorker(hub, psk, name)
-        // START_STICKY: Android restarts us (with a null intent) if killed; the
-        // null branch above falls back to BuildConfig defaults + saved prefs.
         return START_STICKY
     }
 
@@ -113,12 +120,19 @@ class WorkerService : Service() {
     }
 
     private fun startForegroundCompat(id: Int, n: Notification) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(
-                id, n,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-            )
+        // Typed foreground-service starts exist from API 30 (R). We ALWAYS run as
+        // dataSync (the band connection). We add mediaProjection ONLY once the
+        // user has granted screen capture — claiming that type without an active
+        // MediaProjection consent token makes startForeground() throw
+        // SecurityException on Android 14+, which crashed the app on every start.
+        // After consent is granted the service is re-started (see MainActivity),
+        // which re-runs this with the mediaProjection type included.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            var type = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            if (ScreenCaptureBridge.hasConsent()) {
+                type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+            }
+            startForeground(id, n, type)
         } else {
             startForeground(id, n)
         }
