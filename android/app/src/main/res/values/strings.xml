@@ -9,4 +9,6 @@
     <string name="grant_a11y">Enable HID (accessibility)</string>
     <string name="grant_battery">Ignore battery optimization</string>
     <string name="accessibility_description">Lets the Rook worker send taps, swipes, and text on your behalf for remote control over the band.</string>
+    <string name="grant_notif">Grant notification access</string>
+    <string name="grant_perms">Grant SMS / contacts / location</string>
 </resources>

@@ -80,8 +80,29 @@ class MainActivity : AppCompatActivity() {
             ))
         }
 
+        b.btnGrantNotif.setOnClickListener {
+            startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+            status("enable 'Rook Worker' under Notification access")
+        }
+
+        b.btnGrantPerms.setOnClickListener {
+            permsLauncher.launch(arrayOf(
+                android.Manifest.permission.READ_SMS,
+                android.Manifest.permission.SEND_SMS,
+                android.Manifest.permission.READ_CONTACTS,
+                android.Manifest.permission.READ_CALL_LOG,
+                android.Manifest.permission.ACCESS_FINE_LOCATION,
+            ))
+        }
+
         maybeRequestNotifications()
     }
+
+    private val permsLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { res ->
+            val granted = res.filterValues { it }.keys.map { it.substringAfterLast('.') }
+            status("granted: " + (if (granted.isEmpty()) "none" else granted.joinToString(", ")))
+        }
 
     private val notifPermLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* best-effort */ }

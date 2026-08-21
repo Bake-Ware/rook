@@ -51,6 +51,25 @@ class HidAccessibilityService : AccessibilityService() {
         return node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
     }
 
+    private fun dumpTextInternal(): String {
+        val root = rootInActiveWindow ?: return ""
+        val sb = StringBuilder()
+        collectText(root, sb, 0)
+        return sb.toString().trim()
+    }
+
+    private fun collectText(node: AccessibilityNodeInfo?, sb: StringBuilder, depth: Int) {
+        node ?: return
+        if (depth > 40) return
+        val t = node.text?.toString()?.trim()
+        val d = node.contentDescription?.toString()?.trim()
+        if (!t.isNullOrEmpty()) { sb.append(t); sb.append('\n') }
+        else if (!d.isNullOrEmpty()) { sb.append(d); sb.append('\n') }
+        for (i in 0 until node.childCount) {
+            collectText(node.getChild(i), sb, depth + 1)
+        }
+    }
+
     private fun findFocusedEditable(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
         if (node.isEditable && node.isFocused) return node
         for (i in 0 until node.childCount) {
@@ -78,5 +97,8 @@ class HidAccessibilityService : AccessibilityService() {
         @JvmStatic fun back(): Boolean = instance?.performGlobalAction(GLOBAL_ACTION_BACK) ?: false
         @JvmStatic fun home(): Boolean = instance?.performGlobalAction(GLOBAL_ACTION_HOME) ?: false
         @JvmStatic fun recents(): Boolean = instance?.performGlobalAction(GLOBAL_ACTION_RECENTS) ?: false
+
+        /** All visible text on the current screen, or null if not enabled. */
+        @JvmStatic fun screenText(): String? = instance?.dumpTextInternal()
     }
 }

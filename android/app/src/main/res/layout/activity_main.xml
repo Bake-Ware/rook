@@ -60,6 +60,18 @@
             android:layout_height="wrap_content"
             android:text="@string/grant_battery" />
 
+        <Button
+            android:id="@+id/btnGrantNotif"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/grant_notif" />
+
+        <Button
+            android:id="@+id/btnGrantPerms"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/grant_perms" />
+
         <TextView
             android:id="@+id/status"
             android:layout_width="match_parent"
