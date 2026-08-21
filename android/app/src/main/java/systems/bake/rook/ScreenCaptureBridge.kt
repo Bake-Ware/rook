@@ -12,111 +12,142 @@ import android.media.projection.MediaProjectionManager
 import android.os.Handler
 import android.os.Looper
 import android.util.DisplayMetrics
+import android.util.Log
 import android.view.WindowManager
 import java.io.ByteArrayOutputStream
 
 /**
- * Real screen capture via MediaProjection — the native replacement for the
- * Termux `termux-camera-photo` hack. Python's `screenshot.capture` calls
- * [captureJpeg]; it returns a JPEG byte[] or null if consent hasn't been granted.
+ * Screen capture via MediaProjection, Android-14-correct.
  *
- * Consent is a one-time per-grant Activity flow handled in MainActivity, which
- * calls [setProjection] with the result. The MediaProjection token survives until
- * the app is killed (or [release] is called).
+ * Android 14 makes a MediaProjection consent token SINGLE USE: you may call
+ * getMediaProjection() once and createVirtualDisplay() once per grant. The old
+ * code built a fresh projection + virtual display on every screenshot, which
+ * threw "Don't re-use the resultData... Don't take multiple captures by invoking
+ * createVirtualDisplay multiple times on the same instance."
+ *
+ * So we build ONE persistent session right after consent (inside WorkerService,
+ * which owns the mediaProjection foreground-service type): one projection, one
+ * VirtualDisplay mirroring into one long-lived ImageReader. Each screenshot just
+ * pulls the latest mirrored frame from that reader — no new projection, no new
+ * display. [startSession] is called by the service; Python calls [captureJpeg].
  */
 object ScreenCaptureBridge {
 
+    private const val TAG = "RookScreenCapture"
+
     @Volatile private var projection: MediaProjection? = null
-    @Volatile private var resultCode: Int = 0
-    @Volatile private var resultData: Intent? = null
+    @Volatile private var reader: ImageReader? = null
+    @Volatile private var display: VirtualDisplay? = null
+    @Volatile private var capW: Int = 0
+    @Volatile private var capH: Int = 0
+    @Volatile private var lastJpeg: ByteArray? = null
     private var appContext: Context? = null
 
     fun init(ctx: Context) { appContext = ctx.applicationContext }
 
-    /** Called from MainActivity after the user approves the capture dialog. */
-    fun setProjection(ctx: Context, code: Int, data: Intent) {
+    fun hasSession(): Boolean = reader != null
+    /** legacy name — some callers ask "do we have capture" this way */
+    fun hasConsent(): Boolean = hasSession()
+
+    /**
+     * Build the persistent capture session from a fresh consent token. MUST be
+     * called from a context where the mediaProjection foreground service is
+     * already running (i.e. from WorkerService). Returns true on success.
+     */
+    @Synchronized
+    fun startSession(ctx: Context, code: Int, data: Intent): Boolean {
         appContext = ctx.applicationContext
-        resultCode = code
-        resultData = data
-        // Defer building the MediaProjection until first capture so it's created
-        // while the foreground service (mediaProjection type) is already running.
+        stopSession()
+        return try {
+            val mgr = ctx.getSystemService(Context.MEDIA_PROJECTION_SERVICE)
+                as MediaProjectionManager
+            val mp = mgr.getMediaProjection(code, data) ?: return false
+            // Android 14+ requires a registered callback before createVirtualDisplay.
+            mp.registerCallback(object : MediaProjection.Callback() {
+                override fun onStop() { stopSession() }
+            }, Handler(Looper.getMainLooper()))
+
+            val metrics = DisplayMetrics()
+            @Suppress("DEPRECATION")
+            (ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager)
+                .defaultDisplay.getRealMetrics(metrics)
+            val w = metrics.widthPixels
+            val h = metrics.heightPixels
+            val dpi = metrics.densityDpi
+
+            val r = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2)
+            val vd = mp.createVirtualDisplay(
+                "rook-capture", w, h, dpi,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                r.surface, null, Handler(Looper.getMainLooper())
+            )
+            projection = mp
+            reader = r
+            display = vd
+            capW = w
+            capH = h
+            lastJpeg = null
+            Log.i(TAG, "capture session up (${w}x$h @ ${dpi}dpi)")
+            true
+        } catch (t: Throwable) {
+            Log.e(TAG, "startSession failed", t)
+            stopSession()
+            false
+        }
+    }
+
+    @Synchronized
+    fun stopSession() {
+        try { display?.release() } catch (_: Throwable) {}
+        try { reader?.close() } catch (_: Throwable) {}
+        try { projection?.stop() } catch (_: Throwable) {}
+        display = null
+        reader = null
         projection = null
     }
 
-    fun hasConsent(): Boolean = resultData != null
-
-    fun release() {
-        projection?.stop()
-        projection = null
-        resultData = null
-        resultCode = 0
-    }
-
-    /** @return JPEG bytes, or null if no consent yet. Safe to call from Python. */
+    /**
+     * @return JPEG bytes of the latest screen frame, or null if there's no
+     *   active capture session. Safe to call from Python. Reuses the persistent
+     *   ImageReader — no new projection/display, so it's Android-14-safe and
+     *   fast on repeat.
+     */
     @JvmStatic
     fun captureJpeg(quality: Int): ByteArray? {
-        val ctx = appContext ?: return null
-        val data = resultData ?: return null
-        ensureProjection(ctx, resultCode, data) ?: return null
-
-        val metrics = DisplayMetrics()
-        @Suppress("DEPRECATION")
-        (ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager)
-            .defaultDisplay.getRealMetrics(metrics)
-        val w = metrics.widthPixels
-        val h = metrics.heightPixels
-        val dpi = metrics.densityDpi
-
-        val reader = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2)
-        val handlerThread = Looper.getMainLooper() // VirtualDisplay needs a handler
-        val display: VirtualDisplay = projection!!.createVirtualDisplay(
-            "rook-capture", w, h, dpi,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            reader.surface, null, Handler(handlerThread)
-        )
-
+        val r = reader ?: return null
+        // The virtual display mirrors continuously, but a fully static screen
+        // stops producing new frames; poll briefly, then fall back to the last
+        // frame we successfully encoded so a screenshot never comes back empty.
+        var image = r.acquireLatestImage()
+        var tries = 0
+        while (image == null && tries < 40) {
+            Thread.sleep(15)
+            image = r.acquireLatestImage()
+            tries++
+        }
+        if (image == null) return lastJpeg
         return try {
-            // Grab a single frame. Poll briefly for the first available image.
-            var image = reader.acquireLatestImage()
-            var tries = 0
-            while (image == null && tries < 50) {
-                Thread.sleep(20)
-                image = reader.acquireLatestImage()
-                tries++
-            }
-            if (image == null) return null
-
             val plane = image.planes[0]
             val rowStride = plane.rowStride
             val pixelStride = plane.pixelStride
+            val w = image.width
+            val h = image.height
             val rowPadding = rowStride - pixelStride * w
             val bmp = Bitmap.createBitmap(
                 w + rowPadding / pixelStride, h, Bitmap.Config.ARGB_8888
             )
             bmp.copyPixelsFromBuffer(plane.buffer)
-            image.close()
-
-            val cropped = Bitmap.createBitmap(bmp, 0, 0, w, h)
+            val cropped = if (rowPadding == 0) bmp else Bitmap.createBitmap(bmp, 0, 0, w, h)
             val out = ByteArrayOutputStream()
             cropped.compress(Bitmap.CompressFormat.JPEG, quality.coerceIn(1, 100), out)
-            out.toByteArray()
+            val bytes = out.toByteArray()
+            lastJpeg = bytes
+            bytes
+        } catch (t: Throwable) {
+            Log.e(TAG, "encode failed", t)
+            lastJpeg
         } finally {
-            display.release()
-            reader.close()
+            try { image.close() } catch (_: Throwable) {}
         }
-    }
-
-    private fun ensureProjection(ctx: Context, code: Int, data: Intent): MediaProjection? {
-        projection?.let { return it }
-        val mgr = ctx.getSystemService(Context.MEDIA_PROJECTION_SERVICE)
-            as MediaProjectionManager
-        val mp = mgr.getMediaProjection(code, data) ?: return null
-        // Android 14+ (API 34) requires a registered callback before
-        // createVirtualDisplay(), else IllegalStateException.
-        mp.registerCallback(object : MediaProjection.Callback() {
-            override fun onStop() { projection = null }
-        }, Handler(Looper.getMainLooper()))
-        projection = mp
-        return mp
     }
 }

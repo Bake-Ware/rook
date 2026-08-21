@@ -22,21 +22,12 @@ class MainActivity : AppCompatActivity() {
     private val projectionLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
             if (res.resultCode == RESULT_OK && res.data != null) {
-                ScreenCaptureBridge.setProjection(this, res.resultCode, res.data!!)
+                // Hand the consent token to the service (which owns the
+                // mediaProjection FGS type) to open ONE persistent capture
+                // session. Android 14 makes the token single-use, so we must
+                // build the projection now, promptly, inside that service.
+                WorkerService.startCapture(this, res.resultCode, res.data!!)
                 status("screen capture: granted")
-                // If the worker is already running, re-issue start so the
-                // foreground service re-registers now WITH the mediaProjection
-                // type (createVirtualDisplay needs an mediaProjection-typed FGS
-                // on Android 14+). If it isn't running yet, the type is picked up
-                // the next time Start is pressed.
-                val prefs = getSharedPreferences("rook", MODE_PRIVATE)
-                if (prefs.getBoolean("autostart", false)) {
-                    val hub = b.hub.text.toString().trim()
-                    val psk = b.psk.text.toString().trim()
-                    val name = b.name.text.toString().trim()
-                        .ifEmpty { (Build.MODEL ?: "android").replace(' ', '-') }
-                    WorkerService.start(this, hub, psk, name)
-                }
             } else {
                 status("screen capture: denied")
             }

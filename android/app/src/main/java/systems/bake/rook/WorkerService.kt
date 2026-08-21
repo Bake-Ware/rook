@@ -26,6 +26,8 @@ class WorkerService : Service() {
     private var workerThread: Thread? = null
     private var entry: PyObject? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    @Volatile private var wantProjection = false
+    private var lastName: String = ""
 
     override fun onCreate() {
         super.onCreate()
@@ -33,18 +35,53 @@ class WorkerService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val prefs = getSharedPreferences("rook", MODE_PRIVATE)
+
+        // Screen-capture control. The Activity gets consent, then hands the
+        // token to us (the service that owns the mediaProjection FGS type) so we
+        // can foreground WITH that type and build the persistent capture session.
+        when (intent?.action) {
+            ACTION_START_CAPTURE -> {
+                wantProjection = true
+                if (lastName.isEmpty()) lastName = prefs.getString("name", defaultName()) ?: defaultName()
+                startForegroundCompat(NOTIF_ID, buildNotification("on band as $lastName · screen"))
+                acquireWakeLock()
+                val code = intent.getIntExtra(EXTRA_CODE, android.app.Activity.RESULT_CANCELED)
+                val data: Intent? =
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+                        intent.getParcelableExtra(EXTRA_DATA, Intent::class.java)
+                    else @Suppress("DEPRECATION") intent.getParcelableExtra(EXTRA_DATA)
+                if (data != null) {
+                    val ok = ScreenCaptureBridge.startSession(this, code, data)
+                    Log.i(TAG, "capture session start ok=$ok")
+                }
+                // Make sure the band worker itself is up too (usually already is).
+                startWorker(
+                    prefs.getString("hub", BuildConfig.DEFAULT_HUB) ?: BuildConfig.DEFAULT_HUB,
+                    prefs.getString("psk", BuildConfig.DEFAULT_PSK) ?: BuildConfig.DEFAULT_PSK,
+                    lastName,
+                )
+                return START_STICKY
+            }
+            ACTION_STOP_CAPTURE -> {
+                ScreenCaptureBridge.stopSession()
+                wantProjection = false
+                startForegroundCompat(NOTIF_ID, buildNotification("on band as $lastName"))
+                return START_STICKY
+            }
+        }
+
         // On a START_STICKY restart the intent is null. Fall back to the last
         // SAVED band settings rather than the (empty) BuildConfig defaults, so a
-        // killed worker actually reconnects instead of coming back with a blank
-        // PSK. A re-issued start with a real intent (e.g. after the user grants
-        // screen capture) refreshes the foreground type — see startForegroundCompat.
-        val prefs = getSharedPreferences("rook", MODE_PRIVATE)
+        // killed worker actually reconnects instead of coming back with a blank PSK.
         val hub = intent?.getStringExtra(EXTRA_HUB)
             ?: prefs.getString("hub", BuildConfig.DEFAULT_HUB) ?: BuildConfig.DEFAULT_HUB
         val psk = intent?.getStringExtra(EXTRA_PSK)
             ?: prefs.getString("psk", BuildConfig.DEFAULT_PSK) ?: BuildConfig.DEFAULT_PSK
         val name = intent?.getStringExtra(EXTRA_NAME)
             ?: prefs.getString("name", defaultName()) ?: defaultName()
+        lastName = name
+        wantProjection = ScreenCaptureBridge.hasSession()
 
         startForegroundCompat(NOTIF_ID, buildNotification("on band as $name"))
         acquireWakeLock()
@@ -78,6 +115,7 @@ class WorkerService : Service() {
     }
 
     override fun onDestroy() {
+        ScreenCaptureBridge.stopSession()
         stopWorker()
         wakeLock?.let { if (it.isHeld) it.release() }
         super.onDestroy()
@@ -129,7 +167,7 @@ class WorkerService : Service() {
         // which re-runs this with the mediaProjection type included.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             var type = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-            if (ScreenCaptureBridge.hasConsent()) {
+            if (wantProjection || ScreenCaptureBridge.hasSession()) {
                 type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
             }
             startForeground(id, n, type)
@@ -145,6 +183,10 @@ class WorkerService : Service() {
         const val EXTRA_HUB = "hub"
         const val EXTRA_PSK = "psk"
         const val EXTRA_NAME = "name"
+        const val EXTRA_CODE = "projCode"
+        const val EXTRA_DATA = "projData"
+        const val ACTION_START_CAPTURE = "systems.bake.rook.START_CAPTURE"
+        const val ACTION_STOP_CAPTURE = "systems.bake.rook.STOP_CAPTURE"
 
         fun start(ctx: Context, hub: String, psk: String, name: String) {
             val i = Intent(ctx, WorkerService::class.java)
@@ -156,6 +198,16 @@ class WorkerService : Service() {
 
         fun stop(ctx: Context) {
             ctx.stopService(Intent(ctx, WorkerService::class.java))
+        }
+
+        /** Hand a fresh MediaProjection consent token to the service so it can
+         *  foreground with the mediaProjection type and open the capture session. */
+        fun startCapture(ctx: Context, code: Int, data: Intent) {
+            val i = Intent(ctx, WorkerService::class.java)
+                .setAction(ACTION_START_CAPTURE)
+                .putExtra(EXTRA_CODE, code)
+                .putExtra(EXTRA_DATA, data)
+            ctx.startForegroundService(i)
         }
     }
 }
