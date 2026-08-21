@@ -63,6 +63,15 @@ class Plugin:
         worker start; a worker.restart re-evaluates it."""
         return True
 
+    def heartbeat(self) -> dict | None:
+        """Optional compact status merged into the worker's announce (~every
+        30s) under this plugin's namespace, so live state (battery level,
+        temperature, load…) rides the heartbeat the whole band already sees —
+        no polling. Keep it TINY and cheap (a few scalar fields); it runs on
+        every announce and inflates the packet. Return ``None`` (the default)
+        to contribute nothing. Must not raise — core guards it, but be quick."""
+        return None
+
     async def start(self) -> None:
         return None
 

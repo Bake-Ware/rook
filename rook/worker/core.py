@@ -209,6 +209,19 @@ class Worker:
             "version": VERSION,
             "build": BUILD,
         }
+        # Optional per-plugin live status (battery, etc.) rides the heartbeat.
+        hb: dict = {}
+        for p in self.plugins:
+            try:
+                d = p.heartbeat()
+            except Exception:
+                log.debug("heartbeat() raised for plugin %s", getattr(p, "NAMESPACE", "?"),
+                          exc_info=True)
+                continue
+            if d:
+                hb[p.NAMESPACE] = d
+        if hb:
+            msg["hb"] = hb
         await self.transport.send(json.dumps(msg).encode())
 
     async def _announce_loop(self) -> None:

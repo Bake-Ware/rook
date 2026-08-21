@@ -115,6 +115,7 @@ class BandClient:
             "name": msg.get("name", wid),
             "caps": list(msg.get("caps", [])),
             "plugins": list(msg.get("plugins", [])),
+            "hb": dict(msg.get("hb") or {}),
             "version": msg.get("version"),
             "build": msg.get("build"),
             "last_seen": time.time(),

@@ -94,6 +94,13 @@
   .tagfw{font-size:.64rem;color:var(--warn);border:1px solid #3a2f18;background:#1c150a;border-radius:5px;padding:1px 6px}
   .ver{font-size:.78rem;color:var(--accent);font-weight:600;width:118px;flex:0 0 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .ver.old{color:var(--warn)} .ver.none{color:var(--dim2)}
+  .batt{display:inline-flex;align-items:center;gap:4px;font-size:.7rem;color:var(--dim);flex:0 0 auto;
+    border:1px solid var(--line2);border-radius:20px;padding:1px 7px 1px 5px;white-space:nowrap}
+  .batt .ico{width:19px;height:10px;border:1px solid currentColor;border-radius:2px;position:relative;flex:0 0 auto}
+  .batt .ico::after{content:'';position:absolute;right:-3px;top:2px;width:2px;height:4px;background:currentColor;border-radius:0 1px 1px 0}
+  .batt .ico i{display:block;height:100%;border-radius:1px;background:currentColor}
+  .batt.ok{color:var(--accent)} .batt.warn{color:var(--warn)} .batt.low{color:var(--bad)}
+  .batt .bolt{font-size:.72rem;line-height:1}
   .seen{width:150px;flex:0 0 auto;display:flex;align-items:center;gap:9px}
   .seenbar{flex:1;height:6px;border-radius:4px;background:#0a121b;border:1px solid var(--line);overflow:hidden}
   .seenbar i{display:block;height:100%;width:60%;background:var(--accent);border-radius:4px}
@@ -487,6 +494,7 @@ function buildRow(w){
       <span class="caret">▸</span><span class="st"></span>
       <span class="name"><span class="n">${esc(w.name||w.worker_id)}</span><span class="id">${esc(w.worker_id.slice(0,8))}</span></span>
       <span class="ver"></span>
+      <span class="batt-slot"></span>
       <span class="seen"><span class="seenbar"><i></i></span><span class="t"></span></span>
       <span class="acts"></span>
     </div>
@@ -499,15 +507,22 @@ function buildRow(w){
   bar.addEventListener('mouseenter',()=>{wrap.classList.add('hl');bar.classList.add('hl')});
   bar.addEventListener('mouseleave',()=>{wrap.classList.remove('hl');bar.classList.remove('hl')});
   return { w, wrap, row, bar,
-    st:wrap.querySelector('.st'), verEl:wrap.querySelector('.ver'),
+    st:wrap.querySelector('.st'), verEl:wrap.querySelector('.ver'), battEl:wrap.querySelector('.batt-slot'),
     sb:wrap.querySelector('.seenbar i'), tt:wrap.querySelector('.seen .t'),
     acts:wrap.querySelector('.acts'), meta:wrap.querySelector('.meta'), cg:wrap.querySelector('.cggrid'),
     banrow:wrap.querySelector('.banrow'), bannedSig:null,
     fill:bar.querySelector('.fill'), peakEl:bar.querySelector('.peak'),
     lastSeenAbs:clock()-(w.last_seen_age_secs||0), peak:0.6, beatT:-9, capsSig:'' };
 }
+function battHTML(hb){ const b=hb&&hb.battery; if(!b||b.percent==null)return '';
+  const p=Math.max(0,Math.min(100,b.percent)); const cls=b.charging?'ok':(p<=15?'low':(p<=35?'warn':'ok'));
+  const w=Math.max(2,Math.round(p/100*15));
+  return `<span class="batt ${cls}" title="battery ${p}%${b.charging?' · charging':''}">`+
+    `<span class="ico"><i style="width:${w}px"></i></span>`+
+    (b.charging?'<span class="bolt">⚡</span>':'')+`<span>${p}%</span></span>`; }
 function updateMeta(m,w){
   m.w=w;
+  m.battEl.innerHTML=battHTML(w.hb);
   const fw=(w.plugins||[]).some(p=>['kvm','bthid','serial'].includes(p)) || /^0\./.test(w.version||'');
   const vcls = w.version? (fw?'ver old':'ver') : 'ver none';
   m.verEl.className=vcls; m.verEl.textContent = w.version? 'v'+w.version : '—';

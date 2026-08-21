@@ -98,7 +98,8 @@ def build_server(client: "BandClient | MultiBandClient",
         """List all workers currently visible on the band.
 
         Returns a JSON array of objects: ``{worker_id, name, caps, plugins,
-        last_seen_age_secs}``. Workers re-announce every 30s; entries are
+        hb, last_seen_age_secs}``. ``hb`` carries live heartbeat status a
+        worker opts into (e.g. ``{"battery": {"percent": 73, "charging": true}}``). Workers re-announce every 30s; entries are
         evicted after ~90s of silence. Either ``worker_id`` or ``name`` can
         be passed to ``rook_call`` to target a worker; ids change whenever a
         worker restarts, names are stable.
@@ -113,6 +114,7 @@ def build_server(client: "BandClient | MultiBandClient",
                 "band": w.get("band"),
                 "caps": w.get("caps", []),
                 "plugins": w.get("plugins", []),
+                "hb": w.get("hb") or {},
                 "last_seen_age_secs": round(now - w.get("last_seen", 0.0), 2),
             })
         out.sort(key=lambda x: x["name"] or "")
