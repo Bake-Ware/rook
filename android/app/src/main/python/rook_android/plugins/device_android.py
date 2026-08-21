@@ -77,6 +77,79 @@ class AndroidDevicePlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
+    @capability("unlock")
+    async def _unlock(self, pin: str, hold_ms: int = 9000, pre_swipe: bool = True) -> dict:
+        """Unlock a PIN-secured screen: wake, surface the PIN bouncer, and tap
+        the digits at keypad positions computed from the live screen size.
+
+        ``pin`` is digits only, passed per-call (never stored in the app). This
+        does NOT bypass anything — it enters the real PIN the way a finger would,
+        so it only works with the correct PIN and where the OS lets the
+        accessibility service inject taps on the keyguard (verified on Samsung /
+        One UI). Standard 4/6-digit PINs auto-submit; a variable-length PIN may
+        need an explicit OK/enter the phone shows.
+        """
+        import asyncio
+        ctx = app_context()
+        if ctx is None:
+            return {"ok": False, "error": "not an Android host"}
+        pin = str(pin).strip()
+        if not pin or not pin.isdigit():
+            return {"ok": False, "error": "pin must be digits only"}
+        try:
+            Hid = jclass("systems.bake.rook.HidAccessibilityService")
+            if not Hid.isEnabled():
+                return {"ok": False, "error": "accessibility (HID) not enabled — grant it in the app"}
+            Settings = jclass("android.provider.Settings")
+            if not Settings.canDrawOverlays(ctx):
+                return {"ok": False, "error": "grant 'Display over other apps' first"}
+
+            # Live screen size → keypad coordinate model.
+            Context = jclass("android.content.Context")
+            wm = cast(jclass("android.view.WindowManager"), ctx.getSystemService(Context.WINDOW_SERVICE))
+            DisplayMetrics = jclass("android.util.DisplayMetrics")
+            m = DisplayMetrics()
+            wm.getDefaultDisplay().getRealMetrics(m)
+            w, h = int(m.widthPixels), int(m.heightPixels)
+
+            # Wake + surface the PIN bouncer (requestDismissKeyguard).
+            Intent = jclass("android.content.Intent")
+            ComponentName = jclass("android.content.ComponentName")
+            i = Intent()
+            i.setComponent(ComponentName(ctx, "systems.bake.rook.WakeActivity"))
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            i.putExtra("dismiss", True)
+            i.putExtra("hold_ms", int(hold_ms))
+            ctx.startActivity(i)
+            await asyncio.sleep(1.3)  # let the screen wake + bouncer come up
+
+            # A nudge swipe helps on setups that show the clock before the pad.
+            if pre_swipe:
+                try:
+                    Hid.swipe(int(w * 0.5), int(h * 0.85), int(w * 0.5), int(h * 0.2), 200)
+                    await asyncio.sleep(0.5)
+                except Exception:
+                    pass
+
+            # Samsung/One UI portrait PIN bouncer: 3 cols, rows for 1-9 then 0.
+            colx = [round(0.25 * w), round(0.5 * w), round(0.75 * w)]
+            rowy = [round(0.641 * h), round(0.718 * h), round(0.795 * h), round(0.872 * h)]
+            pos = {str(d): (colx[(d - 1) % 3], rowy[(d - 1) // 3]) for d in range(1, 10)}
+            pos["0"] = (colx[1], rowy[3])
+
+            taps = []
+            for ch in pin:
+                x, y = pos[ch]
+                ok = bool(Hid.tap(int(x), int(y)))
+                taps.append({"d": ch, "x": x, "y": y, "ok": ok})
+                await asyncio.sleep(0.28)
+
+            return {"ok": True, "screen": {"w": w, "h": h}, "digits": len(pin),
+                    "taps": taps,
+                    "note": "4/6-digit PINs auto-submit; verify with ui.text"}
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
     @capability("vibrate")
     def _vibrate(self, ms: int = 300) -> dict:
         """Buzz the phone for ``ms`` milliseconds."""
