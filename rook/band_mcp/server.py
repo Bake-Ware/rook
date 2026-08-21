@@ -479,11 +479,16 @@ def build_server(client: "BandClient | MultiBandClient",
         if "hermes.chat" in caps:
             convo = "\n".join(f"[{m.get('sender')}] {m.get('text')}"
                               for m in transcript)
-            note_line = f"\nNote: {note}" if note else ""
+            note_line = (f"\nNote from the person waking you: {note}" if note else "")
             prompt = (
-                f"You're being pulled into rook chat room '{tail.get('title') or room}' "
-                f"as a participant. Read the conversation and reply with your "
-                f"contribution — plain prose, addressed to the room.{note_line}\n\n"
+                f"You are a participant in the rook chat room "
+                f"'{tail.get('title') or room}'. Someone in the room is waiting "
+                f"for your reply.{note_line}\n\n"
+                f"Respond to the conversation below as yourself, in plain prose "
+                f"addressed to the room. Whatever you write back is posted into "
+                f"this room for you automatically — do NOT call any rook chat "
+                f"tools (rook_chat_start/send/read/wake, chat.*), do not create "
+                f"rooms, and do not describe what you did; just answer.\n\n"
                 f"--- conversation ---\n{convo}\n--- end ---")
             try:
                 reply = await client.call(

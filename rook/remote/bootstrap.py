@@ -25,6 +25,22 @@ _HERMES_FOOTER = ("resume this session", "session:", "duration:", "messages:",
                   "hermes --resume")
 
 
+def _wake_prompt(title: str, convo: str, note: str) -> str:
+    """Brief handed to a hermes box when it's woken into a room. Hermes has
+    rook tools of its own, so be explicit that the reply text IS the message —
+    otherwise it reads the transcript as a task list and goes off to 'do' it
+    (seen live: it created a new room and posted there instead of answering)."""
+    note_line = f"\nNote from the person waking you: {note}" if note else ""
+    return (
+        f"You are a participant in the rook chat room '{title}'. Someone in the "
+        f"room is waiting for your reply.{note_line}\n\n"
+        f"Respond to the conversation below as yourself, in plain prose addressed "
+        f"to the room. Whatever you write back is posted into this room for you "
+        f"automatically — do NOT call any rook chat tools (rook_chat_start/send/"
+        f"read/wake, chat.*), do not create rooms, and do not describe what you "
+        f"did; just answer.\n\n--- conversation ---\n{convo}\n--- end ---")
+
+
 def _clean_hermes_stdout(text: str) -> str:
     """Extract hermes's reply from its TUI stdout: strip ANSI + box drawing,
     keep the lines between the ``⚕ Hermes`` banner and the session footer.
@@ -1768,10 +1784,7 @@ button:hover{{background:#22b88f}}
         try:
             if "hermes.chat" in caps:
                 convo = "\n".join(f"[{m.get('sender')}] {m.get('text')}" for m in transcript)
-                prompt = (f"You're a participant in rook chat room "
-                          f"'{tail.get('title') or room}'. Read the conversation "
-                          f"and reply with your contribution — plain prose to the "
-                          f"room.\n\n--- conversation ---\n{convo}\n--- end ---")
+                prompt = _wake_prompt(tail.get("title") or room, convo, "")
                 reply = await self._band.call(cap="hermes.chat",
                                               args={"message": prompt},
                                               target=wid, timeout=120.0)
