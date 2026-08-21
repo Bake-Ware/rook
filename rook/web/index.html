@@ -184,6 +184,10 @@
   .avatar{flex:0 0 auto;width:30px;height:30px;border-radius:9px;display:flex;align-items:center;justify-content:center;
     font-size:.78rem;font-weight:700;color:#08110d;text-transform:uppercase}
   .avatar.sm{width:22px;height:22px;border-radius:7px;font-size:.62rem}
+  img.avatar{object-fit:cover;background:var(--chip)}
+  .delbtn{margin-left:8px;padding:2px 8px;font-size:.8rem;color:var(--dim2)}
+  .delbtn:hover{color:var(--bad);border-color:var(--bad)}
+  .delbtn.armed{color:#fff;background:var(--bad);border-color:var(--bad);font-size:.7rem}
   .roomrow .meta{flex:1;min-width:0}
   .roomrow .rt{font-size:.82rem;color:var(--fg);display:flex;align-items:center;gap:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .roomrow .rp{font-size:.7rem;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
@@ -360,18 +364,26 @@
         </div>
         <div class="chatmain">
           <div class="chattop" id="chattop" hidden>
-            <div class="avatar" id="ct-av">?</div>
+            <span id="ct-av" style="display:contents"></span>
             <div style="min-width:0">
               <div class="ct-title" id="ct-title">—</div>
               <div class="ct-sub" id="ct-sub"></div>
             </div>
             <div class="parts" id="ct-parts"></div>
+            <button class="iconbtn delbtn" id="ct-del" title="delete this room (final)" onclick="deleteRoom()">🗑</button>
           </div>
+          <template id="chatempty-tpl">
+            <div class="chat-empty" id="chatempty">
+              <div class="big">☷</div>
+              <div>Select a room, or start a new one.</div>
+              <div style="font-size:.72rem;color:var(--dim2)">Click an agent in Presence to open a 1:1, or mention one with <b>@name</b> in any room.</div>
+            </div>
+          </template>
           <div id="chatlog" class="chatlog">
             <div class="chat-empty" id="chatempty">
               <div class="big">☷</div>
               <div>Select a room, or start a new one.</div>
-              <div style="font-size:.72rem;color:var(--dim2)">Mention an agent with <b>@name</b> to pull them in.</div>
+              <div style="font-size:.72rem;color:var(--dim2)">Click an agent in Presence to open a 1:1, or mention one with <b>@name</b> in any room.</div>
             </div>
           </div>
           <div class="chatinput">
@@ -749,17 +761,28 @@ function shortName(id){ id=id||'?'; let n=id.includes(':')?id.split(':',2)[1]:id
 function idColor(id){ let h=0; const s=shortName(id); for(let i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))>>>0; return IDPAL[h%IDPAL.length]; }
 function initials(id){ const n=shortName(id); return (n[0]||'?')+(n.includes('-')?n.split('-')[1][0]:(n[1]||'')); }
 function isMe(s){ return (s||'').startsWith('user:'); }
-function avatarHTML(id,cls){ const c=idColor(id); return `<div class="avatar ${cls||''}" style="background:${c}" title="${esc(id)}">${esc(initials(id))}</div>`; }
+let avatars={};   // identity -> version, from /api/avatars (pictures set on the /tokens page)
+async function loadAvatars(){ const d=await jget('/api/avatars'); if(d)avatars=d; }
+function avatarSrc(id){ // exact identity, else strip _host suffixes ("agent:claude_kaiju" -> "agent:claude")
+  let k=id; for(;;){ if(avatars[k]!=null) return '/api/avatar?id='+encodeURIComponent(k)+'&v='+avatars[k];
+    const i=k.lastIndexOf('_'); if(i<=k.indexOf(':')+1) return null; k=k.slice(0,i); } }
+function avatarHTML(id,cls){ const c=idColor(id), src=avatarSrc(id);
+  if(src) return `<img class="avatar ${cls||''}" src="${src}" alt="" title="${esc(id)}" onerror="this.outerHTML=avatarFallback('${esc(id)}','${cls||''}')">`;
+  return avatarFallback(id,cls); }
+function avatarFallback(id,cls){ const c=idColor(id); return `<div class="avatar ${cls||''}" style="background:${c}" title="${esc(id)}">${esc(initials(id))}</div>`; }
 function fmtTime(ts){ const d=new Date(ts*1000); return d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}); }
 function fmtAge(s){ s=Math.round(s||0); if(s<60)return 'now'; if(s<3600)return Math.floor(s/60)+'m'; if(s<86400)return Math.floor(s/3600)+'h'; return Math.floor(s/86400)+'d'; }
 
-function startChat(){ loadRooms(); loadPresence(); if(chatTimer)clearInterval(chatTimer);
-  chatTimer=setInterval(()=>{ loadRooms(); loadPresence(); if(curRoom)pollRoom(); },3000); }
+let chatTicks=0;
+function startChat(){ loadAvatars().then(()=>{ loadRooms(); loadPresence(); }); if(chatTimer)clearInterval(chatTimer);
+  chatTimer=setInterval(()=>{ loadRooms(); loadPresence(); if(curRoom)pollRoom(); if(++chatTicks%10===0)loadAvatars(); },3000); }
 function stopChat(){ if(chatTimer){clearInterval(chatTimer);chatTimer=null;} }
 
+let roomsCache=[];
 async function loadRooms(){
   const d=await jget('/api/chat/rooms'); if(!d)return;
-  const rooms=d.rooms||[];
+  const rooms=d.rooms||[]; roomsCache=rooms;
+  if(curRoom&&!rooms.some(r=>r.room===curRoom)) closeRoom();   // deleted elsewhere
   $('#roomlist').innerHTML=rooms.length? rooms.map(r=>{
     const who=r.last_sender?shortName(r.last_sender)+': ':'';
     return `<div class="roomrow${r.room===curRoom?' sel':''}" onclick="openRoom('${r.room}',${JSON.stringify(esc(r.title))})">
@@ -788,8 +811,9 @@ async function loadPresence(){
     : `<div style="padding:14px 12px;color:var(--dim2);font-size:.74rem">Nobody seen yet.</div>`;
 }
 async function openRoom(id,title){ curRoom=id; lastSeq=0; lastSender=null;
-  $('#chatempty').hidden=true; $('#chattop').hidden=false;
-  $('#ct-title').textContent=title; $('#ct-av').outerHTML=avatarHTML('room:'+title).replace('class="avatar"','class="avatar" id="ct-av"');
+  const emp=$('#chatempty'); if(emp)emp.hidden=true; $('#chattop').hidden=false;
+  const del=$('#ct-del'); del.dataset.arm=''; del.textContent='🗑'; del.classList.remove('armed');
+  $('#ct-title').textContent=title; $('#ct-av').innerHTML=avatarHTML('room:'+title);
   $('#chatbox').disabled=false; $('#sendbtn').disabled=false;
   $('#chatlog').innerHTML=''; loadRooms();
   const d=await jget('/api/chat/read?room='+encodeURIComponent(id)); renderMsgs(d,true); $('#chatbox').focus(); }
@@ -817,9 +841,27 @@ function renderMsgs(d,reset){ if(!d)return; const log=$('#chatlog');
   }
   if(msgs.length&&(reset||atBottom))log.scrollTop=log.scrollHeight;
 }
-function mention(id){ const b=$('#chatbox'); const tag='@'+shortName(id);
+async function mention(id){ const b=$('#chatbox'); const tag='@'+shortName(id);
+  if(!curRoom){
+    // no room open: jump into the 1:1 with this agent (create it on first use)
+    const me='user:operator';
+    let dm=roomsCache.find(r=>r.participants&&r.participants.length===2&&r.participants.includes(id)&&r.participants.includes(me));
+    if(!dm){ const d=await jpost('/api/chat/start',{title:shortName(id),invite:[id]});
+      if(!(d&&d.room)){ return; } await loadRooms(); dm={room:d.room,title:shortName(id)}; }
+    await openRoom(dm.room,dm.title);
+    b.focus(); return;   // 1:1 — the other party is implicitly addressed, no @ needed
+  }
   if(!b.value.includes(tag))b.value=(b.value?b.value.trim()+' ':'')+tag+' ';
-  b.disabled=false; b.focus(); }
+  b.focus(); }
+function closeRoom(){ curRoom=null; lastSeq=0; curParts=[];
+  $('#chattop').hidden=true; $('#chatlog').innerHTML=''; $('#chatlog').appendChild($('#chatempty-tpl').content.cloneNode(true));
+  $('#chatbox').disabled=true; $('#sendbtn').disabled=true; }
+async function deleteRoom(){ if(!curRoom)return; const btn=$('#ct-del');
+  if(btn.dataset.arm!=='1'){ btn.dataset.arm='1'; btn.textContent='delete room?'; btn.classList.add('armed');
+    setTimeout(()=>{ btn.dataset.arm=''; btn.textContent='🗑'; btn.classList.remove('armed'); },4000); return; }
+  const r=await jpost('/api/chat/delete',{room:curRoom});
+  if(!r||r.ok===false){ sysline('delete failed: '+((r&&r.error)||'unknown'),'bad'); btn.dataset.arm=''; btn.textContent='🗑'; btn.classList.remove('armed'); return; }
+  closeRoom(); loadRooms(); }
 
 // Resolve @mentions in text against the presence roster. Longest name wins
 // and names may contain spaces ("@claude code"), so match by substring rather

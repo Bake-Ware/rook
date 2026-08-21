@@ -64,6 +64,9 @@ class ChatStore:
                 CREATE TABLE IF NOT EXISTS presence (
                     identity TEXT PRIMARY KEY, last_seen REAL
                 );
+                CREATE TABLE IF NOT EXISTS avatars (
+                    identity TEXT PRIMARY KEY, mime TEXT, data BLOB, updated REAL
+                );
             """)
             self._db.commit()
         except Exception:
@@ -130,6 +133,82 @@ class ChatStore:
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
         return {"ok": True, "room": rid, "title": title, "participants": parts}
+
+    def delete(self, rid: str, identity: str | None) -> dict:
+        """Delete a room and everything in it. ``identity`` must be a
+        participant (``None`` = trusted caller such as the dashboard admin).
+        Rooms are threads with no backups — this is final."""
+        if self._db is None:
+            return {"ok": False, "error": "chat store not available"}
+        room = self._room(rid)
+        if room is None:
+            return {"ok": False, "error": f"no such room: {rid}"}
+        if identity is not None and identity not in room["participants"]:
+            return {"ok": False, "error": "only a participant can delete a room"}
+        try:
+            with self._lock:
+                n = self._db.execute("SELECT COUNT(*) FROM messages WHERE room_id=?",
+                                     (rid,)).fetchone()[0]
+                self._db.execute("DELETE FROM messages WHERE room_id=?", (rid,))
+                self._db.execute("DELETE FROM reads WHERE room_id=?", (rid,))
+                self._db.execute("DELETE FROM rooms WHERE id=?", (rid,))
+                self._db.commit()
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        return {"ok": True, "room": rid, "title": room["title"], "messages_deleted": n}
+
+    # -- avatars -------------------------------------------------------------
+    # Small images keyed by identity ("agent:<token name>", "user:operator").
+    # Set from the /tokens admin page, shown by the dashboard. Kept in this
+    # shared db so both services see the same pictures.
+
+    def set_avatar(self, identity: str, mime: str, data: bytes) -> dict:
+        if self._db is None:
+            return {"ok": False, "error": "chat store not available"}
+        identity = str(identity or "").strip()
+        if not identity:
+            return {"ok": False, "error": "identity required"}
+        if mime not in ("image/png", "image/jpeg", "image/webp", "image/gif"):
+            return {"ok": False, "error": f"unsupported image type {mime!r}"}
+        if not data or len(data) > 256 * 1024:
+            return {"ok": False, "error": "image must be 1 byte .. 256 KB"}
+        try:
+            with self._lock:
+                self._db.execute(
+                    "INSERT INTO avatars (identity,mime,data,updated) VALUES (?,?,?,?) "
+                    "ON CONFLICT(identity) DO UPDATE SET mime=excluded.mime, "
+                    "data=excluded.data, updated=excluded.updated",
+                    (identity, mime, sqlite3.Binary(data), time.time()))
+                self._db.commit()
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        return {"ok": True, "identity": identity, "bytes": len(data)}
+
+    def clear_avatar(self, identity: str) -> dict:
+        if self._db is None:
+            return {"ok": False, "error": "chat store not available"}
+        with self._lock:
+            cur = self._db.execute("DELETE FROM avatars WHERE identity=?", (identity,))
+            self._db.commit()
+        return {"ok": True, "identity": identity, "removed": cur.rowcount > 0}
+
+    def get_avatar(self, identity: str) -> tuple[str, bytes, float] | None:
+        if self._db is None:
+            return None
+        with self._lock:
+            r = self._db.execute("SELECT mime,data,updated FROM avatars WHERE identity=?",
+                                 (identity,)).fetchone()
+        return (r[0], bytes(r[1]), r[2]) if r else None
+
+    def avatar_index(self) -> dict[str, int]:
+        """``{identity: updated_epoch}`` for every identity with a picture —
+        what a UI needs to decide whether to render an image (and to bust its
+        cache when the picture changes)."""
+        if self._db is None:
+            return {}
+        with self._lock:
+            rows = self._db.execute("SELECT identity,updated FROM avatars").fetchall()
+        return {i: int(u or 0) for (i, u) in rows}
 
     def _room(self, rid: str) -> dict | None:
         with self._lock:

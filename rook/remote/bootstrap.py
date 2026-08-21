@@ -1000,6 +1000,9 @@ class CombinedServer:
         self._app.router.add_post("/api/chat/send", self._api_chat_send)
         self._app.router.add_post("/api/chat/start", self._api_chat_start)
         self._app.router.add_post("/api/chat/wake", self._api_chat_wake)
+        self._app.router.add_post("/api/chat/delete", self._api_chat_delete)
+        self._app.router.add_get("/api/avatars", self._api_avatars)
+        self._app.router.add_get("/api/avatar", self._api_avatar)
         self._app.router.add_get("/api/presence", self._api_presence)
         self._app.router.add_get("/ws", self._websocket_handler)
         # Auth routes (handled by middleware, these are just route stubs)
@@ -1715,6 +1718,39 @@ button:hover{{background:#22b88f}}
         self._chat.touch(self._OPERATOR)
         return web.json_response(self._chat.start(
             str(data.get("title") or "chat"), self._OPERATOR, invite))
+
+    async def _api_chat_delete(self, request: web.Request) -> web.Response:
+        """Delete a room (final). The dashboard operator is trusted to delete
+        any room they can see; rooms_for() already scopes the list to rooms
+        the operator participates in."""
+        if self._chat is None:
+            return web.json_response({"error": "chat unavailable"}, status=503)
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json body"}, status=400)
+        room = str(data.get("room") or "").strip()
+        if not room:
+            return web.json_response({"error": "room required"}, status=400)
+        return web.json_response(self._chat.delete(room, self._OPERATOR))
+
+    async def _api_avatars(self, request: web.Request) -> web.Response:
+        """``{identity: version}`` for identities that have a picture (set on
+        the /tokens page). The UI renders an <img> for those and initials for
+        everyone else."""
+        if self._chat is None:
+            return web.json_response({})
+        return web.json_response(self._chat.avatar_index())
+
+    async def _api_avatar(self, request: web.Request) -> web.Response:
+        if self._chat is None:
+            raise web.HTTPNotFound()
+        got = self._chat.get_avatar(request.query.get("id", ""))
+        if not got:
+            raise web.HTTPNotFound()
+        mime, data, _ = got
+        return web.Response(body=data, content_type=mime,
+                            headers={"Cache-Control": "private, max-age=86400"})
 
     async def _api_presence(self, request: web.Request) -> web.Response:
         """Who the dashboard can talk to. Two kinds of entry, merged into one

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import re as _re
 import json
 import logging
 import os
@@ -172,14 +173,32 @@ def build_server(client: "BandClient | MultiBandClient",
                                              + _HERMES_FOOTER)]
         return " ".join(kept).strip()
 
+    def _caller_host() -> str:
+        """Optional per-host suffix for the identity, from an ``X-Rook-Host``
+        request header. Several agents commonly share one token (every Claude
+        Code on every box using the "claude" token); with the header each
+        shows up as ``agent:claude_kaiju`` instead of one blurred ``agent:claude``.
+        Set it in the MCP client config, e.g. Claude Code's ``.claude.json``:
+        ``"headers": {"Authorization": "Bearer …", "X-Rook-Host": "kaiju"}``.
+        Sanitised to ``[A-Za-z0-9._-]{1,32}``. Audit breadcrumb, not a gate."""
+        try:
+            req = mcp.get_context().request_context.request
+            raw = (req.headers.get("x-rook-host") or "").strip() if req is not None else ""
+        except Exception:
+            return ""
+        raw = _re.sub(r"[^A-Za-z0-9._-]", "", raw)[:32]
+        return raw
+
     def _caller_identity() -> str:
         """Identity to stamp on band calls, derived from the authenticated
         bearer token's name (resolved from the raw token via the TokenStore).
-        Shape is ``agent:<token-name>`` so worker audit logs read cleanly;
-        falls back to ``anonymous`` when there's no auth context (e.g. a local
-        unguarded run). This is the breadcrumb the worker records — not an
-        access gate. Keyed off ``AccessToken.token`` rather than a ``subject``/
-        ``claims`` field so it's robust across ``mcp`` versions."""
+        Shape is ``agent:<token-name>`` — or ``agent:<token-name>_<host>`` when
+        the client sends ``X-Rook-Host`` (see ``_caller_host``) — so worker
+        audit logs and chat presence read cleanly; falls back to ``anonymous``
+        when there's no auth context (e.g. a local unguarded run). This is the
+        breadcrumb the worker records — not an access gate. Keyed off
+        ``AccessToken.token`` rather than a ``subject``/``claims`` field so
+        it's robust across ``mcp`` versions."""
         try:
             from mcp.server.auth.middleware.auth_context import get_access_token
             tok = get_access_token()
@@ -187,7 +206,8 @@ def build_server(client: "BandClient | MultiBandClient",
             if raw:
                 name = store.identity_for(raw)
                 if name:
-                    return f"agent:{name}"
+                    host = _caller_host()
+                    return f"agent:{name}_{host}" if host else f"agent:{name}"
         except Exception:
             pass
         return "anonymous"
@@ -434,6 +454,14 @@ def build_server(client: "BandClient | MultiBandClient",
         return json.dumps(chat.rooms_for(ident), indent=2)
 
     @mcp.tool()
+    async def rook_chat_delete(room: str) -> str:
+        """Delete a room and all its messages. Only a participant can; this is
+        final (rooms are threads, there's no archive)."""
+        ident = _caller_identity()
+        chat.touch(ident)
+        return json.dumps(chat.delete(room, ident), indent=2)
+
+    @mcp.tool()
     async def rook_presence() -> str:
         """Who's reachable: identities seen recently over the MCP (``online``
         if within ~90s) plus, for reference, the live band workers. Use this to
@@ -598,6 +626,7 @@ def build_server(client: "BandClient | MultiBandClient",
                            "error": f"{last_err}; worker will auto-revert to its "
                                     f"prior config at its deadline"}, indent=2)
 
+    mcp._rook_chat = chat  # the /tokens page edits avatars in this store
     return mcp, store
 
 
@@ -631,7 +660,7 @@ async def _amain(args) -> None:
         log.warning("WS band bridge failed to start: %s", e)
 
     # /tokens admin UI (mint/list/revoke bearer tokens).
-    for r in reversed(build_api_token_routes(store)):
+    for r in reversed(build_api_token_routes(store, getattr(mcp, "_rook_chat", None))):
         app.router.routes.insert(0, r)
 
     # Thin OAuth front-door for claude.ai's web connector (which won't take a
