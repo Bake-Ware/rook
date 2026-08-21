@@ -56,7 +56,7 @@ class AndroidLocationPlugin(Plugin):
             return {"ok": False, "error": "location permission not granted (grant it in the app)"}
         try:
             Context = jclass("android.content.Context")
-            lm = cast("android.location.LocationManager",
+            lm = cast(jclass("android.location.LocationManager"),
                       ctx.getSystemService(Context.LOCATION_SERVICE))
             # Best cached fix across providers.
             best, best_age = None, None

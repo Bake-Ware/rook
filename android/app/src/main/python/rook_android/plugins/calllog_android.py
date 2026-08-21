@@ -25,7 +25,7 @@ class AndroidCallLogPlugin(Plugin):
             uri = Uri.parse("content://call_log/calls")
             cr = ctx.getContentResolver()
             n = max(1, min(int(limit), 500))
-            cursor = cr.query(uri, None, None, None, f"date DESC LIMIT {n}")
+            cursor = cr.query(uri, None, None, None, "date DESC")
             if cursor is None:
                 return {"ok": False, "error": "call_log query returned no cursor"}
             out = []
@@ -36,6 +36,8 @@ class AndroidCallLogPlugin(Plugin):
                 iDur = cursor.getColumnIndex("duration")
                 iDate = cursor.getColumnIndex("date")
                 while cursor.moveToNext():
+                    if len(out) >= n:
+                        break
                     out.append({
                         "number": cursor.getString(iNum) if iNum >= 0 else None,
                         "name": cursor.getString(iName) if iName >= 0 else None,

@@ -48,7 +48,7 @@ def _read() -> dict | None:
     # Percent + charging straight from the BatteryManager system service — no
     # receiver, no permission (API 21+ / isCharging API 23+).
     try:
-        bm = cast("android.os.BatteryManager",
+        bm = cast(jclass("android.os.BatteryManager"),
                   ctx.getSystemService(_Context.BATTERY_SERVICE))
         if bm is not None:
             pct = bm.getIntProperty(_BatteryManager.BATTERY_PROPERTY_CAPACITY)

@@ -39,7 +39,7 @@ class AndroidDevicePlugin(Plugin):
             }
             try:
                 Context = jclass("android.content.Context")
-                wm = cast("android.view.WindowManager", ctx.getSystemService(Context.WINDOW_SERVICE))
+                wm = cast(jclass("android.view.WindowManager"), ctx.getSystemService(Context.WINDOW_SERVICE))
                 DisplayMetrics = jclass("android.util.DisplayMetrics")
                 m = DisplayMetrics()
                 wm.getDefaultDisplay().getRealMetrics(m)
@@ -64,11 +64,11 @@ class AndroidDevicePlugin(Plugin):
             eff = VibrationEffect.createOneShot(dur, VibrationEffect.DEFAULT_AMPLITUDE)
             if VER.SDK_INT >= 31:
                 VibratorManager = jclass("android.os.VibratorManager")
-                vm = cast("android.os.VibratorManager",
+                vm = cast(jclass("android.os.VibratorManager"),
                           ctx.getSystemService(Context.VIBRATOR_MANAGER_SERVICE))
                 vm.getDefaultVibrator().vibrate(eff)
             else:
-                vib = cast("android.os.Vibrator", ctx.getSystemService(Context.VIBRATOR_SERVICE))
+                vib = cast(jclass("android.os.Vibrator"), ctx.getSystemService(Context.VIBRATOR_SERVICE))
                 vib.vibrate(eff)
             return {"ok": True, "ms": dur}
         except Exception as e:
@@ -82,7 +82,7 @@ class AndroidDevicePlugin(Plugin):
             return {"ok": False, "error": "not an Android host"}
         try:
             Context = jclass("android.content.Context")
-            cm = cast("android.hardware.camera2.CameraManager",
+            cm = cast(jclass("android.hardware.camera2.CameraManager"),
                       ctx.getSystemService(Context.CAMERA_SERVICE))
             CC = jclass("android.hardware.camera2.CameraCharacteristics")
             flash_id = None
@@ -108,7 +108,7 @@ class AndroidDevicePlugin(Plugin):
         try:
             Context = jclass("android.content.Context")
             ClipData = jclass("android.content.ClipData")
-            cm = cast("android.content.ClipboardManager",
+            cm = cast(jclass("android.content.ClipboardManager"),
                       ctx.getSystemService(Context.CLIPBOARD_SERVICE))
             cm.setPrimaryClip(ClipData.newPlainText("rook", str(text)))
             return {"ok": True, "chars": len(str(text))}
@@ -123,7 +123,7 @@ class AndroidDevicePlugin(Plugin):
             return {"ok": False, "error": "not an Android host"}
         try:
             Context = jclass("android.content.Context")
-            cm = cast("android.content.ClipboardManager",
+            cm = cast(jclass("android.content.ClipboardManager"),
                       ctx.getSystemService(Context.CLIPBOARD_SERVICE))
             clip = cm.getPrimaryClip()
             if clip is None or clip.getItemCount() == 0:
