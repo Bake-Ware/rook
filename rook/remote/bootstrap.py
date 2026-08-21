@@ -1701,10 +1701,41 @@ button:hover{{background:#22b88f}}
             str(data.get("title") or "chat"), self._OPERATOR, invite))
 
     async def _api_presence(self, request: web.Request) -> web.Response:
+        """Who the dashboard can talk to. Two kinds of entry, merged into one
+        ``agents`` list so the UI (and @mention resolution) has a single roster:
+          * identities seen over the MCP (chat store presence) — ``online`` if
+            they called in within ~90s, otherwise voicemail-only;
+          * agents hosted on live band workers that can be *woken* right now:
+            a hermes box (``hermes.chat`` cap) shows up as ``agent:hermes_<w>``
+            and a worker with ``agent.wake`` as ``agent:<w>``. These carry
+            ``worker`` + ``wake`` so a mention can be turned into a wake call.
+        Without the second kind, ``@sojourn`` had nothing to resolve against."""
         if self._chat is None:
             return web.json_response({"error": "chat unavailable"}, status=503)
         self._chat.touch(self._OPERATOR)
-        return web.json_response({"agents": self._chat.online()})
+        agents = self._chat.online()
+        by_id = {a["identity"]: a for a in agents}
+        workers = []
+        now = time.time()
+        roster = self._band.workers if self._band is not None else {}
+        for wid, w in roster.items():
+            name = w.get("name") or wid
+            caps = w.get("caps", []) or []
+            wake = ("hermes.chat" if "hermes.chat" in caps
+                    else "agent.wake" if "agent.wake" in caps else None)
+            workers.append({"name": name, "worker_id": wid, "wake": wake,
+                            "last_seen_age_secs": round(now - w.get("last_seen", 0.0), 1)})
+            if not wake:
+                continue
+            ident = f"agent:hermes_{name}" if wake == "hermes.chat" else f"agent:{name}"
+            ent = by_id.get(ident)
+            if ent is None:
+                ent = {"identity": ident, "online": False, "last_seen_age_secs": None}
+                by_id[ident] = ent
+                agents.append(ent)
+            ent["worker"] = name
+            ent["wake"] = wake
+        return web.json_response({"agents": agents, "workers": workers})
 
     async def _api_chat_wake(self, request: web.Request) -> web.Response:
         """Wake an agent to reply in a room. For a hermes box (hermes.chat cap)

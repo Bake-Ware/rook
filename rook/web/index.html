@@ -217,6 +217,15 @@
   .msg:not(.me) .bubble{border-bottom-left-radius:4px}
   .grouped .wholine{display:none} .grouped{padding-top:1px}
   .grouped .avatar{visibility:hidden}
+  .sysline{align-self:center;color:var(--dim);font-size:.7rem;padding:4px 12px;margin:4px 0;border:1px dashed var(--line2);border-radius:20px;max-width:90%;text-align:center}
+  .sysline.warn{color:var(--warn);border-color:#3a2f18}
+  .sysline.bad{color:var(--bad);border-color:#3a1818}
+  .typing{align-self:flex-start;color:var(--dim);font-size:.72rem;padding:6px 12px;font-style:italic}
+  .typing::after{content:'';display:inline-block;width:1.2em;text-align:left;animation:dots 1.2s steps(4,end) infinite}
+  @keyframes dots{0%{content:''}25%{content:'.'}50%{content:'..'}75%{content:'...'}}
+  .pdot.band{background:var(--blue)}
+  .presrow .st{margin-left:auto;color:var(--dim2);font-size:.64rem;flex-shrink:0}
+  .presrow.band .st{color:var(--blue)}
   .chat-empty{margin:auto;text-align:center;color:var(--dim);font-size:.85rem;display:flex;flex-direction:column;gap:8px;align-items:center}
   .chat-empty .big{font-size:2rem;opacity:.35}
   .chatinput{display:flex;gap:9px;padding:12px 14px;border-top:1px solid var(--line);flex-shrink:0;align-items:center}
@@ -365,7 +374,7 @@
             </div>
           </div>
           <div class="chatinput">
-            <input id="chatbox" placeholder="Message…  (@sojourn to address an agent)" onkeydown="if(event.key==='Enter')sendChat()" disabled>
+            <input id="chatbox" placeholder="Message…  (@name to address an agent — e.g. @sojourn)" onkeydown="if(event.key==='Enter')sendChat()" disabled>
             <button class="sendbtn" id="sendbtn" onclick="sendChat()" disabled>Send</button>
           </div>
         </div>
@@ -762,14 +771,19 @@ async function loadRooms(){
 async function loadPresence(){
   const d=await jget('/api/presence'); if(!d)return;
   presence=d.agents||[];
-  const online=presence.filter(a=>a.online);
-  $('#prescnt').textContent=online.length;
-  const list=(presence.length?presence:[]).sort((a,b)=>(b.online?1:0)-(a.online?1:0));
-  $('#preslist').innerHTML=list.length? list.map(a=>
-    `<div class="presrow${a.online?' on':''}" onclick="mention('${esc(a.identity)}')" title="click to @mention">
-      <span class="pdot${a.online?' on':''}"></span>${avatarHTML(a.identity,'sm')}
+  // reachable = online over the MCP, or hosted on a live band worker we can wake
+  const reach=presence.filter(a=>a.online||a.wake);
+  $('#prescnt').textContent=reach.length;
+  const rank=a=>a.online?0:a.wake?1:2;
+  const list=presence.slice().sort((a,b)=>rank(a)-rank(b)||(a.last_seen_age_secs??1e12)-(b.last_seen_age_secs??1e12));
+  $('#preslist').innerHTML=list.length? list.map(a=>{
+    const cls=a.online?' on':a.wake?' band':'';
+    const st=a.online?'online':a.wake?'on band':(a.last_seen_age_secs==null?'offline':fmtAge(a.last_seen_age_secs));
+    const tip=a.online?'online — click to @mention':a.wake?`hosted on worker ${a.worker} (${a.wake}) — @mention wakes it`:'offline — a message is left as voicemail for its next rook call';
+    return `<div class="presrow${cls}" onclick="mention('${esc(a.identity)}')" title="${esc(tip)}">
+      <span class="pdot${cls}"></span>${avatarHTML(a.identity,'sm')}
       <span class="pn">${esc(shortName(a.identity))}</span>
-      <span style="margin-left:auto;color:var(--dim2);font-size:.64rem">${a.online?'online':fmtAge(a.last_seen_age_secs)}</span></div>`).join('')
+      <span class="st">${st}</span></div>`; }).join('')
     : `<div style="padding:14px 12px;color:var(--dim2);font-size:.74rem">Nobody seen yet.</div>`;
 }
 async function openRoom(id,title){ curRoom=id; lastSeq=0; lastSender=null;
@@ -806,21 +820,41 @@ function mention(id){ const b=$('#chatbox'); const tag='@'+shortName(id);
   if(!b.value.includes(tag))b.value=(b.value?b.value.trim()+' ':'')+tag+' ';
   b.disabled=false; b.focus(); }
 
+// Resolve @mentions in text against the presence roster. Longest name wins
+// and names may contain spaces ("@claude code"), so match by substring rather
+// than a \w+ token. Also accepts the full identity ("@agent:hermes_sojourn").
+function resolveMentions(t){ const low=t.toLowerCase(), out=[];
+  const cands=presence.map(a=>({a,n:shortName(a.identity).toLowerCase(),f:a.identity.toLowerCase()}))
+    .sort((x,y)=>y.n.length-x.n.length);
+  for(const c of cands){ if(!c.n)continue;
+    if(low.includes('@'+c.n)||low.includes('@'+c.f)||low.includes('@'+c.n.replace(/ /g,'_'))){
+      if(!out.includes(c.a.identity))out.push(c.a.identity); } }
+  return out; }
+function sysline(text,cls){ const log=$('#chatlog'); const el=document.createElement('div');
+  el.className='sysline'+(cls?' '+cls:''); el.textContent=text; log.appendChild(el); log.scrollTop=log.scrollHeight; return el; }
+const presById=id=>presence.find(a=>a.identity===id);
+
 async function sendChat(){ const b=$('#chatbox'); const t=b.value.trim(); if(!t||!curRoom)return;
-  // @mentions -> resolve to full identities against presence; wake hermes agents.
-  const ments=[], wake=[];
-  (t.match(/@([\w:-]+)/g)||[]).forEach(m=>{ const q=m.slice(1).toLowerCase();
-    const hit=presence.find(a=>shortName(a.identity).toLowerCase()===q||a.identity.toLowerCase().endsWith(q));
-    if(hit){ ments.push(hit.identity);
-      // a mentioned agent that is a hermes box gets woken to reply in-room
-      const nm=shortName(hit.identity); if(!hit.online) wake.push(nm); } });
-  b.value=''; await jpost('/api/chat/send',{room:curRoom,text:t,mention:ments,expects_reply:ments.length>0});
+  const ments=resolveMentions(t);
+  b.value='';
+  const r=await jpost('/api/chat/send',{room:curRoom,text:t,mention:ments,expects_reply:ments.length>0});
   await pollRoom();
-  // fire wakes (best-effort) so @agent actually answers; show a transient typing line
-  for(const w of wake){ showTyping(w); jpost('/api/chat/wake',{room:curRoom,worker:w}).then(()=>{ clearTyping(); pollRoom(); }); }
+  if(!r){ sysline('send failed — check the connection','bad'); return; }
+  if(r.ok===false){ sysline('send failed: '+(r.error||'unknown error'),'bad'); return; }
+  // The server tells us who this message addressed (explicit @mentions, or the
+  // other party in a 2-person room) and which of them are offline. Anyone we
+  // can wake, we wake — that's what makes an agent actually answer here.
+  // Anyone we can't gets voicemail; say so instead of leaving silence.
+  const offline=r.offline||[];
+  for(const id of offline){ const p=presById(id); const nm=shortName(id);
+    if(p&&p.worker){ showTyping(nm);
+      jpost('/api/chat/wake',{room:curRoom,worker:p.worker}).then(w=>{ clearTyping(); pollRoom();
+        if(!w||w.ok===false) sysline(nm+' didn\'t answer: '+((w&&w.error)||'wake failed'),'warn'); });
+    } else {
+      sysline(nm+' is offline — left as voicemail; they\'ll see it on their next rook call.','warn'); } }
 }
 function showTyping(w){ clearTyping(); const log=$('#chatlog'); const el=document.createElement('div');
-  el.className='typing'; el.id='typing-'+w; el.textContent=w+' is thinking…'; log.appendChild(el); log.scrollTop=log.scrollHeight; }
+  el.className='typing'; el.id='typing-'+w; el.textContent=w+' is thinking'; log.appendChild(el); log.scrollTop=log.scrollHeight; }
 function clearTyping(){ document.querySelectorAll('.typing').forEach(e=>e.remove()); }
 
 async function newRoom(){ const title=prompt('Room title:'); if(!title)return;
