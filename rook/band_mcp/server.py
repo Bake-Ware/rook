@@ -138,28 +138,38 @@ def build_server(client: "BandClient | MultiBandClient",
 
     import re as _re
     _ANSI = _re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
-    _BOXCHARS = "─│╱╲╳┌┐└┘├┤┬┴┼═║╔╗╚╝╠╣╦╩╬▀▄█▌▐░▒▓⚕☤"
+    _BOXCHARS = "─│╱╲╳┌┐└┘├┤┬┴┼═║╔╗╚╝╠╣╦╩╬▀▄█▌▐░▒▓⚕☤┊⚡•·"
+
+    # Footer markers that hermes prints AFTER its reply — the reply ends here.
+    _HERMES_FOOTER = ("resume this session", "session:", "duration:", "messages:",
+                      "hermes --resume")
 
     def _clean_hermes_stdout(text: str) -> str:
-        """Extract hermes's actual reply from its TUI stdout — strip ANSI + box
-        drawing, and keep only what follows the ``⚕ Hermes`` banner (everything
-        before it is the echoed query + init boilerplate). Falls back to
-        boilerplate-line filtering if no banner is present."""
+        """Extract hermes's actual reply from its TUI stdout. The layout is:
+        echoed Query + ``Initializing`` + tool-call ticks, then a standalone
+        ``⚕ Hermes`` banner, then the REPLY, then a session footer (Resume/
+        Session/Duration/Messages). We keep the lines between the banner and the
+        footer. Falls back to boilerplate filtering if the banner is absent."""
         text = _ANSI.sub("", str(text or ""))
         lines = []
         for raw in text.replace("\r", "\n").split("\n"):
             ln = "".join(c for c in raw if c not in _BOXCHARS).strip()
             if ln:
                 lines.append(ln)
-        # Prefer everything after the last banner line (a line that was just the
-        # "⚕ Hermes" header, now reduced to "Hermes" after box-char stripping).
-        banner_idx = max((i for i, ln in enumerate(lines)
-                          if ln.lower().startswith("hermes")), default=-1)
+        # Banner = a line that reduced to exactly "hermes" (the ⚕ Hermes header).
+        banner_idx = next((i for i, ln in enumerate(lines)
+                           if ln.lower() == "hermes"), -1)
         if banner_idx >= 0:
-            return " ".join(lines[banner_idx + 1:]).strip()
-        # No banner — drop obvious boilerplate and return the rest.
+            body = []
+            for ln in lines[banner_idx + 1:]:
+                if ln.lower().startswith(_HERMES_FOOTER):
+                    break  # reply ends where the session footer begins
+                body.append(ln)
+            return " ".join(body).strip()
+        # No banner — drop obvious boilerplate + footer and return the rest.
         kept = [ln for ln in lines
-                if not ln.lower().startswith(("query:", "initializing agent"))]
+                if not ln.lower().startswith(("query:", "initializing agent")
+                                             + _HERMES_FOOTER)]
         return " ".join(kept).strip()
 
     def _caller_identity() -> str:
