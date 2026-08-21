@@ -136,6 +136,32 @@ def build_server(client: "BandClient | MultiBandClient",
     def _fail(msg: str) -> str:
         return json.dumps({"ok": False, "error": msg}, indent=2)
 
+    import re as _re
+    _ANSI = _re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+    _BOXCHARS = "─│╱╲╳┌┐└┘├┤┬┴┼═║╔╗╚╝╠╣╦╩╬▀▄█▌▐░▒▓⚕☤"
+
+    def _clean_hermes_stdout(text: str) -> str:
+        """Extract hermes's actual reply from its TUI stdout — strip ANSI + box
+        drawing, and keep only what follows the ``⚕ Hermes`` banner (everything
+        before it is the echoed query + init boilerplate). Falls back to
+        boilerplate-line filtering if no banner is present."""
+        text = _ANSI.sub("", str(text or ""))
+        lines = []
+        for raw in text.replace("\r", "\n").split("\n"):
+            ln = "".join(c for c in raw if c not in _BOXCHARS).strip()
+            if ln:
+                lines.append(ln)
+        # Prefer everything after the last banner line (a line that was just the
+        # "⚕ Hermes" header, now reduced to "Hermes" after box-char stripping).
+        banner_idx = max((i for i, ln in enumerate(lines)
+                          if ln.lower().startswith("hermes")), default=-1)
+        if banner_idx >= 0:
+            return " ".join(lines[banner_idx + 1:]).strip()
+        # No banner — drop obvious boilerplate and return the rest.
+        kept = [ln for ln in lines
+                if not ln.lower().startswith(("query:", "initializing agent"))]
+        return " ".join(kept).strip()
+
     def _caller_identity() -> str:
         """Identity to stamp on band calls, derived from the authenticated
         bearer token's name (resolved from the raw token via the TokenStore).
@@ -416,35 +442,71 @@ def build_server(client: "BandClient | MultiBandClient",
         """Wake an agent to respond in a room now (a deliberate act, not a
         mention).
 
-        Calls the ``agent.wake`` capability on ``worker`` — a machine set up to
-        spawn an agent session (e.g. a claude-code or hermes box). It's handed
-        the room id and recent transcript and joins as a normal session, posting
-        back via chat. Only works if ``worker`` exposes ``agent.wake`` (host set
-        ``ROOK_WAKE_CMD``); otherwise the mention/voicemail path already applies.
-        A worker whose agent is already attending may decline (black-hole)."""
+        Two paths, auto-selected by the target's capabilities:
+          * ``hermes.chat`` present (a hermes box like sojourn): the room
+            transcript is handed to hermes.chat and its reply is posted straight
+            back into the room — no spawn command needed, it rides the cap the
+            worker already exposes. This is how ``@sojourn`` actually answers.
+          * else ``agent.wake`` present (`ROOK_WAKE_CMD` set): spawns a fresh
+            agent session with the transcript as its brief.
+        A worker with neither can't be woken — the mention/voicemail notice
+        still reaches it on its next call."""
         target, err = _resolve_target(worker)
         if err:
             return _fail(err)
         w = client.workers.get(target, {})
-        if "agent.wake" not in w.get("caps", []):
-            return _fail(f"worker {worker!r} does not expose agent.wake — it "
-                         f"isn't set up to spawn an agent (needs ROOK_WAKE_CMD). "
-                         f"The offline agent will still see a voicemail notice.")
+        caps = w.get("caps", [])
         tail = chat.read(room, None, since_seq=0, mark=False, limit=30)
         if not tail.get("ok"):
             return _fail(tail.get("error", "no such room"))
         ident = _caller_identity()
         chat.touch(ident)
-        wake_args = {"room": room, "thread_id": room, "title": tail.get("title"),
-                     "transcript": tail.get("messages", []),
-                     "woken_by": ident, "note": note or ""}
-        try:
-            reply = await client.call(cap="agent.wake", args=wake_args,
-                                      target=target, timeout=timeout, identity=ident)
-        except asyncio.TimeoutError:
-            return _fail(f"agent.wake on {worker!r} did not confirm within "
-                         f"{timeout:.0f}s (it may still be spawning).")
-        return json.dumps(reply, indent=2)
+        wname = w.get("name") or worker
+        transcript = tail.get("messages", [])
+
+        # Preferred for hermes boxes: bridge to the existing hermes.chat cap and
+        # relay the reply into the room. No ROOK_WAKE_CMD required.
+        if "hermes.chat" in caps:
+            convo = "\n".join(f"[{m.get('sender')}] {m.get('text')}"
+                              for m in transcript)
+            note_line = f"\nNote: {note}" if note else ""
+            prompt = (
+                f"You're being pulled into rook chat room '{tail.get('title') or room}' "
+                f"as a participant. Read the conversation and reply with your "
+                f"contribution — plain prose, addressed to the room.{note_line}\n\n"
+                f"--- conversation ---\n{convo}\n--- end ---")
+            try:
+                reply = await client.call(
+                    cap="hermes.chat", args={"message": prompt},
+                    target=target, timeout=max(timeout, 120.0), identity=ident)
+            except asyncio.TimeoutError:
+                return _fail(f"hermes on {worker!r} didn't reply within "
+                             f"{max(timeout, 120.0):.0f}s.")
+            res = reply.get("result") or {}
+            answer = _clean_hermes_stdout(res.get("stdout", "")) if isinstance(res, dict) else ""
+            if not answer:
+                return json.dumps({"ok": False, "worker": wname,
+                                   "error": "hermes returned no parseable reply",
+                                   "raw": res}, indent=2)
+            posted = chat.send(room, f"agent:hermes_{wname}", answer, [], False)
+            return json.dumps({"ok": True, "via": "hermes.chat", "worker": wname,
+                               "posted": posted.get("ok"), "reply": answer}, indent=2)
+
+        # Fallback: spawn a fresh session via the wake cap.
+        if "agent.wake" in caps:
+            wake_args = {"room": room, "thread_id": room, "title": tail.get("title"),
+                         "transcript": transcript, "woken_by": ident, "note": note or ""}
+            try:
+                reply = await client.call(cap="agent.wake", args=wake_args,
+                                          target=target, timeout=timeout, identity=ident)
+            except asyncio.TimeoutError:
+                return _fail(f"agent.wake on {worker!r} did not confirm within "
+                             f"{timeout:.0f}s (it may still be spawning).")
+            return json.dumps({"ok": True, "via": "agent.wake", "reply": reply}, indent=2)
+
+        return _fail(f"worker {worker!r} exposes neither hermes.chat nor "
+                     f"agent.wake — nothing to wake. It still gets a voicemail "
+                     f"notice on its next call.")
 
     # -- worker config (commit-confirmed OTA) --------------------------------
 
