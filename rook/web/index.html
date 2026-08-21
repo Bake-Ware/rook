@@ -224,7 +224,8 @@
   .typing::after{content:'';display:inline-block;width:1.2em;text-align:left;animation:dots 1.2s steps(4,end) infinite}
   @keyframes dots{0%{content:''}25%{content:'.'}50%{content:'..'}75%{content:'...'}}
   .pdot.band{background:var(--blue)}
-  .presrow .st{margin-left:auto;color:var(--dim2);font-size:.64rem;flex-shrink:0}
+  .presrow .pn{flex:1;min-width:0}
+  .presrow .st{margin-left:auto;color:var(--dim2);font-size:.64rem;flex-shrink:0;white-space:nowrap}
   .presrow.band .st{color:var(--blue)}
   .chat-empty{margin:auto;text-align:center;color:var(--dim);font-size:.85rem;display:flex;flex-direction:column;gap:8px;align-items:center}
   .chat-empty .big{font-size:2rem;opacity:.35}
