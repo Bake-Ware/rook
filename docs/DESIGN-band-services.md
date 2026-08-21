@@ -236,14 +236,13 @@ Status as of 2026-08-20 (fleet on build 76):
    presence, voicemail-on-envelope) + worker plugins/wake.py (agent.wake) +
    dashboard chat panel sharing the same sqlite store. Verified: mention
    routing, wake→spawn (wake-proof), dashboard↔MCP shared room.
-7. **Federation** — ✅ CODE COMPLETE (telesthete b6290c7), tested (3 integration
-   tests + full suite green), NOT YET DEPLOYED to the production hub. Off by
-   default (zero hot-path cost unused); enable per-hub via HUB_FED_* env.
-   Deploying = rebuild + restart the live hub (brief fleet reconnect blip) —
-   hold until a second hub actually exists, since it's inert until then.
+7. **Federation** — ✅ SHIPPED (telesthete b6290c7) + DEPLOYED to the live hub
+   2026-08-21. Tested (3 integration tests + full suite green). Running on
+   bakenetca's `telesthete-hub` but INERT — no `HUB_FED_*` env set, so zero
+   behavior change. Enable when a second hub exists via HUB_FED_* env + restart.
 
-All seven features implemented. Only the federation *hub-binary deploy* is
-pending (deliberately — inert until a 2nd hub, and a hub restart is fleet-wide).
+All seven features implemented, deployed, and verified live. Federation runs on
+the production hub but is dormant until a second hub is stood up and linked.
 
 ## Deployment notes
 
