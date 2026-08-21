@@ -229,8 +229,8 @@
   @keyframes dots{0%{content:''}25%{content:'.'}50%{content:'..'}75%{content:'...'}}
   .pdot.band{background:var(--blue)}
   .presrow .pn{flex:1;min-width:0}
-  .presrow .st{margin-left:auto;color:var(--dim2);font-size:.64rem;flex-shrink:0;white-space:nowrap}
-  .presrow.band .st{color:var(--blue)}
+  .presrow .pst{margin-left:auto;color:var(--dim2);font-size:.64rem;flex-shrink:0;white-space:nowrap}
+  .presrow.band .pst{color:var(--blue)}
   .chat-empty{margin:auto;text-align:center;color:var(--dim);font-size:.85rem;display:flex;flex-direction:column;gap:8px;align-items:center}
   .chat-empty .big{font-size:2rem;opacity:.35}
   .chatinput{display:flex;gap:9px;padding:12px 14px;border-top:1px solid var(--line);flex-shrink:0;align-items:center}
@@ -807,7 +807,7 @@ async function loadPresence(){
     return `<div class="presrow${cls}" onclick="mention('${esc(a.identity)}')" title="${esc(tip)}">
       <span class="pdot${cls}"></span>${avatarHTML(a.identity,'sm')}
       <span class="pn">${esc(shortName(a.identity))}</span>
-      <span class="st">${st}</span></div>`; }).join('')
+      <span class="pst">${st}</span></div>`; }).join('')
     : `<div style="padding:14px 12px;color:var(--dim2);font-size:.74rem">Nobody seen yet.</div>`;
 }
 async function openRoom(id,title){ curRoom=id; lastSeq=0; lastSender=null;

@@ -1100,16 +1100,21 @@ class CombinedServer:
         # Check basic auth (for API/curl): password in either field.
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Basic "):
+            # Only the credential parsing is guarded — the handler runs outside
+            # the try so a handler's own HTTP exceptions (404, 400, redirects)
+            # reach the client instead of being swallowed into a bogus 401.
+            creds_ok = False
             try:
                 decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
                 user, _, passwd = decoded.partition(":")
-                if self._check_creds(user, passwd):
-                    resp = await handler(request)
-                    resp.set_cookie("rook_session", self._make_session_cookie(),
-                                    max_age=30 * 86400, httponly=True, samesite="Lax")
-                    return resp
+                creds_ok = self._check_creds(user, passwd)
             except Exception:
-                pass
+                creds_ok = False
+            if creds_ok:
+                resp = await handler(request)
+                resp.set_cookie("rook_session", self._make_session_cookie(),
+                                max_age=30 * 86400, httponly=True, samesite="Lax")
+                return resp
 
         # No valid auth — redirect to login page for browsers, 401 for API
         accept = request.headers.get("Accept", "")
