@@ -1301,7 +1301,12 @@ button:hover{{background:#22b88f}}
                 from ..modules.web_ui import WEB_DIR
                 index_path = WEB_DIR / "index.html"
                 if index_path.exists():
-                    return web.Response(text=index_path.read_text(encoding="utf-8"), content_type="text/html")
+                    # no-store so a dashboard redeploy is seen on the next load
+                    # instead of the browser serving a stale cached page.
+                    return web.Response(
+                        text=index_path.read_text(encoding="utf-8"),
+                        content_type="text/html",
+                        headers={"Cache-Control": "no-store, must-revalidate"})
             except Exception:
                 pass
 
