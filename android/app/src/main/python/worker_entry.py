@@ -27,7 +27,7 @@ _stop_event: "asyncio.Event | None" = None
 _loop: "asyncio.AbstractEventLoop | None" = None
 
 # Builtin plugin module stems we replace with native bridges.
-_NATIVE_OVERRIDES = {"screenshot", "hid"}
+_NATIVE_OVERRIDES = {"screenshot", "hid", "battery"}
 
 
 def _builtin_enabled() -> list[str]:
@@ -41,7 +41,17 @@ def _builtin_enabled() -> list[str]:
 def _attach_native_plugins(worker) -> None:
     from rook_android.plugins.screen import AndroidScreenPlugin
     from rook_android.plugins.hid_a11y import AndroidHidPlugin
-    for plugin in (AndroidScreenPlugin(), AndroidHidPlugin()):
+    from rook_android.plugins.battery_android import AndroidBatteryPlugin
+    for plugin in (AndroidScreenPlugin(), AndroidHidPlugin(), AndroidBatteryPlugin()):
+        # battery gates on a readable battery; screen/hid are always available()
+        # (they report readiness per-call). Never announce a cap we can't back.
+        try:
+            if not plugin.available():
+                log.info("native plugin ns=%s not available here, skipping", plugin.NAMESPACE)
+                continue
+        except Exception:
+            log.warning("native plugin ns=%s available() raised, skipping", plugin.NAMESPACE)
+            continue
         for dotpath, fn in plugin.caps().items():
             worker.registry.register(dotpath, fn)
         worker.plugins.append(plugin)
