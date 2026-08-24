@@ -188,12 +188,20 @@ class WorkerService : Service() {
         const val ACTION_START_CAPTURE = "systems.bake.rook.START_CAPTURE"
         const val ACTION_STOP_CAPTURE = "systems.bake.rook.STOP_CAPTURE"
 
+        // startForegroundService is API 26+. On Android 6/7 it doesn't exist
+        // (calling it crashed the app on Start / screen-share); use startService,
+        // which is fine there — the service still calls startForeground itself.
+        private fun launch(ctx: Context, i: Intent) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ctx.startForegroundService(i)
+            else @Suppress("DEPRECATION") ctx.startService(i)
+        }
+
         fun start(ctx: Context, hub: String, psk: String, name: String) {
             val i = Intent(ctx, WorkerService::class.java)
                 .putExtra(EXTRA_HUB, hub)
                 .putExtra(EXTRA_PSK, psk)
                 .putExtra(EXTRA_NAME, name)
-            ctx.startForegroundService(i)
+            launch(ctx, i)
         }
 
         fun stop(ctx: Context) {
@@ -207,7 +215,7 @@ class WorkerService : Service() {
                 .setAction(ACTION_START_CAPTURE)
                 .putExtra(EXTRA_CODE, code)
                 .putExtra(EXTRA_DATA, data)
-            ctx.startForegroundService(i)
+            launch(ctx, i)
         }
     }
 }
