@@ -22,9 +22,13 @@ android {
         }
 
         // Default band settings — overridable at runtime in MainActivity and
-        // persisted to SharedPreferences. Keep the PSK out of VCS in real builds.
-        buildConfigField "String", "DEFAULT_HUB", "\"hub.example.com:443\""
-        buildConfigField "String", "DEFAULT_PSK", "\"\""
+        // persisted to SharedPreferences. Baked from build properties so the PSK
+        // stays OUT of VCS: pass -PROOK_DEFAULT_HUB=... -PROOK_DEFAULT_PSK=... (or
+        // the same env vars) at build time; falls back to the example placeholders.
+        def rookHub = (project.findProperty("ROOK_DEFAULT_HUB") ?: System.getenv("ROOK_DEFAULT_HUB") ?: "hub.example.com:443").toString()
+        def rookPsk = (project.findProperty("ROOK_DEFAULT_PSK") ?: System.getenv("ROOK_DEFAULT_PSK") ?: "").toString()
+        buildConfigField "String", "DEFAULT_HUB", "\"${rookHub}\""
+        buildConfigField "String", "DEFAULT_PSK", "\"${rookPsk}\""
     }
 
     buildFeatures {
