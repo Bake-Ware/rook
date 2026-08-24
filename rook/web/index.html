@@ -693,8 +693,8 @@ async function runTerm(cmd){
 const SCHEMA={};                 // worker_id -> caps.describe result (cached)
 let CAPM=null;                    // current modal {wid, cap, params|null}
 const DANGER=new Set(['worker.restart','worker.update','worker.reconfigure']); // never auto-run
-async function capSchema(wid){
-  if(wid in SCHEMA) return SCHEMA[wid];
+async function capSchema(wid,force){
+  if(!force && wid in SCHEMA) return SCHEMA[wid];
   try{ const r=await bandCall('caps.describe',wid,{},10);
     SCHEMA[wid]=(r&&r.result&&typeof r.result==='object'&&!Array.isArray(r.result))?r.result:null;
   }catch(e){ SCHEMA[wid]=null; }
@@ -703,7 +703,9 @@ async function capSchema(wid){
 async function openCapModal(wid,cap){
   openModal('▶ '+esc(cap)+' · '+esc(wname(wid)));
   setBody('<div class="capform"><div style="color:var(--dim);font-size:.82rem"><span class="spin"></span> loading schema…</div></div>');
-  const sc=await capSchema(wid), info=sc&&sc[cap], params=info&&info.params;
+  let sc=await capSchema(wid);
+  if(sc && !sc[cap]) sc=await capSchema(wid,true);   // cap not in cache → refetch (new caps after reinstall)
+  const info=sc&&sc[cap], params=info&&info.params;
   CAPM={wid,cap,params:params||null};
   const help=info&&info.doc?`<div class="caphelp">${esc(info.doc)}</div>`:'';
   // zero-argument caps: run immediately on click (skip the form). Destructive

@@ -10,7 +10,7 @@ android {
 
     defaultConfig {
         applicationId "systems.bake.rook"
-        minSdk 26          // foreground service + AccessibilityService + MediaProjection
+        minSdk 23          // Android 6.0+; some caps (gesture HID, unlock) need 24/26 — guarded at runtime
         targetSdk 34
         versionCode 1
         versionName "0.1.0"
@@ -18,7 +18,7 @@ android {
         // Chaquopy: only the ABIs you intend to run on. arm64 covers modern phones;
         // x86_64 is handy for the emulator. Trim to shrink the APK.
         ndk {
-            abiFilters "arm64-v8a", "x86_64"
+            abiFilters "arm64-v8a", "armeabi-v7a", "x86_64", "x86"
         }
 
         // Default band settings — overridable at runtime in MainActivity and

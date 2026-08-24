@@ -160,16 +160,20 @@ class AndroidDevicePlugin(Plugin):
             Context = jclass("android.content.Context")
             VER = jclass("android.os.Build$VERSION")
             dur = max(1, min(int(ms), 5000))
-            VibrationEffect = jclass("android.os.VibrationEffect")
-            eff = VibrationEffect.createOneShot(dur, VibrationEffect.DEFAULT_AMPLITUDE)
-            if VER.SDK_INT >= 31:
-                VibratorManager = jclass("android.os.VibratorManager")
-                vm = cast(jclass("android.os.VibratorManager"),
-                          ctx.getSystemService(Context.VIBRATOR_MANAGER_SERVICE))
-                vm.getDefaultVibrator().vibrate(eff)
+            if VER.SDK_INT >= 26:
+                VibrationEffect = jclass("android.os.VibrationEffect")
+                eff = VibrationEffect.createOneShot(dur, VibrationEffect.DEFAULT_AMPLITUDE)
+                if VER.SDK_INT >= 31:
+                    vm = cast(jclass("android.os.VibratorManager"),
+                              ctx.getSystemService(Context.VIBRATOR_MANAGER_SERVICE))
+                    vm.getDefaultVibrator().vibrate(eff)
+                else:
+                    vib = cast(jclass("android.os.Vibrator"), ctx.getSystemService(Context.VIBRATOR_SERVICE))
+                    vib.vibrate(eff)
             else:
+                # Android 6/7: VibrationEffect doesn't exist; use the long overload.
                 vib = cast(jclass("android.os.Vibrator"), ctx.getSystemService(Context.VIBRATOR_SERVICE))
-                vib.vibrate(eff)
+                vib.vibrate(int(dur))
             return {"ok": True, "ms": dur}
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}

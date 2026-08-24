@@ -3,6 +3,7 @@ package systems.bake.rook
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.graphics.Path
+import android.os.Build
 import android.os.Bundle
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -85,11 +86,16 @@ class HidAccessibilityService : AccessibilityService() {
 
         @JvmStatic fun isEnabled(): Boolean = instance != null
 
+        // Gesture dispatch is API 24+. On Android 6/7-without-N it's unavailable;
+        // callers get false (text input + global actions still work).
+        private fun gesturesOk(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N
+
         @JvmStatic fun tap(x: Int, y: Int): Boolean =
-            instance?.tapInternal(x.toFloat(), y.toFloat()) ?: false
+            if (!gesturesOk()) false else instance?.tapInternal(x.toFloat(), y.toFloat()) ?: false
 
         @JvmStatic fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Long): Boolean =
-            instance?.swipeInternal(x1.toFloat(), y1.toFloat(), x2.toFloat(), y2.toFloat(), durationMs) ?: false
+            if (!gesturesOk()) false
+            else instance?.swipeInternal(x1.toFloat(), y1.toFloat(), x2.toFloat(), y2.toFloat(), durationMs) ?: false
 
         @JvmStatic fun typeText(text: String): Boolean =
             instance?.typeInternal(text) ?: false
