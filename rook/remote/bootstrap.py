@@ -575,9 +575,24 @@ install_cli() {
   else
     echo "[rook] no credentials set — run 'rook' later to configure"
   fi
-  case ":$PATH:" in *":$DEST:"*) ;; *)
-    echo "[rook] NOTE: $DEST is not on your PATH — add it:";
-    echo "        echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.profile   (fish: fish_add_path ~/.local/bin)" ;;
+  # Actually put $DEST on PATH (the #1 reason `rook` "isn't found" after install)
+  # — append to whatever shell rc files exist, idempotently, + fish.
+  case ":$PATH:" in
+    *":$DEST:"*) ;;
+    *)
+      line="export PATH=\"$DEST:\$PATH\""
+      touched=""
+      for rc in "$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc"; do
+        [ "$rc" = "$HOME/.profile" ] || [ -e "$rc" ] || continue
+        grep -qF "$DEST" "$rc" 2>/dev/null && continue
+        printf '\n# added by rook installer\n%s\n' "$line" >> "$rc" && touched="$touched ${rc##*/}"
+      done
+      if command -v fish >/dev/null 2>&1; then
+        fish -c "fish_add_path -g $DEST" >/dev/null 2>&1 && touched="$touched fish"
+      fi
+      export PATH="$DEST:$PATH"
+      [ -n "$touched" ] && echo "[rook] added $DEST to PATH ($touched)"
+      echo "[rook] open a NEW terminal, or run:  export PATH=\"$DEST:\$PATH\"" ;;
   esac
   hash -r 2>/dev/null || true
 }
