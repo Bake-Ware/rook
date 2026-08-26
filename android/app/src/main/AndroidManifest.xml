@@ -11,6 +11,10 @@
     <!-- One typed FGS permission per capability we run while backgrounded. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- Voice: mic -> kaiju voice-agent WebSocket -> speaker -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Phone-superpowers caps (runtime-granted from the app) -->
     <uses-permission android:name="android.permission.READ_SMS" />
@@ -46,6 +50,12 @@
             android:name=".WorkerService"
             android:exported="false"
             android:foregroundServiceType="dataSync|mediaProjection" />
+
+        <!-- Live voice session (push-to-talk now, wake word later). -->
+        <service
+            android:name=".VoiceService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
 
         <!-- Turns the screen on from the background (device.wake). -->
         <activity

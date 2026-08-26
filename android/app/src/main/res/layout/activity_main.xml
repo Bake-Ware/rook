@@ -79,6 +79,90 @@
             android:text="@string/grant_overlay" />
 
         <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="@string/voice_section"
+            android:textStyle="bold" />
+
+        <EditText
+            android:id="@+id/voiceUrl"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/hint_voice_url"
+            android:inputType="textUri" />
+
+        <CheckBox
+            android:id="@+id/voiceInsecure"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:checked="true"
+            android:text="@string/voice_insecure" />
+
+        <CheckBox
+            android:id="@+id/wakeEnabled"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:checked="true"
+            android:text="@string/wake_enabled" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+            <Button
+                android:id="@+id/btnVoiceStandby"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:text="@string/voice_standby" />
+            <Button
+                android:id="@+id/btnVoiceOff"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:text="@string/voice_off" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/btnVoiceStart"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/voice_start" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+            <Button
+                android:id="@+id/btnVoiceInterrupt"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:text="@string/voice_interrupt" />
+            <Button
+                android:id="@+id/btnVoiceEnd"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:text="@string/voice_end" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/voiceState"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="idle"
+            android:textStyle="italic" />
+
+        <TextView
+            android:id="@+id/voiceLog"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:textIsSelectable="true" />
+
+        <TextView
             android:id="@+id/status"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

@@ -103,7 +103,77 @@ class MainActivity : AppCompatActivity() {
             status("enable 'Display over other apps' → lets device.wake turn the screen on")
         }
 
+        // ---- voice ----
+        b.voiceUrl.setText(prefs.getString("voice_url", "wss://192.168.1.64:8900/ws"))
+        b.voiceInsecure.isChecked = prefs.getBoolean("voice_insecure", true)
+        b.btnVoiceStart.setOnClickListener {
+            val url = b.voiceUrl.text.toString().trim()
+            val insecure = b.voiceInsecure.isChecked
+            prefs.edit().putString("voice_url", url).putBoolean("voice_insecure", insecure).apply()
+            if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                micPermLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+            } else {
+                b.voiceLog.text = ""
+                VoiceService.start(this, url, insecure)
+            }
+        }
+        b.btnVoiceInterrupt.setOnClickListener { VoiceService.interrupt(this) }
+        b.btnVoiceEnd.setOnClickListener { VoiceService.endSession(this) }
+        b.wakeEnabled.isChecked = prefs.getBoolean("wake_enabled", true)
+        b.wakeEnabled.setOnCheckedChangeListener { _, on -> prefs.edit().putBoolean("wake_enabled", on).apply() }
+        b.btnVoiceStandby.setOnClickListener {
+            val url = b.voiceUrl.text.toString().trim()
+            val insecure = b.voiceInsecure.isChecked
+            prefs.edit().putString("voice_url", url).putBoolean("voice_insecure", insecure).apply()
+            if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                micPermLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+            } else VoiceService.standby(this, url, insecure)
+        }
+        b.btnVoiceOff.setOnClickListener { VoiceService.stop(this) }
+
         maybeRequestNotifications()
+    }
+
+    private val micPermLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+            if (ok) b.btnVoiceStart.performClick() else status("microphone permission denied")
+        }
+
+    private var curBot: StringBuilder? = null
+
+    private val voiceListener = object : VoiceBus.Listener {
+        override fun onState(state: String) { b.voiceState.text = state }
+        override fun onTranscript(text: String) { curBot = null; vlog("you: $text") }
+        override fun onAssistantDelta(text: String) {
+            val sb = curBot ?: StringBuilder().also { curBot = it; vlog("bot: ") }
+            sb.append(text)
+            // rewrite the last line in place
+            val lines = b.voiceLog.text.toString().split('\n').toMutableList()
+            if (lines.isNotEmpty()) lines[lines.size - 1] = "bot: $sb"
+            b.voiceLog.text = lines.joinToString("\n")
+        }
+        override fun onAssistantDone() { curBot = null }
+        override fun onInterrupt() { curBot = null; vlog("[interrupted]") }
+        override fun onError(msg: String) { vlog("error: $msg") }
+        override fun onWake() { vlog("[wake word]") }
+    }
+
+    private fun vlog(line: String) {
+        val cur = b.voiceLog.text.toString()
+        b.voiceLog.text = if (cur.isEmpty()) line else cur + "\n" + line
+    }
+
+    override fun onResume() {
+        super.onResume()
+        VoiceBus.listener = voiceListener
+        b.voiceState.text = VoiceBus.state
+    }
+
+    override fun onPause() {
+        VoiceBus.listener = null
+        super.onPause()
     }
 
     private val permsLauncher =

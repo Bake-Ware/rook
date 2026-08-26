@@ -12,4 +12,13 @@
     <string name="grant_notif">Grant notification access</string>
     <string name="grant_perms">Grant SMS / contacts / location</string>
     <string name="grant_overlay">Grant display-over-apps (wake)</string>
+    <string name="hint_voice_url">Voice server (wss://host:8900/ws)</string>
+    <string name="voice_insecure">Accept self-signed TLS cert</string>
+    <string name="voice_start">Start voice session</string>
+    <string name="voice_interrupt">Interrupt</string>
+    <string name="voice_end">End session</string>
+    <string name="voice_section">Voice (Hermes via kaiju)</string>
+    <string name="wake_enabled">Wake word: "hey sojourn"</string>
+    <string name="voice_standby">Listen (standby)</string>
+    <string name="voice_off">Voice off</string>
 </resources>
