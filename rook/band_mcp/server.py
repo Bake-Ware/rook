@@ -4,6 +4,8 @@ Tools:
     rook_workers()                 — list workers seen on the band
     rook_caps()                    — list capabilities per worker
     rook_call(cap, args?, worker_id?, timeout?) — fire a capability call
+    rook_console_open/read/write/close/list/search — long-running commands as
+        named, band-visible, permanently searchable terminal sessions
 
 Run:
     ROOK_BAND_PSK=mysecret python -m rook.band_mcp \\
@@ -77,6 +79,10 @@ def build_server(client: "BandClient | MultiBandClient",
     # Site-hosted chat rooms + presence + voicemail (design §3).
     from .chat_rooms import ChatStore
     chat = ChatStore(os.path.join(_store_dir, "chat.db"))
+
+    # Console rooms — named, searchable terminal sessions pumped off the band.
+    from .console_rooms import ConsoleStore
+    console = ConsoleStore(os.path.join(_store_dir, "console.db"))
     auth_settings: AuthSettings | None = None
     if public_url:
         # Resource-server metadata only (no authorization-server advertised).
@@ -553,6 +559,207 @@ def build_server(client: "BandClient | MultiBandClient",
                      f"agent.wake — nothing to wake. It still gets a voicemail "
                      f"notice on its next call.")
 
+    # -- console rooms (named, searchable terminal sessions) ------------------
+
+    async def _proc_call(room: dict, cap: str, args: dict, timeout: float = 15.0):
+        """Fire a proc.* call at the worker hosting this room's session."""
+        return await client.call(cap=cap, args={**args, "handle": room["handle"]},
+                                 target=room["worker"], timeout=timeout,
+                                 identity=_caller_identity())
+
+    @mcp.tool()
+    async def rook_console_open(worker: str, task: str, cmd: str | None = None,
+                                argv: list | None = None, cwd: str | None = None,
+                                env: dict | None = None, pty: bool = False) -> str:
+        """Start a long-running command on a worker as a **console room** — a
+        named, band-visible, permanently searchable terminal session.
+
+        Use this instead of ``rook_call("shell.exec", ...)`` whenever the work
+        is slow, interactive, or worth remembering. The call returns as soon as
+        the process starts; it then keeps running regardless of any timeout,
+        and its output accumulates in the room for you and everyone else on the
+        band to read at their own pace.
+
+        ``task`` is REQUIRED and becomes the room's title. Write it as the goal,
+        not the command — "set up the llama model on kaiju", not "bash". It is
+        the main thing anyone (or any later documentation pass) will search on,
+        so a vague title makes the session unfindable forever.
+
+        Pass ``argv`` (a list, no shell, no quoting) or ``cmd`` (a string via
+        ``/bin/sh -c``). Set ``pty=True`` for password prompts, REPLs, or
+        anything that needs a real tty.
+
+        Then: ``rook_console_read`` for output, ``rook_console_write`` to answer
+        a prompt, ``rook_console_close`` with a summary when you're done.
+        """
+        if not str(task or "").strip():
+            return _fail("task is required — name what this session is FOR "
+                         "(it becomes the room title and the thing people "
+                         "search on later).")
+        if not cmd and not argv:
+            return _fail("pass cmd or argv")
+        target, err = _resolve_target(worker)
+        if err:
+            return _fail(err)
+        w = client.workers.get(target, {})
+        if "proc.start" not in w.get("caps", []):
+            return _fail(f"worker {w.get('name')!r} has no proc.* capability — "
+                         f"it predates console rooms. Update it, or fall back "
+                         f"to rook_call('shell.exec').")
+        ident = _caller_identity()
+        chat.touch(ident)
+        args = {k: v for k, v in
+                {"cmd": cmd, "argv": argv, "cwd": cwd, "env": env,
+                 "pty": pty, "label": task}.items() if v is not None}
+        try:
+            reply = await client.call(cap="proc.start", args=args, target=target,
+                                      timeout=20.0, identity=ident)
+        except asyncio.TimeoutError:
+            return _fail(f"no reply from {worker!r} starting the session")
+        result = reply.get("result") or {}
+        if not reply.get("ok") or not result.get("ok"):
+            return json.dumps({"ok": False, "stage": "start",
+                               "error": result.get("error") or reply.get("error"),
+                               "reply": reply}, indent=2)
+        opened = console.open(title=task, worker=target,
+                              worker_name=w.get("name") or target,
+                              handle=result["handle"], cmd=result.get("cmd", ""),
+                              pty=bool(result.get("pty")), opened_by=ident)
+        opened["pid"] = result.get("pid")
+        opened["note"] = ("Session is live. Output is pumped into this room — "
+                          "read it with rook_console_read(room). Close it with "
+                          "rook_console_close(room, summary=...) when done.")
+        return json.dumps(opened, indent=2)
+
+    @mcp.tool()
+    async def rook_console_read(room: str, since_seq: int = 0,
+                                tail: bool = False, limit: int = 300) -> str:
+        """Read a console room's output from ``since_seq`` onward.
+
+        Pass the returned ``last_seq`` back as ``since_seq`` to page forward.
+        Set ``tail=True`` to get the LAST ``limit`` lines instead — what you
+        want when attaching to a session that already has thousands, or when
+        reading an old frozen room to see how it ended.
+
+        Works identically for live and frozen rooms; ``state`` tells you which.
+        """
+        chat.touch(_caller_identity())
+        return json.dumps(console.read(room, since_seq=since_seq, tail=tail,
+                                       limit=limit), indent=2)
+
+    @mcp.tool()
+    async def rook_console_write(room: str, text: str, newline: bool = True) -> str:
+        """Type into a live console room — this is the session's stdin.
+
+        Sent verbatim, with no shell in between, so quotes and ``$`` need no
+        escaping. Use it to answer a prompt ("y", a password, a menu choice) or
+        to drive a REPL. Read the room afterwards to see what happened.
+        """
+        r = console.get(room)
+        if r is None:
+            return _fail(f"no such console room: {room}")
+        if r["state"] != "live":
+            return _fail(f"room {room} is {r['state']} — its process has exited, "
+                         f"nothing is listening. Open a new console.")
+        ident = _caller_identity()
+        chat.touch(ident)
+        try:
+            reply = await _proc_call(r, "proc.write",
+                                     {"data": text, "newline": newline})
+        except asyncio.TimeoutError:
+            return _fail(f"worker {r['worker_name']!r} did not confirm the write")
+        result = reply.get("result") or {}
+        if result.get("ok"):
+            # Echo it into the transcript so the room shows who typed what.
+            console.append(room, f"$ {text}", stream="in", sender=ident)
+        return json.dumps(result or reply, indent=2)
+
+    @mcp.tool()
+    async def rook_console_signal(room: str, sig: str = "TERM") -> str:
+        """Signal a live session's process group: TERM (polite), KILL (hard),
+        INT (ctrl-C), HUP. The room and its transcript survive."""
+        r = console.get(room)
+        if r is None:
+            return _fail(f"no such console room: {room}")
+        if r["state"] != "live":
+            return _fail(f"room {room} is {r['state']} — process already gone.")
+        chat.touch(_caller_identity())
+        try:
+            reply = await _proc_call(r, "proc.signal", {"sig": sig})
+        except asyncio.TimeoutError:
+            return _fail(f"worker {r['worker_name']!r} did not confirm the signal")
+        return json.dumps(reply.get("result") or reply, indent=2)
+
+    @mcp.tool()
+    async def rook_console_close(room: str, summary: str | None = None,
+                                 kill: bool = False) -> str:
+        """Freeze a console room, with a closing summary. **Write the summary.**
+
+        The room becomes permanent and immutable: still readable, still
+        searchable, but no longer live. The transcript alone is poor search
+        corpus — pip output rarely contains the words anyone will look for
+        later — so the summary is what actually makes this session findable and
+        what a documentation pass will read first. Say what you were doing,
+        what worked, and what to watch out for.
+
+        If the process is still running, pass ``kill=True`` to stop it; without
+        that a live session is left alone and the room stays live.
+        """
+        r = console.get(room)
+        if r is None:
+            return _fail(f"no such console room: {room}")
+        ident = _caller_identity()
+        chat.touch(ident)
+        if r["state"] == "live":
+            if not kill:
+                return _fail(f"room {room} is still live (its process is "
+                             f"running). Pass kill=True to stop it and freeze "
+                             f"the room, or wait for it to exit.")
+            try:
+                await _proc_call(r, "proc.close", {})
+            except Exception:
+                pass
+            console.mark_closing(room, None)
+        if not summary:
+            return _fail(f"room {room} is ready to freeze but needs a summary — "
+                         f"call again with summary='what this session did and "
+                         f"what came of it'. That text is what makes it findable "
+                         f"later; the raw transcript is not.")
+        return json.dumps(console.freeze(room, summary=summary, by=ident), indent=2)
+
+    @mcp.tool()
+    async def rook_console_list(worker: str | None = None,
+                                state: str | None = None, limit: int = 50) -> str:
+        """List console rooms, newest-active first, across the whole band.
+
+        Filter by ``worker`` (id or name) or ``state`` (``live``, ``closing``,
+        ``frozen``). Use this to find what's running right now; use
+        ``rook_console_search`` to find what happened in the past.
+        """
+        chat.touch(_caller_identity())
+        return json.dumps(console.list(worker=worker, state=state, limit=limit),
+                          indent=2)
+
+    @mcp.tool()
+    async def rook_console_search(query: str, worker: str | None = None,
+                                  limit: int = 20) -> str:
+        """Full-text search every console session ever run on the band.
+
+        This is the band's operational memory: "how did we set up that model on
+        kaiju" finds the room where it happened, even months later, and returns
+        its title, closing summary, exit code and the matching ``seq`` so you
+        can jump straight to that point with
+        ``rook_console_read(room, since_seq=seq-1)``.
+
+        Titles and summaries are indexed alongside the transcript and rank
+        highest, so search for the *task* ("cuda driver install", "postgres
+        migration") rather than for exact command text. Filter with ``worker``
+        to scope to one machine.
+        """
+        chat.touch(_caller_identity())
+        return json.dumps(console.search(query, worker=worker, limit=limit),
+                          indent=2)
+
     # -- worker config (commit-confirmed OTA) --------------------------------
 
     @mcp.tool()
@@ -629,6 +836,7 @@ def build_server(client: "BandClient | MultiBandClient",
                                     f"prior config at its deadline"}, indent=2)
 
     mcp._rook_chat = chat  # the /tokens page edits avatars in this store
+    mcp._rook_console = console  # _amain starts the pump against this store
     return mcp, store
 
 
@@ -649,6 +857,11 @@ async def _amain(args) -> None:
         journal_path=args.journal_path or None,
     )
     app = mcp.streamable_http_app()
+
+    # Console pump — drains live worker proc sessions into their console rooms.
+    from .console_pump import ConsolePump
+    pump = ConsolePump(client, mcp._rook_console)
+    pump.start()
 
     # Wire up WS bridge for remote Telesthete Band workers.
     ws_bridge: WSBandBridge | None = None
@@ -685,6 +898,7 @@ async def _amain(args) -> None:
         await server.serve()
     finally:
         # Tear down WS bridge before stopping transport.
+        await pump.stop()
         if ws_bridge is not None:
             await ws_bridge.stop()
         await client.stop()
