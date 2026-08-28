@@ -21,6 +21,7 @@ that checks ``isatty``.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import shlex
 import signal as _signal
@@ -29,6 +30,8 @@ import time
 import uuid
 
 from ..plugin import Plugin, capability
+
+log = logging.getLogger("rook.worker.plugins.proc")
 
 # Per-session output kept in memory. Older bytes fall off the front; a reader
 # whose cursor has fallen behind is told exactly how much it missed.
@@ -394,10 +397,18 @@ class ProcPlugin(Plugin):
         """Kill the process if it's still running and drop the session. Its
         output is gone from the worker afterwards — read anything you still
         want first (the site keeps its own copy in the console room)."""
-        sess = self._sessions.pop(handle, None)
+        sess = self._sessions.get(handle)
         if sess is None:
             return {"ok": False, "error": f"no such handle: {handle}"}
-        await self._terminate(sess, hard=True)
+        gone = await self._terminate(sess, hard=True)
+        if not gone:
+            # Keep the handle: a caller that can still see it can retry or
+            # signal it. Dropping it here would leave the process running with
+            # nothing left to reach it by.
+            return {"ok": False, "handle": handle, "pid": sess.pid,
+                    "error": "could not stop the process; session kept so you "
+                             "can retry with proc.signal"}
+        self._sessions.pop(handle, None)
         return {"ok": True, "handle": handle, "exit_code": sess.exit_code,
                 "bytes": sess.total}
 
@@ -411,12 +422,28 @@ class ProcPlugin(Plugin):
 
     # -- housekeeping ------------------------------------------------------
 
-    async def _terminate(self, sess: _Session, hard: bool = False) -> None:
+    async def _terminate(self, sess: _Session, hard: bool = False) -> bool:
+        """Stop the process. Returns True if it is gone afterwards.
+
+        ``signal.SIGKILL`` does not exist on Windows, so the hard path goes
+        through ``Process.kill()`` (SIGKILL on POSIX, TerminateProcess on
+        Windows) rather than naming a signal that isn't there. A kill that
+        fails is logged and reported, never swallowed — silently failing here
+        orphans the process while telling the caller it was closed.
+        """
         if sess.running and sess.proc is not None:
             try:
-                self._kill(sess, _signal.SIGKILL if hard else _signal.SIGTERM)
-            except Exception:
+                if hard and _IS_WIN:
+                    sess.proc.kill()
+                elif hard:
+                    self._kill(sess, _signal.SIGKILL)
+                else:
+                    self._kill(sess, _signal.SIGTERM)
+            except ProcessLookupError:
                 pass
+            except Exception:
+                log.warning("failed to signal session %s (pid %s)",
+                            sess.handle, sess.pid, exc_info=True)
             try:
                 await asyncio.wait_for(sess.proc.wait(), 3.0)
             except Exception:
@@ -430,6 +457,14 @@ class ProcPlugin(Plugin):
             except Exception:
                 pass
             sess.pty_master = None
+        # The waiter records the outcome only after draining the pump, and we
+        # just cancelled it — so ask the process, not the bookkeeping, whether
+        # it is actually gone, and backfill what the waiter never got to.
+        ended = sess.proc is None or sess.proc.returncode is not None
+        if ended and sess.exit_code is None and sess.proc is not None:
+            sess.exit_code = sess.proc.returncode
+            sess.ended = time.time()
+        return ended
 
     def _reap(self) -> None:
         """Drop finished sessions whose tail nobody came back for."""
