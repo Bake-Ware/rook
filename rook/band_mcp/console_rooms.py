@@ -77,6 +77,11 @@ def sanitize(text: str) -> str:
     text = _ANSI.sub("", text)
     out = []
     for line in text.split("\n"):
+        # A trailing CR is just the other half of a CRLF — a pty writes every
+        # line that way. Drop it BEFORE collapsing redraws, or splitting on it
+        # leaves the empty string and erases the whole line.
+        if line.endswith("\r"):
+            line = line[:-1]
         if "\r" in line:
             # Keep only what survived the last redraw of this line.
             line = line.split("\r")[-1]

@@ -312,3 +312,16 @@ async def test_read_never_splits_a_utf8_character():
     assert "�" not in out          # no replacement characters
     assert out.strip() == "é" * 500
     await plugin.stop()
+
+
+def test_sanitize_keeps_crlf_lines_intact():
+    # A pty terminates every line with CRLF. Collapsing redraws must not treat
+    # that trailing CR as a redraw, or it erases the entire line and pty
+    # transcripts come out empty.
+    assert sanitize("hi world\r\nlen 14\r\n") == "hi world\nlen 14\n"
+    assert sanitize("Name: ") == "Name: "
+
+
+def test_sanitize_collapses_redraws_that_use_crlf_line_endings():
+    # Both behaviours at once: a progress bar redrawing within a CRLF line.
+    assert sanitize("10%\r50%\r100% done\r\nnext\r\n") == "100% done\nnext\n"
