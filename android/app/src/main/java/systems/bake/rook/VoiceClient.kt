@@ -50,6 +50,7 @@ class VoiceClient(
     private val listener: Listener,
     /** false = caller pushes mic frames via [pushFrame] (shared AudioRecord); true = own the mic. */
     private val ownMic: Boolean = true,
+    private val token: String = "",
 ) {
     interface Listener {
         fun onState(state: String)
@@ -59,12 +60,16 @@ class VoiceClient(
         fun onInterrupt()
         fun onError(msg: String)
         fun onClosed()
+        /** Server asked to end the session: mode = "sleep" (back to standby) or "off". */
+        fun onBye(mode: String, afterMs: Long) {}
+        fun onTool(title: String, status: String) {}
     }
 
     companion object {
         private const val TAG = "VoiceClient"
         const val SR_IN = 16000
-        const val FRAME_BYTES = 640 // 20 ms @ 16 kHz mono PCM16
+        const val FRAME_BYTES = 640 // 20 ms @ 16 kHz mono
+        const val PLAY_TAIL_MS = 400L
     }
 
     @Volatile private var ws: WebSocket? = null
@@ -75,8 +80,13 @@ class VoiceClient(
     @Volatile private var outSr = 24000
     @Volatile private var track: AudioTrack? = null
     @Volatile private var trackSr = 0
+    private val outbox = java.util.concurrent.ConcurrentLinkedQueue<String>()
+    @Volatile private var connected = false
     private var audioChunks = 0L
     private var audioBytes = 0L
+    /** Wall-clock (ms) until which queued playback is still audible; mic frames are not sent before then. */
+    @Volatile private var playingUntil = 0L
+    val isPlaying: Boolean get() = System.currentTimeMillis() < playingUntil
 
     fun connect() {
         val builder = OkHttpClient.Builder()
@@ -84,16 +94,19 @@ class VoiceClient(
             .pingInterval(20, TimeUnit.SECONDS)
         if (insecureTls) trustAll(builder)
         val client = builder.build()
-        val req = Request.Builder().url(url).build()
+        val full = if (token.isNotEmpty() && !url.contains("token=")) url + (if ('?' in url) "&" else "?") + "token=" + token else url
+        val req = Request.Builder().url(full).build()
         running = true
         startPlayer()
         ws = client.newWebSocket(req, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                Log.i(TAG, "ws open $url")
+                Log.i(TAG, "ws open ${url}")
                 // Advance notice for the server: this client has hardware AEC.
                 // (Ignored by the server today; step-4 barge-in will key off it.)
                 webSocket.send(JSONObject().put("type", "hello")
                     .put("client", "rook-android").put("aec", true).toString())
+                connected = true
+                while (true) { val q = outbox.poll() ?: break; webSocket.send(q) }
                 if (ownMic) startMic()
                 listener.onState("listening")
             }
@@ -108,12 +121,22 @@ class VoiceClient(
                     "assistant_done" -> listener.onAssistantDone()
                     "audio_sr" -> outSr = m.optInt("sr", 24000)
                     "interrupt" -> { flushPlayback(); listener.onInterrupt() }
+                    "bye" -> listener.onBye(m.optString("mode", "sleep"), m.optLong("after_ms", 0L))
+                    "tool" -> { val t = m.optString("title", ""); if (t.isNotEmpty()) listener.onTool(t, m.optString("status", "")) }
                     "error" -> listener.onError(m.optString("msg"))
                 }
             }
 
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
-                if (running) { audioBytes += bytes.size; if ((++audioChunks % 25) == 1L) Log.i(TAG, "audio chunk #$audioChunks total=${audioBytes}B sr=$outSr"); playQueue.offer(bytes.toByteArray()) }
+                if (running) {
+                    audioBytes += bytes.size
+                    if ((++audioChunks % 25) == 1L) Log.i(TAG, "audio chunk #$audioChunks total=${audioBytes}B sr=$outSr")
+                    // extend the half-duplex window by this chunk's real duration (cumulative)
+                    val durMs = bytes.size * 1000L / (2L * outSr)
+                    val now = System.currentTimeMillis()
+                    playingUntil = maxOf(playingUntil, now) + durMs
+                    playQueue.offer(bytes.toByteArray())
+                }
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
@@ -130,10 +153,27 @@ class VoiceClient(
 
     /** External mic path: exactly one 20 ms frame (640 bytes) per call. */
     fun pushFrame(buf: ByteArray, len: Int = buf.size) {
-        if (running && len == FRAME_BYTES) ws?.send(buf.toByteString(0, len))
+        if (!running || len != FRAME_BYTES) return
+        // half-duplex: never feed our own playback (plus a short tail) back to the server
+        if (System.currentTimeMillis() < playingUntil + PLAY_TAIL_MS) return
+        ws?.send(buf.toByteString(0, len))
     }
 
     val isRunning: Boolean get() = running
+
+    /** Typed message. `speak` = also synthesize the reply aloud. */
+    fun sendText(text: String, speak: Boolean) = enqueue(
+        JSONObject().put("type", "text").put("text", text).put("speak", speak).toString())
+
+    /** Base64 JPEG for the vision model, with an optional caption/question. */
+    fun sendImage(b64: String, caption: String, speak: Boolean) = enqueue(
+        JSONObject().put("type", "image").put("data", b64).put("text", caption).put("speak", speak).toString())
+
+    /** Send now if the socket is up, otherwise hold it until onOpen. */
+    private fun enqueue(payload: String) {
+        val w = ws
+        if (connected && w != null) w.send(payload) else outbox.add(payload)
+    }
 
     /** Ask the server to cut the current turn, and drop any queued audio locally. */
     fun interrupt() {
@@ -153,6 +193,7 @@ class VoiceClient(
     private fun shutdown() {
         if (!running) return
         running = false
+        connected = false
         ws = null
         playQueue.clear()
         try { recThread?.join(500) } catch (_: Throwable) {}
@@ -190,7 +231,7 @@ class VoiceClient(
                         if (n <= 0) break
                         off += n
                     }
-                    if (off == FRAME_BYTES) ws?.send(buf.toByteString(0, FRAME_BYTES))
+                    if (off == FRAME_BYTES) pushFrame(buf, FRAME_BYTES)
                 }
             } finally {
                 try { rec.stop() } catch (_: Throwable) {}
@@ -235,6 +276,7 @@ class VoiceClient(
 
     private fun flushPlayback() {
         playQueue.clear()
+        playingUntil = 0L
         val t = track ?: return
         try { t.pause(); t.flush(); t.play() } catch (_: Throwable) {}
     }

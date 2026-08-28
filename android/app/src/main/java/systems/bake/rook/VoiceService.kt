@@ -50,11 +50,13 @@ class VoiceService : Service() {
     @Volatile private var lastActivityAt = 0L
     @Volatile private var lastWakeAt = 0L
     private lateinit var url: String
-    private var insecure = true
+    private var insecure = false
+    private var token = ""
     private var wakeEnabled = true
 
     override fun onCreate() {
         super.onCreate()
+        inst = this
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             nm.createNotificationChannel(NotificationChannel(CHANNEL, "Rook voice", NotificationManager.IMPORTANCE_LOW))
@@ -64,7 +66,8 @@ class VoiceService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val prefs = getSharedPreferences("rook", MODE_PRIVATE)
         url = intent?.getStringExtra(EXTRA_URL) ?: prefs.getString("voice_url", "") ?: ""
-        insecure = intent?.getBooleanExtra(EXTRA_INSECURE, true) ?: prefs.getBoolean("voice_insecure", true)
+        insecure = intent?.getBooleanExtra(EXTRA_INSECURE, false) ?: prefs.getBoolean("voice_insecure", false)
+        token = prefs.getString("voice_token", "") ?: ""
         wakeEnabled = prefs.getBoolean("wake_enabled", true)
 
         when (intent?.action) {
@@ -78,12 +81,30 @@ class VoiceService : Service() {
         // default / ACTION_STANDBY: mic on, wake word armed, no session yet
         if (url.isEmpty()) { stopSelf(); return START_NOT_STICKY }
         standby = true
-        ensureForeground(); ensureMic()
+        ensureForeground()
+        val p = pending
+        if (p != null) {
+            pending = null
+            submit(p.first, p.second, p.third)
+        } else ensureMic()
         setState(if (wakeEnabled) "standby" else "idle")
         return START_STICKY
     }
 
     // ---- session --------------------------------------------------------
+
+    /** Text/image chat: opens a session if needed, but never turns the mic on by itself. */
+    fun submit(text: String, imageB64: String? = null, speak: Boolean = false) {
+        if (url.isEmpty()) {
+            url = getSharedPreferences("rook", MODE_PRIVATE).getString("voice_url", "") ?: ""
+            if (url.isEmpty()) { VoiceBus.listener?.onError("no voice server configured"); return }
+        }
+        ensureForeground()
+        openSession()
+        val c = client ?: return
+        if (imageB64 != null) c.sendImage(imageB64, text, speak) else c.sendText(text, speak)
+        lastActivityAt = SystemClock.elapsedRealtime()
+    }
 
     private fun openSession() {
         if (client?.isRunning == true) return
@@ -98,12 +119,21 @@ class VoiceService : Service() {
             override fun onAssistantDone() = post { VoiceBus.listener?.onAssistantDone() }
             override fun onInterrupt() = post { VoiceBus.listener?.onInterrupt() }
             override fun onError(msg: String) = post { VoiceBus.listener?.onError(msg) }
+            override fun onTool(title: String, status: String) = post { VoiceBus.listener?.onTool(title, status) }
+            override fun onBye(mode: String, afterMs: Long) = post {
+                Log.i(TAG, "bye mode=$mode after=${afterMs}ms")
+                VoiceBus.listener?.onBye(mode)
+                main.postDelayed({
+                    if (mode == "off") { standby = false; closeSession(); stopMic(); stopForegroundCompat(); stopSelf() }
+                    else closeSession()
+                }, afterMs.coerceIn(0L, 15_000L))
+            }
             override fun onClosed() = post {
                 client = null
                 if (standby) setState(if (wakeEnabled) "standby" else "idle")
                 else { stopMic(); stopForegroundCompat(); stopSelf() }
             }
-        }, ownMic = false).also { it.connect() }
+        }, ownMic = false, token = token).also { it.connect() }
         main.postDelayed(idleCheck, IDLE_CLOSE_MS)
     }
 
@@ -201,7 +231,7 @@ class VoiceService : Service() {
         }
     }
 
-    override fun onDestroy() { standby = false; closeSession(); stopMic(); try { wakeLock?.release() } catch (_: Throwable) {}; wakeLock = null; super.onDestroy() }
+    override fun onDestroy() { inst = null; standby = false; closeSession(); stopMic(); try { wakeLock?.release() } catch (_: Throwable) {}; wakeLock = null; super.onDestroy() }
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun startForegroundCompat(n: Notification) {
@@ -233,6 +263,7 @@ class VoiceService : Service() {
         (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
 
     companion object {
+        @Volatile var inst: VoiceService? = null
         private const val TAG = "VoiceService"
         const val CHANNEL = "rook_voice"
         const val NOTIF_ID = 2
@@ -261,6 +292,17 @@ class VoiceService : Service() {
         fun interrupt(ctx: Context) = ctx.startService(Intent(ctx, VoiceService::class.java).setAction(ACTION_INTERRUPT))
         fun endSession(ctx: Context) = ctx.startService(Intent(ctx, VoiceService::class.java).setAction(ACTION_END_SESSION))
         fun stop(ctx: Context) = ctx.startService(Intent(ctx, VoiceService::class.java).setAction(ACTION_STOP))
+
+        /** Send a typed message (or image), starting the service if it isn't up yet. */
+        fun send(ctx: Context, text: String, imageB64: String? = null, speak: Boolean = false) {
+            val i = inst
+            if (i != null) { i.submit(text, imageB64, speak); return }
+            val prefs = ctx.getSharedPreferences("rook", MODE_PRIVATE)
+            pending = Triple(text, imageB64, speak)
+            fg(ctx, base(ctx, prefs.getString("voice_url", "") ?: "",
+                         prefs.getBoolean("voice_insecure", false)).setAction(ACTION_STANDBY))
+        }
+        @Volatile var pending: Triple<String, String?, Boolean>? = null
     }
 }
 
@@ -274,6 +316,8 @@ object VoiceBus {
         fun onInterrupt()
         fun onError(msg: String)
         fun onWake() {}
+        fun onBye(mode: String) {}
+        fun onTool(title: String, status: String) {}
     }
     @Volatile var state: String = "idle"
     @Volatile var listener: Listener? = null

@@ -1,173 +1,131 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:orientation="vertical">
 
+    <!-- top bar -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:padding="24dp">
-
-        <EditText
-            android:id="@+id/hub"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="@string/hint_hub"
-            android:inputType="textNoSuggestions" />
-
-        <EditText
-            android:id="@+id/psk"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="@string/hint_psk"
-            android:inputType="textPassword" />
-
-        <EditText
-            android:id="@+id/name"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="@string/hint_name"
-            android:inputType="textNoSuggestions" />
-
-        <Button
-            android:id="@+id/btnStart"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/start" />
-
-        <Button
-            android:id="@+id/btnStop"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/stop" />
-
-        <Button
-            android:id="@+id/btnGrantScreen"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/grant_screen" />
-
-        <Button
-            android:id="@+id/btnGrantA11y"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/grant_a11y" />
-
-        <Button
-            android:id="@+id/btnGrantBattery"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/grant_battery" />
-
-        <Button
-            android:id="@+id/btnGrantNotif"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/grant_notif" />
-
-        <Button
-            android:id="@+id/btnGrantPerms"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/grant_perms" />
-
-        <Button
-            android:id="@+id/btnGrantOverlay"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/grant_overlay" />
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="20dp"
+        android:paddingEnd="8dp"
+        android:paddingTop="12dp">
 
         <TextView
-            android:layout_width="match_parent"
+            android:layout_width="0dp"
+            android:layout_weight="1"
             android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
-            android:text="@string/voice_section"
+            android:text="@string/voice_title"
+            android:textSize="20sp"
             android:textStyle="bold" />
 
-        <EditText
-            android:id="@+id/voiceUrl"
-            android:layout_width="match_parent"
+        <TextView
+            android:id="@+id/stateText"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:hint="@string/hint_voice_url"
-            android:inputType="textUri" />
+            android:layout_marginEnd="8dp"
+            android:text="@string/state_idle"
+            android:textSize="12sp" />
 
-        <CheckBox
-            android:id="@+id/voiceInsecure"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:checked="true"
-            android:text="@string/voice_insecure" />
+        <ImageButton
+            android:id="@+id/btnSettings"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/settings"
+            android:src="@android:drawable/ic_menu_preferences" />
+    </LinearLayout>
 
-        <CheckBox
-            android:id="@+id/wakeEnabled"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:checked="true"
-            android:text="@string/wake_enabled" />
+    <!-- transcript -->
+    <ScrollView
+        android:id="@+id/chatScroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp">
 
         <LinearLayout
+            android:id="@+id/chat"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal">
-            <Button
-                android:id="@+id/btnVoiceStandby"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="wrap_content"
-                android:text="@string/voice_standby" />
-            <Button
-                android:id="@+id/btnVoiceOff"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="wrap_content"
-                android:text="@string/voice_off" />
-        </LinearLayout>
+            android:gravity="bottom"
+            android:orientation="vertical"
+            android:paddingBottom="12dp" />
+    </ScrollView>
+
+    <!-- voice controls -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp">
 
         <Button
-            android:id="@+id/btnVoiceStart"
-            android:layout_width="match_parent"
+            android:id="@+id/btnTalk"
+            android:layout_width="0dp"
+            android:layout_weight="1.4"
             android:layout_height="wrap_content"
-            android:text="@string/voice_start" />
+            android:text="@string/btn_talk" />
 
-        <LinearLayout
-            android:layout_width="match_parent"
+        <Button
+            android:id="@+id/btnInterrupt"
+            style="?attr/materialButtonOutlinedStyle"
+            android:layout_width="0dp"
+            android:layout_weight="1"
             android:layout_height="wrap_content"
-            android:orientation="horizontal">
-            <Button
-                android:id="@+id/btnVoiceInterrupt"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="wrap_content"
-                android:text="@string/voice_interrupt" />
-            <Button
-                android:id="@+id/btnVoiceEnd"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="wrap_content"
-                android:text="@string/voice_end" />
-        </LinearLayout>
+            android:layout_marginStart="6dp"
+            android:text="@string/voice_interrupt" />
 
-        <TextView
-            android:id="@+id/voiceState"
-            android:layout_width="match_parent"
+        <Button
+            android:id="@+id/btnSleep"
+            style="?attr/materialButtonOutlinedStyle"
+            android:layout_width="0dp"
+            android:layout_weight="1"
             android:layout_height="wrap_content"
-            android:text="idle"
-            android:textStyle="italic" />
-
-        <TextView
-            android:id="@+id/voiceLog"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:fontFamily="monospace"
-            android:textIsSelectable="true" />
-
-        <TextView
-            android:id="@+id/status"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:fontFamily="monospace"
-            android:textIsSelectable="true" />
+            android:layout_marginStart="6dp"
+            android:text="@string/voice_sleep" />
     </LinearLayout>
-</ScrollView>
+
+    <!-- text + camera input -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        android:paddingTop="4dp"
+        android:paddingBottom="12dp">
+
+        <ImageButton
+            android:id="@+id/btnCamera"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/send_photo"
+            android:src="@android:drawable/ic_menu_camera" />
+
+        <EditText
+            android:id="@+id/input"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"
+            android:hint="@string/hint_message"
+            android:imeOptions="actionSend"
+            android:inputType="textCapSentences|textMultiLine"
+            android:maxLines="4" />
+
+        <Button
+            android:id="@+id/btnSend"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="4dp"
+            android:text="@string/send" />
+    </LinearLayout>
+</LinearLayout>

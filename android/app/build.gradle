@@ -29,6 +29,10 @@ android {
         def rookPsk = (project.findProperty("ROOK_DEFAULT_PSK") ?: System.getenv("ROOK_DEFAULT_PSK") ?: "").toString()
         buildConfigField "String", "DEFAULT_HUB", "\"${rookHub}\""
         buildConfigField "String", "DEFAULT_PSK", "\"${rookPsk}\""
+        def voiceUrl = (project.findProperty("ROOK_VOICE_URL") ?: System.getenv("ROOK_VOICE_URL") ?: "wss://voice.bake.systems/ws").toString()
+        def voiceTok = (project.findProperty("ROOK_VOICE_TOKEN") ?: System.getenv("ROOK_VOICE_TOKEN") ?: "").toString()
+        buildConfigField "String", "DEFAULT_VOICE_URL", "\"${voiceUrl}\""
+        buildConfigField "String", "DEFAULT_VOICE_TOKEN", "\"${voiceTok}\""
     }
 
     buildFeatures {
