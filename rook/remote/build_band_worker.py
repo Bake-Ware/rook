@@ -10,6 +10,7 @@ Output: rook/remote/band-worker.pyz
 from __future__ import annotations
 
 import datetime
+import hashlib
 import shutil
 import subprocess
 import tempfile
@@ -39,18 +40,96 @@ def _git(*args: str) -> str:
         stderr=subprocess.DEVNULL).strip()
 
 
+# -- memorable build names ---------------------------------------------------
+# A build is identified to humans by "<build>.<adjective>.<noun>" — 111.stinky.goat
+# reads back over a call in a way 111.f2ba9ac never did. The pair is derived from
+# the commit hash, so it is deterministic: the same commit always earns the same
+# name, and two builds of different commits never collide by accident. The exact
+# commit is still stamped in COMMIT, so nothing is lost for tracing.
+#
+# Both lists are 128 long and every word is <= 8 characters: 256 // 128 == 2, so
+# indexing a hash byte is unbiased, and the longest possible version string stays
+# short enough for the dashboard's worker cards.
+
+ADJECTIVES = [
+    "stinky", "grumpy", "sleepy", "wobbly", "cranky", "dizzy", "fuzzy", "greasy",
+    "jolly", "lanky", "mopey", "nifty", "plucky", "quirky", "rusty", "shabby",
+    "snappy", "spicy", "sturdy", "tipsy", "wonky", "zesty", "brisk", "chunky",
+    "clumsy", "crispy", "dapper", "drowsy", "feisty", "frisky", "gawky", "giddy",
+    "glum", "gritty", "hasty", "humble", "jaunty", "jumpy", "lively", "loopy",
+    "lumpy", "moody", "mushy", "nimble", "peppy", "perky", "prickly", "puffy",
+    "rowdy", "salty", "sassy", "scruffy", "silly", "sloppy", "smug", "sneaky",
+    "soggy", "spry", "squishy", "stubby", "sulky", "sunny", "swanky", "tangy",
+    "testy", "thorny", "tidy", "twitchy", "uppity", "velvet", "wiry", "witty",
+    "woolly", "zippy", "bumpy", "chilly", "creaky", "curly", "damp", "dusty",
+    "eager", "flaky", "fluffy", "foggy", "frosty", "glossy", "gloomy", "hairy",
+    "hollow", "husky", "icy", "itchy", "khaki", "leaky", "lofty", "murky",
+    "mossy", "muddy", "nutty", "oily", "pesky", "pudgy", "quaint", "rugged",
+    "rustic", "shaggy", "shiny", "sleek", "slick", "smoky", "snug", "sour",
+    "sparse", "spotty", "steady", "sticky", "stormy", "sweaty", "tender", "toasty",
+    "wispy", "yappy", "bouncy", "breezy", "burly", "chewy", "crusty", "dainty",
+]
+
+NOUNS = [
+    "goat", "badger", "otter", "walrus", "ferret", "gopher", "moose", "newt",
+    "ocelot", "panda", "quail", "raccoon", "shrew", "sloth", "toad", "vole",
+    "weasel", "yak", "zebra", "beetle", "cactus", "kettle", "lantern", "muffin",
+    "nugget", "pickle", "pretzel", "pudding", "rocket", "shovel", "sponge", "teapot",
+    "thimble", "tractor", "trumpet", "turnip", "waffle", "walnut", "wagon", "anchor",
+    "anvil", "bagel", "banjo", "barrel", "beacon", "bison", "blimp", "bobcat",
+    "boulder", "bucket", "bugle", "bunny", "burrito", "camel", "candle", "canoe",
+    "carrot", "chisel", "cobra", "comet", "compass", "cricket", "crumpet", "dagger",
+    "dingo", "donkey", "dragon", "drum", "eagle", "falcon", "fennec", "fiddle",
+    "finch", "gadget", "gecko", "gerbil", "gizmo", "gnome", "grouse", "hamster",
+    "harbor", "heron", "hippo", "hornet", "iguana", "jackal", "kazoo", "kelp",
+    "koala", "lemur", "lizard", "llama", "lobster", "locust", "magnet", "mammoth",
+    "marmot", "meerkat", "mule", "narwhal", "oyster", "parrot", "peanut", "pelican",
+    "penguin", "pigeon", "possum", "prawn", "puffin", "python", "rabbit", "radish",
+    "raven", "robin", "salmon", "skunk", "snail", "sparrow", "spider", "squid",
+    "stork", "tapir", "terrier", "tiger", "toucan", "turtle", "urchin", "wombat",
+]
+
+assert len(ADJECTIVES) == len(NOUNS) == 128, "word lists must stay 128 long"
+assert len(set(ADJECTIVES)) == len(set(NOUNS)) == 128, "word lists must be unique"
+
+
+def build_name(commit: str, dirty: bool = False) -> str:
+    """Deterministic "<adjective>.<noun>" for a commit.
+
+    A dirty tree takes ``dirty`` as its adjective — an unmistakable marker that
+    the bundle does not match any commit. The noun still comes from the commit,
+    so two dirty builds of different commits remain distinguishable.
+    """
+    h = hashlib.sha256(commit.encode()).digest()
+    adjective = "dirty" if dirty else ADJECTIVES[h[0] % len(ADJECTIVES)]
+    return f"{adjective}.{NOUNS[h[1] % len(NOUNS)]}"
+
+
 def compute_build() -> tuple[int, str, str]:
     """Return (build, commit, version). ``build`` is git's commit count — a
-    monotonic integer that the OTA self-update compares. Falls back to
-    (0, "", "0.dev") outside a git checkout, which disables auto-update for
-    that bundle (0 is never greater than a published build)."""
+    monotonic integer that the OTA self-update compares. ``version`` is the
+    human-facing "<build>.<adjective>.<noun>". Falls back to (0, "", "0.dev")
+    outside a git checkout, which disables auto-update for that bundle (0 is
+    never greater than a published build)."""
     try:
         build = int(_git("rev-list", "--count", "HEAD"))
         commit = _git("rev-parse", "--short", "HEAD")
-        dirty = bool(_git("status", "--porcelain"))
-        version = f"{build}.{commit}" + ("+dirty" if dirty else "")
+        # Only TRACKED changes can alter what goes into the bundle, so only they
+        # make it dirty. Counting untracked files here tagged every build +dirty
+        # over a stray backup file sitting in the clone — a warning that fires
+        # constantly is one you learn to ignore, exactly when it starts mattering.
+        dirty = bool(_git("status", "--porcelain", "--untracked-files=no"))
+        version = f"{build}.{build_name(commit, dirty)}"
         if dirty:
-            print("WARNING: building from a dirty tree — version tagged +dirty")
+            print("WARNING: building from a dirty tree (tracked files modified) "
+                  "— version tagged as dirty")
+        untracked = _git("status", "--porcelain", "--untracked-files=normal")
+        stray = [ln[3:] for ln in untracked.splitlines() if ln.startswith("??")]
+        if stray:
+            print(f"note: {len(stray)} untracked file(s) in the tree, ignored for "
+                  f"versioning: {', '.join(stray[:3])}"
+                  + (" …" if len(stray) > 3 else ""))
+        print(f"Build {build} is \"{version}\" (commit {commit})")
         return build, commit, version
     except Exception as e:
         print(f"WARNING: could not derive version from git ({e}); "
