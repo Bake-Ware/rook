@@ -92,6 +92,33 @@
   .name .n{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .name .id{color:var(--dim2);font-size:.72rem}
   .tagfw{font-size:.64rem;color:var(--warn);border:1px solid #3a2f18;background:#1c150a;border-radius:5px;padding:1px 6px}
+  .sesshead{display:flex;align-items:flex-start;gap:16px;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap}
+  .sesshead h2{margin:0 0 4px;font-size:1.05rem}
+  .sesshint{margin:0;color:var(--dim);font-size:.78rem;max-width:52ch;line-height:1.5}
+  #sessworker{background:var(--card);color:var(--fg);border:1px solid var(--line);
+    border-radius:8px;padding:8px 12px;font:inherit;font-size:.82rem;min-width:170px}
+  .sesslist{display:flex;flex-direction:column;gap:8px}
+  .sess{display:flex;align-items:center;gap:14px;background:var(--card);
+    border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+  .sess:hover{border-color:var(--dim2)}
+  .sess .sbody{flex:1;min-width:0}
+  .sess .stitle{font-weight:600;font-size:.88rem;white-space:nowrap;overflow:hidden;
+    text-overflow:ellipsis}
+  .sess .smeta{color:var(--dim);font-size:.72rem;margin-top:3px;white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis}
+  .sess .smeta code{color:var(--dim2);font-size:.72rem}
+  .btn-resume{background:var(--accent);color:#04231b;border:0;border-radius:7px;
+    padding:7px 15px;font:inherit;font-size:.78rem;font-weight:600;cursor:pointer;
+    flex:0 0 auto}
+  .btn-resume:hover{filter:brightness(1.1)}
+  .btn-resume:disabled{opacity:.45;cursor:default;filter:none}
+  .sess.isup{border-color:var(--accent)}
+  .uptag{color:var(--accent);font-size:.7rem;font-weight:600;letter-spacing:.4px;
+    text-transform:uppercase;flex:0 0 auto}
+  .sessnote{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--accent);
+    border-radius:8px;padding:11px 14px;margin-bottom:14px;font-size:.8rem;line-height:1.5}
+  .sessnote.bad{border-left-color:var(--warn)}
+  .sessempty{color:var(--dim);font-size:.84rem;padding:26px 2px}
   .ver{font-size:.78rem;color:var(--accent);font-weight:600;width:150px;flex:0 0 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .ver.old{color:var(--warn)} .ver.none{color:var(--dim2)}
   .batt{display:inline-flex;align-items:center;gap:4px;font-size:.7rem;color:var(--dim);flex:0 0 auto;
@@ -302,6 +329,7 @@
     <nav>
       <a id="tab-workers" class="active" onclick="showView('workers')">Workers</a>
       <a id="tab-chat" onclick="showView('chat')">Chat</a>
+      <a id="tab-sessions" onclick="showView('sessions')">Sessions</a>
       <a id="tab-install" onclick="showView('install')">Install</a>
       <a id="link-tokens" target="_blank" rel="noopener">Tokens</a>
       <a href="/apk">APK</a>
@@ -402,6 +430,20 @@
     </div>
 
     <!-- INSTALL VIEW -->
+    <div id="view-sessions" hidden>
+      <div class="sesshead">
+        <div>
+          <h2>Claude Code sessions</h2>
+          <p class="sesshint">Conversations stored on your machines. Resume puts one
+             back online with Remote&nbsp;Control, so you can pick it up from
+             claude.ai without being at the keyboard.</p>
+        </div>
+        <select id="sessworker" onchange="loadSessions()"></select>
+      </div>
+      <div id="sesslive"></div>
+      <div id="sesslist" class="sesslist"></div>
+    </div>
+
     <div id="view-install" hidden>
       <div class="install">
         <h2>Add a worker</h2>
@@ -759,10 +801,104 @@ function renderCapResult(out,cap,reply){
 
 /* ---- views / install ---- */
 function showView(v){
-  for(const n of ['workers','chat','install']){
+  for(const n of ['workers','chat','sessions','install']){
     $('#view-'+n).hidden=v!==n; $('#tab-'+n).classList.toggle('active',v===n);
   }
   if(v==='chat'){ startChat(); } else { stopChat(); }
+  if(v==='sessions'){ startSessions(); } else { stopSessions(); }
+}
+
+/* ---- sessions panel: Claude Code conversations + Remote Control resume ---- */
+// Only workers that actually store Claude Code history announce claude-history.*,
+// so the picker is built from the live roster rather than a fixed list.
+let sessTimer=null, sessWorker=null, sessBusy=null;
+
+function ccWorkers(){
+  return workers.filter(w=>(w.caps||[]).includes('claude-history.pull'))
+                .sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+}
+
+function startSessions(){
+  const sel=$('#sessworker'), list=ccWorkers();
+  const keep=sessWorker && list.some(w=>w.worker_id===sessWorker) ? sessWorker
+           : (list[0]||{}).worker_id;
+  sel.innerHTML=list.map(w=>`<option value="${w.worker_id}">${esc(w.name||w.worker_id)}</option>`).join('')
+    || '<option value="">no worker with Claude history</option>';
+  sessWorker=keep||null; if(sessWorker) sel.value=sessWorker;
+  loadSessions();
+  // Resumed sessions take a moment to reach claude.ai; refresh so the live
+  // banner appears without the user reloading.
+  sessTimer=setInterval(loadLiveSessions,5000);
+}
+function stopSessions(){ if(sessTimer){clearInterval(sessTimer); sessTimer=null;} }
+
+function ago(secs){
+  if(secs==null) return '';
+  const m=Math.round(secs/60); if(m<60) return m+'m ago';
+  const h=Math.round(m/60); if(h<48) return h+'h ago';
+  return Math.round(h/24)+'d ago';
+}
+function tilde(p){ return (p||'').replace(/^\/home\/[^/]+/,'~').replace(/^\/Users\/[^/]+/,'~'); }
+
+async function loadSessions(){
+  sessWorker=$('#sessworker').value||null;
+  const list=$('#sesslist');
+  if(!sessWorker){ list.innerHTML='<div class="sessempty">No worker on the band is storing Claude Code history.</div>'; return; }
+  list.innerHTML='<div class="sessempty">loading…</div>';
+  const reply=await bandCall('claude-history.pull',sessWorker,{limit:25},25);
+  const res=reply.result||{};
+  if(!res.ok){ list.innerHTML=`<div class="sessnote bad">${esc(res.error||reply.error||'could not read sessions')}</div>`; return; }
+  const sessions=(res.sessions||[]).filter(x=>(x.message_count||0)>0);
+  if(!sessions.length){ list.innerHTML='<div class="sessempty">No sessions recorded on this machine yet.</div>'; return; }
+  list.innerHTML=sessions.map(sessRow).join('');
+  loadLiveSessions();
+}
+
+function sessRow(x){
+  const age=x.last_modified? ago((Date.now()/1000)-x.last_modified) : '';
+  const meta=[tilde(x.cwd)||x.project, x.git_branch, (x.message_count||0)+' msgs', age]
+             .filter(Boolean).map(esc).join(' &middot; ');
+  return `<div class="sess" id="sess-${esc(x.session_id)}">
+    <div class="sbody">
+      <div class="stitle">${esc(x.title||'(untitled)')}</div>
+      <div class="smeta">${meta}</div>
+    </div>
+    <span class="uptag" hidden>live</span>
+    <button class="btn-resume" onclick="resumeSession('${esc(x.session_id)}',this)">Resume</button>
+  </div>`;
+}
+
+// Mark sessions the worker already has running, so Resume can't be pressed
+// twice — two `claude --resume` on one id would both write the same transcript.
+async function loadLiveSessions(){
+  if(!sessWorker || $('#view-sessions').hidden) return;
+  const reply=await bandCall('claude-history.resumed',sessWorker,{},15);
+  const up=new Set(((reply.result||{}).sessions||[]).filter(s=>s.running).map(s=>s.session_id));
+  for(const el of document.querySelectorAll('.sess')){
+    const id=el.id.replace(/^sess-/,''), isUp=up.has(id);
+    el.classList.toggle('isup',isUp);
+    el.querySelector('.uptag').hidden=!isUp;
+    const b=el.querySelector('.btn-resume');
+    if(sessBusy===id) continue;
+    b.disabled=isUp; b.textContent=isUp?'running':'Resume';
+  }
+}
+
+async function resumeSession(sid,btn){
+  sessBusy=sid; btn.disabled=true; btn.textContent='starting…';
+  const note=$('#sesslive');
+  const reply=await bandCall('claude-history.resume',sessWorker,{session_id:sid},40);
+  const res=reply.result||{};
+  sessBusy=null;
+  if(res.ok){
+    note.innerHTML=`<div class="sessnote"><b>${esc(res.title||res.short_id)}</b> is back online
+      as <b>${esc(res.name||'')}</b> on ${esc(wname(sessWorker))}${res.cwd?' in <code>'+esc(tilde(res.cwd))+'</code>':''}.
+      Open it from Remote Control in claude.ai — it should appear within a few seconds.</div>`;
+  }else{
+    btn.disabled=false; btn.textContent='Resume';
+    note.innerHTML=`<div class="sessnote bad">Could not resume: ${esc(res.error||reply.error||'unknown error')}${res.hint?' — '+esc(res.hint):''}</div>`;
+  }
+  loadLiveSessions();
 }
 
 /* ---- chat panel ---- */

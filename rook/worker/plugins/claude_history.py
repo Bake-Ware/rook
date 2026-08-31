@@ -9,6 +9,14 @@ Claude Code stores conversation sessions as JSONL files at
 The ``machine`` argument from the SDD is accepted for caller-side ergonomics
 but ignored here: the worker is already running on the target machine, so
 cross-host routing is the orchestrator's responsibility.
+
+``resume`` is the write half: it relaunches a stored session on this machine
+with Remote Control enabled, so a conversation that was closed on the PC
+becomes reachable again from claude.ai without anyone being at the keyboard.
+It runs the session through ``proc.*`` (pty-backed — Remote Control needs an
+interactive session, which needs a tty), so the relaunched session is a normal
+worker process: visible in ``proc.list``, signalable, and pumped into a console
+room the band can watch.
 """
 
 from __future__ import annotations
@@ -61,6 +69,23 @@ def _read_lines(p: Path) -> Iterable[dict]:
                     continue
     except OSError:
         return
+
+
+def _claude_bin() -> str | None:
+    """Locate the Claude Code CLI. On Windows npm installs it as a .cmd shim,
+    which shutil.which misses unless asked by that name."""
+    import shutil
+    if sys.platform == "win32":
+        found = shutil.which("claude") or shutil.which("claude.cmd")
+        if found:
+            return found
+        for c in (r"C:\nvm4w\nodejs\claude.cmd",
+                  str(Path(os.environ.get("APPDATA", "")) / "npm" / "claude.cmd"),
+                  r"C:\Program Files\nodejs\claude.cmd"):
+            if os.path.exists(c):
+                return c
+        return None
+    return shutil.which("claude")
 
 
 def _short_id(sid: str) -> str:
@@ -195,9 +220,117 @@ def _session_meta(p: Path) -> dict:
 class ClaudeHistoryPlugin(Plugin):
     NAMESPACE = "claude-history"
 
+    def __init__(self) -> None:
+        super().__init__()
+        self._worker = None
+        # session_id -> proc handle, for sessions this plugin relaunched. Used
+        # to refuse a second resume of a conversation that is already live —
+        # two `claude --resume` processes on one session id would both write
+        # the same transcript.
+        self._resumed_handles: dict[str, str] = {}
+
+    def bind_worker(self, worker) -> None:
+        """Grab a handle to the Worker so resume can drive the proc.* caps
+        instead of growing its own copy of process management."""
+        self._worker = worker
+
     def available(self) -> bool:
         # Only where Claude Code history actually lives on this host.
         return _default_root().is_dir()
+
+    @capability("resume")
+    async def _resume(self, session_id: str, path: str | None = None,
+                      name: str | None = None, cwd: str | None = None,
+                      remote_control: bool = True,
+                      machine: str | None = None) -> dict:
+        """Relaunch a stored Claude Code session on this machine.
+
+        For picking a conversation back up when it was closed on the PC and you
+        are somewhere else: the session restarts here with Remote Control on, so
+        it reappears in claude.ai and you carry on from your phone or laptop.
+        Nothing is sent to the model — this only puts the session back online.
+
+        Runs in the session's own recorded ``cwd`` (override with ``cwd``) under
+        a pty, because Remote Control starts an *interactive* session. ``name``
+        labels it in the Remote Control list, defaulting to the conversation's
+        own title. Returns the proc ``handle``, so the caller can watch it come
+        up and stop it with ``proc.signal``/``proc.close``.
+        """
+        if self._worker is None or not self._worker.registry.has("proc.start"):
+            return {"ok": False, "error": "proc.* capability unavailable on this "
+                                          "worker; update it to resume sessions"}
+        root = _expand(path)
+        sp = _resolve_session(root, session_id)
+        if sp is None:
+            return {"ok": False, "error": "session not found",
+                    "session_id": session_id, "root": str(root)}
+        meta = _session_meta(sp)
+        full_id = meta["session_id"]
+
+        # Already live? Relaunching would fork the transcript in place.
+        existing = self._resumed_handles.get(full_id)
+        if existing:
+            live = await self._worker.registry.call("proc.list")
+            for s in live.get("sessions", []):
+                if s.get("handle") == existing and s.get("running"):
+                    return {"ok": False, "error": "session is already running",
+                            "session_id": full_id, "handle": existing,
+                            "hint": "stop it with proc.close before resuming again"}
+            self._resumed_handles.pop(full_id, None)
+
+        binary = _claude_bin()
+        if binary is None:
+            return {"ok": False, "error": "claude CLI not found on this machine"}
+
+        workdir = cwd or meta.get("cwd")
+        if workdir and not os.path.isdir(workdir):
+            # The recorded cwd can be gone (repo moved, worktree removed).
+            # Say so rather than letting the spawn fail with a bare ENOENT.
+            return {"ok": False, "error": f"session cwd no longer exists: {workdir}",
+                    "session_id": full_id,
+                    "hint": "pass cwd= to resume it somewhere else"}
+
+        argv = [binary, "--resume", full_id]
+        label = name or meta.get("title") or _short_id(full_id)
+        if remote_control:
+            argv += ["--remote-control", label[:80]]
+
+        started = await self._worker.registry.call(
+            "proc.start", argv=argv, cwd=workdir, pty=True,
+            label=f"claude: {label}"[:200])
+        if not started.get("ok"):
+            return {"ok": False, "error": started.get("error", "spawn failed"),
+                    "session_id": full_id}
+        self._resumed_handles[full_id] = started["handle"]
+        return {"ok": True, "session_id": full_id, "short_id": _short_id(full_id),
+                "title": meta.get("title"), "name": label, "cwd": workdir,
+                "remote_control": bool(remote_control),
+                "handle": started["handle"], "pid": started.get("pid"),
+                "note": ("Session is starting with Remote Control enabled — it "
+                         "should appear in claude.ai shortly. Read its output "
+                         "with proc.read(handle) if it doesn't."
+                         if remote_control else
+                         "Session is starting; it is local-only (no Remote Control).")}
+
+    @capability("resumed")
+    async def _resumed_list(self) -> dict:
+        """Sessions this worker relaunched and whether they're still up."""
+        if self._worker is None or not self._worker.registry.has("proc.list"):
+            return {"ok": True, "sessions": []}
+        live = await self._worker.registry.call("proc.list")
+        by_handle = {s.get("handle"): s for s in live.get("sessions", [])}
+        out = []
+        for sid, handle in list(self._resumed_handles.items()):
+            s = by_handle.get(handle)
+            if s is None:
+                self._resumed_handles.pop(sid, None)
+                continue
+            out.append({"session_id": sid, "short_id": _short_id(sid),
+                        "handle": handle, "running": s.get("running"),
+                        "exit_code": s.get("exit_code"),
+                        "label": s.get("label"),
+                        "age_secs": s.get("age_secs")})
+        return {"ok": True, "sessions": out}
 
     @capability("pull")
     def _pull(self, machine: str | None = None, path: str | None = None,
