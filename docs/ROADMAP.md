@@ -158,6 +158,39 @@ Legend: ✅ shipped and verified live · ⚠️ exists but partial/unverified ·
 - [ ] **Install-URL gate**: strong install token minted at `/tokens`; stop serving
       the PSK to anonymous `GET /worker`.
 
+### Per-window streaming (RDP per window, over rook)
+
+Stream any window from any fleet machine to wherever you are working, including
+into kwin-vr, where a forwarded window is just another compositor texture.
+Grew out of the kwin-vr side project that used telesthete to stream windows.
+
+**Shape (decided):** the band brokers, the pixels go direct. The band fragments at
+1003 B/packet with no retransmit and the hub broadcasts to every peer, so video
+through the relay is a non-starter (same reason console rooms are pull-not-push).
+Input already exists (`hid.type`, `hid.mouse.*`, `hid.key_combo` on desktop workers);
+what is missing is the picture.
+
+- **Rook's part** is a small namespace: `window.list`, `window.open(id) -> rendezvous`,
+  `window.close`. Rides the band, lands in the journal like any cap.
+- **Pixels** ride a separate transport: telesthete Stream over a direct WebSocket
+  between the two peers on the LAN (rook hands out the address). Off-LAN needs a
+  dedicated stream relay next to the hub; decide up front whether day one needs it.
+
+**Milestone 1 (Linux sources, LAN):** waypipe already is RDP-per-window for Wayland
+and presents remote surfaces as ordinary local windows, so kwin-vr gets them free.
+1. `window.list` on Linux workers (portal or KWin scripting).
+2. `window.open` launches waypipe on the source via `proc.start` (console room gives
+   lifecycle + logs) and returns the endpoint.
+3. Host connects; the compositor sees a native window.
+
+**Milestone 2 (Windows sources):** capture per HWND with Windows.Graphics.Capture,
+hardware H.264 out, a small Wayland client on the host that decodes into a surface.
+Android stays whole-screen (MediaProjection).
+
+**Open question it forces:** session ownership. Nothing arbitrates two agents wanting
+the same machine today; a human in VR holding a streamed window is the first case
+where that actually hurts. Pair this with the scheduler item.
+
 ## 4. Later
 
 - [ ] PSK rotation via `worker.reconfigure`, then per-worker identity (F2).
