@@ -841,9 +841,22 @@ def build_server(client: "BandClient | MultiBandClient",
 
 
 async def _amain(args) -> None:
-    client = MultiBandClient(psks=args.psks, hub_host=args.hub_host,
+    from ..remote.enrollment import EnrollmentStore
+    enrollment = EnrollmentStore()
+    enrollment.import_config(args.psks)
+    client = MultiBandClient(psks=[b["psk"] for b in enrollment.bands(active_only=True, secrets_visible=True)], hub_host=args.hub_host,
                              hub_port=args.hub_port)
     await client.start()
+
+    async def watch_enrollment():
+        while True:
+            try:
+                await client.sync_bands([b["psk"] for b in enrollment.bands(active_only=True, secrets_visible=True)])
+            except Exception:
+                log.exception("could not sync band enrollment")
+            await asyncio.sleep(2)
+
+    enrollment_task = asyncio.create_task(watch_enrollment())
 
     allowed_hosts = [h.strip() for h in (args.allowed_hosts or "").split(",")
                      if h.strip()]
@@ -897,6 +910,11 @@ async def _amain(args) -> None:
     try:
         await server.serve()
     finally:
+        enrollment_task.cancel()
+        try:
+            await enrollment_task
+        except asyncio.CancelledError:
+            pass
         # Tear down WS bridge before stopping transport.
         await pump.stop()
         if ws_bridge is not None:

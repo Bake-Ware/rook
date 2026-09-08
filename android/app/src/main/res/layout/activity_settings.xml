@@ -9,6 +9,21 @@
         android:orientation="vertical"
         android:padding="24dp">
 
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="Get your band configurations" android:textStyle="bold" />
+        <EditText android:id="@+id/accountServer" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:hint="Rook server"
+            android:inputType="textUri" android:text="https://rook.bakeforge.com" />
+        <Button android:id="@+id/btnGoogle" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:text="Sign in with Google" />
+        <Button android:id="@+id/btnSavedBands" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:text="Choose a saved band" />
+        <EditText android:id="@+id/pairingCode" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:hint="Six-character pairing code"
+            android:inputType="textNoSuggestions" android:maxLength="6" />
+        <Button android:id="@+id/btnPair" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:text="Fetch band with pairing code" />
+
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

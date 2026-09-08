@@ -18,6 +18,13 @@ from .server import RemoteWorker
 
 log = logging.getLogger(__name__)
 
+
+class InstallerAccessLogger(web.AbstractAccessLogger):
+    """Keep short-lived join codes out of application HTTP access logs."""
+    def log(self, request, response, elapsed):
+        self.logger.info('%s %s %s %s', request.remote, request.method,
+                         request.path, response.status)
+
 import re as _re
 _HERMES_ANSI = _re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _HERMES_BOX = "─│╱╲╳┌┐└┘├┤┬┴┼═║╔╗╚╝╠╣╦╩╬▀▄█▌▐░▒▓⚕☤┊⚡•·"
@@ -189,8 +196,9 @@ if (-not (Test-Path $vpyw)) {{ $vpyw = $vpy }}  # fallback if pythonw is absent
 # mss+pillow back screenshot.* (see rook/worker/plugins/screenshot.py); hid.* needs
 # nothing extra - it's stdlib ctypes SendInput. windows-curses gives the chat.open
 # receiver window a curses UI (chat falls back to a plain line client without it).
-Write-Host "[r00k] installing dependencies (pynacl aiohttp websockets mss pillow windows-curses)..."
-& $vpy -m pip install --quiet pynacl aiohttp websockets mss pillow windows-curses
+Write-Host "[r00k] installing worker dependencies..."
+& $vpy -m pip install --quiet pynacl aiohttp websockets cryptography mss pillow windows-curses
+if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}
 
 # Download band-worker bundle
 $pyz = "$env:USERPROFILE\\.rook-band-worker\\band-worker.pyz"
@@ -410,8 +418,8 @@ VPY="$VENV/bin/python"
 "$VPY" -m pip install --quiet --upgrade pip &>/dev/null || true
 
 # Install required dependencies into the venv (prebuilt wheels — no compiler needed)
-echo "[r00k] installing dependencies (pynacl aiohttp websockets)..."
-"$VPY" -m pip install --quiet pynacl aiohttp websockets || {{
+echo "[r00k] installing worker dependencies..."
+"$VPY" -m pip install --quiet pynacl aiohttp websockets cryptography || {{
     echo "[r00k] ERROR: dependency install failed. See output above."
     exit 1
 }}
@@ -532,7 +540,16 @@ case "$TARGET" in tui|controller|dashboard) TARGET=cli;; node|agent) TARGET=work
 
 install_worker() {
   echo "[rook] installing band worker…"
-  curl -fsSL "$BASE/worker" | bash
+  local JOIN_CODE="${ROOK_JOIN_CODE:-__JOIN_CODE__}"
+  if [ -z "$JOIN_CODE" ] && [ -r /dev/tty ]; then
+    printf '[rook] pairing code, or Enter to sign in with Google/local account: ' > /dev/tty
+    read -r JOIN_CODE < /dev/tty
+  fi
+  if [ -z "$JOIN_CODE" ]; then
+    curl -fsSL "$BASE/worker?login=google" | bash
+    return
+  fi
+  curl -fsSL "$BASE/worker?band=$JOIN_CODE" | bash
 }
 
 ensure_python() {
@@ -971,7 +988,11 @@ class CombinedServer:
         self._push_task = None  # background: push signed manifest to behind workers
         # Known bands for the dashboard selector. PSKs stay server-side; the UI
         # only ever sees the band_id label (first 8 hex of SHA256(PSK)[:16]).
-        self._bands = setup_store.load_bands()
+        from .enrollment import EnrollmentStore
+        self._enrollment = EnrollmentStore()
+        self._enrollment.import_config([self.band_psk], hub=self.hub_public)
+        self._bands = self._enrollment.bands(active_only=True, secrets_visible=True)
+        self._enrollment_task = None
         self._bans = setup_store.load_bans()   # deauthed workers (by name / worker_id)
         self._band_names: dict[str, str] = {}  # band_id label -> friendly name
         self._primary_label = ""               # the configured band; not removable
@@ -980,8 +1001,10 @@ class CombinedServer:
             for _b in self._bands:
                 _lbl = derive_band_id(_b["psk"]).hex()[:8]
                 self._band_names.setdefault(_lbl, _b["name"])
-            if self.band_psk:
-                self._primary_label = derive_band_id(self.band_psk).hex()[:8]
+            _primary = next((b for b in self._bands if b["is_primary"]), None)
+            if _primary:
+                self.band_psk = _primary["psk"]
+                self._primary_label = _primary["label"]
         except Exception:
             log.warning("could not derive band labels; selector names may be blank")
         self._workers: dict[str, RemoteWorker] = {}
@@ -991,8 +1014,10 @@ class CombinedServer:
         self._app = web.Application(middlewares=[self._basic_auth_middleware])
         self._app.router.add_get("/", self._index)
         self._app.router.add_get("/worker", self._worker_bootstrap)
+        self._app.router.add_post("/enroll", self._enroll_config)
         self._app.router.add_get("/worker.py", self._worker_script)
         self._app.router.add_get("/band-worker.pyz", self._band_worker_pyz)
+        self._app.router.add_get("/band-worker-enrollment.pyz", self._band_worker_pyz)
         self._app.router.add_get("/band-worker.json", self._band_worker_manifest)
         self._app.router.add_get("/apk", self._worker_apk)
         self._app.router.add_get("/install", self._installer)    # unified installer (worker | cli | both)
@@ -1002,6 +1027,7 @@ class CombinedServer:
         self._app.router.add_get("/telesthete-hub", self._hub_binary)  # prebuilt hub binary (arch-gated)
         self._app.router.add_get("/api/bands", self._api_bands)
         self._app.router.add_post("/api/bands", self._api_add_band)
+        self._app.router.add_post("/api/bands/psk", self._api_generate_psk)
         self._app.router.add_delete("/api/bands/{id}", self._api_remove_band)
         self._app.router.add_get("/api/band/workers", self._api_band_workers)
         self._app.router.add_post("/api/band/call", self._api_band_call)
@@ -1028,6 +1054,9 @@ class CombinedServer:
         self._app.router.add_get("/setup", self._setup_page)
         self._app.router.add_post("/setup", self._setup_submit)
         self._app.router.add_get("/health", self._health)
+        from .account_web import AccountWeb
+        self._accounts = AccountWeb(self)
+        self._accounts.install(self._app)
         self._runner: web.AppRunner | None = None
 
         # Register web UI routes before server starts
@@ -1062,17 +1091,28 @@ class CombinedServer:
         import base64
         from . import setup_store
 
+        # Account routes enforce their own sessions, CSRF and band ownership.
+        # A Google/member login never unlocks the legacy global admin APIs.
+        if self._accounts.handles(request.path):
+            if (request.path == "/account" and not self._accounts.current(request)
+                    and self.web_pass and self._accounts.bootstrap_id
+                    and request.cookies.get("rook_session") == self._make_session_cookie()):
+                return self._accounts.signed_in(self._accounts.bootstrap_id)
+            return await handler(request)
+
         # Always public: worker bootstrap/artifacts, health, websockets.
-        exempt = ("/ws", "/health", "/worker", "/worker.py", "/band-worker.pyz",
-                  "/band-worker.json", "/apk", "/install", "/rook", "/rook.py",
+        exempt = ("/ws", "/health", "/worker", "/worker.py", "/band-worker.pyz", "/band-worker-enrollment.pyz",
+                  "/band-worker.json", "/enroll", "/install", "/rook", "/rook.py",
                   "/hub", "/telesthete-hub")
-        is_exempt = request.path == "/ws/ui" or any(
+        is_exempt = any(
             request.path == p or request.path.startswith(p + "/") for p in exempt)
+        if request.path == "/apk" and os.environ.get("ROOK_PUBLIC_APK_SHA256"):
+            is_exempt = True  # handler verifies the exact approved generic artifact
 
         # First-run gate: until the band has a PSK + public hub address, force the
         # setup wizard. Runs before the password shortcut so an unconfigured,
         # password-less hub still can't be used until it's set up.
-        if not setup_store.is_configured():
+        if not setup_store.is_configured() and not any(b["is_primary"] for b in self._enrollment.bands()):
             if request.path == "/setup":
                 return await handler(request)
             if is_exempt:
@@ -1083,6 +1123,20 @@ class CombinedServer:
 
         if is_exempt or not self.web_pass:
             return await handler(request)
+
+        account_user = self._accounts.current(request)
+        if account_user and request.path == "/logout":
+            self._accounts.store.logout(request.cookies.get("rook_account", ""))
+            response = web.HTTPFound("/account/login")
+            response.del_cookie("rook_account")
+            response.del_cookie("rook_session")
+            return response
+        if account_user and account_user["admin"]:
+            if request.path == "/login":
+                raise web.HTTPFound("/")
+            return await handler(request)
+        if account_user and request.path == "/":
+            raise web.HTTPFound("/account")
 
         # Login endpoint — username + password.
         if request.path == "/login" and request.method == "POST":
@@ -1166,6 +1220,7 @@ button:hover{{background:#22b88f}}
 <input name="pass" type="password" placeholder="Password" required autocomplete="current-password">
 <button type="submit">Sign in</button>
 </form>
+<p style="margin-top:18px"><a style="color:#2dd4a7" href="/account/login">Google or personal account login</a></p>
 </div></body></html>"""
 
     def _setup_page_html(self, error: str = "") -> str:
@@ -1175,7 +1230,9 @@ button:hover{{background:#22b88f}}
         band_name = _html.escape(s.get("band_name") or self.band_name)
         hub_public = _html.escape(s.get("hub_public") or "")
         pyz_domain = _html.escape(s.get("pyz_domain") or "")
-        band_psk = _html.escape(s.get("band_psk") or setup_store.gen_psk())
+        primary = next((b for b in self._enrollment.bands(secrets_visible=True) if b["is_primary"]), None)
+        current_key = (primary["psk"] if primary["active"] else "") if primary else s.get("band_psk")
+        band_psk = _html.escape(current_key or setup_store.gen_psk())
         err = f'<div class="err">{_html.escape(error)}</div>' if error else ""
         return f"""<!DOCTYPE html>
 <html><head><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -1207,14 +1264,15 @@ button:hover{{background:#22b88f}}
 <input name="pyz_domain" value="{pyz_domain}" placeholder="hub.mydomain.com" required>
 <small>Domain that serves <code>band-worker.pyz</code> in the one-line installer.</small>
 <label>Band PSK</label>
-<input name="band_psk" value="{band_psk}" required>
-<small>Pre-shared key defining band identity. Keep it secret; change it to rotate.</small>
+<input name="band_psk" value="{band_psk}" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" required>
+<small>New keys use five random words separated by hyphens. Type the key exactly, including hyphens. Use Tokens to replace or revoke an existing band key.</small>
 <button type="submit">Save &amp; activate band</button>
 </form>
 </div></body></html>"""
 
     async def _setup_page(self, request: web.Request) -> web.Response:
-        return web.Response(text=self._setup_page_html(), content_type="text/html")
+        return web.Response(text=self._setup_page_html(), content_type="text/html",
+                            headers={"Cache-Control": "no-store"})
 
     async def _setup_submit(self, request: web.Request) -> web.Response:
         from . import setup_store
@@ -1229,18 +1287,25 @@ button:hover{{background:#22b88f}}
             return web.Response(
                 text=self._setup_page_html("Public hub address, installer domain, and band PSK are all required."),
                 content_type="text/html",
+                headers={"Cache-Control": "no-store"},
             )
+        primary = next((b for b in self._enrollment.bands(secrets_visible=True) if b["is_primary"]), None)
+        if primary and (not primary["active"] or vals["band_psk"] != primary["psk"]):
+            return web.Response(text=self._setup_page_html("Use the Tokens page to replace or revoke the band PSK."),
+                                status=400, content_type="text/html", headers={"Cache-Control": "no-store"})
         saved = setup_store.save(vals)
         # Apply live so the installer one-liners reflect the new band immediately.
         self.band_name = saved["band_name"]
         self.band_psk = saved["band_psk"]
         self.hub_public = saved["hub_public"]
         self.domain = saved["pyz_domain"]
+        self._enrollment.import_config(hub=self.hub_public)
+        await self._sync_enrollment()
         log.info("Setup wizard: band '%s' configured (hub=%s)", self.band_name, self.hub_public)
         raise web.HTTPFound("/")
 
     async def start(self) -> None:
-        self._runner = web.AppRunner(self._app)
+        self._runner = web.AppRunner(self._app, access_log_class=InstallerAccessLogger)
         await self._runner.setup()
         site = web.TCPSite(self._runner, "0.0.0.0", self.port)
         await site.start()
@@ -1251,10 +1316,11 @@ button:hover{{background:#22b88f}}
         # installer server (the bootstrap endpoints don't need the band).
         try:
             from ..band_mcp.client import MultiBandClient
-            psks = [b["psk"] for b in self._bands] or [self.band_psk]
+            psks = [b["psk"] for b in self._enrollment.bands(active_only=True, secrets_visible=True)]
             self._band = MultiBandClient(psks=psks, hub_host=self.hub_host,
                                          hub_port=self.hub_port)
             await self._band.start()
+            self._enrollment_task = asyncio.create_task(self._watch_enrollment())
             log.info("band client joined hub %s:%d (%d band(s))",
                      self.hub_host, self.hub_port, len(psks))
             if os.environ.get("ROOK_PUSH_UPDATES", "1") != "0":
@@ -1262,6 +1328,24 @@ button:hover{{background:#22b88f}}
         except Exception as e:
             log.warning("band client failed to start (%s); dashboard band view disabled", e)
             self._band = None
+
+    async def _sync_enrollment(self) -> None:
+        bands = self._enrollment.bands(active_only=True, secrets_visible=True)
+        self._bands = bands
+        self._band_names = {b["label"]: b["name"] for b in bands}
+        primary = next((b for b in bands if b["is_primary"]), None)
+        self._primary_label = primary["label"] if primary else ""
+        self.band_psk = primary["psk"] if primary else ""
+        if self._band is not None:
+            await self._band.sync_bands([b["psk"] for b in bands])
+
+    async def _watch_enrollment(self) -> None:
+        while True:
+            try:
+                await self._sync_enrollment()
+            except Exception:
+                log.exception("could not sync band enrollment")
+            await asyncio.sleep(2)
 
     async def _push_loop(self) -> None:
         """Auto-converge: push the current signed manifest to apply-capable
@@ -1312,6 +1396,13 @@ button:hover{{background:#22b88f}}
                 log.exception("push loop error")
 
     async def stop(self) -> None:
+        if self._enrollment_task is not None:
+            self._enrollment_task.cancel()
+            try:
+                await self._enrollment_task
+            except asyncio.CancelledError:
+                pass
+            self._enrollment_task = None
         if self._push_task is not None:
             self._push_task.cancel()
             self._push_task = None
@@ -1381,9 +1472,29 @@ button:hover{{background:#22b88f}}
         return web.Response(text=text, content_type="text/plain")
 
     async def _worker_bootstrap(self, request: web.Request) -> web.Response:
+        from .enrollment import JoinDenied, JoinLimited
+        headers = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
+        code = request.query.get("band", "")
+        account_login = request.query.get("login") == "google" and not code
+        if account_login:
+            band = {"psk": "account-enrollment", "hub": self.hub_public, "name": "selected after login"}
+        else:
+            try:
+                band = self._enrollment.redeem(code, request.remote or "unknown")
+            except JoinLimited as e:
+                return web.Response(text=str(e), status=429, headers={**headers, "Retry-After": "60"})
+            except JoinDenied as e:
+                return web.Response(text=str(e), status=403, headers=headers)
         ua = request.headers.get("User-Agent", "").lower()
-        kw = {"domain": self.domain, "band_psk": self.band_psk,
-              "hub_public": self.hub_public, "band_name": self.band_name}
+        kw = {"domain": self.domain, "band_psk": band["psk"],
+              "hub_public": band["hub"] or self.hub_public,
+              "band_name": band["name"].replace("\r", " ").replace("\n", " ")}
+        # These fields enter shell/PowerShell command lines. Reject unsupported
+        # legacy values rather than interpolate executable syntax or normalize keys.
+        if (not _re.fullmatch(r"[A-Za-z0-9_-]{1,256}", kw["band_psk"])
+                or not _re.fullmatch(r"[A-Za-z0-9.-]+(?::[0-9]+)?", kw["domain"])
+                or not _re.fullmatch(r"[A-Za-z0-9.\[\]:-]+", kw["hub_public"])):
+            return web.Response(text="band settings require correction before installation", status=400, headers=headers)
         # Explicit override wins, for determinism: /worker?os=windows|unix
         os_q = request.query.get("os", "").lower()
         if os_q in ("windows", "win"):
@@ -1398,15 +1509,51 @@ button:hover{{background:#22b88f}}
             is_ps = ("powershell" in ua) or ("pwsh" in ua)
             on_windows = ("windows" in ua) or ("win32" in ua) or ("win64" in ua)
             want_ps = is_ps and on_windows
+        # Downloading an installer never grants a reusable band PSK. The worker
+        # generates its own key and redeems the short code (or browser approval).
+        script = (PS_BOOTSTRAP if want_ps else BASH_BOOTSTRAP).format(**kw)
+        script = script.replace(f'https://{self.domain}/band-worker.pyz',
+                                f'https://{self.domain}/band-worker-enrollment.pyz')
+        script = script.replace(f'--hub {kw["hub_public"]} --ws --psk {kw["band_psk"]}', '--enrolled --ws')
+        script = script.replace(f' --update-url https://{self.domain}/band-worker.json', '')
+        enroll_args = f'--enroll https://{self.domain}' + (f' --pair-code {code}' if code else '')
         if want_ps:
-            return web.Response(text=PS_BOOTSTRAP.format(**kw), content_type="text/plain")
-        return web.Response(text=BASH_BOOTSTRAP.format(**kw), content_type="text/plain")
+            query = 'login=google' if account_login else f'band={code}'
+            script = script.replace(f'https://{self.domain}/worker?os=windows',
+                                    f'https://{self.domain}/worker?{query}&os=windows')
+            script = script.replace('# Stop any existing worker FIRST',
+                                    f'& $vpy $pyz {enroll_args}\nif ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}\n\n# Stop any existing worker FIRST')
+        else:
+            # stdin is the curl pipe. Python prompts must use the terminal.
+            script = script.replace('# band: ', f'"$VPY" "$PYZ" {enroll_args} </dev/tty\n\n# band: ')
+        return web.Response(text=script, content_type="text/plain", headers=headers)
+
+    async def _enroll_config(self, request: web.Request) -> web.Response:
+        """Code-based config fetch for provisioning tools and native clients."""
+        from .enrollment import JoinDenied, JoinLimited
+        headers = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
+        try:
+            data = await request.json()
+            code = data.get("code", "") if isinstance(data, dict) else ""
+        except (ValueError, TypeError):
+            code = ""
+        try:
+            band = self._enrollment.redeem(code, request.remote or "unknown")
+        except JoinLimited as e:
+            return web.json_response({"error": str(e)}, status=429,
+                                     headers={**headers, "Retry-After": "60"})
+        except JoinDenied as e:
+            return web.json_response({"error": str(e)}, status=403, headers=headers)
+        return web.json_response({"band_id": band["id"], "name": band["name"],
+                                  "psk": band["psk"], "hub": band["hub"] or self.hub_public,
+                                  "epoch": band["epoch"]}, headers=headers)
 
     async def _worker_script(self, request: web.Request) -> web.Response:
         return web.Response(text=WORKER_SCRIPT, content_type="text/plain")
 
     async def _band_worker_pyz(self, request: web.Request) -> web.Response:
-        pyz_path = Path(__file__).parent / "band-worker.pyz"
+        filename = "band-worker-enrollment.pyz" if request.path == "/band-worker-enrollment.pyz" else "band-worker.pyz"
+        pyz_path = Path(__file__).parent / filename
         if not pyz_path.exists():
             return web.Response(
                 status=404,
@@ -1436,12 +1583,30 @@ button:hover{{background:#22b88f}}
 
     async def _worker_apk(self, request: web.Request) -> web.Response:
         """Serve the native Android worker APK (built by android/, dropped here)."""
+        # Legacy APK builds may contain a default PSK. Keep them behind login
+        # until the Google enrollment work supplies a verified generic APK.
+        expected_hash = os.environ.get("ROOK_PUBLIC_APK_SHA256", "")
+        if not self.web_pass and not expected_hash:
+            return web.Response(status=503, text="Configure dashboard login before downloading the APK.")
         apk_path = Path(__file__).parent / "rook-worker.apk"
         if not apk_path.exists():
             return web.Response(
                 status=404,
                 text="rook-worker.apk not built yet. Build android/ and drop the APK here.",
             )
+        if expected_hash:
+            import hashlib
+            import hmac
+            stat = apk_path.stat()
+            fingerprint = (stat.st_ino, stat.st_size, stat.st_mtime_ns, expected_hash)
+            if getattr(self, "_verified_apk", None) != fingerprint:
+                def hash_apk():
+                    with apk_path.open("rb") as source:
+                        return hashlib.file_digest(source, "sha256").hexdigest()
+                actual = await asyncio.to_thread(hash_apk)
+                if not hmac.compare_digest(actual, expected_hash):
+                    return web.Response(status=503, text="APK verification failed; contact the operator.")
+                self._verified_apk = fingerprint
         return web.FileResponse(
             apk_path,
             headers={
@@ -1450,9 +1615,19 @@ button:hover{{background:#22b88f}}
             },
         )
 
+    async def _api_generate_psk(self, request: web.Request) -> web.Response:
+        """Suggest a new key behind the existing dashboard login gate.
+
+        Generation does not create a band or rotate any existing key.
+        """
+        from . import setup_store
+        return web.json_response({"psk": setup_store.gen_psk()},
+                                 headers={"Cache-Control": "no-store"})
+
     async def _api_bands(self, request: web.Request) -> web.Response:
         """Known bands for the dashboard selector: ``[{id, name}]`` where ``id``
         is the band_id label. Raw PSKs are never sent to the browser."""
+        await self._sync_enrollment()
         out = [{"id": lbl, "name": name, "primary": lbl == self._primary_label}
                for lbl, name in self._band_names.items()]
         out.sort(key=lambda x: x["name"])
@@ -1460,10 +1635,8 @@ button:hover{{background:#22b88f}}
 
     async def _api_add_band(self, request: web.Request) -> web.Response:
         """Add a band by PSK (authenticated dashboard users only). The PSK is
-        persisted server-side in setup.json (gitignored) and never echoed back;
+        persisted server-side in enrollment.db (gitignored) and never echoed back;
         the band is joined live so its workers appear without a restart."""
-        if self._band is None:
-            return web.json_response({"error": "band client not connected"}, status=503)
         try:
             data = await request.json()
         except Exception:
@@ -1478,16 +1651,12 @@ button:hover{{background:#22b88f}}
         except Exception as e:
             return web.json_response({"error": f"crypto unavailable: {e}"}, status=500)
 
-        from . import setup_store
-        # Persist as an extra band (primary stays derived from band_psk). Dedupe.
-        extras = [b for b in setup_store.load_bands() if b["psk"] != self.band_psk]
-        if psk != self.band_psk and all(b["psk"] != psk for b in extras):
-            extras.append({"name": name, "psk": psk})
-            setup_store.save_bands(extras)
-        self._band_names[label] = name
-        self._bands = setup_store.load_bands()
         try:
-            await self._band.add_band(psk)
+            self._enrollment.register(name, psk, self.hub_public)
+        except ValueError as e:
+            return web.json_response({"error": str(e)}, status=400)
+        try:
+            await self._sync_enrollment()
         except Exception as e:
             log.warning("live join of band %s failed: %s", label, e)
         return web.json_response({"id": label, "name": name})
@@ -1500,21 +1669,11 @@ button:hover{{background:#22b88f}}
             return web.json_response({"error": "id required"}, status=400)
         if label == self._primary_label:
             return web.json_response({"error": "cannot remove the primary band"}, status=400)
-        from . import setup_store
-        try:
-            from telesthete.protocol.crypto import derive_band_id
-            extras = [b for b in setup_store.load_bands()
-                      if b["psk"] != self.band_psk
-                      and derive_band_id(b["psk"]).hex()[:8] != label]
-        except Exception as e:
-            return web.json_response({"error": f"crypto unavailable: {e}"}, status=500)
-        setup_store.save_bands(extras)
-        self._band_names.pop(label, None)
-        if self._band is not None:
-            try:
-                await self._band.remove_band(label)
-            except Exception as e:
-                log.warning("live leave of band %s failed: %s", label, e)
+        band = next((b for b in self._enrollment.bands() if b["label"] == label), None)
+        if not band:
+            return web.json_response({"error": "band not found"}, status=404)
+        self._enrollment.revoke(band["id"])
+        await self._sync_enrollment()
         return web.json_response({"removed": label})
 
     async def _api_band_workers(self, request: web.Request) -> web.Response:
@@ -1899,7 +2058,10 @@ button:hover{{background:#22b88f}}
                                 headers={"Content-Disposition": 'inline; filename="rook-cli-install.ps1"',
                                          "Cache-Control": "no-store"})
         base = f"https://{self.domain}"
-        script = _INSTALL_SCRIPT.replace("__BASE__", base)
+        code = request.query.get("band", "")
+        if code and not _re.fullmatch(r"[a-z0-9]{6}", code):
+            return web.Response(text="invalid pairing code", status=400)
+        script = _INSTALL_SCRIPT.replace("__BASE__", base).replace("__JOIN_CODE__", code)
         return web.Response(text=script, content_type="text/x-shellscript",
                             headers={"Content-Disposition": 'inline; filename="rook-install.sh"',
                                      "Cache-Control": "no-store"})

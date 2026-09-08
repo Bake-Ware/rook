@@ -12,8 +12,8 @@ android {
         applicationId "systems.bake.rook"
         minSdk 23          // Android 6.0+; some caps (gesture HID, unlock) need 24/26 — guarded at runtime
         targetSdk 34
-        versionCode 1
-        versionName "0.1.0"
+        versionCode 2
+        versionName "0.2.0"
 
         // Chaquopy: only the ABIs you intend to run on. arm64 covers modern phones;
         // x86_64 is handy for the emulator. Trim to shrink the APK.
@@ -27,10 +27,13 @@ android {
         // the same env vars) at build time; falls back to the example placeholders.
         def rookHub = (project.findProperty("ROOK_DEFAULT_HUB") ?: System.getenv("ROOK_DEFAULT_HUB") ?: "hub.example.com:443").toString()
         def rookPsk = (project.findProperty("ROOK_DEFAULT_PSK") ?: System.getenv("ROOK_DEFAULT_PSK") ?: "").toString()
+        if (rookPsk) throw new GradleException("Public APKs must not embed a band PSK; use Google sign-in or a pairing code.")
         buildConfigField "String", "DEFAULT_HUB", "\"${rookHub}\""
         buildConfigField "String", "DEFAULT_PSK", "\"${rookPsk}\""
         def voiceUrl = (project.findProperty("ROOK_VOICE_URL") ?: System.getenv("ROOK_VOICE_URL") ?: "wss://voice.bake.systems/ws").toString()
         def voiceTok = (project.findProperty("ROOK_VOICE_TOKEN") ?: System.getenv("ROOK_VOICE_TOKEN") ?: "").toString()
+        if (voiceTok) throw new GradleException("Public APKs must not embed a voice token.")
+        buildConfigField "String", "GOOGLE_WEB_CLIENT_ID", '"238138754704-u34fdjh5l0inv0lhqqpub9lnddlc55p3.apps.googleusercontent.com"'
         buildConfigField "String", "DEFAULT_VOICE_URL", "\"${voiceUrl}\""
         buildConfigField "String", "DEFAULT_VOICE_TOKEN", "\"${voiceTok}\""
     }
@@ -82,6 +85,10 @@ chaquopy {
 }
 
 dependencies {
+    implementation "androidx.credentials:credentials:1.3.0"
+    implementation "androidx.credentials:credentials-play-services-auth:1.3.0"
+    implementation "com.google.android.libraries.identity.googleid:googleid:1.1.1"
+    implementation "androidx.lifecycle:lifecycle-runtime-ktx:2.7.0"
     implementation "androidx.core:core-ktx:1.13.1"
     implementation "androidx.appcompat:appcompat:1.7.0"
     implementation "com.google.android.material:material:1.12.0"
@@ -89,3 +96,9 @@ dependencies {
     implementation "com.squareup.okhttp3:okhttp:4.12.0"
     implementation "com.microsoft.onnxruntime:onnxruntime-android:1.19.2"
 }
+
+tasks.register("stageWorker", Exec) {
+    workingDir rootProject.projectDir
+    commandLine "python3", "stage_worker.py"
+}
+tasks.named("preBuild").configure { dependsOn("stageWorker") }

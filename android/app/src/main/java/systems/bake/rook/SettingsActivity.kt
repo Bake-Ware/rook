@@ -8,6 +8,11 @@ import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AlertDialog
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
+import org.json.JSONArray
 import systems.bake.rook.databinding.ActivitySettingsBinding
 
 /**
@@ -41,6 +46,12 @@ class SettingsActivity : AppCompatActivity() {
         ScreenCaptureBridge.init(this)
 
         val prefs = getSharedPreferences("rook", MODE_PRIVATE)
+        b.accountServer.setText(prefs.getString("account_server", "https://rook.bakeforge.com"))
+        b.btnGoogle.setOnClickListener { fetchBands(google = true) }
+        b.btnPair.setOnClickListener { fetchBands(google = false) }
+        b.btnSavedBands.setOnClickListener {
+            chooseBand(JSONArray(prefs.getString("band_configurations", "[]")))
+        }
         b.hub.setText(prefs.getString("hub", BuildConfig.DEFAULT_HUB))
         b.psk.setText(prefs.getString("psk", BuildConfig.DEFAULT_PSK))
         b.name.setText(prefs.getString("name", (Build.MODEL ?: "android").replace(' ', '-')))
@@ -103,6 +114,50 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     override fun onSupportNavigateUp(): Boolean { finish(); return true }
+
+    private fun fetchBands(google: Boolean) {
+        b.btnGoogle.isEnabled = false
+        b.btnPair.isEnabled = false
+        lifecycleScope.launch {
+            try {
+                val server = b.accountServer.text.toString().trim()
+                val bands = if (google) GoogleEnrollment.signIn(this@SettingsActivity, server)
+                    else GoogleEnrollment.pair(server, b.pairingCode.text.toString())
+                getSharedPreferences("rook", MODE_PRIVATE).edit()
+                    .putString("account_server", server)
+                    .putString("band_configurations", bands.toString()).apply()
+                b.pairingCode.text.clear()
+                chooseBand(bands)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                status(error.message ?: "Enrollment failed. Try Google again or use a pairing code.")
+            } finally {
+                b.btnGoogle.isEnabled = true
+                b.btnPair.isEnabled = true
+            }
+        }
+    }
+
+    private fun chooseBand(bands: JSONArray) {
+        if (bands.length() == 0) {
+            status("No bands yet. Create a band or accept an invitation in your Rook account.")
+            return
+        }
+        val names = Array(bands.length()) { bands.getJSONObject(it).getString("name") }
+        AlertDialog.Builder(this).setTitle("Choose your active band")
+            .setItems(names) { _, index ->
+                val band = bands.getJSONObject(index)
+                b.hub.setText(band.getString("hub"))
+                b.psk.setText(band.getString("psk"))
+                getSharedPreferences("rook", MODE_PRIVATE).edit()
+                    .putString("hub", band.getString("hub"))
+                    .putString("psk", band.getString("psk"))
+                    .putString("band_id", band.getString("id"))
+                    .putInt("band_epoch", band.getInt("epoch")).apply()
+                status("Selected ${names[index]}. Tap Start to connect.")
+            }.setNegativeButton("Cancel", null).show()
+    }
 
     private fun status(msg: String) {
         b.status.text = buildString { append(b.status.text); append('\n'); append(msg) }

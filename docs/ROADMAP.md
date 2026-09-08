@@ -6,6 +6,30 @@ This file is the single list of what exists, what is missing, and what is next.
 Update it when a feature ships or is deliberately dropped. If something feels
 "lost", check the inventory below before rebuilding it.
 
+## Current priority: account-gated configuration fetching (2026-09-08)
+
+The account/Google/pairing compatibility release is deployed on bakenetca.
+Existing band PSKs are unchanged. Google web login, explicit merge with the
+existing local operator and Google avatar loading were tested live. Accounts
+can own multiple bands, invite members and fetch only their configurations.
+New bands use five random words; owners can replace/revoke keys and manage
+six-character rolling pairing codes.
+
+The latest working tree also implements browser-authorized terminal enrollment,
+per-device certificates for HTTPS configuration reads, private worker credentials,
+renewal/revocation and an Android Google/pairing configuration picker. The generic
+APK builds; physical Android and Windows tests remain pending. Python: 98 tests
+pass. Deployment/artifact status is recorded in [the deployment record](DEPLOYMENT-enrollment.md).
+
+Next: finish physical canaries, implement and prove the authenticated peer
+transport across Python and ESP32, then implement staged migration with actual
+new-channel acknowledgments. Certificates currently protect config retrieval;
+legacy mesh traffic still trusts the shared PSK. Existing firmware can privately
+embed a band PSK, but unique dongle identity is still pending. No existing-band
+cutover or GitHub push has occurred. The [handoff](HANDOFF-enrollment-upgrade.md)
+records migration and recovery requirements. The September 2 audit below remains
+historical and is not a current fleet inventory.
+
 ## 0. Why features keep going missing
 
 The audit of the three reported regressions found that **none of them were
