@@ -347,9 +347,10 @@
   </div>
 
   <div class="addform" id="addband-form" hidden>
-    <div style="color:var(--dim);font-size:.72rem">Add a band by PSK</div>
+    <div style="color:var(--dim);font-size:.72rem">Join a band with its PSK, or generate a key for a new band</div>
     <input id="ab-name" placeholder="name (optional)">
-    <input id="ab-psk" type="password" placeholder="band PSK" autocomplete="off">
+    <input id="ab-psk" type="password" placeholder="band PSK" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <div class="r"><button class="iconbtn" id="ab-generate" onclick="generateBandPsk()">generate five-word key</button><button class="iconbtn" id="ab-show" onclick="toggleBandPsk()">show key</button></div>
     <div class="r"><button class="iconbtn" onclick="addBand()">add</button><button class="iconbtn" onclick="toggleAddBand()">close</button></div>
     <div class="msg" id="ab-msg"></div>
   </div>
@@ -447,13 +448,13 @@
     <div id="view-install" hidden>
       <div class="install">
         <h2>Add a worker</h2>
-        <p>Run the one-liner on any machine to join it to the band.</p>
+        <p>Open Tokens, select a band, and start pairing. Replace CODE below with the current six-character code, or copy the complete command from Tokens.</p>
         <div class="cmd"><span class="lbl">Linux / macOS</span><span id="cmd-unix"></span></div>
         <div class="cmd"><span class="lbl">Windows (PowerShell)</span><span id="cmd-win"></span></div>
         <div class="cmd"><span class="lbl">Termux / Android</span><span id="cmd-termux"></span></div>
         <div class="ilinks">
           <a href="/apk">⬇ Android APK</a>
-          <a id="link-tokens2" target="_blank" rel="noopener">API tokens ↗</a>
+          <a id="link-tokens2" target="_blank" rel="noopener">Pairing codes &amp; API tokens ↗</a>
         </div>
       </div>
     </div>
@@ -502,13 +503,24 @@ async function removeBand(){
   }catch(e){alert('error: '+e.message);}
 }
 function toggleAddBand(){ const f=$('#addband-form'); f.hidden=!f.hidden; if(!f.hidden)$('#ab-name').focus(); }
+function toggleBandPsk(){ const input=$('#ab-psk'); input.type=input.type==='password'?'text':'password'; $('#ab-show').textContent=input.type==='password'?'show key':'hide key'; }
+async function generateBandPsk(){
+  const msg=$('#ab-msg'), btn=$('#ab-generate'); btn.disabled=true; msg.textContent='generating…';
+  try{
+    const r=await fetch('/api/bands/psk',{method:'POST',headers:{'Accept':'application/json'}});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    const d=await r.json(); $('#ab-psk').value=d.psk; $('#ab-psk').type='text'; $('#ab-show').textContent='hide key';
+    msg.textContent='Save this key to connect your devices. The band is created when you click add.';
+  }catch(e){msg.textContent='Could not generate a key: '+e.message;}
+  finally{btn.disabled=false;}
+}
 async function addBand(){
   const name=$('#ab-name').value.trim(), psk=$('#ab-psk').value.trim(), msg=$('#ab-msg');
   if(!psk){msg.textContent='psk required';return;} msg.textContent='adding…';
   try{
     const r=await fetch('/api/bands',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,psk})});
     const d=await r.json(); if(!r.ok){msg.textContent=d.error||('HTTP '+r.status);return;}
-    $('#ab-psk').value='';$('#ab-name').value=''; msg.textContent=`added ${d.name} (${d.id})`;
+    $('#ab-psk').value='';$('#ab-psk').type='password';$('#ab-show').textContent='show key';$('#ab-name').value=''; msg.textContent=`added ${d.name} (${d.id})`;
     await loadBands(); $('#bandsel').value=d.id; onBandChange();
     setTimeout(()=>{$('#addband-form').hidden=true;msg.textContent='';},1600);
   }catch(e){msg.textContent='error: '+e.message;}
@@ -1069,9 +1081,9 @@ function setCmd(id,text){ const el=document.getElementById(id); if(!el)return; e
 function wireLinks(){
   const origin=location.origin, tokensUrl=location.protocol+'//'+location.host.replace(/^rook\./,'mcp.')+'/tokens';
   $('#link-tokens').href=tokensUrl; const t2=$('#link-tokens2'); if(t2)t2.href=tokensUrl;
-  setCmd('cmd-unix','curl -fsSL '+origin+'/worker | bash');
-  setCmd('cmd-win','iex (irm '+origin+'/worker)');
-  setCmd('cmd-termux','pkg install -y curl && curl -fsSL '+origin+'/worker | bash');
+  setCmd('cmd-unix',"curl -fsSL '"+origin+"/worker?band=CODE' | bash");
+  setCmd('cmd-win','iex (irm "'+origin+'/worker?band=CODE&os=windows")');
+  setCmd('cmd-termux',"pkg install -y curl && curl -fsSL '"+origin+"/worker?band=CODE' | bash");
 }
 
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});

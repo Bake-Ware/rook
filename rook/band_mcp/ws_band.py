@@ -1,19 +1,14 @@
-"""WebSocket transport for remote Telesthete Band workers.
+"""Bridge each WebSocket peer to its own UDP endpoint on the blind band hub.
 
-Registers a /band WebSocket endpoint on the MCP server's Starlette app,
-bridging WS connections into the Telesthete band via a dedicated UDP socket
-to the hub. Remote workers send/receive raw encrypted Band packets over WS —
-same protocol as UDP. No double-encryption: packets are forwarded as-is.
-
-Remote workers connect via: ws://mcp.example.com/band
+The hub excludes a datagram's sender from its fanout. Sharing one UDP socket
+between WebSockets therefore prevents those peers from talking to each other.
+Packets remain encrypted end to end; this bridge never needs the band PSK.
 """
-
 from __future__ import annotations
 
 import asyncio
 import logging
 import socket
-from typing import Dict, Optional, Tuple
 
 from starlette.applications import Starlette
 from starlette.routing import WebSocketRoute
@@ -23,120 +18,78 @@ log = logging.getLogger("rook.band_mcp.ws_band")
 
 
 class WSBandBridge:
-    """Bridges WS connections into the Telesthete band.
-
-    When a worker connects via WS, this class registers it as a peer on the
-    Telesthete band by maintaining its own UDP connection to the hub. Incoming
-    Band packets from the hub are forwarded to all connected WS peers; outgoing
-    packets from WS peers are sent directly to the hub (no re-encryption).
-
-    Args:
-        app: The Starlette app to register the /band route on.
-        hub_host: Hub UDP host address.
-        hub_port: Hub UDP port.
-        psk: Band pre-shared key for decryption of incoming packets.
-    """
-
-    def __init__(self, app: Starlette, hub_host: str, hub_port: int, psk: str):
+    def __init__(self, app: Starlette, hub_host: str, hub_port: int, psk: str = ""):
+        # psk is retained for compatibility with existing startup code, unused.
         self.app = app
-        self.hub_addr: Tuple[str, int] = (hub_host, hub_port)
-        self.psk = psk
-        self._ws_peers: Dict[str, WebSocket] = {}
+        self.hub_addr = (hub_host, hub_port)
+        self._ws_peers: dict[int, tuple[WebSocket, asyncio.Task]] = {}
         self._running = False
-        self._sock: Optional[socket.socket] = None
-        self._recv_task: Optional[asyncio.Task] = None
+        self._route_registered = False
 
     def start(self) -> None:
-        """Register the /band route and begin relaying."""
-        if not self._running:
-            # Create UDP socket for hub communication.
-            self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self._sock.setblocking(False)
-            log.info("WS band bridge starting (hub=%s:%d)", self.hub_addr[0], self.hub_addr[1])
-
-            # Register the /band route.
-            self.app.router.routes.append(
-                WebSocketRoute("/band", self._ws_handler),
-            )
-
-            # Start relay loop to forward incoming hub packets to WS peers.
-            self._recv_task = asyncio.create_task(self._relay_loop())
-            self._running = True
-            log.info("WS band bridge started")
+        if not self._route_registered:
+            self.app.router.routes.append(WebSocketRoute("/band", self._ws_handler))
+            self._route_registered = True
+        self._running = True
+        log.info("WS band bridge started (hub=%s:%d)", *self.hub_addr)
 
     async def stop(self) -> None:
-        """Close all WS connections and tear down the UDP socket."""
-        if not self._running:
-            return
         self._running = False
-
-        # Close all connected peers.
-        for ws in list(self._ws_peers.values()):
+        peers = list(self._ws_peers.values())
+        for ws, task in peers:
             try:
-                await ws.close()
+                await ws.close(code=1001)
             except Exception:
                 pass
+            task.cancel()
+        await asyncio.gather(*(task for _, task in peers), return_exceptions=True)
         self._ws_peers.clear()
 
-        if self._recv_task is not None:
-            self._recv_task.cancel()
-            try:
-                await self._recv_task
-            except asyncio.CancelledError:
-                pass
-
-        if self._sock is not None:
-            try:
-                self._sock.close()
-            except Exception:
-                pass
-            self._sock = None
-
-        log.info("WS band bridge stopped")
-
-    async def _relay_loop(self):
-        """Relay incoming Band packets from the hub to all WS peers."""
-        loop = asyncio.get_running_loop()
-        while self._running:
-            try:
-                data, src_addr = await loop.sock_recvfrom(self._sock, 65535)
-                # Forward raw encrypted packet to all connected WS peers.
-                for ws in list(self._ws_peers.values()):
-                    try:
-                        await ws.send_bytes(data)
-                    except Exception as e:
-                        log.warning("WS relay error: %s", e)
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                if self._running:  # Ignore shutdown errors.
-                    log.error("WS relay error: %s", e)
-
     async def _ws_handler(self, websocket: WebSocket):
-        """Handle a new WS connection from a remote worker."""
+        if not self._running:
+            await websocket.close(code=1001)
+            return
         await websocket.accept()
-        peer_id = f"ws-{id(websocket)}"
-        self._ws_peers[peer_id] = websocket
-        log.info("WS peer connected: %s", peer_id)
-
+        peer_id = id(websocket)
+        self._ws_peers[peer_id] = (websocket, asyncio.current_task())
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setblocking(False)
+        tasks = []
+        loop = asyncio.get_running_loop()
         try:
-            while True:
-                data = await websocket.receive_bytes()
-                await self._send_to_hub(data)
+            # Connected UDP accepts replies only from the configured hub.
+            await loop.sock_connect(sock, self.hub_addr)
+
+            async def to_hub():
+                while self._running:
+                    data = await websocket.receive_bytes()
+                    if len(data) > 65507:
+                        await websocket.close(code=1009)
+                        return
+                    await loop.sock_sendall(sock, data)
+
+            async def from_hub():
+                while self._running:
+                    data = await loop.sock_recv(sock, 65535)
+                    await websocket.send_bytes(data)
+
+            tasks = [asyncio.create_task(to_hub()), asyncio.create_task(from_hub())]
+            done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                task.result()
         except WebSocketDisconnect:
             pass
-        except Exception as e:
-            log.info("WS peer error: %s", e)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            log.info("WS peer disconnected (%s)", type(error).__name__)
         finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            sock.close()
             self._ws_peers.pop(peer_id, None)
-            log.info("WS peer disconnected: %s", peer_id)
-
-    async def _send_to_hub(self, packet_bytes: bytes):
-        """Send a raw encrypted Band packet to the hub."""
-        if not self._running or self._sock is None:
-            return
-        loop = asyncio.get_running_loop()
-        try:
-            await loop.sock_sendto(self._sock, packet_bytes, self.hub_addr)
-        except Exception as e:
-            log.error("Failed to send to hub: %s", e)
+            try:
+                await websocket.close()
+            except Exception:
+                pass

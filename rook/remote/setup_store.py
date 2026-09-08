@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import os
-import secrets
 from pathlib import Path
 
 # repo-root/data/setup.json  (rook/remote/setup_store.py -> parents[2] == repo root)
@@ -168,5 +167,6 @@ def is_configured() -> bool:
 
 
 def gen_psk() -> str:
-    """A fresh, strong band PSK suggestion for the wizard."""
-    return "band-" + secrets.token_urlsafe(24)
+    """A fresh five-word PSK suggestion; never rewrites an existing key."""
+    from .psk import generate_psk
+    return generate_psk()

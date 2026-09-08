@@ -1,4 +1,4 @@
-"""Admin-gated /tokens UI for issuing long-lived API tokens.
+"""Admin-gated /tokens UI for API tokens, worker pairing, and band key management.
 
 Headless agents (cron jobs, daemons, CI) can't do an interactive login, but
 they can carry a single ``Authorization: Bearer <token>`` header. This module
@@ -23,10 +23,10 @@ from __future__ import annotations
 import base64
 import html
 from typing import TYPE_CHECKING
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, RedirectResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
 if TYPE_CHECKING:
@@ -38,7 +38,7 @@ _COOKIE_MAX_AGE = 1800  # mirror _ADMIN_SESSION_TTL in tokens.py
 
 
 _LOGIN_HTML = """<!doctype html>
-<html><head><title>Rook MCP — API tokens</title>
+<html><head><title>Rook — Tokens &amp; pairing</title>
 <style>
 body{{font-family:system-ui,sans-serif;max-width:24rem;margin:4rem auto;padding:0 1rem;background:#111;color:#eee}}
 h1{{font-size:1.2rem;color:#0c9}}
@@ -49,9 +49,8 @@ button{{padding:.7rem;background:#0a7;color:#fff;border:0;border-radius:4px;font
 small{{color:#888;font-size:.85rem}}
 </style></head>
 <body>
-<h1>Rook MCP — API tokens</h1>
-<p><small>Issue long-lived bearer tokens for headless agents that can't
-do an interactive login. Enter the admin password to continue.</small></p>
+<h1>Rook — Tokens &amp; pairing</h1>
+<p><small>Manage worker pairing, band keys, and API tokens. Enter the admin password to continue.</small></p>
 {err}
 <form method="POST" action="/tokens/auth">
 <input type="password" name="password" autofocus required placeholder="Admin password"/>
@@ -136,7 +135,7 @@ function avSubmit(form){ const sub=form.ownerDocument.activeElement;
 
 def _index_html(tokens: list[dict], minted_secret: str | None,
                 minted_name: str | None, avatars: dict[str, int] | None = None,
-                avatars_enabled: bool = False) -> str:
+                avatars_enabled: bool = False, pairing_html: str = "") -> str:
     avatars = avatars or {}
     rows = []
     for t in tokens:
@@ -235,13 +234,14 @@ def _index_html(tokens: list[dict], minted_secret: str | None,
     )
 
     return (
-        "<!doctype html><html><head><title>Rook MCP — API tokens</title>"
+        "<!doctype html><html><head><title>Rook — Tokens &amp; pairing</title>"
         f"<style>{_PAGE_CSS}</style></head><body>"
-        "<h1>Rook MCP — API tokens</h1>"
+        "<h1>Rook — Tokens &amp; pairing</h1>"
         "<p><small>Use these as <code>Authorization: Bearer …</code> on "
         "<code>/mcp</code> calls from headless agents. "
         f"{logout_form}</small></p>"
         f"{minted_block}"
+        f"{pairing_html}"
         "<h2>Existing tokens</h2>"
         f"{table}"
         f"{create_form}"
@@ -281,6 +281,57 @@ def build_api_token_routes(provider: "TokenStore",
                            chat: "ChatStore | None" = None) -> list[Route]:
     av_on = chat is not None and chat.enabled
 
+    from ..remote.enrollment import EnrollmentStore
+    from ..remote import setup_store
+    from ..remote.pairing_ui import pairing_section
+
+    def enrollment():
+        store = EnrollmentStore()
+        store.import_config()
+        return store
+
+    def json_response(data, status=200):
+        return JSONResponse(data, status_code=status,
+                            headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
+
+    async def pairing_action(request: Request) -> Response:
+        if not _is_admin(request, provider):
+            return json_response({"error": "sign in to manage band enrollment"}, 401)
+        origin = request.headers.get("origin")
+        if (request.headers.get("x-rook-request") != "tokens"
+                or (origin and urlsplit(origin).netloc != request.headers.get("host"))):
+            return json_response({"error": "same-origin request required"}, 403)
+        try:
+            data = await request.json()
+            if not isinstance(data, dict) or not isinstance(data.get("band_id"), str):
+                raise ValueError("band_id required")
+            store = enrollment()
+            uid = data["band_id"]
+            path = request.url.path
+            if path == "/tokens/pairing/revoke":
+                store.revoke_code(uid)
+                return json_response({"ok": True})
+            if path == "/tokens/bands/revoke":
+                store.revoke(uid)
+                return json_response({"ok": True})
+            if path == "/tokens/bands/rotate":
+                key = data.get("psk", "")
+                if not isinstance(key, str):
+                    raise ValueError("psk must be text")
+                return json_response(store.rotate(uid, key))
+            domain = setup_store.load().get("pyz_domain", "")
+            # Domain is operator configuration, never taken from a request's Host.
+            import re
+            if not re.fullmatch(r"[A-Za-z0-9.-]+(?::[0-9]+)?", domain):
+                raise ValueError("configure the installer download domain in web setup first")
+            grant = store.issue(uid, session=data.get("session"))
+            url = f'https://{domain}/worker?band={grant["code"]}'
+            grant["command"] = f"curl -fsSL '{url}' | bash"
+            grant["windows"] = f'iex (irm "{url}&os=windows")'
+            return json_response(grant)
+        except (ValueError, TypeError) as e:
+            return json_response({"error": str(e)}, 400)
+
     async def index(request: Request) -> Response:
         if not _is_admin(request, provider):
             return HTMLResponse(_LOGIN_HTML.format(err=""))
@@ -288,7 +339,9 @@ def build_api_token_routes(provider: "TokenStore",
         name = request.query_params.get("name")
         return HTMLResponse(_index_html(
             provider.list_api_tokens(), shown, name,
-            chat.avatar_index() if av_on else {}, av_on))
+            chat.avatar_index() if av_on else {}, av_on,
+            pairing_section(enrollment().bands())),
+            headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
 
     async def avatar_get(request: Request) -> Response:
         if not _is_admin(request, provider):
@@ -368,4 +421,8 @@ def build_api_token_routes(provider: "TokenStore",
         Route("/tokens/logout", logout, methods=["POST"]),
         Route("/tokens/create", create, methods=["POST"]),
         Route("/tokens/revoke", revoke, methods=["POST"]),
+        Route("/tokens/pairing", pairing_action, methods=["POST"]),
+        Route("/tokens/pairing/revoke", pairing_action, methods=["POST"]),
+        Route("/tokens/bands/rotate", pairing_action, methods=["POST"]),
+        Route("/tokens/bands/revoke", pairing_action, methods=["POST"]),
     ]

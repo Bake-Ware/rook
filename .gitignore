@@ -9,6 +9,8 @@ build/
 
 # Secrets
 firmware/include/secrets.h
+firmware/include/band_secrets.h
+firmware/include/.band-secrets-*
 lgtv
 webos_rsa
 

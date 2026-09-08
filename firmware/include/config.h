@@ -3,6 +3,9 @@
 // ---- WiFi Configuration ----
 // Create secrets.h from secrets.h.example with your credentials
 #include "secrets.h"
+#if __has_include("band_secrets.h")
+#include "band_secrets.h"
+#endif
 
 // ---- Server ----
 #define HTTP_PORT 80

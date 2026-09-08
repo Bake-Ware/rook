@@ -70,7 +70,7 @@ class BandClient:
             self._gc_task.cancel()
             try:
                 await self._gc_task
-            except Exception:
+            except (asyncio.CancelledError, Exception):
                 pass
         for fut in list(self._pending.values()):
             if not fut.done():
@@ -249,14 +249,50 @@ class MultiBandClient:
             p = (p or "").strip()
             if p and p not in deduped:
                 deduped.append(p)
-        if not deduped:
-            raise ValueError("MultiBandClient requires at least one PSK")
+        # Empty is valid after the last band is revoked; the controller stays
+        # available for enrollment management without retaining the old key.
         self._clients = [
             BandClient(psk=p, hub_host=hub_host, hub_port=hub_port, use_ws=use_ws)
             for p in deduped
         ]
         self.hub_host = hub_host
         self.hub_port = hub_port
+        self.use_ws = use_ws
+        self._membership_lock = asyncio.Lock()
+
+    async def add_band(self, psk: str) -> None:
+        from telesthete.protocol.crypto import derive_band_id
+        band_id = derive_band_id(psk)
+        async with self._membership_lock:
+            if any(c.transport.band_id == band_id for c in self._clients):
+                return
+            client = BandClient(psk=psk, hub_host=self.hub_host,
+                                hub_port=self.hub_port, use_ws=self.use_ws)
+            try:
+                await client.start()
+            except BaseException:
+                await client.stop()
+                raise
+            client.label = band_id.hex()[:8]
+            self._clients.append(client)
+
+    async def remove_band(self, label: str) -> None:
+        async with self._membership_lock:
+            removed = [c for c in self._clients if c.transport.band_id.hex()[:8] == label]
+            self._clients = [c for c in self._clients if c not in removed]
+            for client in removed:
+                await client.stop()
+
+    async def sync_bands(self, psks: list[str]) -> None:
+        from telesthete.protocol.crypto import derive_band_id
+        wanted = {derive_band_id(p) for p in psks}
+        # Leave retired bands before opening new ones. Never forward a new PSK
+        # to devices over the old, possibly compromised band.
+        for client in list(self._clients):
+            if client.transport.band_id not in wanted:
+                await self.remove_band(client.transport.band_id.hex()[:8])
+        for psk in psks:
+            await self.add_band(psk)
 
     async def start(self) -> None:
         for c in self._clients:
@@ -304,6 +340,8 @@ class MultiBandClient:
                    target: str | None = None, timeout: float = 15.0,
                    identity: str | None = None) -> dict:
         # Known target → send only on its band.
+        if not self._clients:
+            raise ConnectionError("no active bands")
         if target:
             c = self._client_for(target)
             if c is not None:

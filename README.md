@@ -51,6 +51,121 @@ A **band** is a group of workers that share one pre-shared key (PSK). Everything
 - **Workers announce themselves** every ~30s with their name, version, plugins, and capabilities. The control plane keeps a live roster; a worker that goes quiet ages off in ~90s.
 - **Stable identity.** Each worker persists a `worker_id` across restarts, so it keeps one row in the dashboard and can be durably addressed.
 
+### Readable band keys
+
+The permanent PSK is five random lowercase words separated by
+hyphens. In the dashboard, open **+ → generate five-word key** to create a new
+key, save it for your devices, then click **add** to join that band. **Show key**
+lets you read an existing entry while typing. Generation alone changes nothing.
+
+Enter the same key, including hyphens, in Android Settings or a worker's `--psk`
+option. Existing PSKs remain valid and case-sensitive; they are never converted
+automatically. Replacing a PSK changes its transport routing ID and requires
+workers to be reconfigured; the site's persistent band record stays the same.
+
+Each word is independently selected using the OS random generator from a
+bundled 7,776-word dictionary ([EFF attribution](rook/remote/psk_words.LICENSE.md)).
+Five words give approximately 64.6 bits of entropy, versus 192 bits for the old
+generator. This is a manual-entry convenience, not additional authentication:
+the current transport still derives its routing ID and encryption key from the
+PSK. Google configuration fetching and device certificates protect enrollment
+and HTTPS configuration reads; authenticated peer transport is still pending.
+
+### Pairing and key management
+
+Open **Tokens**, select a band, and click **Start pairing**. Its six-character
+lowercase alphanumeric code expires after five minutes and rolls while the page
+is open. It can provision multiple devices during that window. **Revoke code**
+invalidates it immediately, including refreshes from other open tabs. Expired
+codes do not disconnect installed workers: the worker keeps the permanent PSK.
+
+The Tokens page supplies ready-to-copy commands, for example:
+
+```sh
+curl -fsSL 'https://rook.bakeforge.com/worker?band=jd4ps9' | bash
+```
+
+`jd4ps9` is an example, not a working code. A worker needs no interactive login
+when supplied with a valid code. Missing, expired, and revoked codes are rejected;
+the bare `/worker` URL no longer returns credentials. A valid code grants the
+selected band's configuration only, not dashboard or MCP administrator access.
+All worker capabilities within that band retain their existing PSK trust model.
+
+**Replace PSK** accepts a new key or generates five words; **Revoke band**
+disables enrollment until a replacement PSK is assigned. Either invalidates
+outstanding pairing codes. Both controllers reload active credentials every two
+seconds and leave the old band. They never send the replacement over the old
+band. Re-enroll trusted workers with a fresh code or configure them locally.
+Revocation cannot erase credentials on remote devices: peers retaining the old
+PSK can still communicate and accept commands on the old band until reconfigured
+or taken offline. Device-level revocation needs additional transport enforcement.
+
+The installer and MCP services must share `ROOK_ENROLLMENT_DB` and
+`ROOK_SETUP_PATH` with read/write access. By default the database is
+`data/enrollment.db`, beside `data/setup.json`. Existing setup/env bands are
+imported; the database becomes authoritative for rotations and revocations, so
+stale service environments cannot reintroduce retired PSKs. Back up the database
+with the site's configuration. Do not delete it to reset pairing codes.
+
+Redemption attempts are limited across processes to five per source address and
+20 globally per minute, shared by `/worker` and `POST /enroll`. Forwarded address
+headers are not trusted; deployments behind one proxy share its per-address
+budget. Application access logs omit query strings. Configure reverse proxies,
+tunnels, and analytics to omit the `band` query value as well. Secret responses
+use `Cache-Control: no-store`. Legacy APK downloads require dashboard login.
+A generic APK can be served publicly only when its exact SHA-256 matches the
+server configuration `ROOK_PUBLIC_APK_SHA256`; mismatches fail closed.
+
+### Google, accounts and enrolled workers
+
+Open `/account` to sign in with Google or a local account. Owners manage band
+members, invitations, pairing and device revocation there. Connecting accounts
+requires proof of both logins; matching email addresses do not merge accounts.
+The Google picture is the default avatar, with custom-photo and initials options.
+
+A terminal installer can use a Google or local browser login:
+
+```sh
+curl -fsSL 'https://rook.bakeforge.com/worker?login=google' | bash
+```
+
+It displays a code to approve in the web app and fetches all authorized band
+configurations. Choose the active band. With a pairing code, no account login is
+required. Keep the pairing page open and use a fresh code: it must still be valid
+when dependency installation finishes and the worker enrolls.
+
+The worker generates its private device key locally and stores its certificate
+and configurations in `~/.rook-band-worker/enrollment.json` with mode `0600`.
+It starts with `--enrolled`, checks for configuration updates every 30 seconds,
+and reconnects when its active band changes. Certificates last 30 days and renew
+within seven days of expiry. Known authorization denials stop the worker; network
+outages permit at most a one-hour cached lease. Revoking a certificate cannot
+stop a hostile device from using a PSK it already knows on the legacy transport.
+The compatibility download is separate from the fleet's signed OTA manifest.
+
+Android Settings offers Google login, saved-band selection and pairing fallback.
+The generic APK contains no default band PSK. Google web login was tested live;
+physical Android sign-in and certificate-backed Android device storage are still
+pending. See [deployment status](docs/DEPLOYMENT-enrollment.md).
+
+### Preconfigure a dongle build
+
+Create the usual private `firmware/include/secrets.h` for Wi-Fi/admin settings.
+Then fetch band settings with the current pairing code:
+
+```sh
+python3 firmware/scripts/dongle-band-config.py \
+  --server https://rook.bakeforge.com \
+  --udp-hub YOUR-UDP-HUB:7474
+```
+
+The helper prompts for the code and writes a private, git-ignored
+`firmware/include/band_secrets.h`. Build/flash with PlatformIO normally. The
+resulting firmware contains the permanent PSK and must be kept private. The UDP
+hub is explicit because the dongle cannot use the worker's WebSocket endpoint.
+Saved NVS values override build defaults on an already provisioned dongle; update
+its band/hub settings through the local configuration interface when reflashing.
+
 ```
   browser  ─┐                             ┌─ worker: gateway   (shell · file · info)
   rook band ─┼─ control plane ─ hub ──────┼─ worker: media     (deluge · screenshot · hid)
@@ -167,6 +282,12 @@ curl -fsSL https://<your-host>/install | bash -s -- both
 
 The **worker** installs as a background service and joins the band. The **CLI** installs the single `rook` command (pulling in `python3` via the system package manager if it's missing) — for a fully unattended CLI install set `ROOK_WEB_PASS` (and optionally `ROOK_WEB_USER`) so it doesn't prompt. Windows (PowerShell) and a native Android worker APK are served from the same host (`/worker.py`, `/apk`).
 
+For the `worker` or `both` targets, supply `?band=CODE` on the installer URL or
+enter the current code when prompted. Unattended worker installs require the
+code in the URL (or `ROOK_JOIN_CODE` in the installer's environment). Direct
+Windows worker installation uses
+`iex (irm "https://<your-host>/worker?band=CODE&os=windows")`.
+
 ### Run your own hub
 
 The **hub** is the band relay — a dumb `band_id` forwarder that holds no keys. Stand one up from the same host with a short wizard that populates the vars, installs a hardened systemd unit, and starts it:
@@ -194,4 +315,16 @@ rook/
   cli/             band_tui.py — the `rook band` terminal control panel
 firmware/          ESP32 T-Dongle-S3 firmware (telesthete over UDP, BLE/USB HID)
 docs/img/          screenshots
+```
+
+### Running tests
+
+Keep the [Telesthete checkout](https://github.com/Bake-Ware/telesthete) at
+`../telesthete`; `tests/conftest.py` imports its protocol package, matching the
+worker and Android bundle inputs. With Python 3.11 or newer:
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -e '.[dev]'
+.venv/bin/pytest -q
 ```

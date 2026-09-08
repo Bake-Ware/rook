@@ -9,12 +9,22 @@ dependencies = [
     "discord.py[voice]>=2.4",
     "pyyaml>=6.0",
     "aiohttp>=3.9",
+    "websockets>=12.0",
+    "mcp>=1.12,<2",
+    "PyJWT[crypto]>=2.13,<3",
+    "Pillow>=12.3,<13",
     "aiosqlite>=0.20",
     "kuzu>=0.7",
     "watchdog>=4.0",
 ]
 
 [project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pynacl>=1.5",
+    "httpx>=0.27",
+]
 voice = [
     "pyannote.audio>=3.3",
     "webrtcvad>=2.0.10",

@@ -35,6 +35,9 @@ def main() -> None:
                     help="hub host:port (default: bakenet hub)")
     ap.add_argument("--psk", default=None,
                     help="band pre-shared key (must match peers)")
+    ap.add_argument("--enroll", metavar="HTTPS_SERVER", help="sign in through Google/local web login and fetch your configurations")
+    ap.add_argument("--pair-code", default=None, help="use a temporary pairing code with --enroll instead of account login")
+    ap.add_argument("--enrolled", action="store_true", help="use the active band saved by --enroll")
     ap.add_argument("--version", action="store_true",
                     help="print the bundle version and exit")
     ap.add_argument("--selftest", action="store_true",
@@ -77,6 +80,23 @@ def main() -> None:
         print(f"selftest OK v{VERSION}: {len(plugins)} plugins, {len(reg.list())} caps")
         return
 
+    if args.enroll:
+        from .enroll import enroll
+        try:
+            enroll(args.enroll,args.pair_code)
+        except (ValueError,OSError) as error:
+            ap.error(str(error))
+        return
+    if args.enrolled:
+        from .enroll import refresh
+        try:
+            saved=refresh()
+        except (ValueError,OSError) as error:
+            ap.error(str(error))
+        band=next((b for b in saved.get('bands',[]) if b['id']==saved.get('active_band')),None)
+        if not band:
+            ap.error('No enrolled band; run --enroll HTTPS_SERVER first.')
+        args.psk=band['psk'];args.hub=band['hub']
     if not args.psk:
         ap.error("--psk is required")
 
@@ -124,10 +144,11 @@ def main() -> None:
             args.announce_interval = float(_cfg["announce_interval"])
         except (TypeError, ValueError):
             pass
-    if _cfg.get("hub"):
+    if _cfg.get("hub") and not args.enrolled:
         args.hub = str(_cfg["hub"])
     if _cfg.get("psk"):
-        args.psk = str(_cfg["psk"])
+        if not args.enrolled:
+            args.psk = str(_cfg["psk"])
     if _cfg.get("log_level"):
         _lvl = str(_cfg["log_level"]).upper()
         if _lvl in ("DEBUG", "INFO", "WARNING", "ERROR"):
@@ -162,21 +183,51 @@ def main() -> None:
     async def runner() -> int:
         loop = asyncio.get_running_loop()
         stop = asyncio.Event()
+        outcome = 0
         for sig in (signal.SIGINT, signal.SIGTERM):
             try:
                 loop.add_signal_handler(sig, stop.set)
             except NotImplementedError:
                 pass  # Windows
         task = asyncio.create_task(worker.run())
+        task.add_done_callback(lambda _: stop.set())
+
+        async def enrollment_watch():
+            nonlocal outcome
+            from .enroll import refresh
+            while True:
+                await asyncio.sleep(30)
+                try:
+                    saved = await asyncio.to_thread(refresh)
+                    band = next(b for b in saved['bands'] if b['id'] == saved['active_band'])
+                    if band['psk'] != args.psk or band['hub'] != args.hub:
+                        logging.getLogger('rook.worker').info('Enrolled band configuration changed; reconnecting.')
+                        outcome = 75
+                        stop.set()
+                        return
+                except Exception as error:
+                    logging.getLogger('rook.worker').error('Enrollment authorization unavailable (%s); leaving band.', type(error).__name__)
+                    outcome = 78
+                    stop.set()
+                    return
+
+        enrollment_task = asyncio.create_task(enrollment_watch()) if args.enrolled else None
         await stop.wait()
+        if enrollment_task:
+            enrollment_task.cancel()
+            await asyncio.gather(enrollment_task, return_exceptions=True)
         await worker.shutdown()
         try:
             await asyncio.wait_for(task, timeout=2.0)
         except Exception:
             pass
-        return 0
+        return outcome
 
-    sys.exit(asyncio.run(runner()))
+    outcome = asyncio.run(runner())
+    if outcome == 75:
+        # Preserve -m versus zipapp invocation and every original installer arg.
+        os.execv(sys.executable, [sys.executable, *sys.orig_argv[1:]])
+    sys.exit(outcome)
 
 
 if __name__ == "__main__":
