@@ -63,6 +63,8 @@ class EnrollmentStore:
                     bucket TEXT PRIMARY KEY, window INTEGER NOT NULL, count INTEGER NOT NULL
                 );
             """)
+            from .migration import SCHEMA
+            db.executescript(SCHEMA)
 
     @contextmanager
     def _db(self):
@@ -130,6 +132,18 @@ class EnrollmentStore:
                 item.pop("psk_hash")
                 out.append(item)
             return out
+
+    def transport_psks(self) -> list[str]:
+        with self._db() as db:
+            current=[r[0] for r in db.execute('SELECT psk FROM bands WHERE active=1')]
+            pending=[r[0] for r in db.execute("SELECT m.new_psk FROM band_migrations m JOIN bands b ON b.id=m.band_id WHERE m.phase IN ('prepared','active') AND b.active=1 AND b.epoch=m.old_epoch")]
+            return list(dict.fromkeys(current+pending))
+
+    @staticmethod
+    def _cancel_migrations(db,band_id):
+        for row in db.execute("SELECT new_hash FROM band_migrations WHERE band_id=? AND phase IN ('prepared','active')",(band_id,)):
+            db.execute('INSERT OR IGNORE INTO retired VALUES(?)',(row['new_hash'],))
+        db.execute("UPDATE band_migrations SET phase='superseded',new_psk=NULL WHERE band_id=? AND phase IN ('prepared','active')",(band_id,))
 
     def issue(self, band_id: str, session: str | None = None) -> dict:
         now = time.time()
@@ -206,6 +220,7 @@ class EnrollmentStore:
                     or db.execute("SELECT 1 FROM bands WHERE psk_hash=?", (digest,)).fetchone()):
                 raise ValueError("choose a fresh PSK that has not already been used")
             db.execute("INSERT OR IGNORE INTO retired VALUES(?)", (band["psk_hash"],))
+            self._cancel_migrations(db,band_id)
             db.execute("UPDATE bands SET psk=?,psk_hash=?,active=1,epoch=epoch+1 WHERE id=?",
                        (psk, digest, band_id))
             db.execute("DELETE FROM pairing WHERE band_id=?", (band_id,))
@@ -219,6 +234,7 @@ class EnrollmentStore:
                 raise ValueError("band not found")
             db.execute("INSERT OR IGNORE INTO retired VALUES(?)", (band["psk_hash"],))
             db.execute("UPDATE bands SET active=0,epoch=epoch+1 WHERE id=?", (band_id,))
+            self._cancel_migrations(db,band_id)
             db.execute("DELETE FROM pairing WHERE band_id=?", (band_id,))
             if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='devices'").fetchone():
                 db.execute("UPDATE devices SET active=0 WHERE band_id=?", (band_id,))

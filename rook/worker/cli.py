@@ -87,6 +87,9 @@ def main() -> None:
         except (ValueError,OSError) as error:
             ap.error(str(error))
         return
+    from .enroll import load as load_enrollment
+    if load_enrollment().get('auto_start'):
+        args.enrolled = True
     if args.enrolled:
         from .enroll import refresh
         try:
@@ -197,6 +200,8 @@ def main() -> None:
             from .enroll import refresh
             while True:
                 await asyncio.sleep(30)
+                if not args.enrolled and not load_enrollment().get('auto_start'):
+                    continue
                 try:
                     saved = await asyncio.to_thread(refresh)
                     band = next(b for b in saved['bands'] if b['id'] == saved['active_band'])
@@ -211,7 +216,7 @@ def main() -> None:
                     stop.set()
                     return
 
-        enrollment_task = asyncio.create_task(enrollment_watch()) if args.enrolled else None
+        enrollment_task = asyncio.create_task(enrollment_watch())
         await stop.wait()
         if enrollment_task:
             enrollment_task.cancel()

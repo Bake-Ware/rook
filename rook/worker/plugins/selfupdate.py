@@ -293,10 +293,16 @@ class SelfUpdatePlugin(Plugin):
     @capability("status")
     def _status(self) -> dict:
         from .._build_info import as_dict as _build
+        argv=list(sys.argv)
+        for index,value in enumerate(argv):
+            if index and argv[index-1] in ('--psk','--pair-code'):
+                argv[index]='<redacted>'
+            elif value.startswith(('--psk=','--pair-code=')):
+                argv[index]=value.split('=',1)[0]+'=<redacted>'
         return {
             "pid": os.getpid(),
             "python": sys.executable,
-            "argv": sys.argv,
+            "argv": argv,
             "pyz": str(_PYZ),
             "pyz_exists": _PYZ.exists(),
             "supervisor": _supervisor(),

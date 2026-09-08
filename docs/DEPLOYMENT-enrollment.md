@@ -69,7 +69,7 @@ PSK. Android Keystore/ESP32 unique identities, certificate mesh transport,
 revocation enforcement on receivers, CA rotation tooling, staged migration,
 new-channel acknowledgments and physical recovery tests remain outstanding.
 Use the [migration handoff](HANDOFF-enrollment-upgrade.md); immediate Replace PSK
-is not the staged fleet migration mechanism. No live cutover or GitHub push yet.
+is not the staged fleet migration mechanism. This describes the initial deployment checkpoint; see the rollout update below.
 
 ## Second-release deployment and canary result
 
@@ -120,7 +120,7 @@ Artifact SHA-256:
 Latest private pre-deploy backup:
 `/home/ubuntu/rook-upgrade-20260908/backup-devices-20260908-204020`.
 This final result was recorded after deployment; the archived source manifest
-still describes the exact pre-deployment source snapshot. GitHub remains unpushed.
+still describes the exact pre-deployment source snapshot. GitHub publication followed at the rollout checkpoint below.
 
 ## Rollout authorization update
 
@@ -135,3 +135,44 @@ The next substantive Rook notification is the completion report; routine worker
 and voice-service notifications are excluded. Poll approximately once per minute.
 The expected wording is deliberately unspecified by the operator. Review the
 report's meaning, and do not turn a failure report into permission to proceed.
+
+## Migration build preparation
+
+The user confirmed the 0.2.0 APK works. The compatibility/account release was
+pushed to GitHub as `f5c62c9`. The notification round trip passed, and the next
+substantive Rook notification was “Pianobar is ready,” reporting successful
+functional and recovery checks. This cleared the rollout gate. The captured
+report stays in a private rollout directory, outside GitHub.
+
+The next build adds staged PSK migration and native Android lifecycle support.
+It has not yet rotated an existing band. Android 0.3.0 is required for automated
+certificate configuration refresh and in-process worker reconnect; the original
+native app advertised desktop update/restart operations which cannot safely
+re-execute its embedded Python process.
+
+The server's `rook.remote.migrate` command defaults to preflight. Execution
+requires an explicit expected-worker inventory and a reviewed completion report.
+It enrolls trusted existing workers with public CSRs and CSR-bound grants;
+those grants return certificates, never PSKs. A separate private-key proof over
+HTTPS obtains configuration. This is routine migration of a trusted fleet,
+not a bootstrap method for a compromised mesh.
+
+All expected devices must persist and acknowledge the candidate configuration
+before activation. Both band keys stay available while the controller verifies
+per-device signed challenges and `info.ping` on the replacement band. Finalizing
+retires the old hash and invalidates pairing codes. An overdue or interrupted
+migration stops the coordinator and retains authorized connectivity for forward
+recovery; it never silently excludes missing devices or rolls a device back to
+an earlier credential epoch. Resume uses the same recorded expected set.
+
+New device keys use Ed25519 through the existing PyNaCl/libsodium dependency,
+including on Android. Serialization follows RFC 8410 PKCS#8/SPKI and PKCS#10;
+tests validate the CSR, key and signatures independently with cryptography.
+P-256 identities from the first release remain supported. Android private keys
+are in app-private files with backups disabled; hardware Keystore integration
+and certificate enforcement on general peer traffic remain separate work.
+
+Migration build validation: 105 tests pass, including staged acknowledgements,
+proof/replay checks, revoked devices, emergency rotation, interrupted enrollment
+retries, CSR-bound grants, and native Android reconnect/revocation lifecycle.
+Live fleet cutover is still pending the deployment canary and compatible apps.

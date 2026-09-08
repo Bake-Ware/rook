@@ -1316,7 +1316,7 @@ button:hover{{background:#22b88f}}
         # installer server (the bootstrap endpoints don't need the band).
         try:
             from ..band_mcp.client import MultiBandClient
-            psks = [b["psk"] for b in self._enrollment.bands(active_only=True, secrets_visible=True)]
+            psks = self._enrollment.transport_psks()
             self._band = MultiBandClient(psks=psks, hub_host=self.hub_host,
                                          hub_port=self.hub_port)
             await self._band.start()
@@ -1337,7 +1337,7 @@ button:hover{{background:#22b88f}}
         self._primary_label = primary["label"] if primary else ""
         self.band_psk = primary["psk"] if primary else ""
         if self._band is not None:
-            await self._band.sync_bands([b["psk"] for b in bands])
+            await self._band.sync_bands(self._enrollment.transport_psks())
 
     async def _watch_enrollment(self) -> None:
         while True:

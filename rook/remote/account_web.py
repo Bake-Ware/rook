@@ -65,6 +65,7 @@ class AccountWeb:
         app.router.add_post('/auth/devices/challenge',self.device_challenge)
         app.router.add_post('/auth/devices/config',self.device_config)
         app.router.add_post('/auth/devices/renew',self.device_renew)
+        app.router.add_post('/auth/devices/staged',self.device_staged)
 
     def current(self,request):
         token=request.cookies.get(COOKIE,'')
@@ -258,15 +259,21 @@ class AccountWeb:
             return web.json_response({'error':'invalid_request'},status=400,headers=NO_STORE)
 
     async def device_enroll(self,request):
-        if not self.store.rate_limit(request.remote or 'unknown','certificate_enroll',10):
-            raise web.HTTPTooManyRequests()
         try:
             data=await request.json()
+            category='certificate_grant' if data.get('enrollment_grant') else 'certificate_enroll'
+            if not self.store.rate_limit(request.remote or 'unknown',category,60 if data.get('enrollment_grant') else 10):
+                raise web.HTTPTooManyRequests()
             user=self.current(request)
+            grant={}
             if data.get('enrollment_grant'):
                 grant=self.store.consume(str(data['enrollment_grant']),'device_enroll')
                 bid=grant['band_id'];sponsor=grant['user_id']
                 self.store.require_band(sponsor,bid)
+                if grant.get('csr_hash'):
+                    import hashlib
+                    if hashlib.sha256(str(data.get('csr','')).encode()).hexdigest()!=grant['csr_hash']:
+                        raise PermissionError('Enrollment grant belongs to a different device key.')
             elif user:
                 if not request.headers.get('Authorization','').startswith('Bearer '):self.csrf(request,data,user)
                 bid=str(data.get('band_id',''));sponsor=user['id']
@@ -275,6 +282,10 @@ class AccountWeb:
                 band=self.server._enrollment.redeem(str(data.get('code','')),request.remote or 'unknown')
                 bid=band['id'];sponsor=None
             result=self.devices.enroll(bid,sponsor,data.get('csr',''),data.get('name','worker'))
+            if grant.get('csr_hash'):
+                # A copied grant/CSR cannot disclose any band credential. The
+                # new key must prove possession in a separate config request.
+                result['band_id']=result.pop('band')['id']
             return web.json_response(result,headers=NO_STORE)
         except JoinLimited:
             return web.json_response({'error':'Too many enrollment attempts.'},status=429,headers=NO_STORE)
@@ -297,6 +308,9 @@ class AccountWeb:
 
     async def device_renew(self,request):
         return await self.device_operation(request,'renew')
+
+    async def device_staged(self,request):
+        return await self.device_operation(request,'staged')
 
     async def device_operation(self,request,operation):
         if not self.store.rate_limit(request.remote or 'unknown','device_operation',300,1000):
