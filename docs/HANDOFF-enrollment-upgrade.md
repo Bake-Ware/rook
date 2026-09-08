@@ -294,9 +294,9 @@ test account. No external certificate vendor is needed for the proposed device C
 
 ## Release acceptance and remaining decisions
 
-- [ ] Review and commit the final source after testing. The user authorized an
-      uncommitted server snapshot and explicitly held GitHub pushes; record
-      source/artifact hashes and test/build commands for each deployed release.
+- [x] Commit and publish the tested source. The operator later authorized GitHub
+      pushes and the worker rollout. See the current checkpoint below; earlier
+      instructions to hold publication were superseded.
 - [ ] Prove two users/two bands cannot cross-fetch, enroll, administer, invoke
       commands or receive streams outside their membership, including MCP.
 - [ ] Test Google login, local recovery, invitations, explicit linking/merge,
@@ -323,3 +323,53 @@ Handoff order: account/device schema and transport proof; compatible clients;
 Google and pairing-backed certificate enrollment; staged migration controls;
 physical canaries; scheduled per-band cutover. Complete the identity enforcement
 before relying on five-word PSKs as the fleet's new permanent credentials.
+
+
+## Current rollout checkpoint — 2026-09-08
+
+The notification gate passed on the substantive “Pianobar is ready” report.
+The notification post/read test also passed; the test was excluded from the gate.
+The reviewed report remains private in the deployment stage directory.
+
+- GitHub contains worker/account commit `5582837` and server guard `bdb89e2`.
+- Server release: `/opt/rook-releases/enrollment-20260908-migration-118`.
+  All three services are active; the source manifest verifies 271 files.
+- Worker artifact: `117.gawky.mule`, SHA-256
+  `c87622a3b5118ed117c1cd7a874321a4f66af1f8eadb1193dc99afcb6990cfc0`.
+  The public manifest is signed by the existing OTA key and independently verified.
+- Android: 0.3.0, same signing identity, SHA-256
+  `ef8064f31ab278bc9eb18920e51a921cbf8ac08761d164e0dea8a34540475054`.
+  Public download: `https://rook.bakeforge.com/apk`.
+- All 22 Python workers updated, reported build 117, answered ping, enrolled
+  individual device identities, and refreshed their certificate-protected
+  configuration within the final two-minute readiness window.
+- The two-worker live canary completed every migration phase, including signed
+  proofs on the replacement band. Its test band and devices were then revoked.
+- Tests: 105 passed for the migration build; 19 account/OTA checks passed after
+  the server-only automatic-update guard. Zipapp selftest: 17 plugins, 82 caps.
+- Latest consistent backup: `/home/ubuntu/rook-upgrade-20260908/backup-devices-20260908-222004`.
+
+**Production cutover is pending.** All three original bands remain active at
+epoch 1, with zero open migrations. Bakephone still reported the old native
+build at the last check; RedTablet and XaviersTablet were offline. The operator
+was asked to install 0.3.0 and start these workers. Accessibility was disabled
+on Bakephone, preventing remote confirmation of its package installer.
+Do not drop these devices from the expected inventory merely because they
+are absent. No original PSK was rotated at this checkpoint.
+
+Private stage: `/home/ubuntu/rook-upgrade-20260908`. It contains
+`all-workers-117.json` (25 expected identities), `python-devices-117.json`
+(22 enrolled identities), `completion-notification.json`, `readiness-117.json`,
+and the signed artifacts. After all three Android apps are updated, verify
+native `worker.status`, enrollment capabilities, and in-process restart.
+Run `rook.remote.migrate` first without `--execute`, using the protected
+server enrollment DB and the saved full inventory/completion report; then
+execute for bakenet ID `26f8c02cf8a6cb4e579391197183e021`. If interrupted,
+resume the recorded migration ID and the same inventory. Inspect the other two
+bands' offline/recovery inventory before attempting their cutovers.
+
+Certificate authentication currently protects configuration fetches and
+migration proofs. General mesh traffic still uses the shared band key; full
+certificate enforcement on peer traffic and ESP32 device identities remain
+separate acceptance work. Software rollback must preserve current enrollment
+state, minimum epochs and retired hashes.
