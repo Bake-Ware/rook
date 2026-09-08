@@ -176,3 +176,21 @@ Migration build validation: 105 tests pass, including staged acknowledgements,
 proof/replay checks, revoked devices, emergency rotation, interrupted enrollment
 retries, CSR-bound grants, and native Android reconnect/revocation lifecycle.
 Live fleet cutover is still pending the deployment canary and compatible apps.
+
+## Build 117 deployment checkpoint
+
+Commit `5582837` is pushed. Source manifest (271 files), APK hash, and existing
+OTA signing key were verified before deployment to
+`/opt/rook-releases/enrollment-20260908-migration-117`. The private consistent
+backup is `backup-devices-20260908-221036` under the deployment stage directory.
+The two-worker live migration canary passed staging, activation, signed new-band
+proofs, ping, and retirement; its test identities and band were then revoked.
+All 22 Python workers accepted build `117.gawky.mule` and reported that version
+with a successful ping. APK 0.3.0 is available at `/apk`, signed by the existing
+Android debug key. Production PSKs remain at epoch 1 pending compatible Android
+workers. Keep all 25 expected identities in the inventory; do not silently omit
+the two tablets if they are offline.
+
+Public automatic Python updates skip build zero, which denotes an unversioned
+or native installation. Old Android apps can advertise `worker.apply` even
+though desktop zipapp self-update cannot run in their embedded process.

@@ -1375,7 +1375,7 @@ button:hover{{background:#22b88f}}
                     if "worker.apply" not in (w.get("caps") or []):
                         continue  # can't receive an in-band push yet
                     b = w.get("build")
-                    if not isinstance(b, int) or b >= target:
+                    if not isinstance(b, int) or b <= 0 or b >= target:
                         continue
                     last = pushed.get(wid)
                     if last and last[0] == target and (now - last[1]) < REPUSH_SECS:
