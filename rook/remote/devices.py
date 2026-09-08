@@ -9,11 +9,12 @@ import hashlib
 import json
 import secrets
 import time
+import re
 
 from cryptography import x509
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes,serialization
-from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric import ec,ed25519
 from cryptography.x509.oid import NameOID,ExtendedKeyUsageOID
 
 from .accounts import digest
@@ -24,6 +25,8 @@ UTC=dt.timezone.utc
 class DeviceStore:
     def __init__(self,accounts):
         self.accounts=accounts
+        from .migration import MigrationStore
+        self.migrations=MigrationStore(accounts)
         with accounts.db() as db:
             db.executescript('''
                 CREATE TABLE IF NOT EXISTS device_ca (
@@ -75,8 +78,9 @@ class DeviceStore:
         if not isinstance(csr_pem,str) or len(csr_pem)>16000:raise ValueError('Invalid certificate request.')
         csr=x509.load_pem_x509_csr(csr_pem.encode())
         key=csr.public_key()
-        if not csr.is_signature_valid or not isinstance(key,ec.EllipticCurvePublicKey) or not isinstance(key.curve,ec.SECP256R1):
-            raise ValueError('Use a signed P-256 certificate request.')
+        supported=isinstance(key,ed25519.Ed25519PublicKey) or (isinstance(key,ec.EllipticCurvePublicKey) and isinstance(key.curve,ec.SECP256R1))
+        if not csr.is_signature_valid or not supported:
+            raise ValueError('Use a signed P-256 or Ed25519 certificate request.')
         public_hash=hashlib.sha256(key.public_bytes(serialization.Encoding.DER,serialization.PublicFormat.SubjectPublicKeyInfo)).hexdigest()
         with self.accounts.db() as db:
             if sponsor is None:
@@ -86,18 +90,26 @@ class DeviceStore:
             self.accounts.require_band(sponsor,band_id,False,db)
             band=db.execute('SELECT * FROM bands WHERE id=? AND active=1',(band_id,)).fetchone()
             if not band:raise ValueError('Band revoked.')
-            if db.execute('SELECT 1 FROM devices WHERE band_id=? AND public_hash=?',(band_id,public_hash)).fetchone():
-                raise ValueError('This device key is already registered. Use renewal or generate a new key.')
-            device_id=secrets.token_hex(16)
-            db.execute('INSERT INTO devices(id,band_id,sponsor,name,public_hash,created,credential_epoch) VALUES(?,?,?,?,?,?,?)',
-                       (device_id,band_id,sponsor,str(name or 'worker')[:100],public_hash,time.time(),band['epoch']))
-            cert=self.issue(db,device_id,key)
-            self.accounts.audit(db,sponsor,'device_enroll',device_id)
+            existing=db.execute('SELECT * FROM devices WHERE band_id=? AND public_hash=?',(band_id,public_hash)).fetchone()
+            if existing:
+                if not existing['active'] or existing['sponsor']!=sponsor:
+                    raise ValueError('This device key is revoked or belongs to another sponsor.')
+                device_id=existing['id']
+                previous=db.execute('SELECT pem FROM device_certificates WHERE device_id=? AND expires>? ORDER BY expires DESC LIMIT 1',(device_id,time.time())).fetchone()
+                cert=previous['pem'].decode() if previous else self.issue(db,device_id,key)
+            else:
+                device_id=secrets.token_hex(16)
+                db.execute('INSERT INTO devices(id,band_id,sponsor,name,public_hash,created,credential_epoch) VALUES(?,?,?,?,?,?,?)',
+                           (device_id,band_id,sponsor,str(name or 'worker')[:100],public_hash,time.time(),band['epoch']))
+                cert=self.issue(db,device_id,key)
+                self.accounts.audit(db,sponsor,'device_enroll',device_id)
             return {'device_id':device_id,'certificate':cert,'ca_certificate':self.ca_pem().decode(),
+                    'expires_at':x509.load_pem_x509_certificate(cert.encode()).not_valid_after_utc.timestamp(),
                     'band':{'id':band_id,'name':band['name'],'psk':band['psk'],'hub':band['hub'],'epoch':band['epoch']}}
 
     def challenge(self,device_id,purpose):
-        if purpose not in ('config','renew'):raise ValueError('Invalid device operation.')
+        if not re.fullmatch(r'[a-f0-9]{32}',device_id):raise ValueError('Invalid device identity.')
+        if purpose not in ('config','renew') and not re.fullmatch(r'stage:[a-f0-9]{32}',purpose):raise ValueError('Invalid device operation.')
         nonce=secrets.token_urlsafe(32)
         grant=self.accounts.grant('device_proof',{'device_id':device_id,'purpose':purpose,'nonce':nonce},60)
         message='rook-device-v1\n'+device_id+'\n'+purpose+'\n'+nonce
@@ -111,7 +123,10 @@ class DeviceStore:
         cert=x509.load_pem_x509_certificate(certificate.encode())
         message='rook-device-v1\n'+proof['device_id']+'\n'+purpose+'\n'+proof['nonce']
         try:
-            cert.public_key().verify(base64.b64decode(signature,validate=True),message.encode(),ec.ECDSA(hashes.SHA256()))
+            if isinstance(cert.public_key(),ed25519.Ed25519PublicKey):
+                cert.public_key().verify(base64.b64decode(signature,validate=True),message.encode())
+            else:
+                cert.public_key().verify(base64.b64decode(signature,validate=True),message.encode(),ec.ECDSA(hashes.SHA256()))
         except (InvalidSignature,TypeError):
             raise ValueError('Invalid device signature.') from None
         with self.accounts.db() as db:
@@ -128,8 +143,16 @@ class DeviceStore:
             self.accounts.require_band(device['sponsor'],device['band_id'],False,db)
             band=db.execute('SELECT id,name,psk,hub,epoch FROM bands WHERE id=? AND active=1 AND EXISTS(SELECT 1 FROM devices WHERE id=? AND active=1)',(device['band_id'],device['id'])).fetchone()
             if not band:raise PermissionError('Device or band revoked.')
-            db.execute('UPDATE devices SET credential_epoch=? WHERE id=?',(band['epoch'],device['id']))
-            return {'band':dict(band),'device_id':device['id']}
+            migration=self.migrations.candidate(db,device['id'])
+            result={'band':dict(band),'device_id':device['id'],'migration':migration}
+            if migration and migration['phase']=='active':result['band']=migration['band']
+            db.execute('UPDATE devices SET credential_epoch=? WHERE id=?',(result['band']['epoch'],device['id']))
+            return result
+
+    def staged(self,proof):
+        mid=str(proof.get('migration_id',''))
+        device,_=self.authenticate(proof.get('challenge',''),proof.get('certificate',''),proof.get('signature',''),'stage:'+mid)
+        return self.migrations.staged(device,mid)
 
     def renew(self,proof):
         device,key=self.authenticate(proof.get('challenge',''),proof.get('certificate',''),proof.get('signature',''),'renew')
@@ -137,7 +160,9 @@ class DeviceStore:
             self.accounts.require_band(device['sponsor'],device['band_id'],False,db)
             if not db.execute('SELECT 1 FROM devices d JOIN bands b ON b.id=d.band_id WHERE d.id=? AND d.active=1 AND b.active=1',(device['id'],)).fetchone():
                 raise PermissionError('Device or band revoked.')
-            return {'certificate':self.issue(db,device['id'],key),'ca_certificate':self.ca_pem().decode()}
+            pem=self.issue(db,device['id'],key)
+            return {'certificate':pem,'ca_certificate':self.ca_pem().decode(),
+                    'expires_at':x509.load_pem_x509_certificate(pem.encode()).not_valid_after_utc.timestamp()}
 
     def list(self,uid,band_id):
         self.accounts.require_band(uid,band_id,True)

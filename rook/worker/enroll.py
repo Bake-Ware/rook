@@ -81,8 +81,8 @@ def enroll(server,pair_code=None):
     if issued is None:
         import socket
         issued=post(server,'/auth/devices/enroll',{'enrollment_grant':result['enrollment_grants'][bands[chosen]['id']],'csr':csr,'name':socket.gethostname()})
-    from cryptography.hazmat.primitives import serialization
-    issued['private_key']=key.private_bytes(serialization.Encoding.PEM,serialization.PrivateFormat.PKCS8,serialization.NoEncryption()).decode()
+    from .device_key import private_pem
+    issued['private_key']=private_pem(key)
     issued.pop('band',None)
     data={'server':server.rstrip('/'),'bands':bands,'active_band':bands[chosen]['id'],'device':issued,'last_verified':time.time()}
     save(data)
@@ -91,24 +91,24 @@ def enroll(server,pair_code=None):
 
 
 def certificate_request():
-    from cryptography import x509
-    from cryptography.hazmat.primitives import hashes,serialization
-    from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.x509.oid import NameOID
-    key=ec.generate_private_key(ec.SECP256R1())
-    csr=x509.CertificateSigningRequestBuilder().subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME,'rook worker')])).sign(key,hashes.SHA256())
-    return key,csr.public_bytes(serialization.Encoding.PEM).decode()
+    from .device_key import certificate_request as create
+    return create()
 
 
 def proof(saved,purpose):
     import base64
-    from cryptography.hazmat.primitives import hashes,serialization
-    from cryptography.hazmat.primitives.asymmetric import ec
+    from .device_key import sign
     device=saved['device']
     challenge=post(saved['server'],'/auth/devices/challenge',{'device_id':device['device_id'],'purpose':purpose})
-    key=serialization.load_pem_private_key(device['private_key'].encode(),password=None)
     return {'challenge':challenge['challenge'],'certificate':device['certificate'],
-            'signature':base64.b64encode(key.sign(challenge['message'].encode(),ec.ECDSA(hashes.SHA256()))).decode()}
+            'signature':base64.b64encode(sign(device['private_key'],challenge['message'].encode())).decode()}
+
+
+def expires_at(device):
+    if 'expires_at' in device:
+        return float(device['expires_at'])
+    from cryptography import x509
+    return x509.load_pem_x509_certificate(device['certificate'].encode()).not_valid_after_utc.timestamp()
 
 
 def refresh():
@@ -117,17 +117,14 @@ def refresh():
     if not saved.get('device'):
         return saved
     import urllib.error
-    from cryptography import x509
-    import datetime
     try:
         result=post(saved['server'],'/auth/devices/config',proof(saved,'config'))
     except (urllib.error.URLError,TimeoutError,OSError) as error:
         if isinstance(error,urllib.error.HTTPError) and error.code != 429 and error.code < 500:
             raise ValueError('Device authorization was denied. Re-enroll through an owner.') from None
         # Explicit one-hour offline boot lease; known authorization denials never use it.
-        cert=x509.load_pem_x509_certificate(saved['device']['certificate'].encode())
         age=time.time()-saved.get('last_verified',0)
-        if 0<=age<3600 and cert.not_valid_after_utc>datetime.datetime.now(datetime.timezone.utc):
+        if 0<=age<3600 and expires_at(saved['device'])>time.time():
             return saved
         raise ValueError('Cannot verify device authorization; reconnect to the enrollment server.') from None
     band=result['band']
@@ -136,9 +133,15 @@ def refresh():
         raise ValueError('Enrollment server returned an older credential epoch or a different band.')
     saved['bands']=[band if b['id']==band['id'] else b for b in saved['bands']]
     saved['last_verified']=time.time()
-    cert=x509.load_pem_x509_certificate(saved['device']['certificate'].encode())
-    if cert.not_valid_after_utc-datetime.datetime.now(datetime.timezone.utc)<datetime.timedelta(days=7):
+    saved['migration']=result.get('migration')
+    if expires_at(saved['device'])-time.time()<7*86400:
         renewed=post(saved['server'],'/auth/devices/renew',proof(saved,'renew'))
         saved['device']['certificate']=renewed['certificate']
+        saved['device']['expires_at']=renewed['expires_at']
     save(saved)
+    if saved.get('migration',{} ) and saved['migration']['phase']=='prepared':
+        mid=saved['migration']['id']
+        acknowledgement=proof(saved,'stage:'+mid)
+        acknowledgement['migration_id']=mid
+        post(saved['server'],'/auth/devices/staged',acknowledgement)
     return saved

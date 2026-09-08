@@ -844,14 +844,14 @@ async def _amain(args) -> None:
     from ..remote.enrollment import EnrollmentStore
     enrollment = EnrollmentStore()
     enrollment.import_config(args.psks)
-    client = MultiBandClient(psks=[b["psk"] for b in enrollment.bands(active_only=True, secrets_visible=True)], hub_host=args.hub_host,
+    client = MultiBandClient(psks=enrollment.transport_psks(), hub_host=args.hub_host,
                              hub_port=args.hub_port)
     await client.start()
 
     async def watch_enrollment():
         while True:
             try:
-                await client.sync_bands([b["psk"] for b in enrollment.bands(active_only=True, secrets_visible=True)])
+                await client.sync_bands(enrollment.transport_psks())
             except Exception:
                 log.exception("could not sync band enrollment")
             await asyncio.sleep(2)

@@ -49,6 +49,14 @@ def main() -> int:
     rook_dst.mkdir(parents=True, exist_ok=True)
     (rook_dst / "__init__.py").write_text('__version__ = "0.1.0"\n', encoding="utf-8")
     _copy_pkg(WORKER_SRC, rook_dst / "worker")
+    # Native workers report the same source build as the zipapp.
+    import datetime
+    sys.path.insert(0,str(REPO_ROOT))
+    from rook.remote.build_band_worker import compute_build,_stamp_build_info
+    build,commit,version=compute_build()
+    _stamp_build_info(rook_dst/'worker',build,commit,version,
+                      datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds'))
+
 
     # telesthete.protocol  ->  python/telesthete/protocol
     tel_dst = PY_DST / "telesthete"

@@ -27,7 +27,7 @@ _stop_event: "asyncio.Event | None" = None
 _loop: "asyncio.AbstractEventLoop | None" = None
 
 # Builtin plugin module stems we replace with native bridges.
-_NATIVE_OVERRIDES = {"screenshot", "hid", "battery"}
+_NATIVE_OVERRIDES = {"screenshot", "hid", "battery", "selfupdate"}
 
 
 def _builtin_enabled() -> list[str]:
@@ -71,40 +71,11 @@ def _attach_native_plugins(worker) -> None:
 
 
 def start(hub: str, psk: str, name: str) -> None:
-    """Blocking. Runs the worker until stop() is called. Called on a JVM thread."""
-    logging.basicConfig(level=logging.INFO,
-                        format="%(asctime)s %(name)s %(levelname)s: %(message)s")
-    host, _, port = hub.partition(":")
-    if not port:
-        raise ValueError(f"hub must be host:port, got {hub!r}")
-    use_ws = port in ("443", "8443")  # TLS ports -> wss, matches the worker default
-
-    from rook.worker.core import Worker
-    from rook.worker.transports.telesthete_hub import TelestheteHubTransport
-
-    transport = TelestheteHubTransport(
-        psk=psk, hub_host=host, hub_port=int(port), use_ws=use_ws,
-    )
-    worker = Worker(transport=transport, enabled=_builtin_enabled(), name=name)
-    _attach_native_plugins(worker)
-
-    async def runner() -> None:
-        global _stop_event, _loop
-        _loop = asyncio.get_running_loop()
-        _stop_event = asyncio.Event()
-        task = asyncio.create_task(worker.run())
-        await _stop_event.wait()
-        await worker.shutdown()
-        try:
-            await asyncio.wait_for(task, timeout=2.0)
-        except Exception:
-            pass
-
-    asyncio.run(runner())
+    """Run/reconnect the embedded worker without re-executing app_process."""
+    from rook_android.worker_runtime import start as run
+    run(hub,psk,name)
 
 
 def stop() -> None:
-    """Thread-safe shutdown signal. Called from the JVM, off the worker thread."""
-    loop, ev = _loop, _stop_event
-    if loop is not None and ev is not None:
-        loop.call_soon_threadsafe(ev.set)
+    from rook_android.worker_runtime import stop as stop_runtime
+    stop_runtime()

@@ -46,3 +46,16 @@ def test_known_revocation_never_uses_cached_configuration(tmp_path,monkeypatch):
     def denied(*args,**kwargs):raise urllib.error.HTTPError('https://rook.example.com',403,'denied',{},None)
     monkeypatch.setattr(enroll,'proof',denied)
     with pytest.raises(ValueError,match='denied'):enroll.refresh()
+
+
+def test_mobile_device_key_uses_standard_pkcs10_and_pkcs8():
+    from cryptography import x509
+    from cryptography.hazmat.primitives import serialization
+    from rook.worker.device_key import certificate_request, private_pem, sign
+    key,csr=certificate_request()
+    request=x509.load_pem_x509_csr(csr.encode())
+    assert request.is_signature_valid
+    pem=private_pem(key)
+    loaded=serialization.load_pem_private_key(pem.encode(),None)
+    assert loaded.public_key().public_bytes(serialization.Encoding.Raw,serialization.PublicFormat.Raw)==bytes(key.verify_key)
+    request.public_key().verify(sign(pem,b'test proof'),b'test proof')
