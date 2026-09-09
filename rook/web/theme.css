@@ -1,0 +1,25 @@
+/* Shared visual language adapted from BakeDash: olive, amber, schematic rules. */
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;450;500;550;600;650;700&family=IBM+Plex+Mono:wght@400;450;500;600&display=swap');
+:root{--bg:#101310;--panel:#151914;--panel2:#131812;--line:#2b322a;--line2:#444a3c;--fg:#e2e3d9;--dim:#92998c;--dim2:#818b75;--accent:#d8ad6d;--accent-dim:#695637;--warn:#d8ad6d;--bad:#dca58d;--blue:#a4bc92;--chip:#262d20;--green:#a4bc92;--mono:'IBM Plex Mono',ui-monospace,monospace;--sans:'DM Sans',system-ui,sans-serif}
+*{box-sizing:border-box}[hidden]{display:none!important}
+body{font-family:var(--sans);background:var(--bg)}
+.app-sidebar{background:#131712}.app-sidebar .brand{font-weight:500;letter-spacing:2px;color:var(--fg)}
+.app-sidebar nav a{border-radius:0;font-size:12px}.app-sidebar nav a.active{background:#292b20;border-color:#41412c;color:var(--accent)}.app-sidebar nav a:hover{background:#23281f;color:var(--accent)}
+.nav-label{font:9px var(--mono);letter-spacing:1.5px;color:var(--dim2)}.sidebar-footer,.app-sidebar .signout{font-family:var(--mono);font-size:10px}
+.topbar{background:var(--bg);backdrop-filter:none;padding-top:30px;padding-bottom:26px}.app-heading h1{font-size:30px;font-weight:450;letter-spacing:-1px}.app-heading p{font-size:12px}
+select,input,.iconbtn,.signout{border-radius:0}.iconbtn{font:10px var(--mono);padding:9px 12px}
+.tile,.list,.sess,.chatwrap,.install-card,.bands-workspace section{border-radius:0;background:var(--panel);box-shadow:none}.tile{position:relative}.tile:before,.bands-workspace section:before{content:'';position:absolute;top:-1px;left:-1px;width:5px;height:5px;border-top:1px solid #6d735f;border-left:1px solid #6d735f;pointer-events:none}.bands-workspace section{position:relative}
+.tile .l,.listhead,.foot{font:9px var(--mono);letter-spacing:.7px}.tile.mini .k{font-family:var(--mono);font-size:28px;font-weight:400;color:var(--accent)}
+.tile.online .k{color:var(--green)}.bar .fill{background:var(--green);box-shadow:none}.bar .peak{background:#c9d1b5;box-shadow:none}.bar .fill:after{display:none}.dot{background:var(--green);animation:none;border-radius:0;width:6px;height:6px}
+.row:hover,.item.open .row{background:#20271a}.worker-band{color:#becbac;background:#20271b;border-color:#38432d;border-radius:0;font:10px var(--mono);padding:6px 8px}
+.row .ver,.row .seen,.name .id,.mcap,pre,code{font-family:var(--mono)}.row .ver{color:var(--green);font-size:10px}.row .ver.old{color:var(--accent)}.name .n{font-size:13px;font-weight:500}.name .id{font-size:9px}.tagfw{border-radius:0}
+.row .acts{flex:0 0 40px;width:40px;justify-content:flex-end}.row .acts button{border-radius:0}.worker-menu-button{font:24px/20px var(--sans)!important;width:34px;padding:5px!important;border:1px solid var(--line2)!important;color:var(--dim)!important;background:none!important}
+#worker-menu{position:fixed;inset:auto;margin:0;padding:6px;min-width:180px;background:var(--panel);border:1px solid var(--line2);color:var(--fg);box-shadow:0 12px 40px #0008;z-index:100}
+#worker-menu button{display:block;width:100%;text-align:left;background:none;border:0;color:var(--fg);font:12px var(--sans);padding:10px 12px;cursor:pointer}#worker-menu button:hover,#worker-menu button:focus{background:#292b20;color:var(--accent)}
+.device-icon{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;color:var(--green);flex:0 0 24px}.device-icon svg{width:21px;height:21px}
+.worker-group-heading{font:10px var(--mono);letter-spacing:1px;text-transform:uppercase;color:var(--accent);margin:0;padding:15px 16px;background:#101610;border-top:1px solid var(--line)}.worker-group-heading:first-child{border-top:0}
+.inventory-controls{display:flex;gap:20px;justify-content:flex-end;flex-wrap:wrap;margin:0 0 20px}.inventory-controls label{display:flex;gap:10px;align-items:center;font:10px var(--mono);color:var(--dim)}.inventory-controls select{font:10px var(--mono)}
+.bands-workspace button,.bands-workspace input,.bands-workspace select,.bands-workspace dialog,.bands-workspace .badge{border-radius:0}.bands-workspace button{font-family:var(--mono);font-size:11px;background:#292b20;border-color:#514b35;color:var(--accent)}.bands-workspace button.secondary{background:var(--panel2);color:var(--fg)}.bands-workspace button.danger{background:#30271f;color:var(--bad)}
+.bands-workspace h2{font-weight:500}.bands-workspace .badge{font:10px var(--mono)}.bands-workspace dialog{border-color:var(--line2)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+@media(max-width:800px){.row .acts{order:0;flex:0 0 34px;width:34px}.row .name{flex:1 1 calc(100% - 105px)}.row .worker-band{order:2}.row .ver{order:3}.row .batt-slot{order:4}.inventory-controls{justify-content:flex-start;gap:12px}.inventory-controls label{gap:7px;font-size:9px}.inventory-controls select{max-width:145px}.topbar{padding:24px 16px}.app-heading h1{font-size:27px}}

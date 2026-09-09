@@ -324,3 +324,14 @@ async def test_legacy_dashboard_login_bridges_to_worker_move_page(accounts):
         token=response.cookies['rook_account'].value
         response=await client.get('/account/bands/component',headers={'Cookie':'rook_account='+token})
         assert response.status==200 and 'band-dialog' in (await response.json())['html']
+
+
+@pytest.mark.asyncio
+async def test_legacy_login_can_open_tokens_first(accounts):
+    server=CombinedServer(band_psk='old-key',web_user='operator',web_pass='operator-password',domain='rook.example.com')
+    async with TestClient(TestServer(server._app)) as client:
+        response=await client.get('/account/session',headers={'Cookie':'rook_session='+server._make_session_cookie()},allow_redirects=False)
+        assert response.status==302 and response.headers['Location']=='/account/session'
+        token=response.cookies['rook_account'].value
+        response=await client.get('/account/session',headers={'Cookie':'rook_account='+token})
+        assert response.status==200 and (await response.json())['user']['admin']

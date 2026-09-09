@@ -887,6 +887,10 @@ async def _amain(args) -> None:
     except Exception as e:
         log.warning("WS band bridge failed to start: %s", e)
 
+    from .account_tokens import build_account_token_routes
+    for route in reversed(build_account_token_routes(store, getattr(mcp, "_rook_chat", None))):
+        app.router.routes.insert(0, route)
+
     # /tokens admin UI (mint/list/revoke bearer tokens).
     for r in reversed(build_api_token_routes(store, getattr(mcp, "_rook_chat", None))):
         app.router.routes.insert(0, r)

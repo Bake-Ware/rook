@@ -27,7 +27,7 @@ class BandWeb:
 
     async def asset(self, request):
         name=request.match_info['name']
-        types={'bands.js':'application/javascript','bands.css':'text/css','shell.css':'text/css'}
+        types={'bands.js':'application/javascript','bands.css':'text/css','shell.css':'text/css','account.js':'application/javascript','tokens.js':'application/javascript','settings.css':'text/css','theme.css':'text/css'}
         if name not in types:raise web.HTTPNotFound()
         path=Path(__file__).parents[1]/'web'/name
         return web.Response(text=path.read_text(),content_type=types[name],headers=NO_STORE)

@@ -27,7 +27,14 @@ def esc(value):
 
 
 def document(title, body):
-    return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+esc(title)+' · Rook</title><style>body{font:16px system-ui;background:#0b0f14;color:#e6edf3;margin:0}main{max-width:850px;margin:auto;padding:24px}a{color:#48d8b5}h1,h2{font-weight:600}h2{margin-top:32px}section{padding:20px;border:1px solid #29333e;border-radius:12px;margin:16px 0;background:#111820}input,select,button{font:inherit;padding:10px;border-radius:6px;border:1px solid #384553;background:#192431;color:#e6edf3;max-width:100%;box-sizing:border-box}input{margin:5px 0}button{cursor:pointer;background:#12634f}label{display:block;margin-top:10px}form{margin:14px 0}code,pre{white-space:pre-wrap;overflow-wrap:anywhere}small,.muted{color:#a8b4bf}.avatar{width:64px;height:64px;object-fit:cover;border-radius:50%}.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.error{color:#ffa1a1}nav{display:flex;gap:18px;flex-wrap:wrap}hr{border:0;border-top:1px solid #29333e}</style></head><body><main><nav><a href="/account">♖ Rook account</a><a href="/account/bands">Bands</a><a href="/">Dashboard</a></nav><h1>'+esc(title)+'</h1>'+body+'</main></body></html>'
+    return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width,initial-scale=1">'
+            '<title>' + esc(title) + ' · Rook</title>'
+            '<link rel="stylesheet" href="/account/bands/assets/settings.css">'
+            '<link rel="stylesheet" href="/account/bands/assets/theme.css">'
+            '</head><body class="standalone-account"><main class="settings-workspace">'
+            '<nav><a href="/account">♖ Rook account</a><a href="/account/bands">Bands</a>'
+            '<a href="/">Dashboard</a></nav><h1>' + esc(title) + '</h1>' + body + '</main></body></html>')
 
 
 class AccountWeb:
@@ -49,6 +56,9 @@ class AccountWeb:
         from .band_web import BandWeb
         self.band_web=BandWeb(self)
         self.band_web.install(app)
+        from .token_web import TokenWeb
+        TokenWeb(self).install(app)
+        app.router.add_get('/account/component', self.component)
         app.router.add_route('*','/account',self.page)
         app.router.add_get('/account/login',self.login_page)
         app.router.add_post('/account/login',self.local_login)
@@ -363,31 +373,41 @@ class AccountWeb:
             raise web.HTTPNotFound()
         return web.Response(body=image[0],content_type='image/jpeg',headers={'Cache-Control':'private, max-age=300','X-Content-Type-Options':'nosniff'})
 
-    async def page(self,request):
+    async def component(self, request):
+        return await self.page(request, component=True)
+
+    async def page(self,request, *, component=False):
         if request.method!='GET':
             raise web.HTTPMethodNotAllowed(request.method,['GET'])
         user=self.require(request)
+        if user['admin'] and not component:
+            suffix = '?' + urlencode(dict(request.query)) if request.query else ''
+            raise web.HTTPFound('/#account' + suffix, headers=NO_STORE)
         avatar=self.store.avatar(user['id'])
-        body='<div class="row">'+('<img class="avatar" src="/account/avatar/'+esc(user['id'])+'?v='+str(user['avatar_updated'])+'" alt="Your avatar">' if avatar else '<span class="avatar">'+esc(user['name'][:2].upper())+'</span>')+'<p>'+esc(user['name'])+'</p></div>'
-        body+=self.form(user,'logout','<button>Sign out</button>')
+        body='<div class="profile-hero" data-section="profile">'+('<img class="avatar" src="/account/avatar/'+esc(user['id'])+'?v='+str(user['avatar_updated'])+'" alt="Your avatar">' if avatar else '<span class="avatar">'+esc(user['name'][:2].upper())+'</span>')+'<p>'+esc(user['name'])+'</p>'
+        body+=self.form(user,'logout','<button>Sign out</button>')+'</div>'
         device=request.query.get('device','')
-        body+='<section><h2>Authorize a terminal installer</h2><p>Only approve a code shown by an installer you started. Approval lets that installer fetch all your authorized band configurations once.</p>'+self.form(user,'device_approve','<label>Installer authorization code <input name="user_code" value="'+esc(device)+'" maxlength="8" required></label><button>Authorize configuration fetch</button>')+'</section>'
-        body+='<section><h2>Profile & connected logins</h2>'
+        body+='<section data-section="installers"><h2>Authorize a terminal installer</h2><p>Only approve a code shown by an installer you started. Approval lets that installer fetch all your authorized band configurations once.</p>'+self.form(user,'device_approve','<label>Installer authorization code <input name="user_code" value="'+esc(device)+'" maxlength="8" required></label><button>Authorize configuration fetch</button>')+'</section>'
+        body+='<section data-section="profile"><h2>Profile & connected logins</h2>'
         body+=self.form(user,'profile','<label>Display name <input name="name" value="'+esc(user['name'])+'" maxlength="100" required></label><button>Save name</button>')
         if self.google.enabled:
             body+=('<p>Google connected.</p>'+self.form(user,'unlink','<button>Disconnect Google</button>') if user['google_connected'] else '<p><a href="/auth/google?link=1">Connect Google account</a></p>')
-        if not user['has_password']:
+        body+='</section><section data-section="profile"><h2>Password & recovery</h2>'
+        if user['id']==self.bootstrap_id:
+            body+='<p class="muted">This operator recovery login is managed in the server configuration. You can connect a Google account to sign in here.</p>'
+        elif not user['has_password']:
             body+=self.form(user,'local','<label>Local username <input name="username" autocomplete="username" required></label><label>Password <input name="password" type="password" minlength="12" autocomplete="new-password" required></label><button>Add local login</button>')
         else:
             body+=self.form(user,'password','<label>Current password <input type="password" name="current_password" autocomplete="current-password" required></label><label>New password <input type="password" name="password" minlength="12" autocomplete="new-password" required></label><button>Change password</button>')
-        body+=self.form(user,'avatar','<label>Avatar <select name="source"><option value="google">Use Google photo</option><option value="initials">Use initials</option></select></label><button>Apply avatar</button>')
+        body+='</section><section data-section="profile" class="profile-picture"><h2>Profile picture</h2>'
+        body+=self.form(user,'avatar','<label>Avatar <select name="source"><option value="google"'+(' selected' if user['avatar_source']=='google' else '')+'>Use Google photo</option><option value="initials"'+(' selected' if user['avatar_source']=='initials' else '')+'>Use initials</option></select></label><button>Apply avatar</button>')
         body+='<form method="post" action="/account/action" enctype="multipart/form-data"><input type="hidden" name="csrf" value="'+esc(user['csrf'])+'"><input type="hidden" name="op" value="avatar_upload"><label>Custom avatar <input type="file" name="image" accept="image/png,image/jpeg,image/webp" required></label><button>Upload avatar</button></form></section>'
         invite=request.query.get('invite','')
-        body+='<section><h2>Join an invited band</h2>'+self.form(user,'accept','<label>Invitation code <input name="invite" value="'+esc(invite)+'" required></label><button>Accept invitation</button>')+'</section>'
-        body+='<h2 id="bands">Your bands</h2><p><a href="/account/configurations">Download all configurations</a></p>'
+        body+='<section data-section="access"><h2>Join an invited band</h2>'+self.form(user,'accept','<label>Invitation code <input name="invite" value="'+esc(invite)+'" required></label><button>Accept invitation</button>')+'</section>'
+        body+='<div data-section="access"><h2 id="bands">Band access</h2><p><a href="/account/configurations">Download all configurations</a> · <a href="/#bands">Manage bands and migrations</a></p></div>'
         for band in self.store.bands(user['id']):
             bid=band['id']
-            body+='<section><h2>'+esc(band['name'])+'</h2><p>'+esc(band['role'])+' · epoch '+str(band['epoch'])+(' · revoked' if not band['active'] else '')+'</p>'
+            body+='<section data-section="access"><h2>'+esc(band['name'])+'</h2><p>'+esc(band['role'])+' · epoch '+str(band['epoch'])+(' · revoked' if not band['active'] else '')+'</p>'
             if band['active']:
                 body+='<p><a href="/account/configurations?band='+bid+'">Download configuration</a></p>'
             if band['role']=='owner':
@@ -396,7 +416,7 @@ class AccountWeb:
                 body+=self.form(user,'invite','<button>Create invitation link</button>',bid)
                 body+='<details><summary>Members and ownership</summary>'
                 for member in self.store.members(user['id'],bid):
-                    body+=self.form(user,'member','<input type="hidden" name="user_id" value="'+member['id']+'"><span>'+esc(member['name'])+' ('+esc(member['role'])+')</span> <select name="role"><option value="member">Member</option><option value="owner">Owner</option><option value="remove">Remove</option></select> <button>Update member</button>',bid)
+                    body+=self.form(user,'member','<input type="hidden" name="user_id" value="'+member['id']+'"><span>'+esc(member['name'])+' ('+esc(member['role'])+')</span> <select name="role"><option value="member"'+(' selected' if member['role']=='member' else '')+'>Member</option><option value="owner"'+(' selected' if member['role']=='owner' else '')+'>Owner</option><option value="remove">Remove</option></select> <button>Update member</button>',bid)
                 body+='</details><details><summary>Replace or revoke permanent PSK</summary><p>Immediate replacement requires re-enrollment of old-key workers. Never distribute a replacement over a compromised band.</p>'
                 body+=self.form(user,'rotate','<label><input type="checkbox" name="confirm" value="yes" required> I understand existing workers need re-enrollment.</label><button>Generate replacement five-word PSK</button>',bid)
                 body+=self.form(user,'revoke','<label><input type="checkbox" name="confirm" value="yes" required> Revoke this band’s current key.</label><button>Revoke band PSK</button>',bid)+'</details>'
@@ -407,10 +427,22 @@ class AccountWeb:
                         body+=self.form(user,'device_revoke','<input type="hidden" name="device_id" value="'+device['id']+'"><button>Revoke device certificate</button>',bid)
                 body+='</details>'
             body+='</section>'
-        body+='<section><h2>Create a band</h2>'+self.form(user,'band_create','<label>Band name <input name="name" maxlength="100" required></label><button>Create band with a five-word PSK</button>')+'</section>'
+        body+='<section data-section="access"><h2>Organize your fleet</h2><p><a href="/account/bands">Create bands, rename them, or move workers →</a></p></section>'
+        if component:
+            return web.json_response({'html': body, 'csrf': user['csrf']}, headers=NO_STORE)
         return self.response('Your Rook account',body)
 
-    async def action(self,request):
+    async def action(self, request):
+        result = await self._action(request)
+        if request.headers.get('X-Rook-View') == 'account' and isinstance(result, web.HTTPFound):
+            location = result.headers.get('Location', '/account')
+            response = web.json_response({'refresh': location == '/account',
+                                          'redirect': location if location != '/account' else None}, headers=NO_STORE)
+            response.cookies.update(result.cookies)
+            return response
+        return result
+
+    async def _action(self,request):
         user=self.require(request)
         try:
             data=await request.post()
@@ -420,7 +452,7 @@ class AccountWeb:
             uid=user['id']
             if op=='logout':
                 self.store.logout(request.cookies.get(COOKIE,''))
-                response=self.redirect('/account/login'); response.del_cookie(COOKIE); return response
+                response=self.redirect('/account/login'); response.del_cookie(COOKIE); response.del_cookie('rook_session'); return response
             if op in ('local','password','unlink','merge'):
                 self.require(request,fresh=True)
             if op=='local':
@@ -480,6 +512,8 @@ class AccountWeb:
                 if op=='pair':
                     grant=self.server._enrollment.issue(bid)
                     url=self.origin+'/worker?band='+grant['code']
+                    if request.headers.get('X-Rook-View') == 'account':
+                        return web.json_response({'pairing': grant, 'band_id': bid, 'origin': self.origin, 'csrf': user['csrf']}, headers=NO_STORE)
                     body='<p>Code <strong id="code">'+grant['code']+'</strong> · <span id="expires"></span></p><pre id="command">'+esc("curl -fsSL '"+url+"' | bash")+'</pre><p><a href="/account">Back to account</a></p>'
                     payload=json.dumps({'csrf':user['csrf'],'band_id':bid,'session':grant['session']}).replace('<','\\u003c')
                     origin=json.dumps(self.origin).replace('<','\\u003c')

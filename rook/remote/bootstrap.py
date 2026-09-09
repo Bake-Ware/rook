@@ -1094,7 +1094,7 @@ class CombinedServer:
         # Account routes enforce their own sessions, CSRF and band ownership.
         # A Google/member login never unlocks the legacy global admin APIs.
         if self._accounts.handles(request.path):
-            if (request.path in ("/account", "/account/bands", "/account/bands/component") and not self._accounts.current(request)
+            if (request.path in ("/account", "/account/bands", "/account/bands/component", "/account/component", "/account/tokens/api", "/account/session") and not self._accounts.current(request)
                     and self.web_pass and self._accounts.bootstrap_id
                     and request.cookies.get("rook_session") == self._make_session_cookie()):
                 response=self._accounts.signed_in(self._accounts.bootstrap_id)
