@@ -94,9 +94,11 @@ async def main():
     await page.evaluate("document.querySelector('#view-workers').style.minHeight='';window.scrollTo(0,0)")
     await page.locator('.view-toggle [data-layout=list]').click()
 
-    await page.locator('#tab-install').click();await page.locator('.install-art img').scroll_into_view_if_needed()
+    await page.locator('#tab-install').click();await page.locator('#rook-art[data-mode=webgl] canvas').wait_for(state='visible')
+    assert await page.locator('#view-install img').count()==0
+    await page.locator('#art-toggle').click();assert await page.locator('#rook-art').get_attribute('data-motion')=='paused'
+    await page.locator('#art-toggle').click();assert await page.locator('#rook-art').get_attribute('data-motion')=='on'
     await page.screenshot(path='/tmp/rook-new-install.png')
-    assert await page.locator('.install-art img').evaluate('(im)=>im.complete && im.naturalWidth>0')
     await page.locator('#tab-account').click();await page.locator('[data-section-tab=profile]').wait_for()
     await page.locator('form:has([name=op][value=profile]) [name=name]').fill('A better account')
     await page.get_by_role('button',name='Save name',exact=True).click();await page.wait_for_function("document.querySelector('.profile-hero p').textContent==='A better account'")

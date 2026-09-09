@@ -81,10 +81,8 @@ select,input,.iconbtn,.signout{border-radius:0}.iconbtn{font:10px var(--mono);pa
 }
 
 #view-install{position:relative;min-height:650px}#view-install .install{position:relative;z-index:1;width:65%;max-width:900px;margin-left:0}
-.install-art{position:absolute;right:0;top:0;width:32%;max-width:420px;margin:0}.install-art img{display:block;width:100%;height:auto;mask-image:linear-gradient(to right,transparent,#000 10%,#000 92%,transparent)}.install-art figcaption{font:8px var(--mono);letter-spacing:1.5px;color:var(--dim2);text-align:center;margin-top:10px}
-@media(max-width:1100px){#view-install .install{width:100%}.install-art{position:relative;width:230px;margin:30px 0}#view-install{display:flex;flex-direction:column}.install-art{order:2}}
-@media(max-width:800px){.install-art{width:180px}.sidebar-footer{top:25px}}
+@media(max-width:1100px){#view-install .install{width:100%}}
+@media(max-width:800px){.sidebar-footer{top:25px}}
 #worker-stats .tile{order:0}.cggrid .mcap::after{content:none}
-body[data-view=install] .art-toggle{visibility:hidden}
 #view-workers[data-layout=grid] .row .batt-slot{grid-column:3 / 5;grid-row:auto;justify-self:start}
 #view-workers[data-layout=grid] .row .batt-slot:empty{display:none}
