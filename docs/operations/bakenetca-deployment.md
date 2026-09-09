@@ -1,5 +1,39 @@
 # BakeNetCA deployment layout
 
+## Cached overview and responsive terminal deployed, 2026-09-09
+
+Both services run from `/opt/rook-releases/overview-20260909-8bf7f1f`, source
+`8bf7f1f`. The operator-only `/api/band/overview` endpoint combines the existing
+in-memory roster with shared cached worker chat summaries. A demand-driven
+server collector polls at most four workers concurrently, with a 15-second
+interval between rounds and a 90-second idle cutoff. HTTP requests return
+without awaiting those calls. Band filtering, worker moves, bans, expiration,
+and bounded previews are covered by tests.
+
+The terminal fetches one overview about every two seconds off its input thread.
+It also polls active conversations in the background, discarding responses on
+room changes. The previous synchronous, per-worker chat scans are removed.
+The 139-test suite passed, followed by the additional room-switch regression
+test; blocked-network tests exercise navigation, typing, quit, retained cached
+rosters, and shared bounded collection across concurrent readers.
+
+Cachyrig passed the signed in-band canary and update health window. A real
+pseudo-terminal using its installed bundle and live dashboard login measured
+402 ms to first frame, 0.7 ms for selection movement, and 32 ms to quit, with
+the background worker PID unchanged. Five live aggregate requests had a median
+204 ms response time while returning 26 workers and seven cached chats.
+Unauthenticated overview access returned 401.
+
+Signed worker build `138.cranky.heron` is published through both worker download
+endpoints, with signature and SHA-256 verified:
+`96cbf60d4561239cc8205c1dd4a42ede3e04acdee93c83fbbddd8390973960b1`.
+The server endpoint was deployed with the old worker feed first; the new worker
+feed was published after canary verification. Override backups are under
+`/var/backups/rook/overview-20260909-8bf7f1f`, and the prior release remains intact.
+All 25 compatible workers converged to build 138 and completed their update
+health windows, verified through read-only Rook calls.
+The APK, band credentials, and migrations are unchanged.
+
 ## Bundled desktop dashboard deployed, 2026-09-09
 
 Both services now run from `/opt/rook-releases/cli-20260909-6756198`, source
