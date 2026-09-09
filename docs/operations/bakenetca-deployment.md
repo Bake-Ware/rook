@@ -1,8 +1,24 @@
 # BakeNetCA deployment layout
 
-## Deployed and verified, 2026-09-09
+## Dashboard shell deployed, 2026-09-09
 
-Both services now run from `/opt/rook-releases/bands-20260909-ce8aa7d`,
+Both services now run from `/opt/rook-releases/shell-20260909-cf7bc93`.
+The dashboard includes worker band labels, shared sidebar navigation, and
+an embedded band-management component. Source release `cf7bc93` passed all
+117 tests and local desktop/mobile browser checks. Public HTTPS browser checks
+verified real worker labels, the embedded dialog, and layouts at 1440, 1100,
+820, and 390 pixels with no JavaScript errors. A follow-up stylesheet adjustment
+keeps worker action labels on one line while wrapping the action buttons.
+
+This is a web-only update: signed worker build 120, its manifest, and the APK
+are byte-for-byte unchanged. No workers or bands were migrated by this update.
+Previous source and artifacts remain at `/opt/rook-releases/bands-20260909-ce8aa7d`;
+unit and SQLite backups are at `/var/backups/rook/shell-20260909-cf7bc93`.
+Temporary verification sessions and SSH access are removed after verification.
+
+## Band management deployed and verified, 2026-09-09
+
+Both services initially ran from `/opt/rook-releases/bands-20260909-ce8aa7d`,
 source commit `ce8aa7d` on `feature/band-management`. The signed worker build
 `120.steady.iguana` is published at the existing worker download endpoints.
 Its SHA-256 is
