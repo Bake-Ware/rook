@@ -306,3 +306,15 @@ async def test_device_enrollment_http_and_public_apk_hash(accounts,tmp_path,monk
         response=await client.get('/apk');assert response.status==200
         apk.write_bytes(b'old secret-bearing artifact')
         response=await client.get('/apk');assert response.status==503
+
+
+@pytest.mark.asyncio
+async def test_legacy_dashboard_login_bridges_to_worker_move_page(accounts):
+    server=CombinedServer(band_psk='old-key',web_user='operator',web_pass='operator-password',domain='rook.example.com')
+    async with TestClient(TestServer(server._app)) as client:
+        path='/account/bands?worker=selected-worker'
+        response=await client.get(path,headers={'Cookie':'rook_session='+server._make_session_cookie()},allow_redirects=False)
+        assert response.status==302 and response.headers['Location']==path
+        token=response.cookies['rook_account'].value
+        response=await client.get(path,headers={'Cookie':'rook_account='+token})
+        assert response.status==200 and 'Move worker to band' in await response.text()

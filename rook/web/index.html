@@ -328,6 +328,7 @@
     <div class="brand">♖ ROOK</div>
     <nav>
       <a id="tab-workers" class="active" onclick="showView('workers')">Workers</a>
+      <a href="/account/bands">Bands</a>
       <a id="tab-chat" onclick="showView('chat')">Chat</a>
       <a id="tab-sessions" onclick="showView('sessions')">Sessions</a>
       <a id="tab-install" onclick="showView('install')">Install</a>
@@ -586,9 +587,10 @@ function updateMeta(m,w){
   if(has('screenshot.capture')) a.push(`<button class="primary" data-a="snap">snap</button>`);
   if(has('shell.exec')) a.push(`<button data-a="shell">shell</button>`);
   if(has('info.host')) a.push(`<button data-a="info">info</button>`);
+  a.push(`<button data-a="move">move to band…</button>`);
   m.acts.innerHTML=a.join('');
   m.acts.querySelectorAll('button').forEach(b=>b.onclick=e=>{e.stopPropagation();
-    ({snap,shell,info})[b.dataset.a](w.worker_id);});
+    ({snap,shell,info,move:wid=>{location.href='/account/bands?worker='+encodeURIComponent(wid)}})[b.dataset.a](w.worker_id);});
   // caps groups (rebuild only if changed)
   const sig=caps.join(','); if(sig!==m.capsSig){ m.capsSig=sig;
     m.meta.textContent=`worker_id ${w.worker_id} · ${caps.length} capabilities`;

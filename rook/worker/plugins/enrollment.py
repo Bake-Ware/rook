@@ -43,6 +43,11 @@ class EnrollmentPlugin(Plugin):
         return {'worker_id':self.worker.worker_id,'name':self.worker.name,'csr':pending['csr'],
                 'csr_hash':hashlib.sha256(pending['csr'].encode()).hexdigest(),'enrolled':False}
 
+    @capability('enrollment_move_prepare')
+    def move_prepare(self,server):
+        """Advertise support for authenticated cross-band configuration changes."""
+        return self.prepare(server)
+
     @capability('enrollment_finish')
     async def finish(self,grant):
         return await asyncio.to_thread(self._finish,grant)

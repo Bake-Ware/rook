@@ -21,7 +21,8 @@ SCHEMA = '''
 CREATE TABLE IF NOT EXISTS band_migrations (
  id TEXT PRIMARY KEY, band_id TEXT NOT NULL, old_epoch INTEGER NOT NULL,
  new_psk TEXT, new_hash TEXT NOT NULL, phase TEXT NOT NULL,
- created REAL NOT NULL, deadline REAL NOT NULL, owner TEXT NOT NULL);
+ created REAL NOT NULL, deadline REAL NOT NULL, owner TEXT NOT NULL,
+ target_band_id TEXT, target_epoch INTEGER, full_inventory INTEGER NOT NULL DEFAULT 1);
 CREATE UNIQUE INDEX IF NOT EXISTS one_open_migration ON band_migrations(band_id)
  WHERE phase IN ('prepared','active');
 CREATE TABLE IF NOT EXISTS migration_workers (
@@ -34,6 +35,17 @@ CREATE TABLE IF NOT EXISTS migration_proofs (
 '''
 
 
+def upgrade_schema(db):
+    # executescript commits its caller's transaction. Serialize schema upgrades
+    # across the web and MCP processes before inspecting columns.
+    if not db.in_transaction:
+        db.execute('BEGIN IMMEDIATE')
+    columns = {r[1] for r in db.execute('PRAGMA table_info(band_migrations)')}
+    for name, kind in (('target_band_id', 'TEXT'), ('target_epoch', 'INTEGER'), ('full_inventory', 'INTEGER NOT NULL DEFAULT 1')):
+        if name not in columns:
+            db.execute(f'ALTER TABLE band_migrations ADD COLUMN {name} {kind}')
+
+
 def proof_message(migration_id,device_id,worker_id,epoch,nonce):
     return '\n'.join(('rook-migration-proof-v1',migration_id,device_id,worker_id,str(epoch),nonce)).encode()
 
@@ -41,9 +53,11 @@ def proof_message(migration_id,device_id,worker_id,epoch,nonce):
 class MigrationStore:
     def __init__(self,accounts):
         self.accounts=accounts
-        with accounts.db() as db:db.executescript(SCHEMA)
+        with accounts.db() as db:
+            db.executescript(SCHEMA)
+            upgrade_schema(db)
 
-    def prepare(self,uid,band_id,expected,ttl=3600):
+    def prepare(self,uid,band_id,expected,ttl=3600,target_band_id=None,full_inventory=None):
         if not isinstance(expected,dict) or not expected or len(expected)>1000:
             raise ValueError('Specify the complete worker-to-device mapping.')
         if not 300<=ttl<=86400:raise ValueError('Use a 5-minute to 24-hour migration window.')
@@ -58,12 +72,39 @@ class MigrationStore:
                 if not db.execute('SELECT 1 FROM devices d JOIN memberships m ON m.user_id=d.sponsor AND m.band_id=d.band_id WHERE d.id=? AND d.band_id=? AND d.active=1',(device,band_id)).fetchone():
                     raise ValueError('Every expected worker needs a currently authorized device identity.')
             if len(set(expected.values()))!=len(expected):raise ValueError('Device identities must be unique.')
-            mid=secrets.token_hex(16);psk=generate_psk();now=time.time()
-            db.execute('INSERT INTO band_migrations VALUES(?,?,?,?,?,?,?,?,?)',
-                       (mid,band_id,band['epoch'],psk,hashlib.sha256(psk.encode()).hexdigest(),'prepared',now,now+ttl,uid))
+            full_inventory = target_band_id is None if full_inventory is None else full_inventory
+            if full_inventory:
+                self._check_inventory(db,band_id,set(expected.values()))
+            target = None
+            if target_band_id:
+                if target_band_id == band_id:raise ValueError('Choose a different destination band.')
+                self.accounts.require_band(uid,target_band_id,False,db)
+                target=db.execute('SELECT * FROM bands WHERE id=? AND active=1',(target_band_id,)).fetchone()
+                if not target:raise ValueError('Destination band is inactive.')
+                if target['hub'] != band['hub']:raise ValueError('Cross-hub moves are not supported yet.')
+                if db.execute("SELECT 1 FROM band_migrations WHERE (band_id=? OR target_band_id=?) AND phase IN ('prepared','active')",(target_band_id,band_id)).fetchone():
+                    raise ValueError('A related band already has an open migration.')
+                for device in expected.values():
+                    if db.execute('SELECT 1 FROM devices a JOIN devices b ON a.public_hash=b.public_hash WHERE a.id=? AND b.band_id=?',(device,target_band_id)).fetchone():
+                        raise ValueError('A device key is already registered in the destination band.')
+            elif db.execute("SELECT 1 FROM band_migrations WHERE target_band_id=? AND phase IN ('prepared','active')",(band_id,)).fetchone():
+                raise ValueError('Workers are moving into this band; finish that move first.')
+            mid=secrets.token_hex(16);psk=target['psk'] if target else generate_psk();now=time.time()
+            db.execute('INSERT INTO band_migrations(id,band_id,old_epoch,new_psk,new_hash,phase,created,deadline,owner,target_band_id,target_epoch,full_inventory) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
+                       (mid,band_id,band['epoch'],psk,hashlib.sha256(psk.encode()).hexdigest(),'prepared',now,now+ttl,uid,target_band_id,target['epoch'] if target else None,int(full_inventory)))
             db.executemany('INSERT INTO migration_workers(migration_id,worker_id,device_id) VALUES(?,?,?)',[(mid,w,d) for w,d in expected.items()])
             self.accounts.audit(db,uid,'migration_prepare',mid)
         return self.status(uid,mid)
+
+    @staticmethod
+    def _check_inventory(db,band_id,expected):
+        current={r[0] for r in db.execute('SELECT id FROM devices WHERE band_id=? AND active=1',(band_id,))}
+        if current != expected:
+            raise ValueError('Enrolled device inventory changed or contains missing devices. Review the full fleet.')
+
+    def _inventory_unchanged(self,db,row):
+        if row['full_inventory']:
+            self._check_inventory(db,row['band_id'],{r[0] for r in db.execute('SELECT device_id FROM migration_workers WHERE migration_id=?',(row['id'],))})
 
     def _owned(self,db,uid,mid):
         row=db.execute('SELECT * FROM band_migrations WHERE id=?',(mid,)).fetchone()
@@ -72,7 +113,17 @@ class MigrationStore:
         band=db.execute('SELECT * FROM bands WHERE id=?',(row['band_id'],)).fetchone()
         if row['phase'] in ('prepared','active') and (not band['active'] or band['epoch']!=row['old_epoch']):
             raise ValueError('Band credentials changed; this migration is no longer valid.')
+        if row['target_band_id'] and row['phase'] in ('prepared','active'):
+            self.accounts.require_band(uid,row['target_band_id'],False,db)
+            self.accounts.require_band(row['owner'],row['target_band_id'],False,db)
+            target=db.execute('SELECT * FROM bands WHERE id=?',(row['target_band_id'],)).fetchone()
+            if not target or not target['active'] or target['epoch']!=row['target_epoch']:
+                raise ValueError('Destination credentials changed; review the move.')
         return row
+
+    @staticmethod
+    def epoch(row):
+        return row['target_epoch'] if row['target_band_id'] else row['old_epoch']+1
 
     def status(self,uid,mid):
         with self.accounts.db() as db:
@@ -88,14 +139,21 @@ class MigrationStore:
             if row['phase']!='prepared' or row['deadline']<time.time():raise ValueError('Migration is not ready or its window expired.')
             if db.execute('SELECT 1 FROM migration_workers WHERE migration_id=? AND staged IS NULL',(mid,)).fetchone():
                 raise ValueError('Every expected device must persist the candidate configuration first.')
+            self._inventory_unchanged(db,row)
             db.execute("UPDATE band_migrations SET phase='active' WHERE id=?",(mid,))
             self.accounts.audit(db,uid,'migration_activate',mid)
 
     def candidate(self,db,device_id):
         row=db.execute("SELECT m.*,b.name,b.hub FROM band_migrations m JOIN migration_workers w ON w.migration_id=m.id JOIN bands b ON b.id=m.band_id WHERE w.device_id=? AND m.phase IN ('prepared','active') AND b.active=1 AND b.epoch=m.old_epoch",(device_id,)).fetchone()
         if not row:return None
+        if row['target_band_id']:
+            self._owned(db,row['owner'],row['id'])
+            target=db.execute('SELECT id,name,hub,psk,epoch FROM bands WHERE id=?',(row['target_band_id'],)).fetchone()
+            band=dict(target)
+        else:
+            band={'id':row['band_id'],'name':row['name'],'hub':row['hub'],'psk':row['new_psk'],'epoch':row['old_epoch']+1}
         return {'id':row['id'],'phase':row['phase'],'deadline':row['deadline'],
-                'band':{'id':row['band_id'],'name':row['name'],'hub':row['hub'],'psk':row['new_psk'],'epoch':row['old_epoch']+1}}
+                'source_band_id':row['band_id'],'kind':'move' if row['target_band_id'] else 'psk','band':band}
 
     def staged(self,device,mid):
         with self.accounts.db() as db:
@@ -114,7 +172,7 @@ class MigrationStore:
             token=secrets.token_urlsafe(32)
             db.execute('DELETE FROM migration_proofs WHERE expires<?',(time.time(),))
             db.execute('INSERT INTO migration_proofs VALUES(?,?,?,?)',(hashlib.sha256(token.encode()).hexdigest(),mid,worker_id,time.time()+60))
-            return {'migration_id':mid,'epoch':row['old_epoch']+1,'nonce':token}
+            return {'migration_id':mid,'epoch':self.epoch(row),'nonce':token}
 
     def confirm(self,uid,mid,worker_id,proof):
         from cryptography.exceptions import InvalidSignature
@@ -128,7 +186,7 @@ class MigrationStore:
             device=db.execute('SELECT d.* FROM migration_workers w JOIN devices d ON d.id=w.device_id JOIN device_certificates c ON c.device_id=d.id JOIN memberships m ON m.user_id=d.sponsor AND m.band_id=d.band_id WHERE w.migration_id=? AND w.worker_id=? AND d.active=1 AND c.fingerprint=? AND c.expires>?',
                               (mid,worker_id,cert.fingerprint(hashes.SHA256()).hex(),time.time())).fetchone()
             if not device:raise PermissionError('Proof does not identify the expected authorized device.')
-            message=proof_message(mid,device['id'],worker_id,migration['old_epoch']+1,nonce)
+            message=proof_message(mid,device['id'],worker_id,self.epoch(migration),nonce)
             signature=base64.b64decode(proof['signature'],validate=True)
             try:
                 key=cert.public_key()
@@ -148,6 +206,13 @@ class MigrationStore:
                 raise ValueError('Every expected device must prove the new channel before retirement.')
             if db.execute('SELECT 1 FROM migration_workers w JOIN devices d ON d.id=w.device_id WHERE w.migration_id=? AND (d.active=0 OR NOT EXISTS(SELECT 1 FROM memberships m WHERE m.user_id=d.sponsor AND m.band_id=d.band_id))',(mid,)).fetchone():
                 raise ValueError('Device authorization changed; review before finalizing.')
+            self._inventory_unchanged(db,row)
+            if row['target_band_id']:
+                db.execute('UPDATE devices SET band_id=?,sponsor=?,credential_epoch=? WHERE id IN (SELECT device_id FROM migration_workers WHERE migration_id=?)',
+                           (row['target_band_id'],row['owner'],row['target_epoch'],mid))
+                db.execute("UPDATE band_migrations SET phase='complete',new_psk=NULL WHERE id=?",(mid,))
+                self.accounts.audit(db,uid,'workers_moved',mid)
+                return
             old=db.execute('SELECT psk_hash FROM bands WHERE id=?',(row['band_id'],)).fetchone()['psk_hash']
             db.execute('INSERT OR IGNORE INTO retired VALUES(?)',(old,))
             db.execute('UPDATE bands SET psk=?,psk_hash=?,epoch=epoch+1 WHERE id=?',(row['new_psk'],row['new_hash'],row['band_id']))
@@ -157,8 +222,11 @@ class MigrationStore:
 
     def abort(self,uid,mid):
         with self.accounts.db() as db:
-            row=self._owned(db,uid,mid)
+            row=db.execute('SELECT * FROM band_migrations WHERE id=?',(mid,)).fetchone()
+            if not row:raise ValueError('Migration not found.')
+            self.accounts.require_band(uid,row['band_id'],True,db)
             if row['phase']!='prepared':raise ValueError('An activated migration requires forward recovery; it cannot silently roll devices back.')
-            db.execute('INSERT OR IGNORE INTO retired VALUES(?)',(row['new_hash'],))
+            if not row['target_band_id']:
+                db.execute('INSERT OR IGNORE INTO retired VALUES(?)',(row['new_hash'],))
             db.execute("UPDATE band_migrations SET phase='aborted',new_psk=NULL WHERE id=?",(mid,))
             self.accounts.audit(db,uid,'migration_abort',mid)
