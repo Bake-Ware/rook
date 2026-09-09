@@ -22,6 +22,7 @@ async def main():
  with tempfile.TemporaryDirectory() as temp:
   p=portal.__wrapped__(Path(temp),MonkeyPatch());add_worker(p)
   roster=[{'worker_id':name,'name':name,'caps':['info.host','shell.exec','screenshot.capture','worker.enrollment_move_prepare','worker.description_set','files.directory.list']+(['device.info'] if name=='tablet' else []),'plugins':[],'band':p.source['psk_hash'][:8],'version':'120.steady.iguana','last_seen_age_secs':2} for name in ('worker1','tablet','windows','mac')]
+  roster[1]['hb']={'battery':{'percent':100,'charging':True}}
   async def index(r):return web.Response(text=Path('rook/web/index.html').read_text(),content_type='text/html')
   async def bands(r):return web.json_response([{'id':b['psk_hash'][:8],'name':b['name'],'primary':b.get('primary',False)} for b in p.store.bands(p.uid,configs=True)])
   async def workers(r):return web.json_response(roster)

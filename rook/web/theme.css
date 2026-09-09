@@ -86,3 +86,5 @@ select,input,.iconbtn,.signout{border-radius:0}.iconbtn{font:10px var(--mono);pa
 @media(max-width:800px){.app-sidebar .brand{display:flex;font-size:18px;padding-bottom:10px;gap:6px}.app-sidebar .brand img{width:22px;height:33px}.install-art{width:180px}.sidebar-footer{top:25px}}
 #worker-stats .tile{order:0}.cggrid .mcap::after{content:none}
 body[data-view=install] .art-toggle{visibility:hidden}
+#view-workers[data-layout=grid] .row .batt-slot{grid-column:3 / 5;grid-row:auto;justify-self:start}
+#view-workers[data-layout=grid] .row .batt-slot:empty{display:none}
