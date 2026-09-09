@@ -1,8 +1,30 @@
 # BakeNetCA deployment layout
 
+## Persistent worker descriptions deployed, 2026-09-09
+
+Both services now run from `/opt/rook-releases/descriptions-20260909-030efbc`.
+Source commit `030efbc` publishes signed worker build `125.murky.tractor`, SHA-256
+`b8f38dce8e6dce2cda744fdb69ad0d0fc1f9e61d9297004b8e06b0787a7b8394`.
+The public manifest signature and downloaded artifact hash were verified.
+
+All 124 tests passed, plus local dashboard browser checks. A disposable worker
+running the actual signed bundle set/read/cleared its description over the band
+and retained it across a new-process restart with the same worker ID. Public
+MCP and HTTPS dashboard checks verified the description in the worker list,
+Edit description menu, search, and mobile layout. The canary was cleared and
+stopped; its temporary worker state was removed. No permanent device roles were
+assigned during deployment.
+
+All 24 compatible workers advertised the new description capabilities after
+rollout. Native Android workers still need an APK update; the public APK is
+unchanged. Unit, SQLite, and token-store backups are under
+`/var/backups/rook/descriptions-20260909-030efbc`. The previous integrated
+settings release remains available. Temporary verification sessions and SSH
+access were removed after testing.
+
 ## Integrated account, tokens, and device inventory deployed, 2026-09-09
 
-Both services now run from `/opt/rook-releases/settings-20260909-fdbbbea`.
+Both services previously ran from `/opt/rook-releases/settings-20260909-fdbbbea`.
 Account and token management are embedded in the main dashboard with styling
 adapted from the local BakeDash project. Token metadata, creation, revocation,
 and identity pictures use the MCP process's live token store via an
