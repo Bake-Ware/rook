@@ -33,3 +33,7 @@ select,input,.iconbtn,.signout{border-radius:0}.iconbtn{font:10px var(--mono);pa
  .listhead>span{width:auto!important}.row .ver{width:116px}.row .seen{width:90px}.row .batt-slot{width:52px}
 }
 @media(min-width:801px) and (max-width:949px){.listhead{display:none}.row{flex-wrap:wrap}.row .name{flex:1 1 calc(100% - 110px)}.row .acts{order:0}.row .worker-band{order:2}.row .ver{order:3}.row .batt-slot{order:4}.row .seen{order:5}}
+.name .worker-description{flex:1 1 100%;padding-left:32px;color:var(--dim);font:11px/1.6 var(--sans);overflow-wrap:anywhere;max-width:100%}
+.description-dialog{width:min(540px,calc(100vw - 32px));max-height:88dvh;overflow:auto;margin:auto;padding:26px;background:var(--panel);color:var(--fg);border:1px solid var(--line2)}
+.description-dialog::backdrop{background:#050a06bf;backdrop-filter:blur(4px)}.description-dialog h2{font:22px var(--sans);margin:0 0 12px}.description-dialog label{display:block;font-size:13px}.description-dialog textarea{display:block;width:100%;margin-top:10px;padding:12px;resize:vertical;background:var(--panel2);color:var(--fg);border:1px solid var(--line2);font:13px var(--sans)}
+.description-dialog .muted{color:var(--dim);font-size:12px;line-height:1.6}.description-dialog .description-error{color:var(--bad);font-size:12px}.description-dialog .dialog-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}.description-dialog button{background:var(--panel2);border:1px solid var(--line2);color:var(--fg);padding:10px 14px;font:11px var(--mono);cursor:pointer}

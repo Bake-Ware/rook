@@ -21,12 +21,15 @@ from rook.band_mcp.chat_rooms import ChatStore
 async def main():
  with tempfile.TemporaryDirectory() as temp:
   p=portal.__wrapped__(Path(temp),MonkeyPatch());add_worker(p)
-  roster=[{'worker_id':name,'name':name,'caps':['info.host','shell.exec','screenshot.capture','worker.enrollment_move_prepare']+(['device.info'] if name=='tablet' else []),'plugins':[],'band':p.source['psk_hash'][:8],'version':'120.steady.iguana','last_seen_age_secs':2} for name in ('worker1','tablet','windows','mac')]
+  roster=[{'worker_id':name,'name':name,'caps':['info.host','shell.exec','screenshot.capture','worker.enrollment_move_prepare','worker.description_set']+(['device.info'] if name=='tablet' else []),'plugins':[],'band':p.source['psk_hash'][:8],'version':'120.steady.iguana','last_seen_age_secs':2} for name in ('worker1','tablet','windows','mac')]
   async def index(r):return web.Response(text=Path('rook/web/index.html').read_text(),content_type='text/html')
   async def bands(r):return web.json_response([{'id':b['psk_hash'][:8],'name':b['name'],'primary':b.get('primary',False)} for b in p.store.bands(p.uid,configs=True)])
   async def workers(r):return web.json_response(roster)
   async def call(r):
    d=await r.json();wid=d['worker_id']
+   if d['cap']=='worker.description_set':
+    value=' '.join(d['args']['description'].split());next(w for w in roster if w['worker_id']==wid)['description']=value
+    return web.json_response({'ok':True,'result':{'ok':True,'description':value,'announced':True}})
    value={'android_release':'11','model':'Test tablet','screen':{'w':1280,'h':800,'dpi':213}} if wid=='tablet' else {'system':{'worker1':'Linux','windows':'Windows','mac':'Darwin'}[wid],'machine':'x86_64'}
    return web.json_response({'ok':True,'result':value})
   chat=ChatStore(str(Path(temp)/'chat.db'));provider=TokenStore(persist_path=str(Path(temp)/'tokens.json'))
@@ -50,9 +53,15 @@ async def main():
     await page.goto(url);await page.wait_for_timeout(1200);await page.screenshot(path='/tmp/rook-new-debug.png');await page.wait_for_function("[...document.querySelectorAll('.worker-group-heading')].some(e=>e.textContent.includes('Android'))")
     assert await page.locator('.worker-group-heading').count()==4
     assert await page.locator('.device-icon').count()==4
-    await page.locator('[data-id=worker1] .worker-menu-button').click();assert await page.locator('#worker-menu button').count()==4
+    await page.locator('[data-id=worker1] .worker-menu-button').click();assert await page.locator('#worker-menu button').count()==5
     await page.locator('#worker-menu').get_by_text('Move to band…',exact=True).click();await page.locator('#band-dialog').wait_for(state='visible');await page.locator('#cancel-dialog').click()
-    await page.locator('#tab-workers').click();await page.locator('#worker-group').select_option('band');assert await page.locator('.worker-group-heading').count()==1
+    await page.locator('#tab-workers').click()
+    await page.locator('[data-id=worker1] .worker-menu-button').click();await page.locator('#worker-menu').get_by_text('Edit description…',exact=True).click()
+    await page.locator('.description-dialog textarea').fill('CI <build> host & package signing');await page.locator('.description-dialog [type=submit]').click();await page.locator('.description-dialog').wait_for(state='detached')
+    assert await page.locator('[data-id=worker1] .worker-description').inner_text()=='CI <build> host & package signing'
+    await page.locator('#filter').click();await page.locator('#filter').fill('package signing');assert await page.locator('.worker-menu-button').count()==1
+    await page.locator('#filter').fill('')
+    await page.locator('#worker-group').select_option('band');assert await page.locator('.worker-group-heading').count()==1
     await page.locator('#worker-sort').select_option('os');await page.screenshot(path='/tmp/rook-new-workers.png')
     await page.locator('#tab-account').click();await page.locator('[data-section-tab=profile]').wait_for()
     await page.locator('form:has([name=op][value=profile]) [name=name]').fill('A better account')
@@ -81,7 +90,7 @@ async def main():
     await page.locator('#tab-account').click();await page.screenshot(path='/tmp/rook-new-account-mobile.png')
     assert not errors,errors
     assert await page.evaluate("performance.getEntriesByType('navigation').length")==1
-    print('PASS: device groups/icons/sort; worker menu/move; profile, pairing, invitation; live token store create/revoke; picture upload/clear; secrets cleared; mobile; no JS errors')
+    print('PASS: persistent description UI/search/escaping; device groups/icons/sort; worker menu/move; profile, pairing, invitation; live token store create/revoke; picture upload/clear; secrets cleared; mobile; no JS errors')
     await browser.close()
   await http.aclose()
 asyncio.run(main())

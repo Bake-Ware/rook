@@ -1695,6 +1695,7 @@ button:hover{{background:#22b88f}}
             out.append({
                 "worker_id": w["worker_id"],
                 "name": w.get("name"),
+                "description": w.get("description", ""),
                 "caps": w.get("caps", []),
                 "plugins": w.get("plugins", []),
                 "band": band,

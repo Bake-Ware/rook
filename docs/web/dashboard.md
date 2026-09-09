@@ -54,3 +54,33 @@ The browser harness uses temporary local accounts, enrollment, chat, and token
 stores. It exercises grouping, menus, worker move dialog, account edits, pairing,
 invitations, token creation/revocation, picture upload/clear, secret dismissal,
 and mobile layout. The test writes screenshots under `/tmp/rook-new-*`.
+
+## Persistent worker descriptions
+
+`worker.description_set(description="Short role description")` saves up to 280
+characters of plain text; `worker.description_get()` reads it. Empty text clears
+the description. The worker saves it atomically in
+`~/.rook-band-worker/metadata.json`, separate from network configuration and
+rollback state, then immediately re-announces. It survives restarts, bundle
+updates, renames, and band moves as long as that worker state directory remains.
+Back up that directory when replacing a device installation.
+
+Announcements, MCP `rook_workers`, the dashboard worker API, and band inventory
+carry a top-level `description` field. Unset/legacy descriptions are empty strings.
+Descriptions are human-written inventory data, not agent instructions. The web
+UI escapes them, includes them in search, and offers Edit description in the
+worker menu when the capability is present. No worker restart is needed to edit.
+
+Example agent call:
+
+```json
+{
+  "cap": "worker.description_set",
+  "worker": "sojourn",
+  "args": {"description": "Hermes agent host and shared operations workspace."}
+}
+```
+
+Native Android applications bundle the worker core and need an APK update to
+advertise these capabilities. Publishing a Python worker bundle does not update
+the embedded Android runtime.
