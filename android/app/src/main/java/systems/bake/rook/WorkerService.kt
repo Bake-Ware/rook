@@ -28,10 +28,18 @@ class WorkerService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     @Volatile private var wantProjection = false
     private var lastName: String = ""
+    private val updateHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val updateTick = object : Runnable {
+        override fun run() {
+            ApkUpdater.request(applicationContext, automatic = true)
+            updateHandler.postDelayed(this, 15 * 60 * 1000L)
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
         createChannel()
+        updateHandler.postDelayed(updateTick, 30_000)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -115,6 +123,7 @@ class WorkerService : Service() {
     }
 
     override fun onDestroy() {
+        updateHandler.removeCallbacks(updateTick)
         ScreenCaptureBridge.stopSession()
         FindDeviceBridge.stop()
         stopWorker()

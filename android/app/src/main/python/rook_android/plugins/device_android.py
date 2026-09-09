@@ -17,6 +17,23 @@ from rook_android.androidctx import app_context, jclass, cast
 class AndroidDevicePlugin(Plugin):
     NAMESPACE = "device"
 
+    @capability("update")
+    def _update(self) -> dict:
+        """Queue an APK update from the official Rook feed. Nonblocking.
+
+        Validates package, newer version, hash and matching signing certificate.
+        Android may require install permission or notification confirmation.
+        Poll device.update_status; the worker reconnects after APK replacement.
+        """
+        import json
+        return json.loads(str(jclass("systems.bake.rook.ApkUpdater").request(app_context(), False)))
+
+    @capability("update_status")
+    def _update_status(self) -> dict:
+        """APK updater progress, installed/target versions, and required action."""
+        import json
+        return json.loads(str(jclass("systems.bake.rook.ApkUpdater").status(app_context())))
+
     @capability("find")
     def _find(self, seconds: int = 30) -> dict:
         """Ring at maximum alarm volume for 1–120 seconds; restores volume after.

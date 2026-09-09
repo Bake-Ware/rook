@@ -8,8 +8,10 @@ import org.json.JSONObject
 
 /** Run on an isolated emulator, with Location permissions granted and a geo fix injected. */
 class NativeSmokeInstrumentation : Instrumentation() {
-    override fun onCreate(arguments: Bundle?) { super.onCreate(arguments); start() }
+    private var mode: String? = null
+    override fun onCreate(arguments: Bundle?) { super.onCreate(arguments); mode = arguments?.getString("mode"); start() }
     override fun onStart() {
+        mode?.let { finish(-1, ApkUpdateSmokeTest.run(targetContext, it)); return }
         val report = Bundle()
         try {
             val audio = targetContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager

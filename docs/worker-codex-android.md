@@ -1,4 +1,4 @@
-# Codex history and Android 0.4.0
+# Codex history and Android worker
 
 ## Coding sessions
 
@@ -27,18 +27,19 @@ CLI resume reference: https://learn.chatgpt.com/docs/codex/cli
 
 ## Android release identity and UI
 
-APK version **0.4.0**, Android version code **4**, appears on the conversation
+APK version **0.4.1**, Android version code **5**, appears on the conversation
 and Settings screens. The worker announce and `worker.status` include
-`app_release: {platform: "android", version: "0.4.0", code: 4}`. MCP worker lists
+`app_release: {platform: "android", version: "0.4.1", code: 5}`. MCP worker lists
 and the web roster carry this separately from the embedded worker version/build.
 The web worker badge shows APK version/code; its tooltip shows worker build.
 Older APKs without this field continue showing their worker version.
 
 The app uses the web palette: dark olive surfaces, amber controls, outlined
 panels, compact monospace labels. Settings groups connection, device,
-permissions, and voice controls. **Update APK** opens
+permissions, and voice controls. The browser APK download button at the bottom of Settings opens
 https://rook.bakeforge.com/apk in the default browser; installation remains the
-normal Android package upgrade flow. Existing Google enrollment and band
+normal Android package upgrade flow. From 0.4.1, automatic updates and
+`device.update` are also available; see [APK updates](android-updates.md). Existing Google enrollment and band
 settings persist when upgrading with the same signing certificate.
 
 ## Location and find-device

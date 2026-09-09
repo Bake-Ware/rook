@@ -44,6 +44,11 @@ class SettingsActivity : AppCompatActivity() {
         setContentView(b.root)
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
         b.versionInfo.text = "APK ${BuildConfig.VERSION_NAME} · ${BuildConfig.VERSION_CODE}"
+        b.autoUpdates.isChecked = getSharedPreferences("rook", MODE_PRIVATE).getBoolean("apk_auto_update", true)
+        b.autoUpdates.setOnCheckedChangeListener { _, enabled ->
+            getSharedPreferences("rook", MODE_PRIVATE).edit().putBoolean("apk_auto_update", enabled).apply()
+        }
+        b.btnAllowUpdates.setOnClickListener { startActivity(Intent(this, ApkUpdatePermissionActivity::class.java)) }
         b.btnUpdate.setOnClickListener {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://rook.bakeforge.com/apk")))
         }
@@ -175,6 +180,12 @@ class SettingsActivity : AppCompatActivity() {
                     .putInt("band_epoch", band.getInt("epoch")).apply()
                 status("Selected ${names[index]}. Tap Start to connect.")
             }.setNegativeButton("Cancel", null).show()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val update = org.json.JSONObject(ApkUpdater.status(this))
+        b.updateStatus.text = "${update.optString("state").replace('_', ' ')} · ${update.optString("message")}".trim(' ', '·')
     }
 
     private fun status(msg: String) {

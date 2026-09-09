@@ -1033,6 +1033,7 @@ class CombinedServer:
         self._app.router.add_get("/band-worker-enrollment.pyz", self._band_worker_pyz)
         self._app.router.add_get("/band-worker.json", self._band_worker_manifest)
         self._app.router.add_get("/apk", self._worker_apk)
+        self._app.router.add_get("/apk.json", self._worker_apk_manifest)
         self._app.router.add_get("/install", self._installer)    # unified installer (worker | cli | both)
         self._app.router.add_get("/rook", self._installer)       # alias (back-compat)
         self._app.router.add_get("/rook.py", self._band_cli)     # the standalone CLI script itself
@@ -1123,7 +1124,7 @@ class CombinedServer:
                   "/hub", "/telesthete-hub")
         is_exempt = any(
             request.path == p or request.path.startswith(p + "/") for p in exempt)
-        if request.path == "/apk" and os.environ.get("ROOK_PUBLIC_APK_SHA256"):
+        if request.path in ("/apk", "/apk.json") and os.environ.get("ROOK_PUBLIC_APK_SHA256"):
             is_exempt = True  # handler verifies the exact approved generic artifact
 
         # First-run gate: until the band has a PSK + public hub address, force the
@@ -1632,6 +1633,26 @@ button:hover{{background:#22b88f}}
                 "Content-Type": "application/vnd.android.package-archive",
             },
         )
+
+    async def _worker_apk_manifest(self, request: web.Request) -> web.Response:
+        """Public update metadata bound to the same approved APK as /apk."""
+        response = await self._worker_apk(request)
+        if not isinstance(response, web.FileResponse):
+            return response
+        try:
+            manifest = json.loads((Path(__file__).parent / "rook-worker-apk.json").read_text())
+            expected = os.environ.get("ROOK_PUBLIC_APK_SHA256", "")
+            apk = Path(__file__).parent / "rook-worker.apk"
+            if (not expected or manifest.get("sha256") != expected
+                    or manifest.get("package") != "systems.bake.rook"
+                    or type(manifest.get("version_code")) is not int
+                    or manifest["version_code"] <= 0
+                    or not isinstance(manifest.get("version_name"), str)
+                    or manifest.get("size") != apk.stat().st_size):
+                raise ValueError("APK manifest does not match approved release")
+            return web.json_response(manifest, headers={"Cache-Control": "no-store"})
+        except (OSError, ValueError, TypeError):
+            return web.Response(status=503, text="APK update metadata unavailable.")
 
     async def _api_generate_psk(self, request: web.Request) -> web.Response:
         """Suggest a new key behind the existing dashboard login gate.

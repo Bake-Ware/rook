@@ -2,7 +2,6 @@
   <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="20dp">
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="ROOK / SETTINGS" android:textSize="24sp" android:textColor="@color/rook_fg" android:fontFamily="sans-serif-medium" />
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="" android:textSize="12sp" android:textColor="@color/rook_dim" android:id="@+id/versionInfo" android:fontFamily="monospace" android:paddingTop="8dp" android:paddingBottom="12dp" />
-    <Button android:id="@+id/btnUpdate" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Update APK ↗" />
     <Button style="@style/RookOutlinedButton" android:id="@+id/btnBack" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Back to conversation" />
     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="16dp" android:layout_marginTop="16dp" android:background="@drawable/rook_panel">
       <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="01 / CONNECT" android:textSize="12sp" android:textColor="@color/rook_accent" android:fontFamily="monospace" android:letterSpacing="0.08" android:paddingBottom="12dp" />
@@ -47,6 +46,14 @@
       <CheckBox android:id="@+id/wakeEnabled" android:layout_width="match_parent" android:layout_height="wrap_content" android:checked="true" android:text="@string/wake_enabled" />
       <Button android:id="@+id/btnSaveVoice" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/save_voice" style="@style/RookOutlinedButton" />
       <TextView android:id="@+id/status" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="16dp" android:fontFamily="monospace" android:textIsSelectable="true" />
+    </LinearLayout>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="16dp" android:layout_marginTop="16dp" android:background="@drawable/rook_panel">
+      <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="05 / APP UPDATES" android:textColor="@color/rook_accent" android:fontFamily="monospace" />
+      <CheckBox android:id="@+id/autoUpdates" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Automatic APK updates" />
+      <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Checks every six hours while the worker runs. Android may ask you to confirm installation." android:textColor="@color/rook_dim" />
+      <TextView android:id="@+id/updateStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:paddingTop="12dp" android:textIsSelectable="true" />
+      <Button android:id="@+id/btnAllowUpdates" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Allow installation from Rook" />
+      <Button android:id="@+id/btnUpdate" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Download APK in browser ↗" style="@style/RookOutlinedButton" />
     </LinearLayout>
   </LinearLayout>
 </ScrollView>
