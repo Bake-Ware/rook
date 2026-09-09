@@ -268,7 +268,7 @@ class AccountStore:
         if db is None:
             with self.db() as connection:
                 return self.require_band(uid,band_id,owner,connection)
-        row = db.execute('SELECT m.role,b.active FROM memberships m JOIN bands b ON b.id=m.band_id WHERE m.user_id=? AND m.band_id=?', (uid,band_id)).fetchone()
+        row = db.execute('SELECT m.role,b.active FROM memberships m JOIN bands b ON b.id=m.band_id WHERE m.user_id=? AND m.band_id=? AND b.deleted=0', (uid,band_id)).fetchone()
         if not row or (owner and row['role']!='owner'):
             raise PermissionError('Band access denied.')
         return row['role']
@@ -276,8 +276,47 @@ class AccountStore:
     def bands(self, uid, configs=False):
         with self.db() as db:
             fields = ',b.psk' if configs else ''
-            rows = db.execute('SELECT b.id,b.name,b.hub,b.epoch,b.active,b.psk_hash,m.role'+fields+' FROM bands b JOIN memberships m ON m.band_id=b.id WHERE m.user_id=?', (uid,)).fetchall()
+            rows = db.execute('SELECT b.id,b.name,b.hub,b.epoch,b.active,b.psk_hash,m.role'+fields+' FROM bands b JOIN memberships m ON m.band_id=b.id WHERE m.user_id=? AND b.deleted=0', (uid,)).fetchall()
         return [{**dict(r),'label':r['psk_hash'][:8]} for r in rows if r['active'] or not configs]
+
+    @staticmethod
+    def band_name(name):
+        if not isinstance(name,str) or not name.strip() or len(name.strip())>100:
+            raise ValueError('Use a band name between 1 and 100 characters.')
+        return name.strip()
+
+    def create_band(self,uid,name,hub):
+        from .psk import generate_psk
+        name=self.band_name(name)
+        bid=secrets.token_hex(16);psk=generate_psk()
+        with self.db() as db:
+            db.execute('INSERT INTO bands(id,name,psk,psk_hash,hub) VALUES(?,?,?,?,?)',(bid,name,psk,digest(psk),hub))
+            db.execute("INSERT INTO memberships VALUES(?,?,'owner')",(bid,uid))
+            self.audit(db,uid,'band_create',bid)
+        return bid
+
+    def rename_band(self,uid,bid,name):
+        name=self.band_name(name)
+        with self.db() as db:
+            self.require_band(uid,bid,True,db)
+            if not db.execute('SELECT 1 FROM bands WHERE id=? AND deleted=0',(bid,)).fetchone():
+                raise ValueError('Band was deleted.')
+            db.execute('UPDATE bands SET name=? WHERE id=?',(name,bid))
+            self.audit(db,uid,'band_rename',bid)
+
+    def delete_band(self,uid,bid):
+        with self.db() as db:
+            self.require_band(uid,bid,True,db)
+            band=db.execute('SELECT * FROM bands WHERE id=?',(bid,)).fetchone()
+            if band['is_primary']:raise ValueError('The configured primary band cannot be deleted.')
+            if band['deleted']:return
+            if db.execute("SELECT 1 FROM band_migrations WHERE (band_id=? OR target_band_id=?) AND phase IN ('prepared','active')",(bid,bid)).fetchone():
+                raise ValueError('Finish or cancel this band’s migration before deleting it.')
+            db.execute('INSERT OR IGNORE INTO retired VALUES(?)',(band['psk_hash'],))
+            db.execute("UPDATE bands SET active=0,deleted=1,psk='',epoch=epoch+1 WHERE id=?",(bid,))
+            db.execute('DELETE FROM pairing WHERE band_id=?',(bid,))
+            db.execute('UPDATE devices SET active=0 WHERE band_id=?',(bid,))
+            self.audit(db,uid,'band_delete',bid)
 
     def assign(self, band_id, uid):
         with self.db() as db:

@@ -216,6 +216,36 @@ A band-first control panel: live worker list, version-spread and heartbeat visua
   <img src="docs/img/dashboard-mobile.png" alt="Rook dashboard on mobile" width="300">
 </p>
 
+### Bands and worker moves
+
+Open **Bands** from the dashboard or visit `/account/bands`. The page lists
+bands your account can access. Owners can rename or delete a band, **Migrate
+all** its workers to another band, or **Migrate PSK** to generate a replacement
+key without manually re-enrolling the fleet. The configured primary band cannot
+be deleted. Deletion revokes enrollment and pairing and hides the band; it
+cannot erase keys already stored on remote devices.
+
+Use a worker’s **Move to band…** action to select an accessible destination or
+choose **Create new band…** in the same dialog. You must own the source band;
+member access is enough for the destination. Both bands must use the same hub.
+Moves require updated workers advertising `worker.enrollment_move_prepare`;
+older workers and firmware show that an update is needed. Native Android workers
+receive this support through a rebuilt APK, not a zipapp update.
+
+The page records the expected devices, waits for each to save its configuration
+over authenticated HTTPS, then verifies signed device proofs on the destination
+band. Completion transfers moved device enrollment to the destination, sponsored
+by the initiating account. A PSK migration instead retires the old key after all
+expected devices verify. **Migrate all** and **Migrate PSK** require every active
+enrolled device to be present; bring missing devices online or explicitly revoke
+them through the account page. An empty band’s PSK can be replaced immediately.
+
+Keep the Bands page open while migrating. Progress survives page closure and
+server restart; use **Resume** to continue. A prepared migration can be canceled.
+Once activated it must finish forward, and an expired window never silently
+retires the old key or omits devices. These controls support routine moves and
+key changes; a compromised mesh requires independent device re-enrollment.
+
 ### `rook band` — terminal control panel
 
 A btop-inspired, zero-dependency curses TUI (pure stdlib). Framed panels: a worker list on the left, a live **detail pane** for the selected worker on the right — arrow into it to browse capabilities as a tree and call one — and a **chats** panel. Run caps, toggle plugins, define custom caps, message workers, deauth/ban.

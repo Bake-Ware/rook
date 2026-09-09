@@ -27,7 +27,7 @@ def esc(value):
 
 
 def document(title, body):
-    return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+esc(title)+' · Rook</title><style>body{font:16px system-ui;background:#0b0f14;color:#e6edf3;margin:0}main{max-width:850px;margin:auto;padding:24px}a{color:#48d8b5}h1,h2{font-weight:600}h2{margin-top:32px}section{padding:20px;border:1px solid #29333e;border-radius:12px;margin:16px 0;background:#111820}input,select,button{font:inherit;padding:10px;border-radius:6px;border:1px solid #384553;background:#192431;color:#e6edf3;max-width:100%;box-sizing:border-box}input{margin:5px 0}button{cursor:pointer;background:#12634f}label{display:block;margin-top:10px}form{margin:14px 0}code,pre{white-space:pre-wrap;overflow-wrap:anywhere}small,.muted{color:#a8b4bf}.avatar{width:64px;height:64px;object-fit:cover;border-radius:50%}.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.error{color:#ffa1a1}nav{display:flex;gap:18px;flex-wrap:wrap}hr{border:0;border-top:1px solid #29333e}</style></head><body><main><nav><a href="/account">♖ Rook account</a><a href="/account#bands">Bands & pairing</a><a href="/">Dashboard</a></nav><h1>'+esc(title)+'</h1>'+body+'</main></body></html>'
+    return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+esc(title)+' · Rook</title><style>body{font:16px system-ui;background:#0b0f14;color:#e6edf3;margin:0}main{max-width:850px;margin:auto;padding:24px}a{color:#48d8b5}h1,h2{font-weight:600}h2{margin-top:32px}section{padding:20px;border:1px solid #29333e;border-radius:12px;margin:16px 0;background:#111820}input,select,button{font:inherit;padding:10px;border-radius:6px;border:1px solid #384553;background:#192431;color:#e6edf3;max-width:100%;box-sizing:border-box}input{margin:5px 0}button{cursor:pointer;background:#12634f}label{display:block;margin-top:10px}form{margin:14px 0}code,pre{white-space:pre-wrap;overflow-wrap:anywhere}small,.muted{color:#a8b4bf}.avatar{width:64px;height:64px;object-fit:cover;border-radius:50%}.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.error{color:#ffa1a1}nav{display:flex;gap:18px;flex-wrap:wrap}hr{border:0;border-top:1px solid #29333e}</style></head><body><main><nav><a href="/account">♖ Rook account</a><a href="/account/bands">Bands</a><a href="/">Dashboard</a></nav><h1>'+esc(title)+'</h1>'+body+'</main></body></html>'
 
 
 class AccountWeb:
@@ -46,6 +46,9 @@ class AccountWeb:
         return path=='/account' or path.startswith('/account/') or path.startswith('/auth/')
 
     def install(self,app):
+        from .band_web import BandWeb
+        self.band_web=BandWeb(self)
+        self.band_web.install(app)
         app.router.add_route('*','/account',self.page)
         app.router.add_get('/account/login',self.login_page)
         app.router.add_post('/account/login',self.local_login)

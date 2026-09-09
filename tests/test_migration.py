@@ -133,3 +133,73 @@ async def test_csr_bound_grant_discloses_no_psk_and_needs_private_key(fleet):
         _,other=device_key.certificate_request()
         response=await client.post('/auth/devices/enroll',json={'enrollment_grant':grant,'csr':other})
         assert response.status==403
+
+
+def destination(f):
+    bid=f.accounts.create_band(f.owner,'destination','hub.example.com:443')
+    return next(b for b in f.enrollment.bands(secrets_visible=True) if b['id']==bid)
+
+
+def test_move_one_worker_preserves_bands_and_transfers_device(fleet):
+    f=fleet;target=destination(f);entry=f.entries[0]
+    mid=f.migration.prepare(f.owner,f.band['id'],{entry[2]:entry[1]['device_id']},target_band_id=target['id'])['id']
+    pending=f.devices.config(proof(f,entry))
+    assert pending['band']['id']==f.band['id']
+    assert pending['migration']['kind']=='move'
+    assert pending['migration']['band']['id']==target['id']
+    staged=proof(f,entry,'stage:'+mid);staged['migration_id']=mid;f.devices.staged(staged)
+    f.migration.activate(f.owner,mid)
+    assert f.devices.config(proof(f,entry))['band']['id']==target['id']
+    confirm(f,mid,entry);f.migration.finalize(f.owner,mid)
+    assert f.devices.config(proof(f,entry))['band']['id']==target['id']
+    assert f.devices.config(proof(f,f.entries[1]))['band']['id']==f.band['id']
+    assert set(f.enrollment.transport_psks())=={f.band['psk'],target['psk']}
+    assert f.migration.status(f.owner,mid)['phase']=='complete'
+
+
+def test_move_requires_destination_access_and_abort_does_not_retire_its_key(fleet):
+    f=fleet;target=destination(f);entry=f.entries[0]
+    with f.accounts.db() as db:db.execute('DELETE FROM memberships WHERE band_id=?',(target['id'],))
+    with pytest.raises(PermissionError):
+        f.migration.prepare(f.owner,f.band['id'],{entry[2]:entry[1]['device_id']},target_band_id=target['id'])
+    f.accounts.assign(target['id'],f.owner)
+    mid=f.migration.prepare(f.owner,f.band['id'],{entry[2]:entry[1]['device_id']},target_band_id=target['id'])['id']
+    for bid in (target['id'],f.band['id']):
+        with pytest.raises(ValueError,match='move'):f.enrollment.rotate(bid)
+        with pytest.raises(ValueError,match='move'):f.enrollment.revoke(bid)
+    with f.accounts.db() as db:db.execute('DELETE FROM memberships WHERE band_id=?',(target['id'],))
+    with pytest.raises(PermissionError):f.devices.config(proof(f,entry))
+    # Source owners can cancel before activation even after losing target access.
+    f.migration.abort(f.owner,mid)
+    assert f.enrollment.register('same key',target['psk'])['id']==target['id']
+    assert f.devices.config(proof(f,entry))['band']['id']==f.band['id']
+
+
+def test_full_inventory_rechecked_before_activation_and_retirement(fleet):
+    f=fleet;mid=prepare(f)
+    for entry in f.entries:
+        p=proof(f,entry,'stage:'+mid);p['migration_id']=mid;f.devices.staged(p)
+    key,csr=device_key.certificate_request()
+    extra=f.devices.enroll(f.band['id'],f.owner,csr,'late arrival')
+    with pytest.raises(ValueError,match='inventory'):f.migration.activate(f.owner,mid)
+    f.devices.revoke(f.owner,extra['device_id'])
+    f.migration.activate(f.owner,mid)
+    for entry in f.entries:confirm(f,mid,entry)
+    key,csr=device_key.certificate_request()
+    extra=f.devices.enroll(f.band['id'],f.owner,csr,'another arrival')
+    with pytest.raises(ValueError,match='inventory'):f.migration.finalize(f.owner,mid)
+    assert f.band['psk'] in f.enrollment.transport_psks()
+
+
+def test_move_to_band_as_member_responsors_device(fleet):
+    f=fleet;target=destination(f);entry=f.entries[0]
+    other=f.accounts.create_local('destination-owner','long test password')
+    with f.accounts.db() as db:
+        db.execute("UPDATE memberships SET role='member' WHERE band_id=? AND user_id=?",(target['id'],f.owner))
+        db.execute("INSERT INTO memberships VALUES(?,?,'owner')",(target['id'],other))
+    mid=f.migration.prepare(f.owner,f.band['id'],{entry[2]:entry[1]['device_id']},target_band_id=target['id'])['id']
+    p=proof(f,entry,'stage:'+mid);p['migration_id']=mid;f.devices.staged(p)
+    f.migration.activate(f.owner,mid);confirm(f,mid,entry);f.migration.finalize(f.owner,mid)
+    assert f.devices.config(proof(f,entry))['band']['id']==target['id']
+    f.accounts.change_member(other,target['id'],f.owner,'remove')
+    with pytest.raises(PermissionError):f.devices.config(proof(f,entry))

@@ -59,3 +59,25 @@ def test_mobile_device_key_uses_standard_pkcs10_and_pkcs8():
     loaded=serialization.load_pem_private_key(pem.encode(),None)
     assert loaded.public_key().public_bytes(serialization.Encoding.Raw,serialization.PublicFormat.Raw)==bytes(key.verify_key)
     request.public_key().verify(sign(pem,b'test proof'),b'test proof')
+
+
+def test_cross_band_refresh_requires_explicit_active_move(tmp_path,monkeypatch):
+    monkeypatch.setenv('ROOK_ENROLLMENT_FILE',str(tmp_path/'enrollment.json'))
+    old={'id':'source','epoch':8,'psk':'old','hub':'hub'}
+    new={'id':'target','epoch':1,'psk':'new','hub':'hub'}
+    saved={'server':'https://rook.example.com','active_band':'source','bands':[old],
+           'device':{'device_id':'device','expires_at':9999999999}}
+    enroll.save(saved)
+    response={'band':new,'migration':None}
+    monkeypatch.setattr(enroll,'proof',lambda *args:{})
+    monkeypatch.setattr(enroll,'post',lambda *args:response)
+    with pytest.raises(ValueError,match='different band'):enroll.refresh()
+    response['migration']={'id':'move','kind':'move','phase':'prepared','source_band_id':'source','band':new}
+    with pytest.raises(ValueError):enroll.refresh()
+    response['migration']['phase']='active'
+    actual=enroll.refresh()
+    assert actual['active_band']=='target' and actual['bands']==[new]
+    # Restart while the source still holds enrollment; repeated refresh is valid.
+    assert enroll.refresh()['active_band']=='target'
+    response['migration']=None
+    assert enroll.refresh()['active_band']=='target'

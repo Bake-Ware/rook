@@ -63,8 +63,11 @@ class EnrollmentStore:
                     bucket TEXT PRIMARY KEY, window INTEGER NOT NULL, count INTEGER NOT NULL
                 );
             """)
-            from .migration import SCHEMA
+            from .migration import SCHEMA, upgrade_schema
             db.executescript(SCHEMA)
+            upgrade_schema(db)
+            if "deleted" not in {r[1] for r in db.execute("PRAGMA table_info(bands)")}:
+                db.execute("ALTER TABLE bands ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0")
 
     @contextmanager
     def _db(self):
@@ -121,7 +124,7 @@ class EnrollmentStore:
 
     def bands(self, *, active_only=False, secrets_visible=False) -> list[dict]:
         with self._db() as db:
-            rows = db.execute("SELECT * FROM bands" + (" WHERE active=1" if active_only else "")
+            rows = db.execute("SELECT * FROM bands WHERE deleted=0" + (" AND active=1" if active_only else "")
                               + " ORDER BY name,id").fetchall()
             out = []
             for row in rows:
@@ -141,7 +144,7 @@ class EnrollmentStore:
 
     @staticmethod
     def _cancel_migrations(db,band_id):
-        for row in db.execute("SELECT new_hash FROM band_migrations WHERE band_id=? AND phase IN ('prepared','active')",(band_id,)):
+        for row in db.execute("SELECT new_hash FROM band_migrations WHERE target_band_id IS NULL AND band_id=? AND phase IN ('prepared','active')",(band_id,)):
             db.execute('INSERT OR IGNORE INTO retired VALUES(?)',(row['new_hash'],))
         db.execute("UPDATE band_migrations SET phase='superseded',new_psk=NULL WHERE band_id=? AND phase IN ('prepared','active')",(band_id,))
 
@@ -207,18 +210,26 @@ class EnrollmentStore:
             raise JoinDenied("a valid, unexpired band pairing code is required")
         return result
 
-    def rotate(self, band_id: str, psk: str = "") -> dict:
+    @staticmethod
+    def _guard_moves(db, band_id):
+        if db.execute("SELECT 1 FROM band_migrations WHERE (band_id=? OR target_band_id=?) AND target_band_id IS NOT NULL AND phase IN ('prepared','active')", (band_id,band_id)).fetchone():
+            raise ValueError('Finish or cancel the worker move before changing band credentials.')
+
+    def rotate(self, band_id: str, psk: str = "", *, require_empty=False) -> dict:
         psk = psk or generate_psk()
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", psk):
             raise ValueError("use letters, numbers, hyphens, or underscores for the replacement PSK")
         digest = _hash(psk)
         with self._db() as db:
             band = db.execute("SELECT * FROM bands WHERE id=?", (band_id,)).fetchone()
-            if not band:
+            if not band or band["deleted"]:
                 raise ValueError("band not found")
             if (db.execute("SELECT 1 FROM retired WHERE psk_hash=?", (digest,)).fetchone()
                     or db.execute("SELECT 1 FROM bands WHERE psk_hash=?", (digest,)).fetchone()):
                 raise ValueError("choose a fresh PSK that has not already been used")
+            self._guard_moves(db,band_id)
+            if require_empty and db.execute('SELECT 1 FROM devices WHERE band_id=? AND active=1',(band_id,)).fetchone():
+                raise ValueError('Enrolled devices remain; bring them online for a staged migration.')
             db.execute("INSERT OR IGNORE INTO retired VALUES(?)", (band["psk_hash"],))
             self._cancel_migrations(db,band_id)
             db.execute("UPDATE bands SET psk=?,psk_hash=?,active=1,epoch=epoch+1 WHERE id=?",
@@ -230,8 +241,9 @@ class EnrollmentStore:
     def revoke(self, band_id: str) -> None:
         with self._db() as db:
             band = db.execute("SELECT * FROM bands WHERE id=?", (band_id,)).fetchone()
-            if not band:
+            if not band or band["deleted"]:
                 raise ValueError("band not found")
+            self._guard_moves(db,band_id)
             db.execute("INSERT OR IGNORE INTO retired VALUES(?)", (band["psk_hash"],))
             db.execute("UPDATE bands SET active=0,epoch=epoch+1 WHERE id=?", (band_id,))
             self._cancel_migrations(db,band_id)

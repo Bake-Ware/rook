@@ -129,9 +129,18 @@ def refresh():
         raise ValueError('Cannot verify device authorization; reconnect to the enrollment server.') from None
     band=result['band']
     previous=next((b for b in saved['bands'] if b['id']==saved['active_band']),None)
-    if band['id']!=saved['active_band'] or (previous and band['epoch']<previous['epoch']):
+    migration=result.get('migration') or {}
+    moving=(migration.get('kind')=='move' and migration.get('phase')=='active'
+            and migration.get('source_band_id')==saved['active_band']
+            and migration.get('band')==band)
+    if not moving and (band['id']!=saved['active_band'] or (previous and band['epoch']<previous['epoch'])):
         raise ValueError('Enrollment server returned an older credential epoch or a different band.')
-    saved['bands']=[band if b['id']==band['id'] else b for b in saved['bands']]
+    if moving:
+        saved['active_band']=band['id']
+        saved['device']['band_id']=band['id']
+        saved['bands']=[band]
+    else:
+        saved['bands']=[band if b['id']==band['id'] else b for b in saved['bands']]
     saved['last_verified']=time.time()
     saved['migration']=result.get('migration')
     if expires_at(saved['device'])-time.time()<7*86400:
