@@ -113,6 +113,7 @@ class BandClient:
         entry.update({
             "worker_id": wid,
             "name": msg.get("name", wid),
+            "description": msg.get("description", "")[:280] if isinstance(msg.get("description", ""), str) else "",
             "caps": list(msg.get("caps", [])),
             "plugins": list(msg.get("plugins", [])),
             "hb": dict(msg.get("hb") or {}),

@@ -60,6 +60,7 @@ class BandWeb:
             band.pop('psk_hash', None)
             band['workers'] = [
                 {'id': w['worker_id'], 'name': w.get('name') or w['worker_id'],
+                 'description': w.get('description', ''),
                  'online': time.time() - w.get('last_seen', 0) < 90,
                  'can_move': 'worker.enrollment_move_prepare' in w.get('caps', []),
                  'can_migrate_psk': all(c in w.get('caps', []) for c in

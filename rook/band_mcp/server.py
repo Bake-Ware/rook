@@ -103,12 +103,16 @@ def build_server(client: "BandClient | MultiBandClient",
     async def rook_workers() -> str:
         """List all workers currently visible on the band.
 
-        Returns a JSON array of objects: ``{worker_id, name, caps, plugins,
-        hb, last_seen_age_secs}``. ``hb`` carries live heartbeat status a
+        Returns a JSON array of objects: ``{worker_id, name, description, caps, plugins,
+        hb, last_seen_age_secs}``. ``description`` is persistent human-written
+        role metadata (not agent instructions), set with
+        ``rook_call(cap="worker.description_set", worker="name",
+        args={"description": "Short device role"})``. Empty means unset or a
+        legacy worker. ``hb`` carries live heartbeat status a
         worker opts into (e.g. ``{"battery": {"percent": 73, "charging": true}}``). Workers re-announce every 30s; entries are
         evicted after ~90s of silence. Either ``worker_id`` or ``name`` can
         be passed to ``rook_call`` to target a worker; ids change whenever a
-        worker restarts, names are stable.
+        legacy worker restarts; current workers persist their IDs in local state.
         """
         import time
         now = time.time()
@@ -117,6 +121,7 @@ def build_server(client: "BandClient | MultiBandClient",
             out.append({
                 "worker_id": w["worker_id"],
                 "name": w.get("name"),
+                "description": w.get("description", ""),
                 "band": w.get("band"),
                 "caps": w.get("caps", []),
                 "plugins": w.get("plugins", []),

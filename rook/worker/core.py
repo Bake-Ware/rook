@@ -64,6 +64,10 @@ class Worker:
         self.admin.register_caps()
         self.worker_id = stable_worker_id()
         self.name = name or socket.gethostname()
+        from .metadata import WorkerMetadata
+        self.metadata = WorkerMetadata(_WORKER_ID_FILE.with_name('metadata.json'))
+        self.registry.register('worker.description_get', self._description_get)
+        self.registry.register('worker.description_set', self._description_set)
         self._announce_interval = announce_interval
         self._stopping = False
         self._announce_task: asyncio.Task | None = None
@@ -82,6 +86,25 @@ class Worker:
                     bind(self)
                 except Exception:
                     log.exception("plugin %s bind_worker failed", p.NAMESPACE)
+
+    def _description_get(self) -> dict:
+        """Read this worker's persistent, human-written role description."""
+        return {'ok': True, 'description': self.metadata.description}
+
+    async def _description_set(self, description: str) -> dict:
+        """Save a short role description (max 280 characters); empty text clears it.
+
+        Survives worker restarts, updates, and band moves. This is descriptive
+        inventory data, not instructions for an agent. No restart is required.
+        """
+        value = self.metadata.set_description(description)
+        announced = True
+        try:
+            await self.announce()
+        except Exception:
+            announced = False
+            log.warning('Description saved; announcement deferred until reconnect')
+        return {'ok': True, 'description': value, 'announced': announced}
 
     def register_binary_handler(self, handler) -> None:
         """Register a callable(payload: bytes, peer_id: tuple) -> bool that gets
@@ -204,6 +227,7 @@ class Worker:
             "kind": "announce",
             "worker_id": self.worker_id,
             "name": self.name,
+            "description": self.metadata.description,
             "caps": self.registry.list(),
             "plugins": [p.NAMESPACE for p in self.plugins],
             "version": VERSION,
