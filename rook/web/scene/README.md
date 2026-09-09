@@ -1,7 +1,8 @@
 # Rook background study
 
-Procedural Three.js rook with faceted shading, object-space cross-hatching,
-ink edges, and drafting guides. No model or raster assets. The mesh and artwork
+Procedural Three.js rook with toon lighting, real self-shadowing, irregular
+black structural wire edges, and drafting guides. Edge jitter is generated once
+in object space, so the drawing turns with the mesh without temporal noise. No model or raster assets. The mesh and artwork
 are decorative and never intercept dashboard input.
 
 Build the checked-in browser bundle:

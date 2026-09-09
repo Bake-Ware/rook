@@ -18,7 +18,7 @@ async def main():
     async with TestServer(app) as server,async_playwright() as pw:
         browser=await pw.chromium.launch(executable_path=os.environ.get('CHROMIUM_EXECUTABLE'),headless=True)
         context=await browser.new_context(viewport={'width':1440,'height':1000})
-        await context.add_init_script('''window.artFrames=0;const clear=WebGL2RenderingContext.prototype.clear;WebGL2RenderingContext.prototype.clear=function(...args){window.artFrames++;return clear.apply(this,args)};''')
+        await context.add_init_script('''window.artFrames=0;const clear=WebGL2RenderingContext.prototype.clear;WebGL2RenderingContext.prototype.clear=function(...args){if(this.getParameter(this.FRAMEBUFFER_BINDING)===null)window.artFrames++;return clear.apply(this,args)};''')
         page=await context.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
         await page.goto(str(server.make_url('/')));await page.locator('[data-mode=webgl]').wait_for();await page.wait_for_timeout(150)
         before=await page.evaluate('artFrames');await page.wait_for_timeout(550);after=await page.evaluate('artFrames')

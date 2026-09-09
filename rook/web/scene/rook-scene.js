@@ -16,6 +16,7 @@ export function mountRook(host, toggle) {
   }
   renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.25));
   renderer.setClearColor(0x000000, 0);
+  renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;
   renderer.domElement.setAttribute('aria-hidden','true');
   renderer.domElement.tabIndex = -1;
   host.querySelector('.rook-canvas').append(renderer.domElement);
@@ -25,49 +26,50 @@ export function mountRook(host, toggle) {
   const study = new THREE.Group(); study.rotation.y = -.42; scene.add(study);
   const resources = new Set();
   const keep = resource => {resources.add(resource);return resource;};
-  const pencil = keep(new THREE.LineBasicMaterial({color:0xc0a779,transparent:true,opacity:.7}));
+  const pencil = keep(new THREE.LineBasicMaterial({color:0x080a08,transparent:true,opacity:.94}));
+  const retraced = keep(new THREE.LineBasicMaterial({color:0x11150f,transparent:true,opacity:.38}));
   const guide = keep(new THREE.LineBasicMaterial({color:0x9ca880,transparent:true,opacity:.27}));
   const ghost = keep(new THREE.LineBasicMaterial({color:0xc5af87,transparent:true,opacity:.14}));
   const dashed = keep(new THREE.LineDashedMaterial({color:0x9da77c,transparent:true,opacity:.29,dashSize:.065,gapSize:.055}));
-  const pigment = keep(new THREE.ShaderMaterial({
-    uniforms:{ink:{value:new THREE.Color(0x181e15)},shade:{value:new THREE.Color(0x566049)},paper:{value:new THREE.Color(0xb4ab85)},light:{value:new THREE.Color(0xd5bd88)}},
-    vertexShader:`varying vec3 vNormal; varying vec3 vPosition;
-      void main(){vNormal=normalize(normalMatrix*normal);vPosition=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
-    fragmentShader:`uniform vec3 ink;uniform vec3 shade;uniform vec3 paper;uniform vec3 light;
-      varying vec3 vNormal;varying vec3 vPosition;
-      float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
-      float noise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);}
-      void main(){
-        float lit=dot(normalize(vNormal),normalize(vec3(-.6,.9,1.)));
-        // Shadows are accumulated ink strokes on paper, never solid black fills.
-        vec3 tone=mix(paper,light,step(.72,lit));
-        float grain=(noise(vPosition.xy*35.+vPosition.z*4.)-.5)*.22;
-        float a=(vPosition.y*.8+vPosition.x*2.4+vPosition.z*1.6)*23.+grain;
-        float b=(vPosition.y*.9-vPosition.x*2.1-vPosition.z*1.5)*26.+grain;
-        float c=(vPosition.x+vPosition.z)*38.+grain;
-        float wa=max(fwidth(a),.025), wb=max(fwidth(b),.025), wc=max(fwidth(c),.025);
-        float hatch=1.-smoothstep(.09-wa,.09+wa,abs(fract(a)-.5));
-        float cross=1.-smoothstep(.075-wb,.075+wb,abs(fract(b)-.5));
-        float dense=1.-smoothstep(.065-wc,.065+wc,abs(fract(c)-.5));
-        float strokes=max(hatch*(1.-smoothstep(.45,.75,lit)),cross*(1.-smoothstep(.12,.58,lit)));
-        strokes=max(strokes,dense*(1.-smoothstep(-.3,.05,lit)));
-        tone=mix(tone,ink,strokes*mix(.65,.98,noise(vPosition.xy*60.)));
-        gl_FragColor=vec4(tone,1.);
-        #include <tonemapping_fragment>
-        #include <colorspace_fragment>
-      }`
-  }));
+  // A stationary light casts real shadows as the rook turns beneath it.
+  scene.add(new THREE.HemisphereLight(0xe3d8ad,0x35402b,2.));
+  const key=new THREE.DirectionalLight(0xffedc4,3.);
+  key.position.set(-3,6,5);key.castShadow=true;
+  key.shadow.mapSize.set(1024,1024);key.shadow.camera.left=-3;key.shadow.camera.right=3;
+  key.shadow.camera.top=3;key.shadow.camera.bottom=-3;key.shadow.camera.near=.5;key.shadow.camera.far=18;
+  key.shadow.bias=-.0003;key.shadow.normalBias=.015;scene.add(key);
+  const ramp=keep(new THREE.DataTexture(new Uint8Array([65,65,65,255,135,135,135,255,210,210,210,255,255,255,255,255]),4,1,THREE.RGBAFormat));
+  ramp.minFilter=ramp.magFilter=THREE.NearestFilter;ramp.needsUpdate=true;
+  const pigment=keep(new THREE.MeshToonMaterial({color:0xaaa17d,gradientMap:ramp,flatShading:true,polygonOffset:true,polygonOffsetFactor:1,polygonOffsetUnits:1}));
   function solid(source) {
     const geometry = keep(source.toNonIndexed()); source.dispose(); geometry.computeVertexNormals();
-    study.add(new THREE.Mesh(geometry,pigment));
-    const edges = keep(new THREE.EdgesGeometry(geometry,16));
-    study.add(new THREE.LineSegments(edges,pencil));
-    // A second, slightly imperfect stroke softens the CAD-like precision.
-    const loose = keep(edges.clone()), positions = loose.getAttribute('position');
-    for(let i=0;i<positions.count;i++){
-      positions.setXYZ(i,positions.getX(i)+Math.sin(i*12.73)*.009,positions.getY(i)+Math.cos(i*4.19)*.009,positions.getZ(i)+Math.sin(i*6.37)*.009);
+    const mesh=new THREE.Mesh(geometry,pigment);mesh.castShadow=mesh.receiveShadow=true;study.add(mesh);
+    // Trace the structural mesh edges, not the triangulation diagonals.
+    const edges = new THREE.EdgesGeometry(geometry,1), positions=edges.getAttribute('position');
+    for(let pass=0;pass<2;pass++){
+      const strokes=[];
+      for(let i=0;i<positions.count;i+=2){
+        const a=new THREE.Vector3().fromBufferAttribute(positions,i),b=new THREE.Vector3().fromBufferAttribute(positions,i+1);
+        const length=a.distanceTo(b),steps=Math.max(3,Math.ceil(length/.075));
+        const axis=b.clone().sub(a).normalize();
+        const side=new THREE.Vector3().crossVectors(axis,Math.abs(axis.y)<.9?new THREE.Vector3(0,1,0):new THREE.Vector3(1,0,0)).normalize();
+        const other=new THREE.Vector3().crossVectors(axis,side);let last;
+        for(let j=0;j<=steps;j++){
+          const t=j/steps,seed=i*7.13+pass*31.;
+          const envelope=Math.sin(t*Math.PI),amplitude=pass?.008:.004;
+          const point=a.clone().lerp(b,t);
+          point.addScaledVector(side,(Math.sin(t*19.+seed)+.45*Math.sin(t*47.+seed))*amplitude*envelope);
+          point.addScaledVector(other,Math.sin(t*27.+seed)*amplitude*.5*envelope);
+          // The second stroke drifts like a lightly retraced pen line.
+          if(pass)point.addScaledVector(side,.006);
+          if(last)strokes.push(last.x,last.y,last.z,point.x,point.y,point.z);
+          last=point;
+        }
+      }
+      const traced=keep(new THREE.BufferGeometry());traced.setAttribute('position',new THREE.Float32BufferAttribute(strokes,3));
+      study.add(new THREE.LineSegments(traced,pass?retraced:pencil));
     }
-    study.add(new THREE.LineSegments(loose,ghost));
+    edges.dispose();
   }
   const profile = [
     [0,-2.15],[1.08,-2.15],[1.12,-2.06],[1.12,-1.91],[.98,-1.79],
