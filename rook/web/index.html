@@ -316,6 +316,8 @@
     .modal{max-height:92vh}
   }
 </style>
+<link rel="stylesheet" href="/account/bands/assets/shell.css">
+<link rel="stylesheet" href="/account/bands/assets/bands.css">
 </head>
 <body>
   <!-- decoy fields soak up browser/password-manager autofill so it never lands
@@ -324,28 +326,35 @@
          style="position:absolute;left:-9999px;top:-9999px;opacity:0;height:0;width:0;pointer-events:none">
   <input type="password" name="password" autocomplete="current-password" tabindex="-1" aria-hidden="true"
          style="position:absolute;left:-9999px;top:-9999px;opacity:0;height:0;width:0;pointer-events:none">
-  <div class="topbar">
-    <div class="brand">♖ ROOK</div>
-    <nav>
-      <a id="tab-workers" class="active" onclick="showView('workers')">Workers</a>
-      <a href="/account/bands">Bands</a>
-      <a id="tab-chat" onclick="showView('chat')">Chat</a>
-      <a id="tab-sessions" onclick="showView('sessions')">Sessions</a>
-      <a id="tab-install" onclick="showView('install')">Install</a>
-      <a id="link-tokens" target="_blank" rel="noopener">Tokens</a>
-      <a href="/apk">APK</a>
+  <aside class="app-sidebar" aria-label="Application navigation">
+    <a class="brand" href="#workers" onclick="showView('workers');return false">♖ ROOK</a>
+    <span class="nav-label">WORKSPACE</span>
+    <nav aria-label="Workspace">
+      <a id="tab-workers" href="#workers" class="active" onclick="showView('workers');return false">Workers</a>
+      <a id="tab-bands" href="#bands" onclick="showView('bands');return false">Bands</a>
+      <a id="tab-chat" href="#chat" onclick="showView('chat');return false">Chat</a>
+      <a id="tab-sessions" href="#sessions" onclick="showView('sessions');return false">Sessions</a>
     </nav>
-    <div class="spacer"></div>
-    <span class="live"><span class="dot" id="dot"></span><span id="count">…</span></span>
+    <span class="nav-label">MANAGE</span>
+    <nav aria-label="Management">
+      <a id="tab-install" href="#install" onclick="showView('install');return false">Install a worker</a>
+      <a href="/account">Account & access <span aria-hidden="true">↗</span></a>
+      <a id="link-tokens" target="_blank" rel="noopener">API tokens <span aria-hidden="true">↗</span></a>
+    </nav>
+    <div class="sidebar-footer"><span class="live"><span class="dot" id="dot"></span><span id="count">Connecting…</span></span><a class="signout" href="/logout">Sign out</a></div>
+  </aside>
+  <header class="topbar">
+    <div class="app-heading"><h1 id="view-title">Workers</h1><p id="view-description">Your connected machines, across every band.</p></div>
+    <div class="worker-controls" id="worker-controls">
     <select id="bandsel" onchange="onBandChange()"><option value="">All bands</option></select>
-    <button class="iconbtn" title="add band" onclick="toggleAddBand()">+</button>
+    <button class="iconbtn" title="Join an existing band using its key" onclick="toggleAddBand()">Join with key</button>
     <button class="iconbtn" id="rmband-btn" title="remove band" hidden onclick="removeBand()">−</button>
     <input class="filter" id="filter" name="rook-filter-box" type="search" placeholder="filter…"
            autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
            data-1p-ignore data-lpignore="true" data-form-type="other"
            readonly onfocus="this.removeAttribute('readonly')" oninput="applyFilter()">
-    <a class="signout" href="/logout">Sign out</a>
-  </div>
+    </div>
+  </header>
 
   <div class="addform" id="addband-form" hidden>
     <div style="color:var(--dim);font-size:.72rem">Join a band with its PSK, or generate a key for a new band</div>
@@ -376,13 +385,15 @@
 
       <div class="listhead">
         <span style="width:12px"></span><span style="width:9px"></span>
-        <span style="flex:1">worker</span><span style="width:150px">version</span>
+        <span style="flex:1">worker</span><span class="band-column">band</span><span style="width:150px">version</span>
         <span style="width:150px">heartbeat</span><span style="width:210px"></span>
       </div>
       <div class="list" id="list"></div>
       <div class="empty" id="empty" style="display:none"></div>
       <div class="foot" id="foot"></div>
     </div>
+
+    <div id="view-bands" class="bands-workspace" hidden><p class="empty">Loading bands…</p></div>
 
     <!-- CHAT VIEW -->
     <div id="view-chat" hidden>
@@ -491,7 +502,7 @@ async function loadBands(){
     bands=await r.json();
     const sel=$('#bandsel'), keep=sel.value;
     sel.innerHTML='<option value="">All bands</option>'+bands.map(b=>`<option value="${esc(b.id)}">${esc(b.name)} (${esc(b.id)})</option>`).join('');
-    sel.value=keep; curBand=sel.value; updateRemoveBtn();
+    sel.value=keep; curBand=sel.value; updateRemoveBtn(); dirty=true; reconcile();
   }catch(e){}
 }
 function onBandChange(){ curBand=$('#bandsel').value; updateRemoveBtn(); dirty=true; reconcile(); }
@@ -527,6 +538,7 @@ async function addBand(){
   }catch(e){msg.textContent='error: '+e.message;}
 }
 
+function bandName(label){return bands.find(b=>b.id===label)?.name || (label?'Band '+label:'Unknown band');}
 /* ---- workers ---- */
 function shown(){ let l=curBand?workers.filter(w=>w.band===curBand):workers;
   if(filterStr) l=l.filter(w=>(w.name||w.worker_id).toLowerCase().includes(filterStr)); return l; }
@@ -548,6 +560,7 @@ function buildRow(w){
     <div class="row">
       <span class="caret">▸</span><span class="st"></span>
       <span class="name"><span class="n">${esc(w.name||w.worker_id)}</span><span class="id">${esc(w.worker_id.slice(0,8))}</span></span>
+      <button class="worker-band band-column" type="button"></button>
       <span class="ver"></span>
       <span class="batt-slot"></span>
       <span class="seen"><span class="seenbar"><i></i></span><span class="t"></span></span>
@@ -562,7 +575,7 @@ function buildRow(w){
   bar.addEventListener('mouseenter',()=>{wrap.classList.add('hl');bar.classList.add('hl')});
   bar.addEventListener('mouseleave',()=>{wrap.classList.remove('hl');bar.classList.remove('hl')});
   return { w, wrap, row, bar,
-    st:wrap.querySelector('.st'), verEl:wrap.querySelector('.ver'), battEl:wrap.querySelector('.batt-slot'),
+    bandEl:wrap.querySelector('.worker-band'), st:wrap.querySelector('.st'), verEl:wrap.querySelector('.ver'), battEl:wrap.querySelector('.batt-slot'),
     sb:wrap.querySelector('.seenbar i'), tt:wrap.querySelector('.seen .t'),
     acts:wrap.querySelector('.acts'), meta:wrap.querySelector('.meta'), cg:wrap.querySelector('.cggrid'),
     banrow:wrap.querySelector('.banrow'), bannedSig:null,
@@ -577,6 +590,8 @@ function battHTML(hb){ const b=hb&&hb.battery; if(!b||b.percent==null)return '';
     (b.charging?'<span class="bolt">⚡</span>':'')+`<span>${p}%</span></span>`; }
 function updateMeta(m,w){
   m.w=w;
+  m.bandEl.textContent=bandName(w.band);m.bandEl.title='Filter by band: '+bandName(w.band);
+  m.bandEl.onclick=e=>{e.stopPropagation();$('#bandsel').value=w.band||'';onBandChange();};
   m.battEl.innerHTML=battHTML(w.hb);
   const fw=(w.plugins||[]).some(p=>['kvm','bthid','serial'].includes(p)) || /^0\./.test(w.version||'');
   const vcls = w.version? (fw?'ver old':'ver') : 'ver none';
@@ -590,7 +605,7 @@ function updateMeta(m,w){
   a.push(`<button data-a="move">move to band…</button>`);
   m.acts.innerHTML=a.join('');
   m.acts.querySelectorAll('button').forEach(b=>b.onclick=e=>{e.stopPropagation();
-    ({snap,shell,info,move:wid=>{location.href='/account/bands?worker='+encodeURIComponent(wid)}})[b.dataset.a](w.worker_id);});
+    ({snap,shell,info,move:openWorkerMove})[b.dataset.a](w.worker_id);});
   // caps groups (rebuild only if changed)
   const sig=caps.join(','); if(sig!==m.capsSig){ m.capsSig=sig;
     m.meta.textContent=`worker_id ${w.worker_id} · ${caps.length} capabilities`;
@@ -814,13 +829,57 @@ function renderCapResult(out,cap,reply){
 }
 
 /* ---- views / install ---- */
-function showView(v){
-  for(const n of ['workers','chat','sessions','install']){
-    $('#view-'+n).hidden=v!==n; $('#tab-'+n).classList.toggle('active',v===n);
-  }
-  if(v==='chat'){ startChat(); } else { stopChat(); }
-  if(v==='sessions'){ startSessions(); } else { stopSessions(); }
+const viewInfo={
+ workers:['Workers','Your connected machines, across every band.'],
+ bands:['Bands','Organize your fleet, manage keys, and move workers.'],
+ chat:['Chat','Conversations with the people and agents on your network.'],
+ sessions:['Sessions','Continue work across your connected machines.'],
+ install:['Install a worker','Connect another machine to your workspace.']
+};
+let activeView=null, bandsUI=null, bandsLoading=null;
+async function ensureBands(){
+ if(bandsUI)return bandsUI;
+ if(bandsLoading)return bandsLoading;
+ const host=$('#view-bands');
+ bandsLoading=(async()=>{
+  const response=await fetch('/account/bands/component');
+  if(!response.ok||!response.headers.get('content-type')?.includes('application/json'))throw Error('Sign in to your account to manage bands.');
+  const component=await response.json();
+  const {mountBands}=await import('/account/bands/assets/bands.js');
+  host.innerHTML=component.html;
+  bandsUI=await mountBands(host,{csrf:component.csrf,onChange:()=>loadBands()});
+  return bandsUI;
+ })();
+ try{return await bandsLoading;}catch(error){
+  host.innerHTML='<p class="empty">'+esc(error.message)+' <a href="/account">Open account</a></p>';
+  throw error;
+ }finally{bandsLoading=null;}
 }
+function showView(v,updateHistory=true){
+ if(!viewInfo[v])v='workers';
+ if(updateHistory&&location.hash!=='#'+v)history.pushState(null,'','#'+v);
+ if(activeView===v)return;
+ activeView=v;
+ for(const n of Object.keys(viewInfo)){
+  $('#view-'+n).hidden=v!==n; const tab=$('#tab-'+n);tab.classList.toggle('active',v===n);
+  if(v===n)tab.setAttribute('aria-current','page');else tab.removeAttribute('aria-current');
+ }
+ $('#view-title').textContent=viewInfo[v][0];$('#view-description').textContent=viewInfo[v][1];
+ document.title=viewInfo[v][0]+' · Rook';$('#worker-controls').hidden=v!=='workers';$('#addband-form').hidden=true;
+ if(v==='chat'){startChat();}else{stopChat();}
+ if(v==='sessions'){startSessions();}else{stopSessions();}
+ if(v==='bands')ensureBands().then(ui=>ui.refresh()).catch(()=>{});
+}
+async function openWorkerMove(wid){
+ showView('bands');
+ try{const ui=await ensureBands();await ui.openWorker(wid);}catch(error){console.warn(error.message);}
+}
+function routeFromHash(){
+ const [view,query]=location.hash.slice(1).split('?');showView(view||'workers',false);
+ const wid=new URLSearchParams(query||'').get('worker');if(view==='bands'&&wid)openWorkerMove(wid);
+}
+window.addEventListener('hashchange',routeFromHash);
+window.addEventListener('popstate',routeFromHash);
 
 /* ---- sessions panel: Claude Code conversations + Remote Control resume ---- */
 // Only workers that actually store Claude Code history announce claude-history.*,
@@ -1089,7 +1148,7 @@ function wireLinks(){
 }
 
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
-wireLinks(); loadBands(); loadWorkers();
+wireLinks(); routeFromHash(); loadBands(); loadWorkers();
 setInterval(loadWorkers,3000); setInterval(loadBands,20000);
 </script>
 </body>

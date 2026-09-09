@@ -316,5 +316,11 @@ async def test_legacy_dashboard_login_bridges_to_worker_move_page(accounts):
         response=await client.get(path,headers={'Cookie':'rook_session='+server._make_session_cookie()},allow_redirects=False)
         assert response.status==302 and response.headers['Location']==path
         token=response.cookies['rook_account'].value
-        response=await client.get(path,headers={'Cookie':'rook_account='+token})
-        assert response.status==200 and 'Move worker to band' in await response.text()
+        response=await client.get(path,headers={'Cookie':'rook_account='+token},allow_redirects=False)
+        assert response.status==302
+        assert response.headers['Location']=='/#bands?worker=selected-worker'
+        response=await client.get('/account/bands/component',headers={'Cookie':'rook_session='+server._make_session_cookie()},allow_redirects=False)
+        assert response.status==302 and response.headers['Location']=='/account/bands/component'
+        token=response.cookies['rook_account'].value
+        response=await client.get('/account/bands/component',headers={'Cookie':'rook_account='+token})
+        assert response.status==200 and 'band-dialog' in (await response.json())['html']

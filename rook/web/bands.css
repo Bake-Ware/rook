@@ -1,0 +1,22 @@
+.bands-workspace{font:inherit;color:var(--fg,#e6edf3)}
+.bands-workspace section{padding:22px;border:1px solid var(--line,#29333e);border-radius:12px;margin:16px 0;background:var(--panel,#111820)}
+.bands-workspace h2{font-size:1.1rem;margin:0}.bands-workspace h3{font-size:1rem}
+.bands-workspace p{line-height:1.6}.bands-workspace a{color:var(--accent,#48d8b5)}
+.bands-workspace button,.bands-workspace input,.bands-workspace select{font:inherit;font-size:.85rem;padding:9px 13px;border-radius:7px;border:1px solid var(--line2,#384553);color:var(--fg,#e6edf3);background:var(--panel2,#192431);box-sizing:border-box;max-width:100%}
+.bands-workspace button{cursor:pointer;background:var(--accent-dim,#12634f);color:#fff}
+.bands-workspace button.secondary{background:var(--panel2,#192431);color:var(--fg,#e6edf3)}
+.bands-workspace button.danger{background:#57292d}.bands-workspace button:disabled{opacity:.45;cursor:not-allowed}
+.bands-workspace .band-head{display:flex;justify-content:space-between;gap:16px;align-items:center;flex-wrap:wrap}
+.bands-workspace .band-tools{display:flex;gap:8px;flex-wrap:wrap;margin-top:18px}
+.bands-workspace .worker-line{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:12px 0;border-top:1px solid var(--line,#29333e)}
+.bands-workspace .worker-line:first-child{margin-top:18px}.bands-workspace small{display:block;color:var(--dim,#a8b4bf)}
+.bands-workspace .empty{padding:28px;text-align:center;color:var(--dim,#a8b4bf)}
+.bands-workspace dialog{background:var(--panel,#111820);color:var(--fg,#e6edf3);border:1px solid var(--line2,#384553);border-radius:14px;width:min(560px,calc(100vw - 32px));padding:24px;max-height:90dvh;overflow:auto;box-sizing:border-box}
+.bands-workspace dialog::backdrop{background:#000a;backdrop-filter:blur(3px)}
+.bands-workspace dialog h2{margin:0}.bands-workspace dialog input:not([type=checkbox]),.bands-workspace dialog select{width:100%}
+.bands-workspace label{display:block;margin:14px 0 6px}
+.bands-workspace .dialog-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:24px}
+.bands-workspace #message{min-height:24px}.bands-workspace progress{width:100%;accent-color:var(--accent,#48d8b5)}
+.bands-workspace .migration-workers{max-height:180px;overflow:auto}.bands-workspace .badge{font-size:12px;font-weight:400;color:var(--dim,#a8b4bf);background:var(--panel2,#192431);border:1px solid var(--line,#29333e);padding:4px 8px;border-radius:6px}
+.bands-workspace .muted{color:var(--dim,#a8b4bf)}.bands-workspace .error{color:var(--bad,#ffa1a1)}
+.bands-workspace :focus-visible{outline:2px solid var(--accent,#48d8b5);outline-offset:3px}
