@@ -84,3 +84,24 @@ Example agent call:
 Native Android applications bundle the worker core and need an APK update to
 advertise these capabilities. Publishing a Python worker bundle does not update
 the embedded Android runtime.
+
+## Cached terminal overview
+
+`GET /api/band/overview` returns the in-memory worker roster and cached worker
+chat summaries in one response. It uses the same operator authentication as
+`/api/band/workers` and accepts the same optional `band` filter. The handler never
+waits for a worker RPC. A single server collector polls `chat.rooms` with at most
+four calls in flight, waits 15 seconds between rounds, and idles after 90 seconds
+without an overview request. Banned/offline workers are excluded from collection.
+Summary text/counts are bounded; stale summaries are labeled after 30 seconds
+and omitted after 60 seconds. Cache keys include the band and worker ID, so a
+worker move cannot expose its old band's cached summaries in the destination.
+
+The terminal polls this endpoint about every two seconds on a background thread.
+Input and drawing remain on the curses thread, with a 50 ms idle input interval.
+It preserves the last successful roster during failures. Active conversation
+reads use a separate background lane and discard replies when changing rooms.
+Explicit capability calls and sends still wait for their individual result.
+Against an older server without the endpoint, the CLI falls back to the roster
+without performing per-worker chat scans. Clients do not multiply the server's
+collection work. The browser's existing worker endpoint remains available.

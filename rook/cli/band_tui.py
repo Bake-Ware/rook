@@ -21,8 +21,11 @@ import base64
 import getpass
 import json
 import os
+import queue
 import socket
+import threading
 import time
+from concurrent.futures import Future
 import urllib.error
 import urllib.request
 
@@ -49,6 +52,7 @@ class BandHTTP:
     def __init__(self, url: str, user: str, password: str) -> None:
         self.url = url.rstrip("/")
         self._auth = base64.b64encode(f"{user}:{password}".encode()).decode()
+        self._has_overview = True
 
     def _req(self, path: str, method: str = "GET", body: dict | None = None,
              timeout: float = 8.0) -> dict:
@@ -73,16 +77,30 @@ class BandHTTP:
             return f"{type(e).__name__}: {e}"
 
     def snapshot(self) -> list[dict]:
-        try:
-            rows = self._req("/api/band/workers", timeout=8)
-        except Exception:
-            return []
+        rows = self._req("/api/band/workers", timeout=8)
         if not isinstance(rows, list):
-            return []
+            raise ValueError("Invalid worker roster")
         for r in rows:
             r["age"] = r.get("last_seen_age_secs", 999)
         rows.sort(key=lambda x: (x.get("name") or "").lower())
         return rows
+
+    def overview(self) -> dict:
+        """One cached server snapshot, with a roster-only legacy fallback."""
+        if self._has_overview:
+            try:
+                value = self._req("/api/band/overview", timeout=8)
+            except urllib.error.HTTPError as error:
+                if error.code != 404:
+                    raise
+                self._has_overview = False
+            else:
+                if not isinstance(value, dict) or not isinstance(value.get("workers"), list) or not isinstance(value.get("chats"), list):
+                    raise ValueError("Invalid band overview")
+                for row in value["workers"]:
+                    row["age"] = row.get("last_seen_age_secs", 999)
+                return value
+        return {"workers": self.snapshot(), "chats": []}
 
     def call(self, cap: str, worker_id=None, args=None, timeout: float = 15.0) -> dict:
         try:
@@ -127,6 +145,68 @@ DANGER = {"worker.restart", "worker.update", "worker.reconfigure", "worker.deaut
           "worker.apply", "worker.ota_begin"}
 
 
+class _Background:
+    """Bounded read-only jobs. Only the UI thread consumes results or draws.
+
+    Daemon threads let quit finish immediately even when a remote read is stuck
+    until its HTTP timeout. No executor atexit hook waits on those reads.
+    """
+    def __init__(self, workers: int):
+        self.jobs: dict[object, Future] = {}
+        self._queue = queue.Queue(maxsize=workers * 2)
+        self._stop = threading.Event()
+        self._threads = []
+        self._workers = workers
+
+    def submit(self, key, fn, *args, **kwargs) -> bool:
+        if self._stop.is_set() or key in self.jobs or len(self.jobs) >= self._workers * 2:
+            return False
+        future = Future()
+        try:
+            self._queue.put_nowait((future, fn, args, kwargs))
+        except queue.Full:
+            return False
+        self.jobs[key] = future
+        if not self._threads:
+            for _ in range(self._workers):
+                thread = threading.Thread(target=self._run, daemon=True, name="rook-ui-read")
+                self._threads.append(thread)
+                thread.start()
+        return True
+
+    def _run(self):
+        while not self._stop.is_set():
+            try:
+                future, fn, args, kwargs = self._queue.get(timeout=.2)
+            except queue.Empty:
+                continue
+            if self._stop.is_set():
+                future.cancel()
+                continue
+            if not future.set_running_or_notify_cancel():
+                continue
+            try:
+                future.set_result(fn(*args, **kwargs))
+            except Exception as error:
+                future.set_exception(error)
+
+    def take(self, key) -> Future | None:
+        future = self.jobs.get(key)
+        if future is not None and future.done():
+            return self.jobs.pop(key)
+        return None
+
+    def discard(self, key):
+        future = self.jobs.pop(key, None)
+        if future is not None:
+            future.cancel()
+
+    def close(self):
+        self._stop.set()
+        for key in list(self.jobs):
+            self.discard(key)
+
+
 class UI:
     def __init__(self, band: "BandHTTP", hub_label: str) -> None:
         self.band = band
@@ -144,17 +224,58 @@ class UI:
         self.cap_top = 0
         self.cap_expanded: set[str] = set()
         self._detail_wid = None    # reset tree state when the selected worker changes
+        # The server aggregates fleet chat summaries once for all clients.
+        # Overview and active conversation reads have independent bounded lanes.
+        self._roster_reads = _Background(1)
+        self._conversation_reads = _Background(2)
+        self._all_rows = []
+        self._roster_due = 0.0
+        self._roster_error = False
+
+    def close(self):
+        for reads in (self._roster_reads, self._conversation_reads):
+            reads.close()
 
     # -- data ----------------------------------------------------------------
 
     def refresh(self) -> None:
-        rows = self.band.snapshot()
+        """Request a fresh roster without blocking keyboard handling."""
+        self._roster_due = 0.0
+        self._filter_rows()
+
+    def _filter_rows(self) -> None:
+        selected = self.cur()
+        rows = self._all_rows
         if self.filter:
             f = self.filter.lower()
             rows = [r for r in rows if f in (r.get("name") or "").lower()]
         self.rows = rows
+        if selected:
+            self.sel = next((i for i, r in enumerate(rows)
+                             if r["worker_id"] == selected["worker_id"]), self.sel)
         if self.sel >= len(self.rows):
             self.sel = max(0, len(self.rows) - 1)
+
+    def _tick(self) -> None:
+        """Collect ready data and schedule reads; never wait for the network."""
+        now = time.monotonic()
+        result = self._roster_reads.take("roster")
+        if result is not None:
+            try:
+                overview = result.result()
+                self._all_rows = overview["workers"]
+                self.chats = overview["chats"]
+                self._filter_rows()
+                if self._roster_error:
+                    self.status = "connected"
+                self._roster_error = False
+            except Exception:
+                # Keep the last known roster and selection during outages.
+                self.status = "refresh failed; showing cached workers"
+                self._roster_error = True
+            self._roster_due = now + 2.0
+        if now >= self._roster_due:
+            self._roster_reads.submit("roster", self.band.overview)
 
     def cur(self) -> dict | None:
         return self.rows[self.sel] if 0 <= self.sel < len(self.rows) else None
@@ -341,7 +462,8 @@ class UI:
         for ch in self.chats:
             if cy >= bottom:
                 break
-            self._put(scr, cy, cx, f"{ch['name']}/{ch['room']}"[:cw], curses.A_BOLD)
+            label = f"{ch['name']}/{ch['room']}" + (" · cached" if ch.get("stale") else "")
+            self._put(scr, cy, cx, label[:cw], curses.A_BOLD)
             cy += 1
             if cy < bottom:
                 who = ch.get("last_sender") or ""
@@ -559,22 +681,8 @@ class UI:
         self.status = "connected"
 
     def _all_chats(self) -> list:
-        """Every chat on the band: chat.rooms across chat-capable workers,
-        newest-active first. Used by the main-view panel and the chat sidebar."""
-        out = []
-        for r in self.rows:
-            if "chat.rooms" not in (r.get("caps") or []):
-                continue
-            res = self.band.call("chat.rooms", worker_id=r["worker_id"], timeout=6).get("result", {})
-            if not isinstance(res, dict):
-                continue
-            for room in (res.get("rooms") or []):
-                out.append({"wid": r["worker_id"], "name": r.get("name") or r["worker_id"],
-                            "room": room.get("room"), "last_ts": room.get("last_ts", 0) or 0,
-                            "last_text": room.get("last_text", ""),
-                            "last_sender": room.get("last_sender")})
-        out.sort(key=lambda e: e["last_ts"], reverse=True)
-        return out
+        """Cached chat snapshots, newest first. Safe to use while drawing."""
+        return list(self.chats)
 
     def _chat_sidebar(self, active: tuple) -> list:
         entries = self._all_chats()
@@ -593,33 +701,43 @@ class UI:
         msgs: list = []
         since = 0.0
         inp = ""
-        last_side = last_poll = 0.0
-        scr.timeout(300)
+        last_poll = 0.0
+        self._conversation_reads.discard("poll")
+        scr.timeout(50)
         while True:
-            now = time.time()
-            if now - last_side > 3.0:
-                last_side = now
-                side = self._chat_sidebar(active)
-                sidesel = next((i for i, e in enumerate(side)
-                                if e["wid"] == active[0] and e["room"] == active[2]), sidesel)
-            if now - last_poll > 0.8:
+            now = time.monotonic()
+            self._tick()
+            side = self._chat_sidebar(active)
+            sidesel = next((i for i, e in enumerate(side)
+                            if e["wid"] == active[0] and e["room"] == active[2]), sidesel)
+            result = self._conversation_reads.take("poll")
+            if result is not None:
+                try:
+                    res = result.result().get("result", {})
+                    if isinstance(res, dict):
+                        for m in (res.get("messages") or []):
+                            msgs.append(m)
+                            since = max(since, float(m.get("ts", 0)))
+                except Exception:
+                    pass
                 last_poll = now
-                res = self.band.call("chat.poll", worker_id=active[0],
-                                     args={"room": active[2], "since": since}, timeout=8).get("result", {})
-                if isinstance(res, dict):
-                    for m in (res.get("messages") or []):
-                        msgs.append(m)
-                        since = max(since, float(m.get("ts", 0)))
+            if now - last_poll > .8:
+                self._conversation_reads.submit("poll", self.band.call, "chat.poll", worker_id=active[0],
+                                                args={"room": active[2], "since": since}, timeout=5)
             self._chat_draw(scr, active, side, sidesel, msgs, inp)
             k = scr.getch()
             if k == -1:
                 continue
             if k == 27:                                   # esc — leave chat
+                self._conversation_reads.discard("poll")
+                curses.curs_set(0)
                 return
             elif k in (curses.KEY_UP, curses.KEY_DOWN) and side:
                 sidesel = (sidesel + (1 if k == curses.KEY_DOWN else -1)) % len(side)
                 e = side[sidesel]
                 active = (e["wid"], e["name"], e["room"])
+                # A response for the previous room must never enter this one.
+                self._conversation_reads.discard("poll")
                 msgs, since, last_poll = [], 0.0, 0.0     # switch conversation
             elif k in (curses.KEY_ENTER, 10, 13):
                 if inp.strip():
@@ -701,25 +819,25 @@ class UI:
     # -- main loop -----------------------------------------------------------
 
     def loop(self, scr) -> None:
+        try:
+            self._loop(scr)
+        finally:
+            self.close()
+
+    def _loop(self, scr) -> None:
         curses.curs_set(0)
         scr.nodelay(True)
-        scr.timeout(400)
+        scr.timeout(50)
+        if hasattr(curses, "set_escdelay"):
+            curses.set_escdelay(25)
         curses.start_color()
         curses.use_default_colors()
         curses.init_pair(1, curses.COLOR_GREEN, -1)
         curses.init_pair(2, curses.COLOR_YELLOW, -1)
         curses.init_pair(3, curses.COLOR_RED, -1)
         curses.init_pair(4, curses.COLOR_CYAN, -1)     # hermes-cyan borders/brand
-        last = last_chat = 0.0
         while True:
-            now = time.time()
-            if now - last > 0.8:
-                self.refresh()
-                last = now
-            # refresh the chats panel less often, and only when it's shown
-            if now - last_chat > 5.0 and scr.getmaxyx()[1] >= 94:
-                self.chats = self._all_chats()
-                last_chat = now
+            self._tick()
             self.draw(scr)
             try:
                 k = scr.getch()
@@ -754,6 +872,7 @@ class UI:
             elif k == ord("/"):
                 v = self.prompt(scr, "filter name (blank clears)")
                 self.filter = v or ""
+                self._filter_rows()
             elif w and k == ord("c"):
                 self.act_call(scr, w)
             elif w and k == ord("e"):
