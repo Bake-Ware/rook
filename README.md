@@ -252,7 +252,20 @@ A btop-inspired, zero-dependency curses TUI (pure stdlib). Framed panels: a work
 
 ![rook band TUI](docs/img/tui.png)
 
-Install it (see [Install](#install)) — the installer pulls in `python3` if it's missing:
+Desktop worker installs now include this dashboard. Run `rook` in a new terminal
+after installing or updating a worker. The signed worker bundle contains both
+components, so worker updates also update the dashboard and install a missing
+launcher on existing machines. Closing the dashboard leaves the background
+worker running. `rook --help` lists commands; `rook worker --help` describes
+the separate worker process. `rook band` and `rook tui` also open the dashboard.
+
+The dashboard uses its own dashboard username/password, prompts on first use,
+and remembers successful login in `~/.config/rook/band.conf`. Worker enrollment
+credentials do not grant dashboard access. Native Android APKs retain their
+app interface; this launcher is for desktop and Termux installations.
+
+For a controller without a local worker, the standalone installer remains available
+(see [Install](#install)) — it pulls in `python3` if missing:
 
 ```sh
 curl -fsSL https://<your-host>/install | bash -s -- cli

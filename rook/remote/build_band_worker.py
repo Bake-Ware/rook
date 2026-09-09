@@ -213,6 +213,12 @@ def build() -> Path:
         _copy_pkg(WORKER_SRC, rook_dst / "worker")
         _stamp_build_info(rook_dst / "worker", build_num, commit, version, built_at)
 
+        # Bundle only the standalone dashboard, not the legacy agent CLI modules.
+        cli_dst = rook_dst / "cli"
+        cli_dst.mkdir()
+        (cli_dst / "__init__.py").write_text("", encoding="utf-8")
+        shutil.copy2(REPO_ROOT / "rook/cli/band_tui.py", cli_dst / "band_tui.py")
+
         # telesthete.protocol package (only protocol/ is imported by rook.worker)
         tel_dst = t / "telesthete"
         tel_dst.mkdir()

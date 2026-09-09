@@ -30,6 +30,13 @@ def _force_utf8_stdio() -> None:
 
 def main() -> None:
     _force_utf8_stdio()
+    # Keep legacy zipapp/service arguments working. Only the desktop launcher
+    # selects the dashboard; a service never falls into an interactive prompt.
+    if len(sys.argv) > 1 and sys.argv[1] == "--cli":
+        del sys.argv[1]
+        from .desktop import main as desktop_main
+        desktop_main()
+        return
     ap = argparse.ArgumentParser(prog="rook-worker")
     ap.add_argument("--hub", default="hub.example.com:443",
                     help="hub host:port (default: bakenet hub)")
@@ -43,6 +50,8 @@ def main() -> None:
     ap.add_argument("--selftest", action="store_true",
                     help="load all plugins offline, print version, exit 0 "
                          "(used as a pre-swap smoke test by OTA self-update)")
+    ap.add_argument("--install-cli", action="store_true",
+                    help="install the bundled terminal dashboard launcher and exit")
     ap.add_argument("--enable", default="",
                     help="comma-separated plugin module names to load; "
                          "default = all builtins")
@@ -75,10 +84,25 @@ def main() -> None:
         # exactly what the OTA self-update checks before swapping a downloaded pyz.
         from .registry import CapabilityRegistry
         from .plugin import load_plugins
+        from . import desktop
+        from rook.cli import band_tui
         reg = CapabilityRegistry()
         plugins = load_plugins("rook.worker.plugins", reg, None)
         print(f"selftest OK v{VERSION}: {len(plugins)} plugins, {len(reg.list())} caps")
         return
+
+    if args.install_cli:
+        from .desktop import install_launcher
+        result = install_launcher()
+        if not result["installed"]:
+            ap.error(result["reason"])
+        print(f"Installed {result['launcher']}; open a new terminal and run rook.")
+        return
+
+    # Also covers existing workers receiving their first CLI through OTA. This
+    # runs only after offline validation modes, which must have no side effects.
+    from .desktop import ensure_launcher
+    ensure_launcher()
 
     if args.enroll:
         from .enroll import enroll

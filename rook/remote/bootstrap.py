@@ -204,6 +204,8 @@ if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}
 $pyz = "$env:USERPROFILE\\.rook-band-worker\\band-worker.pyz"
 New-Item -ItemType Directory -Force -Path (Split-Path $pyz) | Out-Null
 Invoke-WebRequest -Uri "https://{domain}/band-worker.pyz" -OutFile $pyz
+& $vpy $pyz --install-cli
+if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}
 
 # Stop any existing worker FIRST - avoids duplicate processes and stale worker-ids
 # lingering on the band (each worker process announces a fresh random id).
@@ -429,6 +431,7 @@ PYZ="$HOME/.rook-band-worker/band-worker.pyz"
 mkdir -p "$HOME/.rook-band-worker"
 curl -fsSL https://{domain}/band-worker.pyz -o "$PYZ"
 chmod +x "$PYZ"
+"$VPY" "$PYZ" --install-cli
 
 WORKER_NAME="$(hostname 2>/dev/null || uname -n 2>/dev/null || cat /etc/hostname 2>/dev/null)"
 [ -z "$WORKER_NAME" ] && WORKER_NAME="${{HOSTNAME:-rook-worker}}"
@@ -568,6 +571,14 @@ ensure_python() {
 }
 
 install_cli() {
+  # `both`, or adding the CLI to an existing worker, must keep the launcher tied
+  # to the signed bundle instead of overwriting it with a standalone copy.
+  local WORKER_PY="$HOME/.rook-band-worker/venv/bin/python"
+  local WORKER_BUNDLE="$HOME/.rook-band-worker/band-worker.pyz"
+  if [ -x "$WORKER_PY" ] && [ -f "$WORKER_BUNDLE" ] && "$WORKER_PY" "$WORKER_BUNDLE" --help 2>/dev/null | grep -q -- --install-cli; then
+    "$WORKER_PY" "$WORKER_BUNDLE" --install-cli
+    return
+  fi
   ensure_python || { echo "[rook] python3 is required for the CLI" >&2; return 1; }
   mkdir -p "$DEST" "$(dirname "$CONF")"
   echo "[rook] installing CLI -> $DEST/rook"
