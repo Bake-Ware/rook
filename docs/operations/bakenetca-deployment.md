@@ -1,12 +1,40 @@
 # BakeNetCA deployment layout
 
+## Deployed and verified, 2026-09-09
+
+Both services now run from `/opt/rook-releases/bands-20260909-ce8aa7d`,
+source commit `ce8aa7d` on `feature/band-management`. The signed worker build
+`120.steady.iguana` is published at the existing worker download endpoints.
+Its SHA-256 is
+`ba8f76f1e505c64cf525c3c73ae315c5ae50d0a6d8cf66e47e963fb55794585f`.
+
+An isolated worker exercised the actual public HTTPS API: inline band creation
+and move, rename, PSK migration, migrate-all back to its original band, and
+deletion. All three migrations completed with signed destination-channel proofs
+and the same worker identity. The temporary service, Linux user, account,
+sessions, enrollment, and SSH key were removed; test bands remain only as
+retired tombstones. No production workers were moved between bands.
+
+After publication, all 24 compatible workers reported build 120 and the move
+capability. Three native Android installs still reported `0.dev` and require an
+APK update; the existing public APK was preserved. Both services were active,
+and the three original active bands were unchanged.
+
+The previous release below is retained. SQLite and configuration backups are at
+`/var/backups/rook/bands-20260909-ce8aa7d`. The deployed release contains
+`deployment-result.json`; the durable Rook test console is `6875c8bce42f4d96`.
+The desktop froze before starting the browser migration; live migration checks
+continued on the server and passed independently of the desktop session.
+
+## Historical discovery
+
 Verified read-only through Rook on `bakenetcanada`, 2026-09-09. Historical
 instructions were retrieved from Sojourn’s Hermes reference
 `/root/.hermes/skills/devops/rook/references/bakenetca-deployment.md` and its
 Claude memory `bakenetca-rook-pyz-deploy.md`. Do not copy credentials from those
 notes into repository files or command logs.
 
-## Current services
+## Previous service layout
 
 Both `rook-remote.service` and `rook-band-mcp.service` run as `ubuntu`, with
 `WorkingDirectory` and `PYTHONPATH` pointing to:

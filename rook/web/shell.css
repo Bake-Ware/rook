@@ -1,0 +1,38 @@
+/* Application shell: navigation and shared layout, independent of feature views. */
+:root{--bg:#0c1015;--panel:#141a22;--panel2:#10161d;--line:#252e39;--line2:#354151;--fg:#e8edf3;--dim:#9aa6b5;--dim2:#718093;--accent:#68dab6;--accent-dim:#237d64;--sidebar-width:216px}
+body{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--bg);font-size:14px}
+.app-sidebar{position:fixed;inset:0 auto 0 0;width:var(--sidebar-width);padding:28px 18px;display:flex;flex-direction:column;gap:8px;background:#10151c;border-right:1px solid var(--line);z-index:25}
+.app-sidebar .brand{text-decoration:none;padding:0 12px 26px;letter-spacing:2px;font-size:21px;color:var(--fg)}
+.nav-label{font-size:10px;font-weight:650;letter-spacing:1.5px;color:var(--dim2);padding:20px 12px 7px}
+.app-sidebar nav{display:flex;flex-direction:column;gap:5px}
+.app-sidebar nav a{font-size:14px;padding:11px 13px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;border:1px solid transparent}
+.app-sidebar nav a:hover{background:#19212b}.app-sidebar nav a.active{color:var(--accent);background:#172b26;border-color:#28473d}
+.sidebar-footer{margin-top:auto;padding:20px 10px 0;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:20px}
+.sidebar-footer .signout{border:0;padding:0;font-size:12px}.sidebar-footer .live{font-size:12px}
+.topbar{margin-left:var(--sidebar-width);padding:25px 32px 22px;gap:20px;background:rgba(12,16,21,.96);border-bottom:1px solid var(--line);flex-wrap:wrap;backdrop-filter:blur(10px)}
+.app-heading{flex:1;min-width:240px}.app-heading h1{margin:0;font-size:24px;letter-spacing:-.6px;font-weight:650}.app-heading p{margin:5px 0 0;color:var(--dim);font-size:13px}
+.worker-controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.worker-controls input.filter{width:155px}.worker-controls #rmband-btn{display:none!important}
+.wrap{margin-left:var(--sidebar-width);padding:26px 32px 60px;max-width:1900px}
+.addform{position:fixed;top:105px;right:32px}
+.tile{background:var(--panel);box-shadow:none}.tile.mini{min-width:106px}.tile.mini .k{font-size:28px;font-variant-numeric:tabular-nums}.tile.ver{width:210px}
+.stats{gap:12px;margin-bottom:28px}.tile.hb{min-width:180px}
+.listhead{color:var(--dim);font-size:10px;letter-spacing:.8px}.list{background:var(--panel)}
+.row{padding-top:15px;padding-bottom:15px}.name{gap:8px;flex-wrap:wrap}.name .n{font-size:14px;max-width:100%}.name .id{font-family:ui-monospace,monospace;font-size:10px;color:var(--dim2)}
+.band-column{width:138px;flex:0 0 138px}
+.worker-band{font:inherit;font-size:12px;text-align:left;color:#aadbc9;border:1px solid #2b463e;background:#182922;padding:5px 9px;border-radius:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+.worker-band:hover{border-color:var(--accent)}
+.acts button{font-family:inherit}.acts{opacity:1}.ver,.seen,.foot,.mcap,pre,code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+@media(max-width:1150px){
+ :root{--sidebar-width:184px}.topbar{padding:22px 24px}.wrap{padding:24px}.worker-controls{width:100%}.worker-controls input.filter{flex:1}.band-column{width:110px;flex-basis:110px}.row{gap:10px}.name .id{display:none}.seen{width:100px}.acts{width:180px}.acts button{padding:4px 7px}
+}
+@media(max-width:800px){
+ .app-sidebar{position:relative;inset:auto;width:auto;padding:16px 16px 10px;display:block;border-right:0;border-bottom:1px solid var(--line)}
+ .app-sidebar .brand{display:block;padding:0 4px 14px;font-size:18px}.nav-label{display:none}
+ .app-sidebar nav{flex-direction:row;overflow:auto;white-space:nowrap;gap:4px}.app-sidebar nav a{padding:8px 12px;font-size:13px;flex-shrink:0}
+ .app-sidebar nav[aria-label="Management"]{margin-top:8px}.sidebar-footer{position:absolute;top:18px;right:20px;border:0;margin:0;padding:0;flex-direction:row;gap:15px}.sidebar-footer .signout{font-size:11px}
+ .topbar{margin-left:0;position:relative;padding:20px 16px}.wrap{margin-left:0;padding:20px 16px 40px}
+ .stats{margin-bottom:20px}.row{flex-wrap:wrap}.listhead{display:none}.name{flex:1 1 60%;}.row .ver{order:3;width:auto;flex:0 0 auto}.band-column{order:2;width:auto;max-width:65%;flex:0 1 auto}.acts{order:5;width:auto;flex:1 1 100%;justify-content:flex-start}.acts button{padding:7px 12px}.row .seen{display:none}
+ .addform{top:190px;left:16px;right:16px;width:auto}.tile.mini{min-width:0;flex:1}.tile.ver,.tile.hb{flex:1 1 100%;width:auto}
+}
+@media(prefers-reduced-motion:reduce){.dot{animation:none}.bar .fill,.row{transition:none}}

@@ -38,8 +38,12 @@ async def test_band_crud_membership_and_csrf(portal):
     async with TestClient(TestServer(p.app)) as client:
         r=await client.get('/account/bands/api',allow_redirects=False)
         assert r.status==302
-        r=await client.get('/account/bands',headers=p.headers)
-        assert r.status==200 and 'Move to band' in await r.text()
+        r=await client.get('/account/bands',headers=p.headers,allow_redirects=False)
+        assert r.status==302 and r.headers['Location']=='/#bands'
+        r=await client.get('/account/bands/component',headers=p.headers)
+        component=await r.json()
+        assert r.status==200 and component['csrf']==p.csrf
+        assert 'band-dialog' in component['html']
         r=await client.post('/account/bands/api',headers=p.headers,json={'op':'create','name':'New'})
         assert r.status==403
         r=await client.post('/account/bands/api',headers={**p.headers,'Origin':'https://evil.example'},json={'op':'create','name':'New','csrf':p.csrf})
@@ -166,3 +170,20 @@ def test_existing_migration_database_is_upgraded_without_losing_progress(tmp_pat
         assert row['new_psk']=='pending-key' and row['phase']=='prepared'
         assert row['target_band_id'] is None and row['full_inventory']==1
         assert 'deleted' in {r[1] for r in db.execute('PRAGMA table_info(bands)')}
+
+
+@pytest.mark.asyncio
+async def test_band_component_auth_assets_and_member_page(portal):
+    p=portal
+    async with TestClient(TestServer(p.app)) as client:
+        r=await client.get('/account/bands/component',allow_redirects=False)
+        assert r.status==302
+        for name in ('bands.js','bands.css','shell.css'):
+            r=await client.get('/account/bands/assets/'+name)
+            assert r.status==200
+        r=await client.get('/account/bands/assets/accounts.py')
+        assert r.status==404
+        uid=p.store.create_local('member','long enough test password')
+        token=p.store.new_session(uid)
+        r=await client.get('/account/bands',headers={'Cookie':'rook_account='+token})
+        assert r.status==200 and 'mountBands' in await r.text()

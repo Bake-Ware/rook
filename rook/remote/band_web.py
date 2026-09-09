@@ -20,13 +20,33 @@ class BandWeb:
 
     def install(self, app):
         app.router.add_get('/account/bands', self.page)
+        app.router.add_get('/account/bands/component', self.component)
+        app.router.add_get('/account/bands/assets/{name}', self.asset)
         app.router.add_get('/account/bands/api', self.inventory)
         app.router.add_post('/account/bands/api', self.action)
 
+    async def asset(self, request):
+        name=request.match_info['name']
+        types={'bands.js':'application/javascript','bands.css':'text/css','shell.css':'text/css'}
+        if name not in types:raise web.HTTPNotFound()
+        path=Path(__file__).parents[1]/'web'/name
+        return web.Response(text=path.read_text(),content_type=types[name],headers=NO_STORE)
+
+    async def component(self, request):
+        user=self.account.require(request)
+        return web.json_response({'html':Path(__file__).with_name('bands.html').read_text(),
+                                  'csrf':user['csrf']},headers=NO_STORE)
+
     async def page(self, request):
         user = self.account.require(request)
-        body = Path(__file__).with_name('bands.html').read_text()
-        body = body.replace('__CSRF_JSON__', json.dumps(user['csrf']).replace('<', '\\u003c'))
+        if user['admin']:
+            from urllib.parse import urlencode
+            suffix='?'+urlencode({'worker':request.query['worker']}) if request.query.get('worker') else ''
+            raise web.HTTPFound('/#bands'+suffix)
+        body = '<link rel="stylesheet" href="/account/bands/assets/bands.css">'
+        body += '<div id="bands-root" class="bands-workspace">'+Path(__file__).with_name('bands.html').read_text()+'</div>'
+        csrf=json.dumps(user['csrf']).replace('<','\\u003c')
+        body += '<script type="module">import {mountBands} from "/account/bands/assets/bands.js";const ui=await mountBands(document.getElementById("bands-root"),{csrf:'+csrf+'});const wid=new URLSearchParams(location.search).get("worker");if(wid)ui.openWorker(wid);</script>'
         return self.account.response('Bands', body)
 
     def roster(self, label):
