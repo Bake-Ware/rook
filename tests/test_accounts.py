@@ -304,8 +304,20 @@ async def test_device_enrollment_http_and_public_apk_hash(accounts,tmp_path,monk
         response=await client.post('/auth/devices/config',json=proof)
         assert response.status==200 and (await response.json())['band']['id']==band
         response=await client.get('/apk');assert response.status==200
+        response=await client.get('/apk.json');assert response.status==503
+        manifest={'package':'systems.bake.rook','version_code':5,'version_name':'0.4.1',
+                  'sha256':hashlib.sha256(apk.read_bytes()).hexdigest(),'size':apk.stat().st_size}
+        sidecar=tmp_path/'rook-worker-apk.json'
+        sidecar.write_text(json.dumps(manifest))
+        response=await client.get('/apk.json');assert response.status==200
+        assert await response.json()==manifest
+        assert response.headers['Cache-Control']=='no-store'
+        sidecar.write_text(json.dumps({**manifest,'sha256':'0'*64}))
+        response=await client.get('/apk.json');assert response.status==503
+        sidecar.write_text(json.dumps(manifest))
         apk.write_bytes(b'old secret-bearing artifact')
         response=await client.get('/apk');assert response.status==503
+        response=await client.get('/apk.json');assert response.status==503
 
 
 @pytest.mark.asyncio
