@@ -1,8 +1,31 @@
 # BakeNetCA deployment layout
 
+## Compact inventory and illustrated branding deployed, 2026-09-09
+
+Both services now run from `/opt/rook-releases/layout-20260909-a2e07e6`.
+Source `a2e07e6` includes pinned worker filters/group/sort/view controls and compact
+status cards, grouped masonry/list views with a remembered preference, nested
+capability disclosures, a sidebar narrowed by 40px, and left-aligned half-width
+Bands, Tokens, and Sessions workspaces on desktop. The rook shader uses layered
+ink strokes for shadows. User-supplied artwork, prepared against the site background,
+appears beside the wordmark and on Install; the rotating scene pauses on Install.
+Follow-up `1205361` keeps charging battery badges within masonry cards.
+
+Local browser checks passed for grouped layouts, keyboard capability disclosure,
+view persistence, pinned controls, charging batteries, account/token workflows,
+artwork, and responsive pages. Six band-management tests and the dedicated WebGL
+lifecycle harness passed. Public HTTPS browser checks verified the layouts,
+controls, artwork, and responsive pages with no JavaScript errors. Temporary
+operator verification sessions and SSH access were removed after testing.
+
+Worker build 125 and the APK are unchanged. Backups are under
+`/var/backups/rook/layout-20260909-a2e07e6`; the preceding art release remains
+available for rollback. Image preparation provenance and prompt are recorded in
+`rook/web/scene/illustration.md`.
+
 ## Sketchbook rook background deployed, 2026-09-09
 
-Both services now run from `/opt/rook-releases/art-20260909-1e36124`, source
+Both services previously ran from `/opt/rook-releases/art-20260909-1e36124`, source
 commit `1e36124`. This web-only release adds a self-hosted Three.js rook with
 faceted shading, cross-hatching, drafting guides, and slow rotation. The art
 pauses in hidden tabs, defaults to still on mobile/reduced-motion settings, and
