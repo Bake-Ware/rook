@@ -997,6 +997,8 @@ class CombinedServer:
         except Exception:
             log.warning("chat store unavailable; dashboard chat disabled", exc_info=True)
         self._push_task = None  # background: push signed manifest to behind workers
+        from .band_overview import BandOverview
+        self._overview = BandOverview(self._band_worker_rows, self._overview_call)
         # Known bands for the dashboard selector. PSKs stay server-side; the UI
         # only ever sees the band_id label (first 8 hex of SHA256(PSK)[:16]).
         from .enrollment import EnrollmentStore
@@ -1041,6 +1043,8 @@ class CombinedServer:
         self._app.router.add_post("/api/bands/psk", self._api_generate_psk)
         self._app.router.add_delete("/api/bands/{id}", self._api_remove_band)
         self._app.router.add_get("/api/band/workers", self._api_band_workers)
+        self._app.router.add_get("/api/band/overview", self._api_band_overview)
+        self._app.on_cleanup.append(self._close_overview)
         self._app.router.add_post("/api/band/call", self._api_band_call)
         self._app.router.add_get("/api/band/bans", self._api_bans)
         self._app.router.add_post("/api/band/ban", self._api_ban)
@@ -1409,6 +1413,7 @@ button:hover{{background:#22b88f}}
                 log.exception("push loop error")
 
     async def stop(self) -> None:
+        await self._overview.close()
         if self._enrollment_task is not None:
             self._enrollment_task.cancel()
             try:
@@ -1693,10 +1698,13 @@ button:hover{{background:#22b88f}}
         """Live band roster from our hub-joined MultiBandClient. Each worker is
         tagged with the ``band`` (band_id label) it was seen on; an optional
         ``?band=<id>`` query filters to one band."""
-        import time
         if self._band is None:
             return web.json_response({"error": "band client not connected"}, status=503)
-        want = request.query.get("band") or ""
+        return web.json_response(self._band_worker_rows(request.query.get("band") or ""))
+
+    def _band_worker_rows(self, want: str = "") -> list[dict]:
+        if self._band is None:
+            return []
         now = time.time()
         out = []
         for w in self._band.workers.values():
@@ -1719,7 +1727,21 @@ button:hover{{background:#22b88f}}
                 "banned": self._ban_match(w.get("name"), w.get("worker_id")),
             })
         out.sort(key=lambda x: x["name"] or "")
-        return web.json_response(out)
+        return out
+
+    async def _overview_call(self, cap, **kwargs):
+        if self._band is None:
+            return {"ok": False}
+        return await self._band.call(cap=cap, **kwargs)
+
+    async def _api_band_overview(self, request: web.Request) -> web.Response:
+        if self._band is None:
+            return web.json_response({"error": "band client not connected"}, status=503)
+        return web.json_response(self._overview.snapshot(request.query.get("band") or ""),
+                                 headers={"Cache-Control": "no-store"})
+
+    async def _close_overview(self, app):
+        await self._overview.close()
 
     async def _api_band_call(self, request: web.Request) -> web.Response:
         """Invoke a capability on the band and return the worker's reply."""
