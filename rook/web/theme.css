@@ -23,3 +23,13 @@ select,input,.iconbtn,.signout{border-radius:0}.iconbtn{font:10px var(--mono);pa
 .bands-workspace h2{font-weight:500}.bands-workspace .badge{font:10px var(--mono)}.bands-workspace dialog{border-color:var(--line2)}
 :focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 @media(max-width:800px){.row .acts{order:0;flex:0 0 34px;width:34px}.row .name{flex:1 1 calc(100% - 105px)}.row .worker-band{order:2}.row .ver{order:3}.row .batt-slot{order:4}.inventory-controls{justify-content:flex-start;gap:12px}.inventory-controls label{gap:7px;font-size:9px}.inventory-controls select{max-width:145px}.topbar{padding:24px 16px}.app-heading h1{font-size:27px}}
+/* Keep band and OS metadata aligned even when only some workers have batteries. */
+@media(min-width:1151px){
+ .row,.listhead{display:grid;grid-template-columns:12px 9px minmax(100px,1fr) 138px 150px 64px 150px 40px;gap:14px}
+ .listhead>span{width:auto!important}.row .batt-slot{width:64px}
+}
+@media(min-width:950px) and (max-width:1150px){
+ .row,.listhead{display:grid;grid-template-columns:12px 9px minmax(75px,1fr) 110px 116px 52px 90px 34px;gap:10px}
+ .listhead>span{width:auto!important}.row .ver{width:116px}.row .seen{width:90px}.row .batt-slot{width:52px}
+}
+@media(min-width:801px) and (max-width:949px){.listhead{display:none}.row{flex-wrap:wrap}.row .name{flex:1 1 calc(100% - 110px)}.row .acts{order:0}.row .worker-band{order:2}.row .ver{order:3}.row .batt-slot{order:4}.row .seen{order:5}}
