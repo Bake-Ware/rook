@@ -61,16 +61,19 @@ async def test_description_validation_and_failed_announcements(worker, monkeypat
 
 @pytest.mark.asyncio
 async def test_announce_description_reaches_mcp_and_web(worker, tmp_path, monkeypatch):
+    worker.app_release = {'platform':'android','version':'0.4.0','code':4}
     await worker.registry.call('worker.description_set', description='Build host <&> release signing')
     message = json.loads(worker.transport.send.call_args.args[0])
     client = BandClient('test-band')
     client._handle_announce(message)
     entry = client.workers[worker.worker_id]
     assert entry['description'] == message['description']
+    assert entry['app_release'] == worker.app_release
     mcp, _ = build_server(client, public_url='https://mcp.example.com', persist_path=str(tmp_path/'tokens.json'))
     result = await mcp.call_tool('rook_workers', {})
     blocks = result[0] if isinstance(result, tuple) else result
     assert json.loads(blocks[0].text)[0]['description'] == message['description']
+    assert json.loads(blocks[0].text)[0]['app_release'] == worker.app_release
     monkeypatch.setenv('ROOK_SETUP_PATH',str(tmp_path/'setup.json'))
     monkeypatch.setenv('ROOK_ENROLLMENT_DB',str(tmp_path/'enrollment.db'))
     monkeypatch.setenv('ROOK_CHAT_DB',str(tmp_path/'chat.db'))
@@ -81,7 +84,9 @@ async def test_announce_description_reaches_mcp_and_web(worker, tmp_path, monkey
     async with TestClient(TestServer(server._app)) as http:
         response = await http.get('/api/band/workers', headers={'Accept':'application/json'})
         assert response.status == 200
-        assert (await response.json())[0]['description'] == message['description']
+        rows=await response.json()
+        assert rows[0]['description'] == message['description']
+        assert rows[0]['app_release'] == worker.app_release
     # Clearing, old workers, and malformed remote values must not retain stale text.
     for replacement in ('', None, {'invalid':True}):
         client._handle_announce({**message,'description':replacement})

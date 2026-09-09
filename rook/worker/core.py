@@ -48,6 +48,7 @@ class Worker:
                  enabled: list[str] | None = None,
                  name: str | None = None,
                  announce_interval: float = 30.0) -> None:
+        self.app_release: dict = {}
         self.transport = transport
         self.registry = CapabilityRegistry()
         self.plugins_pkg = plugins_pkg
@@ -232,6 +233,7 @@ class Worker:
             "plugins": [p.NAMESPACE for p in self.plugins],
             "version": VERSION,
             "build": BUILD,
+            "app_release": self.app_release,
         }
         # Optional per-plugin live status (battery, etc.) rides the heartbeat.
         hb: dict = {}

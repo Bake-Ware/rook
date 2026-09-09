@@ -54,6 +54,7 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
         super.onCreate(savedInstanceState)
         b = ActivityMainBinding.inflate(layoutInflater)
         setContentView(b.root)
+        b.versionLabel.text = "APK ${BuildConfig.VERSION_NAME} · ${BuildConfig.VERSION_CODE}"
         maybeRequestNotifications()
 
         b.btnSettings.setOnClickListener { startActivity(Intent(this, SettingsActivity::class.java)) }
@@ -169,7 +170,7 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
         val tv = TextView(this).apply {
             this.text = text
             textSize = 16f
-            setTextColor(Color.WHITE)
+            setTextColor(getColor(R.color.rook_fg))
             setPadding(dp(14), dp(10), dp(14), dp(10))
             setBackgroundResource(if (user) R.drawable.bubble_user else R.drawable.bubble_bot)
             maxWidth = (resources.displayMetrics.widthPixels * 0.8).toInt()

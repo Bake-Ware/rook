@@ -116,6 +116,7 @@ class WorkerService : Service() {
 
     override fun onDestroy() {
         ScreenCaptureBridge.stopSession()
+        FindDeviceBridge.stop()
         stopWorker()
         wakeLock?.let { if (it.isHeld) it.release() }
         super.onDestroy()
@@ -165,10 +166,15 @@ class WorkerService : Service() {
         // SecurityException on Android 14+, which crashed the app on every start.
         // After consent is granted the service is re-started (see MainActivity),
         // which re-runs this with the mediaProjection type included.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             var type = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
             if (wantProjection || ScreenCaptureBridge.hasSession()) {
                 type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+            }
+            if (checkSelfPermission(android.Manifest.permission.ACCESS_BACKGROUND_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED &&
+                (checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED ||
+                 checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED)) {
+                type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
             }
             startForeground(id, n, type)
         } else {

@@ -119,6 +119,7 @@ class BandClient:
             "hb": dict(msg.get("hb") or {}),
             "version": msg.get("version"),
             "build": msg.get("build"),
+            "app_release": msg.get("app_release") if isinstance(msg.get("app_release"), dict) else {},
             "last_seen": time.time(),
         })
         if wid not in self.workers:

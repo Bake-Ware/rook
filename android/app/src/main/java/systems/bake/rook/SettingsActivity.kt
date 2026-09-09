@@ -43,6 +43,24 @@ class SettingsActivity : AppCompatActivity() {
         b = ActivitySettingsBinding.inflate(layoutInflater)
         setContentView(b.root)
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
+        b.versionInfo.text = "APK ${BuildConfig.VERSION_NAME} · ${BuildConfig.VERSION_CODE}"
+        b.btnUpdate.setOnClickListener {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://rook.bakeforge.com/apk")))
+        }
+        b.btnBack.setOnClickListener { finish() }
+        b.btnStopFind.setOnClickListener { FindDeviceBridge.stop(); status("find-device ring stopped") }
+        b.btnLocation.setOnClickListener {
+            if (checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION) != android.content.pm.PackageManager.PERMISSION_GRANTED &&
+                checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                permsLauncher.launch(arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION))
+                status("Grant location first, then tap Background location again.")
+            } else if (Build.VERSION.SDK_INT >= 30) {
+                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+                status("Permissions → Location → Allow all the time. Then stop and start the worker.")
+            } else if (Build.VERSION.SDK_INT >= 29) {
+                permsLauncher.launch(arrayOf(android.Manifest.permission.ACCESS_BACKGROUND_LOCATION))
+            } else status("Location granted. No separate background permission is needed on this Android version.")
+        }
         ScreenCaptureBridge.init(this)
 
         val prefs = getSharedPreferences("rook", MODE_PRIVATE)
@@ -89,7 +107,7 @@ class SettingsActivity : AppCompatActivity() {
             permsLauncher.launch(arrayOf(
                 android.Manifest.permission.READ_SMS, android.Manifest.permission.SEND_SMS,
                 android.Manifest.permission.READ_CONTACTS, android.Manifest.permission.READ_CALL_LOG,
-                android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.RECORD_AUDIO,
+                android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION, android.Manifest.permission.RECORD_AUDIO,
             ))
         }
         b.btnGrantOverlay.setOnClickListener {

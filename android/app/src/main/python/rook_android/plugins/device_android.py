@@ -17,6 +17,24 @@ from rook_android.androidctx import app_context, jclass, cast
 class AndroidDevicePlugin(Plugin):
     NAMESPACE = "device"
 
+    @capability("find")
+    def _find(self, seconds: int = 30) -> dict:
+        """Ring at maximum alarm volume for 1–120 seconds; restores volume after.
+
+        Use device.find_stop to stop early. Device DND policy applies.
+        """
+        import json
+        try:
+            return json.loads(str(jclass("systems.bake.rook.FindDeviceBridge").ring(app_context(), max(1, min(int(seconds), 120)))))
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @capability("find_stop")
+    def _find_stop(self) -> dict:
+        """Stop the find-device ring and restore the previous alarm volume."""
+        import json
+        return json.loads(str(jclass("systems.bake.rook.FindDeviceBridge").stop()))
+
     @capability("info")
     def _info(self) -> dict:
         """Model, Android version, screen, uptime, and battery-independent bits."""

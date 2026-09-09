@@ -22,12 +22,18 @@ async def main():
  with tempfile.TemporaryDirectory() as temp:
   p=portal.__wrapped__(Path(temp),MonkeyPatch());add_worker(p)
   roster=[{'worker_id':name,'name':name,'caps':['info.host','shell.exec','screenshot.capture','worker.enrollment_move_prepare','worker.description_set','files.directory.list']+(['device.info'] if name=='tablet' else []),'plugins':[],'band':p.source['psk_hash'][:8],'version':'120.steady.iguana','last_seen_age_secs':2} for name in ('worker1','tablet','windows','mac')]
+  roster[0]['caps'] += ['codex-history.pull','codex-history.resumed','codex-history.resume']
+  roster[1]['app_release']={'platform':'android','version':'0.4.0','code':4}
   roster[1]['hb']={'battery':{'percent':100,'charging':True}}
   async def index(r):return web.Response(text=Path('rook/web/index.html').read_text(),content_type='text/html')
   async def bands(r):return web.json_response([{'id':b['psk_hash'][:8],'name':b['name'],'primary':b.get('primary',False)} for b in p.store.bands(p.uid,configs=True)])
   async def workers(r):return web.json_response(roster)
   async def call(r):
    d=await r.json();wid=d['worker_id']
+   if d['cap']=='codex-history.pull':
+    return web.json_response({'ok':True,'result':{'ok':True,'sessions':[{'session_id':'12345678-1234-1234-1234-123456789abc','title':'Codex test conversation','message_count':2}]}})
+   if d['cap']=='codex-history.resumed':
+    return web.json_response({'ok':True,'result':{'ok':True,'sessions':[]}})
    if d['cap']=='worker.description_set':
     value=' '.join(d['args']['description'].split());next(w for w in roster if w['worker_id']==wid)['description']=value
     return web.json_response({'ok':True,'result':{'ok':True,'description':value,'announced':True}})
@@ -63,6 +69,17 @@ async def main():
     await page.locator('#filter').click();await page.locator('#filter').fill('package signing');assert await page.locator('.worker-menu-button').count()==1
     await page.locator('#filter').fill('')
     await page.locator('#worker-group').select_option('band');assert await page.locator('.worker-group-heading').count()==1
+    assert await page.locator('[data-id=tablet] .ver').inner_text()=='APK 0.4.0 · 4'
+    await page.evaluate("""() => { const out=document.createElement('div'); out.id='location-test';document.body.append(out); renderCapResult(out,'location.get',{result:{ok:true,lat:41.88,lon:-87.63,stale:true}}); }""")
+    link=page.locator('#location-test a')
+    assert await link.get_attribute('href')=='https://www.google.com/maps/search/?api=1&query=41.88%2C-87.63'
+    assert 'stale' in await page.locator('#location-test').inner_text()
+    await page.evaluate("document.querySelector('#location-test').remove()")
+    await page.evaluate("showView('sessions',false)")
+    await page.locator('#sessagent').select_option('codex-history')
+    await page.get_by_text('Codex test conversation',exact=True).wait_for()
+    assert await page.locator('#sessworker').input_value()=='worker1'
+    await page.evaluate("showView('workers',false)")
     await page.locator('#worker-sort').select_option('os');await page.screenshot(path='/tmp/rook-new-workers.png')
     await page.locator('.view-toggle [data-layout=grid]').click()
     assert await page.locator('#view-workers').get_attribute('data-layout')=='grid'

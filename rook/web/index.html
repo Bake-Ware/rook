@@ -469,11 +469,10 @@
     <div id="view-sessions" hidden>
       <div class="sesshead">
         <div>
-          <h2>Claude Code sessions</h2>
-          <p class="sesshint">Conversations stored on your machines. Resume puts one
-             back online with Remote&nbsp;Control, so you can pick it up from
-             claude.ai without being at the keyboard.</p>
+          <h2>Coding sessions</h2>
+          <p class="sesshint">Claude Code and Codex conversations stored on your machines. Resume a session here and continue through its agent or Rook process controls.</p>
         </div>
+        <select id="sessagent" aria-label="Coding agent" onchange="startSessions()"><option value="claude-history">Claude Code</option><option value="codex-history">Codex</option></select>
         <select id="sessworker" onchange="loadSessions()"></select>
       </div>
       <div id="sesslive"></div>
@@ -662,7 +661,8 @@ function updateMeta(m,w){
   m.battEl.innerHTML=battHTML(w.hb);
   const fw=(w.plugins||[]).some(p=>['kvm','bthid','serial'].includes(p));
   const vcls = w.version? (fw?'ver old':'ver') : 'ver none';
-  m.verEl.className=vcls; m.verEl.textContent = w.version? 'v'+w.version : '—';
+  m.verEl.title='Worker '+(w.version||'unknown')+' · build '+(w.build??'?');
+  m.verEl.className=vcls; m.verEl.textContent = w.version? (w.app_release?.platform==='android'?'APK '+w.app_release.version+' · '+w.app_release.code:'v'+w.version) : '—';
   m.wrap.querySelector('.name').innerHTML=deviceIcon(w)+`<span class="n">${esc(w.name||w.worker_id)}</span><span class="id">${esc(w.worker_id.slice(0,8))}</span>`+(fw?'<span class="tagfw">firmware</span>':'')+(w.description?'<span class="worker-description">'+esc(w.description)+'</span>':'');
   const caps=w.caps||[], has=c=>caps.includes(c);
   if(!m.acts.firstChild){
@@ -940,6 +940,10 @@ function runCap(){
 function renderCapResult(out,cap,reply){
   const res=reply.result;
   if(res==null){ out.innerHTML='<pre class="err">'+esc(reply.error||'no reply')+'</pre>'; return; }
+  if(cap==='location.get' && res.ok!==false && typeof res.lat==='number' && typeof res.lon==='number' && Number.isFinite(res.lat) && Number.isFinite(res.lon) && Math.abs(res.lat)<=90 && Math.abs(res.lon)<=180){
+    const url='https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(res.lat+','+res.lon);
+    out.innerHTML='<p><a target="_blank" rel="noopener noreferrer" href="'+url+'">Show location in Google Maps ↗</a>'+(res.stale?' <strong>Last known location (stale)</strong>':'')+'</p><pre>'+esc(JSON.stringify(res,null,2))+'</pre>'; return;
+  }
   if(res.data&&(res.format||/screenshot|snap/.test(cap))){ out.innerHTML='<img src="data:image/'+(res.format||'jpeg')+';base64,'+res.data+'">'; return; }
   if(res.stdout!==undefined||res.stderr!==undefined){ const p=[]; if(res.stdout)p.push(res.stdout); if(res.stderr)p.push('[stderr]\n'+res.stderr);
     out.innerHTML='<pre class="'+(res.ok===false?'err':'')+'">'+esc((p.join('\n')||'(no output)')+(res.code!==undefined?'\n[exit '+res.code+']':''))+'</pre>'; return; }
@@ -1019,19 +1023,21 @@ window.addEventListener('popstate',routeFromHash);
 /* ---- sessions panel: Claude Code conversations + Remote Control resume ---- */
 // Only workers that actually store Claude Code history announce claude-history.*,
 // so the picker is built from the live roster rather than a fixed list.
-let sessTimer=null, sessWorker=null, sessBusy=null;
+let sessTimer=null, sessWorker=null, sessBusy=null, sessGeneration=0;
+function sessAgent(){return $('#sessagent').value==='codex-history'?'codex-history':'claude-history';}
 
 function ccWorkers(){
-  return workers.filter(w=>(w.caps||[]).includes('claude-history.pull'))
+  return workers.filter(w=>(w.caps||[]).includes(sessAgent()+'.pull'))
                 .sort((a,b)=>(a.name||'').localeCompare(b.name||''));
 }
 
 function startSessions(){
+  stopSessions(); sessGeneration++; $('#sesslive').textContent='';
   const sel=$('#sessworker'), list=ccWorkers();
   const keep=sessWorker && list.some(w=>w.worker_id===sessWorker) ? sessWorker
            : (list[0]||{}).worker_id;
   sel.innerHTML=list.map(w=>`<option value="${w.worker_id}">${esc(w.name||w.worker_id)}</option>`).join('')
-    || '<option value="">no worker with Claude history</option>';
+    || '<option value="">no worker with history for this agent</option>';
   sessWorker=keep||null; if(sessWorker) sel.value=sessWorker;
   loadSessions();
   // Resumed sessions take a moment to reach claude.ai; refresh so the live
@@ -1051,9 +1057,11 @@ function tilde(p){ return (p||'').replace(/^\/home\/[^/]+/,'~').replace(/^\/User
 async function loadSessions(){
   sessWorker=$('#sessworker').value||null;
   const list=$('#sesslist');
-  if(!sessWorker){ list.innerHTML='<div class="sessempty">No worker on the band is storing Claude Code history.</div>'; return; }
+  if(!sessWorker){ list.innerHTML='<div class="sessempty">No worker on the band is storing history for this agent.</div>'; return; }
   list.innerHTML='<div class="sessempty">loading…</div>';
-  const reply=await bandCall('claude-history.pull',sessWorker,{limit:25},25);
+  const generation=++sessGeneration, worker=sessWorker, agent=sessAgent();
+  const reply=await bandCall(agent+'.pull',worker,{limit:25},25);
+  if(generation!==sessGeneration)return;
   const res=reply.result||{};
   if(!res.ok){ list.innerHTML=`<div class="sessnote bad">${esc(res.error||reply.error||'could not read sessions')}</div>`; return; }
   const sessions=(res.sessions||[]).filter(x=>(x.message_count||0)>0);
@@ -1080,7 +1088,9 @@ function sessRow(x){
 // twice — two `claude --resume` on one id would both write the same transcript.
 async function loadLiveSessions(){
   if(!sessWorker || $('#view-sessions').hidden) return;
-  const reply=await bandCall('claude-history.resumed',sessWorker,{},15);
+  const generation=sessGeneration, worker=sessWorker, agent=sessAgent();
+  const reply=await bandCall(agent+'.resumed',worker,{},15);
+  if(generation!==sessGeneration)return;
   const up=new Set(((reply.result||{}).sessions||[]).filter(s=>s.running).map(s=>s.session_id));
   for(const el of document.querySelectorAll('.sess')){
     const id=el.id.replace(/^sess-/,''), isUp=up.has(id);
@@ -1095,13 +1105,21 @@ async function loadLiveSessions(){
 async function resumeSession(sid,btn){
   sessBusy=sid; btn.disabled=true; btn.textContent='starting…';
   const note=$('#sesslive');
-  const reply=await bandCall('claude-history.resume',sessWorker,{session_id:sid},40);
+  const generation=sessGeneration, worker=sessWorker, agent=sessAgent();
+  const reply=await bandCall(agent+'.resume',worker,{session_id:sid},40);
+  if(generation!==sessGeneration){sessBusy=null;return;}
   const res=reply.result||{};
   sessBusy=null;
   if(res.ok){
     note.innerHTML=`<div class="sessnote"><b>${esc(res.title||res.short_id)}</b> is back online
       as <b>${esc(res.name||'')}</b> on ${esc(wname(sessWorker))}${res.cwd?' in <code>'+esc(tilde(res.cwd))+'</code>':''}.
-      Open it from Remote Control in claude.ai — it should appear within a few seconds.</div>`;
+      ${agent==='claude-history'?'Open it from Remote Control in claude.ai — it should appear within a few seconds.':esc(res.note||'Codex is starting.')+' Handle: <code>'+esc(res.handle||'')+'</code>'}</div>`;
+    if(agent==='codex-history' && res.handle){
+      for(const [label,cap] of [['Read output','proc.read'],['Send input','proc.write'],['Stop session','proc.close']]){
+        const button=document.createElement('button');button.className='btn';button.textContent=label;
+        button.onclick=async()=>{await openCapModal(worker,cap);const input=$('#cf-handle');if(input)input.value=res.handle;};note.append(button);
+      }
+    }
   }else{
     btn.disabled=false; btn.textContent='Resume';
     note.innerHTML=`<div class="sessnote bad">Could not resume: ${esc(res.error||reply.error||'unknown error')}${res.hint?' — '+esc(res.hint):''}</div>`;

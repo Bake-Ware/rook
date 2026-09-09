@@ -1720,6 +1720,7 @@ button:hover{{background:#22b88f}}
                 "band": band,
                 "version": w.get("version"),
                 "build": w.get("build"),
+                "app_release": w.get("app_release") or {},
                 "hb": w.get("hb") or {},
                 "last_seen_age_secs": round(now - w.get("last_seen", 0.0), 2),
                 # deauthed nodes normally park off-band and vanish from the roster;
