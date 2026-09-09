@@ -1,5 +1,38 @@
 # BakeNetCA deployment layout
 
+## Android 0.4.0 and Codex capabilities deployed, 2026-09-09
+
+Both services run from `/opt/rook-releases/mobile-codex-20260909-21441c3`, source
+`21441c3`. Override backups are in
+`/var/backups/rook/mobile-codex-20260909-21441c3`; the prior overview release is
+retained. The APK hash allowlist was updated with the service release.
+
+The public `/apk` download is APK **0.4.0 (4)**, SHA-256
+`56f2f8d707964c5a9e80c901111ba6aba491e364bd56678e74165429ffa4feb5`.
+Its signing certificate is unchanged. Version labeling, Settings update link,
+web-style palette/panels, active background location, Google Maps result link,
+and bounded find-device ringing are documented in
+[the release guide](../worker-codex-android.md). Android 14 emulator tests passed
+for GPS with Maps stopped and max-volume ring with timed/manual volume restore,
+including the actual Chaquopy capability bridge. The update button opened
+Chrome. Physical-device GPS, audible output, and Google sign-in were not
+retested for this release; the prior APK had been user-verified.
+
+Signed worker **140.curly.newt**, SHA-256
+`3f2d12bcf6fdd2b9bcc132d891ff6879e383eb9e58d8dbfe91e0216c7385b2e3`, adds
+seven `codex-history.*` capabilities matching Claude's history/resume operations.
+The web Sessions page now selects either agent. APK release metadata travels
+through worker announces, MCP lists, and the web roster independently of worker
+build numbers. The full Python suite passed (143 tests); metadata follow-up
+checks and browser tests for the agent picker, Maps link, and APK badge passed.
+
+The server was deployed with the previous worker feed. Cachyrig then passed the
+signed in-band canary, completed its health window, and answered
+`codex-history.pull` through Rook. Both worker download artifacts and the signed
+manifest were published afterward. All 25 compatible workers reached build 140
+and finalized their update health windows, verified through read-only Rook calls.
+The two online native Android workers still need the normal APK upgrade.
+
 ## Cached overview and responsive terminal deployed, 2026-09-09
 
 Both services run from `/opt/rook-releases/overview-20260909-8bf7f1f`, source
