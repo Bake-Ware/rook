@@ -21,7 +21,7 @@ body{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,
 .band-column{width:138px;flex:0 0 138px}
 .worker-band{font:inherit;font-size:12px;text-align:left;color:#aadbc9;border:1px solid #2b463e;background:#182922;padding:5px 9px;border-radius:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
 .worker-band:hover{border-color:var(--accent)}
-.acts button{font-family:inherit}.acts{opacity:1}.ver,.seen,.foot,.mcap,pre,code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+.acts button{font-family:inherit;white-space:nowrap}.acts{opacity:1;flex-wrap:wrap;align-items:center}.ver,.seen,.foot,.mcap,pre,code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
 :focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 @media(max-width:1150px){
  :root{--sidebar-width:184px}.topbar{padding:22px 24px}.wrap{padding:24px}.worker-controls{width:100%}.worker-controls input.filter{flex:1}.band-column{width:110px;flex-basis:110px}.row{gap:10px}.name .id{display:none}.seen{width:100px}.acts{width:180px}.acts button{padding:4px 7px}
