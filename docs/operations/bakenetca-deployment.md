@@ -1,8 +1,24 @@
 # BakeNetCA deployment layout
 
+## Sketchbook rook background deployed, 2026-09-09
+
+Both services now run from `/opt/rook-releases/art-20260909-1e36124`, source
+commit `1e36124`. This web-only release adds a self-hosted Three.js rook with
+faceted shading, cross-hatching, drafting guides, and slow rotation. The art
+pauses in hidden tabs, defaults to still on mobile/reduced-motion settings, and
+retains an SVG sketch when WebGL is unavailable. Users can toggle motion.
+
+The dashboard browser harness, six band-management tests (including conditional
+asset requests), and dedicated WebGL lifecycle checks passed. Public HTTPS
+browser checks verified rendering, pause/resume, worker menu interaction, and
+mobile layout with no JavaScript errors. Signed worker build 125 and the APK
+are unchanged. Backups are under `/var/backups/rook/art-20260909-1e36124`;
+the descriptions release remains available for rollback. Temporary verification
+session and SSH access were removed after testing.
+
 ## Persistent worker descriptions deployed, 2026-09-09
 
-Both services now run from `/opt/rook-releases/descriptions-20260909-030efbc`.
+Both services previously ran from `/opt/rook-releases/descriptions-20260909-030efbc`.
 Source commit `030efbc` publishes signed worker build `125.murky.tractor`, SHA-256
 `b8f38dce8e6dce2cda744fdb69ad0d0fc1f9e61d9297004b8e06b0787a7b8394`.
 The public manifest signature and downloaded artifact hash were verified.
