@@ -392,7 +392,7 @@
       <div class="listhead">
         <span style="width:12px"></span><span style="width:9px"></span>
         <span style="flex:1">worker</span><span class="band-column">band</span><span style="width:150px">version</span>
-        <span style="width:150px">heartbeat</span><span style="width:40px"></span>
+        <span class="battery-column" aria-hidden="true"></span><span style="width:150px">heartbeat</span><span style="width:40px"></span>
       </div>
       <div class="list" id="list"></div>
       <div class="empty" id="empty" style="display:none"></div>
@@ -628,7 +628,7 @@ function updateMeta(m,w){
   m.bandEl.textContent=bandName(w.band);m.bandEl.title='Filter by band: '+bandName(w.band);
   m.bandEl.onclick=e=>{e.stopPropagation();$('#bandsel').value=w.band||'';onBandChange();};
   m.battEl.innerHTML=battHTML(w.hb);
-  const fw=(w.plugins||[]).some(p=>['kvm','bthid','serial'].includes(p)) || /^0\./.test(w.version||'');
+  const fw=(w.plugins||[]).some(p=>['kvm','bthid','serial'].includes(p));
   const vcls = w.version? (fw?'ver old':'ver') : 'ver none';
   m.verEl.className=vcls; m.verEl.textContent = w.version? 'v'+w.version : '—';
   m.wrap.querySelector('.name').innerHTML=deviceIcon(w)+`<span class="n">${esc(w.name||w.worker_id)}</span><span class="id">${esc(w.worker_id.slice(0,8))}</span>`+(fw?'<span class="tagfw">firmware</span>':'');

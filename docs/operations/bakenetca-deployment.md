@@ -1,8 +1,35 @@
 # BakeNetCA deployment layout
 
+## Integrated account, tokens, and device inventory deployed, 2026-09-09
+
+Both services now run from `/opt/rook-releases/settings-20260909-fdbbbea`.
+Account and token management are embedded in the main dashboard with styling
+adapted from the local BakeDash project. Token metadata, creation, revocation,
+and identity pictures use the MCP process's live token store via an
+operator-authenticated same-origin proxy. Shared account sessions come from the
+existing enrollment database; no separate browser login to MCP is needed.
+
+All 121 tests passed. Local browser checks covered profile edits, pairing and
+invitation dialogs, token creation/revocation, picture upload/clear, worker
+menus, device grouping/sorting, and responsive layouts. Public HTTPS checks
+created a disposable token, initialized an MCP connection with it, revoked it,
+and verified subsequent authentication returned 401. Its picture was uploaded
+and cleared. Existing `/tokens` and OAuth metadata HTTP routes still responded.
+The live inventory classified 24 Linux workers and two Android devices via
+read-only capability calls. Keyboard menus and responsive views passed with no
+JavaScript errors. Follow-up styling aligned worker columns and stopped labeling
+native Android development builds as firmware.
+
+Signed worker build 120 and the public APK remain unchanged. No workers were
+migrated by this deployment. Backups of unit overrides, SQLite, and the token
+store are under `/var/backups/rook/settings-20260909-fdbbbea`; the previous shell
+release remains available. Temporary test credentials, picture, and SSH access
+were removed after verification. See `docs/web/dashboard.md` for service routing
+and component boundaries.
+
 ## Dashboard shell deployed, 2026-09-09
 
-Both services now run from `/opt/rook-releases/shell-20260909-cf7bc93`.
+Both services previously ran from `/opt/rook-releases/shell-20260909-cf7bc93`.
 The dashboard includes worker band labels, shared sidebar navigation, and
 an embedded band-management component. Source release `cf7bc93` passed all
 117 tests and local desktop/mobile browser checks. Public HTTPS browser checks
