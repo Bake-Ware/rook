@@ -481,7 +481,6 @@
     </div>
 
     <div id="view-install" hidden>
-      <figure class="install-art"><img src="/account/bands/assets/rook-illustration.png" width="1024" height="1536" alt="Ink-sketched rook with a network of nodes and blue drafting guides" loading="lazy"><figcaption>ROOK / CONNECTED BY DESIGN</figcaption></figure>
       <div class="install">
         <h2>Add a worker</h2>
         <p>Open Tokens, select a band, and start pairing. Replace CODE below with the current six-character code, or copy the complete command from Tokens.</p>
@@ -994,7 +993,7 @@ function showView(v,updateHistory=true){
  if(updateHistory&&location.hash!=='#'+v)history.pushState(null,'','#'+v);
  if(activeView===v){if(v==='account'&&settingsUI.account)settingsUI.account.refresh().catch(()=>{});return;}
  settingsUI[activeView]?.deactivate();
- activeView=v;document.body.dataset.view=v;$('#rook-art').hidden=v==='install';$('#rook-art').dispatchEvent(new Event('rook:visibility'));
+ activeView=v;document.body.dataset.view=v;
  for(const n of Object.keys(viewInfo)){
   $('#view-'+n).hidden=v!==n; const tab=$('#tab-'+n);tab.classList.toggle('active',v===n);
   if(v===n)tab.setAttribute('aria-current','page');else tab.removeAttribute('aria-current');
