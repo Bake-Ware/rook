@@ -27,10 +27,10 @@ class BandWeb:
 
     async def asset(self, request):
         name=request.match_info['name']
-        types={'bands.js':'application/javascript','bands.css':'text/css','shell.css':'text/css','account.js':'application/javascript','tokens.js':'application/javascript','settings.css':'text/css','theme.css':'text/css','rook-art.css':'text/css','rook-scene.js':'application/javascript','rook-scene.js.LEGAL.txt':'text/plain'}
+        types={'bands.js':'application/javascript','bands.css':'text/css','shell.css':'text/css','account.js':'application/javascript','tokens.js':'application/javascript','settings.css':'text/css','theme.css':'text/css','rook-illustration.png':'image/png','rook-art.css':'text/css','rook-scene.js':'application/javascript','rook-scene.js.LEGAL.txt':'text/plain'}
         if name not in types:raise web.HTTPNotFound()
         path=Path(__file__).parents[1]/'web'/name
-        if name.startswith('rook-scene.'):
+        if name.startswith('rook-scene.') or name=='rook-illustration.png':
             return web.FileResponse(path, headers={'Cache-Control':'no-cache','Content-Type':types[name],'X-Content-Type-Options':'nosniff'})
         return web.Response(text=path.read_text(),content_type=types[name],headers=NO_STORE)
 

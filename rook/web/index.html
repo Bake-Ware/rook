@@ -343,7 +343,7 @@
     <span class="plate-caption"><b>ROOK / ELEVATION STUDY</b><br>FORM · LIGHT · MOTION</span>
   </div>
   <aside class="app-sidebar" aria-label="Application navigation">
-    <a class="brand" href="#workers" onclick="showView('workers');return false">♖ ROOK</a>
+    <a class="brand" href="#workers" onclick="showView('workers');return false"><img src="/account/bands/assets/rook-illustration.png" width="34" height="51" alt=""> <span>ROOK</span></a>
     <span class="nav-label">WORKSPACE</span>
     <nav aria-label="Workspace">
       <a id="tab-workers" href="#workers" class="active" onclick="showView('workers');return false">Workers</a>
@@ -369,22 +369,13 @@
            autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
            data-1p-ignore data-lpignore="true" data-form-type="other"
            readonly onfocus="this.removeAttribute('readonly')" oninput="applyFilter()">
+      <div class="inventory-controls">
+        <label>Group by <select id="worker-group" onchange="dirty=true;reconcile()"><option value="os">Operating system</option><option value="band">Band</option><option value="none">No grouping</option></select></label>
+        <label>Sort <select id="worker-sort" onchange="dirty=true;reconcile()"><option value="name">Name</option><option value="os">Operating system</option><option value="band">Band</option><option value="status">Online first</option></select></label>
+        <div class="view-toggle" role="group" aria-label="Worker view"><button type="button" data-layout="list" aria-pressed="true" onclick="setWorkerLayout('list')">☰ List</button><button type="button" data-layout="grid" aria-pressed="false" onclick="setWorkerLayout('grid')">▦ Grid</button></div>
+      </div>
     </div>
-  </header>
-
-  <div class="addform" id="addband-form" hidden>
-    <div style="color:var(--dim);font-size:.72rem">Join a band with its PSK, or generate a key for a new band</div>
-    <input id="ab-name" placeholder="name (optional)">
-    <input id="ab-psk" type="password" placeholder="band PSK" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
-    <div class="r"><button class="iconbtn" id="ab-generate" onclick="generateBandPsk()">generate five-word key</button><button class="iconbtn" id="ab-show" onclick="toggleBandPsk()">show key</button></div>
-    <div class="r"><button class="iconbtn" onclick="addBand()">add</button><button class="iconbtn" onclick="toggleAddBand()">close</button></div>
-    <div class="msg" id="ab-msg"></div>
-  </div>
-
-  <div class="wrap">
-    <!-- WORKERS VIEW -->
-    <div id="view-workers">
-      <section class="stats">
+      <section class="stats" id="worker-stats">
         <div class="tile mini"><div class="k" id="k-total">0</div><div class="l">workers</div></div>
         <div class="tile mini online"><div class="k" id="k-online">0</div><div class="l">online</div></div>
         <div class="tile mini stale"><div class="k" id="k-stale">0</div><div class="l">stale</div></div>
@@ -399,10 +390,20 @@
         </div>
       </section>
 
-      <div class="inventory-controls">
-        <label>Group by <select id="worker-group" onchange="dirty=true;reconcile()"><option value="os">Operating system</option><option value="band">Band</option><option value="none">No grouping</option></select></label>
-        <label>Sort <select id="worker-sort" onchange="dirty=true;reconcile()"><option value="name">Name</option><option value="os">Operating system</option><option value="band">Band</option><option value="status">Online first</option></select></label>
-      </div>
+  </header>
+
+  <div class="addform" id="addband-form" hidden>
+    <div style="color:var(--dim);font-size:.72rem">Join a band with its PSK, or generate a key for a new band</div>
+    <input id="ab-name" placeholder="name (optional)">
+    <input id="ab-psk" type="password" placeholder="band PSK" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <div class="r"><button class="iconbtn" id="ab-generate" onclick="generateBandPsk()">generate five-word key</button><button class="iconbtn" id="ab-show" onclick="toggleBandPsk()">show key</button></div>
+    <div class="r"><button class="iconbtn" onclick="addBand()">add</button><button class="iconbtn" onclick="toggleAddBand()">close</button></div>
+    <div class="msg" id="ab-msg"></div>
+  </div>
+
+  <div class="wrap">
+    <!-- WORKERS VIEW -->
+    <div id="view-workers">
       <div class="listhead">
         <span style="width:12px"></span><span style="width:9px"></span>
         <span style="flex:1">worker</span><span class="band-column">band</span><span style="width:150px">version</span>
@@ -480,6 +481,7 @@
     </div>
 
     <div id="view-install" hidden>
+      <figure class="install-art"><img src="/account/bands/assets/rook-illustration.png" width="1024" height="1536" alt="Ink-sketched rook with a network of nodes and blue drafting guides" loading="lazy"><figcaption>ROOK / CONNECTED BY DESIGN</figcaption></figure>
       <div class="install">
         <h2>Add a worker</h2>
         <p>Open Tokens, select a band, and start pairing. Replace CODE below with the current six-character code, or copy the complete command from Tokens.</p>
@@ -512,9 +514,26 @@ const listEl=$('#list'), barsEl=$('#bars'), emptyEl=$('#empty');
 
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 function col(f){return f>0.5?'#2dd4a7':f>0.22?'#f5b041':'#f76a6a'}
-function groupCaps(caps){
-  const g={}; (caps||[]).forEach(c=>{const p=c.split('.')[0]; (g[p]=g[p]||[]).push(c.slice(p.length+1)||'*')});
-  return Object.entries(g).sort((a,b)=>b[1].length-a[1].length);
+function capTree(caps){
+  const root={children:new Map()};
+  for(const cap of [...new Set(caps)].sort()){
+    let node=root;
+    for(const part of cap.split('.')){if(!node.children.has(part))node.children.set(part,{children:new Map()});node=node.children.get(part);}
+    node.cap=cap;
+  }
+  function render(node){return '<ul>'+[...node.children].map(([name,child])=>{
+    const action=child.cap?`<button type="button" class="mcap" data-cap="${esc(child.cap)}" title="Run ${esc(child.cap)}">${esc(name)}<span aria-hidden="true">↗</span></button>`:'';
+    return '<li>'+(child.children.size?`<details><summary>${esc(name)} <span>${count(child)}</span></summary>${child.cap?action:''}${render(child)}</details>`:action)+'</li>';
+  }).join('')+'</ul>';}
+  function count(node){return (node.cap?1:0)+[...node.children.values()].reduce((sum,n)=>sum+count(n),0);}
+  return render(root);
+}
+let workerLayout='list', inventorySignature='';
+try{if(localStorage.getItem('rook.workers.layout')==='grid')workerLayout='grid';}catch{}
+function setWorkerLayout(layout){
+  workerLayout=layout==='grid'?'grid':'list';
+  try{localStorage.setItem('rook.workers.layout',workerLayout);}catch{}
+  dirty=true;reconcile();
 }
 
 /* ---- bands ---- */
@@ -607,7 +626,7 @@ function buildRow(w){
   const wrap=document.createElement('div'); wrap.className='item'; wrap.dataset.id=w.worker_id;
   wrap.innerHTML=`
     <div class="row">
-      <span class="caret">▸</span><span class="st"></span>
+      <button type="button" class="caret" aria-expanded="false" aria-label="Capabilities for ${esc(w.name||w.worker_id)}">▸</button><span class="st"></span>
       <span class="name"><span class="n">${esc(w.name||w.worker_id)}</span><span class="id">${esc(w.worker_id.slice(0,8))}</span></span>
       <button class="worker-band band-column" type="button"></button>
       <span class="ver"></span>
@@ -617,7 +636,7 @@ function buildRow(w){
     </div>
     <div class="detail"><div class="detail-in"><div class="meta"></div><div class="cggrid"></div><div class="banrow"></div></div></div>`;
   const row=wrap.querySelector('.row');
-  row.addEventListener('click',()=>wrap.classList.toggle('open'));
+  row.addEventListener('click',()=>{const open=wrap.classList.toggle('open');row.querySelector('.caret').setAttribute('aria-expanded',String(open));});
   const bar=document.createElement('div'); bar.className='bar'; bar.title=w.name||w.worker_id;
   bar.innerHTML='<span class="fill"></span><span class="peak"></span>';
   const idx=[...M.keys()].length;
@@ -655,8 +674,7 @@ function updateMeta(m,w){
   // caps groups (rebuild only if changed)
   const sig=caps.join(','); if(sig!==m.capsSig){ m.capsSig=sig;
     m.meta.textContent=`worker_id ${w.worker_id} · ${caps.length} capabilities`;
-    m.cg.innerHTML=groupCaps(caps).map(g=>`<div class="cg"><div class="cg-head"><span class="cg-caret">▸</span><b>${esc(g[0])}</b><span class="cg-count">${g[1].length}</span></div><div class="cg-body"><div class="cg-body-in">${g[1].map(x=>{const full=x==='*'?g[0]:g[0]+'.'+x;return `<span class="mcap" title="run ${esc(full)}" data-cap="${esc(full)}">${esc(x)}</span>`}).join('')}</div></div></div>`).join('');
-    m.cg.querySelectorAll('.cg').forEach(cg=>cg.querySelector('.cg-head').onclick=()=>cg.classList.toggle('open'));
+    m.cg.innerHTML=capTree(caps);
     m.cg.querySelectorAll('.mcap').forEach(el=>el.onclick=e=>{e.stopPropagation();openCapModal(w.worker_id,el.dataset.cap);});
   }
   // deauth / ban control — ungated by caps, reflects w.banned. Only pyz workers
@@ -704,16 +722,26 @@ function reconcile(){
   });
   for(const [id,m] of M){ if(!seen.has(id)){ m.wrap.remove(); m.bar.remove(); M.delete(id); dirty=true; } }
   if(dirty){ // (re)order by name
-    listEl.querySelectorAll('.worker-group-heading').forEach(el=>el.remove());
     const grouping=$('#worker-group').value, sorting=$('#worker-sort').value;
     const group=w=>grouping==='os'?deviceDetails(w).os:grouping==='band'?bandName(w.band):'';
     const sortValue=w=>sorting==='os'?deviceDetails(w).os:sorting==='band'?bandName(w.band):sorting==='status'?String(w.last_seen_age_secs>90):w.name||w.worker_id;
     const ord=list.slice().sort((a,b)=>group(a).localeCompare(group(b))||sortValue(a).localeCompare(sortValue(b))||(a.name||'').localeCompare(b.name||''));
-    let previous=null;
-    for(const w of ord){
-      const label=group(w);
-      if(grouping!=='none'&&label!==previous){const h=document.createElement('h2');h.className='worker-group-heading';h.textContent=label+' / '+list.filter(x=>group(x)===label).length;listEl.append(h);previous=label;}
-      const m=M.get(w.worker_id);if(m){listEl.appendChild(m.wrap);barsEl.appendChild(m.bar);}
+    $('#view-workers').dataset.layout=workerLayout;
+    document.querySelectorAll('.view-toggle [data-layout]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.layout===workerLayout)));
+    const signature=JSON.stringify([grouping,ord.map(w=>[w.worker_id,group(w)])]);
+    if(signature!==inventorySignature){
+      inventorySignature=signature;
+      const fragment=document.createDocumentFragment();let previous=null,body;
+      for(const w of ord){
+        const label=group(w);
+        if(label!==previous){
+          const section=document.createElement('section');section.className='worker-group';
+          if(grouping!=='none'){const h=document.createElement('h2');h.className='worker-group-heading';h.textContent=label+' / '+ord.filter(x=>group(x)===label).length;section.append(h);}
+          body=document.createElement('div');body.className='worker-group-items';section.append(body);fragment.append(section);previous=label;
+        }
+        const m=M.get(w.worker_id);if(m){body.append(m.wrap);barsEl.append(m.bar);}
+      }
+      listEl.replaceChildren(fragment);
     }
     dirty=false;
   }
@@ -966,13 +994,13 @@ function showView(v,updateHistory=true){
  if(updateHistory&&location.hash!=='#'+v)history.pushState(null,'','#'+v);
  if(activeView===v){if(v==='account'&&settingsUI.account)settingsUI.account.refresh().catch(()=>{});return;}
  settingsUI[activeView]?.deactivate();
- activeView=v;
+ activeView=v;document.body.dataset.view=v;$('#rook-art').hidden=v==='install';$('#rook-art').dispatchEvent(new Event('rook:visibility'));
  for(const n of Object.keys(viewInfo)){
   $('#view-'+n).hidden=v!==n; const tab=$('#tab-'+n);tab.classList.toggle('active',v===n);
   if(v===n)tab.setAttribute('aria-current','page');else tab.removeAttribute('aria-current');
  }
  $('#view-title').textContent=viewInfo[v][0];$('#view-description').textContent=viewInfo[v][1];
- document.title=viewInfo[v][0]+' · Rook';$('#worker-controls').hidden=v!=='workers';$('#addband-form').hidden=true;
+ document.title=viewInfo[v][0]+' · Rook';$('#worker-controls').hidden=v!=='workers';$('#worker-stats').hidden=v!=='workers';$('#addband-form').hidden=true;
  if(v==='chat'){startChat();}else{stopChat();}
  if(v==='sessions'){startSessions();}else{stopSessions();}
  if(v==='bands')ensureBands().then(ui=>ui.refresh()).catch(()=>{});
