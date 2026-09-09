@@ -1,5 +1,31 @@
 # BakeNetCA deployment layout
 
+## Bundled desktop dashboard deployed, 2026-09-09
+
+Both services now run from `/opt/rook-releases/cli-20260909-6756198`, source
+`6756198`. Signed worker build `135.sparse.toucan` includes the terminal dashboard
+and a managed `rook` launcher. New worker installs explicitly install the CLI;
+installed workers also install/repair it at boot after an OTA update. The launcher
+uses the worker venv and current bundle, with PATH setup for Bash, Zsh, Fish,
+and Windows. The dashboard keeps its separate saved dashboard login. Native
+Android runtimes are excluded, and the published APK is unchanged.
+
+All 131 Python tests passed. A real local pseudo-terminal verified the bundled
+launcher, dashboard authentication/rendering, private saved config, and clean
+exit. Cachyrig received the signed bundle through an in-band canary transfer;
+a fresh Fish shell resolved `rook`, opened the live dashboard with its existing
+login, and quit without changing the background worker PID. The updater completed
+its health window before the general release. Windows launcher generation was
+tested, but physical Windows installer execution was not performed.
+
+The public manifest signature and both worker download hashes were verified:
+`f4efbbdb776613472f9967d510fab05dc9660be18517bf215eab1c9009b73734`.
+The normal update feed now distributes this build to compatible workers.
+Service override backups are under `/var/backups/rook/cli-20260909-6756198`;
+the previous release remains intact. No band migration or credential rotation
+was performed. This release also deploys `da515cd`: Install uses the shared 3D
+rook and its pause control in place of the static illustration.
+
 ## Hand-drawn wireframe deployed, 2026-09-09
 
 Both services now run from `/opt/rook-releases/ink-20260909-086249e`, source
