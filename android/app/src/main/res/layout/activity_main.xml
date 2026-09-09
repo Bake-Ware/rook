@@ -1,131 +1,23 @@
-<?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:orientation="vertical">
-
-    <!-- top bar -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:paddingStart="20dp"
-        android:paddingEnd="8dp"
-        android:paddingTop="12dp">
-
-        <TextView
-            android:layout_width="0dp"
-            android:layout_weight="1"
-            android:layout_height="wrap_content"
-            android:text="@string/voice_title"
-            android:textSize="20sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:id="@+id/stateText"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginEnd="8dp"
-            android:text="@string/state_idle"
-            android:textSize="12sp" />
-
-        <ImageButton
-            android:id="@+id/btnSettings"
-            android:layout_width="44dp"
-            android:layout_height="44dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@string/settings"
-            android:src="@android:drawable/ic_menu_preferences" />
-    </LinearLayout>
-
-    <!-- transcript -->
-    <ScrollView
-        android:id="@+id/chatScroll"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:fillViewport="true"
-        android:paddingStart="12dp"
-        android:paddingEnd="12dp">
-
-        <LinearLayout
-            android:id="@+id/chat"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="bottom"
-            android:orientation="vertical"
-            android:paddingBottom="12dp" />
-    </ScrollView>
-
-    <!-- voice controls -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:paddingStart="12dp"
-        android:paddingEnd="12dp">
-
-        <Button
-            android:id="@+id/btnTalk"
-            android:layout_width="0dp"
-            android:layout_weight="1.4"
-            android:layout_height="wrap_content"
-            android:text="@string/btn_talk" />
-
-        <Button
-            android:id="@+id/btnInterrupt"
-            style="?attr/materialButtonOutlinedStyle"
-            android:layout_width="0dp"
-            android:layout_weight="1"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="6dp"
-            android:text="@string/voice_interrupt" />
-
-        <Button
-            android:id="@+id/btnSleep"
-            style="?attr/materialButtonOutlinedStyle"
-            android:layout_width="0dp"
-            android:layout_weight="1"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="6dp"
-            android:text="@string/voice_sleep" />
-    </LinearLayout>
-
-    <!-- text + camera input -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:paddingStart="8dp"
-        android:paddingEnd="8dp"
-        android:paddingTop="4dp"
-        android:paddingBottom="12dp">
-
-        <ImageButton
-            android:id="@+id/btnCamera"
-            android:layout_width="44dp"
-            android:layout_height="44dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@string/send_photo"
-            android:src="@android:drawable/ic_menu_camera" />
-
-        <EditText
-            android:id="@+id/input"
-            android:layout_width="0dp"
-            android:layout_weight="1"
-            android:layout_height="wrap_content"
-            android:hint="@string/hint_message"
-            android:imeOptions="actionSend"
-            android:inputType="textCapSentences|textMultiLine"
-            android:maxLines="4" />
-
-        <Button
-            android:id="@+id/btnSend"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="4dp"
-            android:text="@string/send" />
-    </LinearLayout>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical">
+  <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:orientation="horizontal" android:paddingStart="20dp" android:paddingEnd="8dp" android:paddingTop="12dp" android:paddingBottom="12dp">
+    <TextView android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:text="ROOK" android:textSize="26sp" android:textStyle="bold" android:letterSpacing="0.12" android:textColor="@color/rook_accent" />
+    <TextView android:id="@+id/stateText" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginEnd="8dp" android:text="@string/state_idle" android:textSize="12sp" />
+    <ImageButton android:id="@+id/btnSettings" android:layout_width="48dp" android:layout_height="48dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/settings" android:src="@android:drawable/ic_menu_preferences" android:tint="@color/rook_accent" />
+  </LinearLayout>
+  <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="" android:textSize="12sp" android:textColor="@color/rook_dim" android:id="@+id/versionLabel" android:fontFamily="monospace" android:paddingStart="20dp" android:paddingBottom="20dp" />
+  <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Conversation" android:textSize="22sp" android:textColor="@color/rook_fg" android:paddingStart="20dp" android:fontFamily="sans-serif-medium" />
+  <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="SOJOURN / VOICE + TEXT" android:textSize="12sp" android:textColor="@color/rook_dim" android:fontFamily="monospace" android:paddingStart="20dp" android:paddingTop="6dp" android:paddingBottom="16dp" />
+  <ScrollView android:id="@+id/chatScroll" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:fillViewport="true" android:paddingStart="12dp" android:paddingEnd="12dp">
+    <LinearLayout android:id="@+id/chat" android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="bottom" android:orientation="vertical" android:paddingBottom="12dp" />
+  </ScrollView>
+  <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:paddingStart="12dp" android:paddingEnd="12dp">
+    <Button android:id="@+id/btnTalk" android:layout_width="0dp" android:layout_weight="1.4" android:layout_height="wrap_content" android:text="@string/btn_talk" />
+    <Button android:id="@+id/btnInterrupt" style="?attr/materialButtonOutlinedStyle" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:layout_marginStart="6dp" android:text="@string/voice_interrupt" />
+    <Button android:id="@+id/btnSleep" style="?attr/materialButtonOutlinedStyle" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:layout_marginStart="6dp" android:text="@string/voice_sleep" />
+  </LinearLayout>
+  <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:orientation="horizontal" android:paddingStart="8dp" android:paddingEnd="8dp" android:paddingTop="4dp" android:paddingBottom="12dp">
+    <ImageButton android:id="@+id/btnCamera" android:layout_width="48dp" android:layout_height="48dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/send_photo" android:src="@android:drawable/ic_menu_camera" android:tint="@color/rook_accent" />
+    <EditText android:id="@+id/input" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:hint="@string/hint_message" android:imeOptions="actionSend" android:inputType="textCapSentences|textMultiLine" android:maxLines="4" />
+    <Button android:id="@+id/btnSend" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="4dp" android:text="@string/send" />
+  </LinearLayout>
 </LinearLayout>

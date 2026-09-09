@@ -48,6 +48,9 @@ def start(hub,psk,name):
                 host,port=address.rsplit(':',1)
                 transport=TelestheteHubTransport(psk=key,hub_host=host,hub_port=int(port),use_ws=port in ('443','8443'))
                 worker=Worker(transport=transport,enabled=_builtin_enabled(),name=worker_name)
+                package=context.getPackageManager().getPackageInfo(context.getPackageName(),0) if context else None
+                worker.app_release = {'platform':'android', 'version':str(package.versionName),
+                                      'code':int(package.versionCode)} if package else {}
                 _attach_native_plugins(worker)
                 cycle=asyncio.Event()
 
@@ -62,7 +65,8 @@ def start(hub,psk,name):
                     package=context.getPackageManager().getPackageInfo(context.getPackageName(),0) if context else None
                     return {**as_dict(),'supervisor':'android-service','pyz_exists':False,
                             'app_version':str(package.versionName) if package else '',
-                            'app_version_code':int(package.versionCode) if package else 0}
+                            'app_version_code':int(package.versionCode) if package else 0,
+                            'app_release':worker.app_release}
 
                 worker.registry.register('worker.restart',restart)
                 worker.registry.register('worker.status',status)

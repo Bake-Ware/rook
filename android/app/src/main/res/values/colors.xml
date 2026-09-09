@@ -1,0 +1,5 @@
+<resources>
+<color name="rook_bg">#101310</color><color name="rook_panel">#151914</color>
+<color name="rook_fg">#E2E3D9</color><color name="rook_dim">#92998C</color>
+<color name="rook_accent">#D8AD6D</color><color name="rook_line">#444A3C</color>
+</resources>

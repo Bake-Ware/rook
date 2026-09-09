@@ -169,8 +169,8 @@ def _record_role(record: dict) -> str:
     return rtype or "unknown"
 
 
-def _session_meta(p: Path) -> dict:
-    sid = p.stem
+def _session_meta(p: Path, reader=_read_lines, sid: str | None = None) -> dict:
+    sid = sid or p.stem
     try:
         st = p.stat()
     except OSError as e:
@@ -182,7 +182,7 @@ def _session_meta(p: Path) -> dict:
     ai_title: str | None = None
     cwd: str | None = None
     git_branch: str | None = None
-    for rec in _read_lines(p):
+    for rec in reader(p):
         ts = rec.get("timestamp")
         if isinstance(ts, str):
             if first_ts is None:
@@ -220,6 +220,15 @@ def _session_meta(p: Path) -> dict:
 class ClaudeHistoryPlugin(Plugin):
     NAMESPACE = "claude-history"
 
+    # Format adapters let other local coding agents share the history operations.
+    _default_root = staticmethod(_default_root)
+    _expand = staticmethod(_expand)
+    _resolve_session = staticmethod(_resolve_session)
+    _session_meta = staticmethod(_session_meta)
+    _iter_session_files = staticmethod(_iter_session_files)
+    _read_lines = staticmethod(_read_lines)
+    _session_id = staticmethod(lambda p: p.stem)
+
     def __init__(self) -> None:
         super().__init__()
         self._worker = None
@@ -236,7 +245,7 @@ class ClaudeHistoryPlugin(Plugin):
 
     def available(self) -> bool:
         # Only where Claude Code history actually lives on this host.
-        return _default_root().is_dir()
+        return self._default_root().is_dir()
 
     @capability("resume")
     async def _resume(self, session_id: str, path: str | None = None,
@@ -259,12 +268,12 @@ class ClaudeHistoryPlugin(Plugin):
         if self._worker is None or not self._worker.registry.has("proc.start"):
             return {"ok": False, "error": "proc.* capability unavailable on this "
                                           "worker; update it to resume sessions"}
-        root = _expand(path)
-        sp = _resolve_session(root, session_id)
+        root = self._expand(path)
+        sp = self._resolve_session(root, session_id)
         if sp is None:
             return {"ok": False, "error": "session not found",
                     "session_id": session_id, "root": str(root)}
-        meta = _session_meta(sp)
+        meta = self._session_meta(sp)
         full_id = meta["session_id"]
 
         # Already live? Relaunching would fork the transcript in place.
@@ -339,17 +348,17 @@ class ClaudeHistoryPlugin(Plugin):
 
         Returns the most-recently-modified ``limit`` sessions first.
         """
-        root = _expand(path)
+        root = self._expand(path)
         if not root.exists():
-            return {"ok": False, "error": "claude projects directory not found",
+            return {"ok": False, "error": f"{self.NAMESPACE} directory not found",
                     "path": str(root)}
-        files = list(_iter_session_files(root))
+        files = list(self._iter_session_files(root))
         try:
             files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
         except OSError:
             pass
         files = files[: max(int(limit), 0)]
-        sessions = [_session_meta(p) for p in files]
+        sessions = [self._session_meta(p) for p in files]
         return {"ok": True, "root": str(root), "sessions": sessions,
                 "count": len(sessions)}
 
@@ -357,14 +366,14 @@ class ClaudeHistoryPlugin(Plugin):
     def _read(self, session_id: str, path: str | None = None,
               machine: str | None = None, max_messages: int = 1000) -> dict:
         """Read a session transcript. Accepts full UUID or short prefix."""
-        root = _expand(path)
-        sp = _resolve_session(root, session_id)
+        root = self._expand(path)
+        sp = self._resolve_session(root, session_id)
         if sp is None:
             return {"ok": False, "error": "session not found",
                     "session_id": session_id, "root": str(root)}
         transcript: list[dict] = []
         truncated = False
-        for rec in _read_lines(sp):
+        for rec in self._read_lines(sp):
             rtype = rec.get("type")
             if rtype not in ("user", "assistant"):
                 continue
@@ -380,7 +389,7 @@ class ClaudeHistoryPlugin(Plugin):
                 break
         out = {
             "ok": True,
-            "session_id": sp.stem,
+            "session_id": self._session_id(sp),
             "path": str(sp),
             "messages": transcript,
             "count": len(transcript),
@@ -400,17 +409,17 @@ class ClaudeHistoryPlugin(Plugin):
             rx = re.compile(query, re.IGNORECASE if ignore_case else 0)
         except re.error as e:
             return {"ok": False, "error": f"invalid regex: {e}"}
-        root = _expand(path)
+        root = self._expand(path)
         if not root.exists():
-            return {"ok": False, "error": "claude projects directory not found",
+            return {"ok": False, "error": f"{self.NAMESPACE} directory not found",
                     "path": str(root)}
         hits: list[dict] = []
-        for fp in _iter_session_files(root):
+        for fp in self._iter_session_files(root):
             match_count = 0
             snippet: str | None = None
             title: str | None = None
             ai_title: str | None = None
-            for rec in _read_lines(fp):
+            for rec in self._read_lines(fp):
                 rtype = rec.get("type")
                 if rtype == "ai-title" and isinstance(rec.get("aiTitle"), str):
                     ai_title = rec["aiTitle"]
@@ -432,8 +441,8 @@ class ClaudeHistoryPlugin(Plugin):
                         snippet = text[s:e].replace("\n", " ")
             if match_count:
                 hits.append({
-                    "session_id": fp.stem,
-                    "short_id": _short_id(fp.stem),
+                    "session_id": self._session_id(fp),
+                    "short_id": _short_id(self._session_id(fp)),
                     "project": fp.parent.name,
                     "title": ai_title or title or "(empty)",
                     "snippet": snippet,
@@ -451,9 +460,9 @@ class ClaudeHistoryPlugin(Plugin):
         Supported patterns: ``tool_usage``, ``architectural_decisions``,
         ``error_patterns``, ``code_patterns``.
         """
-        root = _expand(path)
+        root = self._expand(path)
         if not root.exists():
-            return {"ok": False, "error": "claude projects directory not found",
+            return {"ok": False, "error": f"{self.NAMESPACE} directory not found",
                     "path": str(root)}
         pat = pattern.lower().strip()
         if pat == "tool_usage":
@@ -479,9 +488,9 @@ class ClaudeHistoryPlugin(Plugin):
     def _analyze_tools(self, root: Path, limit: int) -> dict:
         names: Counter[str] = Counter()
         sessions_with_tools = 0
-        for fp in _iter_session_files(root):
+        for fp in self._iter_session_files(root):
             local: Counter[str] = Counter()
-            for rec in _read_lines(fp):
+            for rec in self._read_lines(fp):
                 msg = rec.get("message")
                 content = msg.get("content") if isinstance(msg, dict) else None
                 if not isinstance(content, list):
@@ -504,10 +513,10 @@ class ClaudeHistoryPlugin(Plugin):
                           terms: tuple[str, ...], limit: int) -> dict:
         rx = re.compile("|".join(re.escape(t) for t in terms), re.IGNORECASE)
         hits: list[dict] = []
-        for fp in _iter_session_files(root):
+        for fp in self._iter_session_files(root):
             count = 0
             sample: str | None = None
-            for rec in _read_lines(fp):
+            for rec in self._read_lines(fp):
                 if rec.get("type") not in ("user", "assistant"):
                     continue
                 text = _message_text(rec)
@@ -523,8 +532,8 @@ class ClaudeHistoryPlugin(Plugin):
                     sample = text[s:e].replace("\n", " ")
             if count:
                 hits.append({
-                    "session_id": fp.stem,
-                    "short_id": _short_id(fp.stem),
+                    "session_id": self._session_id(fp),
+                    "short_id": _short_id(self._session_id(fp)),
                     "project": fp.parent.name,
                     "match_count": count,
                     "sample": sample,
@@ -541,8 +550,8 @@ class ClaudeHistoryPlugin(Plugin):
         fence = re.compile(r"```([A-Za-z0-9_+.\-]*)\s*\n(.*?)```", re.DOTALL)
         langs: Counter[str] = Counter()
         blocks = 0
-        for fp in _iter_session_files(root):
-            for rec in _read_lines(fp):
+        for fp in self._iter_session_files(root):
+            for rec in self._read_lines(fp):
                 if rec.get("type") not in ("user", "assistant"):
                     continue
                 text = _message_text(rec)
@@ -563,39 +572,39 @@ class ClaudeHistoryPlugin(Plugin):
     def _export(self, session_id: str, format: str = "markdown",
                 path: str | None = None, machine: str | None = None) -> dict:
         """Export a session as ``markdown``, ``json``, or ``html``."""
-        root = _expand(path)
-        sp = _resolve_session(root, session_id)
+        root = self._expand(path)
+        sp = self._resolve_session(root, session_id)
         if sp is None:
             return {"ok": False, "error": "session not found",
                     "session_id": session_id}
         fmt = format.lower().strip()
         if fmt == "json":
-            records = list(_read_lines(sp))
-            return {"ok": True, "format": "json", "session_id": sp.stem,
+            records = list(self._read_lines(sp))
+            return {"ok": True, "format": "json", "session_id": self._session_id(sp),
                     "content": json.dumps(records, indent=2)}
         msgs: list[tuple[str, str, str | None]] = []
-        for rec in _read_lines(sp):
+        for rec in self._read_lines(sp):
             if rec.get("type") not in ("user", "assistant"):
                 continue
             ts = rec.get("timestamp") if isinstance(rec.get("timestamp"), str) else None
             msgs.append((_record_role(rec), _message_text(rec), ts))
         if fmt == "markdown":
-            lines = [f"# Session {sp.stem}", ""]
+            lines = [f"# Session {self._session_id(sp)}", ""]
             for role, text, ts in msgs:
                 head = f"## {role}"
                 if ts:
                     head += f"  _(at {ts})_"
                 lines += [head, "", text, ""]
-            return {"ok": True, "format": "markdown", "session_id": sp.stem,
+            return {"ok": True, "format": "markdown", "session_id": self._session_id(sp),
                     "content": "\n".join(lines)}
         if fmt == "html":
             from html import escape
-            parts = [f"<h1>Session {escape(sp.stem)}</h1>"]
+            parts = [f"<h1>Session {escape(self._session_id(sp))}</h1>"]
             for role, text, ts in msgs:
                 meta = f" <small>({escape(ts)})</small>" if ts else ""
                 parts.append(f"<h2>{escape(role)}{meta}</h2>")
                 parts.append(f"<pre>{escape(text)}</pre>")
-            return {"ok": True, "format": "html", "session_id": sp.stem,
+            return {"ok": True, "format": "html", "session_id": self._session_id(sp),
                     "content": "\n".join(parts)}
         return {"ok": False, "error": f"unsupported format: {format}"}
 

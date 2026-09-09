@@ -1,0 +1,15 @@
+<resources>
+<style name="Theme.Rook" parent="Theme.Material3.Dark.NoActionBar">
+<item name="colorPrimary">@color/rook_accent</item><item name="colorOnPrimary">@color/rook_bg</item>
+<item name="colorSecondary">#A4BC92</item><item name="colorSurface">@color/rook_panel</item>
+<item name="colorOnSurface">@color/rook_fg</item><item name="android:colorBackground">@color/rook_bg</item>
+<item name="android:windowBackground">@color/rook_bg</item><item name="android:statusBarColor">@color/rook_bg</item>
+<item name="android:navigationBarColor">@color/rook_bg</item><item name="android:windowLightStatusBar">false</item>
+<item name="android:textColorPrimary">@color/rook_fg</item><item name="android:textColorSecondary">@color/rook_dim</item>
+<item name="materialButtonStyle">@style/RookButton</item><item name="materialButtonOutlinedStyle">@style/RookOutlinedButton</item>
+<item name="editTextStyle">@style/RookInput</item>
+</style>
+<style name="RookButton" parent="Widget.Material3.Button"><item name="cornerRadius">2dp</item><item name="android:minHeight">52dp</item><item name="android:textAllCaps">false</item></style>
+<style name="RookOutlinedButton" parent="Widget.Material3.Button.OutlinedButton"><item name="cornerRadius">2dp</item><item name="strokeColor">@color/rook_line</item><item name="android:minHeight">52dp</item></style>
+<style name="RookInput" parent="Widget.AppCompat.EditText"><item name="android:background">@drawable/rook_panel</item><item name="android:padding">12dp</item><item name="android:minHeight">52dp</item><item name="android:textSize">15sp</item><item name="android:textColorHint">@color/rook_dim</item></style>
+</resources>
