@@ -1,8 +1,25 @@
 # BakeNetCA deployment layout
 
+## Hand-drawn wireframe deployed, 2026-09-09
+
+Both services now run from `/opt/rook-releases/ink-20260909-086249e`, source
+`086249e`. The rook uses irregular black structural edge strokes, generated once
+in object space, with a faint retraced pass. Toon material and a stationary
+shadow-casting directional light replace the procedural hatch shader. The crown
+casts real shadows on the shaft as the object rotates. The original sidebar
+chess glyph is restored; the larger Install illustration remains.
+
+The dashboard browser harness and WebGL lifecycle checks passed. The latter
+counts main framebuffer draws separately from shadow-map rendering. Public HTTPS
+checks verified the scene, restored brand, pause/resume, worker controls, and
+mobile layout with no JavaScript errors. Worker build 125 and APK are unchanged.
+Backups are under `/var/backups/rook/ink-20260909-086249e`; the prior layout release
+remains available for rollback. Temporary verification session and SSH access
+were removed after testing.
+
 ## Compact inventory and illustrated branding deployed, 2026-09-09
 
-Both services now run from `/opt/rook-releases/layout-20260909-a2e07e6`.
+Both services previously ran from `/opt/rook-releases/layout-20260909-a2e07e6`.
 Source `a2e07e6` includes pinned worker filters/group/sort/view controls and compact
 status cards, grouped masonry/list views with a remembered preference, nested
 capability disclosures, a sidebar narrowed by 40px, and left-aligned half-width
