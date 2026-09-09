@@ -178,7 +178,7 @@ async def test_band_component_auth_assets_and_member_page(portal):
     async with TestClient(TestServer(p.app)) as client:
         r=await client.get('/account/bands/component',allow_redirects=False)
         assert r.status==302
-        for name in ('bands.js','bands.css','shell.css','rook-art.css','rook-scene.js','rook-scene.js.LEGAL.txt'):
+        for name in ('bands.js','bands.css','shell.css','rook-art.css','rook-scene.js','rook-scene.js.LEGAL.txt','rook-illustration.png'):
             r=await client.get('/account/bands/assets/'+name)
             assert r.status==200
         r=await client.get('/account/bands/assets/rook-scene.js')

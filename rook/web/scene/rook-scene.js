@@ -35,14 +35,23 @@ export function mountRook(host, toggle) {
       void main(){vNormal=normalize(normalMatrix*normal);vPosition=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
     fragmentShader:`uniform vec3 ink;uniform vec3 shade;uniform vec3 paper;uniform vec3 light;
       varying vec3 vNormal;varying vec3 vPosition;
+      float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
+      float noise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);}
       void main(){
         float lit=dot(normalize(vNormal),normalize(vec3(-.6,.9,1.)));
-        vec3 tone=lit<.05?ink:lit<.5?shade:lit<.82?paper:light;
-        float stroke=abs(fract((vPosition.y*1.25+vPosition.x+vPosition.z*.45)*12.)-.5);
-        float hatch=1.-smoothstep(.025,.09,stroke);
-        float cross=1.-smoothstep(.025,.09,abs(fract((vPosition.y-vPosition.x*.85+vPosition.z*.5)*15.)-.5));
-        tone=mix(tone,ink,hatch*(lit<.65?.42:.09));
-        tone=mix(tone,ink,cross*(lit<.22?.32:0.));
+        // Shadows are accumulated ink strokes on paper, never solid black fills.
+        vec3 tone=mix(paper,light,step(.72,lit));
+        float grain=(noise(vPosition.xy*35.+vPosition.z*4.)-.5)*.22;
+        float a=(vPosition.y*.8+vPosition.x*2.4+vPosition.z*1.6)*23.+grain;
+        float b=(vPosition.y*.9-vPosition.x*2.1-vPosition.z*1.5)*26.+grain;
+        float c=(vPosition.x+vPosition.z)*38.+grain;
+        float wa=max(fwidth(a),.025), wb=max(fwidth(b),.025), wc=max(fwidth(c),.025);
+        float hatch=1.-smoothstep(.09-wa,.09+wa,abs(fract(a)-.5));
+        float cross=1.-smoothstep(.075-wb,.075+wb,abs(fract(b)-.5));
+        float dense=1.-smoothstep(.065-wc,.065+wc,abs(fract(c)-.5));
+        float strokes=max(hatch*(1.-smoothstep(.45,.75,lit)),cross*(1.-smoothstep(.12,.58,lit)));
+        strokes=max(strokes,dense*(1.-smoothstep(-.3,.05,lit)));
+        tone=mix(tone,ink,strokes*mix(.65,.98,noise(vPosition.xy*60.)));
         gl_FragColor=vec4(tone,1.);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
@@ -103,10 +112,10 @@ export function mountRook(host, toggle) {
     line([point(-1.65,y,0),point(-.98,y,0)],dashed);
   }
   let timer=0, frame=0, previous=0, disposed=false, contextLost=false;
-  function paint(){if(!disposed&&!contextLost)renderer.render(scene,camera);}
+  function paint(){if(!disposed&&!contextLost&&!host.hidden)renderer.render(scene,camera);}
   function stop(){clearTimeout(timer);cancelAnimationFrame(frame);timer=frame=0;previous=0;}
   function tick(now){
-    if(disposed||contextLost||paused||document.hidden)return;
+    if(disposed||contextLost||paused||document.hidden||host.hidden)return;
     if(previous)study.rotation.y+=Math.min((now-previous)/1000,.2)*.035;
     previous=now;paint();
     timer=setTimeout(()=>{frame=requestAnimationFrame(tick);},50); // At most 20 fps.
@@ -114,7 +123,7 @@ export function mountRook(host, toggle) {
   function sync(){
     stop();toggle.textContent=paused?'Animate artwork':'Pause artwork';toggle.setAttribute('aria-pressed',String(!paused));
     host.dataset.motion=paused?'paused':'on';
-    if(!disposed&&!contextLost&&!document.hidden){paint();if(!paused)frame=requestAnimationFrame(tick);}
+    if(!disposed&&!contextLost&&!document.hidden&&!host.hidden){paint();if(!paused)frame=requestAnimationFrame(tick);}
   }
   function resize(){
     const box=host.querySelector('.rook-canvas');
@@ -125,7 +134,7 @@ export function mountRook(host, toggle) {
   const observer=new ResizeObserver(resize);observer.observe(host.querySelector('.rook-canvas'));
   const preference=()=>{if(choice===null){paused=reduced.matches||compact.matches;sync();}};
   reduced.addEventListener('change',preference);compact.addEventListener('change',preference);
-  document.addEventListener('visibilitychange',sync);
+  document.addEventListener('visibilitychange',sync);host.addEventListener('rook:visibility',sync);
   toggle.onclick=()=>{paused=!paused;choice=paused?'off':'on';try{localStorage.setItem('rook.art.motion',choice);}catch{}sync();};
   const lost=event=>{event.preventDefault();contextLost=true;stop();host.dataset.mode='sketch';toggle.hidden=true;};
   const restored=()=>{contextLost=false;resize();host.dataset.mode='webgl';toggle.hidden=false;sync();};
@@ -134,7 +143,7 @@ export function mountRook(host, toggle) {
   function destroy(){
     if(disposed)return;disposed=true;stop();observer.disconnect();
     reduced.removeEventListener('change',preference);compact.removeEventListener('change',preference);
-    document.removeEventListener('visibilitychange',sync);window.removeEventListener('pagehide',pagehide);
+    document.removeEventListener('visibilitychange',sync);host.removeEventListener('rook:visibility',sync);window.removeEventListener('pagehide',pagehide);
     window.removeEventListener('pageshow',pageshow);toggle.onclick=null;
     renderer.domElement.removeEventListener('webglcontextlost',lost);renderer.domElement.removeEventListener('webglcontextrestored',restored);
     resources.forEach(resource=>resource.dispose());renderer.dispose();renderer.domElement.remove();

@@ -37,3 +37,52 @@ select,input,.iconbtn,.signout{border-radius:0}.iconbtn{font:10px var(--mono);pa
 .description-dialog{width:min(540px,calc(100vw - 32px));max-height:88dvh;overflow:auto;margin:auto;padding:26px;background:var(--panel);color:var(--fg);border:1px solid var(--line2)}
 .description-dialog::backdrop{background:#050a06bf;backdrop-filter:blur(4px)}.description-dialog h2{font:22px var(--sans);margin:0 0 12px}.description-dialog label{display:block;font-size:13px}.description-dialog textarea{display:block;width:100%;margin-top:10px;padding:12px;resize:vertical;background:var(--panel2);color:var(--fg);border:1px solid var(--line2);font:13px var(--sans)}
 .description-dialog .muted{color:var(--dim);font-size:12px;line-height:1.6}.description-dialog .description-error{color:var(--bad);font-size:12px}.description-dialog .dialog-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}.description-dialog button{background:var(--panel2);border:1px solid var(--line2);color:var(--fg);padding:10px 14px;font:11px var(--mono);cursor:pointer}
+/* Compact inventory workspace and grouped masonry cards. */
+:root{--sidebar-width:176px}
+.topbar{position:sticky;top:0;gap:10px;padding:14px 24px;z-index:24}
+.app-heading{min-width:180px}.app-heading h1{font-size:25px}.app-heading p{margin-top:2px}
+.worker-controls{width:100%;gap:8px}.worker-controls input.filter{flex:1;min-width:100px}
+.inventory-controls{margin:0;gap:10px;align-items:center}.inventory-controls label{gap:6px;white-space:nowrap}
+.worker-controls select,.worker-controls input{padding:6px 8px;font-size:11px}.worker-controls .iconbtn{padding:7px 9px}
+.view-toggle{display:flex;border:1px solid var(--line2)}.view-toggle button{background:transparent;border:0;color:var(--dim);padding:6px 9px;font:10px var(--mono);cursor:pointer}.view-toggle button[aria-pressed=true]{background:#343322;color:var(--accent)}
+#worker-stats{width:100%;gap:8px;margin:0;display:grid;grid-template-columns:70px 70px 70px minmax(150px,210px) minmax(140px,1fr)}
+#worker-stats .tile{width:auto;min-width:0;padding:7px 10px}#worker-stats .k{font-size:21px}#worker-stats .l{font-size:8px;margin:3px 0}#worker-stats .bars{height:28px;min-height:20px}#worker-stats .hint{display:none}#worker-stats .verleg{font-size:9px;margin-top:4px;max-height:26px;overflow:auto}#worker-stats .verbar{height:5px}
+.wrap{padding:14px 24px 40px}.row{padding-top:9px;padding-bottom:9px}.worker-group-heading{padding:9px 14px}
+.worker-group+.worker-group{border-top:1px solid var(--line)}
+.row .caret{padding:0;background:none;border:0;cursor:pointer;font:12px var(--mono)}
+.item .detail{display:none;max-height:none;transition:none}.item.open>.detail{display:block;max-height:none}.detail-in{padding:6px 16px 12px 32px}
+.cggrid{display:block;max-height:420px;overflow:auto}.cggrid ul{list-style:none;margin:0;padding:0}.cggrid ul ul{margin-left:8px;padding-left:14px;border-left:1px solid var(--line2)}.cggrid li{margin:0}
+.cggrid summary{cursor:pointer;padding:6px 4px;font:11px var(--mono);color:var(--accent)}.cggrid summary span{color:var(--dim2);margin-left:8px;font-size:9px}
+.cggrid .mcap{display:flex;align-items:center;justify-content:space-between;width:100%;text-align:left;border:0;border-radius:0;background:none;color:var(--fg);padding:6px 8px;font:10px var(--mono);cursor:pointer;overflow-wrap:anywhere}.cggrid .mcap span{color:var(--dim2);margin-left:8px}.cggrid .mcap:hover{background:#292f21;color:var(--accent)}
+#view-workers[data-layout=grid] .listhead{display:none}
+#view-workers[data-layout=grid] .list{background:none;border:0;overflow:visible}
+#view-workers[data-layout=grid] .worker-group{border:0;margin-bottom:16px}
+#view-workers[data-layout=grid] .worker-group-heading{background:none;border:0;padding:2px 0 10px}
+#view-workers[data-layout=grid] .worker-group-items{columns:300px;column-gap:12px}
+#view-workers[data-layout=grid] .item{display:inline-block;vertical-align:top;width:100%;break-inside:avoid;margin:0 0 12px;border:1px solid var(--line);background:rgba(21,25,20,.92)}
+#view-workers[data-layout=grid] .row{display:grid;grid-template-columns:12px 9px minmax(0,1fr) 34px;gap:10px;padding:12px}
+#view-workers[data-layout=grid] .row>*{order:0;width:auto;max-width:100%}
+#view-workers[data-layout=grid] .row .name{grid-column:3;gap:6px}
+#view-workers[data-layout=grid] .row .acts{grid-column:4;grid-row:1}
+#view-workers[data-layout=grid] .row .worker-band{grid-column:3;justify-self:start}
+#view-workers[data-layout=grid] .row .ver{grid-column:3;font-size:9px;overflow-wrap:anywhere}
+#view-workers[data-layout=grid] .row .batt-slot{grid-column:4;grid-row:2}
+#view-workers[data-layout=grid] .row .seen{grid-column:3 / 5;display:flex;width:100%}
+#view-workers[data-layout=grid] .worker-description{padding-left:0}
+#view-workers[data-layout=grid] .detail-in{padding:0 12px 12px}
+#view-bands,#view-tokens,#view-sessions{width:50%;max-width:none;margin-right:auto}
+#view-bands section,#view-tokens section{padding:16px;margin-top:0;margin-bottom:12px}
+@media(min-width:801px) and (max-width:1150px){:root{--sidebar-width:144px}.app-sidebar{padding-left:12px;padding-right:12px}.app-sidebar nav a{padding-left:8px;padding-right:8px}.inventory-controls{flex:1;justify-content:flex-start}#view-bands,#view-tokens,#view-sessions{width:75%}}
+@media(max-width:800px){
+ .topbar{position:sticky;top:0;margin-left:0;padding:10px 16px;gap:8px}.app-heading h1{font-size:23px}.app-heading p{display:none}.wrap{padding:12px 16px 40px}
+ .worker-controls{gap:6px}.worker-controls input.filter{width:90px}.inventory-controls{width:100%;gap:6px;justify-content:space-between}.inventory-controls label{font-size:8px;gap:4px}.inventory-controls select{font-size:9px;max-width:105px;padding:5px 3px}.view-toggle button{font-size:9px;padding:6px}
+ #worker-stats{grid-template-columns:repeat(3,1fr) minmax(100px,1.5fr);gap:5px}#worker-stats .tile{padding:5px 7px}#worker-stats .tile.hb{grid-column:1 / -1;display:flex;flex-direction:row;align-items:center;gap:10px}#worker-stats .bars{height:16px;min-height:0}#worker-stats .k{font-size:18px}#worker-stats .verleg{max-height:18px;font-size:8px}
+ #view-bands,#view-tokens,#view-sessions{width:100%}
+}
+.app-sidebar .brand{display:flex;align-items:center;gap:9px;padding:0 0 14px;font-size:20px;letter-spacing:1.5px}.app-sidebar .brand img{width:34px;height:51px;object-fit:contain;mask-image:radial-gradient(ellipse,#000 58%,transparent 76%)}
+#view-install{position:relative;min-height:650px}#view-install .install{position:relative;z-index:1;width:65%;max-width:900px;margin-left:0}
+.install-art{position:absolute;right:0;top:0;width:32%;max-width:420px;margin:0}.install-art img{display:block;width:100%;height:auto;mask-image:linear-gradient(to right,transparent,#000 10%,#000 92%,transparent)}.install-art figcaption{font:8px var(--mono);letter-spacing:1.5px;color:var(--dim2);text-align:center;margin-top:10px}
+@media(max-width:1100px){#view-install .install{width:100%}.install-art{position:relative;width:230px;margin:30px 0}#view-install{display:flex;flex-direction:column}.install-art{order:2}}
+@media(max-width:800px){.app-sidebar .brand{display:flex;font-size:18px;padding-bottom:10px;gap:6px}.app-sidebar .brand img{width:22px;height:33px}.install-art{width:180px}.sidebar-footer{top:25px}}
+#worker-stats .tile{order:0}.cggrid .mcap::after{content:none}
+body[data-view=install] .art-toggle{visibility:hidden}

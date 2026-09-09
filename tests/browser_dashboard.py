@@ -21,7 +21,7 @@ from rook.band_mcp.chat_rooms import ChatStore
 async def main():
  with tempfile.TemporaryDirectory() as temp:
   p=portal.__wrapped__(Path(temp),MonkeyPatch());add_worker(p)
-  roster=[{'worker_id':name,'name':name,'caps':['info.host','shell.exec','screenshot.capture','worker.enrollment_move_prepare','worker.description_set']+(['device.info'] if name=='tablet' else []),'plugins':[],'band':p.source['psk_hash'][:8],'version':'120.steady.iguana','last_seen_age_secs':2} for name in ('worker1','tablet','windows','mac')]
+  roster=[{'worker_id':name,'name':name,'caps':['info.host','shell.exec','screenshot.capture','worker.enrollment_move_prepare','worker.description_set','files.directory.list']+(['device.info'] if name=='tablet' else []),'plugins':[],'band':p.source['psk_hash'][:8],'version':'120.steady.iguana','last_seen_age_secs':2} for name in ('worker1','tablet','windows','mac')]
   async def index(r):return web.Response(text=Path('rook/web/index.html').read_text(),content_type='text/html')
   async def bands(r):return web.json_response([{'id':b['psk_hash'][:8],'name':b['name'],'primary':b.get('primary',False)} for b in p.store.bands(p.uid,configs=True)])
   async def workers(r):return web.json_response(roster)
@@ -63,6 +63,39 @@ async def main():
     await page.locator('#filter').fill('')
     await page.locator('#worker-group').select_option('band');assert await page.locator('.worker-group-heading').count()==1
     await page.locator('#worker-sort').select_option('os');await page.screenshot(path='/tmp/rook-new-workers.png')
+    await page.locator('.view-toggle [data-layout=grid]').click()
+    assert await page.locator('#view-workers').get_attribute('data-layout')=='grid'
+    assert await page.locator('.worker-group').count()==1
+    assert await page.locator('.worker-group-items .item').count()==4
+    await page.locator('[data-id=worker1] .caret').click()
+    assert await page.locator('[data-id=worker1] .caret').get_attribute('aria-expanded')=='true'
+    root=page.locator('[data-id=worker1] .cggrid')
+    await root.locator('summary').filter(has_text='files').click()
+    await root.locator('summary').filter(has_text='directory').focus()
+    await page.keyboard.press('Enter')
+    await root.locator('[data-cap="files.directory.list"]').wait_for(state='visible')
+    await page.evaluate("window.savedCapModal=openCapModal;openCapModal=(wid,cap)=>window.capTest=[wid,cap]")
+    await root.locator('[data-cap="files.directory.list"]').click()
+    assert await page.evaluate('capTest')==['worker1','files.directory.list']
+    await page.evaluate('openCapModal=window.savedCapModal;dirty=true;reconcile()')
+    assert await root.locator('[data-cap="files.directory.list"]').is_visible()
+    await page.screenshot(path='/tmp/rook-new-grid.png')
+    await page.locator('#worker-group').select_option('os')
+    assert await page.locator('.worker-group').count()==4
+    await page.locator('#worker-group').select_option('none')
+    assert await page.locator('.worker-group-heading').count()==0
+    await page.reload();await page.locator('.view-toggle [data-layout=grid][aria-pressed=true]').wait_for()
+    await page.locator('#worker-group').select_option('band')
+    await page.evaluate("document.querySelector('#view-workers').style.minHeight='2200px';window.scrollTo(0,600)")
+    await page.wait_for_timeout(100)
+    assert abs((await page.locator('.topbar').bounding_box())['y'])<1
+    assert (await page.locator('#worker-stats').bounding_box())['y']>=0
+    await page.evaluate("document.querySelector('#view-workers').style.minHeight='';window.scrollTo(0,0)")
+    await page.locator('.view-toggle [data-layout=list]').click()
+
+    await page.locator('#tab-install').click();await page.locator('.install-art img').scroll_into_view_if_needed()
+    await page.screenshot(path='/tmp/rook-new-install.png')
+    assert await page.locator('.install-art img').evaluate('(im)=>im.complete && im.naturalWidth>0')
     await page.locator('#tab-account').click();await page.locator('[data-section-tab=profile]').wait_for()
     await page.locator('form:has([name=op][value=profile]) [name=name]').fill('A better account')
     await page.get_by_role('button',name='Save name',exact=True).click();await page.wait_for_function("document.querySelector('.profile-hero p').textContent==='A better account'")
@@ -84,13 +117,18 @@ async def main():
     await page.locator('[data-revoke]').click();await page.locator('.token-revoke button').click();await page.locator('.token-row').wait_for(state='detached');assert provider.verify_bearer(secret) is None
     for width in (1100,820,390):
      await page.set_viewport_size({'width':width,'height':1000})
-     for view in ('workers','account','tokens','bands'):
+     for view in ('workers','account','tokens','bands','sessions','install'):
       await page.locator('#tab-'+view).click()
       assert await page.evaluate('document.documentElement.scrollWidth<=innerWidth'),str(width)+' '+view+' overflow'
+      if view=='workers':
+       await page.locator('.view-toggle [data-layout=grid]').click()
+       assert await page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+       await page.screenshot(path='/tmp/rook-grid-'+str(width)+'.png')
+       await page.locator('.view-toggle [data-layout=list]').click()
     await page.locator('#tab-account').click();await page.screenshot(path='/tmp/rook-new-account-mobile.png')
     assert not errors,errors
     assert await page.evaluate("performance.getEntriesByType('navigation').length")==1
-    print('PASS: persistent description UI/search/escaping; device groups/icons/sort; worker menu/move; profile, pairing, invitation; live token store create/revoke; picture upload/clear; secrets cleared; mobile; no JS errors')
+    print('PASS: grouped masonry/persisted view; nested keyboard capabilities; sticky controls/stats; install art; persistent description UI/search/escaping; device groups/icons/sort; worker menu/move; profile, pairing, invitation; live token store create/revoke; picture upload/clear; secrets cleared; mobile; no JS errors')
     await browser.close()
   await http.aclose()
 asyncio.run(main())
