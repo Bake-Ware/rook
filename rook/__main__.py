@@ -7,6 +7,7 @@ import sys
 
 SUBCOMMANDS = {
     "band":     "Terminal control panel for the worker band (live view, run/manage caps)",
+    "worker":   "Run the background worker",
     "sessions": "Browse Claude Code session history",
     "history":  "Browse Claude Code session history",
     "tmux":     "Manage Claude Code sessions (spawn, attach, kill)",
@@ -18,10 +19,14 @@ SUBCOMMANDS = {
 
 
 def main() -> None:
-    # No args or help — show available commands
-    if len(sys.argv) <= 1 or sys.argv[1] in ("-h", "--help", "help"):
-        print("Rook — Knowledge graph and session network for Claude Code\n")
+    if len(sys.argv) <= 1:
+        from .cli.band_tui import main as band_main
+        band_main()
+        return
+    if sys.argv[1] in ("-h", "--help", "help"):
+        print("Rook — worker band and terminal dashboard\n")
         print("Usage: rook <command> [args]\n")
+        print("Run rook with no arguments to open the terminal dashboard.\n")
         print("Commands:")
         for cmd, desc in SUBCOMMANDS.items():
             if cmd == "history":
@@ -32,7 +37,13 @@ def main() -> None:
         return
 
     # Lightweight subcommands — no heavy imports needed
-    if sys.argv[1] == "band":
+    if sys.argv[1] == "worker":
+        from .worker.cli import main as worker_main
+        sys.argv = [sys.argv[0]] + sys.argv[2:]
+        worker_main()
+        return
+
+    if sys.argv[1] in ("band", "tui"):
         from .cli.band_tui import main as band_main
         sys.argv = [sys.argv[0]] + sys.argv[2:]
         band_main()

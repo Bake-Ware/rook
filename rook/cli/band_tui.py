@@ -843,6 +843,9 @@ def main() -> None:
     ap.add_argument("--reset", action="store_true", help="ignore saved config and re-enter connection details")
     args = ap.parse_args()
 
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        ap.error("open an interactive terminal to use the dashboard (rook --help for options)")
+
     conf = {} if args.reset else _load_conf()
     url = args.url or os.environ.get("ROOK_WEB_URL") or conf.get("url") or "https://rook.bakeforge.com"
     user = args.user or os.environ.get("ROOK_WEB_USER") or conf.get("user") or "bake"
