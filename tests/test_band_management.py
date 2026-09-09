@@ -178,9 +178,16 @@ async def test_band_component_auth_assets_and_member_page(portal):
     async with TestClient(TestServer(p.app)) as client:
         r=await client.get('/account/bands/component',allow_redirects=False)
         assert r.status==302
-        for name in ('bands.js','bands.css','shell.css'):
+        for name in ('bands.js','bands.css','shell.css','rook-art.css','rook-scene.js','rook-scene.js.LEGAL.txt'):
             r=await client.get('/account/bands/assets/'+name)
             assert r.status==200
+        r=await client.get('/account/bands/assets/rook-scene.js')
+        assert r.headers['Content-Type']=='application/javascript'
+        assert r.headers['Cache-Control']=='no-cache'
+        etag=r.headers['ETag']
+        await r.read()
+        r=await client.get('/account/bands/assets/rook-scene.js',headers={'If-None-Match':etag})
+        assert r.status==304
         r=await client.get('/account/bands/assets/accounts.py')
         assert r.status==404
         uid=p.store.create_local('member','long enough test password')

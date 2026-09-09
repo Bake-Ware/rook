@@ -320,6 +320,7 @@
 <link rel="stylesheet" href="/account/bands/assets/bands.css">
 <link rel="stylesheet" href="/account/bands/assets/settings.css">
 <link rel="stylesheet" href="/account/bands/assets/theme.css">
+<link rel="stylesheet" href="/account/bands/assets/rook-art.css">
 </head>
 <body>
   <!-- decoy fields soak up browser/password-manager autofill so it never lands
@@ -328,6 +329,19 @@
          style="position:absolute;left:-9999px;top:-9999px;opacity:0;height:0;width:0;pointer-events:none">
   <input type="password" name="password" autocomplete="current-password" tabindex="-1" aria-hidden="true"
          style="position:absolute;left:-9999px;top:-9999px;opacity:0;height:0;width:0;pointer-events:none">
+  <div class="rook-art" id="rook-art" aria-hidden="true" data-mode="sketch">
+    <svg class="rook-sketch" viewBox="0 0 600 760" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <defs><pattern id="rook-hatch" width="9" height="9" patternUnits="userSpaceOnUse" patternTransform="rotate(-32)"><path d="M0 0V9" stroke="#aa9870" stroke-width=".6" opacity=".4"/></pattern></defs>
+      <g stroke="#9aa780" stroke-width=".65" opacity=".6"><ellipse cx="310" cy="622" rx="174" ry="62"/><ellipse cx="310" cy="622" rx="205" ry="76" stroke-dasharray="3 5"/><path d="M76 622H543M310 110V716M160 205V635M149 205H173M149 623H173" stroke-dasharray="4 5"/></g>
+      <g stroke="#c2aa7e" stroke-width="1.4"><path d="M209 604L215 579L243 564L254 519L266 333L247 310L232 305V236L251 218V183L280 171V208L306 203V162L339 165V204L367 214V176L392 191V235L404 251V306L386 324L365 344L372 528L385 569L411 590V617L378 639L253 639Z" fill="#303628"/>
+      <path d="M254 519L266 333L306 348L302 554L269 568L243 564Z" fill="url(#rook-hatch)"/>
+      <path d="M232 305L305 328L404 306M247 310L306 348L386 324M215 579L276 603L385 569M209 604L276 627L411 590M276 627V646M280 171L298 183V211M339 165L351 183V210M367 214L391 236M251 218L278 229L306 221L338 230L368 226L392 241M243 564L302 581L385 569M266 333L302 350L365 344"/>
+      </g><g stroke="#c2aa7e" opacity=".22"><path d="M211 608L218 581L247 565L257 520L269 334M233 309L305 333L405 309M247 643L380 642L413 619"/></g>
+    </svg>
+    <div class="rook-canvas"></div>
+    <span class="plate-number">FIG. 01 / CASTELLUM</span>
+    <span class="plate-caption"><b>ROOK / ELEVATION STUDY</b><br>FORM · LIGHT · MOTION</span>
+  </div>
   <aside class="app-sidebar" aria-label="Application navigation">
     <a class="brand" href="#workers" onclick="showView('workers');return false">♖ ROOK</a>
     <span class="nav-label">WORKSPACE</span>
@@ -343,7 +357,7 @@
       <a id="tab-account" href="#account" onclick="showView('account');return false">Account & access</a>
       <a id="tab-tokens" href="#tokens" onclick="showView('tokens');return false">API tokens</a>
     </nav>
-    <div class="sidebar-footer"><span class="live"><span class="dot" id="dot"></span><span id="count">Connecting…</span></span><a class="signout" href="/logout">Sign out</a></div>
+    <div class="sidebar-footer"><button class="art-toggle" id="art-toggle" type="button" hidden>Pause artwork</button><span class="live"><span class="dot" id="dot"></span><span id="count">Connecting…</span></span><a class="signout" href="/logout">Sign out</a></div>
   </aside>
   <header class="topbar">
     <div class="app-heading"><h1 id="view-title">Workers</h1><p id="view-description">Your connected machines, across every band.</p></div>
@@ -1243,6 +1257,13 @@ function wireLinks(){
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
 wireLinks(); routeFromHash(); loadBands(); loadWorkers();
 setInterval(loadWorkers,3000); setInterval(loadBands,20000);
+</script>
+<script type="module">
+const loadArtwork=()=>import('/account/bands/assets/rook-scene.js').then(({mountRook})=>mountRook(document.getElementById('rook-art'),document.getElementById('art-toggle'))).catch(()=>{});
+if(!navigator.connection?.saveData){
+ if('requestIdleCallback' in window)requestIdleCallback(loadArtwork,{timeout:1800});
+ else setTimeout(loadArtwork,300);
+}
 </script>
 </body>
 </html>
