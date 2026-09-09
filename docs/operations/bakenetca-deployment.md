@@ -21,6 +21,9 @@ tested, but physical Windows installer execution was not performed.
 The public manifest signature and both worker download hashes were verified:
 `f4efbbdb776613472f9967d510fab05dc9660be18517bf215eab1c9009b73734`.
 The normal update feed now distributes this build to compatible workers.
+All 25 compatible workers converged to build 135; read-only checks confirmed
+the managed launcher on every host and completed update health windows. The
+two online native Android workers remained on their existing APK runtimes.
 Service override backups are under `/var/backups/rook/cli-20260909-6756198`;
 the previous release remains intact. No band migration or credential rotation
 was performed. This release also deploys `da515cd`: Install uses the shared 3D
