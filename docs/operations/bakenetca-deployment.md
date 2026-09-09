@@ -1,5 +1,34 @@
 # BakeNetCA deployment layout
 
+## Verified APK updater deployed, 2026-09-09
+
+Both services run from `/opt/rook-releases/apk-ota-20260909-24aee7e`, source
+`24aee7e`. Override backups are in `/var/backups/rook/apk-ota-20260909-24aee7e`.
+The public APK is **0.4.1 (5)**, 142,838,632 bytes, SHA-256
+`5f296a17e64dedaefd1a045fdb900f8de4c1ebc290a94fa78e1f967d39733fd2`.
+The signing certificate is unchanged. `/apk.json` and `/apk` were fetched
+publicly and matched the release metadata/hash. The desktop worker feed remains
+**140.curly.newt**; this release does not require replacing desktop workers.
+
+The native APK adds automatic six-hour checks while its worker runs,
+`device.update`, and `device.update_status`. Installation validates package,
+increasing version code, size/hash, and matching signer. Android confirmation
+or install-source permission is handled by notifications. The Settings download
+button is at the bottom, alongside the automatic-update toggle and permission
+link. Existing APKs need one manual upgrade to acquire this updater.
+See [Android updates](../android-updates.md) for setup and publishing.
+
+All 143 Python tests passed, including approved/missing/mismatched APK manifest
+cases. Android 14 emulator verification accepted a same-signer code-6 test APK
+and rejected version mismatch and a wrong signer. Denying install permission
+produced a notification which opened Android's permission prompt. Granting it
+allowed a silent code-5 → code-6 replacement; the worker rejoined the isolated
+test band with the same stable ID and its foreground service running.
+The production code-5 APK then answered `device.update` over that isolated band,
+fetched the live HTTPS manifest, and reported `current` through
+`device.update_status`. Test APKs and keys were never published; no physical
+Android devices were modified by these checks.
+
 ## Android 0.4.0 and Codex capabilities deployed, 2026-09-09
 
 Both services run from `/opt/rook-releases/mobile-codex-20260909-21441c3`, source
