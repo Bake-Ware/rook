@@ -26,8 +26,7 @@ model choices were preserved, including `gemma4-mouthpiece` and
 `large-v3-turbo`. Smart Turn v3.2 is pinned by URL and digest in
 `services/voice/models.json`.
 
-Validation: 152 repository tests passed before the final planner regression test
-was added; all 10 voice regression tests then passed. Three consecutive candidate
+Validation: all 153 repository tests passed, including 10 voice regressions. Three consecutive candidate
 smokes and the production TLS smoke passed model recall across reconnect, real
 TTS framing/stop acknowledgement, and a read-only Rook uptime job. Real Hermes
 ACP completed a synthetic acknowledgement test; PCM input passed Smart Turn and
@@ -37,6 +36,13 @@ reported zero false wakes over 30 seconds of synthetic silence/noise, 126 speech
 frames and one detection on the synthetic wake phrase. These are software-path
 tests, not real-room acoustic measurements or measured physical-phone barge-in
 latency. Physical speaker/headset/Bluetooth checks remain outstanding.
+
+Bakephone installed 0.4.2 through `device.update`, restarted its worker and
+rejoined with the same identity; `device.update_status` confirmed installed code 6.
+Two additional Android clients received the update check and report
+`permission_required`; their Android installation-source permission must be
+granted before OTA can install. Test instances and synthetic candidate state
+were removed after production verification.
 
 Rollback: restore the two saved BakeNetCA overrides, reload systemd and restart
 `rook-remote`/`rook-band-mcp`. On kaiju, remove only `zz-rook-voice.conf`, reload
