@@ -88,7 +88,7 @@ class Provider:
     default_voice='test'
     system='test'
     async def transcribe(self, pcm): return 'hello'
-    async def chat(self, messages, on_clause):
+    async def chat(self, messages, on_clause, reply_only=False):
         await on_clause('Hello.')
         return 'Hello.',[]
     async def synthesize(self,text,voice): return b'\0'*3200,16000
@@ -136,7 +136,7 @@ def test_failed_and_timed_out_tools_are_terminal_not_success():
 def test_model_failure_does_not_leave_tts_consumer_waiting():
     async def scenario():
         class Broken(Provider):
-            async def chat(self,messages,on_clause): raise ValueError('bad model')
+            async def chat(self,messages,on_clause,reply_only=False): raise ValueError('bad model')
         events=[]
         async def send(e): events.append(e)
         async def audio(b): pass
@@ -155,3 +155,36 @@ def test_cancel_job_cannot_cross_sessions():
     jid=store.create_job('alice','lookup',{})
     jobs=Jobs(store,{},'',0,lambda s,e:None)
     with pytest.raises(ValueError): jobs.cancel('bob',jid)
+
+
+def test_planner_retries_missing_call_before_speaking_or_starting_work():
+    import ast
+    from pathlib import Path
+    from types import SimpleNamespace
+    source=ast.parse(Path('services/voice/providers.py').read_text())
+    provider=next(n for n in source.body if isinstance(n,ast.ClassDef) and n.name=='Provider')
+    chat=next(n for n in provider.body if isinstance(n,ast.AsyncFunctionDef) and n.name=='chat')
+    requests=[];spoken=[]
+    class Response:
+        def __init__(self,index):self.index=index
+        def raise_for_status(self):pass
+        def json(self):
+            message={'content':'Let me check that.'} if self.index==1 else {'tool_calls':[{'function':{'name':'rook_read','arguments':'{"worker":"kaiju","cap":"info.uptime"}'}}]}
+            return {'choices':[{'message':message}]}
+    class Client:
+        def __init__(self,**kw):pass
+        async def __aenter__(self):return self
+        async def __aexit__(self,*args):pass
+        async def post(self,url,json):
+            requests.append(json)
+            return Response(len(requests))
+    namespace={'httpx':SimpleNamespace(AsyncClient=Client),'VLLM_URL':'local','VLLM_MODEL':'model','TOOLS':[], 'json':json,'split_sentences':lambda t:([],t)}
+    exec(compile(ast.Module(body=[chat],type_ignores=[]),'planner-test','exec'),namespace)
+    async def scenario():
+        async def on_clause(text):spoken.append(text)
+        text,calls=await namespace['chat'](None,[{'role':'system','content':'policy'},{'role':'user','content':'Check uptime'}],on_clause)
+        assert text=='' and calls[0]['function']['name']=='rook_read'
+        assert not spoken and len(requests)==2
+        assert all(m['role']!='system' for m in requests[0]['messages'][1:])
+        assert requests[0]['tool_choice']=='required'
+    run(scenario)

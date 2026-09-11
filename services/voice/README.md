@@ -32,6 +32,10 @@ Runtime configuration:
 * `VOICE_BIND`, `VOICE_PORT`: default loopback port 8900.
 * `VOICE_TLS_KEY`, `VOICE_TLS_CERT`: existing PEM paths when serving TLS directly.
 
+The mouthpiece uses structured selection of either a reply or a real tool.
+It announces work only after queuing a job. Malformed plans may be retried once
+before any work starts; external jobs are never implicitly retried.
+
 The APK sends a protocol-2 hello with an opaque persisted conversation UUID.
 History is scoped to the credential and conversation. A second simultaneous
 connection to the same conversation is rejected. Reconnects preserve history;

@@ -2,9 +2,11 @@
 import asyncio
 import contextlib
 import json
+import logging
 import struct
 import time
 import uuid
+import traceback
 
 
 class Connection:
@@ -76,7 +78,7 @@ class Connection:
             async def on_clause(clause):
                 await clauses.put(clause)
             async def producer():
-                result = await asyncio.wait_for(self.provider.chat(messages, on_clause), 60)
+                result = await asyncio.wait_for(self.provider.chat(messages, on_clause, reply_only=internal), 60)
                 await clauses.put(None)
                 return result
             producer_task = asyncio.create_task(producer())
@@ -107,6 +109,7 @@ class Connection:
                 if not isinstance(args, dict):
                     raise ValueError("Invalid tool arguments")
                 if name == "end_session":
+                    await self.say("Talk to you later.", epoch)
                     await self.emit("bye", mode="off" if args.get("mode") == "off" else "sleep",
                                     after_ms=max(0, int((self.play_until-time.monotonic())*1000))+300)
                 elif name == "cancel_job":
@@ -122,6 +125,8 @@ class Connection:
         except asyncio.CancelledError:
             raise
         except Exception as error:
+            logging.warning("Voice turn failed: %s at %s", type(error).__name__,
+                            [(frame.name, frame.lineno) for frame in traceback.extract_tb(error.__traceback__)])
             await self.emit("error", msg="Voice turn failed: " + type(error).__name__ + ". Please try again.")
         finally:
             if epoch == self.epoch and not self.closed:

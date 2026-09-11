@@ -4,6 +4,7 @@ uvicorn==0.51.0
 httpx==0.28.1
 websockets==16.1.1
 webrtcvad==2.0.10
+setuptools<81  # webrtcvad still imports pkg_resources
 faster-whisper==1.2.1
 kokoro-onnx==0.5.0
 numpy==2.5.1
