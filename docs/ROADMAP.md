@@ -6,7 +6,17 @@ This file is the single list of what exists, what is missing, and what is next.
 Update it when a feature ships or is deliberately dropped. If something feels
 "lost", check the inventory below before rebuilding it.
 
-## Current priority: account-gated configuration fetching (2026-09-08)
+## Current priority: voice quality (2026-09-10)
+
+Fix false wake-ups, spoken interruption, stalled tools and conversation continuity
+before adding Android's default-assistant entry point. The
+[voice research and implementation audit](DESIGN-voice-quality.md) records the
+confirmed code defects, architecture and release tests. The versioned
+[voice service](../services/voice/README.md) and Android 0.4.2 implement the upgrade.
+Deployment status and remaining physical-phone acoustic checks belong in the
+deployment record.
+
+## Previous priority: account-gated configuration fetching (2026-09-08)
 
 The account/Google/pairing compatibility release is deployed on bakenetca.
 Existing band PSKs are unchanged. Google web login, explicit merge with the

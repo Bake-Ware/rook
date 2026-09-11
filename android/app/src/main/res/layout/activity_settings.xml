@@ -44,6 +44,7 @@
       <EditText android:id="@+id/voiceToken" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="@string/hint_voice_token" android:inputType="textPassword" />
       <CheckBox android:id="@+id/voiceInsecure" android:layout_width="match_parent" android:layout_height="wrap_content" android:checked="false" android:text="@string/voice_insecure" />
       <CheckBox android:id="@+id/wakeEnabled" android:layout_width="match_parent" android:layout_height="wrap_content" android:checked="true" android:text="@string/wake_enabled" />
+      <Button android:id="@+id/btnDefaultAssistant" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Use Rook as default assistant" style="@style/RookOutlinedButton" />
       <Button android:id="@+id/btnSaveVoice" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/save_voice" style="@style/RookOutlinedButton" />
       <TextView android:id="@+id/status" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="16dp" android:fontFamily="monospace" android:textIsSelectable="true" />
     </LinearLayout>

@@ -125,6 +125,16 @@ class SettingsActivity : AppCompatActivity() {
         b.voiceToken.setText(prefs.getString("voice_token", BuildConfig.DEFAULT_VOICE_TOKEN))
         b.voiceInsecure.isChecked = prefs.getBoolean("voice_insecure", false)
         b.wakeEnabled.isChecked = prefs.getBoolean("wake_enabled", true)
+        b.btnDefaultAssistant.setOnClickListener {
+            try {
+                if (Build.VERSION.SDK_INT >= 29) {
+                    val roles = getSystemService(android.app.role.RoleManager::class.java)
+                    if (roles.isRoleAvailable(android.app.role.RoleManager.ROLE_ASSISTANT)) {
+                        startActivity(roles.createRequestRoleIntent(android.app.role.RoleManager.ROLE_ASSISTANT))
+                    } else startActivity(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS))
+                } else startActivity(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS))
+            } catch (_: Exception) { startActivity(Intent(Settings.ACTION_SETTINGS)) }
+        }
         b.btnSaveVoice.setOnClickListener {
             prefs.edit()
                 .putString("voice_url", b.voiceUrl.text.toString().trim())

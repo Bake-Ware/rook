@@ -33,13 +33,17 @@ import kotlin.concurrent.thread
  *    AudioRecord. Sessions open on wake word (or a manual Start) and close after
  *    IDLE_CLOSE_MS of the server sitting in "listening" with nothing said.
  *
- * Saying the wake word while the assistant is talking = interrupt (+ keep listening).
+ * Normal speech interrupts during playback when platform AEC is enabled.
  *
  * UI observes via [VoiceBus] (main-thread callbacks) — no binder needed.
  */
 class VoiceService : Service() {
 
-    private var client: VoiceClient? = null
+    @Volatile private var client: VoiceClient? = null
+    private var generation = 0L
+    private var sessionWanted = false
+    private var retries = 0
+    @Volatile private var aecAvailable = false
     private var detector: WakeWordDetector? = null
     private var micThread: Thread? = null
     @Volatile private var micRunning = false
@@ -75,7 +79,7 @@ class VoiceService : Service() {
             ACTION_END_SESSION -> { closeSession(); return START_STICKY }
             ACTION_STOP -> { standby = false; closeSession(); stopMic(); stopForegroundCompat(); stopSelf(); return START_NOT_STICKY }
             ACTION_SESSION -> {            // manual push-to-talk: open a session now
-                ensureForeground(); ensureMic(); openSession(); return START_STICKY
+                standby = true; ensureForeground(); ensureMic(); openSession(); return START_STICKY
             }
         }
         // default / ACTION_STANDBY: mic on, wake word armed, no session yet
@@ -108,42 +112,61 @@ class VoiceService : Service() {
 
     private fun openSession() {
         if (client?.isRunning == true) return
+        sessionWanted = true
+        val mine = ++generation
+        fun current(action: () -> Unit) = post { if (mine == generation) action() }
         lastActivityAt = SystemClock.elapsedRealtime()
         client = VoiceClient(this, url, insecure, object : VoiceClient.Listener {
-            override fun onState(state: String) = post {
+            override fun onState(state: String) = current {
+                if (state == "listening") retries = 0
                 lastServerState = state; lastActivityAt = SystemClock.elapsedRealtime()
                 setState(state)
             }
-            override fun onTranscript(text: String) = post { lastActivityAt = SystemClock.elapsedRealtime(); VoiceBus.listener?.onTranscript(text) }
-            override fun onAssistantDelta(text: String) = post { VoiceBus.listener?.onAssistantDelta(text) }
-            override fun onAssistantDone() = post { VoiceBus.listener?.onAssistantDone() }
-            override fun onInterrupt() = post { VoiceBus.listener?.onInterrupt() }
-            override fun onError(msg: String) = post { VoiceBus.listener?.onError(msg) }
-            override fun onTool(title: String, status: String) = post { VoiceBus.listener?.onTool(title, status) }
-            override fun onBye(mode: String, afterMs: Long) = post {
+            override fun onTranscript(text: String) = current { lastActivityAt = SystemClock.elapsedRealtime(); VoiceBus.listener?.onTranscript(text) }
+            override fun onAssistantDelta(text: String) = current { VoiceBus.listener?.onAssistantDelta(text) }
+            override fun onAssistantDone() = current { VoiceBus.listener?.onAssistantDone() }
+            override fun onInterrupt() = current { VoiceBus.listener?.onInterrupt() }
+            override fun onError(msg: String) = current { VoiceBus.listener?.onError(msg) }
+            override fun onTool(title: String, status: String) = current { VoiceBus.listener?.onTool(title, status) }
+            override fun onBye(mode: String, afterMs: Long) = current {
                 Log.i(TAG, "bye mode=$mode after=${afterMs}ms")
                 VoiceBus.listener?.onBye(mode)
                 main.postDelayed({
+                    if (mine != generation) return@postDelayed
                     if (mode == "off") { standby = false; closeSession(); stopMic(); stopForegroundCompat(); stopSelf() }
                     else closeSession()
                 }, afterMs.coerceIn(0L, 15_000L))
             }
-            override fun onClosed() = post {
+            override fun onClosed() = current {
                 client = null
+                main.removeCallbacks(idleCheck)
+                if (sessionWanted && retries < 5) {
+                    val delay = minOf(15_000L, 1000L shl retries++)
+                    setState("reconnecting")
+                    main.postDelayed({ if (mine == generation && sessionWanted) openSession() }, delay)
+                    return@current
+                }
+                sessionWanted = false
                 if (standby) setState(if (wakeEnabled) "standby" else "idle")
                 else { stopMic(); stopForegroundCompat(); stopSelf() }
             }
-        }, ownMic = false, token = token).also { it.connect() }
+        }, ownMic = false, token = token).also { it.setAecAvailable(aecAvailable); it.connect() }
+        main.removeCallbacks(idleCheck)
         main.postDelayed(idleCheck, IDLE_CLOSE_MS)
     }
 
-    private fun closeSession() { client?.close(); client = null }
+    private fun closeSession() {
+        sessionWanted = false; ++generation; retries = 0
+        main.removeCallbacks(idleCheck)
+        val old = client; client = null; old?.close()
+        if (standby) setState(if (wakeEnabled) "standby" else "idle")
+    }
 
     private val idleCheck = object : Runnable {
         override fun run() {
             val c = client ?: return
             val idle = SystemClock.elapsedRealtime() - lastActivityAt
-            if (lastServerState == "listening" && idle >= IDLE_CLOSE_MS) { c.close() }
+            if (lastServerState == "listening" && idle >= IDLE_CLOSE_MS) { closeSession() }
             else main.postDelayed(this, 2000)
         }
     }
@@ -153,41 +176,64 @@ class VoiceService : Service() {
     @SuppressLint("MissingPermission")
     private fun ensureMic() {
         if (micRunning) return
-        micRunning = true
-        if (detector == null && wakeEnabled) {
-            try { detector = WakeWordDetector(this, WAKE_MODEL, WAKE_THRESHOLD) }
-            catch (e: Throwable) { Log.e(TAG, "wake model load failed", e); post { VoiceBus.listener?.onError("wake model: ${e.message}") } }
+        if (micThread?.isAlive == true) {
+            main.postDelayed({ if (inst === this && (standby || sessionWanted)) ensureMic() }, 200)
+            return
         }
+        micRunning = true
         micThread = thread(name = "voice-mic") {
-            val minBuf = AudioRecord.getMinBufferSize(VoiceClient.SR_IN, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
-            val rec = AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, VoiceClient.SR_IN,
-                AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(minBuf, VoiceClient.FRAME_BYTES * 8))
-            if (rec.state != AudioRecord.STATE_INITIALIZED) { post { VoiceBus.listener?.onError("mic init failed") }; micRunning = false; return@thread }
-            try { if (AcousticEchoCanceler.isAvailable()) AcousticEchoCanceler.create(rec.audioSessionId)?.enabled = true } catch (_: Throwable) {}
-            try { if (NoiseSuppressor.isAvailable()) NoiseSuppressor.create(rec.audioSessionId)?.enabled = true } catch (_: Throwable) {}
-            // NOTE: no MODE_IN_COMMUNICATION — on Samsung it routes playback to the earpiece.
-            rec.startRecording()
-            val buf = ByteArray(VoiceClient.FRAME_BYTES)
-            var silentFrames = 0L; var frames = 0L
+            var rec: AudioRecord? = null
+            var echo: AcousticEchoCanceler? = null
+            var noise: NoiseSuppressor? = null
+            var speech: SpeechDetector? = null
+            var wake: WakeWordDetector? = null
+            val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val oldMode = audio.mode
+            val oldSpeaker = audio.isSpeakerphoneOn
             try {
+                speech = SpeechDetector(this)
+                if (wakeEnabled) wake = WakeWordDetector(this, WAKE_MODEL, WAKE_THRESHOLD)
+                detector = wake
+                val minBuf = AudioRecord.getMinBufferSize(VoiceClient.SR_IN, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+                audio.mode = AudioManager.MODE_IN_COMMUNICATION
+                if (!audio.isBluetoothScoOn && !audio.isWiredHeadsetOn) audio.isSpeakerphoneOn = true
+                rec = AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, VoiceClient.SR_IN,
+                    AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(minBuf, VoiceClient.FRAME_BYTES * 8))
+                check(rec.state == AudioRecord.STATE_INITIALIZED) { "mic init failed" }
+                if (AcousticEchoCanceler.isAvailable()) echo = AcousticEchoCanceler.create(rec.audioSessionId)?.also { it.enabled = true }
+                if (NoiseSuppressor.isAvailable()) noise = NoiseSuppressor.create(rec.audioSessionId)?.also { it.enabled = true }
+                aecAvailable = echo?.enabled == true
+                client?.setAecAvailable(aecAvailable)
+                rec.startRecording()
+                val buf = ByteArray(VoiceClient.FRAME_BYTES)
+                var wasActive = false
                 while (micRunning) {
                     var off = 0
                     while (off < buf.size && micRunning) {
-                        val n = rec.read(buf, off, buf.size - off); if (n <= 0) break; off += n
+                        val n = rec.read(buf, off, buf.size - off)
+                        check(n > 0) { "microphone read failed" }
+                        off += n
                     }
                     if (off != buf.size) continue
-                    frames++
-                    // diagnostics: are we actually getting audio? (Quest/concurrent-capture check)
-                    var nz = false; for (i in 0 until buf.size step 32) if (buf[i].toInt() != 0) { nz = true; break }
-                    if (!nz) silentFrames++
-                    if (frames % 500 == 0L) Log.i(TAG, "mic frames=$frames silent=$silentFrames score=${detector?.lastScore}")
-                    client?.pushFrame(buf)
-                    val d = detector
-                    if (d != null && d.feed(buf)) onWake(d)
+                    val sp = speech.feed(buf)
+                    val c = client
+                    val active = c?.isRunning == true
+                    c?.pushFrame(buf, speech = sp)
+                    // Wake recognition has no role inside an active conversation.
+                    // Never run it against the assistant's own speech.
+                    if (active != wasActive) wake?.reset()
+                    wasActive = active
+                    if (!active && wake != null && wake.feed(buf, speech = speech.recentSpeech)) onWake(wake)
                 }
+            } catch (error: Exception) {
+                post { VoiceBus.listener?.onError("Voice microphone: ${error.message}") }
             } finally {
-                try { rec.stop() } catch (_: Throwable) {}
-                rec.release()
+                micRunning = false; aecAvailable = false
+                client?.setAecAvailable(false)
+                try { rec?.stop() } catch (_: Exception) {}
+                echo?.release(); noise?.release(); rec?.release()
+                speech?.close(); wake?.close(); detector = null
+                audio.isSpeakerphoneOn = oldSpeaker; audio.mode = oldMode
             }
         }
     }
@@ -198,7 +244,7 @@ class VoiceService : Service() {
         lastWakeAt = now
         Log.i(TAG, "WAKE score=${d.lastScore}")
         d.reset()
-        try { ToneGenerator(AudioManager.STREAM_MUSIC, 60).startTone(ToneGenerator.TONE_PROP_BEEP, 120) } catch (_: Throwable) {}
+        try { ToneGenerator(AudioManager.STREAM_MUSIC, 60).also { tone -> tone.startTone(ToneGenerator.TONE_PROP_BEEP, 120); main.postDelayed({ tone.release() }, 200) } } catch (_: Throwable) {}
         post {
             VoiceBus.listener?.onWake()
             val c = client
@@ -210,8 +256,8 @@ class VoiceService : Service() {
     private fun stopMic() {
         micRunning = false
         try { micThread?.join(800) } catch (_: Throwable) {}
-        micThread = null
-        detector?.close(); detector = null
+        if (micThread?.isAlive != true) micThread = null
+        // The mic thread owns and closes inference sessions after capture stops.
     }
 
     // ---- plumbing ---------------------------------------------------------
@@ -270,7 +316,7 @@ class VoiceService : Service() {
         const val WAKE_MODEL = "hey_sojourn.onnx"
         const val WAKE_THRESHOLD = 0.5f
         const val WAKE_REFRACTORY_MS = 2000L
-        const val IDLE_CLOSE_MS = 20_000L
+        const val IDLE_CLOSE_MS = 300_000L
         const val ACTION_STANDBY = "systems.bake.rook.voice.STANDBY"
         const val ACTION_SESSION = "systems.bake.rook.voice.SESSION"
         const val ACTION_END_SESSION = "systems.bake.rook.voice.END_SESSION"

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<voice-interaction-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:recognitionService="systems.bake.rook.RookRecognitionService"
+    android:sessionService="systems.bake.rook.RookAssistantSessionService"
+    android:settingsActivity="systems.bake.rook.SettingsActivity"
+    android:supportsAssist="true"
+    android:supportsLaunchVoiceAssistFromKeyguard="false" />

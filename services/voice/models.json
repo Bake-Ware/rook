@@ -1,0 +1,6 @@
+{
+  "smart-turn-v3.2-cpu.onnx": {
+    "url": "https://raw.githubusercontent.com/pipecat-ai/pipecat/397ddee2b278f2eb217b48d73ada13c790220cd9/src/pipecat/audio/turn/smart_turn/data/smart-turn-v3.2-cpu.onnx",
+    "sha256": "2bb026316b14a660486a75b1733cd3fbab8c2fd0314dc9af7be49f8cca967e4f"
+  }
+}

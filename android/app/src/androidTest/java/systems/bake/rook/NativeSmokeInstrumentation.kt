@@ -11,6 +11,11 @@ class NativeSmokeInstrumentation : Instrumentation() {
     private var mode: String? = null
     override fun onCreate(arguments: Bundle?) { super.onCreate(arguments); mode = arguments?.getString("mode"); start() }
     override fun onStart() {
+        if (mode == "voice") {
+            try { finish(-1, VoiceSmokeTest.run(targetContext, context)) }
+            catch (error: Throwable) { finish(0, Bundle().apply { putString("stream", "FAIL: ${error.stackTraceToString()}") }) }
+            return
+        }
         mode?.let { finish(-1, ApkUpdateSmokeTest.run(targetContext, it)); return }
         val report = Bundle()
         try {

@@ -206,10 +206,19 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
     private fun scrollToEnd() { b.chatScroll.post { b.chatScroll.fullScroll(View.FOCUS_DOWN) } }
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+    }
+
     override fun onResume() {
         super.onResume()
         VoiceBus.listener = this
         onState(VoiceBus.state)
+        if (intent?.action == Intent.ACTION_ASSIST) {
+            intent.action = null
+            voiceOn(openSession = true)
+        }
     }
 
     override fun onPause() { VoiceBus.listener = null; super.onPause() }
