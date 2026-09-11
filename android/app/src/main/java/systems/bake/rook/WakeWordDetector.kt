@@ -44,6 +44,8 @@ class WakeWordDetector(ctx: Context, private val wakeModelAsset: String, private
     private var rawFilled = 0
     private val pending = FloatArray(CHUNK)
     private var pendingLen = 0
+    private var confirmations = 0
+    private var speechPresent = false
 
     private val mel = ArrayDeque<FloatArray>()      // each = 32 bins
     private val emb = ArrayDeque<FloatArray>()      // each = 96
@@ -53,7 +55,7 @@ class WakeWordDetector(ctx: Context, private val wakeModelAsset: String, private
         fun load(name: String): OrtSession {
             val bytes = ctx.assets.open("wakeword/$name").use { it.readBytes() }
             val opts = OrtSession.SessionOptions().apply { setIntraOpNumThreads(1) }
-            return env.createSession(bytes, opts)
+            return opts.use { env.createSession(bytes, it) }
         }
         melSess = load("melspectrogram.onnx")
         embSess = load("embedding_model.onnx")
@@ -63,7 +65,8 @@ class WakeWordDetector(ctx: Context, private val wakeModelAsset: String, private
     }
 
     /** Feed PCM16 LE bytes (any length). Returns true once per detection (with refractory handled by caller). */
-    fun feed(pcm: ByteArray, len: Int = pcm.size): Boolean {
+    fun feed(pcm: ByteArray, len: Int = pcm.size, speech: Boolean = false): Boolean {
+        speechPresent = speech
         var hit = false
         var i = 0
         while (i + 1 < len) {
@@ -127,11 +130,12 @@ class WakeWordDetector(ctx: Context, private val wakeModelAsset: String, private
                 lastScore = flatten(r[0].value)[0]
             }
         }
-        return lastScore >= threshold
+        confirmations = if (lastScore >= threshold && speechPresent) confirmations + 1 else 0
+        return confirmations >= 2
     }
 
     /** Reset temporal buffers (e.g. after a detection so it doesn't re-fire on the tail). */
-    fun reset() { mel.clear(); emb.clear(); lastScore = 0f }
+    fun reset() { mel.clear(); emb.clear(); lastScore = 0f; raw.fill(0f); pending.fill(0f); rawFilled = 0; pendingLen = 0; confirmations = 0; speechPresent = false }
 
     fun close() { try { melSess.close(); embSess.close(); wakeSess.close() } catch (_: Throwable) {} }
 

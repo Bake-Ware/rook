@@ -46,6 +46,10 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.ASSIST" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
         </activity>
 
         <!-- The long-lived worker. dataSync keeps the band connection alive;
@@ -70,6 +74,16 @@
             android:exported="false"
             android:label="@string/settings"
             android:parentActivityName=".MainActivity" />
+
+        <service android:name=".RookAssistantService" android:exported="true" android:enabled="@bool/native_assistant_service_enabled"
+            android:permission="android.permission.BIND_VOICE_INTERACTION">
+            <intent-filter><action android:name="android.service.voice.VoiceInteractionService" /></intent-filter>
+            <meta-data android:name="android.voice_interaction" android:resource="@xml/voice_interaction_service" />
+        </service>
+        <service android:name=".RookRecognitionService" android:exported="false"
+            android:permission="android.permission.BIND_SPEECH_RECOGNITION_SERVICE" />
+        <service android:name=".RookAssistantSessionService" android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION" />
 
         <!-- Live voice session (push-to-talk now, wake word later). -->
         <service
