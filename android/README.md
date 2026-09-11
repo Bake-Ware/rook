@@ -96,3 +96,22 @@ cd android
 - `shell.exec` runs in the app's restricted sandbox — far less capable than the
   Termux environment. If you need a full userland, keep the Termux worker too;
   both can be on the band at once under different names.
+
+
+## Voice and default assistant (0.4.2)
+
+The APK uses a local Silero speech gate before wake-word activation. In a live
+conversation, sustained speech can interrupt playback when the platform echo
+canceller is enabled; short false interruptions can resume playback. Devices
+without an enabled echo canceller retain the explicit Interrupt control.
+
+Settings → **Use Rook as default assistant** opens Android's assistant selector.
+System assistant invocation opens the same Rook conversation and microphone
+permission flow. This does not grant proprietary hardware hotword support or
+make Rook a general dictation provider. Open Rook after an APK replacement to
+resume wake-word standby.
+
+The version-2 backend preserves conversation and tool results across reconnects.
+Interrupting speech does not cancel background work; explicitly ask to stop a
+job when that is intended. See [the voice service](../services/voice/README.md)
+for protocol, deployment and acoustic-test limitations.
