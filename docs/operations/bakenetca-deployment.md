@@ -1,5 +1,50 @@
 # BakeNetCA deployment layout
 
+## Voice quality and Android assistant deployed, 2026-09-10
+
+Both Rook web/MCP services run from `/opt/rook-releases/voice-20260910-84f2e66`,
+source `84f2e66`. Override backups are in
+`/var/backups/rook/voice-20260910-84f2e66`. The public APK is **0.4.2 (6)**,
+145,576,782 bytes, SHA-256
+`1e1c7d2c17c6c32238ff35c6f494c39a533139b797998f0e545c3bb842bf1cba`.
+The APK was built from `0765413`; the subsequent commit changes only backend
+planning, tests and documentation. The signing certificate is unchanged.
+The public manifest and a full APK download matched the metadata and hash.
+Desktop worker and enrollment artifacts were carried forward unchanged; the
+signed desktop feed remains **140.curly.newt**. All 30 registered workers were
+fresh after deployment (24 desktop build 140, three native APK build 142/code 5
+before OTA, three build 0 devices).
+
+Kaiju's `voice-agent.service` now runs the versioned backend from
+`/home/bake/voice-agent/releases/84f2e66`, using the existing Python environment,
+model services and credentials. The original unversioned source remains intact.
+The drop-in is `/etc/systemd/system/voice-agent.service.d/zz-rook-voice.conf`;
+the private previous unit configuration is backed up under
+`/home/bake/voice-agent/backups/voice-v2-20260910`. Persistent conversation/job
+state is `/home/bake/voice-agent/voice-state.sqlite3` (0600). Existing runtime
+model choices were preserved, including `gemma4-mouthpiece` and
+`large-v3-turbo`. Smart Turn v3.2 is pinned by URL and digest in
+`services/voice/models.json`.
+
+Validation: 152 repository tests passed before the final planner regression test
+was added; all 10 voice regression tests then passed. Three consecutive candidate
+smokes and the production TLS smoke passed model recall across reconnect, real
+TTS framing/stop acknowledgement, and a read-only Rook uptime job. Real Hermes
+ACP completed a synthetic acknowledgement test; PCM input passed Smart Turn and
+Whisper transcription. Android 14 accepted Rook as the assistant role holder;
+the assistant key opened Rook's normal permission flow. APK instrumentation
+reported zero false wakes over 30 seconds of synthetic silence/noise, 126 speech
+frames and one detection on the synthetic wake phrase. These are software-path
+tests, not real-room acoustic measurements or measured physical-phone barge-in
+latency. Physical speaker/headset/Bluetooth checks remain outstanding.
+
+Rollback: restore the two saved BakeNetCA overrides, reload systemd and restart
+`rook-remote`/`rook-band-mcp`. On kaiju, remove only `zz-rook-voice.conf`, reload
+systemd and restart `voice-agent`; the previous source/config remains in place.
+Keep the new SQLite state for a future forward migration. Android cannot be
+silently downgraded to code 5; an APK rollback needs a new, higher version code.
+
+
 ## Verified APK updater deployed, 2026-09-09
 
 Both services run from `/opt/rook-releases/apk-ota-20260909-24aee7e`, source
