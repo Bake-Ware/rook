@@ -56,6 +56,9 @@ class AccountWeb:
         from .band_web import BandWeb
         self.band_web=BandWeb(self)
         self.band_web.install(app)
+        from .work_web import WorkWeb
+        self.work_web = WorkWeb(self)
+        self.work_web.install(app)
         from .token_web import TokenWeb
         TokenWeb(self).install(app)
         app.router.add_get('/account/component', self.component)
