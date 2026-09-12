@@ -1,5 +1,37 @@
 # BakeNetCA deployment layout
 
+## Server-owned Work review deployed, 2026-09-12
+
+The web service `rook-remote` runs from
+`/opt/rook-releases/work-20260912-70090c5`, source `70090c5` on
+`feature/work-sessions`. Open `https://rook.bakeforge.com/#work`.
+The MCP service remains on its prior voice release. Work uses existing desktop
+worker process capabilities, so this release does not publish a new worker or APK.
+The previous signed worker bundles, manifest, and APK were copied into the new
+release and matched by SHA-256 before switching.
+
+Work state persists in `/var/lib/rook-band-mcp/work.sqlite3`.
+Configuration and enrollment backup:
+`/var/backups/rook/work-20260912-70090c5`.
+Rollback restores that directory's saved `90-enrollment-upgrade.conf` to
+`/etc/systemd/system/rook-remote.service.d/`, reloads systemd, and restarts
+`rook-remote`. Keep Work's database for a subsequent forward deployment.
+Rolling back hides Work; close its host agents first if they should not keep running.
+
+Nine focused tests passed. The real Codex/browser smoke passed file edits, work
+continuing after browser close, restored history/diff, desktop and 390-pixel mobile
+layout, and reopening the same provider thread. The production HTTPS WebSocket
+test started Codex on cachyrig through the live worker, disconnected, restarted
+the actual web service during the active turn, and confirmed completion plus
+restored command output and diff on the same thread.
+
+The closed **Work deployment check** session retains this production transcript.
+Its disposable directory is `/tmp/rook-work-review` on cachyrig. The verification
+agent was stopped. A cleanup-script table-name mistake was corrected, and its one
+temporary account login was explicitly removed. Public unauthenticated Work
+bootstrap returns 401; both web and MCP services are healthy.
+See [Work sessions](../web/work.md) for scope and transport limits.
+
 ## Voice quality and Android assistant deployed, 2026-09-10
 
 Both Rook web/MCP services run from `/opt/rook-releases/voice-20260910-84f2e66`,
