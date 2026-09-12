@@ -1,7 +1,7 @@
 # Dashboard workspace
 
 The dashboard is a single document with hash-routed Workers, Bands, Chat,
-Sessions, Install, Account, and Tokens views. `shell.css` owns layout;
+Sessions, Work, Install, Account, and Tokens views. `shell.css` owns layout;
 `theme.css` adopts BakeDash's olive/amber palette, square panels, DM Sans,
 and IBM Plex Mono. The BakeDash project remains independent.
 
@@ -105,3 +105,5 @@ Explicit capability calls and sends still wait for their individual result.
 Against an older server without the endpoint, the CLI falls back to the roster
 without performing per-worker chat scans. Clients do not multiply the server's
 collection work. The browser's existing worker endpoint remains available.
+
+See [Work sessions](work.md) for server-owned agent sessions and the first Codex adapter.

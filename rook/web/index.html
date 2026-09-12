@@ -349,6 +349,7 @@
       <a id="tab-workers" href="#workers" class="active" onclick="showView('workers');return false">Workers</a>
       <a id="tab-bands" href="#bands" onclick="showView('bands');return false">Bands</a>
       <a id="tab-chat" href="#chat" onclick="showView('chat');return false">Chat</a>
+      <a id="tab-work" href="#work" onclick="showView('work');return false">Work</a>
       <a id="tab-sessions" href="#sessions" onclick="showView('sessions');return false">Sessions</a>
     </nav>
     <span class="nav-label">MANAGE</span>
@@ -466,6 +467,7 @@
     </div>
 
     <!-- INSTALL VIEW -->
+    <div id="view-work" hidden></div>
     <div id="view-sessions" hidden>
       <div class="sesshead">
         <div>
@@ -957,10 +959,19 @@ const viewInfo={
  tokens:['API tokens','Credentials and identities for your agents and integrations.'],
  bands:['Bands','Organize your fleet, manage keys, and move workers.'],
  chat:['Chat','Conversations with the people and agents on your network.'],
+ work:['Work','Direct access to agents working on your hosts.'],
  sessions:['Sessions','Continue work across your connected machines.'],
  install:['Install a worker','Connect another machine to your workspace.']
 };
-let activeView=null, bandsUI=null, bandsLoading=null;
+let activeView=null, bandsUI=null, bandsLoading=null, workUI=null, workLoading=null;
+async function ensureWork(){
+ if(workUI)return workUI;
+ if(workLoading)return workLoading;
+ const root=$('#view-work');
+ workLoading=import('/account/work/assets/work.js').then(m=>m.mountWork(root)).then(ui=>workUI=ui);
+ try{return await workLoading;}catch(e){root.textContent=e.message;throw e;}finally{workLoading=null;}
+}
+
 async function ensureBands(){
  if(bandsUI)return bandsUI;
  if(bandsLoading)return bandsLoading;
@@ -997,6 +1008,7 @@ function showView(v,updateHistory=true){
  if(updateHistory&&location.hash!=='#'+v)history.pushState(null,'','#'+v);
  if(activeView===v){if(v==='account'&&settingsUI.account)settingsUI.account.refresh().catch(()=>{});return;}
  settingsUI[activeView]?.deactivate();
+ if(activeView==='work')workUI?.deactivate();
  activeView=v;document.body.dataset.view=v;
  for(const n of Object.keys(viewInfo)){
   $('#view-'+n).hidden=v!==n; const tab=$('#tab-'+n);tab.classList.toggle('active',v===n);
@@ -1006,6 +1018,7 @@ function showView(v,updateHistory=true){
  document.title=viewInfo[v][0]+' · Rook';$('#worker-controls').hidden=v!=='workers';$('#worker-stats').hidden=v!=='workers';$('#addband-form').hidden=true;
  if(v==='chat'){startChat();}else{stopChat();}
  if(v==='sessions'){startSessions();}else{stopSessions();}
+ if(v==='work')ensureWork().then(ui=>{if(activeView==='work')ui.activate();else ui.deactivate();}).catch(()=>{});
  if(v==='bands')ensureBands().then(ui=>ui.refresh()).catch(()=>{});
  if(v==='account'||v==='tokens')ensureSettings(v).then(ui=>ui.refresh()).catch(()=>{});
 }
