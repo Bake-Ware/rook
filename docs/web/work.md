@@ -3,7 +3,12 @@
 Work replaces the old Sessions view; saved `#sessions` links redirect to `#work`.
 The server discovers Claude and Codex histories on connected workers every 15
 seconds after each scan, with paginated metadata and transcript reads. Updated
-workers are required for pagination and activity reporting. Imports are stored
+workers are required for bounded transcript paging and activity reporting.
+Transcript requests transfer at most 6,000 content characters per page, including
+partial large messages, and are paced one second apart. A separate SQLite index
+keeps roster polling independent of transcript size. For deployment canaries,
+`ROOK_WORK_IMPORT_WORKERS` optionally limits discovery to comma-separated worker
+names; unset it for fleet-wide discovery. Imports are stored
 per operator and remain readable offline; subsequent scans update the same entry.
 Codex archives are included alongside regular rollout files.
 

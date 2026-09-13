@@ -96,7 +96,7 @@ export async function mountWork(root) {
     if(s.id!==selected)return;
     state=s;
     $('#work-title').textContent=s.title;
-    $('#work-meta').textContent=[s.agent||'codex',s.worker_name,s.cwd,s.model,s.imported?'Synced from host · continue there':''].filter(Boolean).join(' · ');
+    $('#work-meta').textContent=[s.agent||'codex',s.worker_name,s.cwd,s.model,s.imported?(s.history_loading?'History is syncing from the host':'Synced from host'):''].filter(Boolean).join(' · ');
     $('#work-status').textContent=s.disconnected?'Host disconnected':s.status;
     $('#work-error').hidden=!s.error;$('#work-error').textContent=s.error||'';
     $('#work-interrupt').disabled=!(s.turn_id||s.external_running);

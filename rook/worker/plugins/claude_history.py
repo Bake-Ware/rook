@@ -410,6 +410,43 @@ class ClaudeHistoryPlugin(Plugin):
             out["next_offset"] = max(0, int(offset)) + len(transcript)
         return out
 
+    @capability("read_page")
+    def _read_page(self, session_id: str, path: str | None = None,
+                   offset: int = 0, content_offset: int = 0, max_chars: int = 6000) -> dict:
+        """Read a bounded transcript page, including partial large messages.
+
+        Continue with next_offset and next_content_offset. Message fragments
+        carry their original index and character offset for lossless assembly.
+        """
+        root = self._expand(path)
+        sp = self._resolve_session(root, session_id)
+        if sp is None:
+            return {"ok": False, "error": "session not found"}
+        offset, content_offset = max(0, int(offset)), max(0, int(content_offset))
+        budget = max(1, min(int(max_chars), 6000))
+        messages = []
+        index = 0
+        for rec in self._read_lines(sp):
+            if not isinstance(rec, dict) or rec.get('type') not in ('user', 'assistant'):
+                continue
+            if index < offset:
+                index += 1
+                continue
+            if budget <= 0 or len(messages) >= 20:
+                return dict(ok=True, messages=messages, truncated=True,
+                            next_offset=index, next_content_offset=0)
+            text = _message_text(rec)
+            start = content_offset if index == offset else 0
+            chunk = text[start:start + budget]
+            messages.append(dict(index=index, content_offset=start,
+                                 role=_record_role(rec), content=chunk))
+            budget -= len(chunk)
+            if start + len(chunk) < len(text):
+                return dict(ok=True, messages=messages, truncated=True,
+                            next_offset=index, next_content_offset=start + len(chunk))
+            index += 1
+        return dict(ok=True, messages=messages, truncated=False, activity=self._activity(sp))
+
     def _activity(self, path):
         """Use explicit completion markers; stale/incomplete logs stay pending."""
         activity = 'pending'

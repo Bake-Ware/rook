@@ -150,7 +150,8 @@ class HistoryBand(FakeBand):
     def __init__(self):
         super().__init__()
         self.workers['host1']['caps'] = ['claude-history.pull', 'claude-history.read',
-                                        'codex-history.pull', 'codex-history.read']
+                                        'codex-history.pull', 'codex-history.read',
+                                        'claude-history.read_page', 'codex-history.read_page']
         self.version = 1
 
     async def call(self, cap, args, target, timeout):
@@ -160,12 +161,12 @@ class HistoryBand(FakeBand):
                          last_modified=self.version, size_bytes=self.version) for i in range(101)]
             offset = args.get('offset', 0)
             result = dict(ok=True, sessions=rows[offset:offset+args['limit']], total=len(rows))
-        elif cap.endswith('.read'):
+        elif cap.endswith('.read_page'):
             rows = [dict(role='assistant', content=f'Message {i}') for i in range(501)]
             offset = args.get('offset', 0)
-            batch = rows[offset:offset+args['max_messages']]
+            batch = [dict(m, index=offset+i, content_offset=0) for i, m in enumerate(rows[offset:offset+20])]
             result = dict(ok=True, messages=batch, activity='ready',
-                          truncated=offset+len(batch)<len(rows), next_offset=offset+len(batch))
+                          truncated=offset+len(batch)<len(rows), next_offset=offset+len(batch), next_content_offset=0)
         else:
             raise AssertionError(cap)
         return {'ok': True, 'from': target, 'result': result}
@@ -176,6 +177,7 @@ async def test_discovery_paginates_both_agents_and_preserves_review_status(porta
     p = portal
     p.server._band = band = HistoryBand()
     work = p.account.work_web
+    work.import_pause = 0
     host = band.workers['host1']
     for agent in ('claude', 'codex'):
         await work.sync_history(host, agent, [p.uid])
@@ -231,6 +233,7 @@ async def test_imported_resume_input_close_and_host_isolation(portal):
     band.call = call
     p.server._band = band
     work = p.account.work_web
+    work.import_pause = 0
     host = band.workers['host1']
     await work.sync_history(host, 'claude', [p.uid])
     sid = work.store.all()[0]['id']
@@ -251,3 +254,33 @@ async def test_imported_resume_input_close_and_host_isolation(portal):
     band.workers.clear()
     await work.command(sid, dict(op='status', status='pending', id='offline-review'))
     assert work.summary(work.store.get(sid))['status'] == 'pending'
+
+
+def test_index_migrates_existing_sessions_without_loading_transcripts(tmp_path):
+    store = WorkStore(tmp_path/'work.sqlite3')
+    state = dict(id='legacy', owner='operator', status='ready', items={'large':'x'*1000000}, order=['large'])
+    store.save(state)
+    with store.db() as db:
+        db.execute('DROP TABLE work_index')
+    restored = WorkStore(store.path)
+    metadata = restored.all('operator', details=False)[0]
+    assert 'items' not in metadata and 'order' not in metadata
+    assert len(json.dumps(metadata)) < 1000
+    assert restored.get('legacy')['items'] == state['items']
+    assert restored.revision('legacy', 'operator') == state['revision']
+    state['status'] = 'blocked'
+    restored.save(state)
+    assert restored.all(details=False)[0]['status'] == 'blocked'
+
+
+@pytest.mark.asyncio
+async def test_older_workers_still_get_catalog_entries(portal):
+    p = portal
+    p.server._band = band = HistoryBand()
+    worker = band.workers['host1']
+    worker['caps'] = ['claude-history.pull', 'claude-history.read']
+    work = p.account.work_web
+    await work.sync_history(worker, 'claude', [p.uid])
+    assert len(work.store.all()) == 101
+    assert all(s['history_loading'] for s in work.store.all())
+    assert all(cap.endswith('.pull') for cap, _ in band.calls)
