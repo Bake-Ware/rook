@@ -1,5 +1,37 @@
 # BakeNetCA deployment layout
 
+## Live-session detection and full reads deployed, 2026-09-13
+
+Web release: `/opt/rook-releases/work-live-20260913-fbfbd31`, source
+`fbfbd31`, with signed worker **155.uppity.meerkat**. Artifact SHA-256:
+`12bd98b055289e15965e0461992c37f36f774c17a786d5a657d72166b2abc9c4`.
+The previous release is `work-remote-20260913-4fae19d`; override/database
+backups are under `/var/backups/rook/work-live-20260913-fbfbd31`.
+
+Imported sessions now report independent process activity using exact open log
+files, resume arguments, and Claude PID/session markers with process-start
+validation. Active entries hide Resume on host, and both history adapters reject
+resuming a live session on the worker. Turn status remains separate from process
+liveness. A changed active flag is synced even when the transcript file has not
+changed.
+
+Opening an imported session automatically fetches its complete normalized
+conversation in bounded sequential pages. New workers serve a stable, short-lived
+snapshot from worker memory; the web relays pages without storing transcript
+content. Switching entries cancels the previous read. Older workers retain the
+bounded read-page fallback during rollout. Refresh the Work page after deployment
+to load the updated browser module.
+
+Validation: 175 Python tests passed. Browser checks cover full automatic reads,
+active-session controls, cancellation when switching, and metadata-only storage.
+The live ongoing Codex session on sparky was detected as active, had Resume on
+host hidden, and loaded all 73 messages at verification in four automatic pages.
+Three independent live Claude sessions on cachyrig were also detected. Active web
+storage remained at zero transcript/event rows. The worker build was canaried on
+sparky before the web switch. All 25 compatible workers completed their update
+health window; automatic updates were restored. The existing web resource limits remain in place;
+Android APK and MCP source were preserved.
+
 ## Worker-owned Work deployed, 2026-09-13
 
 Web release: `/opt/rook-releases/work-remote-20260913-4fae19d`, source

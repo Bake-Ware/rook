@@ -51,6 +51,29 @@ async def main():
             await expect(page.locator('#work-compose')).to_be_hidden()
             await expect(page.locator('#work-resume')).to_be_hidden()
             await expect(page.locator('#work-meta')).to_contain_text('Active on host')
+            # Switching sessions must cancel an unfinished whole-conversation read.
+            blocked, release = asyncio.Event(), asyncio.Event()
+            cancelled = []
+            async def hold_old_page(route):
+                if f'/history/{sid}?' in route.request.url and 'offset=20&' in route.request.url and not blocked.is_set():
+                    blocked.set()
+                    await release.wait()
+                try:
+                    await route.continue_()
+                except Exception:
+                    pass  # The previous fetch was cancelled by selecting another entry.
+            page.on('requestfailed', lambda request: cancelled.append(request.url))
+            await page.route('**/account/work/history/**', hold_old_page)
+            await page.locator('#work-history-refresh').click()
+            await asyncio.wait_for(blocked.wait(), 5)
+            other = next(s['id'] for s in work.store.all() if s['id'] != sid)
+            await page.locator(f'[data-session="{other}"]').click()
+            release.set()
+            await expect(page.locator('#work-conversation')).to_contain_text('Message 500', timeout=15000)
+            assert any(f'/history/{sid}?' in url and 'offset=20&' in url for url in cancelled)
+            await page.unroute('**/account/work/history/**', hold_old_page)
+            await page.locator(f'[data-session="{sid}"]').click()
+            await expect(page.locator('#work-history-note')).to_have_text('Conversation read from host.', timeout=15000)
             await card.locator('select').select_option('blocked')
             await expect(page.locator('#work-status')).to_have_text('blocked')
             await card.locator('[data-close-session]').click()
