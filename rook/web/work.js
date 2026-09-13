@@ -58,7 +58,8 @@ export async function mountWork(root) {
   }
   function renderList(){
     const query=$('#work-search').value.trim().toLowerCase();
-    const visible=sessions.filter(s=>[s.title,s.worker_name,s.agent,s.status,s.cwd].join(' ').toLowerCase().includes(query));
+    const visible=sessions.filter(s=>[s.title,s.worker_name,s.agent,s.status,s.cwd].join(' ').toLowerCase().includes(query))
+      .sort((a,b)=>(b.updated||0)-(a.updated||0)||a.id.localeCompare(b.id));
     $('#work-list').innerHTML=visible.length?visible.map(s=>`<div class="work-session-card ${s.id===selected?'selected':''}"><button type="button" class="work-session-link" data-session="${esc(s.id)}"><strong>${esc(s.title)}</strong><span>${esc(s.agent||'codex')} · ${esc(s.worker_name)} · ${esc(s.status)}</span></button><label class="work-card-status">Status <select data-status-session="${esc(s.id)}" aria-label="Status for ${esc(s.title)}">${['auto','pending','blocked','closed'].map(v=>`<option value="${v}" ${(s.review_status||'auto')===v?'selected':''}>${v[0].toUpperCase()+v.slice(1)}</option>`).join('')}</select></label><button type="button" data-close-session="${esc(s.id)}" ${s.status==='closed'?'hidden':''}>Close</button></div>`).join(''):'<p class="work-muted">No matching sessions.</p>';
   }
   function select(id){

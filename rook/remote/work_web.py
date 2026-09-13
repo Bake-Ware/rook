@@ -21,7 +21,7 @@ from ..worker.work_runtime import project
 
 METADATA_KEYS = frozenset(('id', 'owner', 'title', 'cwd', 'model', 'worker_id',
     'worker_name', 'band', 'agent', 'imported', 'source_id', 'source_version',
-    'source_updated', 'message_count', 'thread_id', 'turn_id', 'status',
+    'source_updated', 'last_activity', 'message_count', 'thread_id', 'turn_id', 'status',
     'review_status', 'revision', 'updated', 'error', 'disconnected',
     'external_handle', 'external_cursor', 'resume_note', 'remote_runtime',
     'worker_revision', 'running', 'needs_input', 'legacy_runtime', 'active', 'messageable', 'message_note'))
@@ -238,6 +238,14 @@ class WorkWeb:
                     return web.json_response({'unchanged': True, 'live': False}, headers=NO_STORE)
                 page = await self.rpc(s, cap, dict(session_id=s['source_id'], offset=offset,
                     version=request.query.get('version', '')))
+                version = str(page.get('version', '')).split(':')
+                if len(version) == 3 and version[2].isdigit():
+                    activity = int(version[2]) / 1_000_000_000
+                    async with self.lock(s['id']):
+                        latest = self.store.get(s['id'], user['id'])
+                        if activity > (latest.get('source_updated') or 0):
+                            latest['source_updated'] = activity
+                            self.store.save(latest)
                 return web.json_response(page, headers=NO_STORE)
             cap = s['agent'] + '-history.read_snapshot'
             args = dict(session_id=s['source_id'], offset=offset, content_offset=content_offset)
@@ -272,7 +280,8 @@ class WorkWeb:
         return {**{k: s.get(k) for k in ('id', 'title', 'worker_name', 'cwd',
                                      'updated', 'model', 'revision', 'error', 'agent', 'imported', 'review_status')},
                 'status': s.get('review_status') or ('ready' if s['status'] == 'waiting' else s['status']),
-                'updated': s.get('source_updated', s.get('updated'))}
+                'updated': max(s.get('source_updated') or s.get('updated') or 0,
+                               s.get('last_activity') or 0)}
 
     @staticmethod
     def snapshot(s):
@@ -293,7 +302,7 @@ class WorkWeb:
             try:
                 user = self.user(request)  # Revocation applies to already-open sockets.
                 sessions = [self.summary(s) for s in self.store.all(user['id'], details=False)]
-                sessions.sort(key=lambda s: s.get('updated') or 0, reverse=True)
+                sessions.sort(key=lambda s: (-(s.get('updated') or 0), s['id']))
                 workers = [{'id': w['worker_id'], 'name': w.get('name', ''), 'band': w.get('band')}
                            for w in self.workers()]
                 listing = json.dumps([sessions, workers])
@@ -428,6 +437,8 @@ class WorkWeb:
                         s['review_status'] = None
                     if result.get('result', {}).get('status') != 'submitted':
                         raise ValueError('Command outcome is uncertain or failed. Check the host session before retrying.')
+                if op in ('message', 'terminal_input'):
+                    s['last_activity'] = time.time()
                 self.store.save(s, {'op': op, 'command': data.get('id')})
                 self.store.result(sid, data['id'], {'status': 'submitted'})
             except Exception as e:
@@ -511,6 +522,8 @@ class WorkWeb:
             if key in meta:
                 s[key] = meta[key]
         s['worker_revision'] = meta['revision']
+        if meta.get('updated') is not None:
+            s['source_updated'] = meta['updated']
         s['disconnected'] = False
         s['error'] = 'The host reported an error. Open the session for details.' if meta.get('has_error') else ''
 
