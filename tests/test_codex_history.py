@@ -126,3 +126,29 @@ def test_claude_activity_user_input_and_completion(tmp_path):
     assert plugin._activity(path) == 'working'
     path.write_text(json.dumps({'type': 'assistant', 'message': {'stop_reason': 'end_turn'}}))
     assert plugin._activity(path) == 'ready'
+
+
+def test_bounded_pages_preserve_large_messages_and_unicode(tmp_path):
+    content = 'Large 🦉 output\n' * 3000
+    rows = [dict(type='user', message={'content': content}),
+            dict(type='assistant', message={'content': 'done', 'stop_reason': 'end_turn'})]
+    path = tmp_path / 'session.jsonl'
+    path.write_text('\n'.join(json.dumps(row) for row in rows))
+    plugin = ClaudeHistoryPlugin()
+    rebuilt = ['', '']
+    offset = content_offset = 0
+    calls = 0
+    while True:
+        page = plugin._read_page('session', path=str(tmp_path), offset=offset, content_offset=content_offset)
+        assert len(json.dumps(page).encode()) < 80000
+        for message in page['messages']:
+            index = message['index']
+            assert len(rebuilt[index]) == message['content_offset']
+            rebuilt[index] += message['content']
+        calls += 1
+        if not page.get('truncated'):
+            assert page['activity'] == 'ready'
+            break
+        offset, content_offset = page['next_offset'], page['next_content_offset']
+    assert calls > 1
+    assert rebuilt == [content, 'done']

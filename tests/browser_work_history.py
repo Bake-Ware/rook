@@ -19,6 +19,7 @@ async def main():
         p = portal.__wrapped__(Path(temp), patch)
         p.server._band = band = HistoryBand()
         work = p.account.work_web
+        work.import_pause = 0
         await work.sync_history(band.workers['host1'], 'claude', [p.uid])
         sid = work.store.all()[0]['id']
         async def index(request):

@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import os
 import sqlite3
 import time
 import uuid
@@ -72,6 +73,14 @@ class WorkStore:
                 CREATE TABLE IF NOT EXISTS work_sessions(
                     id TEXT PRIMARY KEY, owner TEXT NOT NULL, updated REAL NOT NULL,
                     state TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS work_index(
+                    id TEXT PRIMARY KEY, owner TEXT NOT NULL, updated REAL NOT NULL,
+                    state TEXT NOT NULL);
+                CREATE INDEX IF NOT EXISTS work_index_owner ON work_index(owner, updated);
+                INSERT OR IGNORE INTO work_index
+                    SELECT id, owner, updated, json_remove(state, '$.items', '$.order',
+                        '$.terminal', '$.diff', '$.rpc', '$.pending', '$.partial') FROM work_sessions
+                    WHERE NOT EXISTS (SELECT 1 FROM work_index WHERE work_index.id=work_sessions.id);
                 CREATE TABLE IF NOT EXISTS work_events(
                     seq INTEGER PRIMARY KEY AUTOINCREMENT, session TEXT NOT NULL,
                     created REAL NOT NULL, event TEXT NOT NULL);
@@ -101,11 +110,18 @@ class WorkStore:
 
     def all(self, owner=None, *, details=True):
         with self.db() as db:
-            projection = 'state' if details else "json_remove(state, '$.items', '$.order', '$.terminal') AS state"
-            rows = db.execute('SELECT ' + projection + ' FROM work_sessions ' +
+            table = 'work_sessions' if details else 'work_index'
+            rows = db.execute('SELECT state FROM ' + table + ' ' +
                               ('WHERE owner=? ' if owner else '') + 'ORDER BY updated DESC',
                               (owner,) if owner else ()).fetchall()
         return [json.loads(r['state']) for r in rows]
+
+    def revision(self, sid, owner):
+        with self.db() as db:
+            row = db.execute('SELECT state FROM work_index WHERE id=? AND owner=?', (sid, owner)).fetchone()
+        if row is None:
+            raise web.HTTPNotFound()
+        return json.loads(row['state'])['revision']
 
     def save(self, state, event=None):
         state['updated'] = time.time()
@@ -113,6 +129,10 @@ class WorkStore:
         with self.db() as db:
             db.execute('INSERT OR REPLACE INTO work_sessions VALUES(?,?,?,?)',
                        (state['id'], state['owner'], state['updated'], json.dumps(state)))
+            index = {k: v for k, v in state.items()
+                     if k not in ('items', 'order', 'terminal', 'diff', 'rpc', 'pending', 'partial')}
+            db.execute('INSERT OR REPLACE INTO work_index VALUES(?,?,?,?)',
+                       (state['id'], state['owner'], state['updated'], json.dumps(index)))
             if event is not None:
                 db.execute('INSERT INTO work_events(session,created,event) VALUES(?,?,?)',
                            (state['id'], time.time(), json.dumps(event)))
@@ -142,6 +162,7 @@ class WorkWeb:
         self.jobs = set()
         self.pump = None
         self.discovery = None
+        self.import_pause = 1.0
 
     def lock(self, sid):
         return self.locks.setdefault(sid, asyncio.Lock())
@@ -247,8 +268,8 @@ class WorkWeb:
                     await ws.send_json({'type': 'index', 'sessions': sessions, 'workers': workers})
                     last_list = listing
                 if selected:
-                    s = self.store.get(selected, user['id'])
-                    if s['revision'] != last_revision:
+                    if self.store.revision(selected, user['id']) != last_revision:
+                        s = self.store.get(selected, user['id'])
                         await ws.send_json({'type': 'session', 'session': self.snapshot(s)})
                         last_revision = s['revision']
                 try:
@@ -441,7 +462,10 @@ class WorkWeb:
             try:
                 with self.account.store.db() as db:
                     owners = [r['id'] for r in db.execute('SELECT id FROM users WHERE admin=1')]
+                allowed = {name.strip() for name in os.environ.get("ROOK_WORK_IMPORT_WORKERS", "").split(",") if name.strip()}
                 for worker in self.workers(history=True):
+                    if allowed and worker.get("name") not in allowed:
+                        continue
                     for agent in ('claude', 'codex'):
                         if agent + '-history.pull' not in worker.get('caps', []):
                             continue
@@ -485,15 +509,38 @@ class WorkWeb:
                                 current['status'] = 'pending'
                                 self.store.save(current)
                         continue
+                    # Catalog entries exist even while an older worker awaits an update.
+                    if not existing:
+                        existing = dict(id=sid, owner=owner, **target, worker_name=worker.get('name'),
+                            agent=agent, imported=True, source_id=source, thread_id=None,
+                            handle=None, turn_id=None, pending={}, rpc={}, cursor=0,
+                            partial='', model='', error='', diff='', status='pending', items={}, order=[],
+                            title=meta.get('title') or source, cwd=meta.get('cwd'),
+                            source_updated=meta.get('last_modified'), history_loading=True)
+                        self.store.save(existing)
+                        existing_by_owner[owner][source] = existing
+                    if namespace + '.read_page' not in worker.get('caps', []):
+                        continue
                     try:
                         messages = []
+                        transcript_offset = content_offset = 0
                         while True:
-                            transcript = await self.rpc(target, namespace + '.read',
-                                {'session_id': source, 'max_messages': 500, 'offset': len(messages)})
-                            batch = transcript.get('messages', [])
-                            messages.extend(batch)
-                            if not transcript.get('truncated') or not batch or 'next_offset' not in transcript:
+                            transcript = await self.rpc(target, namespace + '.read_page',
+                                {'session_id': source, 'offset': transcript_offset, 'content_offset': content_offset})
+                            for fragment in transcript.get('messages', []):
+                                index = fragment['index']
+                                if index == len(messages):
+                                    messages.append({'role': fragment['role'], 'content': ''})
+                                if index >= len(messages) or len(messages[index]['content']) != fragment['content_offset']:
+                                    raise ValueError('History changed during import; retrying on the next scan.')
+                                messages[index]['content'] += fragment['content']
+                            await asyncio.sleep(self.import_pause)
+                            if not transcript.get('truncated'):
                                 break
+                            next_cursor = transcript['next_offset'], transcript['next_content_offset']
+                            if next_cursor <= (transcript_offset, content_offset):
+                                raise ValueError('Worker returned a non-advancing history cursor.')
+                            transcript_offset, content_offset = next_cursor
                     except Exception:
                         log.exception('Could not sync %s session %s on %s', agent, source, worker['worker_id'])
                         continue
@@ -503,7 +550,7 @@ class WorkWeb:
                             agent=agent, imported=True, source_id=source, thread_id=None,
                             handle=None, turn_id=None, pending={}, rpc={}, cursor=0,
                             partial='', model='', error='', diff='', status='pending')
-                        s.update(title=meta.get('title') or source, cwd=meta.get('cwd'),
+                        s.update(title=meta.get('title') or source, cwd=meta.get('cwd'), history_loading=False,
                                  source_version=fingerprint, source_updated=meta.get('last_modified'))
                         s['items'] = {str(i): dict(id=str(i), type='userMessage' if m['role'] == 'user' else 'agentMessage',
                             **({'content': [{'text': m.get('content', '')}]} if m['role'] == 'user'
