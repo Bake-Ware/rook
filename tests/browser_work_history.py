@@ -20,6 +20,7 @@ async def main():
         p.server._band = band = HistoryBand()
         band.active = True
         band.messageable = True
+        band.workers['host1']['caps'].append('claude-history.follow')
         work = p.account.work_web
         await work.sync_history(band.workers['host1'], 'claude', [p.uid])
         sid = work.store.all()[0]['id']
@@ -88,6 +89,21 @@ async def main():
             await page.unroute('**/account/work/history/**', hold_old_page)
             await page.locator(f'[data-session="{sid}"]').click()
             await expect(page.locator('#work-history-note')).to_have_text('Conversation read from host.', timeout=15000)
+            failed_follow = []
+            async def fail_one_follow(route):
+                if 'follow=1' in route.request.url and not failed_follow:
+                    failed_follow.append(True)
+                    await route.fulfill(status=503, content_type='application/json', body='{"error":"Temporary host disconnect"}')
+                else:
+                    await route.continue_()
+            await page.route('**/account/work/history/**', fail_one_follow)
+            band.version += 1
+            await expect(page.locator('#work-conversation')).to_contain_text('Live update from host', timeout=15000)
+            assert failed_follow
+            await page.unroute('**/account/work/history/**', fail_one_follow)
+            await expect(page.locator('#work-history-note')).to_have_text('Live · conversation stored on host.')
+            follow_calls = [args for cap, args in band.calls if cap.endswith('.follow')]
+            assert follow_calls and all(args['offset'] >= 500 for args in follow_calls)
             await card.locator('select').select_option('blocked')
             await expect(page.locator('#work-status')).to_have_text('blocked')
             await card.locator('[data-close-session]').click()

@@ -486,6 +486,30 @@ class ClaudeHistoryPlugin(Plugin):
         """Read a bounded page of a stable, worker-owned conversation snapshot."""
         return self._snapshot_page(session_id, path, offset, content_offset, 6000, snapshot)
 
+    @capability("follow")
+    def _follow(self, session_id: str, offset: int = 0, version: str = "") -> dict:
+        """Check the selected log and return only its changed tail, in stable pages."""
+        with self._history_lock:
+            sp = self._resolve_session(self._default_root(), session_id)
+            if sp is None:
+                return {'ok': False, 'error': 'session not found'}
+            stat = sp.stat()
+            current = f'{stat.st_ino}:{stat.st_size}:{stat.st_mtime_ns}'
+            if version == current:
+                return {'ok': True, 'unchanged': True, 'version': current}
+            first = self._snapshot_page(session_id, None, 0, 0, 6000, '')
+            if not first.get('ok'):
+                return first
+            # If the source was truncated or rewritten, replace the whole view.
+            offset = max(0, int(offset))
+            previous = version.split(':')
+            replaced = (len(previous) == 3 and (previous[0] != str(stat.st_ino) or
+                        stat.st_size <= int(previous[1])))
+            if replaced or offset > first['total_messages']:
+                offset = 0
+            page = self._snapshot_page(session_id, None, offset, 0, 6000, first['snapshot'])
+            return dict(page, version=current, replace_from=offset)
+
     def _snapshot_page(self, session_id, path, offset, content_offset, max_chars, token):
         """Freeze the conversation once on its owner; page it without rereading logs."""
         with self._history_lock:
@@ -497,6 +521,8 @@ class ClaudeHistoryPlugin(Plugin):
                 sp = self._resolve_session(self._expand(path), session_id)
                 if sp is None:
                     return {'ok': False, 'error': 'session not found'}
+                stat = sp.stat()
+                version = f'{stat.st_ino}:{stat.st_size}:{stat.st_mtime_ns}'
                 messages = [{'role': _record_role(rec), 'content': _message_text(rec)}
                             for rec in self._read_lines(sp)
                             if isinstance(rec, dict) and rec.get('type') in ('user', 'assistant')]
@@ -505,7 +531,7 @@ class ClaudeHistoryPlugin(Plugin):
                     del self._history_snapshots[oldest]
                 token = uuid.uuid4().hex
                 self._history_snapshots[token] = dict(session_id=session_id, path=path, used=now,
-                    messages=messages, activity=self._activity(sp), active=self._is_active(sp))
+                    messages=messages, activity=self._activity(sp), active=self._is_active(sp), version=version)
             saved = self._history_snapshots.get(token)
             if not saved or saved['session_id'] != session_id or saved['path'] != path:
                 return {'ok': False, 'error': 'Conversation snapshot expired. Refresh from host.'}
@@ -529,7 +555,7 @@ class ClaudeHistoryPlugin(Plugin):
                 index, start = index + 1, 0
             return dict(ok=True, snapshot=token, messages=messages, truncated=index < len(rows),
                         next_offset=index, next_content_offset=start, activity=saved['activity'],
-                        active=saved['active'], total_messages=len(rows))
+                        active=saved['active'], total_messages=len(rows), version=saved['version'])
 
     def _activity(self, path):
         """Use explicit completion markers; stale/incomplete logs stay pending."""

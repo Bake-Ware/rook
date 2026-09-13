@@ -15,8 +15,13 @@ partial large messages. The worker freezes a short-lived conversation snapshot s
 shift page boundaries, and the browser holds the selected conversation. Reads require the owning administrator's login and use
 `Cache-Control: no-store`. Updated workers are required for snapshot paging and live-process metadata. Older workers can still contribute catalog entries.
 An offline host leaves metadata and review controls available, but its transcript
-cannot be fetched until it reconnects. Source changes do not trigger background
-transcript downloads. Existing imported transcript copies are removed from
+cannot be fetched until it reconnects. While selected and visible, the browser
+checks the source every two seconds and reads only its changed tail in bounded
+snapshot pages. Unchanged checks return a version without conversation content.
+The last message is replaced to include extensions; truncated or replaced files
+reset the view. Navigation cancels polling and hidden pages pause it. Failed reads
+retry after five seconds from a fresh tail snapshot. Unselected entries do not
+download transcripts. Existing imported transcript copies are removed from
 session records when this version opens the database; native Work sessions are
 migrated with acknowledgment before their web copies are removed. Resumed imported terminal output uses a bounded in-memory buffer,
 not durable transcript storage.
@@ -48,8 +53,9 @@ their existing input channel. Codex uses its installed `codex queue --thread`
 command; messages wait for the current turn to finish. Claude uses its local
 authenticated peer inbox, with exact session, process-start, socket-owner, and
 peer-key checks. Claude's peer protocol has no in-band acceptance acknowledgment:
-Work reports **sent to inbox**, not agent acceptance. Use **Refresh from host**
-to see subsequent conversation messages. Older CLIs without a usable channel
+Work reports **sent to inbox**, not agent acceptance. Subsequent messages appear
+automatically while the session is open. **Refresh from host** rereads the whole
+conversation. Older CLIs without a usable channel
 explain why messaging is unavailable. Sending never resumes a second process.
 
 The worker records imported-message command receipts in
