@@ -1,6 +1,17 @@
 # BakeNetCA deployment layout
 
 
+## Activity ordering deployed, 2026-09-13
+
+Web release `/opt/rook-releases/work-order-20260913-b31116e` orders sessions by
+most recent host activity or sent message. Native worker timestamps and live
+imported-tail timestamps update the list; metadata saves do not bump older work.
+Thirteen Work tests and direct ordering checks passed. Worker 159, signed
+artifacts and APK are unchanged. Rollback release:
+`/opt/rook-releases/work-follow-20260913-5bfdd01`; unit/SQLite backup:
+`/var/backups/rook/work-order-20260913-b31116e`.
+
+
 ## Live worker conversations deployed, 2026-09-13
 
 Web release `/opt/rook-releases/work-follow-20260913-5bfdd01` uses source
