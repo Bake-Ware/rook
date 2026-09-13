@@ -1,6 +1,29 @@
 # BakeNetCA deployment layout
 
 
+## Work controls and titles deployed, 2026-09-13
+
+Web release `/opt/rook-releases/work-ui-20260913-354f91f` uses source `354f91f`
+and signed worker **163.sloppy.wagon**. Artifact SHA-256:
+`243bf9002f1918dadbddfa70afe68f06c0c670e677162ebe6519e69f4b98900b`.
+
+Enter sends from the message box; Shift+Enter inserts a newline and IME
+composition does not submit. Refresh sits in the top-right header. Idle
+conversation-storage labels are removed; loading/errors remain visible. Titles
+skip injected setup blocks, including environment context and AGENTS.md setup,
+and unchanged source files receive corrected metadata on discovery. All 12
+existing setup-based titles were corrected without altering transcripts.
+
+Validation: 181 Python tests, both browser suites, and live desktop/mobile
+checks for the header, label, keyboard newline, and corrected title. The signed
+manifest and both public artifact hashes match. The temporary verification login
+was revoked. MCP, APK, and Work resource guards are unchanged.
+Rollback: `/opt/rook-releases/work-order-20260913-b31116e`.
+Unit/SQLite backup: `/var/backups/rook/work-ui-20260913-354f91f`.
+All 25 compatible workers passed their health windows; automatic updates are
+restored. Web inspection still shows zero transcript bodies and legacy events.
+
+
 ## Activity ordering deployed, 2026-09-13
 
 Web release `/opt/rook-releases/work-order-20260913-b31116e` orders sessions by
