@@ -1,4 +1,4 @@
-"""Durable server-owned work sessions. The worker only transports Codex stdio."""
+"""Durable work review, worker history discovery, and agent process transport."""
 import asyncio
 import json
 import logging
@@ -20,7 +20,7 @@ def project(state, message):
     p = message.get('params') or {}
     if 'id' in message and method:
         state['pending'][str(message['id'])] = message
-        state['status'] = 'waiting'
+        state['status'] = 'ready'
     if method == 'thread/started':
         state['thread_id'] = p['thread']['id']
     elif method == 'turn/started':
@@ -58,6 +58,8 @@ def project(state, message):
         state['error'] = str(p.get('error', p))
     elif method == 'serverRequest/resolved':
         state['pending'].pop(str(p.get('requestId')), None)
+        if not state['pending'] and state.get('turn_id'):
+            state['status'] = 'working'
 
 
 class WorkStore:
@@ -97,9 +99,10 @@ class WorkStore:
             raise web.HTTPNotFound()
         return json.loads(row['state'])
 
-    def all(self, owner=None):
+    def all(self, owner=None, *, details=True):
         with self.db() as db:
-            rows = db.execute('SELECT state FROM work_sessions ' +
+            projection = 'state' if details else "json_remove(state, '$.items', '$.order', '$.terminal') AS state"
+            rows = db.execute('SELECT ' + projection + ' FROM work_sessions ' +
                               ('WHERE owner=? ' if owner else '') + 'ORDER BY updated DESC',
                               (owner,) if owner else ()).fetchall()
         return [json.loads(r['state']) for r in rows]
@@ -138,6 +141,7 @@ class WorkWeb:
         self.locks = {}
         self.jobs = set()
         self.pump = None
+        self.discovery = None
 
     def lock(self, sid):
         return self.locks.setdefault(sid, asyncio.Lock())
@@ -151,13 +155,16 @@ class WorkWeb:
 
     async def start(self, app):
         self.pump = asyncio.create_task(self.collect())
+        self.discovery = asyncio.create_task(self.discover())
 
     async def stop(self, app):
+        if self.discovery:
+            self.discovery.cancel()
         if self.pump:
             self.pump.cancel()
         for job in self.jobs:
             job.cancel()
-        await asyncio.gather(*(list(self.jobs) + ([self.pump] if self.pump else [])),
+        await asyncio.gather(*(list(self.jobs) + ([self.pump] if self.pump else []) + ([self.discovery] if self.discovery else [])),
                              return_exceptions=True)
 
     def user(self, request):
@@ -168,25 +175,25 @@ class WorkWeb:
             raise web.HTTPForbidden()
         return user
 
-    def workers(self):
+    def workers(self, history=False):
         band = self.server._band
         if band is None:
             return []
         return [w for w in band.workers.values()
-                if all(c in w.get('caps', []) for c in ('proc.start', 'proc.read', 'proc.write'))
+                if (history or all(c in w.get('caps', []) for c in ('proc.start', 'proc.read', 'proc.write')))
                 and time.time() - w.get('last_seen', 0) < 90
                 and not self.server._ban_match(w.get('name'), w['worker_id'])]
 
     def worker(self, state):
-        found = next((w for w in self.workers() if w['worker_id'] == state['worker_id']
+        found = next((w for w in self.workers(history=True) if w['worker_id'] == state['worker_id']
                       and w.get('band') == state['band']), None)
         if found is None:
             raise ValueError('Host disconnected. Session history is safe on the server.')
         return found
 
-    async def rpc(self, state, cap, args):
+    async def rpc(self, state, cap, args, timeout=12):
         self.worker(state)
-        reply = await self.server._band.call(cap=cap, args=args, target=state['worker_id'], timeout=12)
+        reply = await self.server._band.call(cap=cap, args=args, target=state['worker_id'], timeout=timeout)
         if not reply.get('ok') or reply.get('from') != state['worker_id']:
             raise ValueError(reply.get('error') or 'Worker did not acknowledge the request.')
         result = reply.get('result') or {}
@@ -208,13 +215,16 @@ class WorkWeb:
 
     @staticmethod
     def summary(s):
-        return {k: s.get(k) for k in ('id', 'title', 'worker_name', 'cwd', 'status',
-                                     'updated', 'model', 'revision', 'error')}
+        return {**{k: s.get(k) for k in ('id', 'title', 'worker_name', 'cwd',
+                                     'updated', 'model', 'revision', 'error', 'agent', 'imported', 'review_status')},
+                'status': s.get('review_status') or ('ready' if s['status'] == 'waiting' else s['status']),
+                'updated': s.get('source_updated', s.get('updated'))}
 
     @staticmethod
     def snapshot(s):
         return {k: v for k, v in s.items()
-                if k not in ('owner', 'cursor', 'partial', 'rpc', 'handle', 'worker_id', 'band')}
+                if k not in ('owner', 'cursor', 'partial', 'rpc', 'handle', 'worker_id', 'band', 'external_handle', 'external_cursor')} | {
+                    'status': s.get('review_status') or ('ready' if s['status'] == 'waiting' else s['status']), 'activity': s['status'], 'external_running': bool(s.get('external_handle'))}
 
     async def websocket(self, request):
         self.user(request)
@@ -228,7 +238,8 @@ class WorkWeb:
         while not ws.closed:
             try:
                 user = self.user(request)  # Revocation applies to already-open sockets.
-                sessions = [self.summary(s) for s in self.store.all(user['id'])]
+                sessions = [self.summary(s) for s in self.store.all(user['id'], details=False)]
+                sessions.sort(key=lambda s: s.get('updated') or 0, reverse=True)
                 workers = [{'id': w['worker_id'], 'name': w.get('name', ''), 'band': w.get('band')}
                            for w in self.workers()]
                 listing = json.dumps([sessions, workers])
@@ -270,7 +281,7 @@ class WorkWeb:
                         s = dict(id=sid, owner=user['id'], title=str(data.get('title') or 'New work')[:160],
                                  worker_id=w['worker_id'], worker_name=w.get('name'), band=w.get('band'),
                                  cwd=cwd, model=str(data.get('model') or '')[:100],
-                                 status='starting', items={}, order=[], pending={}, rpc={}, cursor=0,
+                                 agent='codex', status='starting', items={}, order=[], pending={}, rpc={}, cursor=0,
                                  partial='', handle=None, thread_id=None, turn_id=None, error='', diff='')
                         self.store.save(s, {'op': 'create'})
                         self.launch(sid, {'op': 'open', 'id': cid})
@@ -313,7 +324,37 @@ class WorkWeb:
             s = self.store.get(sid)
             try:
                 op = data['op']
-                if op == 'open':
+                if op == 'status' and data.get('status') == 'closed':
+                    op = 'close'
+                if op == 'status':
+                    value = data.get('status')
+                    if value not in ('auto', 'closed', 'blocked', 'pending'):
+                        raise ValueError('Choose Auto, Closed, Blocked, or Pending.')
+                    s['review_status'] = None if value == 'auto' else value
+                    s['error'] = ''
+                elif s.get('imported') and op == 'close':
+                    if s.get('external_handle'):
+                        await self.rpc(s, 'proc.signal', {'handle': s['external_handle'], 'sig': 'TERM'})
+                        s['external_handle'] = None
+                    s['review_status'] = 'closed'
+                elif s.get('imported') and op == 'resume':
+                    if s.get('external_handle'):
+                        raise ValueError('This session is already running on its host.')
+                    result = await self.rpc(s, s['agent'] + '-history.resume', {'session_id': s['source_id']}, timeout=40)
+                    s.update(external_handle=result['handle'], external_cursor=0, terminal='',
+                             review_status=None, error='', resume_note=result.get('note', ''))
+                elif s.get('imported') and op == 'terminal_input':
+                    text = str(data.get('text', ''))
+                    if not s.get('external_handle') or not text.strip() or len(text) > 24000:
+                        raise ValueError('Resume the session before sending input (1–24000 characters).')
+                    await self.rpc(s, 'proc.write', {'handle': s['external_handle'], 'data': text, 'newline': True})
+                elif s.get('imported') and op == 'interrupt':
+                    if not s.get('external_handle'):
+                        raise ValueError('No running session to interrupt.')
+                    await self.rpc(s, 'proc.signal', {'handle': s['external_handle'], 'sig': 'INT'})
+                elif s.get('imported'):
+                    raise ValueError('This session is running outside the web app. Continue it on its host.')
+                elif op == 'open':
                     result = await self.rpc(s, 'proc.start', {
                         'argv': ['codex', 'app-server', '--listen', 'stdio://'],
                         'cwd': s['cwd'], 'label': 'Rook Work ' + sid, 'buffer_bytes': 4194304})
@@ -325,7 +366,7 @@ class WorkWeb:
                     text = str(data.get('text', '')).strip()
                     if not text or len(text) > 24000:
                         raise ValueError('Enter a message of 1–24000 characters.')
-                    if s['status'] not in ('ready', 'working') or not s['thread_id']:
+                    if s['pending'] or s['status'] not in ('ready', 'working') or not s['thread_id']:
                         raise ValueError('Wait for the agent to be ready or answer its pending request.')
                     params = {'threadId': s['thread_id'], 'input': [{'type': 'text', 'text': text}]}
                     method = 'turn/start'
@@ -361,12 +402,13 @@ class WorkWeb:
                         raise ValueError('Unsupported request type. Stop this turn to cancel it.')
                     # Consume before delivery so multiple browsers cannot answer twice.
                     del s['pending'][key]
-                    s['status'] = 'working' if not s['pending'] else 'waiting'
+                    s['status'] = 'working' if not s['pending'] else 'ready'
                     await self.send(s, response={'id': pending['id'], 'result': answer})
                 elif op == 'close':
                     if s['handle']:
                         await self.rpc(s, 'proc.signal', {'handle': s['handle'], 'sig': 'TERM'})
                     s['status'] = 'closed'
+                    s['review_status'] = 'closed'
                     s['pending'] = {}
                     s['handle'] = None
                 elif op == 'resume':
@@ -374,7 +416,7 @@ class WorkWeb:
                         raise ValueError('The agent process is still attached; stop it before reopening.')
                     if not s['thread_id']:
                         raise ValueError('No saved agent thread is available; start a new session.')
-                    s.update(status='starting', cursor=0, partial='', rpc={}, pending={}, error='')
+                    s.update(status='starting', review_status=None, cursor=0, partial='', rpc={}, pending={}, error='')
                     result = await self.rpc(s, 'proc.start', {
                         'argv': ['codex', 'app-server', '--listen', 'stdio://'],
                         'cwd': s['cwd'], 'label': 'Rook Work ' + sid, 'buffer_bytes': 4194304})
@@ -393,16 +435,128 @@ class WorkWeb:
                 self.store.result(sid, data['id'], {'status': 'error', 'error': s['error']})
                 log.warning('Work command %s: %s', sid, e)
 
+    async def discover(self):
+        """Keep each administrator's worker history durable without a browser open."""
+        while True:
+            try:
+                with self.account.store.db() as db:
+                    owners = [r['id'] for r in db.execute('SELECT id FROM users WHERE admin=1')]
+                for worker in self.workers(history=True):
+                    for agent in ('claude', 'codex'):
+                        if agent + '-history.pull' not in worker.get('caps', []):
+                            continue
+                        try:
+                            await self.sync_history(worker, agent, owners)
+                        except Exception:
+                            log.exception('Work history sync failed for %s/%s', worker['worker_id'], agent)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception('Work discovery failed')
+            await asyncio.sleep(15)
+
+    async def sync_history(self, worker, agent, owners):
+        target = dict(worker_id=worker['worker_id'], band=worker.get('band'))
+        namespace = agent + '-history'
+        existing_by_owner = {owner: {s.get('source_id') or s.get('thread_id'): s
+            for s in self.store.all(owner, details=False)
+            if s['worker_id'] == worker['worker_id'] and s.get('band') == worker.get('band')
+            and s.get('agent', 'codex') == agent} for owner in owners}
+        offset = 0
+        while True:
+            result = await self.rpc(target, namespace + '.pull', {'limit': 100, 'offset': offset})
+            entries = result.get('sessions', [])
+            for meta in entries:
+                source = meta.get('session_id')
+                if not source or meta.get('error'):
+                    continue
+                for owner in owners:
+                    # A thread created here already has a durable web session.
+                    existing = existing_by_owner[owner].get(source)
+                    if existing and not existing.get('imported'):
+                        continue
+                    sid = existing['id'] if existing else uuid.uuid5(uuid.NAMESPACE_URL,
+                        json.dumps([owner, worker.get('band'), worker['worker_id'], agent, source])).hex
+                    fingerprint = [meta.get('last_modified'), meta.get('size_bytes')]
+                    if existing and existing.get('source_version') == fingerprint:
+                        if existing['status'] == 'working' and time.time() - (meta.get('last_modified') or 0) > 120:
+                            async with self.lock(sid):
+                                current = self.store.get(sid)
+                                current['status'] = 'pending'
+                                self.store.save(current)
+                        continue
+                    try:
+                        messages = []
+                        while True:
+                            transcript = await self.rpc(target, namespace + '.read',
+                                {'session_id': source, 'max_messages': 500, 'offset': len(messages)})
+                            batch = transcript.get('messages', [])
+                            messages.extend(batch)
+                            if not transcript.get('truncated') or not batch or 'next_offset' not in transcript:
+                                break
+                    except Exception:
+                        log.exception('Could not sync %s session %s on %s', agent, source, worker['worker_id'])
+                        continue
+                    async with self.lock(sid):
+                        s = self.store.get(sid) if existing else dict(
+                            id=sid, owner=owner, **target, worker_name=worker.get('name'),
+                            agent=agent, imported=True, source_id=source, thread_id=None,
+                            handle=None, turn_id=None, pending={}, rpc={}, cursor=0,
+                            partial='', model='', error='', diff='', status='pending')
+                        s.update(title=meta.get('title') or source, cwd=meta.get('cwd'),
+                                 source_version=fingerprint, source_updated=meta.get('last_modified'))
+                        s['items'] = {str(i): dict(id=str(i), type='userMessage' if m['role'] == 'user' else 'agentMessage',
+                            **({'content': [{'text': m.get('content', '')}]} if m['role'] == 'user'
+                               else {'text': m.get('content', '')})) for i, m in enumerate(messages)}
+                        s['order'] = list(s['items'])
+                        # History cannot prove a process is currently working.
+                        s['status'] = transcript.get('activity', 'pending')
+                        s['history_truncated'] = bool(transcript.get('truncated'))
+                        self.store.save(s)
+                        existing_by_owner[owner][source] = {k: v for k, v in s.items() if k not in ('items', 'order')}
+            offset += len(entries)
+            if not entries or offset >= result.get('total', offset):
+                break
+
     async def collect(self):
         while True:
             try:
-                sessions = [s for s in self.store.all() if s.get('handle')]
-                await asyncio.gather(*(self.drain(s['id']) for s in sessions), return_exceptions=True)
+                sessions = [s for s in self.store.all(details=False) if s.get('handle')]
+                external = [s for s in self.store.all(details=False) if s.get('external_handle')]
+                await asyncio.gather(*(self.drain(s['id']) for s in sessions),
+                                     *(self.drain_external(s['id']) for s in external), return_exceptions=True)
             except asyncio.CancelledError:
                 raise
             except Exception:
                 log.exception('Work collector failed')
             await asyncio.sleep(0.35)
+
+    async def drain_external(self, sid):
+        async with self.lock(sid):
+            s = self.store.get(sid)
+            if not s.get('external_handle'):
+                return
+            try:
+                result = await self.rpc(s, 'proc.read', {'handle': s['external_handle'],
+                    'cursor': s.get('external_cursor', 0), 'max_bytes': 8192})
+                chunk = result.get('chunk', '')
+                if not chunk and not result.get('eof') and not s.get('disconnected'):
+                    return
+                s['terminal'] = (s.get('terminal', '') + chunk)[-200000:]
+                s['external_cursor'] = result['next_cursor']
+                s['disconnected'] = False
+                s['error'] = ''
+                if result.get('eof'):
+                    s['external_handle'] = None
+                self.store.save(s)
+            except Exception as error:
+                missing = 'no such handle' in str(error)
+                if missing:
+                    s['external_handle'] = None
+                if missing or not s.get('disconnected'):
+                    s['disconnected'] = True
+                    s['error'] = str(error)
+                    self.store.save(s)
 
     async def drain(self, sid):
         async with self.lock(sid):

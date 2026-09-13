@@ -10,6 +10,7 @@ export async function mountWork(root) {
     <div class="work-layout">
       <aside class="work-sidebar">
         <div class="work-list-heading"><strong>Work sessions</strong><button id="work-new" type="button">+ New</button></div>
+        <input id="work-search" type="search" placeholder="Search sessions…" aria-label="Search by title, host, agent, or status">
         <div id="work-list"><p class="work-muted">Connecting…</p></div>
       </aside>
       <section class="work-main">
@@ -26,12 +27,12 @@ export async function mountWork(root) {
         </form>
         <div id="work-session" hidden>
           <header class="work-session-heading"><div><h2 id="work-title"></h2><div id="work-meta" class="work-muted"></div></div>
-          <div class="work-actions"><span id="work-status"></span><button id="work-interrupt" type="button">Stop turn</button><button id="work-close" type="button">Close agent</button><button id="work-resume" type="button">Reopen</button></div></header>
+          <div class="work-actions"><span id="work-status"></span><button id="work-interrupt" type="button">Stop turn</button><button id="work-close" type="button">Close session</button><button id="work-resume" type="button">Reopen</button></div></header>
           <p id="work-error" role="alert" hidden></p>
           <div class="work-tabs"><button type="button" data-pane="conversation" aria-pressed="true">Conversation</button><button type="button" data-pane="changes" aria-pressed="false">Changes</button></div>
           <div id="work-conversation" class="work-output" aria-label="Conversation"></div>
           <div id="work-changes" class="work-output" hidden><pre id="work-diff"></pre></div>
-          <div id="work-pending"></div>
+          <details id="work-terminal" hidden><summary>Host terminal</summary><p id="work-resume-note" class="work-muted"></p><pre id="work-terminal-output"></pre></details><div id="work-pending"></div>
           <form id="work-compose"><label class="work-muted" for="work-input">Message your agent</label><textarea id="work-input" rows="3" maxlength="24000" placeholder="Describe the task, or steer work already in progress…" required></textarea><div><span class="work-muted">Ctrl / ⌘ + Enter to send</span><button type="submit">Send</button></div></form>
         </div>
         <p id="work-notice" role="alert"></p>
@@ -54,7 +55,9 @@ export async function mountWork(root) {
     pendingCommands.set(id,data);notify('');return true;
   }
   function renderList(){
-    $('#work-list').innerHTML=sessions.length?sessions.map(s=>`<button type="button" class="work-session-link ${s.id===selected?'selected':''}" data-session="${esc(s.id)}"><strong>${esc(s.title)}</strong><span>${esc(s.worker_name)} · ${esc(s.status)}</span></button>`).join(''):'<p class="work-muted">No sessions yet.</p>';
+    const query=$('#work-search').value.trim().toLowerCase();
+    const visible=sessions.filter(s=>[s.title,s.worker_name,s.agent,s.status,s.cwd].join(' ').toLowerCase().includes(query));
+    $('#work-list').innerHTML=visible.length?visible.map(s=>`<div class="work-session-card ${s.id===selected?'selected':''}"><button type="button" class="work-session-link" data-session="${esc(s.id)}"><strong>${esc(s.title)}</strong><span>${esc(s.agent||'codex')} · ${esc(s.worker_name)} · ${esc(s.status)}</span></button><label class="work-card-status">Status <select data-status-session="${esc(s.id)}" aria-label="Status for ${esc(s.title)}">${['auto','pending','blocked','closed'].map(v=>`<option value="${v}" ${(s.review_status||'auto')===v?'selected':''}>${v[0].toUpperCase()+v.slice(1)}</option>`).join('')}</select></label><button type="button" data-close-session="${esc(s.id)}" ${s.status==='closed'?'hidden':''}>Close</button></div>`).join(''):'<p class="work-muted">No matching sessions.</p>';
   }
   function select(id){
     if(selected)drafts.set(selected,$('#work-input').value);
@@ -71,7 +74,7 @@ export async function mountWork(root) {
   }
   function renderItem(item) {
     const kind=item.type;
-    if(kind==='agentMessage'||kind==='userMessage')return `<article class="work-message ${kind}"><div class="work-role">${kind==='userMessage'?'You':'Codex'}</div><div class="work-text">${esc(itemText(item))}</div></article>`;
+    if(kind==='agentMessage'||kind==='userMessage')return `<article class="work-message ${kind}"><div class="work-role">${kind==='userMessage'?'You':esc(state?.agent==='claude'?'Claude':'Codex')}</div><div class="work-text">${esc(itemText(item))}</div></article>`;
     if(kind==='reasoning')return `<details class="work-tool"><summary>Reasoning summary</summary><pre>${esc(itemText(item))}</pre></details>`;
     if(kind==='commandExecution')return `<details class="work-tool" ${item.status==='inProgress'?'open':''}><summary>${esc(item.command||'Command')} <span>${esc(item.status||'')} ${item.exitCode!=null?'· exit '+esc(item.exitCode):''}</span></summary><pre>${esc(item.aggregatedOutput||'Waiting for output…')}</pre></details>`;
     if(kind==='fileChange')return `<details class="work-tool"><summary>File changes · ${esc(item.status)}</summary>${(item.changes||[]).map(c=>`<strong>${esc(c.path)}</strong><pre>${esc(c.diff||JSON.stringify(c.kind))}</pre>`).join('')}</details>`;
@@ -93,18 +96,28 @@ export async function mountWork(root) {
     if(s.id!==selected)return;
     state=s;
     $('#work-title').textContent=s.title;
-    $('#work-meta').textContent=[s.worker_name,s.cwd,s.model].filter(Boolean).join(' · ');
+    $('#work-meta').textContent=[s.agent||'codex',s.worker_name,s.cwd,s.model,s.imported?'Synced from host · continue there':''].filter(Boolean).join(' · ');
     $('#work-status').textContent=s.disconnected?'Host disconnected':s.status;
     $('#work-error').hidden=!s.error;$('#work-error').textContent=s.error||'';
-    $('#work-interrupt').disabled=!s.turn_id;
+    $('#work-interrupt').disabled=!(s.turn_id||s.external_running);
+    $('#work-interrupt').hidden=!!s.imported&&!s.external_running;
+    $('#work-compose').hidden=!!s.imported&&!s.external_running;
+    $('#work-compose label').textContent=s.imported?'Send input to the host terminal':'Message your agent';
+    $('#work-terminal').hidden=!s.imported||!s.terminal;
+    $('#work-terminal-output').textContent=(s.terminal||'').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g,'');
+    $('#work-resume-note').textContent=s.resume_note||'';
+    $('#work-input').placeholder=s.imported?'Send a prompt or answer the terminal’s request.':'Describe the task, or steer work already in progress…';
     $('#work-close').hidden=s.status==='closed';
-    $('#work-resume').hidden=s.status!=='closed'||!s.thread_id;
-    $('#work-compose button').disabled=!['ready','working'].includes(s.status)||!!s.disconnected;
+    $('#work-resume').hidden=s.imported?!!s.external_running:(s.activity||s.status)!=='closed'||!s.thread_id;
+    $('#work-resume').textContent=s.imported?'Resume on host':'Reopen';
+    $('#work-compose button').disabled=(s.imported?!s.external_running:!['ready','working'].includes(s.activity||s.status)||Object.keys(s.pending||{}).length>0)||!!s.disconnected;
     const out=$('#work-conversation');
     const bottom=out.scrollHeight-out.scrollTop-out.clientHeight<80;
     const scroll=out.scrollTop;
     if(s.order?.length){
       if(!renderedItems.size)out.replaceChildren();
+      const currentIds=new Set(s.order);
+      for(const [id,previous] of renderedItems){if(!currentIds.has(id)){previous.node.remove();renderedItems.delete(id);}}
       for(const id of s.order){
         const item=s.items[id],hash=JSON.stringify(item),previous=renderedItems.get(id);
         if(previous?.hash===hash)continue;
@@ -116,7 +129,7 @@ export async function mountWork(root) {
         renderedItems.set(id,{node,hash});
         if(item.type==='userMessage'&&itemText(item)===drafts.get(selected))drafts.delete(selected);
       }
-    } else {out.innerHTML='<p class="work-muted">Your agent is ready for a task.</p>';}
+    } else {renderedItems.clear();out.innerHTML='<p class="work-muted">'+(s.imported?'No conversation messages recorded.':'Your agent is ready for a task.')+'</p>';}
     if(s.error&&drafts.has(selected)&&!$('#work-input').value)$('#work-input').value=drafts.get(selected);
     out.scrollTop=bottom?out.scrollHeight:scroll;
     $('#work-diff').textContent=s.diff||'No changes reported for the current turn.';
@@ -158,14 +171,23 @@ export async function mountWork(root) {
     if(selected)drafts.set(selected,$('#work-input').value);
     selected=null;$('#work-create').hidden=false;$('#work-session').hidden=true;renderList();
   };
-  $('#work-list').onclick=e=>{const b=e.target.closest('[data-session]');if(b)select(b.dataset.session);};
+  $('#work-search').oninput=renderList;
+  $('#work-list').onclick=e=>{
+    const close=e.target.closest('[data-close-session]');
+    if(close){command('close',{session:close.dataset.closeSession});return;}
+    const b=e.target.closest('[data-session]');if(b)select(b.dataset.session);
+  };
+  $('#work-list').onchange=e=>{
+    const pick=e.target.closest('[data-status-session]');
+    if(pick)command('status',{session:pick.dataset.statusSession,status:pick.value});
+  };
   $('#work-create').onsubmit=e=>{
     e.preventDefault();const values=Object.fromEntries(new FormData(e.currentTarget));
     command('create',values);
   };
   $('#work-compose').onsubmit=e=>{
     e.preventDefault();const input=$('#work-input');
-    if(command('message',{text:input.value})){drafts.set(selected,input.value);input.value='';$('#work-compose button').disabled=true;}
+    if(command(state?.imported?'terminal_input':'message',{text:input.value})){drafts.set(selected,input.value);input.value='';$('#work-compose button').disabled=true;}
   };
   $('#work-input').onkeydown=e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();if(!$('#work-compose button').disabled)$('#work-compose').requestSubmit();}};
   $('#work-interrupt').onclick=()=>command('interrupt');

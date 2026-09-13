@@ -92,33 +92,6 @@
   .name .n{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .name .id{color:var(--dim2);font-size:.72rem}
   .tagfw{font-size:.64rem;color:var(--warn);border:1px solid #3a2f18;background:#1c150a;border-radius:5px;padding:1px 6px}
-  .sesshead{display:flex;align-items:flex-start;gap:16px;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap}
-  .sesshead h2{margin:0 0 4px;font-size:1.05rem}
-  .sesshint{margin:0;color:var(--dim);font-size:.78rem;max-width:52ch;line-height:1.5}
-  #sessworker{background:var(--card);color:var(--fg);border:1px solid var(--line);
-    border-radius:8px;padding:8px 12px;font:inherit;font-size:.82rem;min-width:170px}
-  .sesslist{display:flex;flex-direction:column;gap:8px}
-  .sess{display:flex;align-items:center;gap:14px;background:var(--card);
-    border:1px solid var(--line);border-radius:10px;padding:12px 14px}
-  .sess:hover{border-color:var(--dim2)}
-  .sess .sbody{flex:1;min-width:0}
-  .sess .stitle{font-weight:600;font-size:.88rem;white-space:nowrap;overflow:hidden;
-    text-overflow:ellipsis}
-  .sess .smeta{color:var(--dim);font-size:.72rem;margin-top:3px;white-space:nowrap;
-    overflow:hidden;text-overflow:ellipsis}
-  .sess .smeta code{color:var(--dim2);font-size:.72rem}
-  .btn-resume{background:var(--accent);color:#04231b;border:0;border-radius:7px;
-    padding:7px 15px;font:inherit;font-size:.78rem;font-weight:600;cursor:pointer;
-    flex:0 0 auto}
-  .btn-resume:hover{filter:brightness(1.1)}
-  .btn-resume:disabled{opacity:.45;cursor:default;filter:none}
-  .sess.isup{border-color:var(--accent)}
-  .uptag{color:var(--accent);font-size:.7rem;font-weight:600;letter-spacing:.4px;
-    text-transform:uppercase;flex:0 0 auto}
-  .sessnote{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--accent);
-    border-radius:8px;padding:11px 14px;margin-bottom:14px;font-size:.8rem;line-height:1.5}
-  .sessnote.bad{border-left-color:var(--warn)}
-  .sessempty{color:var(--dim);font-size:.84rem;padding:26px 2px}
   .ver{font-size:.78rem;color:var(--accent);font-weight:600;width:150px;flex:0 0 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .ver.old{color:var(--warn)} .ver.none{color:var(--dim2)}
   .batt{display:inline-flex;align-items:center;gap:4px;font-size:.7rem;color:var(--dim);flex:0 0 auto;
@@ -350,7 +323,6 @@
       <a id="tab-bands" href="#bands" onclick="showView('bands');return false">Bands</a>
       <a id="tab-chat" href="#chat" onclick="showView('chat');return false">Chat</a>
       <a id="tab-work" href="#work" onclick="showView('work');return false">Work</a>
-      <a id="tab-sessions" href="#sessions" onclick="showView('sessions');return false">Sessions</a>
     </nav>
     <span class="nav-label">MANAGE</span>
     <nav aria-label="Management">
@@ -468,19 +440,6 @@
 
     <!-- INSTALL VIEW -->
     <div id="view-work" hidden></div>
-    <div id="view-sessions" hidden>
-      <div class="sesshead">
-        <div>
-          <h2>Coding sessions</h2>
-          <p class="sesshint">Claude Code and Codex conversations stored on your machines. Resume a session here and continue through its agent or Rook process controls.</p>
-        </div>
-        <select id="sessagent" aria-label="Coding agent" onchange="startSessions()"><option value="claude-history">Claude Code</option><option value="codex-history">Codex</option></select>
-        <select id="sessworker" onchange="loadSessions()"></select>
-      </div>
-      <div id="sesslive"></div>
-      <div id="sesslist" class="sesslist"></div>
-    </div>
-
     <div id="view-install" hidden>
       <div class="install">
         <h2>Add a worker</h2>
@@ -959,8 +918,7 @@ const viewInfo={
  tokens:['API tokens','Credentials and identities for your agents and integrations.'],
  bands:['Bands','Organize your fleet, manage keys, and move workers.'],
  chat:['Chat','Conversations with the people and agents on your network.'],
- work:['Work','Direct access to agents working on your hosts.'],
- sessions:['Sessions','Continue work across your connected machines.'],
+ work:['Work','Review and continue Claude and Codex sessions across your workers.'],
  install:['Install a worker','Connect another machine to your workspace.']
 };
 let activeView=null, bandsUI=null, bandsLoading=null, workUI=null, workLoading=null;
@@ -1004,6 +962,7 @@ async function ensureSettings(view){
  finally{delete settingsLoading[view];}
 }
 function showView(v,updateHistory=true){
+ if(v==='sessions'){v='work';history.replaceState(null,'','#work');}
  if(!viewInfo[v])v='workers';
  if(updateHistory&&location.hash!=='#'+v)history.pushState(null,'','#'+v);
  if(activeView===v){if(v==='account'&&settingsUI.account)settingsUI.account.refresh().catch(()=>{});return;}
@@ -1017,7 +976,6 @@ function showView(v,updateHistory=true){
  $('#view-title').textContent=viewInfo[v][0];$('#view-description').textContent=viewInfo[v][1];
  document.title=viewInfo[v][0]+' · Rook';$('#worker-controls').hidden=v!=='workers';$('#worker-stats').hidden=v!=='workers';$('#addband-form').hidden=true;
  if(v==='chat'){startChat();}else{stopChat();}
- if(v==='sessions'){startSessions();}else{stopSessions();}
  if(v==='work')ensureWork().then(ui=>{if(activeView==='work')ui.activate();else ui.deactivate();}).catch(()=>{});
  if(v==='bands')ensureBands().then(ui=>ui.refresh()).catch(()=>{});
  if(v==='account'||v==='tokens')ensureSettings(v).then(ui=>ui.refresh()).catch(()=>{});
@@ -1032,113 +990,6 @@ function routeFromHash(){
 }
 window.addEventListener('hashchange',routeFromHash);
 window.addEventListener('popstate',routeFromHash);
-
-/* ---- sessions panel: Claude Code conversations + Remote Control resume ---- */
-// Only workers that actually store Claude Code history announce claude-history.*,
-// so the picker is built from the live roster rather than a fixed list.
-let sessTimer=null, sessWorker=null, sessBusy=null, sessGeneration=0;
-function sessAgent(){return $('#sessagent').value==='codex-history'?'codex-history':'claude-history';}
-
-function ccWorkers(){
-  return workers.filter(w=>(w.caps||[]).includes(sessAgent()+'.pull'))
-                .sort((a,b)=>(a.name||'').localeCompare(b.name||''));
-}
-
-function startSessions(){
-  stopSessions(); sessGeneration++; $('#sesslive').textContent='';
-  const sel=$('#sessworker'), list=ccWorkers();
-  const keep=sessWorker && list.some(w=>w.worker_id===sessWorker) ? sessWorker
-           : (list[0]||{}).worker_id;
-  sel.innerHTML=list.map(w=>`<option value="${w.worker_id}">${esc(w.name||w.worker_id)}</option>`).join('')
-    || '<option value="">no worker with history for this agent</option>';
-  sessWorker=keep||null; if(sessWorker) sel.value=sessWorker;
-  loadSessions();
-  // Resumed sessions take a moment to reach claude.ai; refresh so the live
-  // banner appears without the user reloading.
-  sessTimer=setInterval(loadLiveSessions,5000);
-}
-function stopSessions(){ if(sessTimer){clearInterval(sessTimer); sessTimer=null;} }
-
-function ago(secs){
-  if(secs==null) return '';
-  const m=Math.round(secs/60); if(m<60) return m+'m ago';
-  const h=Math.round(m/60); if(h<48) return h+'h ago';
-  return Math.round(h/24)+'d ago';
-}
-function tilde(p){ return (p||'').replace(/^\/home\/[^/]+/,'~').replace(/^\/Users\/[^/]+/,'~'); }
-
-async function loadSessions(){
-  sessWorker=$('#sessworker').value||null;
-  const list=$('#sesslist');
-  if(!sessWorker){ list.innerHTML='<div class="sessempty">No worker on the band is storing history for this agent.</div>'; return; }
-  list.innerHTML='<div class="sessempty">loading…</div>';
-  const generation=++sessGeneration, worker=sessWorker, agent=sessAgent();
-  const reply=await bandCall(agent+'.pull',worker,{limit:25},25);
-  if(generation!==sessGeneration)return;
-  const res=reply.result||{};
-  if(!res.ok){ list.innerHTML=`<div class="sessnote bad">${esc(res.error||reply.error||'could not read sessions')}</div>`; return; }
-  const sessions=(res.sessions||[]).filter(x=>(x.message_count||0)>0);
-  if(!sessions.length){ list.innerHTML='<div class="sessempty">No sessions recorded on this machine yet.</div>'; return; }
-  list.innerHTML=sessions.map(sessRow).join('');
-  loadLiveSessions();
-}
-
-function sessRow(x){
-  const age=x.last_modified? ago((Date.now()/1000)-x.last_modified) : '';
-  const meta=[tilde(x.cwd)||x.project, x.git_branch, (x.message_count||0)+' msgs', age]
-             .filter(Boolean).map(esc).join(' &middot; ');
-  return `<div class="sess" id="sess-${esc(x.session_id)}">
-    <div class="sbody">
-      <div class="stitle">${esc(x.title||'(untitled)')}</div>
-      <div class="smeta">${meta}</div>
-    </div>
-    <span class="uptag" hidden>live</span>
-    <button class="btn-resume" onclick="resumeSession('${esc(x.session_id)}',this)">Resume</button>
-  </div>`;
-}
-
-// Mark sessions the worker already has running, so Resume can't be pressed
-// twice — two `claude --resume` on one id would both write the same transcript.
-async function loadLiveSessions(){
-  if(!sessWorker || $('#view-sessions').hidden) return;
-  const generation=sessGeneration, worker=sessWorker, agent=sessAgent();
-  const reply=await bandCall(agent+'.resumed',worker,{},15);
-  if(generation!==sessGeneration)return;
-  const up=new Set(((reply.result||{}).sessions||[]).filter(s=>s.running).map(s=>s.session_id));
-  for(const el of document.querySelectorAll('.sess')){
-    const id=el.id.replace(/^sess-/,''), isUp=up.has(id);
-    el.classList.toggle('isup',isUp);
-    el.querySelector('.uptag').hidden=!isUp;
-    const b=el.querySelector('.btn-resume');
-    if(sessBusy===id) continue;
-    b.disabled=isUp; b.textContent=isUp?'running':'Resume';
-  }
-}
-
-async function resumeSession(sid,btn){
-  sessBusy=sid; btn.disabled=true; btn.textContent='starting…';
-  const note=$('#sesslive');
-  const generation=sessGeneration, worker=sessWorker, agent=sessAgent();
-  const reply=await bandCall(agent+'.resume',worker,{session_id:sid},40);
-  if(generation!==sessGeneration){sessBusy=null;return;}
-  const res=reply.result||{};
-  sessBusy=null;
-  if(res.ok){
-    note.innerHTML=`<div class="sessnote"><b>${esc(res.title||res.short_id)}</b> is back online
-      as <b>${esc(res.name||'')}</b> on ${esc(wname(sessWorker))}${res.cwd?' in <code>'+esc(tilde(res.cwd))+'</code>':''}.
-      ${agent==='claude-history'?'Open it from Remote Control in claude.ai — it should appear within a few seconds.':esc(res.note||'Codex is starting.')+' Handle: <code>'+esc(res.handle||'')+'</code>'}</div>`;
-    if(agent==='codex-history' && res.handle){
-      for(const [label,cap] of [['Read output','proc.read'],['Send input','proc.write'],['Stop session','proc.close']]){
-        const button=document.createElement('button');button.className='btn';button.textContent=label;
-        button.onclick=async()=>{await openCapModal(worker,cap);const input=$('#cf-handle');if(input)input.value=res.handle;};note.append(button);
-      }
-    }
-  }else{
-    btn.disabled=false; btn.textContent='Resume';
-    note.innerHTML=`<div class="sessnote bad">Could not resume: ${esc(res.error||reply.error||'unknown error')}${res.hint?' — '+esc(res.hint):''}</div>`;
-  }
-  loadLiveSessions();
-}
 
 /* ---- chat panel ---- */
 let curRoom=null, chatTimer=null, lastSeq=0, curParts=[], presence=[], lastSender=null;

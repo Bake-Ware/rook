@@ -81,3 +81,48 @@ def test_resume_uses_argv_and_serializes_duplicate_requests(tmp_path, monkeypatc
     assert sum(r['ok'] for r in results) == 1
     assert results[1]['error'] == 'session is already running'
     assert sum(c.args[0] == 'proc.start' for c in registry.call.call_args_list) == 1
+
+
+def test_history_pagination_and_activity(tmp_path):
+    import os
+    import time
+    path = rollout(tmp_path)
+    plugin = codex.CodexHistoryPlugin()
+    first = plugin._read(SID, path=str(tmp_path), max_messages=1)
+    second = plugin._read(SID, path=str(tmp_path), max_messages=1, offset=first['next_offset'])
+    assert first['messages'][0]['role'] == 'user'
+    assert second['messages'][0]['role'] == 'assistant'
+    assert not second.get('truncated')
+    assert first['activity'] == 'working'
+    os.utime(path, (time.time()-300, time.time()-300))
+    assert plugin._read(SID, path=str(tmp_path))['activity'] == 'pending'
+    with path.open('a') as stream:
+        stream.write(json.dumps({'type': 'event_msg', 'payload': {'type': 'task_complete'}})+'\n')
+    assert plugin._read(SID, path=str(tmp_path))['activity'] == 'ready'
+    rollout(tmp_path, sid='12345678-0000-0000-0000-000000000000')
+    page1 = plugin._pull(path=str(tmp_path), limit=1)
+    page2 = plugin._pull(path=str(tmp_path), limit=1, offset=1)
+    assert page1['total'] == 2
+    assert page1['sessions'][0]['session_id'] != page2['sessions'][0]['session_id']
+
+
+def test_default_history_includes_archived_codex_sessions(tmp_path, monkeypatch):
+    monkeypatch.setenv('CODEX_HOME', str(tmp_path))
+    rollout(tmp_path / 'sessions')
+    archived = '12345678-0000-0000-0000-000000000000'
+    rollout(tmp_path / 'archived_sessions', sid=archived)
+    plugin = codex.CodexHistoryPlugin()
+    assert plugin._pull()['total'] == 2
+    assert plugin._read(archived)['ok']
+
+
+def test_claude_activity_user_input_and_completion(tmp_path):
+    path = tmp_path / 'session.jsonl'
+    plugin = ClaudeHistoryPlugin()
+    path.write_text(json.dumps({'type': 'assistant', 'message': {'stop_reason': 'tool_use',
+        'content': [{'type': 'tool_use', 'name': 'AskUserQuestion'}]}}) + '\n')
+    assert plugin._activity(path) == 'ready'
+    path.write_text(json.dumps({'type': 'assistant', 'message': {'stop_reason': 'tool_use', 'content': None}}))
+    assert plugin._activity(path) == 'working'
+    path.write_text(json.dumps({'type': 'assistant', 'message': {'stop_reason': 'end_turn'}}))
+    assert plugin._activity(path) == 'ready'
