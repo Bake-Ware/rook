@@ -208,7 +208,7 @@ class HistoryBand(FakeBand):
             result = dict(ok=True, sessions=rows[offset:offset+args['limit']], total=len(rows))
         elif cap.endswith('.send'):
             result = {'ok': False, 'error': 'Host rejected the message.'} if getattr(self, 'fail_send', False) else {
-                'ok': True, 'delivery': 'queued', 'note': 'Message queued on host.'}
+                'ok': True, 'delivery': 'steered', 'note': 'Message delivered to the active turn.'}
         elif cap.endswith('.follow'):
             if args.get('version') == str(self.version):
                 result = dict(ok=True, unchanged=True, version=str(self.version))

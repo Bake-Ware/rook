@@ -57,7 +57,7 @@ async def main():
             assert not any(cap.endswith('.send') for cap, _ in band.calls)
             await page.locator('#work-input').press('Enter')
             await expect(page.locator('.work-session-heading #work-history-refresh')).to_be_visible()
-            await expect(page.locator('#work-resume-note')).to_have_text('Message queued on host.')
+            await expect(page.locator('#work-resume-note')).to_have_text('Message delivered to the active turn.')
             sent = [(cap, args) for cap, args in band.calls if cap.endswith('.send')]
             assert len(sent) == 1 and sent[0][1]['text'] == 'A message from Work\nwith a second line 💌'
             assert sent[0][1]['session_id'] == work.store.get(sid)['source_id']

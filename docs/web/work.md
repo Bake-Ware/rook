@@ -54,8 +54,21 @@ Closing an imported entry that has no web-managed process only closes its review
 entry; it does not terminate an independently started terminal.
 
 Active imported sessions expose a message composer when the worker can reach
-their existing input channel. Codex uses its installed `codex queue --thread`
-command; messages wait for the current turn to finish. Claude uses its local
+their existing input channel. Codex sends directly to an existing local app-server:
+`turn/start` while idle, or `turn/steer` with the current turn ID while working.
+The exact thread must already be loaded; delivery never starts or resumes a
+second runtime. The default Unix control socket is under
+`$CODEX_HOME/app-server-control/app-server-control.sock`; a worker can set
+`ROOK_CODEX_CONTROL_SOCKET` for a custom socket. Pending approvals block input.
+Standalone Linux Codex sessions in Konsole use D-Bus input to their exact open
+terminal. Rook checks the native process's open rollout, process start, terminal,
+foreground group, D-Bus owner ancestry, disabled shared input, and empty composer.
+A local draft, dialog, unsupported renderer, or changed process refuses delivery.
+Konsole must already allow its Security sensitive D-Bus API; Rook never changes
+that setting. Messages are bracketed pastes followed by Enter; control characters and terminal
+commands are refused. This path reports transport submission, not model acceptance.
+There is no CLI queue fallback. Other terminal applications currently need an
+app-server connection for direct input. Claude uses its local
 authenticated peer inbox, with exact session, process-start, socket-owner, and
 peer-key checks. Claude's peer protocol has no in-band acceptance acknowledgment:
 Work reports **sent to inbox**, not agent acceptance. Subsequent messages appear
@@ -67,7 +80,9 @@ The worker records imported-message command receipts in
 `session_message_receipts` in its Work database before dispatch. Neither those
 receipts nor the web database contain prompt bodies. Retries with the same ID
 do not resend, including after an uncertain outcome or restart. Failed sends
-retain the browser draft. Claude inbox behavior is version-dependent; the adapter
+retain the browser draft. An initial web acknowledgment is not completion; the
+browser waits for the host receipt and queries that receipt after reconnecting
+without replaying the message. Submission notes are visible outside the terminal panel. Claude inbox behavior is version-dependent; the adapter
 currently recognizes peer protocol 1 and respects the session's peer-message policy.
 
 To create a new session, open **Work**, choose a connected Linux host with Codex installed
@@ -128,10 +143,15 @@ terminal output is read only while selected and is not persisted by the web.
 
 This is a Rook-native implementation of the T3 work pattern, not an embedded T3
 server. T3's Codex adapter/session runtime at commit
-`cfeaca41ae27bdf2c203158d378c87c7308fea2a` was reviewed as an architectural
+`20363c32c9bfdbf49c2716ef11d1f18483fcc01b` was reviewed as an architectural
 reference. Its assumption that provider execution and orchestration share a
 host is deliberately split at Rook's process transport boundary. No T3 source
-is vendored.
+is vendored. [T3's runtime](https://github.com/pingdotgg/t3code/blob/20363c32c9bfdbf49c2716ef11d1f18483fcc01b/apps/server/src/provider/Layers/CodexSessionRuntime.ts)
+keeps a connection to the app-server it owns and uses `turn/start`; its comments
+note that follow-ups can receive queued turn IDs. Rook explicitly uses
+[`turn/steer`](https://learn.chatgpt.com/docs/app-server) for a working turn.
+T3 does not attach arbitrary standalone CLI processes; the guarded Konsole path
+is Rook's adapter for those existing sessions.
 
 ## Current scope
 
