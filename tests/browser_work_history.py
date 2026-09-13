@@ -19,7 +19,6 @@ async def main():
         p = portal.__wrapped__(Path(temp), patch)
         p.server._band = band = HistoryBand()
         work = p.account.work_web
-        work.import_pause = 0
         await work.sync_history(band.workers['host1'], 'claude', [p.uid])
         sid = work.store.all()[0]['id']
         async def index(request):
@@ -45,7 +44,11 @@ async def main():
             card = page.locator('.work-session-card').filter(has=page.locator(f'[data-session="{sid}"]'))
             await card.locator('[data-session]').click()
             await expect(page.locator('#work-title')).not_to_have_text('Loading…')
-            await expect(page.locator('#work-conversation')).to_contain_text('Message 500')
+            await expect(page.locator('#work-conversation')).to_contain_text('Message 19')
+            await expect(page.locator('#work-conversation')).not_to_contain_text('Message 20')
+            await page.locator('#work-history-more').click()
+            await expect(page.locator('#work-conversation')).to_contain_text('Message 39')
+            assert all('items' not in s for s in work.store.all())
             await expect(page.locator('#work-compose')).to_be_hidden()
             await card.locator('select').select_option('blocked')
             await expect(page.locator('#work-status')).to_have_text('blocked')

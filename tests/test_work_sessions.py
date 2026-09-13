@@ -1,14 +1,18 @@
 import asyncio
+import inspect
 import json
 import time
 from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
+import pytest_asyncio
 from aiohttp.test_utils import TestClient, TestServer
 
 from test_band_management import portal
 from rook.remote.work_web import WorkStore, WorkWeb, project
+from rook.worker.work_runtime import RuntimeStore, WorkRuntime
+from rook.worker.plugins.work import WorkPlugin
 
 
 class FakeBand:
@@ -25,6 +29,8 @@ class FakeBand:
     async def call(self, cap, args, target, timeout):
         self.calls.append((cap,args))
         if cap == 'proc.start':
+            self.running = True
+            self.output = ''
             result = {'ok':True, 'handle':'handle1'}
         elif cap == 'proc.signal':
             self.running = False
@@ -53,6 +59,34 @@ class FakeBand:
         return {'ok':True,'from':target,'result':result}
 
 
+class RuntimeBand(FakeBand):
+    def __init__(self, path):
+        super().__init__()
+        self.plugin = WorkPlugin()
+        async def local_call(cap, **args):
+            return (await super(RuntimeBand, self).call(cap, args, 'host1', 12))['result']
+        self.plugin.runtime = WorkRuntime(path, SimpleNamespace(call=local_call))
+        self.workers['host1']['caps'] += list(self.plugin.caps())
+
+    async def call(self, cap, args, target, timeout):
+        if not cap.startswith('work.'):
+            return await super().call(cap, args, target, timeout)
+        self.calls.append((cap, args))
+        result = self.plugin.caps()[cap](**args)
+        if inspect.isawaitable(result):
+            result = await result
+        return {'ok': True, 'from': target, 'result': result}
+
+
+@pytest_asyncio.fixture
+async def runtime_band(portal, tmp_path):
+    band = RuntimeBand(tmp_path / 'worker' / 'work.sqlite3')
+    portal.server._band = band
+    await band.plugin.start()
+    yield band
+    await band.plugin.stop()
+
+
 async def until(test, timeout=8):
     async with asyncio.timeout(timeout):
         while not test():
@@ -74,8 +108,8 @@ async def create(client,p):
 
 
 @pytest.mark.asyncio
-async def test_session_runs_without_browser_and_recovers_server_state(portal):
-    p=portal;p.server._band=band=FakeBand()
+async def test_session_runs_without_browser_and_recovers_server_state(portal, runtime_band):
+    p=portal;band=runtime_band
     async with TestClient(TestServer(p.app)) as client:
         ws,sid=await create(client,p)
         work=p.account.work_web
@@ -85,24 +119,33 @@ async def test_session_runs_without_browser_and_recovers_server_state(portal):
         await ws.close()
         band.emit({'method':'item/agentMessage/delta','params':{'itemId':'answer','delta':'Still working without a browser.'}})
         band.emit({'method':'item/commandExecution/requestApproval','id':99,'params':{'command':'test approval'}})
-        await until(lambda:bool(work.store.get(sid)['pending']))
+        await until(lambda:bool(band.plugin.runtime.store.get(sid)['pending']))
         # Stop only the web collector; the worker process remains available.
         await work.stop(p.app)
         rebuilt=WorkWeb(p.account)
         band.emit({'method':'item/agentMessage/delta','params':{'itemId':'answer','delta':' More output.'}})
-        await rebuilt.drain(sid)
-        s=rebuilt.store.get(sid)
+        await until(lambda: ' More output.' in band.plugin.runtime.store.get(sid)['items']['answer']['text'])
+        s=band.plugin.runtime.store.get(sid)
         assert s['items']['answer']['text']=='Still working without a browser. More output.'
         assert s['pending']['99']['params']['command']=='test approval'
         assert len([c for c,a in band.calls if c=='proc.start'])==1
-        # A second read never duplicates committed output.
-        await rebuilt.drain(sid)
-        assert rebuilt.store.get(sid)['items']['answer']['text']==s['items']['answer']['text']
+        assert 'items' not in rebuilt.store.get(sid)
+        assert 'pending' not in rebuilt.store.get(sid)
+        assert RuntimeStore(band.plugin.runtime.store.path).get(sid)['items']==s['items']
+        # Viewing is authenticated, paged, and does not populate web storage.
+        response = await client.get('/account/work/view/' + sid, headers=p.headers)
+        assert response.status == 200
+        payload = await response.json()
+        assert json.loads(payload['data'])['pending']['99']['params']['command']=='test approval'
+        with rebuilt.store.db() as db:
+            assert 'More output' not in db.execute('SELECT state FROM work_sessions WHERE id=?', (sid,)).fetchone()[0]
+            assert db.execute('SELECT COUNT(*) FROM work_events').fetchone()[0] == 0
+
 
 
 @pytest.mark.asyncio
-async def test_auth_csrf_owner_and_command_deduplication(portal):
-    p=portal;p.server._band=band=FakeBand()
+async def test_auth_csrf_owner_and_command_deduplication(portal, runtime_band):
+    p=portal;band=runtime_band
     async with TestClient(TestServer(p.app)) as client:
         r=await client.get('/account/work/bootstrap')
         assert r.status==401
@@ -123,10 +166,10 @@ async def test_auth_csrf_owner_and_command_deduplication(portal):
             if msg['type']=='error':
                 assert 'expired' in msg['error'];break
         band.emit({'method':'item/commandExecution/requestApproval','id':88,'params':{'command':'echo approval'}})
-        await until(lambda:'88' in work.store.get(sid)['pending'])
+        await until(lambda:'88' in band.plugin.runtime.store.get(sid)['pending'])
         answer={'op':'answer','id':'answer-test-123','session':sid,'csrf':p.csrf,'request':'88','decision':'decline'}
         await ws.send_json(answer);await ws.send_json(answer)
-        await until(lambda:not work.store.get(sid)['pending'])
+        await until(lambda:not band.plugin.runtime.store.get(sid)['pending'])
         sent=[json.loads(a['data']) for cap,a in band.calls if cap=='proc.write']
         assert len([m for m in sent if m.get('id')==88 and 'result' in m])==1
         other=p.store.create_local('other','long enough password')
@@ -136,13 +179,13 @@ async def test_auth_csrf_owner_and_command_deduplication(portal):
 
 
 def test_projection_unicode_and_durable_command_claim(tmp_path):
-    store=WorkStore(tmp_path/'work.sqlite3')
+    store=RuntimeStore(tmp_path/'work.sqlite3')
     s=dict(id='1',owner='a',items={},order=[],pending={},status='working')
     project(s,{'method':'item/agentMessage/delta','params':{'itemId':'a','delta':'Hello 🦉'}})
     project(s,{'method':'item/completed','params':{'item':{'id':'a','type':'agentMessage','text':'Hello 🦉 world'}}})
     project(s,{'method':'turn/diff/updated','params':{'diff':'+hello'}})
     store.save(s,{'example':True})
-    assert WorkStore(store.path).get('1')['items']['a']['text']=='Hello 🦉 world'
+    assert RuntimeStore(store.path).get('1')['items']['a']['text']=='Hello 🦉 world'
     assert store.claim('1','command') and not store.claim('1','command')
     assert len(s['order'])==1
 
@@ -158,7 +201,7 @@ class HistoryBand(FakeBand):
         self.calls.append((cap, args))
         if cap.endswith('.pull'):
             rows = [dict(session_id=f'source-{i}', title=f'Imported {i}', cwd='/tmp',
-                         last_modified=self.version, size_bytes=self.version) for i in range(101)]
+                         last_modified=self.version, size_bytes=self.version, activity='ready') for i in range(101)]
             offset = args.get('offset', 0)
             result = dict(ok=True, sessions=rows[offset:offset+args['limit']], total=len(rows))
         elif cap.endswith('.read_page'):
@@ -177,7 +220,6 @@ async def test_discovery_paginates_both_agents_and_preserves_review_status(porta
     p = portal
     p.server._band = band = HistoryBand()
     work = p.account.work_web
-    work.import_pause = 0
     host = band.workers['host1']
     for agent in ('claude', 'codex'):
         await work.sync_history(host, agent, [p.uid])
@@ -186,8 +228,8 @@ async def test_discovery_paginates_both_agents_and_preserves_review_status(porta
     assert {s['agent'] for s in sessions} == {'claude', 'codex'}
     s = sessions[0]
     sid = s['id']
-    assert len(s['order']) == 501
-    assert s['items']['500']['text'] == 'Message 500'
+    assert 'items' not in s and 'order' not in s
+    assert all(cap.endswith('.pull') for cap, _ in band.calls)
     await work.command(sid, dict(op='status', status='blocked', id='block-session'))
     band.version += 1
     await work.sync_history(host, s['agent'], [p.uid])
@@ -201,7 +243,7 @@ async def test_discovery_paginates_both_agents_and_preserves_review_status(porta
     await work.sync_history(host, s['agent'], [p.uid])
     assert all(cap.endswith('.pull') for cap, _ in band.calls[count:])
     assert len(work.store.all(p.uid)) == 202
-    assert WorkStore(work.store.path).get(sid)['items']['500']['text'] == 'Message 500'
+    assert 'items' not in WorkStore(work.store.path).get(sid)
 
 
 def test_ready_means_user_interaction_and_manual_status_survives_events():
@@ -233,7 +275,6 @@ async def test_imported_resume_input_close_and_host_isolation(portal):
     band.call = call
     p.server._band = band
     work = p.account.work_web
-    work.import_pause = 0
     host = band.workers['host1']
     await work.sync_history(host, 'claude', [p.uid])
     sid = work.store.all()[0]['id']
@@ -241,7 +282,8 @@ async def test_imported_resume_input_close_and_host_isolation(portal):
     assert work.snapshot(work.store.get(sid))['external_running']
     assert 'external_handle' not in work.snapshot(work.store.get(sid))
     await work.drain_external(sid)
-    assert work.store.get(sid)['terminal'] == 'terminal prompt'
+    assert work.external_output[sid] == 'terminal prompt'
+    assert 'terminal' not in work.store.get(sid)
     await work.command(sid, dict(op='terminal_input', text='hello', id='input-imported'))
     assert ('proc.write', {'handle': 'external', 'data': 'hello', 'newline': True}) in band.calls
     await work.command(sid, dict(op='status', status='closed', id='close-imported'))
@@ -257,12 +299,12 @@ async def test_imported_resume_input_close_and_host_isolation(portal):
 
 
 def test_index_migrates_existing_sessions_without_loading_transcripts(tmp_path):
-    store = WorkStore(tmp_path/'work.sqlite3')
+    store = RuntimeStore(tmp_path/'work.sqlite3')
     state = dict(id='legacy', owner='operator', status='ready', items={'large':'x'*1000000}, order=['large'])
     store.save(state)
     with store.db() as db:
         db.execute('DROP TABLE work_index')
-    restored = WorkStore(store.path)
+    restored = RuntimeStore(store.path)
     metadata = restored.all('operator', details=False)[0]
     assert 'items' not in metadata and 'order' not in metadata
     assert len(json.dumps(metadata)) < 1000
@@ -282,5 +324,128 @@ async def test_older_workers_still_get_catalog_entries(portal):
     work = p.account.work_web
     await work.sync_history(worker, 'claude', [p.uid])
     assert len(work.store.all()) == 101
-    assert all(s['history_loading'] for s in work.store.all())
+    assert all('items' not in s for s in work.store.all())
     assert all(cap.endswith('.pull') for cap, _ in band.calls)
+
+
+@pytest.mark.asyncio
+async def test_history_is_read_on_demand_without_persistence_and_requires_owner(portal):
+    p = portal
+    p.server._band = band = HistoryBand()
+    work = p.account.work_web
+    await work.sync_history(band.workers['host1'], 'claude', [p.uid])
+    s = work.store.all(p.uid)[0]
+    url = '/account/work/history/' + s['id']
+    async with TestClient(TestServer(p.app)) as client:
+        assert (await client.get(url)).status == 401
+        before = work.store.get(s['id'])
+        response = await client.get(url, headers=p.headers)
+        assert response.status == 200
+        assert 'no-store' in response.headers['Cache-Control']
+        page = await response.json()
+        assert len(page['messages']) == 20
+        assert page['messages'][0]['content'] == 'Message 0'
+        response = await client.get(url + '?offset=20', headers=p.headers)
+        assert (await response.json())['messages'][0]['content'] == 'Message 20'
+        assert work.store.get(s['id']) == before
+        with work.store.db() as db:
+            assert db.execute('SELECT COUNT(*) FROM work_events').fetchone()[0] == 0
+        band.workers.clear()
+        response = await client.get(url, headers=p.headers)
+        assert response.status == 503
+        assert 'disconnected' in (await response.json())['error']
+        s['owner'] = 'someone-else'
+        work.store.save(s)
+        assert (await client.get(url, headers=p.headers)).status == 404
+
+
+def test_old_imported_copies_are_removed_but_native_sessions_survive(tmp_path):
+    store = WorkStore(tmp_path / 'work.sqlite3')
+    native = dict(id='native', owner='operator', status='ready', items={'a': 'native text'}, order=['a'])
+    store.save(native)
+    assert 'items' not in store.get('native')
+    imported = dict(native, id='imported', imported=True, review_status='blocked',
+                    terminal='terminal text', history_loading=False)
+    # Simulate a database from the full-copy importer, bypassing the new save filter.
+    with store.db() as db:
+        for table in ('work_sessions', 'work_index'):
+            db.execute('INSERT INTO ' + table + ' VALUES(?,?,?,?)',
+                       ('imported', 'operator', 1, json.dumps(imported)))
+    restored = WorkStore(store.path)
+    for state in (restored.get('imported'), next(s for s in restored.all(details=False) if s['id']=='imported')):
+        assert not {'items', 'order', 'terminal', 'history_loading'} & state.keys()
+        assert state['review_status'] == 'blocked'
+    assert 'items' not in restored.get('native')
+    restored.save(imported)
+    assert 'items' not in restored.get('imported')
+
+
+@pytest.mark.asyncio
+async def test_worker_view_pages_are_stable_incremental_and_bound_to_session(runtime_band):
+    runtime = runtime_band.plugin.runtime
+    state = dict(id='paged', owner='host', status='ready', items={'large': {'text': '🦉' * 15000}},
+                 order=['large'], pending={}, diff='original')
+    runtime.store.save(state)
+    plugin = runtime_band.plugin
+    page = plugin.view_page('paged')
+    assert len(page['data']) <= 6000 and page['truncated']
+    with pytest.raises(ValueError, match='expired'):
+        plugin.view_page('another', token=page['token'], offset=page['next_offset'])
+    original_revision = page['revision']
+    # Output changing while a view is in flight must not mix two revisions.
+    changed = runtime.store.get('paged')
+    changed['items']['second'] = {'text': 'new output'}
+    changed['order'].append('second')
+    changed['diff'] = 'new diff'
+    runtime.store.save(changed)
+    text = page['data']
+    while page['truncated']:
+        page = plugin.view_page('paged', token=page['token'], offset=page['next_offset'])
+        assert len(page['data']) <= 6000
+        text += page['data']
+    assert json.loads(text)['items'] == state['items']
+    delta = plugin.view_page('paged', since=original_revision)
+    update = json.loads(delta['data'])
+    assert update['items'] == {'second': {'text': 'new output'}}
+    assert update['diff'] == 'new diff'
+    assert 'large' not in update['items']
+    assert plugin.status(['paged'])['sessions'][0]['revision'] == changed['revision']
+
+
+@pytest.mark.asyncio
+async def test_legacy_migration_keeps_only_copy_until_worker_acknowledges(portal, runtime_band):
+    p = portal
+    work = p.account.work_web
+    state = dict(id='legacy-native', owner=p.uid, worker_id='host1', band='test',
+                 status='closed', agent='codex', title='Legacy', cwd='/tmp', model='',
+                 items={'saved': {'text': 'old transcript 🦉'}}, order=['saved'], pending={},
+                 rpc={}, partial='', cursor=0, handle=None, turn_id=None, thread_id='thread1',
+                 diff='old diff', error='', revision=1)
+    with work.store.db() as db:
+        db.execute('INSERT INTO work_sessions VALUES(?,?,?,?)',
+                   (state['id'], p.uid, 1, json.dumps(state)))
+        db.execute('INSERT INTO work_events(session,created,event) VALUES(?,?,?)',
+                   (state['id'], 1, json.dumps({'raw': 'old protocol text'})))
+    work.store = WorkStore(work.store.path)
+    metadata = work.store.get(state['id'])
+    assert metadata['legacy_runtime'] and 'items' not in metadata
+    original = runtime_band.call
+    async def reject(cap, args, target, timeout):
+        if cap == 'work.adopt_page':
+            raise ValueError('worker unavailable')
+        return await original(cap, args, target, timeout)
+    runtime_band.call = reject
+    with pytest.raises(ValueError):
+        await work.migrate(metadata)
+    assert work.store.archive(state['id'])['state']['items'] == state['items']
+    runtime_band.call = original
+    await work.migrate(metadata)
+    adopted = runtime_band.plugin.runtime.store.get(state['id'])
+    assert adopted['items'] == state['items']
+    assert adopted['thread_id'] == 'thread1'
+    archive_files = list((runtime_band.plugin.runtime.store.path.parent / 'work-migrations').glob('*.json'))
+    assert len(archive_files) == 1
+    assert json.loads(archive_files[0].read_text())['events'][0]['event'] == json.dumps({'raw': 'old protocol text'})
+    archive = work.store.archive(state['id'])
+    assert 'items' not in archive['state'] and not archive['events']
+    assert work.store.get(state['id'])['remote_runtime']

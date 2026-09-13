@@ -1,4 +1,4 @@
-import asyncio, json, sys, tempfile, time
+import asyncio, inspect, json, sys, tempfile, time
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 sys.path[:0]=[str(ROOT),str(ROOT/'tests')]
@@ -12,20 +12,28 @@ from test_band_management import portal
 from test_work_sessions import until
 from rook.worker.plugins.proc import ProcPlugin
 from rook.remote.work_web import WorkWeb
+from rook.worker.plugins.work import WorkPlugin
+from rook.worker.work_runtime import WorkRuntime
+from types import SimpleNamespace
 
 class LocalBand:
- def __init__(self):
+ def __init__(self,path):
   self.proc=ProcPlugin()
-  self.workers={'local':dict(worker_id='local',name='cachyrig',band='test',last_seen=time.time(),caps=['proc.start','proc.read','proc.write'])}
+  self.plugin=WorkPlugin()
+  async def local_call(cap,**args):return await getattr(self.proc,'_'+cap.split('.')[1])(**args)
+  self.plugin.runtime=WorkRuntime(path,SimpleNamespace(call=local_call))
+  self.workers={'local':dict(worker_id='local',name='cachyrig',band='test',last_seen=time.time(),caps=list(self.plugin.caps()))}
  async def call(self,cap,args,target,timeout):
-  result=await getattr(self.proc,'_'+cap.split('.')[1])(**args)
+  result=self.plugin.caps()[cap](**args)
+  if inspect.isawaitable(result):result=await result
   return dict(ok=True,**{'from':target},result=result)
 
 async def main():
  with tempfile.TemporaryDirectory(prefix='rook-work-live-') as temp:
   path=Path(temp);workspace=path/'repo';workspace.mkdir()
   process=await asyncio.create_subprocess_exec('git','init','-q',str(workspace));await process.wait()
-  p=portal.__wrapped__(path,MonkeyPatch());band=LocalBand();p.server._band=band
+  p=portal.__wrapped__(path,MonkeyPatch());band=LocalBand(path/'host'/'work.sqlite3');p.server._band=band
+  await band.plugin.start()
   async def index(r):return web.Response(text=(ROOT/'rook/web/index.html').read_text(),content_type='text/html')
   async def empty(r):return web.json_response([])
   p.app.router.add_get('/',index)
@@ -57,7 +65,7 @@ async def main():
    async def wait_done():
     async with asyncio.timeout(120):
      while True:
-      s=work.store.get(sid)
+      s=band.plugin.runtime.store.get(sid)
       if s['pending']:
        print('PENDING '+json.dumps(s['pending']),flush=True)
        for key,req in list(s['pending'].items()):
@@ -68,7 +76,7 @@ async def main():
        print(json.dumps(s),flush=True);raise RuntimeError(s['error'])
       await asyncio.sleep(.2)
    await wait_done()
-   print('COMPLETED '+json.dumps({'status':work.store.get(sid)['status'],'error':work.store.get(sid)['error'],'items':[i['type'] for i in work.store.get(sid)['items'].values()]}),flush=True)
+   print('COMPLETED '+json.dumps({'status':work.store.get(sid)['status'],'error':work.store.get(sid)['error'],'items':[i['type'] for i in band.plugin.runtime.store.get(sid)['items'].values()]}),flush=True)
    assert (workspace/'smoke.txt').read_text()=='rook work smoke\n'
    page=await ctx.new_page();page.on('pageerror',lambda e:errors.append(str(e)))
    await page.goto(url+'#work')
@@ -88,6 +96,7 @@ async def main():
    await work.command(sid,dict(op='close',id='test-cleanup-close'))
    await browser.close()
    assert not errors,errors
-   print('PASS: real Codex file edit, server-owned run while page closed, restored history/diff, desktop/mobile, reopen.',flush=True)
+   print('PASS: real Codex file edit, worker-owned run while page closed, restored history/diff, desktop/mobile, reopen.',flush=True)
+  await band.plugin.stop()
   await band.proc.stop()
 asyncio.run(main())
