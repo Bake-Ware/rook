@@ -482,3 +482,16 @@ async def test_active_state_changes_without_transcript_modification(portal):
     band.active = False
     await work.sync_history(band.workers['host1'], 'codex', [p.uid])
     assert not work.store.get(before['id'])['active']
+
+
+def test_web_restart_finishes_uncertain_receipt_without_replaying(tmp_path):
+    from rook.remote.work_web import WorkStore
+    path = tmp_path / 'web.sqlite3'
+    first = WorkStore(path)
+    assert first.claim('session', 'in-flight-command')
+    assert first.claim('session', 'finished-command')
+    first.result('session', 'finished-command', {'status': 'submitted'})
+    restarted = WorkStore(path)
+    assert restarted.result('session', 'in-flight-command')['status'] == 'error'
+    assert not restarted.claim('session', 'in-flight-command')
+    assert restarted.result('session', 'finished-command')['status'] == 'submitted'
