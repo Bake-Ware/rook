@@ -1,5 +1,31 @@
 # BakeNetCA deployment layout
 
+
+## Active-session messaging deployed, 2026-09-13
+
+Web release `/opt/rook-releases/work-message-20260913-901f234` uses source
+`901f234` and signed worker **157.eager.fennec**. Artifact SHA-256:
+`5dba1f6108983dfcaf345a19967b19e85511507da83f86d345cd95c5429790a1`.
+
+Work can send messages to active imported sessions: Codex's existing-session
+queue command and Claude's authenticated local peer inbox. Worker-local command
+receipts prevent replay without storing prompts in the web database. Failed
+sends restore the browser draft. Claude reports inbox submission because its
+protocol does not acknowledge acceptance; refresh history to confirm receipt.
+See [Work sessions](../web/work.md) for supported channels and limitations.
+
+Validation: 179 Python tests; imported-message and native-runtime browser tests;
+public manifest signature and both artifact hashes; live current-session composer
+enabled, Resume hidden, and 85 messages loaded in five snapshot pages. The three
+active Claude sessions on cachyrig advertise usable inboxes. Web inspection found
+zero transcript bodies, legacy events, or pending migrations. The temporary
+verification login was revoked. MCP and Android APK remain unchanged.
+
+Rollback web release: `/opt/rook-releases/work-live-20260913-fbfbd31`.
+Unit and SQLite backups: `/var/backups/rook/work-message-20260913-901f234`.
+All 25 compatible workers passed their update health windows; automatic updates
+are restored. The existing Work resource guard remains in place.
+
 ## Live-session detection and full reads deployed, 2026-09-13
 
 Web release: `/opt/rook-releases/work-live-20260913-fbfbd31`, source
