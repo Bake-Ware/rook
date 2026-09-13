@@ -498,7 +498,7 @@ class WorkWeb:
                     activity = meta.get('activity', 'pending')
                     if activity == 'working' and time.time() - (meta.get('last_modified') or 0) > 120:
                         activity = 'pending'
-                    if existing and existing.get('source_version') == fingerprint and existing['status'] == activity and existing.get('active') == bool(meta.get('active')) and existing.get('messageable') == bool(meta.get('messageable')):
+                    if existing and existing.get('source_version') == fingerprint and existing['status'] == activity and existing.get('active') == bool(meta.get('active')) and existing.get('messageable') == bool(meta.get('messageable')) and existing.get('title') == (meta.get('title') or source):
                         continue
                     async with self.lock(sid):
                         s = self.store.get(sid) if existing else dict(

@@ -175,6 +175,22 @@ def _record_role(record: dict) -> str:
     return rtype or "unknown"
 
 
+def _title_candidate(text):
+    """Ignore injected session setup when choosing a human-readable subject."""
+    text = text.strip()
+    if text.lower().startswith('# agents.md instructions'):
+        return None
+    while text:
+        match = re.match(r'<(environment_context|user_instructions|permissions|environment|turn_aborted|system-reminder|local-command-caveat)(?:\s[^>]*)?>', text, re.I)
+        if not match:
+            break
+        end = re.search(r'</' + re.escape(match[1]) + r'\s*>', text, re.I)
+        if not end:
+            return None
+        text = text[end.end():].strip()
+    return text.splitlines()[0][:120] if text else None
+
+
 def _session_meta(p: Path, reader=_read_lines, sid: str | None = None) -> dict:
     sid = sid or p.stem
     try:
@@ -198,13 +214,11 @@ def _session_meta(p: Path, reader=_read_lines, sid: str | None = None) -> dict:
             last_ts = ts
         rtype = rec.get("type")
         if rtype == "ai-title" and isinstance(rec.get("aiTitle"), str):
-            ai_title = rec["aiTitle"]
+            ai_title = _title_candidate(rec["aiTitle"])
         elif rtype in ("user", "assistant"):
             msg_count += 1
             if title is None and rtype == "user":
-                text = _message_text(rec).strip()
-                if text:
-                    title = text.splitlines()[0][:120]
+                title = _title_candidate(_message_text(rec))
         if cwd is None and isinstance(rec.get("cwd"), str):
             cwd = rec["cwd"]
         if git_branch is None and isinstance(rec.get("gitBranch"), str):
@@ -621,7 +635,7 @@ class ClaudeHistoryPlugin(Plugin):
             for rec in self._read_lines(fp):
                 rtype = rec.get("type")
                 if rtype == "ai-title" and isinstance(rec.get("aiTitle"), str):
-                    ai_title = rec["aiTitle"]
+                    ai_title = _title_candidate(rec["aiTitle"])
                     continue
                 if rtype not in ("user", "assistant"):
                     continue
@@ -629,9 +643,7 @@ class ClaudeHistoryPlugin(Plugin):
                 if not text:
                     continue
                 if title is None and rtype == "user":
-                    first = text.strip().splitlines()
-                    if first:
-                        title = first[0][:120]
+                    title = _title_candidate(text)
                 for m in rx.finditer(text):
                     match_count += 1
                     if snippet is None:

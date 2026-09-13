@@ -214,3 +214,16 @@ def test_follow_checks_version_and_pages_only_new_tail(tmp_path, monkeypatch):
     path.write_text('')
     reset = plugin._follow(SID, offset=2, version=version)
     assert reset['replace_from'] == 0 and reset['messages'] == []
+
+
+def test_title_skips_injected_setup_messages(tmp_path):
+    path = rollout(tmp_path)
+    records = [json.loads(line) for line in path.read_text().splitlines() if line.startswith('{')]
+    setup = [{'type': 'response_item', 'payload': {'type': 'message', 'role': 'user',
+        'content': [{'type': 'input_text', 'text': text}]}} for text in (
+            '# AGENTS.md instructions for /project\n<INSTRUCTIONS>Rules</INSTRUCTIONS>',
+            '<environment_context>\n<cwd>/project</cwd>\n</environment_context>')]
+    path.write_text('\n'.join(json.dumps(row) for row in setup+records))
+    plugin = codex.CodexHistoryPlugin()
+    assert plugin._pull(path=str(tmp_path))['sessions'][0]['title'] == 'Design decision: use a queue'
+    assert plugin._search('queue', path=str(tmp_path))['hits'][0]['title'] == 'Design decision: use a queue'

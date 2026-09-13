@@ -27,14 +27,14 @@ export async function mountWork(root) {
         </form>
         <div id="work-session" hidden>
           <header class="work-session-heading"><div><h2 id="work-title"></h2><div id="work-meta" class="work-muted"></div></div>
-          <div class="work-actions"><span id="work-status"></span><button id="work-interrupt" type="button">Stop turn</button><button id="work-close" type="button">Close session</button><button id="work-resume" type="button">Reopen</button></div></header>
+          <div class="work-actions"><span id="work-status"></span><button id="work-interrupt" type="button">Stop turn</button><button id="work-close" type="button">Close session</button><button id="work-resume" type="button">Reopen</button><button id="work-history-refresh" type="button" title="Reread the full conversation from host">Refresh</button></div></header>
           <p id="work-error" role="alert" hidden></p>
           <div class="work-tabs"><button type="button" data-pane="conversation" aria-pressed="true">Conversation</button><button type="button" data-pane="changes" aria-pressed="false">Changes</button></div>
           <div id="work-conversation" class="work-output" aria-label="Conversation"></div>
-          <div id="work-history-controls" hidden><span id="work-history-note" role="status"></span> <button id="work-history-refresh" type="button">Refresh from host</button></div>
+          <div id="work-history-controls" hidden><span id="work-history-note" role="status"></span></div>
           <div id="work-changes" class="work-output" hidden><pre id="work-diff"></pre></div>
           <details id="work-terminal" hidden><summary>Host terminal</summary><p id="work-resume-note" class="work-muted"></p><pre id="work-terminal-output"></pre></details><div id="work-pending"></div>
-          <form id="work-compose"><label class="work-muted" for="work-input">Message your agent</label><textarea id="work-input" rows="3" maxlength="24000" placeholder="Describe the task, or steer work already in progress…" required></textarea><div><span class="work-muted">Ctrl / ⌘ + Enter to send</span><button type="submit">Send</button></div></form>
+          <form id="work-compose"><label class="work-muted" for="work-input">Message your agent</label><textarea id="work-input" rows="3" maxlength="24000" placeholder="Describe the task, or steer work already in progress…" required></textarea><div><span class="work-muted">Enter to send · Shift+Enter for a new line</span><button type="submit">Send</button></div></form>
         </div>
         <p id="work-notice" role="alert"></p>
       </section>
@@ -114,7 +114,7 @@ export async function mountWork(root) {
       if(firstFollow){
         firstFollow=false;
         if(page.live===false){current.noLive=true;return;}
-        if(page.unchanged){$('#work-history-note').textContent='Live · conversation stored on host.';return;}
+        if(page.unchanged){$('#work-history-note').textContent='';return;}
         current.pendingVersion=page.version;
         const from=page.replace_from;
         if(!Number.isInteger(from)||from<0||from>current.order.length)throw Error('Host returned an invalid update cursor.');
@@ -138,7 +138,7 @@ export async function mountWork(root) {
         if(page.next_offset<current.offset||(page.next_offset===current.offset&&page.next_content_offset<=current.contentOffset))throw Error('Host returned an invalid history cursor.');
         current.offset=page.next_offset;current.contentOffset=page.next_content_offset;
       }
-      $('#work-history-note').textContent=current.more?`Reading conversation… ${current.order.length}${page.total_messages?' / '+page.total_messages:''} messages`:follow?'Live · conversation stored on host.':'Conversation read from host.';
+      $('#work-history-note').textContent=current.more?`Reading conversation… ${current.order.length}${page.total_messages?' / '+page.total_messages:''} messages`:'';
       renderSession(state);
       if(current.more){
         await new Promise(resolve=>setTimeout(resolve,25));
@@ -182,7 +182,7 @@ export async function mountWork(root) {
       }
       const delta=JSON.parse(text);
       Object.assign(current,{...delta,items:{...current.items,...delta.items},revision});completed=true;
-      $('#work-history-note').textContent='Conversation stored on host.';
+      $('#work-history-note').textContent='';
       renderSession(state);
     }catch(error){if(error.name!=='AbortError'&&hostView===current)$('#work-history-note').textContent=error.message;}
     finally{
@@ -194,6 +194,7 @@ export async function mountWork(root) {
     if(s.id!==selected)return;
     state=s;
     $('#work-history-controls').hidden=!(s.imported||s.remote_runtime);
+    $('#work-history-refresh').hidden=!(s.imported||s.remote_runtime);
     if(s.remote_runtime){
       if(!hostView||hostView.revision<s.worker_revision)loadHostView();
       s={...s,items:hostView?.items||{},order:hostView?.order||[],pending:hostView?.pending||{},diff:hostView?.diff||'',error:hostView?.error||s.error};
@@ -298,7 +299,7 @@ export async function mountWork(root) {
     e.preventDefault();const input=$('#work-input');
     if(command('message',{text:input.value})){drafts.set(selected,input.value);input.value='';$('#work-compose button').disabled=true;}
   };
-  $('#work-input').onkeydown=e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();if(!$('#work-compose button').disabled)$('#work-compose').requestSubmit();}};
+  $('#work-input').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.altKey&&!e.isComposing&&e.keyCode!==229){e.preventDefault();if(!$('#work-compose button').disabled)$('#work-compose').requestSubmit();}};
   $('#work-interrupt').onclick=()=>command('interrupt');
   $('#work-close').onclick=()=>command('close');
   $('#work-resume').onclick=()=>command('resume');
