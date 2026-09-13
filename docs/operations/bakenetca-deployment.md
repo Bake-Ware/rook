@@ -1,5 +1,40 @@
 # BakeNetCA deployment layout
 
+Worker rollout policy: publish the signed update feed and let autoupdate handle
+workers. Do not manually sweep the fleet with `worker.apply` or per-worker update
+checks unless explicitly requested. Keep automatic updates enabled.
+
+## Direct Work input deployed, 2026-09-13
+
+Web release `/opt/rook-releases/work-direct-20260913-8c55e0c` uses source
+`8c55e0c` and signed worker **167.snappy.quail**, published through autoupdate.
+Artifact SHA-256:
+`b19a9ba1ac0ac6afbece2aa428eb69287bdbba2650d9566d84c64bf866fc7ff3`.
+
+Imported Codex messages no longer use `codex queue`. Existing app-server threads
+receive `turn/start` while idle or `turn/steer` while active, with exact loaded
+thread and turn checks. Open Konsole sessions use guarded direct terminal input:
+process/rollout/foreground ownership, empty composer, and no shared input.
+Unsupported or blocked channels fail explicitly. No duplicate runtime is resumed.
+Worker receipts deduplicate commands, including uncertain outcomes; deliveries
+to the same host session are serialized. Web receipts remain pending until host
+submission completes, restore failed drafts, and report interrupted submissions
+on server restart. Delivery notes are visible outside the terminal panel.
+
+Validation: full Python suite plus targeted transport/receipt regressions,
+both browser suites, and an isolated real Codex app-server test for idle start
+and active steering. The live browser also confirms that blocked terminal input
+shows an error, restores the draft, and re-enables Send. Web inspection shows zero
+transcript bodies and legacy events. The public signed manifest and both artifact hashes match.
+Konsole on sparky currently blocks its Security sensitive D-Bus API; enabling it
+is pending user approval. No terminal security setting was changed.
+The initial build 165 used a manual rollout; future rollouts follow the policy above.
+MCP, APK, and Work resource guards are unchanged.
+Rollback: `/opt/rook-releases/work-direct-20260913-50c72d5` (build 165).
+Pre-feature rollback: `/opt/rook-releases/work-ui-20260913-354f91f`.
+Unit/SQLite backup: `/var/backups/rook/work-direct-20260913-8c55e0c`.
+
+
 
 ## Work controls and titles deployed, 2026-09-13
 
