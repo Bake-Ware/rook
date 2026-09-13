@@ -1,6 +1,29 @@
 # BakeNetCA deployment layout
 
 
+## Live worker conversations deployed, 2026-09-13
+
+Web release `/opt/rook-releases/work-follow-20260913-5bfdd01` uses source
+`5bfdd01` and signed worker **159.jumpy.lemur**. Artifact SHA-256:
+`5411562767004fcde4c1d0cd62d8e9998168c2f287a2a329341b75fe622c5a62`.
+
+Selected imported conversations now check their worker every two seconds and
+page only the changed tail. File-version checks avoid unchanged transcript
+transfers. Hidden pages pause polling; navigation cancels it. Failed reads retry
+from a fresh tail snapshot after five seconds. Initial opening and manual refresh
+still read the full conversation. Transcripts remain worker-owned.
+
+Validation: 180 Python tests, plus browser coverage for automatic new messages,
+bounded tail offsets, recovery from a temporary disconnect, and existing Work
+controls. Public signed manifest and both worker artifacts match. Rollback web
+release is `/opt/rook-releases/work-message-20260913-901f234`; unit/SQLite backups
+are at `/var/backups/rook/work-follow-20260913-5bfdd01`. MCP, APK and Work resource
+guards are unchanged. Live browser verification confirmed new messages in the
+current session appeared without a refresh. Web inspection found zero transcript
+bodies, legacy events, or pending migrations. The temporary login was revoked.
+All 25 compatible workers passed their health windows; automatic updates are restored.
+
+
 ## Active-session messaging deployed, 2026-09-13
 
 Web release `/opt/rook-releases/work-message-20260913-901f234` uses source
