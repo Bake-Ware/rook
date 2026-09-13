@@ -133,6 +133,8 @@ class CodexHistoryPlugin(history.ClaudeHistoryPlugin):
                 return {"ok": False, "error": "session not found or prefix ambiguous"}
             meta = self._session_meta(fp)
             sid = meta["session_id"]
+            if self._is_active(fp):
+                return {"ok": False, "error": "session is already active on this host", "session_id": sid}
             live = await self._resumed_list()
             for item in live["sessions"]:
                 if item["session_id"] == sid and item.get("running"):

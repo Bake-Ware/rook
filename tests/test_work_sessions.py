@@ -201,14 +201,14 @@ class HistoryBand(FakeBand):
         self.calls.append((cap, args))
         if cap.endswith('.pull'):
             rows = [dict(session_id=f'source-{i}', title=f'Imported {i}', cwd='/tmp',
-                         last_modified=self.version, size_bytes=self.version, activity='ready') for i in range(101)]
+                         last_modified=self.version, size_bytes=self.version, activity='ready', active=getattr(self, 'active', False)) for i in range(101)]
             offset = args.get('offset', 0)
             result = dict(ok=True, sessions=rows[offset:offset+args['limit']], total=len(rows))
         elif cap.endswith('.read_page'):
             rows = [dict(role='assistant', content=f'Message {i}') for i in range(501)]
             offset = args.get('offset', 0)
             batch = [dict(m, index=offset+i, content_offset=0) for i, m in enumerate(rows[offset:offset+20])]
-            result = dict(ok=True, messages=batch, activity='ready',
+            result = dict(ok=True, messages=batch, activity='ready', active=getattr(self, 'active', False),
                           truncated=offset+len(batch)<len(rows), next_offset=offset+len(batch), next_content_offset=0)
         else:
             raise AssertionError(cap)
@@ -449,3 +449,21 @@ async def test_legacy_migration_keeps_only_copy_until_worker_acknowledges(portal
     archive = work.store.archive(state['id'])
     assert 'items' not in archive['state'] and not archive['events']
     assert work.store.get(state['id'])['remote_runtime']
+
+
+@pytest.mark.asyncio
+async def test_active_state_changes_without_transcript_modification(portal):
+    p = portal
+    p.server._band = band = HistoryBand()
+    work = p.account.work_web
+    await work.sync_history(band.workers['host1'], 'codex', [p.uid])
+    before = work.store.all()[0]
+    assert not before['active']
+    band.active = True
+    await work.sync_history(band.workers['host1'], 'codex', [p.uid])
+    after = work.store.get(before['id'])
+    assert after['source_version'] == before['source_version']
+    assert after['active'] and after['revision'] > before['revision']
+    band.active = False
+    await work.sync_history(band.workers['host1'], 'codex', [p.uid])
+    assert not work.store.get(before['id'])['active']

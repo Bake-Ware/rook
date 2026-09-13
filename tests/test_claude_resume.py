@@ -166,3 +166,13 @@ async def test_resumed_lists_live_sessions_and_forgets_dead_ones(projects, monke
     assert (await p._resumed_list())["sessions"] == []
     # and it stops tracking it, so a later resume is allowed again
     assert p._resumed_handles == {}
+
+
+@pytest.mark.asyncio
+async def test_independently_started_claude_cannot_be_resumed(projects, monkeypatch):
+    registry = _FakeRegistry()
+    plugin = _plugin(registry)
+    monkeypatch.setattr(plugin, '_is_active', lambda *args: True)
+    result = await plugin._resume(projects['sid'], path=projects['root'])
+    assert not result['ok'] and 'already active' in result['error']
+    assert not any(cap == 'proc.start' for cap, _ in registry.calls)
