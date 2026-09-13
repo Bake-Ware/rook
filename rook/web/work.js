@@ -96,19 +96,32 @@ export async function mountWork(root) {
       return `<section class="work-approval"><h3>Agent request</h3><pre>${esc(JSON.stringify(p,null,2))}</pre><p>This request type needs a newer adapter. Stop the turn to cancel it.</p></section>`;
     }).join('');
   }
-  async function loadHistory(reset=false){
+  async function loadHistory(reset=false,follow=false){
     if(!state?.imported)return;
     if(reset){historyRequest?.abort();history={id:selected,items:{},order:[],offset:0,contentOffset:0,more:true};}
-    if(!history||history.loading||!history.more)return;
+    if(!history||history.loading||(!history.more&&!follow))return;
     const current=history, controller=new AbortController();historyRequest=controller;current.loading=true;
-    $('#work-history-note').textContent='Reading the conversation from host…';
+    let firstFollow=follow, failed=false;
+    if(!follow)$('#work-history-note').textContent='Reading the conversation from host…';
     try{
-      while(current.more){
-      const response=await fetch(`/account/work/history/${encodeURIComponent(current.id)}?offset=${current.offset}&content_offset=${current.contentOffset}&snapshot=${encodeURIComponent(current.snapshot||'')}`,{signal:controller.signal,cache:'no-store'});
+      while(current.more||firstFollow){
+      const query=firstFollow?new URLSearchParams({follow:'1',offset:Math.max(0,current.order.length-1),version:current.version||''}):new URLSearchParams({offset:current.offset,content_offset:current.contentOffset,snapshot:current.snapshot||''});
+      const response=await fetch(`/account/work/history/${encodeURIComponent(current.id)}?${query}`,{signal:controller.signal,cache:'no-store'});
       const page=await response.json();
       if(!response.ok)throw Error(page.error||'Unable to read host history.');
       if(history!==current||selected!==current.id||!active)return;
+      if(firstFollow){
+        firstFollow=false;
+        if(page.live===false){current.noLive=true;return;}
+        if(page.unchanged){$('#work-history-note').textContent='Live · conversation stored on host.';return;}
+        current.pendingVersion=page.version;
+        const from=page.replace_from;
+        if(!Number.isInteger(from)||from<0||from>current.order.length)throw Error('Host returned an invalid update cursor.');
+        for(const id of current.order.slice(from))delete current.items[id];
+        current.order.length=from;
+      }
       current.snapshot=page.snapshot||current.snapshot;
+      current.pendingVersion=page.version||current.pendingVersion;
       if(typeof page.active==='boolean')state={...state,active:page.active};
       const fragments=page.messages||[];
       for(const m of fragments){
@@ -119,19 +132,28 @@ export async function mountWork(root) {
         if(next.type==='userMessage')next.content=[{text:next.text}];
       }
       current.more=!!page.truncated;
+      if(!current.more){current.version=current.pendingVersion||current.version;current.pendingVersion=null;}
       if(current.more){
         if(page.next_offset<current.offset||(page.next_offset===current.offset&&page.next_content_offset<=current.contentOffset))throw Error('Host returned an invalid history cursor.');
         current.offset=page.next_offset;current.contentOffset=page.next_content_offset;
       }
-      $('#work-history-note').textContent=current.more?`Reading conversation… ${current.order.length}${page.total_messages?' / '+page.total_messages:''} messages`:'Conversation read from host.';
+      $('#work-history-note').textContent=current.more?`Reading conversation… ${current.order.length}${page.total_messages?' / '+page.total_messages:''} messages`:follow?'Live · conversation stored on host.':'Conversation read from host.';
       renderSession(state);
       if(current.more){
         await new Promise(resolve=>setTimeout(resolve,25));
         if(controller.signal.aborted||history!==current||selected!==current.id||!active)return;
       }
       }
-    }catch(error){if(error.name!=='AbortError'&&history===current)$('#work-history-note').textContent=error.message;}
-    finally{current.loading=false;}
+    }catch(error){failed=true;current.more=false;if(error.name!=='AbortError'&&history===current)$('#work-history-note').textContent=error.message;}
+    finally{
+      current.loading=false;
+      const tick=()=>{
+        if(!active||history!==current||current.noLive)return;
+        if(document.hidden){setTimeout(tick,2000);return;}
+        loadHistory(false,!current.more);
+      };
+      if(!controller.signal.aborted)setTimeout(tick,failed?5000:2000);
+    }
   }
   async function loadHostView(reset=false){
     if(!state?.remote_runtime)return;

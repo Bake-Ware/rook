@@ -232,6 +232,13 @@ class WorkWeb:
             if offset < 0 or content_offset < 0:
                 raise ValueError('Invalid history cursor.')
             caps = self.worker(s).get('caps', [])
+            if request.query.get('follow') == '1':
+                cap = s['agent'] + '-history.follow'
+                if cap not in caps:
+                    return web.json_response({'unchanged': True, 'live': False}, headers=NO_STORE)
+                page = await self.rpc(s, cap, dict(session_id=s['source_id'], offset=offset,
+                    version=request.query.get('version', '')))
+                return web.json_response(page, headers=NO_STORE)
             cap = s['agent'] + '-history.read_snapshot'
             args = dict(session_id=s['source_id'], offset=offset, content_offset=content_offset)
             if cap in caps:

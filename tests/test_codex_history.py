@@ -189,3 +189,28 @@ def test_full_read_snapshot_is_stable_unicode_and_session_bound(tmp_path):
                                  offset=page['next_offset'], content_offset=page['next_content_offset'])
     assert messages[max(messages)] == '🦉' * 14000
     assert not plugin._read_page('another-session', path=str(tmp_path), snapshot=token)['ok']
+
+
+def test_follow_checks_version_and_pages_only_new_tail(tmp_path, monkeypatch):
+    monkeypatch.setenv('CODEX_HOME', str(tmp_path))
+    path = rollout(tmp_path / 'sessions')
+    plugin = codex.CodexHistoryPlugin()
+    first = plugin._follow(SID, offset=1)
+    assert first['replace_from'] == 1 and len(first['messages']) == 1
+    same = plugin._follow(SID, offset=1, version=first['version'])
+    assert same['unchanged'] and 'messages' not in same
+    with path.open('a') as stream:
+        stream.write(json.dumps({'type': 'response_item', 'payload': {'type': 'message', 'role': 'assistant',
+            'content': [{'type': 'output_text', 'text': 'New live text 💌' * 1000}]}})+'\n')
+    tail = plugin._follow(SID, offset=1, version=first['version'])
+    assert tail['replace_from'] == 1 and tail['truncated']
+    assert sum(len(m['content']) for m in tail['messages']) <= 6000
+    chunks = [m['content'] for m in tail['messages'] if m['index'] == 2]
+    while tail['truncated']:
+        tail = plugin._read_snapshot(SID, snapshot=tail['snapshot'], offset=tail['next_offset'], content_offset=tail['next_content_offset'])
+        chunks += [m['content'] for m in tail['messages'] if m['index'] == 2]
+    assert ''.join(chunks) == 'New live text 💌' * 1000
+    version = plugin._follow(SID)['version']
+    path.write_text('')
+    reset = plugin._follow(SID, offset=2, version=version)
+    assert reset['replace_from'] == 0 and reset['messages'] == []

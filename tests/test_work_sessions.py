@@ -209,6 +209,16 @@ class HistoryBand(FakeBand):
         elif cap.endswith('.send'):
             result = {'ok': False, 'error': 'Host rejected the message.'} if getattr(self, 'fail_send', False) else {
                 'ok': True, 'delivery': 'queued', 'note': 'Message queued on host.'}
+        elif cap.endswith('.follow'):
+            if args.get('version') == str(self.version):
+                result = dict(ok=True, unchanged=True, version=str(self.version))
+            else:
+                offset = args['offset']
+                rows = [dict(index=i, role='assistant', content_offset=0, content=f'Message {i}')
+                        for i in range(offset, 501)]
+                if self.version > 1:
+                    rows.append(dict(index=501, role='assistant', content_offset=0, content='Live update from host'))
+                result = dict(ok=True, messages=rows, truncated=False, replace_from=offset, version=str(self.version))
         elif cap.endswith('.read_page'):
             rows = [dict(role='assistant', content=f'Message {i}') for i in range(501)]
             offset = args.get('offset', 0)
