@@ -8,13 +8,12 @@ The worker's native session files remain the source of truth. Codex archives are
 included alongside regular rollout files.
 
 Imported entries persist per operator in `work.sqlite3`, but their transcripts
-are not copied into the database. Opening an entry relays one transcript page
-from the worker to the browser; Load more fetches another page and Refresh from
-host restarts the read. Pages contain at most 6,000 content characters, including
-partial large messages. The browser holds only the pages requested for the
-selected session. Reads require the owning administrator's login and use
-`Cache-Control: no-store`. Updated workers are required for bounded transcript
-paging and activity metadata. Older workers can still contribute catalog entries.
+are not copied into the database. Opening an entry automatically reads the whole conversation from its worker.
+The browser fetches bounded pages sequentially; switching entries cancels the
+previous read. Refresh from host takes a new snapshot. Pages contain at most 6,000 content characters, including
+partial large messages. The worker freezes a short-lived conversation snapshot so active appends cannot
+shift page boundaries, and the browser holds the selected conversation. Reads require the owning administrator's login and use
+`Cache-Control: no-store`. Updated workers are required for snapshot paging and live-process metadata. Older workers can still contribute catalog entries.
 An offline host leaves metadata and review controls available, but its transcript
 cannot be fetched until it reconnects. Source changes do not trigger background
 transcript downloads. Existing imported transcript copies are removed from
@@ -29,6 +28,13 @@ names; unset it for fleet-wide discovery.
 Search the sidebar by title, host, agent, directory, or status. Each entry offers
 Pending, Blocked, Closed, and Auto. Manual choices survive new activity. Auto
 shows Working during activity and Ready when input is requested or a turn ends.
+Live Linux sessions are identified by exact agent-owned open log files, resume
+arguments, and Claude session/PID markers (including process-start validation).
+Active sessions show Active on host and do not offer Resume on host. The worker
+also rechecks activity before resuming, including sessions started outside Rook.
+This is separate from Working/Ready, which describe turn activity. Other platforms
+currently have no independent-process detection.
+
 Imported activity is inferred from log markers; incomplete working logs older
 than two minutes fall back to Pending.
 

@@ -31,7 +31,7 @@ export async function mountWork(root) {
           <p id="work-error" role="alert" hidden></p>
           <div class="work-tabs"><button type="button" data-pane="conversation" aria-pressed="true">Conversation</button><button type="button" data-pane="changes" aria-pressed="false">Changes</button></div>
           <div id="work-conversation" class="work-output" aria-label="Conversation"></div>
-          <div id="work-history-controls" hidden><span id="work-history-note" role="status"></span> <button id="work-history-more" type="button">Load more</button> <button id="work-history-refresh" type="button">Refresh from host</button></div>
+          <div id="work-history-controls" hidden><span id="work-history-note" role="status"></span> <button id="work-history-refresh" type="button">Refresh from host</button></div>
           <div id="work-changes" class="work-output" hidden><pre id="work-diff"></pre></div>
           <details id="work-terminal" hidden><summary>Host terminal</summary><p id="work-resume-note" class="work-muted"></p><pre id="work-terminal-output"></pre></details><div id="work-pending"></div>
           <form id="work-compose"><label class="work-muted" for="work-input">Message your agent</label><textarea id="work-input" rows="3" maxlength="24000" placeholder="Describe the task, or steer work already in progress…" required></textarea><div><span class="work-muted">Ctrl / ⌘ + Enter to send</span><button type="submit">Send</button></div></form>
@@ -101,18 +101,21 @@ export async function mountWork(root) {
     if(reset){historyRequest?.abort();history={id:selected,items:{},order:[],offset:0,contentOffset:0,more:true};}
     if(!history||history.loading||!history.more)return;
     const current=history, controller=new AbortController();historyRequest=controller;current.loading=true;
-    $('#work-history-note').textContent='Reading from host…';$('#work-history-more').disabled=true;
+    $('#work-history-note').textContent='Reading the conversation from host…';
     try{
-      const response=await fetch(`/account/work/history/${encodeURIComponent(current.id)}?offset=${current.offset}&content_offset=${current.contentOffset}`,{signal:controller.signal,cache:'no-store'});
+      while(current.more){
+      const response=await fetch(`/account/work/history/${encodeURIComponent(current.id)}?offset=${current.offset}&content_offset=${current.contentOffset}&snapshot=${encodeURIComponent(current.snapshot||'')}`,{signal:controller.signal,cache:'no-store'});
       const page=await response.json();
       if(!response.ok)throw Error(page.error||'Unable to read host history.');
       if(history!==current||selected!==current.id||!active)return;
+      current.snapshot=page.snapshot||current.snapshot;
+      if(typeof page.active==='boolean')state={...state,active:page.active};
       const fragments=page.messages||[];
       for(const m of fragments){
         const id=String(m.index), item=current.items[id];
-        if((item?.text.length||0)!==m.content_offset)throw Error('History changed. Refresh from host to read it again.');
-        if(!item){current.items[id]={id,type:m.role==='user'?'userMessage':'agentMessage',text:''};current.order.push(id);}
-        const next=current.items[id];next.text+=m.content;
+        if((item?.characters||0)!==m.content_offset)throw Error('History changed. Refresh from host to read it again.');
+        if(!item){current.items[id]={id,type:m.role==='user'?'userMessage':'agentMessage',text:'',characters:0};current.order.push(id);}
+        const next=current.items[id];next.text+=m.content;next.characters+=Array.from(m.content).length;
         if(next.type==='userMessage')next.content=[{text:next.text}];
       }
       current.more=!!page.truncated;
@@ -120,10 +123,15 @@ export async function mountWork(root) {
         if(page.next_offset<current.offset||(page.next_offset===current.offset&&page.next_content_offset<=current.contentOffset))throw Error('Host returned an invalid history cursor.');
         current.offset=page.next_offset;current.contentOffset=page.next_content_offset;
       }
-      $('#work-history-note').textContent=current.more?'More conversation is available on the host.':'Conversation read from host.';
+      $('#work-history-note').textContent=current.more?`Reading conversation… ${current.order.length}${page.total_messages?' / '+page.total_messages:''} messages`:'Conversation read from host.';
       renderSession(state);
+      if(current.more){
+        await new Promise(resolve=>setTimeout(resolve,25));
+        if(controller.signal.aborted||history!==current||selected!==current.id||!active)return;
+      }
+      }
     }catch(error){if(error.name!=='AbortError'&&history===current)$('#work-history-note').textContent=error.message;}
-    finally{current.loading=false;if(history===current){$('#work-history-more').disabled=false;$('#work-history-more').hidden=!current.more;}}
+    finally{current.loading=false;}
   }
   async function loadHostView(reset=false){
     if(!state?.remote_runtime)return;
@@ -163,7 +171,6 @@ export async function mountWork(root) {
     if(s.id!==selected)return;
     state=s;
     $('#work-history-controls').hidden=!(s.imported||s.remote_runtime);
-    $('#work-history-more').hidden=!s.imported||history?.more===false;
     if(s.remote_runtime){
       if(!hostView||hostView.revision<s.worker_revision)loadHostView();
       s={...s,items:hostView?.items||{},order:hostView?.order||[],pending:hostView?.pending||{},diff:hostView?.diff||'',error:hostView?.error||s.error};
@@ -173,7 +180,7 @@ export async function mountWork(root) {
       s={...s,items:history?.items||{},order:history?.order||[]};
     }
     $('#work-title').textContent=s.title;
-    $('#work-meta').textContent=[s.agent||'codex',s.worker_name,s.cwd,s.model,s.imported||s.remote_runtime?'History stored on host':''].filter(Boolean).join(' · ');
+    $('#work-meta').textContent=[s.agent||'codex',s.worker_name,s.cwd,s.model,s.imported||s.remote_runtime?(s.active?'Active on host':'History stored on host'):''].filter(Boolean).join(' · ');
     $('#work-status').textContent=s.disconnected?'Host disconnected':s.status;
     $('#work-error').hidden=!s.error;$('#work-error').textContent=s.error||'';
     $('#work-interrupt').disabled=!(s.turn_id||s.external_running);
@@ -185,7 +192,7 @@ export async function mountWork(root) {
     $('#work-resume-note').textContent=s.resume_note||'';
     $('#work-input').placeholder=s.imported?'Send a prompt or answer the terminal’s request.':'Describe the task, or steer work already in progress…';
     $('#work-close').hidden=s.status==='closed';
-    $('#work-resume').hidden=s.imported?!!s.external_running:(s.activity||s.status)!=='closed'||!s.thread_id;
+    $('#work-resume').hidden=s.imported?!!(s.external_running||s.active):(s.activity||s.status)!=='closed'||!s.thread_id;
     $('#work-resume').textContent=s.imported?'Resume on host':'Reopen';
     $('#work-compose button').disabled=(s.imported?!s.external_running:!['ready','working'].includes(s.activity||s.status)||(s.needs_input||Object.keys(s.pending||{}).length>0))||!!s.disconnected;
     const out=$('#work-conversation');
@@ -249,7 +256,6 @@ export async function mountWork(root) {
     historyRequest?.abort();history=null;viewRequest?.abort();hostView=null;
     selected=null;$('#work-create').hidden=false;$('#work-session').hidden=true;renderList();
   };
-  $('#work-history-more').onclick=()=>loadHistory();
   $('#work-history-refresh').onclick=()=>state?.remote_runtime?loadHostView(true):loadHistory(true);
   $('#work-search').oninput=renderList;
   $('#work-list').onclick=e=>{

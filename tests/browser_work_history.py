@@ -18,6 +18,7 @@ async def main():
     with tempfile.TemporaryDirectory() as temp, MonkeyPatch.context() as patch:
         p = portal.__wrapped__(Path(temp), patch)
         p.server._band = band = HistoryBand()
+        band.active = True
         work = p.account.work_web
         await work.sync_history(band.workers['host1'], 'claude', [p.uid])
         sid = work.store.all()[0]['id']
@@ -44,12 +45,12 @@ async def main():
             card = page.locator('.work-session-card').filter(has=page.locator(f'[data-session="{sid}"]'))
             await card.locator('[data-session]').click()
             await expect(page.locator('#work-title')).not_to_have_text('Loading…')
-            await expect(page.locator('#work-conversation')).to_contain_text('Message 19')
-            await expect(page.locator('#work-conversation')).not_to_contain_text('Message 20')
-            await page.locator('#work-history-more').click()
-            await expect(page.locator('#work-conversation')).to_contain_text('Message 39')
+            await expect(page.locator('#work-conversation')).to_contain_text('Message 500', timeout=15000)
+            await expect(page.get_by_role('button', name='Load more', exact=True)).to_have_count(0)
             assert all('items' not in s for s in work.store.all())
             await expect(page.locator('#work-compose')).to_be_hidden()
+            await expect(page.locator('#work-resume')).to_be_hidden()
+            await expect(page.locator('#work-meta')).to_contain_text('Active on host')
             await card.locator('select').select_option('blocked')
             await expect(page.locator('#work-status')).to_have_text('blocked')
             await card.locator('[data-close-session]').click()

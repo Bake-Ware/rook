@@ -24,7 +24,7 @@ METADATA_KEYS = frozenset(('id', 'owner', 'title', 'cwd', 'model', 'worker_id',
     'source_updated', 'message_count', 'thread_id', 'turn_id', 'status',
     'review_status', 'revision', 'updated', 'error', 'disconnected',
     'external_handle', 'external_cursor', 'resume_note', 'remote_runtime',
-    'worker_revision', 'running', 'needs_input', 'legacy_runtime'))
+    'worker_revision', 'running', 'needs_input', 'legacy_runtime', 'active'))
 
 
 class WorkStore:
@@ -231,11 +231,16 @@ class WorkWeb:
             content_offset = int(request.query.get('content_offset', '0'))
             if offset < 0 or content_offset < 0:
                 raise ValueError('Invalid history cursor.')
-            cap = s['agent'] + '-history.read_page'
-            if cap not in self.worker(s).get('caps', []):
-                raise ValueError('Update this worker to enable transcript paging.')
-            page = await self.rpc(s, cap, dict(session_id=s['source_id'],
-                                  offset=offset, content_offset=content_offset))
+            caps = self.worker(s).get('caps', [])
+            cap = s['agent'] + '-history.read_snapshot'
+            args = dict(session_id=s['source_id'], offset=offset, content_offset=content_offset)
+            if cap in caps:
+                args['snapshot'] = request.query.get('snapshot', '')
+            else:
+                cap = s['agent'] + '-history.read_page'
+            if cap not in caps:
+                raise ValueError('Update this worker to enable transcript reads.')
+            page = await self.rpc(s, cap, args)
             # Relay a single bounded page. Never persist transcript content.
             return web.json_response(page, headers=NO_STORE)
         except (ValueError, TimeoutError) as error:
@@ -467,7 +472,7 @@ class WorkWeb:
                     activity = meta.get('activity', 'pending')
                     if activity == 'working' and time.time() - (meta.get('last_modified') or 0) > 120:
                         activity = 'pending'
-                    if existing and existing.get('source_version') == fingerprint and existing['status'] == activity:
+                    if existing and existing.get('source_version') == fingerprint and existing['status'] == activity and existing.get('active') == bool(meta.get('active')):
                         continue
                     async with self.lock(sid):
                         s = self.store.get(sid) if existing else dict(
@@ -477,7 +482,7 @@ class WorkWeb:
                             partial='', model='', error='', diff='', status='pending')
                         s.update(title=meta.get('title') or source, cwd=meta.get('cwd'),
                                  source_version=fingerprint, source_updated=meta.get('last_modified'),
-                                 message_count=meta.get('message_count'), status=activity)
+                                 message_count=meta.get('message_count'), status=activity, active=bool(meta.get('active')))
                         self.store.save(s)
                         existing_by_owner[owner][source] = s
             offset += len(entries)

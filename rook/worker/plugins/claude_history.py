@@ -21,16 +21,20 @@ room the band can watch.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
 import sys
 import time
+import threading
+import uuid
 from collections import Counter
 from pathlib import Path
 from typing import Iterable
 
 from ..plugin import Plugin, capability
+from ..agent_activity import active_sessions
 
 
 def _default_root() -> Path:
@@ -235,6 +239,9 @@ class ClaudeHistoryPlugin(Plugin):
     def __init__(self) -> None:
         super().__init__()
         self._worker = None
+        self._resume_lock = asyncio.Lock()
+        self._history_snapshots = {}
+        self._history_lock = threading.RLock()
         # session_id -> proc handle, for sessions this plugin relaunched. Used
         # to refuse a second resume of a conversation that is already live —
         # two `claude --resume` processes on one session id would both write
@@ -249,6 +256,10 @@ class ClaudeHistoryPlugin(Plugin):
     def available(self) -> bool:
         # Only where Claude Code history actually lives on this host.
         return self._default_root().is_dir()
+
+    def _is_active(self, path, processes=None):
+        paths, ids = processes if processes is not None else active_sessions(self.NAMESPACE.split('-')[0])
+        return str(path.resolve()) in paths or self._session_id(path).lower() in ids
 
     @capability("resume")
     async def _resume(self, session_id: str, path: str | None = None,
@@ -268,61 +279,64 @@ class ClaudeHistoryPlugin(Plugin):
         own title. Returns the proc ``handle``, so the caller can watch it come
         up and stop it with ``proc.signal``/``proc.close``.
         """
-        if self._worker is None or not self._worker.registry.has("proc.start"):
-            return {"ok": False, "error": "proc.* capability unavailable on this "
-                                          "worker; update it to resume sessions"}
-        root = self._expand(path)
-        sp = self._resolve_session(root, session_id)
-        if sp is None:
-            return {"ok": False, "error": "session not found",
-                    "session_id": session_id, "root": str(root)}
-        meta = self._session_meta(sp)
-        full_id = meta["session_id"]
+        async with self._resume_lock:
+            if self._worker is None or not self._worker.registry.has("proc.start"):
+                return {"ok": False, "error": "proc.* capability unavailable on this "
+                                              "worker; update it to resume sessions"}
+            root = self._expand(path)
+            sp = self._resolve_session(root, session_id)
+            if sp is None:
+                return {"ok": False, "error": "session not found",
+                        "session_id": session_id, "root": str(root)}
+            meta = self._session_meta(sp)
+            full_id = meta["session_id"]
+            if self._is_active(sp):
+                return {"ok": False, "error": "session is already active on this host", "session_id": full_id}
 
-        # Already live? Relaunching would fork the transcript in place.
-        existing = self._resumed_handles.get(full_id)
-        if existing:
-            live = await self._worker.registry.call("proc.list")
-            for s in live.get("sessions", []):
-                if s.get("handle") == existing and s.get("running"):
-                    return {"ok": False, "error": "session is already running",
-                            "session_id": full_id, "handle": existing,
-                            "hint": "stop it with proc.close before resuming again"}
-            self._resumed_handles.pop(full_id, None)
+            # Already live? Relaunching would fork the transcript in place.
+            existing = self._resumed_handles.get(full_id)
+            if existing:
+                live = await self._worker.registry.call("proc.list")
+                for s in live.get("sessions", []):
+                    if s.get("handle") == existing and s.get("running"):
+                        return {"ok": False, "error": "session is already running",
+                                "session_id": full_id, "handle": existing,
+                                "hint": "stop it with proc.close before resuming again"}
+                self._resumed_handles.pop(full_id, None)
 
-        binary = _claude_bin()
-        if binary is None:
-            return {"ok": False, "error": "claude CLI not found on this machine"}
+            binary = _claude_bin()
+            if binary is None:
+                return {"ok": False, "error": "claude CLI not found on this machine"}
 
-        workdir = cwd or meta.get("cwd")
-        if workdir and not os.path.isdir(workdir):
-            # The recorded cwd can be gone (repo moved, worktree removed).
-            # Say so rather than letting the spawn fail with a bare ENOENT.
-            return {"ok": False, "error": f"session cwd no longer exists: {workdir}",
-                    "session_id": full_id,
-                    "hint": "pass cwd= to resume it somewhere else"}
+            workdir = cwd or meta.get("cwd")
+            if workdir and not os.path.isdir(workdir):
+                # The recorded cwd can be gone (repo moved, worktree removed).
+                # Say so rather than letting the spawn fail with a bare ENOENT.
+                return {"ok": False, "error": f"session cwd no longer exists: {workdir}",
+                        "session_id": full_id,
+                        "hint": "pass cwd= to resume it somewhere else"}
 
-        argv = [binary, "--resume", full_id]
-        label = name or meta.get("title") or _short_id(full_id)
-        if remote_control:
-            argv += ["--remote-control", label[:80]]
+            argv = [binary, "--resume", full_id]
+            label = name or meta.get("title") or _short_id(full_id)
+            if remote_control:
+                argv += ["--remote-control", label[:80]]
 
-        started = await self._worker.registry.call(
-            "proc.start", argv=argv, cwd=workdir, pty=True,
-            label=f"claude: {label}"[:200])
-        if not started.get("ok"):
-            return {"ok": False, "error": started.get("error", "spawn failed"),
-                    "session_id": full_id}
-        self._resumed_handles[full_id] = started["handle"]
-        return {"ok": True, "session_id": full_id, "short_id": _short_id(full_id),
-                "title": meta.get("title"), "name": label, "cwd": workdir,
-                "remote_control": bool(remote_control),
-                "handle": started["handle"], "pid": started.get("pid"),
-                "note": ("Session is starting with Remote Control enabled — it "
-                         "should appear in claude.ai shortly. Read its output "
-                         "with proc.read(handle) if it doesn't."
-                         if remote_control else
-                         "Session is starting; it is local-only (no Remote Control).")}
+            started = await self._worker.registry.call(
+                "proc.start", argv=argv, cwd=workdir, pty=True,
+                label=f"claude: {label}"[:200])
+            if not started.get("ok"):
+                return {"ok": False, "error": started.get("error", "spawn failed"),
+                        "session_id": full_id}
+            self._resumed_handles[full_id] = started["handle"]
+            return {"ok": True, "session_id": full_id, "short_id": _short_id(full_id),
+                    "title": meta.get("title"), "name": label, "cwd": workdir,
+                    "remote_control": bool(remote_control),
+                    "handle": started["handle"], "pid": started.get("pid"),
+                    "note": ("Session is starting with Remote Control enabled — it "
+                             "should appear in claude.ai shortly. Read its output "
+                             "with proc.read(handle) if it doesn't."
+                             if remote_control else
+                             "Session is starting; it is local-only (no Remote Control).")}
 
     @capability("resumed")
     async def _resumed_list(self) -> dict:
@@ -362,7 +376,8 @@ class ClaudeHistoryPlugin(Plugin):
             pass
         total = len(files)
         files = files[max(int(offset), 0):max(int(offset), 0) + max(int(limit), 0)]
-        sessions = [dict(self._session_meta(p), activity=self._activity(p)) for p in files]
+        processes = active_sessions(self.NAMESPACE.split("-")[0])
+        sessions = [dict(self._session_meta(p), activity=self._activity(p), active=self._is_active(p, processes)) for p in files]
         return {"ok": True, "root": str(root), "sessions": sessions,
                 "count": len(sessions), "total": total}
 
@@ -412,18 +427,22 @@ class ClaudeHistoryPlugin(Plugin):
 
     @capability("read_page")
     def _read_page(self, session_id: str, path: str | None = None,
-                   offset: int = 0, content_offset: int = 0, max_chars: int = 6000) -> dict:
+                   offset: int = 0, content_offset: int = 0, max_chars: int = 6000,
+                   snapshot: str | None = None) -> dict:
         """Read a bounded transcript page, including partial large messages.
 
         Continue with next_offset and next_content_offset. Message fragments
         carry their original index and character offset for lossless assembly.
         """
+        if snapshot is not None:
+            return self._snapshot_page(session_id, path, offset, content_offset, max_chars, snapshot)
         root = self._expand(path)
         sp = self._resolve_session(root, session_id)
         if sp is None:
             return {"ok": False, "error": "session not found"}
         offset, content_offset = max(0, int(offset)), max(0, int(content_offset))
         budget = max(1, min(int(max_chars), 6000))
+        activity_meta = {"active": self._is_active(sp)} if offset == 0 and content_offset == 0 else {}
         messages = []
         index = 0
         for rec in self._read_lines(sp):
@@ -433,7 +452,7 @@ class ClaudeHistoryPlugin(Plugin):
                 index += 1
                 continue
             if budget <= 0 or len(messages) >= 20:
-                return dict(ok=True, messages=messages, truncated=True,
+                return dict(ok=True, **activity_meta, messages=messages, truncated=True,
                             next_offset=index, next_content_offset=0)
             text = _message_text(rec)
             start = content_offset if index == offset else 0
@@ -442,10 +461,61 @@ class ClaudeHistoryPlugin(Plugin):
                                  role=_record_role(rec), content=chunk))
             budget -= len(chunk)
             if start + len(chunk) < len(text):
-                return dict(ok=True, messages=messages, truncated=True,
+                return dict(ok=True, **activity_meta, messages=messages, truncated=True,
                             next_offset=index, next_content_offset=start + len(chunk))
             index += 1
-        return dict(ok=True, messages=messages, truncated=False, activity=self._activity(sp))
+        return dict(ok=True, **activity_meta, messages=messages, truncated=False, activity=self._activity(sp))
+
+    @capability("read_snapshot")
+    def _read_snapshot(self, session_id: str, path: str | None = None, offset: int = 0,
+                       content_offset: int = 0, snapshot: str = "") -> dict:
+        """Read a bounded page of a stable, worker-owned conversation snapshot."""
+        return self._snapshot_page(session_id, path, offset, content_offset, 6000, snapshot)
+
+    def _snapshot_page(self, session_id, path, offset, content_offset, max_chars, token):
+        """Freeze the conversation once on its owner; page it without rereading logs."""
+        with self._history_lock:
+            now = time.monotonic()
+            self._history_snapshots = {k: v for k, v in self._history_snapshots.items() if now - v['used'] < 180}
+            if not token:
+                if offset or content_offset:
+                    return {'ok': False, 'error': 'A new snapshot must start at the beginning.'}
+                sp = self._resolve_session(self._expand(path), session_id)
+                if sp is None:
+                    return {'ok': False, 'error': 'session not found'}
+                messages = [{'role': _record_role(rec), 'content': _message_text(rec)}
+                            for rec in self._read_lines(sp)
+                            if isinstance(rec, dict) and rec.get('type') in ('user', 'assistant')]
+                while len(self._history_snapshots) >= 4:
+                    oldest = min(self._history_snapshots, key=lambda k: self._history_snapshots[k]['used'])
+                    del self._history_snapshots[oldest]
+                token = uuid.uuid4().hex
+                self._history_snapshots[token] = dict(session_id=session_id, path=path, used=now,
+                    messages=messages, activity=self._activity(sp), active=self._is_active(sp))
+            saved = self._history_snapshots.get(token)
+            if not saved or saved['session_id'] != session_id or saved['path'] != path:
+                return {'ok': False, 'error': 'Conversation snapshot expired. Refresh from host.'}
+            saved['used'] = now
+            rows = saved['messages']
+            if offset < 0 or offset > len(rows) or content_offset < 0:
+                return {'ok': False, 'error': 'Invalid history cursor.'}
+            budget = max(1, min(int(max_chars), 6000))
+            messages = []
+            index, start = offset, content_offset
+            while index < len(rows) and budget > 0 and len(messages) < 20:
+                row = rows[index]
+                if start > len(row['content']):
+                    return {'ok': False, 'error': 'Invalid content cursor.'}
+                chunk = row['content'][start:start + budget]
+                messages.append(dict(index=index, content_offset=start, role=row['role'], content=chunk))
+                budget -= len(chunk)
+                start += len(chunk)
+                if start < len(row['content']):
+                    break
+                index, start = index + 1, 0
+            return dict(ok=True, snapshot=token, messages=messages, truncated=index < len(rows),
+                        next_offset=index, next_content_offset=start, activity=saved['activity'],
+                        active=saved['active'], total_messages=len(rows))
 
     def _activity(self, path):
         """Use explicit completion markers; stale/incomplete logs stay pending."""

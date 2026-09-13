@@ -152,3 +152,40 @@ def test_bounded_pages_preserve_large_messages_and_unicode(tmp_path):
         offset, content_offset = page['next_offset'], page['next_content_offset']
     assert calls > 1
     assert rebuilt == [content, 'done']
+
+
+def test_active_external_session_blocks_resume_and_updates_metadata(tmp_path, monkeypatch):
+    rollout(tmp_path)
+    plugin = codex.CodexHistoryPlugin()
+    registry = SimpleNamespace(has=lambda _: True, call=AsyncMock())
+    plugin.bind_worker(SimpleNamespace(registry=registry))
+    monkeypatch.setattr(plugin, '_is_active', lambda *args: True)
+    assert plugin._pull(path=str(tmp_path))['sessions'][0]['active'] is True
+    result = asyncio.run(plugin._resume(SID, path=str(tmp_path)))
+    assert not result['ok'] and 'already active' in result['error']
+    registry.call.assert_not_called()
+
+
+def test_full_read_snapshot_is_stable_unicode_and_session_bound(tmp_path):
+    path = rollout(tmp_path)
+    with path.open('a') as f:
+        f.write(json.dumps({'type': 'response_item', 'payload': {'type': 'message', 'role': 'assistant',
+            'content': [{'type': 'output_text', 'text': '🦉' * 14000}]}}) + '\n')
+    plugin = codex.CodexHistoryPlugin()
+    page = plugin._read_page(SID, path=str(tmp_path), snapshot='')
+    token = page['snapshot']
+    # Log changes after opening must not shift pages or mix two versions.
+    path.write_text('')
+    messages = {}
+    while True:
+        assert sum(len(m['content']) for m in page['messages']) <= 6000
+        for fragment in page['messages']:
+            text = messages.setdefault(fragment['index'], '')
+            assert len(text) == fragment['content_offset']
+            messages[fragment['index']] = text + fragment['content']
+        if not page['truncated']:
+            break
+        page = plugin._read_page(SID, path=str(tmp_path), snapshot=token,
+                                 offset=page['next_offset'], content_offset=page['next_content_offset'])
+    assert messages[max(messages)] == '🦉' * 14000
+    assert not plugin._read_page('another-session', path=str(tmp_path), snapshot=token)['ok']
