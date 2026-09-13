@@ -185,16 +185,16 @@ export async function mountWork(root) {
     $('#work-error').hidden=!s.error;$('#work-error').textContent=s.error||'';
     $('#work-interrupt').disabled=!(s.turn_id||s.external_running);
     $('#work-interrupt').hidden=!!s.imported&&!s.external_running;
-    $('#work-compose').hidden=!!s.imported&&!s.external_running;
-    $('#work-compose label').textContent=s.imported?'Send input to the host terminal':'Message your agent';
+    $('#work-compose').hidden=!!s.imported&&!(s.external_running||s.messageable);
+    $('#work-compose label').textContent=s.imported&&s.external_running?'Send input to the host terminal':'Message your agent';
     $('#work-terminal').hidden=!s.imported||!s.terminal;
     $('#work-terminal-output').textContent=(s.terminal||'').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g,'');
-    $('#work-resume-note').textContent=s.resume_note||'';
+    $('#work-resume-note').textContent=s.message_note||s.resume_note||(s.imported&&s.active&&!s.messageable&&!s.external_running?'This host does not expose a messaging connection for this session.':'');
     $('#work-input').placeholder=s.imported?'Send a prompt or answer the terminal’s request.':'Describe the task, or steer work already in progress…';
     $('#work-close').hidden=s.status==='closed';
     $('#work-resume').hidden=s.imported?!!(s.external_running||s.active):(s.activity||s.status)!=='closed'||!s.thread_id;
     $('#work-resume').textContent=s.imported?'Resume on host':'Reopen';
-    $('#work-compose button').disabled=(s.imported?!s.external_running:!['ready','working'].includes(s.activity||s.status)||(s.needs_input||Object.keys(s.pending||{}).length>0))||!!s.disconnected;
+    $('#work-compose button').disabled=(s.imported?!(s.external_running||s.messageable):!['ready','working'].includes(s.activity||s.status)||(s.needs_input||Object.keys(s.pending||{}).length>0))||!!s.disconnected;
     const out=$('#work-conversation');
     const bottom=out.scrollHeight-out.scrollTop-out.clientHeight<80;
     const scroll=out.scrollTop;
@@ -273,7 +273,7 @@ export async function mountWork(root) {
   };
   $('#work-compose').onsubmit=e=>{
     e.preventDefault();const input=$('#work-input');
-    if(command(state?.imported?'terminal_input':'message',{text:input.value})){drafts.set(selected,input.value);input.value='';$('#work-compose button').disabled=true;}
+    if(command('message',{text:input.value})){drafts.set(selected,input.value);input.value='';$('#work-compose button').disabled=true;}
   };
   $('#work-input').onkeydown=e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();if(!$('#work-compose button').disabled)$('#work-compose').requestSubmit();}};
   $('#work-interrupt').onclick=()=>command('interrupt');

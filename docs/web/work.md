@@ -43,6 +43,22 @@ a Codex PTY, terminal output/input, interruption, and closing the resumed proces
 Closing an imported entry that has no web-managed process only closes its review
 entry; it does not terminate an independently started terminal.
 
+Active imported sessions expose a message composer when the worker can reach
+their existing input channel. Codex uses its installed `codex queue --thread`
+command; messages wait for the current turn to finish. Claude uses its local
+authenticated peer inbox, with exact session, process-start, socket-owner, and
+peer-key checks. Claude's peer protocol has no in-band acceptance acknowledgment:
+Work reports **sent to inbox**, not agent acceptance. Use **Refresh from host**
+to see subsequent conversation messages. Older CLIs without a usable channel
+explain why messaging is unavailable. Sending never resumes a second process.
+
+The worker records imported-message command receipts in
+`session_message_receipts` in its Work database before dispatch. Neither those
+receipts nor the web database contain prompt bodies. Retries with the same ID
+do not resend, including after an uncertain outcome or restart. Failed sends
+retain the browser draft. Claude inbox behavior is version-dependent; the adapter
+currently recognizes peer protocol 1 and respects the session's peer-message policy.
+
 To create a new session, open **Work**, choose a connected Linux host with Codex installed
 and authenticated, and enter an existing absolute working directory. New sessions use Codex. Leave Model blank to use the host's configured model.
 
@@ -118,7 +134,7 @@ is vendored.
 
 ## Verification
 
-`python -m pytest -q tests/test_work_sessions.py tests/test_band_management.py tests/test_codex_history.py tests/test_claude_resume.py`
+`python -m pytest -q tests/test_work_sessions.py tests/test_band_management.py tests/test_codex_history.py tests/test_claude_resume.py tests/test_session_messages.py`
 covers durable projection/cursors, browser disconnect, web-service replacement, worker-local recovery,
 pending approvals, duplicate commands/answers, authentication, Origin/CSRF, and
 owner isolation, paginated import, stable identities, manual statuses, and resumed
