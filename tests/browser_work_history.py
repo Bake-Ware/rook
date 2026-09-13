@@ -51,8 +51,12 @@ async def main():
             await expect(page.get_by_role('button', name='Load more', exact=True)).to_have_count(0)
             assert all('items' not in s for s in work.store.all())
             await expect(page.locator('#work-compose')).to_be_visible()
-            await page.locator('#work-input').fill('A message from Work\nwith a second line 💌')
-            await page.locator('#work-compose button').click()
+            await page.locator('#work-input').fill('A message from Work')
+            await page.locator('#work-input').press('Shift+Enter')
+            await page.locator('#work-input').type('with a second line 💌')
+            assert not any(cap.endswith('.send') for cap, _ in band.calls)
+            await page.locator('#work-input').press('Enter')
+            await expect(page.locator('.work-session-heading #work-history-refresh')).to_be_visible()
             await expect(page.locator('#work-resume-note')).to_have_text('Message queued on host.')
             sent = [(cap, args) for cap, args in band.calls if cap.endswith('.send')]
             assert len(sent) == 1 and sent[0][1]['text'] == 'A message from Work\nwith a second line 💌'
@@ -88,7 +92,7 @@ async def main():
             assert any(f'/history/{sid}?' in url and 'offset=20&' in url for url in cancelled)
             await page.unroute('**/account/work/history/**', hold_old_page)
             await page.locator(f'[data-session="{sid}"]').click()
-            await expect(page.locator('#work-history-note')).to_have_text('Conversation read from host.', timeout=15000)
+            await expect(page.locator('#work-history-note')).to_have_text('', timeout=15000)
             failed_follow = []
             async def fail_one_follow(route):
                 if 'follow=1' in route.request.url and not failed_follow:
@@ -101,7 +105,7 @@ async def main():
             await expect(page.locator('#work-conversation')).to_contain_text('Live update from host', timeout=15000)
             assert failed_follow
             await page.unroute('**/account/work/history/**', fail_one_follow)
-            await expect(page.locator('#work-history-note')).to_have_text('Live · conversation stored on host.')
+            await expect(page.locator('#work-history-note')).to_have_text('')
             follow_calls = [args for cap, args in band.calls if cap.endswith('.follow')]
             assert follow_calls and all(args['offset'] >= 500 for args in follow_calls)
             await card.locator('select').select_option('blocked')

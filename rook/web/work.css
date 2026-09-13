@@ -9,3 +9,4 @@
 .work-sidebar{min-width:0}@media(max-width:850px){.work-layout{grid-template-columns:minmax(0,1fr)}}
 
 #work-search{box-sizing:border-box;width:100%;padding:8px;margin-bottom:10px}#work-list{max-height:70vh;overflow:auto}@media(max-width:850px){#work-list{max-height:180px}}
+#work-history-refresh{margin-left:auto}#work-history-refresh[hidden]{display:none}

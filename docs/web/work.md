@@ -30,6 +30,11 @@ A separate SQLite index keeps roster polling lightweight. For deployment canarie
 `ROOK_WORK_IMPORT_WORKERS` optionally limits discovery to comma-separated worker
 names; unset it for fleet-wide discovery.
 
+Session titles skip injected setup blocks such as `<environment_context>` and
+use the first actual user request. Enter sends a message; Shift+Enter inserts a
+newline. Refresh sits at the top right; only loading or error text appears below
+the conversation.
+
 Search the sidebar by title, host, agent, directory, or status. Each entry offers
 Pending, Blocked, Closed, and Auto. Manual choices survive new activity. Auto
 shows Working during activity and Ready when input is requested or a turn ends.
