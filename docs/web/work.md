@@ -1,13 +1,30 @@
 # Work sessions
 
-Open **Work** in the dashboard, choose a connected Linux host with Codex installed
-and authenticated, and enter an existing absolute working directory. The first
-review build supports Codex. Leave Model blank to use the host's configured model.
+Work replaces the old Sessions view; saved `#sessions` links redirect to `#work`.
+The server discovers Claude and Codex histories on connected workers every 15
+seconds after each scan, with paginated metadata and transcript reads. Updated
+workers are required for pagination and activity reporting. Imports are stored
+per operator and remain readable offline; subsequent scans update the same entry.
+Codex archives are included alongside regular rollout files.
+
+Search the sidebar by title, host, agent, directory, or status. Each entry offers
+Pending, Blocked, Closed, and Auto. Manual choices survive new activity. Auto
+shows Working during activity and Ready when input is requested or a turn ends.
+Imported activity is inferred from log markers; incomplete working logs older
+than two minutes fall back to Pending.
+
+Resume on host retains the former Sessions controls: Claude Remote Control or
+a Codex PTY, terminal output/input, interruption, and closing the resumed process.
+Closing an imported entry that has no web-managed process only closes its review
+entry; it does not terminate an independently started terminal.
+
+To create a new session, open **Work**, choose a connected Linux host with Codex installed
+and authenticated, and enter an existing absolute working directory. New sessions use Codex. Leave Model blank to use the host's configured model.
 
 Sessions belong to the signed-in operator account. Send a task, follow tool output,
 review the current turn's diff under Changes, and answer approval requests inline.
 Messages sent during an active turn steer that turn. Stop turn interrupts work;
-Close agent stops its host process. Reopen resumes the saved Codex thread.
+Close session stops its web-managed host process. Reopen resumes the saved Codex thread.
 Closing the page or navigating away does not stop work.
 
 ## Ownership and transport
@@ -21,8 +38,7 @@ Codex runs on the selected host as a separate `codex app-server` stdio process.
 The web service uses the existing Rook `proc.start/read/write/signal`
 capabilities to carry its structured protocol. The browser only connects to the
 web service, and the server collector continues without browser subscribers.
-No new public host listener, worker upgrade, or provider credential transfer is
-required. A web-service restart reattaches to the saved worker process handle.
+No new public host listener or provider credential transfer is required. A web-service restart reattaches to the saved worker process handle.
 
 The host still owns the repository and Codex's native execution context. A
 worker restart ends its managed processes; reopening uses the saved native thread
@@ -45,16 +61,21 @@ is vendored.
 - Codex conversation, steering, tool activity, file diffs, one-time command/file
   approvals, and structured user questions.
 - Existing directories, with optional model selection. Worktree creation,
-  repository browsing, commits/PR actions, and other agent providers are future work.
+  repository browsing, commits/PR actions, and creating new Claude sessions are future work.
 - Unknown provider request types remain visible and can be canceled by stopping
   the turn; they are never implicitly approved.
 
 ## Verification
 
-`python -m pytest -q tests/test_work_sessions.py tests/test_band_management.py`
+`python -m pytest -q tests/test_work_sessions.py tests/test_band_management.py tests/test_codex_history.py tests/test_claude_resume.py`
 covers durable projection/cursors, browser disconnect, collector replacement,
 pending approvals, duplicate commands/answers, authentication, Origin/CSRF, and
-owner isolation.
+owner isolation, paginated import, stable identities, manual statuses, and resumed
+terminal controls.
+
+`python tests/browser_work_history.py` uses a fake worker with Playwright Chromium
+to verify the Sessions redirect, imported transcripts, sidebar controls, reload
+persistence, and mobile layout without invoking an agent.
 
 The optional `python tests/browser_work.py --live` requires Playwright Chromium
 and a logged-in local Codex. It consumes one small real turn, edits a disposable

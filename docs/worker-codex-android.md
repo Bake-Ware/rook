@@ -4,16 +4,14 @@
 
 Workers with `$CODEX_HOME/sessions` (default `~/.codex/sessions`) advertise
 `codex-history.pull`, `.read`, `.search`, `.analyze`, `.export`, `.resume`, and
-`.resumed`: the same operations as `claude-history.*`. Select Claude Code or
-Codex on the web Sessions page; all capabilities also work through Rook MCP
+`.resumed`: the same operations as `claude-history.*`. Both appear automatically in the web Work view, which replaces Sessions; all capabilities also work through Rook MCP
 and the terminal capability browser. A worker restart discovers newly installed
 agent histories. The CLI and its login must exist on the worker's machine.
 
 Codex resume starts `codex resume UUID --no-alt-screen` in a managed PTY in the
 session's recorded directory. It sends no model prompt and preserves the host's
 Codex approval configuration. Use `proc.read`, `proc.write`, `proc.signal`, and
-`proc.close` with the returned handle. The web resume result provides those
-controls. This is a local Codex process, not Claude Remote Control or a newly
+`proc.close` with the returned handle. Work provides terminal output/input, interruption, and close controls. This is a local Codex process, not Claude Remote Control or a newly
 published remote app-server endpoint. Managed resume state is in memory, as
 with Claude; independently launched processes are not tracked by this plugin.
 

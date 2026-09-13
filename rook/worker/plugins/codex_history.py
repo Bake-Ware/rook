@@ -42,9 +42,13 @@ def _sid(path):
 
 
 def _files(root):
-    for path in history._iter_session_files(root):
-        if _sid(path):
-            yield path
+    roots = [root]
+    if root == _root():
+        roots.append(root.parent / 'archived_sessions')
+    for directory in roots:
+        for path in history._iter_session_files(directory):
+            if _sid(path):
+                yield path
 
 
 def _resolve(root, session_id):

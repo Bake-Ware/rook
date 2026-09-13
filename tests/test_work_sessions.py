@@ -145,3 +145,109 @@ def test_projection_unicode_and_durable_command_claim(tmp_path):
     assert WorkStore(store.path).get('1')['items']['a']['text']=='Hello 🦉 world'
     assert store.claim('1','command') and not store.claim('1','command')
     assert len(s['order'])==1
+
+class HistoryBand(FakeBand):
+    def __init__(self):
+        super().__init__()
+        self.workers['host1']['caps'] = ['claude-history.pull', 'claude-history.read',
+                                        'codex-history.pull', 'codex-history.read']
+        self.version = 1
+
+    async def call(self, cap, args, target, timeout):
+        self.calls.append((cap, args))
+        if cap.endswith('.pull'):
+            rows = [dict(session_id=f'source-{i}', title=f'Imported {i}', cwd='/tmp',
+                         last_modified=self.version, size_bytes=self.version) for i in range(101)]
+            offset = args.get('offset', 0)
+            result = dict(ok=True, sessions=rows[offset:offset+args['limit']], total=len(rows))
+        elif cap.endswith('.read'):
+            rows = [dict(role='assistant', content=f'Message {i}') for i in range(501)]
+            offset = args.get('offset', 0)
+            batch = rows[offset:offset+args['max_messages']]
+            result = dict(ok=True, messages=batch, activity='ready',
+                          truncated=offset+len(batch)<len(rows), next_offset=offset+len(batch))
+        else:
+            raise AssertionError(cap)
+        return {'ok': True, 'from': target, 'result': result}
+
+
+@pytest.mark.asyncio
+async def test_discovery_paginates_both_agents_and_preserves_review_status(portal):
+    p = portal
+    p.server._band = band = HistoryBand()
+    work = p.account.work_web
+    host = band.workers['host1']
+    for agent in ('claude', 'codex'):
+        await work.sync_history(host, agent, [p.uid])
+    sessions = work.store.all(p.uid)
+    assert len(sessions) == 202
+    assert {s['agent'] for s in sessions} == {'claude', 'codex'}
+    s = sessions[0]
+    sid = s['id']
+    assert len(s['order']) == 501
+    assert s['items']['500']['text'] == 'Message 500'
+    await work.command(sid, dict(op='status', status='blocked', id='block-session'))
+    band.version += 1
+    await work.sync_history(host, s['agent'], [p.uid])
+    assert WorkWeb.summary(work.store.get(sid))['status'] == 'blocked'
+    await work.command(sid, dict(op='close', id='close-session'))
+    assert WorkWeb.snapshot(work.store.get(sid))['status'] == 'closed'
+    assert not any(cap.startswith('proc.') for cap, _ in band.calls)
+    await work.command(sid, dict(op='status', status='auto', id='auto-session'))
+    assert WorkWeb.summary(work.store.get(sid))['status'] == 'ready'
+    count = len(band.calls)
+    await work.sync_history(host, s['agent'], [p.uid])
+    assert all(cap.endswith('.pull') for cap, _ in band.calls[count:])
+    assert len(work.store.all(p.uid)) == 202
+    assert WorkStore(work.store.path).get(sid)['items']['500']['text'] == 'Message 500'
+
+
+def test_ready_means_user_interaction_and_manual_status_survives_events():
+    s = dict(id='s', status='working', pending={}, review_status='blocked')
+    project(s, dict(id=4, method='item/tool/requestUserInput', params={}))
+    assert s['status'] == 'ready'
+    assert WorkWeb.summary(s)['status'] == 'blocked'
+    project(s, dict(method='turn/completed', params={'turn': {}}))
+    assert WorkWeb.snapshot(s)['status'] == 'blocked'
+    assert WorkWeb.snapshot(s)['activity'] == 'ready'
+
+@pytest.mark.asyncio
+async def test_imported_resume_input_close_and_host_isolation(portal):
+    p = portal
+    band = HistoryBand()
+    original = band.call
+    async def call(cap, args, target, timeout):
+        if cap.endswith('.resume'):
+            band.calls.append((cap, args))
+            result = {'ok': True, 'handle': 'external', 'note': 'Resume started'}
+        elif cap == 'proc.read':
+            result = {'ok': True, 'chunk': 'terminal prompt', 'next_cursor': 15, 'eof': False}
+        elif cap in ('proc.signal', 'proc.write'):
+            band.calls.append((cap, args))
+            result = {'ok': True}
+        else:
+            return await original(cap, args, target, timeout)
+        return {'ok': True, 'from': target, 'result': result}
+    band.call = call
+    p.server._band = band
+    work = p.account.work_web
+    host = band.workers['host1']
+    await work.sync_history(host, 'claude', [p.uid])
+    sid = work.store.all()[0]['id']
+    await work.command(sid, dict(op='resume', id='resume-imported'))
+    assert work.snapshot(work.store.get(sid))['external_running']
+    assert 'external_handle' not in work.snapshot(work.store.get(sid))
+    await work.drain_external(sid)
+    assert work.store.get(sid)['terminal'] == 'terminal prompt'
+    await work.command(sid, dict(op='terminal_input', text='hello', id='input-imported'))
+    assert ('proc.write', {'handle': 'external', 'data': 'hello', 'newline': True}) in band.calls
+    await work.command(sid, dict(op='status', status='closed', id='close-imported'))
+    assert ('proc.signal', {'handle': 'external', 'sig': 'TERM'}) in band.calls
+    assert work.summary(work.store.get(sid))['status'] == 'closed'
+    host2 = dict(host, worker_id='host2')
+    band.workers['host2'] = host2
+    await work.sync_history(host2, 'claude', [p.uid])
+    assert len(work.store.all()) == 202
+    band.workers.clear()
+    await work.command(sid, dict(op='status', status='pending', id='offline-review'))
+    assert work.summary(work.store.get(sid))['status'] == 'pending'

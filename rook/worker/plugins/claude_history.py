@@ -25,6 +25,7 @@ import json
 import os
 import re
 import sys
+import time
 from collections import Counter
 from pathlib import Path
 from typing import Iterable
@@ -183,6 +184,8 @@ def _session_meta(p: Path, reader=_read_lines, sid: str | None = None) -> dict:
     cwd: str | None = None
     git_branch: str | None = None
     for rec in reader(p):
+        if not isinstance(rec, dict):
+            continue
         ts = rec.get("timestamp")
         if isinstance(ts, str):
             if first_ts is None:
@@ -343,7 +346,7 @@ class ClaudeHistoryPlugin(Plugin):
 
     @capability("pull")
     def _pull(self, machine: str | None = None, path: str | None = None,
-              limit: int = 50) -> dict:
+              limit: int = 50, offset: int = 0) -> dict:
         """List session metadata under ``path`` (default ``~/.claude/projects``).
 
         Returns the most-recently-modified ``limit`` sessions first.
@@ -357,14 +360,15 @@ class ClaudeHistoryPlugin(Plugin):
             files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
         except OSError:
             pass
-        files = files[: max(int(limit), 0)]
+        total = len(files)
+        files = files[max(int(offset), 0):max(int(offset), 0) + max(int(limit), 0)]
         sessions = [self._session_meta(p) for p in files]
         return {"ok": True, "root": str(root), "sessions": sessions,
-                "count": len(sessions)}
+                "count": len(sessions), "total": total}
 
     @capability("read")
     def _read(self, session_id: str, path: str | None = None,
-              machine: str | None = None, max_messages: int = 1000) -> dict:
+              machine: str | None = None, max_messages: int = 1000, offset: int = 0) -> dict:
         """Read a session transcript. Accepts full UUID or short prefix."""
         root = self._expand(path)
         sp = self._resolve_session(root, session_id)
@@ -373,10 +377,19 @@ class ClaudeHistoryPlugin(Plugin):
                     "session_id": session_id, "root": str(root)}
         transcript: list[dict] = []
         truncated = False
+        skipped = 0
         for rec in self._read_lines(sp):
+            if not isinstance(rec, dict):
+                continue
             rtype = rec.get("type")
             if rtype not in ("user", "assistant"):
                 continue
+            if skipped < max(0, int(offset)):
+                skipped += 1
+                continue
+            if len(transcript) >= max(1, int(max_messages)):
+                truncated = True
+                break
             transcript.append({
                 "uuid": rec.get("uuid"),
                 "parent_uuid": rec.get("parentUuid"),
@@ -384,19 +397,58 @@ class ClaudeHistoryPlugin(Plugin):
                 "timestamp": rec.get("timestamp"),
                 "content": _message_text(rec),
             })
-            if len(transcript) >= int(max_messages):
-                truncated = True
-                break
         out = {
             "ok": True,
             "session_id": self._session_id(sp),
             "path": str(sp),
             "messages": transcript,
             "count": len(transcript),
+            "activity": self._activity(sp),
         }
         if truncated:
             out["truncated"] = True
+            out["next_offset"] = max(0, int(offset)) + len(transcript)
         return out
+
+    def _activity(self, path):
+        """Use explicit completion markers; stale/incomplete logs stay pending."""
+        activity = 'pending'
+        for rec in _read_lines(path):
+            if not isinstance(rec, dict):
+                continue
+            if self.NAMESPACE == 'codex-history':
+                payload = rec.get('payload') or {}
+                if not isinstance(payload, dict):
+                    continue
+                if rec.get('type') == 'event_msg':
+                    kind = payload.get('type')
+                    if kind in ('task_started', 'user_message'):
+                        activity = 'working'
+                    elif kind in ('task_complete', 'task_completed', 'turn_aborted'):
+                        activity = 'ready'
+                elif rec.get('type') == 'response_item':
+                    if payload.get('phase') == 'final' or (
+                        payload.get('type') == 'function_call' and
+                        str(payload.get('name', '')).split('.')[-1] in ('request_user_input', 'request_user_input_async')
+                    ):
+                        activity = 'ready'
+                    elif payload.get('type') in ('function_call', 'function_call_output', 'custom_tool_call', 'custom_tool_call_output'):
+                        activity = 'working'
+            else:
+                msg = rec.get('message') or {}
+                if rec.get('type') == 'user':
+                    activity = 'working'
+                elif rec.get('type') == 'assistant' and isinstance(msg, dict):
+                    if msg.get('stop_reason') in ('end_turn', 'stop_sequence'):
+                        activity = 'ready'
+                    elif msg.get('stop_reason') == 'tool_use':
+                        blocks = msg.get('content')
+                        needs_input = isinstance(blocks, list) and any(
+                            isinstance(b, dict) and b.get('name') == 'AskUserQuestion' for b in blocks)
+                        activity = 'ready' if needs_input else 'working'
+        if activity == 'working' and time.time() - path.stat().st_mtime > 120:
+            return 'pending'
+        return activity
 
     @capability("search")
     def _search(self, query: str, path: str | None = None,

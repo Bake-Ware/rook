@@ -1,7 +1,7 @@
 # Dashboard workspace
 
 The dashboard is a single document with hash-routed Workers, Bands, Chat,
-Sessions, Work, Install, Account, and Tokens views. `shell.css` owns layout;
+Work, Install, Account, and Tokens views. Work replaces Sessions; old Sessions links redirect there. `shell.css` owns layout;
 `theme.css` adopts BakeDash's olive/amber palette, square panels, DM Sans,
 and IBM Plex Mono. The BakeDash project remains independent.
 
