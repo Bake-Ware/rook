@@ -1,5 +1,52 @@
 # BakeNetCA deployment layout
 
+## Worker-owned Work deployed, 2026-09-13
+
+Web release: `/opt/rook-releases/work-remote-20260913-4fae19d`, source
+`4fae19d` on `feature/rook-work-review`. Desktop worker build:
+**153.swanky.vole**, SHA-256
+`c62fd3fff1aedc7e482f94bcbbd304e56374cd788f3810c9a5d5147fbc8227b0`.
+Both public worker artifacts matched the signed manifest. All 25 compatible
+workers reported build 153 and completed their update health window. The MCP
+release and Android APK were preserved.
+
+All conversation content belongs to the worker, including Work sessions started
+from the browser. The web database retains metadata and command receipts.
+Worker runtime state/events live in `~/.rook-band-worker/work.sqlite3`; original
+Claude/Codex logs remain in their native directories. Bounded on-demand pages
+and incremental native views feed the browser. See [Work sessions](../web/work.md).
+
+The initial full-copy import release `3fcf042` was rolled back to `70090c5` after
+the 1 GB Oracle VM became unresponsive. Recovery required an OCI reset. Large
+history RPCs and repeated transcript parsing were observed risks; no kernel OOM
+was confirmed. The replacement was first deployed with discovery restricted to
+cachyrig and automatic update pushes disabled. After verification, discovery
+was enabled fleet-wide and automatic updates restored. The retained
+`95-work-resources.conf` web-service drop-in sets MemoryHigh=160M,
+MemoryMax=220M, and CPUQuota=50%.
+
+Verification: 169 Python tests, both fake-worker browser scenarios, and public
+HTTPS checks passed. The live check read an imported transcript, exercised
+status persistence, started and closed a real Codex app-server on cachyrig,
+and checked mobile layout. It did not submit a model turn. Fleet discovery
+indexed 379 entries across six history workers, including an empty verification
+session. Source catalog counts were checked. The old web-owned session migrated
+to its worker with checksum acknowledgment. The active web database then had
+zero transcript bodies, zero legacy event rows, and no pending migrations.
+Web memory after fleet discovery was approximately 38 MB.
+
+Configuration and SQLite backup:
+`/var/backups/rook/work-remote-20260913-4fae19d`.
+The prior release is `/opt/rook-releases/work-20260912-70090c5`.
+A web rollback does not move worker-owned sessions back to the server; the old
+UI cannot control the new worker runtime. Prefer forward recovery and preserve
+both current metadata and worker databases. Do not overwrite current metadata
+with the pre-migration backup. Historical backups may still contain old
+transcripts; active-record cleanup is not secure erasure of backups or WAL pages.
+
+The deployment used a local source archive because GitHub push authentication
+was unavailable in the checkout.
+
 ## Server-owned Work review deployed, 2026-09-12
 
 The web service `rook-remote` runs from
