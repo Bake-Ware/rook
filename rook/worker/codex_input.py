@@ -75,7 +75,7 @@ async def _dbus(endpoint, method, *args, bus=False, literal=False):
         await proc.wait()
         raise
     if proc.returncode:
-        if b'org.freedesktop.DBus.Error.AccessDenied' in error:
+        if b'org.freedesktop.DBus.Error.AccessDenied' in output + error:
             raise ValueError('Konsole blocks remote input: its Security sensitive D-Bus API setting is disabled on the host.')
         raise ValueError('The host terminal could not confirm delivery. Check it before retrying.')
     return output.decode('utf-8', errors='replace').strip()

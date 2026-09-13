@@ -133,3 +133,13 @@ async def test_terminal_ignored_paste_never_sends_enter(monkeypatch):
     with pytest.raises(ValueError, match='pasted message'):
         await direct._terminal_send(SID, 'hello', {})
     assert len([c for c in dbus.call_args_list if c.args[1] == 'sendText']) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('stdout,stderr', [(b'Error: org.freedesktop.DBus.Error.AccessDenied', b''),
+                                          (b'', b'Error: org.freedesktop.DBus.Error.AccessDenied')])
+async def test_konsole_denial_on_either_output_stream(monkeypatch, stdout, stderr):
+    proc = type('Process', (), {'returncode': 2, 'communicate': AsyncMock(return_value=(stdout, stderr))})()
+    monkeypatch.setattr(direct.asyncio, 'create_subprocess_exec', AsyncMock(return_value=proc))
+    with pytest.raises(ValueError, match='Security sensitive D-Bus API'):
+        await direct._dbus(dict(binary='qdbus6', service=':1.2', path='/Sessions/1'), 'sendText', '')
