@@ -8,31 +8,15 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import socket
 import sqlite3
 import stat
-import subprocess
 import time
 from contextlib import contextmanager
 from pathlib import Path
+from weakref import WeakValueDictionary
 
-_queue_support = {}
-
-
-def codex_queue_available():
-    binary = shutil.which('codex')
-    if not binary:
-        return False
-    try:
-        key = (binary, Path(binary).stat().st_mtime_ns)
-        if key not in _queue_support:
-            result = subprocess.run([binary, 'queue', '--help'], capture_output=True, timeout=5)
-            _queue_support.clear()
-            _queue_support[key] = result.returncode == 0 and b'--thread' in result.stdout
-        return _queue_support[key]
-    except (OSError, subprocess.TimeoutExpired):
-        return False
+from . import codex_input
 
 
 def claude_endpoint(session_id, home=None, proc_root=Path('/proc')):
@@ -70,7 +54,7 @@ def claude_endpoint(session_id, home=None, proc_root=Path('/proc')):
 
 
 def messageable(agent, session_id):
-    return codex_queue_available() if agent == 'codex' else claude_endpoint(session_id) is not None
+    return codex_input.available(session_id) if agent == 'codex' else claude_endpoint(session_id) is not None
 
 
 @contextmanager
@@ -86,7 +70,19 @@ def _receipt_db():
         db.close()
 
 
+_delivery_locks = WeakValueDictionary()
+
+
 async def deliver(agent, session_id, command_id, text):
+    # Different operators can target the same host session. Keep paste/Enter
+    # pairs and runtime state checks together, including across web entries.
+    key = (agent, session_id)
+    lock = _delivery_locks.setdefault(key, asyncio.Lock())
+    async with lock:
+        return await _deliver(agent, session_id, command_id, text)
+
+
+async def _deliver(agent, session_id, command_id, text):
     if not isinstance(text, str) or not text.strip() or len(text) > 24000:
         return {'ok': False, 'error': 'Enter a message of 1–24000 characters.'}
     if not isinstance(command_id, str) or not 8 <= len(command_id) <= 100:
@@ -101,19 +97,7 @@ async def deliver(agent, session_id, command_id, text):
     result = uncertain
     try:
         if agent == 'codex':
-            if not codex_queue_available():
-                raise ValueError('This host needs a Codex CLI with the queue command.')
-            process = await asyncio.create_subprocess_exec(shutil.which('codex'), 'queue', '--thread', session_id,
-                '--message', text, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
-            try:
-                code = await asyncio.wait_for(process.wait(), 20)
-            except (asyncio.TimeoutError, asyncio.CancelledError):
-                process.kill()
-                await process.wait()
-                raise
-            if code:
-                raise ValueError('Codex did not confirm queuing the message. Check the host session before retrying.')
-            result = {'ok': True, 'delivery': 'queued', 'note': 'Message queued on host. Codex will read it when the current turn finishes.'}
+            result = await asyncio.wait_for(codex_input.send(session_id, text), 20)
         else:
             endpoint = claude_endpoint(session_id)
             if endpoint is None:
@@ -138,10 +122,10 @@ async def deliver(agent, session_id, command_id, text):
             finally:
                 writer.close()
                 await writer.wait_closed()
-    except (OSError, ValueError) as error:
-        result = {'ok': False, 'error': str(error) if isinstance(error, ValueError) else 'Unable to reach the agent on its host.'}
     except asyncio.TimeoutError:
         pass
+    except (OSError, ValueError) as error:
+        result = {'ok': False, 'error': str(error) if isinstance(error, ValueError) else 'Unable to reach the agent on its host.'}
     with _receipt_db() as db:
         db.execute('UPDATE session_message_receipts SET result=?, updated=? WHERE agent=? AND session=? AND command=?',
                    (json.dumps(result), time.time(), *key))

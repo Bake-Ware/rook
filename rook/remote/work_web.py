@@ -298,6 +298,7 @@ class WorkWeb:
         selected = None
         last_list = None
         last_revision = None
+        pending_receipts = {}
         while not ws.closed:
             try:
                 user = self.user(request)  # Revocation applies to already-open sockets.
@@ -309,6 +310,11 @@ class WorkWeb:
                 if listing != last_list:
                     await ws.send_json({'type': 'index', 'sessions': sessions, 'workers': workers})
                     last_list = listing
+                for cid, sid in list(pending_receipts.items()):
+                    result = self.store.result(sid, cid)
+                    if result and result.get('status') != 'accepted':
+                        await ws.send_json({'type': 'ack', 'id': cid, 'result': result})
+                        pending_receipts.pop(cid, None)
                 if selected:
                     selected_meta = self.store.get(selected, user['id'])
                     if selected_meta.get('external_handle'):
@@ -359,10 +365,11 @@ class WorkWeb:
                 else:
                     sid = str(data.get('session', ''))
                     self.store.get(sid, user['id'])
-                    if self.store.claim(sid, cid):
+                    if data.get('op') != 'receipt' and self.store.claim(sid, cid):
                         self.launch(sid, data)
+                    pending_receipts[cid] = sid
                     await ws.send_json({'type': 'ack', 'id': cid,
-                                        'result': self.store.result(sid, cid)})
+                                        'result': self.store.result(sid, cid) or {'status': 'error', 'error': 'No delivery receipt found. Check the host before retrying.'}})
             except (ValueError, KeyError, TypeError, PermissionError, json.JSONDecodeError) as e:
                 await ws.send_json({'type': 'error', 'error': str(e)})
             except (web.HTTPUnauthorized, web.HTTPForbidden):

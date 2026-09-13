@@ -33,7 +33,7 @@ export async function mountWork(root) {
           <div id="work-conversation" class="work-output" aria-label="Conversation"></div>
           <div id="work-history-controls" hidden><span id="work-history-note" role="status"></span></div>
           <div id="work-changes" class="work-output" hidden><pre id="work-diff"></pre></div>
-          <details id="work-terminal" hidden><summary>Host terminal</summary><p id="work-resume-note" class="work-muted"></p><pre id="work-terminal-output"></pre></details><div id="work-pending"></div>
+          <p id="work-resume-note" class="work-muted" role="status"></p><details id="work-terminal" hidden><summary>Host terminal</summary><pre id="work-terminal-output"></pre></details><div id="work-pending"></div>
           <form id="work-compose"><label class="work-muted" for="work-input">Message your agent</label><textarea id="work-input" rows="3" maxlength="24000" placeholder="Describe the task, or steer work already in progress…" required></textarea><div><span class="work-muted">Enter to send · Shift+Enter for a new line</span><button type="submit">Send</button></div></form>
         </div>
         <p id="work-notice" role="alert"></p>
@@ -218,7 +218,7 @@ export async function mountWork(root) {
     $('#work-close').hidden=s.status==='closed';
     $('#work-resume').hidden=s.imported?!!(s.external_running||s.active):(s.activity||s.status)!=='closed'||!s.thread_id;
     $('#work-resume').textContent=s.imported?'Resume on host':'Reopen';
-    $('#work-compose button').disabled=(s.imported?!(s.external_running||s.messageable):!['ready','working'].includes(s.activity||s.status)||(s.needs_input||Object.keys(s.pending||{}).length>0))||!!s.disconnected;
+    $('#work-compose button').disabled=(s.imported?!(s.external_running||s.messageable):!['ready','working'].includes(s.activity||s.status)||(s.needs_input||Object.keys(s.pending||{}).length>0))||!!s.disconnected||[...pendingCommands.values()].some(c=>c.session===s.id&&c.op==='message');
     const out=$('#work-conversation');
     const bottom=out.scrollHeight-out.scrollTop-out.clientHeight<80;
     const scroll=out.scrollTop;
@@ -238,7 +238,7 @@ export async function mountWork(root) {
         if(item.type==='userMessage'&&itemText(item)===drafts.get(selected))drafts.delete(selected);
       }
     } else {renderedItems.clear();out.innerHTML='<p class="work-muted">'+(s.imported?'Read conversation messages from the host.':'Your agent is ready for a task.')+'</p>';}
-    if(s.error&&drafts.has(selected)&&!$('#work-input').value)$('#work-input').value=drafts.get(selected);
+
     out.scrollTop=bottom?out.scrollHeight:scroll;
     $('#work-diff').textContent=s.diff||'No changes reported for the current turn.';
     renderPending(s);
@@ -251,6 +251,7 @@ export async function mountWork(root) {
       if(gen!==generation)return;
       $('#work-connection').textContent='Connected';
       if(selected)send({op:'select',session:selected});
+      for(const c of pendingCommands.values())if(c.op!=='create')send({op:'receipt',session:c.session,id:c.id});
     };
     ws.onmessage=e=>{
       if(gen!==generation)return;
@@ -266,7 +267,16 @@ export async function mountWork(root) {
       } else if(m.type==='session')renderSession(m.session);
       else if(m.type==='selected')select(m.session);
       else if(m.type==='error')notify(m.error);
-      else if(m.type==='ack')pendingCommands.delete(m.id);
+      else if(m.type==='ack'&&m.result?.status!=='accepted'){
+        const sent=pendingCommands.get(m.id);pendingCommands.delete(m.id);
+        if(sent?.op==='message'&&m.result?.status==='error'){
+          const existing=sent.session===selected?$('#work-input').value:drafts.get(sent.session);
+          drafts.set(sent.session,existing?existing+'\n\n'+sent.text:sent.text);
+          if(sent.session===selected)$('#work-input').value=drafts.get(sent.session);
+          notify(m.result.error||'Message could not be delivered.');
+        }
+        if(state&&sent?.session===selected)renderSession(state);
+      }
     };
     ws.onclose=e=>{
       if(gen!==generation)return;
@@ -297,7 +307,7 @@ export async function mountWork(root) {
   };
   $('#work-compose').onsubmit=e=>{
     e.preventDefault();const input=$('#work-input');
-    if(command('message',{text:input.value})){drafts.set(selected,input.value);input.value='';$('#work-compose button').disabled=true;}
+    if(command('message',{text:input.value})){drafts.set(selected,'');input.value='';$('#work-compose button').disabled=true;}
   };
   $('#work-input').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.altKey&&!e.isComposing&&e.keyCode!==229){e.preventDefault();if(!$('#work-compose button').disabled)$('#work-compose').requestSubmit();}};
   $('#work-interrupt').onclick=()=>command('interrupt');

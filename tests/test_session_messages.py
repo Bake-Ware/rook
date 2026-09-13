@@ -14,35 +14,29 @@ from test_codex_history import SID, rollout
 
 
 @pytest.mark.asyncio
-async def test_queue_literal_text_and_durable_receipts(tmp_path, monkeypatch):
+async def test_direct_literal_text_and_durable_receipts(tmp_path, monkeypatch):
     monkeypatch.setenv('ROOK_WORK_DB', str(tmp_path / 'worker.sqlite3'))
-    monkeypatch.setattr(messages, 'codex_queue_available', lambda: True)
-    monkeypatch.setattr(messages.shutil, 'which', lambda _: '/bin/codex')
-    process = type('Process', (), {'wait': AsyncMock(return_value=0)})()
-    spawn = AsyncMock(return_value=process)
-    monkeypatch.setattr(messages.asyncio, 'create_subprocess_exec', spawn)
+    send = AsyncMock(return_value={'ok': True, 'delivery': 'steered'})
+    monkeypatch.setattr(messages.codex_input, 'send', send)
     text = 'Multiline\n💌 $(touch /tmp/never) `literal` --help'
     first, second = await asyncio.gather(messages.deliver('codex', SID, 'command-123', text),
                                          messages.deliver('codex', SID, 'command-123', text))
-    assert first['delivery'] == 'queued'
-    assert second == first or not second['ok']  # In-flight duplicate is uncertain.
+    assert first['delivery'] == 'steered'
+    assert second == first or not second['ok']
     assert await messages.deliver('codex', SID, 'command-123', text) == first
-    spawn.assert_awaited_once()
-    assert spawn.call_args.args == ('/bin/codex', 'queue', '--thread', SID, '--message', text)
+    send.assert_awaited_once_with(SID, text)
     assert text.encode() not in (tmp_path / 'worker.sqlite3').read_bytes()
 
 
 @pytest.mark.asyncio
-async def test_failed_queue_not_replayed_and_stderr_not_exposed(tmp_path, monkeypatch):
+async def test_failed_direct_delivery_not_replayed(tmp_path, monkeypatch):
     monkeypatch.setenv('ROOK_WORK_DB', str(tmp_path / 'worker.sqlite3'))
-    monkeypatch.setattr(messages, 'codex_queue_available', lambda: True)
-    monkeypatch.setattr(messages.shutil, 'which', lambda _: '/bin/codex')
-    spawn = AsyncMock(return_value=type('Process', (), {'wait': AsyncMock(return_value=1)})())
-    monkeypatch.setattr(messages.asyncio, 'create_subprocess_exec', spawn)
+    send = AsyncMock(side_effect=asyncio.TimeoutError)
+    monkeypatch.setattr(messages.codex_input, 'send', send)
     result = await messages.deliver('codex', SID, 'command-fail', 'secret prompt')
-    assert not result['ok']
+    assert not result['ok'] and 'uncertain' in result['error']
     assert await messages.deliver('codex', SID, 'command-fail', 'secret prompt') == result
-    spawn.assert_awaited_once()
+    send.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -106,3 +100,18 @@ async def test_claude_authenticated_frames_and_stale_process_refused(tmp_path, m
     finally:
         server.close()
         await server.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_distinct_commands_to_same_session_do_not_interleave(tmp_path, monkeypatch):
+    monkeypatch.setenv('ROOK_WORK_DB', str(tmp_path / 'worker.sqlite3'))
+    sequence = []
+    async def send(sid, text):
+        sequence.append(text + ':paste')
+        await asyncio.sleep(.01)
+        sequence.append(text + ':enter')
+        return {'ok': True, 'delivery': 'forwarded'}
+    monkeypatch.setattr(messages.codex_input, 'send', send)
+    await asyncio.gather(messages.deliver('codex', SID, 'command-one', 'one'),
+                         messages.deliver('codex', SID, 'command-two', 'two'))
+    assert sequence == ['one:paste', 'one:enter', 'two:paste', 'two:enter']
