@@ -106,4 +106,4 @@ Against an older server without the endpoint, the CLI falls back to the roster
 without performing per-worker chat scans. Clients do not multiply the server's
 collection work. The browser's existing worker endpoint remains available.
 
-See [Work sessions](work.md) for server-owned agent sessions and the first Codex adapter.
+See [Work sessions](work.md) for worker-owned agent sessions, metadata discovery, and the Codex adapter.

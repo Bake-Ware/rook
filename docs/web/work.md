@@ -2,15 +2,29 @@
 
 Work replaces the old Sessions view; saved `#sessions` links redirect to `#work`.
 The server discovers Claude and Codex histories on connected workers every 15
-seconds after each scan, with paginated metadata and transcript reads. Updated
-workers are required for bounded transcript paging and activity reporting.
-Transcript requests transfer at most 6,000 content characters per page, including
-partial large messages, and are paced one second apart. A separate SQLite index
-keeps roster polling independent of transcript size. For deployment canaries,
+seconds after each scan. Discovery requests only paginated metadata, including
+source identity, title, directory, modification time, message count, and activity.
+The worker's native session files remain the source of truth. Codex archives are
+included alongside regular rollout files.
+
+Imported entries persist per operator in `work.sqlite3`, but their transcripts
+are not copied into the database. Opening an entry relays one transcript page
+from the worker to the browser; Load more fetches another page and Refresh from
+host restarts the read. Pages contain at most 6,000 content characters, including
+partial large messages. The browser holds only the pages requested for the
+selected session. Reads require the owning administrator's login and use
+`Cache-Control: no-store`. Updated workers are required for bounded transcript
+paging and activity metadata. Older workers can still contribute catalog entries.
+An offline host leaves metadata and review controls available, but its transcript
+cannot be fetched until it reconnects. Source changes do not trigger background
+transcript downloads. Existing imported transcript copies are removed from
+session records when this version opens the database; native Work sessions are
+migrated with acknowledgment before their web copies are removed. Resumed imported terminal output uses a bounded in-memory buffer,
+not durable transcript storage.
+
+A separate SQLite index keeps roster polling lightweight. For deployment canaries,
 `ROOK_WORK_IMPORT_WORKERS` optionally limits discovery to comma-separated worker
-names; unset it for fleet-wide discovery. Imports are stored
-per operator and remain readable offline; subsequent scans update the same entry.
-Codex archives are included alongside regular rollout files.
+names; unset it for fleet-wide discovery.
 
 Search the sidebar by title, host, agent, directory, or status. Each entry offers
 Pending, Blocked, Closed, and Auto. Manual choices survive new activity. Auto
@@ -34,24 +48,50 @@ Closing the page or navigating away does not stop work.
 
 ## Ownership and transport
 
-The web service owns the durable session, projected conversation, raw event history,
-pending approvals, command IDs, and worker output cursor. State is in
-`work.sqlite3` beside the enrollment database. Back it up using SQLite's backup
-API; do not copy a live database without its WAL.
+All transcripts belong to their worker, including sessions started with **+ New**.
+The web database (`work.sqlite3` beside enrollment.db) retains only identities,
+source pointers, titles/directories, activity, review status, revisions, and
+command receipts. It never persists new prompts, conversation items, diffs,
+terminal output, pending question bodies, or provider protocol events.
 
-Codex runs on the selected host as a separate `codex app-server` stdio process.
-The web service uses the existing Rook `proc.start/read/write/signal`
-capabilities to carry its structured protocol. The browser only connects to the
-web service, and the server collector continues without browser subscribers.
-No new public host listener or provider credential transfer is required. A web-service restart reattaches to the saved worker process handle.
+The worker's `work.*` plugin launches and controls `codex app-server` locally
+through `proc.*`. Its controller and collector run without the web service or a
+browser. Worker state lives in `~/.rook-band-worker/work.sqlite3` (override with
+`ROOK_WORK_DB`): projected conversation, pending approvals, process cursor, raw
+protocol events (`work_events`), and command IDs/results (`work_commands`). Codex
+also retains its own native rollout files. Back up worker SQLite databases using
+the SQLite backup API, not by copying a live database without its WAL.
 
-The host still owns the repository and Codex's native execution context. A
-worker restart ends its managed processes; reopening uses the saved native thread
-when that same worker is available. A host outage leaves the server history intact.
-The existing process transport retains up to 4 MiB of output; an outage longer
-than that buffer permits is reported as an error, not silently treated as a
-complete transcript. Input delivery with a lost acknowledgment is not retried
-blindly. Check the conversation before resubmitting an uncertain input.
+The web service polls compact `work.status` batches every two seconds. Only an
+open session requests `work.view_page`: stable worker-local view snapshots are
+paged in chunks of at most 6,000 characters, then reconstructed in the browser.
+Subsequent reads request fields and items changed since the browser's last
+revision. Pending approvals and diffs use this same on-demand path. No new
+public worker listener or provider credential transfer is required.
+
+Command IDs are deduplicated on both ends. The worker records intent before
+sending to Codex; this prevents duplicate dispatch, not uncertain-delivery
+failures. Accepted commands interrupted by a crash are not blindly retried.
+The web keeps only submission receipts, while raw events stay on the worker.
+`work_events` remains on older web databases solely to migrate their old records;
+new web actions and transcript reads do not append content there.
+
+On upgrade, older web-owned native sessions are marked for migration. The web
+uploads a bounded, checksum-verified archive containing their state, events, and
+command receipts to the original worker. The worker adopts the runtime and
+keeps the archive in `~/.rook-band-worker/work-migrations/`. Only after its
+acknowledgment does the web remove its old state bodies and event rows. Offline
+or outdated workers leave migration pending and retain the existing copy; their
+old session controls are unavailable until adoption completes. Existing imported
+conversation copies can be discarded because their source files remain on the
+worker. Removal is logical SQLite record cleanup, not secure erasure of backups
+or old WAL pages.
+
+A web-service restart leaves the worker controller running. A worker restart
+ends its managed process; reopen resumes its saved Codex thread. Offline workers
+leave only metadata available on the web; previously viewed browser content may
+remain until navigation, but cannot be refreshed. Resumed external Claude/Codex
+terminal output is read only while selected and is not persisted by the web.
 
 This is a Rook-native implementation of the T3 work pattern, not an embedded T3
 server. T3's Codex adapter/session runtime at commit
@@ -73,10 +113,14 @@ is vendored.
 ## Verification
 
 `python -m pytest -q tests/test_work_sessions.py tests/test_band_management.py tests/test_codex_history.py tests/test_claude_resume.py`
-covers durable projection/cursors, browser disconnect, collector replacement,
+covers durable projection/cursors, browser disconnect, web-service replacement, worker-local recovery,
 pending approvals, duplicate commands/answers, authentication, Origin/CSRF, and
 owner isolation, paginated import, stable identities, manual statuses, and resumed
-terminal controls.
+terminal controls, bounded incremental views, and acknowledged legacy migration.
+
+`python tests/browser_work_runtime.py` verifies web-initiated sessions, paged and
+incremental output, approvals, close/reopen, and metadata-only web storage with
+a fake worker.
 
 `python tests/browser_work_history.py` uses a fake worker with Playwright Chromium
 to verify the Sessions redirect, imported transcripts, sidebar controls, reload

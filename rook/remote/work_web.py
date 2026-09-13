@@ -1,5 +1,6 @@
 """Durable work review, worker history discovery, and agent process transport."""
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -15,52 +16,15 @@ from .account_web import NO_STORE
 log = logging.getLogger(__name__)
 
 
-def project(state, message):
-    """Project native Codex events into a browser snapshot; retain raw events separately."""
-    method = message.get('method', '')
-    p = message.get('params') or {}
-    if 'id' in message and method:
-        state['pending'][str(message['id'])] = message
-        state['status'] = 'ready'
-    if method == 'thread/started':
-        state['thread_id'] = p['thread']['id']
-    elif method == 'turn/started':
-        state['turn_id'] = p['turn']['id']
-        state['status'] = 'working'
-        state['diff'] = ''
-    elif method == 'turn/completed':
-        turn = p.get('turn', {})
-        state['turn_id'] = None
-        state['status'] = 'ready'
-        state['pending'] = {}
-        if turn.get('error'):
-            state['error'] = str(turn['error'])
-    elif method == 'turn/diff/updated':
-        state['diff'] = p.get('diff', '')
-    elif method in ('item/started', 'item/completed'):
-        item = p.get('item', {})
-        key = item.get('id')
-        if key:
-            previous = state['items'].get(key, {})
-            state['items'][key] = {**previous, **item}
-            if key not in state['order']:
-                state['order'].append(key)
-    elif method in ('item/agentMessage/delta', 'item/commandExecution/outputDelta',
-                    'item/reasoning/summaryTextDelta', 'item/reasoning/textDelta'):
-        key = p.get('itemId')
-        if key:
-            kind = 'commandExecution' if 'commandExecution' in method else ('reasoning' if '/reasoning/' in method else 'agentMessage')
-            item = state['items'].setdefault(key, {'id': key, 'type': kind})
-            field = 'aggregatedOutput' if kind == 'commandExecution' else 'text'
-            item[field] = (item.get(field, '') + p.get('delta', ''))[-200000:]
-            if key not in state['order']:
-                state['order'].append(key)
-    elif method == 'error':
-        state['error'] = str(p.get('error', p))
-    elif method == 'serverRequest/resolved':
-        state['pending'].pop(str(p.get('requestId')), None)
-        if not state['pending'] and state.get('turn_id'):
-            state['status'] = 'working'
+# Kept as an import for callers of the former web projection helper.
+from ..worker.work_runtime import project
+
+METADATA_KEYS = frozenset(('id', 'owner', 'title', 'cwd', 'model', 'worker_id',
+    'worker_name', 'band', 'agent', 'imported', 'source_id', 'source_version',
+    'source_updated', 'message_count', 'thread_id', 'turn_id', 'status',
+    'review_status', 'revision', 'updated', 'error', 'disconnected',
+    'external_handle', 'external_cursor', 'resume_note', 'remote_runtime',
+    'worker_revision', 'running', 'needs_input', 'legacy_runtime'))
 
 
 class WorkStore:
@@ -89,6 +53,15 @@ class WorkStore:
                     session TEXT NOT NULL, id TEXT NOT NULL, result TEXT NOT NULL,
                     PRIMARY KEY(session,id));
             """)
+            # Retain legacy native state until the host acknowledges its archive.
+            db.execute("UPDATE work_sessions SET state=json_set(state, '$.legacy_runtime', 1) WHERE COALESCE(json_extract(state, '$.imported'),0)=0 AND COALESCE(json_extract(state, '$.remote_runtime'),0)=0 AND json_type(state, '$.items') IS NOT NULL")
+            # Remove copies written by the earlier import implementation.
+            for table in ('work_sessions', 'work_index'):
+                db.execute("UPDATE " + table + " SET state=json_remove(state, '$.items', '$.order', '$.terminal', '$.history_loading') WHERE json_extract(state, '$.imported')=1 AND (json_type(state, '$.items') IS NOT NULL OR json_type(state, '$.terminal') IS NOT NULL OR json_type(state, '$.history_loading') IS NOT NULL)")
+            for row in db.execute('SELECT id,owner,updated,state FROM work_sessions').fetchall():
+                metadata = self.metadata(json.loads(row['state']))
+                db.execute('INSERT OR REPLACE INTO work_index VALUES(?,?,?,?)',
+                           (row['id'], row['owner'], row['updated'], json.dumps(metadata)))
         self.path.chmod(0o600)
 
     @contextmanager
@@ -103,18 +76,29 @@ class WorkStore:
 
     def get(self, sid, owner=None):
         with self.db() as db:
-            row = db.execute('SELECT * FROM work_sessions WHERE id=?', (sid,)).fetchone()
+            row = db.execute('SELECT * FROM work_index WHERE id=?', (sid,)).fetchone()
         if row is None or (owner is not None and row['owner'] != owner):
             raise web.HTTPNotFound()
-        return json.loads(row['state'])
+        return self.metadata(json.loads(row['state']))
+
+    @staticmethod
+    def metadata(state):
+        return {k: v for k, v in state.items() if k in METADATA_KEYS}
+
+    def archive(self, sid):
+        with self.db() as db:
+            state = json.loads(db.execute('SELECT state FROM work_sessions WHERE id=?', (sid,)).fetchone()[0])
+            events = [dict(r) for r in db.execute('SELECT * FROM work_events WHERE session=?', (sid,))]
+            commands = [dict(r) for r in db.execute('SELECT id,result FROM work_commands WHERE session=?', (sid,))]
+        return dict(state=state, events=events, commands=commands)
 
     def all(self, owner=None, *, details=True):
         with self.db() as db:
-            table = 'work_sessions' if details else 'work_index'
+            table = 'work_index'
             rows = db.execute('SELECT state FROM ' + table + ' ' +
                               ('WHERE owner=? ' if owner else '') + 'ORDER BY updated DESC',
                               (owner,) if owner else ()).fetchall()
-        return [json.loads(r['state']) for r in rows]
+        return [self.metadata(json.loads(r['state'])) for r in rows]
 
     def revision(self, sid, owner):
         with self.db() as db:
@@ -126,16 +110,17 @@ class WorkStore:
     def save(self, state, event=None):
         state['updated'] = time.time()
         state['revision'] = state.get('revision', 0) + 1
+        state = self.metadata(state)
         with self.db() as db:
-            db.execute('INSERT OR REPLACE INTO work_sessions VALUES(?,?,?,?)',
-                       (state['id'], state['owner'], state['updated'], json.dumps(state)))
-            index = {k: v for k, v in state.items()
-                     if k not in ('items', 'order', 'terminal', 'diff', 'rpc', 'pending', 'partial')}
+            if state.get('legacy_runtime'):
+                db.execute('UPDATE work_sessions SET updated=?,state=json_patch(state,?) WHERE id=?',
+                           (state['updated'], json.dumps(state), state['id']))
+            else:
+                db.execute('INSERT OR REPLACE INTO work_sessions VALUES(?,?,?,?)',
+                           (state['id'], state['owner'], state['updated'], json.dumps(state)))
+                db.execute('DELETE FROM work_events WHERE session=?', (state['id'],))
             db.execute('INSERT OR REPLACE INTO work_index VALUES(?,?,?,?)',
-                       (state['id'], state['owner'], state['updated'], json.dumps(index)))
-            if event is not None:
-                db.execute('INSERT INTO work_events(session,created,event) VALUES(?,?,?)',
-                           (state['id'], time.time(), json.dumps(event)))
+                       (state['id'], state['owner'], state['updated'], json.dumps(state)))
 
     def claim(self, sid, cid):
         with self.db() as db:
@@ -162,13 +147,15 @@ class WorkWeb:
         self.jobs = set()
         self.pump = None
         self.discovery = None
-        self.import_pause = 1.0
+        self.external_output = {}
 
     def lock(self, sid):
         return self.locks.setdefault(sid, asyncio.Lock())
 
     def install(self, app):
         app.router.add_get('/account/work/bootstrap', self.bootstrap)
+        app.router.add_get('/account/work/history/{session}', self.history_page)
+        app.router.add_get('/account/work/view/{session}', self.view_page)
         app.router.add_get('/account/work/ws', self.websocket)
         app.router.add_get('/account/work/assets/{name}', self.asset)
         app.on_startup.append(self.start)
@@ -201,7 +188,7 @@ class WorkWeb:
         if band is None:
             return []
         return [w for w in band.workers.values()
-                if (history or all(c in w.get('caps', []) for c in ('proc.start', 'proc.read', 'proc.write')))
+                if (history or all(c in w.get('caps', []) for c in ('work.create', 'work.command', 'work.view_page', 'work.status')))
                 and time.time() - w.get('last_seen', 0) < 90
                 and not self.server._ban_match(w.get('name'), w['worker_id'])]
 
@@ -209,7 +196,7 @@ class WorkWeb:
         found = next((w for w in self.workers(history=True) if w['worker_id'] == state['worker_id']
                       and w.get('band') == state['band']), None)
         if found is None:
-            raise ValueError('Host disconnected. Session history is safe on the server.')
+            raise ValueError('Host disconnected. Connect the host to read or resume this session.')
         return found
 
     async def rpc(self, state, cap, args, timeout=12):
@@ -233,6 +220,40 @@ class WorkWeb:
     async def bootstrap(self, request):
         user = self.user(request)
         return web.json_response({'csrf': user['csrf']}, headers=NO_STORE)
+
+    async def history_page(self, request):
+        user = self.user(request)
+        s = self.store.get(request.match_info['session'], user['id'])
+        if not s.get('imported'):
+            raise web.HTTPBadRequest(text='This session uses the live Work conversation.')
+        try:
+            offset = int(request.query.get('offset', '0'))
+            content_offset = int(request.query.get('content_offset', '0'))
+            if offset < 0 or content_offset < 0:
+                raise ValueError('Invalid history cursor.')
+            cap = s['agent'] + '-history.read_page'
+            if cap not in self.worker(s).get('caps', []):
+                raise ValueError('Update this worker to enable transcript paging.')
+            page = await self.rpc(s, cap, dict(session_id=s['source_id'],
+                                  offset=offset, content_offset=content_offset))
+            # Relay a single bounded page. Never persist transcript content.
+            return web.json_response(page, headers=NO_STORE)
+        except (ValueError, TimeoutError) as error:
+            return web.json_response({'error': str(error) or 'Host request timed out.'},
+                                     status=503, headers=NO_STORE)
+
+    async def view_page(self, request):
+        user = self.user(request)
+        s = self.store.get(request.match_info['session'], user['id'])
+        if not s.get('remote_runtime'):
+            raise web.HTTPBadRequest(text='Host runtime is not available for this session yet.')
+        try:
+            page = await self.rpc(s, 'work.view_page', dict(session_id=s['id'],
+                since=max(0, int(request.query.get('since', '0'))),
+                token=request.query.get('token', ''), offset=max(0, int(request.query.get('offset', '0')))))
+            return web.json_response(page, headers=NO_STORE)
+        except (ValueError, TimeoutError) as error:
+            return web.json_response({'error': str(error) or 'Host request timed out.'}, status=503, headers=NO_STORE)
 
     @staticmethod
     def summary(s):
@@ -268,9 +289,15 @@ class WorkWeb:
                     await ws.send_json({'type': 'index', 'sessions': sessions, 'workers': workers})
                     last_list = listing
                 if selected:
+                    selected_meta = self.store.get(selected, user['id'])
+                    if selected_meta.get('external_handle'):
+                        await self.drain_external(selected)
                     if self.store.revision(selected, user['id']) != last_revision:
                         s = self.store.get(selected, user['id'])
-                        await ws.send_json({'type': 'session', 'session': self.snapshot(s)})
+                        snapshot = self.snapshot(s)
+                        if s.get('imported'):
+                            snapshot['terminal'] = self.external_output.get(s['id'], '')
+                        await ws.send_json({'type': 'session', 'session': snapshot})
                         last_revision = s['revision']
                 try:
                     msg = await ws.receive(timeout=0.35)
@@ -302,8 +329,8 @@ class WorkWeb:
                         s = dict(id=sid, owner=user['id'], title=str(data.get('title') or 'New work')[:160],
                                  worker_id=w['worker_id'], worker_name=w.get('name'), band=w.get('band'),
                                  cwd=cwd, model=str(data.get('model') or '')[:100],
-                                 agent='codex', status='starting', items={}, order=[], pending={}, rpc={}, cursor=0,
-                                 partial='', handle=None, thread_id=None, turn_id=None, error='', diff='')
+                                 agent='codex', status='starting', remote_runtime=True, worker_revision=0,
+                                 thread_id=None, turn_id=None, error='')
                         self.store.save(s, {'op': 'create'})
                         self.launch(sid, {'op': 'open', 'id': cid})
                     selected, last_revision = sid, None
@@ -329,17 +356,6 @@ class WorkWeb:
         self.jobs.add(job)
         job.add_done_callback(self.jobs.discard)
 
-    async def send(self, s, method=None, params=None, response=None):
-        if response is not None:
-            payload = response
-        else:
-            rid = uuid.uuid4().hex
-            payload = {'id': rid, 'method': method, 'params': params or {}}
-            s['rpc'][rid] = method
-        # Persist intent before sending. Never blindly retry a possibly delivered turn.
-        self.store.save(s, {'direction': 'out', 'message': payload})
-        await self.rpc(s, 'proc.write', {'handle': s['handle'], 'data': json.dumps(payload), 'newline': True})
-
     async def command(self, sid, data):
         async with self.lock(sid):
             s = self.store.get(sid)
@@ -362,7 +378,8 @@ class WorkWeb:
                     if s.get('external_handle'):
                         raise ValueError('This session is already running on its host.')
                     result = await self.rpc(s, s['agent'] + '-history.resume', {'session_id': s['source_id']}, timeout=40)
-                    s.update(external_handle=result['handle'], external_cursor=0, terminal='',
+                    self.external_output[sid] = ''
+                    s.update(external_handle=result['handle'], external_cursor=0,
                              review_status=None, error='', resume_note=result.get('note', ''))
                 elif s.get('imported') and op == 'terminal_input':
                     text = str(data.get('text', ''))
@@ -375,77 +392,22 @@ class WorkWeb:
                     await self.rpc(s, 'proc.signal', {'handle': s['external_handle'], 'sig': 'INT'})
                 elif s.get('imported'):
                     raise ValueError('This session is running outside the web app. Continue it on its host.')
-                elif op == 'open':
-                    result = await self.rpc(s, 'proc.start', {
-                        'argv': ['codex', 'app-server', '--listen', 'stdio://'],
-                        'cwd': s['cwd'], 'label': 'Rook Work ' + sid, 'buffer_bytes': 4194304})
-                    s['handle'] = result['handle']
-                    self.store.save(s)
-                    await self.send(s, 'initialize', {'clientInfo': {'name': 'rook_work', 'version': '0.1.0'},
-                                    'capabilities': {'experimentalApi': True}})
-                elif op == 'message':
-                    text = str(data.get('text', '')).strip()
-                    if not text or len(text) > 24000:
-                        raise ValueError('Enter a message of 1–24000 characters.')
-                    if s['pending'] or s['status'] not in ('ready', 'working') or not s['thread_id']:
-                        raise ValueError('Wait for the agent to be ready or answer its pending request.')
-                    params = {'threadId': s['thread_id'], 'input': [{'type': 'text', 'text': text}]}
-                    method = 'turn/start'
-                    if s['turn_id']:
-                        method = 'turn/steer'
-                        params['expectedTurnId'] = s['turn_id']
-                    else:
-                        s['status'] = 'sending'
-                    s['error'] = ''
-                    await self.send(s, method, params)
-                elif op == 'interrupt':
-                    if not s['turn_id']:
-                        raise ValueError('No active turn.')
-                    await self.send(s, 'turn/interrupt', {'threadId': s['thread_id'], 'turnId': s['turn_id']})
-                elif op == 'answer':
-                    key = str(data.get('request'))
-                    pending = s['pending'].get(key)
-                    if not pending:
-                        raise ValueError('That request has already been answered.')
-                    method = pending['method']
-                    if method in ('item/commandExecution/requestApproval', 'item/fileChange/requestApproval',
-                                  'item/fileRead/requestApproval'):
-                        decision = data.get('decision')
-                        if decision not in ('accept', 'decline', 'cancel'):
-                            raise ValueError('Invalid approval decision.')
-                        answer = {'decision': decision}
-                    elif method == 'item/tool/requestUserInput':
-                        answers = data.get('answers')
-                        if not isinstance(answers, dict):
-                            raise ValueError('Answers are required.')
-                        answer = {'answers': {str(k): {'answers': [str(v)]} for k, v in answers.items()}}
-                    else:
-                        raise ValueError('Unsupported request type. Stop this turn to cancel it.')
-                    # Consume before delivery so multiple browsers cannot answer twice.
-                    del s['pending'][key]
-                    s['status'] = 'working' if not s['pending'] else 'ready'
-                    await self.send(s, response={'id': pending['id'], 'result': answer})
-                elif op == 'close':
-                    if s['handle']:
-                        await self.rpc(s, 'proc.signal', {'handle': s['handle'], 'sig': 'TERM'})
-                    s['status'] = 'closed'
-                    s['review_status'] = 'closed'
-                    s['pending'] = {}
-                    s['handle'] = None
-                elif op == 'resume':
-                    if s['handle']:
-                        raise ValueError('The agent process is still attached; stop it before reopening.')
-                    if not s['thread_id']:
-                        raise ValueError('No saved agent thread is available; start a new session.')
-                    s.update(status='starting', review_status=None, cursor=0, partial='', rpc={}, pending={}, error='')
-                    result = await self.rpc(s, 'proc.start', {
-                        'argv': ['codex', 'app-server', '--listen', 'stdio://'],
-                        'cwd': s['cwd'], 'label': 'Rook Work ' + sid, 'buffer_bytes': 4194304})
-                    s['handle'] = result['handle']
-                    await self.send(s, 'initialize', {'clientInfo': {'name': 'rook_work', 'version': '0.1.0'},
-                                    'capabilities': {'experimentalApi': True}})
+                elif s.get('legacy_runtime'):
+                    raise ValueError('Waiting for the host to adopt this session. Update and connect its worker.')
                 else:
-                    raise ValueError('Unknown action.')
+                    if op == 'open':
+                        result = await self.rpc(s, 'work.create', dict(session_id=sid,
+                            command_id=data['id'], cwd=s['cwd'], title=s['title'], model=s['model']), timeout=40)
+                    else:
+                        result = await self.rpc(s, 'work.command', dict(session_id=sid,
+                            command={k: v for k, v in data.items() if k not in ('csrf', 'session')}), timeout=40)
+                    self.apply_metadata(s, result['session'])
+                    if op == 'close':
+                        s['review_status'] = 'closed'
+                    elif op == 'resume':
+                        s['review_status'] = None
+                    if result.get('result', {}).get('status') != 'submitted':
+                        raise ValueError('Command outcome is uncertain or failed. Check the host session before retrying.')
                 self.store.save(s, {'op': op, 'command': data.get('id')})
                 self.store.result(sid, data['id'], {'status': 'submitted'})
             except Exception as e:
@@ -488,7 +450,7 @@ class WorkWeb:
             and s.get('agent', 'codex') == agent} for owner in owners}
         offset = 0
         while True:
-            result = await self.rpc(target, namespace + '.pull', {'limit': 100, 'offset': offset})
+            result = await self.rpc(target, namespace + '.pull', {'limit': 20, 'offset': offset})
             entries = result.get('sessions', [])
             for meta in entries:
                 source = meta.get('session_id')
@@ -502,47 +464,10 @@ class WorkWeb:
                     sid = existing['id'] if existing else uuid.uuid5(uuid.NAMESPACE_URL,
                         json.dumps([owner, worker.get('band'), worker['worker_id'], agent, source])).hex
                     fingerprint = [meta.get('last_modified'), meta.get('size_bytes')]
-                    if existing and existing.get('source_version') == fingerprint:
-                        if existing['status'] == 'working' and time.time() - (meta.get('last_modified') or 0) > 120:
-                            async with self.lock(sid):
-                                current = self.store.get(sid)
-                                current['status'] = 'pending'
-                                self.store.save(current)
-                        continue
-                    # Catalog entries exist even while an older worker awaits an update.
-                    if not existing:
-                        existing = dict(id=sid, owner=owner, **target, worker_name=worker.get('name'),
-                            agent=agent, imported=True, source_id=source, thread_id=None,
-                            handle=None, turn_id=None, pending={}, rpc={}, cursor=0,
-                            partial='', model='', error='', diff='', status='pending', items={}, order=[],
-                            title=meta.get('title') or source, cwd=meta.get('cwd'),
-                            source_updated=meta.get('last_modified'), history_loading=True)
-                        self.store.save(existing)
-                        existing_by_owner[owner][source] = existing
-                    if namespace + '.read_page' not in worker.get('caps', []):
-                        continue
-                    try:
-                        messages = []
-                        transcript_offset = content_offset = 0
-                        while True:
-                            transcript = await self.rpc(target, namespace + '.read_page',
-                                {'session_id': source, 'offset': transcript_offset, 'content_offset': content_offset})
-                            for fragment in transcript.get('messages', []):
-                                index = fragment['index']
-                                if index == len(messages):
-                                    messages.append({'role': fragment['role'], 'content': ''})
-                                if index >= len(messages) or len(messages[index]['content']) != fragment['content_offset']:
-                                    raise ValueError('History changed during import; retrying on the next scan.')
-                                messages[index]['content'] += fragment['content']
-                            await asyncio.sleep(self.import_pause)
-                            if not transcript.get('truncated'):
-                                break
-                            next_cursor = transcript['next_offset'], transcript['next_content_offset']
-                            if next_cursor <= (transcript_offset, content_offset):
-                                raise ValueError('Worker returned a non-advancing history cursor.')
-                            transcript_offset, content_offset = next_cursor
-                    except Exception:
-                        log.exception('Could not sync %s session %s on %s', agent, source, worker['worker_id'])
+                    activity = meta.get('activity', 'pending')
+                    if activity == 'working' and time.time() - (meta.get('last_modified') or 0) > 120:
+                        activity = 'pending'
+                    if existing and existing.get('source_version') == fingerprint and existing['status'] == activity:
                         continue
                     async with self.lock(sid):
                         s = self.store.get(sid) if existing else dict(
@@ -550,33 +475,82 @@ class WorkWeb:
                             agent=agent, imported=True, source_id=source, thread_id=None,
                             handle=None, turn_id=None, pending={}, rpc={}, cursor=0,
                             partial='', model='', error='', diff='', status='pending')
-                        s.update(title=meta.get('title') or source, cwd=meta.get('cwd'), history_loading=False,
-                                 source_version=fingerprint, source_updated=meta.get('last_modified'))
-                        s['items'] = {str(i): dict(id=str(i), type='userMessage' if m['role'] == 'user' else 'agentMessage',
-                            **({'content': [{'text': m.get('content', '')}]} if m['role'] == 'user'
-                               else {'text': m.get('content', '')})) for i, m in enumerate(messages)}
-                        s['order'] = list(s['items'])
-                        # History cannot prove a process is currently working.
-                        s['status'] = transcript.get('activity', 'pending')
-                        s['history_truncated'] = bool(transcript.get('truncated'))
+                        s.update(title=meta.get('title') or source, cwd=meta.get('cwd'),
+                                 source_version=fingerprint, source_updated=meta.get('last_modified'),
+                                 message_count=meta.get('message_count'), status=activity)
                         self.store.save(s)
-                        existing_by_owner[owner][source] = {k: v for k, v in s.items() if k not in ('items', 'order')}
+                        existing_by_owner[owner][source] = s
             offset += len(entries)
             if not entries or offset >= result.get('total', offset):
                 break
 
+    @staticmethod
+    def apply_metadata(s, meta):
+        for key in ('thread_id', 'turn_id', 'status', 'model', 'running', 'needs_input'):
+            if key in meta:
+                s[key] = meta[key]
+        s['worker_revision'] = meta['revision']
+        s['disconnected'] = False
+        s['error'] = 'The host reported an error. Open the session for details.' if meta.get('has_error') else ''
+
+    async def migrate(self, s):
+        archive = self.store.archive(s['id'])
+        data = json.dumps(archive, ensure_ascii=False)
+        digest = hashlib.sha256(data.encode('utf-8')).hexdigest()
+        offset = 0
+        for index in range(0, len(data), 6000):
+            chunk = data[index:index + 6000]
+            result = await self.rpc(s, 'work.adopt_page', dict(session_id=s['id'], digest=digest,
+                offset=offset, data=chunk, final=index + len(chunk) == len(data)))
+            offset += len(chunk.encode('utf-8'))
+            if result.get('adopted'):
+                break
+            await asyncio.sleep(1)
+        if not result.get('adopted') or result.get('digest') != digest:
+            raise ValueError('Host has not acknowledged the session archive.')
+        async with self.lock(s['id']):
+            current = self.store.get(s['id'])
+            current.update(legacy_runtime=False, remote_runtime=True, worker_revision=0)
+            self.store.save(current)
+
     async def collect(self):
         while True:
             try:
-                sessions = [s for s in self.store.all(details=False) if s.get('handle')]
-                external = [s for s in self.store.all(details=False) if s.get('external_handle')]
-                await asyncio.gather(*(self.drain(s['id']) for s in sessions),
-                                     *(self.drain_external(s['id']) for s in external), return_exceptions=True)
+                groups = {}
+                for s in self.store.all(details=False):
+                    if s.get('legacy_runtime'):
+                        try:
+                            if 'work.adopt_page' in self.worker(s).get('caps', []):
+                                await self.migrate(s)
+                        except Exception:
+                            log.warning('Host migration pending for %s', s['id'])
+                    elif s.get('remote_runtime'):
+                        groups.setdefault((s['band'], s['worker_id']), []).append(s)
+                for sessions in groups.values():
+                    for offset in range(0, len(sessions), 20):
+                        batch = sessions[offset:offset + 20]
+                        try:
+                            result = await self.rpc(batch[0], 'work.status', {'sessions': [s['id'] for s in batch]})
+                            for meta in result['sessions']:
+                                if meta.get('id') not in {s['id'] for s in batch} or meta.get('missing'):
+                                    continue
+                                async with self.lock(meta['id']):
+                                    s = self.store.get(meta['id'])
+                                    if s.get('worker_revision') != meta['revision'] or s.get('disconnected'):
+                                        self.apply_metadata(s, meta)
+                                        self.store.save(s)
+                        except Exception:
+                            for previous in batch:
+                                async with self.lock(previous['id']):
+                                    s = self.store.get(previous['id'])
+                                    if not s.get('disconnected'):
+                                        s['disconnected'] = True
+                                        self.store.save(s)
             except asyncio.CancelledError:
                 raise
             except Exception:
-                log.exception('Work collector failed')
-            await asyncio.sleep(0.35)
+                log.exception('Work metadata collector failed')
+            await asyncio.sleep(2)
 
     async def drain_external(self, sid):
         async with self.lock(sid):
@@ -589,7 +563,7 @@ class WorkWeb:
                 chunk = result.get('chunk', '')
                 if not chunk and not result.get('eof') and not s.get('disconnected'):
                     return
-                s['terminal'] = (s.get('terminal', '') + chunk)[-200000:]
+                self.external_output[sid] = (self.external_output.get(sid, '') + chunk)[-200000:]
                 s['external_cursor'] = result['next_cursor']
                 s['disconnected'] = False
                 s['error'] = ''
@@ -603,91 +577,4 @@ class WorkWeb:
                 if missing or not s.get('disconnected'):
                     s['disconnected'] = True
                     s['error'] = str(error)
-                    self.store.save(s)
-
-    async def drain(self, sid):
-        async with self.lock(sid):
-            s = self.store.get(sid)
-            if not s.get('handle'):
-                return
-            try:
-                r = await self.rpc(s, 'proc.read', {'handle': s['handle'], 'cursor': s['cursor'], 'max_bytes': 8192})
-                if r.get('dropped'):
-                    s['status'] = 'error'
-                    s['error'] = 'Host output buffer overflowed. Stop and reopen the saved thread to recover.'
-                    self.store.save(s)
-                    return
-                chunk = r.get('chunk', '')
-                if not chunk and not r.get('eof'):
-                    if s.pop('disconnected', False):
-                        s['error'] = ''
-                        self.store.save(s)
-                    return
-                if s.get('disconnected'):
-                    s['error'] = ''
-                s['disconnected'] = False
-                s['cursor'] = r['next_cursor']
-                lines = (s['partial'] + chunk).split('\n')
-                s['partial'] = lines.pop()
-                followups = []
-                for line in lines:
-                    try:
-                        message = json.loads(line)
-                        if not isinstance(message, dict):
-                            continue
-                    except (ValueError, TypeError):
-                        continue  # Codex stderr shares the pipe; it is not protocol data.
-                    project(s, message)
-                    if 'id' in message and 'method' not in message:
-                        method = s['rpc'].pop(str(message['id']), None)
-                        if 'error' in message:
-                            s['error'] = str(message['error'])
-                            s['status'] = 'ready' if s['thread_id'] else 'error'
-                        elif method == 'initialize':
-                            followups.append(('initialized', {}))
-                        elif method in ('thread/start', 'thread/resume'):
-                            result = message.get('result', {})
-                            s['thread_id'] = result['thread']['id']
-                            s['model'] = result.get('model', s['model'])
-                            s['status'] = 'ready'
-                            s['turn_id'] = None
-                            # Resume restores the provider's saved history when available.
-                            for turn in result.get('thread', {}).get('turns', []):
-                                for item in turn.get('items', []):
-                                    project(s, {'method': 'item/completed', 'params': {'item': item}})
-                        elif method == 'turn/start':
-                            turn = message.get('result', {}).get('turn', {})
-                            if turn.get('status') == 'inProgress':
-                                s['turn_id'] = turn.get('id')
-                                s['status'] = 'working'
-                    # Raw event and projected state/cursor commit together after the entire batch.
-                    followups.append(('event', message))
-                if r.get('eof'):
-                    s['handle'] = None
-                    s['status'] = 'closed'
-                    s['pending'] = {}
-                    s['error'] = 'Agent exited (code ' + str(r.get('exit_code')) + '). Reopen to continue its saved thread.'
-                self.store.save(s, {'direction': 'in', 'events': [p for m, p in followups if m == 'event']})
-                for method, params in followups:
-                    if method == 'initialized':
-                        await self.send(s, response={'method': 'initialized', 'params': {}})
-                        params = {'cwd': s['cwd'], 'approvalPolicy': 'on-request', 'sandbox': 'workspace-write',
-                                  'approvalsReviewer': 'user'}
-                        if s['model']:
-                            params['model'] = s['model']
-                        if s['thread_id']:
-                            params['threadId'] = s['thread_id']
-                        await self.send(s, 'thread/resume' if s['thread_id'] else 'thread/start', params)
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                if 'no such handle' in str(e):
-                    s['handle'] = None
-                    s['status'] = 'closed'
-                    s['pending'] = {}
-                    s['error'] = 'Host process ended. Reopen to continue the saved agent thread.'
-                    self.store.save(s)
-                elif not s.get('disconnected'):
-                    s['disconnected'] = True
-                    s['error'] = str(e) or 'Host did not answer.'
                     self.store.save(s)

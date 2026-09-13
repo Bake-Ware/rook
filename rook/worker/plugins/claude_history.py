@@ -362,7 +362,7 @@ class ClaudeHistoryPlugin(Plugin):
             pass
         total = len(files)
         files = files[max(int(offset), 0):max(int(offset), 0) + max(int(limit), 0)]
-        sessions = [self._session_meta(p) for p in files]
+        sessions = [dict(self._session_meta(p), activity=self._activity(p)) for p in files]
         return {"ok": True, "root": str(root), "sessions": sessions,
                 "count": len(sessions), "total": total}
 
