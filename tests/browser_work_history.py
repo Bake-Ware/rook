@@ -19,6 +19,7 @@ async def main():
         p = portal.__wrapped__(Path(temp), patch)
         p.server._band = band = HistoryBand()
         band.active = True
+        band.messageable = True
         work = p.account.work_web
         await work.sync_history(band.workers['host1'], 'claude', [p.uid])
         sid = work.store.all()[0]['id']
@@ -48,7 +49,20 @@ async def main():
             await expect(page.locator('#work-conversation')).to_contain_text('Message 500', timeout=15000)
             await expect(page.get_by_role('button', name='Load more', exact=True)).to_have_count(0)
             assert all('items' not in s for s in work.store.all())
-            await expect(page.locator('#work-compose')).to_be_hidden()
+            await expect(page.locator('#work-compose')).to_be_visible()
+            await page.locator('#work-input').fill('A message from Work\nwith a second line 💌')
+            await page.locator('#work-compose button').click()
+            await expect(page.locator('#work-resume-note')).to_have_text('Message queued on host.')
+            sent = [(cap, args) for cap, args in band.calls if cap.endswith('.send')]
+            assert len(sent) == 1 and sent[0][1]['text'] == 'A message from Work\nwith a second line 💌'
+            assert sent[0][1]['session_id'] == work.store.get(sid)['source_id']
+            assert 'second line' not in work.store.path.read_bytes().decode(errors='ignore')
+            band.fail_send = True
+            await page.locator('#work-input').fill('Keep this failed draft')
+            await page.locator('#work-compose button').click()
+            await expect(page.locator('#work-error')).to_have_text('Host rejected the message.')
+            await expect(page.locator('#work-input')).to_have_value('Keep this failed draft')
+            band.fail_send = False
             await expect(page.locator('#work-resume')).to_be_hidden()
             await expect(page.locator('#work-meta')).to_contain_text('Active on host')
             # Switching sessions must cancel an unfinished whole-conversation read.

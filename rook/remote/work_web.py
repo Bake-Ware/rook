@@ -24,7 +24,7 @@ METADATA_KEYS = frozenset(('id', 'owner', 'title', 'cwd', 'model', 'worker_id',
     'source_updated', 'message_count', 'thread_id', 'turn_id', 'status',
     'review_status', 'revision', 'updated', 'error', 'disconnected',
     'external_handle', 'external_cursor', 'resume_note', 'remote_runtime',
-    'worker_revision', 'running', 'needs_input', 'legacy_runtime', 'active'))
+    'worker_revision', 'running', 'needs_input', 'legacy_runtime', 'active', 'messageable', 'message_note'))
 
 
 class WorkStore:
@@ -386,11 +386,19 @@ class WorkWeb:
                     self.external_output[sid] = ''
                     s.update(external_handle=result['handle'], external_cursor=0,
                              review_status=None, error='', resume_note=result.get('note', ''))
-                elif s.get('imported') and op == 'terminal_input':
+                elif s.get('imported') and op in ('terminal_input', 'message'):
                     text = str(data.get('text', ''))
-                    if not s.get('external_handle') or not text.strip() or len(text) > 24000:
-                        raise ValueError('Resume the session before sending input (1–24000 characters).')
-                    await self.rpc(s, 'proc.write', {'handle': s['external_handle'], 'data': text, 'newline': True})
+                    if not text.strip() or len(text) > 24000:
+                        raise ValueError('Enter a message of 1–24000 characters.')
+                    s['message_note'] = ''
+                    if s.get('external_handle'):
+                        await self.rpc(s, 'proc.write', {'handle': s['external_handle'], 'data': text, 'newline': True})
+                        s['message_note'] = 'Input sent to the host terminal.'
+                    else:
+                        result = await self.rpc(s, s['agent'] + '-history.send',
+                            {'session_id': s['source_id'], 'text': text, 'command_id': data['id']}, timeout=30)
+                        s['message_note'] = result.get('note', 'Message submitted on host.')
+                    s['error'] = ''
                 elif s.get('imported') and op == 'interrupt':
                     if not s.get('external_handle'):
                         raise ValueError('No running session to interrupt.')
@@ -472,7 +480,7 @@ class WorkWeb:
                     activity = meta.get('activity', 'pending')
                     if activity == 'working' and time.time() - (meta.get('last_modified') or 0) > 120:
                         activity = 'pending'
-                    if existing and existing.get('source_version') == fingerprint and existing['status'] == activity and existing.get('active') == bool(meta.get('active')):
+                    if existing and existing.get('source_version') == fingerprint and existing['status'] == activity and existing.get('active') == bool(meta.get('active')) and existing.get('messageable') == bool(meta.get('messageable')):
                         continue
                     async with self.lock(sid):
                         s = self.store.get(sid) if existing else dict(
@@ -482,7 +490,8 @@ class WorkWeb:
                             partial='', model='', error='', diff='', status='pending')
                         s.update(title=meta.get('title') or source, cwd=meta.get('cwd'),
                                  source_version=fingerprint, source_updated=meta.get('last_modified'),
-                                 message_count=meta.get('message_count'), status=activity, active=bool(meta.get('active')))
+                                 message_count=meta.get('message_count'), status=activity, active=bool(meta.get('active')),
+                                 messageable=bool(meta.get('messageable')))
                         self.store.save(s)
                         existing_by_owner[owner][source] = s
             offset += len(entries)

@@ -194,16 +194,21 @@ class HistoryBand(FakeBand):
         super().__init__()
         self.workers['host1']['caps'] = ['claude-history.pull', 'claude-history.read',
                                         'codex-history.pull', 'codex-history.read',
-                                        'claude-history.read_page', 'codex-history.read_page']
+                                        'claude-history.read_page', 'codex-history.read_page',
+                                        'claude-history.send', 'codex-history.send']
         self.version = 1
 
     async def call(self, cap, args, target, timeout):
         self.calls.append((cap, args))
         if cap.endswith('.pull'):
             rows = [dict(session_id=f'source-{i}', title=f'Imported {i}', cwd='/tmp',
-                         last_modified=self.version, size_bytes=self.version, activity='ready', active=getattr(self, 'active', False)) for i in range(101)]
+                         last_modified=self.version, size_bytes=self.version, activity='ready', active=getattr(self, 'active', False),
+                         messageable=getattr(self, 'messageable', False)) for i in range(101)]
             offset = args.get('offset', 0)
             result = dict(ok=True, sessions=rows[offset:offset+args['limit']], total=len(rows))
+        elif cap.endswith('.send'):
+            result = {'ok': False, 'error': 'Host rejected the message.'} if getattr(self, 'fail_send', False) else {
+                'ok': True, 'delivery': 'queued', 'note': 'Message queued on host.'}
         elif cap.endswith('.read_page'):
             rows = [dict(role='assistant', content=f'Message {i}') for i in range(501)]
             offset = args.get('offset', 0)

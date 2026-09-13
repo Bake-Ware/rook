@@ -35,6 +35,7 @@ from typing import Iterable
 
 from ..plugin import Plugin, capability
 from ..agent_activity import active_sessions
+from ..session_messages import deliver, messageable
 
 
 def _default_root() -> Path:
@@ -261,6 +262,17 @@ class ClaudeHistoryPlugin(Plugin):
         paths, ids = processes if processes is not None else active_sessions(self.NAMESPACE.split('-')[0])
         return str(path.resolve()) in paths or self._session_id(path).lower() in ids
 
+    @capability("send")
+    async def _send(self, session_id: str, text: str, command_id: str) -> dict:
+        """Send to this exact existing session; transcripts stay on this host."""
+        path = self._resolve_session(self._default_root(), session_id)
+        if path is None or self._session_id(path) != session_id:
+            return {"ok": False, "error": "Exact session ID not found on this host."}
+        agent = self.NAMESPACE.split('-')[0]
+        if not self._is_active(path):
+            return {"ok": False, "error": "Session is no longer active. Refresh and resume it on the host first."}
+        return await deliver(agent, session_id, command_id, text)
+
     @capability("resume")
     async def _resume(self, session_id: str, path: str | None = None,
                       name: str | None = None, cwd: str | None = None,
@@ -378,6 +390,8 @@ class ClaudeHistoryPlugin(Plugin):
         files = files[max(int(offset), 0):max(int(offset), 0) + max(int(limit), 0)]
         processes = active_sessions(self.NAMESPACE.split("-")[0])
         sessions = [dict(self._session_meta(p), activity=self._activity(p), active=self._is_active(p, processes)) for p in files]
+        for entry in sessions:
+            entry['messageable'] = bool(entry['active'] and messageable(self.NAMESPACE.split('-')[0], entry['session_id']))
         return {"ok": True, "root": str(root), "sessions": sessions,
                 "count": len(sessions), "total": total}
 
