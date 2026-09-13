@@ -53,6 +53,10 @@ class WorkStore:
                     session TEXT NOT NULL, id TEXT NOT NULL, result TEXT NOT NULL,
                     PRIMARY KEY(session,id));
             """)
+            # A restarted web process cannot know whether the host received an
+            # unfinished command. Keep its ID claimed and require human review.
+            db.execute("UPDATE work_commands SET result=? WHERE json_extract(result, '$.status')='accepted'",
+                       (json.dumps({'status': 'error', 'error': 'Submission was interrupted by a server restart. Check the host before retrying.'}),))
             # Retain legacy native state until the host acknowledges its archive.
             db.execute("UPDATE work_sessions SET state=json_set(state, '$.legacy_runtime', 1) WHERE COALESCE(json_extract(state, '$.imported'),0)=0 AND COALESCE(json_extract(state, '$.remote_runtime'),0)=0 AND json_type(state, '$.items') IS NOT NULL")
             # Remove copies written by the earlier import implementation.
@@ -312,8 +316,8 @@ class WorkWeb:
                     last_list = listing
                 for cid, sid in list(pending_receipts.items()):
                     result = self.store.result(sid, cid)
-                    if result and result.get('status') != 'accepted':
-                        await ws.send_json({'type': 'ack', 'id': cid, 'result': result})
+                    if not result or result.get('status') != 'accepted':
+                        await ws.send_json({'type': 'ack', 'id': cid, 'result': result or {'status': 'error', 'error': 'No delivery receipt found. Check the host before retrying.'}})
                         pending_receipts.pop(cid, None)
                 if selected:
                     selected_meta = self.store.get(selected, user['id'])
