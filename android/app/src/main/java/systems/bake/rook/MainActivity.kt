@@ -4,17 +4,11 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.util.Base64
-import android.view.Gravity
-import android.view.View
 import android.view.inputmethod.EditorInfo
-import android.widget.ImageView
-import android.widget.LinearLayout
-import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
@@ -35,10 +29,13 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
 
     private lateinit var b: ActivityMainBinding
     private val prefs by lazy { getSharedPreferences("rook", MODE_PRIVATE) }
-    private var curBot: TextView? = null
-    private val assistantTurns = mutableMapOf<Int, TextView>()
-    private val thinkingRows = mutableMapOf<TextView, TextView>()
-    private val attachments = DecisionAttachments<TextView> { message, decision -> showDecision(message, decision) }
+    private var curBot: ChatMessage? = null
+    private val assistantTurns = mutableMapOf<Int, ChatMessage>()
+    private lateinit var chat: ChatAdapter
+    private val pendingUsers = ArrayDeque<ChatMessage>()
+    private var eventTurn: Int? = null
+    private val userTurns = mutableSetOf<TurnKey>()
+    private lateinit var panels: ConversationPanels
     private var connectionGeneration = -1L
     private var state = "idle"
     private var photoUri: Uri? = null
@@ -58,6 +55,14 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
         super.onCreate(savedInstanceState)
         b = ActivityMainBinding.inflate(layoutInflater)
         setContentView(b.root)
+        chat = ChatAdapter { prefs.getBoolean("show_thinking", false) }
+        b.chatList.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(this).apply { stackFromEnd = true }
+        b.chatList.adapter = chat
+        panels = ConversationPanels(this, b) { key ->
+            val index = chat.expand(key)
+            if (index >= 0) b.chatList.post { b.chatList.smoothScrollToPosition(index) }
+            else android.widget.Toast.makeText(this, "No chat message available for this turn", android.widget.Toast.LENGTH_SHORT).show()
+        }
         b.versionLabel.text = "APK ${BuildConfig.VERSION_NAME} · ${BuildConfig.VERSION_CODE}"
         maybeRequestNotifications()
 
@@ -65,8 +70,8 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
         b.btnTalk.setOnClickListener {
             when (state) {
                 "thinking", "speaking" -> VoiceService.interrupt(this)
-                "idle" -> voiceOn(openSession = true)
-                else -> VoiceService.start(this, url(), insecure())   // standby/listening -> talk now
+                "idle" -> { panels.listening(); voiceOn(openSession = true) }
+                else -> { panels.listening(); VoiceService.start(this, url(), insecure()) }   // standby/listening -> talk now
             }
         }
         b.btnSleep.setOnClickListener {
@@ -94,7 +99,8 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
         if (t.isEmpty()) return
         b.input.setText("")
         curBot = null
-        addBubble(t, user = true)
+        pendingUsers.addLast(addBubble(t, user = true))
+        panels.begin("Planning")
         VoiceService.send(this, t, null, speak = false)
     }
 
@@ -124,8 +130,10 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
         small.compress(Bitmap.CompressFormat.JPEG, 80, out)
         val b64 = Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
         curBot = null
-        addImageBubble(small, caption)
+        pendingUsers.addLast(chat.add(caption, user = true, image = small))
+        scrollToEnd()
         addSystem("photo sent (${out.size() / 1024} KB)")
+        panels.begin("Planning")
         VoiceService.send(this, caption.ifEmpty { "What is in this image?" }, b64, speak = false)
     }
 
@@ -141,6 +149,14 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
     // ---- VoiceBus.Listener (main thread) --------------------------------
 
     override fun onState(s: String) {
+        syncConnection()
+        if (s == "thinking") eventTurn?.let { id ->
+            val key = TurnKey(connectionGeneration, id)
+            if (key !in userTurns && pendingUsers.isNotEmpty()) {
+                userTurns.add(key); chat.bindTurn(pendingUsers.removeFirst(), key)
+            }
+        }
+        panels.state(s)
         state = s
         b.stateText.text = getString(when (s) {
             "standby" -> R.string.st_standby
@@ -157,13 +173,13 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
     override fun onTranscript(text: String) { curBot = null; addBubble(text, user = true) }
     override fun onAssistantDelta(text: String) {
         val tv = curBot ?: addBubble("", user = false).also { curBot = it }
-        if (tv.text.isNotEmpty()) tv.append(" ")
-        tv.append(text); scrollToEnd()
+        if (tv.text.isNotEmpty()) tv.text += " "
+        tv.text += text; chat.changed(tv); scrollToEnd()
     }
     private fun syncConnection() {
         if (connectionGeneration != VoiceBus.connectionGeneration) {
             connectionGeneration = VoiceBus.connectionGeneration
-            attachments.clear(); assistantTurns.clear(); curBot = null
+            panels.sync(connectionGeneration); assistantTurns.clear(); curBot = null; eventTurn = null
         }
     }
 
@@ -171,97 +187,48 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
         syncConnection()
         if (turn == null) { onTranscript(text); return }
         curBot = null
-        attachments.message(turn, addBubble(text, user = true), voice = true)
+        panels.turn(turn)
+        val key = TurnKey(connectionGeneration, turn)
+        userTurns.add(key)
+        chat.bindTurn(addBubble(text, user = true), key)
     }
 
     override fun onAssistantDelta(text: String, turn: Int?) {
         syncConnection()
         if (turn == null) { onAssistantDelta(text); return }
-        val tv = assistantTurns.getOrPut(turn) { addBubble("", user = false) }
+        val tv = assistantTurns.getOrPut(turn) { addBubble("", user = false).also { chat.bindTurn(it, TurnKey(connectionGeneration, turn)) } }
         curBot = tv
-        if (tv.text.isNotEmpty()) tv.append(" ")
-        tv.append(text)
-        attachments.message(turn, tv)
+        if (tv.text.isNotEmpty()) tv.text += " "
+        tv.text += text
+        chat.changed(tv)
+        panels.turn(turn)
         scrollToEnd()
     }
 
+    override fun onTurn(turn: Int) { syncConnection(); eventTurn = turn; panels.turn(turn) }
+    override fun onActivity(event: ActivityEvent) { syncConnection(); panels.activity(event) }
     override fun onDecision(decision: Decision) {
         syncConnection()
-        if (prefs.getBoolean("show_thinking", false)) attachments.decision(decision)
+        if (prefs.getBoolean("show_thinking", false)) {
+            chat.decision(TurnKey(connectionGeneration, decision.turn), decision)
+            panels.decision(decision)
+        }
     }
 
-    private fun showDecision(message: TextView, decision: Decision) {
-        if (!prefs.getBoolean("show_thinking", false)) return
-        val row = thinkingRows.getOrPut(message) {
-            TextView(this).apply {
-                textSize = 12f; alpha = 0.65f
-                setTextColor(getColor(R.color.rook_fg))
-                setPadding(dp(14), dp(6), dp(14), dp(6))
-                maxWidth = (resources.displayMetrics.widthPixels * 0.9).toInt()
-            }.also { b.chat.addView(it, b.chat.indexOfChild(message) + 1, rowParams((message.layoutParams as LinearLayout.LayoutParams).gravity == Gravity.END)) }
-        }
-        // Do not collapse an expanded row on each streaming delta.
-        if (row.tag == decision) return
-        row.tag = decision
-        var expanded = false
-        fun render() {
-            row.maxLines = if (expanded) Int.MAX_VALUE else 1
-            row.ellipsize = if (expanded) null else android.text.TextUtils.TruncateAt.END
-            row.text = decision.summary() + if (expanded) "\n" + decision.details() else ""
-            row.contentDescription = row.text.toString() + if (expanded) ". Tap to collapse" else ". Tap to expand"
-        }
-        render()
-        row.setOnClickListener { expanded = !expanded; render() }
-    }
-
-    override fun onAssistantDone() { curBot = null }
-    override fun onInterrupt() { curBot?.alpha = 0.5f; curBot = null }
-    override fun onError(msg: String) { addSystem("error: $msg") }
-    override fun onWake() { addSystem("wake word") }
+    override fun onAssistantDone() { curBot = null; panels.done() }
+    override fun onInterrupt() { curBot?.let { it.alpha = 0.5f; chat.changed(it) }; curBot = null; panels.interrupt() }
+    override fun onError(msg: String) { syncConnection(); panels.note(msg, failed = true); panels.done() }
+    override fun onWake() { addSystem("wake word"); panels.listening() }
     override fun onBye(mode: String) { addSystem(if (mode == "off") "voice off" else "sleeping — say \"hey sojourn\"") }
-    override fun onTool(title: String, status: String) { addSystem("$title · $status") }
+    override fun onTool(title: String, status: String) { syncConnection(); panels.tool(title, status) }
 
     // ---- chat rendering -------------------------------------------------
 
-    private fun addBubble(text: String, user: Boolean): TextView {
-        val tv = TextView(this).apply {
-            this.text = text
-            textSize = 16f
-            setTextColor(getColor(R.color.rook_fg))
-            setPadding(dp(14), dp(10), dp(14), dp(10))
-            setBackgroundResource(if (user) R.drawable.bubble_user else R.drawable.bubble_bot)
-            maxWidth = (resources.displayMetrics.widthPixels * 0.8).toInt()
-        }
-        b.chat.addView(tv, rowParams(user)); scrollToEnd(); return tv
-    }
+    private fun addBubble(text: String, user: Boolean): ChatMessage = chat.add(text, user).also { scrollToEnd() }
 
-    private fun addImageBubble(bmp: Bitmap, caption: String) {
-        val iv = ImageView(this).apply {
-            setImageBitmap(bmp)
-            adjustViewBounds = true
-            maxWidth = (resources.displayMetrics.widthPixels * 0.55).toInt()
-        }
-        b.chat.addView(iv, rowParams(true))
-        if (caption.isNotEmpty()) addBubble(caption, user = true)
-        scrollToEnd()
-    }
+    private fun addSystem(text: String) { syncConnection(); panels.note(text) }
 
-    private fun rowParams(user: Boolean) =
-        LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            .apply { topMargin = dp(6); gravity = if (user) Gravity.END else Gravity.START }
-
-    private fun addSystem(text: String) {
-        val tv = TextView(this).apply {
-            this.text = text; textSize = 12f; alpha = 0.6f; setPadding(dp(6), dp(4), dp(6), dp(4))
-        }
-        b.chat.addView(tv, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            .apply { gravity = Gravity.CENTER_HORIZONTAL })
-        scrollToEnd()
-    }
-
-    private fun scrollToEnd() { b.chatScroll.post { b.chatScroll.fullScroll(View.FOCUS_DOWN) } }
-    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+    private fun scrollToEnd() { b.chatList.post { if (chat.itemCount > 0) b.chatList.scrollToPosition(chat.itemCount - 1) } }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
@@ -270,7 +237,8 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
 
     override fun onResume() {
         super.onResume()
-        thinkingRows.values.forEach { it.visibility = if (prefs.getBoolean("show_thinking", false)) View.VISIBLE else View.GONE }
+        chat.notifyDataSetChanged()
+        panels.resume()
         VoiceBus.listener = this
         onState(VoiceBus.state)
         if (intent?.action == Intent.ACTION_ASSIST) {
@@ -279,7 +247,7 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
         }
     }
 
-    override fun onPause() { VoiceBus.listener = null; super.onPause() }
+    override fun onPause() { panels.pause(); VoiceBus.listener = null; super.onPause() }
 
     private val notifPermLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
     private fun maybeRequestNotifications() {

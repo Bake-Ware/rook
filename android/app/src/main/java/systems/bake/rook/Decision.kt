@@ -8,10 +8,17 @@ data class Decision(
     val turn: Int, val source: String, val mode: String, val status: String,
     val latencyMs: Double?, val model: String?, val adapter: String?, val calibration: String?,
     val answers: List<Answer>, val error: String?,
+    val engineStatus: String = status,
 ) {
     data class Answer(val id: String, val type: String, val p: Double?, val choice: String?,
                       val probabilities: Map<String, Double>, val confidence: Double?,
                       val level: Double?, val expected: Double?)
+
+    val engineLabel get() = when (engineStatus) {
+        "ok" -> "ok"; "disabled" -> "engine off"; "skipped" -> "skipped"
+        "timeout" -> "timed out"; "error" -> "error"; else -> engineStatus.ifBlank { "unknown" }
+    }
+    val failed get() = engineStatus == "error" || engineStatus == "timeout"
 
     fun summary(): String {
         val intent = answers.find { it.id == "intent" }
@@ -47,8 +54,9 @@ data class Decision(
         fun parse(m: JSONObject): Decision? {
             if (m.optString("type") != "decision") return null
             val turn = m.number("turn")?.takeIf { it >= 0 && it <= Int.MAX_VALUE && it % 1.0 == 0.0 }?.toInt() ?: return null
+            val engineStatus = m.string("engine_status") ?: m.string("status") ?: "ok"
             val answers = mutableListOf<Answer>()
-            val array = m.optJSONArray("answers")
+            val array = if (engineStatus == "ok") m.optJSONArray("answers") else null
             for (i in 0 until (array?.length() ?: 0)) {
                 val a = array?.optJSONObject(i) ?: continue
                 val id = a.optString("id")
@@ -63,8 +71,8 @@ data class Decision(
             }
             val engine = m.optJSONObject("engine")
             return Decision(turn, m.optString("source"), m.optString("mode"), m.optString("status"),
-                m.number("latency_ms")?.takeIf { it >= 0 }, engine?.string("model"), engine?.string("adapter"),
-                engine?.string("calibration"), answers, m.string("error"))
+                (m.number("elapsed_ms") ?: m.number("latency_ms"))?.takeIf { it >= 0 }, m.string("model") ?: engine?.string("model"), m.string("adapter") ?: engine?.string("adapter"),
+                engine?.string("calibration"), answers, m.string("detail") ?: m.string("reason") ?: m.string("error"), engineStatus)
         }
     }
 }

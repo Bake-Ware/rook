@@ -129,6 +129,8 @@ class VoiceService : Service() {
                 lastActivityAt = SystemClock.elapsedRealtime(); VoiceBus.listener?.onTranscript(text, turn)
             }
             override fun onAssistantDelta(text: String, turn: Int?) = current { VoiceBus.listener?.onAssistantDelta(text, turn) }
+            override fun onTurn(turn: Int) = current { VoiceBus.listener?.onTurn(turn) }
+            override fun onActivity(event: ActivityEvent) = current { VoiceBus.listener?.onActivity(event) }
             override fun onDecision(decision: Decision) = current { VoiceBus.listener?.onDecision(decision) }
             override fun onAssistantDone() = current { VoiceBus.listener?.onAssistantDone() }
             override fun onInterrupt() = current { VoiceBus.listener?.onInterrupt() }
@@ -382,6 +384,8 @@ object VoiceBus {
         fun onTranscript(text: String, turn: Int?) = onTranscript(text)
         fun onAssistantDelta(text: String, turn: Int?) = onAssistantDelta(text)
         fun onDecision(decision: Decision) {}
+        fun onActivity(event: ActivityEvent) {}
+        fun onTurn(turn: Int) {}
     }
     var connectionGeneration = 0L
     @Volatile var state: String = "idle"

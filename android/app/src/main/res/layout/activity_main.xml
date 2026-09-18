@@ -11,9 +11,15 @@
     <ImageButton android:id="@+id/btnSleep" android:layout_width="48dp" android:layout_height="48dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/voice_sleep" android:src="@drawable/ic_sleep" android:tint="@color/rook_accent" />
     <ImageButton android:id="@+id/btnSettings" android:layout_width="48dp" android:layout_height="48dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/settings" android:src="@android:drawable/ic_menu_preferences" android:tint="@color/rook_accent" />
   </LinearLayout>
-  <ScrollView android:id="@+id/chatScroll" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:fillViewport="true" android:paddingStart="12dp" android:paddingEnd="12dp">
-    <LinearLayout android:id="@+id/chat" android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="bottom" android:orientation="vertical" android:paddingBottom="12dp" />
+  <com.google.android.material.tabs.TabLayout android:id="@+id/tabs" android:layout_width="match_parent" android:layout_height="40dp" android:background="@color/rook_bg" />
+  <androidx.recyclerview.widget.RecyclerView android:id="@+id/chatList" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:clipToPadding="false" android:paddingBottom="12dp" />
+  <ScrollView android:id="@+id/activityScroll" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:visibility="gone" android:paddingStart="12dp" android:paddingEnd="12dp">
+    <LinearLayout android:id="@+id/activityList" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingBottom="12dp" />
   </ScrollView>
+  <ScrollView android:id="@+id/decisionsScroll" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:visibility="gone" android:paddingStart="12dp" android:paddingEnd="12dp">
+    <LinearLayout android:id="@+id/decisionsList" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingBottom="12dp" />
+  </ScrollView>
+  <TextView android:id="@+id/turnStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:visibility="gone" android:maxLines="1" android:ellipsize="end" android:textSize="12sp" android:paddingHorizontal="12dp" android:paddingVertical="6dp" android:textColor="@color/rook_dim" />
   <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:orientation="horizontal" android:paddingStart="8dp" android:paddingEnd="8dp" android:paddingTop="4dp" android:paddingBottom="12dp">
     <ImageButton android:id="@+id/btnCamera" android:layout_width="48dp" android:layout_height="48dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/send_photo" android:src="@android:drawable/ic_menu_camera" android:tint="@color/rook_accent" />
     <EditText android:id="@+id/input" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:hint="@string/hint_message" android:imeOptions="actionSend" android:inputType="textCapSentences|textMultiLine" android:maxLines="4" />
