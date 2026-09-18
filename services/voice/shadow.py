@@ -1,5 +1,6 @@
 """Side-channel lifecycle: never consult decisions from the normal voice path."""
 import asyncio
+from collections import deque
 import contextlib
 import json
 import logging
@@ -14,6 +15,8 @@ class Shadow:
         self.conn, self.client, self.feedback = connection, client, feedback
         self.conversation = conversation
         self.tasks = set()
+        self.operations = deque()
+        self.writer = None
         self.current_id = None
         self.current_turn = None
         self.interrupted_playback = False
@@ -41,6 +44,26 @@ class Shadow:
         task.add_done_callback(done)
         return task
 
+    async def _foreground_done(self):
+        # The engine shares the mouthpiece GPU. Start telemetry after the dispatched
+        # turn finishes, including history commits and assistant_done. Late events
+        # are explicitly supported by the protocol; no GPU/SQLite contention on reply.
+        while self.conn.task and not self.conn.task.done():
+            await asyncio.wait({self.conn.task})
+
+    def _submit(self, operation, *args):
+        if len(self.operations) >= 256:
+            return
+        self.operations.append((operation, args))
+        if self.writer is None or self.writer.done():
+            self.writer = self._track(self._persist())
+
+    async def _persist(self):
+        await self._foreground_done()
+        while self.operations:
+            operation, args = self.operations.popleft()
+            self.feedback.submit(operation, *args)
+
     def activity(self):
         if self.silence_task:
             self.silence_task.cancel()
@@ -50,7 +73,7 @@ class Shadow:
         self.activity()
         self.interrupted_playback |= playing
         if self.current_id and (playing or reply_active):
-            self.feedback.submit('signal', self.current_id, 'reply_interrupted',
+            self._submit('signal', self.current_id, 'reply_interrupted',
                                  {'playback': playing, 'generation': reply_active})
 
     def begin(self, text, source, turn):
@@ -65,18 +88,19 @@ class Shadow:
                  'interrupted_playback': self.interrupted_playback}
         self.interrupted_playback = False
         did = self.current_id
-        self.feedback.submit('begin', did, self.conn.session, self.conversation, turn, source, state, time.time())
+        self._submit('begin', did, self.conn.session, self.conversation, turn, source, state, time.time())
         if len(self.tasks) >= 8:
             # Capacity applies only to telemetry, never to the normal turn.
             event = self.client.event(source, turn, 'error')
             event['error'] = 'Decision shadow capacity exceeded'
-            self.feedback.submit('finish', did, event, dict(self.client.info))
+            self._submit('finish', did, event, dict(self.client.info))
             return
         self._track(self._decide(did, state, source, turn))
 
     async def _decide(self, did, state, source, turn):
+        await self._foreground_done()
         event = await self.client.decide(state, source, turn)
-        self.feedback.submit('finish', did, event, dict(self.client.info))
+        self._submit('finish', did, event, dict(self.client.info))
         if self.conn.thinking and not self.conn.closed:
             # A disconnected/slow opt-in consumer cannot fail the foreground turn.
             with contextlib.suppress(Exception):
@@ -88,12 +112,12 @@ class Shadow:
             self.reply_turn = turn
         self.last_reply = (self.last_reply + ' ' + text).strip()[:1000]
         if turn == self.current_turn:
-            self.feedback.submit('reply', self.current_id, text)
+            self._submit('reply', self.current_id, text)
 
     def completed(self, turn):
         if turn != self.current_turn:
             return
-        self.feedback.submit('completed', self.current_id)
+        self._submit('completed', self.current_id)
         if self.reply_turn == turn:
             self.activity()
             self.silence_task = self._track(self._silence(self.current_id, turn))
@@ -103,14 +127,16 @@ class Shadow:
         # barge-in and newer turns cancel this; silence does not imply approval.
         await asyncio.sleep(max(0, self.conn.play_until - time.monotonic()) + self.silence_seconds)
         if not self.conn.closed and not self.conn.receiving_speech and self.current_turn == turn:
-            self.feedback.submit('signal', did, 'no_followup',
+            self._submit('signal', did, 'no_followup',
                                  {'window_seconds': self.silence_seconds, 'connected': True, 'approval': None})
 
     async def close(self):
         self.activity()
         # Let short inference finish/persist even when the caller closes after done.
-        if self.tasks:
-            done, pending = await asyncio.wait(self.tasks, timeout=self.client.timeout + .05)
-            for task in pending:
-                task.cancel()
-            await asyncio.gather(*pending, return_exceptions=True)
+        deadline = time.monotonic() + self.client.timeout + .1
+        while self.tasks and time.monotonic() < deadline:
+            await asyncio.wait(tuple(self.tasks), timeout=max(0, deadline - time.monotonic()))
+        pending = tuple(self.tasks)
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)

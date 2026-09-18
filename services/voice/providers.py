@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Local model and read-only tool adapters for the Rook voice runtime."""
-import asyncio, json, os, re, time
+import asyncio, copy, json, logging, os, re, time
 import numpy as np
 import httpx
-from faster_whisper import WhisperModel
-from kokoro_onnx import Kokoro
 from .rookmcp import RookMCP
+from .workers import inventory
 
 HERE = os.environ.get("VOICE_MODEL_DIR", os.path.dirname(os.path.abspath(__file__)))
 ACP_HOST = os.environ.get("ACP_HOST", "192.168.1.160")
@@ -83,7 +82,7 @@ TOOLS = [
                         "only: uptime, host info, battery, file read/list, service status. Anything "
                         "that changes state must go to delegate_to_hermes instead."),
         "parameters": {"type": "object", "properties": {
-            "worker": {"type": "string", "description": "Device name, e.g. 'soundwave', 'kaiju', 'Bakephone'."},
+            "worker": {"type": "string", "description": "Exact worker name from the live Rook inventory. Never invent a target."},
             "cap": {"type": "string", "description": "Capability, e.g. 'info.uptime', 'info.host', 'battery.status', 'file.read'."},
             "args": {"type": "object", "description": "Arguments for the capability, e.g. {\"path\": \"/etc/hostname\"}."}},
             "required": ["worker", "cap"]}}},
@@ -146,12 +145,9 @@ async def tool_web_search(args):
 
 async def tool_rook_devices(args):
     try:
-        raw = await RookMCP().call("rook_workers", {})
+        data = await inventory.refresh()
     except Exception as e:
-        raise Handoff(f"rook unreachable: {e}")
-    data = json.loads(raw)
-    if isinstance(data, str):
-        data = json.loads(data)
+        raise Handoff(f"rook inventory unavailable: {e}") from e
     out = []
     for w in data:
         bit = w.get("name", "?")
@@ -172,6 +168,10 @@ async def tool_rook_read(args):
         raise Handoff(f"cap {cap!r} is not read-only")
     if not worker:
         raise Handoff("no worker given")
+    try:
+        await inventory.validate(worker)
+    except Exception as e:
+        raise Handoff(str(e)) from e
     payload = {"cap": cap, "worker": worker}
     extra = args.get("args")
     if isinstance(extra, dict) and extra:
@@ -348,11 +348,41 @@ TOOLS += [{"type": "function", "function": {"name": "cancel_job",
     "description": "Request cancellation of a background job, only when the user asks to stop the work.",
     "parameters": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}}}]
 
+SAFE_FALLBACK = "Sorry, I didn't get that — could you say it again?"
+_rejected_logger = None
+
+
+def log_rejected_plan(raw, attempt):
+    global _rejected_logger
+    logging.warning('Rejected voice plan on attempt %s; using bounded retry/fallback', attempt + 1)
+    try:
+        if _rejected_logger is None:
+            from logging.handlers import RotatingFileHandler
+            path = os.path.join(HERE, 'rejected-voice-plans.jsonl')
+            fd = os.open(path, os.O_CREAT | os.O_APPEND | os.O_WRONLY, 0o600)
+            os.close(fd)
+            os.chmod(path, 0o600)
+            class PrivateHandler(RotatingFileHandler):
+                def _open(self):
+                    fd = os.open(self.baseFilename, os.O_CREAT | os.O_APPEND | os.O_WRONLY, 0o600)
+                    return os.fdopen(fd, 'a', encoding='utf-8')
+            logger = logging.getLogger('voice.rejected_plans')
+            logger.propagate = False
+            logger.setLevel(logging.INFO)
+            logger.addHandler(PrivateHandler(path, maxBytes=1_000_000, backupCount=2))
+            _rejected_logger = logger
+        _rejected_logger.info(json.dumps({'time': time.time(), 'attempt': attempt + 1, 'output': raw}, ensure_ascii=False))
+    except Exception:
+        logging.warning('Could not write private rejected-plan diagnostic')
+
+
 class Provider:
     system = MOUTHPIECE_SYSTEM
     def __init__(self):
         from concurrent.futures import ThreadPoolExecutor
         from .turns import SmartTurn
+        from faster_whisper import WhisperModel
+        from kokoro_onnx import Kokoro
         self.whisper = WhisperModel(WHISPER_MODEL, device=WHISPER_DEVICE, compute_type=WHISPER_COMPUTE)
         self.kokoro = Kokoro(os.path.join(HERE, 'kokoro-v1.0.onnx'), os.path.join(HERE, 'voices-v1.0.bin'))
         self.voices = sorted(self.kokoro.get_voices())
@@ -410,30 +440,69 @@ class Provider:
                    "max_tokens": 450, "temperature": 0, "tools": [respond] + ([] if reply_only else TOOLS),
                    "tool_choice": "required", "parallel_tool_calls": False,
                    "chat_template_kwargs": {"enable_thinking": False}}
-        calls = []
+        if not reply_only:
+            payload['tools'] = copy.deepcopy(payload['tools'])
+            for tool in payload['tools']:
+                if tool['function']['name'] == 'rook_read':
+                    tool['function']['description'] += (
+                        " Live worker names: " + ', '.join(inventory.names) + "." if inventory.names else
+                        " Worker inventory unavailable; use rook_devices to discover targets first.")
         # A malformed plan can be retried once because no external work has started.
         # Never retry a job itself after an uncertain outcome.
         async with httpx.AsyncClient(timeout=25) as client:
             for attempt in range(2):
                 response = await client.post(VLLM_URL, json=payload)
                 response.raise_for_status()
-                message = response.json()["choices"][0]["message"]
-                calls = message.get("tool_calls") or []
-                if len(calls) == 1:
-                    break
-                payload["messages"][0]["content"] += " Select exactly one function now, including respond for a direct reply."
-        if len(calls) != 1:
-            raise ValueError("Model did not select exactly one response or tool")
-        function = calls[0].get("function", {})
-        if function.get("name") == "respond":
-            text = json.loads(function.get("arguments") or "{}").get("text", "").strip()
-            if not text:
-                raise ValueError("Empty model response")
-            clauses, tail = split_sentences(text)
-            for clause in clauses + ([tail] if tail else []):
-                await on_clause(clause)
-            return text, []
-        return "", calls
+                raw = response.json()
+                try:
+                    message = raw["choices"][0]["message"]
+                    calls = message.get("tool_calls") or []
+                    if len(calls) != 1:
+                        raise ValueError("Expected exactly one function call")
+                    function = calls[0]['function']
+                    allowed = {t['function']['name']: t['function'] for t in payload['tools']}
+                    name = function['name']
+                    if name not in allowed:
+                        raise ValueError("Unknown or disallowed function")
+                    args = json.loads(function.get('arguments') or '{}')
+                    if not isinstance(args, dict):
+                        raise ValueError("Function arguments must be an object")
+                    schema = allowed[name]['parameters']
+                    for key in schema.get('required', []):
+                        if key not in args:
+                            raise ValueError("Missing required function argument")
+                    for key, value in args.items():
+                        spec = schema.get('properties', {}).get(key, {})
+                        if spec.get('type') == 'string' and (not isinstance(value, str) or not value.strip()):
+                            raise ValueError("Empty or non-string function argument")
+                        if spec.get('type') == 'object' and not isinstance(value, dict):
+                            raise ValueError("Non-object function argument")
+                        if 'enum' in spec and value not in spec['enum']:
+                            raise ValueError("Invalid function argument choice")
+                    text = args.get('text', '').strip() if name == 'respond' else ''
+                    if name == 'respond' and not text:
+                        raise ValueError("Empty model response")
+                except (ValueError, KeyError, TypeError, AttributeError, IndexError):
+                    log_rejected_plan(raw, attempt)
+                    # Preserve the rejected prose as an assistant attempt so the
+                    # deterministic retry does not repeat the identical context.
+                    # No proposed call is executed or persisted in conversation.
+                    rejected = json.dumps(raw, ensure_ascii=False)
+                    payload['messages'] = payload['messages'] + [
+                        {'role': 'assistant', 'content': rejected},
+                        {'role': 'user', 'content':
+                         'REJECTED assistant attempt above: unstructured text and invalid calls are not spoken or executed. '
+                         'Select exactly ONE of the supplied functions now. For an answer or clarification, call respond '
+                         'with a nonempty text argument. Do not invent status or repeat a failed job. No plain prose.'}]
+                    continue
+                if name == 'respond':
+                    clauses, tail = split_sentences(text)
+                    for clause in clauses + ([tail] if tail else []):
+                        await on_clause(clause)
+                    return text, []
+                return "", calls
+        await on_clause(SAFE_FALLBACK)
+        return SAFE_FALLBACK, []
 
     async def turn_complete(self, pcm):
         return await asyncio.wait_for(self._model('turn', lambda: self.turn.complete(pcm)), 2)

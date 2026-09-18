@@ -128,7 +128,8 @@ def test_failed_and_timed_out_tools_are_terminal_not_success():
         ids=[jobs.start('s',name,{},[]) for name in ['fail','hang']]
         await asyncio.gather(*list(jobs.tasks.values()))
         assert all(store.job(jid,'s')['status']=='failed' for jid in ids)
-        assert all('private tool response' not in store.job(jid,'s')['result'] for jid in ids)
+        assert 'private tool response' in store.job(ids[0],'s')['result']
+        assert 'timed out or disconnected' in store.job(ids[1],'s')['result']
         await jobs.close()
     run(scenario)
 
@@ -157,7 +158,7 @@ def test_cancel_job_cannot_cross_sessions():
     with pytest.raises(ValueError): jobs.cancel('bob',jid)
 
 
-def test_planner_retries_missing_call_before_speaking_or_starting_work():
+def test_planner_retries_missing_call_before_speaking_or_starting_work(monkeypatch):
     import ast
     from pathlib import Path
     from types import SimpleNamespace
@@ -178,8 +179,10 @@ def test_planner_retries_missing_call_before_speaking_or_starting_work():
         async def post(self,url,json):
             requests.append(json)
             return Response(len(requests))
-    namespace={'httpx':SimpleNamespace(AsyncClient=Client),'VLLM_URL':'local','VLLM_MODEL':'model','TOOLS':[], 'json':json,'split_sentences':lambda t:([],t)}
-    exec(compile(ast.Module(body=[chat],type_ignores=[]),'planner-test','exec'),namespace)
+    from services.voice import providers
+    monkeypatch.setattr(providers.httpx, 'AsyncClient', Client)
+    monkeypatch.setattr(providers, 'log_rejected_plan', lambda *args: None)
+    namespace={'chat':providers.Provider.chat}
     async def scenario():
         async def on_clause(text):spoken.append(text)
         text,calls=await namespace['chat'](None,[{'role':'system','content':'policy'},{'role':'user','content':'Check uptime'}],on_clause)

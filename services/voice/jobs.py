@@ -57,13 +57,13 @@ class Jobs:
             status, result = "cancel_requested", "Cancellation requested. External changes may already have occurred."
             if acp:
                 await acp.cancel()
-        except (TimeoutError, ConnectionError):
+        except (TimeoutError, ConnectionError) as error:
             status = "unknown" if acp else "failed"
-            result = "The tool timed out or disconnected. Check external state before retrying changes."
+            result = "The tool timed out or disconnected: " + (str(error) or type(error).__name__) + ". Check external state before retrying changes."
             if acp:
                 await acp.cancel()
         except Exception as error:
-            result = "Tool failed: " + type(error).__name__ + ". No success was confirmed."
+            result = "Tool failed: " + (str(error) or type(error).__name__) + ". No success was confirmed."
         finally:
             if acp:
                 await acp.close()

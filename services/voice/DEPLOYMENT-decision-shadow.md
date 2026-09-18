@@ -109,3 +109,71 @@ Open validation limits: no physical-phone/acoustic test in this rollout; the
 correction classifier and live context distribution do not inherit the synthetic
 household ECE guarantee. Outcome signals need review before training. Silence,
 interruptions and repetitions can have benign explanations.
+
+
+## 2026-09-18: turn-failure hotfix and deferred opt-in decisions
+
+Candidate fixes missing/malformed tool calls with one stricter retry including
+the rejected assistant attempt. A second invalid plan speaks only
+“Sorry, I didn't get that — could you say it again?” Raw rejected outputs are
+private mode-0600 rotating diagnostics (three files, 1 MB each), not console output.
+Rook inventory supplies live names to `rook_read`, validates them before dispatch,
+and expires after 60 seconds. Job failures retain their actual error message.
+
+Backend investigation: deployed llama.cpp `common/chat.cpp`'s Gemma 4 grammar
+already makes `required` non-lazy, but includes `scan-to-toolcall` with arbitrary
+text before the required call. Generation can exhaust `max_tokens` there. The
+backend rejects custom grammar combined with tools; `response_format` selects
+JSON content rather than the native tool-call path. No backend flags or model
+services were changed. The hotfix retains native tool calls and validates all
+plans locally, including reply-only restrictions and function arguments.
+
+Thinking is now strictly opt-in. False/absent/invalid/legacy opt-in creates no
+shadow object, engine request or feedback write. Metadata/feedback initialization
+is lazy at the first opt-in hello. The background task starts after dispatch and
+waits for the foreground turn (including assistant_done and history writes) to
+finish before inference and batched telemetry writes. Late decision events retain
+their original turn. This intentionally trades earlier thinking display for no
+same-turn GPU or SQLite contention; rapid subsequent turns or other clients can
+still overlap already-running inference.
+
+Validation before deployment:
+
+- Both session `6dfecb73…` cutoffs (86 user, 89 tool-result follow-up) passed three
+  live replays each. Every initial prose plan was rejected; every retry returned
+  a valid `respond` call. No tools were executed. Replay reconstructs historical
+  job snapshots from cutoff events rather than using future outcomes.
+- Replay command on kaiju, with service env supplied privately:
+  `python -m services.voice.hotfix_smoke replay --output replay.json`.
+- Unit/integration coverage includes repeated missing/malformed calls, safe
+  fallback, reply-only tool restrictions, cached worker validation, readable job
+  errors, no non-opt-in requests/writes, and inference/persistence deferred until
+  assistant completion. Runtime test results and final release follow below.
+- A loopback-only text candidate used the actual server/planner/shadow paths but
+  omitted STT/TTS model initialization. Production remained on 84f2e66. Seven
+  fresh conversations per mode used the same arithmetic prompt and speak:false;
+  the first sample in each mode was excluded from the warm median.
+
+| Preflight warm completion | 84f2e66 | Candidate | Delta | Limit |
+| --- | ---: | ---: | ---: | ---: |
+| thinking:false | 250.893 ms | 219.045 ms | -31.848 ms | +5 ms |
+| thinking:true | 253.106 ms | 216.571 ms | -36.535 ms | +10 ms |
+
+The first preliminary cold engine request timed out at 150 ms; later warm
+requests succeeded. The smoke permits a cold error event only on sample zero,
+requires success for all warm opt-in samples and records every status. This does
+not alter the 150 ms deadline. Deployment must also verify a successful opt-in
+request. Synthetic latency samples are not an acoustic or multi-client benchmark.
+
+Deployment procedure: commit the candidate, archive services/voice into a new
+commit-named release, preserve the existing model/TLS/DB paths in the copied
+90-rook-voice.conf, and add loopback DECISION_URL plus the 150 ms timeout. Remeasure
+84f2e66 immediately before switching. Arm a dedicated transient systemd rollback
+timer before installing the effective drop-in and restarting voice-agent once.
+Verify health, both latency gates, opt-in/out events, persisted opt-in rows and
+unchanged protected drop-in digests, then disarm only that new rollback timer.
+If the combined candidate fails preflight, ship A with DECISION_URL unset instead.
+
+One-command rollback remains the command near the top of this document. The
+original 84f2e66 release is retained. Final live measurements and timer details
+are appended after deployment verification.

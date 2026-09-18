@@ -28,20 +28,26 @@ connections = {}
 @contextlib.asynccontextmanager
 async def lifespan(app):
     from .providers import Provider, DIRECT_TOOLS, ACP_HOST, ACP_PORT
+    from .workers import inventory
     app.state.provider = Provider()
+    async def maintain_workers():
+        while True:
+            with contextlib.suppress(Exception):
+                await inventory.refresh()
+            await asyncio.sleep(60)
+    worker_maintenance = asyncio.create_task(maintain_workers())
     app.state.store = Store(os.environ.get('VOICE_STATE_DB', str(ROOT / 'voice-state.sqlite3')))
     app.state.decision = DecisionClient()
     app.state.feedback = None
     maintenance = None
     if app.state.decision.url:
         app.state.feedback = FeedbackStore(os.environ.get('VOICE_STATE_DB', str(ROOT / 'voice-state.sqlite3')))
-        await app.state.feedback.open()
-        await app.state.decision.refresh_info()
         async def maintain_decisions():
             while True:
                 await asyncio.sleep(60)
-                app.state.feedback.submit('prune')
-                await app.state.decision.refresh_info()
+                if app.state.feedback.db is not None:
+                    app.state.feedback.submit('prune')
+                    await app.state.decision.refresh_info()
         maintenance = asyncio.create_task(maintain_decisions())
     def notify(session, event):
         current = connections.get(session)
@@ -54,6 +60,9 @@ async def lifespan(app):
             queue.put_nowait(event)
     app.state.jobs = Jobs(app.state.store, DIRECT_TOOLS, ACP_HOST, ACP_PORT, notify)
     yield
+    worker_maintenance.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await worker_maintenance
     if maintenance:
         maintenance.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -120,6 +129,10 @@ async def websocket(ws: WebSocket):
         async def send_bytes(data):
             async with lock:
                 await ws.send_bytes(data)
+        if protocol == 2 and hello.get('thinking') is True and app.state.feedback and app.state.feedback.db is None:
+            with contextlib.suppress(Exception):
+                await app.state.feedback.open()
+                await app.state.decision.refresh_info()
         conn = Connection(app.state.store, app.state.jobs, app.state.provider, key, send_json, send_bytes, protocol,
                           app.state.decision, app.state.feedback, hello.get('thinking') is True, conversation)
         conn.full_duplex = protocol == 2 and hello.get('aec') is True
