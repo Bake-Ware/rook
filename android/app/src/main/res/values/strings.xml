@@ -40,4 +40,5 @@
     <string name="st_listening">listening</string>
     <string name="st_thinking">thinking</string>
     <string name="st_speaking">speaking</string>
+    <string name="show_thinking">Show thinking</string>
 </resources>

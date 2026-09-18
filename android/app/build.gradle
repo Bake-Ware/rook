@@ -13,8 +13,8 @@ android {
         minSdk 23          // Android 6.0+; some caps (gesture HID, unlock) need 24/26 — guarded at runtime
         targetSdk 34
         testInstrumentationRunner "systems.bake.rook.NativeSmokeInstrumentation"
-        versionCode = (project.findProperty("ROOK_APK_VERSION_CODE") ?: "6").toInteger()
-        versionName = (project.findProperty("ROOK_APK_VERSION_NAME") ?: "0.4.2").toString()
+        versionCode = (project.findProperty("ROOK_APK_VERSION_CODE") ?: "7").toInteger()
+        versionName = (project.findProperty("ROOK_APK_VERSION_NAME") ?: "0.4.3").toString()
 
         // Chaquopy: only the ABIs you intend to run on. arm64 covers modern phones;
         // x86_64 is handy for the emulator. Trim to shrink the APK.
@@ -86,6 +86,8 @@ chaquopy {
 }
 
 dependencies {
+    testImplementation "junit:junit:4.13.2"
+    testImplementation "org.json:json:20160810"
     implementation "androidx.credentials:credentials:1.3.0"
     implementation "androidx.credentials:credentials-play-services-auth:1.3.0"
     implementation "com.google.android.libraries.identity.googleid:googleid:1.1.1"
