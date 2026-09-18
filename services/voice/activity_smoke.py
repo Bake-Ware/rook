@@ -36,7 +36,9 @@ async def latency(output, expected=None, samples=9, url='wss://127.0.0.1:8900/ws
                         if not isinstance(raw, str): continue
                         event = json.loads(raw)
                         assert event['type'] != 'error', 'Voice error'
-                        if event['type'] == 'assistant_delta' and first is None: first = (time.monotonic()-start)*1000
+                        if event['type'] == 'assistant_delta':
+                            assert "could you say it again" not in event.get('text', ''), 'Planner fallback is not a valid latency reply'
+                            if first is None: first = (time.monotonic()-start)*1000
                         if event['type'] == 'assistant_done':
                             done, turn = (time.monotonic()-start)*1000, event['turn']
                         if event['type'] == 'decision': decisions.append(event)

@@ -36,9 +36,14 @@ async def lifespan(app):
         while True:
             with contextlib.suppress(Exception):
                 await inventory.refresh()
+            await asyncio.sleep(30)
+    async def maintain_schemas():
+        while True:
+            with contextlib.suppress(Exception):
                 await inventory.refresh_schemas()
             await asyncio.sleep(60)
     worker_maintenance = asyncio.create_task(maintain_workers())
+    schema_maintenance = asyncio.create_task(maintain_schemas())
     app.state.store = Store(os.environ.get('VOICE_STATE_DB', str(ROOT / 'voice-state.sqlite3')))
     app.state.decision = DecisionClient()
     app.state.feedback = None
@@ -61,8 +66,8 @@ async def lifespan(app):
     app.state.jobs = Jobs(app.state.store, DIRECT_TOOLS, ACP_HOST, ACP_PORT, notify)
     yield
     worker_maintenance.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await worker_maintenance
+    schema_maintenance.cancel()
+    await asyncio.gather(worker_maintenance, schema_maintenance, return_exceptions=True)
     if maintenance:
         maintenance.cancel()
         with contextlib.suppress(asyncio.CancelledError):

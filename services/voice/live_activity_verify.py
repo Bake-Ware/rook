@@ -10,7 +10,7 @@ import uuid
 import websockets
 
 
-async def turn(text, slow=False, thinking=True):
+async def turn(text, slow=False, thinking=True, tool_required=True):
     events, audio_bytes = [], 0
     async with websockets.connect('wss://127.0.0.1:8900/ws', ssl=ssl._create_unverified_context(),
             additional_headers={'Authorization': 'Bearer '+os.environ['VOICE_TOKEN']}) as ws:
@@ -18,7 +18,7 @@ async def turn(text, slow=False, thinking=True):
                                   'activity':True,'thinking':thinking}))
         while json.loads(await ws.recv())['type'] != 'session': pass
         start = time.monotonic()
-        await ws.send(json.dumps({'type':'text','text':text,'speak':False}))
+        await ws.send(json.dumps({'type':'text','text':text,'speak':not tool_required}))
         tool_done = False
         async with asyncio.timeout(230 if slow else 65):
             while True:
@@ -37,7 +37,7 @@ async def turn(text, slow=False, thinking=True):
                 if e.get('phase')=='tool_result':
                     assert e['status']=='ok', e.get('detail','Tool failed')
                     tool_done=True
-                if tool_done and kind=='assistant_done' and e['turn']>1:
+                if kind=='assistant_done' and (not tool_required or (tool_done and e['turn']>1)):
                     break
             # Catch delayed shadow decisions and verify no late progress after result.
             try:
@@ -53,10 +53,13 @@ async def turn(text, slow=False, thinking=True):
     assert Counter(e['turn'] for e in decisions)==Counter({t:1 for t in turns}) if thinking else not decisions
     progress=[e for e in events if e.get('phase')=='progress']
     assert not slow or (progress and audio_bytes>0)
-    result_index=next(i for i,e in enumerate(events) if e.get('phase')=='tool_result')
+    result_index=next((i for i,e in enumerate(events) if e.get('phase')=='tool_result'),len(events))
     assert not any(e.get('phase')=='progress' for e in events[result_index:])
     phases=[e['phase'] for e in events if e['type']=='activity']
-    assert phases.index('heard')<phases.index('planning')<phases.index('planned')<phases.index('tool_start')<phases.index('tool_result')
+    if tool_required:
+        assert phases.index('heard')<phases.index('planning')<phases.index('planned')<phases.index('tool_start')<phases.index('tool_result')
+    else:
+        assert phases == ['heard','planning','planned','speaking','done'] and audio_bytes>0
     waits=[e for e in events if e.get('phase')=='tool_wait']
     if slow:
         assert len(waits)>=10
@@ -66,8 +69,12 @@ async def turn(text, slow=False, thinking=True):
 
 async def run(output):
     result={}
+    result['plain']=await turn('What is two plus two? Reply in one short sentence.',tool_required=False)
+    print('PLAIN_REPLY_AUDIO_OK',flush=True)
+    Path(output).write_text(json.dumps(result,indent=2))
     result['rook_read']=await turn('Use rook_read to check info.uptime on kaiju.')
     print('ROOK_READ_OK',flush=True)
+    Path(output).write_text(json.dumps(result,indent=2))
     result['slow']=await turn('On kaiju only, use Rook shell.exec to run sleep 70 with a 100 second timeout. This is an authorized progress test; do no other work and report completion.',slow=True)
     print('SLOW_PROGRESS_OK',flush=True)
     Path(output).write_text(json.dumps(result,indent=2))

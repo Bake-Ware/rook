@@ -53,7 +53,7 @@ def test_reply_only_cannot_retry_a_job(monkeypatch):
     spoken = []
     async def handler(request):
         payload = json.loads(request.content)
-        assert [t['function']['name'] for t in payload['tools']] == ['respond']
+        assert [v['properties']['name']['const'] for v in payload['response_format']['json_schema']['schema']['anyOf']] == ['respond']
         return httpx.Response(200, json={'choices': [{'message': responses.pop(0)}]})
     client_type = httpx.AsyncClient
     monkeypatch.setattr(providers.httpx, 'AsyncClient', lambda **kw: client_type(transport=httpx.MockTransport(handler)))
@@ -140,5 +140,26 @@ def test_native_gemma_parse_error_uses_bounded_retry(monkeypatch):
             text, calls = await provider.chat([{'role': 'system', 'content': 'test'}], clause)
             assert text == providers.SAFE_FALLBACK and not calls
             assert len(sent) == 2 and spoken == [providers.SAFE_FALLBACK]
+        finally: await provider.close()
+    asyncio.run(scenario())
+
+
+def test_constrained_json_plan_reuses_runtime_validation(monkeypatch):
+    replies = [json.dumps({'name': 'rook_read', 'arguments': {'worker': 'kaiju'}}),
+               json.dumps({'name': 'respond', 'arguments': {'text': 'Hello.'}})]
+    spoken = []
+    async def handler(request):
+        payload = json.loads(request.content)
+        assert 'tools' not in payload and 'tool_choice' not in payload
+        assert payload['response_format']['json_schema']['strict'] is True
+        return httpx.Response(200, json={'choices': [{'message': {'content': replies.pop(0)}}]})
+    monkeypatch.setattr(providers, 'log_rejected_plan', lambda *a: None)
+    async def scenario():
+        provider = providers.Provider.__new__(providers.Provider)
+        provider.chat_http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        async def clause(text): spoken.append(text)
+        try:
+            text, calls = await provider.chat([{'role':'system','content':'test'}], clause)
+            assert text == 'Hello.' and spoken == ['Hello.'] and not calls and not replies
         finally: await provider.close()
     asyncio.run(scenario())

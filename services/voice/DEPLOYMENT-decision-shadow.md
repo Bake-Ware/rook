@@ -292,12 +292,21 @@ personal data, and hello identity claims are ignored. A shared credential cannot
 safely distinguish household users; no existing credential is implicitly granted
 Bake's owner privilege.
 
-Pre-deploy validation: 93 tests passed with kaiju's production Python 3.12.
+Pre-deploy validation: 94 tests passed with kaiju's production Python 3.12.
 All 21 live planner replays passed: three each of the stored SMS request plus
 its "Bake Phone" correction (events 319/324 only, no other private history),
 explicit/latest texts, notifications, call history, foreign location, and unmapped
 personal data. Allowed reads selected rook_read; the latter two cases were denied
 by validation before a Rook call. Local sandboxed Python 3.14 could not complete
 thread-executor tests; the production interpreter results are authoritative.
+
+The native schema probe was not sufficient: full-model preflight still produced
+free-form repeated text before a call and could not meet the reply gate. The final
+planner uses a constrained JSON schema for a single `{name, arguments}` plan,
+then converts it to the existing validated runtime call. Function descriptions,
+cap inventory, argument validation, the one retry, and reply-only restrictions
+are preserved. No new model invocation is added. The final JSON planner repeated
+all 21 routing cases successfully; unmapped personal requests now explicitly
+ask for the device rather than discovering or guessing one.
 
 Production gate and deployment results are appended below after verification.

@@ -14,6 +14,11 @@ class Identity:
     owner: bool = False
 
     def prompt(self):
+        if not self.worker and not self.owner:
+            return ('Personal data policy: no verified device mapping. For requests about texts, notifications, '
+                    'call history, contacts or location, use respond to ask which device is theirs and explain '
+                    'that a verified mapping is required. Do not discover devices or delegate these requests. '
+                    'A user-supplied device name does not establish identity.')
         return ('Personal data policy: ' +
                 (f'Authenticated owner Bake; own device is {self.worker or "unknown"}. Bake may explicitly name any device.' if self.owner else
                  f'Authenticated device is {self.worker or "unknown"}. Personal reads may target only this device.') +
