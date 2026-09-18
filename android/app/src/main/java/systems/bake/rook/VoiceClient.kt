@@ -34,6 +34,9 @@ class VoiceClient(
         fun onClosed()
         fun onBye(mode: String, afterMs: Long) {}
         fun onTool(title: String, status: String) {}
+        fun onTranscript(text: String, turn: Int?) = onTranscript(text)
+        fun onAssistantDelta(text: String, turn: Int?) = onAssistantDelta(text)
+        fun onDecision(decision: Decision) {}
     }
     companion object { const val SR_IN = 16000; const val FRAME_BYTES = 640; const val PLAY_TAIL_MS = 200L }
     private data class Packet(val turn: Int, val sr: Int, val bytes: ByteArray)
@@ -76,6 +79,7 @@ class VoiceClient(
         val scope = MessageDigest.getInstance("SHA-256").digest((url + "\u0000" + token).toByteArray()).joinToString("") { "%02x".format(it) }
         val key = "voice_conversation_$scope"
         val conversation = prefs.getString(key, null) ?: UUID.randomUUID().toString().also { prefs.edit().putString(key, it).apply() }
+        val thinking = prefs.getBoolean("show_thinking", false)
         val request = Request.Builder().url(url).apply { if (token.isNotEmpty()) header("Authorization", "Bearer $token") }.build()
         running = true
         startPlayer()
@@ -84,7 +88,8 @@ class VoiceClient(
                 if (!running) { webSocket.close(1000, "closed"); return }
                 ws = webSocket
                 webSocket.send(JSONObject().put("type", "hello").put("protocol", 2).put("client", "rook-android")
-                    .put("conversation", conversation).put("aec", aec).toString())
+                    .put("conversation", conversation).put("aec", aec)
+                    .apply { if (thinking) put("thinking", true) }.toString())
                 connected = true
                 while (true) webSocket.send(outbox.poll() ?: break)
             }
@@ -92,10 +97,11 @@ class VoiceClient(
                 if (!running) return
                 val m = try { JSONObject(text) } catch (_: Exception) { return }
                 when (m.optString("type")) {
+                    "decision" -> if (thinking) Decision.parse(m)?.let { listener.onDecision(it) }
                     "session" -> protocol = m.optInt("protocol", 1)
                     "state" -> { if (m.optInt("turn", minimumTurn) >= minimumTurn) listener.onState(m.optString("state")) }
-                    "stt" -> listener.onTranscript(m.optString("text"))
-                    "assistant_delta", "assistant" -> if (!waitingInterrupt) listener.onAssistantDelta(m.optString("text"))
+                    "stt" -> listener.onTranscript(m.optString("text"), eventTurn(m))
+                    "assistant_delta", "assistant" -> if (!waitingInterrupt) listener.onAssistantDelta(m.optString("text"), eventTurn(m))
                     "assistant_done" -> if (!waitingInterrupt) listener.onAssistantDone()
                     "audio_sr" -> { outSr = m.optInt("sr", 24000).coerceIn(8000,48000); outputTurn = m.optInt("turn", 0) }
                     "interrupt" -> { minimumTurn = m.optInt("turn", minimumTurn); flush(); waitingInterrupt = false; listener.onInterrupt() }
@@ -123,6 +129,9 @@ class VoiceClient(
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) = shutdown()
         })
     }
+
+    private fun eventTurn(m: JSONObject): Int? = (m.opt("turn") as? Number)?.toDouble()
+        ?.takeIf { it.isFinite() && it >= 0 && it <= Int.MAX_VALUE && it % 1.0 == 0.0 }?.toInt()
 
     /** Speech gate runs locally so a real barge-in can pause output before network round-trip. */
     fun pushFrame(buf: ByteArray, len: Int = buf.size, speech: Boolean = false) {

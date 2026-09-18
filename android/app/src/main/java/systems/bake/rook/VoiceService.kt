@@ -116,6 +116,7 @@ class VoiceService : Service() {
         val mine = ++generation
         fun current(action: () -> Unit) = post { if (mine == generation) action() }
         lastActivityAt = SystemClock.elapsedRealtime()
+        ++VoiceBus.connectionGeneration
         client = VoiceClient(this, url, insecure, object : VoiceClient.Listener {
             override fun onState(state: String) = current {
                 if (state == "listening") retries = 0
@@ -124,6 +125,11 @@ class VoiceService : Service() {
             }
             override fun onTranscript(text: String) = current { lastActivityAt = SystemClock.elapsedRealtime(); VoiceBus.listener?.onTranscript(text) }
             override fun onAssistantDelta(text: String) = current { VoiceBus.listener?.onAssistantDelta(text) }
+            override fun onTranscript(text: String, turn: Int?) = current {
+                lastActivityAt = SystemClock.elapsedRealtime(); VoiceBus.listener?.onTranscript(text, turn)
+            }
+            override fun onAssistantDelta(text: String, turn: Int?) = current { VoiceBus.listener?.onAssistantDelta(text, turn) }
+            override fun onDecision(decision: Decision) = current { VoiceBus.listener?.onDecision(decision) }
             override fun onAssistantDone() = current { VoiceBus.listener?.onAssistantDone() }
             override fun onInterrupt() = current { VoiceBus.listener?.onInterrupt() }
             override fun onError(msg: String) = current { VoiceBus.listener?.onError(msg) }
@@ -153,6 +159,12 @@ class VoiceService : Service() {
         }, ownMic = false, token = token).also { it.setAecAvailable(aecAvailable); it.connect() }
         main.removeCallbacks(idleCheck)
         main.postDelayed(idleCheck, IDLE_CLOSE_MS)
+    }
+
+    /** Close/cancel the predecessor before opening its replacement; invalidate queued callbacks. */
+    fun thinkingChanged() {
+        val reopen = sessionWanted
+        if (reopen) { closeSession(); openSession() }
     }
 
     private fun closeSession() {
@@ -364,7 +376,11 @@ object VoiceBus {
         fun onWake() {}
         fun onBye(mode: String) {}
         fun onTool(title: String, status: String) {}
+        fun onTranscript(text: String, turn: Int?) = onTranscript(text)
+        fun onAssistantDelta(text: String, turn: Int?) = onAssistantDelta(text)
+        fun onDecision(decision: Decision) {}
     }
+    var connectionGeneration = 0L
     @Volatile var state: String = "idle"
     @Volatile var listener: Listener? = null
 }

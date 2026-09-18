@@ -36,6 +36,10 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
     private lateinit var b: ActivityMainBinding
     private val prefs by lazy { getSharedPreferences("rook", MODE_PRIVATE) }
     private var curBot: TextView? = null
+    private val assistantTurns = mutableMapOf<Int, TextView>()
+    private val thinkingRows = mutableMapOf<TextView, TextView>()
+    private val attachments = DecisionAttachments<TextView> { message, decision -> showDecision(message, decision) }
+    private var connectionGeneration = -1L
     private var state = "idle"
     private var photoUri: Uri? = null
 
@@ -157,6 +161,60 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
         if (tv.text.isNotEmpty()) tv.append(" ")
         tv.append(text); scrollToEnd()
     }
+    private fun syncConnection() {
+        if (connectionGeneration != VoiceBus.connectionGeneration) {
+            connectionGeneration = VoiceBus.connectionGeneration
+            attachments.clear(); assistantTurns.clear(); curBot = null
+        }
+    }
+
+    override fun onTranscript(text: String, turn: Int?) {
+        syncConnection()
+        if (turn == null) { onTranscript(text); return }
+        curBot = null
+        attachments.message(turn, addBubble(text, user = true), voice = true)
+    }
+
+    override fun onAssistantDelta(text: String, turn: Int?) {
+        syncConnection()
+        if (turn == null) { onAssistantDelta(text); return }
+        val tv = assistantTurns.getOrPut(turn) { addBubble("", user = false) }
+        curBot = tv
+        if (tv.text.isNotEmpty()) tv.append(" ")
+        tv.append(text)
+        attachments.message(turn, tv)
+        scrollToEnd()
+    }
+
+    override fun onDecision(decision: Decision) {
+        syncConnection()
+        if (prefs.getBoolean("show_thinking", false)) attachments.decision(decision)
+    }
+
+    private fun showDecision(message: TextView, decision: Decision) {
+        if (!prefs.getBoolean("show_thinking", false)) return
+        val row = thinkingRows.getOrPut(message) {
+            TextView(this).apply {
+                textSize = 12f; alpha = 0.65f
+                setTextColor(getColor(R.color.rook_fg))
+                setPadding(dp(14), dp(6), dp(14), dp(6))
+                maxWidth = (resources.displayMetrics.widthPixels * 0.9).toInt()
+            }.also { b.chat.addView(it, b.chat.indexOfChild(message) + 1, rowParams((message.layoutParams as LinearLayout.LayoutParams).gravity == Gravity.END)) }
+        }
+        // Do not collapse an expanded row on each streaming delta.
+        if (row.tag == decision) return
+        row.tag = decision
+        var expanded = false
+        fun render() {
+            row.maxLines = if (expanded) Int.MAX_VALUE else 1
+            row.ellipsize = if (expanded) null else android.text.TextUtils.TruncateAt.END
+            row.text = decision.summary() + if (expanded) "\n" + decision.details() else ""
+            row.contentDescription = row.text.toString() + if (expanded) ". Tap to collapse" else ". Tap to expand"
+        }
+        render()
+        row.setOnClickListener { expanded = !expanded; render() }
+    }
+
     override fun onAssistantDone() { curBot = null }
     override fun onInterrupt() { curBot?.alpha = 0.5f; curBot = null }
     override fun onError(msg: String) { addSystem("error: $msg") }
@@ -213,6 +271,7 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
 
     override fun onResume() {
         super.onResume()
+        thinkingRows.values.forEach { it.visibility = if (prefs.getBoolean("show_thinking", false)) View.VISIBLE else View.GONE }
         VoiceBus.listener = this
         onState(VoiceBus.state)
         if (intent?.action == Intent.ACTION_ASSIST) {

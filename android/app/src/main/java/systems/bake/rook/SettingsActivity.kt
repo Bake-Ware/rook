@@ -124,6 +124,11 @@ class SettingsActivity : AppCompatActivity() {
         b.voiceUrl.setText(prefs.getString("voice_url", BuildConfig.DEFAULT_VOICE_URL))
         b.voiceToken.setText(prefs.getString("voice_token", BuildConfig.DEFAULT_VOICE_TOKEN))
         b.voiceInsecure.isChecked = prefs.getBoolean("voice_insecure", false)
+        b.showThinking.isChecked = prefs.getBoolean("show_thinking", false)
+        b.showThinking.setOnCheckedChangeListener { _, enabled ->
+            prefs.edit().putBoolean("show_thinking", enabled).apply()
+            VoiceService.inst?.thinkingChanged()
+        }
         b.wakeEnabled.isChecked = prefs.getBoolean("wake_enabled", true)
         b.btnDefaultAssistant.setOnClickListener {
             try {
