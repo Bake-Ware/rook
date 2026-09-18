@@ -12,3 +12,6 @@ Exactly one per turn, ALWAYS sent, even when the engine wasn't called: add `"eng
 
 ## Client stall rule
 During a turn, if no activity event arrives for 15s and no tool_wait heartbeat is flowing, show "No response - may be stalled" (amber), and after 45s "Stalled" (red). If the server never sends activity (old server), fall back to current behavior silently.
+
+## progress phase (added)
+`progress`: server spoke a status update while a job is outstanding; label = spoken text, plus tool/worker/elapsed_ms. Clients render it like any other activity row and may show it in the status strip. Hello may include `progress_updates: {enabled, first_after_s, every_s}`; defaults enabled/25/45.
