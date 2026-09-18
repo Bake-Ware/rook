@@ -34,6 +34,8 @@ class VoiceClient(
         fun onTranscript(text: String, turn: Int?) = onTranscript(text)
         fun onAssistantDelta(text: String, turn: Int?) = onAssistantDelta(text)
         fun onDecision(decision: Decision) {}
+        fun onActivity(event: ActivityEvent) {}
+        fun onTurn(turn: Int) {}
     }
     companion object { const val SR_IN = 16000; const val FRAME_BYTES = 640; const val PLAY_TAIL_MS = 200L }
     private data class Packet(val turn: Int, val sr: Int, val bytes: ByteArray)
@@ -84,7 +86,7 @@ class VoiceClient(
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 if (!running) { webSocket.close(1000, "closed"); return }
                 ws = webSocket
-                webSocket.send(JSONObject().put("type", "hello").put("protocol", 2).put("client", "rook-android")
+                webSocket.send(JSONObject().put("type", "hello").put("protocol", 2).put("client", "rook-android").put("activity", true)
                     .put("conversation", conversation).put("aec", aec)
                     .apply { if (thinking) put("thinking", true) }.toString())
                 webSocket.send(JSONObject().put("type", "voice")
@@ -95,7 +97,11 @@ class VoiceClient(
             override fun onMessage(webSocket: WebSocket, text: String) {
                 if (!running) return
                 val m = try { JSONObject(text) } catch (_: Exception) { return }
+                if (m.optString("type") in setOf("state", "stt", "assistant_delta", "assistant", "tool", "error")) {
+                    eventTurn(m)?.let { listener.onTurn(it) }
+                }
                 when (m.optString("type")) {
+                    "activity" -> ActivityEvent.parse(m)?.let { listener.onActivity(it) }
                     "decision" -> if (thinking) Decision.parse(m)?.let { listener.onDecision(it) }
                     "session" -> protocol = m.optInt("protocol", 1)
                     "state" -> { if (m.optInt("turn", minimumTurn) >= minimumTurn) listener.onState(m.optString("state")) }
