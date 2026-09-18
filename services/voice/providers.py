@@ -477,10 +477,27 @@ class Provider:
                     props = tool['function']['parameters']['properties']
                     # Simultaneous worker/cap enums trigger malformed Gemma native calls.
                     # The catalog supplies live cap examples; the adapter enforces READ_CAPS.
-                    props['cap'] = {'type': 'string', 'description': 'Exact live read capability from the catalog above.'}
+                    props['cap'] = {'type': 'string', 'description': 'Exact live read capability.'}
                     props['worker']['description'] = 'Exact live worker name. Never invent a target or substitute an unknown device without clarification.'
                     if inventory.names:
                         props['worker']['enum'] = list(inventory.names)
+        # Native Gemma tool grammars allow an arbitrary prose prelude, which can
+        # exhaust generation before a call. A constrained JSON plan has no prelude.
+        plan_tools = payload.pop('tools')
+        functions = [tool['function'] for tool in plan_tools]
+        variants = []
+        for function in functions:
+            parameters = {**function['parameters'], 'additionalProperties': False}
+            variants.append({'type': 'object', 'properties': {
+                'name': {'const': function['name']}, 'arguments': parameters},
+                'required': ['name', 'arguments'], 'additionalProperties': False})
+        payload.pop('tool_choice')
+        payload.pop('parallel_tool_calls')
+        payload['response_format'] = {'type': 'json_schema', 'json_schema': {
+            'name': 'plan', 'strict': True, 'schema': {'anyOf': variants}}}
+        planned_messages[0]['content'] += (
+            '\nChoose exactly one function and output its JSON object with name and arguments. Available functions: ' +
+            json.dumps(functions, separators=(',', ':')))
         # A malformed plan can be retried once because no external work has started.
         # Never retry a job itself after an uncertain outcome.
         async with planner_http(self) as client:
@@ -499,10 +516,16 @@ class Provider:
                         raise ValueError('Malformed native tool call')
                     message = raw["choices"][0]["message"]
                     calls = message.get("tool_calls") or []
+                    if not calls:
+                        plan = json.loads(message.get('content') or '')
+                        if not isinstance(plan, dict) or set(plan) != {'name', 'arguments'} or not isinstance(plan['arguments'], dict):
+                            raise ValueError('Invalid structured plan')
+                        calls = [{'id': 'plan', 'type': 'function', 'function': {
+                            'name': plan['name'], 'arguments': json.dumps(plan['arguments'])}}]
                     if len(calls) != 1:
                         raise ValueError("Expected exactly one function call")
                     function = calls[0]['function']
-                    allowed = {t['function']['name']: t['function'] for t in payload['tools']}
+                    allowed = {t['function']['name']: t['function'] for t in plan_tools}
                     name = function['name']
                     if name not in allowed:
                         raise ValueError("Unknown or disallowed function")

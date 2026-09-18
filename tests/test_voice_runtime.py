@@ -190,5 +190,6 @@ def test_planner_retries_missing_call_before_speaking_or_starting_work(monkeypat
         assert text=='' and calls[0]['function']['name']=='rook_read'
         assert not spoken and len(requests)==2
         assert all(m['role']!='system' for m in requests[0]['messages'][1:])
-        assert requests[0]['tool_choice']=='required'
+        assert requests[0]['response_format']['type']=='json_schema'
+        assert 'tools' not in requests[0]
     run(scenario)
