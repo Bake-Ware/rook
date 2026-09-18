@@ -11,6 +11,10 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AlertDialog
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Job
+import android.widget.ArrayAdapter
 import kotlinx.coroutines.CancellationException
 import org.json.JSONArray
 import systems.bake.rook.databinding.ActivitySettingsBinding
@@ -22,6 +26,8 @@ import systems.bake.rook.databinding.ActivitySettingsBinding
  */
 class SettingsActivity : AppCompatActivity() {
 
+    private var voiceFetch: Job? = null
+    private var voiceChoices = emptyList<String>()
     private lateinit var b: ActivitySettingsBinding
 
     private val projectionLauncher =
@@ -124,6 +130,15 @@ class SettingsActivity : AppCompatActivity() {
         b.voiceUrl.setText(prefs.getString("voice_url", BuildConfig.DEFAULT_VOICE_URL))
         b.voiceToken.setText(prefs.getString("voice_token", BuildConfig.DEFAULT_VOICE_TOKEN))
         b.voiceInsecure.isChecked = prefs.getBoolean("voice_insecure", false)
+        showVoices(VoiceCatalog(emptyList(), VoiceCatalog.FALLBACK))
+        b.voicePicker.setOnClickListener { b.voicePicker.showDropDown() }
+        b.voicePicker.setOnItemClickListener { _, _, position, _ ->
+            val voice = voiceChoices.getOrNull(position) ?: return@setOnItemClickListener
+            prefs.edit().putString("voice_choice", voice).apply()
+            VoiceService.inst?.voiceChanged(voice)
+        }
+        b.btnRetryVoices.setOnClickListener { fetchVoices() }
+        fetchVoices()
         b.showThinking.isChecked = prefs.getBoolean("show_thinking", false)
         b.showThinking.setOnCheckedChangeListener { _, enabled ->
             prefs.edit().putBoolean("show_thinking", enabled).apply()
@@ -147,7 +162,41 @@ class SettingsActivity : AppCompatActivity() {
                 .putBoolean("voice_insecure", b.voiceInsecure.isChecked)
                 .putBoolean("wake_enabled", b.wakeEnabled.isChecked)
                 .apply()
+            fetchVoices()
             status("voice settings saved (takes effect on next Voice on)")
+        }
+    }
+
+    private fun showVoices(catalog: VoiceCatalog) {
+        val prefs = getSharedPreferences("rook", MODE_PRIVATE)
+        val saved = prefs.getString("voice_choice", null)
+        voiceChoices = catalog.choices(saved)
+        b.voicePicker.setAdapter(ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, voiceChoices.map(VoiceCatalog::label)))
+        b.voicePicker.setText(VoiceCatalog.label(saved ?: catalog.default), false)
+    }
+
+    private fun fetchVoices() {
+        voiceFetch?.cancel()
+        voiceFetch = lifecycleScope.launch {
+            val prefs = getSharedPreferences("rook", MODE_PRIVATE)
+            val url = prefs.getString("voice_url", BuildConfig.DEFAULT_VOICE_URL) ?: BuildConfig.DEFAULT_VOICE_URL
+            val token = prefs.getString("voice_token", "") ?: ""
+            val insecure = prefs.getBoolean("voice_insecure", false)
+            b.voiceListStatus.text = "Loading voices…"
+            b.btnRetryVoices.isEnabled = false
+            try {
+                val catalog = withContext(Dispatchers.IO) { VoiceCatalog.fetch(url, token, insecure) }
+                if (!prefs.contains("voice_choice")) {
+                    prefs.edit().putString("voice_choice", catalog.default).apply()
+                    VoiceService.inst?.voiceChanged(catalog.default)
+                }
+                showVoices(catalog)
+                b.voiceListStatus.text = "Voice changes apply immediately."
+            } catch (cancelled: CancellationException) { throw cancelled
+            } catch (_: Exception) {
+                showVoices(VoiceCatalog(emptyList(), VoiceCatalog.FALLBACK))
+                b.voiceListStatus.text = "Couldn’t load voices. Showing saved/default voice. Retry below."
+            } finally { b.btnRetryVoices.isEnabled = true }
         }
     }
 

@@ -162,6 +162,8 @@ class VoiceService : Service() {
     }
 
     /** Close/cancel the predecessor before opening its replacement; invalidate queued callbacks. */
+    fun voiceChanged(voice: String) { client?.setVoice(voice) }
+
     fun thinkingChanged() {
         val reopen = sessionWanted
         if (reopen) { closeSession(); openSession() }
@@ -310,6 +312,7 @@ class VoiceService : Service() {
         return b.setContentTitle("Rook voice · $text")
             .setContentText(if (text == "standby") "say \"hey sojourn\"" else url)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setContentIntent(NotificationNavigation.mainActivity(this))
             .setOngoing(true)
             .addAction(android.R.drawable.ic_btn_speak_now, "Talk", pi(3, ACTION_SESSION))
             .addAction(android.R.drawable.ic_media_pause, "Interrupt", pi(1, ACTION_INTERRUPT))

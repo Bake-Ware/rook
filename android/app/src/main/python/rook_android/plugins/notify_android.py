@@ -74,6 +74,7 @@ class AndroidNotifyPlugin(Plugin):
                 b = Builder(ctx)
             icon = jclass("android.R$drawable").stat_notify_chat
             b.setContentTitle(str(title)).setContentText(str(text)).setSmallIcon(icon).setAutoCancel(True)
+            b.setContentIntent(jclass("systems.bake.rook.NotificationNavigation").mainActivity(ctx))
             nid = int(time.time()) & 0x7fffffff
             nm.notify(nid, b.build())
             return {"ok": True, "id": nid}

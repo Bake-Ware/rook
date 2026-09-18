@@ -11,12 +11,9 @@ import okio.ByteString.Companion.toByteString
 import org.json.JSONObject
 import java.nio.ByteBuffer
 import java.security.MessageDigest
-import java.security.SecureRandom
-import java.security.cert.X509Certificate
 import java.util.UUID
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
-import javax.net.ssl.*
 import kotlin.concurrent.thread
 
 /** Versioned voice transport. Audio has response IDs; the shared service owns the mic. */
@@ -73,7 +70,7 @@ class VoiceClient(
     fun connect() {
         check(!ownMic) { "VoiceService must own the microphone" }
         val builder = OkHttpClient.Builder().readTimeout(0, TimeUnit.MILLISECONDS).pingInterval(20, TimeUnit.SECONDS)
-        if (insecureTls) trustAll(builder)
+        if (insecureTls) VoiceTls.trustAll(builder)
         val client = builder.build(); http = client
         val prefs = ctx.getSharedPreferences("rook", Context.MODE_PRIVATE)
         val scope = MessageDigest.getInstance("SHA-256").digest((url + "\u0000" + token).toByteArray()).joinToString("") { "%02x".format(it) }
@@ -90,6 +87,8 @@ class VoiceClient(
                 webSocket.send(JSONObject().put("type", "hello").put("protocol", 2).put("client", "rook-android")
                     .put("conversation", conversation).put("aec", aec)
                     .apply { if (thinking) put("thinking", true) }.toString())
+                webSocket.send(JSONObject().put("type", "voice")
+                    .put("voice", prefs.getString("voice_choice", VoiceCatalog.FALLBACK)).toString())
                 connected = true
                 while (true) webSocket.send(outbox.poll() ?: break)
             }
@@ -220,14 +219,5 @@ class VoiceClient(
             } catch (_: Exception) { if (running) { listener.onError("Voice playback failed"); shutdown() } }
             finally { synchronized(audioLock) { try { track?.stop(); track?.release() } catch (_: Exception) {}; track=null } }
         }
-    }
-    private fun trustAll(b: OkHttpClient.Builder) {
-        val tm = object : X509TrustManager {
-            override fun checkClientTrusted(c: Array<X509Certificate>, a: String) {}
-            override fun checkServerTrusted(c: Array<X509Certificate>, a: String) {}
-            override fun getAcceptedIssuers() = arrayOf<X509Certificate>()
-        }
-        val ssl=SSLContext.getInstance("TLS"); ssl.init(null,arrayOf<TrustManager>(tm),SecureRandom())
-        b.sslSocketFactory(ssl.socketFactory,tm).hostnameVerifier { _,_ -> true }
     }
 }
