@@ -45,7 +45,65 @@ venv was not modified. Live engine smoke with the factual state fields returned
 `device_control` (p=0.9971) and `needs_response` p=0.9550 for the voice lights
 example, in 100.5 ms cold; the typed request completed in 58.6 ms.
 
-Post-deploy measurements and release ID are appended after verification.
+## Deployment result: rolled back
+
+Candidate `fa333b21567c7b9a73b757a921ec172c4b7cdd91` was installed as
+`releases/fa333b2`. Health returned 3.86 seconds after restart. All four
+`thinking:true` conversations received a normal arithmetic reply and exactly one
+successful decision with matching turn ID; all four `thinking:false` conversations
+received normal replies and zero decision events, including a 350 ms late-event
+observation window. Typed decisions had five answers and omitted `needs_response`.
+Live voice-state engine smoke again classified the lights request correctly
+(`needs_response` 0.9550, `device_control`), in 60.7 ms.
+
+**The candidate failed the reply-latency gate and was immediately rolled back.**
+No second candidate rollout was attempted. There was one deployment restart and
+one required rollback restart. Production now runs **84f2e66**, with
+`DECISION_URL` absent and shadow mode off. The candidate release remains available
+for review; no push or merge was performed.
+
+| Configuration | First sample done (ms) | Subsequent samples done (ms) | Warm median (ms) |
+| --- | ---: | --- | ---: |
+| Original 84f2e66 | 630.649 | 246.172, 245.441, 244.461 | 245.441 |
+| Candidate, thinking true | 309.845 | 271.341, 267.793, 280.365 | 271.341 |
+| Candidate, thinking false | 270.551 | 280.932, 281.908, 286.929 | 281.908 |
+| Restored 84f2e66 | 293.848 | 248.233, 243.702, 244.406 | 244.406 |
+
+The opt-in candidate's warm median was **25.9 ms / 10.6% slower**. First-reply
+latencies were within 0.2 ms of done times for these one-sentence responses.
+Decision durations were 108.5 ms cold and 63.3–65.7 ms warm, all below the 150 ms
+deadline. This is a small, synthetic text sample, not a general acoustic benchmark.
+
+After rollback, an interleaved read-only check against the original server sent
+the same decision requests from an independent client. Median done times were
+246.9 ms without concurrent inference and 252.4 ms with it. This supports a small
+shared-resource cost even without the new server code; it does **not** explain
+the full candidate regression. Profile SQLite writer contention and event-loop
+scheduling alongside shared GPU inference before another rollout. The fake-engine
+test proves no explicit inference wait in the reply path, not zero resource cost.
+
+All **eight** candidate decisions were verified in the existing mode-0600 SQLite
+DB with status `ok`, state, answers, version metadata, latency and reply/completion
+timestamps. These synthetic conversations closed before the 15-second silence
+window. Outcome linking, repeat/correction/confirmation signals, silence lifecycle,
+retention and export were verified by tests rather than fabricated production
+feedback. The additive tables remain through rollback. Automatic pruning runs
+only with the new feature enabled; the retained rollout rows contain synthetic
+test input. The exporter independently excludes expired raw examples.
+
+Candidate and final GPU usage: GPU0 **20,752 MiB**, GPU1 **21,289 MiB**. GPU1
+matched baseline exactly; GPU0 was 86 MiB below its pre-restart measurement.
+The auth, front and GPU-STT drop-ins had identical SHA-256 digests before and after.
+The final voice service is active and its TLS health check succeeds. Gemma,
+llamacpp and the decision engine remain active; the two model health endpoints
+and engine `/info` respond successfully. No protected model service or repository
+was modified.
+
+Detailed synthetic timing artifacts on kaiju:
+
+* `/home/bake/voice-agent/staging/shadow-deployed-smoke.json`
+* `/home/bake/voice-agent/staging/shadow-rollback-latency.json`
+* `/home/bake/voice-agent/staging/shadow-contention-check.json`
 
 Open validation limits: no physical-phone/acoustic test in this rollout; the
 correction classifier and live context distribution do not inherit the synthetic
