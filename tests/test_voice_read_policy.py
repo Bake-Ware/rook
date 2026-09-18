@@ -93,3 +93,16 @@ def test_job_inherits_connection_identity_without_cross_connection_leak(tmp_path
             await jobs.close()
             store.db.close()
     asyncio.run(scenario())
+
+
+def test_capability_failure_inside_successful_transport_is_readable(monkeypatch):
+    cache = WorkerInventory()
+    cache.rows = [{'name':'kaiju','caps':['info.uptime']}]
+    cache.updated = time.monotonic()
+    monkeypatch.setattr(providers, 'inventory', cache)
+    class MCP:
+        async def call(self, *args):
+            return json.dumps({'ok':True,'result':{'ok':False,'error':'Permission was denied'}})
+    monkeypatch.setattr(providers, 'RookMCP', MCP)
+    with pytest.raises(providers.Handoff, match='Permission was denied'):
+        asyncio.run(providers.tool_rook_read({'worker':'kaiju','cap':'info.uptime'}))

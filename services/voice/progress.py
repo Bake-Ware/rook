@@ -2,6 +2,7 @@
 import asyncio
 import contextlib
 import math
+import re
 import time
 
 
@@ -43,8 +44,13 @@ class ProgressUpdates:
     def event(self, event):
         jid = event.get('id')
         if event.get('status') == 'running':
-            if jid in self.jobs and (event.get('progress') or event.get('title')):
-                self.jobs[jid]['progress'] = str(event.get('progress') or event['title'])[:240]
+            status = event.get('progress') or event.get('title')
+            # ACP often exposes a function identifier as its title, not a human
+            # status. Use the waiting template rather than reading code aloud.
+            identifier = (not event.get('progress') and status and
+                          re.fullmatch(r'[\w.]+', str(status)) and any(c in str(status) for c in '_.'))
+            if jid in self.jobs and status and not identifier:
+                self.jobs[jid]['progress'] = str(status)[:240]
             return
         self.jobs.pop(jid, None)
         if jid == self.speaking_job:
@@ -65,10 +71,11 @@ class ProgressUpdates:
     def line(job):
         if job['count'] == 3:
             return "This is taking a while - I'll tell you when it's done."
-        label = job['tool'].replace('_', ' ')
+        label = 'Hermes' if job['tool'] == 'delegate_to_hermes' else job['tool'].replace('_', ' ')
         worker = job['worker']
         if job['progress']:
-            return f"{label}: {job['progress']}"
+            return (f"{label}: {job['progress']}" if job['count'] % 2 == 0 else
+                    f"Update from {label}: {job['progress']}")
         elapsed = max(0, int(time.monotonic()-job['started']))
         if worker:
             if job['count'] % 2 == 0:

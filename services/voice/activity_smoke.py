@@ -15,7 +15,7 @@ async def latency(output, expected=None, samples=9, url='wss://127.0.0.1:8900/ws
     engine_log = Path('/home/bake/decision-engine/logs/decisions.jsonl')
     engine_counts = {}
     def count():
-        return sum(1 for _ in engine_log.open()) if engine_log.exists() else None
+        return sum(json.loads(line).get('path') == '/decide' for line in engine_log.open()) if engine_log.exists() else None
     for opted in (False, True):
         before = count()
         for sample in range(samples):

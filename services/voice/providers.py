@@ -203,7 +203,10 @@ async def tool_rook_read(args):
         return raw[:1200]
     if not d.get("ok"):
         raise Handoff(str(d.get("error"))[:200])
-    return json.dumps(d.get("result"))[:1200]
+    result = d.get("result")
+    if isinstance(result, dict) and result.get('ok') is False:
+        raise Handoff(str(result.get('error') or 'The capability reported failure')[:200])
+    return json.dumps(result)[:1200]
 
 
 DIRECT_TOOLS = {

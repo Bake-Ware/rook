@@ -310,3 +310,48 @@ all 21 routing cases successfully; unmapped personal requests now explicitly
 ask for the device rather than discovering or guessing one.
 
 Production gate and deployment results are appended below after verification.
+
+### Production gate: 1d6f8d1
+
+Release `/home/bake/voice-agent/releases/1d6f8d1` is built from commit
+`1d6f8d1a961c065e0c0300b0982115409aa39356`. The archived release passed all
+94 tests on kaiju before switching. A full STT/TTS loopback preflight returned
+warm first-reply medians of 176.053 / 176.330 ms (opt-outs / both opt-ins).
+
+Immediately before the production switch, nine fresh authenticated conversations
+per mode were measured on d7ba60d, using the same arithmetic request and
+`speak:false`. Sample zero was excluded; the table uses the median of eight warm
+first-reply measurements. A fallback phrase is rejected as a timing result.
+
+| Hello activity/thinking | d7ba60d baseline | 1d6f8d1 | Delta | Allowed increase |
+| --- | ---: | ---: | ---: | ---: |
+| false / false | 281.724 ms | 175.411 ms | -106.313 ms | +5 ms |
+| true / true | 285.132 ms | 176.046 ms | -109.086 ms | +10 ms |
+
+Both gates passed; shadow inference remains enabled at loopback :8910 with the
+150 ms timeout. Warm assistant_done medians were 175.508 / 176.126 ms versus
+281.802 / 285.221 ms baseline. Health returned in 3.50 seconds. This is a warm
+synthetic single-client gate, not a physical-phone or concurrent-load benchmark.
+
+`voice-activity-rollback-1d6f8d1.timer` was armed for 12 minutes before installing
+the effective zz-rook-voice.conf and restarting. Its rollback target is d7ba60d.
+The auth.conf, front.conf and gpu-stt.conf files and existing model, TLS, Rook,
+auth-token and DB environment settings were preserved. Live verification and
+final timer state are recorded below.
+
+The initial production verification passed: plain reply included speaking and
+98,304 PCM bytes; rook_read returned an actual uptime result; each external turn
+had one ok decision and result-narration turns had one skipped decision. The
+slow delegated Rook shell.exec ran `sleep 70` on kaiju. Its job lasted 134.6 seconds
+including agent overhead, with 67 heartbeats and three spoken updates. Completion
+stopped progress and triggered the normal result reply. The timer was disarmed
+only after all checks passed. Opt-outs created zero decision rows or engine-log
+entries; nine opt-ins created nine decision rows and nine /decide calls (plus one
+/info log entry). The protected drop-in hashes matched.
+
+A final rendering fix follows this verification: ACP titles that are raw function
+identifiers use a readable waiting template; human status strings vary their
+prefix on repeats. Nested capability failures (transport ok but result.ok false)
+are also surfaced as readable job failures. 96 tests cover the final fixes. The
+final patch uses another timed rollback and repeats live verification and gates
+against the immediately preceding release (a stricter baseline than d7ba60d).
