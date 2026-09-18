@@ -210,3 +210,59 @@ There have already been one candidate restart and one necessary rollback restart
 finishing the explicitly requested A-only fallback requires a third restart in
 this task. This is an exception to the requested one-restart budget, recorded
 rather than describing the failed rollout as a successful single restart.
+
+### Final production result: A deployed, B disabled
+
+Production release: **`/home/bake/voice-agent/releases/d7ba60d`**.
+`DECISION_URL` is explicitly empty. The persistent planner HTTP client and all A
+fixes are active. B remains implemented and tested on the feature branch, but is
+not enabled in production because the combined live candidate failed its gates.
+No further attempt to enable B was made after selecting the requested fallback.
+
+The final release passed **44 tests on kaiju** and **6/6 live replay cases**
+(three each at cutoffs 86 and 89): three valid `rook_devices` calls at cutoff 86
+and three valid `respond` calls at cutoff 89. The safe second-failure fallback was
+covered by unit tests.
+No replay executed tools or changed the original session's records.
+
+Immediately before the final switch, seven fresh conversations per thinking mode
+were measured against 84f2e66; sample zero was excluded from each warm median.
+
+| Final warm completion | Immediate 84f2e66 baseline | d7ba60d | Delta | Gate |
+| --- | ---: | ---: | ---: | --- |
+| thinking:false | 254.435 ms | 211.114 ms | -43.321 ms | pass (+5 ms maximum) |
+| thinking:true, shadow disabled | 251.259 ms | 211.922 ms | -39.336 ms | pass (+10 ms maximum) |
+
+All 14 final turns produced replies with no error or decision events. Their
+conversation IDs produced **zero** new decision rows, including all seven
+opt-in clients. Successful real opt-in decision events were verified during the
+combined attempt, but are deliberately absent from the A-only final deployment.
+Health recovered **3.30 seconds** after the final restart. The auth, front and
+GPU-STT drop-in hashes were unchanged, as were the effective model, TLS, token,
+Rook and SQLite configuration values (compared privately without printing them).
+
+GPU memory before/after the final switch: GPU0 **20,904 / 20,822 MiB**;
+GPU1 **21,383 / 21,383 MiB**. The temporary full-model preflight process was
+terminated before deployment. No model services were changed.
+
+`voice-hotfix-rollback-d7ba60d.timer` was armed for eight minutes **before** the
+switch, then disarmed only after all gates passed. The earlier attempt's timer
+was also disarmed after its successful rollback. The rollback target remains the
+untouched original `84f2e66` release; use the one-command rollback at the top of
+this document. Total production restarts this task: **three** (combined attempt,
+rollback, A-only fallback), exceeding the requested one-restart budget because
+of the live regression and fallback.
+
+Final artifacts on kaiju under `/home/bake/voice-agent/staging/turn-hotfix/`:
+
+- `deploy-record.json`: failed combined attempt and verified rollback.
+- `aonly-preflight-verdict.json`: full-model fallback preflight.
+- `aonly-release-replay.json`: six successful final replay verdicts.
+- `aonly-deploy-baseline.json`, `aonly-deploy-candidate.json`: complete timing samples.
+- `aonly-deploy-record.json`: final health, latency gates, persistence counts,
+  protected configuration checks, VRAM and disarmed timer.
+
+Next step for B: validate the combined full service with the reused HTTP client
+under single- and multi-client load before another explicitly scheduled rollout.
+Late events avoid contention within their own turn but can overlap a subsequent
+turn or another client's reply. No physical-phone/acoustic validation was done.
