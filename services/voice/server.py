@@ -17,6 +17,8 @@ import webrtcvad
 from .jobs import Jobs
 from .runtime import Connection
 from .state import Store
+from .decision import DecisionClient
+from .feedback import FeedbackStore
 
 VERSION = '2.0.0'
 ROOT = Path(os.environ.get('VOICE_MODEL_DIR', '.'))
@@ -28,6 +30,19 @@ async def lifespan(app):
     from .providers import Provider, DIRECT_TOOLS, ACP_HOST, ACP_PORT
     app.state.provider = Provider()
     app.state.store = Store(os.environ.get('VOICE_STATE_DB', str(ROOT / 'voice-state.sqlite3')))
+    app.state.decision = DecisionClient()
+    app.state.feedback = None
+    maintenance = None
+    if app.state.decision.url:
+        app.state.feedback = FeedbackStore(os.environ.get('VOICE_STATE_DB', str(ROOT / 'voice-state.sqlite3')))
+        await app.state.feedback.open()
+        await app.state.decision.refresh_info()
+        async def maintain_decisions():
+            while True:
+                await asyncio.sleep(60)
+                app.state.feedback.submit('prune')
+                await app.state.decision.refresh_info()
+        maintenance = asyncio.create_task(maintain_decisions())
     def notify(session, event):
         current = connections.get(session)
         if current:
@@ -39,6 +54,13 @@ async def lifespan(app):
             queue.put_nowait(event)
     app.state.jobs = Jobs(app.state.store, DIRECT_TOOLS, ACP_HOST, ACP_PORT, notify)
     yield
+    if maintenance:
+        maintenance.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await maintenance
+    await app.state.decision.close()
+    if app.state.feedback:
+        await app.state.feedback.close()
     await app.state.jobs.close()
     app.state.store.db.close()
 
@@ -98,10 +120,12 @@ async def websocket(ws: WebSocket):
         async def send_bytes(data):
             async with lock:
                 await ws.send_bytes(data)
-        conn = Connection(app.state.store, app.state.jobs, app.state.provider, key, send_json, send_bytes, protocol)
+        conn = Connection(app.state.store, app.state.jobs, app.state.provider, key, send_json, send_bytes, protocol,
+                          app.state.decision, app.state.feedback, hello.get('thinking') is True, conversation)
         conn.full_duplex = protocol == 2 and hello.get('aec') is True
         connections[key] = conn, queue
-        await conn.emit('session', conversation=conversation, protocol=protocol, version=VERSION, full_duplex=conn.full_duplex)
+        await conn.emit('session', conversation=conversation, protocol=protocol, version=VERSION,
+                        full_duplex=conn.full_duplex, thinking=conn.thinking)
         await conn.emit('state', state='listening', turn=conn.epoch)
         for job in app.state.store.jobs(key):
             await conn.emit('tool', id=job['id'], title=job['name'], status=job['status'])
@@ -134,6 +158,7 @@ async def websocket(ws: WebSocket):
                     continue
                 sp = vad.is_speech(data, 16000)
                 if sp:
+                    conn.shadow_hook('activity')
                     if analysis is not None:
                         analysis.cancel(); analysis = None
                     if not utterance:
