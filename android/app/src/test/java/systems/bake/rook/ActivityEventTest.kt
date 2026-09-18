@@ -12,6 +12,12 @@ class ActivityEventTest {
         assertTrue(parsed.failed); assertEquals(23L, parsed.elapsedMs); assertEquals("offline", parsed.detail)
         for (json in listOf("""{"type":"future"}""", """{"type":"activity","turn":1,"seq":1,"ts":1,"phase":"future"}""", """{"type":"activity","turn":1.2,"seq":1,"ts":1,"phase":"planning"}""")) assertNull(ActivityEvent.parse(JSONObject(json)))
     }
+    @Test fun progressUpdatesRenderAndResetTheSilenceTimer() {
+        val e = ActivityEvent.parse(JSONObject("""{"type":"activity","turn":1,"seq":2,"ts":1234,"phase":"progress","label":"Still checking Bakephone","worker":"Bakephone","elapsed_ms":25000}"""))!!
+        val status = TurnStatus(); status.event(event(), 0); status.event(e, 25000)
+        assertEquals("Still checking Bakephone", status.display(26000)!!.text)
+        assertEquals(0, status.display(26000)!!.severity)
+    }
     @Test fun groupsTurnsAndIsolatesConnectionsAndIgnoresRepeatedSequence() {
         val timeline = ActivityTimeline()
         assertTrue(timeline.add(1, event(seq=1)))

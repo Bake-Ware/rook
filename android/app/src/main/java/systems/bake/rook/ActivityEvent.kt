@@ -10,7 +10,7 @@ data class ActivityEvent(val turn: Int, val seq: Long, val ts: Long, val phase: 
     val icon get() = when { failed -> "!"; phase == "done" || phase == "tool_result" -> "✓"
         phase == "speaking" -> "♪"; phase == "tool_wait" -> "◷"; else -> "•" }
     companion object {
-        private val phases = setOf("heard", "planning", "planned", "retry", "fallback", "tool_start", "tool_wait", "tool_result", "speaking", "done", "error")
+        private val phases = setOf("heard", "planning", "planned", "retry", "fallback", "tool_start", "tool_wait", "tool_result", "speaking", "done", "error", "progress")
         private fun JSONObject.integer(key: String): Long? = (opt(key) as? Number)?.toDouble()
             ?.takeIf { it.isFinite() && it >= 0 && it < Long.MAX_VALUE.toDouble() && it % 1.0 == 0.0 }?.toLong()
         private fun JSONObject.text(key: String) = (opt(key) as? String)?.takeIf { it.isNotBlank() }
