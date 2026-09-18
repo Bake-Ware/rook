@@ -124,3 +124,21 @@ def test_planner_reuses_client_across_turns_and_closes_it():
         assert provider.chat_http.is_closed
         assert len(requests) == 2
     asyncio.run(scenario())
+
+
+def test_native_gemma_parse_error_uses_bounded_retry(monkeypatch):
+    sent, spoken = [], []
+    async def handler(request):
+        sent.append(request)
+        return httpx.Response(500, json={'error': {'message': 'The model produced output that does not match the expected peg-gemma4 format'}})
+    monkeypatch.setattr(providers, 'log_rejected_plan', lambda *a: None)
+    async def scenario():
+        provider = providers.Provider.__new__(providers.Provider)
+        provider.chat_http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        async def clause(text): spoken.append(text)
+        try:
+            text, calls = await provider.chat([{'role': 'system', 'content': 'test'}], clause)
+            assert text == providers.SAFE_FALLBACK and not calls
+            assert len(sent) == 2 and spoken == [providers.SAFE_FALLBACK]
+        finally: await provider.close()
+    asyncio.run(scenario())

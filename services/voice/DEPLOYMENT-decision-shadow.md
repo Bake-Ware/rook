@@ -266,3 +266,38 @@ Next step for B: validate the combined full service with the reused HTTP client
 under single- and multi-client load before another explicitly scheduled rollout.
 Late events avoid contention within their own turn but can overlap a subsequent
 turn or another client's reply. No physical-phone/acoustic validation was done.
+
+## 2026-09-18: activity, spoken stalls, and direct personal reads
+
+Candidate adds independent activity/thinking opt-ins, two-second tool heartbeats,
+readable terminal errors and exactly one decision per connected turn. Decisions
+are dispatched only after the reply and foreground completion; feedback SQLite
+uses its single thread executor. Disabled/skipped/error/timeout are explicit.
+Spoken job progress uses templates and normal TTS after 25 seconds, then every
+45 seconds, at most three updates plus one final line. Speech/VAD, playback,
+sleep and foreground results suppress it; completion/cancellation wins even
+while a status line is being synthesized. Hello can override or disable updates.
+
+The read catalog uses READ_CAPS intersected with the cached live roster and
+caps.describe argument names. Single reads must use rook_read. Device names have
+a live enum; cap examples remain in the description because simultaneous worker
+and cap enums caused reproducible malformed native Gemma output on the arithmetic
+preflight. A controlled five-variant probe isolated that interaction. Native
+peg-gemma4 format errors now use the same bounded retry/fallback as missing calls.
+No model flags or services were changed.
+
+Personal caps are enforced in the adapter using a trusted credential-to-device
+mapping, described in CONTRACT-activity.md. Unmapped credentials cannot read
+personal data, and hello identity claims are ignored. A shared credential cannot
+safely distinguish household users; no existing credential is implicitly granted
+Bake's owner privilege.
+
+Pre-deploy validation: 93 tests passed with kaiju's production Python 3.12.
+All 21 live planner replays passed: three each of the stored SMS request plus
+its "Bake Phone" correction (events 319/324 only, no other private history),
+explicit/latest texts, notifications, call history, foreign location, and unmapped
+personal data. Allowed reads selected rook_read; the latter two cases were denied
+by validation before a Rook call. Local sandboxed Python 3.14 could not complete
+thread-executor tests; the production interpreter results are authoritative.
+
+Production gate and deployment results are appended below after verification.

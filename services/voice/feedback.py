@@ -126,9 +126,9 @@ class FeedbackStore:
 
     def _finish(self, did, event, version):
         self.db.execute('UPDATE decisions SET answers=?,engine=?,engine_version=?,latency_ms=?,status=? WHERE id=?',
-                        (json.dumps(event['answers']), json.dumps(event['engine']), json.dumps(version),
+                        (json.dumps(event.get('answers', [])), json.dumps(event['engine']), json.dumps(version),
                          event['latency_ms'], event['status'], did))
-        p = next((a['p'] for a in event['answers'] if a['id'] == 'is_correction'), 0)
+        p = next((a['p'] for a in event.get('answers', []) if a['id'] == 'is_correction'), 0)
         if p > .5:
             previous = self.db.execute('SELECT p.id,p.replied_at FROM decisions d JOIN decisions p ON d.parent_id=p.id '
                                        'WHERE d.id=?', (did,)).fetchone()

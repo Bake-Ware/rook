@@ -15,6 +15,8 @@ class Shadow:
         self.conn, self.client, self.feedback = connection, client, feedback
         self.conversation = conversation
         self.tasks = set()
+        self.dispatches = {}
+        self.requests = {}
         self.operations = deque()
         self.writer = None
         self.current_id = None
@@ -91,20 +93,44 @@ class Shadow:
         self._submit('begin', did, self.conn.session, self.conversation, turn, source, state, time.time())
         if len(self.tasks) >= 8:
             # Capacity applies only to telemetry, never to the normal turn.
-            event = self.client.event(source, turn, 'error')
-            event['error'] = 'Decision shadow capacity exceeded'
+            event = self.client.event(source, turn, 'skipped')
+            event['error'] = event['detail'] = 'Decision shadow capacity exceeded'
             self._submit('finish', did, event, dict(self.client.info))
+            self.conn.decision_event(turn, event)
             return
-        self._track(self._decide(did, state, source, turn))
+        ready = asyncio.Event()
+        self.dispatches[turn] = ready
+        self.requests[turn] = self._track(self._decide(did, state, source, turn, ready))
 
-    async def _decide(self, did, state, source, turn):
-        await self._foreground_done()
-        event = await self.client.decide(state, source, turn)
-        self._submit('finish', did, event, dict(self.client.info))
-        if self.conn.thinking and not self.conn.closed:
-            # A disconnected/slow opt-in consumer cannot fail the foreground turn.
-            with contextlib.suppress(Exception):
-                await self.conn.emit('decision', **{k: v for k, v in event.items() if k != 'type'})
+    def dispatch(self, turn):
+        ready = self.dispatches.get(turn)
+        if ready is None:
+            return False
+        ready.set()
+        return True
+
+    def abandon(self, turn):
+        self.dispatches.pop(turn, None)
+        task = self.requests.pop(turn, None)
+        if task:
+            task.cancel()
+
+    async def _decide(self, did, state, source, turn, ready):
+        try:
+            await ready.wait()
+            await self._foreground_done()
+            if turn not in self.conn.decision_turns:
+                return
+            try:
+                event = await self.client.decide(state, source, turn)
+            except Exception:
+                event = self.client.event(source, turn, 'error')
+                event['error'] = event['detail'] = 'Decision engine request failed'
+            self._submit('finish', did, event, dict(self.client.info))
+            self.conn.decision_event(turn, event)
+        finally:
+            self.dispatches.pop(turn, None)
+            self.requests.pop(turn, None)
 
     def reply(self, text, turn):
         if self.reply_turn != turn:
