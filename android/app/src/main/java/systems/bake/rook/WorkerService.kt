@@ -163,6 +163,7 @@ class WorkerService : Service() {
             .setContentTitle("Rook Worker")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+            .setContentIntent(NotificationNavigation.mainActivity(this))
             .setOngoing(true)
             .build()
     }

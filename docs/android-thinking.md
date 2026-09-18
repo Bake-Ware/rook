@@ -34,3 +34,22 @@ Generate OTA metadata with `python3 android/build_apk_manifest.py`. Follow
 [Android updates](android-updates.md#publishing) for publication with the existing
 signer and hash allowlist. Manual installation, when authorized, is
 `adb -s SERIAL install -r PATH_TO_APK`.
+
+## Compact conversation UI and voices (0.4.4 / 8)
+
+The top bar holds the title, muted APK version, status, and accessible Talk,
+Sleep, and Settings icons. Chat fills the space down to the input row; the
+conversation heading and separate Interrupt button are removed. Talk retains
+its previous interrupt action while thinking/speaking, and speech barge-in is
+unchanged. Worker, voice, and posted-message notification bodies return to the
+existing main activity; update permission/installer actions remain intact.
+
+Settings fetches `/voices` over HTTPS on the configured voice host, preserving
+its port and using the same bearer token and optional insecure TLS setting.
+Known Kokoro prefixes receive friendly labels; unknown IDs remain readable.
+Selecting a voice persists it and updates an active socket immediately. Each
+connection sends the selected voice after hello. Failed fetches show the saved
+voice (or `af_heart`) and a reload action. Saving endpoint settings reloads the
+list. Thirteen unit tests cover decisions, catalog parsing, labels, fallback,
+and endpoint construction. No emulator screenshot was taken: no emulator was
+running and `/dev/kvm` was unavailable on this host.

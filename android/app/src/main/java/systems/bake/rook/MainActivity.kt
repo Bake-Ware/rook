@@ -69,7 +69,6 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
                 else -> VoiceService.start(this, url(), insecure())   // standby/listening -> talk now
             }
         }
-        b.btnInterrupt.setOnClickListener { VoiceService.interrupt(this) }
         b.btnSleep.setOnClickListener {
             if (state == "idle") voiceOn() else { VoiceService.endSession(this); addSystem("sleeping — say \"hey sojourn\"") }
         }
@@ -150,9 +149,9 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
             "speaking" -> R.string.st_speaking
             else -> R.string.st_idle
         })
-        b.btnTalk.text = getString(if (s == "thinking" || s == "speaking") R.string.voice_interrupt else R.string.btn_talk)
-        b.btnSleep.text = getString(if (s == "idle") R.string.voice_on else R.string.voice_sleep)
-        b.btnInterrupt.isEnabled = s == "thinking" || s == "speaking"
+        b.btnTalk.contentDescription = getString(if (s == "thinking" || s == "speaking") R.string.voice_interrupt else R.string.btn_talk)
+        b.btnSleep.contentDescription = getString(if (s == "idle") R.string.voice_on else R.string.voice_sleep)
+        b.btnTalk.setImageResource(if (s in listOf("listening", "thinking", "speaking")) R.drawable.ic_mic_active else R.drawable.ic_mic)
     }
 
     override fun onTranscript(text: String) { curBot = null; addBubble(text, user = true) }
