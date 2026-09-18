@@ -10,7 +10,8 @@ import traceback
 
 
 class Connection:
-    def __init__(self, store, jobs, provider, session, send_json, send_bytes, protocol=2):
+    def __init__(self, store, jobs, provider, session, send_json, send_bytes, protocol=2,
+                 decision=None, feedback=None, thinking=False, conversation=None):
         self.store, self.jobs, self.provider, self.session = store, jobs, provider, session
         self.send_json, self.send_bytes = send_json, send_bytes
         self.protocol = protocol
@@ -25,12 +26,28 @@ class Connection:
         self.receiving_speech = False
         self.audio_sent = {}
         self.audio_played = {}
+        self.thinking = protocol == 2 and thinking is True
+        self.shadow = None
+        if decision and decision.url and feedback:
+            from .shadow import Shadow
+            with contextlib.suppress(Exception):
+                self.shadow = Shadow(self, decision, feedback, conversation or session)
+
+    def shadow_hook(self, name, *args):
+        if self.shadow:
+            try:
+                getattr(self.shadow, name)(*args)
+            except Exception as error:
+                logging.warning('Decision shadow hook failed: %s', type(error).__name__)
 
     async def emit(self, kind, **data):
         if not self.closed:
             await asyncio.wait_for(self.send_json({"type": kind, **data}), 5)
 
     async def interrupt(self):
+        if not self.closed:
+            self.shadow_hook('interrupt', time.monotonic() < self.play_until,
+                             bool(self.task and not self.task.done()))
         self.epoch += 1
         old, self.task = self.task, None
         if old and old is not asyncio.current_task():
@@ -58,6 +75,7 @@ class Connection:
                     return
                 await self.emit("stt", text=text, turn=epoch)
             if not internal:
+                self.shadow_hook('begin', text or 'Describe this image.', 'voice' if pcm is not None else 'text', epoch)
                 self.store.append(self.session, "user", {"text": (text or "Describe this image.") +
                                                          (" [image attached]" if image else "")})
             messages = [{"role": "system", "content": self.provider.system}] + self.store.messages(self.session)
@@ -130,6 +148,7 @@ class Connection:
             await self.emit("error", msg="Voice turn failed: " + type(error).__name__ + ". Please try again.")
         finally:
             if epoch == self.epoch and not self.closed:
+                self.shadow_hook('completed', epoch)
                 await self.emit("assistant_done", turn=epoch)
                 await self.emit("state", state="listening", turn=epoch)
                 await self.emit("metrics", turn=epoch, duration_ms=int((time.monotonic()-started)*1000))
@@ -139,6 +158,7 @@ class Connection:
         if epoch != self.epoch or self.closed or not text.strip():
             return
         await self.emit("assistant_delta", text=text, turn=epoch)
+        self.shadow_hook('reply', text, epoch)
         # Record generated speech honestly. Playback acknowledgements are tracked
         # separately; interruption must not make the model assume all of it was heard.
         record = text if not self.speak_out else "[Spoken response generated; playback may be interrupted] " + text
@@ -155,6 +175,8 @@ class Connection:
             part = pcm[offset:offset+step]
             packet = b"RK2A" + struct.pack(">I", epoch) + part if self.protocol >= 2 else part
             await asyncio.wait_for(self.send_bytes(packet), 5)
+            if self.shadow:
+                self.shadow.last_spoke = time.monotonic()
             self.audio_sent[epoch] = self.audio_sent.get(epoch, 0) + len(part)//2
             self.play_until = max(self.play_until, time.monotonic()) + len(part)/(2*sr)
             await asyncio.sleep(len(part)/(2*sr))
@@ -184,3 +206,5 @@ class Connection:
     async def close(self):
         self.closed = True
         await self.interrupt()
+        if self.shadow:
+            await self.shadow.close()

@@ -79,3 +79,78 @@ Android instrumentation mode `voice` checks silence/noise and the bundled
 synthetic speech fixture. Physical-phone speaker, headset and Bluetooth acoustic
 checks remain necessary; emulator success does not establish real-room false
 wake rates or barge-in latency.
+
+### Decision-engine shadow mode
+
+`DECISION_URL` enables an advisory HTTP side channel, e.g.
+`http://127.0.0.1:8910`. Unset/empty disables requests, feedback collection, and
+decision events. `DECISION_TIMEOUT_MS` defaults to **150 ms**, including connection,
+queueing and response parsing. A failed or slow engine never changes the reply,
+tool selection, confirmation policy, or interruption behavior. Requests run
+concurrently with normal turns; no inference is awaited by reply generation.
+The voice process loads no additional model or CUDA allocation.
+
+Only protocol-2 clients with the literal `"thinking": true` in hello receive
+`decision` events; `session.thinking` echoes the opt-in. See the exact
+[shared contract](../../CONTRACT-decision-event.md). One event at most is emitted
+per external turn; it can arrive after the reply and retains the original turn
+number. Typed turns omit `needs_response`. Clients without opt-in still generate
+shadow feedback when the server feature is enabled, but receive no decision
+events. Internal job-completion narration does not create another decision.
+
+The state is text (at most 8,000 characters) and factual context: voice/text
+source, recent assistant speech, literal wake/name match, previous reply (1,000
+characters), and whether playback was interrupted. It does not assert who was
+addressed. `DECISION_RECENT_SPEECH_SECONDS=15` controls recency;
+`DECISION_ASSISTANT_NAMES=rook,assistant` controls case-insensitive whole-word
+matching. Recent speech is measured from audio sent on this connection, not
+proof that a listener heard it; it resets on reconnect. Previous reply context
+is recovered from that conversation's existing history on reconnect.
+
+`feedback.py` adds two migration-safe tables to `VOICE_STATE_DB`:
+
+* `decisions`: random decision ID, credential-scoped session, conversation UUID,
+  connection-local turn, source, state JSON, normalized answers, engine metadata,
+  cached `/info` version including adapter digest, status, latency, timestamps,
+  parent decision ID and generated reply. IDs remain unique across reconnects.
+* `decision_outcomes`: target decision ID, observing decision ID (when another
+  utterance supplied the signal), kind, JSON value/provenance and timestamp.
+  Unique target/observer/kind prevents duplicate observations.
+
+Correction phrases and engine `is_correction > 0.5` point to the **previous
+replied-to decision**, not the correction's own classification. Repeat signals
+use normalized exact text within 15 seconds. Yes/no signals require a recognizable
+confirmation prompt in the previous actual reply, not merely a high predicted
+`needs_confirmation`. Reply interruption targets the reply being interrupted.
+`no_followup` requires a completed reply and an open, quiet connection for
+`DECISION_SILENCE_SECONDS=15` after playback drain. Input, interruption or
+disconnect cancels that observation. Silence is **not approval**. These are weak
+signals with provenance, not gold labels; no training happens here. In particular,
+the engine's household calibration does not validate the new correction question
+or these live context fields.
+
+Database writes use a dedicated worker with a bounded 256-operation backlog and
+short SQLite lock timeout. Inference has a bounded per-connection task count.
+Telemetry can be dropped under overload rather than blocking normal turns;
+failed writes log exception types only. Raw state (including prior-reply context)
+and reply text are cleared after `DECISION_RAW_RETENTION_DAYS=30`, at startup and
+every minute. `secure_delete` is enabled on feedback writes. Numeric observations
+remain; existing history/job retention remains seven days. Backup/export files
+have their own retention obligations.
+
+Export only retained examples with linked outcomes, with labels explicitly marked
+`weak_outcome_signals` (no network or model calls):
+
+```sh
+umask 077
+python -m services.voice.feedback --db /path/to/voice-state.sqlite3 > labeled.jsonl
+PYTHONPATH=. python -m pytest -q tests/test_voice_runtime.py tests/test_voice_decision.py
+DECISION_URL=http://127.0.0.1:8910 VOICE_SMOKE_URL=wss://127.0.0.1:8900/ws \
+  python -m services.voice.decision_smoke --output shadow-smoke.json
+```
+
+Provide `VOICE_TOKEN` privately in the environment. For the existing self-signed
+loopback TLS endpoint, `VOICE_SMOKE_INSECURE=1` is an explicit test-only override.
+The smoke exercises both thinking settings, original turn IDs, late-event absence,
+reply timings and the engine's voice lights example. See
+[deployment and rollback](DEPLOYMENT-decision-shadow.md) for the kaiju release.
