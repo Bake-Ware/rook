@@ -119,3 +119,15 @@ def test_quick_job_finishes_without_progress(tmp_path, monkeypatch):
             assert not any(e.get('phase') == 'progress' for e in events)
         finally: await close()
     asyncio.run(scenario())
+
+
+def test_status_variation_and_readable_hermes_label():
+    p = ProgressUpdates(None)
+    p.jobs['job'] = {'tool':'delegate_to_hermes','worker':None,'count':0,'progress':None,'started':time.monotonic()}
+    p.event({'id':'job','status':'running','title':'mcp__bakeforge__rook_call'})
+    assert p.line(p.jobs['job']) == 'Still waiting for Hermes.'
+    p.event({'id':'job','status':'running','progress':'Read 4 of 8 files'})
+    first = p.line(p.jobs['job'])
+    p.jobs['job']['count'] = 1
+    second = p.line(p.jobs['job'])
+    assert first != second and 'Read 4 of 8 files' in first and 'Read 4 of 8 files' in second
