@@ -19,10 +19,12 @@ from .runtime import Connection
 from .state import Store
 from .decision import DecisionClient
 from .feedback import FeedbackStore
+from .identity import configured_identities, identity_for
 
 VERSION = '2.0.0'
 ROOT = Path(os.environ.get('VOICE_MODEL_DIR', '.'))
 TOKEN = os.environ.get('VOICE_TOKEN', '')
+IDENTITIES = configured_identities()
 connections = {}
 
 @contextlib.asynccontextmanager
@@ -34,6 +36,7 @@ async def lifespan(app):
         while True:
             with contextlib.suppress(Exception):
                 await inventory.refresh()
+                await inventory.refresh_schemas()
             await asyncio.sleep(60)
     worker_maintenance = asyncio.create_task(maintain_workers())
     app.state.store = Store(os.environ.get('VOICE_STATE_DB', str(ROOT / 'voice-state.sqlite3')))
@@ -54,10 +57,7 @@ async def lifespan(app):
         if current:
             conn, queue = current
             conn.job_event(event)
-            if queue.full():
-                with contextlib.suppress(asyncio.QueueEmpty):
-                    queue.get_nowait()
-            queue.put_nowait(event)
+            conn.queue_event(event)
     app.state.jobs = Jobs(app.state.store, DIRECT_TOOLS, ACP_HOST, ACP_PORT, notify)
     yield
     worker_maintenance.cancel()
@@ -92,7 +92,9 @@ async def index():
 @app.websocket('/ws')
 async def websocket(ws: WebSocket):
     supplied = ws.headers.get('authorization', '').removeprefix('Bearer ') or ws.query_params.get('token', '')
-    if (TOKEN and not hmac.compare_digest(TOKEN, supplied)) or (not TOKEN and os.environ.get('VOICE_ALLOW_ANONYMOUS') != '1'):
+    credential_id = hashlib.sha256(supplied.encode()).hexdigest()
+    accepted = bool(supplied) and (hmac.compare_digest(TOKEN, supplied) or credential_id in IDENTITIES)
+    if not accepted and not (not TOKEN and os.environ.get('VOICE_ALLOW_ANONYMOUS') == '1'):
         await ws.close(code=4401)
         return
     await ws.accept()
@@ -110,7 +112,7 @@ async def websocket(ws: WebSocket):
             hello = {}
         protocol = 2 if hello.get('type') == 'hello' and hello.get('protocol') == 2 else 1
         conversation = hello.get('conversation') if protocol == 2 else str(uuid.uuid4())
-        principal = hashlib.sha256(TOKEN.encode()).hexdigest()
+        principal = credential_id
         try:
             key = Store.key(principal, conversation)
         except (ValueError, TypeError, AttributeError):
@@ -123,7 +125,7 @@ async def websocket(ws: WebSocket):
             await ws.send_json({'type': 'error', 'msg': 'Conversation already connected. Retry shortly.'})
             await ws.close(code=4409)
             return
-        queue = asyncio.Queue(maxsize=32)
+        queue = asyncio.Queue(maxsize=256)
         lock = asyncio.Lock()
         async def send_json(event):
             async with lock:
@@ -135,20 +137,44 @@ async def websocket(ws: WebSocket):
             with contextlib.suppress(Exception):
                 await app.state.feedback.open()
                 await app.state.decision.refresh_info()
+        def enqueue(event):
+            try:
+                queue.put_nowait(event)
+            except asyncio.QueueFull:
+                # Never silently discard a decision or reorder activity seq.
+                # A stalled consumer must reconnect instead of losing turn status.
+                if conn and not conn.closed:
+                    conn.closed = True
+                    task = asyncio.create_task(ws.close(code=1013))
+                    task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
         conn = Connection(app.state.store, app.state.jobs, app.state.provider, key, send_json, send_bytes, protocol,
-                          app.state.decision, app.state.feedback, hello.get('thinking') is True, conversation)
+                          app.state.decision, app.state.feedback, hello.get('thinking') is True, conversation,
+                          activity=hello.get('activity') is True, enqueue=enqueue,
+                          progress_updates=hello.get('progress_updates'), identity=identity_for(supplied, IDENTITIES))
         conn.full_duplex = protocol == 2 and hello.get('aec') is True
         connections[key] = conn, queue
         await conn.emit('session', conversation=conversation, protocol=protocol, version=VERSION,
-                        full_duplex=conn.full_duplex, thinking=conn.thinking)
+                        full_duplex=conn.full_duplex, thinking=conn.thinking, activity=conn.activity_enabled)
         await conn.emit('state', state='listening', turn=conn.epoch)
         for job in app.state.store.jobs(key):
             await conn.emit('tool', id=job['id'], title=job['name'], status=job['status'])
+            if job['status'] == 'running':
+                timeout = app.state.jobs.agent_timeout + 30 if job['name'] == 'delegate_to_hermes' else app.state.jobs.read_timeout
+                elapsed = max(0, int((time.time()-job['updated'])*1000))
+                conn.progress.start(job['id'], conn.epoch, job['name'], json.loads(job['args']), elapsed)
+                if conn.activity:
+                    conn.activity.start_job(job['id'], conn.epoch, job['name'], json.loads(job['args']),
+                                            int(timeout * 1000), elapsed)
         async def progress():
             while True:
                 event = await queue.get()
-                await send_json({k: v for k, v in event.items() if k != 'result'})
-                conn.drain_results()
+                try:
+                    await asyncio.wait_for(send_json({k: v for k, v in event.items() if k != 'result'}), 5)
+                except Exception:
+                    await ws.close(code=1013)
+                    return
+                if event.get('type') == 'tool':
+                    conn.drain_results()
         sender = asyncio.create_task(progress())
         vad = webrtcvad.Vad(3)
         preroll = deque(maxlen=10)
@@ -173,6 +199,8 @@ async def websocket(ws: WebSocket):
                     continue
                 sp = vad.is_speech(data, 16000)
                 if sp:
+                    conn.last_speech = time.monotonic()
+                    conn.progress.cancel_speech()
                     conn.shadow_hook('activity')
                     if analysis is not None:
                         analysis.cancel(); analysis = None
@@ -220,7 +248,12 @@ async def websocket(ws: WebSocket):
                         utterance.clear(); preroll.clear(); speech = silence = 0
                         conn.receiving_speech = False
                         await conn.interrupt()
+                    elif kind == 'client_state':
+                        conn.sleeping = msg.get('mode') in ('sleep', 'off')
+                        if conn.sleeping:
+                            conn.progress.cancel_speech()
                     elif kind == 'speech_start' and conn.full_duplex:
+                        conn.last_speech = time.monotonic()
                         speech_permission_until = time.monotonic() + 35
                         conn.receiving_speech = True
                         await conn.interrupt()

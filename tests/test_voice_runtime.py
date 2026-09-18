@@ -167,6 +167,7 @@ def test_planner_retries_missing_call_before_speaking_or_starting_work(monkeypat
     chat=next(n for n in provider.body if isinstance(n,ast.AsyncFunctionDef) and n.name=='chat')
     requests=[];spoken=[]
     class Response:
+        status_code = 200
         def __init__(self,index):self.index=index
         def raise_for_status(self):pass
         def json(self):

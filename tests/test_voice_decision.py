@@ -74,7 +74,7 @@ def test_client_failures_are_bounded_and_sanitized(failure):
         event = await client.decide({'text': 'private'}, 'voice', 7)
         assert time.monotonic() - start < .2
         assert event['status'] == ('timeout' if failure == 'timeout' else 'error')
-        assert event['turn'] == 7 and event['answers'] == []
+        assert event['turn'] == 7 and 'answers' not in event
         assert 'private' not in event['error'] and 'secret' not in event['error']
         await client.close()
     asyncio.run(scenario())
@@ -94,7 +94,7 @@ def test_client_exact_contract_and_training_questions():
         client = DecisionClient('http://engine', transport=httpx.MockTransport(handler))
         await client.refresh_info()
         event = await client.decide({'source': 'text'}, 'text', 42)
-        assert set(event) == {'type', 'turn', 'source', 'mode', 'status', 'latency_ms', 'engine', 'answers', 'error'}
+        assert set(event) == {'type', 'turn', 'source', 'mode', 'status', 'latency_ms', 'engine', 'answers', 'error', 'engine_status', 'elapsed_ms', 'model', 'adapter'}
         assert event['status'] == 'ok' and event['engine']['adapter'] == 'adapter'
         assert set(event['engine']) == {'model', 'adapter', 'calibration'}
         answers = {a['id']: a for a in event['answers']}
@@ -292,7 +292,7 @@ def test_silence_only_after_reply_while_connected_and_cancelled_on_activity(tmp_
     asyncio.run(scenario())
 
 
-def test_shadow_does_not_start_inference_or_writes_until_reply_done(tmp_path):
+def test_shadow_starts_after_reply_dispatch_and_writes_after_completion(tmp_path):
     async def scenario():
         release = asyncio.Event()
         events, operations, requests = [], [], []
@@ -305,7 +305,7 @@ def test_shadow_does_not_start_inference_or_writes_until_reply_done(tmp_path):
                 assert conn.task.done()
                 operations.append(name)
         async def handler(request):
-            assert any(e['type'] == 'assistant_done' for e in events)
+            assert any(e['type'] == 'assistant_delta' for e in events)
             requests.append(request)
             return httpx.Response(200, json=response('text'))
         store = Store(tmp_path / 'state.db')

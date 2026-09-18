@@ -102,9 +102,11 @@ class DecisionClient:
 
     def event(self, source, turn, status='disabled'):
         return {'type': 'decision', 'turn': turn, 'source': source, 'mode': 'shadow',
-                'status': status, 'latency_ms': None,
+                'status': 'disabled' if status == 'skipped' else status, 'engine_status': status,
+                'latency_ms': None, 'elapsed_ms': 0,
                 'engine': {'model': self.info.get('model'), 'adapter': self.info.get('lora_path'),
-                           'calibration': self.info.get('calibration')}, 'answers': [], 'error': None}
+                           'calibration': self.info.get('calibration')},
+                'model': self.info.get('model'), 'adapter': self.info.get('lora_path'), 'error': None}
 
     async def decide(self, state, source, turn):
         event = self.event(source, turn)
@@ -123,13 +125,17 @@ class DecisionClient:
                     if value is not None and not isinstance(value, str):
                         raise ValueError('Invalid engine metadata')
                     event['engine'][key] = value
-                event.update(status='ok', answers=answers)
+                event.update(status='ok', engine_status='ok', answers=answers)
         except (TimeoutError, httpx.TimeoutException):
-            event.update(status='timeout', error='Decision deadline exceeded')
+            event.update(status='timeout', engine_status='timeout', error='Decision deadline exceeded')
         except Exception:
             # Do not leak URLs, response bodies, or user text through error strings.
-            event.update(status='error', error='Decision engine unavailable or invalid response')
+            event.update(status='error', engine_status='error', error='Decision engine unavailable or invalid response')
         event['latency_ms'] = (time.monotonic() - started) * 1000
+        event['elapsed_ms'] = event['latency_ms']
+        event['model'], event['adapter'] = event['engine'].get('model'), event['engine'].get('adapter')
+        if event['error']:
+            event['detail'] = event['error']
         return event
 
     async def close(self):
