@@ -177,3 +177,36 @@ If the combined candidate fails preflight, ship A with DECISION_URL unset instea
 One-command rollback remains the command near the top of this document. The
 original 84f2e66 release is retained. Final live measurements and timer details
 are appended after deployment verification.
+
+
+### Combined production gate failed; A-only fallback selected
+
+Release `a004b40` passed 43 tests on kaiju and six live replays, then was tried with
+an eight-minute `voice-hotfix-rollback-a004b40.timer` armed. Health returned in
+3.31 seconds. All opt-in test turns received successful decisions, but live warm
+completion was **267.033 / 268.727 ms** (thinking false/true), compared with the
+immediate baseline **250.691 / 251.931 ms**. Deltas +16.341 / +16.796 ms failed
+both gates. The script immediately restored 84f2e66 and verified health, then
+stopped its timer. The text-only preflight was insufficient to predict the full
+service's latency; its success did not override the live failure.
+
+Following the requested fallback, the next release ships A with `DECISION_URL=`
+explicitly empty. The B implementation remains available on the review branch,
+but production will make no decision calls or feedback writes, including when a
+client opts in. A further hotfix reuses the planner's HTTP client across turns
+instead of rebuilding its connection and TLS configuration for every request.
+
+Full-model loopback preflight (actual STT/TTS initialization, isolated DB) passed:
+
+| A-only warm completion | Fresh 84f2e66 | Candidate | Delta |
+| --- | ---: | ---: | ---: |
+| thinking:false | 249.618 ms | 212.368 ms | -37.251 ms |
+| thinking:true (shadow disabled) | 251.450 ms | 211.861 ms | -39.589 ms |
+
+All 44 voice tests passed locally. The fallback deployment reruns them with
+kaiju's Python and repeats both stored-state replays, followed by a fresh
+immediate baseline, dedicated rollback timer, and the live latency/health gates.
+There have already been one candidate restart and one necessary rollback restart;
+finishing the explicitly requested A-only fallback requires a third restart in
+this task. This is an exception to the requested one-restart budget, recorded
+rather than describing the failed rollout as a successful single restart.

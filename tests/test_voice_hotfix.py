@@ -106,3 +106,21 @@ def test_failed_job_preserves_readable_message():
         await jobs.close()
         store.db.close()
     asyncio.run(scenario())
+
+
+def test_planner_reuses_client_across_turns_and_closes_it():
+    requests = []
+    async def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json={'choices': [{'message': call()}]})
+    async def scenario():
+        provider = providers.Provider.__new__(providers.Provider)
+        provider.chat_http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        async def clause(text): assert text == 'Hello.'
+        for _ in range(2):
+            await provider.chat([{'role': 'system', 'content': 'policy'}], clause)
+            assert not provider.chat_http.is_closed
+        await provider.close()
+        assert provider.chat_http.is_closed
+        assert len(requests) == 2
+    asyncio.run(scenario())
