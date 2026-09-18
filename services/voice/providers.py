@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Local model and read-only tool adapters for the Rook voice runtime."""
 import asyncio, copy, json, logging, os, re, time
+from contextlib import asynccontextmanager
 import numpy as np
 import httpx
 from .rookmcp import RookMCP
@@ -376,6 +377,17 @@ def log_rejected_plan(raw, attempt):
         logging.warning('Could not write private rejected-plan diagnostic')
 
 
+@asynccontextmanager
+async def planner_http(provider):
+    client = getattr(provider, 'chat_http', None)
+    if client is not None:
+        yield client
+    else:
+        # Planner-only replays do not construct speech models or own a lifespan.
+        async with httpx.AsyncClient(timeout=25, trust_env=False) as client:
+            yield client
+
+
 class Provider:
     system = MOUTHPIECE_SYSTEM
     def __init__(self):
@@ -392,6 +404,7 @@ class Provider:
         self.turn = SmartTurn(os.path.join(HERE, 'smart-turn-v3.2-cpu.onnx'))
         self.executors = {name: ThreadPoolExecutor(max_workers=1) for name in ('stt', 'tts', 'turn')}
         self.slots = {name: asyncio.Semaphore(1) for name in self.executors}
+        self.chat_http = httpx.AsyncClient(timeout=25, trust_env=False)
 
     async def _model(self, name, function):
         slot = self.slots[name]
@@ -449,7 +462,7 @@ class Provider:
                         " Worker inventory unavailable; use rook_devices to discover targets first.")
         # A malformed plan can be retried once because no external work has started.
         # Never retry a job itself after an uncertain outcome.
-        async with httpx.AsyncClient(timeout=25) as client:
+        async with planner_http(self) as client:
             for attempt in range(2):
                 response = await client.post(VLLM_URL, json=payload)
                 response.raise_for_status()
@@ -503,6 +516,9 @@ class Provider:
                 return "", calls
         await on_clause(SAFE_FALLBACK)
         return SAFE_FALLBACK, []
+
+    async def close(self):
+        await self.chat_http.aclose()
 
     async def turn_complete(self, pcm):
         return await asyncio.wait_for(self._model('turn', lambda: self.turn.complete(pcm)), 2)

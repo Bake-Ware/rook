@@ -33,6 +33,7 @@ Runtime configuration:
 * `VOICE_TLS_KEY`, `VOICE_TLS_CERT`: existing PEM paths when serving TLS directly.
 
 The mouthpiece uses structured selection of either a reply or a real tool.
+Its HTTP client is reused across turns and closed at service shutdown.
 It announces work only after queuing a job. Invalid plans are retried once with the rejected output in context before any
 work starts. A second invalid plan yields the fixed clarification fallback;
 unstructured model prose is never spoken. External jobs are never implicitly

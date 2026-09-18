@@ -71,6 +71,8 @@ async def lifespan(app):
     if app.state.feedback:
         await app.state.feedback.close()
     await app.state.jobs.close()
+    if hasattr(app.state.provider, 'close'):
+        await app.state.provider.close()
     app.state.store.db.close()
 
 app = FastAPI(lifespan=lifespan)
