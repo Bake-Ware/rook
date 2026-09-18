@@ -355,3 +355,67 @@ prefix on repeats. Nested capability failures (transport ok but result.ok false)
 are also surfaced as readable job failures. 96 tests cover the final fixes. The
 final patch uses another timed rollback and repeats live verification and gates
 against the immediately preceding release (a stricter baseline than d7ba60d).
+
+### Final release: 3ab2e33
+
+Final code commit: `3ab2e3320ef2abc74005b1f3f6d34d7f99cd1c06`.
+Release directory: `/home/bake/voice-agent/releases/3ab2e33`.
+All **96 tests** passed from that release with kaiju's production interpreter.
+The final patch preserves the planner used in the **21/21** live routing replays.
+
+| Final warm first reply | Original d7ba60d gate baseline | Fresh 1d6f8d1 immediately before patch | 3ab2e33 | Delta vs fresh patch baseline |
+| --- | ---: | ---: | ---: | ---: |
+| activity:false, thinking:false | 281.724 ms | 202.419 ms | 200.244 ms | -2.175 ms |
+| activity:true, thinking:true | 285.132 ms | 202.573 ms | 201.256 ms | -1.317 ms |
+
+Both the original d7ba60d limits and the stricter fresh patch limits (+5/+10 ms)
+passed. Engine inference remains enabled. Final warm completion medians were
+200.356 / 201.375 ms. Health returned in 3.57 seconds. Each mode again used nine
+fresh conversations, excluding the first from its warm median. The final smoke
+counts only POST /decide entries in the engine log; GET /info maintenance entries
+are distinguished from turn inference. Opt-out turns produced **zero** /decide
+entries and **zero** decision rows; nine opt-ins produced **nine** of each.
+
+The authorized live SMS smoke read two inbox messages from Bakephone using the
+owner policy context. Only count and sender metadata were retained in
+`staging/activity-v2/sms-verification.json`; no message bodies were printed or
+stored in that report. This was an operator-side Rook read, not an authenticated
+phone websocket identity test. Existing voice credentials remain unmapped unless
+a server-owned `VOICE_IDENTITIES_FILE` assigns them: shared-token clients cannot
+be safely identified as Bake or a particular family member. They receive a
+clarification for personal reads. No hello name can elevate them to owner.
+No Android, hub, other-host code, existing credential or GPU-STT drop-ins changed.
+
+Final live verification also passed. Plain speech streamed 98,304 PCM bytes with
+heard → planning → planned → speaking → done. The direct uptime lookup emitted
+tool_start/tool_result and a normal result narration. External opt-in turns each
+had one ok decision; internal result narrations each had one skipped decision.
+The repeated slow Rook call emitted **63 two-second heartbeats**, **three varied
+spoken updates**, and **351,232 PCM bytes**. Human status metadata alternated
+between `Hermes: Hermes working` and `Update from Hermes: Hermes working`.
+No progress followed tool completion; the normal result reply won. Maximum-count,
+speech/playback/sleep suppression, cancellation during synthesis and no-LLM
+progress behavior are additionally covered by tests. Audio was observed over a
+real authenticated websocket, not through a physical phone speaker.
+
+Final service health is good, protected drop-in hashes still match, and
+`voice-activity-rollback-3ab2e33.timer` is **inactive/disarmed after verification**.
+The preceding release's timer is also disarmed. This task used two production
+restarts (initial successful rollout and the final progress-rendering patch),
+with no production rollback. No push or merge was performed.
+
+Final evidence on kaiju:
+
+- `/home/bake/voice-agent/staging/activity-v2/read-replay.json`
+- `/home/bake/voice-agent/staging/activity-v2/sms-verification.json` (metadata only)
+- `/home/bake/voice-agent/staging/activity-v2/deploy-baseline.json` (original d7ba60d)
+- `/home/bake/voice-agent/staging/activity-v2-final/deploy-baseline.json` (fresh 1d6f8d1)
+- `/home/bake/voice-agent/staging/activity-v2-final/deploy-candidate.json`
+- `/home/bake/voice-agent/staging/activity-v2-final/live-verification.json`
+- `/home/bake/voice-agent/staging/activity-v2-final/deploy-record.json`
+
+Rollback to d7ba60d, **on kaiju**:
+
+```sh
+sudo -n sh -c 'install -m 644 /home/bake/voice-agent/releases/d7ba60d/90-rook-voice.conf /etc/systemd/system/voice-agent.service.d/zz-rook-voice.conf && systemctl daemon-reload && systemctl restart voice-agent.service'
+```
