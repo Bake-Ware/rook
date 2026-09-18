@@ -33,14 +33,19 @@ class FeedbackStore:
             raise ValueError('DECISION_RAW_RETENTION_DAYS must be between 0 and 3650')
         self.worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix='voice-feedback')
         self.pending = set()
+        self.queued = []
+        self.dispatch = None
         self.db = None
+        self.open_lock = asyncio.Lock()
         self.dropped = 0
 
     async def open(self):
-        await asyncio.get_running_loop().run_in_executor(self.worker, self._open)
+        async with self.open_lock:
+            if self.db is None:
+                await asyncio.get_running_loop().run_in_executor(self.worker, self._open)
 
     def _open(self):
-        self.db = sqlite3.connect(self.path, timeout=.05)
+        self.db = sqlite3.connect(self.path, timeout=.005)
         self.db.row_factory = sqlite3.Row
         self.db.execute('PRAGMA secure_delete=ON')
         self.db.executescript('''
@@ -60,18 +65,37 @@ class FeedbackStore:
             CREATE INDEX IF NOT EXISTS decision_outcomes_target ON decision_outcomes(decision_id);
         ''')
         self._prune()
+        self.db.commit()
 
     def submit(self, operation, *args):
-        if self.db is None or len(self.pending) >= 256:
+        if self.db is None or len(self.queued) + len(self.pending) >= 256:
             self.dropped += 1
             return
-        future = asyncio.get_running_loop().run_in_executor(self.worker, getattr(self, '_' + operation), *args)
+        self.queued.append((operation, args))
+        if self.dispatch is None:
+            self.dispatch = asyncio.get_running_loop().call_soon(self._dispatch)
+
+    def _dispatch(self):
+        self.dispatch = None
+        batch, self.queued = self.queued, []
+        if not batch:
+            return
+        future = asyncio.get_running_loop().run_in_executor(self.worker, self._batch, batch)
         self.pending.add(future)
         def done(f):
             self.pending.discard(f)
             if not f.cancelled() and f.exception():
                 logging.warning('Decision feedback write failed: %s', type(f.exception()).__name__)
         future.add_done_callback(done)
+
+    def _batch(self, batch):
+        try:
+            for operation, args in batch:
+                getattr(self, '_' + operation)(*args)
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
 
     def _outcome(self, target, observed, kind, value):
         if target:
@@ -99,7 +123,6 @@ class FeedbackStore:
                 if answer in ('yes', 'yeah', 'yep', 'yes please', 'confirm', 'go ahead', 'no', 'nope', 'no thanks'):
                     self._outcome(parent, did, 'confirmation_answer',
                                   {'answer': 'no' if answer in ('no', 'nope', 'no thanks') else 'yes', 'method': 'phrase'})
-        self.db.commit()
 
     def _finish(self, did, event, version):
         self.db.execute('UPDATE decisions SET answers=?,engine=?,engine_version=?,latency_ms=?,status=? WHERE id=?',
@@ -111,32 +134,31 @@ class FeedbackStore:
                                        'WHERE d.id=?', (did,)).fetchone()
             if previous and previous['replied_at']:
                 self._outcome(previous['id'], did, 'model_correction', {'p': p, 'threshold': .5, 'method': 'engine'})
-        self.db.commit()
 
     def _reply(self, did, text):
         self.db.execute("UPDATE decisions SET reply=substr(COALESCE(reply,'') || ?,1,4000),replied_at=? WHERE id=?",
                         (text + ' ', time.time(), did))
-        self.db.commit()
 
     def _completed(self, did):
         self.db.execute('UPDATE decisions SET completed_at=? WHERE id=?', (time.time(), did))
-        self.db.commit()
 
     def _signal(self, did, kind, value):
         # Don't invent an outcome if no assistant reply was generated.
         row = self.db.execute('SELECT replied_at FROM decisions WHERE id=?', (did,)).fetchone()
         if row and row['replied_at']:
             self._outcome(did, '', kind, value)
-            self.db.commit()
 
     def _prune(self):
         cutoff = time.time() - self.retention_days * 86400
         # Remove both current input and previous-reply context; keep numeric observations.
         self.db.execute('UPDATE decisions SET state=NULL,reply=NULL WHERE created < ? AND (state IS NOT NULL OR reply IS NOT NULL)',
                         (cutoff,))
-        self.db.commit()
 
     async def flush(self):
+        if self.dispatch:
+            self.dispatch.cancel()
+            self.dispatch = None
+        self._dispatch()
         if self.pending:
             await asyncio.gather(*list(self.pending), return_exceptions=True)
 

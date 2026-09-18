@@ -28,7 +28,7 @@ class Connection:
         self.audio_played = {}
         self.thinking = protocol == 2 and thinking is True
         self.shadow = None
-        if decision and decision.url and feedback:
+        if self.thinking and decision and decision.url and feedback:
             from .shadow import Shadow
             with contextlib.suppress(Exception):
                 self.shadow = Shadow(self, decision, feedback, conversation or session)
@@ -75,7 +75,6 @@ class Connection:
                     return
                 await self.emit("stt", text=text, turn=epoch)
             if not internal:
-                self.shadow_hook('begin', text or 'Describe this image.', 'voice' if pcm is not None else 'text', epoch)
                 self.store.append(self.session, "user", {"text": (text or "Describe this image.") +
                                                          (" [image attached]" if image else "")})
             messages = [{"role": "system", "content": self.provider.system}] + self.store.messages(self.session)
@@ -100,6 +99,9 @@ class Connection:
                 await clauses.put(None)
                 return result
             producer_task = asyncio.create_task(producer())
+            if not internal:
+                self.shadow_hook('begin', text or 'Describe this image.',
+                                 'voice' if pcm is not None else 'text', epoch)
             async def consumer():
                 while True:
                     item = await clauses.get()

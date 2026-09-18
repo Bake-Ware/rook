@@ -33,8 +33,14 @@ Runtime configuration:
 * `VOICE_TLS_KEY`, `VOICE_TLS_CERT`: existing PEM paths when serving TLS directly.
 
 The mouthpiece uses structured selection of either a reply or a real tool.
-It announces work only after queuing a job. Malformed plans may be retried once
-before any work starts; external jobs are never implicitly retried.
+It announces work only after queuing a job. Invalid plans are retried once with the rejected output in context before any
+work starts. A second invalid plan yields the fixed clarification fallback;
+unstructured model prose is never spoken. External jobs are never implicitly
+retried. Raw rejected outputs go to mode-0600 `rejected-voice-plans.jsonl` beneath
+`VOICE_MODEL_DIR` (1 MB plus two rotations); these private diagnostics can contain
+conversation-derived data. Jobs preserve the actual failure message. Rook worker
+names refresh every 60 seconds for planner context and validation; unknown names
+fail before a capability call.
 
 The APK sends a protocol-2 hello with an opaque persisted conversation UUID.
 History is scoped to the credential and conversation. A second simultaneous
@@ -86,17 +92,19 @@ wake rates or barge-in latency.
 `http://127.0.0.1:8910`. Unset/empty disables requests, feedback collection, and
 decision events. `DECISION_TIMEOUT_MS` defaults to **150 ms**, including connection,
 queueing and response parsing. A failed or slow engine never changes the reply,
-tool selection, confirmation policy, or interruption behavior. Requests run
-concurrently with normal turns; no inference is awaited by reply generation.
+tool selection, confirmation policy, or interruption behavior. Opt-in turns dispatch a bounded background task which waits for reply completion
+before inference and persistence. This avoids competition for the mouthpiece GPU
+and history SQLite writer; no inference is awaited by reply generation.
 The voice process loads no additional model or CUDA allocation.
 
 Only protocol-2 clients with the literal `"thinking": true` in hello receive
 `decision` events; `session.thinking` echoes the opt-in. See the exact
 [shared contract](../../CONTRACT-decision-event.md). One event at most is emitted
 per external turn; it can arrive after the reply and retains the original turn
-number. Typed turns omit `needs_response`. Clients without opt-in still generate
-shadow feedback when the server feature is enabled, but receive no decision
-events. Internal job-completion narration does not create another decision.
+number. Typed turns omit `needs_response`. Clients without literal protocol-2
+`thinking:true` create no shadow object, decision requests or feedback writes.
+Feedback tables and engine metadata are initialized lazily at the first opt-in
+hello; a service receiving only non-thinking clients performs no decision I/O. Internal job-completion narration does not create another decision.
 
 The state is text (at most 8,000 characters) and factual context: voice/text
 source, recent assistant speech, literal wake/name match, previous reply (1,000
@@ -129,12 +137,13 @@ signals with provenance, not gold labels; no training happens here. In particula
 the engine's household calibration does not validate the new correction question
 or these live context fields.
 
-Database writes use a dedicated worker with a bounded 256-operation backlog and
-short SQLite lock timeout. Inference has a bounded per-connection task count.
+Database writes are buffered until the dispatched reply finishes, then batched
+on a dedicated worker/connection with a bounded 256-operation backlog and 5 ms
+SQLite lock timeout. Inference has a bounded per-connection task count.
 Telemetry can be dropped under overload rather than blocking normal turns;
 failed writes log exception types only. Raw state (including prior-reply context)
-and reply text are cleared after `DECISION_RAW_RETENTION_DAYS=30`, at startup and
-every minute. `secure_delete` is enabled on feedback writes. Numeric observations
+and reply text are cleared after `DECISION_RAW_RETENTION_DAYS=30`, at first opt-in initialization and
+every minute thereafter. `secure_delete` is enabled on feedback writes. Numeric observations
 remain; existing history/job retention remains seven days. Backup/export files
 have their own retention obligations.
 

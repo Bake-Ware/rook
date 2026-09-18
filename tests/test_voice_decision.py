@@ -120,7 +120,9 @@ def test_websocket_protocol_opt_in(tmp_path, monkeypatch, hello_thinking, protoc
     from fastapi.testclient import TestClient
     from services.voice import server
 
+    requests = []
     async def handler(request):
+        requests.append(request)
         return httpx.Response(200, json=response('text'))
 
     @asynccontextmanager
@@ -168,8 +170,9 @@ def test_websocket_protocol_opt_in(tmp_path, monkeypatch, hello_thinking, protoc
             assert len({e['turn'] for e in decisions}) == len(decisions)
             assert any(e['type'] == 'assistant_delta' for e in events)
             assert all(e['status'] == 'ok' and e['mode'] == 'shadow' for e in decisions)
+    assert len(requests) == (2 if expected else 0)
     db = sqlite3.connect(tmp_path / 'state.db')
-    assert db.execute('SELECT COUNT(*) FROM decisions').fetchone()[0] == 2
+    assert db.execute('SELECT COUNT(*) FROM decisions').fetchone()[0] == (2 if expected else 0)
     db.close()
 
 
@@ -271,7 +274,7 @@ def test_silence_only_after_reply_while_connected_and_cancelled_on_activity(tmp_
         jobs = Jobs(store, {}, '', 0, lambda s, e: None)
         async def send(e): pass
         async def audio(b): pass
-        conn = Connection(store, jobs, Provider(), 's', send, audio, decision=client, feedback=feedback)
+        conn = Connection(store, jobs, Provider(), 's', send, audio, decision=client, feedback=feedback, thinking=True)
         await conn.start(text='hello', speak=False)
         await conn.task
         await asyncio.sleep(.04)
@@ -287,3 +290,73 @@ def test_silence_only_after_reply_while_connected_and_cancelled_on_activity(tmp_
         await jobs.close()
         store.db.close()
     asyncio.run(scenario())
+
+
+def test_shadow_does_not_start_inference_or_writes_until_reply_done(tmp_path):
+    async def scenario():
+        release = asyncio.Event()
+        events, operations, requests = [], [], []
+        class SlowProvider(Provider):
+            async def chat(self, messages, on_clause, reply_only=False):
+                await release.wait()
+                return await super().chat(messages, on_clause, reply_only)
+        class Feedback:
+            def submit(self, name, *args):
+                assert conn.task.done()
+                operations.append(name)
+        async def handler(request):
+            assert any(e['type'] == 'assistant_done' for e in events)
+            requests.append(request)
+            return httpx.Response(200, json=response('text'))
+        store = Store(tmp_path / 'state.db')
+        client = DecisionClient('http://engine', transport=httpx.MockTransport(handler))
+        jobs = Jobs(store, {}, '', 0, lambda *args: None)
+        async def send(e): events.append(e)
+        async def audio(b): pass
+        conn = Connection(store, jobs, SlowProvider(), 's', send, audio, decision=client,
+                          feedback=Feedback(), thinking=True)
+        await conn.start(text='hello', speak=False)
+        await asyncio.sleep(.02)
+        assert not requests and not operations
+        release.set()
+        await conn.task
+        await asyncio.sleep(.03)
+        assert len(requests) == 1
+        assert operations.index('begin') < operations.index('reply') < operations.index('completed')
+        assert 'finish' in operations
+        assert len([e for e in events if e['type'] == 'decision']) == 1
+        await conn.close()
+        await client.close()
+        await jobs.close()
+        store.db.close()
+    asyncio.run(scenario())
+
+
+def test_lifespan_does_no_decision_io_until_first_opt_in(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from services.voice import server, providers, workers
+    requests = []
+    async def handler(request):
+        requests.append(request.url.path)
+        return httpx.Response(200, json={} if request.url.path == '/info' else response('text'))
+    async def refresh(): return []
+    monkeypatch.setattr(providers, 'Provider', Provider)
+    monkeypatch.setattr(workers.inventory, 'refresh', refresh)
+    monkeypatch.setattr(server, 'TOKEN', 'test-token')
+    monkeypatch.setenv('VOICE_STATE_DB', str(tmp_path / 'state.db'))
+    monkeypatch.setattr(server, 'DecisionClient', lambda: DecisionClient('http://engine', transport=httpx.MockTransport(handler)))
+    with TestClient(server.app) as client:
+        assert server.app.state.feedback.db is None
+        with client.websocket_connect('/ws', headers={'Authorization': 'Bearer test-token'}) as ws:
+            ws.send_json({'type': 'hello', 'protocol': 2, 'conversation': str(uuid.uuid4())})
+            ws.send_json({'type': 'text', 'text': 'hello', 'speak': False})
+            while ws.receive_json()['type'] != 'metrics': pass
+        assert requests == []
+        assert server.app.state.feedback.db is None
+        with sqlite3.connect(tmp_path / 'state.db') as db:
+            assert not db.execute("SELECT name FROM sqlite_master WHERE name='decisions'").fetchall()
+        with client.websocket_connect('/ws', headers={'Authorization': 'Bearer test-token'}) as ws:
+            ws.send_json({'type': 'hello', 'protocol': 2, 'conversation': str(uuid.uuid4()), 'thinking': True})
+            assert ws.receive_json()['thinking'] is True
+        assert requests == ['/info']
+        assert server.app.state.feedback.db is not None
