@@ -45,3 +45,29 @@ Manual checklist:
 3. Background Rook and repeat the camera and video-call checks.
 4. Turn wake ON and save; confirm wake standby works. Holding the mic in this
    mode is intentional. Turn wake OFF and save; confirm the mic is released.
+
+## Publication verification
+
+Source commit: `8134e30` on master; bundled worker: `177.foggy.llama`.
+All 237 Python tests and all 32 Android tests in **each** of debug and release
+passed. `assembleRelease` and its required release lint checks passed. The final
+build excluded the unrelated untracked dongle plugin with a build-only staging
+hook; its source file and all other pre-existing untracked work remain untouched.
+The build is the non-debuggable universal release variant (all four ABIs).
+
+Published download: https://rook.bakeforge.com/apk
+OTA manifest: https://rook.bakeforge.com/apk.json
+Size: **143,091,363 bytes**. SHA-256:
+`32426319715dd0d24919337ad89495ddeaac9d25cc743d9beffa953b00c93759`.
+The signature matches the complete downloaded public 0.4.5 APK. The publication
+script fetched the full new APK through its public HTTPS URL and verified both
+size and hash. The public manifest matches the signed local artifact.
+
+Active web release: `/opt/rook-releases/apk-mic-20260921-8134e30`.
+A recursive diff confirmed only the APK and sidecar differ from the prior active
+web release. Both web and MCP services are healthy. Existing server code,
+separate MCP deployment and desktop-worker artifacts were preserved. Rollback:
+`sudo /var/backups/rook/apk-mic-20260921-8134e30/rollback.sh` on bakenetcanada.
+The same backup directory contains release metadata, the exact two-file diff,
+prior/candidate overrides and the completed public verification record.
+No device installs or checks were triggered; owner verification is pending.
