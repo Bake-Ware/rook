@@ -37,3 +37,6 @@ update-signing-key
 # Prebuilt telesthete-hub binaries served by /telesthete-hub (built from Bake-Ware/telesthete)
 rook/remote/telesthete-hub
 rook/remote/telesthete-hub-*
+
+# RP2040 firmware build products
+firmware-rp2040/.pio/
