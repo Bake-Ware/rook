@@ -152,6 +152,8 @@ class BandClient:
         Returns the reply dict (``{"id", "from", "ok", "result"|"error"}``).
         Raises ``asyncio.TimeoutError`` on no reply.
         """
+        if len(self._pending) >= 512:
+            raise RuntimeError("band call capacity reached")
         mid = uuid.uuid4().hex
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
         self._pending[mid] = fut
@@ -160,11 +162,14 @@ class BandClient:
             msg["target"] = target
         if identity:
             msg["identity"] = identity
-        await self.transport.send(json.dumps(msg).encode())
         try:
-            return await asyncio.wait_for(fut, timeout=timeout)
+            async with asyncio.timeout(timeout):
+                await self.transport.send(json.dumps(msg).encode())
+                return await fut
         finally:
             self._pending.pop(mid, None)
+            if not fut.done():
+                fut.cancel()
 
     async def push_update(self, worker_id: str, bundle: bytes, manifest: dict,
                           *, drop_id: int = 0, name: str = "band-worker.pyz",

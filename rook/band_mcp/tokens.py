@@ -217,6 +217,11 @@ class TokenStore:
     def admin_login(self, password: str) -> str | None:
         if not self.verify_password(password):
             return None
+        now = self._now()
+        for old in [s for s, exp in self._admin_sessions.items() if exp < now]:
+            self._admin_sessions.pop(old, None)
+        if len(self._admin_sessions) >= 256:
+            self._admin_sessions.pop(next(iter(self._admin_sessions)))
         sid = secrets.token_urlsafe(24)
         self._admin_sessions[sid] = self._now() + _ADMIN_SESSION_TTL
         return sid

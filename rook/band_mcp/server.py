@@ -99,6 +99,14 @@ def build_server(client: "BandClient | MultiBandClient",
         auth=auth_settings,
     )
 
+    # Keep SDK auth/routing, replace only stateful session ownership.
+    from .http_sessions import BoundedSessionManager
+    mcp._session_manager = BoundedSessionManager(
+        app=mcp._mcp_server,
+        security_settings=sec,
+        json_response=mcp.settings.json_response,
+    )
+
     @mcp.tool()
     async def rook_workers() -> str:
         """List all workers currently visible on the band.
@@ -849,6 +857,8 @@ def build_server(client: "BandClient | MultiBandClient",
 
 
 async def _amain(args) -> None:
+    from .memory_diagnostics import install
+    uninstall_diagnostics = install()
     from ..remote.enrollment import EnrollmentStore
     enrollment = EnrollmentStore()
     enrollment.import_config(args.psks)
@@ -932,6 +942,7 @@ async def _amain(args) -> None:
         if ws_bridge is not None:
             await ws_bridge.stop()
         await client.stop()
+        uninstall_diagnostics()
 
 
 def main() -> None:

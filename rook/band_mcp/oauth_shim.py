@@ -43,6 +43,8 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("rook.band_mcp.oauth_shim")
 
+_MAX_CODES = 1024
+_MAX_FIELD = 4096
 _CODE_TTL = 300          # authorization codes live 5 min
 # Advertised access-token lifetime. The real expiry is whatever the underlying
 # bearer enforces at /mcp (static token: never; API token: its ttl) — this is
@@ -131,6 +133,11 @@ class OAuthShim:
             return JSONResponse(
                 {"error": "invalid_request",
                  "error_description": "PKCE with S256 is required"}, status_code=400)
+        if any(len(value) > _MAX_FIELD for value in q.values()):
+            return self._err("invalid_request", "authorization field too long")
+        self._gc()
+        if len(self._codes) >= _MAX_CODES:
+            return self._err("temporarily_unavailable", "authorization capacity reached", 503)
         code = secrets.token_urlsafe(32)
         self._codes[code] = {
             "challenge": challenge,
@@ -147,6 +154,7 @@ class OAuthShim:
     # -- token ---------------------------------------------------------------
 
     async def _token(self, request: Request) -> Response:
+        self._gc()
         form = await request.form()
         grant = form.get("grant_type", "")
         _cid, csecret = self._client_creds(request, form)
