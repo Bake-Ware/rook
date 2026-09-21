@@ -249,6 +249,11 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
 
     override fun onPause() { panels.pause(); VoiceBus.listener = null; super.onPause() }
 
+    override fun onStop() {
+        VoiceService.inst?.releaseIfIdle()
+        super.onStop()
+    }
+
     private val notifPermLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
     private fun maybeRequestNotifications() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
