@@ -4,6 +4,9 @@ Run with PYTHONPATH=. python tools/diagnostics/band_mcp_memory.py.
 Transport replies are synthetic; HTTP/session/auth/tool/store paths are real.
 """
 import argparse
+import base64
+import hashlib
+from urllib.parse import urlsplit, parse_qs
 import asyncio
 import gc
 import json
@@ -44,6 +47,10 @@ async def exercise(batches=5, sessions=40, trace=True, settle=0, idle=None):
         client.transport.send = send
         token = secrets.token_urlsafe(32)
         mcp, store = build_server(client, public_url='http://localhost', static_token=token, journal_path=tmp+'/journal.db')
+        room=mcp._rook_console.open(title='synthetic',worker='synthetic',worker_name='synthetic',handle='synthetic',cmd='synthetic',pty=False,opened_by='agent:static')['room']
+        mcp._rook_console.append(room, 'synthetic output\n' * 100)
+        chatroom=mcp._rook_chat.start('synthetic','agent:static',[])['room']
+        mcp._rook_chat.send(chatroom,'agent:static','synthetic message',[],False)
         app = mcp.streamable_http_app()
         manager = mcp.session_manager
         if idle is not None:
@@ -64,14 +71,22 @@ async def exercise(batches=5, sessions=40, trace=True, settle=0, idle=None):
                     sid=r.headers['mcp-session-id']
                     h={'mcp-session-id':sid}
                     await http.post('/mcp', headers=h, json={'jsonrpc':'2.0','method':'notifications/initialized'})
-                    calls=[('rook_workers',{}),('rook_console_list',{}),('rook_chat_rooms',{}),('rook_console_read',{'room':'missing'}),('rook_chat_read',{'room':'missing'})]
+                    calls=[('rook_workers',{}),('rook_console_list',{}),('rook_chat_rooms',{}),('rook_console_read',{'room':room}),('rook_chat_read',{'room':chatroom})]
                     calls += [('rook_call', {'cap':'echo','worker':'synthetic','args':{'mode':mode},'timeout':0.001}) for mode in ['ok']*5+['timeout','failure']]
                     for i,(name,args) in enumerate(calls,2):
                         t=time.perf_counter()
                         r=await http.post('/mcp', headers=h, json={'jsonrpc':'2.0','id':i,'method':'tools/call','params':{'name':name,'arguments':args}})
                         assert r.status_code==200, r.status_code
                         timings.append((time.perf_counter()-t)*1000)
-                    await http.get('/authorize', params={'response_type':'code','redirect_uri':'http://localhost/callback','code_challenge':'synthetic','client_id':'harness'})
+                    verifier=secrets.token_urlsafe(32)
+                    challenge=base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b'=').decode()
+                    auth=await http.get('/authorize', params={'response_type':'code','redirect_uri':'http://localhost/callback','code_challenge':challenge,'client_id':'harness'})
+                    if n % 2 == 0:
+                        code=parse_qs(urlsplit(auth.headers['location']).query)['code'][0]
+                        issued=await http.post('/token', data={'grant_type':'authorization_code','code':code,'code_verifier':verifier,'redirect_uri':'http://localhost/callback','client_secret':token})
+                        assert issued.status_code == 200
+                        refreshed=await http.post('/token', data={'grant_type':'refresh_token','refresh_token':token})
+                        assert refreshed.status_code == 200
                     if n % 2 == 0:
                         await http.delete('/mcp', headers=h)
                 await asyncio.sleep(settle)

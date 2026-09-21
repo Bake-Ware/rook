@@ -14,7 +14,9 @@ BandClient has at most 512 pending calls, and its timeout covers both sending
 and awaiting a reply. Every exit releases/cancels the future. OAuth codes have
 a five-minute TTL, 1,024-entry limit and 4,096-character per-field limit. Admin
 sessions expire on login and are capped at 256. Persistent journal/chat/console
-stores retain their existing paginated database-backed behavior.
+stores retain their existing paginated database-backed behavior. Unterminated
+console output is persisted in 4,000-character rows; the in-memory tail stays
+below 4,000 characters per live room, without dropping output.
 
 Allocation diagnostics are opt-in: SIGUSR2 on the bridge PID toggles tracemalloc;
 SIGUSR1 writes only the top 20 allocation sites/sizes/counts to its journal.
