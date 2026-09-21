@@ -187,7 +187,15 @@ class ConsoleStore:
                 lines = parts
             else:
                 # The last element has no terminating newline yet.
-                self._pending[rid] = parts.pop()
+                tail = parts.pop()
+                # A process may never print a newline (progress/binary output).
+                # Persist full row-sized pieces instead of retaining its entire
+                # lifetime output; keep only the final partial row in memory.
+                while len(tail) >= MAX_LINE:
+                    parts.append(tail[:MAX_LINE])
+                    tail = tail[MAX_LINE:]
+                if tail:
+                    self._pending[rid] = tail
                 lines = parts
         else:
             lines = text.split("\n")

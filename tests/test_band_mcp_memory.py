@@ -154,3 +154,18 @@ def test_admin_sessions_bounded_and_expired_collected():
     for sid in store._admin_sessions: store._admin_sessions[sid]=0
     store.admin_login(password)
     assert len(store._admin_sessions)==1
+
+
+def test_console_unterminated_output_is_bounded_and_preserved(tmp_path):
+    from rook.band_mcp.console_rooms import ConsoleStore, MAX_LINE
+    store=ConsoleStore(str(tmp_path/'console.db'))
+    room=store.open(title='synthetic',worker='w',worker_name='w',handle='h',
+                    cmd='synthetic',pty=False,opened_by='synthetic')['room']
+    chunk='x'*8192
+    for _ in range(100):
+        store.append(room,chunk)
+        assert len(store._pending.get(room,'')) < MAX_LINE
+    store.append(room,'',flush=True)
+    assert room not in store._pending
+    assert ''.join(line['text'] for line in store.read(room,limit=1000)['lines']) == chunk*100
+    store.close()
