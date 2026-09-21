@@ -162,6 +162,12 @@ class SettingsActivity : AppCompatActivity() {
                 .putBoolean("voice_insecure", b.voiceInsecure.isChecked)
                 .putBoolean("wake_enabled", b.wakeEnabled.isChecked)
                 .apply()
+            val service = VoiceService.inst
+            if (service != null) service.wakeSettingChanged()
+            else if (b.wakeEnabled.isChecked &&
+                checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                VoiceService.standby(this, b.voiceUrl.text.toString().trim(), b.voiceInsecure.isChecked)
+            }
             fetchVoices()
             status("voice settings saved (takes effect on next Voice on)")
         }

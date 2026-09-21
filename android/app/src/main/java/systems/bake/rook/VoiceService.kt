@@ -28,7 +28,7 @@ import kotlin.concurrent.thread
 /**
  * Foreground service (microphone type) that owns THE mic and runs two things on it:
  *
- *  - always: the on-device wake-word detector ("hey sojourn", openWakeWord ONNX)
+ *  - when enabled: the on-device wake-word detector ("hey sojourn", openWakeWord ONNX)
  *  - on demand: a VoiceClient session to the kaiju voice-agent, fed from the same
  *    AudioRecord. Sessions open on wake word (or a manual Start) and close after
  *    IDLE_CLOSE_MS of the server sitting in "listening" with nothing said.
@@ -41,13 +41,22 @@ class VoiceService : Service() {
 
     @Volatile private var client: VoiceClient? = null
     private var generation = 0L
-    private var sessionWanted = false
+    private val capture = VoiceCaptureLifetime { stopMic(); stopForegroundCompat() }
+    private var sessionWanted: Boolean
+        get() = capture.sessionWanted
+        set(value) { capture.sessionWanted = value }
     private var retries = 0
     @Volatile private var aecAvailable = false
     private var detector: WakeWordDetector? = null
     private var micThread: Thread? = null
     @Volatile private var micRunning = false
-    @Volatile private var standby = false
+    private var standby: Boolean
+        get() = capture.standby
+        set(value) { capture.standby = value }
+    private val recorderLock = Any()
+    private var recorder: AudioRecord? = null
+    private var foreground = false
+    private var destroyed = false
     private var wakeLock: PowerManager.WakeLock? = null
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var lastServerState = "idle"
@@ -56,7 +65,9 @@ class VoiceService : Service() {
     private lateinit var url: String
     private var insecure = false
     private var token = ""
-    private var wakeEnabled = true
+    private var wakeEnabled: Boolean
+        get() = capture.wakeEnabled
+        set(value) { capture.wakeEnabled = value }
 
     override fun onCreate() {
         super.onCreate()
@@ -79,20 +90,22 @@ class VoiceService : Service() {
             ACTION_END_SESSION -> { closeSession(); return START_STICKY }
             ACTION_STOP -> { standby = false; closeSession(); stopMic(); stopForegroundCompat(); stopSelf(); return START_NOT_STICKY }
             ACTION_SESSION -> {            // manual push-to-talk: open a session now
-                standby = true; ensureForeground(); ensureMic(); openSession(); return START_STICKY
+                standby = wakeEnabled; capture.voiceSession = true; sessionWanted = true
+                ensureForeground(); ensureMic(); openSession(); return START_STICKY
             }
         }
         // default / ACTION_STANDBY: mic on, wake word armed, no session yet
         if (url.isEmpty()) { stopSelf(); return START_NOT_STICKY }
-        standby = true
+        standby = wakeEnabled
         ensureForeground()
         val p = pending
         if (p != null) {
+            standby = micRunning && wakeEnabled
             pending = null
             submit(p.first, p.second, p.third)
-        } else ensureMic()
-        setState(if (wakeEnabled) "standby" else "idle")
-        return START_STICKY
+        } else if (capture.needsCapture) ensureMic()
+        settleCapture()
+        return if (capture.needsCapture || sessionWanted) START_STICKY else START_NOT_STICKY
     }
 
     // ---- session --------------------------------------------------------
@@ -103,8 +116,8 @@ class VoiceService : Service() {
             url = getSharedPreferences("rook", MODE_PRIVATE).getString("voice_url", "") ?: ""
             if (url.isEmpty()) { VoiceBus.listener?.onError("no voice server configured"); return }
         }
-        ensureForeground()
         openSession()
+        if (!capture.needsCapture) stopForegroundCompat()
         val c = client ?: return
         if (imageB64 != null) c.sendImage(imageB64, text, speak) else c.sendText(text, speak)
         lastActivityAt = SystemClock.elapsedRealtime()
@@ -154,9 +167,7 @@ class VoiceService : Service() {
                     main.postDelayed({ if (mine == generation && sessionWanted) openSession() }, delay)
                     return@current
                 }
-                sessionWanted = false
-                if (standby) setState(if (wakeEnabled) "standby" else "idle")
-                else { stopMic(); stopForegroundCompat(); stopSelf() }
+                closeSession()
             }
         }, ownMic = false, token = token).also { it.setAecAvailable(aecAvailable); it.connect() }
         main.removeCallbacks(idleCheck)
@@ -168,14 +179,45 @@ class VoiceService : Service() {
 
     fun thinkingChanged() {
         val reopen = sessionWanted
-        if (reopen) { closeSession(); openSession() }
+        if (reopen) {
+            // Socket replacement is not the end of capture ownership.
+            ++generation
+            val old = client; client = null
+            old?.close()
+            openSession()
+        }
     }
 
     private fun closeSession() {
         sessionWanted = false; ++generation; retries = 0
         main.removeCallbacks(idleCheck)
-        val old = client; client = null; old?.close()
-        if (standby) setState(if (wakeEnabled) "standby" else "idle")
+        val old = client; client = null
+        try { old?.close() } finally {
+            capture.endSession()
+            settleCapture()
+        }
+    }
+
+    private fun settleCapture() {
+        capture.reconcile()
+        if (!sessionWanted) {
+            setState(if (capture.wakeStandby) "standby" else "idle")
+            if (!capture.needsCapture) stopSelf()
+        }
+    }
+
+    fun releaseIfIdle() {
+        wakeEnabled = getSharedPreferences("rook", MODE_PRIVATE).getBoolean("wake_enabled", true)
+        settleCapture()
+    }
+
+    fun wakeSettingChanged() {
+        wakeEnabled = getSharedPreferences("rook", MODE_PRIVATE).getBoolean("wake_enabled", true)
+        standby = wakeEnabled
+        // Recreate the detector on the capture thread, including after toggling ON.
+        stopMic()
+        if (capture.needsCapture) { ensureForeground(); ensureMic() }
+        settleCapture()
     }
 
     private val idleCheck = object : Runnable {
@@ -191,9 +233,10 @@ class VoiceService : Service() {
 
     @SuppressLint("MissingPermission")
     private fun ensureMic() {
+        if (destroyed || !capture.needsCapture) return
         if (micRunning) return
         if (micThread?.isAlive == true) {
-            main.postDelayed({ if (inst === this && (standby || sessionWanted)) ensureMic() }, 200)
+            main.postDelayed({ if (inst === this && capture.needsCapture) ensureMic() }, 200)
             return
         }
         micRunning = true
@@ -220,7 +263,9 @@ class VoiceService : Service() {
                 if (NoiseSuppressor.isAvailable()) noise = NoiseSuppressor.create(rec.audioSessionId)?.also { it.enabled = true }
                 aecAvailable = echo?.enabled == true
                 client?.setAecAvailable(aecAvailable)
-                rec.startRecording()
+                synchronized(recorderLock) {
+                    if (micRunning) { recorder = rec; rec.startRecording() }
+                }
                 val buf = ByteArray(VoiceClient.FRAME_BYTES)
                 var wasActive = false
                 while (micRunning) {
@@ -239,17 +284,27 @@ class VoiceService : Service() {
                     // Never run it against the assistant's own speech.
                     if (active != wasActive) wake?.reset()
                     wasActive = active
-                    if (!active && wake != null && wake.feed(buf, speech = speech.recentSpeech)) onWake(wake)
+                    if (!active && wakeEnabled && standby && wake != null && wake.feed(buf, speech = speech.recentSpeech)) onWake(wake)
                 }
             } catch (error: Exception) {
-                post { VoiceBus.listener?.onError("Voice microphone: ${error.message}") }
+                if (micRunning) post {
+                    VoiceBus.listener?.onError("Voice microphone: ${error.message}")
+                    standby = false
+                    closeSession()
+                }
             } finally {
                 micRunning = false; aecAvailable = false
-                client?.setAecAvailable(false)
-                try { rec?.stop() } catch (_: Exception) {}
-                echo?.release(); noise?.release(); rec?.release()
-                speech?.close(); wake?.close(); detector = null
-                audio.isSpeakerphoneOn = oldSpeaker; audio.mode = oldMode
+                cleanupVoiceCapture(
+                    stop = { synchronized(recorderLock) { rec?.stop() } },
+                    release = { synchronized(recorderLock) {
+                        try { rec?.release() } finally { if (recorder === rec) recorder = null }
+                    } },
+                    before = listOf({ client?.setAecAvailable(false); Unit },
+                        { echo?.release(); Unit }, { noise?.release(); Unit }),
+                    after = listOf({ speech?.close(); Unit }, { wake?.close(); Unit },
+                        { detector = null }, { audio.isSpeakerphoneOn = oldSpeaker },
+                        { audio.mode = if (oldMode == AudioManager.MODE_IN_COMMUNICATION) AudioManager.MODE_NORMAL else oldMode })
+                )
             }
         }
     }
@@ -262,6 +317,8 @@ class VoiceService : Service() {
         d.reset()
         try { ToneGenerator(AudioManager.STREAM_MUSIC, 60).also { tone -> tone.startTone(ToneGenerator.TONE_PROP_BEEP, 120); main.postDelayed({ tone.release() }, 200) } } catch (_: Throwable) {}
         post {
+            if (destroyed || !capture.wakeStandby) return@post
+            capture.voiceSession = true
             VoiceBus.listener?.onWake()
             val c = client
             if (c?.isRunning == true) { c.interrupt(); lastActivityAt = SystemClock.elapsedRealtime() }
@@ -271,6 +328,8 @@ class VoiceService : Service() {
 
     private fun stopMic() {
         micRunning = false
+        // Stop the published recorder to unblock read; the thread releases it exactly once.
+        synchronized(recorderLock) { try { recorder?.stop() } catch (_: Exception) {} }
         try { micThread?.join(800) } catch (_: Throwable) {}
         if (micThread?.isAlive != true) micThread = null
         // The mic thread owns and closes inference sessions after capture stops.
@@ -282,18 +341,19 @@ class VoiceService : Service() {
 
     private fun setState(s: String) {
         VoiceBus.state = s; VoiceBus.listener?.onState(s)
-        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(NOTIF_ID, buildNotification(s))
+        if (foreground) (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(NOTIF_ID, buildNotification(s))
     }
 
     private fun ensureForeground() {
         startForegroundCompat(buildNotification("starting…"))
+        foreground = true
         if (wakeLock == null) {
             val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
             wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "rook:voice").also { it.acquire() }
         }
     }
 
-    override fun onDestroy() { inst = null; standby = false; closeSession(); stopMic(); try { wakeLock?.release() } catch (_: Throwable) {}; wakeLock = null; super.onDestroy() }
+    override fun onDestroy() { destroyed = true; if (inst === this) inst = null; standby = false; closeSession(); stopMic(); try { wakeLock?.release() } catch (_: Throwable) {}; wakeLock = null; super.onDestroy() }
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun startForegroundCompat(n: Notification) {
@@ -302,6 +362,9 @@ class VoiceService : Service() {
     }
 
     private fun stopForegroundCompat() {
+        foreground = false
+        try { wakeLock?.release() } catch (_: Exception) {}
+        wakeLock = null
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) stopForeground(STOP_FOREGROUND_REMOVE)
         else @Suppress("DEPRECATION") stopForeground(true)
     }
@@ -350,7 +413,7 @@ class VoiceService : Service() {
 
         /** Mic on + wake word armed. */
         fun standby(ctx: Context, url: String, insecure: Boolean) = fg(ctx, base(ctx, url, insecure).setAction(ACTION_STANDBY))
-        /** Open a session immediately (push-to-talk); also arms standby. */
+        /** Open a session immediately (push-to-talk); retains standby only when wake is enabled. */
         fun start(ctx: Context, url: String, insecure: Boolean) = fg(ctx, base(ctx, url, insecure).setAction(ACTION_SESSION))
         fun interrupt(ctx: Context) = ctx.startService(Intent(ctx, VoiceService::class.java).setAction(ACTION_INTERRUPT))
         fun endSession(ctx: Context) = ctx.startService(Intent(ctx, VoiceService::class.java).setAction(ACTION_END_SESSION))
