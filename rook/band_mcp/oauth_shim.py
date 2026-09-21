@@ -28,11 +28,12 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import ipaddress
 import logging
 import secrets
 import time
 from typing import TYPE_CHECKING
-from urllib.parse import unquote, urlencode
+from urllib.parse import unquote, urlencode, urlsplit
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
@@ -47,6 +48,29 @@ _CODE_TTL = 300          # authorization codes live 5 min
 # bearer enforces at /mcp (static token: never; API token: its ttl) — this is
 # just what we tell claude.ai so it doesn't refresh needlessly.
 _ACCESS_TTL = 31536000   # 1 year
+
+
+def _valid_redirect_uri(uri: str) -> bool:
+    """Allow HTTPS callbacks and HTTP loopback callbacks for local clients."""
+    # Reject characters URL parsers/browsers can normalize differently.
+    if any(ord(c) <= 32 or ord(c) == 127 for c in uri) or "\\" in uri:
+        return False
+    try:
+        parsed = urlsplit(uri)
+        host = parsed.hostname
+        parsed.port  # Validate malformed/out-of-range ports, too.
+        if not host or parsed.username is not None or parsed.password is not None or "#" in uri:
+            return False
+        if parsed.scheme == "https":
+            return True
+        if parsed.scheme != "http":
+            return False
+        if host == "localhost":
+            return True
+        address = ipaddress.ip_address(host)
+        return address.is_loopback
+    except ValueError:
+        return False
 
 
 class OAuthShim:
@@ -99,10 +123,10 @@ class OAuthShim:
             return JSONResponse({"error": "unsupported_response_type"}, status_code=400)
         redirect_uri = q.get("redirect_uri", "")
         challenge = q.get("code_challenge", "")
-        if not redirect_uri.startswith("https://"):
+        if not _valid_redirect_uri(redirect_uri):
             return JSONResponse(
                 {"error": "invalid_request",
-                 "error_description": "redirect_uri must be https"}, status_code=400)
+                 "error_description": "redirect_uri must use HTTPS or HTTP on localhost/a loopback address"}, status_code=400)
         if not challenge or q.get("code_challenge_method", "S256") != "S256":
             return JSONResponse(
                 {"error": "invalid_request",
