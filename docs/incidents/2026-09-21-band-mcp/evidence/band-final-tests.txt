@@ -1,0 +1,16 @@
+........................................................................ [100%]
+=============================== warnings summary ===============================
+rook/remote/server.py:13
+  /home/bake/rook/rook/remote/server.py:13: DeprecationWarning: websockets.server.WebSocketServerProtocol is deprecated
+    from websockets.server import WebSocketServerProtocol
+
+../../../tmp/rook-memory-venv/lib/python3.14/site-packages/websockets/legacy/__init__.py:6
+  /tmp/rook-memory-venv/lib/python3.14/site-packages/websockets/legacy/__init__.py:6: DeprecationWarning: websockets.legacy is deprecated; see https://websockets.readthedocs.io/en/stable/howto/upgrade.html for upgrade instructions
+    warnings.warn(  # deprecated in 14.0 - 2024-11-09
+
+tests/test_band_mcp_memory.py::test_delete_releases_transport_and_tasks
+  /tmp/rook-memory-venv/lib/python3.14/site-packages/pydantic_settings/sources/utils.py:47: IncompleteFieldDefinitionWarning: Field 'lifespan' has an incomplete definition: its annotation contains an unresolved forward reference, so settings sources may fail to correctly resolve its value. Call `model_rebuild()` on the model where the field is defined, once all the referenced types are defined.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+72 passed, 3 warnings in 6.26s

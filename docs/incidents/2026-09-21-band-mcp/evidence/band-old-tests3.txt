@@ -1,0 +1,160 @@
+FFFF..F                                                                  [100%]
+=================================== FAILURES ===================================
+___________________ test_delete_releases_transport_and_tasks ___________________
+  + Exception Group Traceback (most recent call last):
+  |   File "/tmp/band-baseline/tests/test_band_mcp_memory.py", line 43, in test_delete_releases_transport_and_tasks
+  |     async with server() as (manager,http,_):
+  |                ~~~~~~^^
+  |   File "/usr/lib/python3.14/contextlib.py", line 235, in __aexit__
+  |     await self.gen.athrow(value)
+  |   File "/tmp/band-baseline/tests/test_band_mcp_memory.py", line 28, in server
+  |     async with app.router.lifespan_context(app), httpx.AsyncClient(transport=httpx.ASGITransport(app=app),base_url='http://localhost',headers={'Accept':'application/json, text/event-stream'}) as http:
+  |                ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^
+  |   File "/usr/lib/python3.14/contextlib.py", line 235, in __aexit__
+  |     await self.gen.athrow(value)
+  |   File "/tmp/rook-memory-venv/lib/python3.14/site-packages/mcp/server/streamable_http_manager.py", line 125, in run
+  |     async with anyio.create_task_group() as tg:
+  |                ~~~~~~~~~~~~~~~~~~~~~~~^^
+  |   File "/tmp/rook-memory-venv/lib/python3.14/site-packages/anyio/_backends/_asyncio.py", line 799, in __aexit__
+  |     raise BaseExceptionGroup(
+  |         "unhandled errors in a TaskGroup", self._exceptions
+  |     ) from None
+  | ExceptionGroup: unhandled errors in a TaskGroup (1 sub-exception)
+  +-+---------------- 1 ----------------
+    | Traceback (most recent call last):
+    |   File "/tmp/rook-memory-venv/lib/python3.14/site-packages/mcp/server/streamable_http_manager.py", line 130, in run
+    |     yield  # Let the application run
+    |     ^^^^^
+    |   File "/tmp/band-baseline/tests/test_band_mcp_memory.py", line 29, in server
+    |     yield manager,http,started
+    |   File "/tmp/band-baseline/tests/test_band_mcp_memory.py", line 50, in test_delete_releases_transport_and_tasks
+    |     assert not manager._server_instances
+    | AssertionError: assert not {'5b5bd96e640148818e77d75f26f0c2d5': <mcp.server.streamable_http.StreamableHTTPServerTransport object at 0x7f751238cad0>}
+    |  +  where {'5b5bd96e640148818e77d75f26f0c2d5': <mcp.server.streamable_http.StreamableHTTPServerTransport object at 0x7f751238cad0>} = <rook.band_mcp.http_sessions.BoundedSessionManager object at 0x7f75129670e0>._server_instances
+    +------------------------------------
+_______________ test_abandoned_sessions_expire_and_old_id_is_404 _______________
+  + Exception Group Traceback (most recent call last):
+  |   File "/tmp/band-baseline/tests/test_band_mcp_memory.py", line 57, in test_abandoned_sessions_expire_and_old_id_is_404
+  |     async with server() as (manager,http,_):
+  |                ~~~~~~^^
+  |   File "/usr/lib/python3.14/contextlib.py", line 235, in __aexit__
+  |     await self.gen.athrow(value)
+  |   File "/tmp/band-baseline/tests/test_band_mcp_memory.py", line 28, in server
+  |     async with app.router.lifespan_context(app), httpx.AsyncClient(transport=httpx.ASGITransport(app=app),base_url='http://localhost',headers={'Accept':'application/json, text/event-stream'}) as http:
+  |                ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^
+  |   File "/usr/lib/python3.14/contextlib.py", line 235, in __aexit__
+  |     await self.gen.athrow(value)
+  |   File "/tmp/rook-memory-venv/lib/python3.14/site-packages/mcp/server/streamable_http_manager.py", line 125, in run
+  |     async with anyio.create_task_group() as tg:
+  |                ~~~~~~~~~~~~~~~~~~~~~~~^^
+  |   File "/tmp/rook-memory-venv/lib/python3.14/site-packages/anyio/_backends/_asyncio.py", line 799, in __aexit__
+  |     raise BaseExceptionGroup(
+  |         "unhandled errors in a TaskGroup", self._exceptions
+  |     ) from None
+  | ExceptionGroup: unhandled errors in a TaskGroup (1 sub-exception)
+  +-+---------------- 1 ----------------
+    | Traceback (most recent call last):
+    |   File "/tmp/rook-memory-venv/lib/python3.14/site-packages/mcp/server/streamable_http_manager.py", line 130, in run
+    |     yield  # Let the application run
+    |     ^^^^^
+    |   File "/tmp/band-baseline/tests/test_band_mcp_memory.py", line 29, in server
+    |     yield manager,http,started
+    |   File "/tmp/band-baseline/tests/test_band_mcp_memory.py", line 62, in test_abandoned_sessions_expire_and_old_id_is_404
+    |     assert not manager._server_instances
+    | AssertionError: assert not {'6271879791de4f5cabf6729b96fdfeb9': <mcp.server.streamable_http.StreamableHTTPServerTransport object at 0x7f7512363750>}
+    |  +  where {'6271879791de4f5cabf6729b96fdfeb9': <mcp.server.streamable_http.StreamableHTTPServerTransport object at 0x7f7512363750>} = <rook.band_mcp.http_sessions.BoundedSessionManager object at 0x7f7512361590>._server_instances
+    +------------------------------------
+________________ test_pending_futures_always_released[failure] _________________
+
+mode = 'failure'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('mode',['failure','cancel','timeout','reply','serialize'])
+    async def test_pending_futures_always_released(mode):
+        client=BandClient(secrets.token_hex(32))
+        entered=asyncio.Event()
+        async def send(payload):
+            entered.set()
+            if mode=='failure': raise OSError('synthetic')
+            if mode=='reply':
+                msg=json.loads(payload)
+                client._handle_reply({'id':msg['id'],'from':'test','ok':True})
+            else: await asyncio.sleep(10)
+        client.transport.send=send
+        task=asyncio.create_task(client.call('test',args={'bad':object()} if mode=='serialize' else {},timeout=.03))
+        if mode=='cancel':
+            await entered.wait()
+            task.cancel()
+        result=await asyncio.gather(task,return_exceptions=True)
+>       assert not client._pending
+E       AssertionError: assert not {'5c9d3a881d7648d29b0f41b2b3368660': <Future pending>}
+E        +  where {'5c9d3a881d7648d29b0f41b2b3368660': <Future pending>} = <rook.band_mcp.client.BandClient object at 0x7f7512965a90>._pending
+
+tests/test_band_mcp_memory.py:112: AssertionError
+_________________ test_pending_futures_always_released[cancel] _________________
+
+mode = 'cancel'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('mode',['failure','cancel','timeout','reply','serialize'])
+    async def test_pending_futures_always_released(mode):
+        client=BandClient(secrets.token_hex(32))
+        entered=asyncio.Event()
+        async def send(payload):
+            entered.set()
+            if mode=='failure': raise OSError('synthetic')
+            if mode=='reply':
+                msg=json.loads(payload)
+                client._handle_reply({'id':msg['id'],'from':'test','ok':True})
+            else: await asyncio.sleep(10)
+        client.transport.send=send
+        task=asyncio.create_task(client.call('test',args={'bad':object()} if mode=='serialize' else {},timeout=.03))
+        if mode=='cancel':
+            await entered.wait()
+            task.cancel()
+        result=await asyncio.gather(task,return_exceptions=True)
+>       assert not client._pending
+E       AssertionError: assert not {'9b16e51f5d944b7eb4ac7c3fcba4627c': <Future pending>}
+E        +  where {'9b16e51f5d944b7eb4ac7c3fcba4627c': <Future pending>} = <rook.band_mcp.client.BandClient object at 0x7f7512363d90>._pending
+
+tests/test_band_mcp_memory.py:112: AssertionError
+_______________ test_pending_futures_always_released[serialize] ________________
+
+mode = 'serialize'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('mode',['failure','cancel','timeout','reply','serialize'])
+    async def test_pending_futures_always_released(mode):
+        client=BandClient(secrets.token_hex(32))
+        entered=asyncio.Event()
+        async def send(payload):
+            entered.set()
+            if mode=='failure': raise OSError('synthetic')
+            if mode=='reply':
+                msg=json.loads(payload)
+                client._handle_reply({'id':msg['id'],'from':'test','ok':True})
+            else: await asyncio.sleep(10)
+        client.transport.send=send
+        task=asyncio.create_task(client.call('test',args={'bad':object()} if mode=='serialize' else {},timeout=.03))
+        if mode=='cancel':
+            await entered.wait()
+            task.cancel()
+        result=await asyncio.gather(task,return_exceptions=True)
+>       assert not client._pending
+E       AssertionError: assert not {'953dd692e63448bdbe6ca6e5d42acbbf': <Future pending>}
+E        +  where {'953dd692e63448bdbe6ca6e5d42acbbf': <Future pending>} = <rook.band_mcp.client.BandClient object at 0x7f7512204c30>._pending
+
+tests/test_band_mcp_memory.py:112: AssertionError
+=============================== warnings summary ===============================
+tests/test_band_mcp_memory.py::test_delete_releases_transport_and_tasks
+  /tmp/rook-memory-venv/lib/python3.14/site-packages/pydantic_settings/sources/utils.py:47: IncompleteFieldDefinitionWarning: Field 'lifespan' has an incomplete definition: its annotation contains an unresolved forward reference, so settings sources may fail to correctly resolve its value. Call `model_rebuild()` on the model where the field is defined, once all the referenced types are defined.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_band_mcp_memory.py::test_delete_releases_transport_and_tasks
+FAILED tests/test_band_mcp_memory.py::test_abandoned_sessions_expire_and_old_id_is_404
+FAILED tests/test_band_mcp_memory.py::test_pending_futures_always_released[failure]
+FAILED tests/test_band_mcp_memory.py::test_pending_futures_always_released[cancel]
+FAILED tests/test_band_mcp_memory.py::test_pending_futures_always_released[serialize]
+5 failed, 2 passed, 5 deselected, 1 warning in 11.01s

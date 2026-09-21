@@ -7,7 +7,7 @@ new clients. Active POSTs suspend idle expiry until they finish. Expired IDs
 receive 404; clients must initialize a new session. DELETE, send failure,
 cancellation, expiry and shutdown release transport and session-task ownership.
 SDK streams use rendezvous buffers and the bridge does not configure an event
-replay store. The adapter is tested against MCP 1.27.1; re-run lifecycle tests
+replay store. The package requires MCP 1.27.1 or newer. The adapter is tested against MCP 1.27.1; re-run lifecycle tests
 before SDK upgrades because it integrates with FastMCP's internal manager slot.
 
 BandClient has at most 512 pending calls, and its timeout covers both sending

@@ -1,0 +1,68 @@
+{
+  "before": {
+    "duration_seconds": 120.68,
+    "samples": 3,
+    "calls": 115,
+    "errors": 0,
+    "pids": [
+      153960
+    ],
+    "peak_rss_kib": 108952,
+    "peak_hwm_kib": 108952,
+    "max_swap_kib": 0,
+    "calls_per_second": 0.952933377527345,
+    "rook_call": {
+      "n": 57,
+      "p50_ms": 32.03,
+      "p95_ms": 198.023
+    },
+    "rook_workers": {
+      "n": 58,
+      "p50_ms": 11.538,
+      "p95_ms": 117.517
+    },
+    "last15_rss_mib": {
+      "min": 102.51171875,
+      "max": 106.3984375,
+      "slope_mib_per_hour": 115.90770815887366
+    },
+    "last10_rss_plus_swap_mib": {
+      "min": 102.51171875,
+      "max": 106.3984375
+    },
+    "complete": true
+  },
+  "after": {
+    "duration_seconds": 1800.29,
+    "samples": 31,
+    "calls": 1759,
+    "errors": 1,
+    "pids": [
+      155846
+    ],
+    "peak_rss_kib": 100604,
+    "peak_hwm_kib": 100824,
+    "max_swap_kib": 16688,
+    "calls_per_second": 0.9770648062256637,
+    "rook_call": {
+      "n": 879,
+      "p50_ms": 21.336,
+      "p95_ms": 403.647
+    },
+    "rook_workers": {
+      "n": 880,
+      "p50_ms": 12.0465,
+      "p95_ms": 211.861
+    },
+    "last15_rss_mib": {
+      "min": 71.1875,
+      "max": 98.24609375,
+      "slope_mib_per_hour": 10.135674966484867
+    },
+    "last10_rss_plus_swap_mib": {
+      "min": 88.8125,
+      "max": 90.1640625
+    },
+    "complete": true
+  }
+}

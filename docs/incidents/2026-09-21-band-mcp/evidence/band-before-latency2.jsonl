@@ -1,0 +1,5 @@
+{"batch": 1, "VmHWM": 89168, "VmRSS": 89168, "sessions": 40, "pending": 40, "oauth_codes": 40, "tasks": 62, "calls": 480, "p50_ms": 3.2821024069562554, "p95_ms": 4.949157126247883}
+{"batch": 2, "VmHWM": 90692, "VmRSS": 90692, "sessions": 80, "pending": 80, "oauth_codes": 80, "tasks": 122, "calls": 480, "p50_ms": 2.915104618296027, "p95_ms": 4.599271109327674}
+{"batch": 3, "VmHWM": 91752, "VmRSS": 91752, "sessions": 120, "pending": 120, "oauth_codes": 120, "tasks": 182, "calls": 480, "p50_ms": 3.5238804994150996, "p95_ms": 5.394593114033341}
+{"batch": 4, "VmHWM": 92804, "VmRSS": 92804, "sessions": 160, "pending": 160, "oauth_codes": 160, "tasks": 242, "calls": 480, "p50_ms": 3.3760685473680496, "p95_ms": 5.045968806371093}
+{"batch": 5, "VmHWM": 93968, "VmRSS": 93968, "sessions": 200, "pending": 200, "oauth_codes": 200, "tasks": 302, "calls": 480, "p50_ms": 3.5292700631543994, "p95_ms": 5.27314399369061}

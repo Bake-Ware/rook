@@ -100,7 +100,14 @@ async def exercise(batches=5, sessions=40, trace=True, settle=0, idle=None):
                 diffs=tracemalloc.take_snapshot().compare_to(base,'lineno')[:10]
                 print(json.dumps({'allocations':[{'site':str(s.traceback),'bytes':s.size_diff,'count':s.count_diff} for s in diffs]}),flush=True)
                 import objgraph
-                print(json.dumps({'objects':{t:objgraph.count(t) for t in ['StreamableHTTPServerTransport','ServerSession','Future','Task']},'ownership':'manager._server_instances -> transport; task group -> run_server -> ServerSession; client._pending -> Future'}),flush=True)
+                roots={}
+                if manager._server_instances:
+                    obj=next(iter(manager._server_instances.values()))
+                    roots['transport']=[type(x).__name__ for x in objgraph.find_backref_chain(obj,lambda x:x is manager,max_depth=5)]
+                if client._pending:
+                    obj=next(iter(client._pending.values()))
+                    roots['future']=[type(x).__name__ for x in objgraph.find_backref_chain(obj,lambda x:x is client,max_depth=5)]
+                print(json.dumps({'backref_types':roots,'objects':{t:objgraph.count(t) for t in ['StreamableHTTPServerTransport','ServerSession','Future','Task']},'ownership':'manager._server_instances -> transport; task group -> run_server -> ServerSession; client._pending -> Future'}),flush=True)
             return samples
 
 if __name__=='__main__':

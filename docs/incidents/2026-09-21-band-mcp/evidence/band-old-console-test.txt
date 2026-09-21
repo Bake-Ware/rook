@@ -1,0 +1,25 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+__________ test_console_unterminated_output_is_bounded_and_preserved ___________
+
+tmp_path = PosixPath('/tmp/pytest-of-bake/pytest-78/test_console_unterminated_outp0')
+
+    def test_console_unterminated_output_is_bounded_and_preserved(tmp_path):
+        from rook.band_mcp.console_rooms import ConsoleStore, MAX_LINE
+        store=ConsoleStore(str(tmp_path/'console.db'))
+        room=store.open(title='synthetic',worker='w',worker_name='w',handle='h',
+                        cmd='synthetic',pty=False,opened_by='synthetic')['room']
+        chunk='x'*8192
+        for _ in range(100):
+            store.append(room,chunk)
+>           assert len(store._pending.get(room,'')) < MAX_LINE
+E           AssertionError: assert 8192 < 4000
+E            +  where 8192 = len('xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx')
+E            +    where 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' = <built-in method get of dict object at 0x7fa2304d6e80>('589c6e3e087b421f', '')
+E            +      where <built-in method get of dict object at 0x7fa2304d6e80> = {'589c6e3e087b421f': 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'}.get
+E            +        where {'589c6e3e087b421f': 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'} = <rook.band_mcp.console_rooms.ConsoleStore object at 0x7fa230a61e80>._pending
+
+tests/test_band_mcp_memory.py:167: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_band_mcp_memory.py::test_console_unterminated_output_is_bounded_and_preserved
+1 failed, 12 deselected in 0.66s
