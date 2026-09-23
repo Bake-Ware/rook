@@ -284,7 +284,7 @@ class ChatStore:
             msgs = [{"seq": s, "ts": t, "sender": snd, "text": txt,
                      "mentions": json.loads(mn or "[]"),
                      "expects_reply": bool(er)} for (s, t, snd, txt, mn, er) in rows]
-            if mark and reader and msgs:
+            if mark and reader and msgs and reader in room["participants"]:
                 self._db.execute(
                     "INSERT INTO reads (identity,room_id,last_read_seq) VALUES (?,?,?) "
                     "ON CONFLICT(identity,room_id) DO UPDATE SET last_read_seq=excluded.last_read_seq",
@@ -294,9 +294,12 @@ class ChatStore:
                 "participants": room["participants"], "messages": msgs,
                 "last_seq": msgs[-1]["seq"] if msgs else int(since_seq)}
 
-    def rooms_for(self, identity: str, limit: int = 50) -> dict:
+    def rooms_for(self, identity: str, limit: int = 50,
+                  include_all: bool = False) -> dict:
         """Rooms this identity participates in, newest-active first, with unread
-        counts (messages past its read watermark, not counting its own)."""
+        counts (messages past its read watermark, not counting its own).
+        ``include_all`` also lists rooms it isn't in (``member: False``, no
+        unread count) -- for the dashboard, which oversees every room."""
         if self._db is None:
             return {"ok": False, "error": "chat store not available"}
         with self._lock:
@@ -306,21 +309,25 @@ class ChatStore:
             out = []
             for (rid, title, la, parts) in rows:
                 plist = json.loads(parts or "[]")
-                if identity not in plist:
+                member = identity in plist
+                if not member and not include_all:
                     continue
-                wr = self._db.execute(
-                    "SELECT last_read_seq FROM reads WHERE identity=? AND room_id=?",
-                    (identity, rid)).fetchone()
-                watermark = wr[0] if wr else 0
-                cnt = self._db.execute(
-                    "SELECT COUNT(*) FROM messages WHERE room_id=? AND seq>? AND sender!=?",
-                    (rid, watermark, identity)).fetchone()[0]
+                cnt = 0
+                if member:
+                    wr = self._db.execute(
+                        "SELECT last_read_seq FROM reads WHERE identity=? AND room_id=?",
+                        (identity, rid)).fetchone()
+                    watermark = wr[0] if wr else 0
+                    cnt = self._db.execute(
+                        "SELECT COUNT(*) FROM messages WHERE room_id=? AND seq>? AND sender!=?",
+                        (rid, watermark, identity)).fetchone()[0]
                 last = self._db.execute(
                     "SELECT sender,text FROM messages WHERE room_id=? ORDER BY seq DESC LIMIT 1",
                     (rid,)).fetchone()
                 out.append({"room": rid, "title": title,
                             "last_activity_age_secs": round(time.time() - la, 1),
-                            "participants": plist, "unread": cnt,
+                            "participants": plist, "member": member,
+                            "unread": cnt,
                             "last_sender": last[0] if last else None,
                             "last_text": (last[1][:120] if last else None)})
                 if len(out) >= limit:
