@@ -1,6 +1,10 @@
 # Agent work system: knowledge, tasks, links and hygiene
 
-Status: proposal for Bake's review (2026-09-23). Nothing here is built yet.
+Status: design agreed with Bake 2026-09-23 (decisions folded in). Not built yet.
+
+Principle: **on rails.** Anything that can be enforced or triggered
+deterministically by the hub is. Agent discipline covers only what can't be,
+such as writing a good outcome or handoff.
 
 ## Purpose
 
@@ -18,26 +22,42 @@ them. Rook's knowledge and task records are that shared layer:
 Non-goals: nothing here authorizes, blocks or gates band calls. The validation
 rules below apply only to saving records, never to executing work.
 
-## 1. Identity (from the token, never from arguments)
+## 1. Identity (from the token and session, never from arguments)
 
-Every actor is derived from the authenticated request:
+An agent is identified by a compound name built from what the hub observes:
 
-| Field | Source | Example |
+```
+<token>.<client>.<host>@<working dir, / → .>
+claudetoken.claudecode.cachyrig@.home.bake.rook
+```
+
+| Part | Source | Fallback |
 |---|---|---|
-| `key` | API token label (`static` for the shared token) | `claude code` |
-| `key_id` / `agent_id` | token store (stable across rotation) | `a41d…` / `agent_3f9c…` |
-| `client` | MCP `initialize` → `clientInfo.name`, normalized | `claude-code`, `claude-ai`, `codex`, `hermes`, `unknown` |
-| `host` | `X-Rook-Host` header; **`web`** if absent or unreadable | `cachyrig`, `web` |
+| `token` | API token label, normalized (lowercase, `[a-z0-9-]`) | `static` for the shared token |
+| `client` | MCP `initialize` → `clientInfo.name`, normalized (`claudecode`, `claudeai`, `codex`, `hermes`) | `unknown` |
+| `host` | `X-Rook-Host` header | `web` |
+| `dir` | MCP `roots/list` (the client's working root), else an `X-Rook-Cwd` header | omitted (no `@…` part) |
 
-- The **actor id** is `key_id` for named keys. For the shared static token it's
-  derived from `(static, client, host)`, so different agents sharing the
-  static key are still told apart.
-- Records store the full structured actor. The display string stays
-  `agent:<key>_<host>` for chat and worker audit logs, which are keyed on it.
-- No write can claim to be another actor. Background jobs use a fixed
-  `system:<job>` actor that agents can never pass in.
-- To verify: that `clientInfo.name` is readable from the session in the prod
-  SDK (1.27.1), and what each real client actually sends.
+- **The compound name is the agent's identity** for records, claims, links
+  and the deck. The same token and client on another host or directory is a
+  different agent. Structured fields (`key_id`, `agent_id`, `token`, `client`,
+  `host`, `dir`) are stored alongside, so queries don't parse the name.
+- **Chat stays as it is:** chat and worker audit logs keep the current
+  display string (`agent:<key>_<host>`), because rooms are keyed on it.
+- **No impersonation:** no write can claim another identity. Background jobs
+  use a fixed `system:<job>` actor that agents can never pass in.
+- **Normalized names can collide** (two labels that normalize the same). The
+  structured `key_id` disambiguates.
+- To verify on prod (SDK 1.27.1) for each real client: whether
+  `clientInfo.name` is sent, whether the client answers `roots/list`, and
+  what each returns.
+
+### Later: users own keys and bands
+API keys will belong to the user who created them. An agent's access is its
+owner's access, including which bands it can see. The deck and records are
+all-bands for now. When per-user band access lands, both filter to the
+owner's bands. Records already store the key id, so no data migration is
+needed.
 
 ## 2. Records and a loose wiki
 
@@ -122,7 +142,8 @@ Task states: `todo` → `in_progress` → `done`, plus `blocked`, `paused`,
     `rook_handoff_save` linked to the task, or one passed inline.
   - `blocked` needs a `blocked_by` link or a reason.
 - **Deck:** `rook_task(action="deck", project=…)` is the one call behind
-  "what's on deck?". It returns, per project:
+  "what's on deck?". It covers **all bands** (until per-user band access
+  lands, §1). It returns, per project:
   - in progress: claimant, last active, latest handoff;
   - blocked: with reasons;
   - todo: in priority order;
@@ -134,11 +155,13 @@ Most real work happens on workers, where the hub can see activity stop.
 
 - **A task is dirty** when all of these hold:
   - it is `in_progress` with a claim;
-  - the claimant has been idle longer than **N minutes** (default 30,
-    editable);
+  - the claimant has been idle longer than **30 minutes** (one global
+    setting);
   - and either there is activity since the last handoff, or there's
     unlinked or unrecorded outcome evidence.
-- **The nudge,** once per idle period per task, tries these in order:
+- **The nudge,** once per idle period per task:
+  0. First, check whether the claimant's worker (its identity's host) is on
+     the band. If it isn't, go straight to step 3 and mark the task dirty.
   1. The claim recorded a provider session and worker that support
      `<client>-history.send` → send the hygiene prompt **into that same
      session**, so the agent that did the work, with its context, writes it up.
@@ -171,8 +194,8 @@ The migration is a one-off job run by a subagent, after §2–§3 exist:
 - Read each source and dedupe.
 - Write knowledge pages as `unverified`, each with a `url`/`record`-style
   **source link** to its original id, and the importing actor recorded.
-- Afterwards, `memory.*` either writes through to knowledge or is retired
-  (decision for later).
+- After the import is verified, **retire `memory.*`**: disable the plugin
+  and point agents at knowledge in the instructions.
 
 ## 7. Order of work
 
@@ -190,10 +213,10 @@ Before step 1, the existing `knowledge.db` rows (all written by Codex on
 2026-09-22, mostly under invented `system:*` actors) are deleted. A copy stays
 in `/var/backups/rook/audit-20260922-f279a47/knowledge.db`.
 
-## Open questions
+## Decisions (2026-09-23)
 
-1. Are two hosts on one named key the same agent (one actor id) or two? The
-   proposal says one (the key is the agent), with host kept as a separate field.
-2. Idle timeout default (30 min?), and whether it's set per project.
-3. Should the deck be scoped per band, or cover all bands by default?
-4. Should `memory.*` write through to knowledge, or be retired, after import?
+1. **Identity:** the compound `token.client.host@dir` name (§1).
+2. **Idle timeout:** one global 30-minute setting. If the worker is off the
+   band, the task is marked dirty rather than nudged.
+3. **Deck scope:** all bands, later filtered by the owner's band access.
+4. **Memory:** imported into knowledge, then `memory.*` is retired.
