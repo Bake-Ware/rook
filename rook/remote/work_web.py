@@ -24,7 +24,13 @@ METADATA_KEYS = frozenset(('id', 'owner', 'title', 'cwd', 'model', 'worker_id',
     'source_updated', 'last_activity', 'message_count', 'thread_id', 'turn_id', 'status',
     'review_status', 'revision', 'updated', 'error', 'disconnected',
     'external_handle', 'external_cursor', 'resume_note', 'remote_runtime',
-    'worker_revision', 'running', 'needs_input', 'legacy_runtime', 'active', 'messageable', 'message_note'))
+    'worker_revision', 'running', 'needs_input', 'legacy_runtime', 'active', 'messageable', 'message_note',
+    'created_by'))
+
+
+def actor(user):
+    """Audit identity for a signed-in account, stamped on band calls."""
+    return 'human:' + str(user.get('username') or user['id'])
 
 
 class WorkStore:
@@ -53,6 +59,9 @@ class WorkStore:
                     session TEXT NOT NULL, id TEXT NOT NULL, result TEXT NOT NULL,
                     PRIMARY KEY(session,id));
             """)
+            # Audit attribution: which account submitted each command.
+            if 'actor' not in {r[1] for r in db.execute('PRAGMA table_info(work_commands)')}:
+                db.execute('ALTER TABLE work_commands ADD COLUMN actor TEXT')
             # A restarted web process cannot know whether the host received an
             # unfinished command. Keep its ID claimed and require human review.
             db.execute("UPDATE work_commands SET result=? WHERE json_extract(result, '$.status')='accepted'",
@@ -93,7 +102,7 @@ class WorkStore:
         with self.db() as db:
             state = json.loads(db.execute('SELECT state FROM work_sessions WHERE id=?', (sid,)).fetchone()[0])
             events = [dict(r) for r in db.execute('SELECT * FROM work_events WHERE session=?', (sid,))]
-            commands = [dict(r) for r in db.execute('SELECT id,result FROM work_commands WHERE session=?', (sid,))]
+            commands = [dict(r) for r in db.execute('SELECT id,result,actor FROM work_commands WHERE session=?', (sid,))]
         return dict(state=state, events=events, commands=commands)
 
     def all(self, owner=None, *, details=True):
@@ -126,10 +135,10 @@ class WorkStore:
             db.execute('INSERT OR REPLACE INTO work_index VALUES(?,?,?,?)',
                        (state['id'], state['owner'], state['updated'], json.dumps(state)))
 
-    def claim(self, sid, cid):
+    def claim(self, sid, cid, actor=None):
         with self.db() as db:
-            cur = db.execute('INSERT OR IGNORE INTO work_commands VALUES(?,?,?)',
-                             (sid, cid, json.dumps({'status': 'accepted'})))
+            cur = db.execute('INSERT OR IGNORE INTO work_commands(session,id,result,actor) VALUES(?,?,?,?)',
+                             (sid, cid, json.dumps({'status': 'accepted'}), actor))
             return cur.rowcount == 1
 
     def result(self, sid, cid, value=None):
@@ -203,9 +212,10 @@ class WorkWeb:
             raise ValueError('Host disconnected. Connect the host to read or resume this session.')
         return found
 
-    async def rpc(self, state, cap, args, timeout=12):
+    async def rpc(self, state, cap, args, timeout=12, identity='system:work'):
         self.worker(state)
-        reply = await self.server._band.call(cap=cap, args=args, target=state['worker_id'], timeout=timeout)
+        reply = await self.server._band.call(cap=cap, args=args, target=state['worker_id'],
+                                             timeout=timeout, identity=identity)
         if not reply.get('ok') or reply.get('from') != state['worker_id']:
             raise ValueError(reply.get('error') or 'Worker did not acknowledge the request.')
         result = reply.get('result') or {}
@@ -241,7 +251,7 @@ class WorkWeb:
                 if cap not in caps:
                     return web.json_response({'unchanged': True, 'live': False}, headers=NO_STORE)
                 page = await self.rpc(s, cap, dict(session_id=s['source_id'], offset=offset,
-                    version=request.query.get('version', '')))
+                    version=request.query.get('version', '')), identity=actor(user))
                 version = str(page.get('version', '')).split(':')
                 if len(version) == 3 and version[2].isdigit():
                     activity = int(version[2]) / 1_000_000_000
@@ -259,7 +269,7 @@ class WorkWeb:
                 cap = s['agent'] + '-history.read_page'
             if cap not in caps:
                 raise ValueError('Update this worker to enable transcript reads.')
-            page = await self.rpc(s, cap, args)
+            page = await self.rpc(s, cap, args, identity=actor(user))
             # Relay a single bounded page. Never persist transcript content.
             return web.json_response(page, headers=NO_STORE)
         except (ValueError, TimeoutError) as error:
@@ -274,7 +284,8 @@ class WorkWeb:
         try:
             page = await self.rpc(s, 'work.view_page', dict(session_id=s['id'],
                 since=max(0, int(request.query.get('since', '0'))),
-                token=request.query.get('token', ''), offset=max(0, int(request.query.get('offset', '0')))))
+                token=request.query.get('token', ''), offset=max(0, int(request.query.get('offset', '0')))),
+                identity=actor(user))
             return web.json_response(page, headers=NO_STORE)
         except (ValueError, TimeoutError) as error:
             return web.json_response({'error': str(error) or 'Host request timed out.'}, status=503, headers=NO_STORE)
@@ -361,16 +372,16 @@ class WorkWeb:
                                  worker_id=w['worker_id'], worker_name=w.get('name'), band=w.get('band'),
                                  cwd=cwd, model=str(data.get('model') or '')[:100],
                                  agent='codex', status='starting', remote_runtime=True, worker_revision=0,
-                                 thread_id=None, turn_id=None, error='')
+                                 thread_id=None, turn_id=None, error='', created_by=actor(user))
                         self.store.save(s, {'op': 'create'})
-                        self.launch(sid, {'op': 'open', 'id': cid})
+                        self.launch(sid, {'op': 'open', 'id': cid}, actor(user))
                     selected, last_revision = sid, None
                     await ws.send_json({'type': 'selected', 'session': sid})
                 else:
                     sid = str(data.get('session', ''))
                     self.store.get(sid, user['id'])
-                    if data.get('op') != 'receipt' and self.store.claim(sid, cid):
-                        self.launch(sid, data)
+                    if data.get('op') != 'receipt' and self.store.claim(sid, cid, actor(user)):
+                        self.launch(sid, data, actor(user))
                     pending_receipts[cid] = sid
                     await ws.send_json({'type': 'ack', 'id': cid,
                                         'result': self.store.result(sid, cid) or {'status': 'error', 'error': 'No delivery receipt found. Check the host before retrying.'}})
@@ -383,12 +394,14 @@ class WorkWeb:
                 await ws.send_json({'type': 'error', 'error': 'Session not found.'})
         return ws
 
-    def launch(self, sid, data):
-        job = asyncio.create_task(self.command(sid, data))
+    def launch(self, sid, data, identity='system:work'):
+        job = asyncio.create_task(self.command(sid, data, identity))
         self.jobs.add(job)
         job.add_done_callback(self.jobs.discard)
 
-    async def command(self, sid, data):
+    async def command(self, sid, data, identity='system:work'):
+        async def rpc(*args, **kwargs):
+            return await self.rpc(*args, identity=identity, **kwargs)
         async with self.lock(sid):
             s = self.store.get(sid)
             try:
@@ -403,13 +416,13 @@ class WorkWeb:
                     s['error'] = ''
                 elif s.get('imported') and op == 'close':
                     if s.get('external_handle'):
-                        await self.rpc(s, 'proc.signal', {'handle': s['external_handle'], 'sig': 'TERM'})
+                        await rpc(s, 'proc.signal', {'handle': s['external_handle'], 'sig': 'TERM'})
                         s['external_handle'] = None
                     s['review_status'] = 'closed'
                 elif s.get('imported') and op == 'resume':
                     if s.get('external_handle'):
                         raise ValueError('This session is already running on its host.')
-                    result = await self.rpc(s, s['agent'] + '-history.resume', {'session_id': s['source_id']}, timeout=40)
+                    result = await rpc(s, s['agent'] + '-history.resume', {'session_id': s['source_id']}, timeout=40)
                     self.external_output[sid] = ''
                     s.update(external_handle=result['handle'], external_cursor=0,
                              review_status=None, error='', resume_note=result.get('note', ''))
@@ -419,27 +432,27 @@ class WorkWeb:
                         raise ValueError('Enter a message of 1–24000 characters.')
                     s['message_note'] = ''
                     if s.get('external_handle'):
-                        await self.rpc(s, 'proc.write', {'handle': s['external_handle'], 'data': text, 'newline': True})
+                        await rpc(s, 'proc.write', {'handle': s['external_handle'], 'data': text, 'newline': True})
                         s['message_note'] = 'Input sent to the host terminal.'
                     else:
-                        result = await self.rpc(s, s['agent'] + '-history.send',
+                        result = await rpc(s, s['agent'] + '-history.send',
                             {'session_id': s['source_id'], 'text': text, 'command_id': data['id']}, timeout=30)
                         s['message_note'] = result.get('note', 'Message submitted on host.')
                     s['error'] = ''
                 elif s.get('imported') and op == 'interrupt':
                     if not s.get('external_handle'):
                         raise ValueError('No running session to interrupt.')
-                    await self.rpc(s, 'proc.signal', {'handle': s['external_handle'], 'sig': 'INT'})
+                    await rpc(s, 'proc.signal', {'handle': s['external_handle'], 'sig': 'INT'})
                 elif s.get('imported'):
                     raise ValueError('This session is running outside the web app. Continue it on its host.')
                 elif s.get('legacy_runtime'):
                     raise ValueError('Waiting for the host to adopt this session. Update and connect its worker.')
                 else:
                     if op == 'open':
-                        result = await self.rpc(s, 'work.create', dict(session_id=sid,
+                        result = await rpc(s, 'work.create', dict(session_id=sid,
                             command_id=data['id'], cwd=s['cwd'], title=s['title'], model=s['model']), timeout=40)
                     else:
-                        result = await self.rpc(s, 'work.command', dict(session_id=sid,
+                        result = await rpc(s, 'work.command', dict(session_id=sid,
                             command={k: v for k, v in data.items() if k not in ('csrf', 'session')}), timeout=40)
                     self.apply_metadata(s, result['session'])
                     if op == 'close':

@@ -67,10 +67,17 @@ class Journal:
                     reply      TEXT
                 )
             """)
+            # Audit attribution (added 2026-09): stable agent/key IDs behind the
+            # display identity, and whether attribution was verified.
+            cols = {r[1] for r in self._db.execute("PRAGMA table_info(calls)")}
+            for col in ("agent_id", "key_id", "auth"):
+                if col not in cols:
+                    self._db.execute(f"ALTER TABLE calls ADD COLUMN {col} TEXT")
             self._db.execute("CREATE INDEX IF NOT EXISTS idx_calls_ts ON calls(ts)")
             self._db.execute("CREATE INDEX IF NOT EXISTS idx_calls_worker ON calls(worker)")
             self._db.execute("CREATE INDEX IF NOT EXISTS idx_calls_thread ON calls(thread_id)")
             self._db.execute("CREATE INDEX IF NOT EXISTS idx_calls_callid ON calls(call_id)")
+            self._db.execute("CREATE INDEX IF NOT EXISTS idx_calls_agent ON calls(agent_id)")
             self._db.commit()
         except Exception:
             log.exception("journal init failed; journaling disabled")
@@ -82,9 +89,11 @@ class Journal:
 
     def record(self, *, cap: str, worker: str | None, identity: str | None,
                args: dict | None, reply: dict | None, thread_id: str | None = None,
-               call_id: str | None = None) -> str:
+               call_id: str | None = None, audit: dict | None = None) -> str:
         """Store one call + its reply. Returns the journal call id (generated if
-        not supplied). Best-effort — never raises into the call path."""
+        not supplied). ``audit`` is the caller's attribution
+        (``agent_id``/``key_id``/``kind``/``verified``). Best-effort — never
+        raises into the call path."""
         cid = call_id or (reply or {}).get("id") or uuid.uuid4().hex
         if self._db is None:
             return cid
@@ -99,13 +108,18 @@ class Journal:
                 blob = blob[:200_000] + "…<truncated>"
         except Exception:
             blob = "<unserializable reply>"
+        audit = audit or {}
+        # agent | shared | unverified | denied (NULL for pre-attribution rows)
+        auth = audit.get("kind")
         row = (cid, round(time.time(), 3), identity or "anonymous", cap,
-               worker, thread_id, ok, error, blob)
+               worker, thread_id, ok, error, blob,
+               audit.get("agent_id"), audit.get("key_id"), auth)
         try:
             with self._lock:
                 self._db.execute(
                     "INSERT INTO calls (call_id, ts, identity, cap, worker, "
-                    "thread_id, ok, error, reply) VALUES (?,?,?,?,?,?,?,?,?)", row)
+                    "thread_id, ok, error, reply, agent_id, key_id, auth) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", row)
                 self._writes_since_prune += 1
                 if self._writes_since_prune >= _PRUNE_EVERY:
                     self._prune_locked()
@@ -129,7 +143,8 @@ class Journal:
             log.debug("journal prune failed", exc_info=True)
 
     def query(self, *, worker: str | None = None, cap_prefix: str | None = None,
-              identity: str | None = None, thread_id: str | None = None,
+              identity: str | None = None, agent_id: str | None = None,
+              thread_id: str | None = None,
               call_id: str | None = None, since: float | None = None,
               ok: bool | None = None, limit: int = 50,
               include_reply: bool = False) -> list[dict]:
@@ -145,6 +160,8 @@ class Journal:
             clauses.append("cap LIKE ?"); params.append(cap_prefix + "%")
         if identity:
             clauses.append("identity = ?"); params.append(identity)
+        if agent_id:
+            clauses.append("agent_id = ?"); params.append(agent_id)
         if thread_id:
             clauses.append("thread_id = ?"); params.append(thread_id)
         if call_id:
@@ -155,7 +172,8 @@ class Journal:
             clauses.append("ok = ?"); params.append(1 if ok else 0)
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         sql = (f"SELECT call_id, ts, identity, cap, worker, thread_id, ok, "
-               f"error, reply FROM calls {where} ORDER BY seq DESC LIMIT ?")
+               f"error, reply, agent_id, key_id, auth FROM calls {where} "
+               f"ORDER BY seq DESC LIMIT ?")
         params.append(max(1, min(int(limit), 500)))
         try:
             with self._lock:
@@ -164,9 +182,13 @@ class Journal:
             log.debug("journal query failed", exc_info=True)
             return []
         out = []
-        for (cid, ts, ident, cap, worker_, thread, ok_, error, reply) in rows:
+        for (cid, ts, ident, cap, worker_, thread, ok_, error, reply,
+             agent, key, auth) in rows:
             e = {"call_id": cid, "ts": ts, "identity": ident, "cap": cap,
                  "worker": worker_, "thread_id": thread, "ok": bool(ok_)}
+            for k, v in (("agent_id", agent), ("key_id", key), ("auth", auth)):
+                if v:
+                    e[k] = v
             if error:
                 e["error"] = error
             if include_reply and reply is not None:

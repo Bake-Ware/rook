@@ -1765,6 +1765,20 @@ button:hover{{background:#22b88f}}
     async def _close_overview(self, app):
         await self._overview.close()
 
+    def _dashboard_identity(self, request: web.Request) -> str:
+        """Audit identity for a dashboard band call. The auth middleware has
+        already admitted the request; this only names who it was — the signed-in
+        account, or ``human:dashboard`` for the shared dashboard password."""
+        try:
+            user = self._accounts.current(request)
+        except Exception:
+            log.exception("ROOK AUDIT ALERT: dashboard caller lookup failed; call let through")
+            return "unverified"
+        if user:
+            from .work_web import actor
+            return actor(user)
+        return "human:dashboard"
+
     async def _api_band_call(self, request: web.Request) -> web.Response:
         """Invoke a capability on the band and return the worker's reply."""
         if self._band is None:
@@ -1794,7 +1808,8 @@ button:hover{{background:#22b88f}}
         except (TypeError, ValueError):
             timeout = 15.0
         try:
-            reply = await self._band.call(cap=cap, args=args, target=target, timeout=timeout)
+            reply = await self._band.call(cap=cap, args=args, target=target, timeout=timeout,
+                                          identity=self._dashboard_identity(request))
             return web.json_response(reply)
         except asyncio.TimeoutError:
             return web.json_response({"ok": False, "error": "timeout waiting for reply"}, status=504)

@@ -26,7 +26,7 @@ class FakeBand:
     def emit(self, data):
         self.output += json.dumps(data) + '\n'
 
-    async def call(self, cap, args, target, timeout):
+    async def call(self, cap, args, target, timeout, identity=None):
         self.calls.append((cap,args))
         if cap == 'proc.start':
             self.running = True
@@ -68,7 +68,7 @@ class RuntimeBand(FakeBand):
         self.plugin.runtime = WorkRuntime(path, SimpleNamespace(call=local_call))
         self.workers['host1']['caps'] += list(self.plugin.caps())
 
-    async def call(self, cap, args, target, timeout):
+    async def call(self, cap, args, target, timeout, identity=None):
         if not cap.startswith('work.'):
             return await super().call(cap, args, target, timeout)
         self.calls.append((cap, args))
@@ -159,6 +159,10 @@ async def test_auth_csrf_owner_and_command_deduplication(portal, runtime_band):
         await ws.send_json(cmd);await ws.send_json(cmd)
         await until(lambda:work.store.get(sid)['status']=='working')
         assert len([1 for cap,a in band.calls if cap=='proc.write' and json.loads(a['data']).get('method')=='turn/start'])==1
+        # Audit attribution: the signed-in account is recorded as the actor.
+        assert work.store.get(sid)['created_by'].startswith('human:')
+        commands={c['id']:c for c in work.store.archive(sid)['commands']}
+        assert commands['message-test-123']['actor']==work.store.get(sid)['created_by']
         bad={**cmd,'id':'bad-message-123','csrf':'wrong'}
         await ws.send_json(bad)
         while True:
@@ -198,7 +202,7 @@ class HistoryBand(FakeBand):
                                         'claude-history.send', 'codex-history.send']
         self.version = 1
 
-    async def call(self, cap, args, target, timeout):
+    async def call(self, cap, args, target, timeout, identity=None):
         self.calls.append((cap, args))
         if cap.endswith('.pull'):
             rows = [dict(session_id=f'source-{i}', title=f'Imported {i}', cwd='/tmp',
@@ -275,7 +279,7 @@ async def test_imported_resume_input_close_and_host_isolation(portal):
     p = portal
     band = HistoryBand()
     original = band.call
-    async def call(cap, args, target, timeout):
+    async def call(cap, args, target, timeout, identity=None):
         if cap.endswith('.resume'):
             band.calls.append((cap, args))
             result = {'ok': True, 'handle': 'external', 'note': 'Resume started'}
@@ -445,7 +449,7 @@ async def test_legacy_migration_keeps_only_copy_until_worker_acknowledges(portal
     metadata = work.store.get(state['id'])
     assert metadata['legacy_runtime'] and 'items' not in metadata
     original = runtime_band.call
-    async def reject(cap, args, target, timeout):
+    async def reject(cap, args, target, timeout, identity=None):
         if cap == 'work.adopt_page':
             raise ValueError('worker unavailable')
         return await original(cap, args, target, timeout)
