@@ -18,7 +18,7 @@ from .search import Search
 
 log = logging.getLogger(__name__)
 
-WRITES = ('create', 'update', 'link', 'retract', 'claim', 'release')
+WRITES = ('create', 'update', 'link', 'retract', 'claim', 'release', 'review')
 
 
 class KnowledgeService:
@@ -93,8 +93,10 @@ class KnowledgeService:
         if action == 'deck':
             return {'deck': self.store.deck([b['id'] for b in self.bands()] if not band else [self.band(band)],
                                             project=rid or data.get('project'))}
+        if action == 'review' and (actor or {}).get('kind') != 'human':
+            raise PermissionError('review is for people, from the Knowledge page')
         actor = actor or self.actor()
-        if action in ('get', 'update', 'link', 'retract', 'claim', 'release') and not rid:
+        if action in ('get', 'update', 'link', 'retract', 'claim', 'release', 'review') and not rid:
             raise ValueError(f'{action} needs id (a record id or slug; for retract, the link id)')
         if action == 'retract':
             b = self.store.link_band(rid)
@@ -118,6 +120,8 @@ class KnowledgeService:
         if action not in WRITES:
             raise ValueError('Actions: bands, deck, list, get, search, context, status, '
                              'create, update, link, retract, claim, release')
+        if action == 'review':
+            data = {k: data.get(k) for k in ('revision', 'verdict', 'note')}
         if action in ('update', 'release'):
             record = self.store.get(b, rid)
             self._inline_handoff(b, actor, record['id'], data)
@@ -156,7 +160,10 @@ class KnowledgeService:
             (null = top level). To correct a fact,
             create a new page with attrs.supersedes=[old]. To mark a fact verified, first
             link evidence with a traceable id (not just a URL), then update
-            attrs.verification='verified'. Writes need a unique request_id. Your identity
+            attrs.verification='verified'. People also verify or dispute pages on the site
+            (attrs.reviewed_by); a disputed page's attrs.dispute_reason says what to fix,
+            and editing a person-verified page sends it back to unverified for them to
+            re-check. Writes need a unique request_id. Your identity
             is taken from your connection, never from arguments. See rook_task for link kinds.
             """
             return await invoke(action, band, 'knowledge' if action == 'create' else None, id, query, data, request_id)
