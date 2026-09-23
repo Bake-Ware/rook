@@ -641,8 +641,11 @@ def build_server(client: "BandClient | MultiBandClient",
         return json.dumps(reply, indent=2)
 
     @mcp.tool()
-    async def rook_secret(action: str = "list", name: str | None = None,
-                          value: str | None = None, description: str | None = None) -> str:
+    async def rook_secret(action: str = "list", name: str = "",
+                          value: str = "", description: str = "") -> str:
+        # Plain `str` annotations matter: FastMCP JSON-parses string arguments
+        # whose declared type isn't exactly str, which turned JSON-valued
+        # secrets (OAuth client files, tunnel creds) into dicts and rejected them.
         """Credentials for your work, from the hub's vault.
 
         list: names and descriptions (never values). get name=…: the raw value
