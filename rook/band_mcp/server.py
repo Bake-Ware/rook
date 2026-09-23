@@ -163,6 +163,17 @@ def build_server(client: "BandClient | MultiBandClient",
 
     mcp._tool_manager.call_tool = _attributed_call_tool
 
+    from .guidance import Guidance, apply as _apply_guidance
+    guidance = Guidance(os.path.join(_store_dir, "guidance.db"))
+    _base_descriptions: dict[str, str] = {}
+
+    def _guidance_apply() -> None:
+        try:
+            _apply_guidance(mcp, guidance, _base_descriptions)
+        except Exception:
+            log.exception("applying guidance failed; tools keep their docstrings")
+    mcp._rook_guidance = (guidance, _guidance_apply)
+
     # Shared knowledge records (opt-in: ROOK_KNOWLEDGE=1). Additive tools only;
     # nothing here touches the band call path, and a failure to open the store
     # disables the tools rather than the server.
@@ -311,6 +322,13 @@ def build_server(client: "BandClient | MultiBandClient",
         att = _attr.current.get()
         return att.identity if att is not None else "anonymous"
 
+    def _caller_session() -> str:
+        try:
+            req = mcp.get_context().request_context.request
+            return (req.headers.get("mcp-session-id") or "") if req is not None else ""
+        except Exception:
+            return ""
+
     def _caller_audit() -> dict | None:
         att = _attr.current.get()
         return att.audit() if att is not None else None
@@ -425,6 +443,14 @@ def build_server(client: "BandClient | MultiBandClient",
             unread = chat.unread_summary(identity)
             if unread:
                 reply["_unread_chat"] = unread
+            # Operator-editable cap/worker advice, once per MCP session.
+            try:
+                tips = guidance.tips(_caller_session() or identity, cap, worker_name)
+            except Exception:
+                log.exception("guidance tips failed")
+                tips = None
+            if tips:
+                reply["_tips"] = tips
         chat.touch(identity)
         return json.dumps(reply, indent=2)
 
@@ -933,6 +959,11 @@ def build_server(client: "BandClient | MultiBandClient",
 
     mcp._rook_chat = chat  # the /tokens page edits avatars in this store
     mcp._rook_console = console  # _amain starts the pump against this store
+
+    # Agent guidance: server instructions + tool tips applied now (after every
+    # tool, including knowledge, is registered); cap/worker tips ride on
+    # rook_call replies. Edited from the site via guidance_web.
+    _guidance_apply()
     return mcp, store
 
 
@@ -969,10 +1000,15 @@ async def _amain(args) -> None:
         enrollment=enrollment,
     )
     app = mcp.streamable_http_app()
+    from ..remote.accounts import AccountStore
+    from .guidance_web import routes as guidance_routes
+    _guidance, _reapply = mcp._rook_guidance
+    for route in guidance_routes(_guidance, _reapply, lambda: list(mcp._tool_manager._tools),
+                                 AccountStore(enrollment)):
+        app.router.routes.insert(0, route)
     knowledge_task = None
     if mcp._rook_knowledge is not None:
         from ..knowledge.web import routes as knowledge_routes
-        from ..remote.accounts import AccountStore
         for route in reversed(knowledge_routes(mcp._rook_knowledge, AccountStore(enrollment))):
             app.router.routes.insert(0, route)
         knowledge_task = asyncio.create_task(mcp._rook_knowledge.maintain())

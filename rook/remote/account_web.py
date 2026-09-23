@@ -61,8 +61,9 @@ class AccountWeb:
         self.work_web.install(app)
         from .token_web import TokenWeb
         TokenWeb(self).install(app)
-        from .knowledge_web import KnowledgeWeb
+        from .knowledge_web import KnowledgeWeb, GuidanceWeb
         KnowledgeWeb(self).install(app)
+        GuidanceWeb(self).install(app)
         app.router.add_get('/account/component', self.component)
         app.router.add_route('*','/account',self.page)
         app.router.add_get('/account/login',self.login_page)
