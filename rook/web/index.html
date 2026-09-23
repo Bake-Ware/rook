@@ -323,6 +323,7 @@
       <a id="tab-bands" href="#bands" onclick="showView('bands');return false">Bands</a>
       <a id="tab-chat" href="#chat" onclick="showView('chat');return false">Chat</a>
       <a id="tab-work" href="#work" onclick="showView('work');return false">Work</a>
+      <a id="tab-knowledge" href="#knowledge" onclick="showView('knowledge');return false">Knowledge</a>
     </nav>
     <span class="nav-label">MANAGE</span>
     <nav aria-label="Management">
@@ -387,6 +388,7 @@
       <div class="foot" id="foot"></div>
     </div>
 
+    <div id="view-knowledge" hidden></div>
     <div id="view-account" class="settings-workspace" hidden></div>
     <div id="view-tokens" class="settings-workspace" hidden></div>
     <div id="view-bands" class="bands-workspace" hidden><p class="empty">Loading bands…</p></div>
@@ -918,9 +920,16 @@ const viewInfo={
  tokens:['API tokens','Credentials and identities for your agents and integrations.'],
  bands:['Bands','Organize your fleet, manage keys, and move workers.'],
  chat:['Chat','Conversations with the people and agents on your network.'],
+ knowledge:['Knowledge','Shared concepts, projects, tasks, and operational memory.'],
  work:['Work','Review and continue Claude and Codex sessions across your workers.'],
  install:['Install a worker','Connect another machine to your workspace.']
 };
+let knowledgeUI=null, knowledgeLoading=null;
+async function ensureKnowledge(){
+ if(knowledgeUI)return knowledgeUI;
+ if(!knowledgeLoading)knowledgeLoading=import('/account/knowledge/assets/knowledge.js').then(m=>m.mountKnowledge($('#view-knowledge'))).then(ui=>knowledgeUI=ui).finally(()=>{knowledgeLoading=null;});
+ return knowledgeLoading;
+}
 let activeView=null, bandsUI=null, bandsLoading=null, workUI=null, workLoading=null;
 async function ensureWork(){
  if(workUI)return workUI;
@@ -968,6 +977,7 @@ function showView(v,updateHistory=true){
  if(activeView===v){if(v==='account'&&settingsUI.account)settingsUI.account.refresh().catch(()=>{});return;}
  settingsUI[activeView]?.deactivate();
  if(activeView==='work')workUI?.deactivate();
+ if(activeView==='knowledge')knowledgeUI?.deactivate();
  activeView=v;document.body.dataset.view=v;
  for(const n of Object.keys(viewInfo)){
   $('#view-'+n).hidden=v!==n; const tab=$('#tab-'+n);tab.classList.toggle('active',v===n);
@@ -976,6 +986,7 @@ function showView(v,updateHistory=true){
  $('#view-title').textContent=viewInfo[v][0];$('#view-description').textContent=viewInfo[v][1];
  document.title=viewInfo[v][0]+' · Rook';$('#worker-controls').hidden=v!=='workers';$('#worker-stats').hidden=v!=='workers';$('#addband-form').hidden=true;
  if(v==='chat'){startChat();}else{stopChat();}
+ if(v==='knowledge')ensureKnowledge().then(ui=>{if(activeView==='knowledge')ui.activate();}).catch(e=>{$('#view-knowledge').textContent=e.message;});
  if(v==='work')ensureWork().then(ui=>{if(activeView==='work')ui.activate();else ui.deactivate();}).catch(()=>{});
  if(v==='bands')ensureBands().then(ui=>ui.refresh()).catch(()=>{});
  if(v==='account'||v==='tokens')ensureSettings(v).then(ui=>ui.refresh()).catch(()=>{});
