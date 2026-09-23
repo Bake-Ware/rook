@@ -397,7 +397,8 @@ def build_server(client: "BandClient | MultiBandClient",
     async def rook_call(cap: str, args: dict | None = None,
                         worker_id: str | None = None,
                         worker: str | None = None,
-                        timeout: float | None = None) -> str:
+                        timeout: float | None = None,
+                        hint: bool = False) -> str:
         """Invoke a capability on the band and return the reply.
 
         Args:
@@ -417,6 +418,10 @@ def build_server(client: "BandClient | MultiBandClient",
                 before the worker would. To let a command run longer, raise
                 ``args.timeout``; for jobs over a few minutes use
                 rook_console_open.
+            hint: set ``hint=true`` to get this cap's usage tip in ``_tips``
+                again. Tips are sent once per session; later replies carry a
+                one-line ``_hint`` saying the tip is hidden. Use it if the tip
+                was forgotten or compacted out of your context.
 
         Returns the reply dict as JSON: either
         ``{"id","from","ok":true,"result":...}`` or
@@ -512,12 +517,9 @@ def build_server(client: "BandClient | MultiBandClient",
                 reply["_unread_chat"] = unread
             # Operator-editable cap advice, once per MCP session.
             try:
-                tips = guidance.tips(_caller_session() or identity, cap)
+                reply.update(guidance.tips(_caller_session() or identity, cap, bool(hint)))
             except Exception:
                 log.exception("guidance tips failed")
-                tips = None
-            if tips:
-                reply["_tips"] = tips
         chat.touch(identity)
         return json.dumps(reply, indent=2)
 
