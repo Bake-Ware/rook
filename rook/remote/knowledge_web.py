@@ -7,17 +7,22 @@ from .account_web import COOKIE, NO_STORE
 
 
 class KnowledgeWeb:
+    PATH = '/account/knowledge'
+    UPSTREAM = ('ROOK_KNOWLEDGE_ADMIN_URL', 'http://127.0.0.1:8765/knowledge/account-api')
+    ASSETS = ('knowledge.js', 'knowledge.css')
+    UNAVAILABLE = 'Knowledge service is unavailable.'
+
     def __init__(self, account):
         self.account = account
-        self.url = os.environ.get('ROOK_KNOWLEDGE_ADMIN_URL', 'http://127.0.0.1:8765/knowledge/account-api')
+        self.url = os.environ.get(*self.UPSTREAM)
 
     def install(self, app):
-        app.router.add_route('*', '/account/knowledge/api', self.api)
-        app.router.add_get('/account/knowledge/assets/{name}', self.asset)
+        app.router.add_route('*', self.PATH + '/api', self.api)
+        app.router.add_get(self.PATH + '/assets/{name}', self.asset)
 
     async def asset(self, request):
         name = request.match_info['name']
-        if name not in ('knowledge.js', 'knowledge.css'):
+        if name not in self.ASSETS:
             raise web.HTTPNotFound()
         return web.FileResponse(Path(__file__).parent.parent / 'web' / name, headers={'Cache-Control': 'no-cache'})
 
@@ -43,7 +48,16 @@ class KnowledgeWeb:
             token = request.headers['Authorization'][7:]
         try:
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as http:
-                async with http.request(request.method, self.url, json=data, cookies={COOKIE: token}, allow_redirects=False) as response:
+                async with http.request(request.method, self.url, params=request.query, json=data,
+                                        cookies={COOKIE: token}, allow_redirects=False) as response:
                     return web.json_response(await response.json(), status=response.status, headers=NO_STORE)
         except (aiohttp.ClientError, TimeoutError, ValueError):
-            return web.json_response({'error': 'Knowledge service is unavailable.'}, status=503, headers=NO_STORE)
+            return web.json_response({'error': self.UNAVAILABLE}, status=503, headers=NO_STORE)
+
+
+class GuidanceWeb(KnowledgeWeb):
+    """Agent instructions editor: same session/CSRF proxy, different upstream."""
+    PATH = '/account/guidance'
+    UPSTREAM = ('ROOK_GUIDANCE_ADMIN_URL', 'http://127.0.0.1:8765/guidance/account-api')
+    ASSETS = ('guidance.js',)
+    UNAVAILABLE = 'Agent instructions service is unavailable.'
