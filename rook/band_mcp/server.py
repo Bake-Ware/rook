@@ -107,6 +107,74 @@ def build_server(client: "BandClient | MultiBandClient",
         json_response=mcp.settings.json_response,
     )
 
+    # Per-call audit attribution (see attribution.py). Every tool call passes
+    # through here: a missing/invalid token denies that call; a failure of the
+    # attribution machinery itself lets the call through and alerts. Nothing
+    # here looks at bands, workers or capabilities.
+    from mcp.server.fastmcp.exceptions import ToolError
+    from . import attribution as _attr
+    _alert = _attr.Alerter()
+    _run_tool = mcp._tool_manager.call_tool
+
+    def _audit_row(kind: str, name: str, arguments: dict | None,
+                   att: "_attr.Attribution | None", reason: str) -> None:
+        try:
+            _write_audit_row(kind, name, arguments, att, reason)
+        except Exception:  # noqa: BLE001 — audit bookkeeping never blocks a call
+            log.exception("audit journal row failed")
+
+    def _write_audit_row(kind, name, arguments, att, reason) -> None:
+        a = arguments if isinstance(arguments, dict) else {}
+        journal.record(
+            cap=f"audit.{kind}", worker=a.get("worker_id") or a.get("worker"),
+            identity=att.identity if att else "unauthenticated", args=None,
+            reply={"ok": kind != "denied", "error": reason, "tool": name,
+                   "cap": a.get("cap")},
+            audit=att.audit() if att else {"kind": "denied", "verified": False})
+
+    async def _attributed_call_tool(name, arguments, context=None,
+                                    convert_result=False):
+        def token():
+            from mcp.server.auth.middleware.auth_context import get_access_token
+            tok = get_access_token()
+            return getattr(tok, "token", None) if tok is not None else None
+
+        def request():
+            return context.request_context.request if context is not None else None
+
+        try:
+            att = _attr.resolve(store, token, request, _caller_host())
+        except _attr.Unauthenticated as e:
+            _audit_row("denied", name, arguments, None, str(e))
+            log.warning("denied MCP call %r: %s", name, e)
+            raise ToolError(f"unauthenticated: {e}") from None
+        except Exception as e:  # noqa: BLE001 — never let the checker deny
+            att = _attr._unverified(f"attribution crashed: {type(e).__name__}")
+        if not att.verified:
+            _alert(name, att)
+            _audit_row("unverified", name, arguments, att, att.reason or "")
+        reset = _attr.current.set(att)
+        try:
+            return await _run_tool(name, arguments, context=context,
+                                   convert_result=convert_result)
+        finally:
+            _attr.current.reset(reset)
+
+    mcp._tool_manager.call_tool = _attributed_call_tool
+
+    @mcp.tool()
+    async def rook_whoami() -> str:
+        """Show the identity this MCP attributes your calls to.
+
+        ``agent_id`` is stable across key rotation and label changes;
+        ``key_id`` names the specific API key; the shared static key is
+        ``kind: "shared"`` with no agent_id. ``identity`` is the string stamped
+        on band calls, chat and the journal. Attribution only — it grants or
+        restricts nothing. Never returns the token itself.
+        """
+        att = _attr.current.get()
+        return json.dumps(att.audit() if att else {"kind": "unverified"}, indent=2)
+
     @mcp.tool()
     async def rook_workers() -> str:
         """List all workers currently visible on the band.
@@ -214,27 +282,18 @@ def build_server(client: "BandClient | MultiBandClient",
         return raw
 
     def _caller_identity() -> str:
-        """Identity to stamp on band calls, derived from the authenticated
-        bearer token's name (resolved from the raw token via the TokenStore).
-        Shape is ``agent:<token-name>`` — or ``agent:<token-name>_<host>`` when
-        the client sends ``X-Rook-Host`` (see ``_caller_host``) — so worker
-        audit logs and chat presence read cleanly; falls back to ``anonymous``
-        when there's no auth context (e.g. a local unguarded run). This is the
-        breadcrumb the worker records — not an access gate. Keyed off
-        ``AccessToken.token`` rather than a ``subject``/``claims`` field so
-        it's robust across ``mcp`` versions."""
-        try:
-            from mcp.server.auth.middleware.auth_context import get_access_token
-            tok = get_access_token()
-            raw = getattr(tok, "token", None) if tok is not None else None
-            if raw:
-                name = store.identity_for(raw)
-                if name:
-                    host = _caller_host()
-                    return f"agent:{name}_{host}" if host else f"agent:{name}"
-        except Exception:
-            pass
-        return "anonymous"
+        """Identity to stamp on band calls, chat and the journal —
+        ``agent:<token-label>`` or ``agent:<token-label>_<host>`` when the
+        client sends ``X-Rook-Host`` (see ``_caller_host``). Set per tool call
+        by the attribution wrapper above; ``unverified`` means attribution
+        machinery failed and an alert was raised. Audit breadcrumb, not a gate
+        — the token check happens in the wrapper, before the tool runs."""
+        att = _attr.current.get()
+        return att.identity if att is not None else "anonymous"
+
+    def _caller_audit() -> dict | None:
+        att = _attr.current.get()
+        return att.audit() if att is not None else None
 
     def _resolve_target(spec: str) -> tuple[str | None, str | None]:
         """Resolve a worker id OR name to a live worker id.
@@ -315,7 +374,7 @@ def build_server(client: "BandClient | MultiBandClient",
         # talking instead of a generic label.
         if cap in ("chat.send", "msg.send"):
             args = dict(args or {})
-            args.setdefault("sender", identity if identity != "anonymous" else "MCP")
+            args.setdefault("sender", identity if identity not in ("anonymous", "unverified") else "MCP")
         worker_name = (roster[target].get("name") if target in roster else target)
         try:
             reply = await client.call(cap=cap, args=args, target=target,
@@ -328,14 +387,15 @@ def build_server(client: "BandClient | MultiBandClient",
             timeout_reply = {"ok": False, "timeout": True,
                              "error": f"no reply within {timeout:.0f}s"}
             cid = journal.record(cap=cap, worker=worker_name, identity=identity,
-                                 args=args, reply=timeout_reply)
+                                 args=args, reply=timeout_reply,
+                                 audit=_caller_audit())
             return _fail(f"no reply from {where} within {timeout:.0f}s "
                          f"(journal id {cid}). The worker may be offline or "
                          f"still executing — a slow call keeps running and its "
                          f"side effects may still land, so check its output "
                          f"before retrying. For long-running caps raise `timeout`.")
         cid = journal.record(cap=cap, worker=worker_name, identity=identity,
-                             args=args, reply=reply)
+                             args=args, reply=reply, audit=_caller_audit())
         # Surface the journal id so a caller that later loses this output can
         # fetch it back with rook_journal(call_id=...).
         if isinstance(reply, dict):
@@ -458,7 +518,7 @@ def build_server(client: "BandClient | MultiBandClient",
                 else list(mention or []))
         ident = _caller_identity()
         chat.touch(ident)
-        sender = ident if ident != "anonymous" else "MCP"
+        sender = ident if ident not in ("anonymous", "unverified") else "MCP"
         return json.dumps(chat.send(room, sender, text, ment, expects_reply), indent=2)
 
     @mcp.tool()

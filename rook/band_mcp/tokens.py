@@ -16,6 +16,7 @@ never mounts any OAuth authorization-server routes.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import secrets
 import time
@@ -65,7 +66,7 @@ class TokenStore:
         self._persist_path = persist_path
         self._static_token = static_token if (static_token and len(static_token) >= 16) else None
         # API tokens for headless agents. Keyed by full token. Each value:
-        #   {token, id, name, scopes, created_at, last_used_at, expires_at}
+        #   {token, id, agent_id, name, scopes, created_at, last_used_at, expires_at}
         # expires_at = None means no expiry.
         self._api_tokens: dict[str, dict[str, Any]] = {}
         # Admin UI sessions for /tokens page. session_id -> expires_at.
@@ -92,6 +93,11 @@ class TokenStore:
         for t in data.get("api_tokens", []):
             tok = t.get("token")
             if tok:
+                # Deterministic migration needs no write on startup. Duplicate
+                # labels/key IDs must not collapse distinct credentials. The
+                # high-entropy secret is hashed, never returned as identity.
+                t.setdefault("agent_id", "agent_" + hashlib.sha256(
+                    ("rook-agent-v1:" + tok).encode()).hexdigest()[:32])
                 self._api_tokens[tok] = t
         log.info("loaded token store: api_tokens=%d", len(self._api_tokens))
 
@@ -99,6 +105,7 @@ class TokenStore:
         if not self._persist_path:
             return
         import os, json as _json, tempfile
+        tmp = None
         try:
             data = {"api_tokens": list(self._api_tokens.values())}
             d = os.path.dirname(self._persist_path) or "."
@@ -106,10 +113,26 @@ class TokenStore:
             fd, tmp = tempfile.mkstemp(dir=d, prefix=".tokens-", suffix=".json")
             with os.fdopen(fd, "w") as f:
                 _json.dump(data, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
             os.replace(tmp, self._persist_path)
             os.chmod(self._persist_path, 0o600)
         except Exception:
             log.exception("token store persist failed")
+            raise
+        finally:
+            if tmp and os.path.exists(tmp):
+                os.unlink(tmp)
+
+    def _replace_tokens(self, updated: dict[str, dict[str, Any]]) -> None:
+        """Publish a credential change only when its persistence succeeds."""
+        previous = self._api_tokens
+        self._api_tokens = updated
+        try:
+            self._save()
+        except Exception:
+            self._api_tokens = previous
+            raise
 
     def _now(self) -> int:
         return int(time.time())
@@ -132,7 +155,7 @@ class TokenStore:
         if api is None:
             return None
         exp = api.get("expires_at")
-        if exp is not None and exp < self._now():
+        if exp is not None and exp <= self._now():
             return None
         api["last_used_at"] = self._now()
         # Skip _save() here — would write on every authenticated request.
@@ -145,7 +168,7 @@ class TokenStore:
         )
 
     def identity_for(self, token: str) -> str | None:
-        """The human identity behind a bearer token, for stamping band calls
+        """Legacy display attribution behind a bearer token, for stamping band calls
         so workers can audit who called. Returns the token's name for a minted
         API token, ``"static"`` for the fixed static token, or ``None`` if the
         token is unknown. Kept separate from :meth:`verify_bearer` (and keyed
@@ -160,6 +183,28 @@ class TokenStore:
             return None
         return api.get("name") or api.get("id") or "api"
 
+    def principal_for(self, token: str) -> dict[str, Any] | None:
+        """Resolve a valid credential to a secret-free audit principal, or
+        ``None`` when the token is missing, unknown, revoked or expired.
+
+        ``agent_id`` is stable across key rotation and label edits; ``key_id``
+        names the specific credential; ``label`` is the same display name
+        :meth:`identity_for` returns. The shared static credential is valid
+        but identifies no individual agent (``kind="shared"``). Attribution
+        only — nothing here grants or restricts what a caller may do.
+        """
+        if self.verify_bearer(token) is None:
+            return None
+        if self._static_token and secrets.compare_digest(self._static_token, token):
+            return {"kind": "shared", "agent_id": None, "key_id": None,
+                    "label": "static"}
+        api = self._api_tokens.get(token)
+        if api is None:  # revoked between verify and lookup
+            return None
+        return {"kind": "agent", "agent_id": api.get("agent_id"),
+                "key_id": api.get("id"),
+                "label": api.get("name") or api.get("id") or "api"}
+
     # -- API tokens (headless-agent bearers) ---------------------------------
 
     def list_api_tokens(self) -> list[dict[str, Any]]:
@@ -168,6 +213,7 @@ class TokenStore:
         for t in self._api_tokens.values():
             out.append({
                 "id": t.get("id"),
+                "agent_id": t.get("agent_id"),
                 "name": t.get("name"),
                 "created_at": t.get("created_at"),
                 "last_used_at": t.get("last_used_at"),
@@ -181,14 +227,17 @@ class TokenStore:
     def mint_api_token(self, name: str,
                        ttl_seconds: int | None = None,
                        scopes: list[str] | None = None) -> dict[str, Any]:
-        """Create a new long-lived API token. The secret is returned ONCE —
-        the caller must show it to the user immediately; we only keep enough
-        to identify + revoke it afterwards."""
+        """Create a credential for a new agent, even when labels match.
+
+        The UI shows the secret once. The existing token store retains it in
+        its restricted persistence file for bearer verification.
+        """
         secret = secrets.token_urlsafe(32)
-        tok_id = secrets.token_hex(4)
+        tok_id = secrets.token_hex(16)
         entry = {
             "token": secret,
             "id": tok_id,
+            "agent_id": "agent_" + secrets.token_hex(16),
             "name": (name or "unnamed")[:64],
             "scopes": scopes or ["rook"],
             "client_id": "api",
@@ -196,17 +245,38 @@ class TokenStore:
             "last_used_at": None,
             "expires_at": (self._now() + ttl_seconds) if ttl_seconds else None,
         }
-        self._api_tokens[secret] = entry
-        self._save()
+        self._replace_tokens({**self._api_tokens, secret: entry})
         log.info("api token minted: id=%s name=%s ttl=%s",
                  tok_id, entry["name"], ttl_seconds)
         return entry
 
+    def rotate_api_token(self, token_id: str) -> dict[str, Any]:
+        """Trusted administration: replace a key, preserving its agent and limits.
+
+        No MCP tool exposes this operation. Expiry and scopes are preserved;
+        rotation is not a renewal or a privilege change. Old credentials stop
+        verifying only after the replacement has been persisted successfully.
+        """
+        for old_secret, old in self._api_tokens.items():
+            if old.get("id") == token_id:
+                secret = secrets.token_urlsafe(32)
+                entry = {**old, "token": secret, "id": secrets.token_hex(16),
+                         "created_at": self._now(), "last_used_at": None}
+                updated = dict(self._api_tokens)
+                del updated[old_secret]
+                updated[secret] = entry
+                self._replace_tokens(updated)
+                log.info("api token rotated: old_id=%s new_id=%s agent_id=%s",
+                         token_id, entry["id"], entry["agent_id"])
+                return entry
+        raise ValueError("Unknown API token ID")
+
     def revoke_api_token(self, token_id: str) -> bool:
         for tok, entry in list(self._api_tokens.items()):
             if entry.get("id") == token_id:
-                self._api_tokens.pop(tok, None)
-                self._save()
+                updated = dict(self._api_tokens)
+                del updated[tok]
+                self._replace_tokens(updated)
                 log.info("api token revoked: id=%s name=%s",
                          token_id, entry.get("name"))
                 return True
