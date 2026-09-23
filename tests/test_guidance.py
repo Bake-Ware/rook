@@ -74,14 +74,14 @@ async def test_defaults_reach_agents_at_each_placement(tmp_path):
         assert "\n\nTip: Arg names come from caps.describe" in tools["rook_call"]
         assert tools["rook_call"].startswith("Invoke a capability")  # docstring preserved
         first = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "shell.exec", "worker": "WIN11-FLOPHOUSE"}}))
-        assert len(first["_tips"]) == 2 and "cmd.exe" in first["_tips"][1]
+        assert first["_tips"] == [guidance_mod.DEFAULTS["cap:shell.exec"]]  # cap tip only, no host tips
         again = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "shell.exec", "worker": "WIN11-FLOPHOUSE"}}))
         assert "_tips" not in again  # once per session
         proc = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "proc.start", "worker": "kaiju"}}))
         assert proc["_tips"] == [guidance_mod.DEFAULTS["cap:proc."]]
         _, rpc2 = await env.connect()
         fresh = reply(await rpc2("tools/call", {"name": "rook_call", "arguments": {"cap": "shell.exec", "worker": "WIN11-FLOPHOUSE"}}))
-        assert len(fresh["_tips"]) == 2  # new session sees them again
+        assert len(fresh["_tips"]) == 1  # new session sees it again
 
 
 @pytest.mark.asyncio
@@ -93,27 +93,29 @@ async def test_operator_edits_apply_live_with_history_and_reset(tmp_path):
         admin = {"Cookie": "rook_account=admin"}
         listing = (await env.http.get(api, headers=admin)).json()
         assert listing["editable"] and "rook_call" in listing["tools"]
-        assert {s["key"] for s in listing["slots"]} >= {"server", "tool:rook_call", "cap:proc.", "worker:soundwave"}
+        keys = {s["key"] for s in listing["slots"]}
+        assert keys >= {"server", "tool:rook_call", "cap:proc."}
+        assert not any(k.startswith("worker:") for k in keys)
         assert (await env.http.post(api, headers=admin, json={"action": "set", "key": "server", "text": "x"})).status_code == 403
-        for bad in ({"key": "tool:nope"}, {"key": "bogus"}, {"key": "cap:x", "text": "y" * 1001}):
+        for bad in ({"key": "tool:nope"}, {"key": "bogus"}, {"key": "worker:kaiju"}, {"key": "cap:x", "text": "y" * 1001}):
             r = await env.http.post(api, headers=admin, json={"csrf": "k", "action": "set", "text": "t"} | bad)
             assert r.status_code == 400, bad
         ok = await env.http.post(api, headers=admin, json={"csrf": "k", "action": "set", "key": "server", "text": "Be brief."})
         assert ok.status_code == 200
         await env.http.post(api, headers=admin, json={"csrf": "k", "action": "set", "key": "tool:rook_caps", "text": ""})
-        await env.http.post(api, headers=admin, json={"csrf": "k", "action": "set", "key": "worker:kaiju", "text": "GPU box."})
+        await env.http.post(api, headers=admin, json={"csrf": "k", "action": "set", "key": "cap:info.", "text": "Cheap; safe to call first."})
         init, rpc = await env.connect()
         assert init["instructions"] == "Be brief."
         tools = {t["name"]: t["description"] for t in (await rpc("tools/list", {}))["tools"]}
         assert "Tip:" not in tools["rook_caps"]  # empty text disables the tip
         res = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "info.host", "worker": "kaiju"}}))
-        assert res["_tips"] == ["GPU box."]
+        assert res["_tips"] == ["Cheap; safe to call first."]
         hist = (await env.http.get(api + "?history=server", headers=admin)).json()["history"]
         assert hist[0] == {"text": "Be brief.", "ts": hist[0]["ts"], "actor": "human:bake"}
         await env.http.post(api, headers=admin, json={"csrf": "k", "action": "reset", "key": "server"})
         init, _ = await env.connect()
         assert init["instructions"] == guidance_mod.DEFAULTS["server"]
-        slot = next(s for s in (await env.http.get(api, headers=admin)).json()["slots"] if s["key"] == "worker:kaiju")
+        slot = next(s for s in (await env.http.get(api, headers=admin)).json()["slots"] if s["key"] == "cap:info.")
         assert slot["edited"] and slot["default"] is None and slot["actor"] == "human:bake"
 
 
@@ -132,7 +134,9 @@ async def test_broken_store_serves_defaults_and_tip_failure_never_breaks_calls(t
         assert not res.get("isError") and "_tips" not in reply(res)
 
 
-def test_every_default_key_is_valid_and_within_limits():
+def test_every_default_key_is_valid_within_limits_and_host_neutral():
+    hosts = ("kaiju", "soundwave", "bakenetcanada", "win11", "flophouse", "cachyrig", "ct102")
     for key, text in guidance_mod.DEFAULTS.items():
+        assert not any(h in (key + text).lower() for h in hosts), key
         assert guidance_mod.KEY.match(key), key
         assert len(text) <= guidance_mod.LIMITS.get(key, guidance_mod.MAX_TIP), key
