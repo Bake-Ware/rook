@@ -221,6 +221,17 @@ def build_server(client: "BandClient | MultiBandClient",
             log.exception("applying guidance failed; tools keep their docstrings")
     mcp._rook_guidance = (guidance, _guidance_apply)
 
+    # Secret vault (see vault.py). If it can't open, secrets are unavailable
+    # but nothing else is affected.
+    from . import vault as _vault_mod
+    try:
+        vault = _vault_mod.Vault(os.path.join(_store_dir, "vault.db"))
+    except Exception:
+        log.exception("vault unavailable")
+        vault = None
+    mcp._rook_vault = vault
+    mcp._rook_journal = journal
+
     # Shared knowledge records (opt-in: ROOK_KNOWLEDGE=1). Additive tools only;
     # nothing here touches the band call path, and a failure to open the store
     # disables the tools rather than the server.
@@ -400,6 +411,22 @@ def build_server(client: "BandClient | MultiBandClient",
             log.exception("auto-link failed")
             return None
 
+    def _actor_name() -> str:
+        att = _attr.current.get()
+        return (att.actor or att.identity) if att is not None else "anonymous"
+
+    def _claimed_task() -> str | None:
+        k = getattr(mcp, "_rook_knowledge", None)
+        if k is None:
+            return None
+        try:
+            with k.store.db(False) as db:
+                row = db.execute("SELECT task FROM claims WHERE actor=? AND released IS NULL "
+                                 "ORDER BY started DESC LIMIT 1", (_actor_name(),)).fetchone()
+            return row["task"] if row else None
+        except Exception:
+            return None
+
     def _caller_audit() -> dict | None:
         att = _attr.current.get()
         return att.audit() if att is not None else None
@@ -545,6 +572,20 @@ def build_server(client: "BandClient | MultiBandClient",
             args = dict(args or {})
             args.setdefault("sender", identity if identity not in ("anonymous", "unverified") else "MCP")
         worker_name = (roster[target].get("name") if target in roster else target)
+        # {{secret:name}} placeholders: substituted only in what's sent to the
+        # worker; the journal keeps the placeholder and replies are masked.
+        send_args, used = args, {}
+        if args and _vault_mod.PLACEHOLDER.search(json.dumps(args)):
+            if vault is None:
+                return _fail("args use {{secret:…}} but the vault is unavailable on this hub")
+            try:
+                send_args, used = vault.substitute(args, _actor_name(), via=f"{cap} on {worker_name}",
+                                                   task=_claimed_task())
+            except KeyError as e:
+                return _fail(f"unknown secret {e.args[0]!r} in args; rook_secret(action='list') shows the names")
+            for name in used:
+                _auto_link("secret", name, f"used in {cap} on {worker_name}")
+        secret_forms = [f for v in used.values() for f in _vault_mod.encoded_forms(v)]
         try:
             own = await _cap_timeout(target, cap, args)
         except Exception:
@@ -552,7 +593,7 @@ def build_server(client: "BandClient | MultiBandClient",
         floor = own + _WAIT_MARGIN if own else _DEFAULT_WAIT
         wait = min(max(floor, float(timeout or 0)), _MAX_WAIT)
         try:
-            reply = await client.call(cap=cap, args=args, target=target,
+            reply = await client.call(cap=cap, args=send_args, target=target,
                                       timeout=wait, identity=identity)
         except asyncio.TimeoutError:
             where = f"worker {worker_name!r}"
@@ -573,6 +614,8 @@ def build_server(client: "BandClient | MultiBandClient",
                          f"worker before retrying. To let it run longer, raise "
                          f"args.timeout (if the cap takes one) or pass timeout=; "
                          f"for long jobs use rook_console_open.")
+        if secret_forms:
+            reply = _vault_mod.mask(reply, secret_forms)
         if cap == "caps.describe" and isinstance(reply, dict) and reply.get("ok"):
             _learn_timeouts(target, reply.get("result"))
         cid = journal.record(cap=cap, worker=worker_name, identity=identity,
@@ -596,6 +639,53 @@ def build_server(client: "BandClient | MultiBandClient",
                 log.exception("guidance tips failed")
         chat.touch(identity)
         return json.dumps(reply, indent=2)
+
+    @mcp.tool()
+    async def rook_secret(action: str = "list", name: str | None = None,
+                          value: str | None = None, description: str | None = None) -> str:
+        """Credentials for your work, from the hub's vault.
+
+        list: names and descriptions (never values). get name=…: the raw value
+        (every read is logged with your identity and claimed task). Prefer not
+        reading it at all: put ``{{secret:<name>}}`` inside rook_call args and
+        the hub substitutes it on the way to the worker, masks it in the reply
+        and journals only the placeholder. set name=… value=… description=…:
+        store or replace one (e.g. after rotating it). delete name=….
+        log name=?: recent access. Never paste secret values into knowledge
+        pages, chat or handoffs; refer to them by vault name.
+        """
+        if vault is None:
+            return _fail("vault unavailable on this hub")
+        who = _actor_name()
+        try:
+            if action == "list":
+                return json.dumps({"ok": True, "secrets": vault.list()}, indent=2)
+            if action == "log":
+                return json.dumps({"ok": True, "access": vault.access_log(name)}, indent=2)
+            if not name:
+                return _fail(f"{action} needs name=")
+            if action == "get":
+                val = vault.get(name, who, via="get", task=_claimed_task())
+                journal.record(cap="vault.get", worker=None, identity=_caller_identity(),
+                               args={"name": name}, reply={"ok": True}, audit=_caller_audit())
+                _auto_link("secret", name, "read with rook_secret get")
+                return json.dumps({"ok": True, "name": name, "value": val}, indent=2)
+            if action == "set":
+                res = vault.set(name, value or "", description or "", who)
+                redacted = journal.redact(_vault_mod.encoded_forms(value))
+                journal.record(cap="vault.set", worker=None, identity=_caller_identity(),
+                               args={"name": name}, reply={"ok": True, **res}, audit=_caller_audit())
+                return json.dumps({"ok": True, **res, "journal_rows_masked": redacted}, indent=2)
+            if action == "delete":
+                gone = vault.delete(name, who)
+                journal.record(cap="vault.delete", worker=None, identity=_caller_identity(),
+                               args={"name": name}, reply={"ok": gone}, audit=_caller_audit())
+                return json.dumps({"ok": gone} if gone else {"ok": False, "error": f"no secret {name!r}"}, indent=2)
+        except KeyError:
+            return _fail(f"no secret {name!r}; rook_secret(action='list') shows the names")
+        except ValueError as e:
+            return _fail(str(e))
+        return _fail("actions: list, get, set, delete, log")
 
     @mcp.tool()
     async def rook_journal(call_id: str | None = None,
@@ -1155,6 +1245,12 @@ async def _amain(args) -> None:
     _guidance, _reapply = mcp._rook_guidance
     for route in guidance_routes(_guidance, _reapply, lambda: list(mcp._tool_manager._tools),
                                  AccountStore(enrollment)):
+        app.router.routes.insert(0, route)
+    from .vault_web import routes as vault_routes
+    from . import vault as _vault_mod
+    for route in vault_routes(mcp._rook_vault,
+                              lambda v: mcp._rook_journal.redact(_vault_mod.encoded_forms(v or "")),
+                              AccountStore(enrollment)):
         app.router.routes.insert(0, route)
     knowledge_task = None
     if mcp._rook_knowledge is not None:

@@ -61,3 +61,11 @@ class GuidanceWeb(KnowledgeWeb):
     UPSTREAM = ('ROOK_GUIDANCE_ADMIN_URL', 'http://127.0.0.1:8765/guidance/account-api')
     ASSETS = ('guidance.js',)
     UNAVAILABLE = 'Agent instructions service is unavailable.'
+
+
+class VaultWeb(KnowledgeWeb):
+    """Secrets page: same session/CSRF proxy; values are write-only."""
+    PATH = '/account/vault'
+    UPSTREAM = ('ROOK_VAULT_ADMIN_URL', 'http://127.0.0.1:8765/vault/account-api')
+    ASSETS = ('vault.js',)
+    UNAVAILABLE = 'The vault service is unavailable.'
