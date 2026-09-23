@@ -129,6 +129,27 @@ class Journal:
             log.debug("journal record failed", exc_info=True)
         return cid
 
+    def redact(self, forms: list[str], mask: str = "***") -> int:
+        """Mask these strings wherever they appear in stored replies/errors
+        (used when a secret enters the vault). Returns rows changed."""
+        if self._db is None:
+            return 0
+        changed = 0
+        try:
+            with self._lock:
+                for f in forms:
+                    if not f or len(f) < 4:
+                        continue
+                    cur = self._db.execute(
+                        "UPDATE calls SET reply=replace(reply, ?, ?), error=replace(error, ?, ?) "
+                        "WHERE instr(reply, ?) > 0 OR instr(coalesce(error,''), ?) > 0",
+                        (f, mask, f, mask, f, f))
+                    changed += cur.rowcount
+                self._db.commit()
+        except Exception:
+            log.exception("journal redact failed")
+        return changed
+
     def _prune_locked(self) -> None:
         """Drop rows beyond the newest _MAX_ROWS. Called under _lock."""
         try:

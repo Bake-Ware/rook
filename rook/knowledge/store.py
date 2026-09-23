@@ -39,7 +39,7 @@ INITIAL = {'task': 'todo', 'project': 'active', 'concept': 'active', 'knowledge'
 OPEN_TASK = ('todo', 'in_progress', 'blocked', 'paused')
 VERIFICATION = ('unverified', 'verified', 'disputed')
 KNOWLEDGE_KINDS = ('fact', 'decision', 'procedure', 'observation', 'question', 'summary')
-LINK_KINDS = ('journal', 'console', 'handoff', 'chat', 'file', 'commit', 'agent', 'record', 'url')
+LINK_KINDS = ('journal', 'console', 'handoff', 'chat', 'file', 'commit', 'agent', 'record', 'secret', 'url')
 RELATIONS = ('produced', 'evidence', 'touched', 'discussed_in', 'blocked_by', 'duplicates',
              'supersedes', 'mentions', 'source')
 # A URL is a pointer, not something Rook can trace; it can't verify a fact.

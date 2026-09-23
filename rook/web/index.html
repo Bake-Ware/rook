@@ -332,6 +332,7 @@
       <a id="tab-account" href="#account" onclick="showView('account');return false">Account & access</a>
       <a id="tab-tokens" href="#tokens" onclick="showView('tokens');return false">API tokens</a>
       <a id="tab-guidance" href="#guidance" onclick="showView('guidance');return false">Agent instructions</a>
+      <a id="tab-vault" href="#vault" onclick="showView('vault');return false">Secrets</a>
     </nav>
     <div class="sidebar-footer"><button class="art-toggle" id="art-toggle" type="button" hidden>Pause artwork</button><span class="live"><span class="dot" id="dot"></span><span id="count">Connecting…</span></span><a class="signout" href="/logout">Sign out</a></div>
   </aside>
@@ -392,6 +393,7 @@
 
     <div id="view-knowledge" hidden></div>
     <div id="view-guidance" hidden></div>
+    <div id="view-vault" hidden></div>
     <div id="view-account" class="settings-workspace" hidden></div>
     <div id="view-tokens" class="settings-workspace" hidden></div>
     <div id="view-bands" class="bands-workspace" hidden><p class="empty">Loading bands…</p></div>
@@ -925,12 +927,18 @@ const viewInfo={
  bands:['Bands','Organize your fleet, manage keys, and move workers.'],
  chat:['Chat','Conversations with the people and agents on your network.'],
  knowledge:['Knowledge','The agents\' shared wiki: what the team knows, with sources.'],
+ vault:['Secrets','Credentials your agents can use, with every access logged.'],
  guidance:['Agent instructions','What Rook tells agents when they connect, list tools, and call capabilities.'],
  work:['Work','Projects and tasks the agents are tracking: in progress, blocked and done.'],
  sessions:['Sessions','Review and continue Claude and Codex sessions across your workers.'],
  install:['Install a worker','Connect another machine to your workspace.']
 };
-let knowledgeUI=null, knowledgeLoading=null, guidanceUI=null, guidanceLoading=null;
+let knowledgeUI=null, knowledgeLoading=null, guidanceUI=null, guidanceLoading=null, vaultUI=null, vaultLoading=null;
+async function ensureVault(){
+ if(vaultUI)return vaultUI;
+ if(!vaultLoading)vaultLoading=import('/account/vault/assets/vault.js').then(m=>m.mountVault($('#view-vault'))).then(ui=>vaultUI=ui).finally(()=>{vaultLoading=null;});
+ return vaultLoading;
+}
 async function ensureGuidance(){
  if(guidanceUI)return guidanceUI;
  if(!guidanceLoading)guidanceLoading=import('/account/guidance/assets/guidance.js').then(m=>m.mountGuidance($('#view-guidance'))).then(ui=>guidanceUI=ui).finally(()=>{guidanceLoading=null;});
@@ -1002,6 +1010,7 @@ function showView(v,updateHistory=true){
  $('#view-title').textContent=viewInfo[v][0];$('#view-description').textContent=viewInfo[v][1];
  document.title=viewInfo[v][0]+' · Rook';$('#worker-controls').hidden=v!=='workers';$('#worker-stats').hidden=v!=='workers';$('#addband-form').hidden=true;
  if(v==='chat'){startChat();}else{stopChat();}
+ if(v==='vault')ensureVault().then(ui=>{if(activeView==='vault')ui.activate();}).catch(e=>{$('#view-vault').textContent=e.message;});
  if(v==='guidance')ensureGuidance().then(ui=>{if(activeView==='guidance')ui.activate();}).catch(e=>{$('#view-guidance').textContent=e.message;});
  if(v==='knowledge')ensureKnowledge().then(ui=>{if(activeView==='knowledge')ui.activate();}).catch(e=>{$('#view-knowledge').textContent=e.message;});
  if(v==='sessions')ensureSessions().then(ui=>{if(activeView==='sessions')ui.activate();else ui.deactivate();}).catch(()=>{});
