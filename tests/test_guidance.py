@@ -1,6 +1,7 @@
 """Agent guidance: delivered at connect, in tool listings and on matching
 rook_call replies; editable by the operator; never able to break a call."""
 import json
+import re
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
@@ -138,5 +139,6 @@ def test_every_default_key_is_valid_within_limits_and_host_neutral():
     hosts = ("kaiju", "soundwave", "bakenetcanada", "win11", "flophouse", "cachyrig", "ct102")
     for key, text in guidance_mod.DEFAULTS.items():
         assert not any(h in (key + text).lower() for h in hosts), key
+        assert not re.search(r"\d\s*[KMG]i?B\b", text), key  # no point-in-time size estimates
         assert guidance_mod.KEY.match(key), key
         assert len(text) <= guidance_mod.LIMITS.get(key, guidance_mod.MAX_TIP), key
