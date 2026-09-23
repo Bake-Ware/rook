@@ -150,7 +150,10 @@ class KnowledgeService:
             """Shared memory as a wiki: search/get/list/context/status/create/update/link/retract/bands.
             Pages have a slug; reference others in the body with [[slug]] (get shows
             backlinks). get/update/link accept an id or slug. create data {title, body,
-            slug?, parent?, attrs:{knowledge_kind, tags, supersedes}}. To correct a fact,
+            slug?, parent?, attrs:{knowledge_kind, tags, supersedes}}. Pages form a folder
+            tree: parent is another knowledge page (list shows each page's parent); file
+            new pages under the right section, and move one with update patch {parent}
+            (null = top level). To correct a fact,
             create a new page with attrs.supersedes=[old]. To mark a fact verified, first
             link evidence with a traceable id (not just a URL), then update
             attrs.verification='verified'. Writes need a unique request_id. Your identity

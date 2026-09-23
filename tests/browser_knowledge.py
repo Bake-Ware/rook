@@ -32,7 +32,8 @@ class Bands:
 async def seed(s):
     async def do(action, rkind=None, band=None, rid=None, **data):
         return await s.dispatch(action, band, rkind, rid, data=data, request_id=uuid.uuid4().hex)
-    await do('create', 'knowledge', 'bakenet', title='Sojourn (Hermes agent host)', slug='sojourn',
+    await do('create', 'knowledge', 'bakenet', title='Hosts', slug='hosts', body='Machines on the band.')
+    await do('create', 'knowledge', 'bakenet', title='Sojourn (Hermes agent host)', slug='sojourn', parent='hosts',
              body='# Role\nRuns the **Hermes** agent. Memory lives in `/root/.hermes/memories/`.\n\n- Restart the gateway after updates\n- See [[hermes-mcp-empty-responses]]\n\nDocs: https://example.com/hermes')
     fix = await do('create', 'knowledge', 'bakenet', title='Hermes: MCP tool calls return empty', slug='hermes-mcp-empty-responses',
                    body='Stale gateway MCP session after a network change.\n\n```\nhermes gateway restart\n```\nHost: [[sojourn]]')
@@ -130,10 +131,14 @@ window.addEventListener('hashchange',show);await show();window.ready=true;
 async def run_checks(page, base, shot):
     await page.goto(base + '#knowledge'); await page.wait_for_function('window.ready===true')
     await page.wait_for_selector('text=Recently updated')
-    assert await page.locator('.kn-index-item').count() == 2
+    await page.evaluate("localStorage.removeItem('kn-open')")
+    assert await page.locator('.kn-tree-item').count() == 2   # Hosts (folded) + the top-level page
+    assert await page.locator('.kn-sections .kn-card:has-text("Hosts")').count() == 1
     await shot('wiki-home')
-    await page.click('.kn-index-item:has-text("Sojourn")')
+    await page.click('.kn-tog[aria-label="Expand Hosts"]')
+    await page.click('.kn-tree-item:has-text("Sojourn")')
     await page.wait_for_selector('h1:has-text("Sojourn")')
+    assert await page.locator('.kn-crumbs button:has-text("Hosts")').count() == 1
     assert await page.locator('.kn-md h3:has-text("Role")').count() == 1
     assert await page.locator('.kn-md code').count() == 1
     assert await page.locator('h2:has-text("What links here")').count() == 1
@@ -142,7 +147,21 @@ async def run_checks(page, base, shot):
     await page.wait_for_selector('h1:has-text("MCP tool calls return empty")')
     assert await page.locator('.kn-md pre').count() == 1
     assert await page.locator('h2:has-text("Sources and evidence")').count() == 1
-    await page.go_back(); await page.wait_for_selector('h1:has-text("Sojourn")')
+    # Move the Hermes page into Hosts with the Move dialog.
+    await page.click('.kn-page button:has-text("Move")')
+    await page.select_option('.kn-dialog select[name=parent]', label='Hosts')
+    await page.click('.kn-dialog button:has-text("Save")')
+    await page.wait_for_selector('.kn-crumbs button:has-text("Hosts")')
+    assert await page.locator('.kn-tree-row').count() == 3 and await page.locator('.kn-tree-item').first.inner_text() == 'Hosts\n2'
+    await page.click('.kn-crumbs button:has-text("Hosts")'); await page.wait_for_selector('h1:has-text("Hosts")')
+    assert await page.locator('h2:has-text("Pages in here") + ul li').count() == 2
+    await shot('wiki-section')
+    await page.go_back(); await page.wait_for_selector('h1:has-text("MCP tool calls return empty")')
+    await page.click('.kn-page button:has-text("Move")')   # and back to the top level
+    await page.select_option('.kn-dialog select[name=parent]', value='')
+    await page.click('.kn-dialog button:has-text("Save")')
+    await page.wait_for_function("!document.querySelector('.kn-crumbs button:nth-of-type(2)')")
+    await page.go_back(); await page.go_back(); await page.wait_for_selector('h1:has-text("Sojourn")')
     assert await page.locator('.kn-md strong:has-text("Hermes")').count() == 1
     await page.fill('.kn-side input[type=search]', 'stale'); await page.press('.kn-side input[type=search]', 'Enter')
     await page.wait_for_function("document.querySelectorAll('#view-knowledge .kn-index-item').length===1")

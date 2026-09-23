@@ -256,7 +256,17 @@ class KnowledgeStore:
         elif parent:
             if kind == 'concept':
                 raise ValueError('Concepts cannot have a parent')
-            self._get(db, band, parent)
+            p = self._get(db, band, parent)
+            if kind == 'knowledge':
+                # Pages nest under pages, like folders; no loops.
+                seen = {rid}
+                while p:
+                    if p['kind'] != 'knowledge':
+                        raise ValueError('A knowledge page can only be nested under another knowledge page')
+                    if p['id'] in seen:
+                        raise Conflict('Parent cycle: a page cannot be nested under itself or its own subpages')
+                    seen.add(p['id'])
+                    p = self._get(db, band, p['parent']) if p['parent'] else None
         for key in ('workers', 'dependencies', 'criteria', 'supersedes', 'tags'):
             attrs[key] = strings(attrs.get(key, []))
         for dep in attrs['dependencies']:
@@ -320,8 +330,13 @@ class KnowledgeStore:
         if data.get('revision') != r['revision']:
             raise Conflict('Record changed; get its current revision before updating')
         patch = data.get('patch') or {}
-        if not isinstance(patch, dict) or set(patch) - {'title', 'body', 'state', 'attrs'}:
-            raise ValueError('patch may contain title, body, state and attrs')
+        if not isinstance(patch, dict) or set(patch) - {'title', 'body', 'state', 'attrs', 'parent'}:
+            raise ValueError('patch may contain title, body, state, attrs and parent')
+        parent = r['parent']
+        if 'parent' in patch:
+            if r['kind'] != 'knowledge':
+                raise ValueError('Only knowledge pages can be moved (patch.parent)')
+            parent = self._get(db, band, patch['parent'])['id'] if patch['parent'] else None
         title = text(patch.get('title', r['title']), 240)
         body = text(patch.get('body', r['body']))
         if not title:
@@ -329,7 +344,7 @@ class KnowledgeStore:
         attrs = {**r['attrs'], **(patch.get('attrs') or {})}
         if attrs.get('supersedes') != r['attrs'].get('supersedes'):
             raise ValueError('To supersede, create a new knowledge page with attrs.supersedes')
-        self._validate(db, band, r['kind'], r['parent'], attrs, r['id'])
+        self._validate(db, band, r['kind'], parent, attrs, r['id'])
         state = patch.get('state', r['state'])
         if state not in STATES[r['kind']]:
             raise ValueError(f"{r['kind']} state must be one of " + ', '.join(STATES[r['kind']]))
@@ -340,12 +355,12 @@ class KnowledgeStore:
                                  '(journal, console, handoff, chat, file, commit, agent or record; a URL is not enough)')
         if r['kind'] == 'task' and state != r['state']:
             self._task_transition(db, r, state, attrs, live)
-        db.execute('UPDATE records SET title=?,body=?,attrs=?,state=?,revision=revision+1,updated=? WHERE id=?',
-                   (title, body, packed(attrs), state, time.time(), r['id']))
+        db.execute('UPDATE records SET title=?,body=?,attrs=?,state=?,parent=?,revision=revision+1,updated=? WHERE id=?',
+                   (title, body, packed(attrs), state, parent, time.time(), r['id']))
         if r['kind'] == 'task' and state in ('done', 'cancelled', 'archived', 'paused', 'blocked', 'todo'):
             db.execute('UPDATE claims SET released=? WHERE task=? AND released IS NULL', (time.time(), r['id']))
         updated = self._get(db, band, r['id'])
-        changed = {k: updated[k] for k in ('title', 'state') if updated[k] != r[k]}
+        changed = {k: updated[k] for k in ('title', 'state', 'parent') if updated[k] != r[k]}
         if body != r['body']:
             changed['body'] = True
         if attrs != r['attrs']:

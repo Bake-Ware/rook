@@ -8,6 +8,17 @@
 .kn-index-item{display:flex!important;flex-direction:column;align-items:flex-start;text-align:left;width:100%;padding:8px 10px!important;border:1px solid transparent!important;background:transparent!important;white-space:normal!important;color:var(--fg)}
 .kn-index-item:hover{border-color:var(--line2)!important;background:var(--chip)!important}
 .kn-index-item small{color:var(--dim);font-size:11px;margin-top:2px}
+.kn-tree-row{display:flex;align-items:center;gap:2px;min-width:0}
+.kn-tree-row.kn-current .kn-tree-item{background:var(--chip)!important;border-color:var(--accent-dim)!important}
+.kn-tog{flex:0 0 20px;width:20px;height:26px;padding:0!important;border:none!important;background:none!important;color:var(--dim);cursor:pointer;font-size:11px}
+.kn-tree-item{flex:1;min-width:0;display:flex!important;align-items:center;justify-content:space-between;gap:8px;text-align:left;padding:5px 8px!important;border:1px solid transparent!important;background:transparent!important;color:var(--fg);white-space:nowrap!important}
+.kn-tree-item span{overflow:hidden;text-overflow:ellipsis}
+.kn-tree-item small{color:var(--dim);font-size:10px;font-family:var(--mono)}
+.kn-tree-item:hover{border-color:var(--line2)!important;background:var(--chip)!important}
+.kn-tree-item.kn-old span{color:var(--dim);text-decoration:line-through}
+.kn-tree-band{font-family:var(--mono);font-size:10px;color:var(--dim);margin:10px 0 2px;text-transform:uppercase}
+.kn-sections{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px}
+.kn-sections .kn-card{margin:0}
 .kn-page{min-width:0;padding:22px 28px;overflow-wrap:anywhere}
 .kn-page h1{margin:4px 0 6px;font-size:24px}
 .kn-page h2{font-size:15px;margin:26px 0 8px;border-bottom:1px solid var(--line);padding-bottom:4px}
