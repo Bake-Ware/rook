@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import sys
+import time
 
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import FastMCP
@@ -354,23 +355,68 @@ def build_server(client: "BandClient | MultiBandClient",
                       f"Live workers: {', '.join(known) or 'none'}. Ids change "
                       f"when a worker restarts — re-check rook_workers.")
 
+    # How long rook_call waits is derived from the call itself: the cap's own
+    # ``timeout`` arg, else that cap's declared default on that worker (learned
+    # from caps.describe, fetched once per worker), plus a margin for transport.
+    _DEFAULT_WAIT = 15.0
+    _WAIT_MARGIN = 5.0
+    _MAX_WAIT = 3600.0
+    _cap_timeouts: dict[str, dict[str, float]] = {}
+    _describe_tried: dict[str, float] = {}
+
+    def _learn_timeouts(worker_id: str, described) -> None:
+        if not isinstance(described, dict):
+            return
+        table: dict[str, float] = {}
+        for name, spec in described.items():
+            for p in (spec.get("params") or []) if isinstance(spec, dict) else []:
+                d = p.get("default") if isinstance(p, dict) else None
+                if p.get("name") == "timeout" and isinstance(d, (int, float)) and not isinstance(d, bool) and d > 0:
+                    table[name] = float(d)
+        _cap_timeouts[worker_id] = table
+
+    async def _cap_timeout(target: str, cap: str, args: dict | None) -> float | None:
+        """The timeout the call will run under on the worker, if it has one."""
+        v = (args or {}).get("timeout")
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
+            return float(v)
+        w = client.workers.get(target) or {}
+        if ("caps.describe" in w.get("caps", []) and target not in _cap_timeouts
+                and time.monotonic() - _describe_tried.get(target, -1e9) > 600):
+            _describe_tried[target] = time.monotonic()
+            try:
+                r = await client.call(cap="caps.describe", args={}, target=target,
+                                      timeout=10.0, identity="system:rook-mcp")
+                if isinstance(r, dict) and r.get("ok"):
+                    _learn_timeouts(target, r.get("result"))
+            except Exception:
+                log.debug("caps.describe for timeouts failed on %s", target, exc_info=True)
+        return _cap_timeouts.get(target, {}).get(cap)
+
     @mcp.tool()
     async def rook_call(cap: str, args: dict | None = None,
                         worker_id: str | None = None,
                         worker: str | None = None,
-                        timeout: float = 15.0) -> str:
+                        timeout: float | None = None) -> str:
         """Invoke a capability on the band and return the reply.
 
         Args:
             cap: dot-namespaced capability name (e.g. ``"shell.exec"``).
             args: keyword arguments passed to the handler.
-            worker_id: target worker — accepts the hex id from ``rook_workers``
+            worker_id: REQUIRED target worker — the hex id from ``rook_workers``
                 OR the worker name (e.g. ``"kaiju"``); names are resolved
-                against the live roster. If omitted, the first worker on the
-                band that has the capability replies (first reply wins) — so
-                always pass a target when it matters which machine runs this.
+                against the live roster. Calls without a target are refused
+                (the error lists which workers have the capability) so a call
+                never runs on whichever machine happens to answer first.
             worker: alias for ``worker_id`` (same id-or-name resolution).
-            timeout: seconds to wait for the reply.
+            timeout: optional extra wait, in seconds. By default rook_call waits
+                as long as the call itself may run: ``args.timeout`` if you pass
+                one, else that cap's declared default on the target worker
+                (e.g. shell.exec: 30s), plus 5s; 15s for caps with no timeout.
+                A smaller value is raised to that, so the wait never ends
+                before the worker would. To let a command run longer, raise
+                ``args.timeout``; for jobs over a few minutes use
+                rook_console_open.
 
         Returns the reply dict as JSON: either
         ``{"id","from","ok":true,"result":...}`` or
@@ -405,6 +451,16 @@ def build_server(client: "BandClient | MultiBandClient",
             hint = f" Similar caps: {', '.join(similar)}." if similar else ""
             return _fail(f"no live worker has capability {cap!r}.{hint} "
                          f"See rook_caps for the full list.")
+        else:
+            # Never let "first responder wins" pick the machine for the caller.
+            holders = sorted({w.get("name") or wid for wid, w in roster.items()
+                              if cap in w.get("caps", [])}, key=str.lower)
+            shown = ", ".join(holders[:25]) + (f", … ({len(holders)} total)"
+                                               if len(holders) > 25 else "")
+            return _fail(f"specify the target worker: pass worker=\"<name or id>\" "
+                         f"(rook_call without a worker is not allowed, so a call "
+                         f"never runs on whichever machine answers first). "
+                         f"Workers with {cap!r}: {shown}.")
 
         identity = _caller_identity()
         # Messages sent through the MCP identify their origin by the caller's
@@ -415,23 +471,34 @@ def build_server(client: "BandClient | MultiBandClient",
             args.setdefault("sender", identity if identity not in ("anonymous", "unverified") else "MCP")
         worker_name = (roster[target].get("name") if target in roster else target)
         try:
+            own = await _cap_timeout(target, cap, args)
+        except Exception:
+            own = None
+        floor = own + _WAIT_MARGIN if own else _DEFAULT_WAIT
+        wait = min(max(floor, float(timeout or 0)), _MAX_WAIT)
+        try:
             reply = await client.call(cap=cap, args=args, target=target,
-                                      timeout=timeout, identity=identity)
+                                      timeout=wait, identity=identity)
         except asyncio.TimeoutError:
-            where = (f"worker {roster[target].get('name')!r}" if target in roster
-                     else "any worker") if target else f"any worker with {cap!r}"
+            where = f"worker {worker_name!r}"
             # A timeout is exactly the "falls into the ether" case — journal it
             # so the call is at least on the record even though we got no reply.
             timeout_reply = {"ok": False, "timeout": True,
-                             "error": f"no reply within {timeout:.0f}s"}
+                             "error": f"no reply within {wait:.0f}s"}
             cid = journal.record(cap=cap, worker=worker_name, identity=identity,
                                  args=args, reply=timeout_reply,
                                  audit=_caller_audit())
-            return _fail(f"no reply from {where} within {timeout:.0f}s "
-                         f"(journal id {cid}). The worker may be offline or "
-                         f"still executing — a slow call keeps running and its "
-                         f"side effects may still land, so check its output "
-                         f"before retrying. For long-running caps raise `timeout`.")
+            basis = (f"the call's own {own:.0f}s timeout + {_WAIT_MARGIN:.0f}s" if own
+                     else f"the {_DEFAULT_WAIT:.0f}s default; {cap!r} declares no timeout")
+            return _fail(f"no reply from {where} within {wait:.0f}s ({basis}; "
+                         f"journal id {cid}). The worker may be offline, or the "
+                         f"call may still be running and its side effects may "
+                         f"still land. Check rook_journal(call_id={cid!r}) and the "
+                         f"worker before retrying. To let it run longer, raise "
+                         f"args.timeout (if the cap takes one) or pass timeout=; "
+                         f"for long jobs use rook_console_open.")
+        if cap == "caps.describe" and isinstance(reply, dict) and reply.get("ok"):
+            _learn_timeouts(target, reply.get("result"))
         cid = journal.record(cap=cap, worker=worker_name, identity=identity,
                              args=args, reply=reply, audit=_caller_audit())
         # Surface the journal id so a caller that later loses this output can
