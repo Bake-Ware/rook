@@ -70,14 +70,19 @@ def reply(res):
 async def test_defaults_reach_agents_at_each_placement(tmp_path):
     async with server(tmp_path) as env:
         init, rpc = await env.connect()
-        assert "rook_workers (who)" in init["instructions"]
+        assert "rook_workers (who)" in init["instructions"] and "Pass hint=true" in init["instructions"]
         tools = {t["name"]: t["description"] for t in (await rpc("tools/list", {}))["tools"]}
-        assert "\n\nTip: worker= is required" in tools["rook_call"]
+        assert "\n\nTip: worker= is required" in tools["rook_call"] and "hint=true" in tools["rook_call"]
         assert tools["rook_call"].startswith("Invoke a capability")  # docstring preserved
         first = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "shell.exec", "worker": "WIN11-FLOPHOUSE"}}))
         assert first["_tips"] == [guidance_mod.DEFAULTS["cap:shell.exec"]]  # cap tip only, no host tips
         again = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "shell.exec", "worker": "WIN11-FLOPHOUSE"}}))
         assert "_tips" not in again  # once per session
+        assert again["_hint"] == "Usage tip for 'shell.exec' hidden (shown earlier this session); pass hint=true to see it again."
+        forced = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "shell.exec", "worker": "WIN11-FLOPHOUSE", "hint": True}}))
+        assert forced["_tips"] == [guidance_mod.DEFAULTS["cap:shell.exec"]] and "_hint" not in forced
+        plain = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "info.host", "worker": "kaiju"}}))
+        assert "_tips" not in plain and "_hint" not in plain  # caps without a tip get neither
         proc = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "proc.start", "worker": "kaiju"}}))
         assert proc["_tips"] == [guidance_mod.DEFAULTS["cap:proc."]]
         _, rpc2 = await env.connect()
