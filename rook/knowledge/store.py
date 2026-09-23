@@ -513,7 +513,7 @@ class KnowledgeStore:
 
     @staticmethod
     def brief(r):
-        return {k: r.get(k) for k in ('id', 'slug', 'kind', 'title', 'state', 'updated', 'creator')} | {
+        return {k: r.get(k) for k in ('id', 'slug', 'kind', 'title', 'state', 'updated', 'creator', 'parent', 'band')} | {
             'excerpt': r['body'][:240],
             **({'verification': r['attrs'].get('verification', 'unverified')} if r['kind'] == 'knowledge' else {})}
 

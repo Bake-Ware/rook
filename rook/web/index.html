@@ -324,6 +324,7 @@
       <a id="tab-chat" href="#chat" onclick="showView('chat');return false">Chat</a>
       <a id="tab-work" href="#work" onclick="showView('work');return false">Work</a>
       <a id="tab-knowledge" href="#knowledge" onclick="showView('knowledge');return false">Knowledge</a>
+      <a id="tab-sessions" href="#sessions" onclick="showView('sessions');return false">Sessions</a>
     </nav>
     <span class="nav-label">MANAGE</span>
     <nav aria-label="Management">
@@ -443,6 +444,7 @@
     </div>
 
     <!-- INSTALL VIEW -->
+    <div id="view-sessions" hidden></div>
     <div id="view-work" hidden></div>
     <div id="view-install" hidden>
       <div class="install">
@@ -922,9 +924,10 @@ const viewInfo={
  tokens:['API tokens','Credentials and identities for your agents and integrations.'],
  bands:['Bands','Organize your fleet, manage keys, and move workers.'],
  chat:['Chat','Conversations with the people and agents on your network.'],
- knowledge:['Knowledge','Shared concepts, projects, tasks, and operational memory.'],
+ knowledge:['Knowledge','The agents\' shared wiki: what the team knows, with sources.'],
  guidance:['Agent instructions','What Rook tells agents when they connect, list tools, and call capabilities.'],
- work:['Work','Review and continue Claude and Codex sessions across your workers.'],
+ work:['Work','Projects and tasks the agents are tracking: in progress, blocked and done.'],
+ sessions:['Sessions','Review and continue Claude and Codex sessions across your workers.'],
  install:['Install a worker','Connect another machine to your workspace.']
 };
 let knowledgeUI=null, knowledgeLoading=null, guidanceUI=null, guidanceLoading=null;
@@ -938,13 +941,18 @@ async function ensureKnowledge(){
  if(!knowledgeLoading)knowledgeLoading=import('/account/knowledge/assets/knowledge.js').then(m=>m.mountKnowledge($('#view-knowledge'))).then(ui=>knowledgeUI=ui).finally(()=>{knowledgeLoading=null;});
  return knowledgeLoading;
 }
-let activeView=null, bandsUI=null, bandsLoading=null, workUI=null, workLoading=null;
-async function ensureWork(){
- if(workUI)return workUI;
- if(workLoading)return workLoading;
- const root=$('#view-work');
- workLoading=import('/account/work/assets/work.js').then(m=>m.mountWork(root)).then(ui=>workUI=ui);
- try{return await workLoading;}catch(e){root.textContent=e.message;throw e;}finally{workLoading=null;}
+let activeView=null, bandsUI=null, bandsLoading=null, sessionsUI=null, sessionsLoading=null, tasksUI=null, tasksLoading=null;
+async function ensureSessions(){
+ if(sessionsUI)return sessionsUI;
+ if(sessionsLoading)return sessionsLoading;
+ const root=$('#view-sessions');
+ sessionsLoading=import('/account/work/assets/work.js').then(m=>m.mountWork(root)).then(ui=>sessionsUI=ui);
+ try{return await sessionsLoading;}catch(e){root.textContent=e.message;throw e;}finally{sessionsLoading=null;}
+}
+async function ensureTasks(){
+ if(tasksUI)return tasksUI;
+ if(!tasksLoading)tasksLoading=import('/account/knowledge/assets/knowledge.js').then(m=>m.mountTasks($('#view-work'))).then(ui=>tasksUI=ui).finally(()=>{tasksLoading=null;});
+ return tasksLoading;
 }
 
 async function ensureBands(){
@@ -979,12 +987,12 @@ async function ensureSettings(view){
  finally{delete settingsLoading[view];}
 }
 function showView(v,updateHistory=true){
- if(v==='sessions'){v='work';history.replaceState(null,'','#work');}
  if(!viewInfo[v])v='workers';
  if(updateHistory&&location.hash!=='#'+v)history.pushState(null,'','#'+v);
  if(activeView===v){if(v==='account'&&settingsUI.account)settingsUI.account.refresh().catch(()=>{});return;}
  settingsUI[activeView]?.deactivate();
- if(activeView==='work')workUI?.deactivate();
+ if(activeView==='sessions')sessionsUI?.deactivate();
+ if(activeView==='work')tasksUI?.deactivate();
  if(activeView==='knowledge')knowledgeUI?.deactivate();
  activeView=v;document.body.dataset.view=v;
  for(const n of Object.keys(viewInfo)){
@@ -996,7 +1004,8 @@ function showView(v,updateHistory=true){
  if(v==='chat'){startChat();}else{stopChat();}
  if(v==='guidance')ensureGuidance().then(ui=>{if(activeView==='guidance')ui.activate();}).catch(e=>{$('#view-guidance').textContent=e.message;});
  if(v==='knowledge')ensureKnowledge().then(ui=>{if(activeView==='knowledge')ui.activate();}).catch(e=>{$('#view-knowledge').textContent=e.message;});
- if(v==='work')ensureWork().then(ui=>{if(activeView==='work')ui.activate();else ui.deactivate();}).catch(()=>{});
+ if(v==='sessions')ensureSessions().then(ui=>{if(activeView==='sessions')ui.activate();else ui.deactivate();}).catch(()=>{});
+ if(v==='work')ensureTasks().then(ui=>{if(activeView==='work')ui.activate();}).catch(e=>{$('#view-work').textContent=e.message;});
  if(v==='bands')ensureBands().then(ui=>ui.refresh()).catch(()=>{});
  if(v==='account'||v==='tokens')ensureSettings(v).then(ui=>ui.refresh()).catch(()=>{});
 }
