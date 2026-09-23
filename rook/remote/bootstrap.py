@@ -19,6 +19,23 @@ from .server import RemoteWorker
 log = logging.getLogger(__name__)
 
 
+def _versioned_assets(html: str, web_dir) -> str:
+    """Append ?v=<content version> to dashboard asset URLs. Cloudflare rewrites
+    asset caching to hours, so without this a deploy keeps serving browsers the
+    old scripts (e.g. a new page shell calling a function the cached module
+    lacks). The version changes whenever any web file changes."""
+    import hashlib, re as _re
+    h = hashlib.sha1()
+    try:
+        for f in sorted(p for p in web_dir.iterdir() if p.is_file()):
+            st = f.stat()
+            h.update(f"{f.name}:{st.st_size}:{st.st_mtime_ns}".encode())
+    except OSError:
+        return html
+    ver = h.hexdigest()[:10]
+    return _re.sub(r"(/account/[a-z]+/assets/[\w.-]+\.(?:js|css))(?=['\"])", rf"\1?v={ver}", html)
+
+
 class InstallerAccessLogger(web.AbstractAccessLogger):
     """Keep short-lived join codes out of application HTTP access logs."""
     def log(self, request, response, elapsed):
@@ -1453,7 +1470,7 @@ button:hover{{background:#22b88f}}
                     # no-store so a dashboard redeploy is seen on the next load
                     # instead of the browser serving a stale cached page.
                     return web.Response(
-                        text=index_path.read_text(encoding="utf-8"),
+                        text=_versioned_assets(index_path.read_text(encoding="utf-8"), WEB_DIR),
                         content_type="text/html",
                         headers={"Cache-Control": "no-store, must-revalidate"})
             except Exception:
