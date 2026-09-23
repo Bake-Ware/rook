@@ -12,7 +12,6 @@ const SECTIONS=[
  ['server','Connection instructions','Sent once when an agent connects (MCP initialize). Keep it to what every agent needs.'],
  ['tool','Tool tips','Appended to a tool’s description as “Tip: …”. Agents see it when they list tools.'],
  ['cap','Capability tips','Attached as _tips to a rook_call reply whose cap starts with this prefix (e.g. proc. or shell.exec). Shown once per agent session.'],
- ['worker','Worker tips','Attached as _tips to a rook_call reply from this worker. Shown once per agent session.'],
 ];
 export async function mountGuidance(root){
  const style=document.createElement('style');style.textContent=CSS;document.head.append(style);
@@ -43,10 +42,10 @@ export async function mountGuidance(root){
  function adder(){
   const box=el('section',undefined,'gd-slot');box.append(el('strong','Add a tip'));
   const row=el('div',undefined,'gd-row');row.style.marginTop='.6rem';
-  const kind=el('select');for(const [k,label] of [['cap','Capability prefix'],['worker','Worker name'],['tool','Tool']]){const o=el('option',label);o.value=k;kind.append(o);}
-  const name=el('input');name.placeholder='e.g. hermes. or kaiju';name.setAttribute('aria-label','Name');
+  const kind=el('select');for(const [k,label] of [['cap','Capability prefix'],['tool','Tool']]){const o=el('option',label);o.value=k;kind.append(o);}
+  const name=el('input');name.placeholder='e.g. hermes. or deluge.add';name.setAttribute('aria-label','Name');
   const tool=el('select');tool.setAttribute('aria-label','Tool');for(const t of tools){const o=el('option',t);o.value=t;tool.append(o);}tool.hidden=true;
-  kind.onchange=()=>{tool.hidden=kind.value!=='tool';name.hidden=kind.value==='tool';name.placeholder=kind.value==='cap'?'e.g. hermes. or deluge.add':'exact worker name';};
+  kind.onchange=()=>{tool.hidden=kind.value!=='tool';name.hidden=kind.value==='tool';name.placeholder='e.g. hermes. or deluge.add';};
   row.append(kind,name,tool);
   const ta=el('textarea');ta.placeholder='Terse advice an agent needs at that moment.';ta.setAttribute('aria-label','Tip text');
   const err=el('small','','gd-error');const add=el('button','Add');
@@ -55,7 +54,7 @@ export async function mountGuidance(root){
   box.append(row,ta,r2);return box;
  }
  function render(slots){
-  root.replaceChildren(el('p','Advice Rook gives to agents at the moment it is useful. Keep entries short: they are sent with every connection or matching call. Tips are guidance only and never allow or block anything.','gd-help'),status);
+  root.replaceChildren(el('p','Advice Rook gives to agents at the moment it is useful. Keep entries short and generic (about a tool or capability, not a particular host): they go out with every connection or matching call. Tips are guidance only and never allow or block anything.','gd-help'),status);
   if(!editable)root.append(el('p','The instructions store is unavailable, so defaults are in effect and editing is disabled.','gd-error'));
   for(const [k,title,where] of SECTIONS){root.append(el('h2',title),el('p',where,'gd-where'));for(const s of slots.filter(s=>s.kind===k))root.append(slot(s));}
   if(editable)root.append(el('h2','Add'),adder());

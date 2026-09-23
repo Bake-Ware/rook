@@ -443,9 +443,9 @@ def build_server(client: "BandClient | MultiBandClient",
             unread = chat.unread_summary(identity)
             if unread:
                 reply["_unread_chat"] = unread
-            # Operator-editable cap/worker advice, once per MCP session.
+            # Operator-editable cap advice, once per MCP session.
             try:
-                tips = guidance.tips(_caller_session() or identity, cap, worker_name)
+                tips = guidance.tips(_caller_session() or identity, cap)
             except Exception:
                 log.exception("guidance tips failed")
                 tips = None
@@ -961,7 +961,7 @@ def build_server(client: "BandClient | MultiBandClient",
     mcp._rook_console = console  # _amain starts the pump against this store
 
     # Agent guidance: server instructions + tool tips applied now (after every
-    # tool, including knowledge, is registered); cap/worker tips ride on
+    # tool, including knowledge, is registered); cap tips ride on
     # rook_call replies. Edited from the site via guidance_web.
     _guidance_apply()
     return mcp, store
