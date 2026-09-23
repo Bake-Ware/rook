@@ -82,6 +82,27 @@ def test_same_title_gets_distinct_slugs_in_a_band(work):
     assert (a['slug'], b['slug']) == ('deploy-notes', 'deploy-notes-2')
 
 
+def test_pages_nest_like_folders_and_can_move(work):
+    hosts = work.create('knowledge', 'Hosts')
+    sojourn = work.create('knowledge', 'Sojourn', hosts['id'])
+    gpu = work.create('knowledge', 'GPU notes', sojourn['id'])
+    assert sojourn['parent'] == hosts['id']
+    assert [c['id'] for c in work.s.get('default', hosts['id'])['children']] == [sojourn['id']]
+    with pytest.raises(ValueError):   # pages only nest under pages
+        work.create('knowledge', 'Bad', work.task['id'])
+    def move(r, parent):
+        cur = work.s.get('default', r['id'])
+        return work.s.mutate('default', AGENT, rid(), 'update',
+                             {'id': r['id'], 'revision': cur['revision'], 'patch': {'parent': parent}})
+    with pytest.raises(Conflict):     # no loops
+        move(hosts, gpu['slug'])
+    assert move(gpu, 'hosts')['parent'] == hosts['id']       # slug accepted
+    assert move(gpu, None)['parent'] is None                 # back to top level
+    assert work.s.get('default', gpu['id'])['events'][0]['data'] == {'parent': None}
+    with pytest.raises(ValueError):   # tasks keep their project structure
+        move(work.task, None)
+
+
 def test_supersession_banner_and_safe_import(work, tmp_path):
     w = work; old = w.create('knowledge', 'Old port')
     new = w.create('knowledge', 'New port', supersedes=[old['id']])

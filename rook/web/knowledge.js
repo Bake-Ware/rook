@@ -66,41 +66,87 @@ export async function mountKnowledge(root){
   root.replaceChildren();const layout=el('div',undefined,'kn-layout');const side=el('aside',undefined,'kn-side');const page=el('article',undefined,'kn-page');layout.append(side,page);root.append(layout);
   const form=dialog(root);
   const q=el('input');q.type='search';q.placeholder='Search the wiki';q.setAttribute('aria-label','Search the wiki');
-  const home=btn('Knowledge home',()=>go(null),'kn-linkish');const add=btn('New page',()=>edit(null),'kn-primary');
+  const home=btn('Knowledge home',()=>go(null),'kn-linkish');const add=btn('New page',()=>edit(null,null),'kn-primary');
   const showOld=el('label',' Show superseded','kn-dim');const chk=el('input');chk.type='checkbox';showOld.prepend(chk);
   const index=el('nav',undefined,'kn-index');index.setAttribute('aria-label','All pages');
-  const tools=el('div',undefined,'kn-row');tools.append(home,add);side.append(q,tools,el('h3','All pages'),showOld,index);
-  let pages=[],active=false,timer=null;
+  const tools=el('div',undefined,'kn-row');tools.append(home,add);side.append(q,tools,el('h3','Pages'),showOld,index);
+  let pages=[],active=false,timer=null,cur=null,searching=false;
+  // Pages nest under pages (record.parent), like folders. Which folders are
+  // open is remembered per browser.
+  let open_=new Set();try{open_=new Set(JSON.parse(localStorage.getItem('kn-open')||'[]'));}catch{}
+  const saveOpen=()=>{try{localStorage.setItem('kn-open',JSON.stringify([...open_]));}catch{}};
+  const byId=id=>pages.find(p=>p.id===id);
+  const ancestors=p=>{const out=[],seen=new Set();let x=p&&p.parent&&byId(p.parent);while(x&&!seen.has(x.id)){seen.add(x.id);out.unshift(x);x=x.parent&&byId(x.parent);}return out;};
+  const pathOf=p=>[...ancestors(p),p].map(x=>x.title).join(' / ');
+  const visible=p=>chk.checked||!['superseded','archived'].includes(p.state);
+  const byTitle=(a,b)=>a.title.localeCompare(b.title);
   const go=(slug,band)=>{setHash('knowledge',{p:slug,b:band});route();};
   const ref=(slug,band)=>{const hit=pages.find(p=>p.slug===slug&&(!band||p.band===band));if(hit||!slug)return go(slug,band);
     // [[slug]] may name a task/project: send it to Work.
     c.api('get',{id:slug,...(band?{band}:{})}).then(r=>{if(r.kind==='knowledge')go(slug,r.band);else jump('work',{t:r.slug,b:r.band});}).catch(()=>go(slug,band));};
-  async function loadIndex(){pages=await c.listAll('knowledge');drawIndex(pages);}
-  function drawIndex(list){index.replaceChildren();const shown=list.filter(p=>chk.checked||!['superseded','archived'].includes(p.state)).sort((a,b)=>a.title.localeCompare(b.title));
-    if(!shown.length){index.append(el('p','No pages yet.','kn-dim'));return;}const multi=new Set(shown.map(p=>p.band)).size>1;
-    for(const p of shown){const a=btn('',()=>go(p.slug,p.band),'kn-index-item');a.append(el('span',p.title),el('small',(multi?c.bandName(p.band)+' · ':'')+(p.verification||p.attrs?.verification||'unverified')));index.append(a);}}
-  chk.onchange=()=>drawIndex(pages);
-  q.onkeydown=async e=>{if(e.key!=='Enter')return;const term=q.value.trim();if(!term){drawIndex(pages);return;}const r=await c.searchAll(term,'knowledge');drawIndex(r.results);};
-  function edit(r){form(r?'Edit page':'New page',f=>{f('title','Title',r?.title||'');if(!r)f('slug','Slug (optional, lowercase-with-dashes)','');
-      f('body','Body — markdown-lite; link pages with [[slug]]',r?.body||'','textarea');if(!r){const b=f('band','Band','', 'select');for(const x of c.bands()){const o=el('option',x.name);o.value=x.id;if(x.primary)o.selected=true;b.append(o);}}},
-    async d=>{if(r){await c.api('update',{id:r.id,band:r.band,request_id:crypto.randomUUID(),data:{revision:r.revision,patch:{title:d.get('title'),body:d.get('body')}}});await open(r.slug,r.band);}
-      else{const n=await c.api('create',{kind:'knowledge',band:d.get('band'),request_id:crypto.randomUUID(),data:{title:d.get('title'),body:d.get('body'),...(d.get('slug')?{slug:d.get('slug')}:{})}});await loadIndex();go(n.slug,n.band);}});}
-  async function open(slug,band){const r=await c.api('get',{id:slug,...(band?{band}:{})});page.replaceChildren();
-    const crumbs=el('nav',undefined,'kn-crumbs');crumbs.append(btn('Knowledge',()=>go(null),'kn-linkish'),document.createTextNode(' / '+r.title));page.append(crumbs);
+  async function loadIndex(){pages=await c.listAll('knowledge');if(!searching)drawTree();}
+  function kids(parent,band){return pages.filter(p=>visible(p)&&p.band===band&&(parent?p.parent===parent:!(p.parent&&byId(p.parent)&&visible(byId(p.parent))))).sort(byTitle);}
+  function drawTree(){searching=false;index.replaceChildren();
+    const cp=cur&&pages.find(p=>p.slug===cur.slug&&(!cur.band||p.band===cur.band));
+    if(cp)for(const a of ancestors(cp))open_.add(a.id);
+    const bands=[...new Set(pages.filter(visible).map(p=>p.band))];
+    if(!bands.length){index.append(el('p','No pages yet.','kn-dim'));return;}
+    const node=(p,depth)=>{const ch=kids(p.id,p.band),isOpen=open_.has(p.id);
+      const row=el('div',undefined,'kn-tree-row'+(cp&&cp.id===p.id?' kn-current':''));row.style.paddingLeft=(depth*14)+'px';
+      const tog=btn(ch.length?(isOpen?'▾':'▸'):'',()=>{if(!ch.length)return;isOpen?open_.delete(p.id):open_.add(p.id);saveOpen();drawTree();},'kn-tog');
+      tog.setAttribute('aria-label',ch.length?(isOpen?'Collapse ':'Expand ')+p.title:'');if(!ch.length)tog.tabIndex=-1;
+      const a=btn('',()=>go(p.slug,p.band),'kn-tree-item');a.append(el('span',p.title));if(ch.length)a.append(el('small',String(ch.length)));
+      if(['superseded','archived'].includes(p.state))a.classList.add('kn-old');
+      row.append(tog,a);index.append(row);if(isOpen)for(const k of folders(ch))node(k,depth+1);};
+    const folders=list=>list.map(p=>[kids(p.id,p.band).length>0,p]).sort((x,y)=>y[0]-x[0]||byTitle(x[1],y[1])).map(x=>x[1]);
+    for(const b of bands){if(bands.length>1)index.append(el('h4',c.bandName(b),'kn-tree-band'));for(const p of folders(kids(null,b)))node(p,0);}}
+  function drawResults(list){searching=true;index.replaceChildren();const shown=list.filter(visible).sort(byTitle);
+    if(!shown.length){index.append(el('p','No matches.','kn-dim'));return;}
+    for(const p of shown){const full=byId(p.id)||p;const a=btn('',()=>go(p.slug,p.band),'kn-index-item');a.append(el('span',p.title));const anc=ancestors(full);if(anc.length)a.append(el('small',anc.map(x=>x.title).join(' / ')));index.append(a);}}
+  chk.onchange=()=>searching?null:drawTree();
+  q.onkeydown=async e=>{if(e.key!=='Enter')return;const term=q.value.trim();if(!term){drawTree();return;}const r=await c.searchAll(term,'knowledge');drawResults(r.results);};
+  q.oninput=()=>{if(!q.value.trim()&&searching)drawTree();};
+  // Parent picker: every page in tree order, indented, minus the page itself and its subpages.
+  function parentSelect(f,value,band,exclude){const s=f('parent','Inside (parent page)','','select');const none=el('option','— Top level —');none.value='';s.append(none);
+    const walk=(parent,b,depth)=>{for(const p of pages.filter(x=>x.band===b&&x.state!=='archived'&&(parent?x.parent===parent:!(x.parent&&byId(x.parent)))).sort(byTitle)){if(exclude&&p.id===exclude)continue;
+      const o=el('option','  '.repeat(depth)+p.title+(bands().length>1?' ('+c.bandName(b)+')':''));o.value=p.id;s.append(o);walk(p.id,b,depth+1);}};
+    const bands=()=>[...new Set(pages.map(p=>p.band))];for(const b of (band?[band]:bands()))walk(null,b,0);s.value=value||'';return s;}
+  function edit(r,parentId){form(r?'Edit page':'New page',f=>{f('title','Title',r?.title||'');
+      parentSelect(f,r?r.parent:parentId,r?.band,r?.id);
+      if(!r)f('slug','Slug (optional, lowercase-with-dashes)','');
+      f('body','Body — markdown-lite; link pages with [[slug]]',r?.body||'','textarea');
+      if(!r&&c.bands().length>1){const b=f('band','Band (for a top-level page)','', 'select');for(const x of c.bands()){const o=el('option',x.name);o.value=x.id;if(x.primary)o.selected=true;b.append(o);}}},
+    async d=>{const parent=d.get('parent')||null;
+      if(r){const patch={title:d.get('title'),body:d.get('body')};if((r.parent||null)!==parent)patch.parent=parent;
+        await c.api('update',{id:r.id,band:r.band,request_id:crypto.randomUUID(),data:{revision:r.revision,patch}});await loadIndex();await open(r.slug,r.band);}
+      else{const band=parent?byId(parent).band:(d.get('band')||c.bands()[0]?.id);
+        const n=await c.api('create',{kind:'knowledge',band,request_id:crypto.randomUUID(),data:{title:d.get('title'),body:d.get('body'),...(parent?{parent}:{}),...(d.get('slug')?{slug:d.get('slug')}:{})}});
+        if(parent){open_.add(parent);saveOpen();}await loadIndex();go(n.slug,n.band);}});}
+  function move(r){form('Move “'+r.title+'”',f=>{parentSelect(f,r.parent,r.band,r.id);},
+    async d=>{const parent=d.get('parent')||null;if((r.parent||null)===parent)return;
+      await c.api('update',{id:r.id,band:r.band,request_id:crypto.randomUUID(),data:{revision:r.revision,patch:{parent}}});await loadIndex();await open(r.slug,r.band);});}
+  async function open(slug,band){const r=await c.api('get',{id:slug,...(band?{band}:{})});cur={slug:r.slug,band:r.band};if(!searching)drawTree();page.replaceChildren();
+    const crumbs=el('nav',undefined,'kn-crumbs');crumbs.append(btn('Knowledge',()=>go(null),'kn-linkish'));
+    for(const a of ancestors(byId(r.id)||r)){crumbs.append(document.createTextNode(' / '),btn(a.title,()=>go(a.slug,a.band),'kn-linkish'));}
+    crumbs.append(document.createTextNode(' / '+r.title));page.append(crumbs);
     const head=el('header',undefined,'kn-head');head.append(el('h1',r.title));const meta=el('p',undefined,'kn-meta');
     meta.append(badge(r.attrs.verification||'unverified'),document.createTextNode(' '+(r.attrs.knowledge_kind||'page')+' · [['+r.slug+']] · '+c.bandName(r.band)+' · by '+r.creator+' · updated '+ago(r.updated)));head.append(meta);page.append(head);
     if(r.state==='superseded'){const w=el('p','This page is superseded','kn-warn');if(r.superseded_by){w.append(document.createTextNode(' by '));const a=el('a',r.superseded_by.title);a.href='#';a.onclick=e=>{e.preventDefault();go(r.superseded_by.slug,r.band);};w.append(a);}page.append(w);}
     page.append(renderBody(r.body,s=>ref(s,r.band)));
     if((r.attrs.tags||[]).length){const t=el('p',undefined,'kn-tags');for(const x of r.attrs.tags)t.append(badge(x,'tag'));page.append(t);}
-    const acts=el('div',undefined,'kn-row');acts.append(btn('Edit',()=>edit(r)));if(r.state!=='archived')acts.append(btn('Archive',async()=>{await c.api('update',{id:r.id,band:r.band,request_id:crypto.randomUUID(),data:{revision:r.revision,patch:{state:'archived'}}});await loadIndex();go(null);}));page.append(acts);
+    const acts=el('div',undefined,'kn-row');acts.append(btn('Edit',()=>edit(r)),btn('New subpage',()=>edit(null,r.id)),btn('Move',()=>move(r)));if(r.state!=='archived')acts.append(btn('Archive',async()=>{await c.api('update',{id:r.id,band:r.band,request_id:crypto.randomUUID(),data:{revision:r.revision,patch:{state:'archived'}}});await loadIndex();go(null);}));page.append(acts);
+    const sub=r.children.filter(x=>x.kind==='knowledge'&&(chk.checked||!['superseded','archived'].includes(x.state))).sort(byTitle);
+    if(sub.length){page.append(el('h2','Pages in here'));const ul=el('ul',undefined,'kn-list');for(const b of sub){const li=el('li');const a=el('a',b.title);a.href='#';a.onclick=e=>{e.preventDefault();go(b.slug,r.band);};li.append(a);const n=kids(b.id,r.band).length;if(n)li.append(el('span',' · '+n+' page'+(n>1?'s':''),'kn-dim'));ul.append(li);}page.append(ul);}
     if(r.backlinks.length){page.append(el('h2','What links here'));const ul=el('ul',undefined,'kn-list');for(const b of r.backlinks){const li=el('li');const a=el('a',b.title);a.href='#';a.onclick=e=>{e.preventDefault();ref(b.slug,r.band);};li.append(a,el('span',' · '+b.kind,'kn-dim'));ul.append(li);}page.append(ul);}
     if(r.links.length){page.append(el('h2','Sources and evidence'),linksTable(r.links));}
     page.append(historyBlock(r.events));page.focus?.();}
-  async function drawHome(){page.replaceChildren(el('h1','Knowledge'),el('p','What the agent team knows, with sources. Agents write these pages as they work; everything starts unverified until someone links evidence with a traceable id.','kn-dim'));
+  async function drawHome(){cur=null;if(!searching)drawTree();page.replaceChildren(el('h1','Knowledge'),el('p','What the agent team knows, with sources. Agents write these pages as they work; everything starts unverified until someone links evidence with a traceable id.','kn-dim'));
     const recent=pages.filter(p=>p.state==='active').sort((a,b)=>b.updated-a.updated).slice(0,12);
     const counts={};for(const p of pages)counts[p.verification||'unverified']=(counts[p.verification||'unverified']||0)+1;
     const stats=el('p',undefined,'kn-meta');stats.append(document.createTextNode(pages.length+' pages · '));for(const [k,n] of Object.entries(counts))stats.append(badge(n+' '+k,k),document.createTextNode(' '));page.append(stats);
-    page.append(el('h2','Recently updated'));const ul=el('ul',undefined,'kn-list');for(const p of recent){const li=el('li');const a=el('a',p.title);a.href='#';a.onclick=e=>{e.preventDefault();go(p.slug,p.band);};li.append(a,el('span',' · '+ago(p.updated)+' · '+(p.creator||''),'kn-dim'));if(p.excerpt)li.append(el('div',p.excerpt.slice(0,160),'kn-dim'));ul.append(li);}
+    const sections=[...new Set(pages.map(p=>p.band))].flatMap(b=>kids(null,b).filter(p=>kids(p.id,b).length));
+    if(sections.length){page.append(el('h2','Sections'));const grid=el('div',undefined,'kn-sections');for(const s of sections){const n=kids(s.id,s.band).length;const b=btn('',()=>go(s.slug,s.band),'kn-card');const top=el('div',undefined,'kn-card-top');top.append(el('strong',s.title));b.append(top,el('small',n+' page'+(n>1?'s':'')+': '+kids(s.id,s.band).slice(0,4).map(x=>x.title).join(', ')+(n>4?'…':'')));grid.append(b);}page.append(grid);}
+    page.append(el('h2','Recently updated'));const ul=el('ul',undefined,'kn-list');for(const p of recent){const li=el('li');const a=el('a',p.title);a.href='#';a.onclick=e=>{e.preventDefault();go(p.slug,p.band);};li.append(a);const anc=ancestors(p);li.append(el('span',(anc.length?' · in '+anc.map(x=>x.title).join(' / '):'')+' · '+ago(p.updated)+' · '+(p.creator||''),'kn-dim'));if(p.excerpt)li.append(el('div',p.excerpt.slice(0,160),'kn-dim'));ul.append(li);}
     if(!recent.length)ul.append(el('li','Nothing yet.','kn-dim'));page.append(ul);}
   async function route(){const p=hashParams('knowledge');if(!p)return;try{const slug=p.get('p');if(slug)await open(slug,p.get('b'));else await drawHome();}catch(e){page.replaceChildren(el('p',e.message,'kn-error'));}}
   const onHash=()=>{if(active)route();};
