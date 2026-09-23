@@ -188,12 +188,15 @@ async def test_named_key_attribution_reaches_journal_worker_and_whoami(tmp_path)
         who = json.loads((await s.result("rook_whoami"))["content"][0]["text"])
         assert who == {"identity": "agent:claude code_cachyrig", "kind": "agent",
                        "label": "claude code", "agent_id": minted["agent_id"],
-                       "key_id": minted["id"], "verified": True}
+                       "key_id": minted["id"], "verified": True,
+                       "token": "claudecode", "client": "t", "host": "cachyrig",
+                       "actor": "claudecode.t.cachyrig"}
         assert minted["token"] not in json.dumps(who)
         await s.result("rook_call", {"cap": "shell.exec", "worker": "kaiju"})
         assert env.band.calls[-1]["identity"] == "agent:claude code_cachyrig"
         row = rows(env.journal, "cap='shell.exec'")[-1]
         assert (row["agent_id"], row["key_id"], row["auth"]) == (minted["agent_id"], minted["id"], "agent")
+        assert row["actor"] == "claudecode.t.cachyrig"
 
 
 @pytest.mark.asyncio
@@ -328,3 +331,26 @@ async def test_wait_follows_the_calls_own_timeout(tmp_path, monkeypatch):
     out = json.loads(await call(cap="file.list", worker="kaiju"))
     assert "within 15s (the 15s default; 'file.list' declares no timeout" in out["error"]
     assert "rook_journal(call_id=" in out["error"]
+
+
+
+@pytest.mark.asyncio
+async def test_compound_identity_uses_client_host_and_cwd_with_fallbacks(tmp_path):
+    async with mcp_http(tmp_path) as env:
+        s = await Session(env.http, STATIC).open()
+        who = json.loads((await s.result("rook_whoami"))["content"][0]["text"])
+        assert who["actor"] == "static.t.web"  # shared token, no host header → web, no dir
+        env.http.headers["X-Rook-Host"] = "Kaiju"
+        env.http.headers["X-Rook-Cwd"] = "/home/bake/rook"
+        s2 = await Session(env.http, STATIC).open()
+        who = json.loads((await s2.result("rook_whoami"))["content"][0]["text"])
+        assert who["actor"] == "static.t.kaiju@.home.bake.rook" and who["dir"] == "/home/bake/rook"
+
+
+def test_identity_normalization():
+    from rook.band_mcp.attribution import Attribution, compound
+    a = compound(Attribution(identity="agent:Claude Code", kind="agent", label="Claude Code"),
+                 "claude-code", "", "/home/bake/rook/")
+    assert a.actor == "claudecode.claudecode.web@.home.bake.rook"
+    u = compound(Attribution(identity="unverified", kind="unverified", verified=False), "x", "h", "/d")
+    assert u.actor == "unverified"

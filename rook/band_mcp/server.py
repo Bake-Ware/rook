@@ -134,6 +134,47 @@ def build_server(client: "BandClient | MultiBandClient",
                    "cap": a.get("cap")},
             audit=att.audit() if att else {"kind": "denied", "verified": False})
 
+    # Per MCP session: (client name, working dir) as the client reports them.
+    _session_facts_cache: dict[str, tuple[str | None, str | None]] = {}
+
+    async def _session_facts(context) -> tuple[str | None, str | None]:
+        """Client name from MCP initialize; working dir from roots/list (if the
+        client supports it) else an X-Rook-Cwd header. Cached per session;
+        any failure just leaves the part unknown."""
+        req = sid = None
+        try:
+            req = context.request_context.request
+            sid = req.headers.get("mcp-session-id") if req is not None else None
+        except Exception:
+            pass
+        if sid and sid in _session_facts_cache:
+            return _session_facts_cache[sid]
+        client_name = cwd = None
+        roots_seen = None
+        try:
+            session = context.request_context.session
+            params = session.client_params
+            client_name = params.clientInfo.name if params and params.clientInfo else None
+            caps = params.capabilities if params else None
+            if caps is not None and getattr(caps, "roots", None) is not None:
+                from urllib.parse import unquote, urlparse
+                listed = await asyncio.wait_for(session.list_roots(), 2.0)
+                roots_seen = [str(r.uri) for r in listed.roots]
+                for uri in roots_seen:
+                    if uri.startswith("file://"):
+                        cwd = unquote(urlparse(uri).path) or None
+                        break
+        except Exception as e:  # noqa: BLE001 — identity parts are best-effort
+            log.debug("session facts unavailable: %s", type(e).__name__)
+        if cwd is None and req is not None:
+            cwd = (req.headers.get("x-rook-cwd") or "").strip() or None
+        if sid:
+            log.info("mcp session %s: client=%r roots=%r cwd=%r", sid[:8], client_name, roots_seen, cwd)
+            if len(_session_facts_cache) > 5000:
+                _session_facts_cache.clear()
+            _session_facts_cache[sid] = (client_name, cwd)
+        return client_name, cwd
+
     async def _attributed_call_tool(name, arguments, context=None,
                                     convert_result=False):
         def token():
@@ -155,6 +196,11 @@ def build_server(client: "BandClient | MultiBandClient",
         if not att.verified:
             _alert(name, att)
             _audit_row("unverified", name, arguments, att, att.reason or "")
+        try:
+            client_name, cwd = await _session_facts(context)
+            att = _attr.compound(att, client_name, _caller_host(), cwd)
+        except Exception:  # noqa: BLE001 — never let identity detail block a call
+            log.exception("compound identity failed")
         reset = _attr.current.set(att)
         try:
             return await _run_tool(name, arguments, context=context,
@@ -179,6 +225,7 @@ def build_server(client: "BandClient | MultiBandClient",
     # nothing here touches the band call path, and a failure to open the store
     # disables the tools rather than the server.
     mcp._rook_knowledge = None
+    mcp._rook_hygiene = None
     if os.environ.get("ROOK_KNOWLEDGE", "0") == "1":
         try:
             from ..knowledge.service import KnowledgeService
@@ -186,11 +233,22 @@ def build_server(client: "BandClient | MultiBandClient",
             def _principal():
                 att = _attr.current.get()
                 return att.audit() if att is not None else None
+            def _save_handoff(author, h):
+                res = sessions.save(thread_id=h.get("thread_id"), author=author,
+                                    goal=h.get("goal", ""), state=h.get("state", ""),
+                                    decisions=h.get("decisions"), next_steps=h.get("next_steps"),
+                                    artifacts=h.get("artifacts"))
+                if not res.get("ok"):
+                    raise ValueError(res.get("error") or "handoff save failed")
+                return res["thread_id"]
             knowledge = KnowledgeService(
                 os.environ.get("ROOK_KNOWLEDGE_DB", os.path.join(_store_dir, "knowledge.db")),
-                _principal, enrollment)
+                _principal, enrollment, handoffs=_save_handoff)
             knowledge.register(mcp)
             mcp._rook_knowledge = knowledge
+            from .hygiene import Hygiene
+            mcp._rook_hygiene = Hygiene(knowledge, client, chat,
+                                        lambda: guidance.get("hygiene"), journal)
         except Exception:
             log.exception("knowledge store unavailable; knowledge tools disabled")
 
@@ -329,6 +387,18 @@ def build_server(client: "BandClient | MultiBandClient",
             return (req.headers.get("mcp-session-id") or "") if req is not None else ""
         except Exception:
             return ""
+
+    def _auto_link(kind: str, ref, note: str = "") -> str | None:
+        """Attach an artifact to the caller's claimed task, if any (design §3).
+        Bookkeeping only; never affects the call."""
+        k = getattr(mcp, "_rook_knowledge", None)
+        if k is None or not ref:
+            return None
+        try:
+            return k.store.auto_link(k.actor(), kind, ref, note=note)
+        except Exception:
+            log.exception("auto-link failed")
+            return None
 
     def _caller_audit() -> dict | None:
         att = _attr.current.get()
@@ -493,6 +563,7 @@ def build_server(client: "BandClient | MultiBandClient",
             cid = journal.record(cap=cap, worker=worker_name, identity=identity,
                                  args=args, reply=timeout_reply,
                                  audit=_caller_audit())
+            _auto_link("journal", cid, f"{cap} on {worker_name} (timed out)")
             basis = (f"the call's own {own:.0f}s timeout + {_WAIT_MARGIN:.0f}s" if own
                      else f"the {_DEFAULT_WAIT:.0f}s default; {cap!r} declares no timeout")
             return _fail(f"no reply from {where} within {wait:.0f}s ({basis}; "
@@ -506,10 +577,13 @@ def build_server(client: "BandClient | MultiBandClient",
             _learn_timeouts(target, reply.get("result"))
         cid = journal.record(cap=cap, worker=worker_name, identity=identity,
                              args=args, reply=reply, audit=_caller_audit())
+        linked = _auto_link("journal", cid, f"{cap} on {worker_name}")
         # Surface the journal id so a caller that later loses this output can
         # fetch it back with rook_journal(call_id=...).
         if isinstance(reply, dict):
             reply = {**reply, "_journal_id": cid}
+            if linked:
+                reply["_task"] = linked  # this call was recorded on your claimed task
             # Voicemail piggyback: an identified caller learns about unread chat
             # on its next call, no polling. Presence is touched below.
             unread = chat.unread_summary(identity)
@@ -580,6 +654,10 @@ def build_server(client: "BandClient | MultiBandClient",
             thread_id=thread_id, author=_caller_identity(), goal=goal, state=state,
             decisions=decisions, next_steps=next_steps, artifacts=artifacts,
             supersedes=supersedes, transcript_ref=transcript_ref)
+        if res.get("ok"):
+            task = _auto_link("handoff", res.get("thread_id"), goal[:200])
+            if task:
+                res["task"] = task
         return json.dumps(res, indent=2)
 
     @mcp.tool()
@@ -817,6 +895,9 @@ def build_server(client: "BandClient | MultiBandClient",
                               handle=result["handle"], cmd=result.get("cmd", ""),
                               pty=bool(result.get("pty")), opened_by=ident)
         opened["pid"] = result.get("pid")
+        task_id = _auto_link("console", opened.get("room") or opened.get("id"), task[:200])
+        if task_id:
+            opened["task"] = task_id
         opened["note"] = ("Session is live. Output is pumped into this room — "
                           "read it with rook_console_read(room). Close it with "
                           "rook_console_close(room, summary=...) when done.")
@@ -1081,6 +1162,8 @@ async def _amain(args) -> None:
         for route in reversed(knowledge_routes(mcp._rook_knowledge, AccountStore(enrollment))):
             app.router.routes.insert(0, route)
         knowledge_task = asyncio.create_task(mcp._rook_knowledge.maintain())
+    hygiene_task = (asyncio.create_task(mcp._rook_hygiene.run())
+                    if mcp._rook_hygiene is not None else None)
 
     # Console pump — drains live worker proc sessions into their console rooms.
     from .console_pump import ConsolePump
@@ -1125,9 +1208,10 @@ async def _amain(args) -> None:
     try:
         await server.serve()
     finally:
-        if knowledge_task is not None:
-            knowledge_task.cancel()
-            await asyncio.gather(knowledge_task, return_exceptions=True)
+        for bg in (knowledge_task, hygiene_task):
+            if bg is not None:
+                bg.cancel()
+                await asyncio.gather(bg, return_exceptions=True)
         enrollment_task.cancel()
         try:
             await enrollment_task

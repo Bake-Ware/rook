@@ -24,6 +24,7 @@ fleet state can change its answer.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass
@@ -45,9 +46,40 @@ class Attribution:
     key_id: str | None = None
     verified: bool = True
     reason: str | None = None  # why attribution is unverified
+    # Compound agent identity (docs/DESIGN-agent-work-system.md §1):
+    # <token>.<client>.<host>@<dir with / as .>, all observed, never supplied.
+    token: str | None = None
+    client: str | None = None
+    host: str | None = None
+    dir: str | None = None
+    actor: str | None = None
 
     def audit(self) -> dict[str, Any]:
         return {k: v for k, v in asdict(self).items() if v is not None}
+
+
+def norm(value: str | None, fallback: str) -> str:
+    """Lowercase letters and digits only: 'Claude Code' -> 'claudecode'."""
+    return re.sub(r"[^a-z0-9]", "", (value or "").lower()) or fallback
+
+
+def dir_part(path: str | None) -> str | None:
+    """'/home/bake/rook' -> '.home.bake.rook' (safe characters only)."""
+    if not path:
+        return None
+    return re.sub(r"[^A-Za-z0-9._-]", "", path.rstrip("/").replace("/", ".")) or None
+
+
+def compound(att: "Attribution", client: str | None, host: str | None,
+             dir_: str | None) -> "Attribution":
+    """Fill the compound identity fields. Unverified callers stay 'unverified'."""
+    from dataclasses import replace
+    if not att.verified:
+        return replace(att, actor="unverified")
+    token = norm(att.label, "static")
+    c, h, d = norm(client, "unknown"), norm(host, "web"), dir_part(dir_)
+    name = f"{token}.{c}.{h}" + (f"@{d}" if d else "")
+    return replace(att, token=token, client=c, host=h, dir=dir_ or None, actor=name)
 
 
 # Attribution of the MCP tool call currently executing (set per call).

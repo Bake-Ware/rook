@@ -70,7 +70,7 @@ class Journal:
             # Audit attribution (added 2026-09): stable agent/key IDs behind the
             # display identity, and whether attribution was verified.
             cols = {r[1] for r in self._db.execute("PRAGMA table_info(calls)")}
-            for col in ("agent_id", "key_id", "auth"):
+            for col in ("agent_id", "key_id", "auth", "actor"):
                 if col not in cols:
                     self._db.execute(f"ALTER TABLE calls ADD COLUMN {col} TEXT")
             self._db.execute("CREATE INDEX IF NOT EXISTS idx_calls_ts ON calls(ts)")
@@ -113,13 +113,13 @@ class Journal:
         auth = audit.get("kind")
         row = (cid, round(time.time(), 3), identity or "anonymous", cap,
                worker, thread_id, ok, error, blob,
-               audit.get("agent_id"), audit.get("key_id"), auth)
+               audit.get("agent_id"), audit.get("key_id"), auth, audit.get("actor"))
         try:
             with self._lock:
                 self._db.execute(
                     "INSERT INTO calls (call_id, ts, identity, cap, worker, "
-                    "thread_id, ok, error, reply, agent_id, key_id, auth) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", row)
+                    "thread_id, ok, error, reply, agent_id, key_id, auth, actor) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", row)
                 self._writes_since_prune += 1
                 if self._writes_since_prune >= _PRUNE_EVERY:
                     self._prune_locked()
@@ -172,7 +172,7 @@ class Journal:
             clauses.append("ok = ?"); params.append(1 if ok else 0)
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         sql = (f"SELECT call_id, ts, identity, cap, worker, thread_id, ok, "
-               f"error, reply, agent_id, key_id, auth FROM calls {where} "
+               f"error, reply, agent_id, key_id, auth, actor FROM calls {where} "
                f"ORDER BY seq DESC LIMIT ?")
         params.append(max(1, min(int(limit), 500)))
         try:
@@ -183,10 +183,10 @@ class Journal:
             return []
         out = []
         for (cid, ts, ident, cap, worker_, thread, ok_, error, reply,
-             agent, key, auth) in rows:
+             agent, key, auth, actor) in rows:
             e = {"call_id": cid, "ts": ts, "identity": ident, "cap": cap,
                  "worker": worker_, "thread_id": thread, "ok": bool(ok_)}
-            for k, v in (("agent_id", agent), ("key_id", key), ("auth", auth)):
+            for k, v in (("agent_id", agent), ("key_id", key), ("auth", auth), ("actor", actor)):
                 if v:
                     e[k] = v
             if error:

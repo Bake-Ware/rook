@@ -10,6 +10,7 @@ const CSS=`#view-guidance{max-width:960px}#view-guidance .gd-help{color:#9eb0b5;
 @media(max-width:640px){#view-guidance .gd-count{margin-left:0}}`;
 const SECTIONS=[
  ['server','Connection instructions','Sent once when an agent connects (MCP initialize). Keep it to what every agent needs.'],
+ ['hygiene','Hygiene prompt','Sent to an agent when its claimed task sits idle for 30 minutes with work since the last handoff. Placeholders: {slug} {title} {id} {idle} {actor}.'],
  ['tool','Tool tips','Appended to a tool’s description as “Tip: …”. Agents see it when they list tools.'],
  ['cap','Capability tips','Attached as _tips to a rook_call reply whose cap starts with this prefix (e.g. proc. or shell.exec). Shown once per agent session.'],
 ];
@@ -25,7 +26,7 @@ export async function mountGuidance(root){
   const head=el('header');head.append(el('code',s.key));
   head.append(el('small',s.edited?(s.text?'Edited':'Disabled')+' by '+s.actor+' · '+date(s.updated):(s.default===null?'':'Default'),s.edited?'gd-edited':''));
   const ta=el('textarea');ta.value=s.text;ta.setAttribute('aria-label',s.key);ta.disabled=!editable;
-  const limit=s.kind==='server'?6000:1000;const count=el('small','','gd-count');const upd=()=>{count.textContent=ta.value.length+' / '+limit;};upd();ta.oninput=upd;
+  const limit=s.kind==='server'?6000:s.kind==='hygiene'?2000:1000;const count=el('small','','gd-count');const upd=()=>{count.textContent=ta.value.length+' / '+limit;};upd();ta.oninput=upd;
   const row=el('div',undefined,'gd-row');const err=el('small','','gd-error');
   const save=el('button','Save');save.onclick=()=>act(save,err,{action:'set',key:s.key,text:ta.value});
   row.append(save);
