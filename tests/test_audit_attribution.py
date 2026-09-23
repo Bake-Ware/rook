@@ -1,6 +1,7 @@
 """Audit attribution on the band MCP: attribute every call to the existing
 bearer token; deny only a missing/invalid token; never let a broken checker
 deny. Includes regressions for the 349e3eb knowledge-guard outage."""
+import asyncio
 import json
 import logging
 import sqlite3
@@ -267,3 +268,63 @@ def test_resolve_infra_failures_are_unverified_not_denied():
     assert not attribution.resolve(Store(), boom, lambda: req()).verified
     assert not attribution.resolve(Store(), lambda: None, boom).verified
     assert not attribution.resolve(Store(), lambda: None, lambda: None).verified
+
+
+@pytest.mark.asyncio
+async def test_rook_call_without_worker_is_refused_with_holders_listed(tmp_path):
+    async with mcp_http(tmp_path) as env:
+        s = await Session(env.http, STATIC).open()
+        res = await s.result("rook_call", {"cap": "shell.exec"})
+        body = json.loads(res["content"][0]["text"])
+        assert body["ok"] is False
+        assert "specify the target worker" in body["error"]
+        assert "kaiju, soundwave" in body["error"]
+        assert env.band.calls == []  # nothing dispatched
+        unknown = json.loads((await s.result("rook_call", {"cap": "nope.cap"}))["content"][0]["text"])
+        assert "no live worker has capability" in unknown["error"]
+        ok = json.loads((await s.result("rook_call", {"cap": "shell.exec", "worker": "kaiju"}))["content"][0]["text"])
+        assert ok["ok"] is True and len(env.band.calls) == 1
+
+
+class TimingBand(FakeBand):
+    """Records the wait rook_call used; caps.describe declares shell.exec's
+    own 30s timeout the way real workers do."""
+    def __init__(self):
+        super().__init__()
+        self.waits = []
+        self.workers["w1"]["caps"].append("caps.describe")
+
+    async def call(self, cap, args=None, target=None, timeout=15.0, identity=None):
+        self.waits.append((cap, timeout))
+        if cap == "caps.describe":
+            return {"id": "d", "from": target, "ok": True, "result": {
+                "shell.exec": {"params": [{"name": "cmd", "default": None},
+                                          {"name": "timeout", "default": 30.0}]},
+                "info.host": {"params": []}}}
+        if cap == "file.list":
+            raise asyncio.TimeoutError
+        return {"id": "c", "from": target, "ok": True, "result": {}}
+
+
+@pytest.mark.asyncio
+async def test_wait_follows_the_calls_own_timeout(tmp_path, monkeypatch):
+    import rook.band_mcp.server as srv
+    band = TimingBand()
+    mcp, store = srv.build_server(band, public_url="https://mcp.example.com",
+                                  persist_path=str(tmp_path / "tokens.json"), static_token=STATIC,
+                                  journal_path=str(tmp_path / "journal.db"))
+    call = lambda **a: mcp._tool_manager._tools["rook_call"].fn(**a)
+    await call(cap="shell.exec", worker="kaiju")
+    assert band.waits[:2] == [("caps.describe", 10.0), ("shell.exec", 35.0)]  # learned default + 5s
+    await call(cap="shell.exec", worker="kaiju", args={"timeout": 120})
+    assert band.waits[-1] == ("shell.exec", 125.0)  # explicit args.timeout wins
+    await call(cap="shell.exec", worker="kaiju", timeout=5)
+    assert band.waits[-1] == ("shell.exec", 35.0)  # a shorter wait is raised to the call's own
+    await call(cap="shell.exec", worker="kaiju", timeout=300)
+    assert band.waits[-1] == ("shell.exec", 300.0)  # a longer wait is honoured
+    await call(cap="info.host", worker="kaiju")
+    assert band.waits[-1] == ("info.host", 15.0)  # no declared timeout → default
+    assert [c for c, _ in band.waits].count("caps.describe") == 1  # fetched once per worker
+    out = json.loads(await call(cap="file.list", worker="kaiju"))
+    assert "within 15s (the 15s default; 'file.list' declares no timeout" in out["error"]
+    assert "rook_journal(call_id=" in out["error"]

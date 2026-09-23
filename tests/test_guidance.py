@@ -71,7 +71,7 @@ async def test_defaults_reach_agents_at_each_placement(tmp_path):
         init, rpc = await env.connect()
         assert "rook_workers (who)" in init["instructions"]
         tools = {t["name"]: t["description"] for t in (await rpc("tools/list", {}))["tools"]}
-        assert "\n\nTip: Arg names come from caps.describe" in tools["rook_call"]
+        assert "\n\nTip: worker= is required" in tools["rook_call"]
         assert tools["rook_call"].startswith("Invoke a capability")  # docstring preserved
         first = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "shell.exec", "worker": "WIN11-FLOPHOUSE"}}))
         assert first["_tips"] == [guidance_mod.DEFAULTS["cap:shell.exec"]]  # cap tip only, no host tips
