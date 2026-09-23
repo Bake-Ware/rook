@@ -69,8 +69,9 @@ export async function mountKnowledge(root){
   const home=btn('Knowledge home',()=>go(null),'kn-linkish');const add=btn('New page',()=>edit(null,null),'kn-primary');
   const showOld=el('label',' Show superseded','kn-dim');const chk=el('input');chk.type='checkbox';showOld.prepend(chk);
   const index=el('nav',undefined,'kn-index');index.setAttribute('aria-label','All pages');
-  const tools=el('div',undefined,'kn-row');tools.append(home,add);side.append(q,tools,el('h3','Pages'),showOld,index);
-  let pages=[],active=false,timer=null,cur=null,searching=false;
+  const reviewBtn=btn('Review',()=>startReview(),'kn-review-btn');
+  const tools=el('div',undefined,'kn-row');tools.append(home,add,reviewBtn);side.append(q,tools,el('h3','Pages'),showOld,index);
+  let pages=[],active=false,timer=null,cur=null,searching=false,reviewing=false;
   // Pages nest under pages (record.parent), like folders. Which folders are
   // open is remembered per browser.
   let open_=new Set();try{open_=new Set(JSON.parse(localStorage.getItem('kn-open')||'[]'));}catch{}
@@ -80,11 +81,23 @@ export async function mountKnowledge(root){
   const pathOf=p=>[...ancestors(p),p].map(x=>x.title).join(' / ');
   const visible=p=>chk.checked||!['superseded','archived'].includes(p.state);
   const byTitle=(a,b)=>a.title.localeCompare(b.title);
-  const go=(slug,band)=>{setHash('knowledge',{p:slug,b:band});route();};
+  const go=(slug,band,review=reviewing)=>{setHash('knowledge',{p:slug,b:band,r:review&&slug?'1':''});route();};
   const ref=(slug,band)=>{const hit=pages.find(p=>p.slug===slug&&(!band||p.band===band));if(hit||!slug)return go(slug,band);
     // [[slug]] may name a task/project: send it to Work.
     c.api('get',{id:slug,...(band?{band}:{})}).then(r=>{if(r.kind==='knowledge')go(slug,r.band);else jump('work',{t:r.slug,b:r.band});}).catch(()=>go(slug,band));};
-  async function loadIndex(){pages=await c.listAll('knowledge');if(!searching)drawTree();}
+  async function loadIndex(){pages=await c.listAll('knowledge');if(!searching)drawTree();
+    const n=queue().length;reviewBtn.textContent=n?'Review ('+n+')':'Review';reviewBtn.title=n?n+' pages nobody has verified yet':'Everything is verified';}
+  // Review mode walks the unverified pages in tree order.
+  const vstate=p=>p.verification||p.attrs?.verification||'unverified';
+  function treeOrder(){const out=[];const walk=(parent,b)=>{for(const p of folders(kids(parent,b))){out.push(p);walk(p.id,b);}};for(const b of [...new Set(pages.map(p=>p.band))])walk(null,b);return out;}
+  const queue=()=>treeOrder().filter(p=>p.state==='active'&&vstate(p)==='unverified');
+  function startReview(){const q_=queue();if(q_.length)go(q_[0].slug,q_[0].band,true);else{setHash('knowledge',{});reviewing=false;drawHome();}}
+  function nextInQueue(afterId){const q_=queue().filter(p=>p.id!==afterId);if(!q_.length)return null;const order=treeOrder().map(p=>p.id);const i=order.indexOf(afterId);return q_.find(p=>order.indexOf(p.id)>i)||q_[0];}
+  function advance(afterId){const n=nextInQueue(afterId);if(n)go(n.slug,n.band,true);else{reviewing=false;setHash('knowledge',{});drawHome(true);}}
+  async function review(r,verdict,note){await c.api('review',{id:r.id,band:r.band,request_id:crypto.randomUUID(),data:{revision:r.revision,verdict,...(note?{note}:{})}});await loadIndex();}
+  function dispute(r,then){form('Dispute “'+r.title+'”',f=>{f('note',"What's wrong? An agent will see this and fix the page.",r.attrs.dispute_reason||'','textarea');},
+    async d=>{await review(r,'disputed',d.get('note'));then();});}
+  const folders=list=>list.map(p=>[kids(p.id,p.band).length>0,p]).sort((x,y)=>y[0]-x[0]||byTitle(x[1],y[1])).map(x=>x[1]);
   function kids(parent,band){return pages.filter(p=>visible(p)&&p.band===band&&(parent?p.parent===parent:!(p.parent&&byId(p.parent)&&visible(byId(p.parent))))).sort(byTitle);}
   function drawTree(){searching=false;index.replaceChildren();
     const cp=cur&&pages.find(p=>p.slug===cur.slug&&(!cur.band||p.band===cur.band));
@@ -95,10 +108,10 @@ export async function mountKnowledge(root){
       const row=el('div',undefined,'kn-tree-row'+(cp&&cp.id===p.id?' kn-current':''));row.style.paddingLeft=(depth*14)+'px';
       const tog=btn(ch.length?(isOpen?'▾':'▸'):'',()=>{if(!ch.length)return;isOpen?open_.delete(p.id):open_.add(p.id);saveOpen();drawTree();},'kn-tog');
       tog.setAttribute('aria-label',ch.length?(isOpen?'Collapse ':'Expand ')+p.title:'');if(!ch.length)tog.tabIndex=-1;
-      const a=btn('',()=>go(p.slug,p.band),'kn-tree-item');a.append(el('span',p.title));if(ch.length)a.append(el('small',String(ch.length)));
+      const a=btn('',()=>go(p.slug,p.band),'kn-tree-item');const v=vstate(p);const dot=el('i',undefined,'kn-dot kn-dot-'+v);dot.title=v;a.append(dot,el('span',p.title));if(ch.length)a.append(el('small',String(ch.length)));
       if(['superseded','archived'].includes(p.state))a.classList.add('kn-old');
       row.append(tog,a);index.append(row);if(isOpen)for(const k of folders(ch))node(k,depth+1);};
-    const folders=list=>list.map(p=>[kids(p.id,p.band).length>0,p]).sort((x,y)=>y[0]-x[0]||byTitle(x[1],y[1])).map(x=>x[1]);
+
     for(const b of bands){if(bands.length>1)index.append(el('h4',c.bandName(b),'kn-tree-band'));for(const p of folders(kids(null,b)))node(p,0);}}
   function drawResults(list){searching=true;index.replaceChildren();const shown=list.filter(visible).sort(byTitle);
     if(!shown.length){index.append(el('p','No matches.','kn-dim'));return;}
@@ -122,6 +135,13 @@ export async function mountKnowledge(root){
       else{const band=parent?byId(parent).band:(d.get('band')||c.bands()[0]?.id);
         const n=await c.api('create',{kind:'knowledge',band,request_id:crypto.randomUUID(),data:{title:d.get('title'),body:d.get('body'),...(parent?{parent}:{}),...(d.get('slug')?{slug:d.get('slug')}:{})}});
         if(parent){open_.add(parent);saveOpen();}await loadIndex();go(n.slug,n.band);}});}
+  function reviewBlock(r){const v=r.attrs.verification||'unverified',who=r.attrs.reviewed_label,when=r.attrs.reviewed_at;const box=el('div',undefined,'kn-review kn-review-'+v);
+    const reopen=()=>open(r.slug,r.band);
+    if(v==='verified'){box.append(el('span',who?'✓ Verified by '+who+' · '+ago(when):'✓ Verified with linked evidence'),el('span',undefined,'kn-grow'),btn('Unverify',async()=>{await review(r,'unverified');reopen();}));}
+    else if(v==='disputed'){const t=el('div');t.append(el('strong','Disputed'+(who?' by '+who:'')),el('div',r.attrs.dispute_reason||''));box.append(t,el('span',undefined,'kn-grow'),btn('✓ Verify',async()=>{await review(r,'verified');reopen();},'kn-ok'),btn('Clear',async()=>{await review(r,'unverified');reopen();}));}
+    else{const t=el('div');t.append(el('span','Not verified yet. Is this right?'));if(r.attrs.review_note)t.append(el('div',r.attrs.review_note,'kn-warn'));
+      box.append(t,el('span',undefined,'kn-grow'));if(!reviewing)box.append(btn('✓ Verify',async()=>{await review(r,'verified');reopen();},'kn-ok'),btn('Dispute…',()=>dispute(r,reopen)));}
+    return box;}
   function move(r){form('Move “'+r.title+'”',f=>{parentSelect(f,r.parent,r.band,r.id);},
     async d=>{const parent=d.get('parent')||null;if((r.parent||null)===parent)return;
       await c.api('update',{id:r.id,band:r.band,request_id:crypto.randomUUID(),data:{revision:r.revision,patch:{parent}}});await loadIndex();await open(r.slug,r.band);});}
@@ -130,7 +150,13 @@ export async function mountKnowledge(root){
     for(const a of ancestors(byId(r.id)||r)){crumbs.append(document.createTextNode(' / '),btn(a.title,()=>go(a.slug,a.band),'kn-linkish'));}
     crumbs.append(document.createTextNode(' / '+r.title));page.append(crumbs);
     const head=el('header',undefined,'kn-head');head.append(el('h1',r.title));const meta=el('p',undefined,'kn-meta');
-    meta.append(badge(r.attrs.verification||'unverified'),document.createTextNode(' '+(r.attrs.knowledge_kind||'page')+' · [['+r.slug+']] · '+c.bandName(r.band)+' · by '+r.creator+' · updated '+ago(r.updated)));head.append(meta);page.append(head);
+    meta.append(badge(r.attrs.verification||'unverified'),document.createTextNode(' '+(r.attrs.knowledge_kind||'page')+' · [['+r.slug+']] · '+c.bandName(r.band)+' · by '+r.creator+' · updated '+ago(r.updated)));head.append(meta);
+    if(reviewing){const bar=el('div',undefined,'kn-reviewbar');const left=queue().filter(p=>p.id!==r.id).length;
+      bar.append(el('strong','Review mode'),el('span',left?left+' more after this':'last one','kn-dim'),el('span',undefined,'kn-grow'),
+        btn('✓ Verify & next',async()=>{await review(r,'verified');advance(r.id);},'kn-ok'),
+        btn('Dispute…',()=>dispute(r,()=>advance(r.id))),btn('Skip',()=>advance(r.id)),btn('Exit',()=>go(r.slug,r.band,false),'kn-linkish'));
+      page.prepend(bar);}
+    page.append(head,reviewBlock(r));
     if(r.state==='superseded'){const w=el('p','This page is superseded','kn-warn');if(r.superseded_by){w.append(document.createTextNode(' by '));const a=el('a',r.superseded_by.title);a.href='#';a.onclick=e=>{e.preventDefault();go(r.superseded_by.slug,r.band);};w.append(a);}page.append(w);}
     page.append(renderBody(r.body,s=>ref(s,r.band)));
     if((r.attrs.tags||[]).length){const t=el('p',undefined,'kn-tags');for(const x of r.attrs.tags)t.append(badge(x,'tag'));page.append(t);}
@@ -140,15 +166,16 @@ export async function mountKnowledge(root){
     if(r.backlinks.length){page.append(el('h2','What links here'));const ul=el('ul',undefined,'kn-list');for(const b of r.backlinks){const li=el('li');const a=el('a',b.title);a.href='#';a.onclick=e=>{e.preventDefault();ref(b.slug,r.band);};li.append(a,el('span',' · '+b.kind,'kn-dim'));ul.append(li);}page.append(ul);}
     if(r.links.length){page.append(el('h2','Sources and evidence'),linksTable(r.links));}
     page.append(historyBlock(r.events));page.focus?.();}
-  async function drawHome(){cur=null;if(!searching)drawTree();page.replaceChildren(el('h1','Knowledge'),el('p','What the agent team knows, with sources. Agents write these pages as they work; everything starts unverified until someone links evidence with a traceable id.','kn-dim'));
+  async function drawHome(done){cur=null;if(!searching)drawTree();page.replaceChildren(el('h1','Knowledge'),el('p','What the agent team knows, with sources. Agents write these pages as they work; everything starts unverified until someone links evidence with a traceable id.','kn-dim'));
     const recent=pages.filter(p=>p.state==='active').sort((a,b)=>b.updated-a.updated).slice(0,12);
     const counts={};for(const p of pages)counts[p.verification||'unverified']=(counts[p.verification||'unverified']||0)+1;
+    if(done)page.append(el('p','✓ Review done: nothing left to verify.','kn-review kn-review-verified'));
     const stats=el('p',undefined,'kn-meta');stats.append(document.createTextNode(pages.length+' pages · '));for(const [k,n] of Object.entries(counts))stats.append(badge(n+' '+k,k),document.createTextNode(' '));page.append(stats);
     const sections=[...new Set(pages.map(p=>p.band))].flatMap(b=>kids(null,b).filter(p=>kids(p.id,b).length));
     if(sections.length){page.append(el('h2','Sections'));const grid=el('div',undefined,'kn-sections');for(const s of sections){const n=kids(s.id,s.band).length;const b=btn('',()=>go(s.slug,s.band),'kn-card');const top=el('div',undefined,'kn-card-top');top.append(el('strong',s.title));b.append(top,el('small',n+' page'+(n>1?'s':'')+': '+kids(s.id,s.band).slice(0,4).map(x=>x.title).join(', ')+(n>4?'…':'')));grid.append(b);}page.append(grid);}
     page.append(el('h2','Recently updated'));const ul=el('ul',undefined,'kn-list');for(const p of recent){const li=el('li');const a=el('a',p.title);a.href='#';a.onclick=e=>{e.preventDefault();go(p.slug,p.band);};li.append(a);const anc=ancestors(p);li.append(el('span',(anc.length?' · in '+anc.map(x=>x.title).join(' / '):'')+' · '+ago(p.updated)+' · '+(p.creator||''),'kn-dim'));if(p.excerpt)li.append(el('div',p.excerpt.slice(0,160),'kn-dim'));ul.append(li);}
     if(!recent.length)ul.append(el('li','Nothing yet.','kn-dim'));page.append(ul);}
-  async function route(){const p=hashParams('knowledge');if(!p)return;try{const slug=p.get('p');if(slug)await open(slug,p.get('b'));else await drawHome();}catch(e){page.replaceChildren(el('p',e.message,'kn-error'));}}
+  async function route(){const p=hashParams('knowledge');if(!p)return;reviewing=p.get('r')==='1';try{const slug=p.get('p');if(slug)await open(slug,p.get('b'));else await drawHome();}catch(e){page.replaceChildren(el('p',e.message,'kn-error'));}}
   const onHash=()=>{if(active)route();};
   return {async activate(){active=true;window.addEventListener('hashchange',onHash);window.addEventListener('popstate',onHash);try{await loadIndex();await route();}catch(e){page.replaceChildren(el('p',e.message,'kn-error'));}timer=setInterval(()=>{if(active&&!document.hidden)loadIndex().catch(()=>{});},60000);},
     deactivate(){active=false;window.removeEventListener('hashchange',onHash);window.removeEventListener('popstate',onHash);clearInterval(timer);}};

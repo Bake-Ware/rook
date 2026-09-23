@@ -69,3 +69,17 @@
   .kn-side{border-right:0;border-bottom:1px solid var(--line);max-height:42vh;overflow:auto}
   .kn-page{padding:16px}
 }
+/* verification */
+.kn-dot{flex:0 0 7px;width:7px;height:7px;border-radius:50%;border:1px solid var(--line2);margin-right:2px}
+.kn-dot-verified{background:var(--green);border-color:var(--green)}
+.kn-dot-disputed{background:var(--bad);border-color:var(--bad)}
+.kn-tree-item span{flex:1}
+.kn-grow{flex:1}
+.kn-review{display:flex;gap:10px;align-items:center;flex-wrap:wrap;border:1px solid var(--line2);background:var(--panel2);padding:10px 12px;margin:0 0 16px;font-size:13px}
+.kn-review-verified{border-color:var(--green);color:var(--green)}
+.kn-review-disputed{border-color:var(--bad)}
+.kn-review-disputed strong{color:var(--bad)}
+.kn-review-unverified{border-style:dashed}
+.kn-ok{border-color:var(--green)!important;color:var(--green)!important}
+.kn-reviewbar{position:sticky;top:0;z-index:2;display:flex;gap:10px;align-items:center;flex-wrap:wrap;border:1px solid var(--accent-dim);background:var(--panel);padding:10px 12px;margin:-6px 0 14px;font-size:13px}
+.kn-review-btn{margin-left:auto}

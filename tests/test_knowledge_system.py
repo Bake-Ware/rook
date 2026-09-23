@@ -103,6 +103,39 @@ def test_pages_nest_like_folders_and_can_move(work):
         move(work.task, None)
 
 
+def test_a_person_can_verify_a_page_and_an_agent_edit_undoes_it(work):
+    human = {'id': 'human:bake', 'kind': 'human', 'label': 'Bake'}
+    page = work.create('knowledge', 'Kaiju has two 3090s')
+    def review(verdict, note='', actor=human):
+        cur = work.s.get('default', page['id'])
+        return work.s.mutate('default', actor, rid(), 'review',
+                             {'id': page['id'], 'revision': cur['revision'], 'verdict': verdict, 'note': note})
+    with pytest.raises(PermissionError):          # agents can't sign off as a person
+        review('verified', actor=AGENT)
+    with pytest.raises(ValueError):               # nor forge a 'human' link or review fields
+        work.s.mutate('default', AGENT, rid(), 'link', {'id': page['id'], 'kind': 'human', 'ref': 'human:bake'})
+    cur = work.s.get('default', page['id'])
+    with pytest.raises(ValueError):
+        work.s.mutate('default', AGENT, rid(), 'update', {'id': page['id'], 'revision': cur['revision'],
+                                                          'patch': {'attrs': {'reviewed_by': 'human:bake'}}})
+    r = review('verified')
+    assert r['attrs']['verification'] == 'verified' and r['attrs']['reviewed_label'] == 'Bake'
+    got = work.s.get('default', page['id'])
+    assert any(l['kind'] == 'human' and l['relation'] == 'evidence' for l in got['links'])
+    assert got['events'][0]['action'] == 'reviewed'
+    # the person can edit their verified page; an agent edit sends it back for review
+    upd = lambda actor, body: work.s.mutate('default', actor, rid(), 'update', {
+        'id': page['id'], 'revision': work.s.get('default', page['id'])['revision'], 'patch': {'body': body}})
+    assert upd(human, 'Dual RTX 3090')['attrs']['verification'] == 'verified'
+    r = upd(AGENT, 'Dual RTX 4090')
+    assert r['attrs']['verification'] == 'unverified' and 'Bake verified' in r['attrs']['review_note']
+    with pytest.raises(ValueError):               # a dispute needs a reason
+        review('disputed')
+    r = review('disputed', 'They are 3090s, not 4090s')
+    assert r['attrs']['dispute_reason'] == 'They are 3090s, not 4090s' and 'review_note' not in r['attrs']
+    assert 'reviewed_by' not in review('unverified')['attrs']
+
+
 def test_supersession_banner_and_safe_import(work, tmp_path):
     w = work; old = w.create('knowledge', 'Old port')
     new = w.create('knowledge', 'New port', supersedes=[old['id']])

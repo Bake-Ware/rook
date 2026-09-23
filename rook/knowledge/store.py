@@ -39,9 +39,10 @@ INITIAL = {'task': 'todo', 'project': 'active', 'concept': 'active', 'knowledge'
 OPEN_TASK = ('todo', 'in_progress', 'blocked', 'paused')
 VERIFICATION = ('unverified', 'verified', 'disputed')
 KNOWLEDGE_KINDS = ('fact', 'decision', 'procedure', 'observation', 'question', 'summary')
-LINK_KINDS = ('journal', 'console', 'handoff', 'chat', 'file', 'commit', 'agent', 'record', 'secret', 'url')
+LINK_KINDS = ('journal', 'console', 'handoff', 'chat', 'file', 'commit', 'agent', 'record', 'secret', 'url', 'human')
 RELATIONS = ('produced', 'evidence', 'touched', 'discussed_in', 'blocked_by', 'duplicates',
              'supersedes', 'mentions', 'source')
+REVIEW_ATTRS = {'reviewed_by', 'reviewed_label', 'reviewed_at', 'reviewed_revision', 'review_note', 'dispute_reason'}
 # A URL is a pointer, not something Rook can trace; it can't verify a fact.
 TRACEABLE = tuple(k for k in LINK_KINDS if k != 'url')
 SLUG = re.compile(r'^[a-z0-9][a-z0-9-]{0,79}$')
@@ -295,6 +296,8 @@ class KnowledgeStore:
             raise ValueError('Title is required')
         body = text(data.get('body', ''))
         attrs = dict(data.get('attrs') or {})
+        if set(attrs) & REVIEW_ATTRS:
+            raise ValueError('Review fields are set by a person reviewing the page')
         parent = data.get('parent') or None
         if parent:
             parent = self._get(db, band, parent)['id']
@@ -341,6 +344,8 @@ class KnowledgeStore:
         body = text(patch.get('body', r['body']))
         if not title:
             raise ValueError('Title is required')
+        if set(patch.get('attrs') or {}) & REVIEW_ATTRS:
+            raise ValueError('Review fields are set by a person reviewing the page, not by update')
         attrs = {**r['attrs'], **(patch.get('attrs') or {})}
         if attrs.get('supersedes') != r['attrs'].get('supersedes'):
             raise ValueError('To supersede, create a new knowledge page with attrs.supersedes')
@@ -355,6 +360,14 @@ class KnowledgeStore:
                                  '(journal, console, handoff, chat, file, commit, agent or record; a URL is not enough)')
         if r['kind'] == 'task' and state != r['state']:
             self._task_transition(db, r, state, attrs, live)
+        # A person verified what the page said then. If someone else (an agent)
+        # changes what it says, that verification no longer covers it.
+        reverted = (r['kind'] == 'knowledge' and attrs.get('verification') == 'verified'
+                    and r['attrs'].get('reviewed_by') and actor.get('kind') != 'human'
+                    and (title != r['title'] or body != r['body']))
+        if reverted:
+            attrs['verification'] = 'unverified'
+            attrs['review_note'] = 'Edited after ' + r['attrs'].get('reviewed_label', r['attrs']['reviewed_by']) + ' verified it; needs another look'
         db.execute('UPDATE records SET title=?,body=?,attrs=?,state=?,parent=?,revision=revision+1,updated=? WHERE id=?',
                    (title, body, packed(attrs), state, parent, time.time(), r['id']))
         if r['kind'] == 'task' and state in ('done', 'cancelled', 'archived', 'paused', 'blocked', 'todo'):
@@ -367,6 +380,42 @@ class KnowledgeStore:
             changed['attrs'] = sorted(k for k in attrs if attrs.get(k) != r['attrs'].get(k))
         self._event(db, band, r['id'], actor, 'updated', changed)
         return updated
+
+    def _op_review(self, db, band, actor, data):
+        """A person's verdict on a knowledge page: verified, disputed or back to
+        unverified. Their sign-off is the evidence (a 'human' link), so this is
+        for people only; agents verify by linking evidence and updating."""
+        if actor.get('kind') != 'human':
+            raise PermissionError('Only a signed-in person can review a page; agents link evidence and update instead')
+        r = self._get(db, band, data['id'])
+        if r['kind'] != 'knowledge':
+            raise ValueError('Only knowledge pages are reviewed')
+        if data.get('revision') != r['revision']:
+            raise Conflict('The page changed while you were reading it; reload and review again')
+        verdict = data.get('verdict')
+        if verdict not in VERIFICATION:
+            raise ValueError('verdict must be verified, disputed or unverified')
+        note = text(data.get('note', '') or '', 2000)
+        if verdict == 'disputed' and not note:
+            raise ValueError("Say what's wrong so an agent can fix it")
+        aid = actor_id(actor)
+        attrs = {k: v for k, v in r['attrs'].items() if k not in ('review_note', 'dispute_reason')}
+        attrs['verification'] = verdict
+        if verdict == 'unverified':
+            for k in ('reviewed_by', 'reviewed_label', 'reviewed_at', 'reviewed_revision'):
+                attrs.pop(k, None)
+        else:
+            attrs.update(reviewed_by=aid, reviewed_label=actor.get('label') or aid,
+                         reviewed_at=time.time(), reviewed_revision=r['revision'] + 1)
+        if verdict == 'disputed':
+            attrs['dispute_reason'] = note
+        if verdict == 'verified':
+            self._link(db, band, r['id'], actor, 'human', aid, 'evidence',
+                       note or 'Verified by ' + (actor.get('label') or aid))
+        db.execute('UPDATE records SET attrs=?,revision=revision+1,updated=? WHERE id=?',
+                   (packed(attrs), time.time(), r['id']))
+        self._event(db, band, r['id'], actor, 'reviewed', {'verdict': verdict, **({'note': note} if note else {})})
+        return self._get(db, band, r['id'])
 
     def _task_transition(self, db, r, state, attrs, live):
         if state == 'done':
@@ -401,8 +450,9 @@ class KnowledgeStore:
     def _op_link(self, db, band, actor, data):
         r = self._get(db, band, data['id'])
         kind, relation = data.get('kind'), data.get('relation', 'evidence')
-        if kind not in LINK_KINDS:
-            raise ValueError('kind must be one of ' + ', '.join(LINK_KINDS))
+        if kind not in LINK_KINDS or kind == 'human':
+            raise ValueError('kind must be one of ' + ', '.join(k for k in LINK_KINDS if k != 'human')
+                             + " ('human' links come only from a person's review)")
         if relation not in RELATIONS:
             raise ValueError('relation must be one of ' + ', '.join(RELATIONS))
         ref = text(str(data.get('ref', '')), 500)

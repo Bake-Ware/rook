@@ -162,6 +162,28 @@ async def run_checks(page, base, shot):
     await page.click('.kn-dialog button:has-text("Save")')
     await page.wait_for_function("!document.querySelector('.kn-crumbs button:nth-of-type(2)')")
     await page.go_back(); await page.go_back(); await page.wait_for_selector('h1:has-text("Sojourn")')
+    # Verify from the page, then walk the rest in review mode.
+    await page.click('.kn-review button:has-text("Verify")')
+    await page.wait_for_selector('.kn-review-verified:has-text("Verified by Bake")')
+    assert await page.locator('.kn-current .kn-dot-verified').count() == 1
+    await page.click('.kn-review-btn'); await page.wait_for_selector('.kn-reviewbar')
+    await shot('review-mode')
+    first = await page.locator('.kn-page h1').inner_text()
+    await page.click('.kn-reviewbar button:has-text("Dispute")')
+    await page.fill('.kn-dialog textarea[name=note]', 'Wrong restart command')
+    await page.click('.kn-dialog button:has-text("Save")')
+    await page.wait_for_function(f"document.querySelector('.kn-page h1')?.textContent!=={first!r}")
+    second = await page.locator('.kn-page h1').inner_text()
+    await page.click('.kn-reviewbar button:has-text("Verify & next")')
+    await page.wait_for_selector('text=Review done')
+    await page.locator('.kn-tree-item span', has_text=first).first.click()
+    await page.wait_for_selector('.kn-review-disputed:has-text("Wrong restart command")')
+    await page.click('.kn-review-disputed button:has-text("Clear")')
+    await page.wait_for_selector('.kn-review-unverified')
+    for title in (second, 'Sojourn'):   # leave the data as found for the next viewport
+        await page.locator('.kn-tree-item span', has_text=title).first.click()
+        await page.wait_for_selector(f'h1:has-text({title!r})')
+        await page.click('.kn-review button:has-text("Unverify")'); await page.wait_for_selector('.kn-review-unverified')
     assert await page.locator('.kn-md strong:has-text("Hermes")').count() == 1
     await page.fill('.kn-side input[type=search]', 'stale'); await page.press('.kn-side input[type=search]', 'Enter')
     await page.wait_for_function("document.querySelectorAll('#view-knowledge .kn-index-item').length===1")
