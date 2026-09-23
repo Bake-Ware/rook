@@ -1,7 +1,7 @@
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 export async function mountWork(root) {
   if (!document.querySelector('link[data-work-style]')) {
-    const link=document.createElement('link');link.rel='stylesheet';link.href='/account/work/assets/work.css';link.dataset.workStyle='1';document.head.append(link);
+    const link=document.createElement('link');link.rel='stylesheet';link.href='/account/work/assets/work.css'+new URL(import.meta.url).search;link.dataset.workStyle='1';document.head.append(link);
   }
   const response=await fetch('/account/work/bootstrap');
   if(!response.ok)throw Error('Sign in with your operator account to use Work.');
