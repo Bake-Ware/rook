@@ -1945,7 +1945,8 @@ button:hover{{background:#22b88f}}
     async def _api_chat_rooms(self, request: web.Request) -> web.Response:
         if self._chat is None:
             return web.json_response({"error": "chat unavailable"}, status=503)
-        return web.json_response(self._chat.rooms_for(self._OPERATOR))
+        return web.json_response(
+            self._chat.rooms_for(self._OPERATOR, limit=200, include_all=True))
 
     async def _api_chat_read(self, request: web.Request) -> web.Response:
         if self._chat is None:
@@ -1990,9 +1991,9 @@ button:hover{{background:#22b88f}}
             str(data.get("title") or "chat"), self._OPERATOR, invite))
 
     async def _api_chat_delete(self, request: web.Request) -> web.Response:
-        """Delete a room (final). The dashboard operator is trusted to delete
-        any room they can see; rooms_for() already scopes the list to rooms
-        the operator participates in."""
+        """Delete a room (final). The dashboard operator oversees every room
+        (the list includes agent-only rooms), so it deletes as a trusted
+        caller."""
         if self._chat is None:
             return web.json_response({"error": "chat unavailable"}, status=503)
         try:
@@ -2002,7 +2003,7 @@ button:hover{{background:#22b88f}}
         room = str(data.get("room") or "").strip()
         if not room:
             return web.json_response({"error": "room required"}, status=400)
-        return web.json_response(self._chat.delete(room, self._OPERATOR))
+        return web.json_response(self._chat.delete(room, None))
 
     async def _api_avatars(self, request: web.Request) -> web.Response:
         """``{identity: version}`` for identities that have a picture (set on
