@@ -118,6 +118,13 @@ async def test_placeholders_never_reach_agent_or_journal(tmp_path, monkeypatch):
         assert not bad['ok'] and 'unknown secret' in bad['error']
         assert len(env.band.sent) == 2  # refused before dispatch
 
+        blob = json.dumps({'installed': {'client_id': 'x', 'client_secret': 'y-secret-value'}})
+        stored = await env.tool('rook_secret', action='set', name='json-cred', value=blob, description='a JSON file')
+        assert stored['ok'], stored
+        assert (await env.tool('rook_secret', action='get', name='json-cred'))['value'] == blob
+        numeric = await env.tool('rook_secret', action='set', name='123', value='12345678')
+        assert numeric['ok'] and (await env.tool('rook_secret', action='get', name='123'))['value'] == '12345678'
+
         got = await env.tool('rook_secret', action='get', name='pw')
         assert got['value'] == SECRET
         log = (await env.tool('rook_secret', action='log', name='pw'))['access']
