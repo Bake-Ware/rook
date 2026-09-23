@@ -41,6 +41,7 @@ def build_server(client: "BandClient | MultiBandClient",
                  persist_path: str | None = None,
                  static_token: str | None = None,
                  journal_path: str | None = None,
+                 enrollment=None,
                  ) -> tuple[FastMCP, TokenStore]:
     """Build the FastMCP server. Bearer-token-only auth — no OAuth.
 
@@ -161,6 +162,25 @@ def build_server(client: "BandClient | MultiBandClient",
             _attr.current.reset(reset)
 
     mcp._tool_manager.call_tool = _attributed_call_tool
+
+    # Shared knowledge records (opt-in: ROOK_KNOWLEDGE=1). Additive tools only;
+    # nothing here touches the band call path, and a failure to open the store
+    # disables the tools rather than the server.
+    mcp._rook_knowledge = None
+    if os.environ.get("ROOK_KNOWLEDGE", "0") == "1":
+        try:
+            from ..knowledge.service import KnowledgeService
+
+            def _principal():
+                att = _attr.current.get()
+                return att.audit() if att is not None else None
+            knowledge = KnowledgeService(
+                os.environ.get("ROOK_KNOWLEDGE_DB", os.path.join(_store_dir, "knowledge.db")),
+                _principal, enrollment)
+            knowledge.register(mcp)
+            mcp._rook_knowledge = knowledge
+        except Exception:
+            log.exception("knowledge store unavailable; knowledge tools disabled")
 
     @mcp.tool()
     async def rook_whoami() -> str:
@@ -946,8 +966,16 @@ async def _amain(args) -> None:
         persist_path=args.persist_path,
         static_token=args.static_token or None,
         journal_path=args.journal_path or None,
+        enrollment=enrollment,
     )
     app = mcp.streamable_http_app()
+    knowledge_task = None
+    if mcp._rook_knowledge is not None:
+        from ..knowledge.web import routes as knowledge_routes
+        from ..remote.accounts import AccountStore
+        for route in reversed(knowledge_routes(mcp._rook_knowledge, AccountStore(enrollment))):
+            app.router.routes.insert(0, route)
+        knowledge_task = asyncio.create_task(mcp._rook_knowledge.maintain())
 
     # Console pump — drains live worker proc sessions into their console rooms.
     from .console_pump import ConsolePump
@@ -992,6 +1020,9 @@ async def _amain(args) -> None:
     try:
         await server.serve()
     finally:
+        if knowledge_task is not None:
+            knowledge_task.cancel()
+            await asyncio.gather(knowledge_task, return_exceptions=True)
         enrollment_task.cancel()
         try:
             await enrollment_task
