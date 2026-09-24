@@ -2,7 +2,7 @@
 
 **A self-updating mesh of worker agents you drive from a web dashboard, a terminal control panel, or via MCP — over an encrypted peer-to-peer band.**
 
-![Rook dashboard](docs/img/dashboard.png)
+![Rook dashboard](docs/img/dashboard-workers.png)
 
 ## What is this?
 
@@ -217,7 +217,7 @@ A band-first control panel with a sidebar split into **Workspace** (Workers, Ban
 The **Workers** view is a live roster: group by operating system or band, sort, filter, list or grid layout; per-device icons (computer / phone / tablet / microcontroller), battery pills for anything with a battery (⚡ while charging, amber and red as it drains), version-spread and live heartbeat visualizations, click-to-expand capabilities, run any cap from a form, and one-click **deauth/ban**. Fully responsive.
 
 <p>
-  <img src="docs/img/dashboard-mobile.png" alt="Rook dashboard on mobile" width="300">
+  <img src="docs/img/dashboard-workers-mobile.png" alt="Rook dashboard on mobile" width="300">
 </p>
 
 ### Bands and worker moves
