@@ -7,9 +7,14 @@ idle session (no request in flight); only when every session is busy is the new
 one refused. A client that abandons sessions without DELETE (one per call) then
 costs only its own stale sessions, never everyone else's access. An evicted
 client gets 404 on its next request and re-initializes, per the MCP spec.
+Each bearer token may also hold at most ``max_per_key`` sessions; past that
+its own oldest idle session goes, so one leaky client competes only with
+itself. ``stats()`` feeds /healthz and the watchdog.
 """
+import hashlib
 import logging
 import time
+from collections import Counter, deque
 from uuid import uuid4
 
 import anyio
@@ -23,31 +28,65 @@ log = logging.getLogger(__name__)
 SESSION_IDLE_SECONDS = 300.0
 MAX_SESSIONS = 128
 MAX_REQUESTS = 256
+MAX_PER_KEY = 48
 
 
 class BoundedSessionManager(StreamableHTTPSessionManager):
     def __init__(self, *args, idle_seconds=SESSION_IDLE_SECONDS,
-                 max_sessions=MAX_SESSIONS, max_requests=MAX_REQUESTS, **kwargs):
+                 max_sessions=MAX_SESSIONS, max_requests=MAX_REQUESTS,
+                 max_per_key=MAX_PER_KEY, **kwargs):
         super().__init__(*args, **kwargs)
         self.idle_seconds = idle_seconds
         self.max_sessions = max_sessions
         self.max_requests = max_requests
+        self.max_per_key = max_per_key
+        self.started = time.time()
+        self.created = 0
+        self.refused = 0
+        self.key_evicted = 0
+        self._recent = deque(maxlen=5000)   # (ts, key, ip) per new session
         self._requests = 0
         self._owners = {}
         self._admission = anyio.Lock()
         self.evicted = 0
         self._evict_logged = 0.0
 
-    def _evict_idle(self) -> bool:
-        """Drop the least recently used session with no request in flight."""
+    @staticmethod
+    def _key(request) -> str:
+        auth = request.headers.get('authorization') or ''
+        return hashlib.sha256(auth.encode()).hexdigest()[:8] if auth else 'anon'
+
+    def stats(self, window: float = 600.0) -> dict:
+        """Counters plus who opened sessions recently (by token hash and IP)."""
+        cutoff = time.time() - window
+        recent = [(k, ip) for (t, k, ip) in self._recent if t >= cutoff]
+        held = Counter(o.get('key', 'anon') for o in self._owners.values())
+        return {
+            'sessions': len(self._server_instances), 'max_sessions': self.max_sessions,
+            'max_per_key': self.max_per_key, 'requests_in_flight': self._requests,
+            'created': self.created, 'evicted': self.evicted, 'key_evicted': self.key_evicted,
+            'refused': self.refused, 'uptime_secs': round(time.time() - self.started),
+            'window_secs': window, 'new_sessions_in_window': len(recent),
+            'top_keys': Counter(k for k, _ in recent).most_common(3),
+            'top_ips': Counter(ip for _, ip in recent).most_common(3),
+            'held_by_key': held.most_common(3),
+        }
+
+    def _evict_idle(self, key=None) -> bool:
+        """Drop the least recently used session with no request in flight
+        (only among ``key``'s sessions when given)."""
         idle = [(o['last'], sid) for sid, o in self._owners.items()
-                if not o['active'] and o['scope'] is not None]
+                if not o['active'] and o['scope'] is not None
+                and (key is None or o.get('key') == key)]
         if not idle:
             return False
         _, sid = min(idle)
         owner = self._owners.pop(sid)
         self._server_instances.pop(sid, None)
         owner['scope'].cancel()     # run_session's finally terminates the transport
+        if key is not None:
+            self.key_evicted += 1
+            return True
         self.evicted += 1
         now = time.monotonic()
         if now - self._evict_logged > 60:
@@ -61,6 +100,7 @@ class BoundedSessionManager(StreamableHTTPSessionManager):
         request = Request(scope, receive)
         sid = request.headers.get('mcp-session-id')
         if self._requests >= self.max_requests:
+            self.refused += 1
             await Response('MCP request capacity reached', 503,
                            headers={'Retry-After': '2'})(scope, receive, send)
             return
@@ -71,10 +111,16 @@ class BoundedSessionManager(StreamableHTTPSessionManager):
         try:
             if sid is None:
                 # Reserve and start atomically; don't hold this across network I/O.
+                key = self._key(request)
                 async with self._admission:
+                    while (sum(o.get('key') == key for o in self._owners.values()) >= self.max_per_key
+                           and self._evict_idle(key)):
+                        pass
                     while len(self._server_instances) >= self.max_sessions and self._evict_idle():
                         pass
-                    if len(self._server_instances) >= self.max_sessions:
+                    if (len(self._server_instances) >= self.max_sessions
+                            or sum(o.get('key') == key for o in self._owners.values()) >= self.max_per_key):
+                        self.refused += 1
                         await Response('MCP session capacity reached', 503,
                                        headers={'Retry-After': '2'})(scope, receive, send)
                         return
@@ -88,7 +134,10 @@ class BoundedSessionManager(StreamableHTTPSessionManager):
                     )
                     self._server_instances[sid] = transport
                     # Born busy: counts its own first request, so it can't be evicted before it runs.
-                    owner = {'scope': None, 'posts': 0, 'active': 1, 'last': time.monotonic()}
+                    owner = {'scope': None, 'posts': 0, 'active': 1, 'last': time.monotonic(), 'key': key}
+                    self.created += 1
+                    client = scope.get('client')
+                    self._recent.append((time.time(), key, client[0] if client else '?'))
                     self._owners[sid] = owner
 
                     async def run_session(*, task_status=anyio.TASK_STATUS_IGNORED):

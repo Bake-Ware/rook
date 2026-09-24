@@ -14,7 +14,7 @@ from rook.band_mcp.http_sessions import BoundedSessionManager
 
 
 @asynccontextmanager
-async def server(idle=0.05, capacity=4):
+async def server(idle=0.05, capacity=4, per_key=48):
     mcp=FastMCP('regression')
     started=asyncio.Event()
     @mcp.tool()
@@ -22,15 +22,16 @@ async def server(idle=0.05, capacity=4):
         started.set()
         await asyncio.sleep(.15)
         return 'done'
-    manager=BoundedSessionManager(mcp._mcp_server,idle_seconds=idle,max_sessions=capacity)
+    manager=BoundedSessionManager(mcp._mcp_server,idle_seconds=idle,max_sessions=capacity,max_per_key=per_key)
     mcp._session_manager=manager
     app=mcp.streamable_http_app()
     async with app.router.lifespan_context(app), httpx.AsyncClient(transport=httpx.ASGITransport(app=app),base_url='http://localhost',headers={'Accept':'application/json, text/event-stream'}) as http:
         yield manager,http,started
 
 
-async def initialize(http):
-    r=await http.post('/mcp',json={'jsonrpc':'2.0','id':1,'method':'initialize','params':{'protocolVersion':'2025-03-26','capabilities':{},'clientInfo':{'name':'test','version':'1'}}})
+async def initialize(http, token=None):
+    auth={'Authorization':'Bearer '+token} if token else {}
+    r=await http.post('/mcp',headers=auth,json={'jsonrpc':'2.0','id':1,'method':'initialize','params':{'protocolVersion':'2025-03-26','capabilities':{},'clientInfo':{'name':'test','version':'1'}}})
     if r.status_code!=200:
         return r
     sid=r.headers['mcp-session-id']
@@ -92,6 +93,17 @@ async def test_capacity_refuses_only_when_every_session_is_busy():
         assert r.status_code==503               # the only session has a call in flight
         assert (await task).status_code==200
         assert isinstance(await initialize(http),str)
+
+
+@pytest.mark.asyncio
+async def test_one_token_only_competes_with_itself():
+    async with server(idle=10,capacity=10,per_key=3) as (manager,http,_):
+        mine=[await initialize(http,'good') for _ in range(2)]
+        for _ in range(30): assert isinstance(await initialize(http,'leaky'),str)
+        assert all(sid in manager._server_instances for sid in mine)   # untouched
+        st=manager.stats()
+        assert st['held_by_key'][0][1]==3 and st['key_evicted']==27 and st['evicted']==0
+        assert st['top_keys'][0][1]==30 and st['created']==32 and st['refused']==0
 
 
 @pytest.mark.asyncio
