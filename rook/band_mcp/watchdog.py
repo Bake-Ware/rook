@@ -1,9 +1,9 @@
-"""Rook health watchdog: tell Bake on Telegram before Rook fails him.
+"""Rook health watchdog: tell the operator on Telegram before Rook fails them.
 
 Stdlib only, so it runs anywhere. Run it once a minute (systemd timer):
 
     python3 -m rook.band_mcp.watchdog --mode hub       # on the hub
-    python3 watchdog.py --mode remote                   # off-hub (sojourn)
+    python3 watchdog.py --mode remote                   # on another machine
 
 hub mode: an end-to-end MCP probe on 127.0.0.1 (initialize -> rook_whoami ->
 DELETE), /healthz session-table counters and worker count, the hub services,
@@ -94,7 +94,9 @@ def check_hub(state):
     found = {}
     token = env('ROOK_MCP_STATIC_TOKEN')
     base = env('ROOK_WATCHDOG_MCP_URL', 'http://127.0.0.1:8765')
-    host = env('ROOK_WATCHDOG_HOST', 'mcp.bakeforge.com')
+    host = env('ROOK_WATCHDOG_HOST')                # the MCP's public hostname (allowed-hosts check)
+    if not host:
+        return {'config': 'ROOK_WATCHDOG_HOST is not set (the MCP public hostname), so the hub cannot be checked'}
     for svc in SERVICES:
         r = subprocess.run(['systemctl', 'is-active', svc], capture_output=True, text=True)
         if r.stdout.strip() != 'active':
@@ -150,7 +152,9 @@ def check_hub(state):
 
 
 def check_remote(state):
-    fail = probe(env('ROOK_WATCHDOG_MCP_URL', 'https://mcp.bakeforge.com') + '/mcp',
+    if not env('ROOK_WATCHDOG_MCP_URL'):
+        return {'config': 'ROOK_WATCHDOG_MCP_URL is not set (e.g. https://mcp.example.com)'}
+    fail = probe(env('ROOK_WATCHDOG_MCP_URL') + '/mcp',              # e.g. https://mcp.example.com
                  env('ROOK_MCP_STATIC_TOKEN'), timeout=20)
     strikes = state.get('probe_strikes', 0) + 1 if fail else 0
     state['probe_strikes'] = strikes

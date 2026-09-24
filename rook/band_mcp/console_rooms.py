@@ -9,7 +9,7 @@ fan-out at the site — nothing streams over the band's broadcast relay.
 Two things make this an archive rather than a scrollback:
 
   * **Rooms are named for the task, not the command.** ``proc.start`` demands a
-    label ("set up the model on kaiju"), and that title carries most of the
+    label ("set up the model on gpu-01"), and that title carries most of the
     retrieval weight — raw console output is terrible search corpus.
   * **A frozen room is permanent.** When the process exits, the room takes a
     closing summary and freezes: immutable, still readable, still indexed. The

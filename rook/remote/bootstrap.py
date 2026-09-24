@@ -2032,7 +2032,7 @@ button:hover{{background:#22b88f}}
             a hermes box (``hermes.chat`` cap) shows up as ``agent:hermes_<w>``
             and a worker with ``agent.wake`` as ``agent:<w>``. These carry
             ``worker`` + ``wake`` so a mention can be turned into a wake call.
-        Without the second kind, ``@sojourn`` had nothing to resolve against."""
+        Without the second kind, an @mention of a band agent had nothing to resolve against."""
         if self._chat is None:
             return web.json_response({"error": "chat unavailable"}, status=503)
         self._chat.touch(self._OPERATOR)

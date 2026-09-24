@@ -1046,7 +1046,7 @@ function initials(id){ const n=shortName(id); return (n[0]||'?')+(n.includes('-'
 function isMe(s){ return (s||'').startsWith('user:'); }
 let avatars={};   // identity -> version, from /api/avatars (pictures set on the /tokens page)
 async function loadAvatars(){ const d=await jget('/api/avatars'); if(d)avatars=d; }
-function avatarSrc(id){ // exact identity, else strip _host suffixes ("agent:claude_kaiju" -> "agent:claude")
+function avatarSrc(id){ // exact identity, else strip _host suffixes ("agent:claude_laptop" -> "agent:claude")
   let k=id; for(;;){ if(avatars[k]!=null) return '/api/avatar?id='+encodeURIComponent(k)+'&v='+avatars[k];
     const i=k.lastIndexOf('_'); if(i<=k.indexOf(':')+1) return null; k=k.slice(0,i); } }
 function avatarHTML(id,cls){ const c=idColor(id), src=avatarSrc(id);
@@ -1160,7 +1160,7 @@ async function deleteRoom(){ if(!curRoom)return; const btn=$('#ct-del');
 
 // Resolve @mentions in text against the presence roster. Longest name wins
 // and names may contain spaces ("@claude code"), so match by substring rather
-// than a \w+ token. Also accepts the full identity ("@agent:hermes_sojourn").
+// than a \w+ token. Also accepts the full identity ("@agent:hermes_nas").
 function resolveMentions(t){ const low=t.toLowerCase(), out=[];
   const cands=presence.map(a=>({a,n:shortName(a.identity).toLowerCase(),f:a.identity.toLowerCase()}))
     .sort((x,y)=>y.n.length-x.n.length);

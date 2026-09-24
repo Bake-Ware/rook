@@ -262,7 +262,8 @@ export async function mountWork(root) {
           workers=m.workers;const pick=$('select[name=worker]'),value=pick.value;
           pick.innerHTML='<option value="">Choose a host</option>'+workers.map(w=>`<option value="${esc(w.id)}">${esc(w.name)}</option>`).join('');
           if(workers.some(w=>w.id===value))pick.value=value;
-          else {const first=workers.find(w=>w.name==='cachyrig');if(first)pick.value=first.id;}
+          else {let last=null;try{last=localStorage.getItem('rook-session-host');}catch{}const first=last&&workers.find(w=>w.name===last);if(first)pick.value=first.id;}
+          if(!pick.dataset.remember){pick.dataset.remember='1';pick.addEventListener('change',()=>{const w=workers.find(x=>x.id===pick.value);if(w)try{localStorage.setItem('rook-session-host',w.name);}catch{}});}
         }
       } else if(m.type==='session')renderSession(m.session);
       else if(m.type==='selected')select(m.session);
