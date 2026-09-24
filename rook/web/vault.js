@@ -29,7 +29,7 @@ export async function mountVault(root){
     root.replaceChildren();const page=el('div',undefined,'kn-page');page.style.maxWidth='960px';root.append(page);
     page.append(el('p','Credentials your agents can use. Agents list names with rook_secret, read a value with rook_secret get (logged), or — better — put {{secret:name}} in rook_call args so the hub fills it in on the way to the worker and masks it in the reply. Values are encrypted on the hub and never shown here.','kn-dim'),status);
     const add=el('section',undefined,'kn-callout');add.append(el('strong','Add a secret'));
-    const name=el('input');name.placeholder='name, e.g. starscream-root';name.autocomplete='off';
+    const name=el('input');name.placeholder='name, e.g. nas-admin-password';name.autocomplete='off';
     const description=el('input');description.placeholder='What it is for, where it works';
     const value=el('input');value.type='password';value.autocomplete='new-password';value.placeholder='Value';
     const err=el('small','','kn-error');const save=el('button','Save','kn-primary');save.type='button';

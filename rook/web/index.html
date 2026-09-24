@@ -440,7 +440,7 @@
             </div>
           </div>
           <div class="chatinput">
-            <input id="chatbox" placeholder="Message…  (@name to address an agent — e.g. @sojourn)" onkeydown="if(event.key==='Enter')sendChat()" disabled>
+            <input id="chatbox" placeholder="Message…  (@name to address an agent)" onkeydown="if(event.key==='Enter')sendChat()" disabled>
             <button class="sendbtn" id="sendbtn" onclick="sendChat()" disabled>Send</button>
           </div>
         </div>
@@ -1121,7 +1121,7 @@ function renderMsgs(d,reset){ if(!d)return; const log=$('#chatlog');
   $('#ct-sub').textContent=(curParts.length+' participant'+(curParts.length===1?'':'s'))+
     (curParts.length?' · '+curParts.map(shortName).join(', '):'');
   $('#ct-parts').innerHTML=curParts.slice(0,5).map(p=>avatarHTML(p,'sm')).join('');
-  $('#chatbox').placeholder=curParts.some(isMe)?'Message…  (@name to address an agent — e.g. @sojourn)':'Agent room — sending here joins you to it…';
+  $('#chatbox').placeholder=curParts.some(isMe)?'Message…  (@name to address an agent)':'Agent room — sending here joins you to it…';
   const msgs=d.messages||[];
   const atBottom=log.scrollHeight-log.scrollTop-log.clientHeight<60;
   for(const m of msgs){ lastSeq=Math.max(lastSeq,m.seq);
@@ -1196,7 +1196,7 @@ function showTyping(w){ clearTyping(); const log=$('#chatlog'); const el=documen
 function clearTyping(){ document.querySelectorAll('.typing').forEach(e=>e.remove()); }
 
 async function newRoom(){ const title=prompt('Room title:'); if(!title)return;
-  const inv=prompt('Invite agents (comma-separated, e.g. sojourn, kaiju) — optional:','')||'';
+  const inv=prompt('Invite agents (comma-separated names) — optional:','')||'';
   // map short names to identities where we can
   const invIds=inv.split(',').map(s=>s.trim()).filter(Boolean).map(n=>{
     const hit=presence.find(a=>shortName(a.identity).toLowerCase()===n.toLowerCase());

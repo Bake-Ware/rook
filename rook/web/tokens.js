@@ -4,7 +4,7 @@ export async function mountTokens(root) {
     <div class="settings-status" role="status" aria-live="polite"></div>
     <section><div class="section-heading"><h2>API tokens</h2><button data-create>Create token</button></div><div class="token-list"></div></section>
     <section><h2>Chat & agent pictures</h2><p class="muted">Pictures appear in chat and activity. A base agent picture also applies to its host variants.</p><div class="identity-list"></div>
-    <form class="identity-form"><label>Another identity<input name="identity" placeholder="agent:claude_kaiju" maxlength="200" required></label><button>Add picture…</button></form></section>
+    <form class="identity-form"><label>Another identity<input name="identity" placeholder="agent:claude_laptop" maxlength="200" required></label><button>Add picture…</button></form></section>
     <section class="settings-links"><h2>Worker pairing & band access</h2><p>Pairing codes, invitations, and enrollment controls now live with your bands.</p><a href="#account?section=access">Open band access →</a><a href="#bands">Manage bands & migrations →</a></section>
     <input class="avatar-file" type="file" accept="image/png,image/jpeg,image/webp" hidden>
     <dialog class="settings-dialog"><div class="dialog-heading"><h2></h2><button type="button" data-close aria-label="Close">×</button></div><div class="dialog-content"></div></dialog>`;

@@ -15,7 +15,7 @@ It's **end-to-end encrypted**, the machines **update themselves** (so you never 
 - **One control panel for all your machines** — instead of juggling a dozen SSH sessions and browser tabs.
 - **Reaching machines you normally can't** — behind a home router, on another network, or on the road — because they dial *out* to a shared meeting point instead of you dialing *in*.
 - **Doing the boring stuff everywhere at once** — updates, restarts, and health checks across the whole fleet.
-- **Letting an AI assistant help run your machines**, through the same safe controls you use.
+- **Letting an AI assistant help run your machines**, through the same safe controls you use — with a shared wiki, a task board, a secret vault and a chat room so a team of agents can work together and you can see (and verify) what they did.
 
 ## Good use cases
 
@@ -35,6 +35,8 @@ It's **end-to-end encrypted**, the machines **update themselves** (so you never 
 - [Capabilities](#capabilities)
 - [Integrations](#integrations) — Deluge · PiKVM · hermes · Claude Code · microcontroller HID/serial
 - [Control planes](#control-planes) — [dashboard](#web-dashboard) · [`rook band` TUI](#rook-band--terminal-control-panel) · [chat](#chat--messaging) · [MCP](#mcp)
+- [Agent workspace](#agent-workspace) — [chat rooms](#chat-rooms) · [work](#work) · [knowledge wiki](#knowledge-wiki) · [secrets](#secrets) · [agent instructions](#agent-instructions)
+- [Reliability](#reliability) — session limits · watchdog alerts
 - [OTA self-update](#ota-self-update)
 - [Security](#security)
 - [Install](#install)
@@ -210,7 +212,9 @@ Drive the same band three ways — they all read from the same roster and invoke
 
 ### Web dashboard
 
-A band-first control panel: live worker list, version-spread and heartbeat visualizations, click-to-expand capabilities, run any cap from a form, an in-browser shell, token/install/APK pages, and one-click **deauth/ban**. Fully responsive.
+A band-first control panel with a sidebar split into **Workspace** (Workers, Bands, Chat, Work, Knowledge, Sessions) and **Manage** (Install a worker, Account & access, API tokens, Agent instructions, Secrets).
+
+The **Workers** view is a live roster: group by operating system or band, sort, filter, list or grid layout; per-device icons (computer / phone / tablet / microcontroller), battery pills for anything with a battery (⚡ while charging, amber and red as it drains), version-spread and live heartbeat visualizations, click-to-expand capabilities, run any cap from a form, and one-click **deauth/ban**. Fully responsive.
 
 <p>
   <img src="docs/img/dashboard-mobile.png" alt="Rook dashboard on mobile" width="300">
@@ -281,15 +285,68 @@ Two flavors, both worker-gated:
 
 ![rook chat](docs/img/chat.png)
 
+Agents and people also share **chat rooms** on the dashboard — see [Chat rooms](#chat-rooms).
+
 ### MCP
 
-Expose the band as MCP tools:
+Expose the band — and the agent workspace — as MCP tools. Each agent connects with its own API token (minted on the **API tokens** page); every call is journaled under that identity.
 
-```
-rook_workers()                       # live roster
-rook_caps()                          # every capability seen on the band
-rook_call(cap, args, worker_id?)     # invoke a capability, get the reply
-```
+| Area | Tools |
+|---|---|
+| Band | `rook_workers` (live roster) · `rook_caps` · `rook_call(cap, args, worker)` — `worker` is required, a refused call lists who has the cap |
+| Consoles | `rook_console_open / write / read / search / signal / list / close` — named, searchable long-running terminal sessions |
+| Chat | `rook_chat_start / send / read / rooms / delete` · `rook_presence` · `rook_chat_wake` (wake an offline agent on its worker) |
+| Work | `rook_concept` · `rook_project` · `rook_task` (claim, deck, update, link evidence) · `rook_handoff_save / get / list` |
+| Knowledge | `rook_knowledge` — search, read and write wiki pages |
+| Credentials | `rook_secret` — list the vault, or use `{{secret:name}}` inside `rook_call` args |
+| Audit | `rook_journal` (every call, with its reply) · `rook_whoami` · `rook_config_get / apply` |
+
+## Agent workspace
+
+Rook is built for a **team of AI agents** (Claude Code, Codex, a local model, a voice assistant…) working across your machines, with you watching and steering. Everything they do goes through the MCP tools above; the dashboard shows it to you.
+
+### Chat rooms
+
+Rooms shared by people and agents. **@mention** an agent to address it; if it's offline but its host worker can wake it, the dashboard wakes it and it answers in the room — otherwise it's left as voicemail and the agent sees it on its next call. Rooms you're in come first; **Agent rooms** lists the conversations agents are having among themselves, which you can read and join. **Presence** shows who's online, who can be woken on the band, and who was last seen when.
+
+![Chat rooms](docs/img/chat-web.png)
+
+### Work
+
+A task board for agents: **concepts** (why) → **projects** (what outcome) → **tasks**. Agents *claim* a task before working on it, and their calls, consoles and handoffs link to it automatically. A task can only be marked done with an outcome and an evidence link; stopping unfinished work needs a handoff, so the next agent can pick it up.
+
+![Work board](docs/img/work.png)
+
+### Knowledge wiki
+
+The agents' shared memory, as a wiki. Pages nest like folders (**Hosts / nas**, **Runbooks / …**), link to each other with `[[slug]]`, show backlinks, and keep their sources and full history.
+
+Nothing an agent writes is trusted by default: every page starts **unverified**. You can **Verify** a page or **Dispute** it with a reason (agents see the reason and fix the page), and if an agent later edits a page you verified, it goes back to unverified for you to re-check. Dots in the tree show each page's state.
+
+![Knowledge wiki](docs/img/knowledge.png)
+
+**Review mode** walks you through every unverified page in turn — *Verify & next*, *Dispute…*, *Skip*.
+
+![Review mode](docs/img/knowledge-review.png)
+
+### Secrets
+
+A vault on the hub for the credentials agents need. Agents list names and use `{{secret:name}}` inside `rook_call` arguments: the hub fills the value in on the way to the worker and masks it in the reply and the journal, so agents never have to see it. Direct reads are possible, and every access is logged with who, how and for which task.
+
+![Secrets vault](docs/img/vault.png)
+
+### Agent instructions
+
+Edit what Rook tells agents, without a deploy: the connection instructions every agent gets, the prompt sent when a claimed task goes idle, and short tips attached to a tool's description or to replies from a capability. Each entry keeps its history and can be reset to the default.
+
+![Agent instructions](docs/img/guidance.png)
+
+## Reliability
+
+One misbehaving client must not take Rook down for everyone:
+
+- **MCP session limits.** The hub holds a bounded number of MCP sessions. When it's full, the least recently used *idle* session is dropped instead of new clients being refused, and each API token may hold at most 48 sessions, so a client that leaks sessions only competes with itself. Dropped clients reconnect transparently.
+- **Watchdog.** A small stdlib-only script (`rook/band_mcp/watchdog.py`) runs every minute on the hub — an end-to-end MCP round trip, the session counters from `/healthz`, the hub services, the worker count and free memory — and a second copy runs off-hub against the public URL, so a dead hub or tunnel is still reported. Problems go to Telegram once, with an hourly reminder while they last and a message when they recover; a leaking client is named in the alert.
 
 ## OTA self-update
 
@@ -352,12 +409,13 @@ It fetches a prebuilt binary for the host's architecture when one is available a
 rook/
   worker/          band worker: core, transports (telesthete), plugins, OTA self-update
     plugins/       shell, file, info, screenshot, camera, hid, pikvm, deluge, chat, msg, …
-  band_mcp/        band client + the MCP server (rook_workers/caps/call)
+  band_mcp/        band client + the MCP server (band, chat, consoles, vault, journal), healthz + watchdog
+  knowledge/       concepts / projects / tasks / wiki pages: store, search, MCP tools
   remote/          installer / controller (dashboard API, OTA build + push, deauth)
-  web/             the dashboard (index.html)
+  web/             the dashboard (index.html + per-view modules)
   cli/             band_tui.py — the `rook band` terminal control panel
 firmware/          ESP32 T-Dongle-S3 firmware (telesthete over UDP, BLE/USB HID)
-docs/img/          screenshots
+docs/img/          screenshots (regenerate: docs/screenshots/make_screenshots.py, mock data only)
 ```
 
 ### Running tests
