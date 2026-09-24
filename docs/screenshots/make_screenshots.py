@@ -262,6 +262,13 @@ async def main():
         await page.wait_for_selector('.item .n')
         await page.wait_for_timeout(1500)                     # heartbeat bars settle
         await shot('dashboard-workers')
+        await page.select_option('#worker-group', 'none')      # one continuous grid of cards
+        await page.click('.view-toggle [data-layout=grid]')
+        await page.wait_for_selector('#view-workers[data-layout=grid]')
+        await page.wait_for_timeout(1000)
+        await shot('dashboard-workers-grid')
+        await page.click('.view-toggle [data-layout=list]')
+        await page.select_option('#worker-group', 'os')
 
         await page.goto(base + '#chat')
         await page.wait_for_selector('#roomlist .roomrow')
