@@ -36,7 +36,7 @@ NOW = time.time()
 
 
 # ---------------------------------------------------------------- workers
-def worker(name, os_, caps, age=20, battery=None, version='112', build=112, **extra):
+def worker(name, os_, caps, age=20, battery=None, version='167.brisk.otter', build=167, **extra):
     info = {'linux': {'system': 'Linux', 'machine': 'x86_64', 'release': '6.12'},
             'arm': {'system': 'Linux', 'machine': 'aarch64', 'release': '6.6'},
             'windows': {'system': 'Windows', 'machine': 'AMD64', 'release': '11'},
@@ -60,7 +60,7 @@ WORKERS = [
     worker('ci-runner', 'linux', SHELL, 31),
     worker('db-01', 'linux', SHELL, 8, description='postgres primary'),
     worker('dns', 'arm', SHELL, 44, description='pi-hole'),
-    worker('edge-us', 'linux', SHELL, 19),
+    worker('edge-us', 'linux', SHELL, 19, version='142.quiet.heron', build=142),
     worker('gpu-01', 'linux', SHELL + ['screenshot.capture', 'hid.type', 'agent.wake'], 5, description='2× RTX, local models'),
     worker('kvm-dongle', 'chip', ['kvm.type', 'kvm.key_combo', 'serial.write'], 27, version='0.6.9', build=0),
     worker('laptop', 'linux', SHELL + ['screenshot.capture', 'battery.status', 'camera.snap'], 3, battery=(82, True)),
@@ -261,7 +261,7 @@ async def main():
         await page.goto(base + '#workers')
         await page.wait_for_selector('.item .n')
         await page.wait_for_timeout(1500)                     # heartbeat bars settle
-        await shot('dashboard')
+        await shot('dashboard-workers')
 
         await page.goto(base + '#chat')
         await page.wait_for_selector('#roomlist .roomrow')
@@ -298,7 +298,7 @@ async def main():
         await page.goto(base + '#workers')
         await page.wait_for_selector('.item .n')
         await page.wait_for_timeout(1500)
-        await shot('dashboard-mobile')
+        await shot('dashboard-workers-mobile')
         await browser.close()
     await runner.cleanup()
     if errors:
