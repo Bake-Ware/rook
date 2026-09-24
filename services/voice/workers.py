@@ -7,8 +7,12 @@ from .rookmcp import RookMCP
 
 
 class WorkerInventory:
-    def __init__(self, ttl=60):
+    def __init__(self, ttl=60, schema_ttl=3600, retry_seconds=600):
         self.ttl = ttl
+        self.schema_ttl = schema_ttl
+        self.retry_seconds = retry_seconds
+        self.schema_caps = {}
+        self.schema_due = {}
         self.rows = None
         self.updated = 0
         self.lock = asyncio.Lock()
@@ -36,9 +40,19 @@ class WorkerInventory:
             return rows
 
     async def refresh_schemas(self):
-        """Background only: one description request per worker, never per turn."""
+        """Background only. Capability schemas rarely change, so describe a
+        worker only when it is new, its cap list changed, or its schema is older
+        than schema_ttl; retry a failed describe after retry_seconds. (It used to
+        re-describe every worker every minute: ~2,000 hub calls an hour.)"""
         rows = await self.refresh()
-        if time.monotonic() - self.schemas_updated < self.ttl:
+        now = time.monotonic()
+        def due(row):
+            name = row['name']
+            if self.schema_caps.get(name) != tuple(sorted(row.get('caps', []))):
+                return True
+            return now >= self.schema_due.get(name, 0)
+        todo = [row for row in rows if due(row)]
+        if not todo:
             return
         from .providers import READ_CAPS
         async def describe(row):
@@ -49,16 +63,24 @@ class WorkerInventory:
                 if isinstance(data, str):
                     data = json.loads(data)
                 if data.get('ok') and isinstance(data.get('result'), dict):
-                    return row['name'], {cap: spec for cap, spec in data['result'].items() if cap in READ_CAPS}
+                    return row, {cap: spec for cap, spec in data['result'].items() if cap in READ_CAPS}
             except Exception:
                 pass
-            return row['name'], {}
+            return row, None
         # Limit background traffic; unavailable workers cannot stall planner calls.
         semaphore = asyncio.Semaphore(3)
         async def limited(row):
             async with semaphore:
                 return await describe(row)
-        self.schemas = dict(await asyncio.gather(*(limited(row) for row in rows)))
+        for row, spec in await asyncio.gather(*(limited(row) for row in todo)):
+            name = row['name']
+            self.schema_caps[name] = tuple(sorted(row.get('caps', [])))
+            if spec is None:
+                self.schema_due[name] = time.monotonic() + self.retry_seconds
+                self.schemas.setdefault(name, {})
+            else:
+                self.schema_due[name] = time.monotonic() + self.schema_ttl
+                self.schemas[name] = spec
         self.schemas_updated = time.monotonic()
 
     def read_catalog(self, allowed):
