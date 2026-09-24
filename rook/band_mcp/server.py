@@ -1280,6 +1280,11 @@ async def _amain(args) -> None:
     except Exception as e:
         log.warning("WS band bridge failed to start: %s", e)
 
+    # /healthz for the watchdog: session-table counters and band roster size.
+    # Needs the static token (the public hostname reaches it too).
+    from .healthz import route as healthz_route
+    app.router.routes.insert(0, healthz_route(mcp._session_manager, client, args.static_token or ""))
+
     from .account_tokens import build_account_token_routes
     for route in reversed(build_account_token_routes(store, getattr(mcp, "_rook_chat", None))):
         app.router.routes.insert(0, route)
