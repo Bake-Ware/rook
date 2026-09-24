@@ -40,3 +40,4 @@ rook/remote/telesthete-hub-*
 
 # RP2040 firmware build products
 firmware-rp2040/.pio/
+docs/img/rook.mp4

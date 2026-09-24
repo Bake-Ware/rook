@@ -1,5 +1,9 @@
 # Rook
 
+<p align="center">
+  <img src="docs/img/rook.gif" alt="The Rook mark: a faceted chess rook turning slowly" width="360">
+</p>
+
 **A self-updating mesh of worker agents you drive from a web dashboard, a terminal control panel, or via MCP — over an encrypted peer-to-peer band.**
 
 ![Rook dashboard](docs/img/dashboard-workers.png)
