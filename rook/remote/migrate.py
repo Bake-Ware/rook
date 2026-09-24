@@ -6,6 +6,7 @@ This assumes the existing fleet is trusted. It is not compromise recovery.
 """
 import argparse
 import asyncio
+import os
 import hashlib
 import json
 from pathlib import Path
@@ -122,7 +123,8 @@ def main():
     parser.add_argument('--band',required=True)
     parser.add_argument('--workers',required=True)
     parser.add_argument('--completion-report',required=True)
-    parser.add_argument('--server',default='https://rook.bakeforge.com')
+    parser.add_argument('--server',default=os.environ.get('ROOK_SERVER'),required='ROOK_SERVER' not in os.environ,
+                        help='site base URL, e.g. https://rook.example.com (or set ROOK_SERVER)')
     parser.add_argument('--owner')
     parser.add_argument('--hub-host',default='127.0.0.1')
     parser.add_argument('--hub-port',type=int,default=7474)

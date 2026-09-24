@@ -370,9 +370,9 @@ def build_server(client: "BandClient | MultiBandClient",
         """Optional per-host suffix for the identity, from an ``X-Rook-Host``
         request header. Several agents commonly share one token (every Claude
         Code on every box using the "claude" token); with the header each
-        shows up as ``agent:claude_kaiju`` instead of one blurred ``agent:claude``.
+        shows up as ``agent:claude_laptop`` instead of one blurred ``agent:claude``.
         Set it in the MCP client config, e.g. Claude Code's ``.claude.json``:
-        ``"headers": {"Authorization": "Bearer …", "X-Rook-Host": "kaiju"}``.
+        ``"headers": {"Authorization": "Bearer …", "X-Rook-Host": "laptop"}``.
         Sanitised to ``[A-Za-z0-9._-]{1,32}``. Audit breadcrumb, not a gate."""
         try:
             req = mcp.get_context().request_context.request
@@ -502,7 +502,7 @@ def build_server(client: "BandClient | MultiBandClient",
             cap: dot-namespaced capability name (e.g. ``"shell.exec"``).
             args: keyword arguments passed to the handler.
             worker_id: REQUIRED target worker — the hex id from ``rook_workers``
-                OR the worker name (e.g. ``"kaiju"``); names are resolved
+                OR the worker name (e.g. ``"gpu-01"``); names are resolved
                 against the live roster. Calls without a target are refused
                 (the error lists which workers have the capability) so a call
                 never runs on whichever machine happens to answer first.
@@ -778,7 +778,7 @@ def build_server(client: "BandClient | MultiBandClient",
     async def rook_chat_start(title: str, invite: list | str | None = None) -> str:
         """Start a chat room (a thread) and invite participants.
 
-        ``invite`` is a list of identities (e.g. ``["agent:hermes_sojourn"]``)
+        ``invite`` is a list of identities (e.g. ``["agent:hermes_nas"]``)
         or a comma string. You're added automatically. Returns the room id —
         use it with rook_chat_send / rook_chat_read. The room id doubles as a
         thread_id shared with handoffs and the journal."""
@@ -851,10 +851,10 @@ def build_server(client: "BandClient | MultiBandClient",
         mention).
 
         Two paths, auto-selected by the target's capabilities:
-          * ``hermes.chat`` present (a hermes box like sojourn): the room
+          * ``hermes.chat`` present (a box running hermes): the room
             transcript is handed to hermes.chat and its reply is posted straight
             back into the room — no spawn command needed, it rides the cap the
-            worker already exposes. This is how ``@sojourn`` actually answers.
+            worker already exposes. This is how an @mentioned hermes agent actually answers.
           * else ``agent.wake`` present (`ROOK_WAKE_CMD` set): spawns a fresh
             agent session with the transcript as its brief.
         A worker with neither can't be woken — the mention/voicemail notice
@@ -943,7 +943,7 @@ def build_server(client: "BandClient | MultiBandClient",
         band to read at their own pace.
 
         ``task`` is REQUIRED and becomes the room's title. Write it as the goal,
-        not the command — "set up the llama model on kaiju", not "bash". It is
+        not the command — "set up the llama model on gpu-01", not "bash". It is
         the main thing anyone (or any later documentation pass) will search on,
         so a vague title makes the session unfindable forever.
 
@@ -1111,7 +1111,7 @@ def build_server(client: "BandClient | MultiBandClient",
         """Full-text search every console session ever run on the band.
 
         This is the band's operational memory: "how did we set up that model on
-        kaiju" finds the room where it happened, even months later, and returns
+        gpu-01" finds the room where it happened, even months later, and returns
         its title, closing summary, exit code and the matching ``seq`` so you
         can jump straight to that point with
         ``rook_console_read(room, since_seq=seq-1)``.

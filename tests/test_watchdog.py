@@ -29,6 +29,7 @@ def test_alert_repeat_and_recovery(monkeypatch):
 def hub(monkeypatch, healthz, probe_fail=None, services_ok=True):
     monkeypatch.setenv('ROOK_MCP_STATIC_TOKEN', 't')
     monkeypatch.setenv('ROOK_JOURNAL_DB', '/nonexistent')
+    monkeypatch.setenv('ROOK_WATCHDOG_HOST', 'mcp.example.com')
     monkeypatch.setattr(watchdog, 'probe', lambda *a, **k: probe_fail)
     monkeypatch.setattr(watchdog, 'http', lambda url, *a, **k: (200, {}, json.dumps(healthz)))
     monkeypatch.setattr(subprocess, 'run', lambda *a, **k: SimpleNamespace(stdout='active\n' if services_ok else 'failed\n'))
