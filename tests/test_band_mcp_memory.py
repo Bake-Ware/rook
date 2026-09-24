@@ -67,14 +67,30 @@ async def test_abandoned_sessions_expire_and_old_id_is_404():
 
 
 @pytest.mark.asyncio
-async def test_capacity_rejects_new_without_evicting_active_session():
+async def test_capacity_evicts_oldest_idle_session_so_leaks_cant_lock_others_out():
     async with server(idle=10,capacity=2) as (manager,http,_):
         first=await initialize(http)
-        await initialize(http)
+        second=await initialize(http)
+        await http.post('/mcp',headers={'mcp-session-id':first},json={'jsonrpc':'2.0','id':5,'method':'ping'})
+        third=await initialize(http)          # full: the least recently used idle one (second) goes
+        assert isinstance(third,str)
+        await asyncio.sleep(.01)
+        assert set(manager._server_instances)=={first,third} and set(manager._owners)=={first,third}
+        assert (await http.post('/mcp',headers={'mcp-session-id':second},json={'jsonrpc':'2.0','id':6,'method':'ping'})).status_code==404
+        # A leaky client opening a session per call never locks out a working one.
+        for _ in range(20): assert isinstance(await initialize(http),str)
+        assert len(manager._server_instances)<=2 and manager.evicted>=21
+
+
+@pytest.mark.asyncio
+async def test_capacity_refuses_only_when_every_session_is_busy():
+    async with server(idle=10,capacity=1) as (manager,http,started):
+        sid=await initialize(http)
+        task=asyncio.create_task(http.post('/mcp',headers={'mcp-session-id':sid},json={'jsonrpc':'2.0','id':2,'method':'tools/call','params':{'name':'slow','arguments':{}}}))
+        await started.wait()
         r=await initialize(http)
-        assert r.status_code==503
-        assert len(manager._server_instances)==2
-        await http.delete('/mcp',headers={'mcp-session-id':first})
+        assert r.status_code==503               # the only session has a call in flight
+        assert (await task).status_code==200
         assert isinstance(await initialize(http),str)
 
 
