@@ -2,9 +2,14 @@
 
 Keep SDK wire handling, but own the session task lifetime: SDK 1.27 retains
 terminated transports and has no default abandoned-session deadline. No event
-history is kept. Saturation rejects new sessions instead of evicting live calls.
+history is kept. At capacity a new session evicts the least recently used
+idle session (no request in flight); only when every session is busy is the new
+one refused. A client that abandons sessions without DELETE (one per call) then
+costs only its own stale sessions, never everyone else's access. An evicted
+client gets 404 on its next request and re-initializes, per the MCP spec.
 """
 import logging
+import time
 from uuid import uuid4
 
 import anyio
@@ -12,6 +17,8 @@ from mcp.server.streamable_http import StreamableHTTPServerTransport
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.requests import Request
 from starlette.responses import Response
+
+log = logging.getLogger(__name__)
 
 SESSION_IDLE_SECONDS = 300.0
 MAX_SESSIONS = 128
@@ -28,6 +35,27 @@ class BoundedSessionManager(StreamableHTTPSessionManager):
         self._requests = 0
         self._owners = {}
         self._admission = anyio.Lock()
+        self.evicted = 0
+        self._evict_logged = 0.0
+
+    def _evict_idle(self) -> bool:
+        """Drop the least recently used session with no request in flight."""
+        idle = [(o['last'], sid) for sid, o in self._owners.items()
+                if not o['active'] and o['scope'] is not None]
+        if not idle:
+            return False
+        _, sid = min(idle)
+        owner = self._owners.pop(sid)
+        self._server_instances.pop(sid, None)
+        owner['scope'].cancel()     # run_session's finally terminates the transport
+        self.evicted += 1
+        now = time.monotonic()
+        if now - self._evict_logged > 60:
+            self._evict_logged = now
+            log.warning("MCP sessions at capacity (%d): evicting idle sessions "
+                        "(%d so far); some client is opening sessions without closing them",
+                        self.max_sessions, self.evicted)
+        return True
 
     async def _handle_stateful_request(self, scope, receive, send):
         request = Request(scope, receive)
@@ -44,6 +72,8 @@ class BoundedSessionManager(StreamableHTTPSessionManager):
             if sid is None:
                 # Reserve and start atomically; don't hold this across network I/O.
                 async with self._admission:
+                    while len(self._server_instances) >= self.max_sessions and self._evict_idle():
+                        pass
                     if len(self._server_instances) >= self.max_sessions:
                         await Response('MCP session capacity reached', 503,
                                        headers={'Retry-After': '2'})(scope, receive, send)
@@ -57,7 +87,8 @@ class BoundedSessionManager(StreamableHTTPSessionManager):
                         retry_interval=self.retry_interval,
                     )
                     self._server_instances[sid] = transport
-                    owner = {'scope': None, 'posts': 0}
+                    # Born busy: counts its own first request, so it can't be evicted before it runs.
+                    owner = {'scope': None, 'posts': 0, 'active': 1, 'last': time.monotonic()}
                     self._owners[sid] = owner
 
                     async def run_session(*, task_status=anyio.TASK_STATUS_IGNORED):
@@ -70,11 +101,13 @@ class BoundedSessionManager(StreamableHTTPSessionManager):
                                     await self.app.run(*streams, self.app.create_initialization_options(),
                                                        stateless=False)
                         except Exception as error:
-                            logging.getLogger(__name__).warning("MCP session ended: %s", type(error).__name__)
+                            log.warning("MCP session ended: %s", type(error).__name__)
                         finally:
                             # Always release both roots, including DELETE and crashes.
-                            self._server_instances.pop(sid, None)
-                            self._owners.pop(sid, None)
+                            # (Only if still ours: an evicted id is already gone.)
+                            if self._owners.get(sid) is owner:
+                                self._server_instances.pop(sid, None)
+                                self._owners.pop(sid, None)
                             with anyio.CancelScope(shield=True):
                                 await transport.terminate()
 
@@ -86,6 +119,9 @@ class BoundedSessionManager(StreamableHTTPSessionManager):
                 await Response('Session not found', 404)(scope, receive, send)
                 return
             lifetime = owner['scope']
+            if transport is not None and request.headers.get('mcp-session-id'):
+                owner['active'] += 1
+            owner['last'] = time.monotonic()
             if posting:
                 owner['posts'] += 1
                 # Active calls can legitimately run longer than the idle TTL.
@@ -107,6 +143,8 @@ class BoundedSessionManager(StreamableHTTPSessionManager):
                 lifetime.cancel()
                 raise
             finally:
+                owner['active'] -= 1
+                owner['last'] = time.monotonic()
                 if posting:
                     owner['posts'] -= 1
                 if transport.is_terminated:
