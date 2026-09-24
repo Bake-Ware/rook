@@ -33,7 +33,7 @@ Build the release variant, zipalign, and sign using the existing OTA certificate
 (local Android debug keystore, certificate SHA-256
 `975e7c23158e28f2ed4161b1672e3f011fd1b5e9ecfbb501bc9333b99596c863`).
 Verify it against a full download of the prior 0.4.5 APK. Generate the sidecar
-with `android/build_apk_manifest.py`, copy the active bakenetcanada web release,
+with `android/build_apk_manifest.py`, copy the active hub web release,
 replace only its APK/sidecar, and switch its WorkingDirectory and public hash
 allowlist using the prior release procedure. Validate the public `/apk.json`
 and full `/apk` download using User-Agent `rook-worker` before notifying Bake.
@@ -55,8 +55,8 @@ build excluded the unrelated untracked dongle plugin with a build-only staging
 hook; its source file and all other pre-existing untracked work remain untouched.
 The build is the non-debuggable universal release variant (all four ABIs).
 
-Published download: https://rook.bakeforge.com/apk
-OTA manifest: https://rook.bakeforge.com/apk.json
+Published download: https://<your-host>/apk
+OTA manifest: https://<your-host>/apk.json
 Size: **143,091,363 bytes**. SHA-256:
 `32426319715dd0d24919337ad89495ddeaac9d25cc743d9beffa953b00c93759`.
 The signature matches the complete downloaded public 0.4.5 APK. The publication
@@ -67,7 +67,7 @@ Active web release: `/opt/rook-releases/apk-mic-20260921-8134e30`.
 A recursive diff confirmed only the APK and sidecar differ from the prior active
 web release. Both web and MCP services are healthy. Existing server code,
 separate MCP deployment and desktop-worker artifacts were preserved. Rollback:
-`sudo /var/backups/rook/apk-mic-20260921-8134e30/rollback.sh` on bakenetcanada.
+`sudo /var/backups/rook/apk-mic-20260921-8134e30/rollback.sh` on the hub.
 The same backup directory contains release metadata, the exact two-file diff,
 prior/candidate overrides and the completed public verification record.
 No device installs or checks were triggered; owner verification is pending.

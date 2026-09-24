@@ -1,16 +1,19 @@
-# Rook
 
-<p align="center">
-  <img src="docs/img/rook.gif" alt="The Rook mark: a faceted chess rook turning slowly" width="360">
-</p>
+<img src="docs/img/rook.gif" align="right" width="300" alt="The Rook mark: a faceted chess rook turning slowly">
+
+# Rook
 
 **A self-updating mesh of worker agents you drive from a web dashboard, a terminal control panel, or via MCP — over an encrypted peer-to-peer band.**
 
-![Rook dashboard](docs/img/dashboard-workers.png)
-
 ## What is this?
 
-Rook lets you **run things on all your machines from one place**. You install a tiny background program on each computer you want to reach — a home server, a Raspberry Pi, a gaming PC, a cloud box, a phone, even a small USB dongle — and they all quietly link up over an encrypted connection. From then on you get one live view of every machine and can tell any of them to do something — run a command, grab a screenshot or a webcam photo, restart a service, manage downloads, type on another computer, send a message — and get the answer back right away.
+Rook lets you **run things on all your machines from any agent harness**. You install a tiny background program on each computer you want to reach — a home server, a Raspberry Pi, a gaming PC, a cloud box, a phone, even a small USB dongle — and they all quietly link up over an encrypted connection. From then on you get one live view of every machine and can tell any of them to do something — run a command, grab a screenshot or a webcam photo, restart a service, manage downloads, type on another computer, send a message — and get the answer back right away.
+
+
+<p align="center">
+  <img src="docs/img/dashboard-workers.png" alt="Rook dashboard: workers in list view" width="100%">
+  <img src="docs/img/dashboard-workers-grid.png" alt="Rook dashboard: workers in grid view" width="100%">
+</p>
 
 It's **end-to-end encrypted**, the machines **update themselves** (so you never patch each one by hand), and you can **remove a machine from the group with one click**.
 
@@ -37,7 +40,8 @@ It's **end-to-end encrypted**, the machines **update themselves** (so you never 
 - [What is this?](#what-is-this) · [what it's for](#what-its-for) · [use cases](#good-use-cases)
 - [The band](#the-band)
 - [Capabilities](#capabilities)
-- [Integrations](#integrations) — Deluge · PiKVM · hermes · Claude Code · microcontroller HID/serial
+- [Integrations](#integrations) — Deluge · hermes · Claude Code
+- [Hardware integrations](#hardware-integrations) — Android app · ESP32-S3 USB dongle · PiKVM · HDMI-CEC
 - [Control planes](#control-planes) — [dashboard](#web-dashboard) · [`rook band` TUI](#rook-band--terminal-control-panel) · [chat](#chat--messaging) · [MCP](#mcp)
 - [Agent workspace](#agent-workspace) — [chat rooms](#chat-rooms) · [work](#work) · [knowledge wiki](#knowledge-wiki) · [secrets](#secrets) · [agent instructions](#agent-instructions)
 - [Reliability](#reliability) — session limits · watchdog alerts
@@ -88,7 +92,7 @@ codes do not disconnect installed workers: the worker keeps the permanent PSK.
 The Tokens page supplies ready-to-copy commands, for example:
 
 ```sh
-curl -fsSL 'https://rook.bakeforge.com/worker?band=jd4ps9' | bash
+curl -fsSL 'https://<your-host>/worker?band=jd4ps9' | bash
 ```
 
 `jd4ps9` is an example, not a working code. A worker needs no interactive login
@@ -132,7 +136,7 @@ The Google picture is the default avatar, with custom-photo and initials options
 A terminal installer can use a Google or local browser login:
 
 ```sh
-curl -fsSL 'https://rook.bakeforge.com/worker?login=google' | bash
+curl -fsSL 'https://<your-host>/worker?login=google' | bash
 ```
 
 It displays a code to approve in the web app and fetches all authorized band
@@ -161,7 +165,7 @@ Then fetch band settings with the current pairing code:
 
 ```sh
 python3 firmware/scripts/dongle-band-config.py \
-  --server https://rook.bakeforge.com \
+  --server https://<your-host> \
   --udp-hub YOUR-UDP-HUB:7474
 ```
 
@@ -205,10 +209,66 @@ Built-in plugins:
 On top of the generic caps, Rook ships purpose-built integrations for specific apps and hardware. Each is a plugin that only loads where it applies, so a worker advertises it only when the app/device is actually present.
 
 - **Deluge** — `deluge.*`: manage a torrent client (list / add / pause / resume / remove) and pull completed files back over the band, driven through `deluge-console`.
-- **PiKVM** — `pikvm.*`: control a [PiKVM](https://pikvm.org) through its REST API — snapshot the captured screen, send keyboard/mouse, ATX power actions, or hit any `/api/*` endpoint as a passthrough.
 - **hermes** — `hermes.*`: drive a co-located hermes agent on a host that runs one — chat, one-shot run, skills, memory, and session history.
 - **Claude Code** — `claude-history.*`: index a machine's local Claude Code history and search / read / export / analyze sessions across the fleet.
-- **Microcontroller as HID / serial** — the ESP32 T-Dongle-S3 firmware turns a cheap dongle into a remote input device: USB-HID (`kvm.*`) and Bluetooth-HID (`bthid.*`) keystrokes and consumer keys into a target machine, plus a serial passthrough (`serial.*`). It speaks telesthete over UDP directly — no host agent required.
+- **Hardware** — Android phones and tablets, a USB dongle, PiKVM and HDMI-CEC: see [Hardware integrations](#hardware-integrations).
+
+## Hardware integrations
+
+Rook reaches beyond ordinary computers too: the phone in your pocket, the keyboard of a machine that's stuck in its BIOS, the power button of one that has hung, the TV in the living room. Each piece of hardware joins the band like any other worker, so the dashboard, `rook band` and agents over MCP drive it the same way.
+
+### Android phones and tablets
+
+A native Android app (`android/`) turns a phone or tablet into a full worker. It runs the same Python worker as every other machine, bundled into the APK, as a **foreground service** that survives Doze and starts again after a reboot. Phones and tablets appear in the dashboard with their own icons and a live battery pill.
+
+On top of the usual `shell.*`, `file.*` and `info.*`, the app adds what only a phone can do:
+
+| Capability | What it does |
+|---|---|
+| `screenshot.capture` | The real screen, via Android's screen capture |
+| `hid.type` · `hid.key_combo` · `hid.mouse.click` · `hid.mouse.drag` · `ui.text` | Type, tap and swipe, and read all the text on screen, through an accessibility service (**no root**) |
+| `sms.list` · `sms.send` · `calllog.list` · `contacts.search` | Texts, call history and contacts |
+| `notify.list` · `notify.dismiss` · `notify.post` | Read, clear and post notifications |
+| `location.get` | Where the device is, with accuracy and a map link |
+| `battery.status` | Charge level and state (also sent with every heartbeat) |
+| `device.find` | Ring at full volume to find a lost phone, even when it's silenced |
+| `device.wake` · `device.unlock` · `device.launch` · `device.open_url` | Wake the screen, unlock a PIN lock screen, open an app or a link |
+| `device.torch` · `device.vibrate` · `device.clipboard_get` · `device.clipboard_set` | Flashlight, vibration and clipboard |
+
+**Voice assistant.** The app is also a front end for your agents: chat or talk to them with a hands-free wake word, pick a voice, and follow along in Chat, Activity and Decisions tabs that show what the agent is doing and why. It can be set as Android's default assistant.
+
+**Install and updates.** Your hub serves the APK at `/apk`. Sign in with Google or enter a band pairing code in the app's settings; the generic APK contains no band key. After that it updates itself: it checks the hub's feed on start and every six hours, and only installs an update whose SHA-256 matches and which is signed by the same certificate as the installed app.
+
+Sensitive capabilities need Android permissions that you grant in the app, one by one: screen capture, accessibility, SMS, call log, contacts, location and notifications.
+
+### ESP32-S3 USB dongle
+
+A LilyGo T-Dongle-S3 (an ESP32-S3 USB stick with a small LCD and a microSD slot) running Rook's own firmware (`firmware/`, PlatformIO). Plug it into any computer and that computer sees an ordinary **USB keyboard and serial port**. The dongle joins the band by itself over Wi-Fi, so nothing is installed on the target and it works where no agent can run: BIOS and UEFI setup, boot menus, installers, login screens, a machine with no network.
+
+| Capability | What it does |
+|---|---|
+| `kvm.type` · `kvm.key` · `kvm.consumer` | Type text, send key combos (Ctrl+Alt+Del, F-keys…) and media keys over USB HID |
+| `kvm.hid.set` · `kvm.hid.get` | A kill switch for the keyboard, without a reboot |
+| `bthid.type` · `bthid.key` · `bthid.consumer` · `bthid.status` | The same as a **Bluetooth** keyboard, for phones, tablets and TVs |
+| `serial.write` · `serial.read` · `serial.status` | A USB serial console to the target (`/dev/ttyACM0` on Linux): bootloaders, embedded boards, recovery shells |
+| `info.*` | Host, uptime, ping |
+
+The microSD card either stays with the dongle for staging files, or is handed to the target as a **USB flash drive** (switching modes reboots the dongle). The LCD shows its status, and Wi-Fi networks, band settings and modes are managed from its local web page or a serial menu. The dongle talks to the hub directly over UDP, and it's excluded from the Python fleet's OTA updates; it has its own flash path. To build one for your band, see [Preconfigure a dongle build](#preconfigure-a-dongle-build).
+
+### PiKVM
+
+Run a worker on a [PiKVM](https://pikvm.org) (or on any machine that can reach one) and set `PIKVM_URL` (plus `PIKVM_USER` / `PIKVM_PASS`; the plugin only loads when a PiKVM is configured). You get the machine attached to it at the hardware level:
+
+- `pikvm.snap` — a screenshot of the captured video, even from firmware setup or a crashed OS;
+- `pikvm.type` · `pikvm.key` · `pikvm.mouse.move` · `pikvm.mouse.click` — keyboard and mouse;
+- `pikvm.power` (`on`, `off`, `off_hard`, `reset`, `reset_hard`) and `pikvm.power.status` — the ATX power and reset buttons;
+- `pikvm.api.get` · `pikvm.api.post` — any other PiKVM API endpoint, passed through.
+
+Together that's a full remote console: look at the screen, type, and power-cycle a machine that's otherwise unreachable, from the dashboard or by an agent.
+
+### HDMI-CEC (Pico W)
+
+A Raspberry Pi Pico W running Wi-Fi-enabled Pico-CEC firmware sits on an HDMI port. A worker set up with `CEC_HOST` talks to it and gets `cec.send`, `cec.raw` and `cec.ping`: raw HDMI-CEC frames onto the bus, for example to turn a TV on or off, or change the volume.
 
 ## Control planes
 
@@ -216,17 +276,11 @@ Drive the same band three ways — they all read from the same roster and invoke
 
 ### Web dashboard
 
+<img src="docs/img/dashboard-workers-mobile.png" align="right" width="220" alt="Rook dashboard on mobile">
+
 A band-first control panel with a sidebar split into **Workspace** (Workers, Bands, Chat, Work, Knowledge, Sessions) and **Manage** (Install a worker, Account & access, API tokens, Agent instructions, Secrets).
 
 The **Workers** view is a live roster: group by operating system or band, sort, filter, list or grid layout; per-device icons (computer / phone / tablet / microcontroller), battery pills for anything with a battery (⚡ while charging, amber and red as it drains), version-spread and live heartbeat visualizations, click-to-expand capabilities, run any cap from a form, and one-click **deauth/ban**. Fully responsive.
-
-The same roster as a **grid** of cards, one per machine:
-
-![Workers in grid layout](docs/img/dashboard-workers-grid.png)
-
-<p>
-  <img src="docs/img/dashboard-workers-mobile.png" alt="Rook dashboard on mobile" width="300">
-</p>
 
 ### Bands and worker moves
 

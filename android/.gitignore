@@ -10,3 +10,5 @@ local.properties
 .idea/
 .cxx/
 __pycache__/
+rook.properties
+app/src/main/assets/wakeword/private/

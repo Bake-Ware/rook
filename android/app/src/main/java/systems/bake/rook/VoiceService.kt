@@ -28,8 +28,8 @@ import kotlin.concurrent.thread
 /**
  * Foreground service (microphone type) that owns THE mic and runs two things on it:
  *
- *  - when enabled: the on-device wake-word detector ("hey sojourn", openWakeWord ONNX)
- *  - on demand: a VoiceClient session to the kaiju voice-agent, fed from the same
+ *  - when enabled: the on-device wake-word detector (openWakeWord ONNX; model set at build time)
+ *  - on demand: a VoiceClient session to the voice agent, fed from the same
  *    AudioRecord. Sessions open on wake word (or a manual Start) and close after
  *    IDLE_CLOSE_MS of the server sitting in "listening" with nothing said.
  *
@@ -251,7 +251,7 @@ class VoiceService : Service() {
             val oldSpeaker = audio.isSpeakerphoneOn
             try {
                 speech = SpeechDetector(this)
-                if (wakeEnabled) wake = WakeWordDetector(this, WAKE_MODEL, WAKE_THRESHOLD)
+                if (wakeEnabled && WAKE_MODEL.isNotEmpty()) wake = WakeWordDetector(this, WAKE_MODEL, WAKE_THRESHOLD)
                 detector = wake
                 val minBuf = AudioRecord.getMinBufferSize(VoiceClient.SR_IN, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
                 audio.mode = AudioManager.MODE_IN_COMMUNICATION
@@ -375,7 +375,7 @@ class VoiceService : Service() {
         val b = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) Notification.Builder(this, CHANNEL)
                 else @Suppress("DEPRECATION") Notification.Builder(this)
         return b.setContentTitle("Rook voice · $text")
-            .setContentText(if (text == "standby") "say \"hey sojourn\"" else url)
+            .setContentText(if (text == "standby") getString(R.string.st_standby) else url)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentIntent(NotificationNavigation.mainActivity(this))
             .setOngoing(true)
@@ -393,7 +393,7 @@ class VoiceService : Service() {
         private const val TAG = "VoiceService"
         const val CHANNEL = "rook_voice"
         const val NOTIF_ID = 2
-        const val WAKE_MODEL = "hey_sojourn.onnx"
+        val WAKE_MODEL: String = BuildConfig.WAKE_MODEL   // empty: no wake word in this build
         const val WAKE_THRESHOLD = 0.5f
         const val WAKE_REFRACTORY_MS = 2000L
         const val IDLE_CLOSE_MS = 300_000L

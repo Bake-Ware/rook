@@ -6,7 +6,7 @@
     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="16dp" android:layout_marginTop="16dp" android:background="@drawable/rook_panel">
       <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="01 / CONNECT" android:textSize="12sp" android:textColor="@color/rook_accent" android:fontFamily="monospace" android:letterSpacing="0.08" android:paddingBottom="12dp" />
       <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Rook server" android:textSize="12sp" android:textColor="@color/rook_dim" android:paddingTop="10dp" android:paddingBottom="6dp" />
-      <EditText android:id="@+id/accountServer" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Rook server" android:inputType="textUri" android:text="https://rook.bakeforge.com" />
+      <EditText android:id="@+id/accountServer" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="https://rook.example.com" android:inputType="textUri" />
       <Button android:id="@+id/btnGoogle" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Sign in with Google" style="@style/RookOutlinedButton" />
       <Button android:id="@+id/btnSavedBands" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Choose a saved band" style="@style/RookOutlinedButton" />
       <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Six-character pairing code" android:textSize="12sp" android:textColor="@color/rook_dim" android:paddingTop="10dp" android:paddingBottom="6dp" />

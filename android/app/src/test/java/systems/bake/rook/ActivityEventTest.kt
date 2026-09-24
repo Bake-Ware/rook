@@ -6,16 +6,16 @@ import org.junit.Test
 
 class ActivityEventTest {
     private fun event(phase: String = "planning", turn: Int = 1, seq: Long = 1, elapsed: Long? = null) =
-        ActivityEvent(turn, seq, 1700000000000, phase, phase, null, null, "Bakephone", "device.info", elapsed, 30000, null)
+        ActivityEvent(turn, seq, 1700000000000, phase, phase, null, null, "pixel-8", "device.info", elapsed, 30000, null)
     @Test fun parsesOptionalFieldsAndRejectsUnknownOrMalformedEvents() {
         val parsed = ActivityEvent.parse(JSONObject("""{"type":"activity","turn":3,"seq":7,"ts":1234,"phase":"tool_result","label":"Finished","detail":"offline","worker":"phone","cap":"device.info","status":"failed","elapsed_ms":23.5,"timeout_ms":1000}"""))!!
         assertTrue(parsed.failed); assertEquals(23L, parsed.elapsedMs); assertEquals("offline", parsed.detail)
         for (json in listOf("""{"type":"future"}""", """{"type":"activity","turn":1,"seq":1,"ts":1,"phase":"future"}""", """{"type":"activity","turn":1.2,"seq":1,"ts":1,"phase":"planning"}""")) assertNull(ActivityEvent.parse(JSONObject(json)))
     }
     @Test fun progressUpdatesRenderAndResetTheSilenceTimer() {
-        val e = ActivityEvent.parse(JSONObject("""{"type":"activity","turn":1,"seq":2,"ts":1234,"phase":"progress","label":"Still checking Bakephone","worker":"Bakephone","elapsed_ms":25000}"""))!!
+        val e = ActivityEvent.parse(JSONObject("""{"type":"activity","turn":1,"seq":2,"ts":1234,"phase":"progress","label":"Still checking pixel-8","worker":"pixel-8","elapsed_ms":25000}"""))!!
         val status = TurnStatus(); status.event(event(), 0); status.event(e, 25000)
-        assertEquals("Still checking Bakephone", status.display(26000)!!.text)
+        assertEquals("Still checking pixel-8", status.display(26000)!!.text)
         assertEquals(0, status.display(26000)!!.severity)
     }
     @Test fun groupsTurnsAndIsolatesConnectionsAndIgnoresRepeatedSequence() {
@@ -36,7 +36,7 @@ class ActivityEventTest {
         assertEquals(2, s.display(46000)!!.severity)
         s.event(event("tool_wait", seq=2, elapsed=44000), 46000)
         assertEquals(0, s.display(47000)!!.severity)
-        assertEquals("Waiting on Bakephone - 45s", s.display(47000)!!.text)
+        assertEquals("Waiting on pixel-8 - 45s", s.display(47000)!!.text)
         s.event(event("done", seq=3), 48000)
         assertNull(s.display(100000))
     }

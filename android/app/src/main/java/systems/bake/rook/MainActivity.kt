@@ -17,7 +17,7 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 
 /**
- * Home screen = the conversation with Sojourn, by voice or text.
+ * Home screen = the conversation with your assistant, by voice or text.
  *
  *  - Talk / Interrupt / Sleep drive the voice session.
  *  - The text box sends a typed turn (reply comes back as text, not speech).
@@ -75,7 +75,7 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
             }
         }
         b.btnSleep.setOnClickListener {
-            if (state == "idle") voiceOn() else { VoiceService.endSession(this); addSystem("sleeping — say \"hey sojourn\"") }
+            if (state == "idle") voiceOn() else { VoiceService.endSession(this); addSystem(sleepingNote()) }
         }
         b.btnSend.setOnClickListener { sendTyped() }
         b.input.setOnEditorActionListener { _, id, _ ->
@@ -138,6 +138,8 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
     }
 
     private fun url() = prefs.getString("voice_url", BuildConfig.DEFAULT_VOICE_URL) ?: BuildConfig.DEFAULT_VOICE_URL
+    private fun sleepingNote() =
+        if (BuildConfig.WAKE_PHRASE.isNotEmpty()) "sleeping — say \u201c${BuildConfig.WAKE_PHRASE}\u201d" else "sleeping — tap to talk"
     private fun insecure() = prefs.getBoolean("voice_insecure", false)
     private fun hasMic() = checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
@@ -219,7 +221,7 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
     override fun onInterrupt() { curBot?.let { it.alpha = 0.5f; chat.changed(it) }; curBot = null; panels.interrupt() }
     override fun onError(msg: String) { syncConnection(); panels.note(msg, failed = true); panels.done() }
     override fun onWake() { addSystem("wake word"); panels.listening() }
-    override fun onBye(mode: String) { addSystem(if (mode == "off") "voice off" else "sleeping — say \"hey sojourn\"") }
+    override fun onBye(mode: String) { addSystem(if (mode == "off") "voice off" else sleepingNote()) }
     override fun onTool(title: String, status: String) { syncConnection(); panels.tool(title, status) }
 
     // ---- chat rendering -------------------------------------------------

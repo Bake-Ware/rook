@@ -4,6 +4,16 @@ plugins {
     id "com.chaquo.python"
 }
 
+// Deployment-specific settings (server, voice agent, Google client, wake word)
+// come from -P properties, environment variables, or an untracked
+// android/rook.properties, so the public source names no real server.
+def rookProps = new Properties()
+def rookPropsFile = rootProject.file("rook.properties")
+if (rookPropsFile.exists()) rookPropsFile.withInputStream { rookProps.load(it) }
+def rookSetting = { String name, String fallback ->
+    (project.findProperty(name) ?: System.getenv(name) ?: rookProps.getProperty(name) ?: fallback).toString()
+}
+
 android {
     namespace "systems.bake.rook"
     compileSdk 34
@@ -26,17 +36,33 @@ android {
         // persisted to SharedPreferences. Baked from build properties so the PSK
         // stays OUT of VCS: pass -PROOK_DEFAULT_HUB=... -PROOK_DEFAULT_PSK=... (or
         // the same env vars) at build time; falls back to the example placeholders.
-        def rookHub = (project.findProperty("ROOK_DEFAULT_HUB") ?: System.getenv("ROOK_DEFAULT_HUB") ?: "hub.example.com:443").toString()
-        def rookPsk = (project.findProperty("ROOK_DEFAULT_PSK") ?: System.getenv("ROOK_DEFAULT_PSK") ?: "").toString()
+        def rookHub = rookSetting("ROOK_DEFAULT_HUB", "hub.example.com:443")
+        def rookPsk = rookSetting("ROOK_DEFAULT_PSK", "")
         if (rookPsk) throw new GradleException("Public APKs must not embed a band PSK; use Google sign-in or a pairing code.")
         buildConfigField "String", "DEFAULT_HUB", "\"${rookHub}\""
         buildConfigField "String", "DEFAULT_PSK", "\"${rookPsk}\""
-        def voiceUrl = (project.findProperty("ROOK_VOICE_URL") ?: System.getenv("ROOK_VOICE_URL") ?: "wss://voice.bake.systems/ws").toString()
-        def voiceTok = (project.findProperty("ROOK_VOICE_TOKEN") ?: System.getenv("ROOK_VOICE_TOKEN") ?: "").toString()
+        def voiceUrl = rookSetting("ROOK_VOICE_URL", "wss://voice.example.com/ws")
+        def voiceTok = rookSetting("ROOK_VOICE_TOKEN", "")
         if (voiceTok) throw new GradleException("Public APKs must not embed a voice token.")
-        buildConfigField "String", "GOOGLE_WEB_CLIENT_ID", '"238138754704-u34fdjh5l0inv0lhqqpub9lnddlc55p3.apps.googleusercontent.com"'
+        // The Rook site: account login, pairing, and the only origin updates are accepted from.
+        def rookServer = rookSetting("ROOK_SERVER", "https://rook.example.com")
+        // Google sign-in is offered only when a web client ID is configured.
+        def googleClient = rookSetting("ROOK_GOOGLE_WEB_CLIENT_ID", "")
+        // Wake word: an openWakeWord model in assets/wakeword/ and the phrase it detects.
+        // With no model configured the app works by tap-to-talk only.
+        def wakeModel = rookSetting("ROOK_WAKE_MODEL", "")
+        def wakePhrase = rookSetting("ROOK_WAKE_PHRASE", "")
+        def assistantName = rookSetting("ROOK_ASSISTANT_NAME", "Rook")
+        buildConfigField "String", "ROOK_SERVER", "\"${rookServer}\""
+        buildConfigField "String", "GOOGLE_WEB_CLIENT_ID", "\"${googleClient}\""
         buildConfigField "String", "DEFAULT_VOICE_URL", "\"${voiceUrl}\""
         buildConfigField "String", "DEFAULT_VOICE_TOKEN", "\"${voiceTok}\""
+        buildConfigField "String", "WAKE_MODEL", "\"${wakeModel}\""
+        buildConfigField "String", "WAKE_PHRASE", "\"${wakePhrase}\""
+        resValue "string", "voice_title", assistantName
+        resValue "string", "hint_message", "Message ${assistantName}…"
+        resValue "string", "wake_enabled", wakePhrase ? "Wake word: \u201c${wakePhrase}\u201d" : "Wake word (no model in this build)"
+        resValue "string", "st_standby", wakePhrase ? "standby · \u201c${wakePhrase}\u201d" : "standby"
     }
 
     buildFeatures {

@@ -17,12 +17,10 @@
     <string name="voice_start">Start voice session</string>
     <string name="voice_interrupt">Interrupt</string>
     <string name="voice_end">End session</string>
-    <string name="voice_section">Voice (Hermes via kaiju)</string>
-    <string name="wake_enabled">Wake word: "hey sojourn"</string>
+    <string name="voice_section">Voice</string>
     <string name="voice_standby">Listen (standby)</string>
     <string name="voice_off">Voice off</string>
     <string name="hint_voice_token">Voice token</string>
-    <string name="voice_title">Sojourn</string>
     <string name="settings">Settings</string>
     <string name="section_band">Band</string>
     <string name="section_grants">Permissions &amp; grants</string>
@@ -34,9 +32,7 @@
     <string name="btn_listen">Listen</string>
     <string name="send">Send</string>
     <string name="send_photo">Send a photo</string>
-    <string name="hint_message">Message Sojourn…</string>
     <string name="st_idle">off</string>
-    <string name="st_standby">standby · “hey sojourn”</string>
     <string name="st_listening">listening</string>
     <string name="st_thinking">thinking</string>
     <string name="st_speaking">speaking</string>

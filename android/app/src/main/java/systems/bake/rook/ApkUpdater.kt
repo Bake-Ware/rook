@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /** App-signed, monotonic self updates. The OS remains the authority on consent. */
 object ApkUpdater {
-    private const val ORIGIN = "https://rook.bakeforge.com"
+    private val ORIGIN = BuildConfig.ROOK_SERVER.trimEnd('/')   // fixed at build time; see android/README.md
     private const val INTERVAL = 6 * 60 * 60 * 1000L
     private const val MAX_APK = 256 * 1024 * 1024L
     private const val CHANNEL = "rook_updates"
