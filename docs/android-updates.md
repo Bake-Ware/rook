@@ -13,7 +13,7 @@ installed/target version, progress, last check, installation permission, and
 required action. Automatic checks stop with the worker. Turning automatic
 updates off does not cancel an already queued update.
 
-Only the fixed HTTPS rook.bakeforge.com feed is accepted. Downloads have bounded
+Only the HTTPS feed at the build's `ROOK_SERVER` is accepted (fixed at build time). Downloads have bounded
 size and time, and must match the manifest's SHA-256 and size. Before committing,
 Rook checks package name, strictly increasing Android version code, and the
 same signing certificate as the installed app. PackageInstaller independently

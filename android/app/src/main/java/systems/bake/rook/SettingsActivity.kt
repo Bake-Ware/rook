@@ -56,7 +56,7 @@ class SettingsActivity : AppCompatActivity() {
         }
         b.btnAllowUpdates.setOnClickListener { startActivity(Intent(this, ApkUpdatePermissionActivity::class.java)) }
         b.btnUpdate.setOnClickListener {
-            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://rook.bakeforge.com/apk")))
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(BuildConfig.ROOK_SERVER.trimEnd('/') + "/apk")))
         }
         b.btnBack.setOnClickListener { finish() }
         b.btnStopFind.setOnClickListener { FindDeviceBridge.stop(); status("find-device ring stopped") }
@@ -75,8 +75,9 @@ class SettingsActivity : AppCompatActivity() {
         ScreenCaptureBridge.init(this)
 
         val prefs = getSharedPreferences("rook", MODE_PRIVATE)
-        b.accountServer.setText(prefs.getString("account_server", "https://rook.bakeforge.com"))
+        b.accountServer.setText(prefs.getString("account_server", BuildConfig.ROOK_SERVER))
         b.btnGoogle.setOnClickListener { fetchBands(google = true) }
+        if (BuildConfig.GOOGLE_WEB_CLIENT_ID.isEmpty()) b.btnGoogle.visibility = android.view.View.GONE   // not configured in this build
         b.btnPair.setOnClickListener { fetchBands(google = false) }
         b.btnSavedBands.setOnClickListener {
             chooseBand(JSONArray(prefs.getString("band_configurations", "[]")))

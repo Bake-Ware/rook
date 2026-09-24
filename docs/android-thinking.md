@@ -13,17 +13,17 @@ and links back to each message. See [Chat / Activity / Decisions](android-activi
 for attachment, unread badges, and the status strip. Turning Show thinking off
 hides decision markers/details and displays a settings explainer in that tab.
 
-Build/test on cachyrig (existing JDK and SDK; Gradle wrapper 8.7):
+Build/test with a local JDK 17 and Android SDK (Gradle wrapper 8.7):
 
 ```sh
-JAVA_HOME=/home/bake/jdk17 ANDROID_HOME=/home/bake/android-sdk \
+JAVA_HOME=$HOME/jdk17 ANDROID_HOME=$HOME/android-sdk \
   ANDROID_USER_HOME="$PWD/android/build/android-home" \
   GRADLE_USER_HOME="$PWD/android/build/gradle-home" \
   ./android/gradlew -p android :app:testDebugUnitTest :app:assembleDebug
 ```
 
-The build-local Gradle home was seeded from `/home/bake/.gradle`, and the
-build-local Android home uses a copy of `/home/bake/.android/debug.keystore`.
+The build-local Gradle home was seeded from `~/.gradle`, and the
+build-local Android home uses a copy of `~/.android/debug.keystore`.
 Gradle resolves test dependencies and Chaquopy resolves Python packages as
 needed. `stageWorker` runs automatically.
 

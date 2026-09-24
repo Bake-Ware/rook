@@ -59,6 +59,36 @@ cd android
 
 > Re-run `stage_worker.py` whenever `rook.worker` or `telesthete.protocol` change.
 
+## Deployment settings
+
+The source names no real server. Everything deployment-specific is read at
+build time from `-P` properties, environment variables, or an untracked
+`android/rook.properties` (gitignored):
+
+| Setting | Default | What it's for |
+|---|---|---|
+| `ROOK_SERVER` | `https://rook.example.com` | Your Rook site: account login and pairing, the APK download link, and the **only** origin the self-updater accepts updates from |
+| `ROOK_VOICE_URL` | `wss://voice.example.com/ws` | The voice agent's WebSocket (editable in Settings) |
+| `ROOK_GOOGLE_WEB_CLIENT_ID` | *(none)* | Your Google OAuth web client ID; without it the Google sign-in button is hidden and pairing codes are used |
+| `ROOK_WAKE_MODEL` | *(none)* | An openWakeWord model under `app/src/main/assets/wakeword/` (e.g. `private/hey_rook.onnx`); without it voice is tap-to-talk |
+| `ROOK_WAKE_PHRASE` | *(none)* | The phrase that model detects, shown in the app |
+| `ROOK_ASSISTANT_NAME` | `Rook` | The name shown on the conversation screen |
+| `ROOK_DEFAULT_HUB` | `hub.example.com:443` | Prefilled hub |
+
+```properties
+# android/rook.properties
+ROOK_SERVER=https://rook.yourdomain.com
+ROOK_VOICE_URL=wss://voice.yourdomain.com/ws
+ROOK_GOOGLE_WEB_CLIENT_ID=1234567890-abc.apps.googleusercontent.com
+ROOK_WAKE_MODEL=private/hey_rook.onnx
+ROOK_WAKE_PHRASE=hey rook
+```
+
+Put private wake-word models in `assets/wakeword/private/` (also gitignored).
+The build refuses to embed a band PSK or a voice token: devices get those by
+signing in or pairing. Publish the update feed with
+`ROOK_PUBLIC_BASE=<same as ROOK_SERVER> python3 android/build_apk_manifest.py`.
+
 ## First run on the device
 
 1. Open **Rook Worker**. The hub/PSK prefill from `BuildConfig` defaults — edit
