@@ -2,6 +2,8 @@ __pycache__/
 *.pyc
 .env
 data/
+# scripts/local-hub.sh state: band key, passwords, tokens
+rook-data/
 *.egg-info/
 dist/
 build/
