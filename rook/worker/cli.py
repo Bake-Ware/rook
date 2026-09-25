@@ -71,6 +71,7 @@ def main() -> None:
                          "Empty = auto-update disabled.")
     ap.add_argument("-v", "--verbose", action="count", default=0)
     args = ap.parse_args()
+    requested = (args.hub, args.psk)
 
     from ._build_info import VERSION
 
@@ -185,6 +186,15 @@ def main() -> None:
     level = logging.WARNING - 10 * args.verbose
     logging.basicConfig(level=max(level, logging.DEBUG),
                         format="%(asctime)s %(name)s %(levelname)s: %(message)s")
+
+    # Saved enrollment and pushed config beat --hub/--psk; say so, because a
+    # second worker started on an enrolled machine otherwise quietly joins the
+    # enrolled band instead of the one on its command line.
+    if (args.hub, args.psk) != requested:
+        logging.getLogger("rook.worker").warning(
+            "using hub %s%s from saved state in ~/.rook-band-worker (enrollment or "
+            "pushed config), not the --hub/--psk given", args.hub,
+            " and a different band key" if args.psk != requested[1] else "")
 
     host, _, port = args.hub.partition(":")
     if not port:

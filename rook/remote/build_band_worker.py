@@ -21,6 +21,12 @@ HERE = Path(__file__).resolve().parent        # rook/remote/
 REPO_ROOT = HERE.parent.parent               # /root/repos/rook
 WORKER_SRC = REPO_ROOT / "rook" / "worker"
 TELESTHETE_ROOT = REPO_ROOT.parent / "telesthete" / "telesthete"
+if not TELESTHETE_ROOT.is_dir():
+    # No sibling checkout: bundle the pip-installed telesthete instead.
+    import importlib.util as _ilu
+    _spec = _ilu.find_spec("telesthete")
+    if _spec and _spec.origin:
+        TELESTHETE_ROOT = Path(_spec.origin).parent
 OUTPUT = HERE / "band-worker.pyz"
 
 _MAIN = """\
@@ -195,7 +201,7 @@ def build() -> Path:
     if not TELESTHETE_ROOT.is_dir():
         raise FileNotFoundError(
             f"Telesthete source not found: {TELESTHETE_ROOT}\n"
-            "Expected at /root/repos/telesthete/telesthete"
+            "Clone https://github.com/Bake-Ware/telesthete next to this repo or pip install it."
         )
 
     build_num, commit, version = compute_build()

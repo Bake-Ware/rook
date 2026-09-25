@@ -56,7 +56,8 @@ def build_server(client: "BandClient | MultiBandClient",
     sec = TransportSecuritySettings(
         enable_dns_rebinding_protection=True,
         allowed_hosts=list(allowed_hosts or []) + [
-            "127.0.0.1", "127.0.0.1:8765", "localhost", "localhost:8765",
+            # Loopback on any port, so --bind can move off 8765.
+            "127.0.0.1", "127.0.0.1:*", "localhost", "localhost:*", "[::1]:*",
         ],
     )
 
@@ -85,14 +86,15 @@ def build_server(client: "BandClient | MultiBandClient",
     # Console rooms — named, searchable terminal sessions pumped off the band.
     from .console_rooms import ConsoleStore
     console = ConsoleStore(os.path.join(_store_dir, "console.db"))
-    auth_settings: AuthSettings | None = None
-    if public_url:
-        # Resource-server metadata only (no authorization-server advertised).
-        auth_settings = AuthSettings(
-            issuer_url=AnyHttpUrl(public_url),
-            resource_server_url=AnyHttpUrl(public_url + "/mcp"),
-            required_scopes=["rook"],
-        )
+    # Resource-server metadata only (no authorization-server advertised).
+    # FastMCP refuses a token verifier without AuthSettings, so a hub with no
+    # public URL (local / LAN only) advertises its loopback address instead.
+    base_url = (public_url or "http://127.0.0.1").rstrip("/")
+    auth_settings = AuthSettings(
+        issuer_url=AnyHttpUrl(base_url),
+        resource_server_url=AnyHttpUrl(base_url + "/mcp"),
+        required_scopes=["rook"],
+    )
 
     mcp = FastMCP(
         "rook-band",
