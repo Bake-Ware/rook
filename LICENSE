@@ -1,0 +1,19 @@
+License: TBD
+
+The license for Rook has not been chosen yet. The owner (Bake-Ware) will
+decide and replace this file.
+
+Until then, no license is granted: all rights are reserved by the copyright
+holder, and publishing this source does not by itself give permission to use,
+copy, modify or distribute it.
+
+Third-party components bundled in this repository keep their own licenses,
+for example:
+
+- rook/remote/psk_words.txt: EFF large wordlist, see psk_words.LICENSE.md
+- rook/web/scene/: three.js, see THREE-LICENSE.txt
+- android/app/src/main/assets/wakeword/: Silero VAD, see SILERO-LICENSE.txt
+- services/voice/vendor/: see the files in that directory
+
+The telesthete transport library (https://github.com/Bake-Ware/telesthete),
+a separate project and dependency, is MIT licensed.

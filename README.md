@@ -1,493 +1,277 @@
-
 <img src="docs/img/rook.gif" align="right" width="300" alt="The Rook mark: a faceted chess rook turning slowly">
 
 # Rook
 
-**A self-updating mesh of worker agents you drive from a web dashboard, a terminal control panel, or via MCP — over an encrypted peer-to-peer band.**
+**Run things on all your machines from one place: a web dashboard, a terminal UI, or any AI agent that speaks MCP.**
 
-## What is this?
-
-Rook lets you **run things on all your machines from any agent harness**. You install a tiny background program on each computer you want to reach — a home server, a Raspberry Pi, a gaming PC, a cloud box, a phone, even a small USB dongle — and they all quietly link up over an encrypted connection. From then on you get one live view of every machine and can tell any of them to do something — run a command, grab a screenshot or a webcam photo, restart a service, manage downloads, type on another computer, send a message — and get the answer back right away.
-
+You install a small background **worker** on each machine you want to reach (a home server, a Raspberry Pi, a laptop, a cloud VM, an Android phone, even a USB dongle). Workers dial *out* to a **hub** you host, so they work behind home routers and on other networks, and join an end-to-end encrypted group called a **band**. From then on you get one live view of every machine and can tell any of them to run a command, take a screenshot, type on the keyboard, restart a service or send a message, and get the answer back straight away.
 
 <p align="center">
   <img src="docs/img/dashboard-workers.png" alt="Rook dashboard: workers in list view" width="100%">
-  <img src="docs/img/dashboard-workers-grid.png" alt="Rook dashboard: workers in grid view" width="100%">
 </p>
 
-It's **end-to-end encrypted**, the machines **update themselves** (so you never patch each one by hand), and you can **remove a machine from the group with one click**.
+- **One control panel** instead of a dozen SSH sessions.
+- **Reach machines you normally can't**: they connect out, so you never open ports on them.
+- **Let AI agents help**: the MCP server gives Claude Code, Codex or any MCP client the same controls you have, with every call journaled, a shared wiki, a task board, a secret vault and chat rooms.
+- **Self-updating fleet**: workers verify and install signed updates by themselves.
 
-## What it's for
+> **Status: early, single-maintainer software.** It runs a real fleet, but interfaces
+> change and parts are still being hardened (see [Security model](#security-model)).
+> Anyone who holds a band's key can run commands on every worker in it; treat that key
+> like a root password.
 
-- **One control panel for all your machines** — instead of juggling a dozen SSH sessions and browser tabs.
-- **Reaching machines you normally can't** — behind a home router, on another network, or on the road — because they dial *out* to a shared meeting point instead of you dialing *in*.
-- **Doing the boring stuff everywhere at once** — updates, restarts, and health checks across the whole fleet.
-- **Letting an AI assistant help run your machines**, through the same safe controls you use — with a shared wiki, a task board, a secret vault and a chat room so a team of agents can work together and you can see (and verify) what they did.
+- [Quickstart](#quickstart): a hub, one worker and a first call, on one machine
+- [How it works](#how-it-works): architecture
+- [Going beyond localhost](#going-beyond-localhost): LAN, remote workers, HTTPS, installers
+- [Configuration](#configuration) · [Security model](#security-model) · [Repository layout](#repository-layout)
+- **[Feature tour](docs/FEATURES.md)**: capabilities, Android app, USB dongle, PiKVM, dashboard, TUI, agent workspace, OTA
 
-## Good use cases
+## Quickstart
 
-- **Homelab / self-hosting** — watch and control your Pi-hole, NAS, database, media box, etc. from one dashboard, and push an update to all of them at once.
-- **Remote help** — hop onto a family member's or a remote office machine to run a fix or grab a screenshot, with nothing to set up on their end.
-- **Downloads on the go** — check and manage torrents on your media server from your phone.
-- **Keyboard/mouse over the network** — a cheap USB dongle plugged into a machine lets you type into it or send key combos remotely, even during boot/BIOS where normal remote tools can't reach.
-- **A quick line to your machines** — ping a box (or the person sitting at it) and get a reply, right from the dashboard or terminal.
-- **AI-run operations** — let an assistant list your machines and carry out tasks on them through a controlled interface.
+This stands up a complete hub on your own machine, joins that same machine as a worker,
+and runs a command on it. It takes about ten minutes, most of it compiling the relay.
 
----
+**You need:** Linux (macOS should work but is untested), Python 3.11+, `git`, and a Rust
+toolchain (`cargo`, from [rustup.rs](https://rustup.rs)) to build the relay. Windows and
+Android work as *workers*; these hub steps assume a POSIX shell.
 
-## Table of contents
-
-- [What is this?](#what-is-this) · [what it's for](#what-its-for) · [use cases](#good-use-cases)
-- [The band](#the-band)
-- [Capabilities](#capabilities)
-- [Integrations](#integrations) — Deluge · hermes · Claude Code
-- [Hardware integrations](#hardware-integrations) — Android app · ESP32-S3 USB dongle · PiKVM · HDMI-CEC
-- [Control planes](#control-planes) — [dashboard](#web-dashboard) · [`rook band` TUI](#rook-band--terminal-control-panel) · [chat](#chat--messaging) · [MCP](#mcp)
-- [Agent workspace](#agent-workspace) — [chat rooms](#chat-rooms) · [work](#work) · [knowledge wiki](#knowledge-wiki) · [secrets](#secrets) · [agent instructions](#agent-instructions)
-- [Reliability](#reliability) — session limits · watchdog alerts
-- [OTA self-update](#ota-self-update)
-- [Security](#security)
-- [Install](#install)
-- [Repository layout](#repository-layout)
-
----
-
-## The band
-
-A **band** is a group of workers that share one pre-shared key (PSK). Everything rides on [**telesthete**](https://github.com/Bake-Ware/telesthete), a small encrypted transport:
-
-- **Membership by PSK.** `band_id = SHA256(PSK)[:16]` is the cleartext routing label; the AEAD key is derived from the PSK (ChaCha20-Poly1305). Knowing the PSK = being on the band.
-- **Hub-and-spoke over a blind relay.** Workers connect out (UDP on the LAN, or WebSocket through a Cloudflare tunnel for anything remote) to a **hub** that relays band traffic by `band_id` — it holds no key and can't read the payloads.
-- **Workers announce themselves** every ~30s with their name, version, plugins, and capabilities. The control plane keeps a live roster; a worker that goes quiet ages off in ~90s.
-- **Stable identity.** Each worker persists a `worker_id` across restarts, so it keeps one row in the dashboard and can be durably addressed.
-
-### Readable band keys
-
-The permanent PSK is five random lowercase words separated by
-hyphens. In the dashboard, open **+ → generate five-word key** to create a new
-key, save it for your devices, then click **add** to join that band. **Show key**
-lets you read an existing entry while typing. Generation alone changes nothing.
-
-Enter the same key, including hyphens, in Android Settings or a worker's `--psk`
-option. Existing PSKs remain valid and case-sensitive; they are never converted
-automatically. Replacing a PSK changes its transport routing ID and requires
-workers to be reconfigured; the site's persistent band record stays the same.
-
-Each word is independently selected using the OS random generator from a
-bundled 7,776-word dictionary ([EFF attribution](rook/remote/psk_words.LICENSE.md)).
-Five words give approximately 64.6 bits of entropy, versus 192 bits for the old
-generator. This is a manual-entry convenience, not additional authentication:
-the current transport still derives its routing ID and encryption key from the
-PSK. Google configuration fetching and device certificates protect enrollment
-and HTTPS configuration reads; authenticated peer transport is still pending.
-
-### Pairing and key management
-
-Open **Tokens**, select a band, and click **Start pairing**. Its six-character
-lowercase alphanumeric code expires after five minutes and rolls while the page
-is open. It can provision multiple devices during that window. **Revoke code**
-invalidates it immediately, including refreshes from other open tabs. Expired
-codes do not disconnect installed workers: the worker keeps the permanent PSK.
-
-The Tokens page supplies ready-to-copy commands, for example:
+### 1. Install
 
 ```sh
-curl -fsSL 'https://<your-host>/worker?band=jd4ps9' | bash
+# The relay: a small Rust program that forwards encrypted band traffic.
+cargo install --locked --git https://github.com/Bake-Ware/telesthete telesthitium
+# (installs `telesthete-hub` into ~/.cargo/bin)
+
+# Rook itself: dashboard, MCP server, worker and CLI.
+git clone https://github.com/Bake-Ware/rook
+cd rook
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -e .              # add '.[desktop]' for screenshots on desktop workers
 ```
 
-`jd4ps9` is an example, not a working code. A worker needs no interactive login
-when supplied with a valid code. Missing, expired, and revoked codes are rejected;
-the bare `/worker` URL no longer returns credentials. A valid code grants the
-selected band's configuration only, not dashboard or MCP administrator access.
-All worker capabilities within that band retain their existing PSK trust model.
-
-**Replace PSK** accepts a new key or generates five words; **Revoke band**
-disables enrollment until a replacement PSK is assigned. Either invalidates
-outstanding pairing codes. Both controllers reload active credentials every two
-seconds and leave the old band. They never send the replacement over the old
-band. Re-enroll trusted workers with a fresh code or configure them locally.
-Revocation cannot erase credentials on remote devices: peers retaining the old
-PSK can still communicate and accept commands on the old band until reconfigured
-or taken offline. Device-level revocation needs additional transport enforcement.
-
-The installer and MCP services must share `ROOK_ENROLLMENT_DB` and
-`ROOK_SETUP_PATH` with read/write access. By default the database is
-`data/enrollment.db`, beside `data/setup.json`. Existing setup/env bands are
-imported; the database becomes authoritative for rotations and revocations, so
-stale service environments cannot reintroduce retired PSKs. Back up the database
-with the site's configuration. Do not delete it to reset pairing codes.
-
-Redemption attempts are limited across processes to five per source address and
-20 globally per minute, shared by `/worker` and `POST /enroll`. Forwarded address
-headers are not trusted; deployments behind one proxy share its per-address
-budget. Application access logs omit query strings. Configure reverse proxies,
-tunnels, and analytics to omit the `band` query value as well. Secret responses
-use `Cache-Control: no-store`. Legacy APK downloads require dashboard login.
-A generic APK can be served publicly only when its exact SHA-256 matches the
-server configuration `ROOK_PUBLIC_APK_SHA256`; mismatches fail closed.
-
-### Google, accounts and enrolled workers
-
-Open `/account` to sign in with Google or a local account. Owners manage band
-members, invitations, pairing and device revocation there. Connecting accounts
-requires proof of both logins; matching email addresses do not merge accounts.
-The Google picture is the default avatar, with custom-photo and initials options.
-
-A terminal installer can use a Google or local browser login:
+### 2. Start the hub
 
 ```sh
-curl -fsSL 'https://<your-host>/worker?login=google' | bash
+scripts/local-hub.sh
 ```
 
-It displays a code to approve in the web app and fetches all authorized band
-configurations. Choose the active band. With a pairing code, no account login is
-required. Keep the pairing page open and use a fresh code: it must still be valid
-when dependency installation finishes and the worker enrolls.
+On first run it generates a band key, a dashboard password and an MCP token into
+`rook-data/quickstart.env` (mode 600), then starts three processes in the foreground
+(Ctrl-C stops them all):
 
-The worker generates its private device key locally and stores its certificate
-and configurations in `~/.rook-band-worker/enrollment.json` with mode `0600`.
-It starts with `--enrolled`, checks for configuration updates every 30 seconds,
-and reconnects when its active band changes. Certificates last 30 days and renew
-within seven days of expiry. Known authorization denials stop the worker; network
-outages permit at most a one-hour cached lease. Revoking a certificate cannot
-stop a hostile device from using a PSK it already knows on the legacy transport.
-The compatibility download is separate from the fleet's signed OTA manifest.
+```
+  Dashboard   http://127.0.0.1:7005    password: …
+  MCP         http://127.0.0.1:8765/mcp      bearer token in rook-data/quickstart.env
+  Relay       udp://127.0.0.1:7474
+```
 
-Android Settings offers Google login, saved-band selection and pairing fallback.
-The generic APK contains no default band PSK. Google web login was tested live;
-physical Android sign-in and certificate-backed Android device storage are still
-pending. See [deployment status](docs/DEPLOYMENT-enrollment.md).
+### 3. Enroll a worker
 
-### Preconfigure a dongle build
-
-Create the usual private `firmware/include/secrets.h` for Wi-Fi/admin settings.
-Then fetch band settings with the current pairing code:
+In a second terminal (same virtualenv), join this machine to the band:
 
 ```sh
-python3 firmware/scripts/dongle-band-config.py \
-  --server https://<your-host> \
-  --udp-hub YOUR-UDP-HUB:7474
+rook worker --hub 127.0.0.1:7474 \
+  --psk "$(grep ^ROOK_BAND_PSK= rook-data/quickstart.env | cut -d= -f2-)" \
+  --name my-worker
 ```
 
-The helper prompts for the code and writes a private, git-ignored
-`firmware/include/band_secrets.h`. Build/flash with PlatformIO normally. The
-resulting firmware contains the permanent PSK and must be kept private. The UDP
-hub is explicit because the dongle cannot use the worker's WebSocket endpoint.
-Saved NVS values override build defaults on an already provisioned dongle; update
-its band/hub settings through the local configuration interface when reflashing.
+Workers announce themselves every 30 seconds, so give it up to half a minute to appear.
 
-```
-  browser  ─┐                             ┌─ worker: gateway   (shell · file · info)
-  rook band ─┼─ control plane ─ hub ──────┼─ worker: media     (deluge · screenshot · hid)
-  MCP       ─┘   (relay, no keys)         ├─ worker: db-host    ┐ Proxmox host, one worker
-                                          ├─ worker: db-01      ┤ per LXC (db · cache · dns)
-                                          └─ worker: kvm-dongle  ESP32 firmware (HID/KVM)
-```
+> If this machine already runs a Rook worker that was enrolled with a hub, saved state
+> in `~/.rook-band-worker/` takes precedence over `--hub`/`--psk` (the worker logs a
+> warning when it does). Run the demo worker with `HOME=$(mktemp -d)` to keep it separate.
 
-## Capabilities
+### 4. Make a first call
 
-A worker's abilities are **plugins** that register dot-namespaced **capabilities**. A plugin only loads where it can actually function (`available()` gating), so a worker never advertises a cap it can't fulfill — a headless box won't offer `screenshot.*`, a box without deluge won't offer `deluge.*`.
+**In the browser:** open <http://127.0.0.1:7005>, sign in with any username and the
+printed password, and `my-worker` is in the Workers list. Expand it to see its
+capabilities, and run `shell.exec` with `{"cmd": "uname -a"}` from the form.
 
-Built-in plugins:
-
-| Namespace | What it does |
-|---|---|
-| `shell.*` | run commands, `which`, env |
-| `file.*` | read / write / list / search (base64 for binaries) |
-| `info.*` | host, uptime, ping |
-| `screenshot.*` | cross-platform display capture (X11 / wlroots / KDE / GNOME / Windows / Android) |
-| `camera.*` | grab a still photo from a webcam / capture device (`list` + `snap` by camera) |
-| `hid.*` | type / key-combo / mouse on the local display |
-| `chat.* · msg.*` | two-way chat and one-way desktop notifications |
-| `worker.*` | `restart`, `reconfigure`, signed `apply`/`deauth`, `hold`, runtime `plugin.enable/disable` |
-| `caps.describe` | introspect every cap's args (powers the call forms) |
-
-**Custom command-caps.** Define your own cap that runs a shell command with parameter substitution — e.g. `cmd.deploy` → `systemctl restart {svc}` — persisted per-worker and re-registered on boot. Argument *values* are shell-escaped, so a caller can't break out of the template.
-
-## Integrations
-
-On top of the generic caps, Rook ships purpose-built integrations for specific apps and hardware. Each is a plugin that only loads where it applies, so a worker advertises it only when the app/device is actually present.
-
-- **Deluge** — `deluge.*`: manage a torrent client (list / add / pause / resume / remove) and pull completed files back over the band, driven through `deluge-console`.
-- **hermes** — `hermes.*`: drive a co-located hermes agent on a host that runs one — chat, one-shot run, skills, memory, and session history.
-- **Claude Code** — `claude-history.*`: index a machine's local Claude Code history and search / read / export / analyze sessions across the fleet.
-- **Hardware** — Android phones and tablets, a USB dongle, PiKVM and HDMI-CEC: see [Hardware integrations](#hardware-integrations).
-
-## Hardware integrations
-
-Rook reaches beyond ordinary computers too: the phone in your pocket, the keyboard of a machine that's stuck in its BIOS, the power button of one that has hung, the TV in the living room. Each piece of hardware joins the band like any other worker, so the dashboard, `rook band` and agents over MCP drive it the same way.
-
-### Android phones and tablets
-
-A native Android app (`android/`) turns a phone or tablet into a full worker. It runs the same Python worker as every other machine, bundled into the APK, as a **foreground service** that survives Doze and starts again after a reboot. Phones and tablets appear in the dashboard with their own icons and a live battery pill.
-
-On top of the usual `shell.*`, `file.*` and `info.*`, the app adds what only a phone can do:
-
-| Capability | What it does |
-|---|---|
-| `screenshot.capture` | The real screen, via Android's screen capture |
-| `hid.type` · `hid.key_combo` · `hid.mouse.click` · `hid.mouse.drag` · `ui.text` | Type, tap and swipe, and read all the text on screen, through an accessibility service (**no root**) |
-| `sms.list` · `sms.send` · `calllog.list` · `contacts.search` | Texts, call history and contacts |
-| `notify.list` · `notify.dismiss` · `notify.post` | Read, clear and post notifications |
-| `location.get` | Where the device is, with accuracy and a map link |
-| `battery.status` | Charge level and state (also sent with every heartbeat) |
-| `device.find` | Ring at full volume to find a lost phone, even when it's silenced |
-| `device.wake` · `device.unlock` · `device.launch` · `device.open_url` | Wake the screen, unlock a PIN lock screen, open an app or a link |
-| `device.torch` · `device.vibrate` · `device.clipboard_get` · `device.clipboard_set` | Flashlight, vibration and clipboard |
-
-**Voice assistant.** The app is also a front end for your agents: chat or talk to them with a hands-free wake word, pick a voice, and follow along in Chat, Activity and Decisions tabs that show what the agent is doing and why. It can be set as Android's default assistant.
-
-**Install and updates.** Your hub serves the APK at `/apk`. Sign in with Google or enter a band pairing code in the app's settings; the generic APK contains no band key. After that it updates itself: it checks the hub's feed on start and every six hours, and only installs an update whose SHA-256 matches and which is signed by the same certificate as the installed app.
-
-Sensitive capabilities need Android permissions that you grant in the app, one by one: screen capture, accessibility, SMS, call log, contacts, location and notifications.
-
-### ESP32-S3 USB dongle
-
-A LilyGo T-Dongle-S3 (an ESP32-S3 USB stick with a small LCD and a microSD slot) running Rook's own firmware (`firmware/`, PlatformIO). Plug it into any computer and that computer sees an ordinary **USB keyboard and serial port**. The dongle joins the band by itself over Wi-Fi, so nothing is installed on the target and it works where no agent can run: BIOS and UEFI setup, boot menus, installers, login screens, a machine with no network.
-
-| Capability | What it does |
-|---|---|
-| `kvm.type` · `kvm.key` · `kvm.consumer` | Type text, send key combos (Ctrl+Alt+Del, F-keys…) and media keys over USB HID |
-| `kvm.hid.set` · `kvm.hid.get` | A kill switch for the keyboard, without a reboot |
-| `bthid.type` · `bthid.key` · `bthid.consumer` · `bthid.status` | The same as a **Bluetooth** keyboard, for phones, tablets and TVs |
-| `serial.write` · `serial.read` · `serial.status` | A USB serial console to the target (`/dev/ttyACM0` on Linux): bootloaders, embedded boards, recovery shells |
-| `info.*` | Host, uptime, ping |
-
-The microSD card either stays with the dongle for staging files, or is handed to the target as a **USB flash drive** (switching modes reboots the dongle). The LCD shows its status, and Wi-Fi networks, band settings and modes are managed from its local web page or a serial menu. The dongle talks to the hub directly over UDP, and it's excluded from the Python fleet's OTA updates; it has its own flash path. To build one for your band, see [Preconfigure a dongle build](#preconfigure-a-dongle-build).
-
-### PiKVM
-
-Run a worker on a [PiKVM](https://pikvm.org) (or on any machine that can reach one) and set `PIKVM_URL` (plus `PIKVM_USER` / `PIKVM_PASS`; the plugin only loads when a PiKVM is configured). You get the machine attached to it at the hardware level:
-
-- `pikvm.snap` — a screenshot of the captured video, even from firmware setup or a crashed OS;
-- `pikvm.type` · `pikvm.key` · `pikvm.mouse.move` · `pikvm.mouse.click` — keyboard and mouse;
-- `pikvm.power` (`on`, `off`, `off_hard`, `reset`, `reset_hard`) and `pikvm.power.status` — the ATX power and reset buttons;
-- `pikvm.api.get` · `pikvm.api.post` — any other PiKVM API endpoint, passed through.
-
-Together that's a full remote console: look at the screen, type, and power-cycle a machine that's otherwise unreachable, from the dashboard or by an agent.
-
-### HDMI-CEC (Pico W)
-
-A Raspberry Pi Pico W running Wi-Fi-enabled Pico-CEC firmware sits on an HDMI port. A worker set up with `CEC_HOST` talks to it and gets `cec.send`, `cec.raw` and `cec.ping`: raw HDMI-CEC frames onto the bus, for example to turn a TV on or off, or change the volume.
-
-## Control planes
-
-Drive the same band three ways — they all read from the same roster and invoke the same caps.
-
-### Web dashboard
-
-<img src="docs/img/dashboard-workers-mobile.png" align="right" width="220" alt="Rook dashboard on mobile">
-
-A band-first control panel with a sidebar split into **Workspace** (Workers, Bands, Chat, Work, Knowledge, Sessions) and **Manage** (Install a worker, Account & access, API tokens, Agent instructions, Secrets).
-
-The **Workers** view is a live roster: group by operating system or band, sort, filter, list or grid layout; per-device icons (computer / phone / tablet / microcontroller), battery pills for anything with a battery (⚡ while charging, amber and red as it drains), version-spread and live heartbeat visualizations, click-to-expand capabilities, run any cap from a form, and one-click **deauth/ban**. Fully responsive.
-
-### Bands and worker moves
-
-Open **Bands** from the dashboard or visit `/account/bands`. The page lists
-bands your account can access. Owners can rename or delete a band, **Migrate
-all** its workers to another band, or **Migrate PSK** to generate a replacement
-key without manually re-enrolling the fleet. The configured primary band cannot
-be deleted. Deletion revokes enrollment and pairing and hides the band; it
-cannot erase keys already stored on remote devices.
-
-Use a worker’s **Move to band…** action to select an accessible destination or
-choose **Create new band…** in the same dialog. You must own the source band;
-member access is enough for the destination. Both bands must use the same hub.
-Moves require updated workers advertising `worker.enrollment_move_prepare`;
-older workers and firmware show that an update is needed. Native Android workers
-receive this support through a rebuilt APK, not a zipapp update.
-
-The page records the expected devices, waits for each to save its configuration
-over authenticated HTTPS, then verifies signed device proofs on the destination
-band. Completion transfers moved device enrollment to the destination, sponsored
-by the initiating account. A PSK migration instead retires the old key after all
-expected devices verify. **Migrate all** and **Migrate PSK** require every active
-enrolled device to be present; bring missing devices online or explicitly revoke
-them through the account page. An empty band’s PSK can be replaced immediately.
-
-Keep the Bands page open while migrating. Progress survives page closure and
-server restart; use **Resume** to continue. A prepared migration can be canceled.
-Once activated it must finish forward, and an expired window never silently
-retires the old key or omits devices. These controls support routine moves and
-key changes; a compromised mesh requires independent device re-enrollment.
-
-### `rook band` — terminal control panel
-
-A btop-inspired, zero-dependency curses TUI (pure stdlib). Framed panels: a worker list on the left, a live **detail pane** for the selected worker on the right — arrow into it to browse capabilities as a tree and call one — and a **chats** panel. Run caps, toggle plugins, define custom caps, message workers, deauth/ban.
-
-![rook band TUI](docs/img/tui.png)
-
-Desktop worker installs now include this dashboard. Run `rook` in a new terminal
-after installing or updating a worker. The signed worker bundle contains both
-components, so worker updates also update the dashboard and install a missing
-launcher on existing machines. Closing the dashboard leaves the background
-worker running. `rook --help` lists commands; `rook worker --help` describes
-the separate worker process. `rook band` and `rook tui` also open the dashboard.
-
-The dashboard uses its own dashboard username/password, prompts on first use,
-and remembers successful login in `~/.config/rook/band.conf`. Worker enrollment
-credentials do not grant dashboard access. Native Android APKs retain their
-app interface; this launcher is for desktop and Termux installations.
-
-For a controller without a local worker, the standalone installer remains available
-(see [Install](#install)) — it pulls in `python3` if missing:
+**From the command line**, through the dashboard API:
 
 ```sh
-curl -fsSL https://<your-host>/install | bash -s -- cli
-# then just: rook
+. rook-data/quickstart.env
+curl -s -u "admin:$ROOK_WEB_PASS" -H 'Content-Type: application/json' \
+  -d '{"cap": "shell.exec", "target": "my-worker", "args": {"cmd": "uname -a"}}' \
+  http://127.0.0.1:7005/api/band/call
+# {"id": "…", "from": "…", "ok": true, "result": {"ok": true, "code": 0, "stdout": "Linux …", "stderr": ""}}
 ```
 
-### Chat & messaging
-
-Two flavors, both worker-gated:
-
-- **notify** — a one-way desktop toast (`notify-send`) plus an inbox on the target.
-- **chat** — a proper two-way conversation. Opening a chat pops a window on the *receiver's* machine and a matching pane on yours; both render the same two-panel layout (a sidebar of every chat on the band + the conversation). Messages are attributed by origin — the client's machine name, or `MCP` when sent through the MCP.
-
-![rook chat](docs/img/chat.png)
-
-Agents and people also share **chat rooms** on the dashboard — see [Chat rooms](#chat-rooms).
-
-### MCP
-
-Expose the band — and the agent workspace — as MCP tools. Each agent connects with its own API token (minted on the **API tokens** page); every call is journaled under that identity.
-
-| Area | Tools |
-|---|---|
-| Band | `rook_workers` (live roster) · `rook_caps` · `rook_call(cap, args, worker)` — `worker` is required, a refused call lists who has the cap |
-| Consoles | `rook_console_open / write / read / search / signal / list / close` — named, searchable long-running terminal sessions |
-| Chat | `rook_chat_start / send / read / rooms / delete` · `rook_presence` · `rook_chat_wake` (wake an offline agent on its worker) |
-| Work | `rook_concept` · `rook_project` · `rook_task` (claim, deck, update, link evidence) · `rook_handoff_save / get / list` |
-| Knowledge | `rook_knowledge` — search, read and write wiki pages |
-| Credentials | `rook_secret` — list the vault, or use `{{secret:name}}` inside `rook_call` args |
-| Audit | `rook_journal` (every call, with its reply) · `rook_whoami` · `rook_config_get / apply` |
-
-## Agent workspace
-
-Rook is built for a **team of AI agents** (Claude Code, Codex, a local model, a voice assistant…) working across your machines, with you watching and steering. Everything they do goes through the MCP tools above; the dashboard shows it to you.
-
-### Chat rooms
-
-Rooms shared by people and agents. **@mention** an agent to address it; if it's offline but its host worker can wake it, the dashboard wakes it and it answers in the room — otherwise it's left as voicemail and the agent sees it on its next call. Rooms you're in come first; **Agent rooms** lists the conversations agents are having among themselves, which you can read and join. **Presence** shows who's online, who can be woken on the band, and who was last seen when.
-
-![Chat rooms](docs/img/chat-web.png)
-
-### Work
-
-A task board for agents: **concepts** (why) → **projects** (what outcome) → **tasks**. Agents *claim* a task before working on it, and their calls, consoles and handoffs link to it automatically. A task can only be marked done with an outcome and an evidence link; stopping unfinished work needs a handoff, so the next agent can pick it up.
-
-![Work board](docs/img/work.png)
-
-### Knowledge wiki
-
-The agents' shared memory, as a wiki. Pages nest like folders (**Hosts / nas**, **Runbooks / …**), link to each other with `[[slug]]`, show backlinks, and keep their sources and full history.
-
-Nothing an agent writes is trusted by default: every page starts **unverified**. You can **Verify** a page or **Dispute** it with a reason (agents see the reason and fix the page), and if an agent later edits a page you verified, it goes back to unverified for you to re-check. Dots in the tree show each page's state.
-
-![Knowledge wiki](docs/img/knowledge.png)
-
-**Review mode** walks you through every unverified page in turn — *Verify & next*, *Dispute…*, *Skip*.
-
-![Review mode](docs/img/knowledge-review.png)
-
-### Secrets
-
-A vault on the hub for the credentials agents need. Agents list names and use `{{secret:name}}` inside `rook_call` arguments: the hub fills the value in on the way to the worker and masks it in the reply and the journal, so agents never have to see it. Direct reads are possible, and every access is logged with who, how and for which task.
-
-![Secrets vault](docs/img/vault.png)
-
-### Agent instructions
-
-Edit what Rook tells agents, without a deploy: the connection instructions every agent gets, the prompt sent when a claimed task goes idle, and short tips attached to a tool's description or to replies from a capability. Each entry keeps its history and can be reset to the default.
-
-![Agent instructions](docs/img/guidance.png)
-
-## Reliability
-
-One misbehaving client must not take Rook down for everyone:
-
-- **MCP session limits.** The hub holds a bounded number of MCP sessions. When it's full, the least recently used *idle* session is dropped instead of new clients being refused, and each API token may hold at most 48 sessions, so a client that leaks sessions only competes with itself. Dropped clients reconnect transparently.
-- **Watchdog.** A small stdlib-only script (`rook/band_mcp/watchdog.py`) runs every minute on the hub — an end-to-end MCP round trip, the session counters from `/healthz`, the hub services, the worker count and free memory — and a second copy runs off-hub against the public URL, so a dead hub or tunnel is still reported. Problems go to Telegram once, with an hourly reminder while they last and a message when they recover; a leaking client is named in the alert.
-
-## OTA self-update
-
-The Python worker fleet updates itself with a **signed-manifest + in-band push** system:
-
-- Every build stamps a monotonic build number and emits an **ed25519-signed** manifest (`{build, sha256, url, sig}`) next to the bundle.
-- The controller watches each worker's announced build and pushes `worker.apply(manifest)` to any worker that's behind. Workers **verify signature + sha256 + a `--selftest`** before swapping (fail-closed), keep the previous bundle for **rollback**, and restart kill-safely (systemd / runit / `os.execv`).
-- `worker.hold` pins a node; `worker.check(force=true)` drives canary rollouts. The **dongle** (ESP32 firmware) is excluded and has its own signed flash path.
-
-Ship a build → commit → rebuild the signed bundle → the running push loop converges the whole fleet in minutes, no manual per-device steps.
-
-## Security
-
-- **Signed control.** `worker.apply` and `worker.deauth` act only on an ed25519-signed payload, so *being on the band is not enough* to update or evict a worker — only the controller's signing key can. Deauth parks a worker off-band (persisted, survives reboots) and the controller denylists it (hidden, no pushes, calls refused).
-- **AEAD hardening.** The per-session nonce counter is seeded from a CSPRNG to prevent cross-peer / cross-restart nonce reuse under the shared band key.
-- **Roadmap.** Per-worker identity (to evict *hostile* nodes, not just cooperative ones), PSK rotation tooling, and signed firmware OTA are the next hardening steps.
-
-> The band PSK, signing key, and dashboard credentials live only on your hosts — never in the repo. The install commands here use `<your-host>` placeholders.
-
-## Install
-
-One installer, selectable target — a **worker** (a controlled node), the **`rook band` CLI** (the controller), or **both**:
+**From an AI agent**, over MCP. For Claude Code:
 
 ```sh
-# interactive — asks what to install
-curl -fsSL https://<your-host>/install | bash
-
-# unattended — pass the target (worker | cli | both)
-curl -fsSL https://<your-host>/install | bash -s -- worker
-curl -fsSL https://<your-host>/install | bash -s -- cli
-curl -fsSL https://<your-host>/install | bash -s -- both
+. rook-data/quickstart.env
+claude mcp add --transport http rook http://127.0.0.1:8765/mcp \
+  --header "Authorization: Bearer $ROOK_MCP_STATIC_TOKEN"
 ```
 
-The **worker** installs as a background service and joins the band. The **CLI** installs the single `rook` command (pulling in `python3` via the system package manager if it's missing) — for a fully unattended CLI install set `ROOK_WEB_PASS` (and optionally `ROOK_WEB_USER`) so it doesn't prompt. Windows (PowerShell) and a native Android worker APK are served from the same host (`/worker.py`, `/apk`).
+Then ask it to "list my Rook workers and run `uptime` on my-worker". It will use
+`rook_workers` and `rook_call`. Any MCP client that supports streamable HTTP with a
+bearer header works the same way.
 
-For the `worker` or `both` targets, supply `?band=CODE` on the installer URL or
-enter the current code when prompted. Unattended worker installs require the
-code in the URL (or `ROOK_JOIN_CODE` in the installer's environment). Direct
-Windows worker installation uses
-`iex (irm "https://<your-host>/worker?band=CODE&os=windows")`.
+**In the terminal UI:** run `rook` (or `rook band`). It connects to `http://127.0.0.1:7005`
+by default (`--url` for another hub) and prompts for the dashboard password.
 
-### Run your own hub
-
-The **hub** is the band relay — a dumb `band_id` forwarder that holds no keys. Stand one up from the same host with a short wizard that populates the vars, installs a hardened systemd unit, and starts it:
+### Or run the hub with Docker
 
 ```sh
-# interactive — prompts for bind address, TTL, prune interval, log level, user
-curl -fsSL https://<your-host>/hub | bash
-
-# unattended — take defaults (override any var via the environment)
-curl -fsSL https://<your-host>/hub | bash -s -- --yes
-HUB_BIND=0.0.0.0:7474 curl -fsSL https://<your-host>/hub | bash -s -- --yes
+cp .env.example .env
+python3 -c "import secrets; print(secrets.token_urlsafe(16))"   # use as ROOK_WEB_PASS
+python3 -m rook.remote.psk                                       # use as ROOK_BAND_PSK (needs rook installed)
+$EDITOR .env        # set ROOK_WEB_PASS, ROOK_BAND_PSK and ROOK_MCP_STATIC_TOKEN
+docker compose up -d --build
 ```
 
-It fetches a prebuilt binary for the host's architecture when one is available and otherwise builds from source with `cargo` — auto-installing `git`, a Rust toolchain, and a C linker through the system package manager as needed. Tune a running hub by editing `/etc/telesthete-hub.env` and `systemctl restart telesthete-hub`; point workers at it with `--hub <hub-host>:7474`.
+This publishes the dashboard on 7005, the MCP server on 8765 and the relay on 7474/udp,
+with state in the `rook-data` volume. Join workers exactly as in step 3, using the Docker
+host's address. The image builds the relay from source, so the first build takes a few
+minutes. (The compose setup has not yet been run in CI; please report problems.)
+
+## How it works
+
+```
+   you / agents                         hub (you host it)                         workers
+ ┌──────────────┐  HTTPS   ┌──────────────────────────────────┐
+ │ browser      ├─────────►│ dashboard       :7005  (web UI,  │
+ │ rook (TUI)   │          │   installer, band controller)    │◄─┐
+ └──────────────┘          │                                  │  │ UDP     ┌─────────────────┐
+ ┌──────────────┐  MCP     │ MCP server      :8765  (tools,   │  ├─────────┤ worker (LAN)    │
+ │ Claude Code, ├─────────►│   journal, chat, vault, wiki,    │  │         └─────────────────┘
+ │ Codex, …     │          │   /band WebSocket bridge) ◄──────┼──┼── WSS ──┤ worker (remote) │
+ └──────────────┘          │                                  │  │         └─────────────────┘
+                           │ relay (telesthete-hub) :7474/udp ├──┘
+                           │   forwards by band_id, no keys   │
+                           └──────────────────────────────────┘
+```
+
+| Part | What it is | Runs as |
+|---|---|---|
+| **Worker** | Pure-Python agent on each machine. Loads plugins that register dot-named **capabilities** (`shell.exec`, `file.read`, `screenshot.capture`, `hid.type`, …); a plugin only loads where it can work. Announces its name, version and capabilities every 30s. | `rook worker`, or the `band-worker.pyz` bundle the installers deploy |
+| **Band** | The workers and controllers that share one pre-shared key (PSK). Traffic is encrypted with ChaCha20-Poly1305 using a key derived from the PSK; `band_id = SHA256(PSK)[:16]` is the only cleartext label. | [telesthete](https://github.com/Bake-Ware/telesthete) protocol |
+| **Relay** | A blind forwarder: routes packets by `band_id` and never holds a key, so it can't read or forge traffic. | `telesthete-hub` (Rust) |
+| **Dashboard** | Web UI, worker installers and pairing codes, band and account management, and the controller that pushes signed updates and deauths. Joins the band as a controller. | `rook-dashboard` (`python -m rook.remote.bootstrap`) |
+| **MCP server** | Exposes the band to agents as MCP tools (`rook_workers`, `rook_call`, consoles, chat, tasks, knowledge, secrets), journals every call under the caller's token, and bridges WebSocket workers onto the relay at `/band`. | `rook-mcp` (`python -m rook.band_mcp`) |
+| **Control planes** | The dashboard, the `rook band` terminal UI (talks to the dashboard API) and MCP all see the same roster and call the same capabilities. | |
+
+A call goes: client → dashboard or MCP server → encrypted band message through the relay →
+the target worker runs the capability → the reply comes back the same way. LAN workers
+talk UDP to the relay directly; remote workers use a WebSocket to the MCP server's `/band`
+bridge, usually through a TLS reverse proxy or tunnel on port 443.
+
+Hub state (band keys, enrollment database, API tokens, call journal, chat, vault,
+knowledge) lives in one directory, `ROOK_DATA_DIR`. Back it up and keep it private.
+Worker state lives in `~/.rook-band-worker/` on each machine.
+
+The [feature tour](docs/FEATURES.md) covers everything built on this: the full capability
+list, the Android app, the ESP32 USB-keyboard dongle, PiKVM and HDMI-CEC, dashboard views,
+the agent workspace, OTA updates and the installers.
+
+## Going beyond localhost
+
+**Workers on your LAN.** Start the hub with `BIND=0.0.0.0 scripts/local-hub.sh` (or use
+Docker), then run `rook worker --hub <hub-ip>:7474 --psk … --name …` on each machine. Allow
+UDP 7474 through the hub's firewall. To reach MCP by IP, add that `host:port` to
+`ROOK_ALLOWED_HOSTS`.
+
+**Workers anywhere.** Put the hub behind HTTPS: a reverse proxy (Caddy, nginx) or a tunnel
+(Cloudflare Tunnel) that forwards your domain to the dashboard (7005) and the paths `/mcp`,
+`/band`, `/tokens`, `/authorize`, `/token` and `/.well-known/` to the MCP server (8765).
+Then remote workers join with `--hub your.domain:443 --ws`. Set:
+
+- `ROOK_DOMAIN=your.domain` and `ROOK_HUB_PUBLIC=your.domain:443` for the dashboard, which
+  writes them into installer scripts;
+- `ROOK_MCP_PUBLIC_URL=https://your.domain` and `ROOK_ALLOWED_HOSTS=your.domain` for the MCP
+  server (this also enables the OAuth front door that the claude.ai web connector needs).
+
+Never expose the dashboard without `ROOK_WEB_PASS`; it refuses to start on a non-loopback
+address without one unless you pass `--insecure-no-auth`.
+
+**One-line installers.** Once the hub is on HTTPS, the dashboard's **Install a worker** page
+issues short-lived pairing codes, and machines join with
+`curl -fsSL 'https://your.domain/worker?band=CODE' | bash` (PowerShell and Android variants are
+on the same page). The installers download a worker bundle that you build once from a source
+checkout, with the [telesthete](https://github.com/Bake-Ware/telesthete) repo cloned next to it
+or pip-installed:
+
+```sh
+python rook/remote/update_keys.py generate      # once: OTA signing key in ~/.config/rook/
+ROOK_PUBLIC_BASE=https://your.domain python rook/remote/build_band_worker.py
+```
+
+Workers verify updates and deauths against an ed25519 public key. The repository ships the
+maintainer's key; point your workers at your own with `ROOK_UPDATE_PUBKEY` (printed by
+`update_keys.py pubkey`), or replace the value in `rook/worker/_update_pubkey.py` before building.
+See [Installers served by the hub](docs/FEATURES.md#installers-served-by-the-hub) and
+[OTA self-update](docs/FEATURES.md#ota-self-update).
+
+## Configuration
+
+Everything is set with command-line flags or `ROOK_*` environment variables; each
+program's `--help` lists them. [`.env.example`](.env.example) documents every hub setting.
+The main ones:
+
+| Variable | Used by | Meaning |
+|---|---|---|
+| `ROOK_DATA_DIR` | dashboard, MCP | Directory for all hub state |
+| `ROOK_BAND_PSK` | all | Band key. Generate with `python -m rook.remote.psk` |
+| `ROOK_WEB_PASS` | dashboard | Dashboard admin password (required off-loopback) |
+| `ROOK_DOMAIN`, `ROOK_HUB_PUBLIC` | dashboard | Public addresses written into installers |
+| `ROOK_MCP_STATIC_TOKEN` | MCP | Fixed bearer token for MCP clients |
+| `ROOK_MCP_AUTH_PASSWORD` | MCP | Password for `/tokens`, where you mint one token per agent |
+| `ROOK_MCP_PUBLIC_URL`, `ROOK_ALLOWED_HOSTS` | MCP | Public URL and accepted Host headers |
+| `ROOK_HUB` | worker, MCP | Relay `host:port` |
+| `ROOK_UPDATE_URL`, `ROOK_UPDATE_PUBKEY` | worker | OTA manifest URL and your signing public key |
+| `HUB_BIND`, `HUB_PEER_TTL_SECS` | relay | Relay address; keep the TTL at 60 or more |
+
+Google sign-in, the knowledge wiki's embeddings service, voice and the watchdog's Telegram
+alerts are optional; see the [feature tour](docs/FEATURES.md) and `services/`.
+
+## Security model
+
+- **The PSK is the credential.** Every peer on a band shares one key, and knowing it lets you
+  send commands to every worker. Generate keys with `python -m rook.remote.psk`, keep them out
+  of shell history and process arguments (use the environment), and rotate one from the
+  dashboard's **Bands** page if it leaks.
+- **The relay is blind**: it can drop or delay traffic, but not read or forge it.
+- **Updates and deauth are signed** with a separate ed25519 key, so band membership alone can't
+  push code to workers or evict them.
+- **The dashboard and MCP server are the admin surface.** Put them behind HTTPS and strong
+  passwords, and give each agent its own MCP token so the journal shows who did what.
+- **Known gaps:** there is no per-worker identity on the band yet, so a hostile peer that holds
+  the PSK can't be cut off without rotating the key; deauth stops only cooperative workers; the
+  ESP32 dongle's firmware OTA is not signed. See [Security](docs/FEATURES.md#security).
+
+Please report vulnerabilities privately to the maintainer rather than in a public issue.
 
 ## Repository layout
 
 ```
 rook/
-  worker/          band worker: core, transports (telesthete), plugins, OTA self-update
-    plugins/       shell, file, info, screenshot, camera, hid, pikvm, deluge, chat, msg, …
-  band_mcp/        band client + the MCP server (band, chat, consoles, vault, journal), healthz + watchdog
-  knowledge/       concepts / projects / tasks / wiki pages: store, search, MCP tools
-  remote/          installer / controller (dashboard API, OTA build + push, deauth)
-  web/             the dashboard (index.html + per-view modules)
-  cli/             band_tui.py — the `rook band` terminal control panel
-firmware/          ESP32 T-Dongle-S3 firmware (telesthete over UDP, BLE/USB HID)
-docs/img/          screenshots (regenerate: docs/screenshots/make_screenshots.py, mock data only)
+  worker/        the worker: core, transports, plugins, OTA self-update
+  remote/        dashboard server: installers, enrollment, accounts, OTA build + push
+  band_mcp/      MCP server: band tools, consoles, chat, vault, journal, watchdog
+  knowledge/     concepts, projects, tasks and wiki pages
+  web/           dashboard front end
+  cli/           `rook band` terminal UI and Claude Code history tools
+  core/ net/ memory/ tools/ interfaces/ …
+                 legacy pre-band personal agent (needs the [legacy] extra)
+android/         native Android worker app (Kotlin + bundled Python worker)
+firmware/        ESP32-S3 USB dongle firmware (PlatformIO)
+server/          standalone MCP server for the dongle's local KVM bridge
+pikvm/           systemd unit for running a worker on a PiKVM
+services/        optional voice and embeddings services
+scripts/         local-hub.sh
+docs/            feature tour, design notes, screenshots; docs/internal/ holds maintainer notes
+tests/           pytest suite
 ```
 
-### Running tests
+## Contributing
 
-Keep the [Telesthete checkout](https://github.com/Bake-Ware/telesthete) at
-`../telesthete`; `tests/conftest.py` imports its protocol package, matching the
-worker and Android bundle inputs. With Python 3.11 or newer:
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the development setup and test suite, and
+[CHANGELOG.md](CHANGELOG.md) for what has changed.
 
-```sh
-python3 -m venv .venv
-.venv/bin/python -m pip install -e '.[dev]'
-.venv/bin/pytest -q
-```
+## License
+
+No license has been chosen yet; see [LICENSE](LICENSE). Until one is, all rights are reserved
+by the author.
