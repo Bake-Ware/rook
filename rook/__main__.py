@@ -6,15 +6,17 @@ import sys
 
 
 SUBCOMMANDS = {
-    "band":     "Terminal control panel for the worker band (live view, run/manage caps)",
-    "worker":   "Run the background worker",
-    "sessions": "Browse Claude Code session history",
-    "history":  "Browse Claude Code session history",
-    "tmux":     "Manage Claude Code sessions (spawn, attach, kill)",
-    "hub":      "Start the Rook hub server",
-    "discord":  "Start the Discord bot (connects to hub)",
-    "sync":     "Sync Claude.ai cloud conversations",
-    "extract":  "Extract concepts from conversations (local model)",
+    "band":      "Terminal control panel for the worker band (live view, run/manage caps)",
+    "worker":    "Run the background worker",
+    "dashboard": "Run the hub dashboard / installer server (python -m rook.remote.bootstrap)",
+    "mcp":       "Run the hub MCP server and WebSocket bridge (python -m rook.band_mcp)",
+    "sessions":  "Browse Claude Code session history",
+    "history":   "Browse Claude Code session history",
+    "tmux":      "Manage Claude Code sessions (spawn, attach, kill)",
+    "hub":       "(legacy) Start the pre-band knowledge-graph hub; needs the [legacy] extra",
+    "discord":   "(legacy) Start the Discord bot; needs the [legacy] extra",
+    "sync":      "(legacy) Sync Claude.ai cloud conversations",
+    "extract":   "(legacy) Extract concepts from conversations (local model)",
 }
 
 
@@ -32,8 +34,6 @@ def main() -> None:
             if cmd == "history":
                 continue
             print(f"  {cmd:12s} {desc}")
-        print(f"\nMCP server:  python -m rook.mcp_server")
-        print(f"Hub server:  python -m rook.net.hub")
         return
 
     # Lightweight subcommands — no heavy imports needed
@@ -41,6 +41,18 @@ def main() -> None:
         from .worker.cli import main as worker_main
         sys.argv = [sys.argv[0]] + sys.argv[2:]
         worker_main()
+        return
+
+    if sys.argv[1] == "dashboard":
+        from .remote.bootstrap import _cli_main as dashboard_main
+        sys.argv = ["rook dashboard"] + sys.argv[2:]
+        dashboard_main()
+        return
+
+    if sys.argv[1] == "mcp":
+        from .band_mcp.server import main as mcp_main
+        sys.argv = ["rook mcp"] + sys.argv[2:]
+        mcp_main()
         return
 
     if sys.argv[1] in ("band", "tui"):

@@ -1,38 +1,66 @@
 [project]
 name = "rook"
 version = "0.1.0"
-description = "Personal AI agent with voice, tools, and memory"
+description = "Self-updating mesh of worker agents over an encrypted band, driven from a web dashboard, a terminal UI, or MCP"
+readme = "README.md"
 requires-python = ">=3.11"
+# License: TBD by the owner, see LICENSE. No license metadata until then.
+authors = [{ name = "Bake-Ware" }]
 dependencies = [
-    "openai>=1.0",
-    "anthropic>=0.40",
-    "discord.py[voice]>=2.4",
-    "pyyaml>=6.0",
+    # Encrypted transport. Not on PyPI yet, so it installs from GitHub.
+    "telesthete @ git+https://github.com/Bake-Ware/telesthete@b6290c7afabe14c0e81d4e9adfd5bcf498a251e5",
+    "pynacl>=1.5",
+    "cryptography>=42",
     "aiohttp>=3.9",
     "websockets>=12.0",
     "mcp>=1.27.1,<2",
     "PyJWT[crypto]>=2.13,<3",
     "Pillow>=12.3,<13",
-    "aiosqlite>=0.20",
-    "kuzu>=0.7",
-    "watchdog>=4.0",
 ]
 
 [project.optional-dependencies]
+# Screen capture on desktop workers (X11 / Windows / macOS).
+desktop = [
+    "mss>=9.0",
+]
+# The pre-band personal agent stack (rook agent / hub / discord / sync /
+# extract). Not needed for the hub or workers.
+legacy = [
+    "openai>=1.0",
+    "anthropic>=0.40",
+    "discord.py[voice]>=2.4",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+    "aiosqlite>=0.20",
+    "kuzu>=0.7",
+    "watchdog>=4.0",
+    "psutil>=5.9",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
-    "pynacl>=1.5",
     "httpx>=0.27",
 ]
-voice = [
-    "pyannote.audio>=3.3",
-    "webrtcvad>=2.0.10",
-]
+
+[project.urls]
+Homepage = "https://github.com/Bake-Ware/rook"
+Issues = "https://github.com/Bake-Ware/rook/issues"
 
 [project.scripts]
 rook = "rook.__main__:main"
+rook-worker = "rook.worker.cli:main"
+rook-dashboard = "rook.remote.bootstrap:_cli_main"
+rook-mcp = "rook.band_mcp.server:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["rook"]
+
+[tool.hatch.build.targets.sdist]
+include = ["rook", "tests", "README.md", "LICENSE", "CHANGELOG.md", "CONTRIBUTING.md", ".env.example"]
