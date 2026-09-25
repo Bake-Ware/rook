@@ -19,7 +19,7 @@ export async function mountWork(root) {
           <h2>Start work</h2><p>Choose where your agent will work. You can leave this page while it runs.</p>
           <label>Title<input name="title" placeholder="What are we working on?" maxlength="160" required></label>
           <label>Host<select name="worker" required><option value="">Choose a host</option></select></label>
-          <label>Working directory<input name="cwd" placeholder="/home/bake/project" required></label>
+          <label>Working directory<input name="cwd" placeholder="/home/you/project" required></label>
           <label>Agent<select name="agent"><option>Codex</option></select></label>
           <label>Model<input name="model" placeholder="Use the host’s default model" maxlength="100"></label>
           <p class="work-muted">The directory must exist on the selected host. Codex uses that host’s login, with workspace writes and approval prompts for additional access.</p>

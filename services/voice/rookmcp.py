@@ -8,7 +8,7 @@ import asyncio
 import json
 import os
 import httpx
-ROOK_MCP_URL = os.environ.get('ROOK_MCP_URL', 'https://mcp.bakeforge.com/mcp')
+ROOK_MCP_URL = os.environ.get('ROOK_MCP_URL', 'http://127.0.0.1:8765/mcp')
 ROOK_MCP_TOKEN = os.environ.get('ROOK_MCP_TOKEN', '')
 _HDR = {'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream'}
 

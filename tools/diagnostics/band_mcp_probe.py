@@ -10,6 +10,9 @@ import subprocess
 import time
 import httpx
 
+# Worker the probe round-trips shell.exec through (normally the hub host's own worker).
+PROBE_WORKER = os.environ.get('ROOK_PROBE_WORKER', 'hub')
+
 
 def pid():
     return subprocess.check_output(['systemctl','show','rook-band-mcp','-p','MainPID','--value'],text=True).strip()
@@ -50,7 +53,7 @@ def run(seconds, output):
                 decode(r);sid=r.headers['mcp-session-id']
                 http.post('/mcp',headers={'mcp-session-id':sid},json={'jsonrpc':'2.0','method':'notifications/initialized'})
             name='rook_call' if seq%2 else 'rook_workers'
-            args={'cap':'shell.exec','worker':'bakenetcanada','args':{'cmd':'printf memory-probe'},'timeout':10} if seq%2 else {}
+            args={'cap':'shell.exec','worker':PROBE_WORKER,'args':{'cmd':'printf memory-probe'},'timeout':10} if seq%2 else {}
             t=time.perf_counter();ok=False
             try:
                 result=decode(http.post('/mcp',headers={'mcp-session-id':sid},json={'jsonrpc':'2.0','id':seq+2,'method':'tools/call','params':{'name':name,'arguments':args}}))
@@ -58,7 +61,7 @@ def run(seconds, output):
                 ok='error' not in result and not body.get('isError')
                 content=json.loads(body['content'][0]['text'])
                 if name=='rook_call': ok=ok and content.get('ok') and content['result'].get('stdout')=='memory-probe'
-                else: ok=ok and any(w.get('name')=='bakenetcanada' for w in content)
+                else: ok=ok and any(w.get('name')==PROBE_WORKER for w in content)
             except Exception:
                 ok=False
             emit({'type':'call','tool':name,'ms':round((time.perf_counter()-t)*1000,3),'ok':bool(ok)})

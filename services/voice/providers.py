@@ -8,7 +8,7 @@ from kokoro_onnx import Kokoro
 from .rookmcp import RookMCP
 
 HERE = os.environ.get("VOICE_MODEL_DIR", os.path.dirname(os.path.abspath(__file__)))
-ACP_HOST = os.environ.get("ACP_HOST", "192.168.1.160")
+ACP_HOST = os.environ.get("ACP_HOST", "127.0.0.1")
 ACP_PORT = int(os.environ.get("ACP_PORT", "9200"))
 VLLM_URL = os.environ.get("VLLM_URL", "http://127.0.0.1:1234/v1/chat/completions")
 VLLM_MODEL = os.environ.get("VLLM_MODEL", "qwopus3.6-35b-a3b-v1-mtp")
@@ -83,7 +83,7 @@ TOOLS = [
                         "only: uptime, host info, battery, file read/list, service status. Anything "
                         "that changes state must go to delegate_to_hermes instead."),
         "parameters": {"type": "object", "properties": {
-            "worker": {"type": "string", "description": "Device name, e.g. 'soundwave', 'kaiju', 'Bakephone'."},
+            "worker": {"type": "string", "description": "Device name, e.g. 'nas', 'desktop', 'phone'."},
             "cap": {"type": "string", "description": "Capability, e.g. 'info.uptime', 'info.host', 'battery.status', 'file.read'."},
             "args": {"type": "object", "description": "Arguments for the capability, e.g. {\"path\": \"/etc/hostname\"}."}},
             "required": ["worker", "cap"]}}},

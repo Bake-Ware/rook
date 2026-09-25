@@ -44,3 +44,9 @@ docs/img/rook.mp4
 docs/promo/rook-promo.mp4
 docs/promo/preview.png
 docs/promo/soundtrack.wav
+
+# Local agent/tooling scratch space
+.claude-briefs/
+.agents/
+.codex/
+.pytest_cache/

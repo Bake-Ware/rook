@@ -121,7 +121,7 @@ def check_hub(state):
                - prev.get('evicted', 0) - prev.get('key_evicted', 0))
     who = (f"top client {mcp.get('top_ips', [['?']])[0][0]}, token #{mcp.get('top_keys', [['?']])[0][0]}"
            if mcp.get('top_keys') else 'no recent sessions')
-    ident = busiest_identity(env('ROOK_JOURNAL_DB', '/var/lib/rook-band-mcp/journal.db'))
+    ident = busiest_identity(env('ROOK_JOURNAL_DB', os.path.join(env('ROOK_DATA_DIR', '/var/lib/rook-band-mcp'), 'journal.db')))
     if refused > 0:
         found['refused'] = (f'MCP refused {refused} connection(s) in the last {minutes:.0f} min '
                             f"({mcp.get('sessions')}/{mcp.get('max_sessions')} sessions). {who}."

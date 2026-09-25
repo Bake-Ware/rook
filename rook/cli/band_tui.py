@@ -10,7 +10,7 @@ live view and lets you run capabilities, enable/disable plugins, define custom
 command-caps, message chat-capable workers, and deauth/ban — the terminal
 counterpart to the web dashboard. Curses only — no third-party deps.
 
-Connection: ``--url`` (default https://rook.bakeforge.com) + ``--user``/``--pass``
+Connection: ``--url`` (default http://127.0.0.1:7005) + ``--user``/``--pass``
 (or env ROOK_WEB_URL / ROOK_WEB_USER / ROOK_WEB_PASS). Password is prompted if
 not supplied, so it never lands in shell history.
 """
@@ -956,8 +956,8 @@ def main() -> None:
         del sys.argv[1]
     ap = argparse.ArgumentParser(prog="rook",
                                  description="Terminal control panel for the worker band")
-    ap.add_argument("--url", help="dashboard URL (default: saved config or https://rook.bakeforge.com)")
-    ap.add_argument("--user", help="dashboard username (default: saved config or 'bake')")
+    ap.add_argument("--url", help="dashboard URL (default: saved config or http://127.0.0.1:7005)")
+    ap.add_argument("--user", help="dashboard username (default: saved config or 'admin')")
     ap.add_argument("--pass", dest="password", help="dashboard password (default: saved config, else prompt)")
     ap.add_argument("--reset", action="store_true", help="ignore saved config and re-enter connection details")
     args = ap.parse_args()
@@ -966,8 +966,8 @@ def main() -> None:
         ap.error("open an interactive terminal to use the dashboard (rook --help for options)")
 
     conf = {} if args.reset else _load_conf()
-    url = args.url or os.environ.get("ROOK_WEB_URL") or conf.get("url") or "https://rook.bakeforge.com"
-    user = args.user or os.environ.get("ROOK_WEB_USER") or conf.get("user") or "bake"
+    url = args.url or os.environ.get("ROOK_WEB_URL") or conf.get("url") or "http://127.0.0.1:7005"
+    user = args.user or os.environ.get("ROOK_WEB_USER") or conf.get("user") or "admin"
     password = args.password or os.environ.get("ROOK_WEB_PASS") or conf.get("pass")
     had_saved = bool(conf.get("pass")) and not args.reset
 

@@ -32,7 +32,7 @@ PROJECTS_DIR = CLAUDE_DIR / "projects"
 def _decode_project_dir(dirname: str) -> str:
     """Convert Claude's project dir name back to a real path.
 
-    Claude encodes paths like C:\\Users\\bake\\rook -> C--Users-bake-rook
+    Claude encodes paths like C:\\Users\\you\\rook -> C--Users-you-rook
     """
     # Handle lowercase drive letter variants
     parts = dirname.split("-")

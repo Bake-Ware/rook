@@ -1,4 +1,5 @@
 @echo off
-cd /d C:\Users\bake\rook
+rem Run from the repository root (the directory containing this file).
+cd /d "%~dp0"
 set PYTHONIOENCODING=utf-8
-C:\Users\bake\anaconda3\python.exe -m rook
+python -m rook %*

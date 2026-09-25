@@ -38,10 +38,10 @@ def main() -> None:
         desktop_main()
         return
     ap = argparse.ArgumentParser(prog="rook-worker")
-    ap.add_argument("--hub", default="hub.example.com:443",
-                    help="hub host:port (default: bakenet hub)")
-    ap.add_argument("--psk", default=None,
-                    help="band pre-shared key (must match peers)")
+    ap.add_argument("--hub", default=os.environ.get("ROOK_HUB", "127.0.0.1:7474"),
+                    help="hub host:port (or env ROOK_HUB; default 127.0.0.1:7474)")
+    ap.add_argument("--psk", default=os.environ.get("ROOK_BAND_PSK") or None,
+                    help="band pre-shared key, must match peers (or env ROOK_BAND_PSK)")
     ap.add_argument("--enroll", metavar="HTTPS_SERVER", help="sign in through Google/local web login and fetch your configurations")
     ap.add_argument("--pair-code", default=None, help="use a temporary pairing code with --enroll instead of account login")
     ap.add_argument("--enrolled", action="store_true", help="use the active band saved by --enroll")
@@ -125,7 +125,7 @@ def main() -> None:
             ap.error('No enrolled band; run --enroll HTTPS_SERVER first.')
         args.psk=band['psk'];args.hub=band['hub']
     if not args.psk:
-        ap.error("--psk is required")
+        ap.error("--psk (or env ROOK_BAND_PSK) is required")
 
     # Deauth gate: a worker that received a signed worker.deauth parks itself
     # OFF the band (no transport, no announce) instead of rejoining. Runs after

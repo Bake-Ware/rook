@@ -30,3 +30,7 @@ def generate_psk() -> str:
     """
     words = _words()
     return "-".join(secrets.choice(words) for _ in range(5))
+
+
+if __name__ == "__main__":
+    print(generate_psk())

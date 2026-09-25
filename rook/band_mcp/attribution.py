@@ -64,7 +64,7 @@ def norm(value: str | None, fallback: str) -> str:
 
 
 def dir_part(path: str | None) -> str | None:
-    """'/home/bake/rook' -> '.home.bake.rook' (safe characters only)."""
+    """'/home/you/rook' -> '.home.you.rook' (safe characters only)."""
     if not path:
         return None
     return re.sub(r"[^A-Za-z0-9._-]", "", path.rstrip("/").replace("/", ".")) or None

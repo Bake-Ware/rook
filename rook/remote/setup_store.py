@@ -6,7 +6,8 @@ band PSK, the installer download domain, and a cosmetic band name.
 
 Written by the web setup wizard (``CombinedServer`` ``/setup``) and read at
 server start. Persisted to ``data/setup.json`` (gitignored) so secrets never
-touch version control. Override the location with ``ROOK_SETUP_PATH``.
+touch version control. Override the location with ``ROOK_SETUP_PATH`` (or
+put all hub state in one place with ``ROOK_DATA_DIR``).
 """
 
 from __future__ import annotations
@@ -23,7 +24,10 @@ FIELDS = ("band_name", "band_psk", "hub_public", "pyz_domain")
 
 def setup_path() -> Path:
     env = os.environ.get("ROOK_SETUP_PATH")
-    return Path(env).expanduser() if env else _DEFAULT_PATH
+    if env:
+        return Path(env).expanduser()
+    from ..paths import data_path
+    return Path(data_path("setup.json", str(_DEFAULT_PATH))).expanduser()
 
 
 def load() -> dict[str, str]:
