@@ -9,7 +9,6 @@ from nacl.signing import SigningKey
 
 from rook.band_mcp.server import build_server
 from rook.remote import setup_store
-from rook.remote.enrollment import EnrollmentStore
 from rook.worker._update_verify import canonical_payload, verify_manifest
 
 STATIC = "static-token-0123456789abcdef"
@@ -31,17 +30,31 @@ def test_data_dir_holds_hub_state(tmp_path, monkeypatch):
     assert setup_store.setup_path() == tmp_path / "elsewhere.json"
 
 
-def test_env_psk_becomes_primary_band_without_setup_wizard(tmp_path, monkeypatch):
+def test_env_configured_dashboard_skips_the_setup_wizard(tmp_path, monkeypatch):
+    from rook.remote import bootstrap
     monkeypatch.setenv("ROOK_DATA_DIR", str(tmp_path))
     monkeypatch.delenv("ROOK_SETUP_PATH", raising=False)
-    monkeypatch.delenv("ROOK_ENROLLMENT_DB", raising=False)
-    store = EnrollmentStore()
-    store.import_config(["alpha-bravo-charlie-delta-echo"], hub="hub.example.com:443")
-    (band,) = store.bands()
-    assert band["is_primary"] and band["hub"] == "hub.example.com:443"
-    # A second key supplied later (e.g. --psk new,old) does not steal primary.
-    store.import_config(["other-key-words-here-now", "alpha-bravo-charlie-delta-echo"])
-    assert [b["is_primary"] for b in store.bands() if b["name"] == "band"].count(1) == 1
+    monkeypatch.setattr(bootstrap, "CombinedServer", lambda **kw: None)
+    monkeypatch.setattr(bootstrap.asyncio, "run", lambda coro: coro.close())
+
+    def start(*argv):
+        monkeypatch.setattr("sys.argv", ["rook-dashboard", "--bind", "127.0.0.1", *argv])
+        bootstrap._cli_main()
+
+    start("--psk", "alpha-bravo-charlie-delta-echo", "--hub-public", "hub.example.com:443")
+    assert setup_store.is_configured()
+    assert setup_store.load()["band_psk"] == "alpha-bravo-charlie-delta-echo"
+    # A later start with another key never replaces the saved configuration.
+    start("--psk", "other-key-words-here-now")
+    assert setup_store.load()["band_psk"] == "alpha-bravo-charlie-delta-echo"
+
+
+def test_dashboard_refuses_public_bind_without_password(monkeypatch):
+    from rook.remote import bootstrap
+    monkeypatch.delenv("ROOK_WEB_PASS", raising=False)
+    monkeypatch.setattr("sys.argv", ["rook-dashboard", "--bind", "0.0.0.0"])
+    with pytest.raises(SystemExit):
+        bootstrap._cli_main()
 
 
 @pytest.mark.asyncio
