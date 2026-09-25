@@ -35,7 +35,7 @@ Older APKs without this field continue showing their worker version.
 The app uses the web palette: dark olive surfaces, amber controls, outlined
 panels, compact monospace labels. Settings groups connection, device,
 permissions, and voice controls. The browser APK download button at the bottom of Settings opens
-https://rook.bakeforge.com/apk in the default browser; installation remains the
+https://<your-host>/apk in the default browser; installation remains the
 normal Android package upgrade flow. From 0.4.1, automatic updates and
 `device.update` are also available; see [APK updates](android-updates.md). Existing Google enrollment and band
 settings persist when upgrading with the same signing certificate.

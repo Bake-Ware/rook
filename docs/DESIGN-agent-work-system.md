@@ -28,7 +28,7 @@ An agent is identified by a compound name built from what the hub observes:
 
 ```
 <token>.<client>.<host>@<working dir, / → .>
-claudetoken.claudecode.cachyrig@.home.bake.rook
+claudetoken.claudecode.laptop@.home.you.rook
 ```
 
 | Part | Source | Fallback |

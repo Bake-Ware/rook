@@ -44,7 +44,7 @@ framework:
 ## What the current implementation actually does
 
 Audited Android source at `4854c9a` and the running service's source through Rook
-on kaiju (`/home/bake/voice-agent/server.py`, `voice-agent.service`). Backend
+on a GPU host (`voice-agent/server.py`, `voice-agent.service`). Backend
 source is outside this Git repository. No live conversations were exercised or
 private transcripts collected for this audit.
 
