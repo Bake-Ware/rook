@@ -2442,6 +2442,14 @@ def _cli_main() -> None:
                  "ROOK_WEB_PASS (or --web-pass), bind to 127.0.0.1, or pass "
                  "--insecure-no-auth" % args.bind)
 
+    # Configured through flags/env instead of the /setup wizard: record it the
+    # way the wizard would, so the hub starts configured rather than serving an
+    # open setup page. An existing configuration is never overwritten.
+    from . import setup_store
+    if args.band_psk and not setup_store.is_configured():
+        setup_store.save({"band_name": args.band_name, "band_psk": args.band_psk,
+                          "hub_public": args.hub_public, "pyz_domain": args.domain})
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(name)s %(levelname)s: %(message)s",

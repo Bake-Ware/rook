@@ -115,15 +115,10 @@ class EnrollmentStore:
         known_psks = {b["psk"] for b in known}
         known.extend({"name": "band", "psk": key} for key in fallback_psks
                      if key and key not in known_psks)
-        primary_psk = config.get("band_psk")
-        if not primary_psk and not any(b["is_primary"] for b in self.bands()):
-            # Configured only through ROOK_BAND_PSK / --psk (no setup wizard):
-            # the first supplied key is the primary band.
-            primary_psk = next((k for k in fallback_psks if k), "")
         for band in known:
             try:
                 self.register(band["name"], band["psk"], config.get("hub_public") or hub,
-                              primary=band["psk"] == primary_psk)
+                              primary=band["psk"] == config.get("band_psk"))
             except ValueError:
                 pass  # retired keys remain retired across restarts
 
