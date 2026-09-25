@@ -1820,6 +1820,11 @@ button:hover{{background:#22b88f}}
         if cap in ("chat.send", "msg.send") and isinstance(args, dict):
             args.setdefault("sender", "dashboard")
         target = data.get("worker_id") or data.get("target")
+        # Accept a worker name as well as its id, as the MCP rook_call does.
+        if target and self._band and target not in self._band.workers:
+            named = [wid for wid, w in self._band.workers.items() if w.get("name") == target]
+            if len(named) == 1:
+                target = named[0]
         # Refuse to drive a deauthed worker (its name may persist across restarts).
         if target:
             tw = self._band.workers.get(target) if self._band else None

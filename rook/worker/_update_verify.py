@@ -8,7 +8,8 @@ A manifest is a JSON object describing the current published bundle::
 
 The signature is ed25519 over the *canonical* JSON of every field except
 ``sig`` (sorted keys, no whitespace). The build host holds the private key; the
-worker verifies with the public key baked into :mod:`_update_pubkey`. Verifying
+worker verifies with ``ROOK_UPDATE_PUBKEY`` when set, else the public key
+baked into :mod:`_update_pubkey`. Verifying
 the manifest signature — and then checking the downloaded bundle's sha256
 against the manifest — means an attacker who reaches the band (or the download
 origin) still can't push code without the signing key. Fail closed everywhere.
@@ -19,6 +20,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 
 
 def canonical_payload(manifest: dict) -> bytes:
@@ -32,6 +34,8 @@ def verify_manifest(manifest: dict, pubkey_b64: str | None = None) -> bool:
     """True iff the manifest carries a valid ed25519 signature for the given
     (or baked-in) public key. Returns False on any error — never raises."""
     if pubkey_b64 is None:
+        pubkey_b64 = os.environ.get("ROOK_UPDATE_PUBKEY", "").strip()
+    if not pubkey_b64:
         from ._update_pubkey import PUBKEY_B64 as pubkey_b64
     sig = manifest.get("sig")
     if not sig or not pubkey_b64:
