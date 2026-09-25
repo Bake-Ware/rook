@@ -21,6 +21,9 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from rook.band_mcp.client import MultiBandClient
 from rook.band_mcp.server import build_server
 
+# Worker the probe round-trips shell.exec through (normally the hub host's own worker).
+PROBE_WORKER = os.environ.get('ROOK_PROBE_WORKER', 'hub')
+
 
 async def run(output):
     logging.disable(logging.CRITICAL)
@@ -43,7 +46,7 @@ async def run(output):
     await client.start()
     try:
         for _ in range(45):
-            if any(w.get('name')=='bakenetcanada' for w in client.workers.values()):break
+            if any(w.get('name')==PROBE_WORKER for w in client.workers.values()):break
             await asyncio.sleep(1)
         else:raise RuntimeError('target worker unavailable to isolated probe')
         with tempfile.TemporaryDirectory() as d, os.fdopen(os.open(output,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600),'w') as out:
@@ -64,7 +67,7 @@ async def run(output):
                     order=['old','fixed'];rng.shuffle(order)
                     for variant in order:
                         t=time.perf_counter();ok=False
-                        r=await clients[variant].post('/mcp',json={'jsonrpc':'2.0','id':pair+2,'method':'tools/call','params':{'name':'rook_call','arguments':{'cap':'shell.exec','worker':'bakenetcanada','args':{'cmd':'printf controlled-probe'},'timeout':10}}})
+                        r=await clients[variant].post('/mcp',json={'jsonrpc':'2.0','id':pair+2,'method':'tools/call','params':{'name':'rook_call','arguments':{'cap':'shell.exec','worker':PROBE_WORKER,'args':{'cmd':'printf controlled-probe'},'timeout':10}}})
                         ms=(time.perf_counter()-t)*1000
                         if r.status_code==200:
                             body=json.loads([s[6:] for s in r.text.splitlines() if s.startswith('data: ')][-1])['result']

@@ -979,8 +979,10 @@ class CombinedServer:
                  web_user: str = "", web_pass: str = "",
                  band_psk: str = "",
                  hub_host: str = "127.0.0.1", hub_port: int = 7474,
-                 hub_public: str = "hub.example.com:443", band_name: str = "rook-band"):
+                 hub_public: str = "hub.example.com:443", band_name: str = "rook-band",
+                 bind: str = "0.0.0.0"):
         self.port = port
+        self.bind = bind
         self.auth_token = auth_token
         self.domain = domain
         self.web_user = web_user
@@ -1009,7 +1011,8 @@ class CombinedServer:
         self._chat = None
         try:
             from ..band_mcp.chat_rooms import ChatStore
-            chat_db = os.environ.get("ROOK_CHAT_DB", "/var/lib/rook-band-mcp/chat.db")
+            from ..paths import data_path
+            chat_db = os.environ.get("ROOK_CHAT_DB") or data_path("chat.db", "/var/lib/rook-band-mcp/chat.db")
             self._chat = ChatStore(chat_db)
         except Exception:
             log.warning("chat store unavailable; dashboard chat disabled", exc_info=True)
@@ -1342,9 +1345,12 @@ button:hover{{background:#22b88f}}
     async def start(self) -> None:
         self._runner = web.AppRunner(self._app, access_log_class=InstallerAccessLogger)
         await self._runner.setup()
-        site = web.TCPSite(self._runner, "0.0.0.0", self.port)
+        site = web.TCPSite(self._runner, self.bind, self.port)
         await site.start()
-        log.info("Remote server on port %d (HTTP + WebSocket)", self.port)
+        log.info("Remote server on %s:%d (HTTP + WebSocket)", self.bind, self.port)
+        if not self.web_pass:
+            log.warning("dashboard password not set: anyone who can reach port %d "
+                        "can control every worker", self.port)
 
         # Join the band so the dashboard can list workers + invoke caps.
         # Best-effort: a missing/unreachable hub must not take down the
@@ -2392,21 +2398,44 @@ def _cli_main() -> None:
     """Argparse entry point: python -m rook.remote.bootstrap [options]."""
     import argparse
 
-    ap = argparse.ArgumentParser(description="Rook band-worker installer server")
-    ap.add_argument("--port", type=int, default=7005, help="HTTP listen port")
-    ap.add_argument("--domain", default="hub.example.com", help="Public domain for installer URLs")
-    ap.add_argument("--psk", default="",
-                    dest="band_psk", help="Band pre-shared key embedded in bootstrap scripts "
-                                          "(blank = configure via the /setup wizard)")
-    ap.add_argument("--hub-public", default="hub.example.com:443",
-                    help="host:port workers call back to (templated into installers)")
-    ap.add_argument("--band-name", default="rook-band", help="Cosmetic band label")
+    env = os.environ.get
+    ap = argparse.ArgumentParser(
+        description="Rook hub dashboard: web UI, worker installer and band controller",
+        epilog="Every option can also be set with the ROOK_* variable named in its help.")
+    ap.add_argument("--bind", default=env("ROOK_BIND", "0.0.0.0"),
+                    help="HTTP listen address (ROOK_BIND, default 0.0.0.0)")
+    ap.add_argument("--port", type=int, default=int(env("ROOK_PORT", "7005")),
+                    help="HTTP listen port (ROOK_PORT, default 7005)")
+    ap.add_argument("--domain", default=env("ROOK_DOMAIN", "hub.example.com"),
+                    help="public host[:port] of this dashboard, used in installer URLs (ROOK_DOMAIN)")
+    ap.add_argument("--psk", default=env("ROOK_BAND_PSK", ""),
+                    dest="band_psk", help="band pre-shared key (ROOK_BAND_PSK; "
+                                          "blank = configure via the /setup wizard)")
+    ap.add_argument("--hub-public", default=env("ROOK_HUB_PUBLIC", "hub.example.com:443"),
+                    help="host:port workers call back to, templated into installers (ROOK_HUB_PUBLIC)")
+    ap.add_argument("--band-name", default=env("ROOK_BAND_NAME", "rook-band"),
+                    help="cosmetic band label (ROOK_BAND_NAME)")
     ap.add_argument("--token", default="", help="Legacy exec-worker auth token")
-    ap.add_argument("--web-user", default="", help="(legacy, unused) Web UI username")
-    ap.add_argument("--web-pass", default="", help="Dashboard admin password (empty = no auth)")
-    ap.add_argument("--hub-host", default="127.0.0.1", help="Telesthete hub host for the dashboard band client")
-    ap.add_argument("--hub-port", type=int, default=7474, help="Telesthete hub port")
+    ap.add_argument("--web-user", default=env("ROOK_WEB_USER", ""),
+                    help="dashboard username (ROOK_WEB_USER; blank = password only)")
+    ap.add_argument("--web-pass", default=env("ROOK_WEB_PASS", ""),
+                    help="dashboard admin password (ROOK_WEB_PASS). Prefer the "
+                         "variable: command-line arguments are visible in ps.")
+    ap.add_argument("--insecure-no-auth", action="store_true",
+                    help="allow serving without a dashboard password on a "
+                         "non-loopback address (anyone who can reach it can run "
+                         "commands on every worker)")
+    ap.add_argument("--hub-host", default=env("ROOK_HUB_HOST", "127.0.0.1"),
+                    help="telesthete hub host the dashboard joins (ROOK_HUB_HOST)")
+    ap.add_argument("--hub-port", type=int, default=int(env("ROOK_HUB_PORT", "7474")),
+                    help="telesthete hub UDP port (ROOK_HUB_PORT)")
     args = ap.parse_args()
+
+    loopback = args.bind in ("127.0.0.1", "::1", "localhost")
+    if not args.web_pass and not loopback and not args.insecure_no_auth:
+        ap.error("refusing to serve the dashboard on %s without a password: set "
+                 "ROOK_WEB_PASS (or --web-pass), bind to 127.0.0.1, or pass "
+                 "--insecure-no-auth" % args.bind)
 
     logging.basicConfig(
         level=logging.INFO,
@@ -2424,6 +2453,7 @@ def _cli_main() -> None:
         hub_port=args.hub_port,
         hub_public=args.hub_public,
         band_name=args.band_name,
+        bind=args.bind,
     )
 
     async def _run() -> None:

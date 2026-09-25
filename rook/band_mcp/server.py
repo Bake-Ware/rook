@@ -1330,15 +1330,16 @@ async def _amain(args) -> None:
 
 
 def main() -> None:
+    from ..paths import data_path
     ap = argparse.ArgumentParser(prog="rook-band-mcp")
-    ap.add_argument("--hub", default="127.0.0.1:7474",
-                    help="telesthete hub host:port")
+    ap.add_argument("--hub", default=os.environ.get("ROOK_HUB", "127.0.0.1:7474"),
+                    help="telesthete hub host:port (or env ROOK_HUB)")
     ap.add_argument("--psk", default=os.environ.get("ROOK_BAND_PSK"),
                     help="band pre-shared key (or env ROOK_BAND_PSK). Accepts a "
                          "comma-separated list to join several bands on one hub "
                          "at once — e.g. during a PSK rotation: --psk new,old")
-    ap.add_argument("--bind", default="127.0.0.1:8765",
-                    help="HTTP bind host:port for the MCP server")
+    ap.add_argument("--bind", default=os.environ.get("ROOK_MCP_BIND", "127.0.0.1:8765"),
+                    help="HTTP bind host:port for the MCP server (or env ROOK_MCP_BIND)")
     ap.add_argument("--allowed-hosts",
                     default=os.environ.get("ROOK_ALLOWED_HOSTS", ""),
                     help="comma-separated public Host headers to accept "
@@ -1354,9 +1355,11 @@ def main() -> None:
                     default=os.environ.get("ROOK_MCP_AUTH_PASSWORD", ""),
                     help="admin password gating the /tokens mint/revoke UI.")
     ap.add_argument("--persist-path",
-                    default=os.environ.get("ROOK_MCP_PERSIST",
-                                            "/var/lib/rook-band-mcp/oauth.json"),
-                    help="JSON file for persistent API tokens.")
+                    default=os.environ.get("ROOK_MCP_PERSIST")
+                    or data_path("oauth.json", "/var/lib/rook-band-mcp/oauth.json"),
+                    help="JSON file for persistent API tokens; the journal, chat, "
+                         "vault and other stores live beside it (default: "
+                         "$ROOK_DATA_DIR/oauth.json, else /var/lib/rook-band-mcp).")
     ap.add_argument("--static-token",
                     default=os.environ.get("ROOK_MCP_STATIC_TOKEN", ""),
                     help="fixed bearer token clients send as "

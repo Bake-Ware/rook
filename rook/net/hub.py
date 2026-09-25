@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import struct
 import sys
 import time
@@ -310,10 +311,13 @@ class RookHub:
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Rook Hub — central knowledge graph server")
-    parser.add_argument("--psk", default="rook-hub-2026", help="Pre-shared key for Band encryption")
+    parser.add_argument("--psk", default=os.environ.get("ROOK_HUB_PSK", ""),
+                        help="Pre-shared key for Band encryption (or env ROOK_HUB_PSK)")
     parser.add_argument("--udp-port", type=int, default=9999, help="UDP port for LAN Band peers")
     parser.add_argument("--ws-port", type=int, default=7006, help="WebSocket port for internet peers")
     args = parser.parse_args()
+    if not args.psk:
+        parser.error("--psk (or env ROOK_HUB_PSK) is required")
 
     hub = RookHub(psk=args.psk, udp_port=args.udp_port, ws_port=args.ws_port)
     asyncio.run(hub.run_forever())

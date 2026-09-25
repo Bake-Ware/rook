@@ -1,4 +1,4 @@
-"""CPU embeddings on Soundwave; expose only on a loopback/SSH-forwarded port."""
+"""CPU embeddings for knowledge search; expose only on a loopback/SSH-forwarded port."""
 import asyncio
 from aiohttp import web
 from fastembed import TextEmbedding

@@ -16,7 +16,7 @@ testing. No existing-band PSK has been changed. Source remains uncommitted on
   Adds browser-authorized terminal enrollment, certificate configuration reads,
   renewal/revocation, enrolled worker refresh, generic APK and installer updates.
   Superseded by the relay-fix release below.
-- Host: `ubuntu@151.145.63.234` (bakenetcanada). Services: `rook-remote`,
+- Host: `ubuntu@<hub-ip>` (bakenetcanada). Services: `rook-remote`,
   `rook-band-mcp`; the `telesthete-hub` relay is preserved.
 - Shared state: `/var/lib/rook-band-mcp/setup.json` and `enrollment.db`.
   The database includes account sessions, memberships, current/retired band keys,

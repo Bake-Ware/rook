@@ -305,7 +305,7 @@ async def rook_remember(key: str, value: str, category: str = "general") -> str:
     that don't need graph relationships.
 
     Args:
-        key: Short identifier for this memory (e.g. "droga_best_lr", "starscream_ip").
+        key: Short identifier for this memory (e.g. "droga_best_lr", "nas_ip").
         value: The information to store. Be detailed — other sessions need full context.
         category: One of: config, credential, finding, decision, general.
     """
@@ -715,7 +715,7 @@ async def rook_log_cli(commands: str, context: str, outcome: str = "",
 
     Args:
         commands: The command(s) that were run (can be multi-line).
-        context: What problem was being solved (e.g. "dpkg lock on starscream").
+        context: What problem was being solved (e.g. "dpkg lock on the NAS").
         outcome: What happened (e.g. "fixed", "failed", "partial").
         resolution: The key insight or fix (e.g. "kill apt process, rm lock file, apt fix-install").
         cost_hint: How expensive this was: low (1-2 cmds), medium (5-10), high (10+), critical (required multiple compactions).

@@ -172,7 +172,7 @@ class MemoryPlugin(Plugin):
     def _get(self, path: str) -> dict:
         """Read a markdown note from the vault (read-open across the band).
         ``path`` is vault-relative, e.g. ``entities/calendar`` or
-        ``sojourn/bakenetca-creds`` (``.md`` optional)."""
+        ``hosts/nas-notes`` (``.md`` optional)."""
         full, err = self._resolve(path, for_write=False)
         if err:
             return {"ok": False, "error": err}

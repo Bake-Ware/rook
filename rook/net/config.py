@@ -7,7 +7,7 @@ Config file: ~/.rook/net.json
 {
     "mode": "hub" | "client",
     "hub_url": "ws://hub.example.com:7006/band",  // for client mode
-    "psk": "rook-hub-2026",
+    "psk": "<generate a long random key>",
     "udp_port": 9999,
     "ws_port": 7006
 }
@@ -28,7 +28,7 @@ CONFIG_PATH = Path.home() / ".rook" / "net.json"
 DEFAULT_CONFIG = {
     "mode": "local",  # local = graph on this machine, hub = run the hub, client = connect to hub
     "hub_url": "ws://localhost:7006/band",
-    "psk": "rook-hub-2026",
+    "psk": "",
     "udp_port": 9999,
     "ws_port": 7006,
 }
