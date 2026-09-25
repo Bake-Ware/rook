@@ -1,0 +1,10 @@
+*
+!pyproject.toml
+!README.md
+!rook/
+rook/**/__pycache__
+rook/**/*.pyc
+rook/remote/band-worker*
+rook/remote/rook-worker.apk
+rook/remote/telesthete-hub*
+rook/web/scene/node_modules
