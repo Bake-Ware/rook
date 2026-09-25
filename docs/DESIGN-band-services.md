@@ -8,7 +8,7 @@ record; the conversation it came from is gone. Statuses below track implementati
 1. **The hub stays dumb.** The telesthete hub is a band_id forwarder: no keys, no
    storage, no smarts. Everything stateful lives on the **site** (the Python
    `CombinedServer` — installer, dashboard, band client — currently
-   rook.bakeforge.com). Site + hub ship, install, and configure as **one unit**,
+   rook.example.com). Site + hub ship, install, and configure as **one unit**,
    but the roles never blur.
 2. **Workers don't care how it gets there.** Configuration reaches workers the
    same way code does: signed, over the band, automatically. A worker is
@@ -94,7 +94,7 @@ record; the conversation it came from is gone. Statuses below track implementati
 
 ## 4. Identity — tokens, audit-first
 
-- **Agents:** the existing bakeforge bearer-token registry (`/tokens`,
+- **Agents:** the existing bearer-token registry (`/tokens`,
   `TokenStore`, also the OAuth-shim client secret for claude.ai web) is the
   identity registry. A token's **name** is the agent's identity, shaped
   `[agent]_[hostname]` by convention. No certs, no new crypto — "secure
@@ -223,14 +223,14 @@ Status as of 2026-08-20 (fleet on build 76):
 2. **Journal** — ✅ SHIPPED + verified live. `band_mcp/journal.py`,
    `rook_journal` tool, `_journal_id` on every `rook_call`.
 3. **Memory vault** — ✅ SHIPPED + verified live. `worker/plugins/memory.py`
-   (band cap, gated on `ROOK_MEMORY_VAULT`, hosted on bakenetcanada). Post-its +
+   (band cap, gated on `ROOK_MEMORY_VAULT`, hosted on the hub host). Post-its +
    supersede/capstone + currency flag. Curator cron interface (sojourn) still
    TODO on the sojourn side.
 4. **Handoffs** — ✅ SHIPPED + verified live. `band_mcp/sessions.py`,
    `rook_handoff_save/get/list`, read-time freshness banners.
 5. **Settings wizard + config OTA** (commit-confirmed) — ✅ SHIPPED + verified
    live. rook/worker/wconfig.py + plugins/config.py; env-gate push remotely
-   enables gated caps (verified: enabled agent.wake on bakenetca via
+   enables gated caps (verified: enabled agent.wake on the hub via
    rook_config_apply). Stranding auto-reverts (verified).
 6. **Chat v2** — ✅ SHIPPED + verified live. band_mcp/chat_rooms.py (rooms,
    presence, voicemail-on-envelope) + worker plugins/wake.py (agent.wake) +
@@ -238,7 +238,7 @@ Status as of 2026-08-20 (fleet on build 76):
    routing, wake→spawn (wake-proof), dashboard↔MCP shared room.
 7. **Federation** — ✅ SHIPPED (telesthete b6290c7) + DEPLOYED to the live hub
    2026-08-21. Tested (3 integration tests + full suite green). Running on
-   bakenetca's `telesthete-hub` but INERT — no `HUB_FED_*` env set, so zero
+   the production `telesthete-hub` but INERT — no `HUB_FED_*` env set, so zero
    behavior change. Enable when a second hub exists via HUB_FED_* env + restart.
 
 All seven features implemented, deployed, and verified live. Federation runs on
@@ -246,7 +246,7 @@ the production hub but is dormant until a second hub is stood up and linked.
 
 ## Deployment notes
 
-- Site pieces deploy to bakenetca per `bakenetca-deploy` memory (pre-flight
+- Site pieces deploy to the hub host per the maintainer's deploy notes (pre-flight
   `import rook.band_mcp.server` / bootstrap format checks before restarting
   services — there is a history of venv landmines).
 - Worker-side pieces ship as signed OTA builds; fleet converges automatically.
