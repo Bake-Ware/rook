@@ -4,6 +4,8 @@
 
 **Run things on all your machines from one place: a web dashboard, a terminal UI, or any AI agent that speaks MCP.**
 
+[Website and 48-second tour](https://bake-ware.github.io/rook/)
+
 You install a small background **worker** on each machine you want to reach (a home server, a Raspberry Pi, a laptop, a cloud VM, an Android phone, even a USB dongle). Workers dial *out* to a **hub** you host, so they work behind home routers and on other networks, and join an end-to-end encrypted group called a **band**. From then on you get one live view of every machine and can tell any of them to run a command, take a screenshot, type on the keyboard, restart a service or send a message, and get the answer back straight away.
 
 <p align="center">
