@@ -20,6 +20,8 @@ from .server import RemoteWorker
 
 log = logging.getLogger(__name__)
 
+WEB_DIR = Path(__file__).resolve().parents[1] / "web"
+
 
 def _versioned_assets(html: str, web_dir) -> str:
     """Append ?v=<content version> to dashboard asset URLs. Cloudflare rewrites
@@ -1100,12 +1102,6 @@ class CombinedServer:
         self._accounts.install(self._app)
         self._runner: web.AppRunner | None = None
 
-        # Register web UI routes before server starts
-        try:
-            from ..modules.web_ui import register_routes
-            register_routes(self._app)
-        except Exception as e:
-            log.warning("Web UI routes not registered: %s", e)
 
     def _session_ok(self, request: web.Request) -> bool:
         return self._accounts.store.dashboard_session_ok(request.cookies.get("rook_session", ""))
@@ -1487,7 +1483,6 @@ button:hover{{background:#22b88f}}
         accept = request.headers.get("Accept", "")
         if "text/html" in accept:
             try:
-                from ..modules.web_ui import WEB_DIR
                 index_path = WEB_DIR / "index.html"
                 if index_path.exists():
                     # no-store so a dashboard redeploy is seen on the next load

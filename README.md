@@ -255,10 +255,9 @@ rook/
   knowledge/     concepts, projects, tasks and wiki pages
   web/           dashboard front end
   cli/           `rook band` terminal UI and Claude Code history tools
-  core/ net/ memory/ tools/ interfaces/ …
-                 legacy pre-band personal agent (needs the [legacy] extra)
 android/         native Android worker app (Kotlin + bundled Python worker)
 firmware/        ESP32-S3 USB dongle firmware (PlatformIO)
+firmware-rp2040/ RP2040-Zero USB keyboard/mouse dongle firmware (PlatformIO)
 server/          standalone MCP server for the dongle's local KVM bridge
 pikvm/           systemd unit for running a worker on a PiKVM
 services/        optional voice and embeddings services

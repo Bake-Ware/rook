@@ -27,16 +27,20 @@ Preparation for public use.
   third-party components.
 
 ### Changed
+- Removed the pre-band personal agent (`rook agent`, `rook hub`, `rook discord`,
+  `rook sync`, `rook extract`, the `rook/core`, `tools`, `memory`, `modules`,
+  `net`, `interfaces`, `voice`, `tasks` packages, `config.yaml` and the
+  `[legacy]` extra). Its dashboard routes (`/api/workers`, `/api/facts`, `/ui/`
+  and others) had been failing on every hub. It remains in git history.
 - The repository no longer ships the maintainer's update signing key. Each hub
   creates its own on first start and the worker bundles it builds trust only
   that key. Workers run from source trust no update unless `ROOK_UPDATE_PUBKEY`
   is set.
 - `telesthete` is now a declared dependency (installed from GitHub).
 - The pre-band personal agent's dependencies (OpenAI, Anthropic, Discord, Kuzu, …)
-  moved to the `[legacy]` extra; screen capture to `[desktop]`.
+  are no longer installed; screen capture moved to the `[desktop]` extra.
 - Defaults point at localhost instead of the maintainer's hosts: worker `--hub`,
   terminal UI `--url` and user, voice service MCP URL.
-- The legacy pre-band hub no longer has a built-in PSK.
 - Maintainer deployment records, handoffs, incident notes and the roadmap are
   no longer kept in this repository.
 
