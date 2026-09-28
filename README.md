@@ -262,7 +262,7 @@ server/          standalone MCP server for the dongle's local KVM bridge
 pikvm/           systemd unit for running a worker on a PiKVM
 services/        optional voice and embeddings services
 scripts/         local-hub.sh
-docs/            feature tour, design notes, screenshots; docs/internal/ holds maintainer notes
+docs/            feature tour, design notes, screenshots
 tests/           pytest suite
 ```
 

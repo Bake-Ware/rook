@@ -31,8 +31,8 @@ Preparation for public use.
 - Defaults point at localhost instead of the maintainer's hosts: worker `--hub`,
   terminal UI `--url` and user, voice service MCP URL.
 - The legacy pre-band hub no longer has a built-in PSK.
-- Maintainer deployment records, handoffs, incident notes and roadmap moved to
-  `docs/internal/`.
+- Maintainer deployment records, handoffs, incident notes and the roadmap are
+  no longer kept in this repository.
 
 ### Fixed
 - The MCP server failed to start without `--public-url`.
