@@ -459,6 +459,7 @@ class AccountWeb:
             uid=user['id']
             if op=='logout':
                 self.store.logout(request.cookies.get(COOKIE,''))
+                self.store.dashboard_logout(request.cookies.get('rook_session',''))
                 response=self.redirect('/account/login'); response.del_cookie(COOKIE); response.del_cookie('rook_session'); return response
             if op in ('local','password','unlink','merge'):
                 self.require(request,fresh=True)

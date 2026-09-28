@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
 import os
+import secrets
 import time
 import uuid
 from pathlib import Path
@@ -992,6 +994,9 @@ class CombinedServer:
         self.hub_port = hub_port
         self.hub_public = hub_public  # host:port workers call back to (templated into installers)
         self.band_name = band_name    # cosmetic band identity, shown in dashboard + installer
+        # Hidden in the setup form: a page on another site can POST to a
+        # password-less loopback hub, but it cannot read this value first.
+        self._setup_csrf = secrets.token_urlsafe(24)
 
         # First-run setup wizard values (data/setup.json, gitignored) win over
         # the constructor/config defaults so secrets never live in version control.
@@ -1102,10 +1107,15 @@ class CombinedServer:
         except Exception as e:
             log.warning("Web UI routes not registered: %s", e)
 
-    def _make_session_cookie(self) -> str:
-        """Derive the session token from the dashboard credentials."""
-        import hashlib
-        return hashlib.sha256(f"{self.web_user}:{self.web_pass}:r00k-dash".encode()).hexdigest()[:32]
+    def _session_ok(self, request: web.Request) -> bool:
+        return self._accounts.store.dashboard_session_ok(request.cookies.get("rook_session", ""))
+
+    def _signed_in(self, location: str) -> web.HTTPFound:
+        """Redirect that starts a new random dashboard session."""
+        resp = web.HTTPFound(location)
+        resp.set_cookie("rook_session", self._accounts.store.dashboard_session(),
+                        max_age=30 * 86400, httponly=True, samesite="Lax")
+        return resp
 
     def _check_creds(self, user: str, passwd: str) -> bool:
         """Validate login. Username is enforced only when one is configured,
@@ -1123,6 +1133,10 @@ class CombinedServer:
         password via HTTP Basic auth (in either the user or pass field).
         Installer/health endpoints stay public. Auth is off when no password
         is configured.
+
+        Until the band is configured every other page redirects to /setup.
+        With a password, /setup itself needs the login first; without one the
+        hub only starts on loopback (or with --insecure-no-auth).
         """
         import base64
         from . import setup_store
@@ -1132,7 +1146,7 @@ class CombinedServer:
         if self._accounts.handles(request.path):
             if (request.path in ("/account", "/account/bands", "/account/bands/component", "/account/component", "/account/tokens/api", "/account/session") and not self._accounts.current(request)
                     and self.web_pass and self._accounts.bootstrap_id
-                    and request.cookies.get("rook_session") == self._make_session_cookie()):
+                    and self._session_ok(request)):
                 response=self._accounts.signed_in(self._accounts.bootstrap_id)
                 response.headers["Location"]=str(request.rel_url)
                 return response
@@ -1147,24 +1161,28 @@ class CombinedServer:
         if request.path in ("/apk", "/apk.json") and os.environ.get("ROOK_PUBLIC_APK_SHA256"):
             is_exempt = True  # handler verifies the exact approved generic artifact
 
-        # First-run gate: until the band has a PSK + public hub address, force the
-        # setup wizard. Runs before the password shortcut so an unconfigured,
-        # password-less hub still can't be used until it's set up.
-        if not setup_store.is_configured() and not any(b["is_primary"] for b in self._enrollment.bands()):
-            if request.path == "/setup":
-                return await handler(request)
-            if is_exempt:
-                return await handler(request)
-            if "text/html" in request.headers.get("Accept", ""):
-                raise web.HTTPFound("/setup")
-            return web.Response(status=503, text="rook hub not configured — open /setup in a browser")
-
-        if is_exempt or not self.web_pass:
+        if is_exempt:
             return await handler(request)
+
+        # First-run gate: until the band has a PSK + public hub address, only
+        # the setup wizard (and the login that guards it) is reachable.
+        unconfigured = (not setup_store.is_configured()
+                        and not any(b["is_primary"] for b in self._enrollment.bands()))
+
+        async def admit():
+            if unconfigured and request.path != "/setup":
+                if "text/html" in request.headers.get("Accept", ""):
+                    raise web.HTTPFound("/setup")
+                return web.Response(status=503, text="rook hub not configured — open /setup in a browser")
+            return await handler(request)
+
+        if not self.web_pass:
+            return await admit()
 
         account_user = self._accounts.current(request)
         if account_user and request.path == "/logout":
             self._accounts.store.logout(request.cookies.get("rook_account", ""))
+            self._accounts.store.dashboard_logout(request.cookies.get("rook_session", ""))
             response = web.HTTPFound("/account/login")
             response.del_cookie("rook_account")
             response.del_cookie("rook_session")
@@ -1172,7 +1190,7 @@ class CombinedServer:
         if account_user and account_user["admin"]:
             if request.path == "/login":
                 raise web.HTTPFound("/")
-            return await handler(request)
+            return await admit()
         if account_user and request.path == "/":
             raise web.HTTPFound("/account")
 
@@ -1181,10 +1199,7 @@ class CombinedServer:
             try:
                 data = await request.post()
                 if self._check_creds(data.get("user", ""), data.get("pass", "")):
-                    resp = web.HTTPFound("/")
-                    resp.set_cookie("rook_session", self._make_session_cookie(),
-                                    max_age=30 * 86400, httponly=True, samesite="Lax")
-                    raise resp
+                    raise self._signed_in("/setup" if unconfigured else "/")
             except web.HTTPFound:
                 raise
             except Exception:
@@ -1195,14 +1210,13 @@ class CombinedServer:
             return web.Response(text=self._login_page(), content_type="text/html")
 
         if request.path == "/logout":
+            self._accounts.store.dashboard_logout(request.cookies.get("rook_session", ""))
             resp = web.HTTPFound("/login")
             resp.del_cookie("rook_session")
             raise resp
 
-        # Check session cookie
-        session = request.cookies.get("rook_session", "")
-        if session == self._make_session_cookie():
-            return await handler(request)
+        if self._session_ok(request):
+            return await admit()
 
         # Check basic auth (for API/curl): password in either field.
         auth_header = request.headers.get("Authorization", "")
@@ -1218,10 +1232,9 @@ class CombinedServer:
             except Exception:
                 creds_ok = False
             if creds_ok:
-                resp = await handler(request)
-                resp.set_cookie("rook_session", self._make_session_cookie(),
-                                max_age=30 * 86400, httponly=True, samesite="Lax")
-                return resp
+                # No cookie: headless callers resend Basic auth each request,
+                # and minting a session per call would pile up stored grants.
+                return await admit()
 
         # No valid auth — redirect to login page for browsers, 401 for API
         accept = request.headers.get("Accept", "")
@@ -1292,6 +1305,7 @@ button:hover{{background:#22b88f}}
 <p>Configure the band this hub serves. Saved to <code>data/setup.json</code> (never committed).</p>
 {err}
 <form method="POST" action="/setup">
+<input type="hidden" name="csrf" value="{self._setup_csrf}">
 <label>Band name</label>
 <input name="band_name" value="{band_name}" placeholder="my-band" autofocus>
 <small>Cosmetic label for this band, shown in the dashboard + installer.</small>
@@ -1315,6 +1329,9 @@ button:hover{{background:#22b88f}}
     async def _setup_submit(self, request: web.Request) -> web.Response:
         from . import setup_store
         data = await request.post()
+        if not hmac.compare_digest(str(data.get("csrf", "")), self._setup_csrf):
+            return web.Response(text=self._setup_page_html("The form expired. Check the values and save again."),
+                                status=400, content_type="text/html", headers={"Cache-Control": "no-store"})
         vals = {
             "band_name": (data.get("band_name") or "").strip() or "rook-band",
             "hub_public": (data.get("hub_public") or "").strip(),

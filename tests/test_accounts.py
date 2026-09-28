@@ -325,13 +325,13 @@ async def test_legacy_dashboard_login_bridges_to_worker_move_page(accounts):
     server=CombinedServer(band_psk='old-key',web_user='operator',web_pass='operator-password',domain='rook.example.com')
     async with TestClient(TestServer(server._app)) as client:
         path='/account/bands?worker=selected-worker'
-        response=await client.get(path,headers={'Cookie':'rook_session='+server._make_session_cookie()},allow_redirects=False)
+        response=await client.get(path,headers={'Cookie':'rook_session='+server._accounts.store.dashboard_session()},allow_redirects=False)
         assert response.status==302 and response.headers['Location']==path
         token=response.cookies['rook_account'].value
         response=await client.get(path,headers={'Cookie':'rook_account='+token},allow_redirects=False)
         assert response.status==302
         assert response.headers['Location']=='/#bands?worker=selected-worker'
-        response=await client.get('/account/bands/component',headers={'Cookie':'rook_session='+server._make_session_cookie()},allow_redirects=False)
+        response=await client.get('/account/bands/component',headers={'Cookie':'rook_session='+server._accounts.store.dashboard_session()},allow_redirects=False)
         assert response.status==302 and response.headers['Location']=='/account/bands/component'
         token=response.cookies['rook_account'].value
         response=await client.get('/account/bands/component',headers={'Cookie':'rook_account='+token})
@@ -342,7 +342,7 @@ async def test_legacy_dashboard_login_bridges_to_worker_move_page(accounts):
 async def test_legacy_login_can_open_tokens_first(accounts):
     server=CombinedServer(band_psk='old-key',web_user='operator',web_pass='operator-password',domain='rook.example.com')
     async with TestClient(TestServer(server._app)) as client:
-        response=await client.get('/account/session',headers={'Cookie':'rook_session='+server._make_session_cookie()},allow_redirects=False)
+        response=await client.get('/account/session',headers={'Cookie':'rook_session='+server._accounts.store.dashboard_session()},allow_redirects=False)
         assert response.status==302 and response.headers['Location']=='/account/session'
         token=response.cookies['rook_account'].value
         response=await client.get('/account/session',headers={'Cookie':'rook_account='+token})

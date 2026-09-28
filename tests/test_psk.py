@@ -78,7 +78,7 @@ def server(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_setup_suggests_a_readable_key_without_saving_it(server):
     async with TestClient(TestServer(server._app)) as client:
-        response = await client.get("/setup")
+        response = await client.get("/setup", headers=AUTH)
         assert response.status == 200
         assert response.headers["Cache-Control"] == "no-store"
         key = re.search(r'name="band_psk" value="([^"]+)"', await response.text())[1]
@@ -121,7 +121,8 @@ async def test_setup_round_trip_and_scoped_enrollment_keep_exact_key(server):
         response = await client.post("/setup", data={
             "band_name": "test-band", "band_psk": key,
             "hub_public": "hub.example.com:443", "pyz_domain": "rook.example.com",
-        }, allow_redirects=False)
+            "csrf": server._setup_csrf,
+        }, headers=AUTH, allow_redirects=False)
         assert response.status == 302
         assert setup_store.load()["band_psk"] == server.band_psk == key
         assert extra in setup_store.load_bands()

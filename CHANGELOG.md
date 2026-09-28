@@ -37,6 +37,14 @@ Preparation for public use.
   no longer kept in this repository.
 
 ### Fixed
+- The first-run `/setup` page required no login: anyone who could reach an
+  unconfigured hub could set its band key, even with a dashboard password.
+  With a password, `/setup` now needs the login first. A password-less hub
+  (loopback only) keeps an open wizard, protected by a form token.
+- Dashboard login cookies were a fixed hash of the username and password, so
+  they never expired and could not be revoked. Each login now gets a random
+  30-day session that ends on logout or when the password changes. Existing
+  logins must sign in once more.
 - The MCP server failed to start without `--public-url`.
 - The MCP server rejected loopback Host headers on any port other than 8765.
 - A hub configured only with `ROOK_BAND_PSK` / `--psk` stayed locked behind the

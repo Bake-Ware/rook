@@ -134,6 +134,7 @@ class AccountStore:
                     key=hashlib.scrypt(password.encode(),salt=bytes.fromhex(salt),n=32768,r=8,p=1,maxmem=128*1024*1024).hex()
                     db.execute('UPDATE users SET username=?,password=? WHERE id=?',(username,salt+':'+key,uid))
                     db.execute('DELETE FROM user_sessions WHERE user_id=?',(uid,))
+                    db.execute("DELETE FROM account_grants WHERE kind='dashboard_session'")
                     self.audit(db,uid,'operator_credentials_updated')
                 return uid
             uid = secrets.token_hex(16)
@@ -203,6 +204,23 @@ class AccountStore:
     def logout(self, token):
         with self.db() as db:
             db.execute('DELETE FROM user_sessions WHERE hash=?', (digest(token),))
+
+    def dashboard_session(self):
+        """Random, expiring session for the shared dashboard password.
+        Revoked on logout and whenever the operator credentials change."""
+        return self.grant('dashboard_session', {}, ttl=30*86400)
+
+    def dashboard_session_ok(self, token):
+        if not token:
+            return False
+        with self.db() as db:
+            return db.execute("SELECT 1 FROM account_grants WHERE hash=? AND kind='dashboard_session' AND expires>?",
+                              (digest(token),time.time())).fetchone() is not None
+
+    def dashboard_logout(self, token):
+        if token:
+            with self.db() as db:
+                db.execute("DELETE FROM account_grants WHERE hash=? AND kind='dashboard_session'", (digest(token),))
 
     def grant(self, kind, payload, ttl=600):
         token = secrets.token_urlsafe(32)
