@@ -5,9 +5,9 @@ changes with a clear description are the easiest to review. For anything large
 (a new subsystem, a protocol change, a new dependency), please open an issue
 first to talk it through.
 
-Note that the project's license has not been chosen yet (see [LICENSE](LICENSE)).
-Contributions are welcome, but the terms they are made under will follow the
-license the owner picks.
+Rook is licensed under the [Apache License 2.0](LICENSE). Unless you say
+otherwise, a contribution you submit is licensed under the same terms, as
+section 5 of the license describes.
 
 ## Development setup
 

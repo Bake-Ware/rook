@@ -22,7 +22,9 @@ Preparation for public use.
 - Dashboard `--bind`; it refuses to serve on a non-loopback address without a
   password unless `--insecure-no-auth` is given.
 - README quickstart and architecture overview; feature tour moved to
-  `docs/FEATURES.md`; `CONTRIBUTING.md`; license placeholder.
+  `docs/FEATURES.md`; `CONTRIBUTING.md`.
+- Licensed under the Apache License 2.0, with a `NOTICE` for bundled
+  third-party components.
 
 ### Changed
 - `telesthete` is now a declared dependency (installed from GitHub).

@@ -1,0 +1,14 @@
+Rook
+Copyright 2026 Bake-Ware
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Third-party components bundled in this repository keep their own licenses:
+
+- rook/remote/psk_words.txt: EFF large wordlist, see rook/remote/psk_words.LICENSE.md
+- rook/web/scene/: three.js, see THREE-LICENSE.txt in that directory
+- android/app/src/main/assets/wakeword/: Silero VAD, see SILERO-LICENSE.txt
+- services/voice/vendor/: see the files in that directory
+
+The telesthete transport library (https://github.com/Bake-Ware/telesthete) is
+a separate project and dependency, licensed under the MIT License.

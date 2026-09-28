@@ -273,5 +273,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the development setup and test suite,
 
 ## License
 
-No license has been chosen yet; see [LICENSE](LICENSE). Until one is, all rights are reserved
-by the author.
+Rook is licensed under the [Apache License 2.0](LICENSE). Bundled third-party components keep
+their own licenses; see [NOTICE](NOTICE).

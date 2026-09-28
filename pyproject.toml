@@ -4,7 +4,8 @@ version = "0.1.0"
 description = "Self-updating mesh of worker agents over an encrypted band, driven from a web dashboard, a terminal UI, or MCP"
 readme = "README.md"
 requires-python = ">=3.11"
-# License: TBD by the owner, see LICENSE. No license metadata until then.
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "Bake-Ware" }]
 dependencies = [
     # Encrypted transport. Not on PyPI yet, so it installs from GitHub.
@@ -53,7 +54,7 @@ rook-dashboard = "rook.remote.bootstrap:_cli_main"
 rook-mcp = "rook.band_mcp.server:main"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.hatch.metadata]
@@ -63,4 +64,4 @@ allow-direct-references = true
 packages = ["rook"]
 
 [tool.hatch.build.targets.sdist]
-include = ["rook", "tests", "README.md", "LICENSE", "CHANGELOG.md", "CONTRIBUTING.md", ".env.example"]
+include = ["rook", "tests", "README.md", "LICENSE", "NOTICE", "CHANGELOG.md", "CONTRIBUTING.md", ".env.example"]
