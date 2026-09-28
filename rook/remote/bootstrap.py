@@ -2472,6 +2472,13 @@ def _cli_main() -> None:
         format="%(asctime)s %(name)s %(levelname)s: %(message)s",
     )
 
+    # This hub's own key for signing worker updates and deauth orders; the
+    # public half is stamped into the worker bundles it builds.
+    from .update_keys import ensure_key, key_path, public_key_b64
+    signing_key = ensure_key()
+    if signing_key:
+        log.info("update signing key %s (public %s)", key_path(), public_key_b64(signing_key))
+
     server = CombinedServer(
         port=args.port,
         domain=args.domain,

@@ -27,6 +27,10 @@ Preparation for public use.
   third-party components.
 
 ### Changed
+- The repository no longer ships the maintainer's update signing key. Each hub
+  creates its own on first start and the worker bundles it builds trust only
+  that key. Workers run from source trust no update unless `ROOK_UPDATE_PUBKEY`
+  is set.
 - `telesthete` is now a declared dependency (installed from GitHub).
 - The pre-band personal agent's dependencies (OpenAI, Anthropic, Discord, Kuzu, …)
   moved to the `[legacy]` extra; screen capture to `[desktop]`.

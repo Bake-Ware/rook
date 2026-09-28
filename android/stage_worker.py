@@ -52,10 +52,11 @@ def main() -> int:
     # Native workers report the same source build as the zipapp.
     import datetime
     sys.path.insert(0,str(REPO_ROOT))
-    from rook.remote.build_band_worker import compute_build,_stamp_build_info
+    from rook.remote.build_band_worker import compute_build,_stamp_build_info,_stamp_pubkey
     build,commit,version=compute_build()
     _stamp_build_info(rook_dst/'worker',build,commit,version,
                       datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds'))
+    _stamp_pubkey(rook_dst/'worker')
 
 
     # telesthete.protocol  ->  python/telesthete/protocol

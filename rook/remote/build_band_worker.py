@@ -159,6 +159,21 @@ def _stamp_build_info(worker_dst: Path, build: int, commit: str,
     )
 
 
+def _stamp_pubkey(worker_dst: Path) -> None:
+    """Write this hub's update public key into the bundled _update_pubkey.py,
+    creating the signing key if the hub has none yet."""
+    import sys as _sys
+    _sys.path.insert(0, str(REPO_ROOT))
+    from rook.remote.update_keys import ensure_key, public_key_b64
+    sk = ensure_key()
+    pub = public_key_b64(sk) if sk else ""
+    (worker_dst / "_update_pubkey.py").write_text(
+        '"""Generated at bundle time by build_band_worker.py — do not edit."""\n\n'
+        f"PUBKEY_B64 = {pub!r}\n",
+        encoding="utf-8",
+    )
+
+
 def _write_manifest(build: int, commit: str, version: str, built_at: str) -> Path:
     """Compute the pyz hash and write a signed manifest next to it."""
     import hashlib
@@ -218,6 +233,7 @@ def build() -> Path:
         (rook_dst / "__init__.py").write_text('__version__ = "0.1.0"\n', encoding="utf-8")
         _copy_pkg(WORKER_SRC, rook_dst / "worker")
         _stamp_build_info(rook_dst / "worker", build_num, commit, version, built_at)
+        _stamp_pubkey(rook_dst / "worker")
 
         # Bundle only the standalone dashboard, not the legacy agent CLI modules.
         cli_dst = rook_dst / "cli"

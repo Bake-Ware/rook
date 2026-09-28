@@ -1,18 +1,13 @@
-"""ed25519 public key (base64) that signs OTA update manifests.
+"""ed25519 public key (base64) that signs OTA update manifests and deauth orders.
 
-Empty by default = no signing key configured, so the worker refuses every
-auto-update (fail closed). To enable OTA self-update, generate a keypair on the
-build host and paste the printed public key here:
+Empty in the source tree: a worker run straight from a checkout or a pip
+install trusts nobody's updates (fail closed) unless ``ROOK_UPDATE_PUBKEY`` is
+set in its environment.
 
-    python rook/remote/update_keys.py generate
-
-The matching PRIVATE key stays on the build host (never in the repo); this
-public half is safe to commit and is what every worker uses to verify a
-manifest's signature before swapping its bundle.
-
-The value below is the maintainer's key. A self-hosted fleet should use its
-own: set ROOK_UPDATE_PUBKEY in each worker's environment (it takes precedence)
-or replace the value here before building the worker bundle.
+Worker bundles get the key written in at build time. The hub generates its
+signing key on first start (see ``rook/remote/update_keys.py``), and
+``build_band_worker.py`` stamps the matching public key into the copy of this
+file inside ``band-worker.pyz``, so each hub's workers trust only that hub.
 """
 
-PUBKEY_B64 = "D5hj75uLaN91Ml6cBIvZ+ZCTjCgtntiMNz48lNrHROw="
+PUBKEY_B64 = ""

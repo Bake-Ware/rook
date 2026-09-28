@@ -195,13 +195,14 @@ checkout, with the [telesthete](https://github.com/Bake-Ware/telesthete) repo cl
 or pip-installed:
 
 ```sh
-python rook/remote/update_keys.py generate      # once: OTA signing key in ~/.config/rook/
 ROOK_PUBLIC_BASE=https://your.domain python rook/remote/build_band_worker.py
 ```
 
-Workers verify updates and deauths against an ed25519 public key. The repository ships the
-maintainer's key; point your workers at your own with `ROOK_UPDATE_PUBKEY` (printed by
-`update_keys.py pubkey`), or replace the value in `rook/worker/_update_pubkey.py` before building.
+Workers verify updates and deauth orders against an ed25519 key. The hub creates its own
+signing key on first start (in `ROOK_DATA_DIR`, or `ROOK_UPDATE_KEY` to choose the path), and
+the build stamps the public half into the bundle, so your workers trust your hub and nobody
+else. Workers run from a source checkout or pip install trust no key unless you set
+`ROOK_UPDATE_PUBKEY` (printed by `python rook/remote/update_keys.py pubkey`).
 See [Installers served by the hub](docs/FEATURES.md#installers-served-by-the-hub) and
 [OTA self-update](docs/FEATURES.md#ota-self-update).
 
@@ -221,7 +222,7 @@ The main ones:
 | `ROOK_MCP_AUTH_PASSWORD` | MCP | Password for `/tokens`, where you mint one token per agent |
 | `ROOK_MCP_PUBLIC_URL`, `ROOK_ALLOWED_HOSTS` | MCP | Public URL and accepted Host headers |
 | `ROOK_HUB` | worker, MCP | Relay `host:port` |
-| `ROOK_UPDATE_URL`, `ROOK_UPDATE_PUBKEY` | worker | OTA manifest URL and your signing public key |
+| `ROOK_UPDATE_URL`, `ROOK_UPDATE_PUBKEY` | worker | OTA manifest URL; trusted signing key for workers not installed from a hub bundle |
 | `HUB_BIND`, `HUB_PEER_TTL_SECS` | relay | Relay address; keep the TTL at 60 or more |
 
 Google sign-in, the knowledge wiki's embeddings service, voice and the watchdog's Telegram
