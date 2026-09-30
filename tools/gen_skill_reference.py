@@ -119,17 +119,18 @@ def mcp_tools() -> list[tuple[str, str, str]]:
 
 def _hub_node():
     """A throwaway hub node with every opt-in built-in plugin enabled
-    (knowledge/tasks on a temp store), so their caps and skill fragments
-    are documented."""
+    (knowledge/tasks on a temp store, the chat integrations), so their caps
+    and skill fragments are documented."""
     import logging
     logging.disable(logging.WARNING)
-    keys = ("ROOK_KNOWLEDGE", "ROOK_KNOWLEDGE_DB", "ROOK_EMBED_URL")
+    keys = ("ROOK_KNOWLEDGE", "ROOK_KNOWLEDGE_DB", "ROOK_EMBED_URL", "ROOK_TELEGRAM", "ROOK_DISCORD")
     saved = {k: os.environ.get(k) for k in keys}
     try:
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["ROOK_KNOWLEDGE"] = "1"
             os.environ["ROOK_KNOWLEDGE_DB"] = os.path.join(tmp, "knowledge.db")
             os.environ.pop("ROOK_EMBED_URL", None)
+            os.environ["ROOK_TELEGRAM"] = os.environ["ROOK_DISCORD"] = "1"
             from rook.hub.node import HubNode
             return HubNode(tmp, entry_points=False)
     finally:

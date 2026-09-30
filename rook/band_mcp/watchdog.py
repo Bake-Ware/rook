@@ -14,7 +14,11 @@ tunnel is still reported.
 
 Alerts go to Telegram (ROOK_WATCHDOG_TELEGRAM_TOKEN / _CHAT) once per
 condition, repeat every ROOK_WATCHDOG_REPEAT_MIN while it lasts, and a
-"recovered" follows when it clears. A probe must fail twice in a row before it
+"recovered" follows when it clears. With ROOK_WATCHDOG_VIA_HUB=1 an alert is
+first sent through the hub's notify.send cap (the Telegram/Discord
+integration plugins, see docs/integrations.md) over the same MCP endpoint the
+probe uses; when the hub cannot take it (down, or no integration running) the
+direct Telegram settings above are the fallback, so a dead hub still pages. A probe must fail twice in a row before it
 alerts, so a deploy restart doesn't page. State lives in --state.
 Config comes from the environment (an EnvironmentFile), never arguments.
 """
@@ -174,8 +178,71 @@ def telegram(text):
     return st == 200
 
 
-def notify(state, found, where, send=telegram):
+def _mcp_result(text):
+    """The JSON-RPC message from a plain JSON or SSE (``data:``) reply."""
+    try:
+        return json.loads(text)
+    except ValueError:
+        pass
+    for line in reversed(text.splitlines()):
+        if line.startswith('data:'):
+            try:
+                return json.loads(line[5:].strip())
+            except ValueError:
+                continue
+    return {}
+
+
+def hub_notify(text, channel='all', timeout=15):
+    """Send through the hub's ``notify.send`` (rook_call on worker ``rook``).
+    True when at least one integration took it."""
+    token = env('ROOK_MCP_STATIC_TOKEN')
+    base = env('ROOK_WATCHDOG_MCP_URL', 'http://127.0.0.1:8765')
+    host = env('ROOK_WATCHDOG_HOST') or None
+    if not token:
+        return False
+    url = base.rstrip('/') + '/mcp'
+    hdr = {'Authorization': f'Bearer {token}', 'Accept': 'application/json, text/event-stream'}
+    if host:
+        hdr['Host'] = host
+    st, h, _ = http(url, 'POST', {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {
+        'protocolVersion': '2025-03-26', 'capabilities': {},
+        'clientInfo': {'name': 'rook-watchdog', 'version': '1'}}}, hdr, timeout)
+    sid = h.get('mcp-session-id') if st == 200 else None
+    if not sid:
+        return False
+    hdr['mcp-session-id'] = sid
+    try:
+        http(url, 'POST', {'jsonrpc': '2.0', 'method': 'notifications/initialized'}, hdr, timeout)
+        st, _, txt = http(url, 'POST', {'jsonrpc': '2.0', 'id': 2, 'method': 'tools/call', 'params': {
+            'name': 'rook_call', 'arguments': {'cap': 'notify.send', 'worker': 'rook',
+                                               'args': {'text': text, 'channel': channel}}}},
+            hdr, timeout)
+    finally:
+        http(url, 'DELETE', None, hdr, timeout)
+    if st != 200:
+        return False
+    try:
+        res = _mcp_result(txt).get('result') or {}
+        reply = json.loads((res.get('content') or [{}])[0].get('text') or '{}')
+    except (ValueError, AttributeError, IndexError, TypeError):
+        return False
+    ok = bool(reply.get('ok')) and bool((reply.get('result') or {}).get('ok'))
+    if not ok:
+        print(f'hub notify not delivered: {str(reply)[:200]}', file=sys.stderr)
+    return ok
+
+
+def alert(text):
+    """Hub integrations first when ROOK_WATCHDOG_VIA_HUB=1, then direct Telegram."""
+    if env('ROOK_WATCHDOG_VIA_HUB', '0') == '1' and hub_notify(text):
+        return True
+    return telegram(text)
+
+
+def notify(state, found, where, send=None):
     """Alert new conditions, repeat long-running ones, announce recoveries."""
+    send = send or alert
     now = time.time()
     active = state.setdefault('active', {})
     repeat = float(env('ROOK_WATCHDOG_REPEAT_MIN', '60')) * 60
@@ -198,11 +265,11 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('--mode', choices=('hub', 'remote'), default='hub')
     ap.add_argument('--state', default=env('ROOK_WATCHDOG_STATE', '/var/lib/rook-watchdog/state.json'))
-    ap.add_argument('--test-alert', action='store_true', help='send one Telegram message and exit')
+    ap.add_argument('--test-alert', action='store_true', help='send one test alert and exit')
     a = ap.parse_args(argv)
     where = env('ROOK_WATCHDOG_NAME', 'hub' if a.mode == 'hub' else 'external')
     if a.test_alert:
-        return 0 if telegram(f'🔔 Rook watchdog [{where}] test message: alerts reach you.') else 1
+        return 0 if alert(f'🔔 Rook watchdog [{where}] test message: alerts reach you.') else 1
     try:
         with open(a.state) as f:
             state = json.load(f)

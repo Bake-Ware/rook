@@ -31,6 +31,19 @@ Preparation for public use.
   config apply; worker secrets go as `{{secret:…}}` references that the worker
   fetches from the hub at use (memory only, never on its disk). New worker cap
   `worker.settings_report`. Tasks has its own `enabled` setting (`ROOK_TASKS`).
+- Telegram and Discord integrations as hub plugins (`telegram`, `discord`,
+  both off by default), with no platform library needed. Each one:
+  - bridges Rook chat rooms both ways with a `<platform>:<user>` sender,
+    mention mapping, rate limits and loop prevention;
+  - offers `telegram.send` / `discord.send`, plus `notify.send` for every
+    running integration (the watchdog can use it with
+    `ROOK_WATCHDOG_VIA_HUB=1`);
+  - answers a fixed command set that runs as `integration:<platform>` and
+    fails closed on the permission policy, so there is no exec or admin
+    unless a rule grants it.
+
+  The bot token lives in the vault and is masked everywhere. See
+  `docs/integrations.md`.
 - Work worklog view (default; `ROOK_WORK_V2=0` or the **Classic view** button
   restores the old one): rooms per project and host, live sessions as real
   xterm.js terminals, finished ones collapsed, one-click resume of any

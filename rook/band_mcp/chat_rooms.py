@@ -294,6 +294,16 @@ class ChatStore:
                 "participants": room["participants"], "messages": msgs,
                 "last_seq": msgs[-1]["seq"] if msgs else int(since_seq)}
 
+    def last_seq(self, rid: str) -> int:
+        """Highest message seq in a room (0 if empty or unknown) - where a
+        new reader such as a chat bridge starts without replaying history."""
+        if self._db is None:
+            return 0
+        with self._lock:
+            r = self._db.execute("SELECT MAX(seq) FROM messages WHERE room_id=?",
+                                 (rid,)).fetchone()
+        return int(r[0] or 0) if r else 0
+
     def rooms_for(self, identity: str, limit: int = 50,
                   include_all: bool = False) -> dict:
         """Rooms this identity participates in, newest-active first, with unread
