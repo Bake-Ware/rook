@@ -611,10 +611,10 @@ install_cli() {
   if grep -q '^pass=' "$CONF" 2>/dev/null; then
     echo "[rook] using saved login ($CONF)"
   elif [ -n "${ROOK_WEB_PASS:-}" ]; then
-    ( umask 077; printf '# rook band connection (chmod 600)\nurl=%s\nuser=%s\npass=%s\n' "$BASE" "${ROOK_WEB_USER:-bake}" "$ROOK_WEB_PASS" > "$CONF" )
+    ( umask 077; printf '# rook band connection (chmod 600)\nurl=%s\nuser=%s\npass=%s\n' "$BASE" "${ROOK_WEB_USER:-__WEB_USER__}" "$ROOK_WEB_PASS" > "$CONF" )
     chmod 600 "$CONF"; echo "[rook] saved login (from ROOK_WEB_PASS)"
   elif [ -r /dev/tty ]; then
-    WU="${ROOK_WEB_USER:-bake}"
+    WU="${ROOK_WEB_USER:-__WEB_USER__}"
     printf "[rook] dashboard password (user %s): " "$WU" > /dev/tty
     read -rs WP < /dev/tty || true; printf "\n" > /dev/tty
     if [ -n "${WP:-}" ]; then
@@ -750,7 +750,7 @@ if ($env:ROOK_WEB_PASS) {
     $cfgdir = "$env:USERPROFILE\.config\rook"
     New-Item -ItemType Directory -Force -Path $cfgdir | Out-Null
     $u = if ($env:ROOK_WEB_URL) { $env:ROOK_WEB_URL } else { "https://__DOMAIN__" }
-    $usr = if ($env:ROOK_WEB_USER) { $env:ROOK_WEB_USER } else { "bake" }
+    $usr = if ($env:ROOK_WEB_USER) { $env:ROOK_WEB_USER } else { "__WEB_USER__" }
     "# rook band - dashboard connection`nurl=$u`nuser=$usr`npass=$($env:ROOK_WEB_PASS)" |
         Set-Content -Path "$cfgdir\band.conf" -Encoding UTF8
     Write-Host "[rook] saved connection config (from ROOK_WEB_PASS)."
@@ -2150,6 +2150,12 @@ button:hover{{background:#22b88f}}
                             headers={"Content-Disposition": 'inline; filename="rook"',
                                      "Cache-Control": "no-store"})
 
+    def _installer_web_user(self) -> str:
+        """Default dashboard user written into installed CLI configs: this hub's
+        own --web-user when it is shell-safe, else "admin" (the documented default)."""
+        user = self.web_user or ""
+        return user if _re.fullmatch(r"[A-Za-z0-9._@-]{1,64}", user) else "admin"
+
     async def _installer(self, request: web.Request) -> web.Response:
         """Serve the CLI installer. POSIX: `curl .../install | bash` — the
         unified bash installer (worker | cli | both). Windows: `iex (irm
@@ -2167,7 +2173,8 @@ button:hover{{background:#22b88f}}
             on_windows = ("windows" in ua) or ("win32" in ua) or ("win64" in ua)
             want_ps = is_ps and on_windows
         if want_ps:
-            script = PS_CLI_BOOTSTRAP.replace("__DOMAIN__", self.domain)
+            script = (PS_CLI_BOOTSTRAP.replace("__DOMAIN__", self.domain)
+                      .replace("__WEB_USER__", self._installer_web_user()))
             return web.Response(text=script, content_type="text/plain",
                                 headers={"Content-Disposition": 'inline; filename="rook-cli-install.ps1"',
                                          "Cache-Control": "no-store"})
@@ -2175,7 +2182,8 @@ button:hover{{background:#22b88f}}
         code = request.query.get("band", "")
         if code and not _re.fullmatch(r"[a-z0-9]{6}", code):
             return web.Response(text="invalid pairing code", status=400)
-        script = _INSTALL_SCRIPT.replace("__BASE__", base).replace("__JOIN_CODE__", code)
+        script = (_INSTALL_SCRIPT.replace("__BASE__", base).replace("__JOIN_CODE__", code)
+                  .replace("__WEB_USER__", self._installer_web_user()))
         return web.Response(text=script, content_type="text/x-shellscript",
                             headers={"Content-Disposition": 'inline; filename="rook-install.sh"',
                                      "Cache-Control": "no-store"})

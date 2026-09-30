@@ -276,3 +276,20 @@ def test_dongle_header_escapes_psk_and_uses_udp_endpoint():
     assert '#define BAND_PSK "key\\\"\\\\example"' in text
     with pytest.raises(ValueError):
         module.render_config({"psk": "valid", "hub": "host:99999"})
+
+
+@pytest.mark.asyncio
+async def test_cli_installers_default_to_this_hubs_dashboard_user(server, store):
+    async with TestClient(TestServer(server._app)) as client:
+        for params in ({"os": "unix"}, {"os": "windows"}):
+            text = await (await client.get("/install", params=params)).text()
+            assert "__WEB_USER__" not in text
+            assert ("${ROOK_WEB_USER:-owner}" in text) or ('else { "owner" }' in text)
+    unsafe = CombinedServer(web_user='a"; rm -rf ~ #', web_pass="password")
+    try:
+        async with TestClient(TestServer(unsafe._app)) as client:
+            text = await (await client.get("/install", params={"os": "unix"})).text()
+            assert "${ROOK_WEB_USER:-admin}" in text and "rm -rf" not in text
+    finally:
+        if unsafe._chat:
+            unsafe._chat.close()
