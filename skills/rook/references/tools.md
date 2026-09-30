@@ -57,6 +57,13 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | Cap | Args | Risk | Does |
 |---|---|---|---|
 | `caps.describe` | prefix='' | read | Arg schema, docstring and declared risk/limit/fields for every hub cap. |
+| `decide.confirm` | run_id, approve, note='' | exec | Approve (`approve=true`) or refuse the action a drive is waiting on. |
+| `decide.drive` | goal, screen_worker, input_worker='', dry_run?, max_steps?, max_seconds?, texts?, keys?, screen_size='', wait=0.0 | exec | Drive a screen towards `goal`: screenshot -> one decision pass -> hid input. |
+| `decide.health` | — | read | Is the configured decision model reachable and loaded? |
+| `decide.info` | — | read | The configured model: name, adapter, calibration status and limits. |
+| `decide.run` | state, questions, temperature? | read | Answer a batch of typed questions about `state` in one pass. |
+| `decide.runs` | run_id='', steps=5, limit=20 | read | Recent drives, or one drive with its last `steps` journaled frames (answers, decision, gates, executed calls)… |
+| `decide.stop` | run_id='' | write | Kill switch: stop one drive (`run_id`) or every live drive. |
 | `discord.send` | text, chat? | write | Post a message to the configured Discord channel. |
 | `discord.status` | — | read | Discord integration status: connected, channel and token configured (never the token), bridged rooms, counter… |
 | `hub.info` | — | read | What the hub runs: version, core API, roles, facts and plugins. |
@@ -82,6 +89,9 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `task.write` | action, kind='task', band?, id?, data?, request_id? | write | Write tasks/projects/concepts: create\|update\|link\|retract\|claim\|release. |
 | `telegram.send` | text, chat? | write | Post a message to the configured Telegram chat. |
 | `telegram.status` | — | read | Telegram integration status: connected, chat and token configured (never the token), bridged rooms, counters… |
+
+### decide
+One-pass decision model (worker `rook`). `decide.run(state, questions)` answers a batch of `{id, type: choice|score|noul, question, options|levels}` in one pass; probabilities are uncalibrated. `decide.drive(goal, screen_worker, input_worker?, dry_run?, texts?, keys?)` runs screenshot -> decide -> `hid.*` with confirmation gates and returns a `run_id`; dry-run is the default. Watch it with `decide.runs(run_id=...)`, approve with `decide.confirm(run_id, approve)`, kill with `decide.stop()`.
 
 ### discord
 When the Discord integration is on: `discord.send` (text) posts to the configured channel; `discord.status` shows whether it is connected. Prefer `notify.send` to reach every configured channel.
