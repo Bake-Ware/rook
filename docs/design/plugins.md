@@ -561,3 +561,14 @@ only link to handoffs (link kind `handoff`), and `data.handoff` on
 update/release saves one through the bridge. When chat rooms and the journal
 become hub caps, handoffs move with them as `handoff.read` / `handoff.write`
 (permissions.md A.2), not into `task.*`.
+
+## 16. Chat integrations (hub plugins)
+
+Telegram and Discord are the hub plugins `telegram` and `discord`, both built
+on `rook/hub/integrations.py`, plus `notify` (`notify.send`, one cap over
+every running integration). They bridge chat rooms to one chat or channel,
+send notifications, and answer a fixed command set under the principal
+`integration:<platform>`. The integration refuses anything the policy does
+not allow, including a `would_deny` in audit mode. They are off by default,
+use no platform library (aiohttp only), and keep the token in the vault
+(`plugin.<platform>.token`). See [../integrations.md](../integrations.md).

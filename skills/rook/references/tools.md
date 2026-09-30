@@ -57,10 +57,14 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | Cap | Args | Risk | Does |
 |---|---|---|---|
 | `caps.describe` | prefix='' | read | Arg schema, docstring and declared risk/limit/fields for every hub cap. |
+| `discord.send` | text, chat? | write | Post a message to the configured Discord channel. |
+| `discord.status` | — | read | Discord integration status: connected, channel and token configured (never the token), bridged rooms, counter… |
 | `hub.info` | — | read | What the hub runs: version, core API, roles, facts and plugins. |
 | `hub.plugins` | limit=50, fields? | read | Full manifests of the hub's loaded plugins (placement, settings schema, guidance slots, source). |
 | `knowledge.read` | action='search', band?, id?, query='', data? | read | Read the shared wiki: search\|get\|list\|context\|status\|bands\|deck. |
 | `knowledge.write` | action, band?, id?, data?, request_id? | write | Write the shared wiki: create\|update\|link\|retract (needs request_id). |
+| `notify.channels` | — | read | Which notification channels are running on this hub. |
+| `notify.send` | text, channel='all' | write | Send a notification to the chat integrations. |
 | `policy.explain` | principal, cap, worker?, role? | read | Would this principal be allowed to call `cap` on `worker`? |
 | `policy.get` | — | read | The current policy document with its revision, source, mode, lint and last load error (if the file on disk is… |
 | `policy.set` | policy, note='' | admin | Replace the policy document (band owners and operator tokens only). |
@@ -76,12 +80,20 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `settings.worker_secret` | worker_id, names | read | Vault secrets a stored setting assigns to this worker (fetch at use). |
 | `task.read` | action='deck', kind='task', band?, id?, query='', data? | read | Read tasks/projects/concepts: deck\|search\|list\|get\|context\|status. |
 | `task.write` | action, kind='task', band?, id?, data?, request_id? | write | Write tasks/projects/concepts: create\|update\|link\|retract\|claim\|release. |
+| `telegram.send` | text, chat? | write | Post a message to the configured Telegram chat. |
+| `telegram.status` | — | read | Telegram integration status: connected, chat and token configured (never the token), bridged rooms, counters… |
+
+### discord
+When the Discord integration is on: `discord.send` (text) posts to the configured channel; `discord.status` shows whether it is connected. Prefer `notify.send` to reach every configured channel.
 
 ### hub
 `rook_call(cap="hub.info", worker="rook")` returns the hub's version, core API, roles, facts and plugins. `hub.plugins` lists full plugin manifests; pass `fields="*"` for every key.
 
 ### knowledge
 The shared wiki. Use the `rook_knowledge` tool: `search` before starting (5 excerpts; `data.limit`/`data.fields` for more), `get` a page by id or slug, `create` a page with a unique `request_id`. Over the band the same actions are `knowledge.read` (search/get/list/context/status/bands) and `knowledge.write` (create/update/link/retract) on worker `rook`; band callers reach only the read cap by default. Semantic search needs an embedding service (setting `embedder`).
+
+### notify
+`rook_call(worker="rook", cap="notify.send", args={"text": "..."})` posts a notification to every configured chat integration (Telegram, Discord); `channel="telegram"` picks one.
 
 ### policy
 `rook_call(cap="policy.explain", worker="rook", args={"principal": "role:agent", "cap": "shell.exec", "worker": "<name>"})` shows whether a call would be allowed and which rule decides it. `policy.get` returns the document; changing it (`policy.set`) is for band owners and operator tokens.
@@ -91,6 +103,9 @@ Hub, band, worker and user settings with their source (default / hub / band / wo
 
 ### tasks
 Tasks, projects and concepts. Use `rook_task(action="deck")` to see what is on; `claim` a task before working (your calls, consoles and handoffs then link to it); finish with `update` state done + `attrs.outcome` + an evidence `link`, or leave a handoff. Over the band: `task.read` (deck/search/list/get) and `task.write` (create/update/link/retract/claim/release) on worker `rook`, with `kind=task|project|concept`.
+
+### telegram
+When the Telegram integration is on: `telegram.send` (text) posts to the configured chat; `telegram.status` shows whether it is connected. Prefer `notify.send` to reach every configured channel.
 <!-- END GENERATED: hub-caps -->
 
 ## Worker capabilities

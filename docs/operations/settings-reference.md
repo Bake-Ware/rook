@@ -118,6 +118,22 @@ are set only in the environment or on the command line.
 | `decision.silence_seconds` | Silence window (s) | hub | int | `15` | `DECISION_SILENCE_SECONDS` | live |
 | `decision.raw_retention_days` | Keep raw inputs (days) | hub | int | `30` | `DECISION_RAW_RETENTION_DAYS` | live |
 
+## Discord (hub plugin, runs in mcp)
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `discord.enabled` | Discord integration | hub | bool | off | `ROOK_DISCORD`, `ROOK_DISCORD_ENABLED` | restart |
+| `discord.token` | Bot token (secret) | hub | str |  | `ROOK_DISCORD_TOKEN` | live |
+| `discord.chat_id` | Channel id | hub | str |  | `ROOK_DISCORD_CHAT`, `ROOK_DISCORD_CHAT_ID` | live |
+| `discord.rooms` | Bridged rooms | hub | list |  | `ROOK_DISCORD_ROOMS` | restart |
+| `discord.mentions` | Mention map | hub | dict |  | `ROOK_DISCORD_MENTIONS` | live |
+| `discord.commands` | Allowed commands | hub | list | `['help', 'workers', 'rooms']` | `ROOK_DISCORD_COMMANDS` | live |
+| `discord.allowed_caps` | Caps the call command may run | hub | list |  | `ROOK_DISCORD_ALLOWED_CAPS` | live |
+| `discord.command_users` | Command users | hub | list |  | `ROOK_DISCORD_COMMAND_USERS` | live |
+| `discord.rate_out` | Outbound messages per minute | hub | int | `20` | `ROOK_DISCORD_RATE_OUT` | restart |
+| `discord.rate_in` | Inbound messages per user per minute | hub | int | `10` | `ROOK_DISCORD_RATE_IN` | restart |
+| `discord.api_base` | API base URL | hub | url | `https://discord.com/api/v10` | `ROOK_DISCORD_API`, `ROOK_DISCORD_API_BASE` | restart |
+
 ## Dongle (worker plugin, runs in worker)
 
 | Key | Label | Scope | Type | Default | Env / flag | Apply |
@@ -177,6 +193,22 @@ are set only in the environment or on the command line.
 |---|---|---|---|---|---|---|
 | `task.enabled` | Tasks, projects and concepts | hub | bool | on | `ROOK_TASKS`, `ROOK_TASK_ENABLED` | restart |
 
+## Telegram (hub plugin, runs in mcp)
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `telegram.enabled` | Telegram integration | hub | bool | off | `ROOK_TELEGRAM`, `ROOK_TELEGRAM_ENABLED` | restart |
+| `telegram.token` | Bot token (secret) | hub | str |  | `ROOK_TELEGRAM_TOKEN` | live |
+| `telegram.chat_id` | Chat id | hub | str |  | `ROOK_TELEGRAM_CHAT`, `ROOK_TELEGRAM_CHAT_ID` | live |
+| `telegram.rooms` | Bridged rooms | hub | list |  | `ROOK_TELEGRAM_ROOMS` | restart |
+| `telegram.mentions` | Mention map | hub | dict |  | `ROOK_TELEGRAM_MENTIONS` | live |
+| `telegram.commands` | Allowed commands | hub | list | `['help', 'workers', 'rooms']` | `ROOK_TELEGRAM_COMMANDS` | live |
+| `telegram.allowed_caps` | Caps the call command may run | hub | list |  | `ROOK_TELEGRAM_ALLOWED_CAPS` | live |
+| `telegram.command_users` | Command users | hub | list |  | `ROOK_TELEGRAM_COMMAND_USERS` | live |
+| `telegram.rate_out` | Outbound messages per minute | hub | int | `20` | `ROOK_TELEGRAM_RATE_OUT` | restart |
+| `telegram.rate_in` | Inbound messages per user per minute | hub | int | `10` | `ROOK_TELEGRAM_RATE_IN` | restart |
+| `telegram.api_base` | API base URL | hub | url | `https://api.telegram.org` | `ROOK_TELEGRAM_API`, `ROOK_TELEGRAM_API_BASE` | restart |
+
 ## Voice (service, runs in service:voice)
 
 | Key | Label | Scope | Type | Default | Env / flag | Apply |
@@ -224,3 +256,4 @@ are set only in the environment or on the command line.
 | `watchdog.repeat_min` | Repeat an alert after (min) | hub | int | `60` | `ROOK_WATCHDOG_REPEAT_MIN` | live · bootstrap |
 | `watchdog.telegram_token` | Telegram bot token (secret) | hub | str |  | `ROOK_WATCHDOG_TELEGRAM_TOKEN` | live · bootstrap |
 | `watchdog.telegram_chat` | Telegram chat id | hub | str |  | `ROOK_WATCHDOG_TELEGRAM_CHAT` | live · bootstrap |
+| `watchdog.via_hub` | Alert through the hub's notify.send first | hub | bool | off | `ROOK_WATCHDOG_VIA_HUB` | live · bootstrap |
