@@ -4,6 +4,8 @@ __pycache__/
 data/
 # scripts/local-hub.sh state: band key, passwords, tokens
 rook-data/
+# scripts/test-hub.sh default data dir
+test-hub-data/
 *.egg-info/
 dist/
 build/
