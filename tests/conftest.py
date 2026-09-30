@@ -10,3 +10,10 @@ _TELESTHETE = os.path.join(os.path.dirname(_REPO), "telesthete")
 for p in (_REPO, _TELESTHETE):
     if p not in sys.path:
         sys.path.insert(0, p)
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "integration: needs a running test hub (scripts/test-hub.sh); opt-in "
+        "with ROOK_IT=1 or -m integration, skipped otherwise")
