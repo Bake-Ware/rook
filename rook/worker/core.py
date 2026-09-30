@@ -218,9 +218,13 @@ class Worker:
         await self.transport.send(json.dumps(msg).encode())
         return msg_id
 
-    def _caps_describe(self) -> dict:
-        """Arg schema + docstring for every capability on this worker (for the UI)."""
-        return self.registry.describe()
+    def _caps_describe(self, prefix: str = "") -> dict:
+        """Arg schema + docstring for every capability on this worker (for the UI).
+
+        ``prefix`` (e.g. ``"shell."``) limits it to matching caps. Workers
+        before this arg reject it, so the hub filters on its side instead of
+        sending it."""
+        return self.registry.describe(prefix)
 
     async def announce(self) -> None:
         from ._build_info import BUILD, VERSION

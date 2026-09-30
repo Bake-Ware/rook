@@ -70,7 +70,7 @@ async def test_announce_description_reaches_mcp_and_web(worker, tmp_path, monkey
     assert entry['description'] == message['description']
     assert entry['app_release'] == worker.app_release
     mcp, _ = build_server(client, public_url='https://mcp.example.com', persist_path=str(tmp_path/'tokens.json'))
-    result = await mcp.call_tool('rook_workers', {})
+    result = await mcp.call_tool('rook_workers', {'fields': 'description,app_release'})
     blocks = result[0] if isinstance(result, tuple) else result
     assert json.loads(blocks[0].text)[0]['description'] == message['description']
     assert json.loads(blocks[0].text)[0]['app_release'] == worker.app_release

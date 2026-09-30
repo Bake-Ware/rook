@@ -4,11 +4,11 @@ The tables are generated from the code by `tools/gen_skill_reference.py`; don't 
 
 ## Notes that matter
 
-- `rook_call` needs `worker` (name or id). Reply: `{id, from, ok, result|error, _journal_id, _tips|_hint}`.
-- `rook_workers` and `rook_caps` return the whole roster (caps × workers): **heavy**, avoid.
+- `rook_call` needs `worker` (name or id). Reply: compact `{ok, id, from, result|error}` (`id` = journal id, `from` = worker name) plus `_tips`/`_task`/`_unread_chat` only when new; `text=true` for plain text.
+- `rook_workers` defaults to name/description/build/hb/age per worker; filter with `name`, `cap_prefix`, `online`, and pick columns with `fields` (`"all"` = full rows). `rook_caps` maps each cap to `"*"` (every worker), `{all_but:[…]}` or names; narrow with `prefix` or `worker`. Unfiltered, both still grow with the fleet.
 - `rook_journal` listings omit reply bodies; `call_id=` returns the full stored reply.
 - `rook_console_read`: pass the previous `last_seq` back as `since_seq`; lower `limit`.
-- `rook_task`, `rook_project`, `rook_concept`, `rook_knowledge`: writes need a unique `request_id`. Knowledge search: `data={"limit":N}` (default 20); list: `data` keys `parent,state,limit,offset,attention,worker`.
+- `rook_task`, `rook_project`, `rook_concept`, `rook_knowledge`: writes need a unique `request_id`. Search returns 5 excerpt rows by default (`data={"limit":N, "fields":[…]}`, `fields:"all"` for whole records); list returns 20 (`data` keys `parent,state,limit,offset,attention,worker,fields`). `get` returns the full record.
 - `shell.exec` has **no output cap**; trim in the command. `file.read` defaults to 8 MiB; set `max_bytes`. `file.list` with `include_hidden=false` and a small `max_entries`.
 - Android workers (the app, not in these tables) add `ui.text` (on-screen text, the cheapest way to "see"), `sms.*`, `calllog.list`, `contacts.search`, `notify.*`, `location.get`, `battery.status`, `device.*`.
 - Custom caps appear as `cmd.<name>` on the worker that defined them.
@@ -18,35 +18,35 @@ The tables are generated from the code by `tools/gen_skill_reference.py`; don't 
 <!-- BEGIN GENERATED: mcp-tools -->
 | Tool | Args | Does |
 |---|---|---|
-| `rook_call` | cap, args?, worker_id?, worker?, timeout?, hint=false | Invoke a capability on the band and return the reply. |
-| `rook_caps` | — | List all dot-namespaced capabilities seen on the band. |
-| `rook_chat_delete` | room | Delete a room and all its messages. |
-| `rook_chat_read` | room, since_seq=0 | Read messages in a room newer than `since_seq` (0 = from the start) and mark them read. |
-| `rook_chat_rooms` | — | List your chat rooms, newest-active first, with unread counts. |
-| `rook_chat_send` | room, text, mention?, expects_reply=false | Post a message to a room. |
-| `rook_chat_start` | title, invite? | Start a chat room (a thread) and invite participants. |
-| `rook_chat_wake` | room, worker, note?, timeout=20.0 | Wake an agent to respond in a room now (a deliberate act, not a mention). |
-| `rook_concept` | action='search', band?, id?, query='', data?, request_id? | Concepts (why): search/list/get/create/update/link. create data {title, body, slug?}. |
-| `rook_config_apply` | worker, settings, confirm_within=120.0 | Push config to a worker and confirm it, commit-confirmed (design §1). |
-| `rook_config_get` | worker | Read a worker's active config overrides + pending/confirm state. |
-| `rook_console_close` | room, summary?, kill=false | Freeze a console room, with a closing summary. |
-| `rook_console_list` | worker?, state?, limit=50 | List console rooms, newest-active first, across the whole band. |
-| `rook_console_open` | worker, task, cmd?, argv?, cwd?, env?, pty=false | Start a long-running command on a worker as a **console room** — a named, band-visible, permanently searchabl… |
-| `rook_console_read` | room, since_seq=0, tail=false, limit=300 | Read a console room's output from `since_seq` onward. |
-| `rook_console_search` | query, worker?, limit=20 | Full-text search every console session ever run on the band. |
-| `rook_console_signal` | room, sig='TERM' | Signal a live session's process group: TERM (polite), KILL (hard), INT (ctrl-C), HUP. |
-| `rook_console_write` | room, text, newline=true | Type into a live console room — this is the session's stdin. |
-| `rook_handoff_get` | thread_id | Fetch a session's current handoff to continue it. |
-| `rook_handoff_list` | limit=20, active_only=true | List recent session threads (latest handoff per thread) with their goals and freshness. |
-| `rook_handoff_save` | goal, thread_id?, state='', decisions?, next_steps?, artifacts?, supersedes?, transcript_ref? | Save a handoff so any agent can pick this session up later. |
-| `rook_journal` | call_id?, worker?, cap_prefix?, since_secs?, only_failures=false, limit=30 | Query the call journal — the persistent record of every `rook_call` fired through this MCP, so output from a… |
-| `rook_knowledge` | action='search', band?, id?, query='', data?, request_id? | Shared memory as a wiki: search/get/list/context/status/create/update/link/retract/bands. |
-| `rook_presence` | — | Who's reachable: identities seen recently over the MCP (`online` if within ~90s) plus, for reference, the liv… |
-| `rook_project` | action='list', band?, id?, query='', data?, request_id? | Projects (what outcome) beneath concepts: list/search/get/create/update/link. create data {title, body, paren… |
-| `rook_secret` | action='list', name='', value='', description='' | Credentials for your work, from the hub's vault. |
-| `rook_task` | action='deck', band?, id?, query='', data?, request_id? | Tasks: the durable record of work done, in progress and to do, with who did what. deck: what's on deck across… |
-| `rook_whoami` | — | Show the identity this MCP attributes your calls to. |
-| `rook_workers` | — | List all workers currently visible on the band. |
+| `rook_call` | cap, args?, worker_id?, worker?, timeout?, hint?, text? | Run a cap on one worker. worker= (name or id) is required. |
+| `rook_caps` | prefix?, worker? | Caps and their holders: "*" = every worker, {all_but:[…]}, or names. prefix filters (e.g. "shell."); worker=… |
+| `rook_chat_delete` | room | Delete a room and its messages (participants only; final). |
+| `rook_chat_read` | room, since_seq? | Messages after since_seq (0 = all), marked read. |
+| `rook_chat_rooms` | — | Your chat rooms, newest first, with unread counts. |
+| `rook_chat_send` | room, text, mention?, expects_reply? | Post to a room. mention (list/comma): in rooms of 3+ only mentioned participants are expected to reply; a men… |
+| `rook_chat_start` | title, invite? | Start a chat room; invite = identities (list or comma string). |
+| `rook_chat_wake` | room, worker, note?, timeout=20.0 | Make an agent on worker answer in room now (via hermes.chat or agent.wake); note is passed along. |
+| `rook_concept` | action='search', band?, id?, query?, data?, request_id? | Concepts (why) above projects: search/list/get/create/update/link. create data {title, body, slug?}. |
+| `rook_config_apply` | worker, settings, confirm_within=120.0 | Commit-confirmed config push: settings {name, announce_interval, log_level, hub, psk, env:{…}}. |
+| `rook_config_get` | worker | A worker's config overrides and pending/confirm state. |
+| `rook_console_close` | room, summary?, kill? | Freeze a console room. |
+| `rook_console_list` | worker?, state?, limit=50 | Console rooms, newest first; filter by worker or state (live\|closing\|frozen). |
+| `rook_console_open` | worker, task, cmd?, argv?, cwd?, env?, pty? | Run a slow, interactive or worth-keeping command as a console room, searchable after it exits. |
+| `rook_console_read` | room, since_seq?, tail?, limit=300 | Console output after since_seq (page with last_seq), or tail=true for the last limit lines. state says live o… |
+| `rook_console_search` | query, worker?, limit=20 | Full-text search of all console sessions; titles and summaries rank highest (search for the task, not the com… |
+| `rook_console_signal` | room, sig='TERM' | Signal a live console's process group: TERM, KILL, INT (ctrl-C) or HUP. |
+| `rook_console_write` | room, text, newline=true | Type into a live console's stdin, verbatim (no shell, no escaping). |
+| `rook_handoff_get` | thread_id | A thread's current handoff plus history. |
+| `rook_handoff_list` | limit=20, active_only=true | Recent handoff threads (latest per thread) with goal and freshness. |
+| `rook_handoff_save` | goal, thread_id?, state?, decisions?, next_steps?, artifacts?, supersedes?, transcript_ref? | Save a handoff (state, not a transcript) so another agent can continue without asking: goal, state, decisions… |
+| `rook_journal` | call_id?, worker?, cap_prefix?, since_secs?, only_failures?, limit=30 | Recorded rook_call replies. call_id=<reply id> returns that call's full output (recover lost or timed-out out… |
+| `rook_knowledge` | action='search', band?, id?, query?, data?, request_id? | Shared wiki: search\|get\|list\|context\|status\|create\|update\|link\|retract\|bands. search: 5 excerpts (data {limit… |
+| `rook_presence` | — | Agents seen over the MCP recently (online within ~90s) and live band workers. |
+| `rook_project` | action='list', band?, id?, query?, data?, request_id? | Projects (outcomes) under concepts: list/search/get/create/update/link. create data {title, body, parent: con… |
+| `rook_secret` | action='list', name?, value?, description? | Vault: list (names only) \| get name (logged) \| set name value description \| delete name \| log name?. |
+| `rook_task` | action='deck', band?, id?, query?, data?, request_id? | Tasks. deck (id=project narrows): in progress with claimants and latest handoff, blocked, paused, todo, recen… |
+| `rook_whoami` | — | Your identity as this hub records it (agent_id, key_id, kind, identity). |
+| `rook_workers` | name?, cap_prefix?, online?, fields? | Workers on the band. |
 <!-- END GENERATED: mcp-tools -->
 
 ## Worker capabilities
@@ -58,7 +58,7 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 
 | Cap | Args | Does |
 |---|---|---|
-| `caps.describe` | — | Arg schema + docstring for every capability on this worker (for the UI). |
+| `caps.describe` | prefix='' | Arg schema + docstring for every capability on this worker (for the UI). |
 | `customcap.add` | name, command, args?, description='', timeout=30.0 | Define (or replace) a custom cap `cmd.<name>` that runs `command`. |
 | `customcap.list` | — | List defined custom command-caps (name, command template, args). |
 | `customcap.remove` | name | Delete a custom cap and unregister it. |

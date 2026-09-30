@@ -21,10 +21,10 @@ Read the reference that matches the job; don't load them all:
 
 ## The five rules that save the most tokens
 
-1. **Never call `rook_workers` or `rook_caps` to "look around".** Both grow with the fleet (caps × workers): tens of KB on a mid-sized band, and they take no filter. If you know roughly where something runs, just call it: a refused `rook_call` lists the workers that *do* have the cap, the cheapest discovery there is. For one host's details use `rook_call("info.host", worker=X)`.
-2. **Bound every output at the source.** `shell.exec` has **no output cap** and `file.read` defaults to **8 MiB**. Pipe through `head`/`tail`/`cut -c1-200`/`grep -c`/`wc -l`, pass `max_bytes` to `file.read`, and `data.limit` to knowledge/task searches. Shape JSON on the worker (`jq`, `python -c`) and return only the fields you need.
+1. **Filter the roster instead of dumping it.** `rook_workers(name=, cap_prefix=, online=, fields=)` and `rook_caps(prefix=, worker=)` return compact views, but unfiltered they still grow with the fleet. If you know roughly where something runs, just call it: a refused `rook_call` lists the workers that *do* have the cap, the cheapest discovery there is. For one host's details use `rook_call("info.host", worker=X)`.
+2. **Bound every output at the source.** `shell.exec` has **no output cap** and `file.read` defaults to **8 MiB**. Pipe through `head`/`tail`/`cut -c1-200`/`grep -c`/`wc -l`, pass `max_bytes` to `file.read`, and `data.limit` to knowledge/task searches. Shape JSON on the worker (`jq`, `python -c`) and return only the fields you need. `rook_call(..., text=true)` returns `shell.exec` stdout as plain text (stderr and exit code only when set).
 3. **One call, many commands.** Batch independent checks into one `shell.exec` with `;` and `echo "== label"` separators. Issue independent `rook_call`s to *different* workers in parallel.
-4. **Don't re-run to re-read.** Every reply carries `_journal_id`; `rook_journal(call_id=…)` returns the stored output. Long jobs go in a console room; re-attach with `rook_console_read(room, tail=true, limit=40)`.
+4. **Don't re-run to re-read.** A reply's `id` is its journal id; `rook_journal(call_id=id)` returns the stored output. Long jobs go in a console room; re-attach with `rook_console_read(room, tail=true, limit=40)`.
 5. **Search before you rediscover.** `rook_console_search("<task words>")` finds how something was done before; `rook_knowledge(query=…, data={"limit":3})` finds facts.
 
 ## Calling capabilities well
@@ -36,7 +36,7 @@ Read the reference that matches the job; don't load them all:
 - **Write files with `file.write`** (`create_parents`, `encoding: "base64"` for binary), not heredocs through `cmd`.
 - **Read slices:** `grep -n pattern f | head`, then `sed -n 'A,Bp' f`.
 - **Secrets never enter your context.** Put `{{secret:name}}` in `rook_call` args; the hub substitutes and masks it. `rook_secret(action="list")` shows names only.
-- **Usage tips** arrive once per session in `_tips`; later replies carry a one-line `_hint`. Pass `hint=true` only if you need the tip again.
+- **Notices** ride `rook_call` replies only when new for your session: `_tips` (a cap's usage tip, once), `_task` (the claimed task the call was recorded on) and `_unread_chat` (when it changes). Pass `hint=true` only if you need a tip again.
 - **Screens:** on Android prefer `ui.text` over `screenshot.capture`; on desktops try `screenshot.capture_preview` or `capture_region` first.
 - **Windows workers** run `cmd.exe` (no `grep`/`sed`/`head`; use `powershell -NoProfile -Command "…"`) and have no PTY; use a WSL worker for interactive work.
 - **Repeated multi-step work** becomes a custom cap (`customcap.add` → `cmd.<name>`); see `references/usage.md`.

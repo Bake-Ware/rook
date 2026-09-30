@@ -20,6 +20,35 @@ log = logging.getLogger(__name__)
 
 WRITES = ('create', 'update', 'link', 'retract', 'claim', 'release', 'review')
 
+# MCP replies (not the operator's web page) get lean defaults: agents pay for
+# every character. ``data.limit`` and ``data.fields`` override them.
+MCP_SEARCH_LIMIT = 5
+MCP_LIST_LIMIT = 20
+MCP_SEARCH_FIELDS = ('id', 'slug', 'kind', 'title', 'state', 'score', 'excerpt')
+MCP_LIST_FIELDS = ('id', 'slug', 'kind', 'title', 'state', 'parent', 'excerpt')
+EXCERPT = 240
+
+
+def _fields(value):
+    if value is None or value == '':
+        return None
+    if isinstance(value, str):
+        return [f.strip() for f in value.split(',') if f.strip()]
+    return [str(f) for f in value]
+
+
+def project(rows, fields, default):
+    """Keep ``fields`` (or ``default``) of each row; ``excerpt`` is derived
+    from ``body`` when a row has none; ``fields=['all']`` keeps every field."""
+    wanted = _fields(fields) or list(default)
+    out = []
+    for r in rows:
+        r = dict(r)
+        if 'excerpt' not in r and 'body' in r:
+            r['excerpt'] = r['body'][:EXCERPT]
+        out.append(r if 'all' in wanted else {k: r[k] for k in wanted if k in r})
+    return out
+
 
 class KnowledgeService:
     def __init__(self, path, principal, enrollment=None, handoffs=None):
@@ -86,8 +115,11 @@ class KnowledgeService:
                                   'note': 'inline handoff'})
 
     async def dispatch(self, action, band=None, kind=None, rid=None, query='', data=None,
-                       request_id=None, actor=None):
+                       request_id=None, actor=None, lean=False):
+        """``lean`` (MCP callers): search/list default to fewer rows, excerpts
+        and a small field set, overridable with data.limit / data.fields."""
         data = dict(data or {})
+        fields = data.pop('fields', None) if action in ('search', 'list') else None
         if action == 'bands':
             return self.bands()
         if action == 'deck':
@@ -103,12 +135,23 @@ class KnowledgeService:
         else:
             b = self._band_for(band, rid) if rid else self.band(band)
         if action == 'list':
-            return {'records': [self.store.brief(r) for r in self.store.list(
-                b, kind=kind, **{k: v for k, v in data.items() if k in ('worker', 'parent', 'state', 'limit', 'offset', 'attention')})]}
+            if lean:
+                data.setdefault('limit', MCP_LIST_LIMIT)
+            records = [self.store.brief(r) for r in self.store.list(
+                b, kind=kind, **{k: v for k, v in data.items() if k in ('worker', 'parent', 'state', 'limit', 'offset', 'attention')})]
+            if lean or fields:
+                records = project(records, fields, MCP_LIST_FIELDS if lean else ('all',))
+            return {'records': records}
         if action == 'get':
             return self.store.get(b, rid)
         if action == 'search':
-            return await self.search.query(b, query, kind, data.get('worker'), int(data.get('limit', 20)))
+            found = await self.search.query(b, query, kind, data.get('worker'),
+                                            int(data.get('limit', MCP_SEARCH_LIMIT if lean else 20)))
+            if lean or fields:
+                found['results'] = project(found['results'], fields, MCP_SEARCH_FIELDS if lean else ('all',))
+            if lean:
+                found = {k: v for k, v in found.items() if v is not None and v is not False}
+            return found
         if action == 'context':
             return self.store.context(b, data.get('worker'))
         if action == 'status':
@@ -141,65 +184,59 @@ class KnowledgeService:
     def register(self, mcp):
         async def invoke(action, band, kind, rid, query, data, request_id):
             try:
-                return json.dumps({'ok': True, 'result': await self.dispatch(action, band, kind, rid, query, data, request_id)})
+                result = await self.dispatch(action, band, kind, rid, query, data, request_id, lean=True)
+                return json.dumps({'ok': True, 'result': result}, separators=(',', ':'), ensure_ascii=False)
             except (ValueError, KeyError, TypeError, PermissionError) as error:
-                return json.dumps({'ok': False, 'error': str(error), 'code': type(error).__name__})
+                return json.dumps({'ok': False, 'error': str(error), 'code': type(error).__name__},
+                                  separators=(',', ':'), ensure_ascii=False)
 
-        links_help = ('link: data {kind, ref, relation?, note?} — kind ' + '|'.join(LINK_KINDS)
-                      + '; relation ' + '|'.join(RELATIONS) + ' (default evidence). retract: id=<link id>.')
+        # Full relation list is in the error a bad value gets; list the common ones.
+        links_help = ('link data {kind, ref, relation?, note?}: kind '
+                      + '|'.join(k for k in LINK_KINDS if k != 'human')
+                      + '; relation evidence (default)|produced|blocked_by|supersedes|touched|… '
+                      + 'retract id=<link id>.')
+        assert {'evidence', 'produced', 'blocked_by', 'supersedes', 'touched'} <= set(RELATIONS)
 
         @mcp.tool()
         async def rook_knowledge(action: str = 'search', band: str | None = None, id: str | None = None,
                                  query: str = '', data: dict | None = None, request_id: str | None = None) -> str:
-            """Shared memory as a wiki: search/get/list/context/status/create/update/link/retract/bands.
-            Pages have a slug; reference others in the body with [[slug]] (get shows
-            backlinks). get/update/link accept an id or slug. create data {title, body,
-            slug?, parent?, attrs:{knowledge_kind, tags, supersedes}}. Pages form a folder
-            tree: parent is another knowledge page (list shows each page's parent); file
-            new pages under the right section, and move one with update patch {parent}
-            (null = top level). To correct a fact,
-            create a new page with attrs.supersedes=[old]. To mark a fact verified, first
-            link evidence with a traceable id (not just a URL), then update
-            attrs.verification='verified'. People also verify or dispute pages on the site
-            (attrs.reviewed_by); a disputed page's attrs.dispute_reason says what to fix,
-            and editing a person-verified page sends it back to unverified for them to
-            re-check. Writes need a unique request_id. Your identity
-            is taken from your connection, never from arguments. See rook_task for link kinds.
+            """Shared wiki: search|get|list|context|status|create|update|link|retract|bands.
+            search: 5 excerpts (data {limit, fields}); get id-or-slug: full page + backlinks.
+            Search before creating. create data {title, body, slug?, parent?, attrs:{knowledge_kind,
+            tags, supersedes}}; parent = folder page (move: update patch {parent}). Link pages with
+            [[slug]]. Correct a fact with a new page, attrs.supersedes=[old]. Set
+            attrs.verification=verified only after linking traceable evidence; attrs.dispute_reason
+            says what to fix. Writes need a unique request_id. Link kinds: see rook_task.
             """
             return await invoke(action, band, 'knowledge' if action == 'create' else None, id, query, data, request_id)
 
         @mcp.tool()
         async def rook_concept(action: str = 'search', band: str | None = None, id: str | None = None,
                                query: str = '', data: dict | None = None, request_id: str | None = None) -> str:
-            """Concepts (why): search/list/get/create/update/link. create data {title, body, slug?}.
-            Projects belong to concepts. Writes need request_id.
-            """
+            """Concepts (why) above projects: search/list/get/create/update/link.
+            create data {title, body, slug?}. Writes need request_id."""
             return await invoke(action, band, 'concept', id, query, data, request_id)
 
         @mcp.tool()
         async def rook_project(action: str = 'list', band: str | None = None, id: str | None = None,
                                query: str = '', data: dict | None = None, request_id: str | None = None) -> str:
-            """Projects (what outcome) beneath concepts: list/search/get/create/update/link.
-            create data {title, body, parent: concept id or slug, slug?}. States:
-            active|paused|done|archived. For what's on deck use rook_task(action="deck").
-            """
+            """Projects (outcomes) under concepts: list/search/get/create/update/link.
+            create data {title, body, parent: concept, slug?}. States active|paused|done|archived.
+            What's on deck: rook_task(action="deck")."""
             return await invoke(action, band, 'project', id, query, data, request_id)
 
         async def rook_task(action: str = 'deck', band: str | None = None, id: str | None = None,
                             query: str = '', data: dict | None = None, request_id: str | None = None) -> str:
             return await invoke(action, band, 'task', id, query, data, request_id)
-        rook_task.__doc__ = """Tasks: the durable record of work done, in progress and to do, with who did what.
-deck: what's on deck across all bands (id=project to narrow): in progress with claimants,
-last activity and latest handoff; blocked; paused; todo; recently done.
-claim id=task (data {provider_session?}): you're on it; your calls, consoles and handoffs
-are then linked to it automatically. release: stop working on it (needs a handoff).
+        rook_task.__doc__ = """Tasks. deck (id=project narrows): in progress with claimants and latest
+handoff, blocked, paused, todo, recently done. claim id before you work: your calls, consoles
+and handoffs then link to it (claims never block others).
 create data {title, body, parent: project or task, attrs:{criteria, workers, dependencies}}.
-update data {revision, patch:{state?, attrs?, title?, body?}}; states
-todo|in_progress|blocked|paused|done|cancelled|archived. done needs attrs.outcome and an
-evidence link; blocked needs attrs.blocked_reason or a blocked_by link; stopping
-in-progress work needs a handoff: pass data.handoff {goal, state, next_steps}.
+update data {revision, patch:{state?, attrs?, title?, body?}}; states todo|in_progress|blocked|
+paused|done|cancelled|archived. done needs a factual attrs.outcome + evidence link; blocked needs
+attrs.blocked_reason or a blocked_by link; release/stopping needs data.handoff {goal, state, next_steps}.
 """ + links_help + """
-Claims never stop others working. Writes need request_id; id accepts a task id or slug."""
+search/list: 5/20 excerpts (data {limit, fields}). Writes need request_id."""
         mcp.tool()(rook_task)
 
     async def maintain(self):

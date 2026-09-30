@@ -452,7 +452,7 @@ async def test_mcp_claimed_work_builds_its_own_audit_trail(tmp_path, monkeypatch
         await env.tool('rook_handoff_save', goal='Do it', state='half', next_steps=['rest'])
         got = (await env.tool('rook_task', action='get', id=t['id']))['result']
         assert [(l['kind'], l['auto']) for l in got['links']] == [('journal', 1), ('handoff', 1)]
-        assert got['links'][0]['ref'] == reply['_journal_id']
+        assert got['links'][0]['ref'] == reply['id']  # id is the journal id
         deck = (await env.tool('rook_task'))['result']['deck']
         assert deck[0]['in_progress'][0]['claimants'][0]['actor'] == me
         assert env.band.calls == ['shell.exec']  # knowledge never touched the band path
