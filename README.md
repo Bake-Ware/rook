@@ -254,7 +254,8 @@ rook/
   worker/        the worker: core, transports, plugins, OTA self-update
   remote/        dashboard server: installers, enrollment, accounts, OTA build + push
   band_mcp/      MCP server: band tools, consoles, chat, vault, journal, watchdog
-  knowledge/     concepts, projects, tasks and wiki pages
+  core/          plugin contract and host shared by hub and workers
+  hub/           the hub node (worker `rook`) and hub plugins: knowledge wiki, tasks/projects/concepts
   web/           dashboard front end
   cli/           `rook band` terminal UI and Claude Code history tools
 android/         native Android worker app (Kotlin + bundled Python worker)

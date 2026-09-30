@@ -13,6 +13,13 @@ A generated tool is a thin alias: it calls the bridge's own ``rook_call`` on
 worker ``rook``, so attribution, the journal, secret substitution, guidance
 tips and the reply envelope are exactly those of ``rook_call``. Existing tool
 names always win; a cap whose tool name is taken is skipped with a warning.
+
+A hub plugin may instead hand over ready-made tools with a ``mcp_tools(invoke)``
+method (:func:`register_plugin_tools`). That is for tools whose shape predates
+caps and must not change, such as the action-style ``rook_knowledge`` and
+``rook_task``: each tool routes to the plugin's caps through ``invoke(cap,
+args)``, which runs the cap in process with the caller's identity and returns
+its result (or raises), and formats its own reply.
 """
 
 from __future__ import annotations
@@ -102,4 +109,41 @@ def register_cap_tools(mcp: Any, node: Any, call: CallFn) -> list[str]:
             log.exception("hub cap %s: generating MCP tool failed", cap)
             continue
         added.append(name)
+    return added
+
+
+def register_plugin_tools(mcp: Any, node: Any,
+                          identity: Callable[[], "str | None"] = lambda: None) -> list[str]:
+    """Add the tools hub plugins return from ``mcp_tools(invoke)``. Each tool
+    is an async function whose ``__name__`` is the tool name and whose
+    docstring is its description. Existing tool names win."""
+    async def invoke(cap: str, args: dict) -> Any:
+        return await node.invoke(cap, args, identity())
+
+    added: list[str] = []
+    for plugin in node.host.plugins:
+        hook = getattr(plugin, "mcp_tools", None)
+        if not callable(hook):
+            continue
+        try:
+            tools = list(hook(invoke) or [])
+        except Exception:
+            log.exception("hub plugin %s: mcp_tools() failed", plugin.NAMESPACE)
+            continue
+        for fn in tools:
+            name = getattr(fn, "__name__", "")
+            try:
+                exists = mcp._tool_manager.get_tool(name) is not None
+            except Exception:
+                exists = False
+            if not name or exists:
+                log.warning("hub plugin %s: MCP tool %r already exists; not added",
+                            plugin.NAMESPACE, name)
+                continue
+            try:
+                mcp.tool()(fn)
+            except Exception:
+                log.exception("hub plugin %s: adding MCP tool %s failed", plugin.NAMESPACE, name)
+                continue
+            added.append(name)
     return added

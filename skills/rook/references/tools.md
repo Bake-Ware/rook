@@ -59,9 +59,19 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `caps.describe` | prefix='' | read | Arg schema, docstring and declared risk/limit/fields for every hub cap. |
 | `hub.info` | — | read | What the hub runs: version, core API, roles, facts and plugins. |
 | `hub.plugins` | limit=50, fields? | read | Full manifests of the hub's loaded plugins (placement, settings schema, guidance slots, source). |
+| `knowledge.read` | action='search', band?, id?, query='', data? | read | Read the shared wiki: search\|get\|list\|context\|status\|bands\|deck. |
+| `knowledge.write` | action, band?, id?, data?, request_id? | write | Write the shared wiki: create\|update\|link\|retract (needs request_id). |
+| `task.read` | action='deck', kind='task', band?, id?, query='', data? | read | Read tasks/projects/concepts: deck\|search\|list\|get\|context\|status. |
+| `task.write` | action, kind='task', band?, id?, data?, request_id? | write | Write tasks/projects/concepts: create\|update\|link\|retract\|claim\|release. |
 
 ### hub
 `rook_call(cap="hub.info", worker="rook")` returns the hub's version, core API, roles, facts and plugins. `hub.plugins` lists full plugin manifests; pass `fields="*"` for every key.
+
+### knowledge
+The shared wiki. Use the `rook_knowledge` tool: `search` before starting (5 excerpts; `data.limit`/`data.fields` for more), `get` a page by id or slug, `create` a page with a unique `request_id`. Over the band the same actions are `knowledge.read` (search/get/list/context/status/bands) and `knowledge.write` (create/update/link/retract) on worker `rook`; band callers reach only the read cap by default. Semantic search needs an embedding service (setting `embedder`).
+
+### tasks
+Tasks, projects and concepts. Use `rook_task(action="deck")` to see what is on; `claim` a task before working (your calls, consoles and handoffs then link to it); finish with `update` state done + `attrs.outcome` + an evidence `link`, or leave a handoff. Over the band: `task.read` (deck/search/list/get) and `task.write` (create/update/link/retract/claim/release) on worker `rook`, with `kind=task|project|concept`.
 <!-- END GENERATED: hub-caps -->
 
 ## Worker capabilities

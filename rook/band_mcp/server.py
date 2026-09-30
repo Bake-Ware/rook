@@ -245,15 +245,18 @@ def build_server(client: "BandClient | MultiBandClient",
     from ..hub.node import HUB_WORKER_NAME, attach_hub_node
     mcp._rook_hub = attach_hub_node(client, _store_dir, vault=vault, journal=journal)
 
-    # Shared knowledge records (opt-in: ROOK_KNOWLEDGE=1). Additive tools only;
-    # nothing here touches the band call path, and a failure to open the store
-    # disables the tools rather than the server.
+    # Shared knowledge and work records: the hub plugins "knowledge" and
+    # "task" (rook/hub/plugins; opt-in with their "enabled" setting, env
+    # ROOK_KNOWLEDGE=1). The bridge wires in what only it has (the attributed
+    # caller, the handoff store, the band enrollment), then adds the plugins'
+    # MCP tools (rook_knowledge, rook_concept, rook_project, rook_task). A
+    # store that can't open leaves the plugins unloaded: no tools, and
+    # nothing here touches the band call path.
     mcp._rook_knowledge = None
     mcp._rook_hygiene = None
-    if os.environ.get("ROOK_KNOWLEDGE", "0") == "1":
+    _kplugin = mcp._rook_hub.plugin("knowledge") if mcp._rook_hub is not None else None
+    if _kplugin is not None:
         try:
-            from ..knowledge.service import KnowledgeService
-
             def _principal():
                 att = _attr.current.get()
                 return att.audit() if att is not None else None
@@ -265,16 +268,24 @@ def build_server(client: "BandClient | MultiBandClient",
                 if not res.get("ok"):
                     raise ValueError(res.get("error") or "handoff save failed")
                 return res["thread_id"]
-            knowledge = KnowledgeService(
-                os.environ.get("ROOK_KNOWLEDGE_DB", os.path.join(_store_dir, "knowledge.db")),
-                _principal, enrollment, handoffs=_save_handoff)
-            knowledge.register(mcp)
+            _kplugin.principal = _principal
+            knowledge = _kplugin.service
+            knowledge.handoffs = _save_handoff
+            knowledge.enrollment = enrollment
             mcp._rook_knowledge = knowledge
             from .hygiene import Hygiene
             mcp._rook_hygiene = Hygiene(knowledge, client, chat,
                                         lambda: guidance.get("hygiene"), journal)
         except Exception:
-            log.exception("knowledge store unavailable; knowledge tools disabled")
+            log.exception("wiring the knowledge plugin failed; knowledge tools disabled")
+            mcp._rook_knowledge = None
+    if mcp._rook_hub is not None:
+        from ..hub.mcp_tools import register_plugin_tools
+        def _tool_identity():
+            att = _attr.current.get()
+            return att.identity if att is not None else None
+        register_plugin_tools(mcp, mcp._rook_hub, _tool_identity)
+        guidance.add_defaults(mcp._rook_hub.guidance_defaults())
 
     @mcp.tool()
     async def rook_whoami() -> str:
@@ -1277,12 +1288,12 @@ async def _amain(args) -> None:
                               lambda v: mcp._rook_journal.redact(_vault_mod.encoded_forms(v or "")),
                               AccountStore(enrollment)):
         app.router.routes.insert(0, route)
-    knowledge_task = None
     if mcp._rook_knowledge is not None:
-        from ..knowledge.web import routes as knowledge_routes
+        # Operator Knowledge page API (proxied by the dashboard). Background
+        # embedding indexing runs in the knowledge plugin's start().
+        from ..hub.plugins.knowledge.web import routes as knowledge_routes
         for route in reversed(knowledge_routes(mcp._rook_knowledge, AccountStore(enrollment))):
             app.router.routes.insert(0, route)
-        knowledge_task = asyncio.create_task(mcp._rook_knowledge.maintain())
     hygiene_task = (asyncio.create_task(mcp._rook_hygiene.run())
                     if mcp._rook_hygiene is not None else None)
 
@@ -1334,7 +1345,7 @@ async def _amain(args) -> None:
     try:
         await server.serve()
     finally:
-        for bg in (knowledge_task, hygiene_task):
+        for bg in (hygiene_task,):
             if bg is not None:
                 bg.cancel()
                 await asyncio.gather(bg, return_exceptions=True)
