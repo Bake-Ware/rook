@@ -10,6 +10,10 @@ Sources:
 - MCP tools: every tool the hub MCP registers (rook/band_mcp/server.py, plus the
   knowledge/task tools from rook/knowledge), read from a throwaway server built
   in a temp dir. Operator tips (guidance) are not included.
+- Hub caps: every cap the hub node serves as worker `rook` (hub-placed plugins
+  from rook/hub/plugins plus core caps), with its risk tier, and each hub
+  plugin's SKILL fragment. The MCP tools above include the ones generated from
+  hub caps declared tool=True.
 - Worker caps: every @capability on every Plugin class under
   rook/worker/plugins (whether or not it would load on this host), plus the
   worker core caps (caps.describe, worker.description_*, worker.plugin.*,
@@ -68,7 +72,12 @@ def _fmt_param(name: str, required: bool, default, has_default: bool) -> str:
 # -- MCP tools -----------------------------------------------------------------
 
 class _NoBand:
-    workers: dict = {}
+    def __init__(self) -> None:
+        self.workers: dict = {}
+
+    def attach_local(self, node) -> None:
+        # Lets the hub node attach, so tools generated from hub caps are listed.
+        self.workers[node.worker_id] = node.entry()
 
     async def call(self, *a, **k):  # pragma: no cover — never invoked
         raise RuntimeError("generator does not call the band")
@@ -104,6 +113,37 @@ def mcp_tools() -> list[tuple[str, str, str]]:
             params.append(_fmt_param(name, name in req, prop.get("default"), "default" in prop))
         rows.append((t.name, ", ".join(params), _first_sentence(t.description or "")))
     return rows
+
+
+# -- hub caps ------------------------------------------------------------------
+
+def _hub_node():
+    import logging
+    logging.disable(logging.WARNING)
+    try:
+        from rook.hub.node import HubNode
+        return HubNode(None, entry_points=False)
+    finally:
+        logging.disable(logging.NOTSET)
+
+
+def hub_caps() -> tuple[list[tuple[str, str, str, str]], list[str]]:
+    """((cap, args, risk, description) rows, SKILL fragments) for the hub node."""
+    node = _hub_node()
+    rows = []
+    for cap, d in sorted(node.host.registry.describe().items()):
+        params = ", ".join(_fmt_param(p["name"], p["required"], p["default"], True)
+                           for p in d["params"])
+        extra = []
+        if d.get("limit"):
+            extra.append(f"limit={d['limit']}")
+        if d.get("fields") is not None:
+            extra.append("fields?")
+        params = ", ".join(x for x in (params, *extra) if x)
+        rows.append((cap, params, d.get("risk", "exec"), _first_sentence(d["doc"])))
+    skills = [p.SKILL.strip() for p in sorted(node.host.plugins, key=lambda p: p.NAMESPACE)
+              if p.SKILL]
+    return rows, skills
 
 
 # -- worker caps -----------------------------------------------------------------
@@ -168,6 +208,16 @@ def render_mcp() -> str:
     return "\n".join(lines)
 
 
+def render_hub() -> str:
+    rows, skills = hub_caps()
+    out = ["| Cap | Args | Risk | Does |", "|---|---|---|---|"]
+    for cap, args, risk, desc in rows:
+        out.append(f"| `{cap}` | {args or '—'} | {risk} | {desc} |")
+    for frag in skills:
+        out.extend(["", frag])
+    return "\n".join(out)
+
+
 def render_caps() -> str:
     by_src: dict[str, list] = {}
     for cap, args, desc, src in worker_caps():
@@ -183,7 +233,7 @@ def render_caps() -> str:
     return "\n".join(out).rstrip()
 
 
-SECTIONS = {"mcp-tools": render_mcp, "worker-caps": render_caps}
+SECTIONS = {"mcp-tools": render_mcp, "hub-caps": render_hub, "worker-caps": render_caps}
 
 
 def render(text: str) -> str:

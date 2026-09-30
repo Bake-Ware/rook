@@ -49,6 +49,9 @@ def main() -> int:
     rook_dst.mkdir(parents=True, exist_ok=True)
     (rook_dst / "__init__.py").write_text('__version__ = "0.1.0"\n', encoding="utf-8")
     _copy_pkg(WORKER_SRC, rook_dst / "worker")
+    # rook.core (plugin host, registry, facts) is shared with the hub and
+    # imported by rook.worker; stdlib-only.
+    _copy_pkg(REPO_ROOT / "rook" / "core", rook_dst / "core")
     # Native workers report the same source build as the zipapp.
     import datetime
     sys.path.insert(0,str(REPO_ROOT))

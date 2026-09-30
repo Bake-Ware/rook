@@ -65,8 +65,16 @@ class SyntheticBand:
                 "last_seen": __import__("time").time() - rng.random() * 30,
             }
 
+    def attach_local(self, node):
+        # The real server puts the hub node (worker "rook") on the band too.
+        self.local = node
+        self.workers[node.worker_id] = node.entry()
+
     async def call(self, cap, args=None, target=None, timeout=15.0, identity=None):
         rid = "%032x" % random.getrandbits(128)
+        local = getattr(self, "local", None)
+        if local is not None and target == local.worker_id:
+            return {"id": rid, "from": target, **(await local.dispatch(cap, args or {}, identity))}
         if cap == "caps.describe":
             prefix = (args or {}).get("prefix") or ""
             res = {k: v for k, v in self.described.items() if k.startswith(prefix)}
