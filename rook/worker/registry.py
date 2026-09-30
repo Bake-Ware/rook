@@ -42,14 +42,17 @@ class CapabilityRegistry:
     def list(self) -> list[str]:
         return sorted(self._caps.keys())
 
-    def describe(self) -> dict:
+    def describe(self, prefix: str = "") -> dict:
         """Introspect every handler for the UI: for each cap, its docstring plus
         its parameters (name / required / default / type). Skips self and
-        *args/**kwargs. Used by the dashboard to build accurate call forms."""
+        *args/**kwargs. Used by the dashboard to build accurate call forms.
+        ``prefix`` limits it to caps whose name starts with it."""
         def _jsonable(v):
             return v if isinstance(v, (str, int, float, bool)) or v is None else str(v)
         out: dict[str, Any] = {}
         for name, fn in self._caps.items():
+            if not name.startswith(prefix or ""):
+                continue
             params = []
             try:
                 sig = inspect.signature(fn)

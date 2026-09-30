@@ -212,6 +212,12 @@ def build_server(client: "BandClient | MultiBandClient",
 
     mcp._tool_manager.call_tool = _attributed_call_tool
 
+    # Compact replies and per-session notices (see envelope.py).
+    from . import envelope as _env
+    from . import roster as _roster
+    _env.install(mcp)
+    _notices = _env.Notices()
+
     from .guidance import Guidance, apply as _apply_guidance
     guidance = Guidance(os.path.join(_store_dir, "guidance.db"))
     _base_descriptions: dict[str, str] = {}
@@ -279,58 +285,33 @@ def build_server(client: "BandClient | MultiBandClient",
         return json.dumps(att.audit() if att else {"kind": "unverified"}, indent=2)
 
     @mcp.tool()
-    async def rook_workers() -> str:
-        """List all workers currently visible on the band.
+    async def rook_workers(name: str | None = None, cap_prefix: str | None = None,
+                           online: bool | None = None,
+                           fields: list | str | None = None) -> str:
+        """List workers currently visible on the band (see descriptions.py
+        for the advertised text; roster.workers_view for the shape).
 
-        Returns a JSON array of objects: ``{worker_id, name, description, caps, plugins,
-        hb, last_seen_age_secs}``. ``description`` is persistent human-written
-        role metadata (not agent instructions), set with
-        ``rook_call(cap="worker.description_set", worker="name",
-        args={"description": "Short device role"})``. Empty means unset or a
-        legacy worker. ``hb`` carries live heartbeat status a
-        worker opts into (e.g. ``{"battery": {"percent": 73, "charging": true}}``). Workers re-announce every 30s; entries are
-        evicted after ~90s of silence. Either ``worker_id`` or ``name`` can
-        be passed to ``rook_call`` to target a worker; ids change whenever a
-        legacy worker restarts; current workers persist their IDs in local state.
+        ``description`` is persistent human-written role metadata, set with
+        ``rook_call(cap="worker.description_set", ...)``; ``hb`` carries live
+        heartbeat status a worker opts into. Workers re-announce every 30s and
+        are evicted after ~90s of silence.
         """
-        import time
-        now = time.time()
-        out = []
-        for w in client.workers.values():
-            out.append({
-                "worker_id": w["worker_id"],
-                "name": w.get("name"),
-                "description": w.get("description", ""),
-                "band": w.get("band"),
-                "caps": w.get("caps", []),
-                "plugins": w.get("plugins", []),
-                "version": w.get("version"),
-                "build": w.get("build"),
-                "app_release": w.get("app_release") or {},
-                "hb": w.get("hb") or {},
-                "last_seen_age_secs": round(now - w.get("last_seen", 0.0), 2),
-            })
-        out.sort(key=lambda x: x["name"] or "")
-        return json.dumps(out, indent=2)
+        try:
+            return _env.dumps(_roster.workers_view(client.workers, name=name, cap_prefix=cap_prefix,
+                                                   online=online, fields=fields))
+        except ValueError as e:
+            return _fail(str(e))
 
     @mcp.tool()
-    async def rook_caps() -> str:
-        """List all dot-namespaced capabilities seen on the band.
-
-        Returns a JSON array of objects: ``{cap, workers}`` where ``workers``
-        is the list of worker names that announced this capability.
-        """
-        by_cap: dict[str, list[str]] = {}
-        for w in client.workers.values():
-            name = w.get("name") or w["worker_id"]
-            for cap in w.get("caps", []):
-                by_cap.setdefault(cap, []).append(name)
-        out = [{"cap": c, "workers": sorted(set(ws))}
-               for c, ws in sorted(by_cap.items())]
-        return json.dumps(out, indent=2)
+    async def rook_caps(prefix: str | None = None, worker: str | None = None) -> str:
+        """Capabilities on the band and who holds them (roster.caps_view)."""
+        try:
+            return _env.dumps(_roster.caps_view(client.workers, prefix=prefix, worker=worker))
+        except ValueError as e:
+            return _fail(str(e))
 
     def _fail(msg: str) -> str:
-        return json.dumps({"ok": False, "error": msg}, indent=2)
+        return _env.dumps({"ok": False, "error": msg})
 
     import re as _re
     _ANSI = _re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
@@ -497,7 +478,8 @@ def build_server(client: "BandClient | MultiBandClient",
                         worker_id: str | None = None,
                         worker: str | None = None,
                         timeout: float | None = None,
-                        hint: bool = False) -> str:
+                        hint: bool = False,
+                        text: bool = False) -> str:
         """Invoke a capability on the band and return the reply.
 
         Args:
@@ -518,15 +500,15 @@ def build_server(client: "BandClient | MultiBandClient",
                 ``args.timeout``; for jobs over a few minutes use
                 rook_console_open.
             hint: set ``hint=true`` to get this cap's usage tip in ``_tips``
-                again. Tips are sent once per session; later replies carry a
-                one-line ``_hint`` saying the tip is hidden. Use it if the tip
-                was forgotten or compacted out of your context.
+                again. Tips are sent once per MCP session.
+            text: return a successful result as plain text (shell.exec:
+                stdout, then stderr / exit code only when non-empty/non-zero).
 
-        Returns the reply dict as JSON: either
-        ``{"id","from","ok":true,"result":...}`` or
-        ``{"id","from","ok":false,"error":"..."}``. Targeting mistakes
-        (unknown worker, missing capability, no reply) come back the same
-        way, as ``{"ok": false, "error": "<explanation>"}``.
+        Returns compact JSON (envelope.call_reply): ``{"ok","id","from",
+        "result"|"error"}`` where ``id`` is the journal id and ``from`` the
+        worker's name; ``_task``/``_unread_chat`` notices only when new or
+        changed for this MCP session. Targeting mistakes (unknown worker,
+        missing capability, no reply) come back as ``{"ok": false, "error"}``.
         """
         roster = client.workers
         spec = worker_id or worker
@@ -576,6 +558,12 @@ def build_server(client: "BandClient | MultiBandClient",
         worker_name = (roster[target].get("name") if target in roster else target)
         # {{secret:name}} placeholders: substituted only in what's sent to the
         # worker; the journal keeps the placeholder and replies are masked.
+        # caps.describe(prefix=) is filtered here, so it works on workers that
+        # predate the worker-side prefix arg (build 167 rejects unknown args).
+        describe_prefix = None
+        if cap == "caps.describe" and isinstance(args, dict) and "prefix" in args:
+            args = dict(args)
+            describe_prefix = str(args.pop("prefix") or "")
         send_args, used = args, {}
         if args and _vault_mod.PLACEHOLDER.search(json.dumps(args)):
             if vault is None:
@@ -623,24 +611,37 @@ def build_server(client: "BandClient | MultiBandClient",
         cid = journal.record(cap=cap, worker=worker_name, identity=identity,
                              args=args, reply=reply, audit=_caller_audit())
         linked = _auto_link("journal", cid, f"{cap} on {worker_name}")
-        # Surface the journal id so a caller that later loses this output can
-        # fetch it back with rook_journal(call_id=...).
-        if isinstance(reply, dict):
-            reply = {**reply, "_journal_id": cid}
-            if linked:
-                reply["_task"] = linked  # this call was recorded on your claimed task
-            # Voicemail piggyback: an identified caller learns about unread chat
-            # on its next call, no polling. Presence is touched below.
-            unread = chat.unread_summary(identity)
-            if unread:
-                reply["_unread_chat"] = unread
-            # Operator-editable cap advice, once per MCP session.
-            try:
-                reply.update(guidance.tips(_caller_session() or identity, cap, bool(hint)))
-            except Exception:
-                log.exception("guidance tips failed")
         chat.touch(identity)
-        return json.dumps(reply, indent=2)
+        if not isinstance(reply, dict):
+            return _env.dumps(reply)
+        # Notices ride the reply only when new for this MCP session: the task
+        # this call was recorded on, unread chat (voicemail piggyback, no
+        # polling) and operator-editable cap advice.
+        session = _caller_session() or identity
+        notices: dict = {}
+        if linked and _notices.fresh(session, "task", linked):
+            notices["_task"] = linked
+        unread = chat.unread_summary(identity)
+        if unread and _notices.fresh(session, "chat", unread):
+            notices["_unread_chat"] = unread
+        elif not unread:
+            _notices.fresh(session, "chat", [])  # so the same room shows again later
+        try:
+            notices.update(guidance.tips(session, cap, bool(hint)))
+        except Exception:
+            log.exception("guidance tips failed")
+        if cap == "caps.describe" and reply.get("ok") and isinstance(reply.get("result"), dict):
+            if not _env.legacy():
+                reply = {**reply, "result": _env.describe_compact(reply["result"], describe_prefix or "")}
+            elif describe_prefix:
+                reply = {**reply, "result": {k: v for k, v in reply["result"].items()
+                                             if k.startswith(describe_prefix)}}
+        if text:
+            plain = _env.call_text(reply, cap, notices)
+            if plain is not None:
+                return plain
+        # ``id`` is the journal id: rook_journal(call_id=id) recovers this reply.
+        return _env.dumps(_env.call_reply(reply, cid, worker_name, cap, notices))
 
     @mcp.tool()
     async def rook_secret(action: str = "list", name: str = "",
@@ -704,8 +705,9 @@ def build_server(client: "BandClient | MultiBandClient",
         isn't lost when the tool result is discarded.
 
         Args:
-            call_id: fetch one specific call (from a prior reply's
-                ``_journal_id``) — returns it WITH its full stored output.
+            call_id: fetch one specific call (a prior reply's ``id``, or
+                ``_journal_id`` in the legacy envelope) — returns it WITH its
+                full stored output.
             worker: filter to calls targeting this worker name.
             cap_prefix: filter by capability prefix (e.g. ``"shell."``).
             since_secs: only calls newer than this many seconds ago.

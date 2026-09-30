@@ -55,5 +55,5 @@ PowerShell: `Get-Content f -TotalCount 40`, `Get-Content f -Tail 40`, `Select-St
 ## Discovery without the roster
 
 - Who has cap X? Call it on your best guess; the refusal lists the holders.
-- Exact args for a cap: `references/tools.md`, or `caps.describe` on **one** worker (large, no filter; call once).
+- Exact args for a cap: `references/tools.md`, or `caps.describe` on **one** worker with `args={"prefix": "shell."}` (replies `{cap: "(args) — doc"}`; unfiltered it lists every cap).
 - Is worker W alive? `rook_call("info.ping", worker=W)`.

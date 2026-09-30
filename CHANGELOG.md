@@ -32,7 +32,43 @@ Preparation for public use.
 - Licensed under the Apache License 2.0, with a `NOTICE` for bundled
   third-party components.
 
+- MCP roster filters: `rook_workers(name=, cap_prefix=, online=, fields=)` and
+  `rook_caps(prefix=, worker=)`. `caps.describe` takes `prefix=` on the worker;
+  through `rook_call` the hub filters it itself, so it works on older workers.
+- `rook_call(text=true)` returns a successful result as plain text
+  (`shell.exec`: stdout, then stderr and exit code only when set).
+- `rook_knowledge`/`rook_task`/`rook_project`/`rook_concept` search and list
+  accept `data.fields` (a list, comma string, or `"all"`).
+- `tools/token_budget.py` measures what the MCP costs an agent (tools/list,
+  instructions, common replies) against an in-process hub.
+- `ROOK_MCP_ENVELOPE=legacy` restores the previous `rook_call` reply shape.
+
 ### Changed
+- MCP replies are compact. Tool results are JSON without indentation and are
+  sent once (no `structuredContent` copy), tool listings drop output schemas
+  and pydantic schema noise, and the default tool descriptions and server
+  instructions are shorter: `tools/list` went from about 32,400 to under
+  12,000 characters for the same 29 tools. Details stay in cap tips and
+  error messages.
+- `rook_call` reply shape for MCP clients: `{ok, id, from, result|error}` where
+  `id` is the journal id (`_journal_id` is gone), `from` is the worker's name
+  instead of its hex id, and a `shell.exec` result drops empty
+  `stdout`/`stderr` and the `ok` implied by `code` (`{"code":0}` for a silent
+  success). `_task` and `_unread_chat` appear only when new or changed for the
+  MCP session; the per-reply `_hint` line is gone (`_tips` still shows once
+  per session, `hint=true` re-shows it). `ok`, `result` and `error` keep their
+  meaning, so clients reading those are unaffected; the band wire protocol and
+  the dashboard `/api/band/*` API are unchanged.
+- `rook_workers` returns name, description, build, hb and last_seen_age_secs
+  per worker by default (empty values omitted; worker_id added when a name is
+  shared); `fields="all"` gives the previous rows. `rook_caps` returns
+  `{workers: N, caps: {cap: "*" | {all_but: [...]} | [names]}}`.
+- `caps.describe` through `rook_call` returns `{cap: "(args) — doc"}`.
+- Knowledge search over MCP defaults to 5 results with 240-character excerpts
+  and a small field set; list defaults to 20. The operator's Knowledge page is
+  unchanged.
+- Default operator tool tips (guidance `tool:*`) are empty; their content is in
+  the tool descriptions. The slots remain editable.
 - Removed the pre-band personal agent (`rook agent`, `rook hub`, `rook discord`,
   `rook sync`, `rook extract`, the `rook/core`, `tools`, `memory`, `modules`,
   `net`, `interfaces`, `voice`, `tasks` packages, `config.yaml` and the

@@ -70,15 +70,14 @@ def reply(res):
 async def test_defaults_reach_agents_at_each_placement(tmp_path):
     async with server(tmp_path) as env:
         init, rpc = await env.connect()
-        assert "rook_workers (who)" in init["instructions"] and "Pass hint=true" in init["instructions"]
+        assert "rook_workers (who)" in init["instructions"] and "hint=true" in init["instructions"]
         tools = {t["name"]: t["description"] for t in (await rpc("tools/list", {}))["tools"]}
-        assert "\n\nTip: worker= is required" in tools["rook_call"] and "hint=true" in tools["rook_call"]
-        assert tools["rook_call"].startswith("Invoke a capability")  # docstring preserved
+        assert "worker= (name or id) is required" in tools["rook_call"] and "hint=true" in tools["rook_call"]
+        assert "Tip:" not in tools["rook_call"]  # default tool tips are empty; essentials are in the description
         first = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "shell.exec", "worker": "WIN11-FLOPHOUSE"}}))
         assert first["_tips"] == [guidance_mod.DEFAULTS["cap:shell.exec"]]  # cap tip only, no host tips
         again = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "shell.exec", "worker": "WIN11-FLOPHOUSE"}}))
-        assert "_tips" not in again  # once per session
-        assert again["_hint"] == "Usage tip for 'shell.exec' hidden (shown earlier this session); pass hint=true to see it again."
+        assert "_tips" not in again and "_hint" not in again  # once per session, no repeat line
         forced = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "shell.exec", "worker": "WIN11-FLOPHOUSE", "hint": True}}))
         assert forced["_tips"] == [guidance_mod.DEFAULTS["cap:shell.exec"]] and "_hint" not in forced
         plain = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "info.host", "worker": "kaiju"}}))
