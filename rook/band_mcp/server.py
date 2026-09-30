@@ -240,6 +240,11 @@ def build_server(client: "BandClient | MultiBandClient",
     mcp._rook_vault = vault
     mcp._rook_journal = journal
 
+    # Hub plugin host (rook.hub): hub-placed plugins, served on the band as the
+    # reserved worker "rook" and reachable with rook_call(worker="rook").
+    from ..hub.node import HUB_WORKER_NAME, attach_hub_node
+    mcp._rook_hub = attach_hub_node(client, _store_dir, vault=vault, journal=journal)
+
     # Shared knowledge records (opt-in: ROOK_KNOWLEDGE=1). Additive tools only;
     # nothing here touches the band call path, and a failure to open the store
     # disables the tools rather than the server.
@@ -1204,6 +1209,13 @@ def build_server(client: "BandClient | MultiBandClient",
                            "error": f"{last_err}; worker will auto-revert to its "
                                     f"prior config at its deadline"}, indent=2)
 
+    # MCP tools generated from hub caps declared tool=True (hub.x -> rook_hub_x).
+    # Each is an alias of rook_call on worker "rook"; existing names win.
+    if mcp._rook_hub is not None and mcp._rook_hub.attached:
+        from ..hub.mcp_tools import register_cap_tools
+        register_cap_tools(mcp, mcp._rook_hub,
+                           lambda cap, a: rook_call(cap=cap, args=a, worker=HUB_WORKER_NAME))
+
     mcp._rook_chat = chat  # the /tokens page edits avatars in this store
     mcp._rook_console = console  # _amain starts the pump against this store
 
@@ -1250,6 +1262,8 @@ async def _amain(args) -> None:
         journal_path=args.journal_path or None,
         enrollment=enrollment,
     )
+    if mcp._rook_hub is not None:
+        await mcp._rook_hub.start()
     app = mcp.streamable_http_app()
     from ..remote.accounts import AccountStore
     from .guidance_web import routes as guidance_routes
@@ -1331,6 +1345,8 @@ async def _amain(args) -> None:
             pass
         # Tear down WS bridge before stopping transport.
         await pump.stop()
+        if mcp._rook_hub is not None:
+            await mcp._rook_hub.stop()
         if ws_bridge is not None:
             await ws_bridge.stop()
         await client.stop()

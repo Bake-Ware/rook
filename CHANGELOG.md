@@ -10,6 +10,18 @@ releases yet: workers identify themselves by build number (for example
 Preparation for public use.
 
 ### Added
+- One plugin API for the hub and workers (`rook.core`, contract in
+  `docs/design/plugins.md`): manifest with `core_api` range and
+  `<build>.<adjective>.<noun>` versions, placement over node facts
+  (`place("is_hub")`, `has('gpu', vram_gb >= 8)`), cap `risk`/`limit`/`fields`
+  enforced by core, settings schema, `cap://` resources, migrations. Existing
+  worker plugins load unchanged. Worker announces add optional `facts` and
+  `tiers` keys.
+- The hub appears on every band as the reserved worker `rook`, serving
+  hub-placed plugins: `rook_call(cap="hub.info", worker="rook")`. Band calls
+  to it may reach only read caps (`ROOK_HUB_BAND_MAX_RISK`);
+  `ROOK_HUB_PLUGINS=0` turns it off. Caps declared `tool=True` get a generated
+  MCP tool.
 - Agent skill at `skills/rook/` (SKILL.md + install/admin/tools/usage
   references). `tools/gen_skill_reference.py` generates the tool and cap tables
   from the code; a test fails when they are stale. The hub serves it as MCP

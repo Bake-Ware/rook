@@ -13,6 +13,7 @@ import logging
 import time
 import uuid
 
+from ..core.facts import clean_facts
 from ..worker.transports.telesthete_hub import TelestheteHubTransport
 
 log = logging.getLogger("rook.band_mcp.client")
@@ -21,6 +22,18 @@ log = logging.getLogger("rook.band_mcp.client")
 # seconds. Workers re-announce every 30s by default, so 90s tolerates a
 # couple missed broadcasts before they disappear from `rook_workers()`.
 WORKER_STALE_SECS = 90.0
+# The hub's own node (hub-placed plugins, served as worker "rook") announces on
+# the same cadence as workers.
+LOCAL_ANNOUNCE_SECS = 30.0
+
+
+async def _call_local(node, cap: str, args: dict | None, identity: str | None,
+                      timeout: float) -> dict:
+    """In-process call to the hub node: same reply shape as a band reply."""
+    mid = uuid.uuid4().hex
+    async with asyncio.timeout(timeout):
+        body = await node.dispatch(cap, args or {}, identity, source="local")
+    return {"id": mid, "from": node.worker_id, **body}
 
 
 class WorkerEntry(dict):
@@ -56,20 +69,93 @@ class BandClient:
         # Active in-band OTA push (telesthete Drop), if any. Inbound
         # REQUEST/DONE packets from the receiving worker route here.
         self._ota_sender = None
+        # The hub's own node (rook.hub.node.HubNode), if attached: announced on
+        # this band as worker "rook" and answering requests addressed to it.
+        self._local = None
+        self._local_task: asyncio.Task | None = None
+        self._local_calls: set[asyncio.Task] = set()
+        self._started = False
+
+    # -- local (hub) node ----------------------------------------------------
+
+    def attach_local(self, node) -> None:
+        """Serve ``node`` (a HubNode) on this band: it joins the roster, is
+        announced every ~30s, and band requests for it are dispatched to it.
+        Calls from this client to its id short-circuit in-process."""
+        self._local = node
+        self.workers[node.worker_id] = WorkerEntry(node.entry())
+        if self._started:
+            self._start_local_announcer()
+
+    def _start_local_announcer(self) -> None:
+        if self._local is None or self._local_task is not None:
+            return
+        try:
+            self._local_task = asyncio.get_running_loop().create_task(self._local_loop())
+        except RuntimeError:
+            self._local_task = None  # no loop yet; start() will pick it up
+
+    async def _announce_local(self) -> None:
+        node = self._local
+        if node is None:
+            return
+        self.workers[node.worker_id] = WorkerEntry(node.entry())
+        try:
+            await self.transport.send(json.dumps(node.announce_msg()).encode())
+        except Exception:
+            log.debug("hub node announce failed", exc_info=True)
+
+    async def _local_loop(self) -> None:
+        while not self._stopping:
+            try:
+                await self._announce_local()
+                await asyncio.sleep(LOCAL_ANNOUNCE_SECS)
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                log.exception("hub node announce loop failed")
+                await asyncio.sleep(LOCAL_ANNOUNCE_SECS)
+
+    async def _on_connect(self) -> None:
+        if self._local is not None:
+            await self._announce_local()
+
+    def _serve_local(self, msg: dict) -> None:
+        node = self._local
+        if node is None or not node.wants(msg):
+            return
+        task = asyncio.get_running_loop().create_task(self._answer_local(node, msg))
+        self._local_calls.add(task)
+        task.add_done_callback(self._local_calls.discard)
+
+    async def _answer_local(self, node, msg: dict) -> None:
+        body = await node.dispatch(msg.get("cap"), msg.get("args", {}),
+                                   msg.get("identity"), source="band")
+        reply = {"from": node.worker_id, **body}
+        if msg.get("id") is not None:
+            reply = {"id": msg["id"], **reply}
+        try:
+            await self.transport.send(json.dumps(reply).encode())
+        except Exception:
+            log.exception("hub node reply send failed")
 
     async def start(self) -> None:
-        await self.transport.start(self._on_message)
+        await self.transport.start(self._on_message, on_connect=self._on_connect)
+        self._started = True
         self._gc_task = asyncio.create_task(self._gc_loop())
+        self._start_local_announcer()
         log.info("band-mcp client up (band_id=%s, hub=%s:%d)",
                  self.transport.band_id.hex()[:16],
                  self.transport._hub[0], self.transport._hub[1])
 
     async def stop(self) -> None:
         self._stopping = True
-        if self._gc_task is not None:
-            self._gc_task.cancel()
+        for task in (self._gc_task, self._local_task, *self._local_calls):
+            if task is None:
+                continue
+            task.cancel()
             try:
-                await self._gc_task
+                await task
             except (asyncio.CancelledError, Exception):
                 pass
         for fut in list(self._pending.values()):
@@ -100,6 +186,12 @@ class BandClient:
             self._handle_announce(msg)
             return
 
+        # A capability request: only the hub node (if attached) answers.
+        if msg.get("cap") and "ok" not in msg:
+            if self._local is not None:
+                self._serve_local(msg)
+            return
+
         # Looks like a reply if it has an id, "from", and an "ok" boolean.
         if "id" in msg and "ok" in msg and "from" in msg:
             self._handle_reply(msg)
@@ -109,10 +201,19 @@ class BandClient:
         wid = msg.get("worker_id")
         if not wid:
             return
+        local = self._local
+        if local is not None and wid == local.worker_id:
+            return  # our own announce echoed back
+        name = msg.get("name", wid)
+        if local is not None and isinstance(name, str) and name.lower() == local.name:
+            # "rook" is reserved for the hub node; a remote node claiming it is
+            # listed under a disambiguated name so name resolution stays exact.
+            name = f"{name}~{str(wid)[:8]}"
+        facts = msg.get("facts")
         entry = self.workers.get(wid) or WorkerEntry()
         entry.update({
             "worker_id": wid,
-            "name": msg.get("name", wid),
+            "name": name,
             "description": msg.get("description", "")[:280] if isinstance(msg.get("description", ""), str) else "",
             "caps": list(msg.get("caps", [])),
             "plugins": list(msg.get("plugins", [])),
@@ -120,6 +221,8 @@ class BandClient:
             "version": msg.get("version"),
             "build": msg.get("build"),
             "app_release": msg.get("app_release") if isinstance(msg.get("app_release"), dict) else {},
+            # Self-reported platform/hardware facts (absent on build-167 workers).
+            "facts": clean_facts(facts),
             "last_seen": time.time(),
         })
         if wid not in self.workers:
@@ -152,6 +255,8 @@ class BandClient:
         Returns the reply dict (``{"id", "from", "ok", "result"|"error"}``).
         Raises ``asyncio.TimeoutError`` on no reply.
         """
+        if self._local is not None and target == self._local.worker_id:
+            return await _call_local(self._local, cap, args, identity, timeout)
         if len(self._pending) >= 512:
             raise RuntimeError("band call capacity reached")
         mid = uuid.uuid4().hex
@@ -224,8 +329,9 @@ class BandClient:
             try:
                 await asyncio.sleep(15.0)
                 cutoff = time.time() - WORKER_STALE_SECS
+                local_id = self._local.worker_id if self._local is not None else None
                 stale = [wid for wid, w in self.workers.items()
-                         if w["last_seen"] < cutoff]
+                         if w["last_seen"] < cutoff and wid != local_id]
                 for wid in stale:
                     name = self.workers[wid].get("name", wid)
                     log.info("worker stale, evicting: id=%s name=%s", wid, name)
@@ -266,6 +372,13 @@ class MultiBandClient:
         self.hub_port = hub_port
         self.use_ws = use_ws
         self._membership_lock = asyncio.Lock()
+        self._local = None
+
+    def attach_local(self, node) -> None:
+        """Serve the hub node on every band (current and later-added)."""
+        self._local = node
+        for c in self._clients:
+            c.attach_local(node)
 
     async def add_band(self, psk: str) -> None:
         from telesthete.protocol.crypto import derive_band_id
@@ -275,6 +388,8 @@ class MultiBandClient:
                 return
             client = BandClient(psk=psk, hub_host=self.hub_host,
                                 hub_port=self.hub_port, use_ws=self.use_ws)
+            if self._local is not None:
+                client.attach_local(self._local)
             try:
                 await client.start()
             except BaseException:
@@ -331,6 +446,11 @@ class MultiBandClient:
                     entry = WorkerEntry(w)
                     entry["band"] = label
                     merged[wid] = entry
+        if self._local is not None:
+            # The hub node is on every band at once (and listed with none).
+            entry = WorkerEntry(self._local.entry())
+            entry["band"] = "*"
+            merged[self._local.worker_id] = entry
         return merged
 
     def _client_for(self, worker_id: str) -> "BandClient | None":
@@ -346,6 +466,8 @@ class MultiBandClient:
     async def call(self, cap: str, args: dict | None = None,
                    target: str | None = None, timeout: float = 15.0,
                    identity: str | None = None) -> dict:
+        if self._local is not None and target == self._local.worker_id:
+            return await _call_local(self._local, cap, args, identity, timeout)
         # Known target → send only on its band.
         if not self._clients:
             raise ConnectionError("no active bands")

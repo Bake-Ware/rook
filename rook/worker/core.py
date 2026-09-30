@@ -10,8 +10,10 @@ import socket
 import uuid
 from pathlib import Path
 
+from ..core.facts import NodeFacts, local_facts, wire_facts
+from ..core.host import PluginHost
 from . import audit, context
-from .plugin import Plugin, load_plugins
+from .plugin import Plugin
 from .registry import CapabilityRegistry
 from .transports.base import Transport
 
@@ -52,19 +54,26 @@ class Worker:
         self.transport = transport
         self.registry = CapabilityRegistry()
         self.plugins_pkg = plugins_pkg
+        self.worker_id = stable_worker_id()
+        self.name = name or socket.gethostname()
+        # One plugin host for hub and workers (rook.core.host): placement over
+        # this node's facts, manifest checks, failure isolation. Workers hold no
+        # roles, so plugins placed on the hub (is_hub) never load here.
+        from ._build_info import VERSION
+        self.facts = NodeFacts(node_id=self.worker_id, name=self.name, hw=local_facts())
+        self.host = PluginHost(self.registry, self.facts, build_version=VERSION,
+                               data_root=str(_WORKER_ID_FILE.parent / "plugins"))
         # Persisted runtime disables (via worker.plugin.disable) are honoured at
         # boot so a disabled plugin is never loaded in the first place.
         from .admin import load_disabled, WorkerAdmin
-        self.plugins: list[Plugin] = load_plugins(
-            plugins_pkg, self.registry, enabled, disabled=load_disabled())
+        self.host.load(self.host.discover(plugins_pkg), enabled, disabled=load_disabled())
+        self.plugins: list[Plugin] = self.host.plugins  # same list; admin mutates it
         # Introspection: lets the dashboard build accurate call forms.
         self.registry.register("caps.describe", self._caps_describe)
         # Runtime cap administration: worker.plugin.* + customcap.* + re-hydrate
         # persisted custom command-caps (cmd.*).
         self.admin = WorkerAdmin(self.registry, self.plugins, plugins_pkg)
         self.admin.register_caps()
-        self.worker_id = stable_worker_id()
-        self.name = name or socket.gethostname()
         from .metadata import WorkerMetadata
         self.metadata = WorkerMetadata(_WORKER_ID_FILE.with_name('metadata.json'))
         self.registry.register('worker.description_get', self._description_get)
@@ -238,18 +247,15 @@ class Worker:
             "version": VERSION,
             "build": BUILD,
             "app_release": self.app_release,
+            # Self-reported platform/hardware facts for plugin placement.
+            # Additive: build-167 receivers ignore unknown announce keys.
+            "facts": wire_facts(self.facts.hw),
         }
+        tiers = self.host.tiers()  # declared risk tiers only; omitted when none
+        if tiers:
+            msg["tiers"] = tiers
         # Optional per-plugin live status (battery, etc.) rides the heartbeat.
-        hb: dict = {}
-        for p in self.plugins:
-            try:
-                d = p.heartbeat()
-            except Exception:
-                log.debug("heartbeat() raised for plugin %s", getattr(p, "NAMESPACE", "?"),
-                          exc_info=True)
-                continue
-            if d:
-                hb[p.NAMESPACE] = d
+        hb = self.host.heartbeats()
         if hb:
             msg["hb"] = hb
         await self.transport.send(json.dumps(msg).encode())
@@ -273,11 +279,7 @@ class Worker:
         # (re)establishes, so a dropped+restored band connection re-registers
         # us instead of leaving us silently off the band.
         await self.transport.start(self._on_message, on_connect=self.announce)
-        for p in self.plugins:
-            try:
-                await p.start()
-            except Exception:
-                log.exception("plugin %s start failed", p.NAMESPACE)
+        await self.host.start()
         try:
             await self.announce()
         except Exception:
@@ -303,11 +305,7 @@ class Worker:
                 await self._announce_task
             except Exception:
                 pass
-        for p in self.plugins:
-            try:
-                await p.stop()
-            except Exception:
-                log.exception("plugin %s stop failed", p.NAMESPACE)
+        await self.host.stop()
         try:
             await self.transport.stop()
         except Exception:

@@ -79,7 +79,8 @@ def workers_view(workers: dict, name: str | None = None, cap_prefix: str | None 
 
 
 def caps_view(workers: dict, prefix: str | None = None, worker: str | None = None):
-    """Caps → holders. Compact: ``"*"`` (every live worker), ``{"all_but": […]}``
+    """Caps → holders. Compact: ``"*"`` (every live worker; the hub node
+    ``rook`` is not counted), ``{"all_but": […]}``
     when most hold it, else the list of names. ``worker`` lists one worker's caps.
     Legacy: ``[{cap, workers}]``."""
     names = {wid: (w.get("name") or wid) for wid, w in workers.items()}
@@ -99,13 +100,18 @@ def caps_view(workers: dict, prefix: str | None = None, worker: str | None = Non
                 by_cap.setdefault(cap, set()).add(names[wid])
     if envelope.legacy():
         return [{"cap": c, "workers": sorted(ws)} for c, ws in sorted(by_cap.items())]
-    everyone = set(names.values())
+    # The hub's own node ("rook", entry["local"]) is not a band worker: it
+    # doesn't count toward "*"/all_but, so worker caps stay "*" and hub-only
+    # caps read ["rook"].
+    local = {names[wid] for wid, w in workers.items() if w.get("local")}
+    everyone = set(names.values()) - local
     out: dict = {}
     for cap, holders in sorted(by_cap.items()):
-        if holders == everyone:
+        held = holders - local
+        if held and held == everyone:
             out[cap] = "*"
-        elif len(everyone) >= 4 and len(holders) > len(everyone) / 2:
-            out[cap] = {"all_but": sorted(everyone - holders, key=str.lower)}
+        elif len(everyone) >= 4 and len(held) > len(everyone) / 2:
+            out[cap] = {"all_but": sorted(everyone - held, key=str.lower)}
         else:
             out[cap] = sorted(holders, key=str.lower)
     return {"workers": len(everyone), "caps": out}

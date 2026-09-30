@@ -20,6 +20,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent        # rook/remote/
 REPO_ROOT = HERE.parent.parent               # /root/repos/rook
 WORKER_SRC = REPO_ROOT / "rook" / "worker"
+CORE_SRC = REPO_ROOT / "rook" / "core"
 TELESTHETE_ROOT = REPO_ROOT.parent / "telesthete" / "telesthete"
 if not TELESTHETE_ROOT.is_dir():
     # No sibling checkout: bundle the pip-installed telesthete instead.
@@ -232,6 +233,8 @@ def build() -> Path:
         rook_dst.mkdir()
         (rook_dst / "__init__.py").write_text('__version__ = "0.1.0"\n', encoding="utf-8")
         _copy_pkg(WORKER_SRC, rook_dst / "worker")
+        # rook.core: plugin host, registry and node facts shared with the hub.
+        _copy_pkg(CORE_SRC, rook_dst / "core")
         _stamp_build_info(rook_dst / "worker", build_num, commit, version, built_at)
         _stamp_pubkey(rook_dst / "worker")
 

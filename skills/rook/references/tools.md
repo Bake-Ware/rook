@@ -49,6 +49,21 @@ The tables are generated from the code by `tools/gen_skill_reference.py`; don't 
 | `rook_workers` | name?, cap_prefix?, online?, fields? | Workers on the band. |
 <!-- END GENERATED: mcp-tools -->
 
+## Hub capabilities (worker `rook`)
+
+The hub appears on the band as the reserved worker `rook`, serving the caps of hub-placed plugins: `rook_call(cap="hub.info", worker="rook")`. Caps marked `tool=True` also get their own MCP tool (listed above). Calls arriving over the band (not through the MCP) may only reach `read` caps. `fields?` means the cap takes a `fields` projection (`"*"` for every key).
+
+<!-- BEGIN GENERATED: hub-caps -->
+| Cap | Args | Risk | Does |
+|---|---|---|---|
+| `caps.describe` | prefix='' | read | Arg schema, docstring and declared risk/limit/fields for every hub cap. |
+| `hub.info` | — | read | What the hub runs: version, core API, roles, facts and plugins. |
+| `hub.plugins` | limit=50, fields? | read | Full manifests of the hub's loaded plugins (placement, settings schema, guidance slots, source). |
+
+### hub
+`rook_call(cap="hub.info", worker="rook")` returns the hub's version, core API, roles, facts and plugins. `hub.plugins` lists full plugin manifests; pass `fields="*"` for every key.
+<!-- END GENERATED: hub-caps -->
+
 ## Worker capabilities
 
 Grouped by plugin module. A plugin only loads where its backend is present (display, camera, service), so not every worker has every cap.
