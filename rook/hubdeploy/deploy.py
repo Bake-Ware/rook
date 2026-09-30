@@ -281,9 +281,6 @@ def write_rollback_script(cfg: Config, ddir: Path, deploy_id: str, snapshot: lis
     q = shlex.quote
     marker, switched = ddir / "deadman.armed", ddir / "switched"
     back = {n: {"from": c["to"], "to": c["from"]} for n, c in changes.items()}
-    event = json.dumps({"event": "rollback", "id": deploy_id, "result": "ok",
-                        "services": back, "via": "rollback.sh"}, sort_keys=True)
-    event = event[1:].replace("%", "%%")  # printf format, "{" re-added below
     lines = [
         "#!/bin/sh",
         f"# Roll back hub deploy {deploy_id}: restore the release selectors as they",
@@ -303,15 +300,21 @@ def write_rollback_script(cfg: Config, ddir: Path, deploy_id: str, snapshot: lis
         f'echo "rolling back hub deploy {deploy_id} ($REASON)"',
         *restore_script_lines(cfg, snapshot),
         "rc=0",
+        "SVCS=",
     ]
     for s in services:
         argv = " ".join(q(a) for a in restart_argv(cfg, s))
+        frag = json.dumps({s.name: back[s.name]})[1:-1]
         lines.append(f'if [ -e "$SWITCHED" ] && grep -qxF {q(s.name)} "$SWITCHED"; then')
         lines.append(f'  echo "restarting {s.name}"; {argv} || rc=1')
+        lines.append(f'  SVCS="${{SVCS:+$SVCS, }}"{q(frag)}')
         lines.append("fi")
-    fmt = '{"ts": %s, "reason": "%s", ' + event + "\\n"
+    # History records only the services this rollback actually switched back.
+    rest = json.dumps({"event": "rollback", "id": deploy_id, "result": "ok",
+                       "via": "rollback.sh"}, sort_keys=True)[1:].replace("%", "%%")
+    fmt = '{"ts": %s, "reason": "%s", "services": {%s}, ' + rest + "\\n"
     lines += [
-        f'printf {q(fmt)} "$(date +%s)" "$REASON" >> {q(str(history_path(cfg)))}',
+        f'printf {q(fmt)} "$(date +%s)" "$REASON" "$SVCS" >> {q(str(history_path(cfg)))}',
         'echo "rollback finished (rc=$rc)"',
         'exit "$rc"',
     ]
@@ -432,20 +435,42 @@ def restart_service(cfg: Config, svc: Service, log=_log_default) -> None:
         raise DeployError(f"restart of {svc.name} failed: {(r.stderr or r.stdout).strip()}")
 
 
+def unit_restarts(cfg: Config, svc: Service) -> int | None:
+    """systemd's NRestarts counter (automatic restarts), or None if unknown."""
+    if not svc.unit:
+        return None
+    try:
+        r = subprocess.run(systemctl_argv(cfg, "show", "-p", "NRestarts", "--value", svc.unit),
+                           capture_output=True, text=True, timeout=30)
+        return int((r.stdout or "").strip())
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return None
+
+
 def verify_service(cfg: Config, svc: Service, version: str, sel: Selector,
                    log=_log_default) -> None:
     deadline = _now() + cfg.health_timeout
+    baseline = unit_restarts(cfg, svc)
     probs = ["not checked"]
     while _now() < deadline:
         probs = health_problems(cfg, svc, version, sel)
         if not probs:
             break
+        # A release that crashes at start makes systemd restart it
+        # (Restart=on-failure): fail now instead of waiting out the timeout.
+        n = unit_restarts(cfg, svc)
+        if baseline is not None and n is not None and n > baseline:
+            raise DeployError(f"{svc.name} is crash-looping on {version} (systemd restarted it "
+                              f"{n - baseline}x): {'; '.join(probs)}")
         time.sleep(1)
     if probs:
         raise DeployError(f"{svc.name} did not become healthy on {version}: {'; '.join(probs)}")
     if cfg.settle_seconds:
         time.sleep(cfg.settle_seconds)
         probs = health_problems(cfg, svc, version, sel)
+        n = unit_restarts(cfg, svc)
+        if baseline is not None and n is not None and n > baseline:
+            probs.append(f"systemd restarted it {n - baseline}x")
         if probs:
             raise DeployError(f"{svc.name} went unhealthy after start: {'; '.join(probs)}")
     log(f"{svc.name}: healthy on {version}")
