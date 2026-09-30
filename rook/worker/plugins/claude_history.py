@@ -494,6 +494,59 @@ class ClaudeHistoryPlugin(Plugin):
             index += 1
         return dict(ok=True, **activity_meta, messages=messages, truncated=False, activity=self._activity(sp))
 
+    @capability("transcript", risk="read")
+    def _transcript(self, session_id: str, offset: int = 0, max_chars: int = 6000,
+                    path: str | None = None) -> dict:
+        """A transcript page in the stable ``rook.transcript/1`` export format.
+
+        ``messages`` are whole records ``{index, role, ts, text}`` (role is
+        user, assistant or tool); a single record longer than 50,000
+        characters is clipped and carries ``clipped`` (characters dropped).
+        Continue with ``next_offset`` until it is null. See docs/web/worklog.md.
+        """
+        root = self._expand(path)
+        sp = self._resolve_session(root, session_id)
+        if sp is None:
+            return {"ok": False, "error": "session not found"}
+        offset = max(0, int(offset))
+        budget = max(500, min(int(max_chars), 50000))
+        agent = self.NAMESPACE.split("-")[0]
+        messages: list[dict] = []
+        index = 0
+        more = False
+        for rec in self._read_lines(sp):
+            if not isinstance(rec, dict) or rec.get("type") not in ("user", "assistant", "tool"):
+                continue
+            if index < offset:
+                index += 1
+                continue
+            text = _message_text(rec)
+            if messages and len(text) > budget:
+                more = True
+                break
+            entry = {"index": index, "role": "tool" if rec.get("type") == "tool" else _record_role(rec),
+                     "ts": rec.get("timestamp") if isinstance(rec.get("timestamp"), str) else None,
+                     "text": text[:50000]}
+            if len(text) > 50000:
+                entry["clipped"] = len(text) - 50000
+            messages.append(entry)
+            budget -= len(entry["text"])
+            index += 1
+            if budget <= 0:
+                more = True
+                break
+        out = {"ok": True, "format": "rook.transcript/1", "messages": messages,
+               "next_offset": index if more else None}
+        if offset == 0:
+            meta = self._session_meta(sp)
+            out["session"] = {"agent": agent, "session_id": meta.get("session_id"),
+                              "title": meta.get("title"), "cwd": meta.get("cwd"),
+                              "git_branch": meta.get("git_branch"),
+                              "started": meta.get("first_timestamp"),
+                              "updated": meta.get("last_timestamp"),
+                              "message_count": meta.get("message_count")}
+        return out
+
     @capability("read_snapshot")
     def _read_snapshot(self, session_id: str, path: str | None = None, offset: int = 0,
                        content_offset: int = 0, snapshot: str = "") -> dict:

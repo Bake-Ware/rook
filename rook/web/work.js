@@ -1,15 +1,34 @@
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const VIEW_KEY='rook.work.view';
+// Chooses between the worklog (live terminals) and the classic Work view.
+// The hub's ROOK_WORK_V2=0 disables the worklog; otherwise each browser
+// remembers its choice, defaulting to the worklog.
 export async function mountWork(root) {
   if (!document.querySelector('link[data-work-style]')) {
     const link=document.createElement('link');link.rel='stylesheet';link.href='/account/work/assets/work.css'+new URL(import.meta.url).search;link.dataset.workStyle='1';document.head.append(link);
   }
   const response=await fetch('/account/work/bootstrap');
   if(!response.ok)throw Error('Sign in with your operator account to use Work.');
-  const {csrf}=await response.json();
+  const boot=await response.json();
+  if(!boot.v2)return mountClassic(root,boot,null);
+  let current=null, active=true;
+  const remember=mode=>{try{localStorage.setItem(VIEW_KEY,mode);}catch{}};
+  async function show(mode){
+    current?.deactivate();current=null;root.replaceChildren();remember(mode);
+    current=mode==='classic'?await mountClassic(root,boot,()=>show('worklog'))
+      :await (await import('/account/work/assets/worklog.js'+new URL(import.meta.url).search)).mountWorklog(root,boot,()=>show('classic'));
+    if(!active)current.deactivate();
+  }
+  let mode='worklog';try{if(localStorage.getItem(VIEW_KEY)==='classic')mode='classic';}catch{}
+  await show(mode);
+  return {activate(){active=true;current?.activate();},deactivate(){active=false;current?.deactivate();}};
+}
+async function mountClassic(root, boot, toWorklog) {
+  const {csrf}=boot;
   root.innerHTML=`
     <div class="work-layout">
       <aside class="work-sidebar">
-        <div class="work-list-heading"><strong>Work sessions</strong><button id="work-new" type="button">+ New</button></div>
+        <div class="work-list-heading"><strong>Work sessions</strong><button id="work-new" type="button">+ New</button>${toWorklog?'<button id="work-worklog" type="button" title="Live terminals grouped by project">Worklog view</button>':''}</div>
         <input id="work-search" type="search" placeholder="Search sessions…" aria-label="Search by title, host, agent, or status">
         <div id="work-list"><p class="work-muted">Connecting…</p></div>
       </aside>
@@ -326,6 +345,7 @@ export async function mountWork(root) {
     $('#work-conversation').hidden=b.dataset.pane!=='conversation';$('#work-changes').hidden=b.dataset.pane!=='changes';
     root.querySelectorAll('[data-pane]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));
   };
+  $('#work-worklog')?.addEventListener('click',()=>toWorklog());
   connect();
   return {
     activate(){if(!active){active=true;connect();}},
