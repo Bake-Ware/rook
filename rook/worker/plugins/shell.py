@@ -74,13 +74,33 @@ class ShellPlugin(Plugin):
         import shutil
         return shutil.which(name)
 
+    def _masked(self) -> set:
+        """Env keys set by a pushed config (other than declared non-secret
+        settings) or fetched from the hub vault: shown as ``***``."""
+        from .. import wconfig
+        public = set()
+        for p in getattr(getattr(self, "_worker", None), "plugins", None) or []:
+            for s in getattr(p, "SETTINGS", ()):
+                if not s.secret:
+                    public.update(s.env_names())
+        return wconfig.masked_env_keys(public)
+
+    def bind_worker(self, worker) -> None:
+        self._worker = worker
+
     @capability("env.get")
     def _env_get(self, name: str, default: str | None = None) -> str | None:
+        """One environment variable (values pushed as secrets read ``***``)."""
+        if name in os.environ and name in self._masked():
+            return "***"
         return os.environ.get(name, default)
 
     @capability("env.list")
     def _env_list(self, prefix: str = "") -> dict[str, str]:
-        return {k: v for k, v in os.environ.items() if k.startswith(prefix)}
+        """The environment (values pushed as secrets or credentials read ``***``)."""
+        masked = self._masked()
+        return {k: ("***" if k in masked else v) for k, v in os.environ.items()
+                if k.startswith(prefix)}
 
 
 PLUGIN = ShellPlugin

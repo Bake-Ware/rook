@@ -73,7 +73,9 @@ class HubNode:
                  package: str | None = BUILTIN_PACKAGE,
                  entry_points: bool = True,
                  build_version: str | None = None,
-                 band_max_risk: str | None = None) -> None:
+                 band_max_risk: str | None = None,
+                 enrollment: Any = None,
+                 settings_store: Any = None) -> None:
         if build_version is None:
             try:
                 from ..worker._build_info import VERSION as build_version
@@ -87,6 +89,14 @@ class HubNode:
         self._on_band_call = on_band_call
         self._state_dir = state_dir
         self.attached = False  # set by attach_hub_node once a band client serves it
+        self.enrollment = enrollment
+        # The shared settings store (rook.hub.settings_store). Opened lazily:
+        # nothing is created on disk until a value is written or read back.
+        if settings_store is None:
+            from .settings_store import SettingsStore
+            settings_store = SettingsStore()
+        self.settings_store = settings_store
+        self.settings = None  # SettingsService, set by the settings hub plugin
         risk = band_max_risk or os.environ.get("ROOK_HUB_BAND_MAX_RISK", "read")
         self.band_max_risk = risk if risk in RISKS else "read"
         # Local authority: the hub holds the band's signing key, so its own node
@@ -118,17 +128,24 @@ class HubNode:
 
     # -- settings / secrets / resources ----------------------------------
     def _stored_settings(self, namespace: str) -> dict:
-        """Operator-stored values from ``hub_plugin_settings.json`` beside the
-        other hub stores (the wave-2 settings framework writes it)."""
-        if not self._state_dir:
-            return {}
+        """Operator-stored hub-scope values for a plugin: the settings store,
+        over the wave-1 ``hub_plugin_settings.json`` beside the other hub
+        stores (read-only, kept so existing files keep working)."""
+        out: dict = {}
+        if self._state_dir:
+            try:
+                data = json.loads((Path(self._state_dir) / "hub_plugin_settings.json")
+                                  .read_text(encoding="utf-8"))
+                ns = data.get(namespace) if isinstance(data, dict) else None
+                if isinstance(ns, dict):
+                    out.update(ns)
+            except (OSError, ValueError):
+                pass
         try:
-            data = json.loads((Path(self._state_dir) / "hub_plugin_settings.json")
-                              .read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return {}
-        ns = data.get(namespace) if isinstance(data, dict) else None
-        return ns if isinstance(ns, dict) else {}
+            out.update(self.settings_store.namespace_values(namespace))
+        except Exception:
+            log.exception("reading stored settings for %s failed", namespace)
+        return out
 
     def _secret(self, key: str) -> str | None:
         if self._vault is None:
@@ -279,7 +296,7 @@ class HubNode:
 
 
 def attach_hub_node(client: Any, state_dir: str | None, *, vault: Any = None,
-                    journal: Any = None) -> "HubNode | None":
+                    journal: Any = None, enrollment: Any = None) -> "HubNode | None":
     """Build the hub node and put it on ``client``'s bands. Used by the MCP
     bridge's ``build_server``. Never raises: a broken plugin host leaves the
     bridge running without hub caps. ``ROOK_HUB_PLUGINS=0`` disables it.
@@ -290,13 +307,22 @@ def attach_hub_node(client: Any, state_dir: str | None, *, vault: Any = None,
     if os.environ.get("ROOK_HUB_PLUGINS", "1") == "0":
         return None
 
+    holder: dict = {}
+
     def journal_band_call(cap: str, identity: str | None, args: dict, reply: dict) -> None:
-        if journal is not None:
-            journal.record(cap=cap, worker=HUB_WORKER_NAME,
-                           identity=identity or "band:anonymous", args=args, reply=reply)
+        if journal is None:
+            return
+        node = holder.get("node")
+        meta = node.host.registry.meta(cap) if node is not None else None
+        if "sensitive" in (getattr(meta, "tags", ()) or ()) and reply.get("ok"):
+            reply = {"ok": True, "result": "[sensitive: not journaled]"}
+        journal.record(cap=cap, worker=HUB_WORKER_NAME,
+                       identity=identity or "band:anonymous", args=args, reply=reply)
 
     try:
-        node = HubNode(state_dir, client=client, vault=vault, on_band_call=journal_band_call)
+        node = HubNode(state_dir, client=client, vault=vault, on_band_call=journal_band_call,
+                       enrollment=enrollment)
+        holder["node"] = node
     except Exception:
         log.exception("hub plugin host failed to start; hub caps unavailable")
         return None

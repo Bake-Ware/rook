@@ -331,6 +331,7 @@
     <span class="nav-label">MANAGE</span>
     <nav aria-label="Management">
       <a id="tab-install" href="#install" onclick="showView('install');return false">Install a worker</a>
+      <a id="tab-settings" href="#settings" onclick="showView('settings');return false">Settings</a>
       <a id="tab-account" href="#account" onclick="showView('account');return false">Account & access</a>
       <a id="tab-tokens" href="#tokens" onclick="showView('tokens');return false">API tokens</a>
       <a id="tab-guidance" href="#guidance" onclick="showView('guidance');return false">Agent instructions</a>
@@ -396,6 +397,7 @@
     <div id="view-knowledge" hidden></div>
     <div id="view-guidance" hidden></div>
     <div id="view-vault" hidden></div>
+    <div id="view-settings" hidden></div>
     <div id="view-account" class="settings-workspace" hidden></div>
     <div id="view-tokens" class="settings-workspace" hidden></div>
     <div id="view-bands" class="bands-workspace" hidden><p class="empty">Loading bands…</p></div>
@@ -931,6 +933,7 @@ const viewInfo={
  knowledge:['Knowledge','The agents\' shared wiki: what the team knows, with sources.'],
  vault:['Secrets','Credentials your agents can use, with every access logged.'],
  guidance:['Agent instructions','What Rook tells agents when they connect, list tools, and call capabilities.'],
+ settings:['Settings','Hub, band, worker, plugin and personal settings, with where each value comes from.'],
  work:['Work','Projects and tasks the agents are tracking: in progress, blocked and done.'],
  sessions:['Sessions','Review and continue Claude and Codex sessions across your workers.'],
  install:['Install a worker','Connect another machine to your workspace.']
@@ -941,6 +944,13 @@ async function ensureVault(){
  if(!vaultLoading)vaultLoading=import('/account/vault/assets/vault.js').then(m=>m.mountVault($('#view-vault'))).then(ui=>vaultUI=ui).finally(()=>{vaultLoading=null;});
  return vaultLoading;
 }
+let settingsAreaUI=null, settingsAreaLoading=null;
+async function ensureSettingsArea(){
+ if(settingsAreaUI)return settingsAreaUI;
+ if(!settingsAreaLoading)settingsAreaLoading=import('/account/settings/assets/settings-area.js').then(m=>m.mountSettings($('#view-settings'))).then(ui=>settingsAreaUI=ui).finally(()=>{settingsAreaLoading=null;});
+ return settingsAreaLoading;
+}
+function settingsQuery(){const [view,query]=location.hash.slice(1).split('?');return view==='settings'?(query||''):'';}
 async function ensureGuidance(){
  if(guidanceUI)return guidanceUI;
  if(!guidanceLoading)guidanceLoading=import('/account/guidance/assets/guidance.js').then(m=>m.mountGuidance($('#view-guidance'))).then(ui=>guidanceUI=ui).finally(()=>{guidanceLoading=null;});
@@ -998,8 +1008,8 @@ async function ensureSettings(view){
 }
 function showView(v,updateHistory=true){
  if(!viewInfo[v])v='workers';
- if(updateHistory&&location.hash!=='#'+v)history.pushState(null,'','#'+v);
- if(activeView===v){if(v==='account'&&settingsUI.account)settingsUI.account.refresh().catch(()=>{});return;}
+ if(updateHistory&&location.hash.split('?')[0]!=='#'+v)history.pushState(null,'','#'+v);
+ if(activeView===v){if(v==='account'&&settingsUI.account)settingsUI.account.refresh().catch(()=>{});if(v==='settings'&&settingsAreaUI&&settingsQuery())settingsAreaUI.activate(settingsQuery()).catch(()=>{});return;}
  settingsUI[activeView]?.deactivate();
  if(activeView==='sessions')sessionsUI?.deactivate();
  if(activeView==='work')tasksUI?.deactivate();
@@ -1012,6 +1022,7 @@ function showView(v,updateHistory=true){
  $('#view-title').textContent=viewInfo[v][0];$('#view-description').textContent=viewInfo[v][1];
  document.title=viewInfo[v][0]+' · Rook';$('#worker-controls').hidden=v!=='workers';$('#worker-stats').hidden=v!=='workers';$('#addband-form').hidden=true;
  if(v==='chat'){startChat();}else{stopChat();}
+ if(v==='settings')ensureSettingsArea().then(ui=>{if(activeView==='settings')return ui.activate(settingsQuery());}).catch(e=>{$('#view-settings').textContent=e.message;});
  if(v==='vault')ensureVault().then(ui=>{if(activeView==='vault')ui.activate();}).catch(e=>{$('#view-vault').textContent=e.message;});
  if(v==='guidance')ensureGuidance().then(ui=>{if(activeView==='guidance')ui.activate();}).catch(e=>{$('#view-guidance').textContent=e.message;});
  if(v==='knowledge')ensureKnowledge().then(ui=>{if(activeView==='knowledge')ui.activate();}).catch(e=>{$('#view-knowledge').textContent=e.message;});

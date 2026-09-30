@@ -2,8 +2,8 @@
 
 The work tree (concept > project > task) lives in the knowledge store, next
 to the wiki pages it links to, so this plugin ``DEPENDS`` on ``knowledge``
-and loads only where that one did (it is enabled with it; see the
-``knowledge`` settings).
+and loads only where that one did. Its own ``enabled`` setting (default on,
+env ``ROOK_TASKS``) turns the task tools off while keeping the wiki.
 
 Caps (the ``rook_task`` / ``rook_project`` / ``rook_concept`` MCP tools route
 to them; ``kind`` picks the record kind, default ``task``):
@@ -21,7 +21,7 @@ tasks".
 """
 from __future__ import annotations
 
-from ...core.plugin import Plugin, capability, place
+from ...core.plugin import Plugin, capability, place, setting
 from .knowledge import ERRORS, LINKS_HELP, error_reply, reply, route
 
 KINDS = ('task', 'project', 'concept')
@@ -33,6 +33,12 @@ class Tasks(Plugin):
     CORE_API = ">=1.1,<2"
     PLACEMENT = place("is_hub", run="one")
     DEPENDS = ("knowledge",)
+    SETTINGS = (
+        setting("enabled", bool, default=True, env="ROOK_TASKS", apply="restart",
+                label="Tasks, projects and concepts",
+                help="Needs Knowledge on. Off keeps the wiki and removes the task tools. "
+                     "Read at start: restart the hub to apply."),
+    )
     GUIDANCE = {
         "tool:rook_task": "",
         "cap:task.": ("task.read/task.write take rook_task's action, id, query, data and request_id "
@@ -46,6 +52,9 @@ class Tasks(Plugin):
              "handoff. Over the band: `task.read` (deck/search/list/get) and `task.write` "
              "(create/update/link/retract/claim/release) on worker `rook`, with "
              "`kind=task|project|concept`.\n")
+
+    def available(self) -> bool:
+        return bool(self.settings.get("enabled", True))
 
     def _knowledge(self):
         kb = self.dependency("knowledge")

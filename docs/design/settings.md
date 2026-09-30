@@ -1,9 +1,9 @@
 # Settings: inventory and proposal
 
-Status: design (rook-beta wave 1). This document changes no behaviour. Part 1 lists
-every setting as of `beta` (cut from master `733fc16`). Part 2 lists the problems.
-Part 3 proposes one Settings area built from per-plugin `setting()` schemas, and
-a migration path to it.
+Status: wave 2 implemented (see Part 4). Part 1 lists every setting as of `beta`
+(cut from master `733fc16`). Part 2 lists the problems. Part 3 proposes one
+Settings area built from per-plugin `setting()` schemas, and a migration path to
+it. Part 4 records what was built, where it differs from Part 3, and what is left.
 
 Related: `docs/DESIGN-band-services.md` §1 (settings wizard and commit-confirmed
 config OTA). Part 3 builds on that design and does not replace it.
@@ -1003,3 +1003,120 @@ the changelog.
 6. **Relay settings.** The relay is a separate binary with its own environment.
    Should the hub manage it (write its unit environment and restart it), or only
    validate and display it?
+
+---
+
+# Part 4 — Implementation status (wave 2, `rook-beta-settings-framework`)
+
+## 4.1 What exists
+
+| Piece | Where |
+|---|---|
+| `setting()` fields `apply`, `bootstrap`, `overridable`, env alias lists (canonical `ROOK_<NS>_<NAME>` accepted), `flag`, `group`, `order`, `min`/`max`/`pattern`, `advanced`, `deprecated`; types `url`, `hostport`, `path` | `rook/core/plugin.py` (stdlib-only) |
+| Resolution with an explanation (source, lock, inherited value, invalid layers), secret references, masking, fingerprints | `rook/core/settings.py` (stdlib-only, ships to workers) |
+| `settings.db`: `settings`, `history`, `runtime` tables; beside `enrollment.db` (or `ROOK_SETTINGS_DB`), so both hub processes share it | `rook/hub/settings_store.py` |
+| The registry: core keys from Part 1 (with today's variables as env names), hub plugins (loaded or not), worker plugins, and services beside the hub (voice, decision engine, watchdog, relay) | `rook/hub/settings_schema.py` |
+| Service: pages, writes, validation, history, conflicts, worker delivery, service fetch, worker secrets | `rook/hub/settings_service.py` |
+| Caps on worker `rook`: `settings.describe`, `get`, `history` (read); `set`, `reset`, `apply_worker` (admin; call `rook.hub.authz.require_hub_admin` when the permissions module is present); `fetch` (read, sensitive, scoped token); `report` (services report their env locks); `worker_secret` (read, sensitive, band-callable) | `rook/hub/plugins/settings.py` |
+| Account API `/settings/account-api` (MCP port) and the dashboard proxy `/account/settings/api` | `rook/hub/settings_web.py`, `rook/remote/knowledge_web.py` |
+| The Settings area: overview (conflicts, relay check, hub processes, plugins, recent changes), Hub, each band, each worker, each plugin/service, My preferences; search over keys, labels, help and variable names | `rook/web/settings-area.js`, `rook/web/index.html` |
+| Dashboard precedence and runtime report | `rook/remote/dashboard_settings.py`, `rook/remote/bootstrap.py` |
+| Commit-confirmed push shared by `rook_config_apply` and "Apply to worker" | `rook/hub/worker_config.py` |
+| Generated reference of every key | `docs/operations/settings-reference.md` (`tools/gen_settings_reference.py`, checked by a test) |
+
+Screenshots: `docs/img/settings-overview.png`, `settings-hub.png`,
+`settings-worker.png`, `settings-plugin-voice.png`, `settings-preferences.png`.
+
+## 4.2 Precedence as built
+
+```
+default < setup.json (legacy file) < hub < band < worker < user < env / flag
+```
+
+- **A stored value beats `setup.json`.** Part 3 put files above the store; with
+  the file below, no import step is needed: `setup.json` keeps seeding a key
+  until someone saves a value for it, and the wizard keeps working.
+- **The environment and flags win everywhere** (maintainer decision), and the
+  UI shows the variable or flag, what it hides, and a conflict note. The
+  dashboard's own flags and variables reach the MCP-hosted UI through the
+  store's `runtime` table (each hub process reports what its environment and
+  command line set, secrets as fingerprints).
+- **The band key is seed-only** (maintainer decision): `ROOK_BAND_PSK` /
+  `--psk` is imported only into an empty enrollment database; after that a
+  different value is ignored, logged and shown as a conflict, so an old
+  variable cannot undo a rotation or add a stray band. The key itself is
+  managed on the Bands page (`core.band.key` is `managed: enrollment`).
+- **Workers** keep their existing order: a pushed config overrides the
+  command line (it is the remote override path and is commit-confirmed).
+
+## 4.3 Problems addressed
+
+| Problem | Status |
+|---|---|
+| P1 setup.json beats env | Fixed for domain, relay address and band label (env/flag > store > file > default); conflicts logged at start and listed on the overview. The PSK follows 4.2. |
+| P3 MCP requires `--psk` | Fixed: optional seed; the MCP serves the bands in the shared enrollment database and waits when there are none. `WSBandBridge` no longer needs a PSK. |
+| P4 chat database differs | Fixed: the MCP honours `ROOK_CHAT_DB`; the dashboard uses `ROOK_CHAT_DB`, else the chat path the MCP reported, else its old default. The overview flags a mismatch. |
+| P11 undocumented knobs | Every Part 1 row is declared; `docs/operations/settings-reference.md` is generated from the schema. |
+| P13 worker settings via untyped env | Worker plugins declare their settings; the worker page stores typed, validated values per worker (band defaults for core worker keys) and "Apply" pushes them commit-confirmed. The push still uses the legacy `env` form for every build (see 4.5). |
+| P14 plugin enable/disable | Worker page toggles, recorded in history. `plugins.json` now records runtime enables that `--enable` leaves out, and the worker adds them at boot, so they survive a restart. `worker.plugin.list` gives the reason a plugin is not loaded. |
+| P16 relay TTL | The relay is displayed and checked (address each process dials, peers seen), not managed; its keys are declared with `min=60` for the TTL and help text. |
+| P19 secrets on read paths | `worker.config_get` (new builds) and `rook_config_get`/`rook_config_apply` (every build) mask the PSK and env values except declared non-secret settings; `shell.env.list`/`env.get` mask pushed and fetched secrets. |
+| P20 no history | Settings writes, resets, plugin toggles and worker config pushes are recorded with the actor. |
+| P21 per-user preferences | Stored per account (My preferences; `voice.default_voice` user override, `voice.show_thinking`, `voice.hotword_enabled`) and returned by `settings.fetch` to the voice service. Clients do not read them yet. |
+
+## 4.4 Secrets
+
+- Hub and plugin secrets: vault `plugin.<ns>.<name>`; band/worker/user scope:
+  `<scope>.<target>.<key>`. `settings.db` holds only the reference; history
+  holds fingerprints.
+- **Worker secrets are fetched at use** (maintainer decision): the push
+  carries `{{secret:<vault name>}}`; the worker keeps the reference in
+  `config.json`, never puts it in its environment, and after connecting asks
+  worker `rook` (`settings.worker_secret`) for the value, which it keeps in
+  memory. The hub serves only vault entries that a stored setting assigns to
+  that worker (or its band). A band member can impersonate a worker id, so
+  this exposes what shell access to that worker already exposes: its own
+  secrets, no others. Build-167 workers cannot fetch at use, so the hub
+  refuses to push a secret to them instead of writing it to their disk.
+- Replies of sensitive caps (`settings.fetch`, `settings.worker_secret`) are
+  not journaled, on the MCP path or the band path.
+
+## 4.5 Key mapping differences from 3.9
+
+| 3.9 proposal | Built |
+|---|---|
+| `core.hub.public_url` (`ROOK_DOMAIN`) | `core.hub.domain` (it is a host[:port], not a URL) |
+| `core.band.public_relay` (band) | `core.hub.public_relay` (hub; per-band hubs stay in the enrollment database) |
+| `core.band.name` | `core.hub.band_name` (primary band label); other band names stay on the Bands page |
+| `core.dashboard.listen`, `core.relay.address` | `core.dashboard.bind` + `core.dashboard.port`, `core.dashboard.relay_host/port`, `core.mcp.relay` (one key per variable; merged shapes are a phase-5 cleanup) |
+| `wake.command`, `wake.agent` | `agent.wake_command`, `agent.wake_agent` (keys use the plugin namespace, as the vault names do) |
+| `knowledge.embed_endpoint` | the knowledge plugin's own keys: `knowledge.enabled`, `db_path`, `semantic`, `embedder`, `embed_model`; plus `task.enabled` (`ROOK_TASKS`) |
+| — | `core.worker.authz_mode` (`ROOK_AUTHZ_MODE`), `core.work.v2` (`ROOK_WORK_V2`), `core.settings.service_readers` |
+
+## 4.6 Pages
+
+Moved into Settings: none of the existing pages yet. Linked from the Settings
+sidebar ("Also here"): Agent instructions, Secrets, API tokens, Bands (keys,
+members, moves), Account & access. New in Settings: Hub, per-band worker
+defaults, per-worker settings and plugins, per-plugin/service pages, My
+preferences. The first-run `/setup` page is unchanged.
+
+## 4.7 Left for follow-ups
+
+- Typed `settings` map in the config epoch for new builds (all builds get the
+  `env` form now) and worker-reported env locks shown on the worker page.
+- Move Agent instructions, Secrets, API tokens and Account into the Settings
+  area (they are linked); custom caps (`cmd.*`) page on the worker page.
+- The permissions policy (`policy.json` in the hub data dir, PR #23) should
+  move into the settings store (scope hub, with revisions in `history`).
+- The voice service and decision engine should call `settings.fetch` at start
+  and `settings.report` for their env locks (the API and gate exist); the
+  watchdog should get its own scoped token (P8).
+- Android and the TUI should read My preferences from the account (P21).
+- Cross-field validators (3.6), the `pending` badge for a worker change
+  awaiting confirm beyond the job state, and phase 5 (dropping aliases).
+- Keys removed from the store since the last push are sent as `null` (env:
+  removed from the worker's environment at boot; `name`/`announce_interval`/
+  `log_level`: ignored, so the command line applies again). A value pushed by
+  hand with `rook_config_apply` outside the Settings page is not tracked.
+

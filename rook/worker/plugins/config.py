@@ -23,6 +23,7 @@ import logging
 
 from ..plugin import Plugin, capability
 from .. import wconfig
+from ...core.settings import mask_worker_config
 
 log = logging.getLogger("rook.worker.plugins.config")
 
@@ -81,10 +82,24 @@ class ConfigPlugin(Plugin):
         except Exception:
             log.exception("re-exec failed")
 
+    def _public_env(self) -> set:
+        """Env names of this worker's declared non-secret settings: their pushed
+        values are shown; every other pushed value is masked."""
+        plugins = getattr(self._worker, "plugins", None) or []
+        out = set()
+        for p in plugins:
+            for s in getattr(p, "SETTINGS", ()):
+                if not s.secret:
+                    out.update(s.env_names())
+        return out
+
     @capability("config_get")
     def _get(self) -> dict:
-        """Return this worker's active config overrides + pending/confirm state."""
-        return {"ok": True, **wconfig.current()}
+        """Return this worker's active config overrides + pending/confirm state.
+
+        The band key and pushed env values are masked (declared non-secret
+        plugin settings excepted); ``{{secret:…}}`` references are shown."""
+        return {"ok": True, **wconfig.current(self._public_env())}
 
     @capability("config_apply")
     async def _apply(self, settings: dict, epoch: int,
@@ -111,7 +126,7 @@ class ConfigPlugin(Plugin):
         merged = wconfig.stage_apply(settings, epoch, confirm_within)
         result = {"ok": True, "staged_epoch": int(epoch),
                   "confirm_within": confirm_within, "restarting": bool(restart),
-                  "config": {k: v for k, v in merged.items() if k != "psk"}}
+                  "config": mask_worker_config(merged, self._public_env())}
         if restart:
             # Defer the restart so this reply reaches the site first.
             async def _later():

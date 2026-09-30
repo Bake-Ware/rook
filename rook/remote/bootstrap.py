@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import secrets
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -984,7 +985,8 @@ class CombinedServer:
                  band_psk: str = "",
                  hub_host: str = "127.0.0.1", hub_port: int = 7474,
                  hub_public: str = "hub.example.com:443", band_name: str = "rook-band",
-                 bind: str = "0.0.0.0"):
+                 bind: str = "0.0.0.0", explicit: dict | None = None,
+                 argv: list | None = None):
         self.port = port
         self.bind = bind
         self.auth_token = auth_token
@@ -1000,18 +1002,28 @@ class CombinedServer:
         # password-less loopback hub, but it cannot read this value first.
         self._setup_csrf = secrets.token_urlsafe(24)
 
-        # First-run setup wizard values (data/setup.json, gitignored) win over
-        # the constructor/config defaults so secrets never live in version control.
+        # Domain, relay address and band label: environment/flag > Settings
+        # page (settings store) > first-run setup.json > default. ``explicit``
+        # names the ones the environment or command line set (settings P1);
+        # without it (older callers) setup.json keeps beating the constructor.
         from . import setup_store
+        from . import dashboard_settings as _ds
         _s = setup_store.load()
         if _s.get("band_psk"):
             self.band_psk = _s["band_psk"]
-        if _s.get("hub_public"):
-            self.hub_public = _s["hub_public"]
-        if _s.get("pyz_domain"):
-            self.domain = _s["pyz_domain"]
-        if _s.get("band_name"):
-            self.band_name = _s["band_name"]
+        self._explicit = explicit
+        self._argv = list(argv or [])   # for the Settings page: which flags lock a key
+        self._settings_store = _ds.open_store()
+        self._ctor_settings = {"domain": self.domain, "hub_public": self.hub_public,
+                               "band_name": self.band_name}
+        _vals, self._setting_sources, self._setting_conflicts = _ds.resolve(
+            self._ctor_settings, explicit, _s, _ds.stored_values(self._settings_store))
+        self.domain, self.hub_public, self.band_name = (
+            _vals["domain"], _vals["hub_public"], _vals["band_name"])
+        for _c in self._setting_conflicts:
+            log.warning("setting %s: %s", _c["key"], _c["note"])
+        self._settings_checked = 0.0
+        self._started_at = time.time()
         self._band = None  # MultiBandClient — joins the hub to track workers + invoke caps
         # Shared site chat store — same sqlite file band_mcp serves over MCP, so
         # the dashboard chat panel and MCP agents share one set of rooms.
@@ -1019,7 +1031,10 @@ class CombinedServer:
         try:
             from ..band_mcp.chat_rooms import ChatStore
             from ..paths import data_path
-            chat_db = os.environ.get("ROOK_CHAT_DB") or data_path("chat.db", "/var/lib/rook-band-mcp/chat.db")
+            from .dashboard_settings import chat_db_path
+            chat_db = chat_db_path(self._settings_store,
+                                   data_path("chat.db", "/var/lib/rook-band-mcp/chat.db"))
+            self._chat_db = chat_db
             self._chat = ChatStore(chat_db)
         except Exception:
             log.warning("chat store unavailable; dashboard chat disabled", exc_info=True)
@@ -1030,7 +1045,15 @@ class CombinedServer:
         # only ever sees the band_id label (first 8 hex of SHA256(PSK)[:16]).
         from .enrollment import EnrollmentStore
         self._enrollment = EnrollmentStore()
-        self._enrollment.import_config([self.band_psk], hub=self.hub_public)
+        # The environment's key only seeds an empty database (never undoes a
+        # rotation made on the Bands page).
+        if self._enrollment.import_config([self.band_psk], hub=self.hub_public, seed_only=True):
+            log.warning("ROOK_BAND_PSK/--psk holds a key the enrollment database does not use; "
+                        "ignored (it only seeds the first band)")
+            self._setting_conflicts.append({
+                "key": "core.band.key", "env": "ROOK_BAND_PSK",
+                "note": "ROOK_BAND_PSK holds a key the enrollment database does not use; "
+                        "ignored. The environment only seeds the first band."})
         self._bands = self._enrollment.bands(active_only=True, secrets_visible=True)
         self._enrollment_task = None
         self._bans = setup_store.load_bans()   # deauthed workers (by name / worker_id)
@@ -1374,6 +1397,7 @@ button:hover{{background:#22b88f}}
         if not self.web_pass:
             log.warning("dashboard password not set: anyone who can reach port %d "
                         "can control every worker", self.port)
+        self._report_settings()
 
         # Join the band so the dashboard can list workers + invoke caps.
         # Best-effort: a missing/unreachable hub must not take down the
@@ -1394,7 +1418,32 @@ button:hover{{background:#22b88f}}
             log.warning("band client failed to start (%s); dashboard band view disabled", e)
             self._band = None
 
+    def _refresh_settings(self) -> None:
+        """Pick up Settings-page changes to the domain, relay address and band
+        label (live), and report this process's view to the store."""
+        from . import dashboard_settings as _ds
+        from . import setup_store
+        vals, self._setting_sources, _conflicts = _ds.resolve(
+            self._ctor_settings, self._explicit if self._explicit is not None else {},
+            setup_store.load(), _ds.stored_values(self._settings_store))
+        self.domain, self.hub_public, self.band_name = (
+            vals["domain"], vals["hub_public"], vals["band_name"])
+
+    def _report_settings(self) -> None:
+        from . import dashboard_settings as _ds
+        _ds.report(self._settings_store, explicit=self._explicit,
+                   sources=self._setting_sources, conflicts=self._setting_conflicts,
+                   chat_db=getattr(self, "_chat_db", ""), started_at=self._started_at,
+                   values={"domain": self.domain, "hub_public": self.hub_public,
+                           "band_name": self.band_name}, argv=self._argv)
+
     async def _sync_enrollment(self) -> None:
+        if time.time() - self._settings_checked > 10:
+            self._settings_checked = time.time()
+            try:
+                self._refresh_settings()
+            except Exception:
+                log.warning("refreshing settings failed", exc_info=True)
         bands = self._enrollment.bands(active_only=True, secrets_visible=True)
         self._bands = bands
         self._band_names = {b["label"]: b["name"] for b in bands}
@@ -2588,7 +2637,10 @@ def _cli_main() -> None:
     if signing_key:
         log.info("update signing key %s (public %s)", key_path(), public_key_b64(signing_key))
 
+    from .dashboard_settings import explicit_sources
     server = CombinedServer(
+        explicit=explicit_sources(sys.argv[1:]),
+        argv=sys.argv[1:],
         port=args.port,
         domain=args.domain,
         band_psk=args.band_psk,

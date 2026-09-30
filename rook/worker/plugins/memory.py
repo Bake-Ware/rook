@@ -40,7 +40,7 @@ import time
 import uuid
 from pathlib import Path
 
-from ..plugin import Plugin, capability
+from ..plugin import Plugin, capability, setting
 from ..context import current_identity
 
 _VAULT_ENV = "ROOK_MEMORY_VAULT"
@@ -82,6 +82,11 @@ def _safe_seg(seg: str) -> str:
 
 class MemoryPlugin(Plugin):
     NAMESPACE = "memory"
+    SETTINGS = (
+        setting("notes_dir", "path", default="", scope="worker", env="ROOK_MEMORY_VAULT",
+                apply="restart", label="Notes directory",
+                help="Directory of markdown notes. Blank leaves memory.* off."),
+    )
 
     def __init__(self) -> None:
         super().__init__()
