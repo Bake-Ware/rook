@@ -1,5 +1,6 @@
 """Dashboard token administration against the MCP process's live token store."""
 import hmac
+import re
 
 from starlette.responses import JSONResponse
 from starlette.routing import Route
@@ -39,7 +40,15 @@ def build_account_token_routes(provider, chat=None, accounts=None):
                 ttl = data.get('ttl')
                 if ttl not in (None, 86400, 604800, 2592000, 7776000, 31536000):
                     raise ValueError('Choose a supported expiry.')
-                entry = provider.mint_api_token(name.strip(), ttl_seconds=ttl)
+                # Optional scope tags. Only the Work session tag is accepted;
+                # scopes are recorded for attribution until permissions land.
+                scopes = data.get('scopes')
+                if scopes is not None:
+                    if (not isinstance(scopes, list) or len(scopes) > 4 or scopes[:1] != ['rook']
+                            or not all(isinstance(x, str) and re.fullmatch(r'work-session:[a-f0-9]{32}', x)
+                                       for x in scopes[1:])):
+                        raise ValueError('Unsupported token scope.')
+                entry = provider.mint_api_token(name.strip(), ttl_seconds=ttl, scopes=scopes)
                 return response({'id': entry['id'], 'name': entry['name'], 'token': entry['token']})
             if op == 'revoke':
                 if data.get('confirm') is not True:

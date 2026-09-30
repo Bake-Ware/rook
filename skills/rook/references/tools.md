@@ -138,6 +138,7 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 | `claude-history.resumed` | — | Sessions this worker relaunched and whether they're still up. |
 | `claude-history.search` | query, path?, machine?, limit=20, ignore_case=true | Regex-search across all session messages. |
 | `claude-history.send` | session_id, text, command_id | Send to this exact existing session; transcripts stay on this host. |
+| `claude-history.transcript` | session_id, offset=0, max_chars=6000, path? | A transcript page in the stable `rook.transcript/1` export format. |
 
 **codex_history**
 
@@ -154,6 +155,7 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 | `codex-history.resumed` | — | Sessions this worker relaunched and whether they're still up. |
 | `codex-history.search` | query, path?, machine?, limit=20, ignore_case=true | Regex-search across all session messages. |
 | `codex-history.send` | session_id, text, command_id | Send to this exact existing session; transcripts stay on this host. |
+| `codex-history.transcript` | session_id, offset=0, max_chars=6000, path? | A transcript page in the stable `rook.transcript/1` export format. |
 
 **config**
 
@@ -322,6 +324,20 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 | `shell.env.list` | prefix='' |  |
 | `shell.exec` | cmd?, argv?, stdin?, timeout=30.0, cwd?, env? | Run a command. |
 | `shell.which` | name |  |
+
+**terminals**
+
+| Cap | Args | Does |
+|---|---|---|
+| `work.export` | agent, session_id, offset=0, max_chars=6000 | A page of a historical Claude/Codex transcript in the stable `rook.transcript/1` format: `{format, session, m… |
+| `work.sessions` | limit=20, offset=0, history=true, query='' | One catalog of this host's work: live terminals plus Claude/Codex history, newest first. |
+| `work.stream.close` | id | Stop the terminal's process (SIGHUP, then SIGKILL) and drop it. |
+| `work.stream.list` | — | Live and recently finished terminals on this worker. |
+| `work.stream.open` | harness='shell', cwd='', title='', model='', resume='', persona='', mcp_url='', mcp_token='', session='', cols=120, rows=32, buffer_bytes=262144 | Start a harness (shell\|claude\|codex\|hermes) under a PTY and return its terminal `id` immediately. |
+| `work.stream.read` | id, cursor=0, max_bytes=16384, wait=0, accept='tbz' | Output from byte `cursor` on. |
+| `work.stream.resize` | id, cols, rows | Set the terminal size in character cells (sends SIGWINCH). |
+| `work.stream.signal` | id, sig='INT' | Signal the terminal's process group: INT, TERM, HUP, KILL. |
+| `work.stream.write` | id, data, enc='t' | Write raw input to the terminal (keystrokes, pastes; send "\r" for Enter, "\x03" for Ctrl-C). |
 
 **wake**
 

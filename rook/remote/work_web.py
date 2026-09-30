@@ -10,8 +10,10 @@ import uuid
 from pathlib import Path
 from contextlib import contextmanager
 
+import aiohttp
 from aiohttp import web, WSMsgType
-from .account_web import NO_STORE
+from .account_web import COOKIE, NO_STORE
+from .term_hub import TermHub, Viewer, frame
 
 log = logging.getLogger(__name__)
 
@@ -25,7 +27,19 @@ METADATA_KEYS = frozenset(('id', 'owner', 'title', 'cwd', 'model', 'worker_id',
     'review_status', 'revision', 'updated', 'error', 'disconnected',
     'external_handle', 'external_cursor', 'resume_note', 'remote_runtime',
     'worker_revision', 'running', 'needs_input', 'legacy_runtime', 'active', 'messageable', 'message_note',
-    'created_by'))
+    'created_by', 'harness', 'term_id', 'term_running', 'term_exit', 'term_note',
+    'term_started', 'mcp_token_id', 'mcp_token_revoke', 'persona'))
+
+HARNESSES = ('shell', 'claude', 'codex', 'hermes')
+TERM_CAPS = ('work.stream.open', 'work.stream.read', 'work.stream.write')
+VENDOR = {'xterm.mjs': 'application/javascript', 'xterm.css': 'text/css',
+          'addon-fit.mjs': 'application/javascript'}
+# Scoped MCP tokens minted for launched agents. Until the permissions layer
+# lands the scope tag is attribution only: the token can call what any
+# operator API token can. See docs/web/worklog.md.
+SESSION_TOKEN_TTL = 86400
+INPUT_FRAME_MAX = 96 * 1024
+
 
 
 def actor(user):
@@ -161,6 +175,12 @@ class WorkWeb:
         self.pump = None
         self.discovery = None
         self.external_output = {}
+        # Worklog view (live terminals). ROOK_WORK_V2=0 keeps only the classic view.
+        self.v2 = os.environ.get('ROOK_WORK_V2', '1') != '0'
+        self.terms = TermHub(lambda: self.server._band, on_end=self.term_ended)
+        self.token_url = os.environ.get('ROOK_TOKEN_ADMIN_URL', 'http://127.0.0.1:8765/tokens/account-api')
+        self.mcp_url = os.environ.get('ROOK_WORK_MCP_URL', '')
+        self._ticks = 0
 
     def lock(self, sid):
         return self.locks.setdefault(sid, asyncio.Lock())
@@ -171,6 +191,8 @@ class WorkWeb:
         app.router.add_get('/account/work/view/{session}', self.view_page)
         app.router.add_get('/account/work/ws', self.websocket)
         app.router.add_get('/account/work/assets/{name}', self.asset)
+        app.router.add_get('/account/work/assets/vendor/{name}', self.vendor_asset)
+        app.router.add_get('/account/work/term/{session}', self.term_socket)
         app.on_startup.append(self.start)
         app.on_cleanup.append(self.stop)
 
@@ -179,6 +201,7 @@ class WorkWeb:
         self.discovery = asyncio.create_task(self.discover())
 
     async def stop(self, app):
+        await self.terms.stop()
         if self.discovery:
             self.discovery.cancel()
         if self.pump:
@@ -225,15 +248,250 @@ class WorkWeb:
 
     async def asset(self, request):
         name = request.match_info['name']
-        if name not in ('work.js', 'work.css'):
+        if name not in ('work.js', 'work.css', 'worklog.js', 'worklog.css'):
             raise web.HTTPNotFound()
         return web.Response(text=(Path(__file__).parents[1] / 'web' / name).read_text(),
                             content_type='text/css' if name.endswith('css') else 'application/javascript',
                             headers=NO_STORE)
 
+    async def vendor_asset(self, request):
+        name = request.match_info['name']
+        if name not in VENDOR:
+            raise web.HTTPNotFound()
+        path = Path(__file__).parents[1] / 'web' / 'vendor' / 'xterm' / name
+        # Versioned third-party files: cacheable, unlike the app's own assets.
+        return web.Response(body=path.read_bytes(), content_type=VENDOR[name],
+                            headers={'Cache-Control': 'public, max-age=86400'})
+
     async def bootstrap(self, request):
         user = self.user(request)
-        return web.json_response({'csrf': user['csrf']}, headers=NO_STORE)
+        return web.json_response({'csrf': user['csrf'], 'v2': self.v2,
+                                  'harnesses': list(HARNESSES)}, headers=NO_STORE)
+
+    def hosts(self):
+        """Connected workers that can run Work sessions of either kind."""
+        out = []
+        for w in self.workers(history=True):
+            caps = w.get('caps', [])
+            term = all(c in caps for c in TERM_CAPS)
+            runtime = all(c in caps for c in ('work.create', 'work.command', 'work.view_page', 'work.status'))
+            history = [a for a in ('claude', 'codex') if a + '-history.pull' in caps]
+            if not (term or runtime or history):
+                continue
+            hb = (w.get('hb') or {}).get('work') or {}
+            harnesses = [h for h in hb.get('harnesses', []) if h in HARNESSES] if term else []
+            out.append({'id': w['worker_id'], 'name': w.get('name', ''), 'band': w.get('band'),
+                        'term': term, 'runtime': runtime,
+                        'harnesses': harnesses or (list(HARNESSES) if term else []),
+                        'history': history})
+        return out
+
+    def term_capable(self, state):
+        try:
+            caps = self.worker(state).get('caps', [])
+        except ValueError:
+            return False
+        return all(c in caps for c in TERM_CAPS)
+
+    # -- scoped MCP tokens ---------------------------------------------------
+
+    async def token_call(self, request, user, payload):
+        """Operate the MCP process's token store as the signed-in operator."""
+        token = request.cookies.get(COOKIE, '')
+        if request.headers.get('Authorization', '').startswith('Bearer '):
+            token = request.headers['Authorization'][7:]
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
+                async with session.post(self.token_url, json={**payload, 'csrf': user['csrf']},
+                                        cookies={COOKIE: token}, allow_redirects=False) as upstream:
+                    result = await upstream.json()
+                    if upstream.status != 200:
+                        raise ValueError(result.get('error') or 'Token service refused the request.')
+                    return result
+        except (aiohttp.ClientError, TimeoutError) as error:
+            raise ValueError('Token service is unavailable; launch without a Rook MCP token.') from error
+
+    async def mint_session_token(self, request, user, sid, harness):
+        result = await self.token_call(request, user, {
+            'op': 'create', 'name': f'work:{harness}:{sid[:8]}', 'ttl': SESSION_TOKEN_TTL,
+            'scopes': ['rook', 'work-session:' + sid]})
+        return result['id'], result['token']
+
+    async def revoke_session_tokens(self, request, user):
+        """Revoke tokens of finished launches, using an operator's live socket
+        (the token store only accepts operator-authenticated changes)."""
+        for s in self.store.all(user['id'], details=False):
+            if not s.get('mcp_token_revoke') or not s.get('mcp_token_id'):
+                continue
+            try:
+                await self.token_call(request, user, {'op': 'revoke', 'id': s['mcp_token_id'], 'confirm': True})
+            except ValueError as error:
+                if 'no longer exists' not in str(error):
+                    log.warning('Token revoke for %s deferred: %s', s['id'], error)
+                    continue
+            async with self.lock(s['id']):
+                latest = self.store.get(s['id'])
+                latest.update(mcp_token_id=None, mcp_token_revoke=False)
+                self.store.save(latest)
+
+    def mcp_endpoint(self):
+        return self.mcp_url or (self.account.origin + '/mcp')
+
+    # -- live terminals ------------------------------------------------------
+
+    def term_ended(self, stream):
+        """A followed terminal exited or was lost: record it on its session."""
+        for s in self.store.all(details=False):
+            if s.get('term_id') == stream.term_id and s.get('worker_id') == stream.worker_id and s.get('term_running'):
+                self.mark_term_done(s['id'], stream.exit_code, stream.lost)
+
+    def mark_term_done(self, sid, exit_code, note=''):
+        s = self.store.get(sid)
+        if not s.get('term_running'):
+            return
+        s.update(term_running=False, term_exit=exit_code, term_note=note or '',
+                 last_activity=time.time())
+        if not s.get('imported'):
+            s['status'] = 'closed'
+        if s.get('mcp_token_id'):
+            s['mcp_token_revoke'] = True
+        self.store.save(s)
+
+    async def term_socket(self, request):
+        """One live terminal: binary output frames out, JSON control in."""
+        user = self.user(request)
+        if request.headers.get('Origin') != self.account.origin:
+            raise web.HTTPForbidden(text='Origin mismatch')
+        s = self.store.get(request.match_info['session'], user['id'])
+        if not s.get('term_id'):
+            raise web.HTTPNotFound(text='This session has no live terminal.')
+        existing = self.terms.get(s['worker_id'], s['term_id'])
+        if existing is None:
+            if not s.get('term_running'):
+                raise web.HTTPGone(text='This terminal has ended.')
+            try:
+                self.worker(s)
+            except ValueError as error:
+                raise web.HTTPServiceUnavailable(text=str(error))
+        try:
+            stream = existing or self.terms.stream(s['worker_id'], s['term_id'])
+        except ValueError as error:
+            raise web.HTTPServiceUnavailable(text=str(error))
+        ws = web.WebSocketResponse(heartbeat=25, max_msg_size=INPUT_FRAME_MAX)
+        await ws.prepare(request)
+        viewer = Viewer(str(user.get('username') or user['id'])[:60])
+        since = request.query.get('since')
+        try:
+            stream.attach(viewer, int(since) if since and since.isdigit() else None)
+        except ValueError as error:
+            await ws.send_json({'type': 'error', 'error': str(error)})
+            await ws.close()
+            return ws
+
+        async def writer():
+            while not ws.closed:
+                kind, item = await viewer.next()
+                if kind == 'frame':
+                    await ws.send_bytes(item)
+                elif kind == 'resync':
+                    viewer.resync = False
+                    await ws.send_json({'type': 'reset', 'start': stream.start})
+                    if stream.ring:
+                        await ws.send_bytes(frame(stream.start, bytes(stream.ring)))
+                    viewer.sent = stream.end
+                else:
+                    await ws.send_json(item)
+
+        pump = asyncio.create_task(writer())
+        checked = time.monotonic()
+        try:
+            async for msg in ws:
+                if msg.type != WSMsgType.TEXT:
+                    break
+                try:
+                    # Revocation applies to open sockets within a few seconds
+                    # without a session lookup on every keystroke.
+                    if time.monotonic() - checked > 5:
+                        user, checked = self.user(request), time.monotonic()
+                    data = json.loads(msg.data)
+                    if not isinstance(data, dict):
+                        raise ValueError('Expected an object.')
+                    self.account.csrf(request, data, user)
+                    stream.control(viewer, data)
+                    if data.get('op') == 'input':
+                        self.touch(s['id'])
+                except (ValueError, TypeError, PermissionError, json.JSONDecodeError) as error:
+                    await ws.send_json({'type': 'error', 'error': str(error)})
+                except (web.HTTPUnauthorized, web.HTTPForbidden):
+                    await ws.close(code=1008, message=b'Sign in again')
+                    break
+        finally:
+            stream.detach(viewer)
+            pump.cancel()
+            await asyncio.gather(pump, return_exceptions=True)
+        return ws
+
+    def touch(self, sid):
+        """Record activity at most every 30 s (it bumps the sidebar order)."""
+        s = self.store.get(sid)
+        if time.time() - (s.get('last_activity') or 0) > 30:
+            s['last_activity'] = time.time()
+            self.store.save(s)
+
+    async def open_terminal(self, request, user, sid, cid, data):
+        """Launch (or resume into) a PTY on the session's worker."""
+        async with self.lock(sid):
+            s = self.store.get(sid)
+            token_id = None
+            try:
+                args = dict(harness=s['harness'], cwd=s.get('cwd') or '', title=s.get('title') or '',
+                            model=s.get('model') or '', session=sid,
+                            cols=int(data.get('cols') or 120), rows=int(data.get('rows') or 32))
+                if s.get('imported') and s.get('source_id'):
+                    args['resume'] = s['source_id']
+                if s.get('persona'):
+                    args['persona'] = s['persona']
+                if data.get('mcp'):
+                    token_id, secret = await self.mint_session_token(request, user, sid, s['harness'])
+                    args.update(mcp_url=self.mcp_endpoint(), mcp_token=secret)
+                result = await self.rpc(s, 'work.stream.open', args, timeout=40, identity=actor(user))
+                s = self.store.get(sid)
+                s.update(term_id=result['id'], term_running=True, term_exit=None, term_note='',
+                         term_started=time.time(), error='', review_status=None,
+                         last_activity=time.time(), mcp_token_id=token_id, mcp_token_revoke=False)
+                if not s.get('imported'):
+                    s['status'] = 'working'
+                self.store.save(s)
+                self.store.result(sid, cid, {'status': 'submitted'})
+            except Exception as error:
+                s = self.store.get(sid)
+                s['error'] = str(error) or type(error).__name__
+                if not s.get('imported'):
+                    s['status'] = 'closed'
+                if token_id:
+                    s.update(mcp_token_id=token_id, mcp_token_revoke=True)
+                self.store.save(s)
+                self.store.result(sid, cid, {'status': 'error', 'error': s['error']})
+                log.warning('Terminal launch for %s failed: %s', sid, error)
+
+    def launch_terminal(self, request, user, sid, cid, data):
+        job = asyncio.create_task(self.open_terminal(request, user, sid, cid, data))
+        self.jobs.add(job)
+        job.add_done_callback(self.jobs.discard)
+
+    async def close_terminal(self, s):
+        if s.get('term_id') and s.get('term_running'):
+            stream = self.terms.get(s['worker_id'], s['term_id'])
+            try:
+                result = await self.rpc(s, 'work.stream.close', {'id': s['term_id']}, timeout=20)
+                code = result.get('exit_code')
+            except ValueError as error:
+                if 'no such terminal' not in str(error):
+                    raise
+                code = None
+            if stream is not None:
+                stream.finish(code)
+            self.mark_term_done(s['id'], code)
 
     async def history_page(self, request):
         user = self.user(request)
@@ -294,6 +552,12 @@ class WorkWeb:
     def summary(s):
         return {**{k: s.get(k) for k in ('id', 'title', 'worker_name', 'cwd',
                                      'updated', 'model', 'revision', 'error', 'agent', 'imported', 'review_status')},
+                **{k: s[k] for k in ('harness', 'term_running', 'term_exit', 'term_note',
+                                     'active', 'message_count', 'remote_runtime', 'persona')
+                   if s.get(k) is not None and s.get(k) is not False and s.get(k) != ''},
+                **({'term': True} if s.get('term_id') else {}),
+                **({'external': True} if s.get('external_handle') else {}),
+                **({'revoke': True} if s.get('mcp_token_revoke') and s.get('mcp_token_id') else {}),
                 'status': s.get('review_status') or ('ready' if s['status'] == 'waiting' else s['status']),
                 'updated': max(s.get('source_updated') or s.get('updated') or 0,
                                s.get('last_activity') or 0)}
@@ -313,6 +577,7 @@ class WorkWeb:
         selected = None
         last_list = None
         last_revision = None
+        last_revoke = -1e9
         pending_receipts = {}
         while not ws.closed:
             try:
@@ -321,10 +586,15 @@ class WorkWeb:
                 sessions.sort(key=lambda s: (-(s.get('updated') or 0), s['id']))
                 workers = [{'id': w['worker_id'], 'name': w.get('name', ''), 'band': w.get('band')}
                            for w in self.workers()]
-                listing = json.dumps([sessions, workers])
+                hosts = self.hosts() if self.v2 else []
+                listing = json.dumps([sessions, workers, hosts])
                 if listing != last_list:
-                    await ws.send_json({'type': 'index', 'sessions': sessions, 'workers': workers})
+                    await ws.send_json({'type': 'index', 'sessions': sessions, 'workers': workers,
+                                        'hosts': hosts})
                     last_list = listing
+                if any(s.get('revoke') for s in sessions) and time.monotonic() - last_revoke > 30:
+                    last_revoke = time.monotonic()  # bounded retries if the token service is down
+                    await self.revoke_session_tokens(request, user)
                 for cid, sid in list(pending_receipts.items()):
                     result = self.store.result(sid, cid)
                     if not result or result.get('status') != 'accepted':
@@ -377,11 +647,50 @@ class WorkWeb:
                         self.launch(sid, {'op': 'open', 'id': cid}, actor(user))
                     selected, last_revision = sid, None
                     await ws.send_json({'type': 'selected', 'session': sid})
+                elif data.get('op') == 'launch':
+                    if not self.v2:
+                        raise ValueError('Live terminals are disabled on this hub.')
+                    sid = uuid.uuid5(uuid.NAMESPACE_URL, user['id'] + ':' + cid).hex
+                    try:
+                        self.store.get(sid, user['id'])
+                    except web.HTTPNotFound:
+                        w = next((h for h in self.hosts() if h['id'] == data.get('worker') and h['term']), None)
+                        if not w:
+                            raise ValueError('Choose a connected host that supports live terminals.')
+                        harness = data.get('harness')
+                        if harness not in HARNESSES:
+                            raise ValueError('Choose claude, codex, hermes or shell.')
+                        cwd = str(data.get('cwd', '')).strip()
+                        if not cwd.startswith('/') or len(cwd) > 2000:
+                            raise ValueError('Enter an absolute working directory.')
+                        title = str(data.get('title') or '').strip()[:160] or f'{harness} · {cwd.rstrip("/").rsplit("/", 1)[-1] or cwd}'
+                        s = dict(id=sid, owner=user['id'], title=title, worker_id=w['id'],
+                                 worker_name=w.get('name'), band=w.get('band'), cwd=cwd,
+                                 model=str(data.get('model') or '')[:100], agent=harness, harness=harness,
+                                 persona=str(data.get('persona') or '')[:100] or None,
+                                 status='starting', thread_id=None, turn_id=None, error='',
+                                 created_by=actor(user), term_running=False)
+                        self.store.save(s)
+                        self.store.claim(sid, cid, actor(user))
+                        self.launch_terminal(request, user, sid, cid, data)
+                    pending_receipts[cid] = sid
+                    await ws.send_json({'type': 'launched', 'session': sid, 'id': cid})
                 else:
                     sid = str(data.get('session', ''))
                     self.store.get(sid, user['id'])
+                    current = self.store.get(sid, user['id'])
+                    pty_resume = (data.get('op') == 'resume' and data.get('pty') and self.v2
+                                  and current.get('imported') and not current.get('term_running')
+                                  and not current.get('external_handle') and self.term_capable(current))
                     if data.get('op') != 'receipt' and self.store.claim(sid, cid, actor(user)):
-                        self.launch(sid, data, actor(user))
+                        if pty_resume:
+                            async with self.lock(sid):
+                                current = self.store.get(sid)
+                                current['harness'] = current.get('agent') or 'claude'
+                                self.store.save(current)
+                            self.launch_terminal(request, user, sid, cid, data)
+                        else:
+                            self.launch(sid, data, actor(user))
                     pending_receipts[cid] = sid
                     await ws.send_json({'type': 'ack', 'id': cid,
                                         'result': self.store.result(sid, cid) or {'status': 'error', 'error': 'No delivery receipt found. Check the host before retrying.'}})
@@ -408,7 +717,24 @@ class WorkWeb:
                 op = data['op']
                 if op == 'status' and data.get('status') == 'closed':
                     op = 'close'
-                if op == 'status':
+                launched = bool(s.get('harness')) and not s.get('imported')
+                if op in ('close', 'term_close') and s.get('term_running'):
+                    await self.close_terminal(s)
+                    s = self.store.get(sid)
+                if op == 'term_close':
+                    s['error'] = ''
+                elif launched:
+                    # A launched terminal: interaction happens in the terminal.
+                    if op == 'status':
+                        value = data.get('status')
+                        if value not in ('auto', 'closed', 'blocked', 'pending'):
+                            raise ValueError('Choose Auto, Closed, Blocked, or Pending.')
+                        s['review_status'] = None if value == 'auto' else value
+                    elif op == 'close':
+                        s['review_status'] = 'closed'
+                    else:
+                        raise ValueError('Use the terminal to interact with this session.')
+                elif op == 'status':
                     value = data.get('status')
                     if value not in ('auto', 'closed', 'blocked', 'pending'):
                         raise ValueError('Choose Auto, Closed, Blocked, or Pending.')
@@ -584,6 +910,9 @@ class WorkWeb:
                             log.warning('Host migration pending for %s', s['id'])
                     elif s.get('remote_runtime'):
                         groups.setdefault((s['band'], s['worker_id']), []).append(s)
+                self._ticks += 1
+                if self._ticks % 3 == 0:
+                    await self.sweep_terminals()
                 for sessions in groups.values():
                     for offset in range(0, len(sessions), 20):
                         batch = sessions[offset:offset + 20]
@@ -609,6 +938,31 @@ class WorkWeb:
             except Exception:
                 log.exception('Work metadata collector failed')
             await asyncio.sleep(2)
+
+    async def sweep_terminals(self):
+        """Catch terminals that ended while nobody was watching them: one
+        ``work.stream.list`` per worker that has sessions marked running."""
+        by_worker = {}
+        for s in self.store.all(details=False):
+            if s.get('term_running') and s.get('term_id'):
+                stream = self.terms.get(s['worker_id'], s['term_id'])
+                if stream is not None and stream.running and stream.pull and not stream.pull.done():
+                    continue  # followed live; the stream reports its own end
+                by_worker.setdefault((s['band'], s['worker_id']), []).append(s)
+        for sessions in by_worker.values():
+            try:
+                result = await self.rpc(sessions[0], 'work.stream.list', {})
+            except (ValueError, TimeoutError, asyncio.TimeoutError):
+                continue  # offline: keep the record until the host is back
+            terms = {t['id']: t for t in result.get('terminals', [])}
+            for s in sessions:
+                t = terms.get(s['term_id'])
+                if t is None:
+                    async with self.lock(s['id']):
+                        self.mark_term_done(s['id'], None, 'Terminal is gone from its host.')
+                elif not t.get('running'):
+                    async with self.lock(s['id']):
+                        self.mark_term_done(s['id'], t.get('exit_code'))
 
     async def drain_external(self, sid):
         async with self.lock(sid):

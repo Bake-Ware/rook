@@ -10,6 +10,16 @@ releases yet: workers identify themselves by build number (for example
 Preparation for public use.
 
 ### Added
+- Work worklog view (default; `ROOK_WORK_V2=0` or the **Classic view** button
+  restores the old one): rooms per project and host, live sessions as real
+  xterm.js terminals, finished ones collapsed, one-click resume of any
+  Claude/Codex history. New worker caps `work.stream.*` (PTY
+  open/read/write/resize/signal/close/list with long-poll reads and compressed
+  framing), `work.sessions` and `work.export` (`rook.transcript/1`). The hub
+  fans each terminal out to many viewers with one input holder, a bounded
+  replay ring and reconnect replay. Agent launch templates (claude, codex,
+  hermes, shell) can get a session-scoped Rook MCP token. See
+  `docs/web/worklog.md`.
 - One plugin API for the hub and workers (`rook.core`, contract in
   `docs/design/plugins.md`): manifest with `core_api` range and
   `<build>.<adjective>.<noun>` versions, placement over node facts

@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 import time
 from pathlib import Path
@@ -37,6 +38,13 @@ _KEEP_LINES = 5000                  # lines retained after a compaction
 
 _lock = threading.Lock()
 
+# Arg names whose values are credentials (e.g. the scoped MCP token handed to
+# work.stream.open). Recorded as present, never by value.
+# Successful calls to these high-frequency read caps are not recorded: a live
+# terminal long-polls work.stream.read continuously and would flush the ring.
+_QUIET = frozenset({"work.stream.read"})
+_SECRET_ARG = re.compile(r"(?i)(^|_)(password|secret|api_key)$|_token$")
+
 
 def _summarize_args(args: dict | None, limit: int = 500) -> dict | str | None:
     """A compact, log-safe view of the call args. We keep the keys and a
@@ -47,6 +55,9 @@ def _summarize_args(args: dict | None, limit: int = 500) -> dict | str | None:
     try:
         out: dict = {}
         for k, v in args.items():
+            if _SECRET_ARG.search(str(k)):
+                out[str(k)] = "<redacted>" if v else v
+                continue
             s = v if isinstance(v, (int, float, bool)) or v is None else str(v)
             if isinstance(s, str) and len(s) > 120:
                 s = s[:120] + f"…(+{len(s) - 120})"
@@ -63,6 +74,8 @@ def record(cap: str, identity: str | None, args: dict | None,
            ok: bool, msg_id: str | None = None,
            target: str | None = None, error: str | None = None) -> None:
     """Append one audit entry. Best-effort; never raises."""
+    if ok and cap in _QUIET:
+        return
     entry = {
         "ts": round(time.time(), 3),
         "identity": identity or "anonymous",

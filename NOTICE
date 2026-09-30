@@ -7,6 +7,7 @@ Third-party components bundled in this repository keep their own licenses:
 
 - rook/remote/psk_words.txt: EFF large wordlist, see rook/remote/psk_words.LICENSE.md
 - rook/web/scene/: three.js, see THREE-LICENSE.txt in that directory
+- rook/web/vendor/xterm/: xterm.js 6.0.0 and @xterm/addon-fit 0.11.0 (MIT), see LICENSE in that directory
 - android/app/src/main/assets/wakeword/: Silero VAD, see SILERO-LICENSE.txt
 - services/voice/vendor/: see the files in that directory
 

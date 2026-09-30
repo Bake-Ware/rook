@@ -44,6 +44,7 @@ async def main():
    browser=await pw.chromium.launch(headless=True)
    ctx=await browser.new_context(viewport={'width':1440,'height':1000})
    await ctx.add_cookies([{'name':'rook_account','value':p.headers['Cookie'].split('=',1)[1],'url':url}])
+   await ctx.add_init_script("try{localStorage.setItem('rook.work.view','classic')}catch{}")
    page=await ctx.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
    await page.goto(url+'#work')
    await page.locator('#work-create input[name=title]').fill('Live Work verification')

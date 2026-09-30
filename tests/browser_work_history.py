@@ -37,6 +37,8 @@ async def main():
             browser = await pw.chromium.launch()
             context = await browser.new_context(viewport={'width': 1440, 'height': 1000})
             await context.add_cookies([{'name': 'rook_account', 'value': p.headers['Cookie'].split('=', 1)[1], 'url': url}])
+            # These tests cover the classic Work view; the worklog is the default.
+            await context.add_init_script("try{localStorage.setItem('rook.work.view','classic')}catch{}")
             page = await context.new_page()
             errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
