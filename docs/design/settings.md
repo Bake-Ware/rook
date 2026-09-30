@@ -240,6 +240,9 @@ The dashboard renders these scripts with `{hub_public}`, `{band_psk}`,
 | `--reset` | flag | off | user | no | n/a |
 | `~/.config/rook/band.conf` | file (saved after first login) | none | user | **yes** (plaintext password) | proc |
 
+The TUI reaches workers only through the hub (`/api/band/*` with this login);
+it holds no PSK and no band connection of its own.
+
 Other `rook` subcommands (`sessions`, `history`, `tmux`) take only per-command
 arguments (`--json`, `--project`, `-d`, `-n`) and read `CODEX_HOME`/`APPDATA` for
 platform paths. They carry no persistent settings.

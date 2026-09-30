@@ -4,8 +4,11 @@
 Self-contained: pure Python stdlib (curses + urllib), so it runs anywhere as a
 single file — install it as `rook` and just run `rook`.
 
-Talks to the rook-remote dashboard API (the same source the web dashboard uses),
-so it sees the full roster regardless of how each worker is connected. Shows a
+Talks only to the hub's dashboard API (the same source the web dashboard uses),
+never to workers directly: every call goes through the hub, which checks its
+policy for your login, signs the call ticket enforcing workers require, and
+journals the call. So it sees the full roster regardless of how each worker is
+connected, and keeps working when workers enforce permissions. Shows a
 live view and lets you run capabilities, enable/disable plugins, define custom
 command-caps, message chat-capable workers, and deauth/ban — the terminal
 counterpart to the web dashboard. Curses only — no third-party deps.
@@ -53,6 +56,9 @@ class BandHTTP:
         self.url = url.rstrip("/")
         self._auth = base64.b64encode(f"{user}:{password}".encode()).decode()
         self._has_overview = True
+        # What the hub says about this login (GET /api/band/whoami); None until
+        # asked, {"legacy": True} for a hub from before permissions.
+        self.hub: dict | None = None
 
     def _req(self, path: str, method: str = "GET", body: dict | None = None,
              timeout: float = 8.0) -> dict:
@@ -85,6 +91,56 @@ class BandHTTP:
         rows.sort(key=lambda x: (x.get("name") or "").lower())
         return rows
 
+    def whoami(self) -> dict:
+        """Ask the hub who this login's band calls run as and whether it signs
+        call tickets. A hub without the endpoint predates permissions: its
+        calls carry no tickets, so enforcing workers refuse exec/admin."""
+        try:
+            value = self._req("/api/band/whoami", timeout=8)
+        except urllib.error.HTTPError as error:
+            if error.code not in (404, 405):
+                raise
+            value = {"legacy": True}
+        if not isinstance(value, dict):
+            value = {"legacy": True}
+        self.hub = value
+        return value
+
+    def notice(self) -> str | None:
+        """A one-line warning when this hub can't get calls past enforcing
+        workers, else None."""
+        hub = self.hub or {}
+        if hub.get("legacy"):
+            return "hub predates permissions: update it (enforcing workers refuse its calls)"
+        if hub and not hub.get("tickets"):
+            return "hub signs no call tickets: enforcing workers refuse exec/admin"
+        return None
+
+    def explain(self, reply: dict) -> dict:
+        """Add a plain-language ``hint`` to a refusal from hub policy or from a
+        worker that enforces tickets. Leaves every other reply untouched."""
+        if not isinstance(reply, dict) or reply.get("ok") is not False:
+            return reply
+        error = str(reply.get("error") or "")
+        denied = reply.get("denied")
+        if isinstance(denied, dict):
+            who = denied.get("principal") or "this login"
+            reply.setdefault("hint", f"the hub's policy does not allow {who} to make this call; "
+                                     "an owner can change it on the Permissions page")
+        elif "hub ticket" in error or "hub-signed order" in error:
+            hub = self.hub or {}
+            if hub.get("legacy"):
+                why = ("this hub predates permissions and signs no tickets; "
+                       "update the hub, then retry")
+            elif hub and not hub.get("tickets"):
+                why = ("this hub holds no signing key, so its calls carry no ticket; "
+                       "check the hub's update key, then retry")
+            else:
+                why = ("the worker did not accept the hub's ticket (clock skew, or it has "
+                       "not learned this hub's key yet); retry, or check the hub's grant")
+            reply.setdefault("hint", "the worker enforces permissions: " + why)
+        return reply
+
     def overview(self) -> dict:
         """One cached server snapshot, with a roster-only legacy fallback."""
         if self._has_overview:
@@ -104,17 +160,18 @@ class BandHTTP:
 
     def call(self, cap: str, worker_id=None, args=None, timeout: float = 15.0) -> dict:
         try:
-            return self._req("/api/band/call", "POST",
-                             {"cap": cap, "worker_id": worker_id,
-                              "args": args or {}, "timeout": timeout},
-                             timeout=timeout + 6)
+            reply = self._req("/api/band/call", "POST",
+                              {"cap": cap, "worker_id": worker_id,
+                               "args": args or {}, "timeout": timeout},
+                              timeout=timeout + 6)
         except urllib.error.HTTPError as e:
             try:
-                return json.loads(e.read())
+                reply = json.loads(e.read())
             except Exception:
-                return {"ok": False, "error": f"HTTP {e.code}: {e.reason}"}
+                reply = {"ok": False, "error": f"HTTP {e.code}: {e.reason}"}
         except Exception as e:
-            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+            reply = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        return self.explain(reply)
 
     def ban(self, worker_id: str, name: str, reason: str) -> dict:
         try:
@@ -216,7 +273,9 @@ class UI:
         self.top = 0
         self.filter = ""
         self.schema_cache: dict[str, dict] = {}
-        self.status = "connected"
+        # Shown in the header until the first action replaces it.
+        notice = getattr(band, "notice", None)
+        self.status = (notice() if callable(notice) else None) or "connected"
         self.chats: list = []      # aggregated band chats, for the side panel
         # detail-pane (cap tree) focus + navigation
         self.focus = "list"        # "list" or "detail"
@@ -983,6 +1042,14 @@ def main() -> None:
     if err:
         raise SystemExit(f"cannot reach band API at {url}: {err}\n"
                          "(re-run with --reset to change connection details)")
+    try:
+        band.whoami()
+    except Exception as e:
+        band.hub = {}
+        print(f"note: could not ask the hub about permissions ({type(e).__name__})")
+    note = band.notice()
+    if note:
+        print(f"warning: {note}")
     if not had_saved and _save_conf(url, user, password):
         print(f"✓ saved connection to {_CONF} — next time just run `rook`")
     label = url.split("://", 1)[-1]

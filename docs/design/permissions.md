@@ -29,6 +29,7 @@ call `rook.hub.authz.require_hub_admin("settings.set")` the same way.
 | Signed hub announce, `rook` resolution, impostor quarantine | `BandClient._announce_local`, `_handle_announce`, `core.facts.roles_from_announce` | Replaces the reject-all stub. A remote announce naming `rook` without a held grant is listed as `rook~<id8>`, flagged `quarantined`, and journaled once as `audit.impostor`. |
 | E2: worker ticket checks | `rook/worker/authz_guard.py`, `Worker._on_message` | All five modes; default `audit` (`ROOK_AUTHZ_MODE`). Keys learned from signed hub announces or inlined in the ticket; `authz` readiness in the announce; `audit.jsonl` gains `ticket` and `decision`. |
 | Dashboard | `/permissions`, `/api/policy`, `/api/policy/explain` (`rook/remote/policy_web.py`); caps `policy.explain/get/set/status` on `rook` | A minimal page: mode, revision, lint, JSON editor, explain, recent non-allow decisions. The full editor (matrix, pickers, dry run, history) waits for the settings framework. |
+| `rook band` TUI | `rook/cli/band_tui.py` (`BandHTTP`), `GET /api/band/whoami` | The TUI has no band path of its own: every call is `POST /api/band/call` (and `/api/band/ban`, `/unban`) with the dashboard login, so the dashboard principal middleware, the band client's policy check, ticket signing and journaling all apply. `whoami` reports the principal, the hub policy mode for it and whether the hub signs tickets. On a hub without it (404) the TUI warns that the hub predates permissions, and it adds a `hint` to refusals from hub policy or from ticket-enforcing workers. |
 
 **Current-code gaps (6.3), fixed.**
 
@@ -68,8 +69,9 @@ fetching revocation lists (workers accept a signed list inlined in a hub
 announce; the hub does not publish one yet), name binding against the device
 registry (names bind by the live roster; the "weak binding" badge is not
 shown), `{{secret:…}}` refusal for fact-only targets (calls are always
-targeted by id today), `/api/band/ticket` and routing the `rook band` TUI
-through the hub, the dry-run replay and history views, `denied: [...]`
+targeted by id today), `/api/band/ticket` (not needed by the TUI, which
+routes every call through the hub's call API; only for future direct
+scripts), the dry-run replay and history views, `denied: [...]`
 annotations in `rook_workers`/`rook_caps`, and stage 6 device-key signed
 announces. The hub node keeps its persisted `hub_node_id` as `worker_id`
 instead of the op-key `kid`, so rosters and journals keep a stable id across
@@ -114,9 +116,11 @@ What the current code does, and the gaps this spec closes:
   `_dashboard_identity()` (the signed-in account, or `human:dashboard` for the
   shared password). Its only refusal is the controller denylist of banned
   workers.
-- **Direct band peers exist.** The `rook band` TUI (`rook/cli/band_tui.py`)
-  joins with the PSK and calls workers directly. So can any worker, through
-  `Worker.call`.
+- **Direct band peers exist.** Any PSK holder, including any worker through
+  `Worker.call`, can call workers directly. (The `rook band` TUI,
+  `rook/cli/band_tui.py`, never did: it is an HTTP client of the dashboard's
+  `/api/band/*`, so its calls already go through the hub and now carry the
+  hub's tickets.)
 - **Signed control already exists, for code only.** The hub's ed25519 key
   (`rook/remote/update_keys.py`, created on first start) signs OTA manifests
   and `worker.deauth` orders. Its public half is stamped into every bundle as
@@ -486,10 +490,10 @@ data show which workers are ready.
   args *after* `{{secret:…}}` substitution, because those are the bytes the
   worker receives. The hash reveals nothing that the PSK-encrypted args don't
   already reveal to a band member (§6).
-- **Direct band peers** (the `rook band` TUI, scripts) get tickets by calling
-  the hub (`POST /api/band/ticket` with their token). Better, they route
-  through the hub's call API, and the TUI moves to that. A peer with only the
-  PSK can't get a ticket.
+- **Direct band peers** (scripts) route through the hub's call API
+  (`POST /api/band/call`), as the `rook band` TUI does; a ticket endpoint
+  (`POST /api/band/ticket`) is left for a peer that must keep a direct path.
+  A peer with only the PSK can't get a ticket.
 - **Worker-to-worker and worker-to-hub calls** carry no hub ticket. Until
   stage 6 they are `band:unauthenticated`: read-only by default at the hub,
   and refused above the worker's mode threshold at enforcing workers. At
