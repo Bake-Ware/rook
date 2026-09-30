@@ -85,10 +85,12 @@ class _NoBand:
 
 def mcp_tools() -> list[tuple[str, str, str]]:
     saved = {k: os.environ.get(k) for k in ("ROOK_KNOWLEDGE", "ROOK_KNOWLEDGE_DB",
-                                            "ROOK_EMBED_URL")}
+                                            "ROOK_EMBED_URL", "ROOK_MEMORY", "ROOK_MEMORY_DB")}
     with tempfile.TemporaryDirectory() as tmp:
         os.environ["ROOK_KNOWLEDGE"] = "1"
         os.environ["ROOK_KNOWLEDGE_DB"] = os.path.join(tmp, "knowledge.db")
+        os.environ["ROOK_MEMORY"] = "1"
+        os.environ["ROOK_MEMORY_DB"] = os.path.join(tmp, "memory.db")
         os.environ.pop("ROOK_EMBED_URL", None)
         try:
             import logging
@@ -123,12 +125,15 @@ def _hub_node():
     and skill fragments are documented."""
     import logging
     logging.disable(logging.WARNING)
-    keys = ("ROOK_KNOWLEDGE", "ROOK_KNOWLEDGE_DB", "ROOK_EMBED_URL", "ROOK_TELEGRAM", "ROOK_DISCORD")
+    keys = ("ROOK_KNOWLEDGE", "ROOK_KNOWLEDGE_DB", "ROOK_EMBED_URL", "ROOK_TELEGRAM", "ROOK_DISCORD",
+            "ROOK_MEMORY", "ROOK_MEMORY_DB")
     saved = {k: os.environ.get(k) for k in keys}
     try:
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["ROOK_KNOWLEDGE"] = "1"
             os.environ["ROOK_KNOWLEDGE_DB"] = os.path.join(tmp, "knowledge.db")
+            os.environ["ROOK_MEMORY"] = "1"
+            os.environ["ROOK_MEMORY_DB"] = os.path.join(tmp, "memory.db")
             os.environ.pop("ROOK_EMBED_URL", None)
             os.environ["ROOK_TELEGRAM"] = os.environ["ROOK_DISCORD"] = "1"
             from rook.hub.node import HubNode

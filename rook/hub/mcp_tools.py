@@ -112,6 +112,39 @@ def register_cap_tools(mcp: Any, node: Any, call: CallFn) -> list[str]:
     return added
 
 
+def register_plugin_resources(mcp: Any, node: Any) -> list[str]:
+    """Add the MCP resources hub plugins return from ``mcp_resources()`` as
+    ``(uri, name, description, fn)``. Resources cost nothing in
+    ``tools/list``; a client reads one when it wants it. Existing URIs win."""
+    added: list[str] = []
+    for plugin in node.host.plugins:
+        hook = getattr(plugin, "mcp_resources", None)
+        if not callable(hook):
+            continue
+        try:
+            items = list(hook() or [])
+        except Exception:
+            log.exception("hub plugin %s: mcp_resources() failed", plugin.NAMESPACE)
+            continue
+        for uri, name, description, fn in items:
+            try:
+                taken = uri in {str(r.uri) for r in mcp._resource_manager.list_resources()}
+            except Exception:
+                taken = False
+            if taken:
+                log.warning("hub plugin %s: MCP resource %s already exists; not added",
+                            plugin.NAMESPACE, uri)
+                continue
+            try:
+                mcp.resource(uri, name=name, description=description,
+                             mime_type="text/plain")(fn)
+            except Exception:
+                log.exception("hub plugin %s: adding MCP resource %s failed", plugin.NAMESPACE, uri)
+                continue
+            added.append(uri)
+    return added
+
+
 def register_plugin_tools(mcp: Any, node: Any,
                           identity: Callable[[], "str | None"] = lambda: None) -> list[str]:
     """Add the tools hub plugins return from ``mcp_tools(invoke)``. Each tool

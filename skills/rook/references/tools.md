@@ -63,6 +63,17 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `hub.plugins` | limit=50, fields? | read | Full manifests of the hub's loaded plugins (placement, settings schema, guidance slots, source). |
 | `knowledge.read` | action='search', band?, id?, query='', data? | read | Read the shared wiki: search\|get\|list\|context\|status\|bands\|deck. |
 | `knowledge.write` | action, band?, id?, data?, request_id? | write | Write the shared wiki: create\|update\|link\|retract (needs request_id). |
+| `memory.commit` | id, reject=false, reason?, text? | write | Commit a pending proposal (optionally with corrected text), or reject=true to drop it. |
+| `memory.digest` | scope?, max_chars? | read | Compact session-start briefing: profile, preferences, procedures, facts, recent episodes. |
+| `memory.forget` | id, reason='', purge=false | write | Retract a memory (kept in history). purge=true also blanks its text (e.g. a leaked secret). |
+| `memory.import_vault` | path?, worker?, limit=500 | admin | Bridge the worker memory.* vault: post-its (and entity notes) become memories, once. |
+| `memory.ingest` | worker?, agent?, session_id?, transcript?, max_pages=20 | write | Turn a work session into an episode (+ pending preferences), idempotently. |
+| `memory.list` | scope?, kind?, state='active', limit=20, offset=0 | read | List memories by scope, kind and state (active\|pending\|superseded\|archived\|retracted\|rejected). |
+| `memory.maintain` | — | write | Run maintenance now: expire proposals, decay, consolidate duplicates, budgets, indexing. |
+| `memory.propose` | text, kind='fact', scope?, confidence?, confirmed=false, supersedes?, tags?, session?, journal? | write | Propose a memory; the write rules commit, hold (pending), dedupe or reject it. |
+| `memory.recall` | query, scope?, limit=5, kinds?, include_archived=false | read | Hybrid (keyword + embedding) recall of memories relevant to query. |
+| `memory.show` | id | read | One memory in full: text, provenance, supersede chain and history. |
+| `memory.status` | — | read | Counts by state and kind, embedder state and the active write-rule thresholds. |
 | `notify.channels` | — | read | Which notification channels are running on this hub. |
 | `notify.send` | text, channel='all' | write | Send a notification to the chat integrations. |
 | `policy.explain` | principal, cap, worker?, role? | read | Would this principal be allowed to call `cap` on `worker`? |
@@ -91,6 +102,9 @@ When the Discord integration is on: `discord.send` (text) posts to the configure
 
 ### knowledge
 The shared wiki. Use the `rook_knowledge` tool: `search` before starting (5 excerpts; `data.limit`/`data.fields` for more), `get` a page by id or slug, `create` a page with a unique `request_id`. Over the band the same actions are `knowledge.read` (search/get/list/context/status/bands) and `knowledge.write` (create/update/link/retract) on worker `rook`; band callers reach only the read cap by default. Semantic search needs an embedding service (setting `embedder`).
+
+### memory
+Agent memory on worker `rook` (separate from the wiki). At session start read `memory.digest` (or resource `rook://memory/digest`); `memory.recall(query)` when a topic comes up. Save with `memory.propose(text, kind)`: kind profile|preference|fact|episode|procedure, scope user|band|agent. Save corrections, preferences, confirmed approaches and durable facts at the end of a task or on correction; never secrets, transient state or what code/git already records. Below the confidence threshold a proposal is pending until `memory.commit(id)`; near-duplicates reinforce, similar ones supersede. `memory.forget(id)` retracts. `memory.ingest(worker, agent, session_id)` turns a work session into an episode.
 
 ### notify
 `rook_call(worker="rook", cap="notify.send", args={"text": "..."})` posts a notification to every configured chat integration (Telegram, Discord); `channel="telegram"` picks one.
@@ -223,6 +237,12 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 | `dongle.mouse` | x=0, y=0, buttons=0, wheel=0, pan=0 | Relative move (-127..127) and/or button tap (bitmask 0..31). |
 | `dongle.release` | — |  |
 | `dongle.status` | — |  |
+
+**embed**
+
+| Cap | Args | Does |
+|---|---|---|
+| `embed.text` | texts | Embed up to 64 texts: {model, vectors (unit length), dim}. |
 
 **enrollment**
 

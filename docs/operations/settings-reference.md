@@ -140,6 +140,14 @@ are set only in the environment or on the command line.
 |---|---|---|---|---|---|---|
 | `dongle.port` | Serial device | worker | path |  | `ROOK_DONGLE_PORT` | restart |
 
+## Embeddings (embed.text) (worker plugin, runs in worker)
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `embed.mode` | Serve embed.text | worker | str | `auto` | `ROOK_EMBED_MODE` | restart |
+| `embed.backend` | Backend | worker | str | `auto` | `ROOK_EMBED_BACKEND` | restart |
+| `embed.model` | Model | worker | str | `sentence-transformers/all-MiniLM-L6-v2` | `ROOK_EMBED_TEXT_MODEL` | restart |
+
 ## HDMI-CEC (worker plugin, runs in worker)
 
 | Key | Label | Scope | Type | Default | Env / flag | Apply |
@@ -163,6 +171,33 @@ are set only in the environment or on the command line.
 | `knowledge.semantic` | Semantic search | hub | bool | on | `ROOK_KNOWLEDGE_SEMANTIC` | restart |
 | `knowledge.embedder` | Embedding service | hub | resource |  | `ROOK_EMBED_URL`, `ROOK_KNOWLEDGE_EMBEDDER` | restart |
 | `knowledge.embed_model` | Embedding model | hub | str | `sentence-transformers/all-MiniLM-L6-v2` | `ROOK_EMBED_MODEL`, `ROOK_KNOWLEDGE_EMBED_MODEL` | restart |
+
+## Memory (hub plugin, runs in mcp)
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `memory.enabled` | Agent memory | hub | bool | off | `ROOK_MEMORY`, `ROOK_MEMORY_ENABLED` | restart |
+| `memory.db_path` | Database file | hub | path |  | `ROOK_MEMORY_DB`, `ROOK_MEMORY_DB_PATH` | restart |
+| `memory.default_user` | Default user scope | hub | str | `operator` | `ROOK_MEMORY_DEFAULT_USER` | live |
+| `memory.default_band` | Default band scope | hub | str | `default` | `ROOK_MEMORY_DEFAULT_BAND` | live |
+| `memory.embedder` | Embedding service | hub | resource | `cap://any/embed.text` | `ROOK_MEMORY_EMBEDDER` | live |
+| `memory.embed_model` | Required model | hub | str |  | `ROOK_MEMORY_EMBED_MODEL` | live |
+| `memory.commit_threshold` | Auto-commit confidence | hub | float | `0.6` | `ROOK_MEMORY_COMMIT_THRESHOLD` | live |
+| `memory.dedupe_similarity` | Duplicate similarity | hub | float | `0.92` | `ROOK_MEMORY_DEDUPE_SIMILARITY` | live |
+| `memory.supersede_similarity` | Supersede similarity | hub | float | `0.8` | `ROOK_MEMORY_SUPERSEDE_SIMILARITY` | live |
+| `memory.secrets` | Secrets in proposals | hub | str | `reject` | `ROOK_MEMORY_SECRETS` | live |
+| `memory.max_entry_chars` | Longest memory (chars) | hub | int | `600` | `ROOK_MEMORY_MAX_ENTRY_CHARS` | live |
+| `memory.episode_chars` | Longest episode summary (chars) | hub | int | `900` | `ROOK_MEMORY_EPISODE_CHARS` | live |
+| `memory.budgets` | Budget per scope and kind (chars) | hub | dict | `{'profile': 1500, 'preference': 2500, 'proce…` | `ROOK_MEMORY_BUDGETS` | live |
+| `memory.digest_chars` | Session digest size (chars) | hub | int | `1200` | `ROOK_MEMORY_DIGEST_CHARS` | live |
+| `memory.half_life_days` | Half-life by kind (days) | hub | dict | `{'episode': 30, 'fact': 180}` | `ROOK_MEMORY_HALF_LIFE_DAYS` | live |
+| `memory.archive_below` | Archive below strength | hub | float | `0.15` | `ROOK_MEMORY_ARCHIVE_BELOW` | live |
+| `memory.pending_ttl_days` | Pending proposals expire after (days) | hub | int | `14` | `ROOK_MEMORY_PENDING_TTL_DAYS` | live |
+| `memory.episode_keep` | Episodes kept per scope | hub | int | `60` | `ROOK_MEMORY_EPISODE_KEEP` | live |
+| `memory.maintain_interval` | Maintenance interval (s) | hub | int | `3600` | `ROOK_MEMORY_MAINTAIN_INTERVAL` | live |
+| `memory.summarizer` | Transcript summarizer | hub | resource |  | `ROOK_MEMORY_SUMMARIZER` | live |
+| `memory.ingest_autocommit` | Commit extracted preferences | hub | bool | off | `ROOK_MEMORY_INGEST_AUTOCOMMIT` | live |
+| `memory.legacy_vault` | Legacy vault directory | hub | path |  | `ROOK_MEMORY_LEGACY_VAULT` | live |
 
 ## Memory (worker plugin, runs in worker)
 

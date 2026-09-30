@@ -315,7 +315,8 @@ _SERVICES: list[tuple[str, str, str, list[Setting]]] = [
 
 PLUGIN_TITLES = {ns: title for ns, _, title, _ in _SERVICES}
 PLUGIN_TITLES.update({"knowledge": "Knowledge", "task": "Tasks", "hub": "Hub info",
-                      "pikvm": "PiKVM", "cec": "HDMI-CEC", "agent": "Wake (agent.wake)"})
+                      "pikvm": "PiKVM", "cec": "HDMI-CEC", "agent": "Wake (agent.wake)",
+                      "memory": "Memory", "embed": "Embeddings (embed.text)"})
 
 
 def _plugin_classes(package: str = "rook.worker.plugins") -> list[tuple[str, type]]:

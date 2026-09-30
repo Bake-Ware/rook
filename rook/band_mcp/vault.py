@@ -102,6 +102,22 @@ class Vault:
                 self._audit(name, actor, "get" if via == "get" else "use", via, task)
         return self._box.decrypt(row[0]).decode()
 
+    def mask_values(self, actor: str, via: str = "mask") -> list[str]:
+        """Every secret value, for masking only (memory writes refuse or mask
+        text containing one). Audited as one ``mask`` row rather than one
+        ``use`` per secret; the values must never be returned to a caller."""
+        with self._lock:
+            rows = self._db.execute("SELECT value FROM secrets").fetchall()
+            with self._db:
+                self._audit("*", actor, "mask", via)
+        out = []
+        for (blob,) in rows:
+            try:
+                out.append(self._box.decrypt(blob).decode())
+            except Exception:  # noqa: BLE001 - an unreadable row just isn't masked
+                continue
+        return out
+
     def set(self, name: str, value: str, description: str, actor: str) -> dict:
         if not isinstance(name, str) or not NAME.match(name):
             raise ValueError("Secret names are lowercase letters, digits, '.', '_' and '-' (max 64)")

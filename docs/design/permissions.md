@@ -1132,6 +1132,12 @@ rename them. The tiers stand either way.
 | `rook_knowledge` create/update/link/retract | `knowledge.write` | W | |
 | `rook_task` / `rook_project` / `rook_concept` deck/get/list/search | `task.read` | R | |
 | `rook_task` / `rook_project` / `rook_concept` create/update/claim/release/link/retract/review | `task.write` | W | |
+| `memory.recall` / `digest` / `list` / `show` (memory plugin; resource `rook://memory/digest`) | same | R | s |
+| `memory.status` | same | R | |
+| `memory.propose` / `commit` / `ingest` / `maintain` | same | W | |
+| `memory.forget` | same | W | d |
+| `memory.import_vault` (also `require_hub_admin`) | same | A | |
+| `embed.text` (worker plugin `embed`) | same | R | |
 | `grants.revocations` (new) | `grants.revocations` | R | |
 | `policy.explain` (new) | `policy.explain` | R | |
 | `policy.get` (new) | `policy.get` | R | s |

@@ -315,12 +315,23 @@ def build_server(client: "BandClient | MultiBandClient",
         except Exception:
             log.exception("wiring the knowledge plugin failed; knowledge tools disabled")
             mcp._rook_knowledge = None
+    # Agent memory (hub plugin "memory", opt-in): attribute its writes to the
+    # MCP caller with the session and claimed task as provenance.
+    _mplugin = mcp._rook_hub.plugin("memory") if mcp._rook_hub is not None else None
+    if _mplugin is not None:
+        def _memory_principal():
+            att = _attr.current.get()
+            if att is None:
+                return None
+            return {**att.audit(), "session": _caller_session() or None, "task": _claimed_task()}
+        _mplugin.principal = _memory_principal
     if mcp._rook_hub is not None:
-        from ..hub.mcp_tools import register_plugin_tools
+        from ..hub.mcp_tools import register_plugin_resources, register_plugin_tools
         def _tool_identity():
             att = _attr.current.get()
             return att.identity if att is not None else None
         register_plugin_tools(mcp, mcp._rook_hub, _tool_identity)
+        register_plugin_resources(mcp, mcp._rook_hub)
         guidance.add_defaults(mcp._rook_hub.guidance_defaults())
 
     @mcp.tool()

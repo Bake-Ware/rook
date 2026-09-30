@@ -24,6 +24,11 @@ dependencies = [
 desktop = [
     "mss>=9.0",
 ]
+# CPU text embeddings for the worker embed plugin (embed.text); GPU workers
+# can install sentence-transformers instead.
+embed = [
+    "fastembed>=0.3",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",

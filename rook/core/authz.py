@@ -139,6 +139,12 @@ _TABLE_SPEC = {
     "chat.read": "R", "chat.write": "W", "chat.delete": "W d", "chat.presence": "R",
     "console.read": "R", "knowledge.read": "R", "knowledge.write": "W",
     "task.read": "R", "task.write": "W",
+    # Agent memory (hub plugin memory; docs/design/memory.md). Reads disclose
+    # personal data (profile, preferences), hence sensitive.
+    "memory.recall": "R s", "memory.digest": "R s", "memory.list": "R s", "memory.show": "R s",
+    "memory.status": "R", "memory.propose": "W", "memory.commit": "W", "memory.forget": "W d",
+    "memory.ingest": "W", "memory.maintain": "W", "memory.import_vault": "A",
+    "embed.text": "R",
     "grants.revocations": "R", "policy.explain": "R", "policy.status": "R", "policy.get": "R s", "policy.set": "A",
     "token.admin": "A", "band.admin": "A d", "band.deauth": "A d", "member.admin": "A",
     "guidance.write": "A",
