@@ -283,7 +283,12 @@ worker running. `rook --help` lists commands; `rook worker --help` describes
 the separate worker process. `rook band` and `rook tui` also open the dashboard.
 
 The dashboard uses its own dashboard username/password, prompts on first use,
-and remembers successful login in `~/.config/rook/band.conf`. Worker enrollment
+and remembers successful login in `~/.config/rook/band.conf`. It never talks to
+workers directly: every action goes through the hub's dashboard API, so the
+hub checks its policy for that login, signs the call ticket that workers
+enforcing permissions require, and journals the call. Against a hub from
+before permissions it warns at startup that enforcing workers will refuse its
+calls. Worker enrollment
 credentials do not grant dashboard access. Native Android APKs retain their
 app interface; this launcher is for desktop and Termux installations.
 

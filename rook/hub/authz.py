@@ -210,6 +210,10 @@ class Authorizer:
             log.exception("ROOK AUTHZ ALERT: ticket signing failed; call sent without one")
             return None
 
+    def signing_ready(self) -> bool:
+        """True when targeted calls will carry a signed ticket."""
+        return self.signer is not None and self._signing()
+
     def _signing(self) -> bool:
         ready = getattr(self.signer, "ready", None)
         try:

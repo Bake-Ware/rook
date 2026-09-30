@@ -1075,6 +1075,7 @@ class CombinedServer:
         self._app.router.add_get("/api/band/overview", self._api_band_overview)
         self._app.on_cleanup.append(self._close_overview)
         self._app.router.add_post("/api/band/call", self._api_band_call)
+        self._app.router.add_get("/api/band/whoami", self._api_band_whoami)
         self._app.router.add_get("/api/band/bans", self._api_bans)
         self._app.router.add_post("/api/band/ban", self._api_ban)
         self._app.router.add_post("/api/band/unban", self._api_unban)
@@ -1891,6 +1892,34 @@ button:hover{{background:#22b88f}}
             from .work_web import actor
             return actor(user)
         return "human:dashboard"
+
+    async def _api_band_whoami(self, request: web.Request) -> web.Response:
+        """Who the band calls of this login are authorized as, and whether
+        this hub signs call tickets for them. Clients such as the ``rook band``
+        TUI read it once to explain refusals from enforcing workers; a 404
+        tells them the hub predates permissions (no tickets at all)."""
+        from ..hub.authz import current_principal
+        p = current_principal.get()
+        authz = getattr(self._band, "authz", None) if self._band is not None else None
+        if authz is None:
+            authz = self._authz
+        tickets, mode = False, "off"
+        if authz is not None:
+            try:
+                tickets = bool(authz.signing_ready())
+                policy = authz.store.current()
+                mode = policy.mode_for(p) if p is not None else policy.mode
+            except Exception:
+                log.exception("ROOK AUTHZ ALERT: whoami could not read the authorizer")
+        return web.json_response({
+            "principal": p.id if p is not None else None,
+            "role": (p.role if p is not None else "") or None,
+            "groups": list(p.groups) if p is not None else [],
+            "authz": authz is not None,       # hub evaluates policy on band calls
+            "mode": mode,                     # hub policy mode for this principal
+            "tickets": tickets,               # targeted calls carry a signed ticket
+            "band": self._band is not None,
+        })
 
     async def _api_band_call(self, request: web.Request) -> web.Response:
         """Invoke a capability on the band and return the worker's reply."""

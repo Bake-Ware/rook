@@ -114,6 +114,7 @@ bearer header works the same way.
 
 **In the terminal UI:** run `rook` (or `rook band`). It connects to `http://127.0.0.1:7005`
 by default (`--url` for another hub) and prompts for the dashboard password.
+Every call it makes goes through the hub, under that login.
 
 ### Or run the hub with Docker
 
