@@ -1262,12 +1262,19 @@ def build_server(client: "BandClient | MultiBandClient",
 
     # Agent skill: MCP resources rook://skill/rook* + GET /skill/rook.skill.
     from . import skill as _skill
-    _skill.register(mcp, store, lambda: mcp._rook_knowledge)
+    _skill.register(mcp, store, lambda: mcp._rook_knowledge,
+                    lambda: mcp._rook_hub.plugin("persona") if mcp._rook_hub is not None else None)
 
     # Agent guidance: server instructions + tool tips applied now (after every
     # tool, including knowledge, is registered); cap tips ride on
     # rook_call replies. Edited from the site via guidance_web.
     _guidance_apply()
+
+    # Persona (hub plugin "persona"): the caller's resolved persona rides
+    # after the server guidance in each session's initialize instructions.
+    from . import persona_connect
+    persona_connect.install(mcp, store, lambda: (mcp._rook_hub.plugin("persona")
+                                                 if mcp._rook_hub is not None else None))
     return mcp, store
 
 

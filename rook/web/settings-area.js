@@ -51,7 +51,7 @@ export async function mountSettings(root){
     let timer=null;search.oninput=()=>{clearTimeout(timer);timer=setTimeout(async()=>{results.replaceChildren();if(!search.value.trim())return;try{const d=await get({view:'search',q:search.value});for(const r of d.results){const b=navItem(r.label,r.key+(r.env.length?' · '+r.env[0]:''),r.origin==='core'?(r.scope==='hub'?'hub':r.scope==='user'?'user':'overview'):(r.scope==='user'?'user':'plugin'),r.origin==='core'?'':r.namespace);results.append(b);}if(!d.results.length)results.append(el('small','No match.','kn-dim'));}catch(e){results.append(el('small',e.message,'kn-error'));}},200);};
     if(admin)side.append(search,results);
     const nav=el('div',undefined,'kn-index');
-    if(admin){nav.append(navItem('Overview','conflicts, processes, recent changes','overview'),navItem('Hub','addresses, network, sign-in, storage','hub'));}
+    if(admin){nav.append(navItem('Overview','conflicts, processes, recent changes','overview'),navItem('Hub','addresses, network, sign-in, storage','hub'),navItem('Persona','one agent persona for every harness','persona'));}
     nav.append(navItem('My preferences','your account only','user'));side.append(nav);
     if(admin&&overview){
       side.append(el('h3','Bands'));const b=el('div',undefined,'kn-index');for(const x of overview.bands)b.append(navItem(x.name,(x.primary?'primary · ':'')+(x.active?'active':'revoked'),'band',x.id));if(!overview.bands.length)b.append(el('small','No bands yet.','kn-dim'));side.append(b);
@@ -185,7 +185,57 @@ export async function mountSettings(root){
       if(live.config&&live.config.config){page.append(el('h2','Active overrides on the worker'));const pre=el('pre',JSON.stringify(live.config.config,null,2));pre.className='kn-md';page.append(pre);}
       const rep=live.report;if(rep&&rep.secret_refs&&Object.keys(rep.secret_refs).length){page.append(el('h2','Secrets fetched at use'));const ul=el('ul',undefined,'kn-list');for(const [v,s] of Object.entries(rep.secret_refs))ul.append(el('li',v+' ← vault:'+s.vault+(s.resolved?' (fetched)':' (not fetched yet)')));page.append(ul);}
       page.append(historyTable(d.history));return;}
+    if(view==='persona'){d=await get({view});renderPersona(d,target);return;}
     page.replaceChildren(el('p','Unknown settings page.','kn-error'));
+  }
+
+  // Persona (hub plugin "persona"): profiles, scoped assignments, history.
+  function renderPersona(d,target){
+    page.replaceChildren(el('h1','Persona'),el('p','One persona for every agent that uses Rook: it rides in the MCP instructions (trimmed to '+d.mcp_budget+' characters), in work launches, in the skill\'s site notes, in harness files written by persona.apply, and gives the voice assistant its name. The most specific assignment wins: user, then family, then band, then default.','kn-dim'),status);
+    // assignments
+    page.append(el('h2','Assignments'));
+    const at=el('table',undefined,'kn-table');const ah=el('tr');for(const c of ['Scope','Target','Profile','Set by',''])ah.append(el('th',c));at.append(ah);
+    for(const a of d.assignments){const tr=el('tr');const td=el('td');const rm=el('button','Remove');rm.type='button';rm.onclick=async()=>{try{await post({action:'persona_assign',scope:a.scope,target:a.target,profile:''});status.textContent='Assignment removed.';await render();}catch(e){status.textContent=e.message;}};td.append(rm);tr.append(el('td',a.scope),el('td',a.target||'(everyone)'),el('td',a.profile),el('td',(a.actor||'')+' · '+ago(a.updated)),td);at.append(tr);}
+    if(!d.assignments.length){const tr=el('tr');const td=el('td','Nothing assigned: agents get no persona.','kn-dim');td.colSpan=5;tr.append(td);at.append(tr);}
+    page.append(at);
+    const af=el('div',undefined,'kn-row');const sc=el('select');for(const s of d.scopes){const o=el('option',s);o.value=s;sc.append(o);}sc.value='default';
+    const tg=el('input');tg.type='text';tg.placeholder='target: band id, family ('+d.families.join(', ')+') or user id';tg.style.minWidth='320px';
+    const pf=el('select');for(const p of d.profiles){const o=el('option',p.id+(p.name?' ('+p.name+')':''));o.value=p.id;pf.append(o);}
+    const ab=el('button','Assign','kn-primary');ab.type='button';ab.disabled=!d.profiles.length;
+    ab.onclick=async()=>{try{await post({action:'persona_assign',scope:sc.value,target:tg.value,profile:pf.value});status.textContent='Assigned '+pf.value+' at '+sc.value+(tg.value?':'+tg.value:'')+'.';await render();}catch(e){status.textContent=e.message;}};
+    af.append(sc,tg,pf,ab);page.append(af);
+    // profiles
+    page.append(el('h2','Profiles'));
+    const pick=el('div',undefined,'kn-row');
+    for(const p of d.profiles){const b=el('button',p.id+' · rev '+p.rev);b.type='button';b.onclick=()=>go('persona',p.id);if(p.id===target)b.className='kn-primary';pick.append(b);}
+    const nb=el('button','New profile');nb.type='button';nb.onclick=()=>go('persona','');pick.append(nb);page.append(pick);
+    const cur=d.profiles.find(p=>p.id===target);const doc=cur?cur.doc:{id:'',addenda:{}};
+    const box=el('section',undefined,'st-group');box.append(el('h3',cur?'Edit '+cur.id:'New profile'));
+    const fields={};const add=(key,label,kind,help)=>{const r=el('div',undefined,'st-row');const l=el('div',undefined,'st-label');l.append(el('strong',label));if(help)l.append(el('small',help));const c=el('div',undefined,'st-ctl');let i;if(kind==='text'){i=el('input');i.type='text';i.value=doc[key]||'';}else{i=el('textarea');i.value=kind==='list'?(doc[key]||[]).join('\n'):(doc[key]||'');}i.setAttribute('aria-label',label);c.append(i);r.append(l,c);box.append(r);fields[key]={i,kind};};
+    add('id','Profile id','text','slug; cannot change once saved');if(cur)fields.id.i.disabled=true;
+    add('name','Persona name','text','e.g. the assistant name agents and the voice use');
+    add('owner','Works for','text','optional: whose assistant it is');
+    add('voice','Voice and tone','area');
+    add('rules','Rules','list','one per line');add('do','Do','list','one per line');add('dont','Don\'t','list','one per line');
+    add('formatting','Formatting','area');
+    for(const f of d.families)add('addenda.'+f,'Addendum: '+f,'area','added only for '+f);
+    for(const f of d.families)fields['addenda.'+f].i.value=(doc.addenda||{})[f]||'';
+    add('description','Operator note','text','not shown to agents');
+    const collect=()=>{const p={addenda:{}};for(const [k,{i,kind}] of Object.entries(fields)){const v=kind==='list'?i.value.split('\n').map(s=>s.trim()).filter(Boolean):i.value;if(k.startsWith('addenda.')){if(v.trim())p.addenda[k.slice(8)]=v;}else p[k]=v;}return p;};
+    const err=el('small','','kn-error');const preview=el('pre',cur?cur.text:'','kn-md');
+    const line=el('div',undefined,'kn-row');
+    const pv=el('button','Preview');pv.type='button';pv.onclick=async()=>{err.textContent='';try{const r=await post({action:'persona_save',profile:collect(),dry_run:true});preview.textContent=r.text||'(no change)';}catch(e){err.textContent=e.message;}};
+    const sv=el('button','Save','kn-primary');sv.type='button';sv.onclick=async()=>{err.textContent='';try{const p=collect();const r=await post({action:'persona_save',profile:p,rev:cur?cur.rev:0});status.textContent=r.unchanged?'No change.':'Saved '+r.id+' rev '+r.rev+'.';go('persona',r.id);}catch(e){err.textContent=e.message;}};
+    line.append(pv,sv);
+    if(cur){const del=el('button','Delete');del.type='button';del.onclick=async()=>{if(!confirm('Delete profile '+cur.id+'? Its history stays.'))return;try{await post({action:'persona_delete',id:cur.id});status.textContent='Deleted '+cur.id+'.';go('persona','');}catch(e){err.textContent=e.message;}};line.append(del);}
+    line.append(err);box.append(line);page.append(box);
+    page.append(el('h3','Rendered (no addendum)'),preview);
+    // history
+    const wrap=el('div',undefined,'kn-history');wrap.append(el('h2','History'));
+    const t=el('table',undefined,'kn-table');const h=el('tr');for(const c of ['When','Who','What','Rev','Note'])h.append(el('th',c));t.append(h);
+    for(const x of d.history){const tr=el('tr');tr.append(el('td',new Date(x.ts*1000).toLocaleString()),el('td',x.actor),el('td',x.kind+' '+x.ref+(x.doc===null?' (removed)':x.kind==='assign'?' → '+x.doc.profile:'')),el('td',x.rev??''),el('td',x.note||''));t.append(tr);}
+    if(!d.history.length)wrap.append(el('p','No changes recorded yet.','kn-dim'));else{const s=el('div',undefined,'kn-scroll');s.append(t);wrap.append(s);}
+    page.append(wrap);
   }
 
   async function start(){

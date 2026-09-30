@@ -36,6 +36,10 @@ Runtime configuration:
 * `ROOK_VOICE_OWNER`: optional owner name used in the system prompt and tool
   descriptions ("Alex's personal voice assistant", "Alex's Rook band"). Empty
   (the default) uses neutral phrasing ("the user's").
+  Both are also the hub settings `voice.assistant_name` / `voice.owner`
+  (served by `settings.fetch("voice")`). Left blank there, the hub fills them
+  from the persona assigned to family `voice` (per user from a user-scoped
+  persona): see docs/design/persona.md. This environment still wins.
 
 The mouthpiece uses structured selection of either a reply or a real tool.
 It announces work only after queuing a job. Malformed plans may be retried once

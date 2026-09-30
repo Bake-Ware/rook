@@ -231,6 +231,14 @@ _VOICE: list[Setting] = [
        group="Recognition", advanced=True),
     _s("default_voice", "str", "af_heart", env="VOICE", overridable=("user",),
        label="Voice", group="Speech"),
+    _s("assistant_name", "str", "", env="ROOK_VOICE_ASSISTANT_NAME", overridable=("user",),
+       pattern=r"^.{0,60}$", label="Assistant name", group="Speech",
+       help="Blank: the name of the persona assigned to family 'voice' (persona plugin), "
+            "else 'Rook'."),
+    _s("owner", "str", "", env="ROOK_VOICE_OWNER", overridable=("user",),
+       pattern=r"^.{0,60}$", label="Whose assistant", group="Speech",
+       help="Name in 'your personal voice assistant'. Blank: the voice persona's owner, "
+            "else neutral wording."),
     _s("show_thinking", bool, False, scope="user", label="Show thinking", group="Speech"),
     _s("hotword_enabled", bool, True, scope="user", label="Wake word on this account",
        group="Speech"),

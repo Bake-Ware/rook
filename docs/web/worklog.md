@@ -98,13 +98,17 @@ chosen host and directory:
 
 Every harness also gets `TERM=xterm-256color`, `ROOK_MCP_URL`,
 `ROOK_MCP_TOKEN` (when requested), `ROOK_WORK_SESSION` (hub session id),
-`ROOK_WORK_TERMINAL` and `ROOK_PERSONA`. The worker strips its own band secret
+`ROOK_WORK_TERMINAL`, `ROOK_PERSONA` and, when a persona applies,
+`ROOK_PERSONA_FILE`. The worker strips its own band secret
 from the environment. Workers advertise installed harnesses in their heartbeat
 (`hb.work.harnesses`), and the form offers only those.
 
-**Persona hook.** `persona_args(harness, persona)` in `terminals.py` is the
-place where the persona plugin will add per-harness arguments. It returns
-nothing today. The persona id is still exported as `ROOK_PERSONA`.
+**Persona.** Before spawning, the worker fetches `persona.render` from the
+hub (the session's persona id names a profile; empty means the persona
+assigned to the harness family) and `persona_args(harness, text)` in
+`terminals.py` passes it on: `--append-system-prompt` for Claude Code,
+`-c developer_instructions=…` for Codex, nothing for Hermes (its persona
+lives in SOUL.md, see `persona.apply`). See docs/design/persona.md.
 
 **MCP URL.** Set `ROOK_WORK_MCP_URL` on the dashboard. If it is unset,
 `<dashboard origin>/mcp` is used.
