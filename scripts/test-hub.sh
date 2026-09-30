@@ -2,6 +2,7 @@
 # Disposable Rook hub + throwaway workers for tests. Never touches a live install.
 #
 #   scripts/test-hub.sh start  [--workers N] [--data DIR] [--port-base P] [--bind ADDR]
+#                              [--band-max-risk read|write|exec|admin]
 #   scripts/test-hub.sh stop   [--data DIR]
 #   scripts/test-hub.sh status [--data DIR]
 #   scripts/test-hub.sh reset  [--data DIR]      # stop + delete the data dir
@@ -29,7 +30,7 @@
 #   cargo install --locked --git https://github.com/Bake-Ware/telesthete telesthitium
 set -euo pipefail
 
-usage() { sed -n '2,7p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
+usage() { sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
 
 CMD="${1:-}"; [ -n "$CMD" ] || usage
 shift || true
@@ -42,6 +43,7 @@ BIND="127.0.0.1"
 NAME_PREFIX="${ROOK_TEST_HUB_WORKER_PREFIX:-testw}"
 KNOWLEDGE=1
 DASHBOARD=1
+BAND_MAX_RISK="read"
 while [ $# -gt 0 ]; do
   case "$1" in
     --workers)   WORKERS="$2"; shift 2 ;;
@@ -51,6 +53,7 @@ while [ $# -gt 0 ]; do
     --worker-prefix) NAME_PREFIX="$2"; shift 2 ;;
     --no-knowledge)  KNOWLEDGE=0; shift ;;
     --no-dashboard)  DASHBOARD=0; shift ;;
+    --band-max-risk) BAND_MAX_RISK="$2"; shift 2 ;;
     -h|--help) usage 0 ;;
     *) echo "unknown option: $1" >&2; usage ;;
   esac
@@ -209,6 +212,7 @@ cmd_start() {
   guard_ports
   guard_data_dir
   case "$WORKERS" in ''|*[!0-9]*) die "--workers must be a number" ;; esac
+  case "$BAND_MAX_RISK" in read|write|exec|admin) ;; *) die "--band-max-risk must be read, write, exec or admin" ;; esac
   if [ -f "$MARKER" ] && [ -d "$RUN" ] && ls "$RUN"/*.pid >/dev/null 2>&1; then
     for f in "$RUN"/*.pid; do
       pid_ours "$(cat "$f")" && die "already running from $DATA (use stop or status)"
@@ -249,7 +253,8 @@ cmd_start() {
     2>/dev/null || true)"
 
   SPAWN_ENV=(ROOK_DATA_DIR="$DATA/hub" ROOK_BAND_PSK="$ROOK_BAND_PSK" ROOK_MCP_STATIC_TOKEN="$ROOK_MCP_STATIC_TOKEN"
-             ROOK_MCP_AUTH_PASSWORD="$ROOK_MCP_AUTH_PASSWORD" ROOK_KNOWLEDGE="$KNOWLEDGE")
+             ROOK_MCP_AUTH_PASSWORD="$ROOK_MCP_AUTH_PASSWORD" ROOK_KNOWLEDGE="$KNOWLEDGE"
+             ROOK_HUB_BAND_MAX_RISK="$BAND_MAX_RISK")
   spawn mcp "$DATA/hub/home" "$PYTHON" -m rook.band_mcp --hub "127.0.0.1:$RELAY_PORT" \
       --bind "$BIND:$MCP_PORT" --allowed-hosts "$public:$MCP_PORT"
   if [ "$DASHBOARD" = 1 ]; then
@@ -281,6 +286,8 @@ ROOK_IT_RELAY=127.0.0.1:$RELAY_PORT
 ROOK_IT_TOKEN=$ROOK_MCP_STATIC_TOKEN
 ROOK_IT_WORKERS=$names
 ROOK_IT_KNOWLEDGE=$KNOWLEDGE
+ROOK_IT_ROOT_PUB=$root_pub
+ROOK_IT_BAND_MAX_RISK=$BAND_MAX_RISK
 EOF
   )
 

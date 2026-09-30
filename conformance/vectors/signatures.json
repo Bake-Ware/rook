@@ -1,0 +1,1368 @@
+{
+ "spec": "1.0",
+ "vector": "signatures",
+ "description": "ed25519 over PREFIX || canonical(body minus 'sig'); prefixes 'rook-grant-v1\\n', 'rook-ticket-v1\\n', 'rook-announce-v1\\n'. key_id = first 16 hex of sha256(raw 32-byte public key). Keys are test-only (seeds published here). `ok` and `held_roles` are normative; `reason` strings are the reference's and informative.",
+ "keys": [
+  {
+   "label": "root",
+   "seed": "912230276912c39024bf69668146eeb930527d1d6a703fcb0efd500e6b23e01f",
+   "public": "BEZVZkyA4yOmTiw4HziL77yC++aOdMA+zlKTqblr8fY=",
+   "kid": "c16cf5adcb08d915"
+  },
+  {
+   "label": "op-key",
+   "seed": "650c5d4515926fa3b10e1a507960216200ab6f90d40acea850263a52a645fa0f",
+   "public": "EOs43seEw1U3vAYKFJLig+GTmrToy+1q6KI4m+TcITw=",
+   "kid": "cbb76415fc258e43"
+  },
+  {
+   "label": "impostor",
+   "seed": "a12124c3440fca53523bb70cb93f2d8d1cc27672cff26072c165be815cfe6123",
+   "public": "wJ9z5qy3Blu13CMr1dbUDQXRJnYNjQ+vSUE1JDeXCBQ=",
+   "kid": "749887320469eb35"
+  }
+ ],
+ "band": "e17904e6ed4c664592f64f6f1d02c682",
+ "grants": [
+  {
+   "label": "valid",
+   "grant": {
+    "typ": "rook-grant",
+    "v": 1,
+    "serial": "00000000000000000000000000000001",
+    "iss": "c16cf5adcb08d915",
+    "sub": {
+     "key": "ed25519:EOs43seEw1U3vAYKFJLig+GTmrToy+1q6KI4m+TcITw=",
+     "kid": "cbb76415fc258e43"
+    },
+    "role": "is_hub",
+    "scope": {
+     "bands": [
+      "e17904e6ed4c664592f64f6f1d02c682"
+     ]
+    },
+    "constraints": {
+     "max_tier": "admin"
+    },
+    "iat": 1790800000,
+    "nbf": 1790800000,
+    "exp": 1791404800,
+    "name": "rook",
+    "sig": "wPXKK6NW9iqgVwf6t1iY4/W2O7sd1N3V3Sdivy/3kEhPv+HGUW107Ga8gIwVUsnBvCU05bcfU3vF216tBbp6AQ=="
+   },
+   "context": {
+    "anchors": [
+     "BEZVZkyA4yOmTiw4HziL77yC++aOdMA+zlKTqblr8fY="
+    ],
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "now": 1790800060,
+    "revoked": []
+   },
+   "ok": true,
+   "reason": "ok"
+  },
+  {
+   "label": "tampered body",
+   "grant": {
+    "typ": "rook-grant",
+    "v": 1,
+    "serial": "00000000000000000000000000000001",
+    "iss": "c16cf5adcb08d915",
+    "sub": {
+     "key": "ed25519:EOs43seEw1U3vAYKFJLig+GTmrToy+1q6KI4m+TcITw=",
+     "kid": "cbb76415fc258e43"
+    },
+    "role": "is_hub",
+    "scope": {
+     "bands": [
+      "e17904e6ed4c664592f64f6f1d02c682"
+     ]
+    },
+    "constraints": {
+     "max_tier": "admin"
+    },
+    "iat": 1790800000,
+    "nbf": 1790800000,
+    "exp": 1791404801,
+    "name": "rook",
+    "sig": "wPXKK6NW9iqgVwf6t1iY4/W2O7sd1N3V3Sdivy/3kEhPv+HGUW107Ga8gIwVUsnBvCU05bcfU3vF216tBbp6AQ=="
+   },
+   "context": {
+    "anchors": [
+     "BEZVZkyA4yOmTiw4HziL77yC++aOdMA+zlKTqblr8fY="
+    ],
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "now": 1790800060,
+    "revoked": []
+   },
+   "ok": false,
+   "reason": "bad grant signature"
+  },
+  {
+   "label": "untrusted issuer",
+   "grant": {
+    "typ": "rook-grant",
+    "v": 1,
+    "serial": "00000000000000000000000000000001",
+    "iss": "c16cf5adcb08d915",
+    "sub": {
+     "key": "ed25519:EOs43seEw1U3vAYKFJLig+GTmrToy+1q6KI4m+TcITw=",
+     "kid": "cbb76415fc258e43"
+    },
+    "role": "is_hub",
+    "scope": {
+     "bands": [
+      "e17904e6ed4c664592f64f6f1d02c682"
+     ]
+    },
+    "constraints": {
+     "max_tier": "admin"
+    },
+    "iat": 1790800000,
+    "nbf": 1790800000,
+    "exp": 1791404800,
+    "name": "rook",
+    "sig": "wPXKK6NW9iqgVwf6t1iY4/W2O7sd1N3V3Sdivy/3kEhPv+HGUW107Ga8gIwVUsnBvCU05bcfU3vF216tBbp6AQ=="
+   },
+   "context": {
+    "anchors": [
+     "wJ9z5qy3Blu13CMr1dbUDQXRJnYNjQ+vSUE1JDeXCBQ="
+    ],
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "now": 1790800060,
+    "revoked": []
+   },
+   "ok": false,
+   "reason": "issuer is not a trusted root"
+  },
+  {
+   "label": "signed under the ticket prefix",
+   "grant": {
+    "typ": "rook-grant",
+    "v": 1,
+    "serial": "00000000000000000000000000000001",
+    "iss": "c16cf5adcb08d915",
+    "sub": {
+     "key": "ed25519:EOs43seEw1U3vAYKFJLig+GTmrToy+1q6KI4m+TcITw=",
+     "kid": "cbb76415fc258e43"
+    },
+    "role": "is_hub",
+    "scope": {
+     "bands": [
+      "e17904e6ed4c664592f64f6f1d02c682"
+     ]
+    },
+    "constraints": {
+     "max_tier": "admin"
+    },
+    "iat": 1790800000,
+    "nbf": 1790800000,
+    "exp": 1791404800,
+    "name": "rook",
+    "sig": "a5eehLHOo+mOkphE6cr3N7MJgmH1y9NZ/3eCHQARgroogCPGtGeiZ1PcPTYZz3WlE4KCQV4u5QHFHC0o7GAUCg=="
+   },
+   "context": {
+    "anchors": [
+     "BEZVZkyA4yOmTiw4HziL77yC++aOdMA+zlKTqblr8fY="
+    ],
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "now": 1790800060,
+    "revoked": []
+   },
+   "ok": false,
+   "reason": "bad grant signature"
+  },
+  {
+   "label": "signed by the wrong key",
+   "grant": {
+    "typ": "rook-grant",
+    "v": 1,
+    "serial": "00000000000000000000000000000001",
+    "iss": "c16cf5adcb08d915",
+    "sub": {
+     "key": "ed25519:EOs43seEw1U3vAYKFJLig+GTmrToy+1q6KI4m+TcITw=",
+     "kid": "cbb76415fc258e43"
+    },
+    "role": "is_hub",
+    "scope": {
+     "bands": [
+      "e17904e6ed4c664592f64f6f1d02c682"
+     ]
+    },
+    "constraints": {
+     "max_tier": "admin"
+    },
+    "iat": 1790800000,
+    "nbf": 1790800000,
+    "exp": 1791404800,
+    "name": "rook",
+    "sig": "Y4MF0H0YC2otElPZEj5iYFen5uQRGKIKeFVy+zfE6vpNVwoWz3IBjravaAo8vf2SBe8pZtPSxAlAEoKz0yG2DA=="
+   },
+   "context": {
+    "anchors": [
+     "BEZVZkyA4yOmTiw4HziL77yC++aOdMA+zlKTqblr8fY="
+    ],
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "now": 1790800060,
+    "revoked": []
+   },
+   "ok": false,
+   "reason": "bad grant signature"
+  },
+  {
+   "label": "expired beyond grace",
+   "grant": {
+    "typ": "rook-grant",
+    "v": 1,
+    "serial": "00000000000000000000000000000001",
+    "iss": "c16cf5adcb08d915",
+    "sub": {
+     "key": "ed25519:EOs43seEw1U3vAYKFJLig+GTmrToy+1q6KI4m+TcITw=",
+     "kid": "cbb76415fc258e43"
+    },
+    "role": "is_hub",
+    "scope": {
+     "bands": [
+      "e17904e6ed4c664592f64f6f1d02c682"
+     ]
+    },
+    "constraints": {
+     "max_tier": "admin"
+    },
+    "iat": 1790800000,
+    "nbf": 1790800000,
+    "exp": 1791404800,
+    "name": "rook",
+    "sig": "wPXKK6NW9iqgVwf6t1iY4/W2O7sd1N3V3Sdivy/3kEhPv+HGUW107Ga8gIwVUsnBvCU05bcfU3vF216tBbp6AQ=="
+   },
+   "context": {
+    "anchors": [
+     "BEZVZkyA4yOmTiw4HziL77yC++aOdMA+zlKTqblr8fY="
+    ],
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "now": 1791408401,
+    "revoked": []
+   },
+   "ok": false,
+   "reason": "grant expired or not yet valid"
+  },
+  {
+   "label": "inside expiry grace",
+   "grant": {
+    "typ": "rook-grant",
+    "v": 1,
+    "serial": "00000000000000000000000000000001",
+    "iss": "c16cf5adcb08d915",
+    "sub": {
+     "key": "ed25519:EOs43seEw1U3vAYKFJLig+GTmrToy+1q6KI4m+TcITw=",
+     "kid": "cbb76415fc258e43"
+    },
+    "role": "is_hub",
+    "scope": {
+     "bands": [
+      "e17904e6ed4c664592f64f6f1d02c682"
+     ]
+    },
+    "constraints": {
+     "max_tier": "admin"
+    },
+    "iat": 1790800000,
+    "nbf": 1790800000,
+    "exp": 1791404800,
+    "name": "rook",
+    "sig": "wPXKK6NW9iqgVwf6t1iY4/W2O7sd1N3V3Sdivy/3kEhPv+HGUW107Ga8gIwVUsnBvCU05bcfU3vF216tBbp6AQ=="
+   },
+   "context": {
+    "anchors": [
+     "BEZVZkyA4yOmTiw4HziL77yC++aOdMA+zlKTqblr8fY="
+    ],
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "now": 1791408399,
+    "revoked": []
+   },
+   "ok": true,
+   "reason": "ok"
+  },
+  {
+   "label": "not yet valid",
+   "grant": {
+    "typ": "rook-grant",
+    "v": 1,
+    "serial": "00000000000000000000000000000001",
+    "iss": "c16cf5adcb08d915",
+    "sub": {
+     "key": "ed25519:EOs43seEw1U3vAYKFJLig+GTmrToy+1q6KI4m+TcITw=",
+     "kid": "cbb76415fc258e43"
+    },
+    "role": "is_hub",
+    "scope": {
+     "bands": [
+      "e17904e6ed4c664592f64f6f1d02c682"
+     ]
+    },
+    "constraints": {
+     "max_tier": "admin"
+    },
+    "iat": 1790800000,
+    "nbf": 1790800000,
+    "exp": 1791404800,
+    "name": "rook",
+    "sig": "wPXKK6NW9iqgVwf6t1iY4/W2O7sd1N3V3Sdivy/3kEhPv+HGUW107Ga8gIwVUsnBvCU05bcfU3vF216tBbp6AQ=="
+   },
+   "context": {
+    "anchors": [
+     "BEZVZkyA4yOmTiw4HziL77yC++aOdMA+zlKTqblr8fY="
+    ],
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "now": 1790796399,
+    "revoked": []
+   },
+   "ok": false,
+   "reason": "grant expired or not yet valid"
+  },
+  {
+   "label": "band not in scope",
+   "grant": {
+    "typ": "rook-grant",
+    "v": 1,
+    "serial": "00000000000000000000000000000001",
+    "iss": "c16cf5adcb08d915",
+    "sub": {
+     "key": "ed25519:EOs43seEw1U3vAYKFJLig+GTmrToy+1q6KI4m+TcITw=",
+     "kid": "cbb76415fc258e43"
+    },
+    "role": "is_hub",
+    "scope": {
+     "bands": [
+      "e17904e6ed4c664592f64f6f1d02c682"
+     ]
+    },
+    "constraints": {
+     "max_tier": "admin"
+    },
+    "iat": 1790800000,
+    "nbf": 1790800000,
+    "exp": 1791404800,
+    "name": "rook",
+    "sig": "wPXKK6NW9iqgVwf6t1iY4/W2O7sd1N3V3Sdivy/3kEhPv+HGUW107Ga8gIwVUsnBvCU05bcfU3vF216tBbp6AQ=="
+   },
+   "context": {
+    "anchors": [
+     "BEZVZkyA4yOmTiw4HziL77yC++aOdMA+zlKTqblr8fY="
+    ],
+    "band": "00000000000000000000000000000000",
+    "now": 1790800060,
+    "revoked": []
+   },
+   "ok": false,
+   "reason": "band not in grant scope"
+  },
+  {
+   "label": "revoked serial",
+   "grant": {
+    "typ": "rook-grant",
+    "v": 1,
+    "serial": "00000000000000000000000000000001",
+    "iss": "c16cf5adcb08d915",
+    "sub": {
+     "key": "ed25519:EOs43seEw1U3vAYKFJLig+GTmrToy+1q6KI4m+TcITw=",
+     "kid": "cbb76415fc258e43"
+    },
+    "role": "is_hub",
+    "scope": {
+     "bands": [
+      "e17904e6ed4c664592f64f6f1d02c682"
+     ]
+    },
+    "constraints": {
+     "max_tier": "admin"
+    },
+    "iat": 1790800000,
+    "nbf": 1790800000,
+    "exp": 1791404800,
+    "name": "rook",
+    "sig": "wPXKK6NW9iqgVwf6t1iY4/W2O7sd1N3V3Sdivy/3kEhPv+HGUW107Ga8gIwVUsnBvCU05bcfU3vF216tBbp6AQ=="
+   },
+   "context": {
+    "anchors": [
+     "BEZVZkyA4yOmTiw4HziL77yC++aOdMA+zlKTqblr8fY="
+    ],
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "now": 1790800060,
+    "revoked": [
+     "00000000000000000000000000000001"
+    ]
+   },
+   "ok": false,
+   "reason": "grant revoked"
+  },
+  {
+   "label": "unknown role",
+   "grant": {
+    "typ": "rook-grant",
+    "v": 1,
+    "serial": "00000000000000000000000000000001",
+    "iss": "c16cf5adcb08d915",
+    "sub": {
+     "key": "ed25519:EOs43seEw1U3vAYKFJLig+GTmrToy+1q6KI4m+TcITw=",
+     "kid": "cbb76415fc258e43"
+    },
+    "role": "is_admin",
+    "scope": {
+     "bands": [
+      "e17904e6ed4c664592f64f6f1d02c682"
+     ]
+    },
+    "constraints": {
+     "max_tier": "admin"
+    },
+    "iat": 1790800000,
+    "nbf": 1790800000,
+    "exp": 1791404800,
+    "name": "rook",
+    "sig": "k3LeDC8UNZNQVVz2n7uzY6cjBUFxpE8fwzaLVzNyqfDcLWcbzuWpfYGDf3OpPSxsTDdkPuqK0vpft6ad8FpGBw=="
+   },
+   "context": {
+    "anchors": [
+     "BEZVZkyA4yOmTiw4HziL77yC++aOdMA+zlKTqblr8fY="
+    ],
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "now": 1790800060,
+    "revoked": []
+   },
+   "ok": false,
+   "reason": "unknown role"
+  },
+  {
+   "label": "is_hub with a non-reserved name",
+   "grant": {
+    "typ": "rook-grant",
+    "v": 1,
+    "serial": "00000000000000000000000000000001",
+    "iss": "c16cf5adcb08d915",
+    "sub": {
+     "key": "ed25519:EOs43seEw1U3vAYKFJLig+GTmrToy+1q6KI4m+TcITw=",
+     "kid": "cbb76415fc258e43"
+    },
+    "role": "is_hub",
+    "scope": {
+     "bands": [
+      "e17904e6ed4c664592f64f6f1d02c682"
+     ]
+    },
+    "constraints": {
+     "max_tier": "admin"
+    },
+    "iat": 1790800000,
+    "nbf": 1790800000,
+    "exp": 1791404800,
+    "name": "hub-2",
+    "sig": "Qh5AGrHVsITqTrUpsO68p1mXoMzChGObkEbnpwKJ84PTqkUls5nT+QNjAltQIX01Ly70etT8nXJS+LzJGjTABQ=="
+   },
+   "context": {
+    "anchors": [
+     "BEZVZkyA4yOmTiw4HziL77yC++aOdMA+zlKTqblr8fY="
+    ],
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "now": 1790800060,
+    "revoked": []
+   },
+   "ok": false,
+   "reason": "is_hub grant with a non-reserved name"
+  },
+  {
+   "label": "bound to another worker",
+   "grant": {
+    "typ": "rook-grant",
+    "v": 1,
+    "serial": "00000000000000000000000000000001",
+    "iss": "c16cf5adcb08d915",
+    "sub": {
+     "key": "ed25519:EOs43seEw1U3vAYKFJLig+GTmrToy+1q6KI4m+TcITw=",
+     "kid": "cbb76415fc258e43",
+     "worker_id": "w-other"
+    },
+    "role": "is_hub",
+    "scope": {
+     "bands": [
+      "e17904e6ed4c664592f64f6f1d02c682"
+     ]
+    },
+    "constraints": {
+     "max_tier": "admin"
+    },
+    "iat": 1790800000,
+    "nbf": 1790800000,
+    "exp": 1791404800,
+    "name": "rook",
+    "sig": "aRyJRJPj7eXwjqgzrIIpObHPlQ35kDQrW8lTMhsQGcsqTDDN4V8wt4JEmhe6ERBBIWM5DSDiDRF13m3Sn1/EAQ=="
+   },
+   "context": {
+    "anchors": [
+     "BEZVZkyA4yOmTiw4HziL77yC++aOdMA+zlKTqblr8fY="
+    ],
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "now": 1790800060,
+    "revoked": [],
+    "worker_id": "w-1"
+   },
+   "ok": false,
+   "reason": "grant bound to another worker"
+  },
+  {
+   "label": "bound to this worker",
+   "grant": {
+    "typ": "rook-grant",
+    "v": 1,
+    "serial": "00000000000000000000000000000001",
+    "iss": "c16cf5adcb08d915",
+    "sub": {
+     "key": "ed25519:EOs43seEw1U3vAYKFJLig+GTmrToy+1q6KI4m+TcITw=",
+     "kid": "cbb76415fc258e43",
+     "worker_id": "w-1"
+    },
+    "role": "is_hub",
+    "scope": {
+     "bands": [
+      "e17904e6ed4c664592f64f6f1d02c682"
+     ]
+    },
+    "constraints": {
+     "max_tier": "admin"
+    },
+    "iat": 1790800000,
+    "nbf": 1790800000,
+    "exp": 1791404800,
+    "name": "rook",
+    "sig": "5omhEfyOL5cRcaz24cXlgivxq01ppKCPUa4/Y+gO7nt49WX2joV9TfN+0k+e5z6a1hgUFbtGg35UXmucazBgBA=="
+   },
+   "context": {
+    "anchors": [
+     "BEZVZkyA4yOmTiw4HziL77yC++aOdMA+zlKTqblr8fY="
+    ],
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "now": 1790800060,
+    "revoked": [],
+    "worker_id": "w-1"
+   },
+   "ok": true,
+   "reason": "ok"
+  }
+ ],
+ "announces": [
+  {
+   "label": "signed by the grant key",
+   "announce": {
+    "kind": "announce",
+    "worker_id": "hub-node-1",
+    "name": "rook",
+    "caps": [
+     "caps.describe",
+     "chat.read",
+     "chat.write",
+     "hub.info"
+    ],
+    "grants": [
+     {
+      "typ": "rook-grant",
+      "v": 1,
+      "serial": "00000000000000000000000000000001",
+      "iss": "c16cf5adcb08d915",
+      "sub": {
+       "key": "ed25519:EOs43seEw1U3vAYKFJLig+GTmrToy+1q6KI4m+TcITw=",
+       "kid": "cbb76415fc258e43"
+      },
+      "role": "is_hub",
+      "scope": {
+       "bands": [
+        "e17904e6ed4c664592f64f6f1d02c682"
+       ]
+      },
+      "constraints": {
+       "max_tier": "admin"
+      },
+      "iat": 1790800000,
+      "nbf": 1790800000,
+      "exp": 1791404800,
+      "name": "rook",
+      "sig": "wPXKK6NW9iqgVwf6t1iY4/W2O7sd1N3V3Sdivy/3kEhPv+HGUW107Ga8gIwVUsnBvCU05bcfU3vF216tBbp6AQ=="
+     }
+    ],
+    "ts": 1790800000,
+    "seq": 7,
+    "asig": {
+     "kid": "cbb76415fc258e43",
+     "sig": "wDjJvVmNVABDI48eTEOsZ4gXQv2bIkb4XSMnC6pPuxhceexbQV46SmzVHD0D6GxMHtZdFZLYfWMj2roOuBo8AQ=="
+    }
+   },
+   "context": {
+    "anchors": [
+     "BEZVZkyA4yOmTiw4HziL77yC++aOdMA+zlKTqblr8fY="
+    ],
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "now": 1790800010
+   },
+   "held_roles": [
+    "is_hub"
+   ]
+  },
+  {
+   "label": "stale ts",
+   "announce": {
+    "kind": "announce",
+    "worker_id": "hub-node-1",
+    "name": "rook",
+    "caps": [
+     "caps.describe",
+     "chat.read",
+     "chat.write",
+     "hub.info"
+    ],
+    "grants": [
+     {
+      "typ": "rook-grant",
+      "v": 1,
+      "serial": "00000000000000000000000000000001",
+      "iss": "c16cf5adcb08d915",
+      "sub": {
+       "key": "ed25519:EOs43seEw1U3vAYKFJLig+GTmrToy+1q6KI4m+TcITw=",
+       "kid": "cbb76415fc258e43"
+      },
+      "role": "is_hub",
+      "scope": {
+       "bands": [
+        "e17904e6ed4c664592f64f6f1d02c682"
+       ]
+      },
+      "constraints": {
+       "max_tier": "admin"
+      },
+      "iat": 1790800000,
+      "nbf": 1790800000,
+      "exp": 1791404800,
+      "name": "rook",
+      "sig": "wPXKK6NW9iqgVwf6t1iY4/W2O7sd1N3V3Sdivy/3kEhPv+HGUW107Ga8gIwVUsnBvCU05bcfU3vF216tBbp6AQ=="
+     }
+    ],
+    "ts": 1790800000,
+    "seq": 7,
+    "asig": {
+     "kid": "cbb76415fc258e43",
+     "sig": "wDjJvVmNVABDI48eTEOsZ4gXQv2bIkb4XSMnC6pPuxhceexbQV46SmzVHD0D6GxMHtZdFZLYfWMj2roOuBo8AQ=="
+    }
+   },
+   "context": {
+    "anchors": [
+     "BEZVZkyA4yOmTiw4HziL77yC++aOdMA+zlKTqblr8fY="
+    ],
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "now": 1790800091
+   },
+   "held_roles": []
+  },
+  {
+   "label": "signed by another key (grant copied)",
+   "announce": {
+    "kind": "announce",
+    "worker_id": "hub-node-1",
+    "name": "rook",
+    "caps": [
+     "caps.describe",
+     "chat.read",
+     "chat.write",
+     "hub.info"
+    ],
+    "grants": [
+     {
+      "typ": "rook-grant",
+      "v": 1,
+      "serial": "00000000000000000000000000000001",
+      "iss": "c16cf5adcb08d915",
+      "sub": {
+       "key": "ed25519:EOs43seEw1U3vAYKFJLig+GTmrToy+1q6KI4m+TcITw=",
+       "kid": "cbb76415fc258e43"
+      },
+      "role": "is_hub",
+      "scope": {
+       "bands": [
+        "e17904e6ed4c664592f64f6f1d02c682"
+       ]
+      },
+      "constraints": {
+       "max_tier": "admin"
+      },
+      "iat": 1790800000,
+      "nbf": 1790800000,
+      "exp": 1791404800,
+      "name": "rook",
+      "sig": "wPXKK6NW9iqgVwf6t1iY4/W2O7sd1N3V3Sdivy/3kEhPv+HGUW107Ga8gIwVUsnBvCU05bcfU3vF216tBbp6AQ=="
+     }
+    ],
+    "ts": 1790800000,
+    "seq": 7,
+    "asig": {
+     "kid": "749887320469eb35",
+     "sig": "Z9S9xKD7ggs51jTmITV6vSDicqYdxVw7i9s4NOS7FmopxuydAM71E71t1zkQjcsGre/yyFDGmPOM6LIWB9XABQ=="
+    }
+   },
+   "context": {
+    "anchors": [
+     "BEZVZkyA4yOmTiw4HziL77yC++aOdMA+zlKTqblr8fY="
+    ],
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "now": 1790800010
+   },
+   "held_roles": []
+  },
+  {
+   "label": "caps changed after signing",
+   "announce": {
+    "kind": "announce",
+    "worker_id": "hub-node-1",
+    "name": "rook",
+    "caps": [
+     "caps.describe",
+     "chat.read",
+     "chat.write",
+     "hub.info",
+     "shell.exec"
+    ],
+    "grants": [
+     {
+      "typ": "rook-grant",
+      "v": 1,
+      "serial": "00000000000000000000000000000001",
+      "iss": "c16cf5adcb08d915",
+      "sub": {
+       "key": "ed25519:EOs43seEw1U3vAYKFJLig+GTmrToy+1q6KI4m+TcITw=",
+       "kid": "cbb76415fc258e43"
+      },
+      "role": "is_hub",
+      "scope": {
+       "bands": [
+        "e17904e6ed4c664592f64f6f1d02c682"
+       ]
+      },
+      "constraints": {
+       "max_tier": "admin"
+      },
+      "iat": 1790800000,
+      "nbf": 1790800000,
+      "exp": 1791404800,
+      "name": "rook",
+      "sig": "wPXKK6NW9iqgVwf6t1iY4/W2O7sd1N3V3Sdivy/3kEhPv+HGUW107Ga8gIwVUsnBvCU05bcfU3vF216tBbp6AQ=="
+     }
+    ],
+    "ts": 1790800000,
+    "seq": 7,
+    "asig": {
+     "kid": "cbb76415fc258e43",
+     "sig": "wDjJvVmNVABDI48eTEOsZ4gXQv2bIkb4XSMnC6pPuxhceexbQV46SmzVHD0D6GxMHtZdFZLYfWMj2roOuBo8AQ=="
+    }
+   },
+   "context": {
+    "anchors": [
+     "BEZVZkyA4yOmTiw4HziL77yC++aOdMA+zlKTqblr8fY="
+    ],
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "now": 1790800010
+   },
+   "held_roles": []
+  },
+  {
+   "label": "no asig",
+   "announce": {
+    "kind": "announce",
+    "worker_id": "hub-node-1",
+    "name": "rook",
+    "caps": [
+     "caps.describe",
+     "chat.read",
+     "chat.write",
+     "hub.info"
+    ],
+    "grants": [
+     {
+      "typ": "rook-grant",
+      "v": 1,
+      "serial": "00000000000000000000000000000001",
+      "iss": "c16cf5adcb08d915",
+      "sub": {
+       "key": "ed25519:EOs43seEw1U3vAYKFJLig+GTmrToy+1q6KI4m+TcITw=",
+       "kid": "cbb76415fc258e43"
+      },
+      "role": "is_hub",
+      "scope": {
+       "bands": [
+        "e17904e6ed4c664592f64f6f1d02c682"
+       ]
+      },
+      "constraints": {
+       "max_tier": "admin"
+      },
+      "iat": 1790800000,
+      "nbf": 1790800000,
+      "exp": 1791404800,
+      "name": "rook",
+      "sig": "wPXKK6NW9iqgVwf6t1iY4/W2O7sd1N3V3Sdivy/3kEhPv+HGUW107Ga8gIwVUsnBvCU05bcfU3vF216tBbp6AQ=="
+     }
+    ],
+    "ts": 1790800000,
+    "seq": 7
+   },
+   "context": {
+    "anchors": [
+     "BEZVZkyA4yOmTiw4HziL77yC++aOdMA+zlKTqblr8fY="
+    ],
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "now": 1790800010
+   },
+   "held_roles": []
+  }
+ ],
+ "tickets": [
+  {
+   "label": "valid",
+   "ticket": {
+    "v": 1,
+    "kid": "cbb76415fc258e43",
+    "p": "token:agent_1",
+    "via": [],
+    "cap": "conformance.echo",
+    "t": "w-1",
+    "id": "m-1",
+    "ah": "gv_5-s46zBiSsSsvq-UGBbqaSGRBKkqqSuS8RZTcGxs",
+    "tier": "r",
+    "rev": 3,
+    "iat": 1790800000,
+    "exp": 1790800030,
+    "sig": "71x8MqidsSUtnmhI0D4Q1bWPQt5OlX/4iQ3UDkhAo0/7DhjGXEAL3XI/Kre0xn+8xF1kbV4YhLxCFzm9O01jDA=="
+   },
+   "envelope": {
+    "cap": "conformance.echo",
+    "target": "w-1",
+    "msg_id": "m-1",
+    "args": {
+     "value": "hi",
+     "n": 1
+    }
+   },
+   "grants_by_kid": {
+    "cbb76415fc258e43": {
+     "typ": "rook-grant",
+     "v": 1,
+     "serial": "00000000000000000000000000000001",
+     "iss": "c16cf5adcb08d915",
+     "sub": {
+      "key": "ed25519:EOs43seEw1U3vAYKFJLig+GTmrToy+1q6KI4m+TcITw=",
+      "kid": "cbb76415fc258e43"
+     },
+     "role": "is_hub",
+     "scope": {
+      "bands": [
+       "e17904e6ed4c664592f64f6f1d02c682"
+      ]
+     },
+     "constraints": {
+      "max_tier": "admin"
+     },
+     "iat": 1790800000,
+     "nbf": 1790800000,
+     "exp": 1791404800,
+     "name": "rook",
+     "sig": "wPXKK6NW9iqgVwf6t1iY4/W2O7sd1N3V3Sdivy/3kEhPv+HGUW107Ga8gIwVUsnBvCU05bcfU3vF216tBbp6AQ=="
+    }
+   },
+   "now": 1790800005,
+   "ok": true,
+   "reason": "ok"
+  },
+  {
+   "label": "for another worker",
+   "ticket": {
+    "v": 1,
+    "kid": "cbb76415fc258e43",
+    "p": "token:agent_1",
+    "via": [],
+    "cap": "conformance.echo",
+    "t": "w-1",
+    "id": "m-1",
+    "ah": "gv_5-s46zBiSsSsvq-UGBbqaSGRBKkqqSuS8RZTcGxs",
+    "tier": "r",
+    "rev": 3,
+    "iat": 1790800000,
+    "exp": 1790800030,
+    "sig": "71x8MqidsSUtnmhI0D4Q1bWPQt5OlX/4iQ3UDkhAo0/7DhjGXEAL3XI/Kre0xn+8xF1kbV4YhLxCFzm9O01jDA=="
+   },
+   "envelope": {
+    "cap": "conformance.echo",
+    "target": "w-2",
+    "msg_id": "m-1",
+    "args": {
+     "value": "hi",
+     "n": 1
+    }
+   },
+   "grants_by_kid": {
+    "cbb76415fc258e43": {
+     "typ": "rook-grant",
+     "v": 1,
+     "serial": "00000000000000000000000000000001",
+     "iss": "c16cf5adcb08d915",
+     "sub": {
+      "key": "ed25519:EOs43seEw1U3vAYKFJLig+GTmrToy+1q6KI4m+TcITw=",
+      "kid": "cbb76415fc258e43"
+     },
+     "role": "is_hub",
+     "scope": {
+      "bands": [
+       "e17904e6ed4c664592f64f6f1d02c682"
+      ]
+     },
+     "constraints": {
+      "max_tier": "admin"
+     },
+     "iat": 1790800000,
+     "nbf": 1790800000,
+     "exp": 1791404800,
+     "name": "rook",
+     "sig": "wPXKK6NW9iqgVwf6t1iY4/W2O7sd1N3V3Sdivy/3kEhPv+HGUW107Ga8gIwVUsnBvCU05bcfU3vF216tBbp6AQ=="
+    }
+   },
+   "now": 1790800005,
+   "ok": false,
+   "reason": "ticket for another worker"
+  },
+  {
+   "label": "for another message",
+   "ticket": {
+    "v": 1,
+    "kid": "cbb76415fc258e43",
+    "p": "token:agent_1",
+    "via": [],
+    "cap": "conformance.echo",
+    "t": "w-1",
+    "id": "m-1",
+    "ah": "gv_5-s46zBiSsSsvq-UGBbqaSGRBKkqqSuS8RZTcGxs",
+    "tier": "r",
+    "rev": 3,
+    "iat": 1790800000,
+    "exp": 1790800030,
+    "sig": "71x8MqidsSUtnmhI0D4Q1bWPQt5OlX/4iQ3UDkhAo0/7DhjGXEAL3XI/Kre0xn+8xF1kbV4YhLxCFzm9O01jDA=="
+   },
+   "envelope": {
+    "cap": "conformance.echo",
+    "target": "w-1",
+    "msg_id": "m-2",
+    "args": {
+     "value": "hi",
+     "n": 1
+    }
+   },
+   "grants_by_kid": {
+    "cbb76415fc258e43": {
+     "typ": "rook-grant",
+     "v": 1,
+     "serial": "00000000000000000000000000000001",
+     "iss": "c16cf5adcb08d915",
+     "sub": {
+      "key": "ed25519:EOs43seEw1U3vAYKFJLig+GTmrToy+1q6KI4m+TcITw=",
+      "kid": "cbb76415fc258e43"
+     },
+     "role": "is_hub",
+     "scope": {
+      "bands": [
+       "e17904e6ed4c664592f64f6f1d02c682"
+      ]
+     },
+     "constraints": {
+      "max_tier": "admin"
+     },
+     "iat": 1790800000,
+     "nbf": 1790800000,
+     "exp": 1791404800,
+     "name": "rook",
+     "sig": "wPXKK6NW9iqgVwf6t1iY4/W2O7sd1N3V3Sdivy/3kEhPv+HGUW107Ga8gIwVUsnBvCU05bcfU3vF216tBbp6AQ=="
+    }
+   },
+   "now": 1790800005,
+   "ok": false,
+   "reason": "ticket for another message"
+  },
+  {
+   "label": "for another cap",
+   "ticket": {
+    "v": 1,
+    "kid": "cbb76415fc258e43",
+    "p": "token:agent_1",
+    "via": [],
+    "cap": "conformance.echo",
+    "t": "w-1",
+    "id": "m-1",
+    "ah": "gv_5-s46zBiSsSsvq-UGBbqaSGRBKkqqSuS8RZTcGxs",
+    "tier": "r",
+    "rev": 3,
+    "iat": 1790800000,
+    "exp": 1790800030,
+    "sig": "71x8MqidsSUtnmhI0D4Q1bWPQt5OlX/4iQ3UDkhAo0/7DhjGXEAL3XI/Kre0xn+8xF1kbV4YhLxCFzm9O01jDA=="
+   },
+   "envelope": {
+    "cap": "shell.exec",
+    "target": "w-1",
+    "msg_id": "m-1",
+    "args": {
+     "value": "hi",
+     "n": 1
+    }
+   },
+   "grants_by_kid": {
+    "cbb76415fc258e43": {
+     "typ": "rook-grant",
+     "v": 1,
+     "serial": "00000000000000000000000000000001",
+     "iss": "c16cf5adcb08d915",
+     "sub": {
+      "key": "ed25519:EOs43seEw1U3vAYKFJLig+GTmrToy+1q6KI4m+TcITw=",
+      "kid": "cbb76415fc258e43"
+     },
+     "role": "is_hub",
+     "scope": {
+      "bands": [
+       "e17904e6ed4c664592f64f6f1d02c682"
+      ]
+     },
+     "constraints": {
+      "max_tier": "admin"
+     },
+     "iat": 1790800000,
+     "nbf": 1790800000,
+     "exp": 1791404800,
+     "name": "rook",
+     "sig": "wPXKK6NW9iqgVwf6t1iY4/W2O7sd1N3V3Sdivy/3kEhPv+HGUW107Ga8gIwVUsnBvCU05bcfU3vF216tBbp6AQ=="
+    }
+   },
+   "now": 1790800005,
+   "ok": false,
+   "reason": "ticket for another cap"
+  },
+  {
+   "label": "args changed",
+   "ticket": {
+    "v": 1,
+    "kid": "cbb76415fc258e43",
+    "p": "token:agent_1",
+    "via": [],
+    "cap": "conformance.echo",
+    "t": "w-1",
+    "id": "m-1",
+    "ah": "gv_5-s46zBiSsSsvq-UGBbqaSGRBKkqqSuS8RZTcGxs",
+    "tier": "r",
+    "rev": 3,
+    "iat": 1790800000,
+    "exp": 1790800030,
+    "sig": "71x8MqidsSUtnmhI0D4Q1bWPQt5OlX/4iQ3UDkhAo0/7DhjGXEAL3XI/Kre0xn+8xF1kbV4YhLxCFzm9O01jDA=="
+   },
+   "envelope": {
+    "cap": "conformance.echo",
+    "target": "w-1",
+    "msg_id": "m-1",
+    "args": {
+     "value": "hi",
+     "n": 2
+    }
+   },
+   "grants_by_kid": {
+    "cbb76415fc258e43": {
+     "typ": "rook-grant",
+     "v": 1,
+     "serial": "00000000000000000000000000000001",
+     "iss": "c16cf5adcb08d915",
+     "sub": {
+      "key": "ed25519:EOs43seEw1U3vAYKFJLig+GTmrToy+1q6KI4m+TcITw=",
+      "kid": "cbb76415fc258e43"
+     },
+     "role": "is_hub",
+     "scope": {
+      "bands": [
+       "e17904e6ed4c664592f64f6f1d02c682"
+      ]
+     },
+     "constraints": {
+      "max_tier": "admin"
+     },
+     "iat": 1790800000,
+     "nbf": 1790800000,
+     "exp": 1791404800,
+     "name": "rook",
+     "sig": "wPXKK6NW9iqgVwf6t1iY4/W2O7sd1N3V3Sdivy/3kEhPv+HGUW107Ga8gIwVUsnBvCU05bcfU3vF216tBbp6AQ=="
+    }
+   },
+   "now": 1790800005,
+   "ok": false,
+   "reason": "ticket args mismatch"
+  },
+  {
+   "label": "expired beyond skew",
+   "ticket": {
+    "v": 1,
+    "kid": "cbb76415fc258e43",
+    "p": "token:agent_1",
+    "via": [],
+    "cap": "conformance.echo",
+    "t": "w-1",
+    "id": "m-1",
+    "ah": "gv_5-s46zBiSsSsvq-UGBbqaSGRBKkqqSuS8RZTcGxs",
+    "tier": "r",
+    "rev": 3,
+    "iat": 1790800000,
+    "exp": 1790800030,
+    "sig": "71x8MqidsSUtnmhI0D4Q1bWPQt5OlX/4iQ3UDkhAo0/7DhjGXEAL3XI/Kre0xn+8xF1kbV4YhLxCFzm9O01jDA=="
+   },
+   "envelope": {
+    "cap": "conformance.echo",
+    "target": "w-1",
+    "msg_id": "m-1",
+    "args": {
+     "value": "hi",
+     "n": 1
+    }
+   },
+   "grants_by_kid": {
+    "cbb76415fc258e43": {
+     "typ": "rook-grant",
+     "v": 1,
+     "serial": "00000000000000000000000000000001",
+     "iss": "c16cf5adcb08d915",
+     "sub": {
+      "key": "ed25519:EOs43seEw1U3vAYKFJLig+GTmrToy+1q6KI4m+TcITw=",
+      "kid": "cbb76415fc258e43"
+     },
+     "role": "is_hub",
+     "scope": {
+      "bands": [
+       "e17904e6ed4c664592f64f6f1d02c682"
+      ]
+     },
+     "constraints": {
+      "max_tier": "admin"
+     },
+     "iat": 1790800000,
+     "nbf": 1790800000,
+     "exp": 1791404800,
+     "name": "rook",
+     "sig": "wPXKK6NW9iqgVwf6t1iY4/W2O7sd1N3V3Sdivy/3kEhPv+HGUW107Ga8gIwVUsnBvCU05bcfU3vF216tBbp6AQ=="
+    }
+   },
+   "now": 1790800331,
+   "ok": false,
+   "reason": "ticket expired"
+  },
+  {
+   "label": "unknown key",
+   "ticket": {
+    "v": 1,
+    "kid": "cbb76415fc258e43",
+    "p": "token:agent_1",
+    "via": [],
+    "cap": "conformance.echo",
+    "t": "w-1",
+    "id": "m-1",
+    "ah": "gv_5-s46zBiSsSsvq-UGBbqaSGRBKkqqSuS8RZTcGxs",
+    "tier": "r",
+    "rev": 3,
+    "iat": 1790800000,
+    "exp": 1790800030,
+    "sig": "71x8MqidsSUtnmhI0D4Q1bWPQt5OlX/4iQ3UDkhAo0/7DhjGXEAL3XI/Kre0xn+8xF1kbV4YhLxCFzm9O01jDA=="
+   },
+   "envelope": {
+    "cap": "conformance.echo",
+    "target": "w-1",
+    "msg_id": "m-1",
+    "args": {
+     "value": "hi",
+     "n": 1
+    }
+   },
+   "grants_by_kid": {},
+   "now": 1790800005,
+   "ok": false,
+   "reason": "unknown ticket key"
+  },
+  {
+   "label": "tampered",
+   "ticket": {
+    "v": 1,
+    "kid": "cbb76415fc258e43",
+    "p": "token:someone_else",
+    "via": [],
+    "cap": "conformance.echo",
+    "t": "w-1",
+    "id": "m-1",
+    "ah": "gv_5-s46zBiSsSsvq-UGBbqaSGRBKkqqSuS8RZTcGxs",
+    "tier": "r",
+    "rev": 3,
+    "iat": 1790800000,
+    "exp": 1790800030,
+    "sig": "71x8MqidsSUtnmhI0D4Q1bWPQt5OlX/4iQ3UDkhAo0/7DhjGXEAL3XI/Kre0xn+8xF1kbV4YhLxCFzm9O01jDA=="
+   },
+   "envelope": {
+    "cap": "conformance.echo",
+    "target": "w-1",
+    "msg_id": "m-1",
+    "args": {
+     "value": "hi",
+     "n": 1
+    }
+   },
+   "grants_by_kid": {
+    "cbb76415fc258e43": {
+     "typ": "rook-grant",
+     "v": 1,
+     "serial": "00000000000000000000000000000001",
+     "iss": "c16cf5adcb08d915",
+     "sub": {
+      "key": "ed25519:EOs43seEw1U3vAYKFJLig+GTmrToy+1q6KI4m+TcITw=",
+      "kid": "cbb76415fc258e43"
+     },
+     "role": "is_hub",
+     "scope": {
+      "bands": [
+       "e17904e6ed4c664592f64f6f1d02c682"
+      ]
+     },
+     "constraints": {
+      "max_tier": "admin"
+     },
+     "iat": 1790800000,
+     "nbf": 1790800000,
+     "exp": 1791404800,
+     "name": "rook",
+     "sig": "wPXKK6NW9iqgVwf6t1iY4/W2O7sd1N3V3Sdivy/3kEhPv+HGUW107Ga8gIwVUsnBvCU05bcfU3vF216tBbp6AQ=="
+    }
+   },
+   "now": 1790800005,
+   "ok": false,
+   "reason": "bad ticket signature"
+  },
+  {
+   "label": "tier above grant constraint",
+   "ticket": {
+    "v": 1,
+    "kid": "cbb76415fc258e43",
+    "p": "token:agent_1",
+    "via": [],
+    "cap": "conformance.echo",
+    "t": "w-1",
+    "id": "m-1",
+    "ah": "gv_5-s46zBiSsSsvq-UGBbqaSGRBKkqqSuS8RZTcGxs",
+    "tier": "x",
+    "rev": 3,
+    "iat": 1790800000,
+    "exp": 1790800030,
+    "sig": "1LKcpkmeC4zGji/aGZe5QBeTNXTpOIUt2axVw7i8+Hgk6hRrjbrFVdkbXzJzpHahLqeqJdwlla4ipu7YoLqgDg=="
+   },
+   "envelope": {
+    "cap": "conformance.echo",
+    "target": "w-1",
+    "msg_id": "m-1",
+    "args": {
+     "value": "hi",
+     "n": 1
+    }
+   },
+   "grants_by_kid": {
+    "cbb76415fc258e43": {
+     "typ": "rook-grant",
+     "v": 1,
+     "serial": "00000000000000000000000000000002",
+     "iss": "c16cf5adcb08d915",
+     "sub": {
+      "key": "ed25519:EOs43seEw1U3vAYKFJLig+GTmrToy+1q6KI4m+TcITw=",
+      "kid": "cbb76415fc258e43"
+     },
+     "role": "is_hub",
+     "scope": {
+      "bands": [
+       "e17904e6ed4c664592f64f6f1d02c682"
+      ]
+     },
+     "constraints": {
+      "max_tier": "read"
+     },
+     "iat": 1790800000,
+     "nbf": 1790800000,
+     "exp": 1791404800,
+     "name": "rook",
+     "sig": "02j0jWVTHlTuHEvu7lKP+z/go4k7FUhRUWTo1LTElDM8BpPqGVe033h0ziMWOOt4qsWZZMvyGqw8PNmmFcmxBw=="
+    }
+   },
+   "now": 1790800005,
+   "ok": false,
+   "reason": "ticket tier above grant constraint"
+  }
+ ],
+ "ticket_replay": {
+  "ticket": {
+   "v": 1,
+   "kid": "cbb76415fc258e43",
+   "p": "token:agent_1",
+   "via": [],
+   "cap": "conformance.echo",
+   "t": "w-1",
+   "id": "m-1",
+   "ah": "gv_5-s46zBiSsSsvq-UGBbqaSGRBKkqqSuS8RZTcGxs",
+   "tier": "r",
+   "rev": 3,
+   "iat": 1790800000,
+   "exp": 1790800030,
+   "sig": "71x8MqidsSUtnmhI0D4Q1bWPQt5OlX/4iQ3UDkhAo0/7DhjGXEAL3XI/Kre0xn+8xF1kbV4YhLxCFzm9O01jDA=="
+  },
+  "grants_by_kid": {
+   "cbb76415fc258e43": {
+    "typ": "rook-grant",
+    "v": 1,
+    "serial": "00000000000000000000000000000001",
+    "iss": "c16cf5adcb08d915",
+    "sub": {
+     "key": "ed25519:EOs43seEw1U3vAYKFJLig+GTmrToy+1q6KI4m+TcITw=",
+     "kid": "cbb76415fc258e43"
+    },
+    "role": "is_hub",
+    "scope": {
+     "bands": [
+      "e17904e6ed4c664592f64f6f1d02c682"
+     ]
+    },
+    "constraints": {
+     "max_tier": "admin"
+    },
+    "iat": 1790800000,
+    "nbf": 1790800000,
+    "exp": 1791404800,
+    "name": "rook",
+    "sig": "wPXKK6NW9iqgVwf6t1iY4/W2O7sd1N3V3Sdivy/3kEhPv+HGUW107Ga8gIwVUsnBvCU05bcfU3vF216tBbp6AQ=="
+   }
+  },
+  "now": 1790800005,
+  "envelope": {
+   "cap": "conformance.echo",
+   "target": "w-1",
+   "msg_id": "m-1",
+   "args": {
+    "value": "hi",
+    "n": 1
+   }
+  },
+  "results": [
+   {
+    "ok": true,
+    "reason": "ok"
+   },
+   {
+    "ok": false,
+    "reason": "ticket replayed"
+   }
+  ]
+ },
+ "cases": []
+}

@@ -1,0 +1,43 @@
+{
+ "spec": "1.0",
+ "vector": "band_crypto",
+ "description": "band_id = SHA256(psk)[:16]; key = HKDF-SHA256(salt 'telesthete-v1', ikm psk, info 'encryption-chacha20-poly1305'); ChaCha20-Poly1305 (IETF) with nonce 4 zero bytes || u64be(sequence) and EMPTY associated data (Rook profile). ciphertext includes the 16-byte tag. All byte strings are lowercase hex.",
+ "cases": [
+  {
+   "psk": "correct horse battery staple",
+   "band_id": "c4bbcb1fbec99d65bf59d85c8cb62ee2",
+   "key": "a534cdcb44aadac00910499996a547b7678f3e32856dcc96bfff640337ffa3f8",
+   "sequence": "0",
+   "nonce": "000000000000000000000000",
+   "plaintext": "",
+   "ciphertext": "09a963921158f0f5a664bb860202baed"
+  },
+  {
+   "psk": "correct horse battery staple",
+   "band_id": "c4bbcb1fbec99d65bf59d85c8cb62ee2",
+   "key": "a534cdcb44aadac00910499996a547b7678f3e32856dcc96bfff640337ffa3f8",
+   "sequence": "1",
+   "nonce": "000000000000000000000001",
+   "plaintext": "00",
+   "ciphertext": "0b840985125fa37484a66181b2167330a0"
+  },
+  {
+   "psk": "k3y-with-ünicode-☃",
+   "band_id": "e005d0f3e2e16a821fb0ff549b45a292",
+   "key": "0d43e1c744cfb73da59a5f177c2417deb8985f8ffb7593946d07aeed981b03cf",
+   "sequence": "81985529216486895",
+   "nonce": "000000000123456789abcdef",
+   "plaintext": "7b226b696e64223a22616e6e6f756e6365227d",
+   "ciphertext": "9657550756416ba7838ff677379b8227bc50cb7411f74045670f7650644b7d4ce882ac"
+  },
+  {
+   "psk": "a",
+   "band_id": "ca978112ca1bbdcafac231b39a23dc4d",
+   "key": "42c8308e7c71f24a46e0444441bda5b764bd62050d4d0427c50eb386a5757b24",
+   "sequence": "9223372036854775807",
+   "nonce": "000000007fffffffffffffff",
+   "plaintext": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+   "ciphertext": "98d5de8c01ac9a248b76237bf787892e9a417396219b2076afa24976c52fcf99210ac5570221e7df1d2c516b6cd23f6197a58ca0d35add45841479703a3a9d566dd299e2218531761bd1666acb2549d3"
+  }
+ ]
+}

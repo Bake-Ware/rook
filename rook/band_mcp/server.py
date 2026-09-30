@@ -279,7 +279,7 @@ def build_server(client: "BandClient | MultiBandClient",
     # reserved worker "rook" and reachable with rook_call(worker="rook").
     from ..hub.node import HUB_WORKER_NAME, attach_hub_node
     mcp._rook_hub = attach_hub_node(client, _store_dir, vault=vault, journal=journal,
-                                    enrollment=enrollment)
+                                    enrollment=enrollment, chat=chat)
 
     # Shared knowledge and work records: the hub plugins "knowledge" and
     # "task" (rook/hub/plugins; opt-in with their "enabled" setting, env

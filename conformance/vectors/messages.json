@@ -1,0 +1,399 @@
+{
+ "spec": "1.0",
+ "vector": "messages",
+ "description": "How a worker with id `worker_id` owning `caps` answers each inbound band message: `replies` is the list of JSON messages it sends back (empty = stays silent). Compare replies as JSON objects (key order free). Where `error_prefix` is present only that prefix of `error` is normative.",
+ "cases": [
+  {
+   "label": "targeted call",
+   "worker_id": "w-1",
+   "caps": [
+    "conformance.add",
+    "conformance.echo"
+   ],
+   "input": {
+    "id": "m1",
+    "cap": "conformance.echo",
+    "args": {
+     "value": 1
+    },
+    "target": "w-1"
+   },
+   "replies": [
+    {
+     "id": "m1",
+     "from": "w-1",
+     "ok": true,
+     "result": 1
+    }
+   ]
+  },
+  {
+   "label": "open call for an owned cap",
+   "worker_id": "w-1",
+   "caps": [
+    "conformance.add",
+    "conformance.echo"
+   ],
+   "input": {
+    "id": "m2",
+    "cap": "conformance.add",
+    "args": {
+     "a": 2,
+     "b": 3
+    }
+   },
+   "replies": [
+    {
+     "id": "m2",
+     "from": "w-1",
+     "ok": true,
+     "result": 5
+    }
+   ]
+  },
+  {
+   "label": "call for another worker",
+   "worker_id": "w-1",
+   "caps": [
+    "conformance.add",
+    "conformance.echo"
+   ],
+   "input": {
+    "id": "m3",
+    "cap": "conformance.echo",
+    "target": "w-2"
+   },
+   "replies": []
+  },
+  {
+   "label": "open call for a cap not owned",
+   "worker_id": "w-1",
+   "caps": [
+    "conformance.add",
+    "conformance.echo"
+   ],
+   "input": {
+    "id": "m4",
+    "cap": "nope.nothing"
+   },
+   "replies": []
+  },
+  {
+   "label": "targeted call for a cap not owned",
+   "worker_id": "w-1",
+   "caps": [
+    "conformance.add",
+    "conformance.echo"
+   ],
+   "input": {
+    "id": "m5",
+    "cap": "nope.nothing",
+    "target": "w-1"
+   },
+   "replies": [
+    {
+     "id": "m5",
+     "from": "w-1",
+     "ok": false,
+     "error": "unknown capability: nope.nothing"
+    }
+   ]
+  },
+  {
+   "label": "args not an object",
+   "worker_id": "w-1",
+   "caps": [
+    "conformance.add",
+    "conformance.echo"
+   ],
+   "input": {
+    "id": "m6",
+    "cap": "conformance.echo",
+    "args": [
+     1
+    ],
+    "target": "w-1"
+   },
+   "replies": [
+    {
+     "id": "m6",
+     "from": "w-1",
+     "ok": false,
+     "error": "args must be an object"
+    }
+   ]
+  },
+  {
+   "label": "args null means {}",
+   "worker_id": "w-1",
+   "caps": [
+    "conformance.add",
+    "conformance.echo"
+   ],
+   "input": {
+    "id": "m7",
+    "cap": "conformance.echo",
+    "args": null,
+    "target": "w-1"
+   },
+   "replies": [
+    {
+     "id": "m7",
+     "from": "w-1",
+     "ok": true,
+     "result": null
+    }
+   ]
+  },
+  {
+   "label": "args [] is falsy, means {}",
+   "worker_id": "w-1",
+   "caps": [
+    "conformance.add",
+    "conformance.echo"
+   ],
+   "input": {
+    "id": "m10",
+    "cap": "conformance.echo",
+    "args": [],
+    "target": "w-1"
+   },
+   "replies": [
+    {
+     "id": "m10",
+     "from": "w-1",
+     "ok": true,
+     "result": null
+    }
+   ]
+  },
+  {
+   "label": "args false is falsy, means {}",
+   "worker_id": "w-1",
+   "caps": [
+    "conformance.add",
+    "conformance.echo"
+   ],
+   "input": {
+    "id": "m11",
+    "cap": "conformance.echo",
+    "args": false,
+    "target": "w-1"
+   },
+   "replies": [
+    {
+     "id": "m11",
+     "from": "w-1",
+     "ok": true,
+     "result": null
+    }
+   ]
+  },
+  {
+   "label": "empty cap is not a request",
+   "worker_id": "w-1",
+   "caps": [
+    "conformance.add",
+    "conformance.echo"
+   ],
+   "input": {
+    "id": "m12",
+    "cap": "",
+    "target": "w-1"
+   },
+   "replies": []
+  },
+  {
+   "label": "empty target is an open call",
+   "worker_id": "w-1",
+   "caps": [
+    "conformance.add",
+    "conformance.echo"
+   ],
+   "input": {
+    "id": "m13",
+    "cap": "conformance.echo",
+    "args": {
+     "value": 3
+    },
+    "target": ""
+   },
+   "replies": [
+    {
+     "id": "m13",
+     "from": "w-1",
+     "ok": true,
+     "result": 3
+    }
+   ]
+  },
+  {
+   "label": "unexpected arg",
+   "worker_id": "w-1",
+   "caps": [
+    "conformance.add",
+    "conformance.echo"
+   ],
+   "input": {
+    "id": "m14",
+    "cap": "conformance.add",
+    "args": {
+     "a": 1,
+     "b": 2,
+     "c": 3
+    },
+    "target": "w-1"
+   },
+   "replies": [
+    {
+     "id": "m14",
+     "from": "w-1",
+     "ok": false,
+     "error": "bad args: messages.<locals>.Conf.add() got an unexpected keyword argument 'c'",
+     "error_prefix": "bad args: "
+    }
+   ]
+  },
+  {
+   "label": "bad args",
+   "worker_id": "w-1",
+   "caps": [
+    "conformance.add",
+    "conformance.echo"
+   ],
+   "input": {
+    "id": "m8",
+    "cap": "conformance.add",
+    "args": {
+     "a": 1
+    },
+    "target": "w-1"
+   },
+   "replies": [
+    {
+     "id": "m8",
+     "from": "w-1",
+     "ok": false,
+     "error": "bad args: messages.<locals>.Conf.add() missing 1 required positional argument: 'b'",
+     "error_prefix": "bad args: "
+    }
+   ]
+  },
+  {
+   "label": "unknown envelope keys ignored",
+   "worker_id": "w-1",
+   "caps": [
+    "conformance.add",
+    "conformance.echo"
+   ],
+   "input": {
+    "id": "m9",
+    "cap": "conformance.echo",
+    "args": {
+     "value": "x"
+    },
+    "target": "w-1",
+    "identity": "agent:x",
+    "ticket": {
+     "v": 1
+    },
+    "future_field": {
+     "a": 1
+    }
+   },
+   "replies": [
+    {
+     "id": "m9",
+     "from": "w-1",
+     "ok": true,
+     "result": "x"
+    }
+   ]
+  },
+  {
+   "label": "no id: reply without id",
+   "worker_id": "w-1",
+   "caps": [
+    "conformance.add",
+    "conformance.echo"
+   ],
+   "input": {
+    "cap": "conformance.echo",
+    "args": {
+     "value": 2
+    },
+    "target": "w-1"
+   },
+   "replies": [
+    {
+     "from": "w-1",
+     "ok": true,
+     "result": 2
+    }
+   ]
+  },
+  {
+   "label": "announce is not a request",
+   "worker_id": "w-1",
+   "caps": [
+    "conformance.add",
+    "conformance.echo"
+   ],
+   "input": {
+    "kind": "announce",
+    "worker_id": "w-9",
+    "name": "x",
+    "caps": []
+   },
+   "replies": []
+  },
+  {
+   "label": "reply is not a request",
+   "worker_id": "w-1",
+   "caps": [
+    "conformance.add",
+    "conformance.echo"
+   ],
+   "input": {
+    "id": "m1",
+    "from": "w-9",
+    "ok": true,
+    "result": 1
+   },
+   "replies": []
+  },
+  {
+   "label": "not an object",
+   "worker_id": "w-1",
+   "caps": [
+    "conformance.add",
+    "conformance.echo"
+   ],
+   "input": [
+    1,
+    2
+   ],
+   "replies": []
+  },
+  {
+   "label": "not JSON",
+   "worker_id": "w-1",
+   "caps": [
+    "conformance.add",
+    "conformance.echo"
+   ],
+   "input_hex": "000162696e617279",
+   "replies": []
+  },
+  {
+   "label": "empty",
+   "worker_id": "w-1",
+   "caps": [
+    "conformance.add",
+    "conformance.echo"
+   ],
+   "input_hex": "",
+   "replies": []
+  }
+ ]
+}

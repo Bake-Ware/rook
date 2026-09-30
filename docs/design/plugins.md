@@ -419,6 +419,10 @@ enforcement lands. Band calls to the hub are journaled with worker `rook`.
 
 `ROOK_HUB_PLUGINS=0` turns the hub node off entirely.
 
+The wire-level contract (frames, messages, caps, placement, grants, chat
+rooms) is specified for other implementations in `docs/spec/core-v1.md`,
+with test vectors in `conformance/`.
+
 ## 11. Failure isolation
 
 - A plugin that fails to import, construct, pass `available()`, or register
@@ -489,6 +493,7 @@ Runtime enable/disable (`worker.plugin.*`) persists per worker as before.
 | Guidance slots, skill fragments, panels | slots registered with the guidance store (wave 2); skill fragments generated | dashboard panel mounting |
 | `DEPENDS`, settings wired before `available()` (core API 1.1) | wave 2 | |
 | Knowledge, tasks as plugins | wave 2 (section 15) | settings UI writes; `handoff.*` caps with chat/journal |
+| Chat rooms on the band (`chat.*` on `rook`, `rook/hub/plugins/rooms.py`) | wave 3 (core spec) | per-principal band identities (device-signed calls) |
 
 ## 15. Knowledge and tasks (hub plugins)
 

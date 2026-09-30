@@ -263,7 +263,7 @@ rook/
   remote/        dashboard server: installers, enrollment, accounts, OTA build + push
   band_mcp/      MCP server: band tools, consoles, chat, vault, journal, watchdog
   core/          plugin contract and host shared by hub and workers
-  hub/           the hub node (worker `rook`) and hub plugins: knowledge wiki, tasks/projects/concepts
+  hub/           the hub node (worker `rook`) and hub plugins: knowledge wiki, tasks/projects/concepts, chat rooms
   web/           dashboard front end
   cli/           `rook band` terminal UI and Claude Code history tools
 android/         native Android worker app (Kotlin + bundled Python worker)
@@ -273,7 +273,9 @@ server/          standalone MCP server for the dongle's local KVM bridge
 pikvm/           systemd unit for running a worker on a PiKVM
 services/        optional voice and embeddings services
 scripts/         local-hub.sh
-docs/            feature tour, design notes, screenshots
+docs/            feature tour, design notes, screenshots; docs/spec: the core spec for other implementations
+conformance/     test vectors and live harness for the core spec
+examples/ports/  minimal workers in TypeScript and Rust that pass the conformance suite
 tests/           pytest suite
 ```
 

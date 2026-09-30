@@ -1,0 +1,58 @@
+{
+ "spec": "1.0",
+ "vector": "resources",
+ "description": "Resource connection strings (plugin settings of type resource).",
+ "cases": [
+  {
+   "url": "cap://any/embed.text",
+   "valid": true,
+   "scheme": "cap",
+   "target": "any",
+   "path": "embed.text"
+  },
+  {
+   "url": "cap://gpu-box/llm.complete",
+   "valid": true,
+   "scheme": "cap",
+   "target": "gpu-box",
+   "path": "llm.complete"
+  },
+  {
+   "url": "https://api.example.com/v1",
+   "valid": true,
+   "scheme": "https",
+   "target": "api.example.com",
+   "path": "/v1"
+  },
+  {
+   "url": "sqlite:///var/lib/app/db.sqlite",
+   "valid": true,
+   "scheme": "sqlite",
+   "target": "",
+   "path": "/var/lib/app/db.sqlite"
+  },
+  {
+   "url": "file:///tmp/x",
+   "valid": true,
+   "scheme": "file",
+   "target": "",
+   "path": "/tmp/x"
+  },
+  {
+   "url": "cap://any/",
+   "valid": false
+  },
+  {
+   "url": "cap:///embed.text",
+   "valid": false
+  },
+  {
+   "url": "ftp://example.com/x",
+   "valid": false
+  },
+  {
+   "url": "not a url",
+   "valid": false
+  }
+ ]
+}

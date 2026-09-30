@@ -10,6 +10,18 @@ releases yet: workers identify themselves by build number (for example
 Preparation for public use.
 
 ### Added
+- Core specification `docs/spec/core-v1.md` (v1.0, RFC 2119): band transport
+  profile, messages, caps and tiers, placement, the hub worker `rook` with
+  grants and tickets, chat rooms, plugin contract, compatibility rules.
+  `conformance/` has test vectors generated from the reference
+  (`generate.py`, checked by the unit suite) and a live harness that runs a
+  candidate worker against a throwaway hub. Example ports in TypeScript
+  (Node, no runtime dependencies) and Rust under `examples/ports/` pass all
+  vectors and the live run.
+- Hub chat rooms on the band: caps `chat.read`, `chat.write`, `chat.delete`,
+  `chat.presence` on worker `rook` (same store as `rook_chat_*`). Band callers
+  are recorded as `band:<identity>`; posting needs `ROOK_HUB_BAND_MAX_RISK=write`.
+  `scripts/test-hub.sh start --band-max-risk` sets it for a test hub.
 - One **Settings** area in the dashboard, rendered from the settings schema:
   hub, each band, each worker (with plugin enable/disable and per-worker
   values), each plugin or service (Voice, Decision engine, Knowledge, Tasks,

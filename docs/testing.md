@@ -41,6 +41,7 @@ are manual browser scripts, not part of the suite.
 
 ```sh
 scripts/test-hub.sh start  [--workers N] [--data DIR] [--port-base P] [--bind ADDR]
+                           [--band-max-risk read|write|exec|admin]
 scripts/test-hub.sh status [--data DIR]
 scripts/test-hub.sh stop   [--data DIR]
 scripts/test-hub.sh reset  [--data DIR]    # stop, then delete DIR
@@ -48,7 +49,9 @@ scripts/test-hub.sh reset  [--data DIR]    # stop, then delete DIR
 
 Defaults: `--data ./test-hub-data` (git-ignored), `--port-base 17470`,
 `--workers 2`, `--bind 127.0.0.1`. Other options: `--worker-prefix NAME`
-(workers are `NAME-1..N`, default `testw`), `--no-knowledge`, `--no-dashboard`.
+(workers are `NAME-1..N`, default `testw`), `--no-knowledge`, `--no-dashboard`,
+`--band-max-risk` (the hub's `ROOK_HUB_BAND_MAX_RISK`, default `read`; the
+conformance run uses `write` so band peers can post to chat rooms).
 The same defaults can come from `ROOK_TEST_HUB_DATA`, `ROOK_TEST_HUB_PORT_BASE`
 and `ROOK_TEST_HUB_WORKER_PREFIX`. `PYTHON` selects the interpreter (default:
 the repo's `.venv/bin/python`, else `python3`).
@@ -83,7 +86,8 @@ never killed.
 Files under `DIR`: `run/*.pid`, `logs/*.log`, `secrets.env`, and
 `test-hub.env` (mode 600) with the connection details the integration suite
 reads: `ROOK_IT_MCP_URL`, `ROOK_IT_TOKEN`, `ROOK_IT_WORKERS`,
-`ROOK_IT_DATA_DIR`, `ROOK_IT_KNOWLEDGE`, and the relay/dashboard addresses.
+`ROOK_IT_DATA_DIR`, `ROOK_IT_KNOWLEDGE`, `ROOK_IT_ROOT_PUB` (the hub's root
+public key), `ROOK_IT_BAND_MAX_RISK`, and the relay/dashboard addresses.
 
 ## Integration tests
 
@@ -110,6 +114,21 @@ round trip, console open/read/close, knowledge create + search. Add new
 end-to-end checks to `tests/integration/`; use the `hub` fixture's
 `hub.call(tool, **args)` for one call or `hub.run(async_fn)` for several calls
 in one MCP session.
+
+## Conformance
+
+`conformance/` holds the language-neutral test vectors and live harness for
+the core spec (`docs/spec/core-v1.md`); see `conformance/README.md`.
+
+- `tests/test_conformance.py` runs in the unit suite: the committed vectors
+  must match `python conformance/generate.py` (regenerate them when a wire or
+  `rook.core` change moves them) and the reference must verify them.
+- `ROOK_PORTS=1` adds the example ports' offline suites (`node --test`,
+  `cargo test`), skipped when the toolchain is missing.
+- `tests/integration/test_it_conformance.py` (`ROOK_IT=1`) boots its own hub
+  with `--band-max-risk write` and runs the harness against the Python
+  reference candidate, and with `ROOK_PORTS=1` against the TypeScript and
+  Rust ports.
 
 ## On a dev box through Rook
 

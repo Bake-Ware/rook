@@ -1,0 +1,77 @@
+{
+ "spec": "1.0",
+ "vector": "core_api",
+ "description": "Plugin CORE_API range matching against a core API version.",
+ "cases": [
+  {
+   "spec": ">=1.0,<2",
+   "have": "1.1",
+   "compatible": true
+  },
+  {
+   "spec": ">=1.1,<2",
+   "have": "1.0",
+   "compatible": false
+  },
+  {
+   "spec": "==1.0",
+   "have": "1.0",
+   "compatible": true
+  },
+  {
+   "spec": "==1.0",
+   "have": "1.1",
+   "compatible": false
+  },
+  {
+   "spec": "1",
+   "have": "1.9",
+   "compatible": true
+  },
+  {
+   "spec": "1",
+   "have": "2.0",
+   "compatible": false
+  },
+  {
+   "spec": "1.1",
+   "have": "1.0",
+   "compatible": false
+  },
+  {
+   "spec": "",
+   "have": "1.1",
+   "compatible": true
+  },
+  {
+   "spec": "!=1.1",
+   "have": "1.1",
+   "compatible": false
+  },
+  {
+   "spec": ">1.0",
+   "have": "1.0.1",
+   "compatible": true
+  },
+  {
+   "spec": "<=1.1",
+   "have": "1.1",
+   "compatible": true
+  },
+  {
+   "spec": ">=2",
+   "have": "1.1",
+   "compatible": false
+  },
+  {
+   "spec": "~1.0",
+   "have": "1.1",
+   "compatible": false
+  },
+  {
+   "spec": ">=1.0 , <2",
+   "have": "1.5",
+   "compatible": true
+  }
+ ]
+}
