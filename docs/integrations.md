@@ -155,36 +155,44 @@ also add a deny rule for `tag:sensitive`, as shown in
 
 ## Settings
 
-Both plugins use the same settings schema, and every setting except the
-token can be set in the hub's `hub_plugin_settings.json` under the plugin's
-namespace. Settings are read when the hub starts, so restart it to apply
-changes. The token is read from the vault each time it is used.
+Both plugins use the same settings schema, declared with `setting()` in
+`rook/hub/integrations.py`. Set values on the dashboard's **Settings** page
+(Telegram / Discord) or with `settings.set` on worker `rook`. Both are
+stored in `settings.db` with history.
 
-| Setting | Type | Env | Default | Notes |
-|---|---|---|---|---|
-| `enabled` | bool | `ROOK_TELEGRAM` / `ROOK_DISCORD` | false | Loads the plugin. |
-| `token` | secret | `ROOK_TELEGRAM_TOKEN` / `ROOK_DISCORD_TOKEN` | none | Vault key `plugin.telegram.token` / `plugin.discord.token`. |
-| `chat_id` | str | `ROOK_TELEGRAM_CHAT` / `ROOK_DISCORD_CHAT` | empty | The Telegram chat id or Discord channel id. |
-| `rooms` | list | | `[]` | Rook room ids to bridge. |
-| `commands` | list | | `["help","workers","rooms"]` | A subset of `help`, `workers`, `rooms`, `call`. |
-| `allowed_caps` | list | | `[]` | Globs that `call` may run. |
-| `command_users` | list | | `[]` | Platform user ids allowed to use commands. Empty means anyone in the chat. |
-| `mentions` | dict | | `{}` | `{handle or user id: rook identity}`. |
-| `rate_out` / `rate_in` | int | | 20 / 10 | Messages per minute. |
-| `api_base` | str | `ROOK_TELEGRAM_API` / `ROOK_DISCORD_API` | official API | Change it only for a proxy or a test server. |
+Some settings apply only at start. `enabled`, `rooms`, the rate limits and
+`api_base` are read when the hub starts, so restart it after changing them.
+The other settings are read each time they are used. The token is a secret:
+it lives in the vault and is never stored in `settings.db`. For every key,
+the canonical `ROOK_<NAMESPACE>_<NAME>` environment variable also works (for
+example `ROOK_TELEGRAM_CHAT_ID`). The generated list is in
+`docs/operations/settings-reference.md`.
 
-Example `hub_plugin_settings.json`:
+| Setting | Type | Env | Default | Apply | Notes |
+|---|---|---|---|---|---|
+| `enabled` | bool | `ROOK_TELEGRAM` / `ROOK_DISCORD` | false | restart | Loads the plugin. |
+| `token` | secret | `ROOK_TELEGRAM_TOKEN` / `ROOK_DISCORD_TOKEN` | none | live | Vault key `plugin.telegram.token` / `plugin.discord.token`. |
+| `chat_id` | str | `ROOK_TELEGRAM_CHAT` / `ROOK_DISCORD_CHAT` | empty | live | The Telegram chat id or Discord channel id. |
+| `rooms` | list | | `[]` | restart | Rook room ids to bridge. |
+| `mentions` | dict | | `{}` | live | `{handle or user id: rook identity}`. |
+| `commands` | list | | `["help","workers","rooms"]` | live | A subset of `help`, `workers`, `rooms`, `call`. |
+| `allowed_caps` | list | | `[]` | live | Globs that `call` may run. |
+| `command_users` | list | | `[]` | live | Platform user ids allowed to use commands. Empty means anyone in the chat. |
+| `rate_out` / `rate_in` | int | | 20 / 10 | restart | Messages per minute. |
+| `api_base` | url | `ROOK_TELEGRAM_API` / `ROOK_DISCORD_API` | official API | restart | Change it only for a proxy or a test server. |
 
-```json
-{"telegram": {"enabled": true, "chat_id": "-1001234567890",
-              "rooms": ["3f2a9c0d1e4b5a67"],
-              "mentions": {"alice": "user:operator"}},
- "discord":  {"enabled": true, "chat_id": "123456789012345678",
-              "commands": ["help", "workers", "call"], "allowed_caps": ["hub.info"]}}
+Example, from an operator token:
+
+```
+rook_call(worker="rook", cap="settings.set", args={"key": "telegram.chat_id", "value": "-1001234567890"})
+rook_call(worker="rook", cap="settings.set", args={"key": "telegram.rooms", "value": ["3f2a9c0d1e4b5a67"]})
+rook_call(worker="rook", cap="settings.set", args={"key": "telegram.mentions", "value": {"alice": "user:operator"}})
+rook_call(worker="rook", cap="settings.set", args={"key": "telegram.enabled", "value": true})
 ```
 
-Store the token with `rook_secret(action="set", name="plugin.telegram.token",
-...)` or on the dashboard's Secrets page.
+Enter the token in the Settings page's write-only field, or store it in the
+vault with `rook_secret(action="set", name="plugin.telegram.token", ...)`.
+Don't paste it into a `rook_call`, because call arguments are journaled.
 
 **Secrets.**
 - The token is never logged, returned or put in a reply.

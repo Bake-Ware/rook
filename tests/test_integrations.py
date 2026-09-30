@@ -513,6 +513,7 @@ def test_available_needs_enabled_and_aiohttp(tmp_path, monkeypatch):
 
 def test_hub_node_loads_integrations_only_when_enabled(tmp_path, monkeypatch):
     from rook.hub.node import HubNode
+    monkeypatch.setenv("ROOK_SETTINGS_DB", str(tmp_path / "settings.db"))
     node = HubNode(str(tmp_path), entry_points=False)
     assert not node.has("telegram.send") and node.has("notify.send")
     monkeypatch.setenv("ROOK_TELEGRAM", "1")

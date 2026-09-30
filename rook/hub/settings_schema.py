@@ -285,6 +285,10 @@ _WATCHDOG: list[Setting] = [
        bootstrap=True, label="Telegram bot token", group="Alerts"),
     _s("telegram_chat", "str", "", env="ROOK_WATCHDOG_TELEGRAM_CHAT", bootstrap=True,
        label="Telegram chat id", group="Alerts"),
+    _s("via_hub", bool, False, env="ROOK_WATCHDOG_VIA_HUB", bootstrap=True,
+       label="Alert through the hub's notify.send first", group="Alerts",
+       help="Uses the Telegram/Discord integration plugins; the direct Telegram settings "
+            "above are the fallback when the hub cannot deliver."),
 ]
 
 #: The relay (telesthete-hub) is a separate binary with its own environment:

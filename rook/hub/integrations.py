@@ -145,37 +145,47 @@ class Inbound:
     mentions: dict = field(default_factory=dict)  # platform user id -> handle (native mentions)
 
 
-def integration_settings(platform: str, *, chat_label: str, api_default: str,
-                         text_limit_help: str = "") -> tuple:
-    """The settings schema every chat integration shares."""
+def integration_settings(platform: str, *, chat_label: str, api_default: str) -> tuple:
+    """The settings schema every chat integration shares. ``apply``: the
+    enable flag, bridged rooms, rate limits and API base are read at start;
+    the rest is read on use (the hub refreshes ``plugin.settings`` on save)."""
     up = platform.upper()
     return (
-        setting("enabled", bool, default=False, env=f"ROOK_{up}",
-                label=f"{platform.title()} integration",
-                help="Read at start: restart the hub to apply."),
-        setting("token", str, secret=True, env=f"ROOK_{up}_TOKEN", label="Bot token",
+        setting("enabled", bool, default=False, env=f"ROOK_{up}", apply="restart",
+                group="General", label=f"{platform.title()} integration",
+                help="Bridge rooms, notifications and chat commands. Read at start: "
+                     "restart the hub to apply."),
+        setting("token", str, secret=True, env=f"ROOK_{up}_TOKEN", group="General",
+                label="Bot token",
                 help=f"Stored in the vault as plugin.{platform}.token; never shown or logged."),
-        setting("chat_id", str, default="", env=f"ROOK_{up}_CHAT", label=chat_label,
+        setting("chat_id", str, default="", env=f"ROOK_{up}_CHAT", group="General",
+                label=chat_label,
                 help="Where bridged rooms, notifications and commands go. Messages from any "
                      "other chat are ignored."),
-        setting("rooms", list, default=[], label="Bridged rooms",
+        setting("rooms", list, default=[], apply="restart", group="Bridge",
+                label="Bridged rooms",
                 help="Rook chat room ids relayed to and from the chat. Empty: no bridge."),
-        setting("commands", list, default=list(DEFAULT_COMMANDS), label="Allowed commands",
-                help=f"Subset of {list(COMMANDS)}. Commands run as integration:{platform} and "
-                     "are checked against the permission policy."),
-        setting("allowed_caps", list, default=[], label="Caps the call command may run",
-                help="Glob patterns (e.g. 'hub.*'). The policy must also allow them."),
-        setting("command_users", list, default=[], label="Command users",
-                help="Platform user ids allowed to run commands. Empty: anyone in the chat."),
-        setting("mentions", dict, default={}, label="Mention map",
+        setting("mentions", dict, default={}, group="Bridge", label="Mention map",
                 help="Platform handle or user id -> Rook identity, e.g. "
                      "{\"alice\": \"user:operator\"}. Used both ways."),
-        setting("rate_out", int, default=20, label="Outbound messages per minute"),
-        setting("rate_in", int, default=10, label="Inbound messages per user per minute"),
-        setting("api_base", str, default=api_default, env=f"ROOK_{up}_API",
-                label="API base URL", help="Change only for a proxy or a test server."),
+        setting("commands", list, default=list(DEFAULT_COMMANDS), group="Commands",
+                label="Allowed commands",
+                help=f"Subset of {list(COMMANDS)}. Commands run as integration:{platform} and "
+                     "are checked against the permission policy."),
+        setting("allowed_caps", list, default=[], group="Commands",
+                label="Caps the call command may run",
+                help="Glob patterns (e.g. 'hub.*'). The policy must also allow them."),
+        setting("command_users", list, default=[], group="Commands", label="Command users",
+                help="Platform user ids allowed to run commands. Empty: anyone in the chat."),
+        setting("rate_out", int, default=20, apply="restart", group="Limits", min=1,
+                label="Outbound messages per minute"),
+        setting("rate_in", int, default=10, apply="restart", group="Limits", min=1,
+                label="Inbound messages per user per minute"),
+        setting("api_base", "url", default=api_default, env=f"ROOK_{up}_API",
+                apply="restart", group="Limits", advanced=True, label="API base URL",
+                help="Change only for a proxy or a test server: the Telegram API puts the "
+                     "token in the URL."),
     )
-
 
 class ChatIntegration(Plugin):
     """Base class: bridge loop, commands, notifications, masking, backoff.
