@@ -22,7 +22,7 @@ class LocalBand:
   self.plugin=WorkPlugin()
   async def local_call(cap,**args):return await getattr(self.proc,'_'+cap.split('.')[1])(**args)
   self.plugin.runtime=WorkRuntime(path,SimpleNamespace(call=local_call))
-  self.workers={'local':dict(worker_id='local',name='cachyrig',band='test',last_seen=time.time(),caps=list(self.plugin.caps()))}
+  self.workers={'local':dict(worker_id='local',name='workstation',band='test',last_seen=time.time(),caps=list(self.plugin.caps()))}
  async def call(self,cap,args,target,timeout):
   result=self.plugin.caps()[cap](**args)
   if inspect.isawaitable(result):result=await result

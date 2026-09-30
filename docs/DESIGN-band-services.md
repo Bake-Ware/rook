@@ -1,6 +1,6 @@
 # Band Services — Design
 
-*Settled 2026-08-20 in conversation between jamix and Claude. This is the durable
+*Settled 2026-08-20 in conversation between the maintainer and Claude. This is the durable
 record; the conversation it came from is gone. Statuses below track implementation.*
 
 ## First principles
@@ -78,7 +78,7 @@ record; the conversation it came from is gone. Statuses below track implementati
 - **Asymmetric roles.** The *caller* stays in tool-land: `chat.send` is a tool
   call, replies arrive as tool results, its own agentic loop terminates the
   exchange. The *woken agent* gets a **normal session** where room messages
-  arrive as user turns (attributed `[sojourn]: ...` in multi-party rooms) and
+  arrive as user turns (attributed `[hermes]: ...` in multi-party rooms) and
   its assistant output posts back to the room. Each end sees its native
   interface; the room is transport. Loop prevention is structural: the woken
   side only speaks when spoken to, because that's what responding to user turns
@@ -114,14 +114,14 @@ record; the conversation it came from is gone. Statuses below track implementati
 
 ### Vault
 - Plain-markdown, **Obsidian-compatible** vault on the site. Folders are
-  namespaces (`sojourn/`, `claude/`, `shared/`); `[[wikilinks]]` intact; FTS
+  namespaces (`hermes/`, `claude/`, `shared/`); `[[wikilinks]]` intact; FTS
   index (sqlite FTS5) rebuilt on write. No Obsidian process — the real app can
   be pointed at it any time.
 - Access: **read-open across the band, write-owned to your namespace**,
   `shared/` writable by all. Tightens for free once ACLs land.
 - Caps: `memory.search`, `memory.get`, `memory.put`, `memory.note` (drop a
   post-it explicitly).
-- Sojourn (and any agent) syncs its native memory in by cron; **different
+- A Hermes agent (or any agent) syncs its native memory in by cron; **different
   schemas coexist** — the vault doesn't impose one.
 
 ### Post-its — atomic facts ("factbuilding")
@@ -140,7 +140,7 @@ supersedes: [ids]?, author (identity)
 - **Curator, not discipline:** acting agents are never relied on for memory
   maintenance (they demonstrably don't do it). Their work is *observable* —
   journal, rooms, handoffs land in the threads store automatically. An
-  out-of-band **curator** (sojourn — free local inference) runs on cron +
+  out-of-band **curator** (a Hermes agent on free local inference) runs on cron +
   thread-idle triggers, reads the delta since its last pass, extracts post-its,
   amends entity notes, notices **loose ends** ("LXC created for calendar duty;
   calendar moved to gcal; nothing decommissioned it — orphan?"), and flags
@@ -162,8 +162,8 @@ supersedes: [ids]?, author (identity)
 - One cheap server-side assist (pure graph heuristic, no inference): flag piles
   where notes share subject entities across a time gap with no supersede chain
   — `⚠ 4 notes touch [[calendar]] across 5 months, no resolution chain`.
-- `memory.ask` (later): routes a question to sojourn for live RAG over the
-  corpus — "go ask sojourn," formalized as a cap.
+- `memory.ask` (later): routes a question to the curator agent for live RAG over the
+  corpus — "go ask the assistant," formalized as a cap.
 
 ### Capstones — truth set by ruling
 - When the consuming agent surfaces a contradiction and the **user rules**, it
@@ -224,8 +224,8 @@ Status as of 2026-08-20 (fleet on build 76):
    `rook_journal` tool, `_journal_id` on every `rook_call`.
 3. **Memory vault** — ✅ SHIPPED + verified live. `worker/plugins/memory.py`
    (band cap, gated on `ROOK_MEMORY_VAULT`, hosted on the hub host). Post-its +
-   supersede/capstone + currency flag. Curator cron interface (sojourn) still
-   TODO on the sojourn side.
+   supersede/capstone + currency flag. Curator cron interface still
+   TODO on the curator agent side.
 4. **Handoffs** — ✅ SHIPPED + verified live. `band_mcp/sessions.py`,
    `rook_handoff_save/get/list`, read-time freshness banners.
 5. **Settings wizard + config OTA** (commit-confirmed) — ✅ SHIPPED + verified
@@ -250,4 +250,4 @@ the production hub but is dormant until a second hub is stood up and linked.
   `import rook.band_mcp.server` / bootstrap format checks before restarting
   services — there is a history of venv landmines).
 - Worker-side pieces ship as signed OTA builds; fleet converges automatically.
-- The curator cron is configured on sojourn by hand (hermes owns its own box).
+- The curator cron is configured on the agent host by hand (hermes owns its own box).

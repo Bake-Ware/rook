@@ -2,8 +2,8 @@
 
 The dashboard is a single document with hash-routed Workers, Bands, Chat,
 Work, Install, Account, and Tokens views. Work replaces Sessions; old Sessions links redirect there. `shell.css` owns layout;
-`theme.css` adopts BakeDash's olive/amber palette, square panels, DM Sans,
-and IBM Plex Mono. The BakeDash project remains independent.
+`theme.css` uses an olive/amber palette, square panels, DM Sans, and IBM
+Plex Mono.
 
 Account, band, and token controls are mounted modules in `rook/web`. Account
 forms retain the existing authorization and CSRF handlers; enhanced submissions
@@ -76,7 +76,7 @@ Example agent call:
 ```json
 {
   "cap": "worker.description_set",
-  "worker": "sojourn",
+  "worker": "agent-host",
   "args": {"description": "Hermes agent host and shared operations workspace."}
 }
 ```

@@ -36,7 +36,7 @@ Verify it against a full download of the prior 0.4.5 APK. Generate the sidecar
 with `android/build_apk_manifest.py`, copy the active hub web release,
 replace only its APK/sidecar, and switch its WorkingDirectory and public hash
 allowlist using the prior release procedure. Validate the public `/apk.json`
-and full `/apk` download using User-Agent `rook-worker` before notifying Bake.
+and full `/apk` download using User-Agent `rook-worker` before notifying the operator.
 
 Manual checklist:
 1. Install the same-signer update over the current app (retain app data).

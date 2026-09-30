@@ -54,8 +54,8 @@ def test_sanitize_leaves_ordinary_output_alone():
 
 # -- store lifecycle --------------------------------------------------------
 
-def _open(store, title="set up the llama model on kaiju", worker="w1"):
-    r = store.open(title=title, worker=worker, worker_name="kaiju",
+def _open(store, title="set up the llama model on gpu-box", worker="w1"):
+    r = store.open(title=title, worker=worker, worker_name="gpu-box",
                    handle="h1", cmd="bash install.sh", pty=False,
                    opened_by="agent:claude")
     assert r["ok"]
@@ -105,13 +105,13 @@ def test_read_paging_and_tail(store):
 # -- search -----------------------------------------------------------------
 
 def test_search_finds_by_task_title(store):
-    rid = _open(store, title="set up the llama model on kaiju")
+    rid = _open(store, title="set up the llama model on gpu-box")
     store.append(rid, "irrelevant build noise\n")
     store.mark_closing(rid, 0)
     store.freeze(rid, summary="model lives in /opt/models")
 
     # The question a human would actually ask, months later.
-    res = store.search("set up model kaiju")
+    res = store.search("set up model gpu-box")
     assert res["ok"] and res["count"] == 1
     assert res["results"][0]["room"] == rid
     assert res["results"][0]["summary"] == "model lives in /opt/models"
@@ -130,12 +130,12 @@ def test_search_finds_transcript_text_with_seq(store):
 
 
 def test_search_scopes_to_worker(store):
-    a = store.open(title="nginx tuning", worker="w1", worker_name="kaiju",
+    a = store.open(title="nginx tuning", worker="w1", worker_name="gpu-box",
                    handle="h", cmd="x", pty=False, opened_by="a")["room"]
-    b = store.open(title="nginx tuning", worker="w2", worker_name="flophouse",
+    b = store.open(title="nginx tuning", worker="w2", worker_name="laptop",
                    handle="h", cmd="x", pty=False, opened_by="a")["room"]
     assert store.search("nginx")["count"] == 2
-    scoped = store.search("nginx", worker="kaiju")
+    scoped = store.search("nginx", worker="gpu-box")
     assert scoped["count"] == 1 and scoped["results"][0]["room"] == a
 
 
@@ -192,7 +192,7 @@ class _FakeBand:
 
     def __init__(self, plugin):
         self.plugin = plugin
-        self.workers = {"w1": {"name": "kaiju", "caps": ["proc.start", "proc.read"]}}
+        self.workers = {"w1": {"name": "gpu-box", "caps": ["proc.start", "proc.read"]}}
 
     async def call(self, cap, args=None, target=None, timeout=15.0, identity=None):
         fn = {"proc.read": self.plugin._read, "proc.write": self.plugin._write,
@@ -210,7 +210,7 @@ async def test_end_to_end_pump_drains_process_into_room(store):
         label="end to end check")
     assert started["ok"]
 
-    rid = store.open(title="end to end check", worker="w1", worker_name="kaiju",
+    rid = store.open(title="end to end check", worker="w1", worker_name="gpu-box",
                      handle=started["handle"], cmd=started["cmd"], pty=False,
                      opened_by="agent:test")["room"]
 

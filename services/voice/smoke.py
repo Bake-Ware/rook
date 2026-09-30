@@ -7,6 +7,7 @@ import websockets
 
 async def main():
     uri=os.environ.get('VOICE_SMOKE_URL','ws://127.0.0.1:8901/ws')
+    SMOKE_WORKER=os.environ.get('VOICE_SMOKE_WORKER','gpu-box')
     headers={'Authorization':'Bearer '+os.environ['VOICE_TOKEN']} if os.environ.get('VOICE_TOKEN') else {}
     cid=str(uuid.uuid4())
     async def connect():
@@ -47,7 +48,7 @@ async def main():
         async with asyncio.timeout(.5):
             while True: assert not isinstance(await ws.recv(),bytes), 'stale audio after stop acknowledgement'
     print('PASS: real TTS framing and interruption')
-    await ws.send(json.dumps({'type':'text','text':'Use rook_read to get info.uptime from kaiju.','speak':False}))
+    await ws.send(json.dumps({'type':'text','text':f'Use rook_read to get info.uptime from {SMOKE_WORKER}.','speak':False}))
     async with asyncio.timeout(90):
         started=False
         while True:

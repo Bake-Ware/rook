@@ -19,9 +19,9 @@ from rook.knowledge.maintenance import import_vault
 from rook.knowledge.web import routes
 from rook.band_mcp.hygiene import Hygiene
 
-AGENT = {'id': 'codex.codex.kaiju@.home.bake.rook', 'kind': 'agent', 'label': 'codex', 'host': 'kaiju',
-         'client': 'codex', 'dir': '/home/bake/rook'}
-OTHER = {'id': 'claude.claudecode.cachyrig', 'kind': 'agent', 'label': 'claude', 'host': 'cachyrig', 'client': 'claudecode'}
+AGENT = {'id': 'codex.codex.gpubox@.home.user.rook', 'kind': 'agent', 'label': 'codex', 'host': 'gpubox',
+         'client': 'codex', 'dir': '/home/user/rook'}
+OTHER = {'id': 'claude.claudecode.workstation', 'kind': 'agent', 'label': 'claude', 'host': 'workstation', 'client': 'claudecode'}
 
 
 def rid():
@@ -36,7 +36,7 @@ def work(tmp_path):
                         {'kind': kind, 'title': title, 'body': title, 'parent': parent, 'attrs': attrs})
     concept = create('concept', 'Shared memory')
     project = create('project', 'Knowledge service', concept['id'])
-    task = create('task', 'Restart test service', project['id'], criteria=['Service responds'], workers=['kaiju'])
+    task = create('task', 'Restart test service', project['id'], criteria=['Service responds'], workers=['gpubox'])
     return SimpleNamespace(s=s, create=create, concept=concept, project=project, task=task)
 
 
@@ -84,10 +84,10 @@ def test_same_title_gets_distinct_slugs_in_a_band(work):
 
 def test_pages_nest_like_folders_and_can_move(work):
     hosts = work.create('knowledge', 'Hosts')
-    sojourn = work.create('knowledge', 'Sojourn', hosts['id'])
-    gpu = work.create('knowledge', 'GPU notes', sojourn['id'])
-    assert sojourn['parent'] == hosts['id']
-    assert [c['id'] for c in work.s.get('default', hosts['id'])['children']] == [sojourn['id']]
+    agent_host = work.create('knowledge', 'Agent host', hosts['id'])
+    gpu = work.create('knowledge', 'GPU notes', agent_host['id'])
+    assert agent_host['parent'] == hosts['id']
+    assert [c['id'] for c in work.s.get('default', hosts['id'])['children']] == [agent_host['id']]
     with pytest.raises(ValueError):   # pages only nest under pages
         work.create('knowledge', 'Bad', work.task['id'])
     def move(r, parent):
@@ -104,8 +104,8 @@ def test_pages_nest_like_folders_and_can_move(work):
 
 
 def test_a_person_can_verify_a_page_and_an_agent_edit_undoes_it(work):
-    human = {'id': 'human:bake', 'kind': 'human', 'label': 'Bake'}
-    page = work.create('knowledge', 'Kaiju has two 3090s')
+    human = {'id': 'human:operator', 'kind': 'human', 'label': 'Operator'}
+    page = work.create('knowledge', 'The GPU box has two 3090s')
     def review(verdict, note='', actor=human):
         cur = work.s.get('default', page['id'])
         return work.s.mutate('default', actor, rid(), 'review',
@@ -113,13 +113,13 @@ def test_a_person_can_verify_a_page_and_an_agent_edit_undoes_it(work):
     with pytest.raises(PermissionError):          # agents can't sign off as a person
         review('verified', actor=AGENT)
     with pytest.raises(ValueError):               # nor forge a 'human' link or review fields
-        work.s.mutate('default', AGENT, rid(), 'link', {'id': page['id'], 'kind': 'human', 'ref': 'human:bake'})
+        work.s.mutate('default', AGENT, rid(), 'link', {'id': page['id'], 'kind': 'human', 'ref': 'human:operator'})
     cur = work.s.get('default', page['id'])
     with pytest.raises(ValueError):
         work.s.mutate('default', AGENT, rid(), 'update', {'id': page['id'], 'revision': cur['revision'],
-                                                          'patch': {'attrs': {'reviewed_by': 'human:bake'}}})
+                                                          'patch': {'attrs': {'reviewed_by': 'human:operator'}}})
     r = review('verified')
-    assert r['attrs']['verification'] == 'verified' and r['attrs']['reviewed_label'] == 'Bake'
+    assert r['attrs']['verification'] == 'verified' and r['attrs']['reviewed_label'] == 'Operator'
     got = work.s.get('default', page['id'])
     assert any(l['kind'] == 'human' and l['relation'] == 'evidence' for l in got['links'])
     assert got['events'][0]['action'] == 'reviewed'
@@ -128,7 +128,7 @@ def test_a_person_can_verify_a_page_and_an_agent_edit_undoes_it(work):
         'id': page['id'], 'revision': work.s.get('default', page['id'])['revision'], 'patch': {'body': body}})
     assert upd(human, 'Dual RTX 3090')['attrs']['verification'] == 'verified'
     r = upd(AGENT, 'Dual RTX 4090')
-    assert r['attrs']['verification'] == 'unverified' and 'Bake verified' in r['attrs']['review_note']
+    assert r['attrs']['verification'] == 'unverified' and 'Operator verified' in r['attrs']['review_note']
     with pytest.raises(ValueError):               # a dispute needs a reason
         review('disputed')
     r = review('disputed', 'They are 3090s, not 4090s')
@@ -259,12 +259,12 @@ def test_prototype_v1_database_migrates(tmp_path):
 
 class Enrollment:
     def bands(self, active_only=False):
-        return [{'id': '26f8c02c', 'name': 'bakenet', 'label': '7f68c499', 'is_primary': 1},
+        return [{'id': '26f8c02c', 'name': 'hub', 'label': '7f68c499', 'is_primary': 1},
                 {'id': 'c8cbc05b', 'name': 'rooknet', 'label': '6178ba5f', 'is_primary': 0}]
 
 
-PRINCIPAL = {'kind': 'agent', 'actor': 'codex.codex.kaiju@.home.bake.rook', 'key_id': 'k1', 'agent_id': 'agent_x',
-             'token': 'codex', 'client': 'codex', 'host': 'kaiju', 'dir': '/home/bake/rook'}
+PRINCIPAL = {'kind': 'agent', 'actor': 'codex.codex.gpubox@.home.user.rook', 'key_id': 'k1', 'agent_id': 'agent_x',
+             'token': 'codex', 'client': 'codex', 'host': 'gpubox', 'dir': '/home/user/rook'}
 
 
 @pytest.mark.asyncio
@@ -286,7 +286,7 @@ async def test_service_finds_records_across_bands_and_attributes_compound_identi
     assert deck[0]['paused'][0]['latest_handoff']['ref'] == 'thread-1'
     with sqlite3.connect(work.s.path) as db:
         info = json.loads(db.execute('SELECT info FROM actors WHERE id=?', (PRINCIPAL['actor'],)).fetchone()[0])
-    assert info['host'] == 'kaiju' and info['dir'] == '/home/bake/rook'
+    assert info['host'] == 'gpubox' and info['dir'] == '/home/user/rook'
 
 
 @pytest.mark.asyncio
@@ -305,7 +305,7 @@ async def test_search_uses_embeddings_and_falls_back(work):
 @pytest.mark.asyncio
 async def test_human_route_requires_operator_login_and_csrf(work):
     s = KnowledgeService(work.s.path, lambda: None)
-    accounts = SimpleNamespace(session=lambda c: {'id': 'bake', 'name': 'Bake', 'csrf': 'csrf', 'admin': c == 'admin'} if c else None)
+    accounts = SimpleNamespace(session=lambda c: {'id': 'operator', 'name': 'Operator', 'csrf': 'csrf', 'admin': c == 'admin'} if c else None)
     app = Starlette(routes=routes(s, accounts))
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
         assert (await client.get('/knowledge/account-api')).status_code == 401
@@ -314,7 +314,7 @@ async def test_human_route_requires_operator_login_and_csrf(work):
         body = {'action': 'create', 'kind': 'concept', 'request_id': 'h1', 'data': {'title': 'Human idea'}}
         assert (await client.post('/knowledge/account-api', headers=h, json=body)).status_code == 403
         r = await client.post('/knowledge/account-api', headers=h, json=body | {'csrf': 'csrf'})
-        assert r.status_code == 200 and r.json()['result']['creator'] == 'human:bake'
+        assert r.status_code == 200 and r.json()['result']['creator'] == 'human:operator'
         r = await client.post('/knowledge/account-api', headers=h, json={'action': 'deck', 'csrf': 'csrf'})
         assert r.status_code == 200 and 'deck' in r.json()['result']
 
@@ -356,7 +356,7 @@ async def test_hygiene_sends_into_the_agents_session_once_per_idle_period(work):
     w = work
     w.s.mutate('default', AGENT, rid(), 'claim', {'id': w.task['id'], 'provider_session': 'sess-1'})
     w.s.auto_link(AGENT, 'journal', 'j1')
-    workers = Workers({'wk': {'worker_id': 'wk', 'name': 'kaiju', 'caps': ['codex-history.send', 'agent.wake']}})
+    workers = Workers({'wk': {'worker_id': 'wk', 'name': 'gpubox', 'caps': ['codex-history.send', 'agent.wake']}})
     h = hygiene_for(w, workers)
     assert await h.tick() == []  # not idle yet
     idle(w, w.task['id'])
@@ -375,7 +375,7 @@ async def test_hygiene_wakes_or_marks_dirty_and_skips_clean_tasks(work):
     w = work
     w.s.mutate('default', AGENT, rid(), 'claim', {'id': w.task['id']})
     idle(w, w.task['id'])
-    wake = Workers({'wk': {'worker_id': 'wk', 'name': 'kaiju', 'caps': ['agent.wake']}})
+    wake = Workers({'wk': {'worker_id': 'wk', 'name': 'gpubox', 'caps': ['agent.wake']}})
     assert (await hygiene_for(w, wake).tick())[0]['action'] == 'woke_agent'
     assert wake.calls[0][0] == 'agent.wake' and wake.calls[0][2]['room'] == 'room1'
 
@@ -389,7 +389,7 @@ async def test_hygiene_wakes_or_marks_dirty_and_skips_clean_tasks(work):
     assert next(t for t in deck['in_progress'] if t['id'] == t2['id'])['needs_hygiene']
 
     t3 = w.create('task', 'Clean task', w.project['id'])
-    clean = dict(AGENT, id='codex.codex.clean', host='kaiju')
+    clean = dict(AGENT, id='codex.codex.clean', host='gpubox')
     w.s.mutate('default', clean, rid(), 'claim', {'id': t3['id']})
     idle(w, t3['id'])
     w.s.auto_link(clean, 'handoff', 'thread-x')  # handoff after the last activity → clean
@@ -404,7 +404,7 @@ async def test_hygiene_wakes_or_marks_dirty_and_skips_clean_tasks(work):
 class FakeBand:
     def __init__(self):
         self.calls = []
-        self.workers = {'w1': {'worker_id': 'w1', 'name': 'kaiju', 'band': 'deadbeef', 'caps': ['shell.exec', 'file.list'], 'last_seen': 0}}
+        self.workers = {'w1': {'worker_id': 'w1', 'name': 'gpubox', 'band': 'deadbeef', 'caps': ['shell.exec', 'file.list'], 'last_seen': 0}}
     async def call(self, cap, args=None, target=None, timeout=15.0, identity=None):
         self.calls.append(cap)
         return {'id': 'c-' + uuid.uuid4().hex[:6], 'from': target, 'ok': True, 'result': {}}
@@ -422,7 +422,7 @@ async def session(tmp_path, monkeypatch, enabled=True, db=None):
     app = mcp.streamable_http_app()
     async with app.router.lifespan_context(app), httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://localhost',
             headers={'Accept': 'application/json, text/event-stream', 'Authorization': 'Bearer ' + token['token'],
-                     'X-Rook-Host': 'kaiju', 'X-Rook-Cwd': '/home/bake/rook'}) as http:
+                     'X-Rook-Host': 'gpubox', 'X-Rook-Cwd': '/home/user/rook'}) as http:
         r = await http.post('/mcp', json={'jsonrpc': '2.0', 'id': 0, 'method': 'initialize', 'params': {
             'protocolVersion': '2025-03-26', 'capabilities': {}, 'clientInfo': {'name': 'codex-mcp-client', 'version': '1'}}})
         http.headers['mcp-session-id'] = r.headers['mcp-session-id']
@@ -441,13 +441,13 @@ async def test_mcp_claimed_work_builds_its_own_audit_trail(tmp_path, monkeypatch
     async with session(tmp_path, monkeypatch) as env:
         tools = {t['name'] for t in (await env.rpc('tools/list', {}))['tools']}
         assert {'rook_knowledge', 'rook_concept', 'rook_project', 'rook_task'} <= tools and 'rook_attempt' not in tools
-        me = 'codex.codexmcpclient.kaiju@.home.bake.rook'
+        me = 'codex.codexmcpclient.gpubox@.home.user.rook'
         c = (await env.tool('rook_concept', action='create', request_id='c1', data={'title': 'Idea'}))['result']
         assert c['creator'] == me
         p = (await env.tool('rook_project', action='create', request_id='p1', data={'title': 'Proj', 'parent': c['slug']}))['result']
         t = (await env.tool('rook_task', action='create', request_id='t1', data={'title': 'Do it', 'parent': p['slug']}))['result']
         assert (await env.tool('rook_task', action='claim', id=t['slug'], request_id='cl1'))['ok']
-        reply = await env.tool('rook_call', cap='shell.exec', worker='kaiju')
+        reply = await env.tool('rook_call', cap='shell.exec', worker='gpubox')
         assert reply['_task'] == t['id']
         await env.tool('rook_handoff_save', goal='Do it', state='half', next_steps=['rest'])
         got = (await env.tool('rook_task', action='get', id=t['id']))['result']
@@ -462,8 +462,8 @@ async def test_mcp_claimed_work_builds_its_own_audit_trail(tmp_path, monkeypatch
 async def test_knowledge_off_by_default_and_broken_store_never_blocks(tmp_path, monkeypatch):
     async with session(tmp_path, monkeypatch, enabled=False) as env:
         assert 'rook_knowledge' not in {t['name'] for t in (await env.rpc('tools/list', {}))['tools']}
-        assert '_task' not in await env.tool('rook_call', cap='shell.exec', worker='kaiju')
+        assert '_task' not in await env.tool('rook_call', cap='shell.exec', worker='gpubox')
     bad = tmp_path / 'is-a-directory'; bad.mkdir()
     async with session(tmp_path, monkeypatch, db=str(bad)) as env:
         assert 'rook_knowledge' not in {t['name'] for t in (await env.rpc('tools/list', {}))['tools']}
-        assert (await env.tool('rook_call', cap='shell.exec', worker='kaiju'))['ok']
+        assert (await env.tool('rook_call', cap='shell.exec', worker='gpubox'))['ok']

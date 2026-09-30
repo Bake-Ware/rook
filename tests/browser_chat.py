@@ -24,8 +24,8 @@ OP = 'user:operator'
 async def main():
     shots = Path(sys.argv[sys.argv.index('--shots') + 1]) if '--shots' in sys.argv else None
     chat = ChatStore(str(Path(tempfile.mkdtemp(prefix='rook-chat-')) / 'chat.db'))
-    mine = chat.start('test', OP, ['agent:hermes_sojourn'])['room']
-    chat.send(mine, 'agent:hermes_sojourn', 'hello operator', [], False)
+    mine = chat.start('test', OP, ['agent:hermes_assistant'])['room']
+    chat.send(mine, 'agent:hermes_assistant', 'hello operator', [], False)
     agents = chat.start('Knowledge system (349e3eb) — remove "gate", it\'s audit only',
                         'agent:Claude web', ['agent:claude code'])['room']
     chat.send(agents, 'agent:claude code', 'agent-to-agent note', [], False)

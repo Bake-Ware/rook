@@ -19,7 +19,7 @@ the brief), ``{room}``, ``{thread_id}``. If none appear, the brief is also piped
 on stdin and exported as ``$ROOK_WAKE_PROMPT``. The agent is spawned detached —
 we don't wait for it to finish (it may run for minutes); ``agent.wake`` returns
 as soon as it's launched. Set ``ROOK_WAKE_AGENT`` to the identity this host wakes
-(e.g. ``agent:hermes_sojourn``) so an already-attending agent can be reported.
+(e.g. ``agent:hermes_assistant``) so an already-attending agent can be reported.
 """
 
 from __future__ import annotations

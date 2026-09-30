@@ -41,7 +41,7 @@ class _FakeWorker:
 @pytest.fixture
 def projects(tmp_path):
     """A ~/.claude/projects tree with one real-looking session."""
-    root = tmp_path / "projects" / "-home-bake-infra"
+    root = tmp_path / "projects" / "-home-user-infra"
     root.mkdir(parents=True)
     cwd = tmp_path / "infra"
     cwd.mkdir()

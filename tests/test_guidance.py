@@ -19,9 +19,9 @@ STATIC = "static-token-0123456789abcdef"
 class FakeBand:
     def __init__(self):
         self.workers = {
-            "w1": {"worker_id": "w1", "name": "WIN11-FLOPHOUSE", "band": "x",
+            "w1": {"worker_id": "w1", "name": "WIN11-DESKTOP", "band": "x",
                    "caps": ["shell.exec", "info.host"], "last_seen": 0},
-            "w2": {"worker_id": "w2", "name": "kaiju", "band": "x",
+            "w2": {"worker_id": "w2", "name": "gpu-box", "band": "x",
                    "caps": ["shell.exec", "proc.start", "info.host"], "last_seen": 0},
         }
 
@@ -41,7 +41,7 @@ async def server(tmp_path):
                               persist_path=str(tmp_path / "tokens.json"), static_token=STATIC,
                               journal_path=str(tmp_path / "journal.db"))
     guidance, reapply = mcp._rook_guidance
-    accounts = SimpleNamespace(session=lambda c: {"id": "u1", "username": "bake", "csrf": "k",
+    accounts = SimpleNamespace(session=lambda c: {"id": "u1", "username": "operator", "csrf": "k",
                                                   "admin": c == "admin"} if c else None)
     app = mcp.streamable_http_app()
     for route in routes(guidance, reapply, lambda: list(mcp._tool_manager._tools), accounts):
@@ -74,18 +74,18 @@ async def test_defaults_reach_agents_at_each_placement(tmp_path):
         tools = {t["name"]: t["description"] for t in (await rpc("tools/list", {}))["tools"]}
         assert "worker= (name or id) is required" in tools["rook_call"] and "hint=true" in tools["rook_call"]
         assert "Tip:" not in tools["rook_call"]  # default tool tips are empty; essentials are in the description
-        first = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "shell.exec", "worker": "WIN11-FLOPHOUSE"}}))
+        first = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "shell.exec", "worker": "WIN11-DESKTOP"}}))
         assert first["_tips"] == [guidance_mod.DEFAULTS["cap:shell.exec"]]  # cap tip only, no host tips
-        again = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "shell.exec", "worker": "WIN11-FLOPHOUSE"}}))
+        again = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "shell.exec", "worker": "WIN11-DESKTOP"}}))
         assert "_tips" not in again and "_hint" not in again  # once per session, no repeat line
-        forced = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "shell.exec", "worker": "WIN11-FLOPHOUSE", "hint": True}}))
+        forced = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "shell.exec", "worker": "WIN11-DESKTOP", "hint": True}}))
         assert forced["_tips"] == [guidance_mod.DEFAULTS["cap:shell.exec"]] and "_hint" not in forced
-        plain = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "info.host", "worker": "kaiju"}}))
+        plain = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "info.host", "worker": "gpu-box"}}))
         assert "_tips" not in plain and "_hint" not in plain  # caps without a tip get neither
-        proc = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "proc.start", "worker": "kaiju"}}))
+        proc = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "proc.start", "worker": "gpu-box"}}))
         assert proc["_tips"] == [guidance_mod.DEFAULTS["cap:proc."]]
         _, rpc2 = await env.connect()
-        fresh = reply(await rpc2("tools/call", {"name": "rook_call", "arguments": {"cap": "shell.exec", "worker": "WIN11-FLOPHOUSE"}}))
+        fresh = reply(await rpc2("tools/call", {"name": "rook_call", "arguments": {"cap": "shell.exec", "worker": "WIN11-DESKTOP"}}))
         assert len(fresh["_tips"]) == 1  # new session sees it again
 
 
@@ -102,7 +102,7 @@ async def test_operator_edits_apply_live_with_history_and_reset(tmp_path):
         assert keys >= {"server", "tool:rook_call", "cap:proc."}
         assert not any(k.startswith("worker:") for k in keys)
         assert (await env.http.post(api, headers=admin, json={"action": "set", "key": "server", "text": "x"})).status_code == 403
-        for bad in ({"key": "tool:nope"}, {"key": "bogus"}, {"key": "worker:kaiju"}, {"key": "cap:x", "text": "y" * 1001}):
+        for bad in ({"key": "tool:nope"}, {"key": "bogus"}, {"key": "worker:gpu-box"}, {"key": "cap:x", "text": "y" * 1001}):
             r = await env.http.post(api, headers=admin, json={"csrf": "k", "action": "set", "text": "t"} | bad)
             assert r.status_code == 400, bad
         ok = await env.http.post(api, headers=admin, json={"csrf": "k", "action": "set", "key": "server", "text": "Be brief."})
@@ -113,15 +113,15 @@ async def test_operator_edits_apply_live_with_history_and_reset(tmp_path):
         assert init["instructions"] == "Be brief."
         tools = {t["name"]: t["description"] for t in (await rpc("tools/list", {}))["tools"]}
         assert "Tip:" not in tools["rook_caps"]  # empty text disables the tip
-        res = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "info.host", "worker": "kaiju"}}))
+        res = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "info.host", "worker": "gpu-box"}}))
         assert res["_tips"] == ["Cheap; safe to call first."]
         hist = (await env.http.get(api + "?history=server", headers=admin)).json()["history"]
-        assert hist[0] == {"text": "Be brief.", "ts": hist[0]["ts"], "actor": "human:bake"}
+        assert hist[0] == {"text": "Be brief.", "ts": hist[0]["ts"], "actor": "human:operator"}
         await env.http.post(api, headers=admin, json={"csrf": "k", "action": "reset", "key": "server"})
         init, _ = await env.connect()
         assert init["instructions"] == guidance_mod.DEFAULTS["server"]
         slot = next(s for s in (await env.http.get(api, headers=admin)).json()["slots"] if s["key"] == "cap:info.")
-        assert slot["edited"] and slot["default"] is None and slot["actor"] == "human:bake"
+        assert slot["edited"] and slot["default"] is None and slot["actor"] == "human:operator"
 
 
 @pytest.mark.asyncio
@@ -129,18 +129,18 @@ async def test_broken_store_serves_defaults_and_tip_failure_never_breaks_calls(t
     g = guidance_mod.Guidance(str(tmp_path / "missing-dir" / "guidance.db"))
     assert not g.editable and g.get("server") == guidance_mod.DEFAULTS["server"]
     with pytest.raises(ValueError):
-        g.set("server", "x", "human:bake")
+        g.set("server", "x", "human:operator")
     async with server(tmp_path) as env:
         def boom(*a, **k):
             raise RuntimeError("tips broke")
         monkeypatch.setattr(env.guidance, "tips", boom)
         _, rpc = await env.connect()
-        res = await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "shell.exec", "worker": "kaiju"}})
+        res = await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "shell.exec", "worker": "gpu-box"}})
         assert not res.get("isError") and "_tips" not in reply(res)
 
 
 def test_every_default_key_is_valid_within_limits_and_host_neutral():
-    hosts = ("kaiju", "soundwave", "bakenetcanada", "win11", "flophouse", "cachyrig", "ct102")
+    hosts = ("gpu-box", "hypervisor", "workstation", "laptop", "agent-host", "win11", "ct102")
     for key, text in guidance_mod.DEFAULTS.items():
         assert not any(h in (key + text).lower() for h in hosts), key
         assert not re.search(r"\d\s*[KMG]i?B\b", text), key  # no point-in-time size estimates

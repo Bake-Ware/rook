@@ -18,41 +18,41 @@ from playwright.async_api import async_playwright
 
 from rook.knowledge.service import KnowledgeService
 
-AGENT = {'kind': 'agent', 'actor': 'claude.claudecode.cachyrig@.home.bake.rook', 'token': 'claude',
-         'client': 'claudecode', 'host': 'cachyrig', 'dir': '/home/bake/rook'}
-HUMAN = {'id': 'human:bake', 'kind': 'human', 'label': 'Bake'}
+AGENT = {'kind': 'agent', 'actor': 'claude.claudecode.workstation@.home.user.rook', 'token': 'claude',
+         'client': 'claudecode', 'host': 'workstation', 'dir': '/home/user/rook'}
+HUMAN = {'id': 'human:operator', 'kind': 'human', 'label': 'Operator'}
 
 
 class Bands:
     def bands(self, active_only=False):
-        return [{'id': 'b1', 'name': 'bakenet', 'label': '7f68c499', 'is_primary': 1},
+        return [{'id': 'b1', 'name': 'hub', 'label': '7f68c499', 'is_primary': 1},
                 {'id': 'b2', 'name': 'rooknet', 'label': '6178ba5f', 'is_primary': 0}]
 
 
 async def seed(s):
     async def do(action, rkind=None, band=None, rid=None, **data):
         return await s.dispatch(action, band, rkind, rid, data=data, request_id=uuid.uuid4().hex)
-    await do('create', 'knowledge', 'bakenet', title='Hosts', slug='hosts', body='Machines on the band.')
-    await do('create', 'knowledge', 'bakenet', title='Sojourn (Hermes agent host)', slug='sojourn', parent='hosts',
+    await do('create', 'knowledge', 'hub', title='Hosts', slug='hosts', body='Machines on the band.')
+    await do('create', 'knowledge', 'hub', title='Agent host (Hermes)', slug='agent-host', parent='hosts',
              body='# Role\nRuns the **Hermes** agent. Memory lives in `/root/.hermes/memories/`.\n\n- Restart the gateway after updates\n- See [[hermes-mcp-empty-responses]]\n\nDocs: https://example.com/hermes')
-    fix = await do('create', 'knowledge', 'bakenet', title='Hermes: MCP tool calls return empty', slug='hermes-mcp-empty-responses',
-                   body='Stale gateway MCP session after a network change.\n\n```\nhermes gateway restart\n```\nHost: [[sojourn]]')
+    fix = await do('create', 'knowledge', 'hub', title='Hermes: MCP tool calls return empty', slug='hermes-mcp-empty-responses',
+                   body='Stale gateway MCP session after a network change.\n\n```\nhermes gateway restart\n```\nHost: [[agent-host]]')
     await do('link', rid=fix['id'], kind='journal', ref='c9c799b6', relation='source', note='read MEMORY.md')
-    c = await do('create', 'concept', 'bakenet', title='Agent work system', slug='agent-work-system')
-    p = await do('create', 'project', 'bakenet', title='Agent work system rollout', slug='rollout', parent=c['id'],
+    c = await do('create', 'concept', 'hub', title='Agent work system', slug='agent-work-system')
+    p = await do('create', 'project', 'hub', title='Agent work system rollout', slug='rollout', parent=c['id'],
                  body='Ship it. Part of [[agent-work-system]].')
-    t1 = await do('create', 'task', 'bakenet', title='Deploy e6aaa2b', slug='deploy', parent=p['id'], body='Ship to the hub.')
+    t1 = await do('create', 'task', 'hub', title='Deploy e6aaa2b', slug='deploy', parent=p['id'], body='Ship to the hub.')
     await do('claim', rid=t1['id'])
     await do('link', rid=t1['id'], kind='journal', ref='4f6a413a', relation='evidence')
     cur = await do('get', rid=t1['id'])
     await do('update', rid=t1['id'], revision=cur['revision'], patch={'state': 'done', 'attrs': {'outcome': 'Live; 38/38 tests.'}})
-    t2 = await do('create', 'task', 'bakenet', title='Rotate Hermes secrets', slug='rotate', parent=p['id'],
-                  body='Move secrets out of memory. See [[sojourn]].', attrs={'criteria': ['No secrets in memory'], 'tags': ['security']})
+    t2 = await do('create', 'task', 'hub', title='Rotate Hermes secrets', slug='rotate', parent=p['id'],
+                  body='Move secrets out of memory. See [[agent-host]].', attrs={'criteria': ['No secrets in memory'], 'tags': ['security']})
     await do('claim', rid=t2['id'])
-    t3 = await do('create', 'task', 'bakenet', title='Fix hermes.memory.read', slug='fix-read', parent=p['id'])
+    t3 = await do('create', 'task', 'hub', title='Fix hermes.memory.read', slug='fix-read', parent=p['id'])
     cur = await do('get', rid=t3['id'])
     await do('update', rid=t3['id'], revision=cur['revision'], patch={'state': 'blocked', 'attrs': {'blocked_reason': 'needs worker restart window'}})
-    await do('create', 'task', 'bakenet', title='Import Claude memory', slug='import-claude', parent=p['id'])
+    await do('create', 'task', 'hub', title='Import Claude memory', slug='import-claude', parent=p['id'])
     c2 = await do('create', 'concept', 'rooknet', title='Tablets', slug='tablets')
     p2 = await do('create', 'project', 'rooknet', title='Tablet fleet', slug='tablet-fleet', parent=c2['id'])
     await do('create', 'task', 'rooknet', title='Charge the tablets', parent=p2['id'])
@@ -136,8 +136,8 @@ async def run_checks(page, base, shot):
     assert await page.locator('.kn-sections .kn-card:has-text("Hosts")').count() == 1
     await shot('wiki-home')
     await page.click('.kn-tog[aria-label="Expand Hosts"]')
-    await page.click('.kn-tree-item:has-text("Sojourn")')
-    await page.wait_for_selector('h1:has-text("Sojourn")')
+    await page.click('.kn-tree-item:has-text("Agent host")')
+    await page.wait_for_selector('h1:has-text("Agent host")')
     assert await page.locator('.kn-crumbs button:has-text("Hosts")').count() == 1
     assert await page.locator('.kn-md h3:has-text("Role")').count() == 1
     assert await page.locator('.kn-md code').count() == 1
@@ -161,10 +161,10 @@ async def run_checks(page, base, shot):
     await page.select_option('.kn-dialog select[name=parent]', value='')
     await page.click('.kn-dialog button:has-text("Save")')
     await page.wait_for_function("!document.querySelector('.kn-crumbs button:nth-of-type(2)')")
-    await page.go_back(); await page.go_back(); await page.wait_for_selector('h1:has-text("Sojourn")')
+    await page.go_back(); await page.go_back(); await page.wait_for_selector('h1:has-text("Agent host")')
     # Verify from the page, then walk the rest in review mode.
     await page.click('.kn-review button:has-text("Verify")')
-    await page.wait_for_selector('.kn-review-verified:has-text("Verified by Bake")')
+    await page.wait_for_selector('.kn-review-verified:has-text("Verified by Operator")')
     assert await page.locator('.kn-current .kn-dot-verified').count() == 1
     await page.click('.kn-review-btn'); await page.wait_for_selector('.kn-reviewbar')
     await shot('review-mode')
@@ -180,7 +180,7 @@ async def run_checks(page, base, shot):
     await page.wait_for_selector('.kn-review-disputed:has-text("Wrong restart command")')
     await page.click('.kn-review-disputed button:has-text("Clear")')
     await page.wait_for_selector('.kn-review-unverified')
-    for title in (second, 'Sojourn'):   # leave the data as found for the next viewport
+    for title in (second, 'Agent host'):   # leave the data as found for the next viewport
         await page.locator('.kn-tree-item span', has_text=title).first.click()
         await page.wait_for_selector(f'h1:has-text({title!r})')
         await page.click('.kn-review button:has-text("Unverify")'); await page.wait_for_selector('.kn-review-unverified')
@@ -202,8 +202,8 @@ async def run_checks(page, base, shot):
     assert await page.locator('h2:has-text("Audit trail")').count() == 1
     await shot('work-task')
     await page.goto(base + '#work?t=rotate&b=b1'); await page.wait_for_selector('#view-work h1:has-text("Rotate Hermes secrets")')
-    await page.click('#view-work .kn-ref:has-text("sojourn")')  # cross-view jump to the wiki
-    await page.wait_for_selector('#view-knowledge h1:has-text("Sojourn")')
+    await page.click('#view-work .kn-ref:has-text("agent-host")')  # cross-view jump to the wiki
+    await page.wait_for_selector('#view-knowledge h1:has-text("Agent host")')
 
 
 asyncio.run(main())

@@ -1,4 +1,4 @@
-# Tested on Python 3.12 on kaiju. Model weights are managed separately.
+# Tested on Python 3.12 on a CUDA GPU host. Model weights are managed separately.
 fastapi==0.139.2
 uvicorn==0.51.0
 httpx==0.28.1

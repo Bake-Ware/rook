@@ -169,7 +169,7 @@ def test_planner_retries_missing_call_before_speaking_or_starting_work():
         def __init__(self,index):self.index=index
         def raise_for_status(self):pass
         def json(self):
-            message={'content':'Let me check that.'} if self.index==1 else {'tool_calls':[{'function':{'name':'rook_read','arguments':'{"worker":"kaiju","cap":"info.uptime"}'}}]}
+            message={'content':'Let me check that.'} if self.index==1 else {'tool_calls':[{'function':{'name':'rook_read','arguments':'{"worker":"gpu-box","cap":"info.uptime"}'}}]}
             return {'choices':[{'message':message}]}
     class Client:
         def __init__(self,**kw):pass

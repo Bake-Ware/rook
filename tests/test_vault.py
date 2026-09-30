@@ -23,19 +23,19 @@ STATIC = 'static-token-0123456789abcdef'
 def test_vault_encrypts_logs_and_never_lists_values(tmp_path):
     v = Vault(str(tmp_path / 'vault.db'))
     assert stat.S_IMODE(os.stat(tmp_path / 'vault.key').st_mode) == 0o600
-    v.set('starscream-root', SECRET, 'Proxmox root on starscream', 'human:bake')
+    v.set('hypervisor-root', SECRET, 'Proxmox root on the hypervisor', 'human:operator')
     assert SECRET.encode() not in (tmp_path / 'vault.db').read_bytes()
     assert SECRET not in json.dumps(v.list())
-    assert v.get('starscream-root', 'codex.codex.kaiju', task='t_1') == SECRET
-    assert Vault(str(tmp_path / 'vault.db')).get('starscream-root', 'x') == SECRET  # key persists
-    log = v.access_log('starscream-root')
-    assert [(a['action'], a['actor']) for a in log][:2] == [('get', 'x'), ('get', 'codex.codex.kaiju')]
+    assert v.get('hypervisor-root', 'codex.codex.gpubox', task='t_1') == SECRET
+    assert Vault(str(tmp_path / 'vault.db')).get('hypervisor-root', 'x') == SECRET  # key persists
+    log = v.access_log('hypervisor-root')
+    assert [(a['action'], a['actor']) for a in log][:2] == [('get', 'x'), ('get', 'codex.codex.gpubox')]
     assert log[1]['task'] == 't_1' and log[-1]['action'] == 'create'
     with pytest.raises(ValueError):
         v.set('Bad Name', 'x' * 5, '', 'a')
     with pytest.raises(KeyError):
         v.get('missing', 'a')
-    assert v.delete('starscream-root', 'human:bake') and not v.list()
+    assert v.delete('hypervisor-root', 'human:operator') and not v.list()
 
 
 def test_substitute_and_mask(tmp_path):
@@ -51,7 +51,7 @@ def test_substitute_and_mask(tmp_path):
 class EchoBand:
     def __init__(self):
         self.sent = []
-        self.workers = {'w1': {'worker_id': 'w1', 'name': 'kaiju', 'band': 'x', 'caps': ['shell.exec'], 'last_seen': 0}}
+        self.workers = {'w1': {'worker_id': 'w1', 'name': 'gpu-box', 'band': 'x', 'caps': ['shell.exec'], 'last_seen': 0}}
 
     async def call(self, cap, args=None, target=None, timeout=15.0, identity=None):
         self.sent.append(args)
@@ -69,7 +69,7 @@ async def mcp_session(tmp_path, monkeypatch):
     async with app.router.lifespan_context(app), httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url='http://localhost',
             headers={'Accept': 'application/json, text/event-stream', 'Authorization': 'Bearer ' + STATIC,
-                     'X-Rook-Host': 'cachyrig'}) as http:
+                     'X-Rook-Host': 'workstation'}) as http:
         r = await http.post('/mcp', json={'jsonrpc': '2.0', 'id': 0, 'method': 'initialize', 'params': {
             'protocolVersion': '2025-03-26', 'capabilities': {}, 'clientInfo': {'name': 'claude-code', 'version': '1'}}})
         http.headers['mcp-session-id'] = r.headers['mcp-session-id']
@@ -96,7 +96,7 @@ def leaks(path):
 async def test_placeholders_never_reach_agent_or_journal(tmp_path, monkeypatch):
     async with mcp_session(tmp_path, monkeypatch) as env:
         # A call that leaked the value before it entered the vault…
-        leaked = await env.tool('rook_call', cap='shell.exec', worker='kaiju', args={'cmd': f'echo {SECRET}'})
+        leaked = await env.tool('rook_call', cap='shell.exec', worker='gpu-box', args={'cmd': f'echo {SECRET}'})
         assert leaks(env.journal)
         # …is masked in the journal once the secret is stored.
         res = await env.tool('rook_secret', action='set', name='pw', value=SECRET, description='test')
@@ -109,12 +109,12 @@ async def test_placeholders_never_reach_agent_or_journal(tmp_path, monkeypatch):
         t = (await env.tool('rook_task', action='create', request_id='t', data={'title': 'T', 'parent': p['id']}))['result']
         await env.tool('rook_task', action='claim', id=t['id'], request_id='cl')
 
-        out = await env.tool('rook_call', cap='shell.exec', worker='kaiju', args={'argv': ['login', '{{secret:pw}}']})
+        out = await env.tool('rook_call', cap='shell.exec', worker='gpu-box', args={'argv': ['login', '{{secret:pw}}']})
         assert env.band.sent[-1] == {'argv': ['login', SECRET]}  # worker got the real value
         assert SECRET not in json.dumps(out) and '***' in out['result']['stdout']  # agent didn't
         assert not leaks(env.journal)
 
-        bad = await env.tool('rook_call', cap='shell.exec', worker='kaiju', args={'cmd': '{{secret:nope}}'})
+        bad = await env.tool('rook_call', cap='shell.exec', worker='gpu-box', args={'cmd': '{{secret:nope}}'})
         assert not bad['ok'] and 'unknown secret' in bad['error']
         assert len(env.band.sent) == 2  # refused before dispatch
 
@@ -129,7 +129,7 @@ async def test_placeholders_never_reach_agent_or_journal(tmp_path, monkeypatch):
         assert got['value'] == SECRET
         log = (await env.tool('rook_secret', action='log', name='pw'))['access']
         assert [a['action'] for a in log][:2] == ['get', 'use']
-        assert log[1]['task'] == t['id'] and log[0]['actor'] == 'static.claudecode.cachyrig'
+        assert log[1]['task'] == t['id'] and log[0]['actor'] == 'static.claudecode.workstation'
         links = (await env.tool('rook_task', action='get', id=t['id']))['result']['links']
         assert {(l['kind'], l['ref']) for l in links} >= {('secret', 'pw')}
         assert not leaks(env.journal)
@@ -139,7 +139,7 @@ async def test_placeholders_never_reach_agent_or_journal(tmp_path, monkeypatch):
 async def test_operator_page_is_write_only(tmp_path):
     v = Vault(str(tmp_path / 'vault.db'))
     masked = []
-    accounts = SimpleNamespace(session=lambda c: {'id': 'u1', 'username': 'bake', 'csrf': 'k', 'admin': c == 'admin'} if c else None)
+    accounts = SimpleNamespace(session=lambda c: {'id': 'u1', 'username': 'operator', 'csrf': 'k', 'admin': c == 'admin'} if c else None)
     app = Starlette(routes=routes(v, lambda val: masked.append(val) or 3, accounts))
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://t') as c:
         api = '/vault/account-api'
