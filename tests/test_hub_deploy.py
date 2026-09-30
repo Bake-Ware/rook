@@ -576,6 +576,10 @@ def test_previous_release_ignores_failed_switches():
     assert dp.previous_release(hist, "web", "2.c.d") == "1.a.b"
     assert dp.previous_release(hist, "web", "1.a.b") is None
     assert dp.previous_release(hist, "mcp", "2.c.d") is None
+    # Undoing the failed 3.e.f (auto/dead-man) must not make it a rollback target.
+    hist.append({"result": "ok", "via": "rollback.sh",
+                 "services": {"web": {"from": "3.e.f", "to": "2.c.d"}}})
+    assert dp.previous_release(hist, "web", "2.c.d") == "1.a.b"
 
 
 def test_deploy_lock_is_exclusive(tmp_path, svc):

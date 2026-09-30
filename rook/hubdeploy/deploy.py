@@ -106,9 +106,13 @@ def read_history(cfg: Config) -> list[dict]:
 
 def previous_release(history: list[dict], service: str, current: str | None) -> str | None:
     """The release ``service`` ran before it was last switched to ``current``,
-    counting only switches that completed (result ok)."""
+    counting only switches that completed (result ok). A deploy's own
+    rollback.sh (auto, dead-man or manual) undoes that deploy rather than
+    choosing a release, so it is skipped: after a failed deploy is undone, the
+    rollback target is still the release before the last good switch, never
+    the broken one."""
     for ev in reversed(history):
-        if ev.get("result") != "ok":
+        if ev.get("result") != "ok" or ev.get("via") == "rollback.sh":
             continue
         ch = (ev.get("services") or {}).get(service)
         if ch and ch.get("to") == current and ch.get("from") and ch["from"] != current:
