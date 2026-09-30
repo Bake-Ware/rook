@@ -52,7 +52,7 @@ log = logging.getLogger("rook.core.plugin")
 
 #: The plugin API version this core implements. Plugins declare the range they
 #: support in ``CORE_API``; minor bumps are additive, a major bump breaks.
-CORE_API_VERSION = "1.0"
+CORE_API_VERSION = "1.1"  # 1.1: DEPENDS, Plugin.dependency(); settings wired before available()
 
 RISKS = ("read", "write", "exec", "admin")
 SCOPES = ("hub", "band", "worker", "user")
@@ -202,6 +202,8 @@ class Setting:
     def coerce(self, value: Any) -> Any:
         if value is None:
             return None
+        if self.type == "resource" and isinstance(value, str) and not value.strip():
+            return None  # an explicitly empty connection string means "not configured"
         want = _TYPES[self.type]
         if self.type == "bool" and isinstance(value, str):
             v = value.strip().lower()
@@ -367,6 +369,7 @@ class Plugin:
     GUIDANCE: dict = {}                  # slot -> default guidance text (operator-editable)
     SKILL: str = ""                      # markdown fragment merged into the agent skill doc
     PANEL: dict | None = None            # optional web panel {"title", "path"}
+    DEPENDS: tuple = ()                  # namespaces of plugins that must load first on this node (core_api 1.1)
 
     _module: str = ""   # source module stem; set by the loader / admin enable
     _source: str = ""   # "package:<pkg>" or "entry_point:<name>"
@@ -404,6 +407,11 @@ class Plugin:
         if not url:
             return None
         return parse_resource(url, self.__dict__.get("_cap_caller"))
+
+    def dependency(self, namespace: str) -> "Plugin | None":
+        """The loaded plugin instance for one of this plugin's ``DEPENDS``
+        namespaces (``None`` outside a host)."""
+        return (self.__dict__.get("_deps") or {}).get(namespace)
 
     @property
     def data_dir(self) -> Path:
@@ -447,6 +455,8 @@ class Plugin:
             m["skill"] = True
         if self.PANEL:
             m["panel"] = dict(self.PANEL)
+        if self.DEPENDS:
+            m["depends"] = list(self.DEPENDS)
         return m
 
     # lifecycle hooks ---------------------------------------------------
@@ -455,7 +465,10 @@ class Plugin:
         gate on a backend or config (a display for screenshots, an input tool
         for HID, PIKVM_URL, etc.) — returning False skips loading it, so the
         worker never announces capabilities it can't fulfill. Checked once at
-        worker start; a worker.restart re-evaluates it."""
+        worker start; a worker.restart re-evaluates it. Since core_api 1.1 the
+        host wires :attr:`settings`, :meth:`resource`, :attr:`data_dir` and
+        :meth:`dependency` before calling it, so an enable flag in the
+        settings schema can gate loading."""
         return True
 
     def heartbeat(self) -> dict | None:

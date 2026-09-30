@@ -960,8 +960,8 @@ the changelog.
 | `ROOK_MCP_AUTH_PASSWORD` | removed (accounts) | — | — |
 | `ROOK_MCP_STATIC_TOKEN` | `core.mcp.static_token` (vault) | hub | live |
 | `ROOK_MCP_PUBLIC_URL`, `ROOK_ALLOWED_HOSTS` | `core.mcp.public_url`, `core.mcp.allowed_hosts` | hub | restart |
-| `ROOK_KNOWLEDGE` | plugin enable `knowledge` | hub | reload |
-| `ROOK_EMBED_URL` | `knowledge.embed_endpoint` | hub | live |
+| `ROOK_KNOWLEDGE` | `knowledge.enabled` (the `task` plugin follows it; implemented, env alias) | hub | restart |
+| `ROOK_EMBED_URL`, `ROOK_EMBED_MODEL`, `ROOK_KNOWLEDGE_DB` | `knowledge.embedder` (resource: `http(s)://` or `cap://any/embed.text`), `knowledge.embed_model`, `knowledge.db_path`; new `knowledge.semantic` (implemented, env aliases) | hub | restart |
 | `ROOK_PUSH_UPDATES` | `core.updates.push` | hub | live |
 | `ROOK_GOOGLE_*` | `core.auth.google.*` (client file → vault) | hub | restart |
 | `--announce-interval`, pushed `announce_interval` | `core.worker.announce_interval` | band, worker override | restart |

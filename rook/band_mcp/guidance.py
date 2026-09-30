@@ -47,9 +47,7 @@ Ask the user before band-wide or hard-to-undo changes: worker updates, re-bandin
     "tool:rook_journal": "",
     "tool:rook_chat_send": "",
     "tool:rook_handoff_save": "",
-    "tool:rook_knowledge": "",
     "tool:rook_secret": "",
-    "tool:rook_task": "",
 
     "hygiene": "Rook hygiene check: your claimed task [[{slug}]] \"{title}\" ({id}) has been idle {idle} min with work since its last handoff. If you've stopped: 1) rook_handoff_save with goal, state and next_steps (it links to the task automatically); 2) link evidence for what you produced (rook_task action=link); 3) record durable facts as rook_knowledge pages; 4) set the task state: done with attrs.outcome, or paused/blocked. If you're still working, carry on.",
 
@@ -76,6 +74,8 @@ class Guidance:
         self._lock = threading.Lock()
         self._overrides: dict[str, dict] = {}
         self._seen: OrderedDict[tuple[str, str], None] = OrderedDict()
+        # Core defaults plus the slots hub plugins declare (add_defaults).
+        self._defaults: dict[str, str] = dict(DEFAULTS)
         self._db = None
         if path:
             try:
@@ -93,22 +93,31 @@ class Guidance:
                 log.exception("guidance store unavailable; serving defaults, editing disabled")
                 self._db = None
 
+    def add_defaults(self, slots: dict[str, str]) -> None:
+        """Register plugin guidance slots (``Plugin.GUIDANCE``) with their
+        default text. Core defaults and slots added earlier win; keys that
+        are not valid slot names are ignored."""
+        for key, text in (slots or {}).items():
+            if (isinstance(key, str) and KEY.match(key) and isinstance(text, str)
+                    and len(text) <= LIMITS.get(key, MAX_TIP)):
+                self._defaults.setdefault(key, text)
+
     @property
     def editable(self) -> bool:
         return self._db is not None
 
     def get(self, key: str) -> str:
         o = self._overrides.get(key)
-        return o["text"] if o is not None else DEFAULTS.get(key, "")
+        return o["text"] if o is not None else self._defaults.get(key, "")
 
     def slots(self) -> list[dict]:
-        keys = sorted(set(DEFAULTS) | set(self._overrides),
+        keys = sorted(set(self._defaults) | set(self._overrides),
                       key=lambda k: (["server", "hygiene", "tool", "cap"].index(kind(k)), k.lower()))
         out = []
         for k in keys:
             o = self._overrides.get(k)
             out.append({"key": k, "kind": kind(k), "text": self.get(k),
-                        "default": DEFAULTS.get(k), "edited": o is not None,
+                        "default": self._defaults.get(k), "edited": o is not None,
                         "updated": o and o["updated"], "actor": o and o["actor"]})
         return out
 
@@ -151,7 +160,7 @@ class Guidance:
         server instructions and the rook_call description, rather than as a
         ``_hint`` line on every reply.
         """
-        keys = set(self._overrides) | set(DEFAULTS)
+        keys = set(self._overrides) | set(self._defaults)
         matches = [k for k in keys if k.startswith("cap:") and cap.startswith(k[4:])]
         if not matches:
             return {}

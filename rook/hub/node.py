@@ -29,6 +29,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
+from ..core.context import caller_identity
 from ..core.facts import NodeFacts, local_facts, wire_facts
 from ..core.host import PluginHost
 from ..core.plugin import CORE_API_VERSION, RISKS, CapMeta
@@ -230,6 +231,33 @@ class HubNode:
             except Exception:
                 log.exception("journaling band call to hub failed")
         return body
+
+    async def invoke(self, cap: str, args: dict | None = None, identity: str | None = None) -> Any:
+        """In-process call for the MCP bridge's plugin tools: runs the cap
+        through the registry (so core's limit/fields contract applies) and
+        returns its result, raising the handler's own exception instead of
+        building a reply body."""
+        tok = caller_identity.set(identity)
+        try:
+            return await self.host.registry.call(cap, **(args or {}))
+        finally:
+            caller_identity.reset(tok)
+
+    def guidance_defaults(self) -> dict[str, str]:
+        """Guidance slots declared by the loaded plugins, as guidance-store
+        keys: a slot that already names a kind (``tool:``, ``cap:``,
+        ``server``, ``hygiene``) is used as is; a bare cap name or prefix
+        becomes ``cap:<slot>`` (a tip on ``rook_call`` replies for that cap)."""
+        out: dict[str, str] = {}
+        for p in self.host.plugins:
+            for slot, text in (p.GUIDANCE or {}).items():
+                key = slot if (slot in ("server", "hygiene") or slot.startswith(("tool:", "cap:"))) \
+                    else "cap:" + slot
+                out.setdefault(key, text)
+        return out
+
+    def plugin(self, namespace: str) -> Any:
+        return self.host.plugin(namespace)
 
     def wants(self, msg: dict) -> bool:
         """Whether a band request is for this node."""

@@ -8,8 +8,8 @@ workers actually expose.
 
 Sources:
 - MCP tools: every tool the hub MCP registers (rook/band_mcp/server.py, plus the
-  knowledge/task tools from rook/knowledge), read from a throwaway server built
-  in a temp dir. Operator tips (guidance) are not included.
+  knowledge/task tools the knowledge and tasks hub plugins add), read from a
+  throwaway server built in a temp dir. Operator tips (guidance) are not included.
 - Hub caps: every cap the hub node serves as worker `rook` (hub-placed plugins
   from rook/hub/plugins plus core caps), with its risk tier, and each hub
   plugin's SKILL fragment. The MCP tools above include the ones generated from
@@ -118,13 +118,27 @@ def mcp_tools() -> list[tuple[str, str, str]]:
 # -- hub caps ------------------------------------------------------------------
 
 def _hub_node():
+    """A throwaway hub node with every opt-in built-in plugin enabled
+    (knowledge/tasks on a temp store), so their caps and skill fragments
+    are documented."""
     import logging
     logging.disable(logging.WARNING)
+    keys = ("ROOK_KNOWLEDGE", "ROOK_KNOWLEDGE_DB", "ROOK_EMBED_URL")
+    saved = {k: os.environ.get(k) for k in keys}
     try:
-        from rook.hub.node import HubNode
-        return HubNode(None, entry_points=False)
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["ROOK_KNOWLEDGE"] = "1"
+            os.environ["ROOK_KNOWLEDGE_DB"] = os.path.join(tmp, "knowledge.db")
+            os.environ.pop("ROOK_EMBED_URL", None)
+            from rook.hub.node import HubNode
+            return HubNode(tmp, entry_points=False)
     finally:
         logging.disable(logging.NOTSET)
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
 
 
 def hub_caps() -> tuple[list[tuple[str, str, str, str]], list[str]]:

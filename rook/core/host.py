@@ -88,95 +88,141 @@ class PluginHost:
              disabled: set[str] | None = None) -> list[Plugin]:
         """Load candidates; returns the newly loaded plugins (also appended to
         :attr:`plugins`). ``enabled``/``disabled`` filter by module name, with
-        ``disabled`` winning (the worker's persisted runtime disables)."""
+        ``disabled`` winning (the worker's persisted runtime disables).
+
+        A plugin whose ``DEPENDS`` namespaces are not loaded yet waits until
+        the others have been tried; if they never load it is ``unavailable``."""
         disabled = disabled or set()
         loaded: list[Plugin] = []
+        waiting: list[tuple[str, Candidate, Plugin]] = []
         for cand in candidates:
-            name = cand.module
-            if name in disabled:
-                log.info("%s (%s): disabled (persisted), skipping", name, cand.source)
-                self._mark(name, "disabled", "disabled by operator")
+            got = self._prepare(cand, enabled, disabled)
+            if got is None:
                 continue
-            if enabled is not None and name not in enabled:
+            if self._missing_deps(got[2]):
+                waiting.append((cand.module, cand, got[2]))
                 continue
-            try:
-                plugin_obj = cand.load()
-            except Exception as e:
-                log.exception("%s (%s): import failed, skipping", name, cand.source)
-                self._mark(name, "failed", f"import: {type(e).__name__}: {e}")
-                continue
-            if plugin_obj is _UNSET:
-                log.warning("%s (%s): no PLUGIN export, skipping", name, cand.source)
-                self._mark(name, "skipped", "no PLUGIN export")
-                continue
-            if plugin_obj is None:
-                # Intentional opt-out: the module decided it shouldn't load here
-                # (e.g. an optional integration whose dependency isn't present).
-                log.debug("%s: PLUGIN is None, not active on this host", name)
-                self._mark(name, "skipped", "PLUGIN is None")
-                continue
-            try:
-                plugin = plugin_obj() if isinstance(plugin_obj, type) else plugin_obj
-            except Exception as e:
-                log.exception("%s: constructor raised, skipping", name)
-                self._mark(name, "failed", f"init: {type(e).__name__}: {e}")
-                continue
-            if not isinstance(plugin, Plugin):
-                log.warning("%s: PLUGIN is not a Plugin instance, skipping", name)
-                self._mark(name, "skipped", "PLUGIN is not a Plugin")
-                continue
-            if not core_api_compatible(plugin.CORE_API):
-                log.warning("%s: needs core_api %s, this core is %s; skipping",
-                            name, plugin.CORE_API, CORE_API_VERSION)
-                self._mark(name, "failed", f"core_api {plugin.CORE_API} incompatible with {CORE_API_VERSION}")
-                continue
-            if plugin.VERSION and not valid_version(plugin.VERSION):
-                log.warning("%s: version %r is not <build>.<adjective>.<noun>", name, plugin.VERSION)
-            if self.check_placement:
-                ok, why = self._placed_here(plugin)
-                if not ok:
-                    log.info("%s: %s, skipping", name, why)
-                    self._mark(name, "not_placed", why)
-                    continue
-            try:
-                if not plugin.available():
-                    log.info("%s: backend/config not present here, skipping", name)
-                    self._mark(name, "unavailable", "available() returned False")
-                    continue
-            except Exception:
-                log.exception("%s: available() raised, skipping", name)
-                self._mark(name, "failed", "available() raised")
-                continue
-            plugin._module = name   # so runtime admin can map module -> plugin
-            plugin._source = cand.source
-            if not plugin.VERSION:
-                plugin.VERSION = self.build_version
-            stored = {}
-            if self._stored_settings is not None:
-                try:
-                    stored = self._stored_settings(plugin.NAMESPACE) or {}
-                except Exception:
-                    log.exception("%s: loading stored settings failed", name)
-            plugin.__dict__["_settings"] = SettingsView(plugin, stored, self._secrets)
-            plugin.__dict__["_cap_caller"] = self._cap_caller
-            plugin.__dict__["_data_root"] = self._data_root
-            caps = plugin.caps()
-            done: list[str] = []
-            try:
-                for dotpath, fn in caps.items():
-                    self.registry.register(dotpath, fn)
-                    done.append(dotpath)
-            except ValueError as e:
-                for d in done:
-                    self.registry.unregister(d)
-                log.error("%s: %s; skipping plugin", name, e)
-                self._mark(name, "failed", str(e))
-                continue
-            self.plugins.append(plugin)
-            loaded.append(plugin)
-            self._mark(name, "loaded", namespace=plugin.NAMESPACE, caps=len(caps))
-            log.info("loaded plugin %s (ns=%s, caps=%d)", name, plugin.NAMESPACE, len(caps))
+            if self._activate(cand.module, cand, got[2]):
+                loaded.append(got[2])
+        progress = True
+        while waiting and progress:
+            progress = False
+            for item in list(waiting):
+                if not self._missing_deps(item[2]):
+                    waiting.remove(item)
+                    progress = True
+                    if self._activate(*item):
+                        loaded.append(item[2])
+        for name, _cand, plugin in waiting:
+            missing = ", ".join(self._missing_deps(plugin))
+            log.info("%s: needs plugin(s) %s, which did not load; skipping", name, missing)
+            self._mark(name, "unavailable", f"depends on {missing} (not loaded)")
         return loaded
+
+    def plugin(self, namespace: str) -> Plugin | None:
+        """The loaded plugin with this namespace, if any."""
+        return next((p for p in self.plugins if p.NAMESPACE == namespace), None)
+
+    def _missing_deps(self, plugin: Plugin) -> list[str]:
+        return [ns for ns in (plugin.DEPENDS or ()) if self.plugin(ns) is None]
+
+    def _prepare(self, cand: Candidate, enabled: list[str] | None,
+                 disabled: set[str]) -> tuple[str, Candidate, Plugin] | None:
+        """Filter, import, construct, check the manifest and placement."""
+        name = cand.module
+        if name in disabled:
+            log.info("%s (%s): disabled (persisted), skipping", name, cand.source)
+            self._mark(name, "disabled", "disabled by operator")
+            return None
+        if enabled is not None and name not in enabled:
+            return None
+        try:
+            plugin_obj = cand.load()
+        except Exception as e:
+            log.exception("%s (%s): import failed, skipping", name, cand.source)
+            self._mark(name, "failed", f"import: {type(e).__name__}: {e}")
+            return None
+        if plugin_obj is _UNSET:
+            log.warning("%s (%s): no PLUGIN export, skipping", name, cand.source)
+            self._mark(name, "skipped", "no PLUGIN export")
+            return None
+        if plugin_obj is None:
+            # Intentional opt-out: the module decided it shouldn't load here
+            # (e.g. an optional integration whose dependency isn't present).
+            log.debug("%s: PLUGIN is None, not active on this host", name)
+            self._mark(name, "skipped", "PLUGIN is None")
+            return None
+        try:
+            plugin = plugin_obj() if isinstance(plugin_obj, type) else plugin_obj
+        except Exception as e:
+            log.exception("%s: constructor raised, skipping", name)
+            self._mark(name, "failed", f"init: {type(e).__name__}: {e}")
+            return None
+        if not isinstance(plugin, Plugin):
+            log.warning("%s: PLUGIN is not a Plugin instance, skipping", name)
+            self._mark(name, "skipped", "PLUGIN is not a Plugin")
+            return None
+        if not core_api_compatible(plugin.CORE_API):
+            log.warning("%s: needs core_api %s, this core is %s; skipping",
+                        name, plugin.CORE_API, CORE_API_VERSION)
+            self._mark(name, "failed", f"core_api {plugin.CORE_API} incompatible with {CORE_API_VERSION}")
+            return None
+        if plugin.VERSION and not valid_version(plugin.VERSION):
+            log.warning("%s: version %r is not <build>.<adjective>.<noun>", name, plugin.VERSION)
+        if self.check_placement:
+            ok, why = self._placed_here(plugin)
+            if not ok:
+                log.info("%s: %s, skipping", name, why)
+                self._mark(name, "not_placed", why)
+                return None
+        return name, cand, plugin
+
+    def _wire(self, plugin: Plugin) -> None:
+        stored = {}
+        if self._stored_settings is not None:
+            try:
+                stored = self._stored_settings(plugin.NAMESPACE) or {}
+            except Exception:
+                log.exception("%s: loading stored settings failed", plugin.NAMESPACE)
+        plugin.__dict__["_settings"] = SettingsView(plugin, stored, self._secrets)
+        plugin.__dict__["_cap_caller"] = self._cap_caller
+        plugin.__dict__["_data_root"] = self._data_root
+        plugin.__dict__["_deps"] = {ns: self.plugin(ns) for ns in (plugin.DEPENDS or ())}
+
+    def _activate(self, name: str, cand: Candidate, plugin: Plugin) -> bool:
+        """Wire settings/resources/deps, check available(), register caps."""
+        # Wired before available() (core_api 1.1) so an enable flag or a
+        # configured resource in the settings schema can gate loading.
+        self._wire(plugin)
+        try:
+            if not plugin.available():
+                log.info("%s: backend/config not present here, skipping", name)
+                self._mark(name, "unavailable", "available() returned False")
+                return False
+        except Exception:
+            log.exception("%s: available() raised, skipping", name)
+            self._mark(name, "failed", "available() raised")
+            return False
+        plugin._module = name   # so runtime admin can map module -> plugin
+        plugin._source = cand.source
+        if not plugin.VERSION:
+            plugin.VERSION = self.build_version
+        caps = plugin.caps()
+        done: list[str] = []
+        try:
+            for dotpath, fn in caps.items():
+                self.registry.register(dotpath, fn)
+                done.append(dotpath)
+        except ValueError as e:
+            for d in done:
+                self.registry.unregister(d)
+            log.error("%s: %s; skipping plugin", name, e)
+            self._mark(name, "failed", str(e))
+            return False
+        self.plugins.append(plugin)
+        self._mark(name, "loaded", namespace=plugin.NAMESPACE, caps=len(caps))
+        log.info("loaded plugin %s (ns=%s, caps=%d)", name, plugin.NAMESPACE, len(caps))
+        return True
 
     # -- lifecycle -------------------------------------------------------
     async def start(self) -> None:

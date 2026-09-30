@@ -22,6 +22,16 @@ Preparation for public use.
   to it may reach only read caps (`ROOK_HUB_BAND_MAX_RISK`);
   `ROOK_HUB_PLUGINS=0` turns it off. Caps declared `tool=True` get a generated
   MCP tool.
+- Knowledge and tasks are hub plugins (`rook/hub/plugins/knowledge`,
+  `rook/hub/plugins/tasks.py`): caps `knowledge.read`/`knowledge.write` and
+  `task.read`/`task.write` on worker `rook` (band callers reach the read caps),
+  a settings schema (`enabled` = `ROOK_KNOWLEDGE`, `db_path`, `semantic`,
+  `embedder` = `ROOK_EMBED_URL` or `cap://any/embed.text`, `embed_model`) and
+  plugin migrations. `rook_knowledge`, `rook_task`, `rook_project` and
+  `rook_concept` keep their names, arguments and replies; an existing
+  `knowledge.db` is used in place and upgraded without loss. Plugin guidance
+  slots now appear in the guidance store. Core API 1.1 adds `DEPENDS` and
+  wires settings before `available()`.
 - Agent skill at `skills/rook/` (SKILL.md + install/admin/tools/usage
   references). `tools/gen_skill_reference.py` generates the tool and cap tables
   from the code; a test fails when they are stale. The hub serves it as MCP

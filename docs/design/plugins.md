@@ -1,8 +1,8 @@
 # Plugins: the contract between Rook core and everything else
 
-Status: wave 1 of the beta refactor. The core plugin host, node facts, the hub
+Status: wave 2 of the beta refactor. The core plugin host, node facts, the hub
 node (`rook`) and generated MCP tools are implemented (`rook/core`,
-`rook/hub`). Knowledge and tasks move onto this API in wave 2. Signed role
+`rook/hub`). Knowledge and tasks run on this API as hub plugins (section 15). Signed role
 grants and permissions enforcement are specified in
 [permissions.md](permissions.md); the settings UI and storage are specified in
 [settings.md](settings.md). This document owns the plugin contract and says
@@ -29,7 +29,7 @@ where it hands off to those two.
 
 | Core (always present) | Plugin (optional, placed) |
 |---|---|
-| Band transport (Telesthete hub relay, WS bridge) | Knowledge wiki, tasks/projects (wave 2) |
+| Band transport (Telesthete hub relay, WS bridge) | Knowledge wiki, tasks/projects/concepts (hub plugins `knowledge`, `task`) |
 | Worker registry, announces, cap routing | Memory, persona/guidance content, work sessions |
 | Identity and tokens, attribution | Voice, decision, Telegram/Discord bridges |
 | Call journal | Hardware integrations (camera, HID, CEC, KVM, battery, ...) |
@@ -73,10 +73,11 @@ attributes. Only `NAMESPACE` is required.
 | `GUIDANCE` | `{}` | Guidance slots: `{slot: default text}`. Operators edit them; agents see them as cap tips (section 8). |
 | `SKILL` | `""` | Markdown fragment merged into the agent skill reference (section 8). |
 | `PANEL` | `None` | Optional web panel `{"title", "path"}` (section 8). |
+| `DEPENDS` | `()` | Namespaces of plugins that must be loaded on the same node first (core API 1.1). The host tries the plugin after the others; if a dependency never loads it is `unavailable`. `self.dependency(ns)` returns the loaded instance. |
 
 `Plugin.manifest()` returns the manifest as a dict (name, namespace, version,
 core_api, placement, caps, settings schema, migrations, guidance slots, skill
-flag, panel). The host adds `source` (`package:<pkg>` or `entry_point:<name>`)
+flag, panel, depends). The host adds `source` (`package:<pkg>` or `entry_point:<name>`)
 and the load `state`.
 
 ```python
@@ -283,10 +284,14 @@ hub's other stores (read-only; settings.md's framework writes it).
   never edited; fixes are new files. Each plugin gets a private
   `self.data_dir` (`<node state>/plugins/<namespace>`).
 - **Guidance slots.** `GUIDANCE = {slot: default}`. A slot is usually a cap
-  name, and its text becomes that cap's tip on `rook_call` replies (today's
-  guidance mechanism, `rook/band_mcp/guidance.py`). Operators edit the text;
-  the plugin ships only the default. Wiring plugin slots into the guidance
-  store is wave 2; manifests list the slots now.
+  name or prefix, and its text becomes that cap's tip on `rook_call` replies
+  (today's guidance mechanism, `rook/band_mcp/guidance.py`). A slot may also
+  name a guidance kind directly (`tool:<name>`, `cap:<prefix>`). Operators edit
+  the text; the plugin ships only the default. On the hub the bridge registers
+  every loaded plugin's slots with the guidance store at start-up
+  (`HubNode.guidance_defaults()` then `Guidance.add_defaults`), so they show on
+  the Agent instructions page and can be edited like core slots; core
+  defaults win on a clash.
 - **Skill fragment.** `SKILL` is markdown merged into the agent skill's tool
   reference by `tools/gen_skill_reference.py` (hub plugins today, under "Hub
   capabilities"). Keep it short: when to use the caps, the one or two args that
@@ -305,12 +310,16 @@ For each discovered candidate, the host (`rook.core.host.PluginHost`) runs:
 2. **Import** the module and read `PLUGIN`; construct it if it's a class.
 3. **Manifest check**: `CORE_API` compatible, `VERSION` shape (warning only).
 4. **Placement** over this node's facts; `run="one"` asks the elector.
-5. **`available()`**: backend/config present on this node.
-6. **Wire**: default `VERSION`, settings view, resource caller, data dir.
-7. **Register** caps (all or nothing).
-8. Node-specific binding: `bind_worker(worker)` on workers, `bind_host(hub_node)`
+5. **Dependencies**: a plugin whose `DEPENDS` are not loaded yet waits until
+   the other candidates have been tried (then `unavailable` if still missing).
+6. **Wire**: settings view, resource caller, data dir, dependencies. Since
+   core API 1.1 this happens *before* `available()`, so an enable flag or a
+   resource in the settings schema can gate loading.
+7. **`available()`**: backend/config present on this node.
+8. **Register** caps (all or nothing); default `VERSION`.
+9. Node-specific binding: `bind_worker(worker)` on workers, `bind_host(hub_node)`
    on the hub.
-9. **`start()`** (async) when the node starts; `heartbeat()` on every announce
+10. **`start()`** (async) when the node starts; `heartbeat()` on every announce
    (~30 s; tiny, non-raising); **`stop()`** at shutdown.
 
 `host.status[module]` records the outcome: `loaded`, `disabled`, `skipped`
@@ -364,9 +373,19 @@ taken is skipped with a warning.
 
 Every connect pays for `tools/list` (budgeted in
 `tests/test_token_envelope.py`), so `tool=True` is for caps agents use
-constantly, typically the ones replacing a hand-written tool when knowledge
-and tasks move onto caps. Everything else stays one `rook_call` away. The
-reference plugin's `hub.info` deliberately declares no tool.
+constantly. Everything else stays one `rook_call` away. The reference
+plugin's `hub.info` deliberately declares no tool.
+
+**Plugin-shaped tools.** A tool whose shape predates caps and must not change
+(the action-style `rook_knowledge`, `rook_task`, `rook_project`,
+`rook_concept`) cannot be generated one-to-one from a cap. A hub plugin may
+return such tools from `mcp_tools(invoke)` (`rook.hub.mcp_tools.register_plugin_tools`):
+each is an async function (its `__name__` is the tool name, its docstring the
+description) that routes to the plugin's caps through `invoke(cap, args)`.
+`invoke` runs the cap in process through the registry (core's `limit`/`fields`
+contract applies) with the MCP caller's identity, and returns the result or
+raises the handler's exception, so the tool formats its own reply exactly as
+before. Existing names win here too.
 
 ### 10.4 Band calls are read-only by default
 
@@ -416,7 +435,7 @@ Runtime enable/disable (`worker.plugin.*`) persists per worker as before.
 - **Core API.** `CORE_API_VERSION` is `major.minor`. Minor bumps only add
   (new optional manifest keys, new host services). A major bump may remove or
   change behaviour; plugins declare the range they support and are refused
-  outside it. Wave 1 ships `1.0`.
+  outside it. Wave 1 shipped `1.0`; `1.1` adds `DEPENDS` and wires settings before `available()`.
 - **Plugin versions** follow the worker build scheme
   `<build>.<adjective>.<noun>`: the build number is monotonic and the
   adjective/noun pair names the commit.
@@ -441,9 +460,83 @@ Runtime enable/disable (`worker.plugin.*`) persists per worker as before.
 | Role grants | verification hook (stub rejects all) | permissions wave 2 |
 | `risk`/`tags`/`limit`/`fields`/`tool` | declared, `limit`/`fields` enforced, tiers announced | policy enforcement, byte caps |
 | Hub node `rook` + band serving | done, band calls read-only | tickets, signed announces |
-| Generated MCP tools | done (no built-in hub cap uses it yet; `tools/list` unchanged) | regenerate chat/vault/journal/knowledge/tasks tools from caps |
+| Generated MCP tools | done (no built-in hub cap uses it yet; `tools/list` unchanged) | regenerate chat/vault/journal tools from caps |
+| Plugin-shaped MCP tools (`mcp_tools(invoke)`) | wave 2: knowledge/task tools, `tools/list` unchanged | |
 | Settings schema + resolution | done (env, stored file, vault, default) | settings UI, writes, history |
 | Resources | parsed; `cap://` callable on the hub | placement-aware `any` |
 | Migrations, data dir | done | |
-| Guidance slots, skill fragments, panels | declared; skill fragments generated | guidance store + dashboard mounting |
-| Knowledge, tasks as plugins | | wave 2 |
+| Guidance slots, skill fragments, panels | slots registered with the guidance store (wave 2); skill fragments generated | dashboard panel mounting |
+| `DEPENDS`, settings wired before `available()` (core API 1.1) | wave 2 | |
+| Knowledge, tasks as plugins | wave 2 (section 15) | settings UI writes; `handoff.*` caps with chat/journal |
+
+## 15. Knowledge and tasks (hub plugins)
+
+The shared wiki and the work tree (concept > project > task) are two hub
+plugins on one store:
+
+| Plugin | Module | Caps (worker `rook`) | MCP tools (unchanged) |
+|---|---|---|---|
+| `knowledge` | `rook/hub/plugins/knowledge/` (store, search, service, maintenance, web, migrations) | `knowledge.read` (R): search, get, list, context, status, bands, deck; `knowledge.write` (W): create, update, link, retract | `rook_knowledge` |
+| `tasks` (namespace `task`, `DEPENDS = ("knowledge",)`) | `rook/hub/plugins/tasks.py` | `task.read` (R): deck, search, list, get, context, status; `task.write` (W): create, update, link, retract, claim, release; `kind` = task, project or concept | `rook_task`, `rook_project`, `rook_concept` |
+
+The cap names follow permissions.md Appendix A.2. Each cap takes the tool's
+arguments (`action`, `band`, `id`, `query`, `data`, `request_id`) and returns
+the same result, with the lean MCP defaults for search/list (5/20 rows, a
+small field set; `data.limit` / `data.fields` override). A read cap refuses a
+write action, so the band ceiling (section 10.4) can't be bypassed through
+`*.read`. The tools route each action to the read or write cap and keep their
+reply shape (`{"ok": true, "result": ...}` or `{"ok": false, "error", "code"}`).
+`rook/knowledge/*` remains as import aliases of the moved modules.
+
+**Settings** (`knowledge` plugin; the tasks plugin loads with it):
+
+| Setting | Type | Default | Env (legacy alias) |
+|---|---|---|---|
+| `enabled` | bool | `false` | `ROOK_KNOWLEDGE` |
+| `db_path` | str | empty = `knowledge.db` beside the hub's other stores | `ROOK_KNOWLEDGE_DB` |
+| `semantic` | bool | `true` (used only when `embedder` is set) | `ROOK_KNOWLEDGE_SEMANTIC` |
+| `embedder` | resource | empty = keyword search only | `ROOK_EMBED_URL` |
+| `embed_model` | str | `sentence-transformers/all-MiniLM-L6-v2` | `ROOK_EMBED_MODEL` |
+
+`embedder` is `http(s)://…/embed` (the `services/knowledge-embeddings`
+service, as before; an existing `ROOK_EMBED_URL` keeps working) or a band cap
+such as `cap://any/embed.text`. Both are called with `{"texts": [...]}` and
+return `{"model", "vectors"}` (a cap may return a bare list of vectors); the
+model must match `embed_model`. An empty value means "not configured". The
+settings are read when the hub starts. With `ROOK_HUB_PLUGINS=0` there is no
+hub node, so knowledge and tasks are off too.
+
+**Storage and migrations.** The store stays where it was (`db_path`
+default), so an existing `knowledge.db` is used in place and a rollback to an
+older release still finds it. Migration `001_schema.sql` (namespace
+`knowledge` in `_rook_migrations`) is the layout the pre-plugin store created
+(`PRAGMA user_version=2`), all `IF NOT EXISTS`. Before it runs on a database
+that predates plugin migrations, `KnowledgeStore._upgrade_legacy` applies the
+old in-code steps that need Python (adding and back-filling `slug`,
+`actors.info`, the v1 state renames, dropping prototype tables), so every
+record, link, claim, event, receipt, embedding and cursor is kept
+(`tests/test_knowledge_plugin.py` checks a database written by the old code,
+`tests/fixtures/knowledge_v2.db`). `user_version` stays 2 until a later
+migration changes the layout.
+
+**Attribution.** Writes record the caller's compound identity. Through the
+MCP the bridge hands the plugin its attribution (`Knowledge.principal`), so
+tool calls and `rook_call(worker="rook")` are attributed exactly as before. A
+band call (only possible for writes when `ROOK_HUB_BAND_MAX_RISK` allows it)
+records the self-stamped envelope identity with actor kind `band`.
+
+**What stays in the bridge.** The bridge wires in what only it has: the
+attributed caller, the band enrollment (for `bands`), the handoff store (for
+`data.handoff`), the hygiene loop, auto-linking of calls/consoles/handoffs to
+the caller's claimed task, and the operator Knowledge page API
+(`/knowledge/account-api`, proxied by the dashboard). Background embedding
+indexing runs in the plugin's `start()`.
+
+**Handoffs stay in the bridge**, not in the tasks plugin. A handoff is a
+*thread* record (`rook/band_mcp/sessions.py`): its `thread_id` is the same
+namespace as the call journal's and chat rooms' thread ids, and
+`rook_handoff_*` must keep working with knowledge off (the default). Tasks
+only link to handoffs (link kind `handoff`), and `data.handoff` on
+update/release saves one through the bridge. When chat rooms and the journal
+become hub caps, handoffs move with them as `handoff.read` / `handoff.write`
+(permissions.md A.2), not into `task.*`.
