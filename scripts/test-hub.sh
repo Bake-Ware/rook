@@ -241,6 +241,13 @@ cmd_start() {
   spawn relay "$DATA/hub/home" "$relay"
   sleep 0.5
 
+  # The hub's root signing key (OTA, deauth, role grants). Workers trust it
+  # through ROOK_UPDATE_PUBKEY, so hub call tickets verify end to end.
+  local root_pub
+  root_pub="$(env -i PATH="$PATH" HOME="$DATA/hub/home" ROOK_DATA_DIR="$DATA/hub" "$PYTHON" -c \
+    'from rook.remote.update_keys import ensure_key, public_key_b64; print(public_key_b64(ensure_key()))' \
+    2>/dev/null || true)"
+
   SPAWN_ENV=(ROOK_DATA_DIR="$DATA/hub" ROOK_BAND_PSK="$ROOK_BAND_PSK" ROOK_MCP_STATIC_TOKEN="$ROOK_MCP_STATIC_TOKEN"
              ROOK_MCP_AUTH_PASSWORD="$ROOK_MCP_AUTH_PASSWORD" ROOK_KNOWLEDGE="$KNOWLEDGE")
   spawn mcp "$DATA/hub/home" "$PYTHON" -m rook.band_mcp --hub "127.0.0.1:$RELAY_PORT" \
@@ -257,6 +264,7 @@ cmd_start() {
   for i in $(seq 1 "$WORKERS"); do
     local wname="$NAME_PREFIX-$i"
     SPAWN_ENV=()
+    [ -n "$root_pub" ] && SPAWN_ENV=(ROOK_UPDATE_PUBKEY="$root_pub")
     spawn "worker-$i" "$DATA/workers/$wname/home" "$PYTHON" -m rook.worker \
         --hub "127.0.0.1:$RELAY_PORT" --psk "$ROOK_BAND_PSK" --name "$wname" --update-url "" -v
     names="${names:+$names,}$wname"

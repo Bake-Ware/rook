@@ -20,6 +20,14 @@ caller_identity: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "rook_caller_identity", default=None)
 
 
+# Result of the worker's ticket check for the call being dispatched (see
+# rook.worker.authz_guard): ``{"verified": bool, "reason", "kid", "p", ...}``
+# or ``None`` when no check ran (local invocation, hub node). Caps that need a
+# hub-signed order (hub/PSK repointing) read it.
+call_ticket: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "rook_call_ticket", default=None)
+
+
 def current_identity() -> str | None:
     """The identity of the agent/user behind the call currently being handled,
     or ``None`` if unknown (anonymous / local invocation)."""

@@ -12,8 +12,11 @@ Capabilities:
     worker.status                         — pid / argv / pyz / supervisor
     worker.restart                        — clean restart, same config
     worker.reconfigure(hub?, psk?, name?) — repoint at a new band, then restart
-    worker.update(url?, hub?, psk?, name?) — fetch a new bundle, then restart
-    worker.deauth(payload)                — ed25519-signed remove/ban from band
+    worker.update(manifest?, url?, hub?, psk?, name?) — install a signed bundle, then restart
+    worker.deauth(payload)                — signed (deauth v2) remove/ban from band
+
+Hub/PSK changes need a hub-signed order (a verified call ticket, see
+``rook.worker.authz_guard``); bundle installs need a signed manifest.
 """
 
 from __future__ import annotations
@@ -248,8 +251,14 @@ class SelfUpdatePlugin(Plugin):
         manifests, and is bound to THIS node's stable worker_id so a signed order
         for one worker can't be replayed against another.
 
-        payload = {"worker_id": "<target>", "name": "<label>", "issued_at":
-                   <unix>, "reason": "...", "sig": "<base64 ed25519>"}
+        payload = {"typ": "rook-deauth", "v": 2, "worker_id": "<target>",
+                   "name": "<label>", "issued_at": <unix>, "reason": "...",
+                   "sig": "<base64 ed25519 over b'rook-deauth-v2\\n' + canonical body>"}
+
+        (or a legacy v1 payload carrying that order under ``v2``). The v2 order
+        has its own signature domain, so an OTA manifest can never pass for a
+        deauth order, and ``worker_id`` and ``issued_at`` are required
+        (permissions 6.3). Unprefixed v1 orders are refused.
 
         On success the node persists a ``banned`` flag and restarts into the CLI
         boot gate, which parks it OFF the band (no transport, no announce). The
@@ -261,20 +270,16 @@ class SelfUpdatePlugin(Plugin):
         shared PSK — the controller still hides/ignores it and denies it commands
         and updates, but truly evicting a hostile node needs per-worker identity
         or a PSK rotation."""
-        from .._update_verify import verify_manifest
+        from ...core.authz import default_anchors, verify_deauth
         if not isinstance(payload, dict):
             return {"ok": False, "error": "payload must be an object"}
-        if not verify_manifest(payload):
-            # Fail closed: unsigned or wrong key → refuse.
-            return {"ok": False, "error": "invalid or missing signature"}
-        mine = _my_worker_id()
-        target = payload.get("worker_id")
-        if target and mine and target != mine:
-            return {"ok": False, "error": "worker_id mismatch (not this worker)"}
-        issued = payload.get("issued_at")
-        if isinstance(issued, (int, float)) and abs(time.time() - issued) > 86400:
-            # Reject ancient captured orders; window is generous for clock skew.
-            return {"ok": False, "error": "signed order too old"}
+        mine = _my_worker_id() or (self._worker.worker_id if self._worker is not None else None)
+        ok, why = verify_deauth(payload, default_anchors(), mine)
+        if not ok:
+            # Fail closed: unsigned, wrong key, wrong domain, wrong target or stale.
+            return {"ok": False, "error": why}
+        if isinstance(payload.get("v2"), dict):
+            payload = payload["v2"]
         _WORKER_DIR.mkdir(parents=True, exist_ok=True)
         _BANNED.write_text(json.dumps({
             "at": int(time.time()),
@@ -324,9 +329,17 @@ class SelfUpdatePlugin(Plugin):
         """Repoint this worker at a new band (hub/psk) and/or rename it, then
         restart. The new config is persisted to the systemd unit so it survives
         reboots. Used to migrate bands without a curl|bash reinstall.
+
+        Changing ``hub`` or ``psk`` needs a hub-signed order: the call must
+        carry a valid ticket from the hub (permissions 6.3). Renaming does not.
         """
         if hub is None and psk is None and name is None:
             return {"ok": False, "error": "nothing to change (pass hub/psk/name)"}
+        if hub is not None or psk is not None:
+            from ..authz_guard import require_hub_order
+            refused = require_hub_order("changing hub/psk")
+            if refused:
+                return {"ok": False, "error": refused}
         new_argv = self._current_argv(hub=hub, psk=psk, name=name)
         persisted = self._persist(new_argv)
         if restart:
@@ -342,16 +355,63 @@ class SelfUpdatePlugin(Plugin):
 
     @capability("update")
     async def _update(self, url: str | None = None, hub: str | None = None,
-                      psk: str | None = None, name: str | None = None) -> dict:
-        """Fetch a fresh worker bundle from ``url`` (if given), optionally
-        repoint at a new band, then restart. Kill-safe."""
+                      psk: str | None = None, name: str | None = None,
+                      manifest: dict | None = None) -> dict:
+        """Install a worker bundle, optionally repoint at a new band, then
+        restart. Kill-safe.
+
+        Installing needs a signed OTA ``manifest`` (the same object
+        ``worker.apply`` takes): the bundle is fetched from ``url`` (or the
+        manifest's own ``url``), its sha256 must match the manifest and it
+        must pass ``--selftest``. A bare ``url`` is refused, so this cap can't
+        bypass OTA signing, and an older build than the running one is
+        refused (no downgrades). Changing ``hub``/``psk`` needs a hub-signed
+        order (a valid call ticket), as for ``worker.reconfigure``."""
+        from .._build_info import BUILD
+        from .._update_verify import sha256_file, verify_manifest
         notes = []
-        if url:
+        if hub is not None or psk is not None:
+            from ..authz_guard import require_hub_order
+            refused = require_hub_order("changing hub/psk")
+            if refused:
+                return {"ok": False, "error": refused}
+        if url or manifest is not None:
+            if not isinstance(manifest, dict) or not verify_manifest(manifest):
+                return {"ok": False, "error": (
+                    "worker.update needs a signed OTA manifest (manifest=...); an "
+                    "unsigned url is refused (fail-closed)")}
             try:
-                await self._download(url, _PYZ)
-                notes.append(f"bundle updated from {url}")
+                target = int(manifest.get("build", 0))
+            except (TypeError, ValueError):
+                return {"ok": False, "error": "manifest has no valid build number"}
+            if target < BUILD:
+                return {"ok": False, "error": f"refusing to downgrade from build {BUILD} to {target}"}
+            src = url or manifest.get("url")
+            if not src:
+                return {"ok": False, "error": "no download url (pass url= or a manifest with url)"}
+            _WORKER_DIR.mkdir(parents=True, exist_ok=True)
+            tmp = _WORKER_DIR / "band-worker.pyz.dl"
+            try:
+                tmp.write_bytes(await self._http_get(src, timeout=120))
             except Exception as e:
+                tmp.unlink(missing_ok=True)
                 return {"ok": False, "error": f"download failed: {type(e).__name__}: {e}"}
+            if sha256_file(tmp) != manifest.get("sha256"):
+                tmp.unlink(missing_ok=True)
+                return {"ok": False, "error": "sha256 mismatch vs signed manifest (fail-closed)"}
+            if not await self._smoke_test(tmp):
+                tmp.unlink(missing_ok=True)
+                return {"ok": False, "error": "bundle failed --selftest; not installing"}
+            try:
+                import shutil
+                if _PYZ.exists():
+                    shutil.copy2(_PYZ, _PREV)
+                os.replace(tmp, _PYZ)
+                os.chmod(_PYZ, 0o755)
+            except Exception as e:
+                tmp.unlink(missing_ok=True)
+                return {"ok": False, "error": f"swap failed: {type(e).__name__}: {e}"}
+            notes.append(f"bundle build {target} installed from {src}")
         new_argv = self._current_argv(hub=hub, psk=psk, name=name)
         persisted = self._persist(new_argv)
         self._schedule_restart(new_argv)
@@ -630,21 +690,6 @@ class SelfUpdatePlugin(Plugin):
         except Exception:
             log.exception("failed to persist scheduled task")
             return False
-
-    async def _download(self, url: str, dest: Path) -> None:
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        tmp = dest.with_suffix(".pyz.new")
-
-        def _fetch() -> None:
-            import urllib.request
-            req = urllib.request.Request(url, headers={"User-Agent": _UA})
-            with urllib.request.urlopen(req, timeout=60) as r:
-                data = r.read()
-            tmp.write_bytes(data)
-            os.replace(tmp, dest)
-            os.chmod(dest, 0o755)
-
-        await asyncio.get_event_loop().run_in_executor(None, _fetch)
 
     def _schedule_restart(self, argv: list[str], delay: float = 1.0) -> None:
         """Fire the restart shortly *after* this call returns, so the reply is

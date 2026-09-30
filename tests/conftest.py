@@ -12,6 +12,17 @@ for p in (_REPO, _TELESTHETE):
         sys.path.insert(0, p)
 
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolated_hub_keys(tmp_path, monkeypatch):
+    """Never let a test read or create the real hub signing keys (the root
+    OTA key and the permissions op key beside it)."""
+    if "ROOK_UPDATE_KEY" not in os.environ:
+        monkeypatch.setenv("ROOK_UPDATE_KEY", str(tmp_path / "keys" / "update-signing-key"))
+
+
 def pytest_configure(config):
     config.addinivalue_line(
         "markers",

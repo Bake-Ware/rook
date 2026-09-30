@@ -117,6 +117,8 @@ def build_server(client: "BandClient | MultiBandClient",
     # here looks at bands, workers or capabilities.
     from mcp.server.fastmcp.exceptions import ToolError
     from . import attribution as _attr
+    from ..hub import authz as _hub_authz
+    from ..hub.node import HUB_WORKER_NAME
     _alert = _attr.Alerter()
     _run_tool = mcp._tool_manager.call_tool
 
@@ -204,11 +206,31 @@ def build_server(client: "BandClient | MultiBandClient",
         except Exception:  # noqa: BLE001 — never let identity detail block a call
             log.exception("compound identity failed")
         reset = _attr.current.set(att)
+        # The authenticated principal (permissions 1): from the verified token
+        # only, never from X-Rook-Host or the envelope identity.
+        principal = _hub_authz.principal_for_token(att, att.role)
+        preset = _hub_authz.current_principal.set(principal)
         try:
+            _authorize_tool(name, arguments, principal)
             return await _run_tool(name, arguments, context=context,
                                    convert_result=convert_result)
         finally:
+            _hub_authz.current_principal.reset(preset)
             _attr.current.reset(reset)
+
+    def _authorize_tool(name, arguments, principal) -> None:
+        """Hub tools are caps on `rook` (permissions 3.5, Appendix A.2).
+        Raises ToolError only for a denial in enforce mode."""
+        authz = getattr(client, "authz", None)
+        cap = _hub_authz.hub_cap_for_tool(name, arguments)
+        if authz is None or cap is None:
+            return
+        node = getattr(mcp, "_rook_hub", None)
+        entry = node.entry() if node is not None else {"name": HUB_WORKER_NAME, "roles": ["is_hub"]}
+        d = authz.check(cap, node.worker_id if node is not None else HUB_WORKER_NAME, entry,
+                        principal=principal, local=True)
+        if d.denied:
+            raise ToolError(d.denial()["error"] + f" (rule {d.rule}, policy rev {d.rev})")
 
     mcp._tool_manager.call_tool = _attributed_call_tool
 
@@ -239,6 +261,16 @@ def build_server(client: "BandClient | MultiBandClient",
         vault = None
     mcp._rook_vault = vault
     mcp._rook_journal = journal
+
+    # Permissions (docs/design/permissions.md): policy evaluation + call
+    # tickets inside the band client, so every path that emits a band call
+    # is covered. Ships in audit mode: nothing is denied until the operator
+    # sets mode: enforce in policy.json.
+    try:
+        client.authz = _hub_authz.build_authorizer(_store_dir, record=journal.record)
+    except Exception:
+        log.exception("ROOK AUTHZ ALERT: authorizer unavailable; calls are not evaluated")
+    mcp._rook_authz = getattr(client, "authz", None)
 
     # Hub plugin host (rook.hub): hub-placed plugins, served on the band as the
     # reserved worker "rook" and reachable with rook_call(worker="rook").
@@ -426,6 +458,10 @@ def build_server(client: "BandClient | MultiBandClient",
         except Exception:
             return None
 
+    def _decision_row() -> dict | None:
+        d = _hub_authz.last_decision.get()
+        return d.journal() if d is not None else None
+
     def _caller_audit() -> dict | None:
         att = _attr.current.get()
         return att.audit() if att is not None else None
@@ -598,6 +634,8 @@ def build_server(client: "BandClient | MultiBandClient",
             own = None
         floor = own + _WAIT_MARGIN if own else _DEFAULT_WAIT
         wait = min(max(floor, float(timeout or 0)), _MAX_WAIT)
+        _hub_authz.last_decision.set(None)
+        jtok = _hub_authz.caller_journals.set(True)
         try:
             reply = await client.call(cap=cap, args=send_args, target=target,
                                       timeout=wait, identity=identity)
@@ -609,7 +647,7 @@ def build_server(client: "BandClient | MultiBandClient",
                              "error": f"no reply within {wait:.0f}s"}
             cid = journal.record(cap=cap, worker=worker_name, identity=identity,
                                  args=args, reply=timeout_reply,
-                                 audit=_caller_audit())
+                                 audit=_caller_audit(), authz=_decision_row())
             _auto_link("journal", cid, f"{cap} on {worker_name} (timed out)")
             basis = (f"the call's own {own:.0f}s timeout + {_WAIT_MARGIN:.0f}s" if own
                      else f"the {_DEFAULT_WAIT:.0f}s default; {cap!r} declares no timeout")
@@ -620,12 +658,15 @@ def build_server(client: "BandClient | MultiBandClient",
                          f"worker before retrying. To let it run longer, raise "
                          f"args.timeout (if the cap takes one) or pass timeout=; "
                          f"for long jobs use rook_console_open.")
+        finally:
+            _hub_authz.caller_journals.reset(jtok)
         if secret_forms:
             reply = _vault_mod.mask(reply, secret_forms)
         if cap == "caps.describe" and isinstance(reply, dict) and reply.get("ok"):
             _learn_timeouts(target, reply.get("result"))
         cid = journal.record(cap=cap, worker=worker_name, identity=identity,
-                             args=args, reply=reply, audit=_caller_audit())
+                             args=args, reply=reply, audit=_caller_audit(),
+                             authz=_decision_row())
         linked = _auto_link("journal", cid, f"{cap} on {worker_name}")
         chat.touch(identity)
         if not isinstance(reply, dict):

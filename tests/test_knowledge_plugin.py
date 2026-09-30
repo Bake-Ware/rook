@@ -187,14 +187,16 @@ async def test_band_reaches_reads_only_and_writes_are_attributed(tmp_path, monke
     # A read cap never writes, even when the band ceiling allows it.
     sneaky = await n.dispatch("knowledge.read", {"action": "create", "data": {"title": "x"}}, "agent:x")
     assert not sneaky["ok"] and "is a write" in sneaky["error"]
-    # With the ceiling raised, a band write records the self-stamped identity as kind "band".
+    # With the ceiling raised, a band write is recorded under the band's
+    # unauthenticated principal, never the self-stamped identity (permissions 1).
     monkeypatch.setenv("ROOK_HUB_BAND_MAX_RISK", "write")
     n2 = node(tmp_path)
     w = await n2.dispatch("knowledge.write", {"action": "create", "data": {"title": "From band"},
                                               "request_id": "b2"}, "agent:someone", source="band")
-    assert w["ok"] and w["result"]["creator"] == "agent:someone"
+    assert w["ok"] and w["result"]["creator"] == "band:unauthenticated"
     with sqlite3.connect(tmp_path / "knowledge.db") as db:
-        assert db.execute("SELECT kind FROM actors WHERE id='agent:someone'").fetchone() == ("band",)
+        assert db.execute("SELECT kind FROM actors WHERE id='band:unauthenticated'").fetchone() == ("band",)
+        assert db.execute("SELECT kind FROM actors WHERE id='agent:someone'").fetchone() is None
 
 
 @pytest.mark.asyncio

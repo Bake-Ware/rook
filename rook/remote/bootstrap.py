@@ -1051,7 +1051,8 @@ class CombinedServer:
         self._on_worker_connect = None
         self._on_worker_disconnect = None
         self._on_worker_chat = None  # async callback(worker_name, content, worker_id) -> response
-        self._app = web.Application(middlewares=[self._basic_auth_middleware])
+        self._app = web.Application(middlewares=[self._basic_auth_middleware,
+                                                 self._principal_middleware])
         self._app.router.add_get("/", self._index)
         self._app.router.add_get("/worker", self._worker_bootstrap)
         self._app.router.add_post("/enroll", self._enroll_config)
@@ -1100,6 +1101,10 @@ class CombinedServer:
         from .account_web import AccountWeb
         self._accounts = AccountWeb(self)
         self._accounts.install(self._app)
+        # Permissions page + policy API (docs/design/permissions.md 3.10).
+        self._authz = None
+        from .policy_web import PolicyWeb
+        PolicyWeb(self).install(self._app)
         self._runner: web.AppRunner | None = None
 
 
@@ -1119,6 +1124,14 @@ class CombinedServer:
         if self.web_user:
             return user == self.web_user and passwd == self.web_pass
         return passwd == self.web_pass
+
+    _AUTH_EXEMPT = ("/ws", "/health", "/worker", "/worker.py", "/band-worker.pyz",
+                    "/band-worker-enrollment.pyz", "/band-worker.json", "/enroll", "/install",
+                    "/rook", "/rook.py", "/hub", "/telesthete-hub")
+
+    @classmethod
+    def _auth_exempt(cls, path: str) -> bool:
+        return any(path == p or path.startswith(p + "/") for p in cls._AUTH_EXEMPT)
 
     @web.middleware
     async def _basic_auth_middleware(self, request: web.Request, handler):
@@ -1149,11 +1162,7 @@ class CombinedServer:
             return await handler(request)
 
         # Always public: worker bootstrap/artifacts, health, websockets.
-        exempt = ("/ws", "/health", "/worker", "/worker.py", "/band-worker.pyz", "/band-worker-enrollment.pyz",
-                  "/band-worker.json", "/enroll", "/install", "/rook", "/rook.py",
-                  "/hub", "/telesthete-hub")
-        is_exempt = any(
-            request.path == p or request.path.startswith(p + "/") for p in exempt)
+        is_exempt = self._auth_exempt(request.path)
         if request.path in ("/apk", "/apk.json") and os.environ.get("ROOK_PUBLIC_APK_SHA256"):
             is_exempt = True  # handler verifies the exact approved generic artifact
 
@@ -1373,6 +1382,7 @@ button:hover{{background:#22b88f}}
             psks = self._enrollment.transport_psks()
             self._band = MultiBandClient(psks=psks, hub_host=self.hub_host,
                                          hub_port=self.hub_port)
+            self._band.authz = self._authorizer()
             await self._band.start()
             self._enrollment_task = asyncio.create_task(self._watch_enrollment())
             log.info("band client joined hub %s:%d (%d band(s))",
@@ -1800,6 +1810,74 @@ button:hover{{background:#22b88f}}
     async def _close_overview(self, app):
         await self._overview.close()
 
+    # -- permissions (docs/design/permissions.md) -----------------------------
+
+    def _authorizer(self):
+        """Policy evaluation + call tickets for the dashboard's band client.
+        Shares policy.json (and, when present, the journal) with the MCP
+        bridge's data directory. Never raises."""
+        from ..paths import data_path
+        from ..hub.authz import build_authorizer
+        policy_dir = os.path.dirname(data_path("policy.json", "/var/lib/rook-band-mcp/policy.json"))
+        journal_path = data_path("journal.db", "/var/lib/rook-band-mcp/journal.db")
+        state = {"journal": None}
+
+        def record(**kw):
+            if state["journal"] is None:
+                if not os.path.isdir(os.path.dirname(journal_path)):
+                    return None
+                from ..band_mcp.journal import Journal
+                state["journal"] = Journal(journal_path)
+            return state["journal"].record(**kw)
+
+        try:
+            authz = build_authorizer(policy_dir, record=record, banned=self._ban_match)
+        except Exception:
+            log.exception("ROOK AUTHZ ALERT: dashboard authorizer unavailable")
+            return None
+        self._authz = authz
+        return authz
+
+    def _principal_for(self, request: web.Request):
+        """The authenticated principal behind an admitted dashboard request:
+        the signed-in account (owner if admin or a band owner), else the shared
+        dashboard password (``human:dashboard``, an owner for compatibility)."""
+        from ..hub.authz import principal_for_user
+        if self._auth_exempt(request.path):
+            return None  # public endpoints carry no principal
+        user = self._accounts.current(request)
+        if not user:
+            if self._accounts.handles(request.path):
+                return None  # account routes enforce their own sessions
+            return principal_for_user(None, True)
+        owner = bool(user.get("admin"))
+        if not owner:
+            try:
+                owner = any(b.get("role") == "owner"
+                            for b in self._accounts.store.bands(user["id"]))
+            except Exception:
+                owner = False
+        return principal_for_user(user, owner)
+
+    @web.middleware
+    async def _principal_middleware(self, request: web.Request, handler):
+        """Runs after the auth middleware admitted the request: put the
+        caller's principal in context so every band call this request makes is
+        authorized for it (the band client reads it)."""
+        from ..hub.authz import current_principal
+        try:
+            principal = self._principal_for(request)
+        except Exception:
+            log.exception("ROOK AUTHZ ALERT: dashboard principal lookup failed")
+            principal = None
+        if principal is None:
+            return await handler(request)
+        tok = current_principal.set(principal)
+        try:
+            return await handler(request)
+        finally:
+            current_principal.reset(tok)
+
     def _dashboard_identity(self, request: web.Request) -> str:
         """Audit identity for a dashboard band call. The auth middleware has
         already admitted the request; this only names who it was — the signed-in
@@ -1869,17 +1947,16 @@ button:hover{{background:#22b88f}}
         return False
 
     def _sign_deauth(self, worker_id: str, name: str, reason: str) -> dict | None:
-        """An ed25519-signed worker.deauth payload, signed with the same OTA
-        key. None if this host holds no signing key (then it's denylist-only)."""
-        from .update_keys import load_signing_key, _canonical_payload
-        import base64
+        """A signed worker.deauth payload: a deauth v2 order (own signature
+        domain, bound to ``worker_id`` + ``issued_at``) nested in a legacy v1
+        body so workers from before v2 still park (permissions 6.3). None if
+        this host holds no signing key (then it's denylist-only)."""
+        from .update_keys import load_signing_key
+        from ..hub.keys import deauth_payload
         sk = load_signing_key()
-        if sk is None:
+        if sk is None or not worker_id:
             return None
-        body = {"worker_id": worker_id, "name": name,
-                "issued_at": int(time.time()), "reason": reason[:500]}
-        sig = sk.sign(_canonical_payload(body)).signature
-        return {**body, "sig": base64.b64encode(sig).decode("ascii")}
+        return deauth_payload(sk, worker_id, name, reason)
 
     async def _api_bans(self, request: web.Request) -> web.Response:
         """The current deauth list (for the dashboard 'Banned' view)."""

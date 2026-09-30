@@ -4,10 +4,11 @@ Every node (the hub and each worker) describes itself with two kinds of fact:
 
 * **Roles** (``is_hub``, later others) come from a *grant signed by the root
   key* (``docs/design/permissions.md`` section 4). A node cannot make itself the hub by saying so. Grants ride in
-  the announce as ``grants``; :func:`verify_role_grant` checks them. The
-  signature scheme is specified by the permissions task, so in this wave the
-  verifier is a stub that rejects every remote grant; the hub's own node
-  holds ``is_hub`` as local authority (it is the key holder).
+  the announce as ``grants``; :func:`roles_from_announce` checks them
+  (``rook-grant-v1`` signature by a trusted root, window, band scope, and a
+  signed announce proving the node holds the grant key; see
+  :mod:`rook.core.authz`). The hub's own node holds ``is_hub`` as local
+  authority (it is the key holder).
 * **Hardware/platform facts** (os, arch, cpus, memory, pty, display, camera,
   gpu, embedded) are self-reported. They only gate *placement* (where a plugin
   runs); they grant nothing. Operators can add or correct them with the
@@ -50,24 +51,31 @@ log = logging.getLogger("rook.core.facts")
 RoleVerifier = Callable[[dict, str], "str | None"]
 
 
-def _reject_all(grant: dict, node_id: str) -> str | None:  # noqa: ARG001
-    return None
+def _verify_signed(grant: dict, node_id: str) -> str | None:
+    """Default verifier: a ``rook-grant-v1`` signature by a trusted root
+    (:func:`rook.core.authz.default_anchors`), validity window, known role and
+    ``sub.worker_id`` binding. Band scope and key possession need the whole
+    announce; :func:`roles_from_announce` checks those."""
+    from . import authz
+    ok, _ = authz.verify_grant(grant, authz.default_anchors(), worker_id=node_id)
+    return grant.get("role") if ok else None
 
 
-_role_verifier: RoleVerifier = _reject_all
+_role_verifier: RoleVerifier = _verify_signed
+_custom_verifier = False
 
 
 def set_role_verifier(fn: RoleVerifier | None) -> None:
-    """Install the grant verifier: ``fn(grant, node_id) -> role | None``.
+    """Install a grant verifier: ``fn(grant, node_id) -> role | None``.
 
-    The real verifier checks a ``rook-grant-v1`` ed25519 signature by a
-    trusted root, expiry, band scope, revocation and that the announcer holds
-    ``sub.key`` (``docs/design/permissions.md`` section 4.4). Until
-    that lands every remote grant is rejected, so no remote node gets a role.
-    ``None`` restores the reject-all stub.
+    The default checks a ``rook-grant-v1`` ed25519 signature by a trusted
+    root, expiry and role (``docs/design/permissions.md`` section 4.4);
+    :func:`roles_from_announce` additionally requires band scope and that
+    the announcer holds ``sub.key``. ``None`` restores the default.
     """
-    global _role_verifier
-    _role_verifier = fn or _reject_all
+    global _role_verifier, _custom_verifier
+    _role_verifier = fn or _verify_signed
+    _custom_verifier = fn is not None
 
 
 def verify_role_grant(grant: Any, node_id: str) -> str | None:
@@ -87,6 +95,28 @@ def roles_from_grants(grants: Any, node_id: str) -> frozenset[str]:
     if not isinstance(grants, list):
         return frozenset()
     return frozenset(r for r in (verify_role_grant(g, node_id) for g in grants) if r)
+
+
+def roles_from_announce(msg: dict, band: str | None = None,
+                        anchors: "list[str] | None" = None) -> frozenset[str]:
+    """Roles an announce *proves*: each grant must verify (root signature,
+    window, band scope when ``band`` is given, revocation, bindings) and the
+    announce must be signed by the grant's key (``asig``), so a grant copied
+    into another node's announce confers nothing. A custom verifier installed
+    with :func:`set_role_verifier` replaces the signature check. Never raises."""
+    if not isinstance(msg, dict):
+        return frozenset()
+    wid = str(msg.get("worker_id") or "")
+    if _custom_verifier:
+        return roles_from_grants(msg.get("grants"), wid)
+    try:
+        from . import authz
+        held = authz.held_roles(msg, anchors if anchors is not None else authz.default_anchors(),
+                                band=band)
+        return frozenset(held)
+    except Exception:
+        log.warning("role grant check failed; no roles granted", exc_info=True)
+        return frozenset()
 
 
 # -- hardware / platform facts ---------------------------------------------
@@ -243,12 +273,13 @@ class NodeFacts:
         return False
 
     @classmethod
-    def from_announce(cls, msg: dict) -> "NodeFacts":
+    def from_announce(cls, msg: dict, band: str | None = None) -> "NodeFacts":
         """Facts for a remote node from its announce. Missing/garbled fields
-        (build-167 workers) yield empty facts and no roles."""
+        (build-167 workers) yield empty facts and no roles. Roles need a
+        verified grant plus proof of key possession (:func:`roles_from_announce`)."""
         wid = str(msg.get("worker_id") or "")
         return cls(node_id=wid, name=str(msg.get("name") or ""),
-                   roles=roles_from_grants(msg.get("grants"), wid),
+                   roles=roles_from_announce(msg, band),
                    hw=clean_facts(msg.get("facts")))
 
 

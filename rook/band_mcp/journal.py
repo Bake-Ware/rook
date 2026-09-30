@@ -73,6 +73,14 @@ class Journal:
             for col in ("agent_id", "key_id", "auth", "actor"):
                 if col not in cols:
                     self._db.execute(f"ALTER TABLE calls ADD COLUMN {col} TEXT")
+            # Permissions (docs/design/permissions.md 3.7): the authenticated
+            # principal, the policy decision (allow|deny|would_deny|...), the
+            # winning rule, the policy revision and the cap's tier.
+            for col, typ in (("principal", "TEXT"), ("decision", "TEXT"), ("rule", "TEXT"),
+                             ("policy_rev", "INTEGER"), ("tier", "TEXT")):
+                if col not in cols:
+                    self._db.execute(f"ALTER TABLE calls ADD COLUMN {col} {typ}")
+            self._db.execute("CREATE INDEX IF NOT EXISTS idx_calls_decision ON calls(decision)")
             self._db.execute("CREATE INDEX IF NOT EXISTS idx_calls_ts ON calls(ts)")
             self._db.execute("CREATE INDEX IF NOT EXISTS idx_calls_worker ON calls(worker)")
             self._db.execute("CREATE INDEX IF NOT EXISTS idx_calls_thread ON calls(thread_id)")
@@ -89,7 +97,8 @@ class Journal:
 
     def record(self, *, cap: str, worker: str | None, identity: str | None,
                args: dict | None, reply: dict | None, thread_id: str | None = None,
-               call_id: str | None = None, audit: dict | None = None) -> str:
+               call_id: str | None = None, audit: dict | None = None,
+               authz: dict | None = None) -> str:
         """Store one call + its reply. Returns the journal call id (generated if
         not supplied). ``audit`` is the caller's attribution
         (``agent_id``/``key_id``/``kind``/``verified``). Best-effort — never
@@ -111,15 +120,19 @@ class Journal:
         audit = audit or {}
         # agent | shared | unverified | denied (NULL for pre-attribution rows)
         auth = audit.get("kind")
+        az = authz or {}
         row = (cid, round(time.time(), 3), identity or "anonymous", cap,
                worker, thread_id, ok, error, blob,
-               audit.get("agent_id"), audit.get("key_id"), auth, audit.get("actor"))
+               audit.get("agent_id"), audit.get("key_id"), auth, audit.get("actor"),
+               az.get("principal"), az.get("decision"), az.get("rule"),
+               az.get("policy_rev"), az.get("tier"))
         try:
             with self._lock:
                 self._db.execute(
                     "INSERT INTO calls (call_id, ts, identity, cap, worker, "
-                    "thread_id, ok, error, reply, agent_id, key_id, auth, actor) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", row)
+                    "thread_id, ok, error, reply, agent_id, key_id, auth, actor, "
+                    "principal, decision, rule, policy_rev, tier) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", row)
                 self._writes_since_prune += 1
                 if self._writes_since_prune >= _PRUNE_EVERY:
                     self._prune_locked()
@@ -168,7 +181,7 @@ class Journal:
               thread_id: str | None = None,
               call_id: str | None = None, since: float | None = None,
               ok: bool | None = None, limit: int = 50,
-              include_reply: bool = False) -> list[dict]:
+              include_reply: bool = False, decision: str | None = None) -> list[dict]:
         """Return matching journal entries, newest first. ``include_reply``
         attaches the full stored reply (omitted by default to keep listings
         light — fetch a single call_id with include_reply=True to see output)."""
@@ -191,9 +204,12 @@ class Journal:
             clauses.append("ts >= ?"); params.append(float(since))
         if ok is not None:
             clauses.append("ok = ?"); params.append(1 if ok else 0)
+        if decision:
+            clauses.append("decision = ?"); params.append(decision)
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         sql = (f"SELECT call_id, ts, identity, cap, worker, thread_id, ok, "
-               f"error, reply, agent_id, key_id, auth, actor FROM calls {where} "
+               f"error, reply, agent_id, key_id, auth, actor, principal, decision, "
+               f"rule, policy_rev, tier FROM calls {where} "
                f"ORDER BY seq DESC LIMIT ?")
         params.append(max(1, min(int(limit), 500)))
         try:
@@ -204,12 +220,16 @@ class Journal:
             return []
         out = []
         for (cid, ts, ident, cap, worker_, thread, ok_, error, reply,
-             agent, key, auth, actor) in rows:
+             agent, key, auth, actor, principal, dec, rule, rev, tier) in rows:
             e = {"call_id": cid, "ts": ts, "identity": ident, "cap": cap,
                  "worker": worker_, "thread_id": thread, "ok": bool(ok_)}
             for k, v in (("agent_id", agent), ("key_id", key), ("auth", auth), ("actor", actor)):
                 if v:
                     e[k] = v
+            if dec and dec != "allow":
+                # Only non-allow decisions are shown, to keep listings light.
+                e.update({"principal": principal, "decision": dec, "rule": rule,
+                          "policy_rev": rev, "tier": tier})
             if error:
                 e["error"] = error
             if include_reply and reply is not None:

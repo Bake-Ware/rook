@@ -74,6 +74,27 @@ Preparation for public use.
 - `tools/token_budget.py` measures what the MCP costs an agent (tools/list,
   instructions, common replies) against an in-process hub.
 - `ROOK_MCP_ENVELOPE=legacy` restores the previous `rook_call` reply shape.
+- Permissions (`docs/design/permissions.md`), shipped in **audit mode**: a
+  policy engine (per-principal tier defaults, most-specific-wins rules with
+  worker/group/fact target selectors, hard invariants) evaluated inside the
+  hub's band client for every hub path, plus hub tools as caps on `rook`.
+  Nothing is denied until `policy.json` sets `"mode": "enforce"`; would-be
+  denials are journaled (`calls` gains `principal`, `decision`, `rule`,
+  `policy_rev`, `tier`). Principals come from verified credentials only;
+  tokens get a role at mint (agent, operator, readonly, integration, custom).
+  `policy.explain/get/set/status` caps on `rook` and a `/permissions`
+  dashboard page. Built-in cap tier table; a worker may declare a higher tier,
+  never a lower one; unknown caps are exec.
+- Signed role grants: the OTA root key signs an `is_hub` grant for a new hub
+  operational key (`hub-op-key`, rotated every 30 days). The hub announces
+  it with an op-key signature (proof of possession); only its holder resolves
+  as `rook`, and anyone else announcing that name is quarantined as
+  `rook~<id8>` and journaled as `audit.impostor`.
+- Call tickets: targeted hub calls carry a short-lived, op-key-signed ticket
+  bound to the worker, message id, cap and exact args. Workers verify them in
+  `audit` mode by default (`ROOK_AUTHZ_MODE=off|audit|enforce-admin|
+  enforce-exec|enforce-all`), record the result in `audit.jsonl` and announce
+  their readiness under `authz`. Build-167 workers ignore the extra keys.
 
 ### Changed
 - MCP replies are compact. Tool results are JSON without indentation and are
@@ -119,6 +140,18 @@ Preparation for public use.
   no longer kept in this repository.
 
 ### Fixed
+- `worker.deauth` accepted any validly signed OTA manifest as an order and
+  skipped the target/age checks when fields were missing. It now requires a
+  deauth v2 order with its own signature domain and mandatory `worker_id` and
+  `issued_at`; the hub sends one nested in a legacy body so older workers
+  still park.
+- `worker.update(url=...)` installed a bundle with no signature check. It now
+  needs a signed OTA `manifest` (sha256 and `--selftest` checked, no
+  downgrades).
+- `worker.reconfigure`, `worker.update` and `worker.config_apply` could
+  repoint a worker at another hub or PSK without a signed order. Hub/PSK
+  changes now need a verified hub ticket (`ROOK_AUTHZ_ALLOW_UNSIGNED_REPOINT=1`
+  on the worker is the local escape hatch).
 - The first-run `/setup` page required no login: anyone who could reach an
   unconfigured hub could set its band key, even with a dashboard password.
   With a password, `/setup` now needs the login first. A password-less hub

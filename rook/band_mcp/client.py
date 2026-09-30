@@ -27,6 +27,20 @@ WORKER_STALE_SECS = 90.0
 LOCAL_ANNOUNCE_SECS = 30.0
 
 
+def _denial(decision, target: str | None) -> dict:
+    """A policy denial in the shape of a band reply (permissions 3.7)."""
+    return {"id": uuid.uuid4().hex, "from": target or "rook", **decision.denial()}
+
+
+def _authorize(authz, cap: str, target: str | None, entry: dict | None,
+               identity: str | None, principal, local: bool = False):
+    """Run E1 (permissions 3.5). Returns the Decision, or None when this
+    client has no authorizer (tests, tools that never enforce)."""
+    if authz is None:
+        return None
+    return authz.check(cap, target, entry, identity=identity, principal=principal, local=local)
+
+
 async def _call_local(node, cap: str, args: dict | None, identity: str | None,
                       timeout: float) -> dict:
     """In-process call to the hub node: same reply shape as a band reply."""
@@ -75,6 +89,21 @@ class BandClient:
         self._local_task: asyncio.Task | None = None
         self._local_calls: set[asyncio.Task] = set()
         self._started = False
+        # Hub-side policy enforcement + ticket signing (rook.hub.authz). None
+        # = no evaluation (the build-167 world); the MCP bridge and dashboard
+        # install one.
+        self.authz = None
+        self._impostors: set[str] = set()
+
+    @property
+    def band_hex(self) -> str:
+        return self.transport.band_id.hex()
+
+    def _anchors(self) -> list[str]:
+        if self.authz is not None:
+            return self.authz.anchors()
+        from ..core.authz import default_anchors
+        return default_anchors()
 
     # -- local (hub) node ----------------------------------------------------
 
@@ -100,8 +129,12 @@ class BandClient:
         if node is None:
             return
         self.workers[node.worker_id] = WorkerEntry(node.entry())
+        msg = node.announce_msg()
+        if self.authz is not None:
+            # is_hub grant + op-key signature: proves this node is `rook`.
+            msg = self.authz.decorate_announce(msg, self.band_hex)
         try:
-            await self.transport.send(json.dumps(node.announce_msg()).encode())
+            await self.transport.send(json.dumps(msg).encode())
         except Exception:
             log.debug("hub node announce failed", exc_info=True)
 
@@ -129,8 +162,18 @@ class BandClient:
         task.add_done_callback(self._local_calls.discard)
 
     async def _answer_local(self, node, msg: dict) -> None:
-        body = await node.dispatch(msg.get("cap"), msg.get("args", {}),
-                                   msg.get("identity"), source="band")
+        decision = None
+        if self.authz is not None:
+            # Band-originated: any PSK holder, so no authenticated principal.
+            from ..hub.authz import BAND_UNAUTHENTICATED
+            decision = _authorize(self.authz, msg.get("cap") or "", node.worker_id,
+                                  node.entry(), msg.get("identity"), BAND_UNAUTHENTICATED,
+                                  local=True)
+        if decision is not None and decision.denied:
+            body = decision.denial()
+        else:
+            body = await node.dispatch(msg.get("cap"), msg.get("args", {}),
+                                       msg.get("identity"), source="band")
         reply = {"from": node.worker_id, **body}
         if msg.get("id") is not None:
             reply = {"id": msg["id"], **reply}
@@ -205,12 +248,40 @@ class BandClient:
         if local is not None and wid == local.worker_id:
             return  # our own announce echoed back
         name = msg.get("name", wid)
-        if local is not None and isinstance(name, str) and name.lower() == local.name:
-            # "rook" is reserved for the hub node; a remote node claiming it is
-            # listed under a disambiguated name so name resolution stays exact.
+        # Roles only from verified grants whose key signed this announce
+        # (permissions 4.4); self-reported facts never count.
+        roles: frozenset = frozenset()
+        if "grants" in msg:
+            from ..core.facts import roles_from_announce
+            try:
+                roles = roles_from_announce(msg, self.band_hex, self._anchors())
+            except Exception:
+                roles = frozenset()
+        claims_rook = isinstance(name, str) and name.lower() == "rook"
+        quarantined = False
+        if claims_rook and (local is not None or "is_hub" not in roles):
+            # "rook" is reserved for the hub node (4.6): only the holder of a
+            # valid is_hub grant for this band gets the name. Anyone else is
+            # quarantined under a disambiguated name, so name resolution stays
+            # exact, and journaled as an impostor (once per id).
             name = f"{name}~{str(wid)[:8]}"
+            quarantined = local is None or "is_hub" not in roles
+            if quarantined and wid not in self._impostors:
+                self._impostors.add(wid)
+                log.warning("ROOK AUTHZ ALERT: %s announced the reserved name 'rook' "
+                            "without a valid is_hub grant; quarantined as %s", wid, name)
+                if self.authz is not None:
+                    self.authz.record_event("audit.impostor", name,
+                                            {"worker_id": wid, "claimed": "rook"})
         facts = msg.get("facts")
         entry = self.workers.get(wid) or WorkerEntry()
+        tiers = msg.get("tiers")
+        entry["tiers"] = ({str(k): str(v) for k, v in list(tiers.items())[:2000]}
+                          if isinstance(tiers, dict) else {})
+        entry["authz"] = msg["authz"] if isinstance(msg.get("authz"), dict) else {}
+        entry["roles"] = sorted(roles)
+        entry["claims_rook"] = claims_rook
+        entry["quarantined"] = quarantined
         entry.update({
             "worker_id": wid,
             "name": name,
@@ -246,16 +317,31 @@ class BandClient:
 
     async def call(self, cap: str, args: dict | None = None,
                    target: str | None = None, timeout: float = 15.0,
-                   identity: str | None = None) -> dict:
+                   identity: str | None = None, principal=None,
+                   _decision=None) -> dict:
         """Send a capability call and wait for the first matching reply.
 
-        ``identity`` is the caller's identity (from the bearer-token name);
-        it rides in the envelope so the target worker can audit who called.
+        ``identity`` is the caller's display identity (from the bearer-token
+        name); it rides in the envelope so the target worker can audit who
+        called. ``principal`` (a :class:`rook.hub.policy.Principal`) is who the
+        call is authorized for; by default the one the MCP wrapper or dashboard
+        middleware put in context, else a ``system:*`` principal.
+
+        With an authorizer installed the call is evaluated first (a denial in
+        ``enforce`` mode comes back as an ``ok: false`` reply with ``denied``
+        and nothing is sent) and targeted calls carry a signed ticket.
 
         Returns the reply dict (``{"id", "from", "ok", "result"|"error"}``).
         Raises ``asyncio.TimeoutError`` on no reply.
         """
-        if self._local is not None and target == self._local.worker_id:
+        local = self._local is not None and target == self._local.worker_id
+        decision = _decision
+        if decision is None:
+            entry = self._local.entry() if local else self.workers.get(target) if target else None
+            decision = _authorize(self.authz, cap, target, entry, identity, principal, local=local)
+        if decision is not None and decision.denied:
+            return _denial(decision, target)
+        if local:
             return await _call_local(self._local, cap, args, identity, timeout)
         if len(self._pending) >= 512:
             raise RuntimeError("band call capacity reached")
@@ -267,6 +353,11 @@ class BandClient:
             msg["target"] = target
         if identity:
             msg["identity"] = identity
+        if target and self.authz is not None and decision is not None:
+            ticket = self.authz.ticket(decision, band=self.band_hex, target=target, msg_id=mid,
+                                       args=msg["args"], entry=self.workers.get(target))
+            if ticket is not None:
+                msg["ticket"] = ticket  # build-167 workers ignore unknown keys
         try:
             async with asyncio.timeout(timeout):
                 await self.transport.send(json.dumps(msg).encode())
@@ -373,6 +464,18 @@ class MultiBandClient:
         self.use_ws = use_ws
         self._membership_lock = asyncio.Lock()
         self._local = None
+        self._authz = None
+
+    @property
+    def authz(self):
+        return self._authz
+
+    @authz.setter
+    def authz(self, value) -> None:
+        """One authorizer for every band (current and later-added)."""
+        self._authz = value
+        for c in self._clients:
+            c.authz = value
 
     def attach_local(self, node) -> None:
         """Serve the hub node on every band (current and later-added)."""
@@ -388,6 +491,7 @@ class MultiBandClient:
                 return
             client = BandClient(psk=psk, hub_host=self.hub_host,
                                 hub_port=self.hub_port, use_ws=self.use_ws)
+            client.authz = self._authz
             if self._local is not None:
                 client.attach_local(self._local)
             try:
@@ -465,23 +569,26 @@ class MultiBandClient:
 
     async def call(self, cap: str, args: dict | None = None,
                    target: str | None = None, timeout: float = 15.0,
-                   identity: str | None = None) -> dict:
-        if self._local is not None and target == self._local.worker_id:
+                   identity: str | None = None, principal=None) -> dict:
+        local = self._local is not None and target == self._local.worker_id
+        entry = self._local.entry() if local else self.workers.get(target) if target else None
+        decision = _authorize(self._authz, cap, target, entry, identity, principal, local=local)
+        if decision is not None and decision.denied:
+            return _denial(decision, target)
+        if local:
             return await _call_local(self._local, cap, args, identity, timeout)
+        kw = {"timeout": timeout, "identity": identity, "_decision": decision}
         # Known target → send only on its band.
         if not self._clients:
             raise ConnectionError("no active bands")
         if target:
             c = self._client_for(target)
             if c is not None:
-                return await c.call(cap=cap, args=args, target=target,
-                                    timeout=timeout, identity=identity)
+                return await c.call(cap=cap, args=args, target=target, **kw)
         # Otherwise race across all bands; first real reply wins.
         if len(self._clients) == 1:
-            return await self._clients[0].call(cap=cap, args=args, target=target,
-                                               timeout=timeout, identity=identity)
-        tasks = [asyncio.create_task(c.call(cap=cap, args=args, target=target,
-                                            timeout=timeout, identity=identity))
+            return await self._clients[0].call(cap=cap, args=args, target=target, **kw)
+        tasks = [asyncio.create_task(c.call(cap=cap, args=args, target=target, **kw))
                  for c in self._clients]
         try:
             result: dict | None = None

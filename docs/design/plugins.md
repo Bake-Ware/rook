@@ -345,9 +345,12 @@ added later) and:
 - is never evicted from its own roster, and ignores its own announce echoed
   back.
 
-A remote announce claiming the name `rook` (any case) is listed as
-`rook~<id8>`, so name resolution stays exact. Quarantine and impostor
-journaling arrive with signed grants (permissions.md 4.6).
+A remote announce claiming the name `rook` (any case) without a valid
+`is_hub` grant for the band, held by the announcer (op-key signed announce),
+is listed as `rook~<id8>`, flagged `quarantined` and journaled once as
+`audit.impostor` (permissions.md 4.6). The hub's own announce carries its
+grant and signature, so band clients without a hub node (the dashboard) also
+resolve `rook` to it.
 
 ### 10.2 From the MCP bridge
 
@@ -457,7 +460,7 @@ Runtime enable/disable (`worker.plugin.*`) persists per worker as before.
 | Core plugin host shared by hub and worker | done | |
 | Manifest, `core_api` check, versions | done | |
 | Placement expressions + facts in announces | done | hub-driven `run="one"` election for workers |
-| Role grants | verification hook (stub rejects all) | permissions wave 2 |
+| Role grants | verified (`roles_from_announce`: root signature, band scope, proof of possession) | done (permissions wave 2) |
 | `risk`/`tags`/`limit`/`fields`/`tool` | declared, `limit`/`fields` enforced, tiers announced | policy enforcement, byte caps |
 | Hub node `rook` + band serving | done, band calls read-only | tickets, signed announces |
 | Generated MCP tools | done (no built-in hub cap uses it yet; `tools/list` unchanged) | regenerate chat/vault/journal tools from caps |

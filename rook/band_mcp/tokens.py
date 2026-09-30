@@ -28,6 +28,15 @@ log = logging.getLogger("rook.band_mcp.tokens")
 
 _ADMIN_SESSION_TTL = 1800  # 30 min — UI-only session for /tokens page
 
+#: Token roles (permissions.md 1). Tokens minted before roles existed are
+#: ``agent`` (compatibility: they keep everything, admin moves to audit).
+TOKEN_ROLES = ("agent", "operator", "readonly", "integration", "custom")
+
+
+def token_role(entry: dict) -> str:
+    role = entry.get("role")
+    return role if role in TOKEN_ROLES else "agent"
+
 
 class StaticTokenVerifier(TokenVerifier):
     """Accept exactly one bearer token. No expiry, no scope check beyond
@@ -197,13 +206,14 @@ class TokenStore:
             return None
         if self._static_token and secrets.compare_digest(self._static_token, token):
             return {"kind": "shared", "agent_id": None, "key_id": None,
-                    "label": "static"}
+                    "label": "static", "role": "operator"}
         api = self._api_tokens.get(token)
         if api is None:  # revoked between verify and lookup
             return None
         return {"kind": "agent", "agent_id": api.get("agent_id"),
                 "key_id": api.get("id"),
-                "label": api.get("name") or api.get("id") or "api"}
+                "label": api.get("name") or api.get("id") or "api",
+                "role": token_role(api)}
 
     # -- API tokens (headless-agent bearers) ---------------------------------
 
@@ -218,6 +228,7 @@ class TokenStore:
                 "created_at": t.get("created_at"),
                 "last_used_at": t.get("last_used_at"),
                 "expires_at": t.get("expires_at"),
+                "role": token_role(t),
                 "preview": (t.get("token", "")[:8] + "…"
                             + t.get("token", "")[-4:]) if t.get("token") else "",
             })
@@ -226,12 +237,18 @@ class TokenStore:
 
     def mint_api_token(self, name: str,
                        ttl_seconds: int | None = None,
-                       scopes: list[str] | None = None) -> dict[str, Any]:
+                       scopes: list[str] | None = None,
+                       role: str = "agent") -> dict[str, Any]:
         """Create a credential for a new agent, even when labels match.
 
-        The UI shows the secret once. The existing token store retains it in
-        its restricted persistence file for bearer verification.
+        ``role`` (agent, operator, readonly, integration, custom) is chosen at
+        mint time and picks the token's default tier table in the permission
+        policy (permissions.md 1). Rotation keeps it. The UI shows the secret
+        once. The existing token store retains it in its restricted
+        persistence file for bearer verification.
         """
+        if role not in TOKEN_ROLES:
+            raise ValueError(f"role must be one of {', '.join(TOKEN_ROLES)}")
         secret = secrets.token_urlsafe(32)
         tok_id = secrets.token_hex(16)
         entry = {
@@ -241,6 +258,7 @@ class TokenStore:
             "name": (name or "unnamed")[:64],
             "scopes": scopes or ["rook"],
             "client_id": "api",
+            "role": role,
             "created_at": self._now(),
             "last_used_at": None,
             "expires_at": (self._now() + ttl_seconds) if ttl_seconds else None,

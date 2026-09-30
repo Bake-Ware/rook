@@ -97,9 +97,17 @@ class ConfigPlugin(Plugin):
         ``ROOK_WAKE_CMD`` or the memory vault via ``ROOK_MEMORY_VAULT``). The new
         config is staged as *pending*; the worker restarts and must be confirmed
         (worker.config_confirm) within ``confirm_within`` seconds or it reverts
-        to the previous config automatically. Reply is sent before the restart."""
+        to the previous config automatically. Reply is sent before the restart.
+
+        Setting ``hub`` or ``psk`` needs a hub-signed order: the call must carry
+        a valid ticket from the hub (permissions 6.3)."""
         if not isinstance(settings, dict) or not settings:
             return {"ok": False, "error": "settings must be a non-empty object"}
+        if settings.get("hub") is not None or settings.get("psk") is not None:
+            from ..authz_guard import require_hub_order
+            refused = require_hub_order("changing hub/psk")
+            if refused:
+                return {"ok": False, "error": refused}
         merged = wconfig.stage_apply(settings, epoch, confirm_within)
         result = {"ok": True, "staged_epoch": int(epoch),
                   "confirm_within": confirm_within, "restarting": bool(restart),
