@@ -207,7 +207,10 @@ Steps, in order; any failure before step 7 changes nothing:
    or a detached `sleep` (symlink mode), that runs `rollback.sh --deadman`.
 9. For each service in order: switch its selector, `daemon-reload`, restart,
    wait until healthy (unit active, effective release correct, health URLs
-   pass), then confirm it is still healthy after `settle_seconds`.
+   pass), then confirm it is still healthy after `settle_seconds`. If
+   systemd's `NRestarts` goes up meanwhile (the release crashes at start and
+   `Restart=on-failure` brings it back), verification fails at once instead
+   of waiting out `health_timeout`.
 10. Disarm the dead-man and record success.
 
 If step 9 fails, `rollback.sh` runs at once: it restores the selectors from the
@@ -265,7 +268,13 @@ keeps the latest 20 deploy records (never an armed one).
 
 `tests/test_hub_deploy.py` covers manifests, unpacking, preflight, symlink and
 (simulated) systemd deploys, stray detection, automatic and dead-man
-rollbacks, status and prune, without a hub. For an end-to-end run use a
-throwaway test hub (docs/testing.md) with its dashboard and MCP moved into
-`systemd --user` units in a separate directory. Never point `rook hub` at a
-live install to try it out.
+rollbacks, status and prune, without a hub.
+
+`scripts/hub-deploy-e2e.sh --dir DIR [--port-base P] [--deadman]` runs the
+real thing against a throwaway test hub (docs/testing.md) whose dashboard and
+MCP it moves into `systemd --user` units: first deploy, dashboard-only
+deploy, a release that crashes at start, a stray drop-in, the dead-man timer,
+rollback and prune, with the integration suite run against the deployed
+release. It uses its own signing key and a private clone, and removes
+everything afterwards unless `--keep`. Never point `rook hub` at a live
+install to try it out.
