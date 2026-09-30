@@ -14,6 +14,7 @@ SUBCOMMANDS = {
     "history":   "Browse Claude Code session history",
     "tmux":      "Manage Claude Code sessions (spawn, attach, kill)",
     "skill":     "Install or package the Rook agent skill (Claude Code, Codex)",
+    "hub":       "Build, deploy, inspect and roll back signed hub releases",
 }
 
 
@@ -69,6 +70,10 @@ def main() -> None:
         sys.argv = [sys.argv[0]] + sys.argv[2:]
         tmux_main()
         return
+
+    if sys.argv[1] == "hub":
+        from .hubdeploy.cli import main as hub_main
+        sys.exit(hub_main(sys.argv[2:]))
 
     if sys.argv[1] == "skill":
         from .cli.skill import main as skill_main
