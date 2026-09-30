@@ -6,10 +6,8 @@ Responses come back as SSE frames (`data: {...}`), not plain JSON.
 """
 import asyncio
 import json
-import os
 import httpx
-ROOK_MCP_URL = os.environ.get('ROOK_MCP_URL', 'http://127.0.0.1:8765/mcp')
-ROOK_MCP_TOKEN = os.environ.get('ROOK_MCP_TOKEN', '')
+from .config import cfg
 _HDR = {'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream'}
 
 def _parse(resp):
@@ -37,8 +35,11 @@ class RookMCP:
     _lock_loop = None
     _n = 0
 
-    def __init__(self, url=ROOK_MCP_URL, token=ROOK_MCP_TOKEN, timeout=30.0):
-        self.url, self.token, self.timeout = (url, token, timeout)
+    def __init__(self, url=None, token=None, timeout=30.0):
+        # voice.mcp_url / voice.mcp_token (ROOK_MCP_URL / ROOK_MCP_TOKEN).
+        self.url = url or cfg('mcp_url')
+        self.token = cfg('mcp_token') if token is None else token
+        self.timeout = timeout
 
     def _headers(self, sid=None):
         h = dict(_HDR)

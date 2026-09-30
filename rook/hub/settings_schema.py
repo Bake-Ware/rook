@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..core.plugin import RISKS, Plugin, Setting, setting
+from ..core.service_settings import DECISION, VOICE
 
 log = logging.getLogger("rook.hub.settings_schema")
 
@@ -206,65 +207,10 @@ _CORE: list[tuple[Setting, str, dict]] = [
 
 # -- services beside the hub ------------------------------------------------
 
-_VOICE: list[Setting] = [
-    _s("bind", "str", "127.0.0.1", env="VOICE_BIND", bootstrap=True, apply="restart",
-       label="Listen address", group="Access"),
-    _s("port", int, 8900, env="VOICE_PORT", bootstrap=True, apply="restart", min=1,
-       max=65535, label="Port", group="Access"),
-    _s("token", "str", secret=True, env="VOICE_TOKEN", apply="restart",
-       label="Client bearer token", group="Access"),
-    _s("allow_anonymous", bool, False, env="VOICE_ALLOW_ANONYMOUS", apply="restart",
-       label="Allow clients without a token", group="Access"),
-    _s("whisper_model", "str", "small.en", env="WHISPER_MODEL", apply="reload",
-       label="Speech recognition model", group="Recognition"),
-    _s("whisper_device", "str", "cpu", env="WHISPER_DEVICE", apply="reload",
-       label="Recognition device", group="Recognition"),
-    _s("whisper_compute", "str", "int8", env="WHISPER_COMPUTE", apply="reload",
-       label="Compute type", group="Recognition"),
-    _s("min_speech_ms", int, 450, env="MIN_SPEECH_MS", min=0, label="Minimum speech (ms)",
-       group="Recognition", advanced=True),
-    _s("min_rms", float, 0.008, env="MIN_RMS", min=0.0, label="Energy floor",
-       group="Recognition", advanced=True),
-    _s("max_no_speech", float, 0.6, env="MAX_NO_SPEECH", min=0.0, max=1.0,
-       label="No-speech ceiling", group="Recognition", advanced=True),
-    _s("min_logprob", float, -1.0, env="MIN_LOGPROB", label="Minimum log-probability",
-       group="Recognition", advanced=True),
-    _s("default_voice", "str", "af_heart", env="VOICE", overridable=("user",),
-       label="Voice", group="Speech"),
-    _s("show_thinking", bool, False, scope="user", label="Show thinking", group="Speech"),
-    _s("hotword_enabled", bool, True, scope="user", label="Wake word on this account",
-       group="Speech"),
-    _s("llm_url", "url", "http://127.0.0.1:1234/v1/chat/completions", env="VLLM_URL",
-       label="Language model URL", group="Agent"),
-    _s("llm_model", "str", "", env="VLLM_MODEL", label="Model id", group="Agent"),
-    _s("mcp_url", "url", "http://127.0.0.1:8765/mcp", env="ROOK_MCP_URL",
-       label="Rook MCP URL", group="Agent"),
-    _s("mcp_token", "str", secret=True, env="ROOK_MCP_TOKEN", label="Rook MCP token",
-       group="Agent"),
-    _s("acp_host", "str", "127.0.0.1", env="ACP_HOST", label="ACP host", group="Agent"),
-    _s("acp_port", int, 9200, env="ACP_PORT", min=1, max=65535, label="ACP port",
-       group="Agent"),
-    _s("acp_auto_approve", bool, True, env="ACP_AUTO_APPROVE",
-       label="Auto-approve ACP prompts", group="Agent",
-       help="Unattended tool permission for the voice agent."),
-    _s("direct_tool_budget", int, 1, env="DIRECT_TOOL_BUDGET", min=0,
-       label="Direct tool calls per turn", group="Agent", advanced=True),
-]
-
-_DECISION: list[Setting] = [
-    _s("url", "str", "", env="DECISION_URL", label="Engine endpoint", group="General",
-       help="Blank turns the engine off."),
-    _s("assistant_names", list, ["rook", "assistant"], env="DECISION_ASSISTANT_NAMES",
-       label="Assistant names", group="General"),
-    _s("timeout_ms", int, 150, env="DECISION_TIMEOUT_MS", min=10, max=5000,
-       label="Per-turn timeout (ms)", group="Timing"),
-    _s("recent_speech_seconds", int, 15, env="DECISION_RECENT_SPEECH_SECONDS", min=1,
-       label="Recent speech window (s)", group="Timing"),
-    _s("silence_seconds", int, 15, env="DECISION_SILENCE_SECONDS", min=1,
-       label="Silence window (s)", group="Timing"),
-    _s("raw_retention_days", int, 30, env="DECISION_RAW_RETENTION_DAYS", min=0,
-       label="Keep raw inputs (days)", group="Data"),
-]
+# Voice and the decision engine are declared in rook.core.service_settings
+# (stdlib-only) so the voice service resolves the very same schema.
+_VOICE: list[Setting] = VOICE
+_DECISION: list[Setting] = DECISION
 
 _WATCHDOG: list[Setting] = [
     _s("mcp_url", "str", "http://127.0.0.1:8765", env="ROOK_WATCHDOG_MCP_URL",

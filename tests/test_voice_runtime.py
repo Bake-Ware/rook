@@ -175,10 +175,11 @@ def test_planner_retries_missing_call_before_speaking_or_starting_work():
         def __init__(self,**kw):pass
         async def __aenter__(self):return self
         async def __aexit__(self,*args):pass
-        async def post(self,url,json):
+        async def post(self,url,json,headers=None):
             requests.append(json)
             return Response(len(requests))
-    namespace={'httpx':SimpleNamespace(AsyncClient=Client),'VLLM_URL':'local','VLLM_MODEL':'model','TOOLS':[], 'json':json,'split_sentences':lambda t:([],t)}
+    namespace={'httpx':SimpleNamespace(AsyncClient=Client),'llm_request':lambda payload:('local',{'model':'model',**payload},{}),
+               'tools':lambda:[],'cfg':lambda name:25.0,'json':json,'split_sentences':lambda t:([],t)}
     exec(compile(ast.Module(body=[chat],type_ignores=[]),'planner-test','exec'),namespace)
     async def scenario():
         async def on_clause(text):spoken.append(text)

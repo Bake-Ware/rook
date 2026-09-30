@@ -339,7 +339,8 @@ def test_service_fetch_is_gated_to_listed_tokens(tmp_path):
     svc.set("core.settings.service_readers", {"voice": ["agent_v"]})
     got = svc.fetch("voice", voice)
     assert got["values"]["token"] == SECRET and got["values"]["whisper_model"] == "base.en"
-    assert got["values"]["min_speech_ms"] == 450 and got["users"] == {"u1": {"default_voice": "bf_emma"}}
+    assert set(got["stored"]) == {"token", "whisper_model"}     # the rest are defaults
+    assert got["values"]["min_speech_ms"] == 200 and got["users"] == {"u1": {"default_voice": "bf_emma"}}
     with pytest.raises(PermissionError):
         svc.fetch("voice", {**voice, "agent_id": "agent_other", "label": "other"})
     with pytest.raises(PermissionError):

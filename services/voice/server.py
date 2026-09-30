@@ -1,11 +1,15 @@
-"""Run with python -m services.voice.server; runtime secrets stay in environment."""
+"""Run with python -m services.voice.server.
+
+Settings come from the environment, then the hub (settings.fetch("voice") with
+ROOK_MCP_TOKEN), then defaults: services/voice/config.py. Secrets fetched from
+the hub stay in memory."""
 import asyncio
 from collections import deque
 import contextlib
 import hashlib
 import hmac
 import json
-import os
+import logging
 from pathlib import Path
 import time
 import uuid
@@ -14,20 +18,43 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 import uvicorn
 import webrtcvad
+from . import config
+from .config import cfg
 from .jobs import Jobs
 from .runtime import Connection
 from .state import Store
 
 VERSION = '2.0.0'
-ROOT = Path(os.environ.get('VOICE_MODEL_DIR', '.'))
-TOKEN = os.environ.get('VOICE_TOKEN', '')
+FRAME_MS = 20            # 640-byte PCM frames at 16 kHz
 connections = {}
+
+
+def root():
+    """voice.model_dir, else the working directory (static files, state DB)."""
+    return Path(cfg('model_dir') or '.')
+
+
+def state_db():
+    return cfg('state_db') or str(root() / 'voice-state.sqlite3')
+
+
+def frames(ms):
+    return max(1, int(ms) // FRAME_MS)
+
+
+def wake_advert():
+    """Wake word settings advertised to clients (the device detects the wake
+    word; older clients ignore the field)."""
+    return {'model': cfg('wake_model'), 'threshold': cfg('wake_threshold')}
+
 
 @contextlib.asynccontextmanager
 async def lifespan(app):
-    from .providers import Provider, DIRECT_TOOLS, ACP_HOST, ACP_PORT
+    await config.start_service()
+    config.CONFIG.start()
+    from .providers import Provider, DIRECT_TOOLS
     app.state.provider = Provider()
-    app.state.store = Store(os.environ.get('VOICE_STATE_DB', str(ROOT / 'voice-state.sqlite3')))
+    app.state.store = Store(state_db())
     def notify(session, event):
         current = connections.get(session)
         if current:
@@ -37,8 +64,9 @@ async def lifespan(app):
                 with contextlib.suppress(asyncio.QueueEmpty):
                     queue.get_nowait()
             queue.put_nowait(event)
-    app.state.jobs = Jobs(app.state.store, DIRECT_TOOLS, ACP_HOST, ACP_PORT, notify)
+    app.state.jobs = Jobs(app.state.store, DIRECT_TOOLS, notify=notify)
     yield
+    await config.CONFIG.stop()
     await app.state.jobs.close()
     app.state.store.db.close()
 
@@ -54,12 +82,13 @@ async def voices():
 
 @app.get('/')
 async def index():
-    return FileResponse(ROOT / 'static' / 'index.html')
+    return FileResponse(root() / 'static' / 'index.html')
 
 @app.websocket('/ws')
 async def websocket(ws: WebSocket):
     supplied = ws.headers.get('authorization', '').removeprefix('Bearer ') or ws.query_params.get('token', '')
-    if (TOKEN and not hmac.compare_digest(TOKEN, supplied)) or (not TOKEN and os.environ.get('VOICE_ALLOW_ANONYMOUS') != '1'):
+    token = cfg('token') or ''
+    if (token and not hmac.compare_digest(token, supplied)) or (not token and not cfg('allow_anonymous')):
         await ws.close(code=4401)
         return
     await ws.accept()
@@ -77,7 +106,7 @@ async def websocket(ws: WebSocket):
             hello = {}
         protocol = 2 if hello.get('type') == 'hello' and hello.get('protocol') == 2 else 1
         conversation = hello.get('conversation') if protocol == 2 else str(uuid.uuid4())
-        principal = hashlib.sha256(TOKEN.encode()).hexdigest()
+        principal = hashlib.sha256(token.encode()).hexdigest()
         try:
             key = Store.key(principal, conversation)
         except (ValueError, TypeError, AttributeError):
@@ -101,7 +130,8 @@ async def websocket(ws: WebSocket):
         conn = Connection(app.state.store, app.state.jobs, app.state.provider, key, send_json, send_bytes, protocol)
         conn.full_duplex = protocol == 2 and hello.get('aec') is True
         connections[key] = conn, queue
-        await conn.emit('session', conversation=conversation, protocol=protocol, version=VERSION, full_duplex=conn.full_duplex)
+        await conn.emit('session', conversation=conversation, protocol=protocol, version=VERSION, full_duplex=conn.full_duplex,
+                        wake=wake_advert())
         await conn.emit('state', state='listening', turn=conn.epoch)
         for job in app.state.store.jobs(key):
             await conn.emit('tool', id=job['id'], title=job['name'], status=job['status'])
@@ -148,7 +178,8 @@ async def websocket(ws: WebSocket):
                     silence += 1
                 else:
                     preroll.append(data)
-                if utterance and silence == 20 and speech >= 10:
+                min_speech = frames(cfg('min_speech_ms'))
+                if utterance and silence == frames(cfg('turn_check_ms')) and speech >= min_speech:
                     analysis = asyncio.create_task(app.state.provider.turn_complete(bytes(utterance)))
                     analysis.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
                 complete = False
@@ -156,11 +187,13 @@ async def websocket(ws: WebSocket):
                     with contextlib.suppress(Exception):
                         complete = analysis.result()
                 # Semantic completion, with a finite fallback for model uncertainty.
-                if utterance and ((silence >= 30 and complete) or silence >= 125 or len(utterance) >= 16000 * 2 * 30):
+                if utterance and ((silence >= frames(cfg('turn_silence_ms')) and complete)
+                                  or silence >= frames(cfg('turn_max_silence_ms'))
+                                  or len(utterance) >= 16000 * 2 * cfg('max_utterance_s')):
                     if analysis is not None:
                         analysis.cancel(); analysis = None
                     pcm = bytes(utterance)
-                    enough = speech >= 10
+                    enough = speech >= min_speech
                     utterance.clear(); speech = silence = 0
                     conn.receiving_speech = False
                     if enough:
@@ -213,6 +246,9 @@ async def websocket(ws: WebSocket):
                 connections.pop(key, None)
 
 if __name__ == '__main__':
-    uvicorn.run(app, host=os.environ.get('VOICE_BIND', '127.0.0.1'), port=int(os.environ.get('VOICE_PORT', '8900')),
-                ssl_keyfile=os.environ.get('VOICE_TLS_KEY'), ssl_certfile=os.environ.get('VOICE_TLS_CERT'),
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(name)s %(levelname)s %(message)s')
+    logging.getLogger('httpx').setLevel(logging.WARNING)
+    config.load_blocking()   # hub settings (or cache / env) before the socket opens
+    uvicorn.run(app, host=cfg('bind'), port=cfg('port'),
+                ssl_keyfile=cfg('tls_key') or None, ssl_certfile=cfg('tls_cert') or None,
                 log_level='warning', ws_max_size=8*1024*1024)

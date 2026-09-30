@@ -2,7 +2,7 @@
 import asyncio
 import contextlib
 import json
-import os
+from .config import cfg
 
 
 class ACPClient:
@@ -54,7 +54,7 @@ class ACPClient:
                     # operators can disable it. Never select an arbitrary option.
                     options = message.get("params", {}).get("options", [])
                     allow = next((o.get("optionId") for o in options if o.get("kind") in ("allow_once", "allow_always")), None)
-                    outcome = {"outcome": "selected", "optionId": allow} if allow and os.environ.get("ACP_AUTO_APPROVE", "1") == "1" else {"outcome": "cancelled"}
+                    outcome = {"outcome": "selected", "optionId": allow} if allow and cfg("acp_auto_approve") else {"outcome": "cancelled"}
                     await self.send({"jsonrpc": "2.0", "id": message["id"], "result":
                                      {"outcome": outcome}})
                 elif message.get("id") in self.pending:
