@@ -434,12 +434,14 @@ async def test_hub_info_and_plugins_caps(tmp_path, monkeypatch):
     node = _node(tmp_path)
     info = (await node.dispatch("hub.info", {}))["result"]
     assert info["roles"] == ["is_hub"] and info["motd"] == "maintenance at noon"
-    assert {"name": "hub-info", "namespace": "hub"}.items() <= info["plugins"][0].items()
+    hub_info = [p for p in info["plugins"] if p["namespace"] == "hub"][0]
+    assert {"name": "hub-info", "namespace": "hub"}.items() <= hub_info.items()
     compact = (await node.dispatch("hub.plugins", {}))["result"]
     assert set(compact[0]) == {"name", "namespace", "version", "state", "caps"}
     full = (await node.dispatch("hub.plugins", {"fields": "*"}))["result"]
-    assert full[0]["placement"] == {"where": "is_hub", "run": "one"}
-    assert full[0]["settings"][0]["env"] == "ROOK_HUB_MOTD"
+    full_hub = [p for p in full if p["namespace"] == "hub"][0]
+    assert full_hub["placement"] == {"where": "is_hub", "run": "one"}
+    assert full_hub["settings"][0]["env"] == "ROOK_HUB_MOTD"
 
 
 @pytest.mark.asyncio
@@ -590,7 +592,7 @@ async def test_mcp_reaches_hub_caps(tmp_path, monkeypatch):
 
     plugins = _text(await mcp.call_tool("rook_call", {"cap": "hub.plugins", "worker": "rook",
                                                       "args": {"fields": ["name"]}}))
-    assert plugins["result"] == [{"name": "hub-info"}, {"name": "notify"},
+    assert plugins["result"] == [{"name": "decide"}, {"name": "hub-info"}, {"name": "notify"},
                                  {"name": "hub-policy"}, {"name": "settings"}]
 
     workers = _text(await mcp.call_tool("rook_workers", {}))

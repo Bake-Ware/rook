@@ -107,6 +107,32 @@ are set only in the environment or on the command line.
 | `core.worker.authz_mode` | Worker permission checks | band+worker | str | `audit` | `ROOK_AUTHZ_MODE` | restart |
 | `core.worker.authz_allow_unsigned_repoint` | Allow unsigned hub/PSK changes | band+worker | bool | off | `ROOK_AUTHZ_ALLOW_UNSIGNED_REPOINT` | restart |
 
+## Decide (decision model) (hub plugin, runs in mcp)
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `decide.endpoint` | Decision model endpoint | hub | resource |  | `ROOK_DECIDE_ENDPOINT` | live |
+| `decide.adapter` | API dialect | hub | str | `diffucision` | `ROOK_DECIDE_ADAPTER` | live |
+| `decide.token` | Bearer token (secret) | hub | str |  | `ROOK_DECIDE_TOKEN` | live |
+| `decide.timeout_s` | Request timeout (s) | hub | float | `10.0` | `ROOK_DECIDE_TIMEOUT_S` | live |
+| `decide.temperature` | Softmax temperature | hub | float |  | `ROOK_DECIDE_TEMPERATURE` | live |
+| `decide.dry_run` | Dry run by default | hub | bool | on | `ROOK_DECIDE_DRY_RUN` | live |
+| `decide.max_steps` | Step budget per drive | hub | int | `20` | `ROOK_DECIDE_MAX_STEPS` | live |
+| `decide.max_seconds` | Time budget per drive (s) | hub | int | `120` | `ROOK_DECIDE_MAX_SECONDS` | live |
+| `decide.settle_ms` | Settle time after an action (ms) | hub | int | `300` | `ROOK_DECIDE_SETTLE_MS` | live |
+| `decide.screenshot_cap` | Screenshot cap | hub | str | `screenshot.capture_preview` | `ROOK_DECIDE_SCREENSHOT_CAP` | live |
+| `decide.perceiver` | Perception service | hub | resource |  | `ROOK_DECIDE_PERCEIVER` | live |
+| `decide.grid` | Target grid (rows x columns) | hub | str | `8x8` | `ROOK_DECIDE_GRID` | live |
+| `decide.screen_size` | Screen size override (WxH) | hub | str |  | `ROOK_DECIDE_SCREEN_SIZE` | live |
+| `decide.halt` | Kill switch | hub | bool | off | `ROOK_DECIDE_HALT` | live |
+| `decide.confirm` | Confirmation policy | hub | str | `gated` | `ROOK_DECIDE_CONFIRM` | live |
+| `decide.min_confidence` | Confidence floor | hub | float | `0.9` | `ROOK_DECIDE_MIN_CONFIDENCE` | live |
+| `decide.confirm_p` | needs_confirmation threshold | hub | float | `0.2` | `ROOK_DECIDE_CONFIRM_P` | live |
+| `decide.done_p` | done threshold | hub | float | `0.5` | `ROOK_DECIDE_DONE_P` | live |
+| `decide.abort_p` | abort threshold | hub | float | `0.5` | `ROOK_DECIDE_ABORT_P` | live |
+| `decide.confirm_timeout_s` | Confirmation timeout (s) | hub | int | `300` | `ROOK_DECIDE_CONFIRM_TIMEOUT_S` | live |
+| `decide.destructive_words` | Destructive words | hub | list | `['delete', 'remove', 'erase', 'wipe', 'forma…` | `ROOK_DECIDE_DESTRUCTIVE_WORDS` | live |
+
 ## Decision engine (service, runs in service:decision)
 
 | Key | Label | Scope | Type | Default | Env / flag | Apply |
