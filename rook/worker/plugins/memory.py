@@ -1,4 +1,4 @@
-"""memory.* — a shared, band-wide memory vault ("go ask sojourn", as a cap).
+"""memory.* — a shared, band-wide memory vault ("go ask the assistant", as a cap).
 
 One host on the band runs this (whichever worker has ``ROOK_MEMORY_VAULT`` set —
 intended to be the always-on hub box). Every agent on the band, Claude or
@@ -8,7 +8,7 @@ write-owned to your own namespace, with a shared/ space anyone can write.
 Two layers live in the vault dir:
 
   * **Markdown notes** — an Obsidian-compatible tree. Folders are namespaces
-    (``claude/``, ``sojourn/``, ``shared/``, ``entities/``). ``[[wikilinks]]``
+    (``claude/``, ``hermes/``, ``shared/``, ``entities/``). ``[[wikilinks]]``
     are preserved. Point the real Obsidian app at the dir any time to browse
     the graph. This is durable human-facing memory.
   * **Post-its** — atomic, append-only, immutable factlets in sqlite (FTS5),
@@ -59,7 +59,7 @@ def _vault_dir() -> Path | None:
 
 def _identity_namespace() -> str:
     """Map the caller identity to a writable namespace folder. ``agent:claude``
-    -> ``claude``; ``agent:hermes_sojourn`` -> ``sojourn`` (the agent family,
+    -> ``claude``; ``agent:hermes_assistant`` -> ``hermes`` (the agent family,
     before the first underscore, so per-host tokens share one namespace);
     unknown -> ``shared``."""
     ident = current_identity() or ""
@@ -67,7 +67,7 @@ def _identity_namespace() -> str:
     name = name.strip() or "shared"
     if name in ("static", "anonymous", ""):
         return "shared"
-    # agent family: hermes_sojourn -> hermes, claude_kaiju -> claude
+    # agent family: hermes_assistant -> hermes, claude_gpubox -> claude
     fam = name.split("_", 1)[0]
     return _safe_seg(fam or name)
 

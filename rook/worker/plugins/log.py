@@ -23,7 +23,7 @@ class LogPlugin(Plugin):
 
         Each entry: ``{ts, identity, cap, ok, args, id?, target?, error?}``.
         Filter with ``cap_prefix`` (e.g. ``"shell."``), exact ``identity``
-        (e.g. ``"agent:claude_kaiju"``), and/or ``since`` (unix seconds).
+        (e.g. ``"agent:claude_gpubox"``), and/or ``since`` (unix seconds).
         ``limit`` caps how many are returned. This is the trail behind
         "who renamed this machine and when".
         """

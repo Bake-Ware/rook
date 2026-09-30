@@ -123,8 +123,8 @@ std::vector<String> wifiScanVisible() {
     return out;
 }
 
-// Ensure firmware-shipped defaults exist in the saved list. Called every boot
-// so newly-added defaults (like bifrost) reach dongles that already had a
+// Ensure build-time defaults exist in the saved list. Called every boot
+// so newly-added defaults (DEFAULT_WIFI_SSID in secrets.h) reach dongles that already had a
 // populated wifi_networks NVS blob from earlier firmware.
 static void seedDefaults() {
     auto nets = parseJson(getSettings().wifi_networks);
@@ -142,7 +142,7 @@ static void seedDefaults() {
         changed = true;
     };
     // SSIDs are case-sensitive on Wi-Fi — must match exactly.
-    ensure("Bifrost", "1234567890", 1);
+    ensure(DEFAULT_WIFI_SSID, DEFAULT_WIFI_PASS, 1);
 
     // Also fold legacy single-STA + phone hotspot into the list if present.
     const auto& s = getSettings();

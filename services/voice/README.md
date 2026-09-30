@@ -1,6 +1,6 @@
 # Rook voice service
 
-Version 2 replaces the unversioned `voice-agent/server.py` orchestration on kaiju.
+Version 2 replaces the unversioned `voice-agent/server.py` orchestration on the GPU host.
 The model servers and Rook/Hermes capabilities remain in use. Pipecat's pinned
 Smart Turn v3.2 model and feature extractor provide local turn completion;
 Rook owns the transport, session and background-job lifecycle. The full Pipecat
@@ -31,6 +31,11 @@ Runtime configuration:
 * `VOICE_STATE_DB`: private SQLite file; defaults beneath `VOICE_MODEL_DIR`.
 * `VOICE_BIND`, `VOICE_PORT`: default loopback port 8900.
 * `VOICE_TLS_KEY`, `VOICE_TLS_CERT`: existing PEM paths when serving TLS directly.
+* `ROOK_VOICE_ASSISTANT_NAME`: the name the assistant introduces itself with in
+  its system prompt; defaults to `Rook`.
+* `ROOK_VOICE_OWNER`: optional owner name used in the system prompt and tool
+  descriptions ("Alex's personal voice assistant", "Alex's Rook band"). Empty
+  (the default) uses neutral phrasing ("the user's").
 
 The mouthpiece uses structured selection of either a reply or a real tool.
 It announces work only after queuing a job. Malformed plans may be retried once
@@ -74,7 +79,8 @@ PYTHONPATH=. .venv/bin/pytest -q tests/test_voice_runtime.py
 VOICE_SMOKE_URL=ws://127.0.0.1:8901/ws python -m services.voice.smoke
 ```
 
-The smoke uses a synthetic conversation and a read-only `info.uptime` lookup.
+The smoke uses a synthetic conversation and a read-only `info.uptime` lookup
+on the worker named by `VOICE_SMOKE_WORKER` (default `gpu-box`).
 Android instrumentation mode `voice` checks silence/noise and the bundled
 synthetic speech fixture. Physical-phone speaker, headset and Bluetooth acoustic
 checks remain necessary; emulator success does not establish real-room false

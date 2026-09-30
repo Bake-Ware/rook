@@ -70,8 +70,8 @@ void initSettings() {
             o["pass"] = pass;
             o["priority"] = prio;
         };
-        // Firmware-shipped defaults, highest priority first.
-        addNet("bifrost", "1234567890", 1);
+        // Optional build-time default network (secrets.h), highest priority.
+        addNet(DEFAULT_WIFI_SSID, DEFAULT_WIFI_PASS, 1);
         addNet(g.sta_ssid, g.sta_pass, 5);
         addNet(g.phone_ssid, g.phone_pass, 9);
         String out;

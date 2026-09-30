@@ -1,6 +1,6 @@
 # Agent work system: knowledge, tasks, links and hygiene
 
-Status: design agreed with Bake 2026-09-23 (decisions folded in). Not built yet.
+Status: design agreed with the maintainer 2026-09-23 (decisions folded in). Not built yet.
 
 Principle: **on rails.** Anything that can be enforced or triggered
 deterministically by the hub is. Agent discipline covers only what can't be,
@@ -185,7 +185,7 @@ Most real work happens on workers, where the hub can see activity stop.
 Sources:
 
 - `memory.*` caps (`memory.search/get/entities`, one worker);
-- Sojourn Hermes memory (`hermes.memory.read`, `hermes.sessions.*`);
+- Hermes agent memory (`hermes.memory.read`, `hermes.sessions.*`);
 - the legacy vault that Codex's import used (read directly, not trusted
   through its records).
 

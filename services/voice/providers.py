@@ -40,8 +40,27 @@ def looks_hallucinated(text: str) -> bool:
 HIST_MAX = 64
 TICK_SECS = 5.0
 
+ASSISTANT_NAME = os.environ.get("ROOK_VOICE_ASSISTANT_NAME", "").strip() or "Rook"
+OWNER = os.environ.get("ROOK_VOICE_OWNER", "").strip()
+
+
+def owner_possessive(owner: str = "") -> str:
+    """``"Alex"`` -> ``"Alex's"``; empty -> the neutral ``"the user's"``."""
+    owner = owner.strip()
+    if not owner:
+        return "the user's"
+    return owner + ("'" if owner.endswith("s") else "'s")
+
+
+def assistant_intro(name: str = "", owner: str = "") -> str:
+    """First sentence of the mouthpiece system prompt."""
+    return f"You are {name.strip() or 'Rook'}, {owner_possessive(owner)} personal voice assistant."
+
+
+OWNER_POSSESSIVE = owner_possessive(OWNER)
+
 MOUTHPIECE_SYSTEM = (
-    "You are Sojourn, Bake's personal voice assistant. Speak briefly and naturally: one or two "
+    assistant_intro(ASSISTANT_NAME, OWNER) + " Speak briefly and naturally: one or two "
     "sentences, no markdown. You can see images attached to the current message. "
     "Use respond for greetings, clarification and answers supported by conversation or job records. "
     "For fresh facts use web_search, rook_devices or rook_read. Delegate multi-step work, shell "
@@ -68,13 +87,13 @@ TOOLS = [
     {"type": "function", "function": {
         "name": "web_search",
         "description": ("Search the web and get the top results. Use for current facts, news, "
-                        "documentation, prices, anything outside Bake's own systems."),
+                        f"documentation, prices, anything outside {OWNER_POSSESSIVE} own systems."),
         "parameters": {"type": "object", "properties": {
             "query": {"type": "string", "description": "The search query."}},
             "required": ["query"]}}},
     {"type": "function", "function": {
         "name": "rook_devices",
-        "description": ("List the machines and phones on Bake's Rook band, with their status and "
+        "description": (f"List the machines and phones on {OWNER_POSSESSIVE} Rook band, with their status and "
                         "battery. Use when asked what devices exist or which are online."),
         "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {

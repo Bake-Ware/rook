@@ -40,7 +40,7 @@ def _decode_project_dir(dirname: str) -> str:
         return dirname
 
     # Reconstruct: first part is drive letter, rest are path segments
-    # C--Users-bake-rook -> C:\Users\bake\rook
+    # C--Users-user-rook -> C:\Users\user\rook
     # But dashes in actual folder names get collapsed, so this is best-effort
     result = dirname.replace("--", ":\\", 1).replace("-", "\\")
     return result

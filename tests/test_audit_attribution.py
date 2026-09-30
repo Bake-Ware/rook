@@ -24,9 +24,9 @@ class FakeBand:
     def __init__(self):
         self.calls = []
         self.workers = {
-            "w1": {"worker_id": "w1", "name": "kaiju", "band": "deadbeef",
+            "w1": {"worker_id": "w1", "name": "gpu-box", "band": "deadbeef",
                    "caps": ["info.host", "file.list", "shell.exec"], "last_seen": 0},
-            "w2": {"worker_id": "w2", "name": "soundwave", "band": "?",
+            "w2": {"worker_id": "w2", "name": "hypervisor", "band": "?",
                    "caps": ["info.host", "shell.exec"], "last_seen": 0},
         }
 
@@ -111,15 +111,15 @@ async def test_token_revoked_mid_session_denies_only_that_call(tmp_path):
     async with mcp_http(tmp_path) as env:
         minted = env.store.mint_api_token("codex")
         s = await Session(env.http, minted["token"]).open()
-        ok = await s.result("rook_call", {"cap": "info.host", "worker": "kaiju"})
+        ok = await s.result("rook_call", {"cap": "info.host", "worker": "gpu-box"})
         assert not ok.get("isError")
         # Revoke; the HTTP layer rejects the next request outright...
         env.store.revoke_api_token(minted["id"])
-        assert (await s.tool("rook_call", {"cap": "info.host", "worker": "kaiju"})).status_code == 401
+        assert (await s.tool("rook_call", {"cap": "info.host", "worker": "gpu-box"})).status_code == 401
         assert len(env.band.calls) == 1
         # ...and another caller on the same server is unaffected.
         other = await Session(env.http, STATIC).open()
-        res = await other.result("rook_call", {"cap": "shell.exec", "worker": "soundwave"})
+        res = await other.result("rook_call", {"cap": "shell.exec", "worker": "hypervisor"})
         assert not res.get("isError")
         assert len(env.band.calls) == 2
 
@@ -132,7 +132,7 @@ async def test_tool_level_recheck_denies_invalid_token_and_journals_it(tmp_path,
     async with mcp_http(tmp_path) as env:
         s = await Session(env.http, STATIC).open()
         monkeypatch.setattr(env.store, "principal_for", lambda raw: None)
-        res = await s.result("rook_call", {"cap": "shell.exec", "worker": "kaiju"})
+        res = await s.result("rook_call", {"cap": "shell.exec", "worker": "gpu-box"})
         assert res["isError"]
         assert "unauthenticated" in res["content"][0]["text"]
         assert env.band.calls == []
@@ -153,7 +153,7 @@ async def test_token_store_failure_lets_call_through_and_alerts(tmp_path, monkey
         monkeypatch.setattr(env.store, "principal_for", boom)
         with caplog.at_level(logging.ERROR, logger="rook.band_mcp.attribution"):
             for _ in range(3):
-                res = await s.result("rook_call", {"cap": "shell.exec", "worker": "kaiju"})
+                res = await s.result("rook_call", {"cap": "shell.exec", "worker": "gpu-box"})
                 assert not res.get("isError")
         assert len(env.band.calls) == 3
         assert env.band.calls[0]["identity"] == "unverified"
@@ -171,7 +171,7 @@ async def test_attribution_crash_never_denies(tmp_path, monkeypatch):
         def explode(*a, **k):
             raise AssertionError("bug in resolve")
         monkeypatch.setattr(attribution, "resolve", explode)
-        res = await s.result("rook_call", {"cap": "info.host", "worker": "kaiju"})
+        res = await s.result("rook_call", {"cap": "info.host", "worker": "gpu-box"})
         assert not res.get("isError")
         assert len(env.band.calls) == 1
 
@@ -184,19 +184,19 @@ async def test_named_key_attribution_reaches_journal_worker_and_whoami(tmp_path)
         minted = env.store.mint_api_token("claude code")
         s = await Session(env.http, minted["token"]).open()
         s.token = minted["token"]
-        env.http.headers["X-Rook-Host"] = "cachyrig"
+        env.http.headers["X-Rook-Host"] = "workstation"
         who = json.loads((await s.result("rook_whoami"))["content"][0]["text"])
-        assert who == {"identity": "agent:claude code_cachyrig", "kind": "agent",
+        assert who == {"identity": "agent:claude code_workstation", "kind": "agent",
                        "label": "claude code", "agent_id": minted["agent_id"],
                        "key_id": minted["id"], "verified": True,
-                       "token": "claudecode", "client": "t", "host": "cachyrig",
-                       "actor": "claudecode.t.cachyrig"}
+                       "token": "claudecode", "client": "t", "host": "workstation",
+                       "actor": "claudecode.t.workstation"}
         assert minted["token"] not in json.dumps(who)
-        await s.result("rook_call", {"cap": "shell.exec", "worker": "kaiju"})
-        assert env.band.calls[-1]["identity"] == "agent:claude code_cachyrig"
+        await s.result("rook_call", {"cap": "shell.exec", "worker": "gpu-box"})
+        assert env.band.calls[-1]["identity"] == "agent:claude code_workstation"
         row = rows(env.journal, "cap='shell.exec'")[-1]
         assert (row["agent_id"], row["key_id"], row["auth"]) == (minted["agent_id"], minted["id"], "agent")
-        assert row["actor"] == "claudecode.t.cachyrig"
+        assert row["actor"] == "claudecode.t.workstation"
 
 
 @pytest.mark.asyncio
@@ -224,8 +224,8 @@ async def test_agent_id_survives_key_rotation(tmp_path):
 async def test_no_attempt_gate_reads_and_writes_dispatch_on_any_band(tmp_path):
     async with mcp_http(tmp_path) as env:
         s = await Session(env.http, STATIC).open()
-        for cap, worker in [("info.host", "kaiju"), ("file.list", "kaiju"),
-                            ("shell.exec", "kaiju"), ("shell.exec", "soundwave")]:
+        for cap, worker in [("info.host", "gpu-box"), ("file.list", "gpu-box"),
+                            ("shell.exec", "gpu-box"), ("shell.exec", "hypervisor")]:
             res = await s.result("rook_call", {"cap": cap, "worker": worker})
             assert not res.get("isError"), res
             assert "attempt_id" not in res["content"][0]["text"]
@@ -281,11 +281,11 @@ async def test_rook_call_without_worker_is_refused_with_holders_listed(tmp_path)
         body = json.loads(res["content"][0]["text"])
         assert body["ok"] is False
         assert "specify the target worker" in body["error"]
-        assert "kaiju, soundwave" in body["error"]
+        assert "gpu-box, hypervisor" in body["error"]
         assert env.band.calls == []  # nothing dispatched
         unknown = json.loads((await s.result("rook_call", {"cap": "nope.cap"}))["content"][0]["text"])
         assert "no live worker has capability" in unknown["error"]
-        ok = json.loads((await s.result("rook_call", {"cap": "shell.exec", "worker": "kaiju"}))["content"][0]["text"])
+        ok = json.loads((await s.result("rook_call", {"cap": "shell.exec", "worker": "gpu-box"}))["content"][0]["text"])
         assert ok["ok"] is True and len(env.band.calls) == 1
 
 
@@ -317,18 +317,18 @@ async def test_wait_follows_the_calls_own_timeout(tmp_path, monkeypatch):
                                   persist_path=str(tmp_path / "tokens.json"), static_token=STATIC,
                                   journal_path=str(tmp_path / "journal.db"))
     call = lambda **a: mcp._tool_manager._tools["rook_call"].fn(**a)
-    await call(cap="shell.exec", worker="kaiju")
+    await call(cap="shell.exec", worker="gpu-box")
     assert band.waits[:2] == [("caps.describe", 10.0), ("shell.exec", 35.0)]  # learned default + 5s
-    await call(cap="shell.exec", worker="kaiju", args={"timeout": 120})
+    await call(cap="shell.exec", worker="gpu-box", args={"timeout": 120})
     assert band.waits[-1] == ("shell.exec", 125.0)  # explicit args.timeout wins
-    await call(cap="shell.exec", worker="kaiju", timeout=5)
+    await call(cap="shell.exec", worker="gpu-box", timeout=5)
     assert band.waits[-1] == ("shell.exec", 35.0)  # a shorter wait is raised to the call's own
-    await call(cap="shell.exec", worker="kaiju", timeout=300)
+    await call(cap="shell.exec", worker="gpu-box", timeout=300)
     assert band.waits[-1] == ("shell.exec", 300.0)  # a longer wait is honoured
-    await call(cap="info.host", worker="kaiju")
+    await call(cap="info.host", worker="gpu-box")
     assert band.waits[-1] == ("info.host", 15.0)  # no declared timeout → default
     assert [c for c, _ in band.waits].count("caps.describe") == 1  # fetched once per worker
-    out = json.loads(await call(cap="file.list", worker="kaiju"))
+    out = json.loads(await call(cap="file.list", worker="gpu-box"))
     assert "within 15s (the 15s default; 'file.list' declares no timeout" in out["error"]
     assert "rook_journal(call_id=" in out["error"]
 
@@ -340,17 +340,17 @@ async def test_compound_identity_uses_client_host_and_cwd_with_fallbacks(tmp_pat
         s = await Session(env.http, STATIC).open()
         who = json.loads((await s.result("rook_whoami"))["content"][0]["text"])
         assert who["actor"] == "static.t.web"  # shared token, no host header → web, no dir
-        env.http.headers["X-Rook-Host"] = "Kaiju"
-        env.http.headers["X-Rook-Cwd"] = "/home/bake/rook"
+        env.http.headers["X-Rook-Host"] = "GPU-Box"
+        env.http.headers["X-Rook-Cwd"] = "/home/user/rook"
         s2 = await Session(env.http, STATIC).open()
         who = json.loads((await s2.result("rook_whoami"))["content"][0]["text"])
-        assert who["actor"] == "static.t.kaiju@.home.bake.rook" and who["dir"] == "/home/bake/rook"
+        assert who["actor"] == "static.t.gpubox@.home.user.rook" and who["dir"] == "/home/user/rook"
 
 
 def test_identity_normalization():
     from rook.band_mcp.attribution import Attribution, compound
     a = compound(Attribution(identity="agent:Claude Code", kind="agent", label="Claude Code"),
-                 "claude-code", "", "/home/bake/rook/")
-    assert a.actor == "claudecode.claudecode.web@.home.bake.rook"
+                 "claude-code", "", "/home/user/rook/")
+    assert a.actor == "claudecode.claudecode.web@.home.user.rook"
     u = compound(Attribution(identity="unverified", kind="unverified", verified=False), "x", "h", "/d")
     assert u.actor == "unverified"

@@ -7,6 +7,15 @@
 #include "band_secrets.h"
 #endif
 
+// Optional firmware-shipped default Wi-Fi network (define both in secrets.h).
+// Empty means no default; networks can always be added at runtime via /config.
+#ifndef DEFAULT_WIFI_SSID
+#define DEFAULT_WIFI_SSID ""
+#endif
+#ifndef DEFAULT_WIFI_PASS
+#define DEFAULT_WIFI_PASS ""
+#endif
+
 // ---- Server ----
 #define HTTP_PORT 80
 
