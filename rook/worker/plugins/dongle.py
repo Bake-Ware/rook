@@ -13,7 +13,7 @@ import threading
 import time
 import uuid
 
-from ..plugin import Plugin, capability
+from ..plugin import Plugin, capability, setting
 
 _LOCK = threading.Lock()
 
@@ -58,6 +58,11 @@ def _exchange(command: dict) -> dict:
 
 class DonglePlugin(Plugin):
     NAMESPACE = "dongle"
+    SETTINGS = (
+        setting("port", "path", default="", scope="worker", env="ROOK_DONGLE_PORT",
+                apply="restart", label="Serial device",
+                help="Blank leaves dongle.* off."),
+    )
 
     def available(self):
         if not os.environ.get("ROOK_DONGLE_PORT"):

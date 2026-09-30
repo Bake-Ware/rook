@@ -36,7 +36,7 @@ from .plugin import Plugin, load_plugins
 log = logging.getLogger("rook.worker.admin")
 
 _WORKER_DIR = Path(os.path.expanduser("~")) / ".rook-band-worker"
-_PLUGIN_STATE = _WORKER_DIR / "plugins.json"        # {"disabled": [module, ...]}
+_PLUGIN_STATE = _WORKER_DIR / "plugins.json"        # {"disabled": [...], "enabled": [...]}
 _CUSTOM_STATE = _WORKER_DIR / "custom_caps.json"    # {name: {command, args, ...}}
 
 _CUSTOM_NS = "cmd"      # custom caps register as cmd.<name>
@@ -44,19 +44,38 @@ _MAX_OUT = 100_000
 _MAX_ERR = 20_000
 
 
+def _load_state() -> dict:
+    try:
+        d = json.loads(_PLUGIN_STATE.read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
 def load_disabled() -> set[str]:
     """Persisted set of disabled plugin module names. Read at boot by the Worker
     so disabled plugins are never loaded in the first place."""
-    try:
-        return set(json.loads(_PLUGIN_STATE.read_text(encoding="utf-8")).get("disabled", []))
-    except Exception:
-        return set()
+    return set(_load_state().get("disabled", []) or [])
+
+
+def load_enabled() -> set[str]:
+    """Plugins enabled at runtime that ``--enable`` leaves out: the Worker adds
+    them to its enable list at boot, so an enable survives a restart."""
+    return set(_load_state().get("enabled", []) or [])
+
+
+def _save_state(disabled: set[str] | None = None, enabled: set[str] | None = None) -> None:
+    state = _load_state()
+    if disabled is not None:
+        state["disabled"] = sorted(disabled)
+    if enabled is not None:
+        state["enabled"] = sorted(enabled)
+    _WORKER_DIR.mkdir(parents=True, exist_ok=True)
+    _PLUGIN_STATE.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
 
 
 def _save_disabled(names: set[str]) -> None:
-    _WORKER_DIR.mkdir(parents=True, exist_ok=True)
-    _PLUGIN_STATE.write_text(json.dumps({"disabled": sorted(names)}, indent=2) + "\n",
-                             encoding="utf-8")
+    _save_state(disabled=names)
 
 
 def _load_custom() -> dict:
@@ -77,11 +96,23 @@ class WorkerAdmin:
     changes take effect immediately, and persists them so they survive restart.
     Constructed and wired by :class:`rook.worker.core.Worker`."""
 
-    def __init__(self, registry, plugins: list[Plugin], plugins_pkg: str) -> None:
+    def __init__(self, registry, plugins: list[Plugin], plugins_pkg: str,
+                 enable_arg: list[str] | None = None) -> None:
         self.registry = registry
         self.plugins = plugins            # the Worker's live list (mutated in place)
         self.plugins_pkg = plugins_pkg
+        self.enable_arg = enable_arg      # --enable as given (None = all built-ins)
         self._custom: dict = _load_custom()
+
+    def excluded(self) -> list[str]:
+        """Modules --enable leaves out that were not enabled at runtime."""
+        if self.enable_arg is None:
+            return []
+        keep = set(self.enable_arg) | load_enabled()
+        try:
+            return [m for m in self._all_modules() if m not in keep]
+        except Exception:
+            return []
 
     def register_caps(self) -> None:
         """Register the admin capabilities and re-hydrate persisted custom caps."""
@@ -111,17 +142,28 @@ class WorkerAdmin:
         caps each loaded plugin provides."""
         loaded = {p._module: p for p in self.plugins if getattr(p, "_module", "")}
         disabled = load_disabled()
+        excluded = set(self.excluded())
         out = []
         for mod in self._all_modules():
             p = loaded.get(mod)
-            out.append({
+            row = {
                 "module": mod,
                 "loaded": p is not None,
                 "disabled": mod in disabled,
                 "namespace": p.NAMESPACE if p else None,
                 "caps": sorted(p.caps().keys()) if p else [],
-            })
-        return {"ok": True, "plugins": out}
+            }
+            if p is None:
+                # Why it isn't loaded, so a UI can explain it (settings P14).
+                if mod in disabled:
+                    row["reason"] = "disabled by an operator"
+                elif mod in excluded:
+                    row["excluded"] = True
+                    row["reason"] = "left out by --enable on the worker's command line"
+                else:
+                    row["reason"] = "not available on this host (backend or setting missing)"
+            out.append(row)
+        return {"ok": True, "plugins": out, "enable": self.enable_arg}
 
     async def plugin_disable(self, module: str) -> dict:
         """Unload a plugin now and keep it unloaded across restarts. Its caps are
@@ -145,7 +187,9 @@ class WorkerAdmin:
         except Exception:
             log.exception("plugin %s stop() failed", module)
         self.plugins[:] = [x for x in self.plugins if x is not p]
-        d = load_disabled(); d.add(module); _save_disabled(d)
+        d = load_disabled(); d.add(module)
+        e = load_enabled(); e.discard(module)
+        _save_state(disabled=d, enabled=e)
         log.info("disabled plugin %s (%d caps removed)", module, len(removed))
         return {"ok": True, "module": module, "caps_removed": removed}
 
@@ -175,7 +219,11 @@ class WorkerAdmin:
                     await res
             except Exception:
                 log.exception("plugin %s start() failed", module)
-        d = load_disabled(); d.discard(module); _save_disabled(d)
+        d = load_disabled(); d.discard(module)
+        e = load_enabled()
+        if self.enable_arg is not None and module not in self.enable_arg:
+            e.add(module)   # --enable leaves it out: remember, or a restart drops it
+        _save_state(disabled=d, enabled=e)
         caps = sorted(c for p in new for c in p.caps())
         log.info("enabled plugin %s (%d caps)", module, len(caps))
         return {"ok": True, "module": module, "caps_added": caps}

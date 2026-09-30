@@ -254,25 +254,43 @@ its history (settings.md specifies the UI, storage and history):
 
 ```python
 setting(name, type=str, default=None, *, scope="hub", secret=False,
-        env=None, label="", help="", choices=())
+        env=None, label="", help="", choices=(),
+        apply="live", bootstrap=False, overridable=(), flag=None,
+        group="", order=0, min=None, max=None, pattern=None,
+        advanced=False, deprecated=None)
 ```
 
-- `type`: `str`, `int`, `float`, `bool`, `list`, `dict` (or `resource`).
-  Strings from env are coerced (`"true"`, JSON for list/dict). A bad default is
-  a plugin bug and raises at import time.
-- `scope`: `hub`, `band`, `worker` or `user`: where a value lives and who may
-  change it (settings.md).
-- `secret=True`: the value lives in the **vault** under
-  `plugin.<namespace>.<name>`, never in settings storage, and is masked in
-  listings.
-- `env`: an env var that overrides the stored value (for containers and
-  emergencies).
+- `type`: `str`, `int`, `float`, `bool`, `list`, `dict`, `resource`, and the
+  str-shaped `url`, `hostport`, `path` (with a light shape check). Strings
+  from env are coerced (`"true"`; JSON or `a,b` for lists; JSON for dicts). A
+  bad default is a plugin bug and raises at import time.
+- `scope`: the key's home scope, `hub`, `band`, `worker` or `user`.
+  `overridable` names lower scopes that may override it (a `band` key with
+  `overridable=("worker",)`; a `hub` key with `overridable=("user",)`).
+- `secret=True`: the value lives in the **vault** (hub scope:
+  `plugin.<namespace>.<name>`), never in settings storage, and is masked in
+  every listing and in history (fingerprints only).
+- `env`: a variable name or a list of them (the first is the legacy name the
+  UI shows). The canonical `ROOK_<NAMESPACE>_<NAME>` is always accepted by
+  `plugin.settings` too.
+- `apply`: how a change takes effect, shown in the UI: `live` (read on use;
+  the hub refreshes `plugin.settings` when a value is saved), `reload`,
+  `restart` (read only at start), `risky` (commit-confirmed worker restart).
+  Declare `restart` for anything you read in `available()` or `start()`.
+- `bootstrap=True`: needed before the settings store is reachable; set only
+  by env or flag, shown read-only with its source.
+- `group`, `order`, `advanced`, `label`, `help`: placement and text in the UI.
+  `min`/`max`/`pattern`/`choices`: validation (client and hub).
 
-Resolution in `plugin.settings[name]`: env override, then the vault (secret) or
-the stored value, then the default. An invalid value from one source is logged
-and skipped, so a typo degrades to the next source instead of killing the
-plugin. Wave 1 reads stored values from `hub_plugin_settings.json` beside the
-hub's other stores (read-only; settings.md's framework writes it).
+Resolution in `plugin.settings[name]`: env override (legacy names, then the
+canonical one), then the vault (secret) or the stored value, then the default.
+An invalid value from one source is logged and skipped, so a typo degrades to
+the next source instead of killing the plugin. Hub plugins read stored values
+from the hub settings store (`settings.db`, written by the Settings page and
+`settings.set`); the wave-1 `hub_plugin_settings.json` is still read beneath
+it. Worker plugins declare their settings too (wake, memory, pikvm, cec,
+dongle); the hub delivers per-worker values in a commit-confirmed config push
+and secrets as `{{secret:…}}` references the worker fetches at use.
 
 ## 8. Migrations, guidance, skill, panel
 
@@ -465,7 +483,7 @@ Runtime enable/disable (`worker.plugin.*`) persists per worker as before.
 | Hub node `rook` + band serving | done, band calls read-only | tickets, signed announces |
 | Generated MCP tools | done (no built-in hub cap uses it yet; `tools/list` unchanged) | regenerate chat/vault/journal tools from caps |
 | Plugin-shaped MCP tools (`mcp_tools(invoke)`) | wave 2: knowledge/task tools, `tools/list` unchanged | |
-| Settings schema + resolution | done (env, stored file, vault, default) | settings UI, writes, history |
+| Settings schema + resolution | done (env aliases, store, vault, default); settings UI, writes, history, worker delivery (settings.md, implementation status) | typed worker settings map; user prefs to Android |
 | Resources | parsed; `cap://` callable on the hub | placement-aware `any` |
 | Migrations, data dir | done | |
 | Guidance slots, skill fragments, panels | slots registered with the guidance store (wave 2); skill fragments generated | dashboard panel mounting |

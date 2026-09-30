@@ -623,6 +623,12 @@ class SelfUpdatePlugin(Plugin):
         """Reconstruct the full launch command (python + pyz + args), applying
         any hub/psk/name overrides. Preserves every other existing flag."""
         argv = [sys.executable, *sys.argv]  # sys.argv[0] is the pyz path
+        # Started as ``python -m rook.worker``: sys.argv[0] is the package's
+        # __main__.py, which cannot run as a plain script (relative imports).
+        spec = getattr(sys.modules.get("__main__"), "__spec__", None)
+        mod = getattr(spec, "name", "") or ""
+        if mod.endswith(".__main__") and sys.argv and sys.argv[0].endswith("__main__.py"):
+            argv = [sys.executable, "-m", mod[:-len(".__main__")], *sys.argv[1:]]
 
         def setflag(flag: str, val: str | None) -> None:
             if val is None:

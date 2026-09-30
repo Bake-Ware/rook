@@ -10,6 +10,27 @@ releases yet: workers identify themselves by build number (for example
 Preparation for public use.
 
 ### Added
+- One **Settings** area in the dashboard, rendered from the settings schema:
+  hub, each band, each worker (with plugin enable/disable and per-worker
+  values), each plugin or service (Voice, Decision engine, Knowledge, Tasks,
+  Watchdog, worker plugins) and personal preferences. Every row shows the
+  effective value, its source (default / setup.json / hub / band / worker /
+  user / env or flag, which locks it), what it hides, how a change applies and
+  a restart-required flag; conflicts are listed on the overview; search
+  matches keys, labels and variable names. Backed by `settings.db` (beside
+  `enrollment.db`, shared by both hub processes) with attributed history, and
+  served as caps on worker `rook`: `settings.describe/get/set/reset/history/
+  apply_worker`, `settings.fetch` for services with a scoped token
+  (`core.settings.service_readers`) and `settings.worker_secret` for workers.
+  Secrets are stored in the vault and never returned. Generated reference:
+  `docs/operations/settings-reference.md`.
+- `setting()` gains `apply`, `bootstrap`, `overridable`, env alias lists (and
+  the canonical `ROOK_<NS>_<NAME>`), `flag`, `group`, `order`, `min`/`max`/
+  `pattern`, `advanced`, `deprecated`, and `url`/`hostport`/`path` types.
+- Worker settings are pushed from the Settings page with the commit-confirmed
+  config apply; worker secrets go as `{{secret:…}}` references that the worker
+  fetches from the hub at use (memory only, never on its disk). New worker cap
+  `worker.settings_report`. Tasks has its own `enabled` setting (`ROOK_TASKS`).
 - Work worklog view (default; `ROOK_WORK_V2=0` or the **Classic view** button
   restores the old one): rooms per project and host, live sessions as real
   xterm.js terminals, finished ones collapsed, one-click resume of any
@@ -97,6 +118,19 @@ Preparation for public use.
   their readiness under `authz`. Build-167 workers ignore the extra keys.
 
 ### Changed
+- The dashboard's domain, relay address and band label now follow environment
+  or flag > Settings page > `setup.json` > default; `setup.json` no longer
+  silently overrides the environment, and a conflict is logged and shown.
+- `ROOK_BAND_PSK` only seeds an empty enrollment database, for the dashboard
+  and the MCP server; the MCP server no longer requires `--psk` and serves the
+  bands in the shared enrollment database. The MCP server honours
+  `ROOK_CHAT_DB`, and the dashboard follows the MCP's chat database.
+- `worker.config_get`, `rook_config_get`, `rook_config_apply` and
+  `shell.env.list`/`env.get` mask the band key and pushed env values.
+- A plugin enabled at runtime that `--enable` leaves out now survives a
+  worker restart; `worker.plugin.list` says why a plugin is not loaded.
+- A worker started as `python -m rook.worker` restarts correctly (re-exec with
+  `-m`).
 - MCP replies are compact. Tool results are JSON without indentation and are
   sent once (no `structuredContent` copy), tool listings drop output schemas
   and pydantic schema noise, and the default tool descriptions and server

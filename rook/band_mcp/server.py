@@ -81,7 +81,10 @@ def build_server(client: "BandClient | MultiBandClient",
 
     # Site-hosted chat rooms + presence + voicemail (design §3).
     from .chat_rooms import ChatStore
-    chat = ChatStore(os.path.join(_store_dir, "chat.db"))
+    # ROOK_CHAT_DB wins, as it does for the dashboard; otherwise beside the
+    # journal. The dashboard follows this choice through the settings store's
+    # runtime report, so both serve the same rooms (settings P4).
+    chat = ChatStore(os.environ.get("ROOK_CHAT_DB") or os.path.join(_store_dir, "chat.db"))
 
     # Console rooms — named, searchable terminal sessions pumped off the band.
     from .console_rooms import ConsoleStore
@@ -275,7 +278,8 @@ def build_server(client: "BandClient | MultiBandClient",
     # Hub plugin host (rook.hub): hub-placed plugins, served on the band as the
     # reserved worker "rook" and reachable with rook_call(worker="rook").
     from ..hub.node import HUB_WORKER_NAME, attach_hub_node
-    mcp._rook_hub = attach_hub_node(client, _store_dir, vault=vault, journal=journal)
+    mcp._rook_hub = attach_hub_node(client, _store_dir, vault=vault, journal=journal,
+                                    enrollment=enrollment)
 
     # Shared knowledge and work records: the hub plugins "knowledge" and
     # "task" (rook/hub/plugins; opt-in with their "enabled" setting, env
@@ -664,8 +668,16 @@ def build_server(client: "BandClient | MultiBandClient",
             reply = _vault_mod.mask(reply, secret_forms)
         if cap == "caps.describe" and isinstance(reply, dict) and reply.get("ok"):
             _learn_timeouts(target, reply.get("result"))
+        journal_reply = reply
+        hub = getattr(mcp, "_rook_hub", None)
+        if (hub is not None and target == hub.worker_id and isinstance(reply, dict)
+                and "sensitive" in (getattr(hub.host.registry.meta(cap), "tags", ()) or ())):
+            # Hub caps tagged sensitive (settings.fetch) reply with secrets:
+            # the caller gets them, the journal does not.
+            journal_reply = {"ok": reply.get("ok"), "result": "[sensitive: not journaled]"} \
+                if reply.get("ok") else reply
         cid = journal.record(cap=cap, worker=worker_name, identity=identity,
-                             args=args, reply=reply, audit=_caller_audit(),
+                             args=args, reply=journal_reply, audit=_caller_audit(),
                              authz=_decision_row())
         linked = _auto_link("journal", cid, f"{cap} on {worker_name}")
         chat.touch(identity)
@@ -1188,6 +1200,13 @@ def build_server(client: "BandClient | MultiBandClient",
 
     # -- worker config (commit-confirmed OTA) --------------------------------
 
+    def _public_worker_env() -> set:
+        hub = getattr(mcp, "_rook_hub", None)
+        svc = getattr(hub, "settings", None) if hub is not None else None
+        if svc is not None:
+            return svc.schema.worker_env_names()
+        return set()
+
     @mcp.tool()
     async def rook_config_get(worker: str) -> str:
         """Read a worker's active config overrides + pending/confirm state."""
@@ -1199,7 +1218,9 @@ def build_server(client: "BandClient | MultiBandClient",
                                       timeout=15.0, identity=_caller_identity())
         except asyncio.TimeoutError:
             return _fail(f"no reply from {worker!r}")
-        return json.dumps(reply, indent=2)
+        # The band key and pushed env values never come back (settings P19).
+        from ..hub.worker_config import masked_reply
+        return json.dumps(masked_reply(reply, _public_worker_env()), indent=2)
 
     @mcp.tool()
     async def rook_config_apply(worker: str, settings: dict,
@@ -1215,51 +1236,19 @@ def build_server(client: "BandClient | MultiBandClient",
         within ``confirm_within`` seconds or it AUTO-REVERTS to its prior config.
         This tool drives that: it applies, waits for the worker to come back on
         the band, verifies it, then confirms — so a change that strands the
-        worker rolls back on its own. Returns the final state.
+        worker rolls back on its own. Returns the final state, with the band
+        key and env values masked.
         """
         target, err = _resolve_target(worker)
         if err:
             return _fail(err)
         if not isinstance(settings, dict) or not settings:
             return _fail("settings must be a non-empty object")
-        import time as _t
-        epoch = int(_t.time())
-        ident = _caller_identity()
-        try:
-            applied = await client.call(
-                cap="worker.config_apply", target=target, timeout=15.0,
-                identity=ident,
-                args={"settings": settings, "epoch": epoch,
-                      "confirm_within": confirm_within})
-        except asyncio.TimeoutError:
-            return _fail(f"no reply from {worker!r} on config_apply")
-        if not (applied.get("result") or {}).get("ok", applied.get("ok")):
-            return json.dumps({"ok": False, "stage": "apply", "reply": applied}, indent=2)
-
-        # Wait for the worker to restart and come back, then confirm. If it
-        # never returns, the worker's own watchdog reverts after the deadline.
-        deadline = _t.time() + min(confirm_within, 110.0)
-        await asyncio.sleep(4.0)  # let it go down + restart
-        last_err = "worker did not return"
-        while _t.time() < deadline:
-            try:
-                got = await client.call(cap="worker.config_get", target=target,
-                                        timeout=8.0, identity=ident)
-                res = got.get("result") or {}
-                if res.get("epoch") == epoch or (res.get("config") or {}).get("epoch") == epoch:
-                    conf = await client.call(
-                        cap="worker.config_confirm", target=target, timeout=10.0,
-                        identity=ident, args={"epoch": epoch})
-                    return json.dumps({"ok": True, "epoch": epoch,
-                                       "confirmed": conf.get("result", conf),
-                                       "config": res.get("config")}, indent=2)
-                last_err = f"worker back but at epoch {res.get('epoch')}, not {epoch}"
-            except asyncio.TimeoutError:
-                last_err = "worker still down (restarting)"
-            await asyncio.sleep(4.0)
-        return json.dumps({"ok": False, "stage": "confirm", "epoch": epoch,
-                           "error": f"{last_err}; worker will auto-revert to its "
-                                    f"prior config at its deadline"}, indent=2)
+        from ..hub.worker_config import apply_confirmed
+        res = await apply_confirmed(client, target, settings, identity=_caller_identity(),
+                                    confirm_within=confirm_within,
+                                    public_env=_public_worker_env())
+        return json.dumps(res, indent=2)
 
     # MCP tools generated from hub caps declared tool=True (hub.x -> rook_hub_x).
     # Each is an alias of rook_call on worker "rook"; existing names win.
@@ -1287,7 +1276,23 @@ async def _amain(args) -> None:
     uninstall_diagnostics = install()
     from ..remote.enrollment import EnrollmentStore
     enrollment = EnrollmentStore()
-    enrollment.import_config(args.psks)
+    # The environment's key only seeds an empty enrollment database; after
+    # that the database (rotated from the dashboard) is authoritative.
+    ignored = enrollment.import_config(args.psks, seed_only=True)
+    startup_conflicts = []
+    if ignored:
+        log.warning("ROOK_BAND_PSK/--psk holds %d key(s) the enrollment database does not "
+                    "use; ignored (the environment only seeds the first band; rotate keys "
+                    "on the dashboard Bands page and remove the variable)", len(ignored))
+        from ..core.settings import fingerprint
+        startup_conflicts.append({
+            "key": "core.band.key", "env": "ROOK_BAND_PSK",
+            "note": "ROOK_BAND_PSK holds a key the enrollment database does not use "
+                    f"(fp {', '.join(fingerprint(k) for k in ignored)}); ignored. "
+                    "The environment only seeds the first band."})
+    if not enrollment.transport_psks():
+        log.warning("no band key yet: waiting for the dashboard /setup page or ROOK_BAND_PSK "
+                    "(the MCP joins bands from the shared enrollment database)")
     client = MultiBandClient(psks=enrollment.transport_psks(), hub_host=args.hub_host,
                              hub_port=args.hub_port)
     await client.start()
@@ -1315,6 +1320,8 @@ async def _amain(args) -> None:
         enrollment=enrollment,
     )
     if mcp._rook_hub is not None:
+        mcp._rook_hub.startup_conflicts = startup_conflicts
+        mcp._rook_hub.startup_flags = getattr(args, "flag_settings", {})
         await mcp._rook_hub.start()
     app = mcp.streamable_http_app()
     from ..remote.accounts import AccountStore
@@ -1328,6 +1335,10 @@ async def _amain(args) -> None:
     for route in vault_routes(mcp._rook_vault,
                               lambda v: mcp._rook_journal.redact(_vault_mod.encoded_forms(v or "")),
                               AccountStore(enrollment)):
+        app.router.routes.insert(0, route)
+    from ..hub.settings_web import routes as settings_routes
+    for route in settings_routes(lambda: getattr(mcp._rook_hub, "settings", None),
+                                 AccountStore(enrollment)):
         app.router.routes.insert(0, route)
     if mcp._rook_knowledge is not None:
         # Operator Knowledge page API (proxied by the dashboard). Background
@@ -1349,7 +1360,8 @@ async def _amain(args) -> None:
         from .ws_band import WSBandBridge
         # The WS /band bridge forwards raw encrypted packets and is band-agnostic,
         # so a single bridge serves every band; the psk arg is unused.
-        ws_bridge = WSBandBridge(app, args.hub_host, args.hub_port, args.psks[0])
+        ws_bridge = WSBandBridge(app, args.hub_host, args.hub_port,
+                                 args.psks[0] if args.psks else "")
         ws_bridge.start()
     except Exception as e:
         log.warning("WS band bridge failed to start: %s", e)
@@ -1410,10 +1422,11 @@ def main() -> None:
     ap = argparse.ArgumentParser(prog="rook-band-mcp")
     ap.add_argument("--hub", default=os.environ.get("ROOK_HUB", "127.0.0.1:7474"),
                     help="telesthete hub host:port (or env ROOK_HUB)")
-    ap.add_argument("--psk", default=os.environ.get("ROOK_BAND_PSK"),
-                    help="band pre-shared key (or env ROOK_BAND_PSK). Accepts a "
-                         "comma-separated list to join several bands on one hub "
-                         "at once — e.g. during a PSK rotation: --psk new,old")
+    ap.add_argument("--psk", default=os.environ.get("ROOK_BAND_PSK", ""),
+                    help="band pre-shared key (or env ROOK_BAND_PSK); optional. It only "
+                         "seeds an empty enrollment database: bands, rotations and "
+                         "revocations come from the enrollment database the dashboard "
+                         "shares (ROOK_DATA_DIR). A comma-separated list seeds several.")
     ap.add_argument("--bind", default=os.environ.get("ROOK_MCP_BIND", "127.0.0.1:8765"),
                     help="HTTP bind host:port for the MCP server (or env ROOK_MCP_BIND)")
     ap.add_argument("--allowed-hosts",
@@ -1449,10 +1462,22 @@ def main() -> None:
     ap.add_argument("-v", "--verbose", action="count", default=0)
     args = ap.parse_args()
 
-    if not args.psk:
-        ap.error("--psk or env ROOK_BAND_PSK is required")
-    # One or more PSKs (comma-separated) → one band each, all on the same hub.
-    args.psks = [p.strip() for p in args.psk.split(",") if p.strip()]
+    # Settings given as flags lock their key like an environment variable
+    # does; recorded so the Settings page can say "flag --bind".
+    _flag_keys = {"--hub": "core.mcp.relay", "--bind": "core.mcp.listen",
+                  "--allowed-hosts": "core.mcp.allowed_hosts", "--public-url": "core.mcp.public_url",
+                  "--admin-password": "core.mcp.admin_password",
+                  "--static-token": "core.mcp.static_token", "--psk": "core.band.key",
+                  "--persist-path": "core.store.persist_path",
+                  "--journal-path": "core.store.journal_path"}
+    args.flag_settings = {}
+    for flag, key in _flag_keys.items():
+        if any(a == flag or a.startswith(flag + "=") for a in sys.argv[1:]):
+            args.flag_settings[key] = (flag, getattr(args, flag[2:].replace("-", "_"), None))
+
+    # Zero or more seed PSKs (comma-separated). Without one the MCP serves the
+    # bands in the shared enrollment database, like the dashboard (settings P3).
+    args.psks = [p.strip() for p in (args.psk or "").split(",") if p.strip()]
 
     level = logging.WARNING - 10 * args.verbose
     logging.basicConfig(level=max(level, logging.DEBUG),

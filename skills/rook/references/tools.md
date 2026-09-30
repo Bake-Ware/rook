@@ -65,6 +65,15 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `policy.get` | — | read | The current policy document with its revision, source, mode, lint and last load error (if the file on disk is… |
 | `policy.set` | policy, note='' | admin | Replace the policy document (band owners and operator tokens only). |
 | `policy.status` | — | read | Hub permission status: policy mode/revision, whether calls carry tickets (root key present), the op-key id an… |
+| `settings.apply_worker` | worker, confirm_within=120.0 | admin | Push a worker's stored settings to it (commit-confirmed restart). |
+| `settings.describe` | prefix='', limit=100, fields? | read | The settings schema: key, type, scope, default, env names, apply mode. |
+| `settings.fetch` | namespace | read | A service's own settings, secrets included, for its scoped token. |
+| `settings.get` | key='', prefix='', scope='hub', target='', limit=100, fields? | read | Effective value of a setting, where it came from and what it hides. |
+| `settings.history` | key='', scope='', target='', limit=20 | read | Attributed changes, newest first (secrets as fingerprints). |
+| `settings.report` | namespace, env? | write | A service reports which of its settings its environment sets. |
+| `settings.reset` | key, scope='', target='', note='' | admin | Remove a stored value so the key inherits again (in history). |
+| `settings.set` | key, value, scope='', target='', note='', dry_run=false | admin | Store a setting (validated, attributed, in history). |
+| `settings.worker_secret` | worker_id, names | read | Vault secrets a stored setting assigns to this worker (fetch at use). |
 | `task.read` | action='deck', kind='task', band?, id?, query='', data? | read | Read tasks/projects/concepts: deck\|search\|list\|get\|context\|status. |
 | `task.write` | action, kind='task', band?, id?, data?, request_id? | write | Write tasks/projects/concepts: create\|update\|link\|retract\|claim\|release. |
 
@@ -76,6 +85,9 @@ The shared wiki. Use the `rook_knowledge` tool: `search` before starting (5 exce
 
 ### policy
 `rook_call(cap="policy.explain", worker="rook", args={"principal": "role:agent", "cap": "shell.exec", "worker": "<name>"})` shows whether a call would be allowed and which rule decides it. `policy.get` returns the document; changing it (`policy.set`) is for band owners and operator tokens.
+
+### settings
+Hub, band, worker and user settings with their source (default / hub / band / worker / user / file / env) on worker `rook`: `settings.get(key=…)` or `settings.get(prefix="core.", scope="hub")`, `settings.history`, `settings.describe`. Writes (`settings.set`, `settings.reset`, `settings.apply_worker`) are admin actions: ask the user first. A key set by an environment variable is locked; the reply says which.
 
 ### tasks
 Tasks, projects and concepts. Use `rook_task(action="deck")` to see what is on; `claim` a task before working (your calls, consoles and handoffs then link to it); finish with `update` state done + `attrs.outcome` + an evidence `link`, or leave a handoff. Over the band: `task.read` (deck/search/list/get) and `task.write` (create/update/link/retract/claim/release) on worker `rook`, with `kind=task|project|concept`.
@@ -327,8 +339,8 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 
 | Cap | Args | Does |
 |---|---|---|
-| `shell.env.get` | name, default? |  |
-| `shell.env.list` | prefix='' |  |
+| `shell.env.get` | name, default? | One environment variable (values pushed as secrets read `***`). |
+| `shell.env.list` | prefix='' | The environment (values pushed as secrets or credentials read `***`). |
 | `shell.exec` | cmd?, argv?, stdin?, timeout=30.0, cwd?, env? | Run a command. |
 | `shell.which` | name |  |
 

@@ -265,6 +265,23 @@ class PluginHost:
             out.append(m)
         return out
 
+    def refresh_settings(self, stored: Callable[[str], dict] | None = None) -> int:
+        """Re-read stored settings into every loaded plugin's view (after an
+        operator change). Returns how many plugins were refreshed."""
+        source = stored or self._stored_settings
+        if source is None:
+            return 0
+        n = 0
+        for p in self.plugins:
+            if not p.SETTINGS:
+                continue
+            try:
+                p.settings.refresh(source(p.NAMESPACE) or {})
+                n += 1
+            except Exception:
+                log.exception("%s: refreshing stored settings failed", p.NAMESPACE)
+        return n
+
     def settings_schema(self) -> dict[str, list[dict]]:
         return {p.NAMESPACE: p.settings.schema() for p in self.plugins if p.SETTINGS}
 

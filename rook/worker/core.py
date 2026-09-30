@@ -67,15 +67,27 @@ class Worker:
                                data_root=str(_WORKER_ID_FILE.parent / "plugins"))
         # Persisted runtime disables (via worker.plugin.disable) are honoured at
         # boot so a disabled plugin is never loaded in the first place.
-        from .admin import load_disabled, WorkerAdmin
+        from .admin import load_disabled, load_enabled, WorkerAdmin
+        # Plugins enabled at runtime (worker.plugin.enable) survive a restart
+        # even when --enable leaves them out (settings P14).
+        self.enable_arg = list(enabled) if enabled is not None else None
+        if enabled is not None:
+            enabled = list(dict.fromkeys(list(enabled) + sorted(load_enabled())))
         self.host.load(self.host.discover(plugins_pkg), enabled, disabled=load_disabled())
         self.plugins: list[Plugin] = self.host.plugins  # same list; admin mutates it
         # Introspection: lets the dashboard build accurate call forms.
         self.registry.register("caps.describe", self._caps_describe)
         # Runtime cap administration: worker.plugin.* + customcap.* + re-hydrate
         # persisted custom command-caps (cmd.*).
-        self.admin = WorkerAdmin(self.registry, self.plugins, plugins_pkg)
+        self.admin = WorkerAdmin(self.registry, self.plugins, plugins_pkg,
+                                 enable_arg=self.enable_arg)
         self.admin.register_caps()
+        # Typed settings: what this worker's plugins declare, which env the
+        # pushed config set, and secrets fetched from the hub at use. Its
+        # presence tells the hub this build resolves {{secret:…}} references.
+        self.registry.register("worker.settings_report", self._settings_report)
+        self._pending_replies: dict[str, asyncio.Future] = {}
+        self._secret_task: asyncio.Task | None = None
         from .metadata import WorkerMetadata
         self.metadata = WorkerMetadata(_WORKER_ID_FILE.with_name('metadata.json'))
         self.registry.register('worker.description_get', self._description_get)
@@ -120,6 +132,90 @@ class Worker:
             announced = False
             log.warning('Description saved; announcement deferred until reconnect')
         return {'ok': True, 'description': value, 'announced': announced}
+
+    def _settings_report(self) -> dict:
+        """Settings view of this worker: declared plugin settings with the env
+        variable that sets each (values of secrets never shown), keys a pushed
+        config set, secret references and whether they were fetched, and the
+        plugins --enable leaves out."""
+        from . import wconfig
+        import os as _os
+        declared = []
+        for p in self.plugins:
+            for st in getattr(p, "SETTINGS", ()):
+                var = next((v for v in st.env_names() if _os.environ.get(v) is not None), None)
+                declared.append({"key": f"{p.NAMESPACE}.{st.name}", "env": var,
+                                 "pushed": bool(var and var in wconfig.load().get("env", {})),
+                                 "secret": st.secret})
+        refs = wconfig.secret_refs()
+        missing = wconfig.unresolved()
+        return {"ok": True, "features": ["secret_refs", "masked_config", "enable_persist"],
+                "declared": declared,
+                "pushed_env": sorted((wconfig.load().get("env") or {}).keys()),
+                "secret_refs": {var: {"vault": name, "resolved": var not in missing}
+                                for var, name in refs.items()},
+                "enable": self.enable_arg,
+                "excluded": self.admin.excluded()}
+
+    async def request(self, cap: str, args: dict | None = None, target: str | None = None,
+                      timeout: float = 10.0):
+        """A band call that waits for its reply (``{"ok", "result"|"error"}``)."""
+        msg_id = uuid.uuid4().hex
+        fut = asyncio.get_running_loop().create_future()
+        self._pending_replies[msg_id] = fut
+        msg: dict = {"id": msg_id, "cap": cap, "args": args or {},
+                     "identity": f"worker:{self.name}"}
+        if target:
+            msg["target"] = target
+        try:
+            await self.transport.send(json.dumps(msg).encode())
+            return await asyncio.wait_for(fut, timeout)
+        finally:
+            self._pending_replies.pop(msg_id, None)
+
+    async def resolve_secret_refs(self) -> list[str]:
+        """Fetch pushed ``{{secret:…}}`` values from the hub (worker ``rook``,
+        cap ``settings.worker_secret``) into this process's environment. The
+        values stay in memory; nothing is written to disk."""
+        from . import wconfig
+        missing = wconfig.unresolved()
+        if not missing:
+            return []
+        try:
+            reply = await self.request("settings.worker_secret",
+                                       {"worker_id": self.worker_id,
+                                        "names": sorted(set(missing.values()))}, timeout=10.0)
+        except asyncio.TimeoutError:
+            log.warning("hub did not answer settings.worker_secret; %d secret(s) unresolved",
+                        len(missing))
+            return []
+        if not reply.get("ok"):
+            log.warning("fetching pushed secrets failed: %s", reply.get("error"))
+            return []
+        got = (reply.get("result") or {}).get("secrets") or {}
+        done = wconfig.set_resolved({var: got.get(name) for var, name in missing.items()
+                                     if got.get(name) is not None})
+        still = wconfig.unresolved()
+        if still:
+            log.warning("pushed secret(s) for %s not available from the hub", sorted(still))
+        return done
+
+    async def _on_connect(self) -> None:
+        await self.announce()
+        from . import wconfig
+        if wconfig.unresolved() and (self._secret_task is None or self._secret_task.done()):
+            self._secret_task = asyncio.ensure_future(self._resolve_later())
+
+    async def _resolve_later(self) -> None:
+        for delay in (2.0, 10.0, 30.0, 60.0):
+            await asyncio.sleep(delay)
+            try:
+                await self.resolve_secret_refs()
+            except Exception:
+                log.exception("resolving pushed secrets failed")
+            from . import wconfig
+            if not wconfig.unresolved():
+                return
 
     def register_binary_handler(self, handler) -> None:
         """Register a callable(payload: bytes, peer_id: tuple) -> bool that gets
@@ -171,6 +267,10 @@ class Worker:
                     self.guard.on_announce(msg)
                 except Exception:
                     log.debug("hub grant check failed", exc_info=True)
+            # A reply to one of our own requests (Worker.request)?
+            fut = self._pending_replies.get(msg.get("id")) if msg.get("id") else None
+            if fut is not None and not fut.done():
+                fut.set_result(msg)
             return  # not a request
 
         target = msg.get("target")
@@ -314,7 +414,7 @@ class Worker:
         # on_connect=self.announce: re-announce every time the transport's link
         # (re)establishes, so a dropped+restored band connection re-registers
         # us instead of leaving us silently off the band.
-        await self.transport.start(self._on_message, on_connect=self.announce)
+        await self.transport.start(self._on_message, on_connect=self._on_connect)
         await self.host.start()
         try:
             await self.announce()
@@ -323,6 +423,9 @@ class Worker:
             # announce loop will register us as soon as the link is up.
             log.debug("initial announce deferred (transport not ready yet)")
         self._announce_task = asyncio.create_task(self._announce_loop())
+        from . import wconfig
+        if wconfig.unresolved() and self._secret_task is None:
+            self._secret_task = asyncio.ensure_future(self._resolve_later())
         log.info("worker up: id=%s name=%s caps=%s",
                  self.worker_id, self.name, self.registry.list())
         try:
@@ -335,6 +438,8 @@ class Worker:
         if self._stopping:
             return
         self._stopping = True
+        if self._secret_task is not None and not self._secret_task.done():
+            self._secret_task.cancel()
         if self._announce_task is not None:
             self._announce_task.cancel()
             try:

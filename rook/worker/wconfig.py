@@ -62,25 +62,78 @@ def load() -> dict:
     return {k: cfg[k] for k in _ALLOWED if k in cfg}
 
 
+#: Env keys this process took from a pushed config (masked in env reads unless
+#: a declared non-secret setting), and ``{{secret:…}}`` references waiting to
+#: be fetched from the hub at use: ``{VAR: vault name}``.
+_PUSHED: set[str] = set()
+_SECRET_REFS: dict[str, str] = {}
+_RESOLVED: set[str] = set()
+
+
 def apply_env(cfg: dict | None = None) -> list[str]:
     """Push config ``env`` overrides into ``os.environ``. Call BEFORE loading
-    plugins so gated caps (wake, memory) see them. Returns the keys set."""
+    plugins so gated caps (wake, memory) see them. Returns the keys set.
+
+    A value that is exactly ``{{secret:<name>}}`` is not placed in the
+    environment: it names a hub vault entry the worker fetches at use
+    (:func:`secret_refs`, ``Worker.resolve_secret_refs``), so the secret is
+    never written to this machine's disk."""
+    from ..core.settings import secret_ref
     cfg = cfg if cfg is not None else load()
     env = cfg.get("env") or {}
     keys = []
     if isinstance(env, dict):
         for k, v in env.items():
+            k = str(k)
+            ref = secret_ref(v)
             if v is None:
-                os.environ.pop(str(k), None)
+                os.environ.pop(k, None)
+                _SECRET_REFS.pop(k, None)
+            elif ref:
+                _SECRET_REFS[k] = ref
+                if k not in _RESOLVED:
+                    os.environ.pop(k, None)
             else:
-                os.environ[str(k)] = str(v)
-            keys.append(str(k))
+                os.environ[k] = str(v)
+            _PUSHED.add(k)
+            keys.append(k)
     return keys
 
 
-def current() -> dict:
-    """Active config + pending/confirm state, for worker.config_get."""
-    return {"config": load(), "epoch": _read(_ACTIVE).get("epoch", 0),
+def secret_refs() -> dict[str, str]:
+    """``{VAR: vault name}`` for pushed secret references."""
+    return dict(_SECRET_REFS)
+
+
+def set_resolved(values: dict[str, str]) -> list[str]:
+    """Place fetched secrets in this process's environment (memory only)."""
+    done = []
+    for var, value in values.items():
+        if var in _SECRET_REFS and value is not None:
+            os.environ[var] = str(value)
+            _RESOLVED.add(var)
+            done.append(var)
+    return done
+
+
+def unresolved() -> dict[str, str]:
+    return {k: v for k, v in _SECRET_REFS.items() if k not in _RESOLVED}
+
+
+def masked_env_keys(public: set | None = None) -> set[str]:
+    """Env keys whose values env reads must not return: pushed keys that are
+    not declared non-secret settings, and every fetched secret."""
+    from ..core.settings import looks_secret
+    public = public or set()
+    return {k for k in _PUSHED if k not in public or looks_secret(k)} | set(_SECRET_REFS)
+
+
+def current(public_env: set | None = None) -> dict:
+    """Active config + pending/confirm state, for worker.config_get. The band
+    key and env values are masked (declared non-secret settings excepted)."""
+    from ..core.settings import mask_worker_config
+    return {"config": mask_worker_config(load(), public_env or ()),
+            "epoch": _read(_ACTIVE).get("epoch", 0),
             "pending": _read(_PENDING) or None}
 
 

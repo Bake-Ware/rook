@@ -11,6 +11,8 @@ class KnowledgeWeb:
     UPSTREAM = ('ROOK_KNOWLEDGE_ADMIN_URL', 'http://127.0.0.1:8765/knowledge/account-api')
     ASSETS = ('knowledge.js', 'knowledge.css')
     UNAVAILABLE = 'Knowledge service is unavailable.'
+    ADMIN_ONLY = True
+    TIMEOUT = 20
 
     def __init__(self, account):
         self.account = account
@@ -28,7 +30,7 @@ class KnowledgeWeb:
 
     async def api(self, request):
         user = self.account.require(request)
-        if not user['admin']:
+        if self.ADMIN_ONLY and not user['admin']:
             raise web.HTTPForbidden()
         if request.method not in ('GET', 'POST'):
             raise web.HTTPMethodNotAllowed(request.method, ['GET', 'POST'])
@@ -47,7 +49,7 @@ class KnowledgeWeb:
         if request.headers.get('Authorization', '').startswith('Bearer '):
             token = request.headers['Authorization'][7:]
         try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as http:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self.TIMEOUT)) as http:
                 async with http.request(request.method, self.url, params=request.query, json=data,
                                         cookies={COOKIE: token}, allow_redirects=False) as response:
                     return web.json_response(await response.json(), status=response.status, headers=NO_STORE)
@@ -69,3 +71,14 @@ class VaultWeb(KnowledgeWeb):
     UPSTREAM = ('ROOK_VAULT_ADMIN_URL', 'http://127.0.0.1:8765/vault/account-api')
     ASSETS = ('vault.js',)
     UNAVAILABLE = 'The vault service is unavailable.'
+
+
+class SettingsWeb(KnowledgeWeb):
+    """The unified Settings area. Any signed-in account may call it: the
+    upstream limits non-operators to their own preferences (user scope)."""
+    PATH = '/account/settings'
+    UPSTREAM = ('ROOK_SETTINGS_ADMIN_URL', 'http://127.0.0.1:8765/settings/account-api')
+    ASSETS = ('settings-area.js',)
+    UNAVAILABLE = 'The settings service is unavailable (is the MCP server running?).'
+    ADMIN_ONLY = False
+    TIMEOUT = 30   # a worker page asks the worker for its plugins and config

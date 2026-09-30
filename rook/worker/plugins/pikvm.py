@@ -19,7 +19,7 @@ import ssl
 import urllib.parse
 import urllib.request
 
-from ..plugin import Plugin, capability
+from ..plugin import Plugin, capability, setting
 
 
 def _client_cfg() -> tuple[str, str, str, bool]:
@@ -115,6 +115,18 @@ def _decode_body(resp: dict, max_text: int = 64_000) -> dict:
 
 class PiKvmPlugin(Plugin):
     NAMESPACE = "pikvm"
+    SETTINGS = (
+        setting("url", "url", default="https://localhost", scope="worker", env="PIKVM_URL",
+                apply="restart", label="PiKVM URL",
+                help="The plugin loads only where PIKVM_URL is set."),
+        setting("user", str, default="admin", scope="worker", env="PIKVM_USER",
+                apply="restart", label="User"),
+        setting("password", str, secret=True, scope="worker", env="PIKVM_PASS",
+                apply="restart", label="Password",
+                help="Kept in the hub vault; the worker fetches it at use."),
+        setting("insecure", bool, default=True, scope="worker", env="PIKVM_INSECURE",
+                apply="restart", label="Skip TLS verification"),
+    )
 
     def available(self) -> bool:
         # Only load where a PiKVM is explicitly configured — otherwise every

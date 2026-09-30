@@ -77,22 +77,24 @@ class Knowledge(Plugin):
     PLACEMENT = place("is_hub", run="one")
     MIGRATIONS = "migrations"
     SETTINGS = (
-        setting("enabled", bool, default=False, env="ROOK_KNOWLEDGE",
-                label="Knowledge and tasks",
+        setting("enabled", bool, default=False, env="ROOK_KNOWLEDGE", apply="restart",
+                group="General", label="Knowledge and tasks",
                 help="Shared wiki plus concept/project/task records and the hygiene nudges. "
                      "Read at start: restart the hub to apply."),
-        setting("db_path", str, default="", env="ROOK_KNOWLEDGE_DB", label="Database file",
+        setting("db_path", "path", default="", env="ROOK_KNOWLEDGE_DB", apply="restart",
+                group="General", advanced=True, label="Database file",
                 help="Empty: knowledge.db beside the hub's other stores (the journal's directory)."),
         setting("semantic", bool, default=True, env="ROOK_KNOWLEDGE_SEMANTIC",
-                label="Semantic search",
+                apply="restart", group="Search", label="Semantic search",
                 help="Blend embedding similarity into search when an embedding service is set; "
                      "off = keyword search only."),
         resource("embedder", default=None, env="ROOK_EMBED_URL", label="Embedding service",
+                 apply="restart", group="Search",
                  help="http(s)://host:port/embed (services/knowledge-embeddings) or a band cap "
                       "such as cap://any/embed.text; both take {texts} and return {model, vectors}. "
                       "Empty: keyword search only."),
         setting("embed_model", str, default=DEFAULT_MODEL, env="ROOK_EMBED_MODEL",
-                label="Embedding model",
+                apply="restart", group="Search", label="Embedding model",
                 help="Must match the model the embedding service reports."),
     )
     GUIDANCE = {

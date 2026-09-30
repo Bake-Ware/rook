@@ -32,7 +32,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from ..plugin import Plugin, capability
+from ..plugin import Plugin, capability, setting
 
 _STATE = Path(os.path.expanduser("~")) / ".rook-band-worker" / "wake-last.txt"
 # Don't respawn the same agent within this window — a cheap guard against a
@@ -67,6 +67,14 @@ def _brief(room: str, thread_id: str, title: str, transcript: list,
 
 class WakePlugin(Plugin):
     NAMESPACE = "agent"
+    SETTINGS = (
+        setting("wake_command", str, default="", scope="worker", env="ROOK_WAKE_CMD",
+                apply="restart", label="Wake command",
+                help="Command template that starts an agent; {prompt_file} is filled in. "
+                     "Blank leaves agent.wake off."),
+        setting("wake_agent", str, default="", scope="worker", env="ROOK_WAKE_AGENT",
+                apply="restart", label="Identity this host wakes"),
+    )
 
     def available(self) -> bool:
         return bool(os.environ.get("ROOK_WAKE_CMD"))

@@ -29,7 +29,7 @@ import asyncio
 import os
 import socket
 
-from ..plugin import Plugin, capability
+from ..plugin import Plugin, capability, setting
 
 
 def _cfg() -> tuple[str, int, float]:
@@ -71,6 +71,14 @@ def _exchange(line: str) -> str:
 
 class CecPlugin(Plugin):
     NAMESPACE = "cec"
+    SETTINGS = (
+        setting("host", str, default="", scope="worker", env="CEC_HOST", apply="restart",
+                label="CEC bridge host", help="Blank leaves cec.* off."),
+        setting("port", int, default=9526, scope="worker", env="CEC_PORT", apply="restart",
+                min=1, max=65535, label="CEC bridge port"),
+        setting("timeout", float, default=5.0, scope="worker", env="CEC_TIMEOUT",
+                apply="restart", min=0.1, label="Timeout (s)"),
+    )
 
     @capability("send")
     async def _send(self, addr, opcode, operands=None, **_) -> dict:

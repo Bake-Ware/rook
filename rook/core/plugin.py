@@ -168,33 +168,77 @@ DEFAULT_PLACEMENT = Placement(where="not is_hub", run="all")
 # -- settings & resources ----------------------------------------------------
 
 _TYPES: dict[str, type] = {"str": str, "int": int, "float": float, "bool": bool,
-                           "list": list, "dict": dict, "resource": str}
+                           "list": list, "dict": dict, "resource": str,
+                           # str-valued types with a light shape check
+                           "url": str, "hostport": str, "path": str}
+
+#: How a changed value takes effect (docs/design/settings.md 3.7):
+#: ``live`` on the next read, ``reload`` when the plugin restarts, ``restart``
+#: when the process restarts, ``risky`` through a commit-confirmed worker restart.
+APPLY_MODES = ("live", "reload", "restart", "risky")
+
+
+def canonical_env(key: str) -> str:
+    """``ROOK_`` + the setting key upper-cased, dots and dashes as underscores
+    (``voice.whisper_model`` -> ``ROOK_VOICE_WHISPER_MODEL``)."""
+    return "ROOK_" + re.sub(r"[^A-Za-z0-9]", "_", key).upper()
 
 
 @dataclass(frozen=True)
 class Setting:
     """One entry of a plugin's settings schema. The schema drives validation,
-    env overrides, the (wave-2) settings UI and its history."""
+    env overrides, the settings UI and its history (docs/design/settings.md).
+
+    ``env`` is the first (legacy) variable name; ``env_aliases`` are further
+    accepted names, in order. The canonical ``ROOK_<NS>_<NAME>`` is always
+    accepted too (:meth:`env_names`)."""
 
     name: str
     type: str = "str"
     default: Any = None
-    scope: str = "hub"            # hub|band|worker|user
+    scope: str = "hub"            # hub|band|worker|user (the key's home scope)
     secret: bool = False          # value lives in the vault, never in settings storage
     env: str | None = None        # env var that overrides the stored value
     label: str = ""
     help: str = ""
     choices: tuple = ()
+    env_aliases: tuple = ()       # further accepted env names, after ``env``
+    apply: str = "live"           # live|reload|restart|risky
+    bootstrap: bool = False       # needed before the store is reachable: env/flag/file only
+    overridable: tuple = ()       # lower scopes that may override (e.g. ("worker",))
+    flag: str | None = None       # CLI flag for bootstrap settings (display only)
+    group: str = ""
+    order: int = 0
+    min: Any = None
+    max: Any = None
+    pattern: str | None = None
+    advanced: bool = False
+    deprecated: str | None = None  # replacement key / removal note
+
+    def env_names(self, namespace: str = "") -> tuple:
+        names = [n for n in ((self.env,) + tuple(self.env_aliases)) if n]
+        if namespace:
+            canon = canonical_env(f"{namespace}.{self.name}")
+            if canon not in names:
+                names.append(canon)
+        return tuple(names)
 
     def describe(self) -> dict:
         out = {"name": self.name, "type": self.type, "scope": self.scope,
                "label": self.label or self.name}
         if not self.secret:
             out["default"] = self.default
-        for k in ("secret", "env", "help"):
+        for k in ("secret", "env", "help", "bootstrap", "flag", "group", "order",
+                  "min", "max", "pattern", "advanced", "deprecated"):
             v = getattr(self, k)
-            if v:
+            if v not in (None, False, "", 0):
                 out[k] = v
+        if self.apply != "live":
+            out["apply"] = self.apply
+        if self.env_aliases:
+            out["env_aliases"] = list(self.env_aliases)
+        if self.overridable:
+            out["overridable"] = list(self.overridable)
         if self.choices:
             out["choices"] = list(self.choices)
         return out
@@ -214,40 +258,82 @@ class Setting:
             raise ValueError(f"{self.name}: not a boolean: {value!r}")
         if self.type in ("list", "dict") and isinstance(value, str):
             import json
-            value = json.loads(value)
+            if self.type == "list" and not value.strip().startswith("["):
+                value = [v.strip() for v in value.split(",") if v.strip()]
+            else:
+                value = json.loads(value)
         if self.type in ("int", "float") and isinstance(value, bool):
+            raise ValueError(f"{self.name}: expected {self.type}")
+        if self.type in ("list", "dict") and not isinstance(value, want):
             raise ValueError(f"{self.name}: expected {self.type}")
         out = want(value) if not isinstance(value, want) else value
         if self.type == "resource":
             parse_resource(out)
+        elif self.type == "url" and out:
+            u = urlparse(out)
+            if u.scheme not in ("http", "https", "ws", "wss") or not u.netloc:
+                raise ValueError(f"{self.name}: not an http(s)/ws(s) URL: {out!r}")
+        elif self.type == "hostport" and out:
+            host, sep, port = out.rpartition(":")
+            if not sep or not host or not port.isdigit() or not 0 < int(port) < 65536:
+                raise ValueError(f"{self.name}: expected host:port, got {out!r}")
         if self.choices and out not in self.choices:
             raise ValueError(f"{self.name}: {out!r} not in {list(self.choices)}")
+        if self.type in ("int", "float"):
+            if self.min is not None and out < self.min:
+                raise ValueError(f"{self.name}: {out} is below the minimum {self.min}")
+            if self.max is not None and out > self.max:
+                raise ValueError(f"{self.name}: {out} is above the maximum {self.max}")
+        if self.pattern and isinstance(out, str) and not re.fullmatch(self.pattern, out):
+            raise ValueError(f"{self.name}: {out!r} does not match {self.pattern}")
         return out
 
 
 def setting(name: str, type: "type | str" = str, default: Any = None, *,
-            scope: str = "hub", secret: bool = False, env: str | None = None,
-            label: str = "", help: str = "", choices: Iterable = ()) -> Setting:
+            scope: str = "hub", secret: bool = False,
+            env: "str | Iterable[str] | None" = None,
+            label: str = "", help: str = "", choices: Iterable = (),
+            apply: str = "live", bootstrap: bool = False,
+            overridable: Iterable[str] = (), flag: str | None = None,
+            group: str = "", order: int = 0, min: Any = None, max: Any = None,
+            pattern: str | None = None, advanced: bool = False,
+            deprecated: str | None = None) -> Setting:
+    """Declare one setting. ``env`` is a variable name or a list of them (the
+    first is the legacy name shown in the UI). See docs/design/plugins.md 7."""
     tname = type if isinstance(type, str) else getattr(type, "__name__", "")
     if tname not in _TYPES:
         raise ValueError(f"setting {name!r}: unsupported type {type!r}")
     if scope not in SCOPES:
         raise ValueError(f"setting {name!r}: scope must be one of {SCOPES}")
+    if apply not in APPLY_MODES:
+        raise ValueError(f"setting {name!r}: apply must be one of {APPLY_MODES}")
+    overridable = tuple(overridable)
+    for o in overridable:
+        if o not in SCOPES or SCOPES.index(o) <= SCOPES.index(scope):
+            raise ValueError(f"setting {name!r}: overridable scopes must be below {scope!r}")
+    if env is None or isinstance(env, str):
+        envs: tuple = (env,) if env else ()
+    else:
+        envs = tuple(e for e in env if e)
     s = Setting(name=name, type=tname, default=default, scope=scope, secret=secret,
-                env=env, label=label, help=help, choices=tuple(choices))
-    if default is not None and not secret:
+                env=envs[0] if envs else None, label=label, help=help,
+                choices=tuple(choices), env_aliases=envs[1:], apply=apply,
+                bootstrap=bootstrap, overridable=overridable, flag=flag, group=group,
+                order=order, min=min, max=max, pattern=pattern, advanced=advanced,
+                deprecated=deprecated)
+    if default is not None and not secret and not callable(default):
         s.coerce(default)  # a bad default is a plugin bug; fail at import time
     return s
 
 
 def resource(name: str, default: str | None = None, *, scope: str = "hub",
-             env: str | None = None, label: str = "", help: str = "",
-             secret: bool = False) -> Setting:
+             env: "str | Iterable[str] | None" = None, label: str = "", help: str = "",
+             secret: bool = False, **kw: Any) -> Setting:
     """A connection string setting: ``cap://<worker|any>/<cap>``, ``http(s)://``,
     ``sqlite:///path``. Operator-set; the plugin reads it with
     :meth:`Plugin.resource`."""
     return setting(name, "resource", default, scope=scope, env=env, label=label,
-                   help=help, secret=secret)
+                   help=help, secret=secret, **kw)
 
 
 RESOURCE_SCHEMES = ("cap", "http", "https", "sqlite", "file")
@@ -288,7 +374,11 @@ def parse_resource(url: str, caller: Any = None) -> Resource:
 class SettingsView:
     """Resolved settings for one plugin: env override > stored value > secret
     (vault) > default. Invalid values fall through to the next source with a
-    warning, so a typo in an env var degrades instead of killing the plugin."""
+    warning, so a typo in an env var degrades instead of killing the plugin.
+
+    Env names are the setting's ``env`` and ``env_aliases`` in order, then the
+    canonical ``ROOK_<NS>_<NAME>``. The host swaps in new stored values with
+    :meth:`refresh` when an operator changes one (``apply="live"``)."""
 
     def __init__(self, plugin: "Plugin", stored: dict | None = None,
                  secrets: Callable[[str], "str | None"] | None = None) -> None:
@@ -297,15 +387,25 @@ class SettingsView:
         self._stored = dict(stored or {})
         self._secrets = secrets
 
+    def refresh(self, stored: dict | None) -> None:
+        self._stored = dict(stored or {})
+
     def schema(self) -> list[dict]:
         return [s.describe() for s in self._schema.values()]
 
     def vault_key(self, name: str) -> str:
         return f"plugin.{self._plugin.NAMESPACE}.{name}"
 
+    def env_var(self, name: str) -> str | None:
+        """The environment variable currently overriding ``name``, if any."""
+        for var in self._schema[name].env_names(self._plugin.NAMESPACE):
+            if os.environ.get(var) is not None:
+                return var
+        return None
+
     def source(self, name: str) -> str:
         s = self._schema[name]
-        if s.env and os.environ.get(s.env) is not None:
+        if self.env_var(name):
             return "env"
         if s.secret:
             return "vault"
@@ -318,8 +418,9 @@ class SettingsView:
         if s is None:
             raise KeyError(f"{self._plugin.NAMESPACE}: no setting {name!r}")
         candidates: list[tuple[str, Any]] = []
-        if s.env and os.environ.get(s.env) is not None:
-            candidates.append((f"env {s.env}", os.environ[s.env]))
+        var = self.env_var(name)
+        if var:
+            candidates.append((f"env {var}", os.environ[var]))
         if s.secret:
             if self._secrets is not None:
                 try:
@@ -336,7 +437,7 @@ class SettingsView:
             except (ValueError, TypeError) as e:
                 log.warning("%s.%s: ignoring invalid %s value (%s)",
                             self._plugin.NAMESPACE, name, where, e)
-        return s.default
+        return s.default() if callable(s.default) else s.default
 
     def get(self, name: str, default: Any = None) -> Any:
         try:

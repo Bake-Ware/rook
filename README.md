@@ -210,9 +210,12 @@ See [Installers served by the hub](docs/FEATURES.md#installers-served-by-the-hub
 
 ## Configuration
 
-Everything is set with command-line flags or `ROOK_*` environment variables; each
-program's `--help` lists them. [`.env.example`](.env.example) documents every hub setting.
-The main ones:
+Hub, band, worker and plugin settings are on the dashboard's **Settings** page, which
+shows each value's source. An environment variable or flag always wins over the page (and
+the page says so); the band key is managed on the **Bands** page, and `ROOK_BAND_PSK` only
+seeds the first band. Every key, its variables and default are listed in
+[`docs/operations/settings-reference.md`](docs/operations/settings-reference.md) (generated
+from the schema). [`.env.example`](.env.example) covers a first deployment. The main ones:
 
 | Variable | Used by | Meaning |
 |---|---|---|
