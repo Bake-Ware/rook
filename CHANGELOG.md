@@ -10,6 +10,12 @@ releases yet: workers identify themselves by build number (for example
 Preparation for public use.
 
 ### Added
+- Agent skill at `skills/rook/` (SKILL.md + install/admin/tools/usage
+  references). `tools/gen_skill_reference.py` generates the tool and cap tables
+  from the code; a test fails when they are stale. The hub serves it as MCP
+  resources (`rook://skill/rook`) and `GET /skill/rook.skill`, with optional
+  operator site notes (`ROOK_SKILL_SITE_PAGE` / `ROOK_SKILL_SITE_FILE`).
+  `rook skill install [--harness claude|codex]` installs it.
 - `scripts/local-hub.sh` runs the relay, dashboard and MCP server locally with
   generated credentials.
 - `Dockerfile` and `compose.yaml` for running the hub in containers.

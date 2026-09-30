@@ -21,6 +21,7 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /src
 COPY pyproject.toml README.md ./
 COPY rook ./rook
+COPY skills ./skills
 # git is only needed to fetch the telesthete dependency.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git \

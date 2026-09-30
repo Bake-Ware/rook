@@ -13,6 +13,7 @@ SUBCOMMANDS = {
     "sessions":  "Browse Claude Code session history",
     "history":   "Browse Claude Code session history",
     "tmux":      "Manage Claude Code sessions (spawn, attach, kill)",
+    "skill":     "Install or package the Rook agent skill (Claude Code, Codex)",
 }
 
 
@@ -68,6 +69,10 @@ def main() -> None:
         sys.argv = [sys.argv[0]] + sys.argv[2:]
         tmux_main()
         return
+
+    if sys.argv[1] == "skill":
+        from .cli.skill import main as skill_main
+        sys.exit(skill_main(sys.argv[2:]))
 
     print(f"Unknown command: {sys.argv[1]}")
     print("Run 'rook --help' for available commands.")
