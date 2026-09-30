@@ -10,9 +10,11 @@ import socket
 import uuid
 from pathlib import Path
 
+from ..core import authz
 from ..core.facts import NodeFacts, local_facts, wire_facts
 from ..core.host import PluginHost
 from . import audit, context
+from .authz_guard import Guard
 from .plugin import Plugin
 from .registry import CapabilityRegistry
 from .transports.base import Transport
@@ -79,6 +81,9 @@ class Worker:
         self.registry.register('worker.description_get', self._description_get)
         self.registry.register('worker.description_set', self._description_set)
         self._announce_interval = announce_interval
+        band_id = getattr(transport, "band_id", None)
+        self.guard = Guard(self.worker_id,
+                           band_id.hex() if isinstance(band_id, (bytes, bytearray)) else None)
         self._stopping = False
         self._announce_task: asyncio.Task | None = None
         # Binary sub-protocol handlers (e.g. in-band OTA over telesthete Drop).
@@ -159,6 +164,13 @@ class Worker:
 
         cap = msg.get("cap")
         if not cap:
+            # Hub announces carry the is_hub grant behind its call tickets;
+            # learn the op key from them (signed announce = key possession).
+            if msg.get("kind") == "announce" and "grants" in msg:
+                try:
+                    self.guard.on_announce(msg)
+                except Exception:
+                    log.debug("hub grant check failed", exc_info=True)
             return  # not a request
 
         target = msg.get("target")
@@ -188,25 +200,47 @@ class Worker:
             await self._reply(msg_id, {"ok": False, "error": "args must be an object"})
             return
 
+        # Defense in depth (permissions 3.5 E2): check the hub's call ticket
+        # against this worker's own tier table. In the default ``audit`` mode
+        # nothing is refused; the result is recorded in audit.jsonl.
+        try:
+            tier = authz.effective_tier(cap, getattr(self.registry.meta(cap), "risk", None))
+            ticket = self.guard.check(msg, cap, tier, args)
+        except Exception as e:  # a broken checker must not brick the worker
+            log.exception("ticket check failed")
+            ticket = {"verified": False, "reason": f"check failed: {type(e).__name__}"}
+            if self.guard.mode not in ("off", "audit"):
+                ticket["refuse"] = "denied by worker: ticket check failed"
+        if ticket.get("refuse"):
+            audit.record(cap, identity, args, ok=False, msg_id=msg_id, target=target,
+                         error=ticket["refuse"], ticket=ticket, decision="deny")
+            await self._reply(msg_id, {"ok": False, "error": ticket["refuse"]})
+            return
+
         # Expose the caller identity to the handler for its duration (memory
         # write-ownership, chat attribution, later ACLs). Reset after so it
         # never leaks into an unrelated dispatch.
         tok = context.caller_identity.set(identity)
+        ttok = context.call_ticket.set(ticket)
         try:
             result = await self.registry.call(cap, **args)
-            audit.record(cap, identity, args, ok=True, msg_id=msg_id, target=target)
+            audit.record(cap, identity, args, ok=True, msg_id=msg_id, target=target,
+                         ticket=ticket, decision="allow")
             await self._reply(msg_id, {"ok": True, "result": result})
         except TypeError as e:
             audit.record(cap, identity, args, ok=False, msg_id=msg_id,
-                         target=target, error=f"bad args: {e}")
+                         target=target, error=f"bad args: {e}", ticket=ticket,
+                         decision="allow")
             await self._reply(msg_id, {"ok": False, "error": f"bad args: {e}"})
         except Exception as e:
             log.exception("capability %s raised", cap)
             audit.record(cap, identity, args, ok=False, msg_id=msg_id,
-                         target=target, error=f"{type(e).__name__}: {e}")
+                         target=target, error=f"{type(e).__name__}: {e}",
+                         ticket=ticket, decision="allow")
             await self._reply(msg_id, {"ok": False,
                                         "error": f"{type(e).__name__}: {e}"})
         finally:
+            context.call_ticket.reset(ttok)
             context.caller_identity.reset(tok)
 
     async def _reply(self, msg_id: str | None, body: dict) -> None:
@@ -254,6 +288,8 @@ class Worker:
         tiers = self.host.tiers()  # declared risk tiers only; omitted when none
         if tiers:
             msg["tiers"] = tiers
+        # Ticket-verification readiness (permissions 5.1); additive key.
+        msg["authz"] = self.guard.readiness()
         # Optional per-plugin live status (battery, etc.) rides the heartbeat.
         hb = self.host.heartbeats()
         if hb:

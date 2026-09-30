@@ -41,14 +41,26 @@ def build_account_token_routes(provider, chat=None, accounts=None):
                 if ttl not in (None, 86400, 604800, 2592000, 7776000, 31536000):
                     raise ValueError('Choose a supported expiry.')
                 # Optional scope tags. Only the Work session tag is accepted;
-                # scopes are recorded for attribution until permissions land.
+                # scopes are recorded for attribution.
                 scopes = data.get('scopes')
                 if scopes is not None:
                     if (not isinstance(scopes, list) or len(scopes) > 4 or scopes[:1] != ['rook']
                             or not all(isinstance(x, str) and re.fullmatch(r'work-session:[a-f0-9]{32}', x)
                                        for x in scopes[1:])):
                         raise ValueError('Unsupported token scope.')
-                entry = provider.mint_api_token(name.strip(), ttl_seconds=ttl, scopes=scopes)
+                # Token role (permissions.md 1), chosen at mint; work-session
+                # tokens and the default are "agent".
+                role = data.get('role') or 'agent'
+                from .tokens import TOKEN_ROLES
+                if role not in TOKEN_ROLES:
+                    raise ValueError('Choose a supported role.')
+                if role == 'operator' and not user.get('admin'):
+                    raise ValueError('Only an operator account can mint operator tokens.')
+                if role != 'agent' and scopes is not None:
+                    raise ValueError('Work session tokens are agent tokens.')
+                entry = (provider.mint_api_token(name.strip(), ttl_seconds=ttl, scopes=scopes, role=role)
+                         if role != 'agent' else
+                         provider.mint_api_token(name.strip(), ttl_seconds=ttl, scopes=scopes))
                 return response({'id': entry['id'], 'name': entry['name'], 'token': entry['token']})
             if op == 'revoke':
                 if data.get('confirm') is not True:

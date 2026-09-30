@@ -238,7 +238,11 @@ alerts are optional; see the [feature tour](docs/FEATURES.md) and `services/`.
   dashboard's **Bands** page if it leaks.
 - **The relay is blind**: it can drop or delay traffic, but not read or forge it.
 - **Updates and deauth are signed** with a separate ed25519 key, so band membership alone can't
-  push code to workers or evict them.
+  push code to workers, evict them or repoint them at another hub or key.
+- **Permissions** (`docs/design/permissions.md`): the hub evaluates a policy per principal, cap
+  and worker, and signs a short-lived ticket for each call. It ships in audit mode (would-be
+  denials are journaled, nothing is refused) until you set `"mode": "enforce"` in `policy.json`
+  or on the dashboard's **/permissions** page. Give tokens the least role they need at mint.
 - **The dashboard and MCP server are the admin surface.** Put them behind HTTPS and strong
   passwords, and give each agent its own MCP token so the journal shows who did what.
 - **Known gaps:** there is no per-worker identity on the band yet, so a hostile peer that holds

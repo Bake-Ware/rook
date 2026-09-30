@@ -223,6 +223,16 @@ class HubNode:
             body = {"ok": False, "error": (
                 f"{cap} is not callable over the band on the hub (risk above "
                 f"{self.band_max_risk!r}); call it through the MCP bridge")}
+        elif source == "band":
+            # Any PSK holder can send this: no authenticated principal until
+            # device-signed calls (permissions.md 1); the envelope identity
+            # stays a display breadcrumb.
+            from .authz import BAND_UNAUTHENTICATED, current_principal
+            tok = current_principal.set(BAND_UNAUTHENTICATED)
+            try:
+                body = await self.host.dispatch(cap, args, identity)
+            finally:
+                current_principal.reset(tok)
         else:
             body = await self.host.dispatch(cap, args, identity)
         if source == "band" and self._on_band_call is not None:

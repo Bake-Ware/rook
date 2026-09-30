@@ -18,7 +18,7 @@ Never hand-edit remote config over `shell.exec` when this path works. Moving hub
 | See what's loaded | `worker.plugin.list` |
 | Toggle a plugin at runtime | `worker.plugin.enable` / `worker.plugin.disable` with `{"module": "deluge"}` |
 | Restart the worker process | `worker.restart` |
-| Change hub/psk without the confirm dance | `worker.reconfigure` (`hub`, `psk`) — prefer `rook_config_apply` |
+| Change hub/psk without the confirm dance | `worker.reconfigure` (`hub`, `psk`) — prefer `rook_config_apply`. Hub/psk changes need the hub's signed call ticket, so send them through the hub (rook_call), never from a direct band peer |
 | Role text shown in rosters | `worker.description_set` / `worker.description_get` |
 | Worker health/build | `worker.status` |
 | Recent cap calls on that worker | `log.audit` (`limit`, `cap_prefix`), `log.tail` (`limit`) |
@@ -30,7 +30,11 @@ Flow: build bundle → hub signs manifest `{build, sha256, url, sig}` → the co
 - **Default policy: let autoupdate converge.** Don't sweep the fleet with `worker.apply` or per-worker checks unless the user asks.
 - Canary: `worker.check` with `{"force": true}` on one worker, verify, then let the rest converge.
 - Pin a node: `worker.hold`.
-- `worker.apply` / `worker.deauth` only accept payloads signed by the controller key — being on the band isn't enough, and agents can't forge them.
+- `worker.apply` / `worker.deauth` / `worker.update` only accept payloads signed by the controller key — being on the band isn't enough, and agents can't forge them. `worker.update(url=…)` needs a signed `manifest` too.
+
+## Permissions
+
+The hub evaluates a policy for every call (`docs/design/permissions.md`). It ships in **audit** mode: nothing is denied, would-be denials are journaled (`decision=would_deny`). `rook_call(worker="rook", cap="policy.explain", args={"principal": "role:agent", "cap": "…", "worker": "…"})` shows the rule that decides a call; `policy.status` shows the mode and whether calls carry tickets. A denial comes back as `{"ok": false, "error": "denied: …", "denied": {"rule", "rev", …}}`: don't retry it, ask the user. Changing the policy (`policy.set`, dashboard **/permissions**) is for band owners and operator tokens.
 - Android updates come from a rebuilt APK (hub feed checked on start and every 6 h; SHA-256 + same signing cert required), not the zipapp feed. The ESP32 dongle has its own flash path.
 
 ## Custom caps (fleet-wide patterns)

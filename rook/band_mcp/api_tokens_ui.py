@@ -146,7 +146,8 @@ def _index_html(tokens: list[dict], minted_secret: str | None,
             f"<tr>"
             f"<td>{av}</td>"
             f"<td>{html.escape(str(t.get('name') or ''))}<br>"
-            f"<code class=id>{html.escape(ident)}</code></td>"
+            f"<code class=id>{html.escape(ident)}</code> "
+            f"<small>role: {html.escape(str(t.get('role') or 'agent'))}</small></td>"
             f"<td><code>{html.escape(str(t.get('preview') or ''))}</code></td>"
             f"<td>{_fmt_ts(t.get('created_at'))}</td>"
             f"<td>{_fmt_ts(t.get('last_used_at'))}</td>"
@@ -221,6 +222,15 @@ def _index_html(tokens: list[dict], minted_secret: str | None,
       <option value="2592000">30 days</option>
       <option value="7776000">90 days</option>
       <option value="31536000">1 year</option>
+    </select>
+  </label>
+  <label>Role
+    <select name=role title="Picks the token's default permissions (docs/design/permissions.md)">
+      <option value="agent">agent</option>
+      <option value="readonly">readonly</option>
+      <option value="integration">integration</option>
+      <option value="operator">operator</option>
+      <option value="custom">custom</option>
     </select>
   </label>
   <button type=submit>Mint</button>
@@ -402,7 +412,11 @@ def build_api_token_routes(provider: "TokenStore",
         name = str(form.get("name") or "").strip() or "unnamed"
         ttl_raw = str(form.get("ttl") or "").strip()
         ttl = int(ttl_raw) if ttl_raw.isdigit() else None
-        entry = provider.mint_api_token(name=name, ttl_seconds=ttl)
+        role = str(form.get("role") or "agent").strip()
+        try:
+            entry = provider.mint_api_token(name=name, ttl_seconds=ttl, role=role)
+        except (TypeError, ValueError):
+            entry = provider.mint_api_token(name=name, ttl_seconds=ttl)
         return _redirect_with_secret(entry["token"], entry["name"])
 
     async def revoke(request: Request) -> Response:

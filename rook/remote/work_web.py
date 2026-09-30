@@ -314,7 +314,7 @@ class WorkWeb:
     async def mint_session_token(self, request, user, sid, harness):
         result = await self.token_call(request, user, {
             'op': 'create', 'name': f'work:{harness}:{sid[:8]}', 'ttl': SESSION_TOKEN_TTL,
-            'scopes': ['rook', 'work-session:' + sid]})
+            'scopes': ['rook', 'work-session:' + sid], 'role': 'agent'})
         return result['id'], result['token']
 
     async def revoke_session_tokens(self, request, user):

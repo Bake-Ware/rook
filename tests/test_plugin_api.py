@@ -521,12 +521,15 @@ async def test_band_client_serves_the_hub_node(tmp_path):
     await client.stop()
 
 
-def test_band_client_without_hub_node_is_unchanged():
+def test_band_client_without_hub_node_quarantines_ungranted_rook():
+    # Without a valid is_hub grant (and proof of key possession) nobody gets
+    # the reserved name, even on a client with no hub node of its own.
     from rook.band_mcp.client import BandClient
     client = BandClient("test-band")
     client._handle_announce({"kind": "announce", "worker_id": "w1", "name": "rook",
                              "caps": []})
-    assert client.workers["w1"]["name"] == "rook" and client.workers["w1"]["facts"] == {}
+    w = client.workers["w1"]
+    assert w["name"] == "rook~w1" and w["quarantined"] and w["facts"] == {}
 
 
 @pytest.mark.asyncio
@@ -587,7 +590,7 @@ async def test_mcp_reaches_hub_caps(tmp_path, monkeypatch):
 
     plugins = _text(await mcp.call_tool("rook_call", {"cap": "hub.plugins", "worker": "rook",
                                                       "args": {"fields": ["name"]}}))
-    assert plugins["result"] == [{"name": "hub-info"}]
+    assert plugins["result"] == [{"name": "hub-info"}, {"name": "hub-policy"}]
 
     workers = _text(await mcp.call_tool("rook_workers", {}))
     assert [w["name"] for w in workers] == ["rook"]

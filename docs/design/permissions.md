@@ -1,7 +1,79 @@
 # Permissions and signed role grants
 
-Status: **design / spec** (rook-beta wave 1). Implementation is a wave-2 task.
-Nothing in this document changes behaviour on its own.
+Status: **implemented in audit mode** (rook-beta wave 2). The spec below is
+unchanged; the next section records what the code does, where it deviates and
+what is still open.
+
+## Implementation notes (wave 2)
+
+**Maintainer decisions applied.** Enforcement ships in shadow/audit mode:
+decisions are computed and journaled, nothing is denied until the operator
+sets `"mode": "enforce"`. The default policy reproduces today's behaviour.
+Denying exec/admin to `unverified` callers is implemented but off by default
+(one edit: `"unverified": {"exec": "deny", "admin": "deny"}`). Band settings
+changes (`settings.set`/`settings.reset`) and `policy.set` are for band owners
+and operator-role tokens: default rules deny them to `role:agent` and
+`human:member` (in enforce mode), and `policy.set` also hard-gates on the
+principal in its handler whatever the mode. The settings framework should
+call `rook.hub.authz.require_hub_admin("settings.set")` the same way.
+
+| Area | Code | Notes |
+|---|---|---|
+| Tier table, tier resolution, signed objects, grants, tickets, deauth v2, revocations, replay cache | `rook/core/authz.py` | Stdlib-only (PyNaCl loaded at runtime; verification fails closed without it). Ships in the worker bundle. |
+| Policy document, compiler, evaluator, lint, store | `rook/hub/policy.py` | **JSON** at `policy.json` in the hub data dir (`$ROOK_DATA_DIR`, else next to the MCP stores); `policy.yaml` is read instead when present and PyYAML is installed. The settings framework can take over storage later. Reloaded on change; an invalid file keeps the last good revision. |
+| E1: principal resolution, `authorize()`, tickets, journaling | `rook/hub/authz.py`, `BandClient.authz` / `MultiBandClient.authz` | The authorizer sits inside the band client, so every hub path is covered. Principals come from a context variable set by the MCP attribution wrapper (`token:<agent_id>`, `token:static`, `unverified`) and the dashboard principal middleware (`human:<user_id>`, `human:dashboard`); in-process hub code without one is `system:*`. `call(principal=…)` overrides. |
+| Hub tools as caps on `rook` | `server._authorize_tool`, `hub_cap_for_tool` | Checked right after attribution. Tools that only forward to worker caps are authorized in the band client. |
+| Journal | `calls.principal/decision/rule/policy_rev/tier` | `rook_call` puts the decision on its own row; other paths journal non-allow decisions (coalesced over 10 s). `rook_journal` shows the columns on non-allow rows only. |
+| Token roles | `TokenStore.mint_api_token(role=…)`, `/tokens` and account token pages | Existing tokens are `agent`; the static token is `operator`. Only operator accounts may mint operator tokens from the account page. |
+| Keys and grants | `rook/hub/keys.py` | `hub-op-key` beside the root key (mode 0600), rotated after 30 days with a 24 h overlap. Grants are issued in memory by each hub process (7 days, renewed daily, scoped to every band that process serves). |
+| Signed hub announce, `rook` resolution, impostor quarantine | `BandClient._announce_local`, `_handle_announce`, `core.facts.roles_from_announce` | Replaces the reject-all stub. A remote announce naming `rook` without a held grant is listed as `rook~<id8>`, flagged `quarantined`, and journaled once as `audit.impostor`. |
+| E2: worker ticket checks | `rook/worker/authz_guard.py`, `Worker._on_message` | All five modes; default `audit` (`ROOK_AUTHZ_MODE`). Keys learned from signed hub announces or inlined in the ticket; `authz` readiness in the announce; `audit.jsonl` gains `ticket` and `decision`. |
+| Dashboard | `/permissions`, `/api/policy`, `/api/policy/explain` (`rook/remote/policy_web.py`); caps `policy.explain/get/set/status` on `rook` | A minimal page: mode, revision, lint, JSON editor, explain, recent non-allow decisions. The full editor (matrix, pickers, dry run, history) waits for the settings framework. |
+
+**Current-code gaps (6.3), fixed.**
+
+1. `worker.deauth` accepts only a deauth v2 order (`rook-deauth-v2` domain,
+   `worker_id` and `issued_at` required). The hub sends the v2 order nested
+   under `v2` inside a legacy v1 body signed the old way, so build-167 workers
+   still park and new workers verify only the v2 part.
+2. `worker.update(url=…)` requires a signed OTA `manifest` (same verification
+   as `worker.apply`, sha256 match, `--selftest`, no downgrades). The optional
+   `manifest` argument is new; old workers never receive it.
+3. Hub/PSK changes through `worker.reconfigure`, `worker.update` and
+   `worker.config_apply` require a **signed order**, implemented as a verified
+   call ticket: signed by the hub op key under a root-signed `is_hub` grant,
+   bound to this worker, message id, cap and the exact args (so the new hub and
+   PSK values are covered). The ticket travels in the envelope, not in the
+   args, so build-167 workers are unaffected.
+
+**Compatibility.** Every wire addition is an optional key old peers ignore:
+envelope `ticket`, announce `grants`/`asig`/`ts`/`seq`/`authz`, deauth `v2`.
+Known breaks, both on new workers only:
+
+- A hub without the root signing key (or an old hub) can no longer repoint a
+  new worker's hub or PSK over the band, and a new worker without a trust
+  anchor (run from a source checkout, `ROOK_UPDATE_PUBKEY` unset) refuses such
+  changes too. Set `ROOK_AUTHZ_ALLOW_UNSIGNED_REPOINT=1` on the worker to
+  restore the old behaviour locally. Band migrations use the enrollment HTTPS
+  path and are not affected.
+- `worker.update(url=…)` without a signed manifest and legacy v1 deauth
+  orders are refused. Old hubs sending v1 deauth orders to new workers fall
+  back to the controller denylist only.
+
+**Not done yet (follow-ups).** Per-argument predicates, on-behalf-of chains
+from integrations (the evaluator supports chains; no integration builds one
+yet), plugin principals from manifests, the worker local floor
+(`policy.yaml` on the worker), hub-signed time / clock offset adoption,
+fetching revocation lists (workers accept a signed list inlined in a hub
+announce; the hub does not publish one yet), name binding against the device
+registry (names bind by the live roster; the "weak binding" badge is not
+shown), `{{secret:…}}` refusal for fact-only targets (calls are always
+targeted by id today), `/api/band/ticket` and routing the `rook band` TUI
+through the hub, the dry-run replay and history views, `denied: [...]`
+annotations in `rook_workers`/`rook_caps`, and stage 6 device-key signed
+announces. The hub node keeps its persisted `hub_node_id` as `worker_id`
+instead of the op-key `kid`, so rosters and journals keep a stable id across
+op-key rotations; the grant does not bind `sub.worker_id`.
 
 This spec covers who may call which capability on which worker, how the
 decision is made and recorded, and how a node proves that it holds a role such

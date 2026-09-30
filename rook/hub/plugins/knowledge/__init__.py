@@ -170,8 +170,9 @@ class Knowledge(Plugin):
     # -- attribution -------------------------------------------------------
     def _principal(self):
         """The MCP bridge's attributed caller when there is one; otherwise the
-        identity the call arrived with (a band caller's self-stamped identity,
-        recorded as kind ``band``)."""
+        authenticated principal of the call (permissions.md 1): a dashboard
+        account, in-process hub code, or ``band:unauthenticated`` for a band
+        caller, whose self-stamped identity is never taken as who it is."""
         p = None
         if self.principal is not None:
             try:
@@ -180,8 +181,13 @@ class Knowledge(Plugin):
                 log.exception("knowledge: principal lookup failed")
         if p:
             return p
+        from ...authz import current_principal
+        pr = current_principal.get()
+        if pr is not None:
+            return {'identity': pr.id, 'kind': pr.kind}
+        # In-process hub code without a principal: the identity it passed.
         ident = current_identity()
-        return {'identity': ident, 'kind': 'band'} if ident else None
+        return {'identity': ident, 'kind': 'system'} if ident else None
 
     # -- caps --------------------------------------------------------------
     async def run(self, namespace: str, write: bool, action: str, kind, band, rid, query,

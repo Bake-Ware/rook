@@ -72,8 +72,13 @@ def _summarize_args(args: dict | None, limit: int = 500) -> dict | str | None:
 
 def record(cap: str, identity: str | None, args: dict | None,
            ok: bool, msg_id: str | None = None,
-           target: str | None = None, error: str | None = None) -> None:
-    """Append one audit entry. Best-effort; never raises."""
+           target: str | None = None, error: str | None = None,
+           ticket: dict | None = None, decision: str | None = None) -> None:
+    """Append one audit entry. Best-effort; never raises.
+
+    ``ticket`` summarises the hub-ticket check (``{kid, p, verified, reason}``)
+    and ``decision`` is ``allow`` / ``deny`` (permissions 3.7), so "calls
+    without a ticket" is a query over ``log.audit``."""
     if ok and cap in _QUIET:
         return
     entry = {
@@ -89,6 +94,11 @@ def record(cap: str, identity: str | None, args: dict | None,
         entry["target"] = target
     if error:
         entry["error"] = error[:300]
+    if ticket is not None:
+        entry["ticket"] = {k: ticket.get(k) for k in ("kid", "p", "verified", "reason")
+                           if ticket.get(k) is not None}
+    if decision:
+        entry["decision"] = decision
     line = json.dumps(entry, separators=(",", ":"))
     try:
         with _lock:
