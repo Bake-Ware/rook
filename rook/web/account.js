@@ -1,109 +1,108 @@
+// Account & access: who you are and how you sign in on the left; your bands
+// and the devices enrolled in them on the right.
+import {h,ago,day,useCss,btn,table,two,dialog,menu,accountAction,reveal,pairing} from '/account/bands/assets/manage.js';
+
 export async function mountAccount(root, {onChange = () => {}} = {}) {
-  root.innerHTML = `<nav class="settings-tabs" aria-label="Account sections">
-    <button data-section-tab="profile">Profile & login</button><button data-section-tab="access">Band access</button><button data-section-tab="installers">Installer approval</button>
-    </nav><div class="settings-status" role="status" aria-live="polite"></div><div class="account-content"></div>
-    <dialog class="settings-dialog"><div class="dialog-heading"><h2></h2><button type="button" data-close aria-label="Close">×</button></div><div class="dialog-content"></div></dialog>`;
-  const $ = s => root.querySelector(s), content = $('.account-content'), dialog = $('dialog');
-  let section = 'profile', pairingTimer = null, busy = false;
-  function select(value) {
-    section = value;
-    root.querySelectorAll('[data-section]').forEach(el => {el.hidden = el.dataset.section !== value;});
-    root.querySelectorAll('[data-section-tab]').forEach(el => {
-      el.classList.toggle('active', el.dataset.sectionTab === value);
-      el.setAttribute('aria-pressed', String(el.dataset.sectionTab === value));
-    });
+  useCss();
+  let csrf='',user=null,bands=[],tab='bands',asked='';
+  const status=h('p',{class:'mg-status settings-status',role:'status','aria-live':'polite'});
+  const left=h('div',{class:'mg-side',style:'display:flex;flex-direction:column;gap:18px;flex:1 1 340px'}),right=h('div',{class:'mg-box mg-main',style:'flex:2 1 520px;gap:0'});
+  root.replaceChildren(h('div',{class:'mg'},status,h('div',{class:'mg-split'},left,right)));
+
+  async function act(fields,done){
+    status.className='mg-status settings-status';status.textContent='';
+    try{const d=await accountAction(csrf,fields);if(d.pairing){pairing(d);return d;}await refresh();onChange();(done||(()=>{status.textContent='Changes saved.';}))(d);return d;}
+    catch(e){status.className+=' bad';status.textContent=e.message;}
   }
-  root.querySelectorAll('[data-section-tab]').forEach(el => {el.onclick = () => select(el.dataset.sectionTab);});
-  $('[data-close]').onclick = () => dialog.close();
-  dialog.addEventListener('close', () => {clearInterval(pairingTimer); pairingTimer = null; $('.dialog-content').replaceChildren();});
-  async function refresh() {
-    const query = location.hash.split('?')[1] || '';
-    const response = await fetch('/account/component' + (query ? '?' + query : ''));
-    if (!response.ok || !response.headers.get('content-type')?.includes('application/json')) throw Error('Sign in to your account and reload this view.');
-    const data = await response.json();
-    content.innerHTML = data.html;
-    // The sign-out form belongs with the profile summary.
-    content.querySelector('form')?.setAttribute('data-section', 'profile');
-    const params = new URLSearchParams(query);
-    if (params.has('invite') || params.get('section') === 'access') section = 'access';
-    if (params.has('device')) section = 'installers';
-    select(section);
-    return data;
+  function form(fields,submit,...kids){
+    return h('form',{onsubmit:e=>{e.preventDefault();const b=e.submitter;if(b)b.disabled=true;const data=Object.fromEntries(new FormData(e.target));
+      Promise.resolve(submit({...fields,...data})).finally(()=>{if(b)b.disabled=false;});}},kids);
   }
-  function openResult(title) {
-    $('.dialog-heading h2').textContent = title; dialog.setAttribute('aria-label', title);
-    $('.dialog-content').replaceChildren();
-    if (!dialog.open) dialog.showModal();
-    return $('.dialog-content');
+  async function refresh(){
+    const query=location.hash.split('?')[1]||'';
+    const [r,b]=await Promise.all([fetch('/account/component'+(query?'?'+query:'')),fetch('/account/bands/api',{headers:{Accept:'application/json'}})]);
+    if(!r.ok||!r.headers.get('content-type')?.includes('application/json'))throw Error('Sign in to your account and reload this view.');
+    const d=await r.json();csrf=d.csrf;user=d.user;bands=b.ok?(await b.json()).bands:[];
+    draw();
+    const params=new URLSearchParams(query);
+    if(params.get('invite')&&asked!==query){asked=query;acceptDialog(params.get('invite'));}
+    if(params.get('device')&&asked!==query){asked=query;const code=left.querySelector('[name=user_code]');code.value=params.get('device');code.focus();}
+    return d;
   }
-  function showPairing(data) {
-    const box = openResult('Pair a worker');
-    box.innerHTML = '<p class="muted">Use this code on the machine you want to connect.</p><strong class="pairing-code"></strong><p class="pairing-expiry"></p><label>Linux / macOS<pre class="pairing-command"></pre></label><label>Windows PowerShell<pre class="pairing-windows"></pre></label>';
-    let grant = data.pairing, pending = false, stopped = false;
-    function display() {
-      const url = data.origin + '/worker?band=' + grant.code;
-      box.querySelector('.pairing-code').textContent = grant.code;
-      box.querySelector('.pairing-command').textContent = `curl -fsSL '${url}' | bash`;
-      box.querySelector('.pairing-windows').textContent = `iex (irm "${url}&os=windows")`;
+
+  function draw(){
+    const avatar=user.avatar?h('img',{class:'mg-avatar big',src:'/account/avatar/'+encodeURIComponent(user.id)+'?v='+user.avatar_updated,alt:''}):h('span',{class:'mg-avatar big',text:(user.name||'?').slice(0,2).toUpperCase()});
+    const upload=h('input',{type:'file',name:'image',accept:'image/png,image/jpeg,image/webp',hidden:true,onchange:()=>{if(!upload.files[0])return;const fd={op:'avatar_upload',image:upload.files[0]};act(fd);}});
+    const profile=h('div',{class:'mg-box mg-pad'},h('div',{class:'mg-label',text:'Profile'}),
+      h('div',{class:'mg-actions',style:'gap:14px;flex-wrap:nowrap'},avatar,h('div',{class:'mg-two'},h('b',{class:'profile-name',style:'font-size:18px',text:user.name}),h('small',{text:user.email||user.username||''}))),
+      form({op:'profile'},f=>act(f,()=>{status.textContent='Name saved.';}),h('div',{class:'mg-actions',style:'align-items:flex-end'},h('label',{class:'mg-field mg-grow'},'Display name',h('input',{name:'name',value:user.name,maxlength:'100',required:true})),h('button',{class:'mg-btn soft',text:'Save name'}))),
+      h('div',{class:'mg-actions'},h('span',{class:'mg-sub mg-grow',style:'font-size:12px',text:'Picture: '+(!user.avatar?'initials':user.avatar_source==='custom'?'uploaded':'Google photo')}),
+        btn('Upload…','',()=>upload.click()),
+        user.google_enabled&&user.avatar_source!=='google'?btn('Use Google photo','',()=>act({op:'avatar',source:'google'})):null,
+        user.avatar?btn('Use initials','',()=>act({op:'avatar',source:'initials'})):null,upload),
+      h('div',{class:'mg-actions'},btn('Sign out','',()=>act({op:'logout'}))));
+    const login=(name,detail,action)=>h('div',{class:'mg-row',style:'grid-template-columns:minmax(0,1fr) auto;min-height:52px'},two(name,detail),action||h('span'));
+    const signin=h('div',{class:'mg-box'},h('div',{class:'mg-label mg-navlabel',text:'Sign-in'}),
+      user.google_enabled?login('Google',user.google_connected?'Connected':'Not connected',user.google_connected?btn('Disconnect','',()=>{if(confirm('Disconnect Google from this account?'))act({op:'unlink'});}):h('a',{class:'mg-btn',href:'/auth/google?link=1',text:'Connect'})):null,
+      user.managed_login?login('Password','Managed in the server configuration'):user.has_password?login('Password','Set for '+user.username,btn('Change','',passwordDialog)):login('Password','No local login',btn('Add','',localDialog)));
+    const installer=h('div',{class:'mg-box callout mg-pad'},h('div',{class:'mg-label mg-warn',text:'Approve an installer'}),
+      h('p',{class:'mg-sub',style:'font-size:13px;color:var(--fg)',text:'An installer you started shows a code. Approving it lets that installer fetch your band configurations once.'}),
+      form({op:'device_approve'},f=>act(f,()=>{status.textContent='Installer approved.';}),h('div',{class:'mg-actions'},h('input',{name:'user_code',maxlength:'8',required:true,placeholder:'ABCD1234','aria-label':'Installer code',class:'mg-grow',style:'font:500 16px var(--mono);letter-spacing:2px'}),h('button',{class:'mg-btn primary',text:'Approve'}))));
+    left.replaceChildren(profile,signin,installer);
+    drawRight();
+  }
+
+  function drawRight(){
+    const owned=bands.filter(b=>b.role==='owner');
+    const devices=owned.flatMap(b=>(b.devices||[]).map(d=>({...d,band:b})));
+    const tabs=[['bands','Your bands · '+bands.length],['devices','Devices · '+devices.filter(d=>d.active).length]];
+    const add=tab==='bands'?btn('Accept an invitation','soft',()=>acceptDialog('')):btn('Pair a device','soft',pairDialog,{disabled:!owned.some(b=>b.active)});
+    let body,foot;
+    if(tab==='bands'){
+      body=table('minmax(0,1.4fr) minmax(0,1fr) 90px 44px',['Band','Workers','Your role',''],bands.length?bands.map(b=>{
+        const on=b.workers.filter(w=>w.online).length,more=btn('⋯','icon',()=>menu(more,[
+          {label:'Open on the Bands page',href:'#bands'},
+          b.active&&{label:'Download configuration',href:'/account/configurations?band='+encodeURIComponent(b.id)},
+          b.role==='owner'&&b.active&&{label:'Pairing code for a device',run:()=>act({op:'pair',band_id:b.id})},
+          b.role==='owner'&&b.active&&{label:'Invite a person',run:()=>act({op:'invite',band_id:b.id},d=>reveal('Invite a person','Share this single-use link. It expires in seven days.',d.text))}]),{'aria-label':'More actions for '+b.name});
+        return h('div',{class:'mg-row'},two(b.name,(b.primary?'Default band · ':'')+(b.active?'key v'+b.epoch:'revoked')),h('span',{class:'mg-mono mg-dimtext',text:on+' of '+b.workers.length+' online'}),h('span',{class:'mg-mono '+(b.role==='owner'?'mg-good':'mg-dimtext'),text:b.role}),more);
+      }):[h('div',{class:'mg-empty',text:'You are not in any band yet. Accept an invitation to join one.'})],520);
+      foot=h('span',null,'Members, keys and worker moves are on the ',h('a',{href:'#bands',text:'Bands page'}),'. ',h('a',{href:'/account/configurations',text:'Download all configurations'}),'.');
+    }else{
+      body=table('minmax(0,1.4fr) minmax(0,1fr) 110px 44px',['Device','Band','Last seen',''],devices.length?devices.map(d=>{
+        const more=d.active?btn('⋯','icon',()=>menu(more,[{label:'Revoke certificate…',danger:true,run:()=>{if(confirm('Revoke the certificate for '+d.name+'? It can no longer fetch its configuration.'))act({op:'device_revoke',band_id:d.band.id,device_id:d.id},()=>{status.textContent='Device certificate revoked.';});}}]),{'aria-label':'More actions for '+d.name}):h('span');
+        return h('div',{class:'mg-row'},two(d.name,'enrolled '+day(d.created)),h('span',{class:'mg-mono mg-dimtext',text:d.band.name}),h('span',{class:'mg-mono '+(d.active?'mg-dimtext':'mg-bad'),text:d.active?ago(d.last_seen):'revoked'}),more);
+      }):[h('div',{class:'mg-empty',text:owned.length?'No enrolled devices.':'Devices show here for bands you own.'})],520);
+      foot='Each device holds its own certificate. Revoking one stops only that device from fetching its configuration.';
     }
-    display(); clearInterval(pairingTimer);
-    pairingTimer = setInterval(async () => {
-      if (stopped) return;
-      const left = Math.ceil(grant.expires - Date.now()/1000);
-      box.querySelector('.pairing-expiry').textContent = Math.max(0, left) + ' seconds remaining';
-      if (left > 0 || pending) return;
-      pending = true;
-      try {
-        const response = await fetch('/account/pairing', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({csrf:data.csrf, band_id:data.band_id, session:grant.session})});
-        const next = await response.json();
-        if (!response.ok) throw Error(next.error || 'Pairing stopped. Generate a new code.');
-        grant = next;
-        if (dialog.open && box.isConnected) display();
-      } catch (error) {
-        box.querySelector('.pairing-expiry').textContent = error.message; stopped = true;
-      } finally {pending = false;}
-    }, 1000);
+    right.replaceChildren(h('div',{class:'mg-bar',style:'justify-content:space-between;padding-right:18px;border-bottom:1px solid var(--line)'},
+      h('div',{class:'mg-tabs',role:'tablist',style:'border:0'},tabs.map(([id,text])=>h('button',{type:'button',role:'tab',class:id===tab?'on':'','aria-selected':String(id===tab),'data-section-tab':id,text,onclick:()=>{tab=id;drawRight();}}))),add),
+      body,h('div',{class:'mg-sub',style:'padding:12px 18px;font-size:12px'},foot));
   }
-  root.addEventListener('submit', async event => {
-    const form = event.target;
-    if (form.getAttribute('action') !== '/account/action') return;
-    event.preventDefault(); if (busy) return;
-    busy = true;
-    const button = event.submitter; if (button) button.disabled = true;
-    $('.settings-status').textContent = '';
-    try {
-      const response = await fetch('/account/action', {method:'POST', headers:{'X-Rook-View':'account'}, body:new FormData(form)});
-      if (response.headers.get('content-type')?.includes('application/json')) {
-        const data = await response.json();
-        if (data.redirect) {location.assign(data.redirect); return;}
-        if (data.pairing) showPairing(data);
-        else {await refresh(); onChange(); $('.settings-status').textContent = 'Changes saved.';}
-      } else {
-        if (response.redirected) throw Error('Your session expired. Sign in again.');
-        const doc = new DOMParser().parseFromString(await response.text(), 'text/html');
-        const main = doc.querySelector('main');
-        if (!main) throw Error('Unable to complete this request.');
-        const box = openResult(main.querySelector('h1')?.textContent || 'Account');
-        main.querySelectorAll('script,style,link,nav,h1').forEach(el => el.remove());
-        box.append(...main.childNodes);
-        if (response.ok) onChange();
-      }
-    } catch (error) {$('.settings-status').textContent = error.message;}
-    finally {busy = false; if (button) button.disabled = false;}
-  });
-  root.addEventListener('click', event => {
-    const link = event.target.closest('a');
-    if (!link) return;
-    const url = new URL(link.href);
-    if (url.origin !== location.origin) return;
-    if (url.pathname === '/account' && !url.search) {
-      event.preventDefault(); if (dialog.open) dialog.close();
-      if (url.hash === '#bands') select('access');
-      refresh().catch(error => {$('.settings-status').textContent = error.message;});
-    } else if (url.pathname === '/account/bands') {
-      event.preventDefault(); if (dialog.open) dialog.close(); location.hash = 'bands';
-    }
-  });
+
+  function acceptDialog(code){
+    const d=dialog('Accept an invitation',form({op:'accept'},async f=>{if(await act(f,()=>{status.textContent='Invitation accepted.';}))d.close();},
+      h('label',{class:'mg-field'},'Invitation code',h('input',{name:'invite',value:code,required:true})),h('div',{class:'mg-actions end'},h('button',{class:'mg-btn primary',text:'Accept'}))));
+  }
+  function pairDialog(){
+    const owned=bands.filter(b=>b.role==='owner'&&b.active);
+    const d=dialog('Pair a device',form({op:'pair'},f=>{d.close();return act(f);},
+      h('label',{class:'mg-field'},'Band',h('select',{name:'band_id'},owned.map(b=>h('option',{value:b.id,text:b.name})))),
+      h('div',{class:'mg-actions end'},h('button',{class:'mg-btn primary',text:'Show pairing code'}))));
+  }
+  function passwordDialog(){
+    const d=dialog('Change password',form({op:'password'},async f=>{if(await act(f,()=>{status.textContent='Password changed.';}))d.close();},
+      h('label',{class:'mg-field'},'Current password',h('input',{type:'password',name:'current_password',autocomplete:'current-password',required:true})),
+      h('label',{class:'mg-field'},'New password',h('input',{type:'password',name:'password',minlength:'12',autocomplete:'new-password',required:true})),
+      h('div',{class:'mg-actions end'},h('button',{class:'mg-btn primary',text:'Change password'}))));
+  }
+  function localDialog(){
+    const d=dialog('Add a local login',form({op:'local'},async f=>{if(await act(f,()=>{status.textContent='Local login added.';}))d.close();},
+      h('label',{class:'mg-field'},'Username',h('input',{name:'username',autocomplete:'username',required:true})),
+      h('label',{class:'mg-field'},'Password',h('input',{type:'password',name:'password',minlength:'12',autocomplete:'new-password',required:true})),
+      h('div',{class:'mg-actions end'},h('button',{class:'mg-btn primary',text:'Add login'}))));
+  }
+
   await refresh();
-  return {refresh, deactivate(){if(dialog.open)dialog.close();}, destroy(){clearInterval(pairingTimer);}};
+  return {refresh,deactivate(){document.querySelectorAll('dialog.mg-dialog[open]').forEach(d=>d.close());}};
 }

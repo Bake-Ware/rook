@@ -27,7 +27,7 @@ class BandWeb:
 
     async def asset(self, request):
         name=request.match_info['name']
-        types={'bands.js':'application/javascript','bands.css':'text/css','shell.css':'text/css','account.js':'application/javascript','tokens.js':'application/javascript','settings.css':'text/css','theme.css':'text/css','rook-illustration.png':'image/png','rook-art.css':'text/css','rook-scene.js':'application/javascript','rook-scene.js.LEGAL.txt':'text/plain'}
+        types={'bands.js':'application/javascript','bands.css':'text/css','manage.css':'text/css','manage.js':'application/javascript','shell.css':'text/css','account.js':'application/javascript','tokens.js':'application/javascript','settings.css':'text/css','theme.css':'text/css','rook-illustration.png':'image/png','rook-art.css':'text/css','rook-scene.js':'application/javascript','rook-scene.js.LEGAL.txt':'text/plain'}
         if name not in types:raise web.HTTPNotFound()
         path=Path(__file__).parents[1]/'web'/name
         if name.startswith('rook-scene.') or name=='rook-illustration.png':
@@ -45,8 +45,8 @@ class BandWeb:
             from urllib.parse import urlencode
             suffix='?'+urlencode({'worker':request.query['worker']}) if request.query.get('worker') else ''
             raise web.HTTPFound('/#bands'+suffix)
-        body = '<link rel="stylesheet" href="/account/bands/assets/bands.css">'
-        body += '<div id="bands-root" class="bands-workspace">'+Path(__file__).with_name('bands.html').read_text()+'</div>'
+        body = '<link rel="stylesheet" href="/account/bands/assets/manage.css">'
+        body += '<div id="bands-root">'+Path(__file__).with_name('bands.html').read_text()+'</div>'
         csrf=json.dumps(user['csrf']).replace('<','\\u003c')
         body += '<script type="module">import {mountBands} from "/account/bands/assets/bands.js";const ui=await mountBands(document.getElementById("bands-root"),{csrf:'+csrf+'});const wid=new URLSearchParams(location.search).get("worker");if(wid)ui.openWorker(wid);</script>'
         return self.account.response('Bands', body)
@@ -71,6 +71,10 @@ class BandWeb:
             with self.store.db() as db:
                 band['primary'] = bool(db.execute('SELECT is_primary FROM bands WHERE id=?', (band['id'],)).fetchone()[0])
                 band['enrolled_devices'] = db.execute('SELECT count(*) FROM devices WHERE band_id=? AND active=1', (band['id'],)).fetchone()[0]
+            if band['role'] == 'owner':
+                # Owners manage people and device certificates from the band's panel.
+                band['members'] = self.store.members(uid, band['id'])
+                band['devices'] = self.account.devices.list(uid, band['id'])
         with self.store.db() as db:
             rows = db.execute("SELECT m.id FROM band_migrations m JOIN memberships a ON a.band_id=m.band_id WHERE a.user_id=? AND a.role='owner' ORDER BY m.created DESC LIMIT 30", (uid,)).fetchall()
         migrations = []

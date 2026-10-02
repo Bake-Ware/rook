@@ -1,68 +1,87 @@
-export async function mountTokens(root) {
-  const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  root.innerHTML = `<p class="settings-intro">Named credentials for agents and integrations. Revoking a token stops clients that use it.</p>
-    <div class="settings-status" role="status" aria-live="polite"></div>
-    <section><div class="section-heading"><h2>API tokens</h2><button data-create>Create token</button></div><div class="token-list"></div></section>
-    <section><h2>Chat & agent pictures</h2><p class="muted">Pictures appear in chat and activity. A base agent picture also applies to its host variants.</p><div class="identity-list"></div>
-    <form class="identity-form"><label>Another identity<input name="identity" placeholder="agent:claude_laptop" maxlength="200" required></label><button>Add picture…</button></form></section>
-    <section class="settings-links"><h2>Worker pairing & band access</h2><p>Pairing codes, invitations, and enrollment controls now live with your bands.</p><a href="#account?section=access">Open band access →</a><a href="#bands">Manage bands & migrations →</a></section>
-    <input class="avatar-file" type="file" accept="image/png,image/jpeg,image/webp" hidden>
-    <dialog class="settings-dialog"><div class="dialog-heading"><h2></h2><button type="button" data-close aria-label="Close">×</button></div><div class="dialog-content"></div></dialog>`;
-  const $ = s => root.querySelector(s), dialog = $('dialog');
-  let csrf = '', identity = '', busy = false;
-  const date = value => value ? new Date(value*1000).toLocaleDateString() : '—';
-  async function api(data) {
-    const response = await fetch('/account/tokens/api', data ? {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({...data, csrf})} : {});
-    if (!response.headers.get('content-type')?.includes('application/json')) throw Error('Sign in to your operator account to manage tokens.');
-    const result = await response.json();
-    if (!response.ok) throw Error(result.error || 'Token request failed.');
-    return result;
+// API tokens: one row per token, with the picture its identity shows in chat.
+import {h,ago,day,useCss,btn,chips,table,two,dialog,menu,copy} from '/account/bands/assets/manage.js';
+
+const SOON=14*86400, IDLE=30*86400;
+
+export async function mountTokens(root){
+  useCss();
+  let csrf='',data={tokens:[],avatars:{}},filter='all',query='',identity='',busy=false;
+  const status=h('p',{class:'mg-status settings-status',role:'status','aria-live':'polite'});
+  const search=h('input',{type:'search',class:'mg-grow','aria-label':'Filter tokens',placeholder:'Filter by label or identity',oninput:()=>{query=search.value.trim().toLowerCase();draw();}});
+  const chipHost=h('span',{class:'mg-actions'}),list=h('div',{class:'mg-box'}),summary=h('span');
+  const file=h('input',{type:'file',class:'avatar-file',accept:'image/png,image/jpeg,image/webp',hidden:true});
+  const label=h('input',{name:'name',maxlength:'64',placeholder:'claude, codex, ci-runner',required:true,style:'font-family:var(--mono)'});
+  const ttl=h('select',{name:'ttl'},[['2592000','30 days'],['86400','1 day'],['604800','7 days'],['7776000','90 days'],['31536000','1 year'],['','Never']].map(([v,t])=>h('option',{value:v,text:t})));
+  const formError=h('small',{class:'mg-error dialog-error',role:'alert'});
+  const create=h('form',{class:'mg-box callout mg-pad token-create',hidden:true,onsubmit:e=>{e.preventDefault();perform(async()=>{
+      const made=await api({op:'create',name:label.value,ttl:ttl.value?Number(ttl.value):null});
+      label.value='';create.hidden=true;showSecret(made.token);await refresh();},formError);}},
+    h('div',{class:'mg-bar',style:'align-items:flex-end'},
+      h('label',{class:'mg-field',style:'flex:2 1 220px'},'Label',label),h('label',{class:'mg-field',style:'flex:1 1 140px'},'Expires',ttl),
+      h('button',{class:'mg-btn soft',text:'Create and show once'})),
+    h('small',{class:'mg-sub',text:'The label is the identity this token’s work is recorded under. It grants access to the operator’s MCP service.'}),formError);
+  root.replaceChildren(h('div',{class:'mg'},
+    h('div',{class:'mg-bar'},search,chipHost,btn('New token','primary',()=>{create.hidden=!create.hidden;if(!create.hidden)label.focus();},{'data-create':''})),
+    create,status,list,
+    h('div',{class:'mg-bar mg-sub',style:'justify-content:space-between'},summary,
+      btn('Picture for another identity…','',()=>{const id=h('input',{placeholder:'agent:claude_laptop',maxlength:'200',required:true});const d=dialog('Picture for another identity',h('form',{onsubmit:e=>{e.preventDefault();identity=id.value.trim();d.close();file.click();}},h('label',{class:'mg-field'},'Identity',id),h('div',{class:'mg-actions end'},h('button',{class:'mg-btn primary',text:'Choose picture…'}))));id.focus();})),
+    file));
+
+  async function api(body){
+    const r=await fetch('/account/tokens/api',body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...body,csrf})}:{});
+    if(!r.headers.get('content-type')?.includes('application/json'))throw Error('Sign in to your operator account to manage tokens.');
+    const d=await r.json();if(!r.ok)throw Error(d.error||'Token request failed.');return d;
   }
-  async function refresh() {
-    const session = await fetch('/account/session');
-    if (!session.ok) throw Error('Sign in to your operator account.');
-    const info = await session.json(); csrf = info.user.csrf;
-    const data = await api();
-    $('.token-list').innerHTML = data.tokens.length ? data.tokens.map(t => `<article class="token-row"><div><h3>${esc(t.name)}</h3><code>${esc(t.preview)}</code><p class="muted">Created ${date(t.created_at)} · Last used ${date(t.last_used_at)} · ${t.expires_at ? 'Expires '+date(t.expires_at) : 'No expiry'}</p></div><button class="danger" data-revoke="${esc(t.id)}" data-name="${esc(t.name)}">Revoke…</button></article>`).join('') : '<p class="empty">No named API tokens yet.</p>';
-    const identities = [...new Set(['user:operator','agent:static',...data.tokens.map(t=>'agent:'+(t.name||t.id)),...Object.keys(data.avatars)])];
-    $('.identity-list').innerHTML = identities.map(id => `<div class="identity-row">${data.avatars[id] ? `<img class="avatar" src="/api/avatar?id=${encodeURIComponent(id)}&v=${data.avatars[id]}" alt="">` : `<span class="avatar initials">${esc(id.split(':').pop().slice(0,2).toUpperCase())}</span>`}<code>${esc(id)}</code><button data-picture="${esc(id)}">${data.avatars[id]?'Change':'Set'} picture</button>${data.avatars[id]?`<button data-clear="${esc(id)}">Clear</button>`:''}</div>`).join('');
+  async function perform(work,target){
+    if(busy)return;busy=true;(target||status).textContent='';status.classList.remove('bad');
+    try{await work();}catch(e){(target||status).textContent=e.message;if(!target)status.classList.add('bad');}finally{busy=false;}
   }
-  function open(title, html) {dialog.setAttribute('aria-label',title); $('.dialog-heading h2').textContent = title; $('.dialog-content').innerHTML = html; dialog.showModal();}
-  $('[data-close]').onclick = () => dialog.close();
-  // Clear secrets from the DOM as soon as the one-time dialog closes.
-  dialog.addEventListener('close', () => $('.dialog-content').replaceChildren());
-  $('[data-create]').onclick = () => open('Create API token', `<form class="token-create"><label>Label<input name="name" maxlength="64" placeholder="e.g. claude, codex, ci-runner" required></label><label>Expires<select name="ttl"><option value="2592000">30 days</option><option value="86400">1 day</option><option value="604800">7 days</option><option value="7776000">90 days</option><option value="31536000">1 year</option><option value="">Never</option></select></label><p class="muted">This token grants access to the operator’s MCP service. Store it in the client’s secret configuration.</p><p class="dialog-error" role="alert"></p><button>Create token</button></form>`);
-  async function perform(action) {
-    if (busy) return; busy = true;
-    try {await action();} catch(error) {const target = dialog.open ? $('.dialog-error') : $('.settings-status'); (target || $('.settings-status')).textContent = error.message;}
-    finally {busy = false;}
+  async function refresh(){
+    const session=await fetch('/account/session');if(!session.ok)throw Error('Sign in to your operator account.');
+    csrf=(await session.json()).user.csrf;data=await api();draw();
   }
-  root.addEventListener('submit', event => {
-    event.preventDefault(); const form = event.target;
-    if (form.matches('.identity-form')) {identity = form.elements.identity.value.trim(); $('.avatar-file').click(); return;}
-    if (form.matches('.token-create')) perform(async () => {
-      const data = await api({op:'create', name:form.elements.name.value, ttl:form.elements.ttl.value ? Number(form.elements.ttl.value) : null});
-      $('.dialog-heading h2').textContent = 'Copy your new token';
-      $('.dialog-content').innerHTML = '<p>This secret is shown once. Copy it before closing.</p><pre class="token-secret" tabindex="0"></pre><button type="button" data-copy>Copy token</button><p class="copy-status" role="status"></p>';
-      $('.token-secret').textContent = data.token;
-      $('[data-copy]').onclick = async () => {try {await navigator.clipboard.writeText(data.token); $('.copy-status').textContent = 'Copied.';}catch { $('.copy-status').textContent = 'Select and copy the token above.';}};
-      await refresh();
-    });
-    if (form.matches('.token-revoke')) perform(async () => {await api({op:'revoke', id:form.dataset.id, confirm:true}); dialog.close(); await refresh(); $('.settings-status').textContent = 'Token revoked.';});
-  });
-  root.addEventListener('click', event => {
-    const button = event.target.closest('button'); if (!button) return;
-    if (button.dataset.revoke) open('Revoke token', `<form class="token-revoke" data-id="${esc(button.dataset.revoke)}"><p>Revoke <strong>${esc(button.dataset.name)}</strong>? Clients using it will lose access.</p><p class="dialog-error" role="alert"></p><button class="danger">Revoke token</button></form>`);
-    if (button.dataset.picture) {identity = button.dataset.picture; $('.avatar-file').click();}
-    if (button.dataset.clear) perform(async () => {await api({op:'avatar_clear', identity:button.dataset.clear}); await refresh();});
-  });
-  $('.avatar-file').onchange = () => perform(async () => {
-    const file = $('.avatar-file').files[0]; if (!file) return;
-    const bitmap = await createImageBitmap(file), canvas = document.createElement('canvas'); canvas.width = canvas.height = 96;
-    const side = Math.min(bitmap.width, bitmap.height);
-    canvas.getContext('2d').drawImage(bitmap,(bitmap.width-side)/2,(bitmap.height-side)/2,side,side,0,0,96,96); bitmap.close();
-    await api({op:'avatar', identity, data:canvas.toDataURL('image/png')}); $('.avatar-file').value = ''; await refresh();
+  function showSecret(token){
+    const c=btn('Copy token','soft',()=>copy(token,c),{'data-copy':''});
+    dialog('Copy your new token',h('p',{text:'This secret is shown once. Copy it before closing.'}),h('pre',{class:'token-secret',tabindex:'0',text:token}),h('div',{class:'mg-actions end'},c));
+  }
+  function picture(id){
+    const v=data.avatars[id],attrs={class:'mg-avatar','aria-label':'Change picture for '+id,title:'Change picture','data-picture':id,onclick:()=>{identity=id;file.click();}};
+    return v?h('input',{...attrs,type:'image',src:'/api/avatar?id='+encodeURIComponent(id)+'&v='+v,alt:''}):h('button',{...attrs,type:'button',text:id.split(':').pop().slice(0,2).toUpperCase()});
+  }
+  function draw(){
+    const now=Date.now()/1000;
+    const rows=data.tokens.map(t=>({token:t,id:'agent:'+(t.name||t.id),label:t.name||t.id,soon:!!t.expires_at&&t.expires_at-now<SOON,idle:!t.last_used_at||now-t.last_used_at>IDLE}));
+    const taken=new Set(rows.map(r=>r.id));
+    for(const id of new Set(['user:operator','agent:static',...Object.keys(data.avatars)]))if(!taken.has(id))rows.push({id,label:id.split(':').pop(),soon:false,idle:false});
+    const tokens=rows.filter(r=>r.token);
+    chipHost.replaceChildren(...chips([['all','All '+tokens.length],['soon','Expiring soon '+tokens.filter(r=>r.soon).length],['idle','Unused 30 days '+tokens.filter(r=>r.idle).length]],filter,id=>{filter=id;draw();}));
+    const shown=rows.filter(r=>(filter==='all'||(r.token&&r[filter]))&&(!query||(r.label+' '+r.id).toLowerCase().includes(query)));
+    const expires=t=>{if(!t.expires_at)return 'never';const d=Math.ceil((t.expires_at-now)/86400);return d<=0?'expired':d===1?'in 1 day':'in '+d+' days';};
+    list.replaceChildren(table('44px minmax(0,1.5fr) 100px 110px 110px 44px',['','Label · identity','Created','Expires','Last used',''],shown.length?shown.map(r=>{
+      const t=r.token,more=btn('⋯','icon',()=>menu(more,[
+        {label:(data.avatars[r.id]?'Change':'Set')+' picture',run:()=>{identity=r.id;file.click();}},
+        data.avatars[r.id]&&{label:'Clear picture',run:()=>perform(async()=>{await api({op:'avatar_clear',identity:r.id});await refresh();})},
+        t&&{label:'Revoke…',danger:true,run:()=>revoke(t)}]),{'aria-label':'More actions for '+r.label,'data-more':r.id});
+      return h('div',{class:'mg-row'+(t?' token-row':'')},picture(r.id),
+        two(r.label,t?r.id+' · '+t.preview:r.id+' · no token'),
+        h('span',{class:'mg-dimtext',text:t?day(t.created_at):'—'}),
+        h('span',{class:'mg-mono '+(t&&r.soon?'mg-warn':'mg-dimtext'),text:t?expires(t):'—'}),
+        h('span',{class:t&&!t.last_used_at?'mg-warn':'mg-dimtext',text:t?ago(t.last_used_at):'—'}),more);
+    }):[h('div',{class:'mg-empty',text:tokens.length?'Nothing matches.':'No named API tokens yet.'})],680));
+    summary.textContent=shown.filter(r=>r.token).length+' of '+tokens.length+' tokens shown. The square is the picture shown in chat; click it to change it.';
+  }
+  function revoke(t){
+    const err=h('small',{class:'mg-error dialog-error',role:'alert'});
+    const d=dialog('Revoke token',h('form',{class:'token-revoke',onsubmit:e=>{e.preventDefault();perform(async()=>{await api({op:'revoke',id:t.id,confirm:true});d.close();await refresh();status.textContent='Token revoked.';},err);}},
+      h('p',null,'Revoke ',h('strong',{text:t.name}),'? Clients using it will lose access.'),err,h('div',{class:'mg-actions end'},h('button',{class:'mg-btn danger',text:'Revoke token'}))));
+  }
+  file.onchange=()=>perform(async()=>{
+    const f=file.files[0];if(!f)return;
+    const bitmap=await createImageBitmap(f),canvas=document.createElement('canvas');canvas.width=canvas.height=96;
+    const side=Math.min(bitmap.width,bitmap.height);
+    canvas.getContext('2d').drawImage(bitmap,(bitmap.width-side)/2,(bitmap.height-side)/2,side,side,0,0,96,96);bitmap.close();
+    await api({op:'avatar',identity,data:canvas.toDataURL('image/png')});file.value='';await refresh();
   });
   await refresh();
-  return {refresh, deactivate(){if(dialog.open)dialog.close();}};
+  return {refresh,deactivate(){document.querySelectorAll('dialog.mg-dialog[open]').forEach(d=>d.close());}};
 }

@@ -1,65 +1,89 @@
 // Agent instructions editor. All stored text is rendered as text, never HTML.
-const CSS=`#view-guidance{max-width:960px}#view-guidance .gd-help{color:#9eb0b5;line-height:1.55;margin:0 0 1rem}#view-guidance h2{font-size:1rem;margin:1.8rem 0 .3rem}#view-guidance .gd-where{color:#9eb0b5;font-size:.85rem;margin:0 0 .8rem}
-#view-guidance .gd-slot{background:#101b21;border:1px solid #34464e;border-radius:10px;padding:.9rem;margin-bottom:.7rem}#view-guidance .gd-slot header{display:flex;justify-content:space-between;gap:.6rem;flex-wrap:wrap;align-items:baseline}
-#view-guidance code{font-size:.9rem;color:#cfe7df}#view-guidance small{color:#9eb0b5}#view-guidance .gd-edited{color:#e8c77a}
-#view-guidance textarea,#view-guidance input,#view-guidance select,#view-guidance button{font:inherit;border:1px solid #48575b;border-radius:6px;padding:.55rem;background:#19242a;color:#e1e9e6}
-#view-guidance textarea{width:100%;box-sizing:border-box;min-height:4.2rem;margin:.55rem 0;line-height:1.5;resize:vertical}#view-guidance .gd-server textarea{min-height:15rem}
-#view-guidance button{cursor:pointer}#view-guidance button:hover{border-color:#73baa2}#view-guidance button:focus-visible,#view-guidance textarea:focus-visible{outline:2px solid #73baa2}
-#view-guidance .gd-row{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}#view-guidance .gd-count{margin-left:auto}#view-guidance .gd-status{color:#9cc9bd;min-height:1.4rem}#view-guidance .gd-error{color:#ffada6}
-#view-guidance details{margin-top:.5rem}#view-guidance details pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;font-size:.85rem;color:#c7d3d0;border-left:2px solid #34464e;padding-left:.6rem}
-@media(max-width:640px){#view-guidance .gd-count{margin-left:0}}`;
-const SECTIONS=[
- ['server','Connection instructions','Sent once when an agent connects (MCP initialize). Keep it to what every agent needs.'],
- ['hygiene','Hygiene prompt','Sent to an agent when its claimed task sits idle for 30 minutes with work since the last handoff. Placeholders: {slug} {title} {id} {idle} {actor}.'],
- ['tool','Tool tips','Appended to a tool’s description as “Tip: …”. Agents see it when they list tools.'],
- ['cap','Capability tips','Attached as _tips to a rook_call reply whose cap starts with this prefix (e.g. proc. or shell.exec). Shown once per agent session.'],
+import {h,ago,useCss,btn} from '/account/bands/assets/manage.js';
+
+const KINDS=[
+ ['server','On connect','Sent once, when an agent connects. Keep it to what every agent needs.',6000],
+ ['hygiene','While working','Sent when a claimed task sits idle for 30 minutes with work since its last handoff. Placeholders: {slug} {title} {id} {idle} {actor}.',2000],
+ ['tool','Tool tips','Added to the tool’s description as “Tip: …”. Agents see it when they list tools.',1000],
+ ['cap','Capability tips','Attached as _tips to the first rook_call reply in a session whose cap starts with this prefix.',1000],
 ];
+const TITLES={server:'Connection instructions',hygiene:'Hygiene prompt'};
+const SAMPLE={slug:'menu-compiler',title:'Menu compiler',id:'t_4f32…',idle:'34',actor:'agent:claude'};
+
 export async function mountGuidance(root){
- const style=document.createElement('style');style.textContent=CSS;document.head.append(style);
- const el=(tag,txt,cls)=>{const e=document.createElement(tag);if(txt!==undefined)e.textContent=txt;if(cls)e.className=cls;return e;};
- const date=t=>new Date(t*1000).toLocaleString();
- let csrf='',tools=[],editable=true;
- const status=el('p','','gd-status');status.setAttribute('role','status');
- async function api(body){const r=await fetch('/account/guidance/api',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({csrf,...body})});const d=await r.json();if(!r.ok||d.error)throw Error(d.error||'Request failed');return d;}
- function slot(s){
-  const box=el('section',undefined,'gd-slot'+(s.kind==='server'?' gd-server':''));
-  const head=el('header');head.append(el('code',s.key));
-  head.append(el('small',s.edited?(s.text?'Edited':'Disabled')+' by '+s.actor+' · '+date(s.updated):(s.default===null?'':'Default'),s.edited?'gd-edited':''));
-  const ta=el('textarea');ta.value=s.text;ta.setAttribute('aria-label',s.key);ta.disabled=!editable;
-  const limit=s.kind==='server'?6000:s.kind==='hygiene'?2000:1000;const count=el('small','','gd-count');const upd=()=>{count.textContent=ta.value.length+' / '+limit;};upd();ta.oninput=upd;
-  const row=el('div',undefined,'gd-row');const err=el('small','','gd-error');
-  const save=el('button','Save');save.onclick=()=>act(save,err,{action:'set',key:s.key,text:ta.value});
-  row.append(save);
-  if(s.edited&&s.default!==null){const reset=el('button','Reset to default');reset.onclick=()=>act(reset,err,{action:'reset',key:s.key});row.append(reset);}
-  if(s.edited&&s.default===null){const del=el('button','Remove');del.onclick=()=>act(del,err,{action:'reset',key:s.key});row.append(del);}
-  row.append(err,count);
-  box.append(head,ta,row);
-  if(s.default!==null&&s.edited){const d=el('details');d.append(el('summary','Show default'),el('pre',s.default));box.append(d);}
-  const h=el('details');h.append(el('summary','History'));h.ontoggle=async()=>{if(!h.open||h.dataset.loaded)return;h.dataset.loaded=1;try{const r=await fetch('/account/guidance/api?history='+encodeURIComponent(s.key));const d=await r.json();if(!d.history.length)h.append(el('small','No edits yet.'));for(const e of d.history)h.append(el('small',date(e.ts)+' · '+e.actor+(e.text===null?' · reset to default':'')),el('pre',e.text??''));}catch(e){h.append(el('small',e.message,'gd-error'));}};
-  box.append(h);
-  return box;
- }
- async function act(button,err,body){button.disabled=true;err.textContent='';try{const d=await api(body);render(d.slots);status.textContent='Saved. New agent connections and tool listings use it now; tips apply on the next matching call.';}catch(e){err.textContent=e.message;}finally{button.disabled=false;}}
- function adder(){
-  const box=el('section',undefined,'gd-slot');box.append(el('strong','Add a tip'));
-  const row=el('div',undefined,'gd-row');row.style.marginTop='.6rem';
-  const kind=el('select');for(const [k,label] of [['cap','Capability prefix'],['tool','Tool']]){const o=el('option',label);o.value=k;kind.append(o);}
-  const name=el('input');name.placeholder='e.g. hermes. or deluge.add';name.setAttribute('aria-label','Name');
-  const tool=el('select');tool.setAttribute('aria-label','Tool');for(const t of tools){const o=el('option',t);o.value=t;tool.append(o);}tool.hidden=true;
-  kind.onchange=()=>{tool.hidden=kind.value!=='tool';name.hidden=kind.value==='tool';name.placeholder='e.g. hermes. or deluge.add';};
-  row.append(kind,name,tool);
-  const ta=el('textarea');ta.placeholder='Terse advice an agent needs at that moment.';ta.setAttribute('aria-label','Tip text');
-  const err=el('small','','gd-error');const add=el('button','Add');
-  add.onclick=()=>{const key=kind.value+':'+(kind.value==='tool'?tool.value:name.value.trim());act(add,err,{action:'set',key,text:ta.value});};
-  const r2=el('div',undefined,'gd-row');r2.append(add,err);
-  box.append(row,ta,r2);return box;
- }
- function render(slots){
-  root.replaceChildren(el('p','Advice Rook gives to agents at the moment it is useful. Keep entries short and generic (about a tool or capability, not a particular host): they go out with every connection or matching call. Tips are guidance only and never allow or block anything.','gd-help'),status);
-  if(!editable)root.append(el('p','The instructions store is unavailable, so defaults are in effect and editing is disabled.','gd-error'));
-  for(const [k,title,where] of SECTIONS){root.append(el('h2',title),el('p',where,'gd-where'));for(const s of slots.filter(s=>s.kind===k))root.append(slot(s));}
-  if(editable)root.append(el('h2','Add'),adder());
- }
- async function load(){const r=await fetch('/account/guidance/api');const d=await r.json();if(!r.ok||d.error)throw Error(d.error||'Sign in with your operator account to edit agent instructions.');csrf=d.csrf;tools=d.tools;editable=d.editable;render(d.slots);}
- return {activate(){load().catch(e=>{root.replaceChildren(el('p',e.message,'gd-error'));});},deactivate(){}};
+  useCss();
+  let csrf='',tools=[],editable=true,slots=[],picked='',query='',adding=false;
+  const status=h('p',{class:'mg-status',role:'status'}),summary=h('p',{class:'mg-sub'});
+  const search=h('input',{type:'search','aria-label':'Find a text',placeholder:'Find a tool, cap or phrase',style:'border-width:0 0 1px;width:100%',oninput:()=>{query=search.value.trim().toLowerCase();drawList();}});
+  const items=h('div'),editor=h('div',{class:'mg-box strong mg-main',style:'gap:0'});
+  const add=h('button',{type:'button',class:'mg-btn soft',style:'margin:10px 16px 14px;border-style:dashed',text:'Add a tip',onclick:()=>{adding=true;draw();}});
+  root.replaceChildren(h('div',{class:'mg'},summary,status,h('div',{class:'mg-split'},h('div',{class:'mg-box mg-nav',style:'flex:0 1 280px;display:flex;flex-direction:column'},search,items,add),editor)));
+
+  async function api(body){const r=await fetch('/account/guidance/api',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({csrf,...body})});const d=await r.json();if(!r.ok||d.error)throw Error(d.error||'Request failed');return d;}
+  const name=s=>TITLES[s.kind]||s.key.slice(s.key.indexOf(':')+1);
+  const kind=k=>KINDS.find(x=>x[0]===k)||KINDS[3];
+  function seen(s,text){
+    if(!text)return s.kind==='server'||s.kind==='hygiene'?'(nothing is sent)':'(no tip: the agent sees nothing extra)';
+    if(s.kind==='hygiene')return text.replace(/\{(slug|title|id|idle|actor)\}/g,(_,k)=>SAMPLE[k]);
+    if(s.kind==='tool')return 'Tip: '+text;
+    if(s.kind==='cap')return '"_tips": ['+JSON.stringify(text)+']';
+    return text;
+  }
+  function draw(){
+    const edited=slots.filter(s=>s.edited).length;
+    summary.textContent=edited+' of '+slots.length+' texts differ from the defaults. Tips are guidance only: they never allow or block anything.'+(editable?'':' The instructions store is unavailable, so defaults are in effect and editing is off.');
+    add.hidden=!editable;
+    if(!adding&&!slots.some(s=>s.key===picked))picked=slots[0]?.key||'';
+    drawList();adding?drawAdder():drawEditor(slots.find(s=>s.key===picked));
+  }
+  function drawList(){
+    items.replaceChildren(...KINDS.flatMap(([k,title])=>{
+      const all=slots.filter(s=>s.kind===k),shown=all.filter(s=>!query||(s.key+' '+name(s)+' '+s.text).toLowerCase().includes(query));
+      if(!shown.length)return [];
+      return [h('div',{class:'mg-label mg-navlabel',text:title+(all.length>1?' · '+all.length:'')}),...shown.map(s=>h('button',{type:'button',class:'mg-navitem'+(!adding&&s.key===picked?' on':''),'aria-current':!adding&&s.key===picked?'true':null,onclick:()=>{picked=s.key;adding=false;draw();}},
+        h('span',{text:name(s),class:TITLES[s.kind]?'':'mg-mono'}),s.edited?h('span',{class:'mg-tag',text:s.text?'EDITED':'OFF'}):null))];
+    }));
+    if(!items.childElementCount)items.append(h('div',{class:'mg-empty',text:'Nothing matches.'}));
+  }
+  async function act(button,err,body,pick){
+    button.disabled=true;err.textContent='';
+    try{const d=await api(body);slots=d.slots;adding=false;if(pick)picked=pick;draw();status.textContent='Saved. New connections and tool listings use it now; tips apply on the next matching call.';}
+    catch(e){err.textContent=e.message;}finally{button.disabled=false;}
+  }
+  function drawEditor(s){
+    if(!s){editor.replaceChildren(h('div',{class:'mg-empty',text:'No instructions to show.'}));return;}
+    const [, , when,limit]=kind(s.kind);
+    const err=h('small',{class:'mg-error',role:'alert'}),count=h('span',{class:'mg-mono mg-sub'}),fill=h('i'),preview=h('pre',{class:'quote'});
+    const ta=h('textarea',{'aria-label':'Text sent to the agent',rows:s.kind==='server'?'14':'7',style:'font:13px/1.6 var(--mono)',disabled:!editable});ta.value=s.text;
+    const sync=()=>{const n=ta.value.length;count.textContent=n.toLocaleString()+' of '+limit.toLocaleString()+' characters';fill.style.width=Math.min(100,n/limit*100)+'%';fill.className=n>limit?'over':'';preview.textContent=seen(s,ta.value);};
+    ta.oninput=sync;sync();
+    const save=btn('Save','primary',()=>act(save,err,{action:'set',key:s.key,text:ta.value}),{disabled:!editable});
+    const extra=h('div',{class:'mg-pad',hidden:true,style:'padding-top:0'});
+    const hist=btn('History','',async()=>{
+      if(!extra.hidden&&extra.dataset.show==='h'){extra.hidden=true;return;}
+      extra.dataset.show='h';extra.hidden=false;extra.replaceChildren(h('p',{class:'mg-sub',text:'Loading…'}));
+      try{const r=await fetch('/account/guidance/api?history='+encodeURIComponent(s.key));const d=await r.json();
+        extra.replaceChildren(h('div',{class:'mg-label',text:'History'}),...(d.history.length?d.history.flatMap(e=>[h('small',{class:'mg-sub',text:new Date(e.ts*1000).toLocaleString()+' · '+e.actor+(e.text===null?' · reset to default':'')}),e.text===null?null:h('pre',{text:e.text})]):[h('p',{class:'mg-sub',text:'No edits yet.'})]));}
+      catch(e){extra.replaceChildren(h('p',{class:'mg-error',text:e.message}));}});
+    const dflt=s.edited&&s.default!==null?btn('Show default','',()=>{if(!extra.hidden&&extra.dataset.show==='d'){extra.hidden=true;return;}extra.dataset.show='d';extra.hidden=false;extra.replaceChildren(h('div',{class:'mg-label',text:'Default'}),h('pre',{text:s.default}));}):null;
+    const reset=s.edited&&editable?btn(s.default===null?'Remove':'Reset to default','',()=>act(reset,err,{action:'reset',key:s.key})):null;
+    editor.replaceChildren(
+      h('div',{class:'mg-panel-head'},h('div',{class:'mg-two',style:'flex:1 1 260px'},h('h2',{text:name(s),class:TITLES[s.kind]?'':'mg-mono'}),h('small',{style:'white-space:normal',text:when+(s.edited?' '+(s.text?'Edited':'Turned off')+' by '+s.actor+' '+ago(s.updated)+'.':'')})),h('div',{class:'mg-actions'},hist,dflt,reset)),
+      h('div',{class:'mg-pad'},ta,h('div',{class:'mg-bar',style:'justify-content:space-between'},h('div',{class:'mg-actions mg-grow'},h('div',{class:'mg-meter'},fill),count),err,save),
+        h('div',{class:'mg-label',text:'What the agent sees'}),preview),extra);
+  }
+  function drawAdder(){
+    const err=h('small',{class:'mg-error',role:'alert'});
+    const k=h('select',{'aria-label':'Kind'},h('option',{value:'cap',text:'Capability prefix'}),h('option',{value:'tool',text:'Tool'}));
+    const cap=h('input',{placeholder:'hermes. or deluge.add','aria-label':'Capability prefix',class:'mg-grow',style:'font-family:var(--mono)'});
+    const tool=h('select',{'aria-label':'Tool',hidden:true,class:'mg-grow'},tools.map(t=>h('option',{value:t,text:t})));
+    k.onchange=()=>{tool.hidden=k.value!=='tool';cap.hidden=k.value==='tool';};
+    const ta=h('textarea',{rows:'6',placeholder:'Terse advice an agent needs at that moment.','aria-label':'Tip text',style:'font:13px/1.6 var(--mono)'});
+    const save=btn('Add','primary',()=>{const key=k.value+':'+(k.value==='tool'?tool.value:cap.value.trim());act(save,err,{action:'set',key,text:ta.value},key);});
+    editor.replaceChildren(h('div',{class:'mg-panel-head'},h('div',{class:'mg-two'},h('h2',{text:'Add a tip'}),h('small',{style:'white-space:normal',text:'Keep it short and about the tool or capability, not one host: it goes out with every matching call.'}))),
+      h('div',{class:'mg-pad'},h('div',{class:'mg-bar'},k,cap,tool),ta,h('div',{class:'mg-actions end'},err,btn('Cancel','',()=>{adding=false;draw();}),save)));
+    cap.focus();
+  }
+  async function load(){const r=await fetch('/account/guidance/api');const d=await r.json();if(!r.ok||d.error)throw Error(d.error||'Sign in with your operator account to edit agent instructions.');csrf=d.csrf;tools=d.tools;editable=d.editable;slots=d.slots;draw();}
+  return {activate(){load().catch(e=>{editor.replaceChildren(h('p',{class:'mg-empty mg-bad',text:e.message}));});},deactivate(){}};
 }
