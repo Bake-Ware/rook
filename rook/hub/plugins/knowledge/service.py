@@ -22,7 +22,7 @@ log = logging.getLogger(__name__)
 WRITES = ('create', 'update', 'link', 'retract', 'claim', 'release', 'review', 'note', 'batch')
 BATCH_OPS = ('create', 'update', 'link', 'retract', 'claim', 'release', 'note')
 BATCH_MAX = 50
-CLOSED_TASK = ('done', 'cancelled', 'archived')
+CLOSED_TASK = ('done', 'closed', 'cancelled', 'archived')
 
 # MCP replies (not the operator's web page) get lean defaults: agents pay for
 # every character. ``data.limit`` and ``data.fields`` override them.

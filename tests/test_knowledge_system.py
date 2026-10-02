@@ -304,6 +304,40 @@ def test_deck_rows_serve_grooming(work):
     assert good['id']
 
 
+def test_closing_on_a_persons_word_is_not_done(work):
+    w = work; t = w.task
+    waiting = w.create('task', 'Waiting', w.project['id'], dependencies=[t['id']])
+    said = {'who': 'bake', 'quote': 'yeah close it', 'session': 'https://example.com/session/1'}
+    with pytest.raises(ValueError, match='who, quote, session'):
+        update(w, t, state='closed')
+    with pytest.raises(ValueError, match='written by closing'):
+        update(w, t, attrs={'closed_by': said})
+    def close(record, closed_by, **patch):
+        cur = w.s.get(record['band'], record['id'])
+        return w.s.mutate(record['band'], AGENT, rid(), 'update', {
+            'id': cur['id'], 'revision': cur['revision'], 'patch': patch, 'closed_by': closed_by})
+    with pytest.raises(ValueError, match='goes with patch.state closed'):
+        close(t, said, title='x')
+    with pytest.raises(ValueError, match='who, quote, session'):
+        close(t, {'who': 'bake', 'quote': 'yeah close it'}, state='closed')
+    w.s.mutate('default', AGENT, rid(), 'claim', {'id': t['id']})
+    got = close(t, said, state='closed')  # no evidence, no outcome, no handoff needed
+    assert got['state'] == 'closed' and got['attrs']['closed_by']['recorded_by'] == AGENT['id']
+    full = w.s.get('default', t['id'])
+    assert [(l['kind'], l['ref'], l['relation'], l['note']) for l in full['links']] == [
+        ('url', said['session'], 'closed_by', 'bake: "yeah close it"')]
+    assert all(c['released'] for c in full['claims'])
+    deck = w.s.deck(['default'])[0]
+    assert deck['recently_done'][0]['closed_by'] == said
+    assert deck['todo'][0]['id'] == waiting['id'] and deck['todo'][0]['unblocked'] is False
+    with pytest.raises(Conflict, match='Task is closed'):
+        w.s.mutate('default', AGENT, rid(), 'claim', {'id': t['id']})
+    reopened = update(w, t, state='todo')
+    assert 'closed_by' not in reopened['attrs']
+    again = close(t, {**said, 'session': 'sess-42'}, state='closed')
+    assert w.s.get('default', again['id'])['links'][-1]['kind'] == 'agent'
+
+
 def test_deck_covers_all_bands_by_project(work):
     w = work
     other_c = w.create('concept', 'Tablets', band='family')

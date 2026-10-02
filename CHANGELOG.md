@@ -21,6 +21,11 @@ Preparation for public use.
   `data {cascade: true}` gives `paused` or `archived` to its open tasks (work
   in progress is skipped and listed). `rook_handoff_save` takes `task` (link
   to that task, not the claimed one) and `status="closed"` (close a thread).
+- Task state `closed`: a task closed because a person said so, kept apart
+  from `done`, which needs evidence of the work. It takes
+  `data {closed_by: {who, quote, session}}`: the person, their words, and the
+  session they said it in. Rook records them on the task and as a `closed_by`
+  link. A closed task does not unblock tasks that depend on it.
 - Core specification `docs/spec/core-v1.md` (v1.0, RFC 2119): band transport
   profile, messages, caps and tiers, placement, the hub worker `rook` with
   grants and tickets, chat rooms, plugin contract, compatibility rules.

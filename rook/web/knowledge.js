@@ -5,7 +5,7 @@
 const el=(tag,txt,cls)=>{const e=document.createElement(tag);if(txt!==undefined&&txt!==null)e.textContent=txt;if(cls)e.className=cls;return e;};
 const date=t=>t?new Date(t*1000).toLocaleString():'';
 const ago=t=>{if(!t)return '';const m=Math.round((Date.now()/1000-t)/60);return m<1?'just now':m<60?m+'m ago':m<1440?Math.round(m/60)+'h ago':Math.round(m/1440)+'d ago';};
-const STATE_LABEL={in_progress:'In progress',todo:'To do',blocked:'Blocked',paused:'Paused',done:'Done',cancelled:'Cancelled',archived:'Archived',active:'Active',superseded:'Superseded'};
+const STATE_LABEL={in_progress:'In progress',todo:'To do',blocked:'Blocked',paused:'Paused',done:'Done',closed:'Closed',cancelled:'Cancelled',archived:'Archived',active:'Active',superseded:'Superseded'};
 
 function loadCss(){if(document.querySelector('link[data-kn]'))return;const css=document.createElement('link');css.rel='stylesheet';css.href='/account/knowledge/assets/knowledge.css'+new URL(import.meta.url).search;css.dataset.kn='1';document.head.append(css);}
 
@@ -220,6 +220,7 @@ export async function mountTasks(root){
     crumbs.append(document.createTextNode(' / '+r.title));main.append(crumbs,el('h1',r.title));
     const meta=el('p',undefined,'kn-meta');meta.append(badge(STATE_LABEL[r.state]||r.state,r.state),document.createTextNode(' '+r.kind+' · [['+r.slug+']] · '+c.bandName(r.band)+' · created by '+r.creator+' · updated '+ago(r.updated)));main.append(meta);
     const live=r.claims.filter(x=>!x.released);if(live.length){const s=el('div',undefined,'kn-callout');s.append(el('strong','On it'));for(const x of live)s.append(el('div',x.actor+' · since '+date(x.started)+' · last active '+ago(x.last_active)+(x.dirty?' · needs hygiene':'')));main.append(s);}
+    if(r.attrs.closed_by){const c=r.attrs.closed_by,s=el('div',undefined,'kn-callout');s.append(el('strong','Closed on '+c.who+"'s word"),el('div','\u201c'+c.quote+'\u201d'),el('div','Session: '+c.session+' \u00b7 recorded by '+c.recorded_by));main.append(s);}
     if(r.attrs.outcome){const s=el('div',undefined,'kn-callout');s.append(el('strong',r.state==='cancelled'?'Why cancelled':'Outcome'),el('div',r.attrs.outcome));main.append(s);}
     if(r.attrs.blocked_reason)main.append(el('p','Blocked: '+r.attrs.blocked_reason,'kn-warn'));
     main.append(renderBody(r.body,s=>refOpen(s,r.band)));

@@ -125,12 +125,13 @@ class Tasks(Plugin):
         rook_task.__doc__ = """Tasks. deck (id=project narrows): in progress with claimants and latest
 handoff, blocked, paused, todo, recently done; rows have revision and unblocked. deck data {states,
 done_days, fields, handoffs:true}. claim id before you work: your calls, consoles and handoffs then
-link to it (claims never block others).
+link to it.
 create data {title, body, parent: project or task, attrs:{criteria, workers, dependencies}}.
 update data {revision, patch:{state?, attrs?, title?, body?}}; states todo|in_progress|blocked|
-paused|done|cancelled|archived. done needs a factual attrs.outcome + evidence link; blocked needs
+paused|done|closed|cancelled|archived. done needs a factual attrs.outcome + evidence link; closed (a person
+said so) needs data.closed_by {who, quote, session}; blocked needs
 attrs.blocked_reason or a blocked_by link; release/stopping needs data.handoff {goal, state, next_steps}.
-note data {text, evidence?}: remark, no revision. batch data {ops:[{action, id, data}]}.
+note data {text, evidence?}: no revision. batch data {ops:[{action, id, data}]}.
 release data {actor}: free a claim idle 2 h. get data {links:"all"} adds automatic links.
 """ + LINKS_HELP + """
 search/list: 5/20 excerpts (data {limit, fields}). Writes need request_id."""

@@ -32,7 +32,7 @@ from ....core import migrations
 
 KINDS = ('concept', 'project', 'task', 'knowledge')
 STATES = {
-    'task': ('todo', 'in_progress', 'blocked', 'paused', 'done', 'cancelled', 'archived'),
+    'task': ('todo', 'in_progress', 'blocked', 'paused', 'done', 'closed', 'cancelled', 'archived'),
     'project': ('active', 'paused', 'done', 'archived'),
     'concept': ('active', 'paused', 'done', 'archived'),
     'knowledge': ('active', 'superseded', 'archived'),
@@ -43,7 +43,7 @@ VERIFICATION = ('unverified', 'verified', 'disputed')
 KNOWLEDGE_KINDS = ('fact', 'decision', 'procedure', 'observation', 'question', 'summary')
 LINK_KINDS = ('journal', 'console', 'handoff', 'chat', 'file', 'commit', 'agent', 'record', 'secret', 'url', 'human')
 RELATIONS = ('produced', 'evidence', 'touched', 'discussed_in', 'blocked_by', 'duplicates',
-             'supersedes', 'mentions', 'source')
+             'supersedes', 'mentions', 'source', 'closed_by')
 REVIEW_ATTRS = {'reviewed_by', 'reviewed_label', 'reviewed_at', 'reviewed_revision', 'review_note', 'dispute_reason'}
 # A URL is a pointer, not something Rook can trace; it can't verify a fact.
 TRACEABLE = tuple(k for k in LINK_KINDS if k != 'url')
@@ -343,6 +343,8 @@ class KnowledgeStore:
             raise ValueError('Title is required')
         if set(patch.get('attrs') or {}) & REVIEW_ATTRS:
             raise ValueError('Review fields are set by a person reviewing the page, not by update')
+        if 'closed_by' in (patch.get('attrs') or {}):
+            raise ValueError('attrs.closed_by is written by closing a task: state closed + data.closed_by')
         attrs = {**r['attrs'], **(patch.get('attrs') or {})}
         if attrs.get('supersedes') != r['attrs'].get('supersedes'):
             raise ValueError('To supersede, create a new knowledge page with attrs.supersedes')
@@ -357,6 +359,12 @@ class KnowledgeStore:
                                  '(journal, console, handoff, chat, file, commit, agent or record; a URL is not enough)')
         if r['kind'] == 'task' and state != r['state']:
             self._task_transition(db, r, state, attrs, live)
+            if state == 'closed':
+                attrs['closed_by'] = self._closed_by(db, band, r, actor, data.get('closed_by'))
+            else:
+                attrs.pop('closed_by', None)
+        elif data.get('closed_by'):
+            raise ValueError('data.closed_by goes with patch.state closed')
         # A person verified what the page said then. If someone else (an agent)
         # changes what it says, that verification no longer covers it.
         reverted = (r['kind'] == 'knowledge' and attrs.get('verification') == 'verified'
@@ -367,7 +375,7 @@ class KnowledgeStore:
             attrs['review_note'] = 'Edited after ' + r['attrs'].get('reviewed_label', r['attrs']['reviewed_by']) + ' verified it; needs another look'
         db.execute('UPDATE records SET title=?,body=?,attrs=?,state=?,parent=?,revision=revision+1,updated=? WHERE id=?',
                    (title, body, packed(attrs), state, parent, time.time(), r['id']))
-        if r['kind'] == 'task' and state in ('done', 'cancelled', 'archived', 'paused', 'blocked', 'todo'):
+        if r['kind'] == 'task' and state in ('done', 'closed', 'cancelled', 'archived', 'paused', 'blocked', 'todo'):
             db.execute('UPDATE claims SET released=? WHERE task=? AND released IS NULL', (time.time(), r['id']))
         updated = self._get(db, band, r['id'])
         changed = {k: updated[k] for k in ('title', 'state', 'parent') if updated[k] != r[k]}
@@ -451,6 +459,21 @@ class KnowledgeStore:
         self._event(db, band, r['id'], actor, 'reviewed', {'verdict': verdict, **({'note': note} if note else {})})
         return self._get(db, band, r['id'])
 
+    def _closed_by(self, db, band, r, actor, said):
+        """Closing a task on a person's word, kept apart from ``done`` (which
+        needs evidence of the work): who said so, their words, and the session
+        they said it in, recorded on the task and as a ``closed_by`` link."""
+        said = said if isinstance(said, dict) else {}
+        who, quote, session = (text(str(said.get(k) or ''), n) for k, n in (('who', 120), ('quote', 1000), ('session', 500)))
+        if not (who and quote and session):
+            raise ValueError('Closing a task needs data.closed_by {who, quote, session}: the person who said to '
+                             'close it, their words, and the session (URL or id) they said it in. '
+                             'For finished work with evidence use state done')
+        kind = 'url' if session.startswith(('http://', 'https://')) else 'agent'
+        lid = self._link(db, band, r['id'], actor, kind, session, 'closed_by', f'{who}: "{quote}"')
+        self._event(db, band, r['id'], actor, 'linked', {'link': lid, 'kind': kind, 'ref': session, 'relation': 'closed_by'})
+        return {'who': who, 'quote': quote, 'session': session, 'recorded_by': actor_id(actor), 'at': time.time()}
+
     def _task_transition(self, db, r, state, attrs, live):
         if state == 'done':
             if not attrs.get('outcome'):
@@ -514,7 +537,7 @@ class KnowledgeStore:
         r = self._get(db, band, data['id'])
         if r['kind'] != 'task':
             raise ValueError('Only tasks can be claimed')
-        if r['state'] in ('done', 'cancelled', 'archived'):
+        if r['state'] in ('done', 'closed', 'cancelled', 'archived'):
             raise Conflict(f"Task is {r['state']}; reopen it (state todo) before claiming")
         aid = actor_id(actor)
         now = time.time()
@@ -608,7 +631,7 @@ class KnowledgeStore:
 
     def _dependencies(self, db, band, attrs):
         """A task's dependencies with their states, and whether all are done."""
-        deps = []
+        deps = []  # only done counts: closed on someone's word is not proof the work exists
         for dep in attrs.get('dependencies') or []:
             d = db.execute('SELECT id,slug,state FROM records WHERE band=? AND (id=? OR slug=?)', (band, dep, dep)).fetchone()
             deps.append(dict(d) if d else {'id': dep, 'slug': None, 'state': 'missing'})
@@ -709,7 +732,7 @@ class KnowledgeStore:
                 entry = {'band': p['band'], 'project': self.brief(self.record(p)),
                          **{k: [] for k in lists if wanted is None or k in wanted}}
                 for t in sorted(tasks, key=lambda t: -t['updated']):
-                    key = 'recently_done' if t['state'] in ('done', 'cancelled') else t['state']
+                    key = 'recently_done' if t['state'] in ('done', 'closed', 'cancelled') else t['state']
                     if key not in entry or (key == 'recently_done' and t['updated'] < since):
                         continue
                     rec = self.record(t)
@@ -735,6 +758,8 @@ class KnowledgeStore:
                         if outcome_chars and outcome and len(outcome) > outcome_chars:
                             outcome = outcome[:outcome_chars] + '…'
                         item['outcome'] = outcome
+                        if rec['attrs'].get('closed_by'):
+                            item['closed_by'] = {k: rec['attrs']['closed_by'].get(k) for k in ('who', 'quote', 'session')}
                     entry[key].append(item)
                 out.append(entry)
         return out
