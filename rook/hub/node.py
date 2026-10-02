@@ -78,6 +78,10 @@ class HubNode:
                  enrollment: Any = None,
                  settings_store: Any = None) -> None:
         if build_version is None:
+            # A deployed hub runs a named release (`rook hub deploy` sets
+            # ROOK_RELEASE, e.g. 412.salty.otter: the worker version scheme).
+            build_version = os.environ.get("ROOK_RELEASE", "").strip() or None
+        if build_version is None:
             try:
                 from ..worker._build_info import VERSION as build_version
             except Exception:
@@ -85,6 +89,8 @@ class HubNode:
         self.worker_id = _stable_node_id(state_dir)
         self.name = HUB_WORKER_NAME
         self.version = build_version
+        head = str(build_version).split(".", 1)[0]
+        self.build = int(head) if head.isdigit() else 0
         self.client = client
         self._vault = vault
         # The bridge's chat store (rook.band_mcp.chat_rooms), for the chat
@@ -207,7 +213,7 @@ class HubNode:
             "caps": self.caps(),
             "plugins": [p.NAMESPACE for p in self.host.plugins],
             "version": self.version,
-            "build": 0,
+            "build": self.build,
             "core_api": CORE_API_VERSION,
             "facts": wire_facts(self.facts.hw),
             "roles": sorted(self.facts.roles),
@@ -226,7 +232,7 @@ class HubNode:
         return {"worker_id": self.worker_id, "name": self.name,
                 "description": m["description"], "caps": m["caps"],
                 "plugins": m["plugins"], "hb": m.get("hb", {}),
-                "version": self.version, "build": 0, "app_release": {},
+                "version": self.version, "build": self.build, "app_release": {},
                 "facts": m["facts"], "roles": m["roles"], "local": True,
                 "last_seen": time.time()}
 

@@ -545,6 +545,18 @@ async def test_multiband_client_routes_to_hub_node(tmp_path):
     assert reply["ok"] and reply["result"]["name"] == "rook"
 
 
+def test_a_deployed_hub_reports_its_release_as_version_and_build(tmp_path, monkeypatch):
+    """`rook hub deploy` names the release in ROOK_RELEASE; the hub worker
+    shows it the way a worker shows its build."""
+    monkeypatch.setenv("ROOK_RELEASE", "412.salty.otter")
+    from rook.hub.node import HubNode
+    node = HubNode(str(tmp_path), package=None, entry_points=False)
+    assert (node.version, node.build) == ("412.salty.otter", 412)
+    assert node.announce_msg()["build"] == 412 and node.entry()["version"] == "412.salty.otter"
+    monkeypatch.setenv("ROOK_RELEASE", "")
+    assert HubNode(str(tmp_path), package=None, entry_points=False, build_version="0.dev").build == 0
+
+
 def test_a_remote_hub_node_is_listed_on_every_band():
     """Another process (the dashboard) sees the hub's announces on each band
     it serves; the merged roster files it under none of them."""
