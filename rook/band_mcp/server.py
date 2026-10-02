@@ -355,9 +355,12 @@ def build_server(client: "BandClient | MultiBandClient",
         heartbeat status a worker opts into. Workers re-announce every 30s and
         are evicted after ~90s of silence.
         """
+        hub = getattr(mcp, "_rook_hub", None)
+        hosting = hub.plugin("serves") if hub is not None else None
         try:
             return _env.dumps(_roster.workers_view(client.workers, name=name, cap_prefix=cap_prefix,
-                                                   online=online, fields=fields))
+                                                   online=online, fields=fields,
+                                                   serves=hosting.lookup if hosting is not None else None))
         except ValueError as e:
             return _fail(str(e))
 

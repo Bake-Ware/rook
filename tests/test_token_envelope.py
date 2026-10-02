@@ -218,7 +218,7 @@ def test_workers_view_defaults_filters_and_fields():
     assert "worker-b" not in [r["name"] for r in roster.workers_view(band.workers, online=True)]
     assert roster.workers_view(band.workers, name="worker-a", fields="name,online") == [{"name": "worker-a", "online": True}]
     full = roster.workers_view(band.workers, name="worker-a", fields=["all"])[0]
-    assert set(full) == {"worker_id", "name", "description", "band", "caps", "plugins", "version",
+    assert set(full) == {"worker_id", "name", "description", "serves", "band", "caps", "plugins", "version",
                          "build", "app_release", "hb", "last_seen_age_secs"}
     with pytest.raises(ValueError, match="unknown fields"):
         roster.workers_view(band.workers, fields="nope")

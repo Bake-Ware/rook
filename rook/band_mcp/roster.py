@@ -12,19 +12,21 @@ import time
 
 from . import envelope
 
-ALL_FIELDS = ("worker_id", "name", "description", "band", "caps", "plugins", "version",
+ALL_FIELDS = ("worker_id", "name", "description", "serves", "band", "caps", "plugins", "version",
               "build", "app_release", "hb", "last_seen_age_secs", "online")
-DEFAULT_FIELDS = ("name", "description", "build", "hb", "last_seen_age_secs")
+DEFAULT_FIELDS = ("name", "description", "serves", "build", "hb", "last_seen_age_secs")
 # Workers announce every 30s (±20%); one missed announce still counts as online.
 ONLINE_SECS = 65.0
 
 
-def _row(w: dict, now: float) -> dict:
+def _row(w: dict, now: float, serves=None) -> dict:
     age = round(now - w.get("last_seen", 0.0), 1)
     return {
         "worker_id": w["worker_id"],
         "name": w.get("name"),
         "description": w.get("description", ""),
+        # Hand-written hosting metadata kept on the hub (the serves plugin).
+        "serves": (serves(w.get("name")) if serves else None) or {},
         "band": w.get("band"),
         "caps": list(w.get("caps", [])),
         "plugins": w.get("plugins", []),
@@ -38,7 +40,9 @@ def _row(w: dict, now: float) -> dict:
 
 
 def workers_view(workers: dict, name: str | None = None, cap_prefix: str | None = None,
-                 online: bool | None = None, fields=None, now: float | None = None) -> list[dict]:
+                 online: bool | None = None, fields=None, now: float | None = None,
+                 serves=None) -> list[dict]:
+    """``serves``: optional ``callable(worker name) -> {sites, services} | None``."""
     now = time.time() if now is None else now
     wanted = envelope.fields_arg(fields)
     full = envelope.legacy() or (wanted is not None and "all" in wanted)
@@ -46,7 +50,7 @@ def workers_view(workers: dict, name: str | None = None, cap_prefix: str | None 
         unknown = [f for f in wanted if f not in ALL_FIELDS]
         if unknown:
             raise ValueError(f"unknown fields {unknown}; choose from {', '.join(ALL_FIELDS)} or 'all'")
-    rows = [_row(w, now) for w in workers.values()]
+    rows = [_row(w, now, serves) for w in workers.values()]
     if name:
         needles = [n.strip().lower() for n in name.split(",") if n.strip()]
         rows = [r for r in rows if any(n in (r["name"] or "").lower() or n == r["worker_id"]

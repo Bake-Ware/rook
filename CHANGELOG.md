@@ -10,6 +10,11 @@ releases yet: workers identify themselves by build number (for example
 Preparation for public use.
 
 ### Added
+- `serves`: hand-written hosting metadata per worker, kept on the hub. Hub
+  plugin `serves` with caps `serves.list` (read), `serves.set` and
+  `serves.clear` (write) on worker `rook`; each worker's `{sites, services}`
+  (lists of `{name, url, note?}`) appears as the `serves` field of its
+  `rook_workers` row. Keyed by worker name; needs no worker update.
 - Task and handoff tools sized for grooming a deck. `rook_task` deck rows carry
   `revision`, resolved `dependencies` with an `unblocked` flag and, when a
   claim has gone quiet, a `hygiene` reason; deck takes `data {states,
