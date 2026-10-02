@@ -75,10 +75,23 @@ def available_harnesses() -> list[str]:
     return [h for h in HARNESSES if _binary(h)]
 
 
+#: Longest persona text passed on a command line (argv is visible in ps).
+MAX_PERSONA_ARG = 8000
+
+
 def persona_args(harness: str, persona: str) -> list[str]:
-    """Hook for the persona plugin: extra argv that applies ``persona`` to a
-    harness. Placeholder until that plugin lands; the persona id is still
-    exported as ``ROOK_PERSONA`` so a wrapper script can act on it."""
+    """Extra argv that applies the rendered persona text to a harness (the
+    persona plugin; docs/design/persona.md): Claude Code appends it to its
+    system prompt, Codex takes it as developer instructions. Hermes has no
+    such flag: its persona lives in SOUL.md (``persona.apply``); the text is
+    still exported as ROOK_PERSONA_FILE for wrapper scripts."""
+    text = (persona or "").strip()
+    if not text or len(text) > MAX_PERSONA_ARG:
+        return []
+    if harness == "claude":
+        return ["--append-system-prompt", text]
+    if harness == "codex":
+        return ["-c", f"developer_instructions={json.dumps(text)}"]
     return []
 
 
@@ -322,8 +335,16 @@ class TerminalsPlugin(Plugin):
         env.update(TERM="xterm-256color", COLORTERM="truecolor", ROOK_WORK_TERMINAL=tid)
         if session:
             env["ROOK_WORK_SESSION"] = session
+        persona_text = await self._persona_text(harness, persona) if harness != "shell" else ""
         if persona:
             env["ROOK_PERSONA"] = str(persona)[:100]
+        if persona_text:
+            ppath = self._session_dir() / f"persona-{tid}.md"
+            fd = os.open(ppath, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(persona_text)
+            env["ROOK_PERSONA_FILE"] = str(ppath)
+            t.files.append(str(ppath))
         mcp_config = ""
         if mcp_url and mcp_token:
             env.update(ROOK_MCP_URL=mcp_url, ROOK_MCP_TOKEN=mcp_token)
@@ -337,7 +358,7 @@ class TerminalsPlugin(Plugin):
                 t.files.append(mcp_config)
         argv = build_argv(harness, binary, model=model, resume=resume,
                           mcp_url=mcp_url if mcp_token else "", mcp_config=mcp_config,
-                          persona=persona)
+                          persona=persona_text)
         try:
             await self._spawn(t, argv, cwd, env)
         except Exception:
@@ -346,6 +367,14 @@ class TerminalsPlugin(Plugin):
         self.terms[tid] = t
         log.info("terminal %s started: %s (pid %s)", tid, harness, t.pid)
         return {"ok": True, **t.info()}
+
+    async def _persona_text(self, harness: str, persona: str) -> str:
+        """The rendered persona for this launch from the hub
+        (``persona.render``): the named profile, else the one assigned to the
+        harness family. Empty when there is none or the hub doesn't answer."""
+        from .persona import fetch_persona
+        got = await fetch_persona(self._worker, harness, persona, timeout=3.0)
+        return str((got or {}).get("text") or "")
 
     async def _spawn(self, t: _Term, argv: list[str], cwd: str, env: dict) -> None:
         import pty

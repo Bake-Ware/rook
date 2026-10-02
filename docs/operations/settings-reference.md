@@ -251,6 +251,8 @@ are set only in the environment or on the command line.
 | `voice.max_no_speech` | No-speech ceiling | hub | float | `0.6` | `MAX_NO_SPEECH` | live |
 | `voice.min_logprob` | Minimum log-probability | hub | float | `-1.0` | `MIN_LOGPROB` | live |
 | `voice.default_voice` | Voice | hub+user | str | `af_heart` | `VOICE` | live |
+| `voice.assistant_name` | Assistant name | hub+user | str |  | `ROOK_VOICE_ASSISTANT_NAME` | live |
+| `voice.owner` | Whose assistant | hub+user | str |  | `ROOK_VOICE_OWNER` | live |
 | `voice.show_thinking` | Show thinking | user | bool | off |  | live |
 | `voice.hotword_enabled` | Wake word on this account | user | bool | on |  | live |
 | `voice.llm_url` | Language model URL | hub | url | `http://127.0.0.1:1234/v1/chat/completions` | `VLLM_URL` | live |

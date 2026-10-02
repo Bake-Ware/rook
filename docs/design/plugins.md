@@ -6,7 +6,8 @@ node (`rook`) and generated MCP tools are implemented (`rook/core`,
 grants and permissions enforcement are specified in
 [permissions.md](permissions.md); the settings UI and storage are specified in
 [settings.md](settings.md). This document owns the plugin contract and says
-where it hands off to those two.
+where it hands off to those two. The persona plugin (a hub part and a worker
+part sharing the namespace `persona`) is specified in [persona.md](persona.md).
 
 ## 1. Goals
 

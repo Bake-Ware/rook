@@ -24,6 +24,15 @@ def _json(data, status=200):
     return JSONResponse(data, status, headers=NO_STORE)
 
 
+def _persona(svc):
+    """The persona hub plugin behind the Settings > Persona page."""
+    node = getattr(svc, "node", None)
+    plugin = node.plugin("persona") if node is not None else None
+    if plugin is None:
+        raise SettingsError("The persona plugin is not loaded on this hub.")
+    return plugin
+
+
 def routes(get_service, accounts):
     """``get_service()`` returns the live SettingsService (or None)."""
 
@@ -59,6 +68,8 @@ def routes(get_service, accounts):
                     data = svc.plugin_page(target)
                 elif view == "user":
                     data = svc.user_page(uid, label)
+                elif view == "persona":
+                    data = _persona(svc).page()
                 elif view == "search":
                     data = {"results": svc.search(q.get("q", ""))}
                 elif view == "history":
@@ -98,8 +109,11 @@ def routes(get_service, accounts):
                 res = await svc.plugin_toggle(str(data.get("worker", "")),
                                               str(data.get("module", "")),
                                               bool(data.get("enable")), actor)
+            elif action in ("persona_save", "persona_assign", "persona_delete"):
+                res = _persona(svc).page_action(data, actor)
             else:
-                return _json({"error": "Use set, dry_run, reset, apply_worker or plugin"}, 400)
+                return _json({"error": "Use set, dry_run, reset, apply_worker, plugin or "
+                                       "persona_*"}, 400)
             return _json(res)
         except PermissionError as e:
             return _json({"error": str(e)}, 403)

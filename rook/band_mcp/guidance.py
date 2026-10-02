@@ -3,6 +3,8 @@
 Three slot kinds, each placed at the moment the advice is useful:
 
 * ``server``          — MCP ``initialize`` instructions: read once per connect.
+                        The caller's persona (hub plugin ``persona``) is
+                        appended per session (:func:`compose_instructions`).
 * ``tool:<name>``     — appended to that tool's description ("Tip: …").
 * ``cap:<prefix>``    — ``_tips`` on a ``rook_call`` reply whose cap starts with
                         the prefix (``proc.`` or ``shell.exec``).
@@ -174,6 +176,14 @@ class Guidance:
         while len(self._seen) > 10000:
             self._seen.popitem(last=False)
         return {"_tips": [text]}
+
+
+def compose_instructions(server: str | None, *extra: str | None) -> str | None:
+    """The ``initialize`` instructions: the ``server`` slot, then any extra
+    sections (the caller's persona), separated by a blank line. Empty parts
+    are dropped, so with no persona the result is the server slot as is."""
+    parts = [p.strip() for p in (server, *extra) if p and p.strip()]
+    return "\n\n".join(parts) or None
 
 
 def apply(mcp, guidance: Guidance, base_descriptions: dict[str, str]) -> None:

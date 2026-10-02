@@ -76,6 +76,13 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `knowledge.write` | action, band?, id?, data?, request_id? | write | Write the shared wiki: create\|update\|link\|retract (needs request_id). |
 | `notify.channels` | — | read | Which notification channels are running on this hub. |
 | `notify.send` | text, channel='all' | write | Send a notification to the chat integrations. |
+| `persona.assign` | scope, profile='', target='', note='' | admin | Assign a profile at a scope: `default` (everyone), `band` (band id), `family` (claude-code, codex, hermes, vo… |
+| `persona.delete` | id, note='' | admin | Delete an unassigned profile (its history stays). |
+| `persona.get` | id='', family='', user='', band='', harness='' | read | A persona profile with its rendered `text`. |
+| `persona.history` | id='', scope='', target='', limit=20 | read | Attributed changes, newest first. |
+| `persona.list` | — | read | Every profile (id, name, rev) and every scoped assignment. |
+| `persona.render` | harness='', profile='', user='', band='' | read | Just the rendered persona for a harness: `{text, profile, rev, sha}`. |
+| `persona.set` | profile, note='', dry_run=false, expect_rev? | admin | Create or replace a profile (band owners and operator tokens). |
 | `policy.explain` | principal, cap, worker?, role? | read | Would this principal be allowed to call `cap` on `worker`? |
 | `policy.get` | — | read | The current policy document with its revision, source, mode, lint and last load error (if the file on disk is… |
 | `policy.set` | policy, note='' | admin | Replace the policy document (band owners and operator tokens only). |
@@ -111,6 +118,9 @@ The shared wiki. Use the `rook_knowledge` tool: `search` before starting (5 exce
 
 ### notify
 `rook_call(worker="rook", cap="notify.send", args={"text": "..."})` posts a notification to every configured chat integration (Telegram, Discord); `channel="telegram"` picks one.
+
+### persona
+One persona for every harness. `rook_call(cap="persona.get", worker="rook", args={"family": "claude-code"})` returns the persona that applies to you (user > family > band > default) with its rendered `text`. To install it in a harness file on a machine: `rook_call(cap="persona.apply", worker="<name>", args={"harness": "claude-code", "dry_run": true})` (then without `dry_run`; `remove=true` takes it out). It only edits between its own markers. `persona.set` / `persona.assign` are admin: ask the user first.
 
 ### policy
 `rook_call(cap="policy.explain", worker="rook", args={"principal": "role:agent", "cap": "shell.exec", "worker": "<name>"})` shows whether a call would be allowed and which rule decides it. `policy.get` returns the document; changing it (`policy.set`) is for band owners and operator tokens.
@@ -319,6 +329,13 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 | `msg.clear` | — | Empty this worker's inbox. |
 | `msg.read` | limit=20 | Return the most recent messages from this worker's inbox. |
 | `msg.send` | text, sender='operator' | Deliver a text message to this worker: store it in the inbox and try a desktop notification. |
+
+**persona**
+
+| Cap | Args | Does |
+|---|---|---|
+| `persona.apply` | harness, path='', content?, profile='', remove=false, dry_run=false | Write (or with `remove=true` take out) the persona's managed block in a harness file: claude-code -> ~/.claud… |
+| `persona.status` | harness='', path='' | Whether each harness file holds a persona block, with its profile, rev and hash. |
 
 **pikvm**
 

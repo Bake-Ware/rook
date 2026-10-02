@@ -621,10 +621,25 @@ class SettingsService:
                 for row in self.store.rows("user", prefix=key):
                     if row["key"] == key and not row["secret_ref"]:
                         users.setdefault(row["target"], {})[s.name] = row["value"]
+        self._fetch_extras(namespace, values, users)
         env_names = {self.schema.get(k).setting.name: list(self.schema.get(k).env_names())
                      for k in page["keys"]}
         return {"namespace": namespace, "values": values, "users": users,
                 "env": env_names, "note": "The service's own environment still wins over these."}
+
+    def _fetch_extras(self, namespace: str, values: dict, users: dict) -> None:
+        """Let hub plugins fill blanks in a service's fetched settings
+        (``settings_fetch_extra(namespace, values, users)``; the persona
+        plugin supplies the voice assistant's name and owner). Explicit
+        values win; a failing plugin is logged and skipped."""
+        host = getattr(self.node, "host", None)
+        for p in getattr(host, "plugins", None) or []:
+            fn = getattr(p, "settings_fetch_extra", None)
+            if callable(fn):
+                try:
+                    fn(namespace, values, users)
+                except Exception:
+                    log.exception("settings.fetch extra from %s failed", p.NAMESPACE)
 
     def report_service(self, namespace: str, principal: dict | None, env: dict) -> dict:
         """A service tells the hub which of its keys its environment locks

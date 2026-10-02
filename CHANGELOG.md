@@ -22,6 +22,19 @@ Preparation for public use.
   `chat.presence` on worker `rook` (same store as `rook_chat_*`). Band callers
   are recorded as `band:<identity>`; posting needs `ROOK_HUB_BAND_MAX_RISK=write`.
   `scripts/test-hub.sh start --band-max-risk` sets it for a test hub.
+- **Persona** plugin (docs/design/persona.md): persona profiles (name, voice,
+  rules, do/don't, formatting, per-harness addenda) stored on the hub with
+  scoped assignments (user > agent family > band > default), versions and
+  attributed history; edited on Settings > Persona or with `persona.get/list/
+  render/history` (read) and `persona.set/assign/delete` (admin) on worker
+  `rook`. Delivered in each MCP session's `initialize` instructions (after the
+  server guidance, at most 1,200 characters; unchanged when nothing is
+  assigned), by the worker cap `persona.apply`, which writes a delimited,
+  idempotent marker block into CLAUDE.md / AGENTS.md / SOUL.md without
+  touching anything else (dry run, diff, removal), in work launches
+  (`--append-system-prompt` / Codex `developer_instructions`), in the skill's
+  site notes, and to the voice service as `voice.assistant_name` /
+  `voice.owner` through `settings.fetch("voice")`.
 - One **Settings** area in the dashboard, rendered from the settings schema:
   hub, each band, each worker (with plugin enable/disable and per-worker
   values), each plugin or service (Voice, Decision engine, Knowledge, Tasks,

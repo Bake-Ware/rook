@@ -9,8 +9,9 @@ without committing them. The hub reads, at request time, either
 - ``ROOK_SKILL_SITE_PAGE``: a knowledge page slug or id (needs ROOK_KNOWLEDGE=1), or
 - ``ROOK_SKILL_SITE_FILE``: a Markdown file on the hub,
 
-and serves it as ``references/site.md``. The overlay is only included for
-callers holding a valid token (MCP clients always do; the HTTP download needs
+plus, when the persona plugin has a default persona assigned, a short
+"Persona" section (docs/design/persona.md), and serves it as
+``references/site.md``. The overlay is only included for callers holding a valid token (MCP clients always do; the HTTP download needs
 ``Authorization: Bearer <token>``). Anonymous downloads get the generic skill.
 
 Served as:
@@ -56,8 +57,23 @@ def base_files() -> dict[str, str]:
     return out
 
 
-def site_notes(knowledge=None) -> str | None:
-    """Operator site notes from config, or None. Never raises."""
+def site_notes(knowledge=None, persona=None) -> str | None:
+    """Operator site notes from config, plus the band's persona note when the
+    persona plugin has a default assigned (``persona`` is that plugin), or
+    None. Never raises."""
+    notes = _configured_notes(knowledge)
+    note = None
+    if persona is not None:
+        try:
+            note = persona.site_note() or None
+        except Exception as e:  # noqa: BLE001
+            log.warning("persona note for the skill overlay unavailable: %s", e)
+    if notes and note:
+        return notes.rstrip("\n") + "\n\n" + note
+    return notes or note
+
+
+def _configured_notes(knowledge=None) -> str | None:
     slug = os.environ.get("ROOK_SKILL_SITE_PAGE", "").strip()
     path = os.environ.get("ROOK_SKILL_SITE_FILE", "").strip()
     try:
@@ -115,13 +131,15 @@ def _resource_uri(rel: str) -> str:
     return f"rook://skill/{SKILL_NAME}" if rel == "SKILL.md" else f"rook://skill/{SKILL_NAME}/{rel}"
 
 
-def register(mcp, store=None, knowledge_getter: Callable[[], object] | None = None) -> None:
+def register(mcp, store=None, knowledge_getter: Callable[[], object] | None = None,
+             persona_getter: Callable[[], object] | None = None) -> None:
     """Register the skill as MCP resources and HTTP routes on ``mcp``.
 
     ``store`` is the TokenStore that vouches for HTTP bearer tokens (overlay
     access); ``knowledge_getter`` returns the KnowledgeService or None.
     """
     kget = knowledge_getter or (lambda: None)
+    pget = persona_getter or (lambda: None)
     try:
         generic = base_files()
     except FileNotFoundError:
@@ -140,7 +158,7 @@ def register(mcp, store=None, knowledge_getter: Callable[[], object] | None = No
                      mime_type="text/markdown")(_read)
 
     def _site() -> str:
-        return site_notes(kget()) or "No site notes configured on this hub.\n"
+        return site_notes(kget(), pget()) or "No site notes configured on this hub.\n"
     mcp.resource(_resource_uri(SITE_FILE), name=f"rook-skill:{SITE_FILE}",
                  description="Operator-maintained site notes for this band (may be empty)",
                  mime_type="text/markdown")(_site)
@@ -157,7 +175,7 @@ def register(mcp, store=None, knowledge_getter: Callable[[], object] | None = No
             return False
 
     def _current(request) -> dict[str, str]:
-        return files(site_notes(kget()) if _authed(request) else None)
+        return files(site_notes(kget(), pget()) if _authed(request) else None)
 
     @mcp.custom_route("/skill/rook.skill", methods=["GET"])
     async def _download(request):
