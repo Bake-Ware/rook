@@ -1,0 +1,517 @@
+{
+ "spec": "1.0",
+ "vector": "placement",
+ "description": "Placement predicates over node facts. `valid: false` expressions MUST be rejected at declaration time and evaluate to false. `roles` come from verified grants only; `hw` is self-reported. Evaluation errors (e.g. ordering a string against a number) make the WHOLE expression false; and/or short-circuit.",
+ "nodes": {
+  "hub": {
+   "roles": [
+    "is_hub"
+   ],
+   "hw": {
+    "os": "linux",
+    "arch": "x86_64",
+    "cpus": 8,
+    "mem_gb": 31.2,
+    "pty": true
+   }
+  },
+  "gpu-box": {
+   "roles": [],
+   "hw": {
+    "os": "linux",
+    "arch": "x86_64",
+    "cpus": 32,
+    "pty": true,
+    "display": true,
+    "gpu": [
+     {
+      "vendor": "nvidia",
+      "name": "A",
+      "vram_gb": 24.0
+     },
+     {
+      "vendor": "nvidia",
+      "name": "B",
+      "vram_gb": 6.0
+     }
+    ]
+   }
+  },
+  "phone": {
+   "roles": [],
+   "hw": {
+    "os": "android",
+    "arch": "aarch64",
+    "cpus": 8,
+    "embedded": true,
+    "camera": true
+   }
+  },
+  "bare": {
+   "roles": [],
+   "hw": {}
+  }
+ },
+ "cases": [
+  {
+   "expr": "is_hub",
+   "valid": true,
+   "results": {
+    "hub": true,
+    "gpu-box": false,
+    "phone": false,
+    "bare": false
+   }
+  },
+  {
+   "expr": "not is_hub",
+   "valid": true,
+   "results": {
+    "hub": false,
+    "gpu-box": true,
+    "phone": true,
+    "bare": true
+   }
+  },
+  {
+   "expr": "any",
+   "valid": true,
+   "results": {
+    "hub": true,
+    "gpu-box": true,
+    "phone": true,
+    "bare": true
+   }
+  },
+  {
+   "expr": "anywhere",
+   "valid": true,
+   "results": {
+    "hub": true,
+    "gpu-box": true,
+    "phone": true,
+    "bare": true
+   }
+  },
+  {
+   "expr": "True",
+   "valid": true,
+   "results": {
+    "hub": true,
+    "gpu-box": true,
+    "phone": true,
+    "bare": true
+   }
+  },
+  {
+   "expr": "is_embedded",
+   "valid": true,
+   "results": {
+    "hub": false,
+    "gpu-box": false,
+    "phone": true,
+    "bare": false
+   }
+  },
+  {
+   "expr": "has('camera')",
+   "valid": true,
+   "results": {
+    "hub": false,
+    "gpu-box": false,
+    "phone": true,
+    "bare": false
+   }
+  },
+  {
+   "expr": "has('gpu')",
+   "valid": true,
+   "results": {
+    "hub": false,
+    "gpu-box": true,
+    "phone": false,
+    "bare": false
+   }
+  },
+  {
+   "expr": "has('gpu', vram_gb >= 8)",
+   "valid": true,
+   "results": {
+    "hub": false,
+    "gpu-box": true,
+    "phone": false,
+    "bare": false
+   }
+  },
+  {
+   "expr": "has('gpu', vram_gb >= 32)",
+   "valid": true,
+   "results": {
+    "hub": false,
+    "gpu-box": false,
+    "phone": false,
+    "bare": false
+   }
+  },
+  {
+   "expr": "has('gpu', vendor='nvidia')",
+   "valid": true,
+   "results": {
+    "hub": false,
+    "gpu-box": true,
+    "phone": false,
+    "bare": false
+   }
+  },
+  {
+   "expr": "has('gpu', vram_gb > 10, vram_gb < 20)",
+   "valid": true,
+   "results": {
+    "hub": false,
+    "gpu-box": false,
+    "phone": false,
+    "bare": false
+   }
+  },
+  {
+   "expr": "has('gpu', name == 'B', vram_gb <= 6)",
+   "valid": true,
+   "results": {
+    "hub": false,
+    "gpu-box": true,
+    "phone": false,
+    "bare": false
+   }
+  },
+  {
+   "expr": "os == 'android'",
+   "valid": true,
+   "results": {
+    "hub": false,
+    "gpu-box": false,
+    "phone": true,
+    "bare": false
+   }
+  },
+  {
+   "expr": "os != 'linux'",
+   "valid": true,
+   "results": {
+    "hub": false,
+    "gpu-box": false,
+    "phone": true,
+    "bare": true
+   }
+  },
+  {
+   "expr": "is_embedded or os == 'android'",
+   "valid": true,
+   "results": {
+    "hub": false,
+    "gpu-box": false,
+    "phone": true,
+    "bare": false
+   }
+  },
+  {
+   "expr": "has('pty') and arch in ('x86_64', 'aarch64')",
+   "valid": true,
+   "results": {
+    "hub": true,
+    "gpu-box": true,
+    "phone": false,
+    "bare": false
+   }
+  },
+  {
+   "expr": "arch not in ['x86_64']",
+   "valid": true,
+   "results": {
+    "hub": false,
+    "gpu-box": false,
+    "phone": true,
+    "bare": true
+   }
+  },
+  {
+   "expr": "cpus >= 16",
+   "valid": true,
+   "results": {
+    "hub": false,
+    "gpu-box": true,
+    "phone": false,
+    "bare": false
+   }
+  },
+  {
+   "expr": "2 < cpus <= 8",
+   "valid": true,
+   "results": {
+    "hub": true,
+    "gpu-box": false,
+    "phone": true,
+    "bare": false
+   }
+  },
+  {
+   "expr": "mem_gb > 16.5",
+   "valid": true,
+   "results": {
+    "hub": true,
+    "gpu-box": false,
+    "phone": false,
+    "bare": false
+   }
+  },
+  {
+   "expr": "missing == None",
+   "valid": true,
+   "results": {
+    "hub": true,
+    "gpu-box": true,
+    "phone": true,
+    "bare": true
+   }
+  },
+  {
+   "expr": "missing > 3",
+   "valid": true,
+   "results": {
+    "hub": false,
+    "gpu-box": false,
+    "phone": false,
+    "bare": false
+   }
+  },
+  {
+   "expr": "'lin' in os",
+   "valid": true,
+   "results": {
+    "hub": true,
+    "gpu-box": true,
+    "phone": false,
+    "bare": false
+   }
+  },
+  {
+   "expr": "'x' in missing",
+   "valid": true,
+   "results": {
+    "hub": false,
+    "gpu-box": false,
+    "phone": false,
+    "bare": false
+   }
+  },
+  {
+   "expr": "not (is_hub or is_embedded)",
+   "valid": true,
+   "results": {
+    "hub": false,
+    "gpu-box": true,
+    "phone": false,
+    "bare": true
+   }
+  },
+  {
+   "expr": "os < 3 or is_hub",
+   "valid": true,
+   "results": {
+    "hub": false,
+    "gpu-box": false,
+    "phone": false,
+    "bare": false
+   }
+  },
+  {
+   "expr": "is_hub and os < 3",
+   "valid": true,
+   "results": {
+    "hub": false,
+    "gpu-box": false,
+    "phone": false,
+    "bare": false
+   }
+  },
+  {
+   "expr": "cpus == 8.0",
+   "valid": true,
+   "results": {
+    "hub": true,
+    "gpu-box": false,
+    "phone": true,
+    "bare": false
+   }
+  },
+  {
+   "expr": "is_worker",
+   "valid": true,
+   "results": {
+    "hub": false,
+    "gpu-box": false,
+    "phone": false,
+    "bare": false
+   }
+  },
+  {
+   "expr": "role == 'hub'",
+   "valid": true,
+   "results": {
+    "hub": false,
+    "gpu-box": false,
+    "phone": false,
+    "bare": false
+   }
+  },
+  {
+   "expr": "",
+   "valid": false,
+   "results": {
+    "hub": false,
+    "gpu-box": false,
+    "phone": false,
+    "bare": false
+   }
+  },
+  {
+   "expr": "   ",
+   "valid": false,
+   "results": {
+    "hub": false,
+    "gpu-box": false,
+    "phone": false,
+    "bare": false
+   }
+  },
+  {
+   "expr": "__import__('os')",
+   "valid": false,
+   "results": {
+    "hub": false,
+    "gpu-box": false,
+    "phone": false,
+    "bare": false
+   }
+  },
+  {
+   "expr": "os.path",
+   "valid": false,
+   "results": {
+    "hub": false,
+    "gpu-box": false,
+    "phone": false,
+    "bare": false
+   }
+  },
+  {
+   "expr": "cpus + 1 > 2",
+   "valid": false,
+   "results": {
+    "hub": false,
+    "gpu-box": false,
+    "phone": false,
+    "bare": false
+   }
+  },
+  {
+   "expr": "has(gpu)",
+   "valid": false,
+   "results": {
+    "hub": false,
+    "gpu-box": false,
+    "phone": false,
+    "bare": false
+   }
+  },
+  {
+   "expr": "has()",
+   "valid": false,
+   "results": {
+    "hub": false,
+    "gpu-box": false,
+    "phone": false,
+    "bare": false
+   }
+  },
+  {
+   "expr": "lambda: 1",
+   "valid": false,
+   "results": {
+    "hub": false,
+    "gpu-box": false,
+    "phone": false,
+    "bare": false
+   }
+  },
+  {
+   "expr": "-1 < cpus",
+   "valid": false,
+   "results": {
+    "hub": false,
+    "gpu-box": false,
+    "phone": false,
+    "bare": false
+   }
+  },
+  {
+   "expr": "x if y else z",
+   "valid": false,
+   "results": {
+    "hub": false,
+    "gpu-box": false,
+    "phone": false,
+    "bare": false
+   }
+  },
+  {
+   "expr": "f(1)",
+   "valid": false,
+   "results": {
+    "hub": false,
+    "gpu-box": false,
+    "phone": false,
+    "bare": false
+   }
+  },
+  {
+   "expr": "[x for x in y]",
+   "valid": false,
+   "results": {
+    "hub": false,
+    "gpu-box": false,
+    "phone": false,
+    "bare": false
+   }
+  },
+  {
+   "expr": "cpus > 1; is_hub",
+   "valid": false,
+   "results": {
+    "hub": false,
+    "gpu-box": false,
+    "phone": false,
+    "bare": false
+   }
+  },
+  {
+   "expr": "{'a': 1}",
+   "valid": false,
+   "results": {
+    "hub": false,
+    "gpu-box": false,
+    "phone": false,
+    "bare": false
+   }
+  },
+  {
+   "expr": "os[0] == 'l'",
+   "valid": false,
+   "results": {
+    "hub": false,
+    "gpu-box": false,
+    "phone": false,
+    "bare": false
+   }
+  }
+ ]
+}

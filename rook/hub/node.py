@@ -69,6 +69,7 @@ class HubNode:
     def __init__(self, state_dir: str | None = None, *,
                  client: Any = None,
                  vault: Any = None,
+                 chat: Any = None,
                  on_band_call: Callable[[str, str | None, dict, dict], None] | None = None,
                  package: str | None = BUILTIN_PACKAGE,
                  entry_points: bool = True,
@@ -86,6 +87,9 @@ class HubNode:
         self.version = build_version
         self.client = client
         self._vault = vault
+        # The bridge's chat store (rook.band_mcp.chat_rooms), for the chat
+        # rooms plugin; None = the plugin opens chat.db in state_dir itself.
+        self.chat = chat
         self._on_band_call = on_band_call
         self._state_dir = state_dir
         self.attached = False  # set by attach_hub_node once a band client serves it
@@ -296,7 +300,8 @@ class HubNode:
 
 
 def attach_hub_node(client: Any, state_dir: str | None, *, vault: Any = None,
-                    journal: Any = None, enrollment: Any = None) -> "HubNode | None":
+                    journal: Any = None, enrollment: Any = None,
+                    chat: Any = None) -> "HubNode | None":
     """Build the hub node and put it on ``client``'s bands. Used by the MCP
     bridge's ``build_server``. Never raises: a broken plugin host leaves the
     bridge running without hub caps. ``ROOK_HUB_PLUGINS=0`` disables it.
@@ -321,7 +326,7 @@ def attach_hub_node(client: Any, state_dir: str | None, *, vault: Any = None,
 
     try:
         node = HubNode(state_dir, client=client, vault=vault, on_band_call=journal_band_call,
-                       enrollment=enrollment)
+                       enrollment=enrollment, chat=chat)
         holder["node"] = node
     except Exception:
         log.exception("hub plugin host failed to start; hub caps unavailable")

@@ -1,0 +1,893 @@
+{
+ "spec": "1.0",
+ "vector": "projection",
+ "description": "Core-enforced output contract of a cap declaring `limit`/`fields` (see spec 'Capabilities'). `handler_params` lists which of limit/fields the handler accepts itself; `handler_received` is the kwargs it got.",
+ "cases": [
+  {
+   "label": "no metadata: untouched",
+   "meta": null,
+   "handler_params": [],
+   "args": {},
+   "handler_result": [
+    {
+     "id": 0,
+     "name": "n0",
+     "extra": 0
+    },
+    {
+     "id": 1,
+     "name": "n1",
+     "extra": 1
+    },
+    {
+     "id": 2,
+     "name": "n2",
+     "extra": 4
+    },
+    {
+     "id": 3,
+     "name": "n3",
+     "extra": 9
+    },
+    {
+     "id": 4,
+     "name": "n4",
+     "extra": 16
+    }
+   ],
+   "handler_received": {},
+   "result": [
+    {
+     "id": 0,
+     "name": "n0",
+     "extra": 0
+    },
+    {
+     "id": 1,
+     "name": "n1",
+     "extra": 1
+    },
+    {
+     "id": 2,
+     "name": "n2",
+     "extra": 4
+    },
+    {
+     "id": 3,
+     "name": "n3",
+     "extra": 9
+    },
+    {
+     "id": 4,
+     "name": "n4",
+     "extra": 16
+    }
+   ]
+  },
+  {
+   "label": "limit trims a list",
+   "meta": {
+    "limit": 2
+   },
+   "handler_params": [],
+   "args": {},
+   "handler_result": [
+    {
+     "id": 0,
+     "name": "n0",
+     "extra": 0
+    },
+    {
+     "id": 1,
+     "name": "n1",
+     "extra": 1
+    },
+    {
+     "id": 2,
+     "name": "n2",
+     "extra": 4
+    },
+    {
+     "id": 3,
+     "name": "n3",
+     "extra": 9
+    },
+    {
+     "id": 4,
+     "name": "n4",
+     "extra": 16
+    }
+   ],
+   "handler_received": {},
+   "result": [
+    {
+     "id": 0,
+     "name": "n0",
+     "extra": 0
+    },
+    {
+     "id": 1,
+     "name": "n1",
+     "extra": 1
+    }
+   ]
+  },
+  {
+   "label": "caller limit wins",
+   "meta": {
+    "limit": 2
+   },
+   "handler_params": [],
+   "args": {
+    "limit": 4
+   },
+   "handler_result": [
+    {
+     "id": 0,
+     "name": "n0",
+     "extra": 0
+    },
+    {
+     "id": 1,
+     "name": "n1",
+     "extra": 1
+    },
+    {
+     "id": 2,
+     "name": "n2",
+     "extra": 4
+    },
+    {
+     "id": 3,
+     "name": "n3",
+     "extra": 9
+    },
+    {
+     "id": 4,
+     "name": "n4",
+     "extra": 16
+    }
+   ],
+   "handler_received": {},
+   "result": [
+    {
+     "id": 0,
+     "name": "n0",
+     "extra": 0
+    },
+    {
+     "id": 1,
+     "name": "n1",
+     "extra": 1
+    },
+    {
+     "id": 2,
+     "name": "n2",
+     "extra": 4
+    },
+    {
+     "id": 3,
+     "name": "n3",
+     "extra": 9
+    }
+   ]
+  },
+  {
+   "label": "bad caller limit falls back",
+   "meta": {
+    "limit": 2
+   },
+   "handler_params": [],
+   "args": {
+    "limit": 0
+   },
+   "handler_result": [
+    {
+     "id": 0,
+     "name": "n0",
+     "extra": 0
+    },
+    {
+     "id": 1,
+     "name": "n1",
+     "extra": 1
+    },
+    {
+     "id": 2,
+     "name": "n2",
+     "extra": 4
+    },
+    {
+     "id": 3,
+     "name": "n3",
+     "extra": 9
+    },
+    {
+     "id": 4,
+     "name": "n4",
+     "extra": 16
+    }
+   ],
+   "handler_received": {},
+   "result": [
+    {
+     "id": 0,
+     "name": "n0",
+     "extra": 0
+    },
+    {
+     "id": 1,
+     "name": "n1",
+     "extra": 1
+    }
+   ]
+  },
+  {
+   "label": "limit trims an items envelope",
+   "meta": {
+    "limit": 3
+   },
+   "handler_params": [],
+   "args": {},
+   "handler_result": {
+    "items": [
+     {
+      "id": 0,
+      "name": "n0",
+      "extra": 0
+     },
+     {
+      "id": 1,
+      "name": "n1",
+      "extra": 1
+     },
+     {
+      "id": 2,
+      "name": "n2",
+      "extra": 4
+     },
+     {
+      "id": 3,
+      "name": "n3",
+      "extra": 9
+     },
+     {
+      "id": 4,
+      "name": "n4",
+      "extra": 16
+     }
+    ],
+    "total": 5,
+    "next": null
+   },
+   "handler_received": {},
+   "result": {
+    "items": [
+     {
+      "id": 0,
+      "name": "n0",
+      "extra": 0
+     },
+     {
+      "id": 1,
+      "name": "n1",
+      "extra": 1
+     },
+     {
+      "id": 2,
+      "name": "n2",
+      "extra": 4
+     }
+    ],
+    "total": 5,
+    "next": null,
+    "truncated": true
+   }
+  },
+  {
+   "label": "handler takes limit: default injected",
+   "meta": {
+    "limit": 3
+   },
+   "handler_params": [
+    "limit"
+   ],
+   "args": {},
+   "handler_result": [
+    {
+     "id": 0,
+     "name": "n0",
+     "extra": 0
+    },
+    {
+     "id": 1,
+     "name": "n1",
+     "extra": 1
+    },
+    {
+     "id": 2,
+     "name": "n2",
+     "extra": 4
+    },
+    {
+     "id": 3,
+     "name": "n3",
+     "extra": 9
+    },
+    {
+     "id": 4,
+     "name": "n4",
+     "extra": 16
+    }
+   ],
+   "handler_received": {
+    "limit": 3
+   },
+   "result": [
+    {
+     "id": 0,
+     "name": "n0",
+     "extra": 0
+    },
+    {
+     "id": 1,
+     "name": "n1",
+     "extra": 1
+    },
+    {
+     "id": 2,
+     "name": "n2",
+     "extra": 4
+    },
+    {
+     "id": 3,
+     "name": "n3",
+     "extra": 9
+    },
+    {
+     "id": 4,
+     "name": "n4",
+     "extra": 16
+    }
+   ]
+  },
+  {
+   "label": "handler takes limit: caller value passed",
+   "meta": {
+    "limit": 3
+   },
+   "handler_params": [
+    "limit"
+   ],
+   "args": {
+    "limit": 1
+   },
+   "handler_result": [
+    {
+     "id": 0,
+     "name": "n0",
+     "extra": 0
+    },
+    {
+     "id": 1,
+     "name": "n1",
+     "extra": 1
+    },
+    {
+     "id": 2,
+     "name": "n2",
+     "extra": 4
+    },
+    {
+     "id": 3,
+     "name": "n3",
+     "extra": 9
+    },
+    {
+     "id": 4,
+     "name": "n4",
+     "extra": 16
+    }
+   ],
+   "handler_received": {
+    "limit": 1
+   },
+   "result": [
+    {
+     "id": 0,
+     "name": "n0",
+     "extra": 0
+    },
+    {
+     "id": 1,
+     "name": "n1",
+     "extra": 1
+    },
+    {
+     "id": 2,
+     "name": "n2",
+     "extra": 4
+    },
+    {
+     "id": 3,
+     "name": "n3",
+     "extra": 9
+    },
+    {
+     "id": 4,
+     "name": "n4",
+     "extra": 16
+    }
+   ]
+  },
+  {
+   "label": "fields default list",
+   "meta": {
+    "fields": [
+     "id",
+     "name"
+    ]
+   },
+   "handler_params": [],
+   "args": {},
+   "handler_result": [
+    {
+     "id": 0,
+     "name": "n0",
+     "extra": 0
+    },
+    {
+     "id": 1,
+     "name": "n1",
+     "extra": 1
+    },
+    {
+     "id": 2,
+     "name": "n2",
+     "extra": 4
+    },
+    {
+     "id": 3,
+     "name": "n3",
+     "extra": 9
+    },
+    {
+     "id": 4,
+     "name": "n4",
+     "extra": 16
+    }
+   ],
+   "handler_received": {},
+   "result": [
+    {
+     "id": 0,
+     "name": "n0"
+    },
+    {
+     "id": 1,
+     "name": "n1"
+    },
+    {
+     "id": 2,
+     "name": "n2"
+    },
+    {
+     "id": 3,
+     "name": "n3"
+    },
+    {
+     "id": 4,
+     "name": "n4"
+    }
+   ]
+  },
+  {
+   "label": "fields star by default",
+   "meta": {
+    "fields": "*"
+   },
+   "handler_params": [],
+   "args": {},
+   "handler_result": [
+    {
+     "id": 0,
+     "name": "n0",
+     "extra": 0
+    },
+    {
+     "id": 1,
+     "name": "n1",
+     "extra": 1
+    },
+    {
+     "id": 2,
+     "name": "n2",
+     "extra": 4
+    },
+    {
+     "id": 3,
+     "name": "n3",
+     "extra": 9
+    },
+    {
+     "id": 4,
+     "name": "n4",
+     "extra": 16
+    }
+   ],
+   "handler_received": {},
+   "result": [
+    {
+     "id": 0,
+     "name": "n0",
+     "extra": 0
+    },
+    {
+     "id": 1,
+     "name": "n1",
+     "extra": 1
+    },
+    {
+     "id": 2,
+     "name": "n2",
+     "extra": 4
+    },
+    {
+     "id": 3,
+     "name": "n3",
+     "extra": 9
+    },
+    {
+     "id": 4,
+     "name": "n4",
+     "extra": 16
+    }
+   ]
+  },
+  {
+   "label": "caller fields list",
+   "meta": {
+    "fields": "*"
+   },
+   "handler_params": [],
+   "args": {
+    "fields": [
+     "name"
+    ]
+   },
+   "handler_result": [
+    {
+     "id": 0,
+     "name": "n0",
+     "extra": 0
+    },
+    {
+     "id": 1,
+     "name": "n1",
+     "extra": 1
+    },
+    {
+     "id": 2,
+     "name": "n2",
+     "extra": 4
+    },
+    {
+     "id": 3,
+     "name": "n3",
+     "extra": 9
+    },
+    {
+     "id": 4,
+     "name": "n4",
+     "extra": 16
+    }
+   ],
+   "handler_received": {},
+   "result": [
+    {
+     "name": "n0"
+    },
+    {
+     "name": "n1"
+    },
+    {
+     "name": "n2"
+    },
+    {
+     "name": "n3"
+    },
+    {
+     "name": "n4"
+    }
+   ]
+  },
+  {
+   "label": "caller fields csv",
+   "meta": {
+    "fields": [
+     "id"
+    ]
+   },
+   "handler_params": [],
+   "args": {
+    "fields": "id, extra"
+   },
+   "handler_result": [
+    {
+     "id": 0,
+     "name": "n0",
+     "extra": 0
+    },
+    {
+     "id": 1,
+     "name": "n1",
+     "extra": 1
+    },
+    {
+     "id": 2,
+     "name": "n2",
+     "extra": 4
+    },
+    {
+     "id": 3,
+     "name": "n3",
+     "extra": 9
+    },
+    {
+     "id": 4,
+     "name": "n4",
+     "extra": 16
+    }
+   ],
+   "handler_received": {},
+   "result": [
+    {
+     "id": 0,
+     "extra": 0
+    },
+    {
+     "id": 1,
+     "extra": 1
+    },
+    {
+     "id": 2,
+     "extra": 4
+    },
+    {
+     "id": 3,
+     "extra": 9
+    },
+    {
+     "id": 4,
+     "extra": 16
+    }
+   ]
+  },
+  {
+   "label": "caller fields star",
+   "meta": {
+    "fields": [
+     "id"
+    ]
+   },
+   "handler_params": [],
+   "args": {
+    "fields": "*"
+   },
+   "handler_result": [
+    {
+     "id": 0,
+     "name": "n0",
+     "extra": 0
+    },
+    {
+     "id": 1,
+     "name": "n1",
+     "extra": 1
+    },
+    {
+     "id": 2,
+     "name": "n2",
+     "extra": 4
+    },
+    {
+     "id": 3,
+     "name": "n3",
+     "extra": 9
+    },
+    {
+     "id": 4,
+     "name": "n4",
+     "extra": 16
+    }
+   ],
+   "handler_received": {},
+   "result": [
+    {
+     "id": 0,
+     "name": "n0",
+     "extra": 0
+    },
+    {
+     "id": 1,
+     "name": "n1",
+     "extra": 1
+    },
+    {
+     "id": 2,
+     "name": "n2",
+     "extra": 4
+    },
+    {
+     "id": 3,
+     "name": "n3",
+     "extra": 9
+    },
+    {
+     "id": 4,
+     "name": "n4",
+     "extra": 16
+    }
+   ]
+  },
+  {
+   "label": "fields on a dict",
+   "meta": {
+    "fields": [
+     "id"
+    ]
+   },
+   "handler_params": [],
+   "args": {},
+   "handler_result": {
+    "id": 1,
+    "name": "x"
+   },
+   "handler_received": {},
+   "result": {
+    "id": 1
+   }
+  },
+  {
+   "label": "fields on an envelope",
+   "meta": {
+    "fields": [
+     "name"
+    ],
+    "limit": 2
+   },
+   "handler_params": [],
+   "args": {},
+   "handler_result": {
+    "items": [
+     {
+      "id": 0,
+      "name": "n0",
+      "extra": 0
+     },
+     {
+      "id": 1,
+      "name": "n1",
+      "extra": 1
+     },
+     {
+      "id": 2,
+      "name": "n2",
+      "extra": 4
+     },
+     {
+      "id": 3,
+      "name": "n3",
+      "extra": 9
+     },
+     {
+      "id": 4,
+      "name": "n4",
+      "extra": 16
+     }
+    ],
+    "total": 5,
+    "next": null
+   },
+   "handler_received": {},
+   "result": {
+    "items": [
+     {
+      "name": "n0"
+     },
+     {
+      "name": "n1"
+     }
+    ],
+    "total": 5,
+    "next": null,
+    "truncated": true
+   }
+  },
+  {
+   "label": "handler takes fields: passed through",
+   "meta": {
+    "fields": [
+     "id"
+    ]
+   },
+   "handler_params": [
+    "fields"
+   ],
+   "args": {
+    "fields": "name"
+   },
+   "handler_result": [
+    {
+     "id": 0,
+     "name": "n0",
+     "extra": 0
+    },
+    {
+     "id": 1,
+     "name": "n1",
+     "extra": 1
+    },
+    {
+     "id": 2,
+     "name": "n2",
+     "extra": 4
+    },
+    {
+     "id": 3,
+     "name": "n3",
+     "extra": 9
+    },
+    {
+     "id": 4,
+     "name": "n4",
+     "extra": 16
+    }
+   ],
+   "handler_received": {
+    "fields": "name"
+   },
+   "result": [
+    {
+     "id": 0,
+     "name": "n0",
+     "extra": 0
+    },
+    {
+     "id": 1,
+     "name": "n1",
+     "extra": 1
+    },
+    {
+     "id": 2,
+     "name": "n2",
+     "extra": 4
+    },
+    {
+     "id": 3,
+     "name": "n3",
+     "extra": 9
+    },
+    {
+     "id": 4,
+     "name": "n4",
+     "extra": 16
+    }
+   ]
+  },
+  {
+   "label": "scalars untouched",
+   "meta": {
+    "fields": [
+     "id"
+    ],
+    "limit": 1
+   },
+   "handler_params": [],
+   "args": {},
+   "handler_result": 42,
+   "handler_received": {},
+   "result": 42
+  }
+ ]
+}

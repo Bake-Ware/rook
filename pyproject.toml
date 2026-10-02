@@ -55,4 +55,4 @@ packages = ["rook"]
 "skills/rook" = "rook/_skill/rook"
 
 [tool.hatch.build.targets.sdist]
-include = ["rook", "skills", "tests", "README.md", "LICENSE", "NOTICE", "CHANGELOG.md", "CONTRIBUTING.md", ".env.example"]
+include = ["rook", "skills", "tests", "conformance", "README.md", "LICENSE", "NOTICE", "CHANGELOG.md", "CONTRIBUTING.md", ".env.example"]

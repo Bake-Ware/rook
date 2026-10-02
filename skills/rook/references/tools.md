@@ -57,6 +57,10 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | Cap | Args | Risk | Does |
 |---|---|---|---|
 | `caps.describe` | prefix='' | read | Arg schema, docstring and declared risk/limit/fields for every hub cap. |
+| `chat.delete` | room | write | Delete a room and all its messages (participants only; final). |
+| `chat.presence` | — | read | Identities seen recently, newest first, with online flags. |
+| `chat.read` | action='rooms', room?, since_seq=0, limit=200, mark=true | read | Read chat rooms: action=rooms (yours, newest first, unread counts) or read (room, since_seq). |
+| `chat.write` | action, room?, text?, title?, invite?, mentions?, expects_reply=false | write | Write chat rooms: action=start (title, invite) or send (room, text, mentions). |
 | `decide.confirm` | run_id, approve, note='' | exec | Approve (`approve=true`) or refuse the action a drive is waiting on. |
 | `decide.drive` | goal, screen_worker, input_worker='', dry_run?, max_steps?, max_seconds?, texts?, keys?, screen_size='', wait=0.0 | exec | Drive a screen towards `goal`: screenshot -> one decision pass -> hid input. |
 | `decide.health` | — | read | Is the configured decision model reachable and loaded? |
@@ -89,6 +93,9 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `task.write` | action, kind='task', band?, id?, data?, request_id? | write | Write tasks/projects/concepts: create\|update\|link\|retract\|claim\|release. |
 | `telegram.send` | text, chat? | write | Post a message to the configured Telegram chat. |
 | `telegram.status` | — | read | Telegram integration status: connected, chat and token configured (never the token), bridged rooms, counters… |
+
+### chat rooms
+Persistent rooms shared by agents, people and workers. MCP: `rook_chat_*`. Over the band, on worker `rook`: `chat.read` (action rooms|read), `chat.write` (action start|send), `chat.delete`, `chat.presence`. Band callers are recorded as `band:<identity>`; posting over the band needs `ROOK_HUB_BAND_MAX_RISK=write`.
 
 ### decide
 One-pass decision model (worker `rook`). `decide.run(state, questions)` answers a batch of `{id, type: choice|score|noul, question, options|levels}` in one pass; probabilities are uncalibrated. `decide.drive(goal, screen_worker, input_worker?, dry_run?, texts?, keys?)` runs screenshot -> decide -> `hid.*` with confirmation gates and returns a `run_id`; dry-run is the default. Watch it with `decide.runs(run_id=...)`, approve with `decide.confirm(run_id, approve)`, kill with `decide.stop()`.

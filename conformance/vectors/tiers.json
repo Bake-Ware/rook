@@ -1,0 +1,873 @@
+{
+ "spec": "1.0",
+ "vector": "tiers",
+ "description": "effective_tier = max(builtin[cap], declared) (unknown everywhere -> exec); 'cmd.*' is always exec; an override raises freely and lowers only with lower=true. Tiers order read < write < exec < admin; letters r/w/x/a accepted.",
+ "table": {
+  "agent.wake": {
+   "tier": "exec"
+  },
+  "agent.wake_info": {
+   "tier": "read"
+  },
+  "band.admin": {
+   "tier": "admin",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "band.caps": {
+   "tier": "read"
+  },
+  "band.deauth": {
+   "tier": "admin",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "band.workers": {
+   "tier": "read"
+  },
+  "battery.status": {
+   "tier": "read"
+  },
+  "camera.list": {
+   "tier": "read"
+  },
+  "camera.snap": {
+   "tier": "read",
+   "tags": [
+    "sensitive",
+    "physical"
+   ]
+  },
+  "caps.describe": {
+   "tier": "read"
+  },
+  "cec.ping": {
+   "tier": "read",
+   "tags": [
+    "physical"
+   ]
+  },
+  "cec.raw": {
+   "tier": "write",
+   "tags": [
+    "physical"
+   ]
+  },
+  "cec.send": {
+   "tier": "write",
+   "tags": [
+    "physical"
+   ]
+  },
+  "chat.delete": {
+   "tier": "write",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "chat.open": {
+   "tier": "write"
+  },
+  "chat.poll": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "chat.presence": {
+   "tier": "read"
+  },
+  "chat.read": {
+   "tier": "read"
+  },
+  "chat.rooms": {
+   "tier": "read"
+  },
+  "chat.send": {
+   "tier": "write"
+  },
+  "chat.write": {
+   "tier": "write"
+  },
+  "claude-history.analyze": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "claude-history.export": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "claude-history.follow": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "claude-history.pull": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "claude-history.read": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "claude-history.read_page": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "claude-history.read_snapshot": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "claude-history.resume": {
+   "tier": "exec"
+  },
+  "claude-history.resumed": {
+   "tier": "read"
+  },
+  "claude-history.search": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "claude-history.send": {
+   "tier": "exec"
+  },
+  "codex-history.resume": {
+   "tier": "exec"
+  },
+  "console.read": {
+   "tier": "read"
+  },
+  "customcap.add": {
+   "tier": "admin"
+  },
+  "customcap.list": {
+   "tier": "read"
+  },
+  "customcap.remove": {
+   "tier": "admin"
+  },
+  "deluge.add": {
+   "tier": "write"
+  },
+  "deluge.files": {
+   "tier": "read"
+  },
+  "deluge.list": {
+   "tier": "read"
+  },
+  "deluge.pause": {
+   "tier": "write"
+  },
+  "deluge.remove": {
+   "tier": "write",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "deluge.resume": {
+   "tier": "write"
+  },
+  "deluge.status": {
+   "tier": "read"
+  },
+  "dongle.consumer": {
+   "tier": "write",
+   "tags": [
+    "physical"
+   ]
+  },
+  "dongle.display": {
+   "tier": "read",
+   "tags": [
+    "sensitive",
+    "physical"
+   ]
+  },
+  "dongle.display_probe": {
+   "tier": "read",
+   "tags": [
+    "physical"
+   ]
+  },
+  "dongle.keyboard": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "dongle.mouse": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "dongle.release": {
+   "tier": "write",
+   "tags": [
+    "physical"
+   ]
+  },
+  "dongle.status": {
+   "tier": "read",
+   "tags": [
+    "physical"
+   ]
+  },
+  "file.exists": {
+   "tier": "read"
+  },
+  "file.list": {
+   "tier": "read"
+  },
+  "file.read": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "file.search": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "file.write": {
+   "tier": "exec"
+  },
+  "grants.revocations": {
+   "tier": "read"
+  },
+  "guidance.write": {
+   "tier": "admin"
+  },
+  "handoff.read": {
+   "tier": "read"
+  },
+  "handoff.write": {
+   "tier": "write"
+  },
+  "hermes.chat": {
+   "tier": "exec"
+  },
+  "hermes.mcp.list": {
+   "tier": "read"
+  },
+  "hermes.memory.read": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "hermes.memory.status": {
+   "tier": "read"
+  },
+  "hermes.run": {
+   "tier": "exec"
+  },
+  "hermes.sessions.list": {
+   "tier": "read"
+  },
+  "hermes.sessions.read": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "hermes.skills.list": {
+   "tier": "read"
+  },
+  "hermes.skills.search": {
+   "tier": "read"
+  },
+  "hermes.status": {
+   "tier": "read"
+  },
+  "hid.backend": {
+   "tier": "read"
+  },
+  "hid.key_combo": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "hid.mouse.click": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "hid.mouse.drag": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "hid.mouse.move": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "hid.type": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "hub.info": {
+   "tier": "read"
+  },
+  "hub.plugins": {
+   "tier": "read"
+  },
+  "identity.whoami": {
+   "tier": "read"
+  },
+  "info.host": {
+   "tier": "read"
+  },
+  "info.ping": {
+   "tier": "read"
+  },
+  "info.uptime": {
+   "tier": "read"
+  },
+  "journal.read": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "knowledge.read": {
+   "tier": "read"
+  },
+  "knowledge.write": {
+   "tier": "write"
+  },
+  "log.audit": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "log.tail": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "member.admin": {
+   "tier": "admin"
+  },
+  "memory.entities": {
+   "tier": "read"
+  },
+  "memory.get": {
+   "tier": "read"
+  },
+  "memory.note": {
+   "tier": "write"
+  },
+  "memory.put": {
+   "tier": "write"
+  },
+  "memory.search": {
+   "tier": "read"
+  },
+  "msg.clear": {
+   "tier": "write",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "msg.read": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "msg.send": {
+   "tier": "write"
+  },
+  "pikvm.api.get": {
+   "tier": "read",
+   "tags": [
+    "sensitive",
+    "physical"
+   ]
+  },
+  "pikvm.api.post": {
+   "tier": "exec",
+   "tags": [
+    "destructive",
+    "physical"
+   ]
+  },
+  "pikvm.key": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "pikvm.mouse.click": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "pikvm.mouse.move": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "pikvm.power": {
+   "tier": "exec",
+   "tags": [
+    "destructive",
+    "physical"
+   ]
+  },
+  "pikvm.power.status": {
+   "tier": "read",
+   "tags": [
+    "physical"
+   ]
+  },
+  "pikvm.snap": {
+   "tier": "read",
+   "tags": [
+    "sensitive",
+    "physical"
+   ]
+  },
+  "pikvm.type": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "policy.explain": {
+   "tier": "read"
+  },
+  "policy.get": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "policy.set": {
+   "tier": "admin"
+  },
+  "policy.status": {
+   "tier": "read"
+  },
+  "proc.close": {
+   "tier": "exec",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "proc.list": {
+   "tier": "read"
+  },
+  "proc.read": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "proc.signal": {
+   "tier": "exec",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "proc.start": {
+   "tier": "exec"
+  },
+  "proc.write": {
+   "tier": "exec"
+  },
+  "screenshot.capture": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "screenshot.capture_preview": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "screenshot.capture_region": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "secret.delete": {
+   "tier": "admin",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "secret.get": {
+   "tier": "admin",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "secret.list": {
+   "tier": "read"
+  },
+  "secret.log": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "secret.set": {
+   "tier": "admin",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "secret.use": {
+   "tier": "write",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "settings.describe": {
+   "tier": "read"
+  },
+  "settings.get": {
+   "tier": "read"
+  },
+  "settings.history": {
+   "tier": "read"
+  },
+  "settings.reset": {
+   "tier": "admin"
+  },
+  "settings.set": {
+   "tier": "admin"
+  },
+  "shell.env.get": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "shell.env.list": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "shell.exec": {
+   "tier": "exec"
+  },
+  "shell.which": {
+   "tier": "read"
+  },
+  "task.read": {
+   "tier": "read"
+  },
+  "task.write": {
+   "tier": "write"
+  },
+  "token.admin": {
+   "tier": "admin"
+  },
+  "work.adopt_page": {
+   "tier": "write"
+  },
+  "work.command": {
+   "tier": "exec"
+  },
+  "work.create": {
+   "tier": "exec"
+  },
+  "work.export": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "work.sessions": {
+   "tier": "read"
+  },
+  "work.status": {
+   "tier": "read"
+  },
+  "work.stream.close": {
+   "tier": "exec"
+  },
+  "work.stream.list": {
+   "tier": "read"
+  },
+  "work.stream.open": {
+   "tier": "exec"
+  },
+  "work.stream.read": {
+   "tier": "read"
+  },
+  "work.stream.resize": {
+   "tier": "write"
+  },
+  "work.stream.signal": {
+   "tier": "exec"
+  },
+  "work.stream.write": {
+   "tier": "exec"
+  },
+  "work.view_page": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "worker.apply": {
+   "tier": "admin"
+  },
+  "worker.check": {
+   "tier": "admin"
+  },
+  "worker.config_apply": {
+   "tier": "admin",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "worker.config_confirm": {
+   "tier": "admin"
+  },
+  "worker.config_get": {
+   "tier": "read"
+  },
+  "worker.config_revert": {
+   "tier": "admin",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "worker.deauth": {
+   "tier": "admin",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "worker.description_get": {
+   "tier": "read"
+  },
+  "worker.description_set": {
+   "tier": "write"
+  },
+  "worker.enrollment_finish": {
+   "tier": "admin"
+  },
+  "worker.enrollment_move_prepare": {
+   "tier": "admin"
+  },
+  "worker.enrollment_prepare": {
+   "tier": "admin"
+  },
+  "worker.enrollment_prove": {
+   "tier": "admin"
+  },
+  "worker.enrollment_status": {
+   "tier": "read"
+  },
+  "worker.hold": {
+   "tier": "admin"
+  },
+  "worker.ota_begin": {
+   "tier": "admin"
+  },
+  "worker.plugin.disable": {
+   "tier": "admin"
+  },
+  "worker.plugin.enable": {
+   "tier": "admin"
+  },
+  "worker.plugin.list": {
+   "tier": "read"
+  },
+  "worker.reconfigure": {
+   "tier": "admin",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "worker.restart": {
+   "tier": "admin",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "worker.status": {
+   "tier": "read"
+  },
+  "worker.update": {
+   "tier": "admin",
+   "tags": [
+    "destructive"
+   ]
+  }
+ },
+ "prefixes": [
+  {
+   "prefix": "cmd.",
+   "tier": "exec"
+  }
+ ],
+ "cases": [
+  {
+   "cap": "shell.exec",
+   "declared": null,
+   "override": null,
+   "lower": false,
+   "tier": "exec"
+  },
+  {
+   "cap": "shell.exec",
+   "declared": "read",
+   "override": null,
+   "lower": false,
+   "tier": "exec"
+  },
+  {
+   "cap": "info.ping",
+   "declared": "admin",
+   "override": null,
+   "lower": false,
+   "tier": "admin"
+  },
+  {
+   "cap": "info.ping",
+   "declared": "a",
+   "override": null,
+   "lower": false,
+   "tier": "admin"
+  },
+  {
+   "cap": "info.ping",
+   "declared": null,
+   "override": "write",
+   "lower": false,
+   "tier": "write"
+  },
+  {
+   "cap": "worker.deauth",
+   "declared": null,
+   "override": "read",
+   "lower": false,
+   "tier": "admin"
+  },
+  {
+   "cap": "worker.deauth",
+   "declared": null,
+   "override": "read",
+   "lower": true,
+   "tier": "read"
+  },
+  {
+   "cap": "custom.thing",
+   "declared": null,
+   "override": null,
+   "lower": false,
+   "tier": "exec"
+  },
+  {
+   "cap": "custom.thing",
+   "declared": "r",
+   "override": null,
+   "lower": false,
+   "tier": "read"
+  },
+  {
+   "cap": "custom.thing",
+   "declared": "bogus",
+   "override": null,
+   "lower": false,
+   "tier": "exec"
+  },
+  {
+   "cap": "custom.thing",
+   "declared": "w",
+   "override": "x",
+   "lower": false,
+   "tier": "exec"
+  },
+  {
+   "cap": "custom.thing",
+   "declared": "x",
+   "override": "r",
+   "lower": true,
+   "tier": "read"
+  },
+  {
+   "cap": "cmd.backup",
+   "declared": "read",
+   "override": null,
+   "lower": false,
+   "tier": "exec"
+  },
+  {
+   "cap": "cmd.backup",
+   "declared": null,
+   "override": "admin",
+   "lower": false,
+   "tier": "admin"
+  },
+  {
+   "cap": "cmd.backup",
+   "declared": null,
+   "override": "read",
+   "lower": true,
+   "tier": "read"
+  },
+  {
+   "cap": "chat.write",
+   "declared": null,
+   "override": null,
+   "lower": false,
+   "tier": "write"
+  },
+  {
+   "cap": "conformance.echo",
+   "declared": "read",
+   "override": null,
+   "lower": false,
+   "tier": "read"
+  },
+  {
+   "cap": "secret.get",
+   "declared": "read",
+   "override": null,
+   "lower": false,
+   "tier": "admin"
+  }
+ ]
+}

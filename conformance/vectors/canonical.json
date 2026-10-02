@@ -1,0 +1,75 @@
+{
+ "spec": "1.0",
+ "vector": "canonical",
+ "description": "canonical(v) = JSON, keys sorted by Unicode code point, separators ',' and ':', no whitespace, every non-ASCII character escaped as \\uXXXX (surrogate pairs above U+FFFF, lowercase hex), short escapes for \\\" \\\\ \\b \\f \\n \\r \\t, other controls as \\u00XX, DEL (0x7f) as \\u007f, '/' unescaped. Integers within +/-(2**53-1), no floats in signed bodies. args_hash(v) = base64url(sha256(canonical(v))) without padding.",
+ "cases": [
+  {
+   "value": {},
+   "canonical": "{}",
+   "args_hash": "RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o"
+  },
+  {
+   "value": {
+    "b": 1,
+    "a": [
+     true,
+     false,
+     null
+    ],
+    "c": {
+     "z": "",
+     "y": 0
+    }
+   },
+   "canonical": "{\"a\":[true,false,null],\"b\":1,\"c\":{\"y\":0,\"z\":\"\"}}",
+   "args_hash": "Mt8vfKwMrJJa8rRrqJmpDkmg8beczaGdj3-1KrUHzoY"
+  },
+  {
+   "value": {
+    "cmd": "echo 'hi' \"there\"\n\t\\ /"
+   },
+   "canonical": "{\"cmd\":\"echo 'hi' \\\"there\\\"\\n\\t\\\\ /\"}",
+   "args_hash": "gtmF0VTgL8Q7I2HC8JnK0gWcgpF9X0qkU5NQDV9EeeY"
+  },
+  {
+   "value": {
+    "text": "café ☃ 😀",
+    "é": 1
+   },
+   "canonical": "{\"text\":\"caf\\u00e9 \\u2603 \\ud83d\\ude00\",\"\\u00e9\":1}",
+   "args_hash": "VnBYJULOlKuiYkixv0PwO1w-6iDgbThqbIC5SaFC_Aw"
+  },
+  {
+   "value": {
+    "￿": 1,
+    "😀": 2,
+    "~": 3,
+    "A": 4
+   },
+   "canonical": "{\"A\":4,\"~\":3,\"\\uffff\":1,\"\\ud83d\\ude00\":2}",
+   "args_hash": "gSX8Mhme6hIhr9CWYRNO1g7qq7Vh2rvw4M9t2zmOIBo"
+  },
+  {
+   "value": {
+    "ctl": "\u0000\u0001\u001f",
+    "big": 9007199254740991,
+    "neg": -7
+   },
+   "canonical": "{\"big\":9007199254740991,\"ctl\":\"\\u0000\\u0001\\u001f\\u007f\",\"neg\":-7}",
+   "args_hash": "kaLPFOm9ILTaHTOEWR8K9lkiC7sGg-lNSMGL-RUdf1I"
+  },
+  {
+   "value": [
+    1,
+    "two",
+    {
+     "three": [
+      3
+     ]
+    }
+   ],
+   "canonical": "[1,\"two\",{\"three\":[3]}]",
+   "args_hash": "fW3g_IjUSiwNPbU8gBYQRwfOqF4iDaH0M--zHpQjutI"
+  }
+ ]
+}
