@@ -304,9 +304,16 @@ def build_server(client: "BandClient | MultiBandClient",
                 if not res.get("ok"):
                     raise ValueError(res.get("error") or "handoff save failed")
                 return res["thread_id"]
+            def _list_handoffs():
+                return sessions.list_recent(limit=200).get("threads", [])
+            def _close_handoff(thread_id, author, reason):
+                res = sessions.close_thread(thread_id, author, reason)
+                return bool(res.get("ok")) and not res.get("already")
             _kplugin.principal = _principal
             knowledge = _kplugin.service
             knowledge.handoffs = _save_handoff
+            knowledge.handoff_list = _list_handoffs
+            knowledge.handoff_close = _close_handoff
             knowledge.enrollment = enrollment
             mcp._rook_knowledge = knowledge
             from .hygiene import Hygiene
@@ -434,14 +441,15 @@ def build_server(client: "BandClient | MultiBandClient",
         except Exception:
             return ""
 
-    def _auto_link(kind: str, ref, note: str = "") -> str | None:
-        """Attach an artifact to the caller's claimed task, if any (design §3).
-        Bookkeeping only; never affects the call."""
+    def _auto_link(kind: str, ref, note: str = "", task: str | None = None) -> str | None:
+        """Attach an artifact to the caller's claimed task, if any (design §3),
+        or to ``task`` when the caller names one. Bookkeeping only; never
+        affects the call."""
         k = getattr(mcp, "_rook_knowledge", None)
         if k is None or not ref:
             return None
         try:
-            return k.store.auto_link(k.actor(), kind, ref, note=note)
+            return k.store.auto_link(k.actor(), kind, ref, note=note, task=task)
         except Exception:
             log.exception("auto-link failed")
             return None
@@ -800,12 +808,13 @@ def build_server(client: "BandClient | MultiBandClient",
         return json.dumps({"count": len(entries), "entries": entries}, indent=2)
 
     @mcp.tool()
-    async def rook_handoff_save(goal: str, thread_id: str | None = None,
+    async def rook_handoff_save(goal: str = "", thread_id: str | None = None,
                                 state: str = "", decisions: list | str | None = None,
                                 next_steps: list | str | None = None,
                                 artifacts: list | str | None = None,
                                 supersedes: list | str | None = None,
-                                transcript_ref: str | None = None) -> str:
+                                transcript_ref: str | None = None,
+                                task: str | None = None, status: str = "active") -> str:
         """Save a handoff so any agent can pick this session up later.
 
         A handoff is the structured state of a piece of work — not a full
@@ -815,15 +824,29 @@ def build_server(client: "BandClient | MultiBandClient",
         (one is returned); pass an existing ``thread_id`` to update it — the
         prior handoff becomes history and this becomes current. Write one at the
         end of a work session, or whenever you hand off to another agent.
+        ``task`` (id or slug) links it to that task instead of your claimed
+        one. ``status="closed"`` with a ``thread_id`` closes the thread
+        (``state`` = why); it then leaves rook_handoff_list.
         """
+        if status not in ("active", "closed"):
+            return json.dumps({"ok": False, "error": "status must be active or closed"})
+        if status == "closed":
+            if not thread_id:
+                return json.dumps({"ok": False, "error": "closing needs thread_id"})
+            return json.dumps(sessions.close_thread(thread_id, _caller_identity(), state or goal),
+                              indent=2)
+        if not str(goal or "").strip():
+            return json.dumps({"ok": False, "error": "goal is required"})
         res = sessions.save(
             thread_id=thread_id, author=_caller_identity(), goal=goal, state=state,
             decisions=decisions, next_steps=next_steps, artifacts=artifacts,
             supersedes=supersedes, transcript_ref=transcript_ref)
         if res.get("ok"):
-            task = _auto_link("handoff", res.get("thread_id"), goal[:200])
-            if task:
-                res["task"] = task
+            linked = _auto_link("handoff", res.get("thread_id"), goal[:200], task=task)
+            if linked:
+                res["task"] = linked
+            elif task:
+                res["task_error"] = f"task {task!r} not found; the handoff was saved unlinked"
         return json.dumps(res, indent=2)
 
     @mcp.tool()

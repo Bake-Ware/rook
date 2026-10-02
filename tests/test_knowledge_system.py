@@ -219,6 +219,125 @@ def test_auto_link_goes_to_latest_active_claim_and_updates_activity(work):
     assert links[0]['auto'] == 1 and links[0]['relation'] == 'touched'
 
 
+def test_conflict_names_the_current_revision(work):
+    w = work
+    with pytest.raises(Conflict, match='current revision is 1') as e:
+        w.s.mutate('default', AGENT, rid(), 'update', {'id': w.task['id'], 'revision': 7, 'patch': {'title': 'x'}})
+    assert e.value.revision == 1
+
+
+def test_stale_claims_stop_collecting_links_and_can_be_released_by_others(work):
+    w = work; t = w.task
+    claim = w.s.mutate('default', AGENT, rid(), 'claim', {'id': t['id']})['claim']
+    with pytest.raises(ValueError, match='2 h idle'):  # a fresh claim is its owner's
+        w.s.mutate('default', OTHER, rid(), 'release', {'id': t['id'], 'actor': AGENT['id']})
+    with sqlite3.connect(w.s.path) as db:
+        db.execute('UPDATE claims SET last_active=? WHERE id=?', (time.time() - 3 * 3600, claim))
+    assert w.s.auto_link(AGENT, 'journal', 'j-late') is None  # the agent moved on
+    assert w.s.auto_link(AGENT, 'handoff', 'thread-x', task=t['slug']) == t['id']  # unless it names the task
+    with pytest.raises(ValueError, match='not found'):
+        w.s.auto_link(AGENT, 'handoff', 'thread-x', task='no-such-task')
+    with sqlite3.connect(w.s.path) as db:
+        db.execute('UPDATE claims SET last_active=? WHERE id=?', (time.time() - 3 * 3600, claim))
+    with pytest.raises(ValueError, match='no active claim'):
+        w.s.mutate('default', OTHER, rid(), 'release', {'id': t['id'], 'actor': 'nobody'})
+    out = w.s.mutate('default', OTHER, rid(), 'release', {'id': t['id'], 'actor': AGENT['id']})
+    got = w.s.get('default', t['id'])
+    assert out['released'] == claim and got['state'] == 'paused'
+    assert got['events'][0]['action'] == 'released' and got['events'][0]['data']['of'] == AGENT['id']
+
+
+def test_notes_need_no_revision_and_can_carry_evidence(work):
+    w = work; t = w.task
+    out = w.s.mutate('default', AGENT, rid(), 'note', {'id': t['id'], 'text': 'Checked: still broken',
+                                                         'evidence': [{'kind': 'journal', 'ref': 'j-1'}]})
+    got = w.s.get('default', t['id'])
+    assert got['revision'] == t['revision'] and got['events'][0]['data']['text'] == 'Checked: still broken'
+    assert [(l['kind'], l['ref'], l['relation']) for l in got['links']] == [('journal', 'j-1', 'evidence')]
+    assert out['links'] == [got['links'][0]['id']]
+    with pytest.raises(ValueError, match='data.text'):
+        w.s.mutate('default', AGENT, rid(), 'note', {'id': t['id']})
+
+
+def test_project_cascade_moves_open_tasks_but_not_work_in_progress(work):
+    w = work
+    busy = w.create('task', 'Busy', w.project['id'])
+    sub = w.create('task', 'Sub', w.task['id'])
+    w.s.mutate('default', AGENT, rid(), 'claim', {'id': busy['id']})
+    p = w.s.get('default', w.project['id'])
+    out = w.s.mutate('default', AGENT, rid(), 'update',
+                     {'id': p['id'], 'revision': p['revision'], 'patch': {'state': 'paused'}, 'cascade': True})
+    assert set(out['cascaded']) == {w.task['id'], sub['id']}
+    assert [s['id'] for s in out['cascade_skipped']] == [busy['id']]
+    assert w.s.get('default', sub['id'])['state'] == 'paused' and w.s.get('default', busy['id'])['state'] == 'in_progress'
+    with pytest.raises(ValueError, match='cascade applies'):
+        update_raw = w.s.get('default', w.task['id'])
+        w.s.mutate('default', AGENT, rid(), 'update', {'id': update_raw['id'], 'revision': update_raw['revision'],
+                                                         'patch': {'title': 'x'}, 'cascade': True})
+    assert w.s.get('default', w.task['id'])['title'] == 'Restart test service'  # the refused update changed nothing
+
+
+def test_deck_rows_serve_grooming(work):
+    w = work
+    dep = w.create('task', 'Dependency', w.project['id'])
+    waiting = w.create('task', 'Waiting', w.project['id'], dependencies=[dep['slug']])
+    row = lambda deck, title: next(i for d in deck for k in d if isinstance(d[k], list) for i in d[k] if i['title'] == title)
+    first = row(w.s.deck(['default']), 'Waiting')
+    assert first['revision'] == 1 and first['unblocked'] is False
+    assert first['dependencies'] == [{'id': dep['id'], 'slug': dep['slug'], 'state': 'todo'}]
+    link(w, dep, 'commit', 'abc123')
+    update(w, dep, state='done', attrs={'outcome': 'x' * 500})
+    deck = w.s.deck(['default'], outcome_chars=240)
+    assert row(deck, 'Waiting')['unblocked'] is True and len(row(deck, 'Dependency')['outcome']) == 241
+    assert 'recently_done' not in w.s.deck(['default'], states=['todo'])[0]
+    assert w.s.deck(['default'], done_days=0)[0]['recently_done'] == []
+    with pytest.raises(ValueError, match='states are'):
+        w.s.deck(['default'], states=['finished'])
+    # A retracted handoff link is no longer the task's latest handoff.
+    w.s.mutate('default', AGENT, rid(), 'claim', {'id': w.task['id']})
+    good = link(w, w.task, 'handoff', 'thread-good', 'produced')
+    wrong = link(w, w.task, 'handoff', 'thread-wrong', 'touched')
+    assert row(w.s.deck(['default']), w.task['title'])['latest_handoff']['ref'] == 'thread-wrong'
+    w.s.mutate('default', AGENT, rid(), 'retract', {'link': wrong['id']})
+    assert row(w.s.deck(['default']), w.task['title'])['latest_handoff']['ref'] == 'thread-good'
+    assert w.s.handoff_tasks(['default']) == {'thread-good': [{'id': w.task['id'], 'slug': w.task['slug'], 'state': 'in_progress'}]}
+    assert good['id']
+
+
+def test_closing_on_a_persons_word_is_not_done(work):
+    w = work; t = w.task
+    waiting = w.create('task', 'Waiting', w.project['id'], dependencies=[t['id']])
+    said = {'who': 'bake', 'quote': 'yeah close it', 'session': 'https://example.com/session/1'}
+    with pytest.raises(ValueError, match='who, quote, session'):
+        update(w, t, state='closed')
+    with pytest.raises(ValueError, match='written by closing'):
+        update(w, t, attrs={'closed_by': said})
+    def close(record, closed_by, **patch):
+        cur = w.s.get(record['band'], record['id'])
+        return w.s.mutate(record['band'], AGENT, rid(), 'update', {
+            'id': cur['id'], 'revision': cur['revision'], 'patch': patch, 'closed_by': closed_by})
+    with pytest.raises(ValueError, match='goes with patch.state closed'):
+        close(t, said, title='x')
+    with pytest.raises(ValueError, match='who, quote, session'):
+        close(t, {'who': 'bake', 'quote': 'yeah close it'}, state='closed')
+    w.s.mutate('default', AGENT, rid(), 'claim', {'id': t['id']})
+    got = close(t, said, state='closed')  # no evidence, no outcome, no handoff needed
+    assert got['state'] == 'closed' and got['attrs']['closed_by']['recorded_by'] == AGENT['id']
+    full = w.s.get('default', t['id'])
+    assert [(l['kind'], l['ref'], l['relation'], l['note']) for l in full['links']] == [
+        ('url', said['session'], 'closed_by', 'bake: "yeah close it"')]
+    assert all(c['released'] for c in full['claims'])
+    deck = w.s.deck(['default'])[0]
+    assert deck['recently_done'][0]['closed_by'] == said
+    assert deck['todo'][0]['id'] == waiting['id'] and deck['todo'][0]['unblocked'] is False
+    with pytest.raises(Conflict, match='Task is closed'):
+        w.s.mutate('default', AGENT, rid(), 'claim', {'id': t['id']})
+    reopened = update(w, t, state='todo')
+    assert 'closed_by' not in reopened['attrs']
+    again = close(t, {**said, 'session': 'sess-42'}, state='closed')
+    assert w.s.get('default', again['id'])['links'][-1]['kind'] == 'agent'
+
+
 def test_deck_covers_all_bands_by_project(work):
     w = work
     other_c = w.create('concept', 'Tablets', band='family')
@@ -287,6 +406,57 @@ async def test_service_finds_records_across_bands_and_attributes_compound_identi
     with sqlite3.connect(work.s.path) as db:
         info = json.loads(db.execute('SELECT info FROM actors WHERE id=?', (PRINCIPAL['actor'],)).fetchone()[0])
     assert info['host'] == 'gpubox' and info['dir'] == '/home/user/rook'
+
+
+@pytest.mark.asyncio
+async def test_service_batch_handoff_threads_and_lean_reads(work):
+    threads, closed = [], []
+    def save(author, h):
+        threads.append(h.get('thread_id') or f'thread-{len(threads) + 1}')
+        return threads[-1]
+    s = KnowledgeService(work.s.path, lambda: PRINCIPAL, Enrollment(), handoffs=save,
+                         handoff_list=lambda: [{'thread_id': 'thread-1', 'goal': 'T', 'author': 'a', 'as_of': '1m ago',
+                                                'next_steps': ['finish'], 'state': 'hidden'},
+                                               {'thread_id': 'orphan', 'goal': 'O', 'author': 'a', 'as_of': '9d ago',
+                                                'next_steps': []}],
+                         handoff_close=lambda thread, author, reason: closed.append((thread, reason)) or True)
+    c = await s.dispatch('create', 'rooknet', 'concept', data={'title': 'C'}, request_id='b1')
+    p = await s.dispatch('create', 'rooknet', 'project', data={'title': 'P', 'parent': c['id']}, request_id='b2')
+    a = await s.dispatch('create', 'rooknet', 'task', data={'title': 'A', 'parent': p['id']}, request_id='b3')
+    b = await s.dispatch('create', 'rooknet', 'task', data={'title': 'B', 'parent': p['id']}, request_id='b4')
+    out = await s.dispatch('batch', request_id='b5', data={'ops': [
+        {'action': 'note', 'id': a['id'], 'data': {'text': 'looked at it'}},
+        {'action': 'update', 'id': b['id'], 'data': {'revision': 9, 'patch': {'state': 'paused'}}},
+        {'action': 'update', 'id': b['id'], 'data': {'revision': 1, 'patch': {'state': 'paused'}}},
+        {'action': 'review', 'id': a['id']}]})
+    assert [r['ok'] for r in out['results']] == [True, False, True, False] and out['failed'] == 2
+    assert out['results'][1]['current_revision'] == 1 and out['results'][1]['code'] == 'Conflict'
+    again = await s.dispatch('batch', request_id='b5', data={'ops': [
+        {'action': 'note', 'id': a['id'], 'data': {'text': 'looked at it'}}]})
+    assert again['results'][0]['result'] == out['results'][0]['result']  # same request_id: not written twice
+    with pytest.raises(ValueError, match='1 to 50'):
+        await s.dispatch('batch', request_id='b6', data={'ops': []})
+
+    # Stopping twice continues one handoff thread; finishing the task closes it.
+    await s.dispatch('claim', None, None, a['id'], request_id='b7')
+    stop = {'goal': 'A', 'state': 'half', 'next_steps': ['finish']}
+    rev = lambda: work.s.get(a['band'], a['id'])['revision']
+    await s.dispatch('update', None, None, a['id'], request_id='b8', data={'revision': rev(), 'patch': {'state': 'paused'}, 'handoff': dict(stop)})
+    await s.dispatch('claim', None, None, a['id'], request_id='b9')
+    await s.dispatch('update', None, None, a['id'], request_id='b10', data={'revision': rev(), 'patch': {'state': 'paused'}, 'handoff': dict(stop)})
+    assert threads == ['thread-1', 'thread-1']
+    deck = await s.dispatch('deck', data={'states': ['paused'], 'fields': ['title', 'revision'], 'handoffs': True}, lean=True)
+    rows = deck['deck'][0]['paused']
+    assert set(deck['deck'][0]) == {'band', 'project', 'paused'} and set(rows[0]) == {'id', 'title', 'revision'}
+    assert [(h['thread_id'], [t['slug'] for t in h['tasks']]) for h in deck['handoffs']] == [('thread-1', [a['slug']]), ('orphan', [])]
+    assert 'state' not in deck['handoffs'][0]
+    await s.dispatch('link', None, None, a['id'], request_id='b11', data={'kind': 'commit', 'ref': 'abc'})
+    done = await s.dispatch('update', None, None, a['id'], request_id='b12',
+                            data={'revision': rev(), 'patch': {'state': 'done', 'attrs': {'outcome': 'shipped'}}})
+    assert done['closed_handoffs'] == ['thread-1'] and closed == [('thread-1', f"task {a['slug']} is done")]
+    lean = await s.dispatch('get', None, None, a['id'], lean=True)
+    full = await s.dispatch('get', None, None, a['id'])
+    assert len(lean['events']) == 10 < len(full['events']) and 'auto_links' in lean and 'auto_links' not in full
 
 
 @pytest.mark.asyncio
@@ -450,12 +620,26 @@ async def test_mcp_claimed_work_builds_its_own_audit_trail(tmp_path, monkeypatch
         reply = await env.tool('rook_call', cap='shell.exec', worker='gpubox')
         assert reply['_task'] == t['id']
         await env.tool('rook_handoff_save', goal='Do it', state='half', next_steps=['rest'])
-        got = (await env.tool('rook_task', action='get', id=t['id']))['result']
+        lean = (await env.tool('rook_task', action='get', id=t['id']))['result']
+        assert lean['links'] == [] and lean['auto_links'] == {'journal': 1, 'handoff': 1}
+        got = (await env.tool('rook_task', action='get', id=t['id'], data={'links': 'all'}))['result']
         assert [(l['kind'], l['auto']) for l in got['links']] == [('journal', 1), ('handoff', 1)]
         assert got['links'][0]['ref'] == reply['id']  # id is the journal id
         deck = (await env.tool('rook_task'))['result']['deck']
         assert deck[0]['in_progress'][0]['claimants'][0]['actor'] == me
         assert env.band.calls == ['shell.exec']  # knowledge never touched the band path
+        stale = await env.tool('rook_task', action='update', id=t['id'], request_id='u1',
+                               data={'revision': 99, 'patch': {'title': 'x'}})
+        assert stale['code'] == 'Conflict' and stale['current_revision'] == got['revision']
+        side = await env.tool('rook_handoff_save', goal='Side thread', task=t['slug'])
+        assert side['task'] == t['id']
+        assert (await env.tool('rook_handoff_save', goal='Lost', task='no-such-task'))['task_error']
+        assert not (await env.tool('rook_handoff_save', status='closed'))['ok']  # closing names a thread
+        shut = await env.tool('rook_handoff_save', thread_id=side['thread_id'], status='closed', state='merged elsewhere')
+        assert shut['status'] == 'closed'
+        assert side['thread_id'] not in [h['thread_id'] for h in (await env.tool('rook_handoff_list'))['threads']]
+        cur = (await env.tool('rook_handoff_get', thread_id=side['thread_id']))['current']
+        assert cur['goal'] == 'Side thread' and cur['state'] == 'merged elsewhere' and cur['freshness'][0].startswith('CLOSED')
 
 
 @pytest.mark.asyncio
