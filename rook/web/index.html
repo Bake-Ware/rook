@@ -352,7 +352,7 @@
       <div class="inventory-controls">
         <label>Group by <select id="worker-group" onchange="dirty=true;reconcile()"><option value="os">Operating system</option><option value="band">Band</option><option value="none">No grouping</option></select></label>
         <label>Sort <select id="worker-sort" onchange="dirty=true;reconcile()"><option value="name">Name</option><option value="os">Operating system</option><option value="band">Band</option><option value="status">Online first</option></select></label>
-        <div class="view-toggle" role="group" aria-label="Worker view"><button type="button" data-layout="list" aria-pressed="true" onclick="setWorkerLayout('list')">☰ List</button><button type="button" data-layout="grid" aria-pressed="false" onclick="setWorkerLayout('grid')">▦ Grid</button></div>
+        <div class="view-toggle" role="group" aria-label="Worker view"><button type="button" data-layout="list" aria-pressed="true" onclick="setWorkerLayout('list')">☰ List</button><button type="button" data-layout="grid" aria-pressed="false" onclick="setWorkerLayout('grid')">▦ Grid</button><button type="button" data-layout="scene" aria-pressed="false" onclick="setWorkerLayout('scene')">♜ 3D</button></div>
       </div>
     </div>
       <section class="stats" id="worker-stats">
@@ -390,6 +390,7 @@
         <span class="battery-column" aria-hidden="true"></span><span style="width:150px">heartbeat</span><span style="width:40px"></span>
       </div>
       <div class="list" id="list"></div>
+      <div class="fleet-scene" id="fleet-scene" hidden></div>
       <div class="empty" id="empty" style="display:none"></div>
       <div class="foot" id="foot"></div>
     </div>
@@ -485,26 +486,108 @@ const listEl=$('#list'), barsEl=$('#bars'), emptyEl=$('#empty');
 
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 function col(f){return f>0.5?'#2dd4a7':f>0.22?'#f5b041':'#f76a6a'}
-function capTree(caps){
-  const root={children:new Map()};
-  for(const cap of [...new Set(caps)].sort()){
-    let node=root;
-    for(const part of cap.split('.')){if(!node.children.has(part))node.children.set(part,{children:new Map()});node=node.children.get(part);}
-    node.cap=cap;
+/* Capabilities as chips by namespace; a chip opens that namespace, a cap runs it.
+   One builder for the list, the grid and the 3D card. */
+const openCapSpace=new Map(); // worker id -> open namespace
+function capChips(w,onChange){
+  const box=document.createElement('div');box.className='capchips';
+  const caps=[...new Set(w.caps||[])].sort(), spaces=new Map();
+  for(const cap of caps){const ns=cap.split('.')[0];if(!spaces.has(ns))spaces.set(ns,[]);spaces.get(ns).push(cap);}
+  const head=document.createElement('div');head.className='capchips-title';head.textContent='Capabilities · '+caps.length;
+  const chips=document.createElement('div');chips.className='capchips-row';
+  const list=document.createElement('div');list.className='capchips-list';list.hidden=true;
+  const open=openCapSpace.get(w.worker_id);
+  for(const [ns,members] of spaces){
+    const chip=document.createElement('button');chip.type='button';chip.className='capchip';chip.textContent=ns+' '+members.length;
+    chip.setAttribute('aria-pressed',String(open===ns));
+    chip.onclick=e=>{e.stopPropagation();if(open===ns)openCapSpace.delete(w.worker_id);else openCapSpace.set(w.worker_id,ns);onChange();};
+    chips.append(chip);
+    if(open===ns){list.hidden=false;
+      for(const cap of members){const run=document.createElement('button');run.type='button';run.className='caprun';run.textContent=cap;run.title='Run '+cap;
+        run.onclick=e=>{e.stopPropagation();openCapModal(w.worker_id,cap);};list.append(run);}
+    }
   }
-  function render(node){return '<ul>'+[...node.children].map(([name,child])=>{
-    const action=child.cap?`<button type="button" class="mcap" data-cap="${esc(child.cap)}" title="Run ${esc(child.cap)}">${esc(name)}<span aria-hidden="true">↗</span></button>`:'';
-    return '<li>'+(child.children.size?`<details><summary>${esc(name)} <span>${count(child)}</span></summary>${child.cap?action:''}${render(child)}</details>`:action)+'</li>';
-  }).join('')+'</ul>';}
-  function count(node){return (node.cap?1:0)+[...node.children.values()].reduce((sum,n)=>sum+count(n),0);}
-  return render(root);
+  box.append(head,chips,list);return box;
 }
+function hostingBox(w){
+  const out=document.createDocumentFragment();
+  for(const [title,items] of [['Sites',w.serves?.sites||[]],['Services',w.serves?.services||[]]]){
+    if(!items.length)continue;
+    const box=document.createElement('div');box.className='hosting-group';
+    const head=document.createElement('span');head.className='hosting-title';head.textContent=title;box.append(head);
+    for(const item of items){
+      const web=/^https?:\/\//.test(item.url||''), el=document.createElement(web?'a':'span');
+      el.className='hosting-link';el.textContent=item.name||item.url;el.title=[item.url,item.note].filter(Boolean).join(' → ');
+      if(web){el.href=item.url;el.target='_blank';el.rel='noopener noreferrer';el.onclick=e=>e.stopPropagation();}
+      box.append(el);
+    }
+    out.append(box);
+  }
+  return out;
+}
+/* What can be done to a worker: the ⋯ menu of a row and the buttons of the 3D card. */
+function workerActions(w){
+  const all=[['screenshot.capture','Screenshot',snap],['shell.exec','Shell',shell],['info.host','Device info',info],['worker.description_set','Edit description…',editDescription],['worker.reconfigure','Rename…',renameWorker],['','Move to band…',openWorkerMove]];
+  const out=all.filter(([cap,,run])=>(!cap||(w.caps||[]).includes(cap))&&!(run===openWorkerMove&&isHub(w)));
+  // Deauth lives here in every view. Only pyz workers can park themselves (firmware has no worker.deauth).
+  if(w.banned)out.push(['','Remove ban',wid=>unban(wid,w.name),'danger']);
+  else if((w.caps||[]).includes('worker.restart')&&!isHub(w))out.push(['','⛔ Deauth / ban…',wid=>ban(wid,w.name),'danger']);
+  return out;
+}
+/* The 3D view's card: the same facts, links, caps and actions as an expanded row. */
+function fleetCard(card,id){
+  const w=workers.find(x=>x.worker_id===id);if(!w)return false;
+  const add=(tag,text,cls)=>{const el=document.createElement(tag);if(cls)el.className=cls;el.textContent=text;card.append(el);return el;};
+  const d=deviceDetails(w), age=w.last_seen_age_secs||0;
+  add('div',isHub(w)?'HUB · ROOK':d.type.toUpperCase()+' · PAWN','fleet-card-kind');
+  add('h3',w.name||w.worker_id);
+  if(w.description)add('p',w.description,'fleet-card-note');
+  add('p',[versionLabel(w),bandName(w.band),w.banned?'deauthed':age>HB_WINDOW?'quiet for '+Math.round(age)+'s':'seen '+Math.round(age)+'s ago',
+    w.hb?.battery?.percent!=null?'battery '+w.hb.battery.percent+'%':'',d.detail].filter(Boolean).join(' · '),'fleet-card-facts');
+  add('p','worker_id '+w.worker_id,'fleet-card-facts');
+  const hosting=document.createElement('div');hosting.className='hosting';hosting.append(hostingBox(w));card.append(hosting);
+  if(workerActions(w).length){const menu=document.createElement('button');menu.type='button';menu.className='worker-menu-button fleet-card-menu';menu.textContent='⋯';
+    menu.setAttribute('aria-label','Actions for '+(w.name||w.worker_id));menu.setAttribute('aria-haspopup','menu');
+    menu.onclick=e=>{e.stopPropagation();openWorkerMenu(menu,w.worker_id);};card.append(menu);}
+  if(w.banned)add('div','⛔ deauthed','banbadge');
+  card.append(capChips(w,()=>fleet?.refreshCard()));
+  return true;
+}
+const LAYOUTS=['list','grid','scene'];
 let workerLayout='list', inventorySignature='';
-try{if(localStorage.getItem('rook.workers.layout')==='grid')workerLayout='grid';}catch{}
+try{const saved=localStorage.getItem('rook.workers.layout');if(LAYOUTS.includes(saved))workerLayout=saved;}catch{}
 function setWorkerLayout(layout){
-  workerLayout=layout==='grid'?'grid':'list';
+  workerLayout=LAYOUTS.includes(layout)?layout:'list';
   try{localStorage.setItem('rook.workers.layout',workerLayout);}catch{}
   dirty=true;reconcile();
+}
+/* Groups fold: the choice is kept per group name. */
+let collapsedGroups=new Set();
+try{collapsedGroups=new Set(JSON.parse(localStorage.getItem('rook.workers.collapsed')||'[]'));}catch{}
+function toggleGroup(label,section){
+  const folded=!collapsedGroups.has(label);
+  if(folded)collapsedGroups.add(label);else collapsedGroups.delete(label);
+  try{localStorage.setItem('rook.workers.collapsed',JSON.stringify([...collapsedGroups]));}catch{}
+  section.classList.toggle('collapsed',folded);section.querySelector('.worker-group-heading').setAttribute('aria-expanded',String(!folded));
+}
+/* The 3D fleet view (rook-scene.js, loaded on first use). */
+let fleet=null, fleetLoading=null;
+function versionLabel(w){return w.version?(w.app_release?.platform==='android'?'APK '+w.app_release.version+' · '+w.app_release.code:'v'+w.version):'';}
+function syncFleet(list,group){
+  const host=$('#fleet-scene'), on=workerLayout==='scene'&&!$('#view-workers').hidden;
+  host.hidden=workerLayout!=='scene';
+  if(!on){fleet?.setActive(false);return;}
+  if(!fleet){
+    fleetLoading??=import('/account/bands/assets/rook-scene.js').then(({mountFleet})=>{
+      fleet=mountFleet(host,{quietAfter:HB_WINDOW,renderCard:fleetCard});
+      dirty=true;reconcile();
+    }).catch(()=>{host.dataset.mode='unavailable';});
+    return;
+  }
+  fleet.update(list.map(w=>({id:w.worker_id,name:w.name||w.worker_id,group:group(w)||'',kind:deviceDetails(w).type,hub:isHub(w),
+    age:w.last_seen_age_secs||0,banned:!!w.banned,description:w.description||'',version:versionLabel(w).replace(/^v/,''),
+    bandName:bandName(w.band),battery:w.hb?.battery?.percent??null,serves:w.serves||null,caps:w.caps||[]})));
+  fleet.setActive(true);
 }
 
 /* ---- bands ---- */
@@ -607,7 +690,7 @@ function buildRow(w){
       <span class="seen"><span class="seenbar"><i></i></span><span class="t"></span></span>
       <span class="acts"></span>
     </div>
-    <div class="detail"><div class="detail-in"><div class="meta"></div><div class="cggrid"></div><div class="banrow"></div></div></div>`;
+    <div class="detail"><div class="detail-in"><div class="meta"></div><div class="hosting"></div><div class="cggrid"></div><div class="banrow"></div></div></div>`;
   const row=wrap.querySelector('.row');
   row.addEventListener('click',()=>{const open=wrap.classList.toggle('open');row.querySelector('.caret').setAttribute('aria-expanded',String(open));});
   const bar=document.createElement('div'); bar.className='bar'; bar.title=w.name||w.worker_id;
@@ -619,6 +702,7 @@ function buildRow(w){
     bandEl:wrap.querySelector('.worker-band'), st:wrap.querySelector('.st'), verEl:wrap.querySelector('.ver'), battEl:wrap.querySelector('.batt-slot'),
     sb:wrap.querySelector('.seenbar i'), tt:wrap.querySelector('.seen .t'),
     acts:wrap.querySelector('.acts'), meta:wrap.querySelector('.meta'), cg:wrap.querySelector('.cggrid'),
+    hosting:wrap.querySelector('.hosting'), hostingSig:'',
     banrow:wrap.querySelector('.banrow'), bannedSig:null,
     fill:bar.querySelector('.fill'), peakEl:bar.querySelector('.peak'),
     lastSeenAbs:clock()-(w.last_seen_age_secs||0), peak:0.6, beatT:-9, capsSig:'' };
@@ -637,7 +721,10 @@ function updateMeta(m,w){
   const fw=(w.plugins||[]).some(p=>['kvm','bthid','serial'].includes(p));
   const vcls = w.version? (fw?'ver old':'ver') : 'ver none';
   m.verEl.title='Worker '+(w.version||'unknown')+' · build '+(w.build??'?');
-  m.verEl.className=vcls; m.verEl.textContent = w.version? (w.app_release?.platform==='android'?'APK '+w.app_release.version+' · '+w.app_release.code:'v'+w.version) : '—';
+  m.verEl.className=vcls; m.verEl.textContent = versionLabel(w)||'—';
+  // What it hosts (hand-written on the hub): links on expand.
+  const hsig=JSON.stringify(w.serves||null);
+  if(hsig!==m.hostingSig){ m.hostingSig=hsig; m.hosting.replaceChildren(hostingBox(w)); }
   m.wrap.querySelector('.name').innerHTML=deviceIcon(w)+`<span class="n">${esc(w.name||w.worker_id)}</span><span class="id">${esc(w.worker_id.slice(0,8))}</span>`+(fw?'<span class="tagfw">firmware</span>':'')+(w.description?'<span class="worker-description">'+esc(w.description)+'</span>':'');
   const caps=w.caps||[], has=c=>caps.includes(c);
   if(!m.acts.firstChild){
@@ -647,21 +734,12 @@ function updateMeta(m,w){
   }
   // caps groups (rebuild only if changed)
   const sig=caps.join(','); if(sig!==m.capsSig){ m.capsSig=sig;
-    m.meta.textContent=`worker_id ${w.worker_id} · ${caps.length} capabilities`;
-    m.cg.innerHTML=capTree(caps);
-    m.cg.querySelectorAll('.mcap').forEach(el=>el.onclick=e=>{e.stopPropagation();openCapModal(w.worker_id,el.dataset.cap);});
+    m.meta.textContent=`worker_id ${w.worker_id}`;
+    const draw=()=>m.cg.replaceChildren(capChips(m.w,draw));draw();
   }
-  // deauth / ban control — ungated by caps, reflects w.banned. Only pyz workers
-  // can self-park (firmware has no worker.deauth), so hide it for firmware.
-  const canDeauth=has('worker.restart');
-  const bsig=w.banned?'b':(canDeauth?'d':'x');
-  if(bsig!==m.bannedSig){ m.bannedSig=bsig;
+  if(!!w.banned!==m.bannedSig){ m.bannedSig=!!w.banned;
     m.wrap.classList.toggle('banned',!!w.banned);
-    m.banrow.innerHTML = w.banned
-      ? `<span class="banbadge">⛔ deauthed</span><button class="danger sm" data-a="unban">remove ban</button>`
-      : (canDeauth?`<button class="danger sm" data-a="deauth">⛔ deauth / ban this worker</button>`:'');
-    const btn=m.banrow.querySelector('button');
-    if(btn) btn.onclick=e=>{e.stopPropagation(); (m.w.banned?unban:ban)(m.w.worker_id,m.w.name);};
+    m.banrow.innerHTML = w.banned?'<span class="banbadge">⛔ deauthed</span>':'';
   }
   m.bar.title=w.name||w.worker_id;
 }
@@ -711,7 +789,11 @@ function reconcile(){
         const label=group(w);
         if(label!==previous){
           const section=document.createElement('section');section.className='worker-group';
-          if(grouping!=='none'){const h=document.createElement('h2');h.className='worker-group-heading';h.textContent=label+' / '+ord.filter(x=>group(x)===label).length;section.append(h);}
+          if(grouping!=='none'){const h=document.createElement('h2');h.className='worker-group-heading';h.textContent=label+' / '+ord.filter(x=>group(x)===label).length;
+            h.tabIndex=0;h.setAttribute('role','button');h.title='Show or hide this group';
+            const folded=collapsedGroups.has(label);section.classList.toggle('collapsed',folded);h.setAttribute('aria-expanded',String(!folded));
+            h.onclick=()=>toggleGroup(label,section);h.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();toggleGroup(label,section);}};
+            section.append(h);}
           body=document.createElement('div');body.className='worker-group-items';section.append(body);fragment.append(section);previous=label;
         }
         const m=M.get(w.worker_id);if(m){body.append(m.wrap);barsEl.append(m.bar);}
@@ -720,6 +802,8 @@ function reconcile(){
     }
     dirty=false;
   }
+  { const grouping=$('#worker-group').value;
+    syncFleet(list,w=>grouping==='os'?deviceDetails(w).os:grouping==='band'?bandName(w.band):''); }
   emptyEl.style.display=list.length?'none':'block';
   emptyEl.textContent=curBand?'No workers on this band.':'No workers on the band.';
   $('#foot').textContent=(curBand?('band '+curBand):'all bands')+' · '+list.length+' workers';
@@ -727,12 +811,12 @@ function reconcile(){
 }
 
 function versionSpread(list){
-  const c={}; list.forEach(w=>{const v=w.version||'none'; c[v]=(c[v]||0)+1;});
+  const c={}; list.forEach(w=>{const v=versionLabel(w)||'none'; c[v]=(c[v]||0)+1;});
   const ent=Object.entries(c).sort((a,b)=>b[1]-a[1]); const total=list.length||1;
   const palette=['var(--accent)','var(--blue)','var(--warn)','#a78bfa','#e06c9f'];
-  const colFor=v=>v==='none'?'var(--dim2)':(/^0\./.test(v)?'var(--warn)':palette[ent.findIndex(e=>e[0]===v)%palette.length]);
+  const colFor=v=>v==='none'?'var(--dim2)':(/^v0\./.test(v)?'var(--warn)':palette[ent.findIndex(e=>e[0]===v)%palette.length]);
   $('#verbar').innerHTML=ent.map(e=>`<span style="width:${e[1]/total*100}%;background:${colFor(e[0])}"></span>`).join('');
-  $('#verleg').innerHTML=ent.slice(0,4).map(e=>`<span><i class="vdot" style="background:${colFor(e[0])}"></i>${e[0]==='none'?'no version':(e[0].length>22?'v'+e[0].slice(0,20)+'…':'v'+e[0])} <b>×${e[1]}</b></span>`).join('');
+  $('#verleg').innerHTML=ent.map(e=>`<span title="${esc(e[0])}"><i class="vdot" style="background:${colFor(e[0])}"></i>${e[0]==='none'?'no version':esc(e[0])} <b>×${e[1]}</b></span>`).join('');
 }
 
 /* ---- rAF: drive bars/dots/counts from real last_seen ---- */
@@ -763,11 +847,9 @@ const workerMenu=document.createElement('div');workerMenu.id='worker-menu';worke
 let workerMenuTrigger=null;
 function openWorkerMenu(trigger,wid){
  const w=workers.find(w=>w.worker_id===wid);if(!w)return;
- const actions=[['screenshot.capture','Screenshot',snap],['shell.exec','Shell',shell],['info.host','Device info',info],['worker.description_set','Edit description…',editDescription],['','Move to band…',openWorkerMove]];
  workerMenu.replaceChildren();workerMenuTrigger=trigger;
- for(const [cap,label,run] of actions){if(cap&&!w.caps.includes(cap))continue;
-  if(run===openWorkerMove&&isHub(w))continue; // the hub serves every band; it is not moved
-  const b=document.createElement('button');b.setAttribute('role','menuitem');b.textContent=label;
+ for(const [,label,run,kind] of workerActions(w)){ // the hub serves every band; it has no move
+  const b=document.createElement('button');b.setAttribute('role','menuitem');b.textContent=label;if(kind)b.className=kind;
   b.onclick=()=>{workerMenu.hidePopover();run(wid);};workerMenu.append(b);
  }
  workerMenu.showPopover();const rect=trigger.getBoundingClientRect();
@@ -781,6 +863,27 @@ workerMenu.addEventListener('keydown',e=>{
  if(['ArrowDown','ArrowUp','Home','End'].includes(e.key)){e.preventDefault();items[e.key==='Home'?0:e.key==='End'?items.length-1:(index+(e.key==='ArrowDown'?1:-1)+items.length)%items.length]?.focus();}
  if(e.key==='Escape'){workerMenuTrigger?.focus();}
 });
+function renameWorker(wid){
+ const w=workers.find(w=>w.worker_id===wid);if(!w)return;
+ const dialog=document.createElement('dialog');dialog.className='description-dialog';dialog.setAttribute('aria-label','Rename worker');
+ dialog.innerHTML='<form><h2>Rename worker</h2><p class="description-worker"></p><label>New name<input type="text" maxlength="64" autocomplete="off" spellcheck="false" required></label><p class="muted">The worker saves the name in its service and restarts, so it drops off for a few seconds and comes back renamed. What it hosts and any ban are recorded under the old name and do not follow it.</p><p class="description-error" role="alert"></p><div class="dialog-actions"><button type="button" data-cancel>Cancel</button><button type="submit">Rename and restart</button></div></form>';
+ const input=dialog.querySelector('input');dialog.querySelector('.description-worker').textContent=w.name||wid;input.value=w.name||'';
+ dialog.querySelector('[data-cancel]').onclick=()=>dialog.close();dialog.addEventListener('close',()=>dialog.remove());
+ dialog.querySelector('form').onsubmit=async event=>{
+  event.preventDefault();const button=dialog.querySelector('[type=submit]');if(button.disabled)return;
+  const name=input.value.trim(), fail=text=>{dialog.querySelector('.description-error').textContent=text;button.disabled=false;};
+  if(!/^[\w][\w .'-]{0,63}$/.test(name))return fail('Use letters, digits, spaces, dots, dashes or apostrophes.');
+  if(name.toLowerCase()==='rook')return fail('"rook" is reserved for the hub.');
+  if(workers.some(x=>x.worker_id!==wid&&(x.name||'').toLowerCase()===name.toLowerCase()))return fail('Another worker already has that name.');
+  if(name===w.name){dialog.close();return;}
+  button.disabled=true;
+  try{const reply=await bandCall('worker.reconfigure',wid,{name},15);
+   if(!reply.ok||!reply.result?.ok)throw Error(reply.error||reply.result?.error||'Unable to rename.');
+   dialog.close();
+  }catch(error){fail(error.message);}
+ };
+ document.body.append(dialog);dialog.showModal();input.focus();input.select();
+}
 function editDescription(wid){
  const w=workers.find(w=>w.worker_id===wid);if(!w)return;
  const dialog=document.createElement('dialog');dialog.className='description-dialog';dialog.setAttribute('aria-label','Edit worker description');

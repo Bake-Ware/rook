@@ -10,6 +10,19 @@ releases yet: workers identify themselves by build number (for example
 Preparation for public use.
 
 ### Added
+- Dashboard workers page: a **3D view** beside list and grid (the hub as a
+  rook, each worker a pawn on a polar board; a quiet worker's pawn tips over,
+  a heartbeat sends a spark to the hub, a ring marks a worker that hosts
+  sites; click a piece for its details, hosted links and capabilities).
+  Group headings fold and unfold on a click. An expanded worker lists the
+  sites and services it hosts as links. The version spread lists every
+  version.
+- Worker menu (⋯), the same in every view: **Rename…** (`worker.reconfigure`
+  with a new name; the worker saves it and restarts) and deauth / remove ban,
+  which moved there from the expanded row. Capabilities show as chips by
+  namespace in the list, the grid and the 3D card.
+- The hub worker `rook` reports the release it runs (`ROOK_RELEASE`, set by
+  `rook hub deploy`) as its version and build, in the worker scheme.
 - `serves`: hand-written hosting metadata per worker, kept on the hub. Hub
   plugin `serves` with caps `serves.list` (read), `serves.set` and
   `serves.clear` (write) on worker `rook`; each worker's `{sites, services}`

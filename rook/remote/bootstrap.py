@@ -1816,7 +1816,34 @@ button:hover{{background:#22b88f}}
         ``?band=<id>`` query filters to one band."""
         if self._band is None:
             return web.json_response({"error": "band client not connected"}, status=503)
-        return web.json_response(self._band_worker_rows(request.query.get("band") or ""))
+        rows = self._band_worker_rows(request.query.get("band") or "")
+        hosting = await self._hosting()
+        for row in rows:
+            entry = hosting.get(str(row.get("name") or "").lower())
+            if entry:
+                row["serves"] = {k: entry[k] for k in ("sites", "services") if entry.get(k)}
+        return web.json_response(rows)
+
+    async def _hosting(self) -> dict:
+        """What each worker hosts (the hub's ``serves`` plugin), by lower-cased
+        worker name. Asked of the hub node over the band at most twice a minute;
+        a hub without the plugin, or one that does not answer, means none."""
+        cached = getattr(self, "_hosting_cache", None)
+        now = time.time()
+        if cached and now - cached[0] < 30:
+            return cached[1]
+        data: dict = cached[1] if cached else {}
+        try:
+            hub = next((wid for wid, w in self._band.workers.items()
+                        if "is_hub" in (w.get("roles") or ())), None)
+            if hub is not None:
+                reply = await self._band.call("serves.list", target=hub, timeout=5.0)
+                if reply.get("ok"):
+                    data = (reply.get("result") or {}).get("serves") or {}
+        except Exception:
+            log.debug("serves.list failed", exc_info=True)
+        self._hosting_cache = (now, data)
+        return data
 
     def _band_worker_rows(self, want: str = "") -> list[dict]:
         if self._band is None:
