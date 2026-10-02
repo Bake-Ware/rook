@@ -17,6 +17,10 @@ Preparation for public use.
   Group headings fold and unfold on a click. An expanded worker lists the
   sites and services it hosts as links. The version spread lists every
   version.
+- Worker menu (⋯), the same in every view: **Rename…** (`worker.reconfigure`
+  with a new name; the worker saves it and restarts) and deauth / remove ban,
+  which moved there from the expanded row. Capabilities show as chips by
+  namespace in the list, the grid and the 3D card.
 - The hub worker `rook` reports the release it runs (`ROOK_RELEASE`, set by
   `rook hub deploy`) as its version and build, in the worker scheme.
 - `serves`: hand-written hosting metadata per worker, kept on the hub. Hub

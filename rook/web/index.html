@@ -527,8 +527,12 @@ function hostingBox(w){
 }
 /* What can be done to a worker: the ⋯ menu of a row and the buttons of the 3D card. */
 function workerActions(w){
-  const all=[['screenshot.capture','Screenshot',snap],['shell.exec','Shell',shell],['info.host','Device info',info],['worker.description_set','Edit description…',editDescription],['','Move to band…',openWorkerMove]];
-  return all.filter(([cap,,run])=>(!cap||(w.caps||[]).includes(cap))&&!(run===openWorkerMove&&isHub(w)));
+  const all=[['screenshot.capture','Screenshot',snap],['shell.exec','Shell',shell],['info.host','Device info',info],['worker.description_set','Edit description…',editDescription],['worker.reconfigure','Rename…',renameWorker],['','Move to band…',openWorkerMove]];
+  const out=all.filter(([cap,,run])=>(!cap||(w.caps||[]).includes(cap))&&!(run===openWorkerMove&&isHub(w)));
+  // Deauth lives here in every view. Only pyz workers can park themselves (firmware has no worker.deauth).
+  if(w.banned)out.push(['','Remove ban',wid=>unban(wid,w.name),'danger']);
+  else if((w.caps||[]).includes('worker.restart')&&!isHub(w))out.push(['','⛔ Deauth / ban…',wid=>ban(wid,w.name),'danger']);
+  return out;
 }
 /* The 3D view's card: the same facts, links, caps and actions as an expanded row. */
 function fleetCard(card,id){
@@ -542,11 +546,10 @@ function fleetCard(card,id){
     w.hb?.battery?.percent!=null?'battery '+w.hb.battery.percent+'%':'',d.detail].filter(Boolean).join(' · '),'fleet-card-facts');
   add('p','worker_id '+w.worker_id,'fleet-card-facts');
   const hosting=document.createElement('div');hosting.className='hosting';hosting.append(hostingBox(w));card.append(hosting);
-  const acts=document.createElement('div');acts.className='fleet-card-actions';
-  for(const [,label,run] of workerActions(w)){const b=document.createElement('button');b.type='button';b.textContent=label;b.onclick=()=>run(w.worker_id);acts.append(b);}
-  if(w.banned||(w.caps||[]).includes('worker.restart')){const b=document.createElement('button');b.type='button';b.className='danger';
-    b.textContent=w.banned?'Remove ban':'⛔ Deauth / ban';b.onclick=()=>(w.banned?unban:ban)(w.worker_id,w.name);acts.append(b);}
-  if(acts.firstChild)card.append(acts);
+  if(workerActions(w).length){const menu=document.createElement('button');menu.type='button';menu.className='worker-menu-button fleet-card-menu';menu.textContent='⋯';
+    menu.setAttribute('aria-label','Actions for '+(w.name||w.worker_id));menu.setAttribute('aria-haspopup','menu');
+    menu.onclick=e=>{e.stopPropagation();openWorkerMenu(menu,w.worker_id);};card.append(menu);}
+  if(w.banned)add('div','⛔ deauthed','banbadge');
   card.append(capChips(w,()=>fleet?.refreshCard()));
   return true;
 }
@@ -734,17 +737,9 @@ function updateMeta(m,w){
     m.meta.textContent=`worker_id ${w.worker_id}`;
     const draw=()=>m.cg.replaceChildren(capChips(m.w,draw));draw();
   }
-  // deauth / ban control — ungated by caps, reflects w.banned. Only pyz workers
-  // can self-park (firmware has no worker.deauth), so hide it for firmware.
-  const canDeauth=has('worker.restart');
-  const bsig=w.banned?'b':(canDeauth?'d':'x');
-  if(bsig!==m.bannedSig){ m.bannedSig=bsig;
+  if(!!w.banned!==m.bannedSig){ m.bannedSig=!!w.banned;
     m.wrap.classList.toggle('banned',!!w.banned);
-    m.banrow.innerHTML = w.banned
-      ? `<span class="banbadge">⛔ deauthed</span><button class="danger sm" data-a="unban">remove ban</button>`
-      : (canDeauth?`<button class="danger sm" data-a="deauth">⛔ deauth / ban this worker</button>`:'');
-    const btn=m.banrow.querySelector('button');
-    if(btn) btn.onclick=e=>{e.stopPropagation(); (m.w.banned?unban:ban)(m.w.worker_id,m.w.name);};
+    m.banrow.innerHTML = w.banned?'<span class="banbadge">⛔ deauthed</span>':'';
   }
   m.bar.title=w.name||w.worker_id;
 }
@@ -853,8 +848,8 @@ let workerMenuTrigger=null;
 function openWorkerMenu(trigger,wid){
  const w=workers.find(w=>w.worker_id===wid);if(!w)return;
  workerMenu.replaceChildren();workerMenuTrigger=trigger;
- for(const [,label,run] of workerActions(w)){ // the hub serves every band; it has no move
-  const b=document.createElement('button');b.setAttribute('role','menuitem');b.textContent=label;
+ for(const [,label,run,kind] of workerActions(w)){ // the hub serves every band; it has no move
+  const b=document.createElement('button');b.setAttribute('role','menuitem');b.textContent=label;if(kind)b.className=kind;
   b.onclick=()=>{workerMenu.hidePopover();run(wid);};workerMenu.append(b);
  }
  workerMenu.showPopover();const rect=trigger.getBoundingClientRect();
@@ -868,6 +863,27 @@ workerMenu.addEventListener('keydown',e=>{
  if(['ArrowDown','ArrowUp','Home','End'].includes(e.key)){e.preventDefault();items[e.key==='Home'?0:e.key==='End'?items.length-1:(index+(e.key==='ArrowDown'?1:-1)+items.length)%items.length]?.focus();}
  if(e.key==='Escape'){workerMenuTrigger?.focus();}
 });
+function renameWorker(wid){
+ const w=workers.find(w=>w.worker_id===wid);if(!w)return;
+ const dialog=document.createElement('dialog');dialog.className='description-dialog';dialog.setAttribute('aria-label','Rename worker');
+ dialog.innerHTML='<form><h2>Rename worker</h2><p class="description-worker"></p><label>New name<input type="text" maxlength="64" autocomplete="off" spellcheck="false" required></label><p class="muted">The worker saves the name in its service and restarts, so it drops off for a few seconds and comes back renamed. What it hosts and any ban are recorded under the old name and do not follow it.</p><p class="description-error" role="alert"></p><div class="dialog-actions"><button type="button" data-cancel>Cancel</button><button type="submit">Rename and restart</button></div></form>';
+ const input=dialog.querySelector('input');dialog.querySelector('.description-worker').textContent=w.name||wid;input.value=w.name||'';
+ dialog.querySelector('[data-cancel]').onclick=()=>dialog.close();dialog.addEventListener('close',()=>dialog.remove());
+ dialog.querySelector('form').onsubmit=async event=>{
+  event.preventDefault();const button=dialog.querySelector('[type=submit]');if(button.disabled)return;
+  const name=input.value.trim(), fail=text=>{dialog.querySelector('.description-error').textContent=text;button.disabled=false;};
+  if(!/^[\w][\w .'-]{0,63}$/.test(name))return fail('Use letters, digits, spaces, dots, dashes or apostrophes.');
+  if(name.toLowerCase()==='rook')return fail('"rook" is reserved for the hub.');
+  if(workers.some(x=>x.worker_id!==wid&&(x.name||'').toLowerCase()===name.toLowerCase()))return fail('Another worker already has that name.');
+  if(name===w.name){dialog.close();return;}
+  button.disabled=true;
+  try{const reply=await bandCall('worker.reconfigure',wid,{name},15);
+   if(!reply.ok||!reply.result?.ok)throw Error(reply.error||reply.result?.error||'Unable to rename.');
+   dialog.close();
+  }catch(error){fail(error.message);}
+ };
+ document.body.append(dialog);dialog.showModal();input.focus();input.select();
+}
 function editDescription(wid){
  const w=workers.find(w=>w.worker_id===wid);if(!w)return;
  const dialog=document.createElement('dialog');dialog.className='description-dialog';dialog.setAttribute('aria-label','Edit worker description');

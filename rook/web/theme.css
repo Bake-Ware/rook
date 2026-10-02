@@ -140,3 +140,9 @@ a.hosting-link{color:var(--accent)}a.hosting-link:hover{background:#343322;borde
 .fleet-card-actions{display:flex;flex-wrap:wrap;gap:5px;margin-top:10px}
 .fleet-card-actions button{background:transparent;border:1px solid var(--line2);color:var(--accent);font:10px var(--mono);padding:5px 8px;cursor:pointer}
 .fleet-card-actions button:hover{background:#343322}.fleet-card-actions button.danger{color:var(--bad,#dca58d);border-color:#6b4336}
+/* Sites and services: the title on its own line where the column is narrow. */
+#view-workers[data-layout=grid] .hosting-title,.fleet-card .hosting-title{flex-basis:100%;min-width:0}
+#view-workers[data-layout=grid] .hosting{gap:10px}
+.fleet-card-menu{position:absolute;right:34px;top:8px}
+[role=menuitem].danger{color:var(--bad,#dca58d)}
+.description-dialog input[type=text]{width:100%;background:var(--panel2,#11150f);border:1px solid var(--line2);color:inherit;font:13px var(--mono);padding:8px;margin-top:6px}
