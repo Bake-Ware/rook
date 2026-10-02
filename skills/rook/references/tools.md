@@ -87,6 +87,9 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `policy.get` | — | read | The current policy document with its revision, source, mode, lint and last load error (if the file on disk is… |
 | `policy.set` | policy, note='' | admin | Replace the policy document (band owners and operator tokens only). |
 | `policy.status` | — | read | Hub permission status: policy mode/revision, whether calls carry tickets (root key present), the op-key id an… |
+| `serves.clear` | worker | write | Remove a worker's hosting entry. |
+| `serves.list` | worker='' | read | What workers host: `{worker: {sites, services, updated, by}}`. |
+| `serves.set` | worker, sites?, services?, by='' | write | Write what a worker hosts. |
 | `settings.apply_worker` | worker, confirm_within=120.0 | admin | Push a worker's stored settings to it (commit-confirmed restart). |
 | `settings.describe` | prefix='', limit=100, fields? | read | The settings schema: key, type, scope, default, env names, apply mode. |
 | `settings.fetch` | namespace | read | A service's own settings, secrets included, for its scoped token. |
@@ -124,6 +127,9 @@ One persona for every harness. `rook_call(cap="persona.get", worker="rook", args
 
 ### policy
 `rook_call(cap="policy.explain", worker="rook", args={"principal": "role:agent", "cap": "shell.exec", "worker": "<name>"})` shows whether a call would be allowed and which rule decides it. `policy.get` returns the document; changing it (`policy.set`) is for band owners and operator tokens.
+
+### serves
+What each worker hosts: `serves` on a `rook_workers` row is `{sites: [{name, url}], services: [{name, url}]}`, written by hand. `rook_call(worker="rook", cap="serves.list")` returns all of it; `serves.set(worker, sites?, services?)` replaces the lists it is given; `serves.clear(worker)` removes the entry.
 
 ### settings
 Hub, band, worker and user settings with their source (default / hub / band / worker / user / file / env) on worker `rook`: `settings.get(key=…)` or `settings.get(prefix="core.", scope="hub")`, `settings.history`, `settings.describe`. Writes (`settings.set`, `settings.reset`, `settings.apply_worker`) are admin actions: ask the user first. A key set by an environment variable is locked; the reply says which.
