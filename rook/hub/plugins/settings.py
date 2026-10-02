@@ -188,11 +188,16 @@ class HubSettings(Plugin):
         return self._svc().fetch(namespace, _principal())
 
     @capability("report", risk="write")
-    def report(self, namespace: str, env: dict | None = None) -> dict:
+    def report(self, namespace: str, env: dict | None = None, started_at: float = 0.0,
+               pending: list | None = None, values: dict | None = None) -> dict:
         """A service reports which of its settings its environment sets.
 
-        ``env`` maps setting name to the variable that set it (no values)."""
-        return self._svc().report_service(namespace, _principal(), env or {})
+        ``env`` maps setting name to the variable that set it; ``values`` the
+        non-secret env values (optional); ``started_at`` the service's start
+        time; ``pending`` the names of stored changes waiting for its restart."""
+        return self._svc().report_service(namespace, _principal(), env or {},
+                                          started_at=started_at or None, pending=pending,
+                                          values=values)
 
     @capability("worker_secret", risk="read", tags=("sensitive",))
     def worker_secret(self, worker_id: str, names: list) -> dict:

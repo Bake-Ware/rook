@@ -81,7 +81,7 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `settings.fetch` | namespace | read | A service's own settings, secrets included, for its scoped token. |
 | `settings.get` | key='', prefix='', scope='hub', target='', limit=100, fields? | read | Effective value of a setting, where it came from and what it hides. |
 | `settings.history` | key='', scope='', target='', limit=20 | read | Attributed changes, newest first (secrets as fingerprints). |
-| `settings.report` | namespace, env? | write | A service reports which of its settings its environment sets. |
+| `settings.report` | namespace, env?, started_at=0.0, pending?, values? | write | A service reports which of its settings its environment sets. |
 | `settings.reset` | key, scope='', target='', note='' | admin | Remove a stored value so the key inherits again (in history). |
 | `settings.set` | key, value, scope='', target='', note='', dry_run=false | admin | Store a setting (validated, attributed, in history). |
 | `settings.worker_secret` | worker_id, names | read | Vault secrets a stored setting assigns to this worker (fetch at use). |

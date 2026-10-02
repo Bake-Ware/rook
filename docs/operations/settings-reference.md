@@ -137,12 +137,13 @@ are set only in the environment or on the command line.
 
 | Key | Label | Scope | Type | Default | Env / flag | Apply |
 |---|---|---|---|---|---|---|
-| `decision.url` | Engine endpoint | hub | str |  | `DECISION_URL` | live |
-| `decision.assistant_names` | Assistant names | hub | list | `['rook', 'assistant']` | `DECISION_ASSISTANT_NAMES` | live |
-| `decision.timeout_ms` | Per-turn timeout (ms) | hub | int | `150` | `DECISION_TIMEOUT_MS` | live |
-| `decision.recent_speech_seconds` | Recent speech window (s) | hub | int | `15` | `DECISION_RECENT_SPEECH_SECONDS` | live |
-| `decision.silence_seconds` | Silence window (s) | hub | int | `15` | `DECISION_SILENCE_SECONDS` | live |
-| `decision.raw_retention_days` | Keep raw inputs (days) | hub | int | `30` | `DECISION_RAW_RETENTION_DAYS` | live |
+| `decision.url` | Engine endpoint | hub | str |  | `DECISION_URL`, `ROOK_DECISION_URL` | live |
+| `decision.mode` | Mode | hub | str | `shadow` | `ROOK_DECISION_MODE` | live |
+| `decision.assistant_names` | Assistant names | hub | list | `['rook', 'assistant']` | `DECISION_ASSISTANT_NAMES`, `ROOK_DECISION_ASSISTANT_NAMES` | live |
+| `decision.timeout_ms` | Per-turn timeout (ms) | hub | int | `150` | `DECISION_TIMEOUT_MS`, `ROOK_DECISION_TIMEOUT_MS` | live |
+| `decision.recent_speech_seconds` | Recent speech window (s) | hub | int | `15` | `DECISION_RECENT_SPEECH_SECONDS`, `ROOK_DECISION_RECENT_SPEECH_SECONDS` | live |
+| `decision.silence_seconds` | Silence window (s) | hub | int | `15` | `DECISION_SILENCE_SECONDS`, `ROOK_DECISION_SILENCE_SECONDS` | live |
+| `decision.raw_retention_days` | Keep raw inputs (days) | hub | int | `30` | `DECISION_RAW_RETENTION_DAYS`, `ROOK_DECISION_RAW_RETENTION_DAYS` | live |
 
 ## Discord (hub plugin, runs in mcp)
 
@@ -239,28 +240,60 @@ are set only in the environment or on the command line.
 
 | Key | Label | Scope | Type | Default | Env / flag | Apply |
 |---|---|---|---|---|---|---|
-| `voice.bind` | Listen address | hub | str | `127.0.0.1` | `VOICE_BIND` | restart · bootstrap |
-| `voice.port` | Port | hub | int | `8900` | `VOICE_PORT` | restart · bootstrap |
-| `voice.token` | Client bearer token (secret) | hub | str |  | `VOICE_TOKEN` | restart |
-| `voice.allow_anonymous` | Allow clients without a token | hub | bool | off | `VOICE_ALLOW_ANONYMOUS` | restart |
-| `voice.whisper_model` | Speech recognition model | hub | str | `small.en` | `WHISPER_MODEL` | reload |
-| `voice.whisper_device` | Recognition device | hub | str | `cpu` | `WHISPER_DEVICE` | reload |
-| `voice.whisper_compute` | Compute type | hub | str | `int8` | `WHISPER_COMPUTE` | reload |
-| `voice.min_speech_ms` | Minimum speech (ms) | hub | int | `450` | `MIN_SPEECH_MS` | live |
-| `voice.min_rms` | Energy floor | hub | float | `0.008` | `MIN_RMS` | live |
-| `voice.max_no_speech` | No-speech ceiling | hub | float | `0.6` | `MAX_NO_SPEECH` | live |
-| `voice.min_logprob` | Minimum log-probability | hub | float | `-1.0` | `MIN_LOGPROB` | live |
-| `voice.default_voice` | Voice | hub+user | str | `af_heart` | `VOICE` | live |
-| `voice.show_thinking` | Show thinking | user | bool | off |  | live |
-| `voice.hotword_enabled` | Wake word on this account | user | bool | on |  | live |
-| `voice.llm_url` | Language model URL | hub | url | `http://127.0.0.1:1234/v1/chat/completions` | `VLLM_URL` | live |
-| `voice.llm_model` | Model id | hub | str |  | `VLLM_MODEL` | live |
-| `voice.mcp_url` | Rook MCP URL | hub | url | `http://127.0.0.1:8765/mcp` | `ROOK_MCP_URL` | live |
-| `voice.mcp_token` | Rook MCP token (secret) | hub | str |  | `ROOK_MCP_TOKEN` | live |
-| `voice.acp_host` | ACP host | hub | str | `127.0.0.1` | `ACP_HOST` | live |
-| `voice.acp_port` | ACP port | hub | int | `9200` | `ACP_PORT` | live |
-| `voice.acp_auto_approve` | Auto-approve ACP prompts | hub | bool | on | `ACP_AUTO_APPROVE` | live |
-| `voice.direct_tool_budget` | Direct tool calls per turn | hub | int | `1` | `DIRECT_TOOL_BUDGET` | live |
+| `voice.bind` | Listen address | hub | str | `127.0.0.1` | `VOICE_BIND`, `ROOK_VOICE_BIND` | restart · bootstrap |
+| `voice.port` | Port | hub | int | `8900` | `VOICE_PORT`, `ROOK_VOICE_PORT` | restart · bootstrap |
+| `voice.tls_cert` | TLS certificate (PEM path) | hub | path |  | `VOICE_TLS_CERT`, `ROOK_VOICE_TLS_CERT` | restart |
+| `voice.tls_key` | TLS key (PEM path) | hub | path |  | `VOICE_TLS_KEY`, `ROOK_VOICE_TLS_KEY` | restart |
+| `voice.token` | Client bearer token (secret) | hub | str |  | `VOICE_TOKEN`, `ROOK_VOICE_TOKEN` | restart |
+| `voice.allow_anonymous` | Allow clients without a token | hub | bool | off | `VOICE_ALLOW_ANONYMOUS`, `ROOK_VOICE_ALLOW_ANONYMOUS` | restart |
+| `voice.assistant_name` | Assistant name | hub | str | `Rook` | `ROOK_VOICE_ASSISTANT_NAME` | live |
+| `voice.owner` | Owner name | hub | str |  | `ROOK_VOICE_OWNER` | live |
+| `voice.stt_provider` | Speech recognition provider | hub | str | `faster-whisper` | `ROOK_VOICE_STT_PROVIDER` | restart |
+| `voice.tts_provider` | Speech synthesis provider | hub | str | `kokoro` | `ROOK_VOICE_TTS_PROVIDER` | restart |
+| `voice.llm_provider` | Language model API | hub | str | `openai-compatible` | `ROOK_VOICE_LLM_PROVIDER` | live |
+| `voice.turn_provider` | Turn detection provider | hub | str | `smart-turn` | `ROOK_VOICE_TURN_PROVIDER` | restart |
+| `voice.whisper_model` | Speech recognition model | hub | str | `small.en` | `WHISPER_MODEL`, `ROOK_VOICE_WHISPER_MODEL` | restart |
+| `voice.whisper_device` | Recognition device | hub | str | `cpu` | `WHISPER_DEVICE`, `ROOK_VOICE_WHISPER_DEVICE` | restart |
+| `voice.whisper_compute` | Compute type | hub | str | `int8` | `WHISPER_COMPUTE`, `ROOK_VOICE_WHISPER_COMPUTE` | restart |
+| `voice.stt_language` | Recognition language | hub | str | `en` | `ROOK_VOICE_STT_LANGUAGE` | live |
+| `voice.min_speech_ms` | Minimum speech (ms) | hub | int | `200` | `MIN_SPEECH_MS`, `ROOK_VOICE_MIN_SPEECH_MS` | live |
+| `voice.min_rms` | Energy floor | hub | float | `0.008` | `MIN_RMS`, `ROOK_VOICE_MIN_RMS` | live |
+| `voice.max_no_speech` | No-speech ceiling | hub | float | `0.6` | `MAX_NO_SPEECH`, `ROOK_VOICE_MAX_NO_SPEECH` | live |
+| `voice.min_logprob` | Minimum log-probability | hub | float | `-1.0` | `MIN_LOGPROB`, `ROOK_VOICE_MIN_LOGPROB` | live |
+| `voice.turn_model` | Turn model file | hub | str | `smart-turn-v3.2-cpu.onnx` | `ROOK_VOICE_TURN_MODEL` | restart |
+| `voice.turn_check_ms` | Check for end of turn after (ms) | hub | int | `400` | `ROOK_VOICE_TURN_CHECK_MS` | live |
+| `voice.turn_silence_ms` | End turn after silence (ms) when complete | hub | int | `600` | `ROOK_VOICE_TURN_SILENCE_MS` | live |
+| `voice.turn_max_silence_ms` | End turn after silence (ms) regardless | hub | int | `2500` | `ROOK_VOICE_TURN_MAX_SILENCE_MS` | live |
+| `voice.max_utterance_s` | Longest utterance (s) | hub | int | `30` | `ROOK_VOICE_MAX_UTTERANCE_S` | live |
+| `voice.tts_model` | Synthesis model file | hub | str | `kokoro-v1.0.onnx` | `ROOK_VOICE_TTS_MODEL` | restart |
+| `voice.tts_voices` | Voices file | hub | str | `voices-v1.0.bin` | `ROOK_VOICE_TTS_VOICES` | restart |
+| `voice.default_voice` | Voice | hub+user | str | `af_heart` | `VOICE`, `ROOK_VOICE_DEFAULT_VOICE` | live |
+| `voice.tts_speed` | Speaking rate | hub | float | `1.0` | `ROOK_VOICE_TTS_SPEED` | live |
+| `voice.tts_language` | Synthesis language | hub | str | `en-us` | `ROOK_VOICE_TTS_LANGUAGE` | live |
+| `voice.show_thinking` | Show thinking | user | bool | off | `ROOK_VOICE_SHOW_THINKING` | live |
+| `voice.hotword_enabled` | Wake word on this account | user | bool | on | `ROOK_VOICE_HOTWORD_ENABLED` | live |
+| `voice.wake_model` | Wake word model | hub | str |  | `ROOK_VOICE_WAKE_MODEL` | live |
+| `voice.wake_threshold` | Wake word threshold | hub | float | `0.5` | `ROOK_VOICE_WAKE_THRESHOLD` | live |
+| `voice.llm_url` | Language model URL | hub | url | `http://127.0.0.1:1234/v1/chat/completions` | `VLLM_URL`, `ROOK_VOICE_LLM_URL` | live |
+| `voice.llm_model` | Model id | hub | str | `qwopus3.6-35b-a3b-v1-mtp` | `VLLM_MODEL`, `ROOK_VOICE_LLM_MODEL` | live |
+| `voice.llm_api_key` | Language model API key (secret) | hub | str |  | `VLLM_API_KEY`, `ROOK_VOICE_LLM_API_KEY` | live |
+| `voice.acp_host` | ACP host | hub | str | `127.0.0.1` | `ACP_HOST`, `ROOK_VOICE_ACP_HOST` | live |
+| `voice.acp_port` | ACP port | hub | int | `9200` | `ACP_PORT`, `ROOK_VOICE_ACP_PORT` | live |
+| `voice.acp_auto_approve` | Auto-approve ACP prompts | hub | bool | on | `ACP_AUTO_APPROVE`, `ROOK_VOICE_ACP_AUTO_APPROVE` | live |
+| `voice.stt_timeout_s` | Recognition budget (s) | hub | float | `25.0` | `ROOK_VOICE_STT_TIMEOUT_S` | live |
+| `voice.plan_timeout_s` | Planning request budget (s) | hub | float | `25.0` | `ROOK_VOICE_PLAN_TIMEOUT_S` | live |
+| `voice.reply_timeout_s` | Reply budget (s) | hub | float | `60.0` | `ROOK_VOICE_REPLY_TIMEOUT_S` | live |
+| `voice.tts_timeout_s` | Synthesis budget (s) | hub | float | `25.0` | `ROOK_VOICE_TTS_TIMEOUT_S` | live |
+| `voice.turn_detect_timeout_s` | Turn detection budget (s) | hub | float | `2.0` | `ROOK_VOICE_TURN_DETECT_TIMEOUT_S` | live |
+| `voice.model_wait_s` | Model queue wait (s) | hub | float | `5.0` | `ROOK_VOICE_MODEL_WAIT_S` | live |
+| `voice.read_tool_timeout_s` | Read-only tool budget (s) | hub | float | `45.0` | `ROOK_VOICE_READ_TOOL_TIMEOUT_S` | live |
+| `voice.agent_timeout_s` | Delegated agent budget (s) | hub | float | `600.0` | `ROOK_VOICE_AGENT_TIMEOUT_S` | live |
+| `voice.mcp_url` | Rook MCP URL | hub | url | `http://127.0.0.1:8765/mcp` | `ROOK_MCP_URL`, `ROOK_VOICE_MCP_URL` | live · bootstrap |
+| `voice.mcp_token` | Rook MCP token (secret) | hub | str |  | `ROOK_MCP_TOKEN`, `ROOK_VOICE_MCP_TOKEN` | live · bootstrap |
+| `voice.settings_refresh_s` | Settings refresh (s) | hub | int | `300` | `ROOK_VOICE_SETTINGS_REFRESH_S` | live |
+| `voice.settings_cache` | Settings cache file | hub | path |  | `VOICE_SETTINGS_CACHE`, `ROOK_VOICE_SETTINGS_CACHE` | live · bootstrap |
+| `voice.model_dir` | Model directory | hub | path |  | `VOICE_MODEL_DIR`, `ROOK_VOICE_MODEL_DIR` | restart · bootstrap |
+| `voice.state_db` | State database | hub | path |  | `VOICE_STATE_DB`, `ROOK_VOICE_STATE_DB` | restart |
 
 ## Wake (agent.wake) (worker plugin, runs in worker)
 

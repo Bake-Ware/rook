@@ -212,7 +212,8 @@ class SettingsService:
         return rows
 
     GROUP_ORDER = ("General", "Identity", "Access", "Network", "Sign-in", "Updates", "Features",
-                   "Recognition", "Speech", "Agent", "Search", "Timing", "Data", "Storage",
+                   "Persona", "Providers", "Recognition", "Turn taking", "Speech", "Wake word",
+                   "Agent", "Search", "Timing", "Hub link", "Data", "Storage",
                    "Plugins", "Keys & access", "Worker defaults", "Probe", "Thresholds", "Alerts")
 
     @classmethod
@@ -414,9 +415,11 @@ class SettingsService:
             other.append({"key": e.key, "label": e.setting.label or e.key,
                           "scope": e.setting.scope, "overrides": counts, "schema": e.describe()})
         readers = self.resolve("core.settings.service_readers").get("value") or {}
+        runtime = self.store.runtime(page["owner"]) if page["owner"].startswith("service:") else {}
         return {"view": "plugin", "title": page["title"], "namespace": namespace,
                 "origin": page["origin"], "owner": page["owner"], "groups": self._group(rows),
                 "scoped": other, "service_readers": readers.get(namespace, []),
+                "runtime": runtime or None,
                 "history": self.store.history(key=namespace + ".", limit=30)}
 
     def user_page(self, user_id: str, label: str = "") -> dict:
@@ -597,13 +600,15 @@ class SettingsService:
             raise PermissionError(
                 f"settings.fetch {namespace}: this token is not a reader for {namespace} "
                 f"(add its label or agent_id to core.settings.service_readers.{namespace})")
-        values, users = {}, {}
+        values, users, stored = {}, {}, []
         for key in page["keys"]:
             e = self.schema.get(key)
             s = e.setting
             if s.scope == "hub":
                 row = self.store.get(key, "hub", "")
                 raw = self._row_value(row)
+                if row is not None:
+                    stored.append(s.name)
                 if s.secret:
                     ref = cs.secret_ref(raw) if raw else None
                     val = None
@@ -623,22 +628,40 @@ class SettingsService:
                         users.setdefault(row["target"], {})[s.name] = row["value"]
         env_names = {self.schema.get(k).setting.name: list(self.schema.get(k).env_names())
                      for k in page["keys"]}
-        return {"namespace": namespace, "values": values, "users": users,
+        # ``stored``: names with a value saved on the hub (the rest of
+        # ``values`` are defaults), so the service can tell "hub" from "default".
+        return {"namespace": namespace, "values": values, "users": users, "stored": stored,
                 "env": env_names, "note": "The service's own environment still wins over these."}
 
-    def report_service(self, namespace: str, principal: dict | None, env: dict) -> dict:
+    def report_service(self, namespace: str, principal: dict | None, env: dict,
+                       started_at: float | None = None, pending: list | None = None,
+                       values: dict | None = None) -> dict:
         """A service tells the hub which of its keys its environment locks
-        (names only; values of secrets are never sent)."""
+        (variable names; values only for non-secret keys, and only if it
+        sends them), when it started, and which stored changes wait for its
+        restart."""
         self.fetch(namespace, principal)  # same gate
         page = self.schema.plugins()[namespace]
+        values = values if isinstance(values, dict) else {}
         locked = {}
         for key in page["keys"]:
             e = self.schema.get(key)
             var = (env or {}).get(e.setting.name)
             if var:
-                locked[key] = {"env": str(var)[:64], "value": cs.MASK if e.setting.secret else None}
-        self.store.report_runtime(f"service:{namespace}", {"env": locked, "started_at": time.time()})
-        return {"ok": True, "locked": sorted(locked)}
+                shown = cs.MASK if e.setting.secret else values.get(e.setting.name)
+                if not e.setting.secret and shown is not None:
+                    shown = str(shown)[:200]
+                locked[key] = {"env": str(var)[:64], "value": shown}
+        names = {self.schema.get(k).setting.name for k in page["keys"]}
+        waiting = sorted(f"{namespace}.{n}" for n in (pending or []) if n in names)
+        try:
+            started = float(started_at) if started_at else time.time()
+        except (TypeError, ValueError):
+            started = time.time()
+        self.store.report_runtime(f"service:{namespace}", {
+            "env": locked, "started_at": started, "pending": waiting,
+            "reporter": (principal or {}).get("label") or ""})
+        return {"ok": True, "locked": sorted(locked), "pending": waiting}
 
     # -- worker delivery ---------------------------------------------------
     def delivery(self, worker: str, typed: bool) -> tuple[dict, list[str]]:

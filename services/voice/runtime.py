@@ -8,6 +8,8 @@ import time
 import uuid
 import traceback
 
+from .config import cfg
+
 
 class Connection:
     def __init__(self, store, jobs, provider, session, send_json, send_bytes, protocol=2):
@@ -53,7 +55,7 @@ class Connection:
         try:
             await self.emit("state", state="thinking", turn=epoch)
             if pcm is not None:
-                text = await asyncio.wait_for(self.provider.transcribe(pcm), 25)
+                text = await asyncio.wait_for(self.provider.transcribe(pcm), cfg("stt_timeout_s"))
                 if not text:
                     return
                 await self.emit("stt", text=text, turn=epoch)
@@ -78,7 +80,8 @@ class Connection:
             async def on_clause(clause):
                 await clauses.put(clause)
             async def producer():
-                result = await asyncio.wait_for(self.provider.chat(messages, on_clause, reply_only=internal), 60)
+                result = await asyncio.wait_for(self.provider.chat(messages, on_clause, reply_only=internal),
+                                                cfg("reply_timeout_s"))
                 await clauses.put(None)
                 return result
             producer_task = asyncio.create_task(producer())
@@ -146,7 +149,7 @@ class Connection:
         if not self.speak_out:
             return
         await self.emit("state", state="speaking", turn=epoch)
-        pcm, sr = await asyncio.wait_for(self.provider.synthesize(text, self.voice), 25)
+        pcm, sr = await asyncio.wait_for(self.provider.synthesize(text, self.voice), cfg("tts_timeout_s"))
         await self.emit("audio_sr", sr=sr, turn=epoch)
         step = int(sr * .04) * 2
         for offset in range(0, len(pcm), step):

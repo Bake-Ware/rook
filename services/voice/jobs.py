@@ -2,14 +2,24 @@
 import asyncio
 import json
 from .acp import ACPClient
+from .config import cfg
 
 
 class Jobs:
-    def __init__(self, store, direct, acp_host, acp_port, notify, read_timeout=45, agent_timeout=600):
+    def __init__(self, store, direct, acp_host=None, acp_port=None, notify=None, read_timeout=None,
+                 agent_timeout=None):
+        # None: follow voice.acp_host / acp_port / read_tool_timeout_s / agent_timeout_s.
         self.store, self.direct, self.notify = store, direct, notify
-        self.host, self.port = acp_host, acp_port
-        self.read_timeout, self.agent_timeout = read_timeout, agent_timeout
+        self._host, self._port = acp_host, acp_port
+        self._read_timeout, self._agent_timeout = read_timeout, agent_timeout
         self.tasks = {}
+
+    host = property(lambda self: cfg("acp_host") if self._host is None else self._host)
+    port = property(lambda self: cfg("acp_port") if self._port is None else self._port)
+    read_timeout = property(lambda self: cfg("read_tool_timeout_s") if self._read_timeout is None
+                            else self._read_timeout)
+    agent_timeout = property(lambda self: cfg("agent_timeout_s") if self._agent_timeout is None
+                             else self._agent_timeout)
 
     def start(self, session, name, args, context):
         if sum(j["status"] == "running" for j in self.store.jobs(session)) >= 4 or len(self.tasks) >= 32:
