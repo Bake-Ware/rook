@@ -116,25 +116,25 @@ async def main():
     await page.locator('#art-toggle').click();assert await page.locator('#rook-art').get_attribute('data-motion')=='paused'
     await page.locator('#art-toggle').click();assert await page.locator('#rook-art').get_attribute('data-motion')=='on'
     await page.screenshot(path='/tmp/rook-new-install.png')
-    await page.locator('#tab-account').click();await page.locator('[data-section-tab=profile]').wait_for()
-    await page.locator('form:has([name=op][value=profile]) [name=name]').fill('A better account')
-    await page.get_by_role('button',name='Save name',exact=True).click();await page.wait_for_function("document.querySelector('.profile-hero p').textContent==='A better account'")
+    await page.locator('#tab-account').click();await page.locator('[data-section-tab=bands]').wait_for()
+    await page.locator('#view-account [name=name]').fill('A better account')
+    await page.get_by_role('button',name='Save name',exact=True).click();await page.wait_for_function("document.querySelector('.profile-name').textContent==='A better account'")
     await page.screenshot(path='/tmp/rook-new-account.png')
-    await page.locator('[data-section-tab=access]').click();await page.get_by_role('button',name='Show pairing code',exact=True).click();await page.locator('.pairing-code').wait_for(state='visible')
-    await page.wait_for_timeout(1100);assert 'seconds remaining' in await page.locator('.pairing-expiry').inner_text();await page.locator('#view-account [data-close]').click()
-    await page.get_by_role('button',name='Create invitation link',exact=True).click();await page.locator('#view-account dialog').wait_for(state='visible');assert 'invite=' in await page.locator('#view-account .dialog-content').inner_text();await page.locator('#view-account [data-close]').click()
+    await page.locator('#view-account [aria-label^="More actions"]').click();await page.get_by_role('menuitem',name='Pairing code for a device',exact=True).click();await page.locator('.pairing-code').wait_for(state='visible')
+    await page.wait_for_timeout(1100);assert 'seconds remaining' in await page.locator('.pairing-expiry').inner_text();await page.locator('dialog.mg-dialog [data-close]').click()
+    await page.locator('#view-account [aria-label^="More actions"]').click();await page.get_by_role('menuitem',name='Invite a person',exact=True).click();await page.locator('dialog.mg-dialog').wait_for(state='visible');assert 'invite=' in await page.locator('dialog.mg-dialog pre').inner_text();await page.locator('dialog.mg-dialog [data-close]').click()
     await page.locator('#tab-tokens').click();await page.locator('[data-create]').wait_for();await page.locator('[data-create]').click()
     await page.locator('.token-create [name=name]').fill('browser-canary');await page.locator('.token-create button').click();await page.locator('.token-secret').wait_for(state='visible')
     secret=await page.locator('.token-secret').inner_text();assert provider.verify_bearer(secret)
     assert secret not in page.url
-    await page.locator('#view-tokens [data-close]').click();await page.locator('.token-secret').wait_for(state='detached');assert secret not in await page.content()
+    await page.locator('dialog.mg-dialog [data-close]').click();await page.locator('.token-secret').wait_for(state='detached');assert secret not in await page.content()
     await page.locator('[data-picture="user:operator"]').click(no_wait_after=True)
     raw=io.BytesIO();Image.new('RGB',(100,100),'#a4bc92').save(raw,format='PNG')
     await page.locator('.avatar-file').set_input_files({'name':'picture.png','mimeType':'image/png','buffer':raw.getvalue()})
-    await page.locator('[data-clear="user:operator"]').wait_for();assert chat.get_avatar('user:operator')
-    await page.locator('[data-clear="user:operator"]').click();await page.locator('[data-clear="user:operator"]').wait_for(state='detached');assert not chat.get_avatar('user:operator')
+    await page.locator('input[data-picture="user:operator"]').wait_for();assert chat.get_avatar('user:operator')
+    await page.locator('[data-more="user:operator"]').click();await page.get_by_role('menuitem',name='Clear picture',exact=True).click();await page.locator('button[data-picture="user:operator"]').wait_for();assert not chat.get_avatar('user:operator')
     await page.screenshot(path='/tmp/rook-new-tokens.png')
-    await page.locator('[data-revoke]').click();await page.locator('.token-revoke button').click();await page.locator('.token-row').wait_for(state='detached');assert provider.verify_bearer(secret) is None
+    await page.locator('.token-row [data-more]').click();await page.get_by_role('menuitem',name='Revoke…',exact=True).click();await page.locator('.token-revoke button').click();await page.locator('.token-row').wait_for(state='detached');assert provider.verify_bearer(secret) is None
     for width in (1100,820,390):
      await page.set_viewport_size({'width':width,'height':1000})
      for view in ('workers','account','tokens','bands','sessions','install'):

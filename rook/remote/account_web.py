@@ -437,7 +437,10 @@ class AccountWeb:
             body+='</section>'
         body+='<section data-section="access"><h2>Organize your fleet</h2><p><a href="/account/bands">Create bands, rename them, or move workers →</a></p></section>'
         if component:
-            return web.json_response({'html': body, 'csrf': user['csrf']}, headers=NO_STORE)
+            # The dashboard draws its own page from these facts; html serves older clients.
+            facts = {k: user.get(k) for k in ('id', 'name', 'username', 'email', 'has_password', 'google_connected', 'avatar_source', 'avatar_updated')}
+            facts.update(avatar=bool(avatar), google_enabled=bool(self.google.enabled), managed_login=user['id'] == self.bootstrap_id)
+            return web.json_response({'html': body, 'csrf': user['csrf'], 'user': facts}, headers=NO_STORE)
         return self.response('Your Rook account',body)
 
     async def action(self, request):
