@@ -545,6 +545,22 @@ async def test_multiband_client_routes_to_hub_node(tmp_path):
     assert reply["ok"] and reply["result"]["name"] == "rook"
 
 
+def test_a_remote_hub_node_is_listed_on_every_band():
+    """Another process (the dashboard) sees the hub's announces on each band
+    it serves; the merged roster files it under none of them."""
+    from types import SimpleNamespace
+    from rook.band_mcp.client import MultiBandClient, WorkerEntry
+    client = MultiBandClient([])
+    hub = {"worker_id": "h1", "name": "rook", "roles": ["is_hub"], "last_seen": 2.0}
+    client._clients = [
+        SimpleNamespace(label="aaaaaaaa", workers={"h1": WorkerEntry(hub),
+                                                   "w1": WorkerEntry({"worker_id": "w1", "name": "a", "last_seen": 1.0})}),
+        SimpleNamespace(label="bbbbbbbb", workers={"h1": WorkerEntry({**hub, "last_seen": 3.0})}),
+    ]
+    merged = client.workers
+    assert merged["h1"]["band"] == "*" and merged["w1"]["band"] == "aaaaaaaa"
+
+
 # -- MCP bridge end to end -------------------------------------------------------
 
 def _text(result):

@@ -551,8 +551,10 @@ async function addBand(){
 }
 
 const deviceCache=new Map();let discovering=false;
+const isHub=w=>(w.roles||[]).includes('is_hub');
 function deviceDetails(w){
- const d=w.hb?.info||deviceCache.get(w.worker_id)||{};
+ const d=w.hb?.info||deviceCache.get(w.worker_id)||(w.facts?.os?{system:w.facts.os,machine:w.facts.arch}:{});
+ if(isHub(w))return {os:'HUB',type:'computer',detail:['Rook hub',d.system,d.machine].filter(Boolean).join(' · ')};
  if(d.android_release||String(d.system).toLowerCase()==='android'){
   const tablet=d.screen?.dpi&&Math.min(d.screen.w,d.screen.h)/d.screen.dpi*160>=600;
   return {os:'Android',type:tablet?'tablet':'phone',detail:[d.manufacturer,d.model,'Android '+(d.android_release||'')].filter(Boolean).join(' · ')};
@@ -577,9 +579,9 @@ async function discoverDevices(){
   }));
  }finally{discovering=false;}
 }
-function bandName(label){return bands.find(b=>b.id===label)?.name || (label?'Band '+label:'Unknown band');}
+function bandName(label){return label==='*'?'All bands':bands.find(b=>b.id===label)?.name || (label?'Band '+label:'Unknown band');}
 /* ---- workers ---- */
-function shown(){ let l=curBand?workers.filter(w=>w.band===curBand):workers;
+function shown(){ let l=curBand?workers.filter(w=>w.band===curBand||w.band==='*'):workers;
   if(filterStr) l=l.filter(w=>((w.name||w.worker_id)+' '+(w.description||'')).toLowerCase().includes(filterStr)); return l; }
 function setStatus(ok,txt){ $('#dot').className='dot'+(ok?'':' off'); $('#count').textContent=txt; }
 
@@ -696,8 +698,9 @@ function reconcile(){
   if(dirty){ // (re)order by name
     const grouping=$('#worker-group').value, sorting=$('#worker-sort').value;
     const group=w=>grouping==='os'?deviceDetails(w).os:grouping==='band'?bandName(w.band):'';
+    const first=w=>grouping==='os'&&isHub(w)?0:1; // the hub group leads
     const sortValue=w=>sorting==='os'?deviceDetails(w).os:sorting==='band'?bandName(w.band):sorting==='status'?String(w.last_seen_age_secs>90):w.name||w.worker_id;
-    const ord=list.slice().sort((a,b)=>group(a).localeCompare(group(b))||sortValue(a).localeCompare(sortValue(b))||(a.name||'').localeCompare(b.name||''));
+    const ord=list.slice().sort((a,b)=>first(a)-first(b)||group(a).localeCompare(group(b))||sortValue(a).localeCompare(sortValue(b))||(a.name||'').localeCompare(b.name||''));
     $('#view-workers').dataset.layout=workerLayout;
     document.querySelectorAll('.view-toggle [data-layout]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.layout===workerLayout)));
     const signature=JSON.stringify([grouping,ord.map(w=>[w.worker_id,group(w)])]);
@@ -763,6 +766,7 @@ function openWorkerMenu(trigger,wid){
  const actions=[['screenshot.capture','Screenshot',snap],['shell.exec','Shell',shell],['info.host','Device info',info],['worker.description_set','Edit description…',editDescription],['','Move to band…',openWorkerMove]];
  workerMenu.replaceChildren();workerMenuTrigger=trigger;
  for(const [cap,label,run] of actions){if(cap&&!w.caps.includes(cap))continue;
+  if(run===openWorkerMove&&isHub(w))continue; // the hub serves every band; it is not moved
   const b=document.createElement('button');b.setAttribute('role','menuitem');b.textContent=label;
   b.onclick=()=>{workerMenu.hidePopover();run(wid);};workerMenu.append(b);
  }

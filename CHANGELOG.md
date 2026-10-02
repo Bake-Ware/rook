@@ -238,6 +238,12 @@ Preparation for public use.
 
 ### Fixed
 - The deck showed a retracted handoff link as a task's latest handoff.
+- The dashboard listed the hub's own worker `rook` under whichever band it
+  had last announced on, offered to move it to another band and then asked
+  for a worker update. The hub is now shown as on all bands, grouped as
+  **HUB** when grouping by operating system, has no move action, and is no
+  longer part of a band's roster for worker moves or key migration. Workers
+  that announce platform facts are grouped by them without a device probe.
 - `worker.deauth` accepted any validly signed OTA manifest as an order and
   skipped the target/age checks when fields were missing. It now requires a
   deauth v2 order with its own signature domain and mandatory `worker_id` and

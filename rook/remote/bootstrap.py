@@ -1825,11 +1825,14 @@ button:hover{{background:#22b88f}}
         out = []
         for w in self._band.workers.values():
             band = w.get("band")
-            if want and band != want:
+            if want and band not in (want, "*"):
                 continue
             out.append({
                 "worker_id": w["worker_id"],
                 "name": w.get("name"),
+                # Verified roles (is_hub) and self-reported platform facts.
+                "roles": list(w.get("roles") or []),
+                "facts": w.get("facts") or {},
                 "description": w.get("description", ""),
                 "caps": w.get("caps", []),
                 "plugins": w.get("plugins", []),
