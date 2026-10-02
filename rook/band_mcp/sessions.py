@@ -132,7 +132,10 @@ class SessionStore:
         if status == "superseded":
             notes.append("SUPERSEDED — a newer handoff exists for this thread; "
                          "this is history, not current state.")
-        if age > 3 * 86400:
+        if status == "closed":
+            notes.append("CLOSED — this thread was closed; saving a new handoff "
+                         "on it reopens it.")
+        elif age > 3 * 86400:
             notes.append(f"STALE — last updated {_ago(ts)}; verify before "
                          f"treating as current.")
         d["freshness"] = notes or ["current"]
@@ -180,6 +183,18 @@ class SessionStore:
         for i in items:
             i.pop("state", None)
         return {"ok": True, "count": len(items), "threads": items}
+
+    def close_thread(self, thread_id: str, author: str | None = None,
+                     reason: str = "") -> dict:
+        """Close a thread: a new closing entry (who, why) that keeps the goal.
+        Closed threads leave the default listing; history stays readable."""
+        cur = self.get(thread_id, history=False)
+        if not cur.get("ok"):
+            return cur
+        if cur["current"]["status"] == "closed":
+            return {"ok": True, "thread_id": thread_id.strip(), "status": "closed", "already": True}
+        return self.save(thread_id=thread_id, author=author, goal=cur["current"]["goal"],
+                         state=reason or "Closed.", status="closed")
 
     def close(self) -> None:
         if self._db is not None:

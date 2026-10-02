@@ -24,7 +24,7 @@ TOOLS: dict[str, str] = {
 
     "rook_journal": "Recorded rook_call replies. call_id=<reply id> returns that call's full output (recover lost or timed-out output). Otherwise lists entries filtered by worker, cap_prefix, since_secs, only_failures.",
 
-    "rook_handoff_save": "Save a handoff (state, not a transcript) so another agent can continue without asking: goal, state, decisions, next_steps, artifacts (files, hosts, URLs). Omit thread_id to start a thread; pass one to update it. Linked to your claimed task.",
+    "rook_handoff_save": "Save a handoff (state, not a transcript) so another agent can continue without asking: goal, state, decisions, next_steps, artifacts (files, hosts, URLs). Omit thread_id to start a thread; pass one to update it. Linked to your claimed task, or task=<id>. status=closed + thread_id closes it.",
 
     "rook_handoff_get": "A thread's current handoff plus history. Verify anything marked SUPERSEDED or STALE before acting on it.",
 

@@ -82,7 +82,7 @@ class Tasks(Plugin):
     async def write(self, action: str, kind: str = 'task', band: str | None = None,
                     id: str | None = None, data: dict | None = None,
                     request_id: str | None = None) -> dict:
-        """Write tasks/projects/concepts: create|update|link|retract|claim|release.
+        """Write tasks/projects/concepts: create|update|link|retract|claim|release|note|batch.
 
         Same arguments and result as rook_task's write actions (needs
         request_id); kind picks task (default), project or concept."""
@@ -114,7 +114,8 @@ class Tasks(Plugin):
         async def rook_project(action: str = 'list', band: str | None = None, id: str | None = None,
                                query: str = '', data: dict | None = None, request_id: str | None = None) -> str:
             """Projects (outcomes) under concepts: list/search/get/create/update/link.
-            create data {title, body, parent: concept, slug?}. States active|paused|done|archived.
+            create data {title, body, parent: concept, slug?}. States active|paused|done|archived
+            (update data {cascade:true}: open tasks follow).
             What's on deck: rook_task(action="deck")."""
             return await call('project', action, band, id, query, data, request_id)
 
@@ -122,12 +123,15 @@ class Tasks(Plugin):
                             query: str = '', data: dict | None = None, request_id: str | None = None) -> str:
             return await call('task', action, band, id, query, data, request_id)
         rook_task.__doc__ = """Tasks. deck (id=project narrows): in progress with claimants and latest
-handoff, blocked, paused, todo, recently done. claim id before you work: your calls, consoles
-and handoffs then link to it (claims never block others).
+handoff, blocked, paused, todo, recently done; rows have revision and unblocked. deck data {states,
+done_days, fields, handoffs:true}. claim id before you work: your calls, consoles and handoffs then
+link to it (claims never block others).
 create data {title, body, parent: project or task, attrs:{criteria, workers, dependencies}}.
 update data {revision, patch:{state?, attrs?, title?, body?}}; states todo|in_progress|blocked|
 paused|done|cancelled|archived. done needs a factual attrs.outcome + evidence link; blocked needs
 attrs.blocked_reason or a blocked_by link; release/stopping needs data.handoff {goal, state, next_steps}.
+note data {text, evidence?}: remark, no revision. batch data {ops:[{action, id, data}]}.
+release data {actor}: free a claim idle 2 h. get data {links:"all"} adds automatic links.
 """ + LINKS_HELP + """
 search/list: 5/20 excerpts (data {limit, fields}). Writes need request_id."""
         return [rook_concept, rook_project, rook_task]

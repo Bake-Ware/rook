@@ -55,8 +55,16 @@ MIGRATIONS = Path(__file__).resolve().parent / 'migrations'
 NAMESPACE = 'knowledge'
 
 
+# A claim idle longer than this no longer collects auto-links, and another
+# actor may release it (docs/DESIGN-agent-work-system.md, grooming).
+STALE_CLAIM_SECS = 2 * 3600
+CASCADE_STATES = ('paused', 'archived')
+
+
 class Conflict(ValueError):
-    pass
+    def __init__(self, message, revision=None):
+        super().__init__(message)
+        self.revision = revision
 
 
 def packed(value):
@@ -320,7 +328,7 @@ class KnowledgeStore:
     def _op_update(self, db, band, actor, data):
         r = self._get(db, band, data['id'])
         if data.get('revision') != r['revision']:
-            raise Conflict('Record changed; get its current revision before updating')
+            raise Conflict(f"Record changed; its current revision is {r['revision']}", r['revision'])
         patch = data.get('patch') or {}
         if not isinstance(patch, dict) or set(patch) - {'title', 'body', 'state', 'attrs', 'parent'}:
             raise ValueError('patch may contain title, body, state, attrs and parent')
@@ -368,7 +376,44 @@ class KnowledgeStore:
         if attrs != r['attrs']:
             changed['attrs'] = sorted(k for k in attrs if attrs.get(k) != r['attrs'].get(k))
         self._event(db, band, r['id'], actor, 'updated', changed)
+        if data.get('cascade'):
+            if r['kind'] != 'project' or state not in CASCADE_STATES:
+                raise ValueError('cascade applies to a project going to ' + ' or '.join(CASCADE_STATES))
+            updated = {**updated, **self._cascade(db, band, actor, r['id'], state)}
         return updated
+
+    def _cascade(self, db, band, actor, project, state):
+        """Give a project's open tasks its new state. Work in progress is left
+        alone: stopping it needs a handoff, which only its own update can carry."""
+        done, skipped, todo, now = [], [], [project], time.time()
+        while todo:
+            for t in db.execute("SELECT * FROM records WHERE parent=? AND kind='task'", (todo.pop(),)).fetchall():
+                todo.append(t['id'])
+                if t['state'] == 'in_progress':
+                    skipped.append({'id': t['id'], 'slug': t['slug'], 'reason': 'in progress; stop it with a handoff'})
+                elif t['state'] in OPEN_TASK and t['state'] != state:
+                    db.execute('UPDATE records SET state=?,revision=revision+1,updated=? WHERE id=?', (state, now, t['id']))
+                    db.execute('UPDATE claims SET released=? WHERE task=? AND released IS NULL', (now, t['id']))
+                    self._event(db, band, t['id'], actor, 'updated', {'state': state, 'cascade': project})
+                    done.append(t['id'])
+        return {'cascaded': done, 'cascade_skipped': skipped}
+
+    def _op_note(self, db, band, actor, data):
+        """An append-only remark on a record (shown with its events); needs no
+        revision. ``evidence`` links are added with the note as their note."""
+        r = self._get(db, band, data['id'])
+        note = text(data.get('text', ''), 4000)
+        if not note:
+            raise ValueError('note needs data.text')
+        links = []
+        for e in (data.get('evidence') or [])[:10]:
+            if not isinstance(e, dict) or e.get('kind') not in LINK_KINDS or e.get('kind') == 'human' or not e.get('ref'):
+                raise ValueError('evidence items are {kind, ref}; kind as for link')
+            ref = self._get(db, band, e['ref'])['id'] if e['kind'] == 'record' else text(str(e['ref']), 500)
+            links.append(self._link(db, band, r['id'], actor, e['kind'], ref, 'evidence', note[:2000]))
+        self._event(db, band, r['id'], actor, 'note', {'text': note, **({'links': links} if links else {})})
+        seq = db.execute('SELECT max(seq) FROM events WHERE record=?', (r['id'],)).fetchone()[0]
+        return {'id': r['id'], 'note': seq, 'links': links}
 
     def _op_review(self, db, band, actor, data):
         """A person's verdict on a knowledge page: verified, disputed or back to
@@ -493,10 +538,15 @@ class KnowledgeStore:
 
     def _op_release(self, db, band, actor, data):
         r = self._get(db, band, data['id'])
-        aid = actor_id(actor)
+        me = actor_id(actor)
+        aid = text(str(data.get('actor') or ''), 200) or me
         mine = db.execute('SELECT * FROM claims WHERE task=? AND actor=? AND released IS NULL', (r['id'], aid)).fetchone()
         if not mine:
-            raise ValueError('You have no active claim on this task')
+            raise ValueError('You have no active claim on this task' if aid == me
+                             else f'{aid} has no active claim on this task')
+        if aid != me and time.time() - mine['last_active'] < STALE_CLAIM_SECS:
+            raise ValueError(f"That claim was active {int((time.time() - mine['last_active']) // 60)} min ago; "
+                             f"another actor's claim can be released after {STALE_CLAIM_SECS // 3600} h idle")
         others = db.execute('SELECT count(*) FROM claims WHERE task=? AND released IS NULL AND actor<>?', (r['id'], aid)).fetchone()[0]
         if not others and r['state'] == 'in_progress':
             live = self._live_links(db, r['id'])
@@ -506,18 +556,30 @@ class KnowledgeStore:
             db.execute("UPDATE records SET state='paused',revision=revision+1,updated=? WHERE id=?", (time.time(), r['id']))
             self._event(db, band, r['id'], actor, 'updated', {'state': 'paused'})
         db.execute('UPDATE claims SET released=? WHERE id=?', (time.time(), mine['id']))
-        self._event(db, band, r['id'], actor, 'released', {'claim': mine['id']})
+        self._event(db, band, r['id'], actor, 'released',
+                    {'claim': mine['id'], **({'of': aid, 'stale': True} if aid != me else {})})
         return {'released': mine['id'], 'task': r['id']}
 
-    def auto_link(self, actor, kind, ref, relation='touched', note=''):
-        """Attach an artifact to the actor's most recently claimed open task.
-        Called by the hub on the actor's behalf; returns the task id or None."""
+    def auto_link(self, actor, kind, ref, relation='touched', note='', task=None):
+        """Attach an artifact to the actor's most recently claimed open task,
+        or to ``task`` (id or slug) when the caller names one. A claim idle
+        longer than STALE_CLAIM_SECS is skipped: the actor has moved on, and
+        its later work belongs to something else. Called by the hub on the
+        actor's behalf; returns the task id or None."""
         aid = actor.get('id')
         if not aid:
             return None
         with self.db() as db:
-            claim = db.execute('SELECT * FROM claims WHERE actor=? AND released IS NULL ORDER BY started DESC LIMIT 1',
-                               (aid,)).fetchone()
+            if task:
+                row = db.execute("SELECT * FROM records WHERE (id=? OR slug=?) AND kind='task'", (task, task)).fetchall()
+                if len(row) != 1:
+                    raise ValueError(f'task {task!r} not found' if not row else f'task slug {task!r} is in several bands; use its id')
+                self._link(db, row[0]['band'], row[0]['id'], actor, kind, str(ref)[:500], relation, note, auto=True)
+                db.execute('UPDATE claims SET last_active=?,dirty=NULL WHERE task=? AND actor=? AND released IS NULL',
+                           (time.time(), row[0]['id'], aid))
+                return row[0]['id']
+            claim = db.execute('SELECT * FROM claims WHERE actor=? AND released IS NULL AND last_active>=? '
+                               'ORDER BY started DESC LIMIT 1', (aid, time.time() - STALE_CLAIM_SECS)).fetchone()
             if not claim:
                 return None
             self._link(db, claim['band'], claim['task'], actor, kind, str(ref)[:500], relation, note, auto=True)
@@ -544,15 +606,35 @@ class KnowledgeStore:
 
     # -- reads ------------------------------------------------------------------
 
-    def get(self, band, rid):
+    def _dependencies(self, db, band, attrs):
+        """A task's dependencies with their states, and whether all are done."""
+        deps = []
+        for dep in attrs.get('dependencies') or []:
+            d = db.execute('SELECT id,slug,state FROM records WHERE band=? AND (id=? OR slug=?)', (band, dep, dep)).fetchone()
+            deps.append(dict(d) if d else {'id': dep, 'slug': None, 'state': 'missing'})
+        return deps, all(d['state'] == 'done' for d in deps)
+
+    def get(self, band, rid, auto_links=True, events=100):
+        """``auto_links=False`` returns only the links someone made by hand,
+        with ``auto_links`` = a count of the automatic ones per kind."""
         with self.db(False) as db:
             r = self._get(db, band, rid)
             rid = r['id']
             r['events'] = [{**dict(e), 'data': json.loads(e['data'])} for e in db.execute(
-                'SELECT seq,actor,action,ts,data FROM events WHERE band=? AND record=? ORDER BY seq DESC LIMIT 100', (band, rid))]
+                'SELECT seq,actor,action,ts,data FROM events WHERE band=? AND record=? ORDER BY seq DESC LIMIT ?',
+                (band, rid, max(0, min(int(events), 1000))))]
             r['children'] = [self.brief(self.record(e)) for e in db.execute(
                 'SELECT * FROM records WHERE band=? AND parent=? ORDER BY created LIMIT 200', (band, rid))]
             r['links'] = self._live_links(db, rid)
+            if not auto_links:
+                counts = {}
+                for l in r['links']:
+                    if l['auto']:
+                        counts[l['kind']] = counts.get(l['kind'], 0) + 1
+                r['links'] = [l for l in r['links'] if not l['auto']]
+                r['auto_links'] = counts
+            if r['kind'] == 'task' and r['attrs'].get('dependencies'):
+                r['dependencies'], r['unblocked'] = self._dependencies(db, band, r['attrs'])
             r['claims'] = [dict(c) for c in db.execute('SELECT * FROM claims WHERE task=? ORDER BY started DESC LIMIT 20', (rid,))]
             r['mentions'] = sorted(set(WIKI.findall(r['body'])))
             back = db.execute('SELECT * FROM records WHERE band=? AND id<>? AND (body LIKE ? OR id IN '
@@ -567,7 +649,7 @@ class KnowledgeStore:
 
     @staticmethod
     def brief(r):
-        return {k: r.get(k) for k in ('id', 'slug', 'kind', 'title', 'state', 'updated', 'creator', 'parent', 'band')} | {
+        return {k: r.get(k) for k in ('id', 'slug', 'kind', 'title', 'state', 'revision', 'updated', 'creator', 'parent', 'band')} | {
             'excerpt': r['body'][:240],
             **({'verification': r['attrs'].get('verification', 'unverified')} if r['kind'] == 'knowledge' else {})}
 
@@ -602,10 +684,16 @@ class KnowledgeStore:
         return {'band': band, 'worker': worker, 'open_tasks': [self.brief(r) for r in tasks],
                 'recent_knowledge': [self.brief(r) for r in recent], 'generated_at': time.time()}
 
-    def deck(self, bands, project=None, done_days=7):
+    def deck(self, bands, project=None, done_days=7, states=None, outcome_chars=None):
         """What's on deck, per project, across ``bands``: in progress (with
-        claimants and latest handoff), blocked, paused, todo, recently done."""
-        since = time.time() - done_days * 86400
+        claimants and latest handoff), blocked, paused, todo, recently done.
+        ``states`` keeps only those lists (``done`` = recently done);
+        ``done_days=0`` drops finished work; ``outcome_chars`` shortens outcomes."""
+        since = time.time() - float(done_days) * 86400
+        wanted = {'recently_done' if s == 'done' else s for s in states} if states else None
+        lists = ('in_progress', 'blocked', 'paused', 'todo', 'recently_done')
+        if wanted is not None and wanted - set(lists):
+            raise ValueError('states are in_progress, blocked, paused, todo and done')
         out = []
         with self.db(False) as db:
             marks = ','.join('?' * len(bands))
@@ -619,8 +707,11 @@ class KnowledgeStore:
                     tasks += kids
                     todo += [k['id'] for k in kids]
                 entry = {'band': p['band'], 'project': self.brief(self.record(p)),
-                         'in_progress': [], 'blocked': [], 'paused': [], 'todo': [], 'recently_done': []}
+                         **{k: [] for k in lists if wanted is None or k in wanted}}
                 for t in sorted(tasks, key=lambda t: -t['updated']):
+                    key = 'recently_done' if t['state'] in ('done', 'cancelled') else t['state']
+                    if key not in entry or (key == 'recently_done' and t['updated'] < since):
+                        continue
                     rec = self.record(t)
                     item = self.brief(rec)
                     if t['state'] == 'in_progress':
@@ -628,18 +719,41 @@ class KnowledgeStore:
                             'SELECT actor,started,last_active,dirty FROM claims WHERE task=? AND released IS NULL', (t['id'],))]
                         item['needs_hygiene'] = any(c['dirty'] for c in item['claimants'])
                     if t['state'] in ('in_progress', 'paused', 'blocked'):
-                        h = db.execute("SELECT ref,ts FROM links WHERE record=? AND kind='handoff' AND retracts IS NULL "
-                                       "ORDER BY ts DESC LIMIT 1", (t['id'],)).fetchone()
-                        item['latest_handoff'] = dict(h) if h else None
+                        handoffs = [l for l in self._live_links(db, t['id']) if l['kind'] == 'handoff']
+                        item['latest_handoff'] = {'ref': handoffs[-1]['ref'], 'ts': handoffs[-1]['ts']} if handoffs else None
+                        if item.get('needs_hygiene'):
+                            # Why: who went quiet, since when, and the handoff they last left.
+                            item['hygiene'] = [{'actor': c['actor'], 'idle_since': c['last_active'], 'marked': c['dirty'],
+                                                'last_handoff': item['latest_handoff'] and item['latest_handoff']['ts']}
+                                               for c in item['claimants'] if c['dirty']]
+                    if t['state'] in OPEN_TASK and rec['attrs'].get('dependencies'):
+                        item['dependencies'], item['unblocked'] = self._dependencies(db, t['band'], rec['attrs'])
                     if t['state'] == 'blocked':
                         item['blocked_reason'] = rec['attrs'].get('blocked_reason')
-                    if t['state'] in ('done', 'cancelled'):
-                        if t['updated'] >= since:
-                            item['outcome'] = rec['attrs'].get('outcome')
-                            entry['recently_done'].append(item)
-                    elif t['state'] in entry:
-                        entry[t['state']].append(item)
+                    if key == 'recently_done':
+                        outcome = rec['attrs'].get('outcome')
+                        if outcome_chars and outcome and len(outcome) > outcome_chars:
+                            outcome = outcome[:outcome_chars] + '…'
+                        item['outcome'] = outcome
+                    entry[key].append(item)
                 out.append(entry)
+        return out
+
+    def handoff_tasks(self, bands):
+        """Handoff thread id -> the open tasks linked to it (id, slug, state)."""
+        out = {}
+        with self.db(False) as db:
+            marks = ','.join('?' * len(bands))
+            rows = db.execute(f"SELECT l.id lid,l.ref,l.retracts,r.id,r.slug,r.state FROM links l JOIN records r "
+                              f"ON r.id=l.record WHERE l.kind='handoff' AND r.kind='task' AND r.band IN ({marks})",
+                              tuple(bands)).fetchall()
+            gone = {r['retracts'] for r in rows if r['retracts']}
+            for r in rows:
+                if r['retracts'] or r['lid'] in gone or r['state'] not in OPEN_TASK:
+                    continue
+                tasks = out.setdefault(r['ref'], [])
+                if all(t['id'] != r['id'] for t in tasks):
+                    tasks.append({'id': r['id'], 'slug': r['slug'], 'state': r['state']})
         return out
 
     def cursor(self, name, value=None):

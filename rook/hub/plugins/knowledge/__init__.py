@@ -45,8 +45,10 @@ def reply(result) -> str:
 
 
 def error_reply(error: Exception) -> str:
-    return json.dumps({'ok': False, 'error': str(error), 'code': type(error).__name__},
-                      separators=(',', ':'), ensure_ascii=False)
+    out = {'ok': False, 'error': str(error), 'code': type(error).__name__}
+    if getattr(error, 'revision', None) is not None:
+        out['current_revision'] = error.revision
+    return json.dumps(out, separators=(',', ':'), ensure_ascii=False)
 
 
 def check_action(namespace: str, action: str, write: bool) -> None:

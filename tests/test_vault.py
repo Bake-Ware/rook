@@ -130,7 +130,7 @@ async def test_placeholders_never_reach_agent_or_journal(tmp_path, monkeypatch):
         log = (await env.tool('rook_secret', action='log', name='pw'))['access']
         assert [a['action'] for a in log][:2] == ['get', 'use']
         assert log[1]['task'] == t['id'] and log[0]['actor'] == 'static.claudecode.workstation'
-        links = (await env.tool('rook_task', action='get', id=t['id']))['result']['links']
+        links = (await env.tool('rook_task', action='get', id=t['id'], data={'links': 'all'}))['result']['links']
         assert {(l['kind'], l['ref']) for l in links} >= {('secret', 'pw')}
         assert not leaks(env.journal)
 

@@ -19,7 +19,10 @@ from .search import Search
 
 log = logging.getLogger(__name__)
 
-WRITES = ('create', 'update', 'link', 'retract', 'claim', 'release', 'review')
+WRITES = ('create', 'update', 'link', 'retract', 'claim', 'release', 'review', 'note', 'batch')
+BATCH_OPS = ('create', 'update', 'link', 'retract', 'claim', 'release', 'note')
+BATCH_MAX = 50
+CLOSED_TASK = ('done', 'cancelled', 'archived')
 
 # MCP replies (not the operator's web page) get lean defaults: agents pay for
 # every character. ``data.limit`` and ``data.fields`` override them.
@@ -28,6 +31,8 @@ MCP_LIST_LIMIT = 20
 MCP_SEARCH_FIELDS = ('id', 'slug', 'kind', 'title', 'state', 'score', 'excerpt')
 MCP_LIST_FIELDS = ('id', 'slug', 'kind', 'title', 'state', 'parent', 'excerpt')
 EXCERPT = 240
+MCP_GET_EVENTS = 10
+MCP_OUTCOME_CHARS = 240
 
 
 def _fields(value):
@@ -52,13 +57,16 @@ def project(rows, fields, default):
 
 
 class KnowledgeService:
-    def __init__(self, path, principal, enrollment=None, handoffs=None, search=None):
+    def __init__(self, path, principal, enrollment=None, handoffs=None, search=None,
+                 handoff_list=None, handoff_close=None):
         """``search``: optional ``callable(store) -> Search`` (the plugin passes
         its configured embedder); default reads the legacy env vars."""
         self.store = KnowledgeStore(path)
         self.principal = principal
         self.enrollment = enrollment
         self.handoffs = handoffs  # callable(author, handoff dict) -> handoff thread_id
+        self.handoff_list = handoff_list    # callable() -> active threads (latest handoff each)
+        self.handoff_close = handoff_close  # callable(thread_id, author, reason) -> None
         self.search = search(self.store) if search else Search(self.store)
         self.last_maintenance = None
         self.last_error = None
@@ -112,26 +120,95 @@ class KnowledgeService:
             raise ValueError('Handoff store unavailable; save one with rook_handoff_save and link it')
         if not isinstance(h, dict) or not h.get('goal'):
             raise ValueError('data.handoff needs at least {goal, state, next_steps}')
+        if not h.get('thread_id'):
+            # Continue the task's own thread; a new one per update piles up
+            # duplicates nobody can tell apart.
+            with self.store.db(False) as db:
+                mine = [l for l in self.store._live_links(db, rid) if l['kind'] == 'handoff']
+            if mine:
+                h = {**h, 'thread_id': mine[-1]['ref']}
         thread = self.handoffs(actor['id'], h)
-        return self.store.mutate(band, actor, f'handoff:{thread}', 'link',
+        return self.store.mutate(band, actor, f'handoff:{thread}:{time.time_ns()}', 'link',
                                  {'id': rid, 'kind': 'handoff', 'ref': thread, 'relation': 'produced',
                                   'note': 'inline handoff'})
+
+    def _deck(self, band, rid, data, fields, lean):
+        bands = [b['id'] for b in self.bands()] if not band else [self.band(band)]
+        full = data.get('outcome') == 'full'
+        deck = self.store.deck(bands, project=rid or data.get('project'),
+                               done_days=data.get('done_days', 7), states=data.get('states'),
+                               outcome_chars=None if full or not lean else MCP_OUTCOME_CHARS)
+        wanted = _fields(fields)
+        if wanted and 'all' not in wanted:
+            keep = set(wanted) | {'id'}
+            for entry in deck:
+                for key, items in entry.items():
+                    if isinstance(items, list):
+                        entry[key] = [{k: v for k, v in i.items() if k in keep} for i in items]
+        out = {'deck': deck}
+        if data.get('handoffs'):
+            if not self.handoff_list:
+                raise ValueError('Handoff store unavailable; use rook_handoff_list')
+            linked = self.store.handoff_tasks(bands)
+            out['handoffs'] = [{k: t.get(k) for k in ('thread_id', 'goal', 'author', 'as_of', 'next_steps')}
+                               | {'tasks': linked.get(t['thread_id'], [])} for t in self.handoff_list()]
+        return out
+
+    def _close_handoffs(self, band, actor, record):
+        """A finished task takes its handoff threads with it, unless another
+        open task still uses them. Bookkeeping: never fails the update."""
+        if not self.handoff_close:
+            return []
+        try:
+            with self.store.db(False) as db:
+                threads = {l['ref'] for l in self.store._live_links(db, record['id']) if l['kind'] == 'handoff'}
+            still = self.store.handoff_tasks([b['id'] for b in self.bands()])
+            closed = []
+            for thread in sorted(threads):
+                if not any(t['id'] != record['id'] for t in still.get(thread, [])):
+                    if self.handoff_close(thread, actor['id'], f"task {record['slug']} is {record['state']}"):
+                        closed.append(thread)
+            return closed
+        except Exception:
+            log.exception('closing handoff threads failed')
+            return []
+
+    async def _batch(self, band, kind, data, request_id, actor, lean):
+        ops = data.get('ops')
+        if not isinstance(ops, list) or not ops or len(ops) > BATCH_MAX:
+            raise ValueError(f'batch needs data.ops: 1 to {BATCH_MAX} items of {{action, id?, data?}}')
+        if not request_id:
+            raise ValueError('request_id is required for writes')
+        results = []
+        for n, op in enumerate(ops):
+            try:
+                if not isinstance(op, dict) or op.get('action') not in BATCH_OPS:
+                    raise ValueError('op.action must be one of ' + ', '.join(BATCH_OPS))
+                results.append({'ok': True, 'result': await self.dispatch(
+                    op['action'], op.get('band') or band, kind, op.get('id'), '', op.get('data'),
+                    f'{request_id}:{n}', actor, lean)})
+            except (ValueError, KeyError, TypeError, PermissionError) as error:
+                results.append({'ok': False, 'error': str(error), 'code': type(error).__name__,
+                                **({'current_revision': error.revision}
+                                   if getattr(error, 'revision', None) is not None else {})})
+        return {'results': results, 'failed': sum(1 for r in results if not r['ok'])}
 
     async def dispatch(self, action, band=None, kind=None, rid=None, query='', data=None,
                        request_id=None, actor=None, lean=False):
         """``lean`` (MCP callers): search/list default to fewer rows, excerpts
         and a small field set, overridable with data.limit / data.fields."""
         data = dict(data or {})
-        fields = data.pop('fields', None) if action in ('search', 'list') else None
+        fields = data.pop('fields', None) if action in ('search', 'list', 'deck') else None
         if action == 'bands':
             return self.bands()
         if action == 'deck':
-            return {'deck': self.store.deck([b['id'] for b in self.bands()] if not band else [self.band(band)],
-                                            project=rid or data.get('project'))}
+            return self._deck(band, rid, data, fields, lean)
         if action == 'review' and (actor or {}).get('kind') != 'human':
             raise PermissionError('review is for people, from the Knowledge page')
         actor = actor or self.actor()
-        if action in ('get', 'update', 'link', 'retract', 'claim', 'release', 'review') and not rid:
+        if action == 'batch':
+            return await self._batch(band, kind, data, request_id, actor, lean)
+        if action in ('get', 'update', 'link', 'retract', 'claim', 'release', 'review', 'note') and not rid:
             raise ValueError(f'{action} needs id (a record id or slug; for retract, the link id)')
         if action == 'retract':
             b = self.store.link_band(rid)
@@ -146,7 +223,10 @@ class KnowledgeService:
                 records = project(records, fields, MCP_LIST_FIELDS if lean else ('all',))
             return {'records': records}
         if action == 'get':
-            return self.store.get(b, rid)
+            if not lean:
+                return self.store.get(b, rid)
+            return self.store.get(b, rid, auto_links=data.get('links') == 'all',
+                                  events=data.get('events', MCP_GET_EVENTS))
         if action == 'search':
             found = await self.search.query(b, query, kind, data.get('worker'),
                                             int(data.get('limit', MCP_SEARCH_LIMIT if lean else 20)))
@@ -165,7 +245,7 @@ class KnowledgeService:
                     'maintenance_error': self.last_error}
         if action not in WRITES:
             raise ValueError('Actions: bands, deck, list, get, search, context, status, '
-                             'create, update, link, retract, claim, release')
+                             'create, update, link, retract, claim, release, note, batch')
         if action == 'review':
             data = {k: data.get(k) for k in ('revision', 'verdict', 'note')}
         if action in ('update', 'release'):
@@ -178,6 +258,11 @@ class KnowledgeService:
         if action == 'retract':
             data.setdefault('link', rid)
         result = self.store.mutate(b, actor, request_id, action, data)
+        if action == 'update' and result.get('kind') == 'task' and result.get('state') in CLOSED_TASK \
+                and record['state'] not in CLOSED_TASK:
+            closed = self._close_handoffs(b, actor, result)
+            if closed:
+                result = {**result, 'closed_handoffs': closed}
         if action == 'create':
             result = {**result, 'comparable': [
                 {'id': r['id'], 'slug': r['slug'], 'title': r['title'], 'kind': r['kind']}

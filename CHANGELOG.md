@@ -10,6 +10,17 @@ releases yet: workers identify themselves by build number (for example
 Preparation for public use.
 
 ### Added
+- Task and handoff tools sized for grooming a deck. `rook_task` deck rows carry
+  `revision`, resolved `dependencies` with an `unblocked` flag and, when a
+  claim has gone quiet, a `hygiene` reason; deck takes `data {states,
+  done_days, fields, handoffs, outcome}` (`handoffs: true` lists every open
+  handoff thread with the open tasks linked to it). New actions `note` (a
+  dated remark with optional evidence, no revision needed) and `batch` (up to
+  50 writes, one result each). `release data {actor}` frees another actor's
+  claim once it has been idle for two hours. A project update with
+  `data {cascade: true}` gives `paused` or `archived` to its open tasks (work
+  in progress is skipped and listed). `rook_handoff_save` takes `task` (link
+  to that task, not the claimed one) and `status="closed"` (close a thread).
 - Core specification `docs/spec/core-v1.md` (v1.0, RFC 2119): band transport
   profile, messages, caps and tiers, placement, the hub worker `rook` with
   grants and tickets, chat rooms, plugin contract, compatibility rules.
@@ -156,6 +167,15 @@ Preparation for public use.
   their readiness under `authz`. Build-167 workers ignore the extra keys.
 
 ### Changed
+- Over MCP, `rook_task`/`rook_knowledge` `get` returns only hand-made links
+  plus `auto_links` (a count per kind) and the last 10 events; pass
+  `data {links: "all", events: N}` for more. Deck outcomes are cut to 240
+  characters unless `data {outcome: "full"}`. A revision conflict now names
+  the current revision (`current_revision` in the reply).
+- A claim idle for more than two hours no longer collects automatic links.
+  Finishing, cancelling or archiving a task closes its handoff threads unless
+  another open task uses them, and an inline `data.handoff` continues the
+  task's existing thread instead of starting a new one.
 - The dashboard's domain, relay address and band label now follow environment
   or flag > Settings page > `setup.json` > default; `setup.json` no longer
   silently overrides the environment, and a conflict is logged and shown.
@@ -212,6 +232,7 @@ Preparation for public use.
   no longer kept in this repository.
 
 ### Fixed
+- The deck showed a retracted handoff link as a task's latest handoff.
 - `worker.deauth` accepted any validly signed OTA manifest as an order and
   skipped the target/age checks when fields were missing. It now requires a
   deauth v2 order with its own signature domain and mandatory `worker_id` and
