@@ -557,10 +557,23 @@ function fleetCard(card,id){
 const LAYOUTS=['list','grid','scene'];
 let workerLayout='list', inventorySignature='';
 try{const saved=localStorage.getItem('rook.workers.layout');if(LAYOUTS.includes(saved))workerLayout=saved;}catch{}
-function setWorkerLayout(layout){
-  workerLayout=LAYOUTS.includes(layout)?layout:'list';
-  try{localStorage.setItem('rook.workers.layout',workerLayout);}catch{}
-  dirty=true;reconcile();
+let layoutBusy=false;
+const pause=ms=>new Promise(r=>setTimeout(r,ms));
+async function setWorkerLayout(layout){
+  layout=LAYOUTS.includes(layout)?layout:'list';
+  if(layoutBusy||layout===workerLayout)return;
+  const view=$('#view-workers'),calm=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  layoutBusy=true;
+  try{
+    // Into 3D: the page fades, then the scene pulls back from the rook. Out of it: the reverse.
+    if(!calm&&layout==='scene'){view.classList.add('fading');await pause(320);}
+    if(!calm&&workerLayout==='scene'&&fleet){await fleet.leave();view.classList.add('fading');}
+    workerLayout=layout;
+    try{localStorage.setItem('rook.workers.layout',workerLayout);}catch{}
+    if(layout==='scene')fleetEnter=true;
+    dirty=true;reconcile();
+    if(!calm){await pause(30);view.classList.remove('fading');}
+  }finally{layoutBusy=false;view.classList.remove('fading');}
 }
 /* Groups fold: the choice is kept per group name. */
 let collapsedGroups=new Set();
@@ -572,11 +585,12 @@ function toggleGroup(label,section){
   section.classList.toggle('collapsed',folded);section.querySelector('.worker-group-heading').setAttribute('aria-expanded',String(!folded));
 }
 /* The 3D fleet view (rook-scene.js, loaded on first use). */
-let fleet=null, fleetLoading=null;
+let fleet=null, fleetLoading=null, fleetEnter=workerLayout==='scene';
 function versionLabel(w){return w.version?(w.app_release?.platform==='android'?'APK '+w.app_release.version+' · '+w.app_release.code:'v'+w.version):'';}
 function syncFleet(list,group){
   const host=$('#fleet-scene'), on=workerLayout==='scene'&&!$('#view-workers').hidden;
   host.hidden=workerLayout!=='scene';
+  document.body.classList.toggle('fleet-on',on);
   if(!on){fleet?.setActive(false);return;}
   if(!fleet){
     fleetLoading??=import('/account/bands/assets/rook-scene.js').then(({mountFleet})=>{
@@ -588,6 +602,7 @@ function syncFleet(list,group){
   fleet.update(list.map(w=>({id:w.worker_id,name:w.name||w.worker_id,group:group(w)||'',kind:deviceDetails(w).type,hub:isHub(w),
     age:w.last_seen_age_secs||0,banned:!!w.banned,description:w.description||'',version:versionLabel(w).replace(/^v/,''),
     bandName:bandName(w.band),battery:w.hb?.battery?.percent??null,serves:w.serves||null,caps:w.caps||[]})));
+  if(fleetEnter){fleetEnter=false;fleet.enter();}
   fleet.setActive(true);
 }
 

@@ -226,7 +226,7 @@ export function mountFleet(host, options = {}) {
   const labels = document.createElement('div'); labels.className = 'fleet-labels';
   const card = document.createElement('aside'); card.className = 'fleet-card'; card.hidden = true;
   const legend = document.createElement('div'); legend.className = 'fleet-legend';
-  legend.textContent = 'standing · online    toppled · quiet    ring · hosts sites    drag to turn · scroll to zoom · click a piece';
+  legend.textContent = 'standing · online    toppled · quiet    halo · hosts sites    one ring per group    drag to turn · scroll to zoom · click a piece';
   stage.append(renderer.domElement); host.append(stage, labels, legend, card);
 
   const scene = new THREE.Scene();
@@ -263,21 +263,26 @@ export function mountFleet(host, options = {}) {
     scene.add(made); return made;
   };
   const circle = (r, material) => line(Array.from({length: 128}, (_, i) => point(r, i / 128 * TAU)), material, true);
-  for (let k = 0; k < 4; k++) {
-    const inner = RING0 - RING_STEP / 2 + k * RING_STEP;
-    for (let s = 0; s < 24; s++) {
-      if ((s + k) % 2) continue;
-      const wedge = new THREE.Mesh(keep(new THREE.RingGeometry(inner, inner + RING_STEP, 5, 1, s / 24 * TAU, TAU / 24)), tile);
-      wedge.rotation.x = -Math.PI / 2; wedge.position.y = .004; scene.add(wedge);
+  const boardMarks = []; let boardRings = 0;
+  function drawBoard(rings) {
+    if (rings === boardRings) return; boardRings = rings;
+    while (boardMarks.length) { const m = boardMarks.pop(); scene.remove(m); m.geometry.dispose(); resources.delete(m.geometry); }
+    const mark = m => { boardMarks.push(m); return m; };
+    for (let k = 0; k < rings; k++) {
+      const inner = RING0 - RING_STEP / 2 + k * RING_STEP;
+      for (let s = 0; s < 24; s++) {
+        if ((s + k) % 2) continue;
+        const wedge = new THREE.Mesh(keep(new THREE.RingGeometry(inner, inner + RING_STEP, 5, 1, s / 24 * TAU, TAU / 24)), tile);
+        wedge.rotation.x = -Math.PI / 2; wedge.position.y = .004; scene.add(wedge); mark(wedge);
+      }
+      mark(circle(inner, k ? ghost : guide));
     }
-    circle(inner, k ? ghost : guide);
+    const rim = RING0 - RING_STEP / 2 + rings * RING_STEP;
+    mark(circle(rim, guide));
+    for (let i = 0; i < 72; i++) { const a = i / 72 * TAU; mark(line([point(rim, a), point(rim + (i % 6 ? .12 : .3), a)], ghost)); }
+    mark(line([point(rim + .6, 0), point(rim + .6, Math.PI)], dashed)); mark(line([point(rim + .6, Math.PI / 2), point(rim + .6, -Math.PI / 2)], dashed));
   }
-  circle(1.25, guide); circle(1.6, dashed); circle(RING0 - RING_STEP / 2 + 4 * RING_STEP, guide);
-  for (let i = 0; i < 72; i++) {
-    const a = i / 72 * TAU, r = RING0 - RING_STEP / 2 + 4 * RING_STEP;
-    line([point(r, a), point(r + (i % 6 ? .12 : .3), a)], ghost);
-  }
-  line([point(11, 0), point(11, Math.PI)], dashed); line([point(11, Math.PI / 2), point(11, -Math.PI / 2)], dashed);
+  circle(1.25, guide); circle(1.6, dashed);
 
   // Pieces share their geometry; only the pigment differs.
   const pawn = keep(pawnGeometry()); pawn.computeVertexNormals();
@@ -310,38 +315,56 @@ export function mountFleet(host, options = {}) {
     tilt.add(mesh, new THREE.LineSegments(pawnInk, ink)); root.add(tilt);
     const ring = new THREE.LineLoop(haloGeometry, halo); root.add(ring);
     const tie = new THREE.Line(keep(new THREE.BufferGeometry()), tether); scene.add(tie); scene.add(root);
-    return {root, tilt, mesh, ring, tie, el: label(worker.name, 'worker'), worker, lean: 0, hop: 0, at: new THREE.Vector3()};
+    root.visible = tie.visible = false;
+    return {root, tilt, mesh, ring, tie, el: label(worker.name, 'worker away'), worker, lean: 0, hop: 0, at: new THREE.Vector3(), fall: {delay: intro.mode === 'in' ? .45 + Math.random() * 1.15 : .1 + Math.random() * .3, t: 0, dir: 1}};
   }
 
+  // One group, one ring: the smallest group sits nearest the hub, and a group
+  // too big for its ring takes the next one out as well.
   function layout(list) {
     const groups = new Map();
     for (const w of list) { if (!groups.has(w.group)) groups.set(w.group, []); groups.get(w.group).push(w); }
-    const total = list.length || 1; let angle = -Math.PI / 2;
-    let reach = RING0;
-    while (groupMarks.length) { const m = groupMarks.pop(); if (m.isObject3D) scene.remove(m); else m.remove(); }
-    for (const [name, members] of groups) {
-      const span = TAU * members.length / total, pad = Math.min(.07, span * .12), room = span - pad * 2;
-      let ring = 0, placed = 0, outer = RING0;
+    while (groupMarks.length) { const m = groupMarks.pop(); if (m.isObject3D) { scene.remove(m); m.geometry.dispose(); resources.delete(m.geometry); } else m.remove(); }
+    const named = groups.size > 1;
+    const order = [...groups].sort((a, b) => a[1].length - b[1].length || a[0].localeCompare(b[0]));
+    let ring = 0, reach = RING0;
+    for (const [name, members] of order) {
+      let placed = 0; const first = ring;
       while (placed < members.length) {
-        const radius = RING0 + ring * RING_STEP, slots = Math.max(1, Math.floor(room * radius / SLOT));
-        const row = members.slice(placed, placed + slots);
+        const radius = RING0 + ring * RING_STEP, gap = named && ring === first ? 1 : 0;
+        const row = members.slice(placed, placed + Math.max(1, Math.floor(TAU * radius / SLOT) - gap));
+        const start = -Math.PI / 2 + ring * .42, slots = row.length + gap;
         row.forEach((w, i) => {
-          const a = angle + pad + room * (i + .5) / row.length;
+          const a = start + TAU * (i + gap) / slots;
           pieces.get(w.id).at.copy(point(radius, a, 0)); pieces.get(w.id).angle = a;
         });
-        placed += row.length; outer = radius; ring++; reach = Math.max(reach, radius);
+        if (named) { const mark = circle(radius, halo); mark.material = tether; mark.computeLineDistances(); groupMarks.push(mark); }
+        placed += row.length; reach = radius; ring++;
       }
-      if (groups.size > 1) {
-        const r = outer + 1.05, steps = Math.max(4, Math.ceil(room * 14));
-        const arc = line(Array.from({length: steps + 1}, (_, i) => point(r, angle + pad + room * i / steps)), halo);
-        arc.material = guide; groupMarks.push(arc);
-        const el = label(`${name} · ${members.length}`, 'group'); el.dataset.angle = String(angle + span / 2); el.dataset.radius = String(r + .55);
+      if (named) {
+        const el = label(`${name} · ${members.length}`, 'group'); el.dataset.angle = String(-Math.PI / 2 + first * .42); el.dataset.radius = String(RING0 + first * RING_STEP);
         groupMarks.push(el);
       }
-      angle += span;
     }
+    drawBoard(Math.max(2, ring));
     // Frame what is on the board, until the person zooms for themselves.
-    if (!view.zoomed) view.radius = 8.5 + reach * 1.75;
+    if (!view.zoomed) view.radius = 9.5 + reach * 1.9;
+  }
+
+  // Entering: the camera starts on the rook and pulls back while the pawns drop
+  // in at random. Leaving plays it backwards.
+  const intro = {mode: 'in', t: 0, k: 0, done: null};
+  const smooth = x => { x = Math.min(1, Math.max(0, x)); return x * x * (3 - 2 * x); };
+  function enter() {
+    intro.mode = 'in'; intro.t = 0; intro.k = reduced.matches ? 1 : 0; host.classList.add('fleet-intro');
+    for (const piece of pieces.values()) piece.fall = {delay: reduced.matches ? -1 : .45 + Math.random() * 1.15, t: 0, dir: 1};
+  }
+  function leave() {
+    select(null);
+    if (reduced.matches || !active) return Promise.resolve();
+    intro.mode = 'out'; intro.t = 0; host.classList.add('fleet-intro');
+    for (const piece of pieces.values()) piece.fall = {delay: Math.random() * .45, t: 0, dir: -1};
+    return new Promise(resolve => { intro.done = resolve; });
   }
 
   function update(list) {
@@ -451,9 +474,9 @@ export function mountFleet(host, options = {}) {
   };
   const up = e => { const wasDrag = view.moved; view.drag = null; if (!wasDrag) select(pieceAt(e)); };
   const wheel = e => { e.preventDefault(); view.zoomed = true; view.radius = Math.min(34, Math.max(8, view.radius * (1 + Math.sign(e.deltaY) * .08))); paint(); };
-  const leave = () => { if (hovered) { hovered = null; paint(); } };
+  const unhover = () => { if (hovered) { hovered = null; paint(); } };
   dom.addEventListener('pointerdown', down); dom.addEventListener('pointermove', move); dom.addEventListener('pointerup', up);
-  dom.addEventListener('pointerleave', leave); dom.addEventListener('wheel', wheel, {passive: false}); dom.style.cursor = 'grab'; dom.style.touchAction = 'none';
+  dom.addEventListener('pointerleave', unhover); dom.addEventListener('wheel', wheel, {passive: false}); dom.style.cursor = 'grab'; dom.style.touchAction = 'none';
 
   const projected = new THREE.Vector3();
   function place(el, position, lift) {
@@ -465,14 +488,26 @@ export function mountFleet(host, options = {}) {
   }
 
   function step(dt) {
+    intro.t += dt;
+    if (intro.mode === 'in') { intro.k = smooth(intro.t / 1.9); if (intro.t > 1.5) host.classList.remove('fleet-intro'); if (intro.t >= 1.9) intro.mode = 'idle'; }
+    else if (intro.mode === 'out') {
+      intro.k = 1 - smooth((intro.t - .35) / 1.05);
+      if (intro.t >= 1.45) { intro.mode = 'gone'; intro.k = 0; const done = intro.done; intro.done = null; if (done) done(); }
+    }
     for (const piece of pieces.values()) {
+      const fall = piece.fall; fall.t += dt;
+      const p = fall.delay < 0 ? 2 : (fall.t - fall.delay) / .6;
+      const landed = fall.dir > 0 ? p >= 1 : p <= 0;
+      piece.root.visible = intro.mode !== 'gone' && (fall.dir > 0 ? p > 0 : p < 1);
+      piece.tie.visible = piece.root.visible && landed; piece.el.classList.toggle('away', !(piece.root.visible && landed));
+      piece.drop = fall.dir > 0 ? (p >= 1 ? (p < 1.3 ? Math.sin((p - 1) / .3 * Math.PI) * .16 : 0) : (1 - p * p) * 17) : Math.max(0, p) ** 2 * 17;
       const state = stateOf(piece.worker), target = state === 'online' ? 0 : 1;
       piece.lean += (target - piece.lean) * Math.min(1, dt * 4);
       piece.tilt.rotation.z = piece.lean * Math.PI / 2 * .97;
       piece.tilt.position.set(0, piece.lean * .44, 0);
       piece.hop = Math.max(0, piece.hop - dt * 2.4);
       const big = piece.worker.id === picked || piece.worker.id === hovered;
-      piece.root.position.y = Math.sin(piece.hop * Math.PI) * .22 * (1 - piece.lean);
+      piece.root.position.y = Math.sin(piece.hop * Math.PI) * .22 * (1 - piece.lean) + piece.drop;
       piece.mesh.material = piece.worker.id === picked ? pigment.picked : pigment[state];
       const s = (KIND_SCALE[piece.worker.kind] || 1) * (big ? 1.14 : 1);
       piece.root.scale.x += (s - piece.root.scale.x) * Math.min(1, dt * 10); piece.root.scale.y = piece.root.scale.z = piece.root.scale.x;
@@ -490,8 +525,9 @@ export function mountFleet(host, options = {}) {
 
   function paint() {
     if (disposed || !active) return;
-    camera.position.set(Math.cos(view.theta) * Math.cos(view.phi) * view.radius, Math.sin(view.phi) * view.radius, Math.sin(view.theta) * Math.cos(view.phi) * view.radius);
-    camera.lookAt(0, .35, 0); camera.updateMatrixWorld();
+    const k = intro.k, radius = 6.4 + (view.radius - 6.4) * k, phi = .1 + (view.phi - .1) * k, theta = view.theta - (1 - k) * .9, eye = 2.1 + (.35 - 2.1) * k;
+    camera.position.set(Math.cos(theta) * Math.cos(phi) * radius, eye + Math.sin(phi) * radius, Math.sin(theta) * Math.cos(phi) * radius);
+    camera.lookAt(0, eye, 0); camera.updateMatrixWorld();
     renderer.render(scene, camera);
     place(hubLabel, hub.position, 3.75);
     for (const piece of pieces.values()) {
@@ -528,5 +564,5 @@ export function mountFleet(host, options = {}) {
     resources.forEach(resource => resource.dispose()); renderer.dispose(); stage.remove(); labels.remove(); legend.remove(); card.remove();
   }
   host.dataset.mode = 'webgl';
-  return {update, setActive, destroy, refreshCard: () => { if (picked) showCard(); }};
+  return {update, setActive, destroy, enter, leave, refreshCard: () => { if (picked) showCard(); }};
 }
