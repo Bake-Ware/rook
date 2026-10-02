@@ -548,7 +548,9 @@ class MultiBandClient:
                 prev = merged.get(wid)
                 if prev is None or w.get("last_seen", 0.0) >= prev.get("last_seen", 0.0):
                     entry = WorkerEntry(w)
-                    entry["band"] = label
+                    # A hub node (verified is_hub grant) announces on every
+                    # band it serves; it belongs to none of them in particular.
+                    entry["band"] = "*" if "is_hub" in (w.get("roles") or ()) else label
                     merged[wid] = entry
         if self._local is not None:
             # The hub node is on every band at once (and listed with none).
