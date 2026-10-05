@@ -278,16 +278,19 @@ class VoiceService : Service() {
             var speech: SpeechDetector? = null
             var wake: WakeWordDetector? = null
             val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-            val oldMode = audio.mode
-            val oldSpeaker = audio.isSpeakerphoneOn
             try {
                 speech = SpeechDetector(this)
                 if (wakeEnabled && WAKE_MODEL.isNotEmpty()) wake = WakeWordDetector(this, WAKE_MODEL, WAKE_THRESHOLD)
                 detector = wake
                 val minBuf = AudioRecord.getMinBufferSize(VoiceClient.SR_IN, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
-                arbiter.ownsMode = true
+                // Save the pre-Rook routing (never a leftover of Rook's own forced state).
+                audioRoute.begin(audio.mode, audio.isSpeakerphoneOn)
+                arbiter.modeTaken()
                 audio.mode = AudioManager.MODE_IN_COMMUNICATION
-                if (!audio.isBluetoothScoOn && !audio.isWiredHeadsetOn) audio.isSpeakerphoneOn = true
+                if (!audio.isBluetoothScoOn && !audio.isWiredHeadsetOn && !audio.isSpeakerphoneOn) {
+                    audioRoute.speakerForced()
+                    audio.isSpeakerphoneOn = true
+                }
                 rec = AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, VoiceClient.SR_IN,
                     AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(minBuf, VoiceClient.FRAME_BYTES * 8))
                 check(rec.state == AudioRecord.STATE_INITIALIZED) { "mic init failed" }
@@ -331,10 +334,6 @@ class VoiceService : Service() {
                 }
             } finally {
                 micRunning = false; aecAvailable = false
-                // Below Android 12 audio mode/speaker routing is global: after yielding to a call
-                // or another app, leave its routing alone. Android 12+ scopes them per client.
-                val restoreAudio = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ||
-                    arbiter.yieldReason == null || arbiter.yieldReason == MicYieldPolicy.Reason.FOCUS
                 cleanupVoiceCapture(
                     stop = { synchronized(recorderLock) { rec?.stop() } },
                     release = { synchronized(recorderLock) {
@@ -343,9 +342,12 @@ class VoiceService : Service() {
                     before = listOf({ client?.setAecAvailable(false); Unit },
                         { echo?.release(); Unit }, { noise?.release(); Unit }),
                     after = listOf({ speech?.close(); Unit }, { wake?.close(); Unit },
-                        { detector = null }, { if (restoreAudio) audio.isSpeakerphoneOn = oldSpeaker },
-                        { if (restoreAudio) audio.mode = if (oldMode == AudioManager.MODE_IN_COMMUNICATION) AudioManager.MODE_NORMAL else oldMode },
-                        { arbiter.ownSessionId = 0; arbiter.ownsMode = false })
+                        { detector = null },
+                        // Below Android 12 mode/speaker are global: undo Rook's speakerphone always,
+                        // and its MODE_IN_COMMUNICATION unless a call has already replaced it.
+                        { restoreAudioRoute(audio) },
+                        // setMode is async on 12+: keep treating IN_COMMUNICATION as Rook's until it changes.
+                        { arbiter.ownSessionId = 0; arbiter.modeReleased() })
                 )
             }
         }
@@ -367,6 +369,13 @@ class VoiceService : Service() {
             else openSession()
             syncFocus()
         }
+    }
+
+    private fun restoreAudioRoute(audio: AudioManager) {
+        val r = audioRoute.end(audio.mode)
+        r.speaker?.let { audio.isSpeakerphoneOn = it }
+        r.mode?.let { audio.mode = it }
+        audioRoute.restored()
     }
 
     // ---- sharing the mic with other apps (MicArbiter) -----------------------
@@ -473,6 +482,8 @@ class VoiceService : Service() {
 
     companion object {
         @Volatile var inst: VoiceService? = null
+        /** Pre-Rook audio routing; process-wide so a leftover survives a service restart. */
+        private val audioRoute = AudioRouteKeeper()
         private const val TAG = "VoiceService"
         const val CHANNEL = "rook_voice"
         const val NOTIF_ID = 2

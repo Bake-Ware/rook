@@ -15,9 +15,15 @@ import android.view.KeyEvent
  * Pure decision logic for headset / assistant keys reaching Rook's media session.
  *
  *  - VOICE_ASSIST, ASSIST, SEARCH: press = talk (or interrupt while Rook speaks).
- *  - HEADSETHOOK, MEDIA_PLAY_PAUSE: long press = talk; a short press interrupts
- *    while Rook is thinking/speaking, otherwise it is passed on to the next media
- *    app as a normal click so music controls keep working.
+ *  - MEDIA_PLAY_PAUSE: long press = talk.
+ *  - HEADSETHOOK, MEDIA_PLAY_PAUSE: a short press interrupts while Rook is
+ *    thinking/speaking, otherwise it is passed on to the next media app as a normal
+ *    click so music controls keep working.
+ *  - HEADSETHOOK long press normally never reaches a media session: the system
+ *    handles it itself (unlocked: ACTION_WEB_SEARCH, which Rook deliberately does
+ *    not register for; locked / screen off: VOICE_SEARCH_HANDS_FREE, which
+ *    VoiceCommandActivity handles). The long-press branch below only covers devices
+ *    that do deliver it.
  *  - Every other key is passed on untouched.
  */
 internal class HeadsetKeyDecoder(private val longPressMs: Long = 600L) {

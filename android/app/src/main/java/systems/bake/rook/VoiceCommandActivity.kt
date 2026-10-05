@@ -7,8 +7,10 @@ import android.os.Bundle
 /**
  * Invisible entry point for legacy voice/assist triggers that Bluetooth headsets and
  * older Android builds still send: VOICE_COMMAND (HFP voice-recognition button),
- * SEARCH_LONG_PRESS, VOICE_ASSIST and the hands-free voice search used for a headset
- * long-press while the screen is off. Each is forwarded to MainActivity's existing
+ * SEARCH_LONG_PRESS, VOICE_ASSIST and the hands-free voice search
+ * (VOICE_SEARCH_HANDS_FREE) the system sends for a HEADSETHOOK long press while the
+ * device is locked. (Unlocked, that long press becomes ACTION_WEB_SEARCH, which Rook
+ * does not claim.) Each is forwarded to MainActivity's existing
  * ACTION_ASSIST path, which owns permission requests and opens a voice session.
  */
 class VoiceCommandActivity : Activity() {

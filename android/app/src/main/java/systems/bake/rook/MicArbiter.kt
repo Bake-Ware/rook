@@ -16,11 +16,17 @@ import android.util.Log
  * Platform side of [MicYieldPolicy]: watches who else wants audio input and tells
  * VoiceService when to release its AudioRecord and when it may open it again.
  * Everything here runs on [main]; the capture thread only touches the volatile
- * [ownSessionId] / [ownsMode] fields.
+ * [ownSessionId] field and calls [modeTaken] / [modeReleased].
  *
  * Signals, all version-guarded so minSdk 23 keeps working:
  *  - API 24+: AudioManager recording callback (another client recording);
  *    API 29+: AudioRecordingConfiguration.isClientSilenced for our own client.
+ *    Android 7-9 (API 24-28) never let a second app open the mic while Rook is
+ *    recording (its AudioRecord.startRecording fails instead), so "another app is
+ *    recording" can only fire there once Rook has already released; on those
+ *    versions an app that wants the mic is expected to take audio focus, and the
+ *    focus-loss trigger (held during voice conversations) is what makes Rook yield.
+ *    Plain standby without focus cannot see the contention there.
  *  - Audio focus, held only during a voice conversation (LOSS / LOSS_TRANSIENT).
  *  - API 31+: audio mode changes; API 23-30: telephony call state (no permission
  *    needed below 31). Audio mode is also re-read on every evaluation.
@@ -39,8 +45,15 @@ internal class MicArbiter(
 
     /** Session id of Rook's live AudioRecord, or 0 when none (set by the capture thread). */
     @Volatile var ownSessionId = 0
-    /** True while Rook itself has put audio into MODE_IN_COMMUNICATION. */
-    @Volatile var ownsMode = false
+    /**
+     * True while MODE_IN_COMMUNICATION is Rook's own: from [modeTaken] until the mode
+     * actually leaves IN_COMMUNICATION after [modeReleased] (setMode is asynchronous on
+     * API 31+), so a lagging mode read is never mistaken for a call.
+     */
+    private var ownsMode = false
+    /** elapsedRealtime of [modeReleased] while waiting for the mode to change, else -1. */
+    private var modeReleasedAt = -1L
+    private val modeLock = Any()
     /** Reason for the last release, read by the capture thread's cleanup. */
     @Volatile var yieldReason: MicYieldPolicy.Reason? = null
         private set
@@ -155,9 +168,17 @@ internal class MicArbiter(
     /** Read the signals and release capture if the policy says so. Returns now. */
     private fun refresh(configs: List<AudioRecordingConfiguration>?): Long {
         readRecorders(configs)
-        policy.inCall = telephonyCall || MicYieldPolicy.callMode(currentMode(),
-            rookOwnsMode = ownsMode || Build.VERSION.SDK_INT < Build.VERSION_CODES.S)
         val now = SystemClock.elapsedRealtime()
+        val mode = currentMode()
+        val rookMode = synchronized(modeLock) {
+            if (ownsMode && modeReleasedAt >= 0 &&
+                !MicYieldPolicy.rookModeLingers(mode, modeReleasedAt, now, MODE_RELEASE_GRACE_MS)) {
+                ownsMode = false; modeReleasedAt = -1L
+            }
+            ownsMode
+        }
+        policy.inCall = telephonyCall || MicYieldPolicy.callMode(mode,
+            rookOwnsMode = rookMode || Build.VERSION.SDK_INT < Build.VERSION_CODES.S)
         if (policy.update(now)) {
             val r = policy.reason ?: MicYieldPolicy.Reason.OTHER_APP
             yieldReason = r
@@ -165,6 +186,15 @@ internal class MicArbiter(
             release(r)
         }
         return now
+    }
+
+    /** Capture thread: Rook is about to set MODE_IN_COMMUNICATION. */
+    fun modeTaken() = synchronized(modeLock) { ownsMode = true; modeReleasedAt = -1L }
+
+    /** Capture thread: Rook asked for its mode to be undone (the change may land later). */
+    fun modeReleased() {
+        synchronized(modeLock) { if (ownsMode) modeReleasedAt = SystemClock.elapsedRealtime() }
+        main.post { evaluate() }
     }
 
     /** Recording started successfully on the capture thread. */
@@ -254,5 +284,7 @@ internal class MicArbiter(
     companion object {
         private const val TAG = "MicArbiter"
         private const val POLL_MS = 5_000L
+        /** Longest wait for an async setMode to land before IN_COMMUNICATION counts as someone else's. */
+        private const val MODE_RELEASE_GRACE_MS = 2_000L
     }
 }
