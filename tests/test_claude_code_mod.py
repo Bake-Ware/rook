@@ -1,5 +1,6 @@
 """The Claude Code mod: marketplace layout, rook_install_claude_code, scrubbed fixtures."""
 import json
+import os
 import re
 from pathlib import Path
 
@@ -32,14 +33,66 @@ def test_marketplace_lists_the_mod_at_its_version():
     assert (MOD / "hooks" / "hooks.json").is_file()
 
 
+def _published_files():
+    """Everything the mod's marketplace entry publishes, plus the READMEs that point at it."""
+    roots = [MOD, ROOT / ".claude-plugin"]
+    for root in roots:
+        for p in root.rglob("*"):
+            parts = p.relative_to(root).parts
+            if not p.is_file() or "node_modules" in parts:
+                continue
+            if ".claude-plugin" in parts and "types" in parts:  # written by Claude Code, git-ignored
+                continue
+            yield p
+    yield ROOT / "README.md"
+
+
+def _private_names() -> list[str]:
+    """Real host, worker and band names that must never be published.
+
+    Kept out of the repo: one per line in the file ROOK_PRIVATE_NAMES names, or
+    in ~/.config/rook/private-names.txt. Blank lines and # comments are skipped.
+    """
+    candidates = [os.environ.get("ROOK_PRIVATE_NAMES", ""),
+                  str(Path.home() / ".config" / "rook" / "private-names.txt")]
+    for path in filter(None, candidates):
+        f = Path(path).expanduser()
+        if f.is_file():
+            return [line.strip() for line in f.read_text(encoding="utf-8").splitlines()
+                    if line.strip() and not line.strip().startswith("#")]
+    return []
+
+
+# 8+ hex characters that read like a real id (a band id, a token, a hash):
+# letters and digits mixed, and varied. Placeholders such as aaaa1111 pass.
+_HEX = re.compile(r"(?<![0-9A-Za-z_])[0-9a-fA-F]{8,}(?![0-9A-Za-z_])")
+
+
+def _id_like(word: str) -> bool:
+    w = word.lower()
+    return (any(c.isdigit() for c in w) and any(c.isalpha() for c in w)
+            and len(set(w)) >= 5)
+
+
+def test_id_like_spots_real_ids_and_spares_placeholders():
+    assert _id_like("3f9a7c21") and _id_like("e3b0c44298fc1c14")
+    assert not _id_like("aaaa1111") and not _id_like("1700000000") and not _id_like("deadbeef")
+
+
 def test_mod_files_name_no_real_hosts_paths_or_ids():
-    for p in MOD.rglob("*"):
-        if not p.is_file() or ".claude-plugin/types" in p.as_posix():
-            continue
+    private = [name.lower() for name in _private_names()]
+    for p in _published_files():
         text = p.read_text(encoding="utf-8")
         assert not re.search(r"/home/(?!user\b)[a-z]", text), p
         assert not re.search(r"\b(?:192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d+\.\d+", text), p
         assert not re.search(r"rmcp-|\b[0-9a-f]{32,}\b", text), p
+        ids = [m.group(0) for m in _HEX.finditer(text) if _id_like(m.group(0))]
+        assert not ids, (p, ids)
+        lower = text.lower()
+        # Counted, never printed: a failure must not echo the private names.
+        leaked = sum(1 for name in private
+                     if re.search(rf"(?<![0-9a-z]){re.escape(name)}(?![0-9a-z])", lower))
+        assert leaked == 0, (p, f"{leaked} name(s) from the private denylist")
 
 
 def test_status_without_a_listing_gives_install_steps_and_how_to_check():
