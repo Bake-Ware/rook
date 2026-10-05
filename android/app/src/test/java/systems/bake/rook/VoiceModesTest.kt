@@ -17,6 +17,17 @@ class VoiceModesTest {
         assertEquals(talk.defaultPrompt, VoiceModes.shownPrompt(talk, ""))
         assertEquals("custom", VoiceModes.shownPrompt(talk, "custom"))
     }
+    @Test fun sessionModeMustMatchWhatWasAsked() {
+        assertTrue(VoiceModes.sessionModeMatches("conversation", "conversation"))
+        assertTrue(VoiceModes.sessionModeMatches("assistant", "assistant"))
+        // An old server sends no mode and runs the assistant: fine only if that was asked for.
+        assertTrue(VoiceModes.sessionModeMatches("assistant", null))
+        assertFalse(VoiceModes.sessionModeMatches("conversation", null))
+        assertFalse(VoiceModes.sessionModeMatches("conversation", ""))
+        assertFalse(VoiceModes.sessionModeMatches("conversation", "assistant"))
+        assertFalse(VoiceModes.sessionModeMatches("dictate", "listen"))
+        assertTrue(VoiceModes.mismatchMessage("conversation", null).contains("\"assistant\" instead of \"conversation\""))
+    }
     @Test fun assistantKeepsHistoricalConversationScope() {
         assertEquals("wss://v/ws\u0000tok", VoiceModes.conversationScope("wss://v/ws", "tok", "assistant"))
         assertEquals("wss://v/ws\u0000tok", VoiceModes.conversationScope("wss://v/ws", "tok", "unknown"))

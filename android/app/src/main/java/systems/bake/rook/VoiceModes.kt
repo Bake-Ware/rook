@@ -23,6 +23,20 @@ object VoiceModes {
     fun byId(id: String?): Mode = ALL.firstOrNull { it.id == id } ?: ALL.first()
     fun promptKey(id: String) = "voice_mode_prompt_$id"
 
+    /**
+     * Whether the server really started the mode we asked for. A server that predates
+     * modes sends no mode and answers as the full assistant; anything but an exact
+     * match must stop the session, or a child's "conversation" could silently get
+     * the agent with its tools.
+     */
+    fun sessionModeMatches(requested: String, echoed: String?): Boolean =
+        (echoed?.takeIf { it.isNotEmpty() } ?: DEFAULT) == requested
+
+    fun mismatchMessage(requested: String, echoed: String?): String {
+        val got = echoed?.takeIf { it.isNotEmpty() } ?: DEFAULT
+        return "Voice server started \"$got\" instead of \"$requested\" mode; disconnected. Update the voice server or change the mode."
+    }
+
     /** What to store for an edited prompt: trimmed, capped, blank when it equals the default. */
     fun storedPrompt(mode: Mode, input: String): String {
         val text = input.trim().take(MAX_PROMPT).trim()

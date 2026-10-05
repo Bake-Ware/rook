@@ -148,6 +148,8 @@ class VoiceService : Service() {
             override fun onAssistantDone() = current { VoiceBus.listener?.onAssistantDone() }
             override fun onInterrupt() = current { VoiceBus.listener?.onInterrupt() }
             override fun onError(msg: String) = current { VoiceBus.listener?.onError(msg) }
+            // Retrying would only hit the same server and mode again; stay closed and say why.
+            override fun onRefused(msg: String) = current { VoiceBus.listener?.onError(msg); closeSession() }
             override fun onTool(title: String, status: String) = current { VoiceBus.listener?.onTool(title, status) }
             override fun onBye(mode: String, afterMs: Long) = current {
                 Log.i(TAG, "bye mode=$mode after=${afterMs}ms")
