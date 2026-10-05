@@ -58,3 +58,6 @@ packages = ["rook"]
 
 [tool.hatch.build.targets.sdist]
 include = ["rook", "skills", "integrations", ".claude-plugin", "tests", "conformance", "README.md", "LICENSE", "NOTICE", "CHANGELOG.md", "CONTRIBUTING.md", ".env.example"]
+# Hatchling reads only the root .gitignore: keep out what Claude Code writes
+# beside a loaded mod (its types list the developer's connected MCP servers).
+exclude = ["integrations/**/.claude-plugin/types", "**/node_modules"]
