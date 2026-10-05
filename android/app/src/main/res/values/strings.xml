@@ -39,4 +39,7 @@
     <string name="show_thinking">Show thinking</string>
     <string name="voice_picker">Voice</string>
     <string name="retry_voices">Reload voices</string>
+    <string name="mic_paused">mic paused</string>
+    <string name="mic_paused_other">Mic paused: in use by another app</string>
+    <string name="mic_paused_call">Mic paused during a call</string>
 </resources>

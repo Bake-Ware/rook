@@ -41,7 +41,7 @@ class VoiceService : Service() {
 
     @Volatile private var client: VoiceClient? = null
     private var generation = 0L
-    private val capture = VoiceCaptureLifetime { stopMic(); stopForegroundCompat() }
+    private val capture = VoiceCaptureLifetime { stopMic(); stopForegroundCompat(); if (::arbiter.isInitialized) arbiter.idle() }
     private var sessionWanted: Boolean
         get() = capture.sessionWanted
         set(value) { capture.sessionWanted = value }
@@ -62,6 +62,8 @@ class VoiceService : Service() {
     @Volatile private var lastServerState = "idle"
     @Volatile private var lastActivityAt = 0L
     @Volatile private var lastWakeAt = 0L
+    private lateinit var arbiter: MicArbiter
+    private var buttons: HeadsetButtons? = null
     private lateinit var url: String
     private var insecure = false
     private var token = ""
@@ -72,6 +74,21 @@ class VoiceService : Service() {
     override fun onCreate() {
         super.onCreate()
         inst = this
+        arbiter = MicArbiter(this, main,
+            release = { reason -> yieldMic(reason) },
+            resume = { resumeMic() },
+            focusGone = { if (sessionWanted && capture.voiceSession) closeSession() },
+            changed = { reason -> micPauseChanged(reason) })
+        arbiter.start()
+        buttons = try {
+            HeadsetButtons(this, main, speaking = { VoiceBus.state == "thinking" || VoiceBus.state == "speaking" }) { action ->
+                when (action) {
+                    HeadsetKeyDecoder.Action.INTERRUPT -> client?.interrupt()
+                    HeadsetKeyDecoder.Action.TALK -> headsetTalk()
+                    else -> {}
+                }
+            }
+        } catch (e: Exception) { Log.w(TAG, "media session unavailable", e); null }
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             nm.createNotificationChannel(NotificationChannel(CHANNEL, "Rook voice", NotificationManager.IMPORTANCE_LOW))
@@ -89,10 +106,7 @@ class VoiceService : Service() {
             ACTION_INTERRUPT -> { client?.interrupt(); return START_STICKY }
             ACTION_END_SESSION -> { closeSession(); return START_STICKY }
             ACTION_STOP -> { standby = false; closeSession(); stopMic(); stopForegroundCompat(); stopSelf(); return START_NOT_STICKY }
-            ACTION_SESSION -> {            // manual push-to-talk: open a session now
-                standby = wakeEnabled; capture.voiceSession = true; sessionWanted = true
-                ensureForeground(); ensureMic(); openSession(); return START_STICKY
-            }
+            ACTION_SESSION -> { startVoiceSession(); return START_STICKY }   // manual push-to-talk
         }
         // default / ACTION_STANDBY: mic on, wake word armed, no session yet
         if (url.isEmpty()) { stopSelf(); return START_NOT_STICKY }
@@ -110,11 +124,25 @@ class VoiceService : Service() {
 
     // ---- session --------------------------------------------------------
 
+    /** Push-to-talk: open a voice session now (Talk button, notification, headset key). */
+    private fun startVoiceSession() {
+        standby = wakeEnabled; capture.voiceSession = true; sessionWanted = true
+        ensureForeground(); ensureMic(); openSession(); syncFocus()
+    }
+
+    private fun headsetTalk() {
+        if (destroyed || !::url.isInitialized || url.isEmpty()) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+            checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) return
+        try { ToneGenerator(AudioManager.STREAM_MUSIC, 60).also { tone -> tone.startTone(ToneGenerator.TONE_PROP_BEEP, 120); main.postDelayed({ tone.release() }, 200) } } catch (_: Throwable) {}
+        startVoiceSession()
+    }
+
     /** Text/image chat: opens a session if needed, but never turns the mic on by itself. */
     fun submit(text: String, imageB64: String? = null, speak: Boolean = false) {
         if (url.isEmpty()) {
             url = getSharedPreferences("rook", MODE_PRIVATE).getString("voice_url", "") ?: ""
-            if (url.isEmpty()) { VoiceBus.listener?.onError("no voice server configured"); return }
+            if (url.isEmpty()) { VoiceBus.emit { it.onError("no voice server configured") }; return }
         }
         openSession()
         if (!capture.needsCapture) stopForegroundCompat()
@@ -129,29 +157,29 @@ class VoiceService : Service() {
         val mine = ++generation
         fun current(action: () -> Unit) = post { if (mine == generation) action() }
         lastActivityAt = SystemClock.elapsedRealtime()
-        ++VoiceBus.connectionGeneration
+        val conn = ++VoiceBus.connectionGeneration
         client = VoiceClient(this, url, insecure, object : VoiceClient.Listener {
             override fun onState(state: String) = current {
                 if (state == "listening") retries = 0
                 lastServerState = state; lastActivityAt = SystemClock.elapsedRealtime()
                 setState(state)
             }
-            override fun onTranscript(text: String) = current { lastActivityAt = SystemClock.elapsedRealtime(); VoiceBus.listener?.onTranscript(text) }
-            override fun onAssistantDelta(text: String) = current { VoiceBus.listener?.onAssistantDelta(text) }
+            override fun onTranscript(text: String) = current { lastActivityAt = SystemClock.elapsedRealtime(); VoiceBus.emit(conn) { it.onTranscript(text) } }
+            override fun onAssistantDelta(text: String) = current { VoiceBus.emit(conn) { it.onAssistantDelta(text) } }
             override fun onTranscript(text: String, turn: Int?) = current {
-                lastActivityAt = SystemClock.elapsedRealtime(); VoiceBus.listener?.onTranscript(text, turn)
+                lastActivityAt = SystemClock.elapsedRealtime(); VoiceBus.emit(conn) { it.onTranscript(text, turn) }
             }
-            override fun onAssistantDelta(text: String, turn: Int?) = current { VoiceBus.listener?.onAssistantDelta(text, turn) }
-            override fun onTurn(turn: Int) = current { VoiceBus.listener?.onTurn(turn) }
-            override fun onActivity(event: ActivityEvent) = current { VoiceBus.listener?.onActivity(event) }
-            override fun onDecision(decision: Decision) = current { VoiceBus.listener?.onDecision(decision) }
-            override fun onAssistantDone() = current { VoiceBus.listener?.onAssistantDone() }
-            override fun onInterrupt() = current { VoiceBus.listener?.onInterrupt() }
-            override fun onError(msg: String) = current { VoiceBus.listener?.onError(msg) }
-            override fun onTool(title: String, status: String) = current { VoiceBus.listener?.onTool(title, status) }
+            override fun onAssistantDelta(text: String, turn: Int?) = current { VoiceBus.emit(conn) { it.onAssistantDelta(text, turn) } }
+            override fun onTurn(turn: Int) = current { VoiceBus.emit(conn) { it.onTurn(turn) } }
+            override fun onActivity(event: ActivityEvent) = current { VoiceBus.emit(conn) { it.onActivity(event) } }
+            override fun onDecision(decision: Decision) = current { VoiceBus.emit(conn) { it.onDecision(decision) } }
+            override fun onAssistantDone() = current { VoiceBus.emit(conn) { it.onAssistantDone() } }
+            override fun onInterrupt() = current { VoiceBus.emit(conn) { it.onInterrupt() } }
+            override fun onError(msg: String) = current { VoiceBus.emit(conn) { it.onError(msg) } }
+            override fun onTool(title: String, status: String) = current { VoiceBus.emit(conn) { it.onTool(title, status) } }
             override fun onBye(mode: String, afterMs: Long) = current {
                 Log.i(TAG, "bye mode=$mode after=${afterMs}ms")
-                VoiceBus.listener?.onBye(mode)
+                VoiceBus.emit(conn) { it.onBye(mode) }
                 main.postDelayed({
                     if (mine != generation) return@postDelayed
                     if (mode == "off") { standby = false; closeSession(); stopMic(); stopForegroundCompat(); stopSelf() }
@@ -200,6 +228,7 @@ class VoiceService : Service() {
 
     private fun settleCapture() {
         capture.reconcile()
+        syncFocus()
         if (!sessionWanted) {
             setState(if (capture.wakeStandby) "standby" else "idle")
             if (!capture.needsCapture) stopSelf()
@@ -235,6 +264,8 @@ class VoiceService : Service() {
     private fun ensureMic() {
         if (destroyed || !capture.needsCapture) return
         if (micRunning) return
+        // Another app or a call has the mic: stay released until MicArbiter hands it back.
+        if (!arbiter.mayCapture()) return
         if (micThread?.isAlive == true) {
             main.postDelayed({ if (inst === this && capture.needsCapture) ensureMic() }, 200)
             return
@@ -254,11 +285,13 @@ class VoiceService : Service() {
                 if (wakeEnabled && WAKE_MODEL.isNotEmpty()) wake = WakeWordDetector(this, WAKE_MODEL, WAKE_THRESHOLD)
                 detector = wake
                 val minBuf = AudioRecord.getMinBufferSize(VoiceClient.SR_IN, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+                arbiter.ownsMode = true
                 audio.mode = AudioManager.MODE_IN_COMMUNICATION
                 if (!audio.isBluetoothScoOn && !audio.isWiredHeadsetOn) audio.isSpeakerphoneOn = true
                 rec = AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, VoiceClient.SR_IN,
                     AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(minBuf, VoiceClient.FRAME_BYTES * 8))
                 check(rec.state == AudioRecord.STATE_INITIALIZED) { "mic init failed" }
+                arbiter.ownSessionId = rec.audioSessionId   // before start: our own config is not "another app"
                 if (AcousticEchoCanceler.isAvailable()) echo = AcousticEchoCanceler.create(rec.audioSessionId)?.also { it.enabled = true }
                 if (NoiseSuppressor.isAvailable()) noise = NoiseSuppressor.create(rec.audioSessionId)?.also { it.enabled = true }
                 aecAvailable = echo?.enabled == true
@@ -266,6 +299,8 @@ class VoiceService : Service() {
                 synchronized(recorderLock) {
                     if (micRunning) { recorder = rec; rec.startRecording() }
                 }
+                check(!micRunning || rec.recordingState == AudioRecord.RECORDSTATE_RECORDING) { MIC_BUSY }
+                if (micRunning) post { if (micRunning) arbiter.micStarted() }
                 val buf = ByteArray(VoiceClient.FRAME_BYTES)
                 var wasActive = false
                 while (micRunning) {
@@ -288,12 +323,18 @@ class VoiceService : Service() {
                 }
             } catch (error: Exception) {
                 if (micRunning) post {
-                    VoiceBus.listener?.onError("Voice microphone: ${error.message}")
+                    // Contended mic (re-acquire raced another app): stay paused and retry.
+                    if (arbiter.micFailed(busy = error.message == MIC_BUSY)) return@post
+                    VoiceBus.emit { it.onError("Voice microphone: ${error.message}") }
                     standby = false
                     closeSession()
                 }
             } finally {
                 micRunning = false; aecAvailable = false
+                // Below Android 12 audio mode/speaker routing is global: after yielding to a call
+                // or another app, leave its routing alone. Android 12+ scopes them per client.
+                val restoreAudio = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ||
+                    arbiter.yieldReason == null || arbiter.yieldReason == MicYieldPolicy.Reason.FOCUS
                 cleanupVoiceCapture(
                     stop = { synchronized(recorderLock) { rec?.stop() } },
                     release = { synchronized(recorderLock) {
@@ -302,8 +343,9 @@ class VoiceService : Service() {
                     before = listOf({ client?.setAecAvailable(false); Unit },
                         { echo?.release(); Unit }, { noise?.release(); Unit }),
                     after = listOf({ speech?.close(); Unit }, { wake?.close(); Unit },
-                        { detector = null }, { audio.isSpeakerphoneOn = oldSpeaker },
-                        { audio.mode = if (oldMode == AudioManager.MODE_IN_COMMUNICATION) AudioManager.MODE_NORMAL else oldMode })
+                        { detector = null }, { if (restoreAudio) audio.isSpeakerphoneOn = oldSpeaker },
+                        { if (restoreAudio) audio.mode = if (oldMode == AudioManager.MODE_IN_COMMUNICATION) AudioManager.MODE_NORMAL else oldMode },
+                        { arbiter.ownSessionId = 0; arbiter.ownsMode = false })
                 )
             }
         }
@@ -319,11 +361,51 @@ class VoiceService : Service() {
         post {
             if (destroyed || !capture.wakeStandby) return@post
             capture.voiceSession = true
-            VoiceBus.listener?.onWake()
+            VoiceBus.emit { it.onWake() }
             val c = client
             if (c?.isRunning == true) { c.interrupt(); lastActivityAt = SystemClock.elapsedRealtime() }
             else openSession()
+            syncFocus()
         }
+    }
+
+    // ---- sharing the mic with other apps (MicArbiter) -----------------------
+
+    /** Another app, a call or a focus loss wants audio input: release the recorder fully. */
+    private fun yieldMic(reason: MicYieldPolicy.Reason) {
+        if (reason == MicYieldPolicy.Reason.CALL) client?.interrupt()   // never talk over a call
+        stopMic()
+    }
+
+    /** Nobody else is recording any more: take the mic back if we still need it. */
+    private fun resumeMic() {
+        if (destroyed || !capture.needsCapture) { arbiter.idle(); return }
+        ensureForeground()
+        ensureMic()
+    }
+
+    private fun micPauseChanged(reason: MicYieldPolicy.Reason?) {
+        val text = when (reason) {
+            null -> null
+            MicYieldPolicy.Reason.CALL -> getString(R.string.mic_paused_call)
+            else -> getString(R.string.mic_paused_other)
+        }
+        if (VoiceBus.micPaused == text) return
+        VoiceBus.micPaused = text
+        VoiceBus.listener?.onMicPaused(text)
+        if (foreground) (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(NOTIF_ID, buildNotification(VoiceBus.state))
+        if (reason == null) syncFocus()
+    }
+
+    /**
+     * Audio focus belongs to a live voice conversation only; plain wake standby never takes it.
+     * While the mic is yielded, focus is never newly requested (that would interrupt the other
+     * app); focus already held is kept so a transient loss can still report the regain.
+     */
+    private fun syncFocus() {
+        if (!::arbiter.isInitialized) return
+        val live = !destroyed && sessionWanted && capture.voiceSession
+        arbiter.setFocusWanted(live && (arbiter.focusHeld || !arbiter.paused))
     }
 
     private fun stopMic() {
@@ -353,7 +435,7 @@ class VoiceService : Service() {
         }
     }
 
-    override fun onDestroy() { destroyed = true; if (inst === this) inst = null; standby = false; closeSession(); stopMic(); try { wakeLock?.release() } catch (_: Throwable) {}; wakeLock = null; super.onDestroy() }
+    override fun onDestroy() { destroyed = true; if (inst === this) inst = null; standby = false; closeSession(); stopMic(); arbiter.stop(); buttons?.release(); buttons = null; VoiceBus.micPaused = null; try { wakeLock?.release() } catch (_: Throwable) {}; wakeLock = null; super.onDestroy() }
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun startForegroundCompat(n: Notification) {
@@ -374,8 +456,9 @@ class VoiceService : Service() {
             Intent(this, VoiceService::class.java).setAction(action), piFlags())
         val b = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) Notification.Builder(this, CHANNEL)
                 else @Suppress("DEPRECATION") Notification.Builder(this)
-        return b.setContentTitle("Rook voice · $text")
-            .setContentText(if (text == "standby") getString(R.string.st_standby) else url)
+        val paused = VoiceBus.micPaused
+        return b.setContentTitle("Rook voice · ${if (paused != null) getString(R.string.mic_paused) else text}")
+            .setContentText(paused ?: if (text == "standby") getString(R.string.st_standby) else url)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentIntent(NotificationNavigation.mainActivity(this))
             .setOngoing(true)
@@ -395,6 +478,7 @@ class VoiceService : Service() {
         const val NOTIF_ID = 2
         val WAKE_MODEL: String = BuildConfig.WAKE_MODEL   // empty: no wake word in this build
         const val WAKE_THRESHOLD = 0.5f
+        private const val MIC_BUSY = "microphone busy"
         const val WAKE_REFRACTORY_MS = 2000L
         const val IDLE_CLOSE_MS = 300_000L
         const val ACTION_STANDBY = "systems.bake.rook.voice.STANDBY"
@@ -449,8 +533,48 @@ object VoiceBus {
         fun onDecision(decision: Decision) {}
         fun onActivity(event: ActivityEvent) {}
         fun onTurn(turn: Int) {}
+        /** Mic released for another app/call ([reason] is user-facing text), or null when held again. */
+        fun onMicPaused(reason: String?) {}
+        /** A typed/photo turn this device sent (recorded so a recreated screen can show it). */
+        fun onUserText(text: String) {}
+        /** Bookkeeping: the conversation event with this sequence number was handled. */
+        fun onDelivered(seq: Long) {}
     }
     var connectionGeneration = 0L
+    private var delivering: Long? = null
+    /** Connection generation of the event being delivered (live or replayed). */
+    val eventGeneration: Long get() = delivering ?: connectionGeneration
+    /** True while missed events are being replayed into a resuming screen. */
+    var replaying = false
+        private set
+    private val log = ConversationLog<(Listener) -> Unit>()
+
+    /**
+     * Main thread: record a conversation event and hand it to the live screen if there
+     * is one. Events that arrive while no screen is attached (paused, backgrounded or
+     * destroyed activity) are replayed by [attach].
+     */
+    fun emit(generation: Long = connectionGeneration, event: (Listener) -> Unit) {
+        val e = log.append(generation, event)
+        listener?.let { deliver(it, e) }
+    }
+
+    /** Main thread: record an event the screen already rendered itself; returns its sequence number. */
+    fun record(generation: Long = connectionGeneration, event: (Listener) -> Unit): Long = log.append(generation, event).seq
+
+    /** Main thread: replay everything after [seenSeq] into [l], then make it the live observer. */
+    fun attach(l: Listener, seenSeq: Long) {
+        replaying = true
+        try { for (e in log.after(seenSeq)) deliver(l, e) } finally { replaying = false }
+        listener = l
+    }
+
+    private fun deliver(l: Listener, e: ConversationLog.Entry<(Listener) -> Unit>) {
+        delivering = e.generation
+        try { e.event(l) } finally { delivering = null; l.onDelivered(e.seq) }
+    }
     @Volatile var state: String = "idle"
+    /** User-facing reason the mic is currently yielded to another app, or null. */
+    @Volatile var micPaused: String? = null
     @Volatile var listener: Listener? = null
 }
