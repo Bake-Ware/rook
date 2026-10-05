@@ -136,10 +136,18 @@ async def websocket(ws: WebSocket):
         if credential_id not in live_identities and not (not TOKEN and os.environ.get('VOICE_ALLOW_ANONYMOUS') == '1'):
             await ws.close(code=4401)
             return
+        try:
+            # Absent mode keeps old clients on assistant; an unknown one is refused
+            # rather than silently granted the most capable mode.
+            mode = modes.resolve(hello.get('mode'), hello.get('mode_prompt'))
+        except modes.UnknownMode as error:
+            await ws.send_json({'type': 'error', 'code': 'unknown_mode', 'msg': str(error)})
+            await ws.close(code=4400)
+            return
         conn = Connection(app.state.store, app.state.jobs, app.state.provider, key, send_json, send_bytes, protocol,
                           identity=identity_for(supplied, live_identities))
         conn.full_duplex = protocol == 2 and hello.get('aec') is True
-        conn.mode = modes.resolve(hello.get('mode'), hello.get('mode_prompt'))
+        conn.mode = mode
         connections[key] = conn, queue
         credential_sockets.setdefault(credential_id, []).append((ws, conn))
         credential_sessions.setdefault(credential_id, set()).add(key)
@@ -238,7 +246,15 @@ async def websocket(ws: WebSocket):
                     elif kind == 'image' and msg.get('data'):
                         await conn.start(text=str(msg.get('text', ''))[:16000], image=msg['data'], speak=bool(msg.get('speak')))
                     elif kind == 'mode':
-                        await conn.set_mode(modes.resolve(msg.get('mode'), msg.get('prompt')))
+                        # Never fall back to assistant on a bad switch; keep the current mode.
+                        try:
+                            if msg.get('mode') is None:
+                                raise modes.UnknownMode('Mode switch needs a mode.')
+                            mode = modes.resolve(msg['mode'], msg.get('prompt'))
+                        except modes.UnknownMode as error:
+                            await conn.emit('error', code='unknown_mode', msg=f'{error} Mode unchanged: {conn.mode.id}.')
+                        else:
+                            await conn.set_mode(mode)
                     elif kind == 'voice' and msg.get('voice') in app.state.provider.voices:
                         conn.voice = msg['voice']
                 except (ValueError, TypeError):

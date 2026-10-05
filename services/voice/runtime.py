@@ -174,8 +174,11 @@ class Connection:
         await self.emit("assistant_delta", text=text, turn=epoch)
         # Record generated speech honestly. Playback acknowledgements are tracked
         # separately; interruption must not make the model assume all of it was heard.
-        record = text if not self.speak_out else "[Spoken response generated; playback may be interrupted] " + text
-        self.store.append(self.session, "assistant", {"text": record})
+        # Dictation mode speaks only read-backs and confirmations: none of it is
+        # conversation, and read-back would copy the dictated text into model history.
+        if self.mode.uses_model:
+            record = text if not self.speak_out else "[Spoken response generated; playback may be interrupted] " + text
+            self.store.append(self.session, "assistant", {"text": record})
         if not self.speak_out:
             return
         await self.emit("state", state="speaking", turn=epoch)
@@ -217,10 +220,17 @@ class Connection:
             await self.say("Removed the last part." if command == "undo" else "Cleared.", epoch)
             return
         if command is None:
-            self.store.append(self.session, "dictation", {"text": text[:16000]})
+            if not self.store.add_dictation(self.session, text[:16000]):
+                await self.emit("error", msg="Dictation is full. Say \"I'm done\" to collect it, or \"start over\".")
+                await self.say("Dictation is full. Say I'm done to collect it.", epoch)
             return
-        body = " ".join(part for _, part in self.store.dictation(self.session))
-        await self.emit("dictation", text=body, final=command == "finish", turn=epoch)
+        segments = self.store.dictation(self.session)
+        body = " ".join(part for _, part in segments)
+        final = command == "finish"
+        await self.emit("dictation", text=body, final=final, turn=epoch)
+        if final and segments:
+            # The client now holds the finished text; the next dictation starts fresh.
+            self.store.drop_dictation(self.session, through=segments[-1][0])
         if not body:
             await self.say("Nothing has been dictated yet.", epoch)
         elif command == "read":
@@ -229,7 +239,7 @@ class Connection:
                 await self.say(sentence, epoch)
         else:
             await self.emit("assistant_delta", text=body, turn=epoch)
-            await self.say("That's your dictation so far.", epoch)
+            await self.say("That's your dictation. The next one starts fresh.", epoch)
 
     def job_event(self, event):
         if self.closed:

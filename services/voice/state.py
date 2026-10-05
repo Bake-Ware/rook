@@ -25,12 +25,20 @@ class Store:
             CREATE TABLE IF NOT EXISTS jobs (
               id TEXT PRIMARY KEY, session TEXT, name TEXT, args TEXT,
               status TEXT, result TEXT, updated REAL);
+            CREATE TABLE IF NOT EXISTS dictation (
+              id INTEGER PRIMARY KEY, session TEXT, text TEXT, created REAL);
+            CREATE INDEX IF NOT EXISTS dictation_session ON dictation(session, id);
         """)
+        # Dictation used to share the trimmed event history; move any such rows out.
+        self.db.execute("INSERT INTO dictation(session,text,created) SELECT session,json_extract(body,'$.text'),created "
+                        "FROM events WHERE kind='dictation' ORDER BY id")
+        self.db.execute("DELETE FROM events WHERE kind='dictation'")
         self.db.execute("UPDATE jobs SET status='unknown', result=? WHERE status='running'",
                         ("Voice service restarted; do not repeat changes without checking their outcome.",))
         cutoff = time.time() - 7 * 86400
         self.db.execute("DELETE FROM events WHERE created < ?", (cutoff,))
         self.db.execute("DELETE FROM jobs WHERE updated < ? AND status != 'running'", (cutoff,))
+        self.db.execute("DELETE FROM dictation WHERE created < ?", (cutoff,))
         self.db.commit()
 
     @staticmethod
@@ -47,8 +55,8 @@ class Store:
         self.db.commit()
 
     def messages(self, session):
-        rows = self.db.execute("SELECT kind,body FROM events WHERE session=? AND kind!='dictation' "
-                               "ORDER BY id DESC LIMIT 80", (session,)).fetchall()
+        rows = self.db.execute("SELECT kind,body FROM events WHERE session=? ORDER BY id DESC LIMIT 80",
+                               (session,)).fetchall()
         groups, size = [], 0
         for row in rows:
             body = json.loads(row["body"])
@@ -67,18 +75,35 @@ class Store:
             groups.append(group)
         return [message for group in reversed(groups) for message in group]
 
-    def dictation(self, session):
-        """Dictated segments, oldest first; kept apart from model-visible history."""
-        rows = self.db.execute("SELECT id,body FROM events WHERE session=? AND kind='dictation' ORDER BY id",
-                               (session,)).fetchall()
-        return [(row["id"], json.loads(row["body"])["text"]) for row in rows]
+    # Dictation is the user's document, not conversation history: its own table,
+    # never trimmed by the event window and never shown to the model. It is bounded
+    # by total size; past the cap new segments are refused, never old ones dropped.
+    DICTATION_MAX_CHARS = 200_000
 
-    def drop_dictation(self, session, last=False):
+    def dictation(self, session):
+        """Dictated segments, oldest first, as (id, text)."""
+        rows = self.db.execute("SELECT id,text FROM dictation WHERE session=? ORDER BY id", (session,)).fetchall()
+        return [(row["id"], row["text"]) for row in rows]
+
+    def add_dictation(self, session, text):
+        """Append a segment; False (and nothing stored) when it would exceed the cap."""
+        used = self.db.execute("SELECT COALESCE(SUM(LENGTH(text)),0) FROM dictation WHERE session=?",
+                               (session,)).fetchone()[0]
+        if used + len(text) > self.DICTATION_MAX_CHARS:
+            return False
+        self.db.execute("INSERT INTO dictation(session,text,created) VALUES(?,?,?)", (session, text, time.time()))
+        self.db.commit()
+        return True
+
+    def drop_dictation(self, session, last=False, through=None):
+        """Remove the last segment, segments up to id ``through``, or all of them."""
         if last:
-            self.db.execute("DELETE FROM events WHERE id=(SELECT MAX(id) FROM events WHERE session=? "
-                            "AND kind='dictation')", (session,))
+            self.db.execute("DELETE FROM dictation WHERE id=(SELECT MAX(id) FROM dictation WHERE session=?)",
+                            (session,))
+        elif through is not None:
+            self.db.execute("DELETE FROM dictation WHERE session=? AND id<=?", (session, through))
         else:
-            self.db.execute("DELETE FROM events WHERE session=? AND kind='dictation'", (session,))
+            self.db.execute("DELETE FROM dictation WHERE session=?", (session,))
         self.db.commit()
 
     def job(self, jid, session):

@@ -70,6 +70,42 @@ def test_guest_cannot_start_band_reads_even_if_model_selects_them():
     asyncio.run(scenario())
 
 
+def test_device_mapped_key_reads_only_its_own_device():
+    async def scenario():
+        offered=[];reads=[];events=[]
+        calls=[{'function':{'name':name,'arguments':json.dumps(args)}} for name,args in
+               (('rook_devices',{}),('delegate_to_hermes',{'task':'list every device'}),
+                ('rook_read',{'worker':'nas','cap':'file.read'}),('rook_read',{'worker':'phone','cap':'sms.list'}))]
+        class Provider:
+            default_voice='test'
+            system='test'
+            async def chat(self,messages,on_clause,reply_only=False,tools=None):
+                offered.append(tools);return '',calls
+        async def rook_read(args):
+            # Same check tool_rook_read makes; it runs inside the background job task.
+            authorize_read(args['cap'],args['worker']);reads.append(args['worker']);return 'ok'
+        async def devices(args):
+            authorize_devices();return 'devices'
+        store=Store(':memory:')
+        async def send(event):events.append(event)
+        jobs=Jobs(store,{'rook_read':rook_read,'rook_devices':devices},'',0,lambda *a:None)
+        conn=Connection(store,jobs,Provider(),'session',send,send,identity=Identity('Alex','phone'))
+        await conn.start(text='read stuff',speak=False)
+        await conn.task
+        assert offered[0]=={'web_search','end_session','cancel_job','job_status','rook_read'}
+        started={j['name']:j for j in store.jobs('session')}
+        assert set(started)=={'rook_read'}  # rook_devices and delegate never became jobs
+        await asyncio.gather(*list(jobs.tasks.values()))
+        results=sorted((json.loads(j['args'])['worker'],j['status'],j['result']) for j in store.jobs('session'))
+        assert results[0][:2]==('nas','failed') and 'PermissionError' in results[0][2]
+        assert results[1][:2]==('phone','completed')
+        assert reads==['phone']
+        assert sum('owner voice key' in e.get('text','') for e in events if e['type']=='assistant_delta')==2
+        assert current_identity.get()==Identity()
+        await jobs.close();await conn.close();store.db.close()
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize('owner',[False,True])
 def test_unrestricted_agent_work_requires_owner(owner):
     async def scenario():
@@ -77,7 +113,7 @@ def test_unrestricted_agent_work_requires_owner(owner):
         class Provider:
             default_voice='test'
             system='test'
-            async def chat(self,messages,on_clause,reply_only=False):
+            async def chat(self,messages,on_clause,reply_only=False,tools=None):
                 return '',[{'function':{'name':'delegate_to_hermes','arguments':json.dumps({'task':'test'})}}]
         class Jobs:
             def start(self,*args):seen.append(current_identity.get());return 'job'

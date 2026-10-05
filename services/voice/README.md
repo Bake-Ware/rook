@@ -61,16 +61,25 @@ Playback acknowledgements provide frame counts, not word-aligned timestamps.
 Conversation modes (`services/voice/modes.py`, `GET /modes`): the hello may carry
 `mode` (`assistant`, `conversation`, `dictate`, `brainstorm`, `roleplay`, `listen`)
 and an optional `mode_prompt`; `{"type":"mode","mode":...,"prompt":...}` switches
-live. A missing or unknown mode is `assistant`, the unchanged agent behaviour (a
-custom prompt there is appended as extra style instructions). Other modes replace
-the agent prompt with a spoken-conversation prompt and offer no tools except
-`end_session`; the runtime refuses any other tool call. `dictate` never calls the
-model: speech is stored as dictation, outside model-visible history, and "read it
-back", "I'm done", "scratch that" and "start over" read, emit (`dictation` event),
-trim or clear it. Mode prompts are client text: capped at 2,000 characters with
+live. A missing mode is `assistant`, the unchanged agent behaviour (a custom
+prompt there is appended as extra style instructions). An unknown mode never
+falls back: the hello gets an `error` with `code: "unknown_mode"` and the socket
+closes (4400); a bad live switch gets the same error and the mode is unchanged.
+The `session` event echoes `mode`; the APK and browser compare it with what they
+asked for and disconnect with a warning on a mismatch, so a client asking an old
+server for `conversation` never silently gets the full assistant. Other modes
+replace the agent prompt with a spoken-conversation prompt and offer no tools
+except `end_session`; the runtime refuses any other tool call. `dictate` never
+calls the model: segments go to their own `dictation` table (not the trimmed
+event history, never model-visible, capped at 200,000 characters; past that new
+speech is refused, old text is never dropped), read-backs are not recorded as
+history, and "read it back", "I'm done", "scratch that" and "start over" read,
+emit (`dictation` event; "I'm done" then clears it for the next dictation), trim
+or clear it. Mode prompts are client text: capped at 2,000 characters with
 control characters removed, and they never grant tools. Job reports wait until
 the session is back in `assistant` mode. The APK and browser keep a separate
-conversation per non-assistant mode.
+conversation per non-assistant mode; the browser reconnects on a mode change
+rather than switching the live session, so no mode inherits another's history.
 
 Jobs are independent of audio turns and survive socket closure. Read tools have
 45-second limits; Hermes jobs have 10-minute limits. Outcomes are persisted,

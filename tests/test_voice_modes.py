@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import re
 import sys
+import time
 import types
 import uuid
 import pytest
@@ -17,7 +18,9 @@ from services.voice.state import Store
 
 def test_resolve_defaults_aliases_and_bounds():
     assert modes.resolve(None).id == 'assistant'
-    assert modes.resolve('nonsense').id == 'assistant'
+    for bad in ('nonsense', '', 'assistant2', 7):
+        with pytest.raises(modes.UnknownMode):
+            modes.resolve(bad)
     assert modes.resolve('Active Listening').id == 'listen'
     talk = modes.resolve('conversation', '   ')
     assert talk.prompt == modes.MODES['conversation']['prompt'] and not talk.custom
@@ -248,3 +251,86 @@ def test_hello_without_mode_keeps_assistant(server):
         ws.send_json({'type': 'hello', 'protocol': 2, 'conversation': str(uuid.uuid4())})
         assert ws.receive_json()['mode'] == 'assistant'
         assert next(iter(module.connections.values()))[0].mode == modes.Mode()
+
+
+def test_unknown_mode_is_rejected_at_hello_and_on_live_switch(server):
+    from starlette.websockets import WebSocketDisconnect
+    module, client = server
+    with client.websocket_connect('/ws') as ws:
+        ws.send_json({'type': 'hello', 'protocol': 2, 'conversation': str(uuid.uuid4()), 'mode': 'kids-v2'})
+        error = ws.receive_json()
+        assert error['type'] == 'error' and error['code'] == 'unknown_mode' and 'kids-v2' in error['msg']
+        with pytest.raises(WebSocketDisconnect) as closed:
+            ws.receive_json()
+        assert closed.value.code == 4400
+    assert not module.connections
+    with client.websocket_connect('/ws') as ws:
+        ws.send_json({'type': 'hello', 'protocol': 2, 'conversation': str(uuid.uuid4()), 'mode': 'conversation'})
+        assert ws.receive_json()['mode'] == 'conversation'
+        conn = next(iter(module.connections.values()))[0]
+        ws.receive_json()
+        for bad in ({'type': 'mode', 'mode': 'garbage'}, {'type': 'mode'}):
+            ws.send_json(bad)
+            error = ws.receive_json()
+            assert error['type'] == 'error' and error['code'] == 'unknown_mode'
+            assert 'Mode unchanged: conversation' in error['msg']
+            assert conn.mode.id == 'conversation'
+
+
+async def _say_all(conn, texts):
+    for text in texts:
+        await conn.start(text=text, speak=False)
+        await conn.task
+
+
+def test_dictation_survives_long_sessions_and_read_back():
+    async def scenario():
+        conn, store, events = _conn(Provider(), modes.resolve('dictate'))
+        first = [f'Sentence number {i}.' for i in range(200)]
+        await _say_all(conn, first + ['Read it back'])
+        # Read-back speaks 200 sentences; none of it may displace the dictation.
+        await _say_all(conn, ['One more line.', 'Read it back'])
+        assert [t for _, t in store.dictation('s')] == first + ['One more line.']
+        assert [e for e in events if e['type'] == 'dictation'][-1]['text'] == ' '.join(first + ['One more line.'])
+        # Neither the dictated text nor its read-back becomes model-visible history.
+        assert store.messages('s') == []
+        assert store.db.execute("SELECT COUNT(*) FROM events WHERE session='s'").fetchone()[0] == 0
+        await conn.close()
+    asyncio.run(scenario())
+
+
+def test_dictation_is_capped_by_size_without_dropping_old_text(monkeypatch):
+    async def scenario():
+        conn, store, events = _conn(Provider(), modes.resolve('dictate'))
+        monkeypatch.setattr(Store, 'DICTATION_MAX_CHARS', 30)
+        await _say_all(conn, ['A' * 20, 'B' * 20])
+        assert [t for _, t in store.dictation('s')] == ['A' * 20]
+        assert any(e['type'] == 'error' and 'full' in e['msg'] for e in events)
+        await conn.close()
+    asyncio.run(scenario())
+
+
+def test_finishing_dictation_clears_it_for_the_next_one():
+    async def scenario():
+        conn, store, events = _conn(Provider(), modes.resolve('dictate'))
+        await _say_all(conn, ['First note.', "I'm done"])
+        final = [e for e in events if e['type'] == 'dictation'][-1]
+        assert final == {'type': 'dictation', 'text': 'First note.', 'final': True, 'turn': final['turn']}
+        assert store.dictation('s') == []
+        await _say_all(conn, ['Second note.', "I'm done"])
+        assert [e for e in events if e['type'] == 'dictation'][-1]['text'] == 'Second note.'
+        await conn.close()
+    asyncio.run(scenario())
+
+
+def test_legacy_dictation_events_move_to_their_own_table(tmp_path):
+    path = tmp_path / 'state.db'
+    store = Store(path)
+    store.db.execute("INSERT INTO events(session,kind,body,created) VALUES('s','dictation',?,?)",
+                     (json.dumps({'text': 'old words'}), time.time()))
+    store.db.commit()
+    store.db.close()
+    store = Store(path)
+    assert [t for _, t in store.dictation('s')] == ['old words']
+    assert store.db.execute("SELECT COUNT(*) FROM events WHERE kind='dictation'").fetchone()[0] == 0
+    store.db.close()

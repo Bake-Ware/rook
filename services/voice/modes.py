@@ -66,10 +66,22 @@ NON_AGENT_TOOLS = frozenset({'end_session'})
 _CONTROL = re.compile(r'[\x00-\x08\x0b-\x1f\x7f  ]')
 
 
+class UnknownMode(ValueError):
+    """An explicitly requested mode this server does not know. Never fall back to
+    ``assistant`` for it: that is the most capable mode, so failing open would hand
+    full agent access to a client that asked for, say, a children's conversation."""
+
+
 def normalize(mode):
-    mode = str(mode or '').strip().lower()
-    mode = ALIASES.get(mode, mode)
-    return mode if mode in MODES else DEFAULT
+    """Absent (None) means the default; anything else must name a known mode."""
+    if mode is None:
+        return DEFAULT
+    name = str(mode).strip().lower()
+    name = ALIASES.get(name, name)
+    if name not in MODES:
+        raise UnknownMode(f'Unknown voice mode {str(mode)[:40]!r}; this server supports: '
+                          + ', '.join(MODES))
+    return name
 
 
 def clean_prompt(text):
@@ -123,7 +135,9 @@ class Mode:
 
 
 def resolve(mode, prompt=None):
-    """Build a session mode from client fields; blank prompt means the built-in default."""
+    """Build a session mode from client fields; blank prompt means the built-in default.
+
+    Raises UnknownMode for an explicit mode this server does not support."""
     mode = normalize(mode)
     text = clean_prompt(prompt)
     default = MODES[mode]['prompt']
