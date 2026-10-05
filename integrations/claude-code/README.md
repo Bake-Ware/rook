@@ -26,6 +26,26 @@ The plugin talks to your hub through Claude Code's MCP connection. It uses the
 server named `rook` if you added one with `claude mcp add`, and otherwise the
 claude.ai **Rook** connector. Without either connection, the pane shows an error.
 
+Text the plugin hands the model (a loaded session, a deck item, the grooming
+snapshot, the pane tool's reply) is wrapped in a tagged block and labelled as
+band data, not instructions. Grooming may update rook tasks and handoffs on its
+own, but asks before any `rook_call` or other write.
+
+## Options
+
+These are set in `/config` (or under `pluginConfigs` in settings).
+
+- **Hosting sync button** (`hostingSync`, off by default): adds `h · sync
+  hosting` to the bands tab. It is for a band that runs a Cloudflare tunnel
+  with a worker that can list the tunnel's routes. After you confirm in the
+  pane, Claude reads the routes, proposes what each worker hosts, and asks you
+  before it writes anything with `serves.set`.
+- **Tunnel worker** (`hostingWorker`): the worker that lists the routes.
+- **Routes capability** (`hostingRoutesCap`): the capability on that worker
+  that returns them.
+
+The button stays hidden until all three are set.
+
 ## Install
 
 You need a Claude Code build that loads function-hook plugins, and a Rook MCP

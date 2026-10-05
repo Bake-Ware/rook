@@ -71,6 +71,8 @@ export type View = {
   busy?: boolean
   error?: string
   note?: string
+  /** A pane action waiting for the person's yes: `hosting` is the hosting sync. */
+  confirm?: 'hosting'
 }
 
 export type BandInfo = { id: string; label: string; name: string; primary: boolean }

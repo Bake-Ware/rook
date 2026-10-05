@@ -3,7 +3,8 @@ import type { EngineInterface, McpToolResult, Register } from 'claude-code'
 
 import type { BandInfo, Item, Roster, SessionMeta, View, Worker } from '../types'
 import { groupBands, fleetBuild, HUB_BAND, parseBands, parseWorkers, STALE_SECS } from './bands'
-import { deckItems, findWorker, HOSTING_PROMPT, hostedCount, paneText } from './pane'
+import { deckItems, findWorker, hostedCount, hostingConfig, hostingPrompt, paneText } from './pane'
+import type { HostingConfig } from './pane'
 import {
   GROOM_PROMPT,
   groomText,
@@ -96,7 +97,7 @@ function set($: EngineInterface, patch: Patch): Promise<unknown> {
   })
 }
 
-const CLEAR: Patch = { busy: undefined, error: undefined, note: undefined }
+const CLEAR: Patch = { busy: undefined, error: undefined, note: undefined, confirm: undefined }
 
 const mcpText = (result: McpToolResult): string =>
   result.content.map(block => (block.type === 'text' ? block.text : '')).join('')
@@ -605,7 +606,10 @@ async function drive($: EngineInterface, input: Raw): Promise<string> {
   return paneText(await read($, view), await read($, roster), await $.clock.now())
 }
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
+  // The hosting sync is the person's own deployment's: off unless they turn it on.
+  const hosting: HostingConfig | undefined = hostingConfig(options)
+
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'rook-bands',
@@ -1105,20 +1109,40 @@ export const register: Register = on => {
           <Text bold>
             {fetchedAt === 0 ? 'Connecting to rook…' : `${workers.length} workers · ${bands.length} bands`}
           </Text>
-          <Button
-            key="hosting"
-            hotkey="h"
-            label="h · sync hosting"
-            onPress={() => {
-              void $.prompt.submit({ text: HOSTING_PROMPT })
-              void $.ui.toast('rook: asked Claude to sync hosting from the tunnel routes')
-            }}
-          />
+          {hosting !== undefined && at.confirm !== 'hosting' && (
+            <Button
+              key="hosting"
+              hotkey="h"
+              label="h · sync hosting"
+              onPress={() => set($, { ...CLEAR, confirm: 'hosting' })}
+            />
+          )}
         </Box>
         {error !== undefined && (
           <Text color={C.bad} wrap="wrap">
             {`✗ ${error}`}
           </Text>
+        )}
+        {hosting !== undefined && at.confirm === 'hosting' && (
+          <Box flexDirection="column" marginTop={1}>
+            <Text color={C.accent} wrap="wrap">
+              {`Sync hosting from ${hosting.worker} (${hosting.cap})? Claude reads the routes, ` +
+                'shows a plan and asks you before any serves.set write.'}
+            </Text>
+            <Box flexDirection="row" columnGap={2}>
+              <Button
+                key="hosting-yes"
+                hotkey="y"
+                label="y · start"
+                onPress={async () => {
+                  await set($, CLEAR)
+                  void $.prompt.submit({ text: hostingPrompt(hosting) })
+                  void $.ui.toast('rook: asked Claude to plan a hosting sync from the tunnel routes')
+                }}
+              />
+              <Button key="hosting-no" hotkey="n" label="n · cancel" onPress={() => set($, CLEAR)} />
+            </Box>
+          </Box>
         )}
         {bands.map(band => {
           const stale = band.workers.filter(w => w.ageSecs > STALE_SECS).length
@@ -1177,7 +1201,10 @@ export const register: Register = on => {
             </Box>
           )
         })}
-        {keys(`■ online  □ quiet  ✻ claude  ◆ codex  ⌂ hosts sites or services · enter opens a marked worker · h has Claude rewrite hosting from the tunnel routes`)}
+        {keys(
+          `■ online  □ quiet  ✻ claude  ◆ codex  ⌂ hosts sites or services · enter opens a marked worker` +
+            (hosting !== undefined ? ' · h plans a hosting sync from the tunnel routes' : ''),
+        )}
       </Box>
     )
   })
