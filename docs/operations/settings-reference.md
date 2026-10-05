@@ -174,6 +174,24 @@ are set only in the environment or on the command line.
 | `cec.port` | CEC bridge port | worker | int | `9526` | `CEC_PORT` | restart |
 | `cec.timeout` | Timeout (s) | worker | float | `5.0` | `CEC_TIMEOUT` | restart |
 
+## Home agent (hub plugin, runs in mcp)
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `home.enabled` | Enabled | hub | bool | off | `ROOK_HOME_ENABLED` | live |
+| `home.name` | Name | hub | str | `home` | `ROOK_HOME_NAME` | live |
+| `home.provider` | Provider | hub | str | `openai` | `ROOK_HOME_PROVIDER` | live |
+| `home.base_url` | Base URL | hub | url |  | `ROOK_HOME_BASE_URL` | live |
+| `home.model` | Model | hub | str |  | `ROOK_HOME_MODEL` | live |
+| `home.api_key` | API key (vault reference) | hub | str |  | `ROOK_HOME_API_KEY` | live |
+| `home.timeout_s` | Request timeout (s) | hub | float | `90.0` | `ROOK_HOME_TIMEOUT_S` | live |
+| `home.max_tokens` | Longest reply (tokens) | hub | int | `1024` | `ROOK_HOME_MAX_TOKENS` | live |
+| `home.temperature` | Temperature | hub | float |  | `ROOK_HOME_TEMPERATURE` | live |
+| `home.persona` | Persona profile | hub | str |  | `ROOK_HOME_PERSONA` | live |
+| `home.system_prompt` | System prompt addition | hub | str |  | `ROOK_HOME_SYSTEM_PROMPT` | live |
+| `home.context_messages` | Room messages sent as context | hub | int | `20` | `ROOK_HOME_CONTEXT_MESSAGES` | live |
+| `home.tools` | Read-only tools (knowledge search) | hub | bool | off | `ROOK_HOME_TOOLS` | live |
+
 ## Hub info (hub plugin, runs in mcp)
 
 | Key | Label | Scope | Type | Default | Env / flag | Apply |

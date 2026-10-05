@@ -8,6 +8,8 @@ grants and permissions enforcement are specified in
 [settings.md](settings.md). This document owns the plugin contract and says
 where it hands off to those two. The persona plugin (a hub part and a worker
 part sharing the namespace `persona`) is specified in [persona.md](persona.md).
+The home agent (hub plugin `home`, the hub's own LLM) is in
+[home-agent.md](home-agent.md).
 
 ## 1. Goals
 

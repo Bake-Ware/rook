@@ -337,6 +337,7 @@
       <a id="tab-tokens" href="#tokens" onclick="showView('tokens');return false">API tokens</a>
       <a id="tab-guidance" href="#guidance" onclick="showView('guidance');return false">Agent instructions</a>
       <a id="tab-vault" href="#vault" onclick="showView('vault');return false">Secrets</a>
+      <a id="tab-home" href="#home" onclick="showView('home');return false">Home agent</a>
     </nav>
     <div class="sidebar-footer"><button class="art-toggle" id="art-toggle" type="button" hidden>Pause artwork</button><span class="live"><span class="dot" id="dot"></span><span id="count">Connecting…</span></span><a class="signout" href="/logout">Sign out</a></div>
   </aside>
@@ -399,6 +400,7 @@
     <div id="view-knowledge" hidden></div>
     <div id="view-guidance" hidden></div>
     <div id="view-vault" hidden></div>
+    <div id="view-home" hidden></div>
     <div id="view-settings" hidden></div>
     <div id="view-account" hidden></div>
     <div id="view-tokens" hidden></div>
@@ -1056,6 +1058,7 @@ const viewInfo={
  knowledge:['Knowledge','The agents\' shared wiki: what the team knows, with sources.'],
  vault:['Secrets','Credentials your agents can use, with every access logged.'],
  guidance:['Agent instructions','What Rook tells agents when they connect, list tools, and call capabilities.'],
+ home:['Home agent','The hub\'s own LLM: who it is, which model it runs, and what it has been asked.'],
  settings:['Settings','Hub, band, worker, plugin and personal settings, with where each value comes from.'],
  work:['Work','Projects and tasks the agents are tracking: in progress, blocked and done.'],
  sessions:['Sessions','Review and continue Claude and Codex sessions across your workers.'],
@@ -1066,6 +1069,12 @@ async function ensureVault(){
  if(vaultUI)return vaultUI;
  if(!vaultLoading)vaultLoading=import('/account/vault/assets/vault.js').then(m=>m.mountVault($('#view-vault'))).then(ui=>vaultUI=ui).finally(()=>{vaultLoading=null;});
  return vaultLoading;
+}
+let homeUI=null, homeLoading=null;
+async function ensureHome(){
+ if(homeUI)return homeUI;
+ if(!homeLoading)homeLoading=import('/account/settings/assets/home.js').then(m=>m.mountHome($('#view-home'))).then(ui=>homeUI=ui).finally(()=>{homeLoading=null;});
+ return homeLoading;
 }
 let settingsAreaUI=null, settingsAreaLoading=null;
 async function ensureSettingsArea(){
@@ -1147,6 +1156,7 @@ function showView(v,updateHistory=true){
  if(v==='chat'){startChat();}else{stopChat();}
  if(v==='settings')ensureSettingsArea().then(ui=>{if(activeView==='settings')return ui.activate(settingsQuery());}).catch(e=>{$('#view-settings').textContent=e.message;});
  if(v==='vault')ensureVault().then(ui=>{if(activeView==='vault')ui.activate();}).catch(e=>{$('#view-vault').textContent=e.message;});
+ if(v==='home')ensureHome().then(ui=>{if(activeView==='home')ui.activate();}).catch(e=>{$('#view-home').textContent=e.message;});
  if(v==='guidance')ensureGuidance().then(ui=>{if(activeView==='guidance')ui.activate();}).catch(e=>{$('#view-guidance').textContent=e.message;});
  if(v==='knowledge')ensureKnowledge().then(ui=>{if(activeView==='knowledge')ui.activate();}).catch(e=>{$('#view-knowledge').textContent=e.message;});
  if(v==='sessions')ensureSessions().then(ui=>{if(activeView==='sessions')ui.activate();else ui.deactivate();}).catch(()=>{});
@@ -1229,7 +1239,7 @@ async function loadPresence(){
   const list=presence.slice().sort((a,b)=>rank(a)-rank(b)||(a.last_seen_age_secs??1e12)-(b.last_seen_age_secs??1e12));
   $('#preslist').innerHTML=list.length? list.map(a=>{
     const cls=a.online?' on':a.wake?' band':'';
-    const st=a.online?'online':a.wake?'on band':(a.last_seen_age_secs==null?'offline':fmtAge(a.last_seen_age_secs));
+    const st=a.home?(a.online?'home agent':'home agent · off'):a.online?'online':a.wake?'on band':(a.last_seen_age_secs==null?'offline':fmtAge(a.last_seen_age_secs));
     const tip=a.online?'online — click to @mention':a.wake?`hosted on worker ${a.worker} (${a.wake}) — @mention wakes it`:'offline — a message is left as voicemail for its next rook call';
     return `<div class="presrow${cls}" data-id="${esc(a.identity)}" title="${esc(tip)}">
       <span class="pdot${cls}"></span>${avatarHTML(a.identity,'sm')}
@@ -1259,6 +1269,7 @@ function renderMsgs(d,reset){ if(!d)return; const log=$('#chatlog');
   const msgs=d.messages||[];
   const atBottom=log.scrollHeight-log.scrollTop-log.clientHeight<60;
   for(const m of msgs){ lastSeq=Math.max(lastSeq,m.seq);
+    document.querySelectorAll('.typing').forEach(t=>{ if(t.dataset.ident===m.sender)t.remove(); });
     const me=isMe(m.sender), grouped=(m.sender===lastSender);
     const el=document.createElement('div');
     el.className='msg'+(me?' me':'')+(grouped?' grouped':'');
@@ -1318,6 +1329,9 @@ async function sendChat(){ const b=$('#chatbox'); const t=b.value.trim(); if(!t|
   // can wake, we wake — that's what makes an agent actually answer here.
   // Anyone we can't gets voicemail; say so instead of leaving silence.
   const offline=r.offline||[];
+  // The hub's home agent answers by itself (no wake): show it thinking until it posts.
+  for(const id of (r.addressed||[])){ const p=presById(id);
+    if(p&&p.home&&!offline.includes(id)) showTyping(shortName(id),id); }
   for(const id of offline){ const p=presById(id); const nm=shortName(id);
     if(p&&p.worker){ showTyping(nm);
       jpost('/api/chat/wake',{room:curRoom,worker:p.worker}).then(w=>{ clearTyping(); pollRoom();
@@ -1325,8 +1339,9 @@ async function sendChat(){ const b=$('#chatbox'); const t=b.value.trim(); if(!t|
     } else {
       sysline(nm+' is offline — left as voicemail; they\'ll see it on their next rook call.','warn'); } }
 }
-function showTyping(w){ clearTyping(); const log=$('#chatlog'); const el=document.createElement('div');
-  el.className='typing'; el.id='typing-'+w; el.textContent=w+' is thinking'; log.appendChild(el); log.scrollTop=log.scrollHeight; }
+function showTyping(w,ident){ clearTyping(); const log=$('#chatlog'); const el=document.createElement('div');
+  el.className='typing'; el.id='typing-'+w; if(ident)el.dataset.ident=ident; el.textContent=w+' is thinking'; log.appendChild(el); log.scrollTop=log.scrollHeight;
+  if(ident)setTimeout(()=>{ if(el.isConnected)el.remove(); },120000); }
 function clearTyping(){ document.querySelectorAll('.typing').forEach(e=>e.remove()); }
 
 async function newRoom(){ const title=prompt('Room title:'); if(!title)return;
