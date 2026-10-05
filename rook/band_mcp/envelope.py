@@ -12,6 +12,7 @@ this module owns the MCP-facing shape of things:
   uses the tool's own argument model, so accepted input does not change.
 * ``Notices``: per-MCP-session memory so ``_task`` and ``_unread_chat`` ride a
   reply only when they are new or changed.
+* ``add_notice``: adds a key (``_hygiene``) to any tool's reply after it ran.
 * ``call_reply`` / ``call_text``: the ``rook_call`` reply, compact or plain text.
 
 ``ROOK_MCP_ENVELOPE=legacy`` restores the pre-beta ``rook_call`` shape
@@ -133,6 +134,34 @@ class Notices:
         while len(self._seen) > self._cap:
             self._seen.popitem(last=False)
         return True
+
+
+def add_notice(result, key: str, value):
+    """Add ``key: value`` to a tool result after the tool ran (the hygiene
+    piggyback). A JSON-object text reply gets the key; any other text reply
+    gets a last ``[rook] {...}`` line, as ``call_text`` does. Accepts the raw
+    string a tool returns or FastMCP's converted content list / tuple."""
+    def edit(text: str) -> str:
+        if text[:1] == "{":
+            try:
+                obj = json.loads(text)
+            except ValueError:
+                obj = None
+            if isinstance(obj, dict):
+                obj[key] = value
+                return dumps(obj)
+        return text + "\n[rook] " + json.dumps({key: value}, separators=(",", ":"),
+                                                ensure_ascii=False, default=str)
+    if isinstance(result, str):
+        return edit(result)
+    items = result[0] if isinstance(result, tuple) else result
+    if isinstance(items, list):
+        for item in items:
+            text = getattr(item, "text", None)
+            if isinstance(text, str):
+                item.text = edit(text)
+                break
+    return result
 
 
 # -- rook_call replies -------------------------------------------------------

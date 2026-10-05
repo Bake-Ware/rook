@@ -71,6 +71,27 @@ class KnowledgeService:
         self.last_maintenance = None
         self.last_error = None
         self._band_cache = (0, [])
+        # HygieneEngine (hygiene.py), set by the knowledge plugin; None = off.
+        self.hygiene = None
+
+    def _hook(self, name, *args, **kwargs):
+        """Run a hygiene hook. Bookkeeping: never fails the caller."""
+        engine = self.hygiene
+        if engine is None:
+            return None
+        try:
+            return getattr(engine, name)(*args, **kwargs)
+        except Exception:
+            log.exception('hygiene hook %s failed', name)
+            return None
+
+    def auto_link(self, actor, kind, ref, relation='touched', note='', task=None):
+        """The store's auto_link plus its hygiene trigger (a handoff on
+        in-progress work asks for a state). Returns the task id or None."""
+        linked = self.store.auto_link(actor, kind, ref, relation=relation, note=note, task=task)
+        if linked:
+            self._hook('on_link', actor, linked, kind, ref, relation, True)
+        return linked
 
     def bands(self):
         """The operator's existing bands (all of them, until per-user band
@@ -146,6 +167,16 @@ class KnowledgeService:
                     if isinstance(items, list):
                         entry[key] = [{k: v for k, v in i.items() if k in keep} for i in items]
         out = {'deck': deck}
+        flags = self._hook('flags') or {}
+        if flags:
+            for entry in deck:
+                if entry['project']['id'] in flags:
+                    entry['project']['hygiene'] = flags[entry['project']['id']]
+                for items in entry.values():
+                    if isinstance(items, list):
+                        for item in items:
+                            if item.get('id') in flags:
+                                item['hygiene'] = flags[item['id']]
         if data.get('handoffs'):
             if not self.handoff_list:
                 raise ValueError('Handoff store unavailable; use rook_handoff_list')
@@ -203,6 +234,15 @@ class KnowledgeService:
             return self.bands()
         if action == 'deck':
             return self._deck(band, rid, data, fields, lean)
+        if action == 'hygiene':
+            if self.hygiene is None:
+                return {'findings': [], 'enabled': False}
+            who = self.actor()['id'] if data.get('mine') else None
+            records = None
+            if rid:
+                b = self._band_for(band, rid)
+                records = [self.store.get(b, rid, events=0)['id']]
+            return {'findings': self.hygiene.open(records, who, data.get('limit', 50))}
         if action == 'review' and (actor or {}).get('kind') != 'human':
             raise PermissionError('review is for people, from the Knowledge page')
         actor = actor or self.actor()
@@ -224,9 +264,14 @@ class KnowledgeService:
             return {'records': records}
         if action == 'get':
             if not lean:
-                return self.store.get(b, rid)
-            return self.store.get(b, rid, auto_links=data.get('links') == 'all',
-                                  events=data.get('events', MCP_GET_EVENTS))
+                got = self.store.get(b, rid)
+            else:
+                got = self.store.get(b, rid, auto_links=data.get('links') == 'all',
+                                     events=data.get('events', MCP_GET_EVENTS))
+            found = self._hook('open', [got['id']])
+            if found:
+                got['hygiene'] = [{k: f[k] for k in ('kind', 'actor', 'text', 'created')} for f in found]
+            return got
         if action == 'search':
             found = await self.search.query(b, query, kind, data.get('worker'),
                                             int(data.get('limit', MCP_SEARCH_LIMIT if lean else 20)))
@@ -244,7 +289,7 @@ class KnowledgeService:
                     'semantic_error': self.search.last_error, 'last_maintenance': self.last_maintenance,
                     'maintenance_error': self.last_error}
         if action not in WRITES:
-            raise ValueError('Actions: bands, deck, list, get, search, context, status, '
+            raise ValueError('Actions: bands, deck, hygiene, list, get, search, context, status, '
                              'create, update, link, retract, claim, release, note, batch')
         if action == 'review':
             data = {k: data.get(k) for k in ('revision', 'verdict', 'note')}
@@ -263,11 +308,28 @@ class KnowledgeService:
             closed = self._close_handoffs(b, actor, result)
             if closed:
                 result = {**result, 'closed_handoffs': closed}
+        self._after_write(action, actor, data, result, record if action in ('update', 'release') else None)
         if action == 'create':
             result = {**result, 'comparable': [
                 {'id': r['id'], 'slug': r['slug'], 'title': r['title'], 'kind': r['kind']}
                 for r in self.store.lexical(b, result['title'], 5) if r['id'] != result['id']]}
         return result
+
+    def _after_write(self, action, actor, data, result, before):
+        """Hygiene triggers for a write that went through."""
+        if self.hygiene is None or not isinstance(result, dict):
+            return
+        if action == 'link':
+            self._hook('on_link', actor, result.get('record'), result.get('kind'), result.get('ref'),
+                       result.get('relation'))
+        elif action == 'update':
+            self._hook('on_record_changed', actor, before, result)
+        elif action == 'claim':
+            self._hook('on_claim', actor.get('id'), result.get('task'))
+        elif action == 'release':
+            self._hook('on_release', result.get('task'), data.get('actor') or actor.get('id'))
+        if action in ('create', 'update', 'link', 'retract'):
+            self._hook('after_knowledge_write')
 
     async def maintain(self):
         """Background embedding indexing. Failures are recorded, never raised."""

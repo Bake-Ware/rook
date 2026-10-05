@@ -41,12 +41,14 @@ class _Safe(dict):
 
 class Hygiene:
     def __init__(self, knowledge, client, chat, prompt, journal=None,
-                 idle: float = IDLE_SECONDS) -> None:
+                 idle=IDLE_SECONDS) -> None:
         self.knowledge = knowledge
         self.client = client
         self.chat = chat
         self.prompt = prompt  # callable() -> template text
         self.journal = journal
+        # Seconds, or callable() -> seconds (the knowledge plugin's
+        # hygiene_idle_minutes setting); a falsy value turns the loop off.
         self.idle = idle
 
     async def run(self, every: float = 60.0) -> None:
@@ -80,9 +82,12 @@ class Hygiene:
     async def tick(self, now: float | None = None) -> list[dict]:
         now = now or time.time()
         done = []
+        idle = self.idle() if callable(self.idle) else self.idle
+        if not idle:
+            return done
         store = self.knowledge.store
         for c in store.active_claims():
-            if now - c["last_active"] < self.idle:
+            if now - c["last_active"] < idle:
                 continue
             if c["nudged"] and c["nudged"] >= c["last_active"]:
                 continue  # already handled this idle period
