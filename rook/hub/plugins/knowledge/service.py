@@ -167,7 +167,7 @@ class KnowledgeService:
                     if isinstance(items, list):
                         entry[key] = [{k: v for k, v in i.items() if k in keep} for i in items]
         out = {'deck': deck}
-        flags = self._hook('flags') or {}
+        flags = self._hook('flags', bands) or {}
         if flags:
             for entry in deck:
                 if entry['project']['id'] in flags:
@@ -238,11 +238,12 @@ class KnowledgeService:
             if self.hygiene is None:
                 return {'findings': [], 'enabled': False}
             who = self.actor()['id'] if data.get('mine') else None
+            bands = [self.band(band)] if band else [b['id'] for b in self.bands()]
             records = None
             if rid:
                 b = self._band_for(band, rid)
                 records = [self.store.get(b, rid, events=0)['id']]
-            return {'findings': self.hygiene.open(records, who, data.get('limit', 50))}
+            return {'findings': self.hygiene.open(records, who, data.get('limit', 50), bands=bands)}
         if action == 'review' and (actor or {}).get('kind') != 'human':
             raise PermissionError('review is for people, from the Knowledge page')
         actor = actor or self.actor()
@@ -328,7 +329,9 @@ class KnowledgeService:
             self._hook('on_claim', actor.get('id'), result.get('task'))
         elif action == 'release':
             self._hook('on_release', result.get('task'), data.get('actor') or actor.get('id'))
-        if action in ('create', 'update', 'link', 'retract'):
+        # A new or changed knowledge page, or a new link, can cover a done
+        # task; task writes, claims and retractions cannot.
+        if action == 'link' or (action in ('create', 'update') and result.get('kind') == 'knowledge'):
             self._hook('after_knowledge_write')
 
     async def maintain(self):

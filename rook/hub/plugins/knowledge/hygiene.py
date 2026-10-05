@@ -14,8 +14,8 @@ the deck (``hygiene`` on the row) and in ``rook_task(action="hygiene")``, so
 the next agent or person sees it even if the addressee never comes back.
 
 Safety. The engine only adds rows to its own table, events on records,
-automatic links (a commit to the task it names or the caller's claim) and the
-claim's ``dirty`` mark the deck already shows. It never changes a record's
+automatic links (a commit to the claimed task its message names, or the
+caller's claim) and the claim's ``dirty`` mark the deck already shows. It never changes a record's
 state, title, body or attrs, and never releases a claim: state changes are
 proposals in the finding's text. Every hook is bookkeeping: callers wrap it so
 a failure here never fails the write or call that triggered it.
@@ -23,8 +23,8 @@ a failure here never fails the write or call that triggered it.
 Triggers:
 
 * ``work_signal`` (event): a commit or PR is linked to an open task (by hand,
-  or detected in a ``rook_call`` reply: ``git commit`` output, ``gh pr``
-  URLs), or a console linked to it is closed. Commits are auto-linked first.
+  or detected in a ``rook_call`` reply: ``git commit`` output, the URL ``gh pr create``
+  prints), or a console linked to it is closed. Commits are auto-linked first.
 * ``handoff_saved`` (event): a handoff lands on a task that is still
   ``in_progress``: stopping? release it or set the state.
 * ``idle_claim`` (scan): claimed, in progress, idle past
@@ -49,10 +49,11 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shlex
 import time
 import uuid
 
-from .store import packed
+from .store import STALE_CLAIM_SECS, packed
 
 log = logging.getLogger("rook.hub.plugins.knowledge.hygiene")
 
@@ -99,18 +100,78 @@ PR_URL = re.compile(r'https://github\.com/[\w.-]+/[\w.-]+/pull/\d+')
 # ``rook: t_<hex>`` or ``rook: <slug>`` in a commit message names the task.
 TASK_REF = re.compile(r'\brook:\s*(t_[0-9a-f]{32}|[a-z0-9][a-z0-9-]{2,79})\b')
 BARE_TASK_ID = re.compile(r'\b(t_[0-9a-f]{32})\b')
+# ``git commit`` / ``git -C dir commit`` in a shell command.
+GIT_COMMIT = re.compile(r'\bgit\s+(?:[^\s;&|]+\s+){0,4}?commit\b')
+# Only ``gh pr create`` prints a PR this call produced (``gh pr view/list``
+# print PRs that already exist).
+GH_PR_CREATE = re.compile(r'\bgh\s+pr\s+create\b')
+HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n(.*?)\n[ \t]*\2[ \t]*(?=\n|$|\))", re.S)
+SEPARATORS = set(';&|')
 
 
 def _strings(value, depth=0):
-    """Every string in a call's args (the command, a commit message...)."""
+    """Every string in a call's args (the command, a commit message...). A
+    list of strings (an argv) also yields the joined command line."""
     if isinstance(value, str):
         yield value
     elif depth < 4 and isinstance(value, dict):
         for v in value.values():
             yield from _strings(v, depth + 1)
     elif depth < 4 and isinstance(value, (list, tuple)):
+        if value and all(isinstance(v, str) for v in value):
+            yield shlex.join(value)
         for v in value:
             yield from _strings(v, depth + 1)
+
+
+def _tokens(text):
+    for attempt in (text, HEREDOC.sub('', text)):
+        try:
+            lex = shlex.shlex(attempt, posix=True, punctuation_chars=';&|')
+            lex.whitespace_split = True
+            return list(lex)
+        except ValueError:
+            continue
+    return text.split()
+
+
+def commit_messages(command: str) -> list[str]:
+    """The messages of the ``git commit`` commands in a shell command line:
+    ``-m``/``--message`` values (``-am``, ``-m"..."``, ``--message=``), and
+    the here-document fed to ``-F -``. Nothing else in the command counts."""
+    out = []
+    for m in GIT_COMMIT.finditer(command):
+        rest = command[m.end():]
+        take, stdin = None, False
+        for tok in _tokens(rest):
+            if take:
+                if take == 'm':
+                    out.append(tok)
+                else:
+                    stdin = stdin or tok == '-'
+                take = None
+                continue
+            if tok and set(tok) <= SEPARATORS:
+                break  # the next command
+            if tok in ('-m', '--message'):
+                take = 'm'
+            elif tok in ('-F', '--file'):
+                take = 'F'
+            elif tok.startswith('--message='):
+                out.append(tok[len('--message='):])
+            elif tok in ('--file=-', '-F-'):
+                stdin = True
+            elif tok.startswith('-') and not tok.startswith('--') and 'm' in tok[1:]:
+                i = tok.index('m', 1)  # -am / -m"msg" / -amsg
+                if i == len(tok) - 1:
+                    take = 'm'
+                else:
+                    out.append(tok[i + 1:])
+        if stdin:
+            h = HEREDOC.search(rest)
+            if h:
+                out.append(h.group(3))
+    return out
 
 
 def _ago(seconds: float) -> str:
@@ -188,10 +249,13 @@ class HygieneEngine:
         out['data'] = json.loads(r['data'] or '{}')
         return out
 
-    def take(self, actor, now=None, limit=None) -> list[dict]:
+    def due(self, actor, now=None, limit=None) -> list[dict]:
         """The findings to show ``actor`` on its next reply (oldest first, at
-        most ``hygiene_hints_per_reply``), marked delivered. Each goes once;
-        ``repeat`` kinds again after the renotify period while still open."""
+        most ``hygiene_hints_per_reply``), NOT yet marked delivered: call
+        :meth:`delivered` with the hints once they are actually on a reply.
+        Each goes once; ``repeat`` kinds again after the renotify period while
+        still open. Each hint carries its finding id as ``_id`` (strip it with
+        :meth:`public` before showing)."""
         if not actor or not self.enabled:
             return []
         now = now or time.time()
@@ -207,21 +271,44 @@ class HygieneEngine:
                 f'WHERE h.actor=? AND h.resolved IS NULL AND (h.delivered IS NULL OR '
                 f'(h.kind IN ({marks}) AND h.delivered<?)) ORDER BY h.created LIMIT ?',
                 (actor, *repeat, again, limit)).fetchall()
-        if not due:
-            return []
-        with self.store.db() as db:
-            for r in due:
-                db.execute('UPDATE hygiene SET delivered=?,deliveries=deliveries+1 WHERE id=?', (now, r['id']))
         out = []
         for r in due:
-            hint = {'kind': r['kind'], 'id': r['slug'] or r['record'], 'say': r['text']}
+            hint = {'kind': r['kind'], 'id': r['slug'] or r['record'], 'say': r['text'], '_id': r['id']}
             data = json.loads(r['data'] or '{}')
             if data.get('suggest'):
                 hint['suggest'] = data['suggest']
             out.append(hint)
         return out
 
-    def open(self, records=None, actor=None, limit=50) -> list[dict]:
+    @staticmethod
+    def public(hints) -> list[dict]:
+        return [{k: v for k, v in h.items() if k != '_id'} for h in hints]
+
+    def delivered(self, hints, now=None) -> None:
+        """Mark the findings behind ``hints`` (from :meth:`due`) delivered."""
+        ids = [h['_id'] for h in hints if h.get('_id')]
+        if not ids:
+            return
+        now = now or time.time()
+        with self.store.db() as db:
+            db.executemany('UPDATE hygiene SET delivered=?,deliveries=deliveries+1 WHERE id=?',
+                           [(now, i) for i in ids])
+
+    def take(self, actor, now=None, limit=None) -> list[dict]:
+        """:meth:`due` and :meth:`delivered` in one step, for a caller that
+        always shows what it takes."""
+        hints = self.due(actor, now, limit)
+        self.delivered(hints, now)
+        return self.public(hints)
+
+    @staticmethod
+    def _bands_sql(bands, column='h.band'):
+        if bands is None:
+            return '', []
+        return f' AND {column} IN (' + ','.join('?' * len(bands)) + ')', list(bands)
+
+    def open(self, records=None, actor=None, limit=50, bands=None) -> list[dict]:
+        """Open findings, newest first; ``bands`` limits them to those bands."""
         sql, params = ('SELECT h.*, r.slug FROM hygiene h LEFT JOIN records r ON r.id=h.record '
                        'WHERE h.resolved IS NULL'), []
         if records:
@@ -230,18 +317,29 @@ class HygieneEngine:
         if actor is not None:
             sql += ' AND h.actor=?'
             params.append(actor)
-        sql += ' ORDER BY h.created DESC LIMIT ?'
-        params.append(max(1, min(int(limit), 500)))
+        more, extra = self._bands_sql(bands)
+        sql += more + ' ORDER BY h.created DESC LIMIT ?'
+        params += extra + [max(1, min(int(limit), 500))]
         with self.store.db(False) as db:
-            return [self._row(r) | {'slug': r['slug']} for r in db.execute(sql, params)]
+            return [self._row(r) | {'slug': r['slug'], 'band': r['band']} for r in db.execute(sql, params)]
 
-    def flags(self) -> dict:
+    def flags(self, bands=None) -> dict:
         """record id -> sorted open finding kinds (for the deck)."""
         out: dict = {}
+        more, params = self._bands_sql(bands, 'band')
         with self.store.db(False) as db:
-            for r in db.execute('SELECT DISTINCT record, kind FROM hygiene WHERE resolved IS NULL'):
+            for r in db.execute('SELECT DISTINCT record, kind FROM hygiene WHERE resolved IS NULL' + more, params):
                 out.setdefault(r['record'], set()).add(r['kind'])
         return {k: sorted(v) for k, v in out.items()}
+
+    def notified(self, record, actor, since, kind='idle_claim') -> bool:
+        """A ``kind`` finding for (record, actor) was delivered at or after
+        ``since`` and is still open (the band-side nudge loop checks this so
+        an agent is not nudged twice for one idle period)."""
+        with self.store.db(False) as db:
+            return bool(db.execute('SELECT 1 FROM hygiene WHERE record=? AND kind=? AND actor=? '
+                                   'AND resolved IS NULL AND delivered>=?',
+                                   (record, kind, actor, since)).fetchone())
 
     # -- helpers ----------------------------------------------------------------
     @staticmethod
@@ -289,37 +387,58 @@ class HygieneEngine:
             return self._signal(actor, task_id, 'Handoff saved', now, kind='handoff_saved')
         return []
 
-    def on_call(self, actor, cap, args, reply, worker=None, now=None):
+    def _claimed(self, actor_id, name, band=None):
+        """The task id named ``name`` (id or slug) that ``actor_id`` holds a
+        live claim on (in ``band`` when given), or None."""
+        sql = ("SELECT DISTINCT r.id FROM claims c JOIN records r ON r.id=c.task WHERE c.actor=? "
+               "AND c.released IS NULL AND c.last_active>=? AND r.kind='task' AND (r.id=? OR r.slug=?)")
+        params = [actor_id, time.time() - STALE_CLAIM_SECS, name, name]
+        if band:
+            sql += ' AND r.band=?'
+            params.append(band)
+        with self.store.db(False) as db:
+            rows = [r['id'] for r in db.execute(sql, params)]
+        return rows[0] if len(rows) == 1 else None
+
+    def on_call(self, actor, cap, args, reply, worker=None, now=None, band=None):
         """Look for finished work in a band call's reply: ``git commit`` output
-        and GitHub PR URLs. A commit is auto-linked to the task its message
-        names (``rook: <task id or slug>``, or a bare task id) as evidence, or
-        else to the caller's live claim as ``produced``. Returns the linked
-        task ids."""
+        and the PR URL ``gh pr create`` prints. The commit's own message may
+        name the task (``rook: <task id or slug>``, or a bare task id): the
+        commit is evidence on it only when the caller holds a live claim on
+        that task (in ``band``, the band of the worker the call ran on, when
+        known). Anything else goes to the caller's own live claim as
+        ``produced``, never as evidence: a message can name any task, and
+        evidence is what lets a task go done. Returns the linked task ids."""
         if not self.enabled or not isinstance(reply, dict) or not reply.get('ok'):
+            return []
+        aid = (actor or {}).get('id')
+        if not aid:
             return []
         res = reply.get('result')
         out = res.get('stdout') if isinstance(res, dict) else res if isinstance(res, str) else None
         if not isinstance(out, str) or not out:
             return []
-        said = '\n'.join(_strings(args))[:20000]
+        commands = list(dict.fromkeys(_strings(args)))
+        said = '\n'.join(commands)[:20000]
         if 'git' not in said and 'gh ' not in said:
             return []
-        named = TASK_REF.findall(said) or BARE_TASK_ID.findall(said)
-        found = [('commit', m.group(2), f'{m.group(1)}: {m.group(3)[:160]}') for m in COMMIT_LINE.finditer(out)]
-        if 'gh ' in said:
+        commits = list(COMMIT_LINE.finditer(out)) if GIT_COMMIT.search(said) else []
+        found = [('commit', m.group(2), f'{m.group(1)}: {m.group(3)[:160]}') for m in commits]
+        if GH_PR_CREATE.search(said):
             found += [('url', u, 'pull request') for u in dict.fromkeys(PR_URL.findall(out))]
+        if not found:
+            return []
+        messages = [msg for c in commands for msg in commit_messages(c)] + [m.group(3) for m in commits]
+        said_in_messages = '\n'.join(messages)
+        named = list(dict.fromkeys(TASK_REF.findall(said_in_messages) + BARE_TASK_ID.findall(said_in_messages)))
+        evidence = next((t for t in (self._claimed(aid, n, band) for n in named[:5]) if t), None)
         linked = []
         for kind, ref, note in found[:5]:
             note = (note + (f' (on {worker})' if worker else ''))[:500]
-            task = None
-            for name in named:
-                try:
-                    task = self.store.auto_link(actor, kind, ref, relation='evidence', note=note, task=name)
-                    break
-                except ValueError:
-                    continue
-            if task is None:
-                task = self.store.auto_link(actor, kind, ref, relation='produced', note=note)
+            if evidence:
+                task = self.store.auto_link(actor, kind, ref, relation='evidence', note=note, task=evidence)
+            else:
+                task = self.store.auto_link(actor, kind, ref, relation='produced', note=note, band=band)
             if task:
                 linked.append(task)
                 self.on_link(actor, task, kind, ref, auto=True, now=now)
@@ -359,15 +478,18 @@ class HygieneEngine:
             self.resolve(task_id, CLAIM_KINDS, actor_id, now)
 
     def after_knowledge_write(self, now=None):
-        """A page or link changed: re-check open done_without_knowledge findings."""
+        """A page or link changed: re-check open done_without_knowledge
+        findings (in a read transaction; one short write for the resolves)."""
         if not self.enabled:
             return 0
         with self.store.db(False) as db:
             tasks = [r['record'] for r in db.execute(
                 "SELECT DISTINCT record FROM hygiene WHERE kind='done_without_knowledge' AND resolved IS NULL")]
             covered = [t for t in tasks if self._has_knowledge(db, t)]
-        for t in covered:
-            self.resolve(t, ('done_without_knowledge',), None, now)
+        if covered:
+            with self.store.db() as db:
+                for t in covered:
+                    self.resolve(t, ('done_without_knowledge',), None, now, db)
         return len(covered)
 
     def on_session_end(self, actor_id, now=None):
@@ -459,36 +581,42 @@ class HygieneEngine:
     def scan(self, now=None) -> list[dict]:
         """Evaluate the scan-owned conditions: raise new findings, resolve the
         ones that no longer hold, mark long-idle claims dirty. Returns the
-        findings raised, as {id, kind, record, actor, text}."""
+        findings raised, as {id, kind, record, actor, text}.
+
+        The conditions are evaluated in a read transaction; the writes
+        (inserts, resolves, dirty marks) go in one short write transaction
+        afterwards, so a scan never holds the write lock while it reads."""
         if not self.enabled:
             return []
         now = now or time.time()
         holding: set = set()          # (record, kind, actor) that still hold
+        pending: list = []            # findings to raise
+        done_checks: list = []        # done tasks without knowledge
+        dirty: list = []              # (claim id, band, task, last_active, quiet)
         raised: list = []
 
         def want(band, record, kind, actor, text, data=None):
             holding.add((record, kind, actor or ''))
             pending.append((band, record, kind, actor or '', text, data))
-        pending: list = []
 
         idle_s = float(self.cfg('hygiene_idle_minutes')) * 60
         dirty_s = float(self.cfg('hygiene_dirty_hours')) * 3600
         release_s = float(self.cfg('hygiene_release_hours')) * 3600
-        with self.store.db() as db:
+        scan_kinds = [k for k, v in KINDS.items() if v['scan']]
+        with self.store.db(False) as db:
             # Idle claims: nudge, then mark dirty, then propose a release.
             for c in db.execute("SELECT c.*, r.slug, r.title, r.band rband FROM claims c JOIN records r "
                                 "ON r.id=c.task WHERE c.released IS NULL AND r.state='in_progress'").fetchall():
                 quiet = now - c['last_active']
                 if quiet < idle_s or not self._unhanded(db, c):
                     continue
-                want(c['rband'], c['task'], 'idle_claim', c['actor'],
-                     f'[[{c["slug"]}]] is claimed by you and idle {_ago(quiet)} with work since its last '
-                     f'handoff. Stopped? rook_handoff_save, link evidence, record knowledge, set the state. '
-                     f'Still on it? Carry on.')
+                if not self._nudged(db, c):
+                    want(c['rband'], c['task'], 'idle_claim', c['actor'],
+                         f'[[{c["slug"]}]] is claimed by you and idle {_ago(quiet)} with work since its last '
+                         f'handoff. Stopped? rook_handoff_save, link evidence, record knowledge, set the state. '
+                         f'Still on it? Carry on.')
                 if quiet >= dirty_s and not c['dirty']:
-                    db.execute('UPDATE claims SET dirty=? WHERE id=?', (now, c['id']))
-                    self.store._event(db, c['rband'], c['task'], SYSTEM, 'hygiene_dirty',
-                                      {'claim': c['id'], 'idle': int(quiet)})
+                    dirty.append((c['id'], c['rband'], c['task'], c['last_active'], quiet))
                 if quiet >= release_s:
                     text = (f'Claim by {c["actor"]} on [[{c["slug"]}]] idle {_ago(quiet)}. Proposal: if the '
                             f'work stopped, release it with a handoff: rook_task release id={c["slug"]} '
@@ -503,7 +631,7 @@ class HygieneEngine:
                     for r in db.execute("SELECT actor FROM hygiene WHERE record=? AND kind='done_without_knowledge' "
                                         'AND resolved IS NULL', (t['id'],)):
                         holding.add((t['id'], 'done_without_knowledge', r['actor']))
-                    pending.append(('check_done', t['id'], None, None, None, None))
+                    done_checks.append(t['id'])
             # Projects whose tasks are all finished and quiet.
             quiet_s = float(self.cfg('hygiene_project_idle_hours')) * 3600
             for p in db.execute("SELECT * FROM records WHERE kind='project' AND state='active'").fetchall():
@@ -551,24 +679,48 @@ class HygieneEngine:
                          f'[[{page["slug"]}]] relies on ' + ', '.join(f'[[{s}]]' for s in refs)
                          + ', now superseded or cancelled. Check it still holds; update it, or supersede it.',
                          {'refs': refs})
-            # Resolve scan-owned findings whose condition stopped holding.
-            scan_kinds = [k for k, v in KINDS.items() if v['scan']]
-            for r in db.execute('SELECT id, record, kind, actor FROM hygiene WHERE resolved IS NULL AND kind IN ('
-                                + ','.join('?' * len(scan_kinds)) + ')', scan_kinds).fetchall():
-                if (r['record'], r['kind'], r['actor']) not in holding:
-                    db.execute('UPDATE hygiene SET resolved=? WHERE id=?', (now, r['id']))
-            # Event findings outlive their moment: a day by default.
-            ttl = now - float(self.cfg('hygiene_signal_hours')) * 3600
-            db.execute("UPDATE hygiene SET resolved=? WHERE resolved IS NULL AND kind IN "
-                       "('work_signal','handoff_saved','session_ended') AND created<?", (now, ttl))
-            for band, record, kind, actor, text, data in pending:
-                if band == 'check_done':
-                    continue
-                hid = self.raise_(band, record, kind, actor, text, data, now, db)
-                if hid:
-                    raised.append({'id': hid, 'kind': kind, 'record': record, 'actor': actor, 'text': text})
-        for band, record, *_ in pending:
-            if band == 'check_done':
-                for hid in self._check_done(record, None, now):
-                    raised.append({'id': hid, 'kind': 'done_without_knowledge', 'record': record})
+            # Scan-owned findings whose condition stopped holding. Only rows
+            # seen here: one raised by an event after this read is left alone.
+            open_now = {(r['record'], r['kind'], r['actor']): r['id'] for r in db.execute(
+                'SELECT id, record, kind, actor FROM hygiene WHERE resolved IS NULL AND kind IN ('
+                + ','.join('?' * len(scan_kinds)) + ')', scan_kinds).fetchall()}
+            stopped = [hid for key, hid in open_now.items() if key not in holding]
+            pending = [f for f in pending if (f[1], f[2], f[3]) not in open_now]  # already open
+
+        if dirty or stopped or pending or self._expired_signals(now):
+            with self.store.db() as db:
+                for cid, band, task, last_active, quiet in dirty:
+                    # Unless the claim came back to life since the read.
+                    if db.execute('UPDATE claims SET dirty=? WHERE id=? AND dirty IS NULL AND released IS NULL '
+                                  'AND last_active=?', (now, cid, last_active)).rowcount:
+                        self.store._event(db, band, task, SYSTEM, 'hygiene_dirty', {'claim': cid, 'idle': int(quiet)})
+                db.executemany('UPDATE hygiene SET resolved=? WHERE id=? AND resolved IS NULL',
+                               [(now, i) for i in stopped])
+                # Event findings outlive their moment: a day by default.
+                db.execute("UPDATE hygiene SET resolved=? WHERE resolved IS NULL AND kind IN "
+                           "('work_signal','handoff_saved','session_ended') AND created<?",
+                           (now, now - float(self.cfg('hygiene_signal_hours')) * 3600))
+                for band, record, kind, actor, text, data in pending:
+                    hid = self.raise_(band, record, kind, actor, text, data, now, db)
+                    if hid:
+                        raised.append({'id': hid, 'kind': kind, 'record': record, 'actor': actor, 'text': text})
+        for record in done_checks:
+            for hid in self._check_done(record, None, now):
+                raised.append({'id': hid, 'kind': 'done_without_knowledge', 'record': record})
         return raised
+
+    def _expired_signals(self, now) -> bool:
+        with self.store.db(False) as db:
+            return bool(db.execute("SELECT 1 FROM hygiene WHERE resolved IS NULL AND kind IN "
+                                   "('work_signal','handoff_saved','session_ended') AND created<? LIMIT 1",
+                                   (now - float(self.cfg('hygiene_signal_hours')) * 3600,)).fetchone())
+
+    @staticmethod
+    def _nudged(db, claim) -> bool:
+        """The band-side idle loop (rook/band_mcp/hygiene.py) already nudged
+        this claim's agent for its current idle period (claims.nudged, with
+        a ``hygiene_nudge`` event: a ``hygiene_dirty`` outcome reached nobody)."""
+        if not claim['nudged'] or claim['nudged'] < claim['last_active']:
+            return False
+        return bool(db.execute("SELECT 1 FROM events WHERE band=? AND record=? AND action='hygiene_nudge' "
+                               "AND ts>=? LIMIT 1", (claim['rband'], claim['task'], claim['last_active'])).fetchone())

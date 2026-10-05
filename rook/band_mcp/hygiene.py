@@ -66,6 +66,20 @@ class Hygiene:
         last_handoff = row[0] or 0
         return last_handoff < claim["last_active"]
 
+    def _already_told(self, claim) -> bool:
+        """The hub's hygiene engine (rook/hub/plugins/knowledge/hygiene.py)
+        delivered an ``idle_claim`` finding for this claim since it went
+        idle. The engine in turn skips claims this loop nudged, so an agent
+        hears about one idle period once."""
+        engine = getattr(self.knowledge, "hygiene", None)
+        if engine is None:
+            return False
+        try:
+            return engine.notified(claim["task"], claim["actor"], claim["last_active"])
+        except Exception:  # noqa: BLE001 — dedupe is best effort
+            log.exception("hygiene dedupe check failed")
+            return False
+
     def _worker(self, host):
         if not host or host == "web":
             return None
@@ -93,6 +107,8 @@ class Hygiene:
                 continue  # already handled this idle period
             if not self._dirty(c):
                 continue
+            if self._already_told(c):
+                continue  # its idle_claim finding already rode a reply this idle period
             idle_min = int((now - c["last_active"]) // 60)
             outcome = await self._nudge(c, idle_min)
             if outcome["action"] == "marked_dirty":

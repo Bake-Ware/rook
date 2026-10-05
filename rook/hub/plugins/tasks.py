@@ -54,7 +54,8 @@ class Tasks(Plugin):
              "(create/update/link/retract/claim/release) on worker `rook`, with "
              "`kind=task|project|concept`. Hygiene nudges ride replies as `_hygiene` and show on "
              "the deck; `rook_task(action=\"hygiene\")` lists open ones (`data {mine: true}`). A commit "
-             "message with `rook: <task id or slug>` links the commit to that task as evidence.\n")
+             "message with `rook: <task id or slug>` links the commit to that task as evidence "
+             "when you hold a claim on it.\n")
 
     def available(self) -> bool:
         return bool(self.settings.get("enabled", True))

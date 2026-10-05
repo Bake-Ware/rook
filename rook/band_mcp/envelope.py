@@ -12,7 +12,7 @@ this module owns the MCP-facing shape of things:
   uses the tool's own argument model, so accepted input does not change.
 * ``Notices``: per-MCP-session memory so ``_task`` and ``_unread_chat`` ride a
   reply only when they are new or changed.
-* ``add_notice``: adds a key (``_hygiene``) to any tool's reply after it ran.
+* ``add_notice``: adds a key (``_hygiene``) to a reply Rook built, after the tool ran.
 * ``call_reply`` / ``call_text``: the ``rook_call`` reply, compact or plain text.
 
 ``ROOK_MCP_ENVELOPE=legacy`` restores the pre-beta ``rook_call`` shape
@@ -138,30 +138,38 @@ class Notices:
 
 def add_notice(result, key: str, value):
     """Add ``key: value`` to a tool result after the tool ran (the hygiene
-    piggyback). A JSON-object text reply gets the key; any other text reply
-    gets a last ``[rook] {...}`` line, as ``call_text`` does. Accepts the raw
+    piggyback). Returns ``(result, attached)``.
+
+    Only for replies Rook builds itself as one JSON object (the caller picks
+    the tools; see server._HYGIENE_TOOLS): the key is merged into that
+    object. Anything else (a JSON array, plain text, a worker's output) is
+    left untouched and ``attached`` is False, so the caller keeps the notice
+    for a later reply instead of editing data it does not own. ``rook_call``
+    adds its notices itself (``call_reply`` / ``call_text``). Accepts the raw
     string a tool returns or FastMCP's converted content list / tuple."""
-    def edit(text: str) -> str:
-        if text[:1] == "{":
-            try:
-                obj = json.loads(text)
-            except ValueError:
-                obj = None
-            if isinstance(obj, dict):
-                obj[key] = value
-                return dumps(obj)
-        return text + "\n[rook] " + json.dumps({key: value}, separators=(",", ":"),
-                                                ensure_ascii=False, default=str)
+    def edit(text: str):
+        if text[:1] != "{":
+            return None
+        try:
+            obj = json.loads(text)
+        except ValueError:
+            return None
+        if not isinstance(obj, dict) or key in obj:
+            return None
+        obj[key] = value
+        return dumps(obj)
     if isinstance(result, str):
-        return edit(result)
+        out = edit(result)
+        return (result, False) if out is None else (out, True)
     items = result[0] if isinstance(result, tuple) else result
     if isinstance(items, list):
-        for item in items:
-            text = getattr(item, "text", None)
-            if isinstance(text, str):
-                item.text = edit(text)
-                break
-    return result
+        texts = [item for item in items if isinstance(getattr(item, "text", None), str)]
+        if len(texts) == 1:
+            out = edit(texts[0].text)
+            if out is not None:
+                texts[0].text = out
+                return result, True
+    return result, False
 
 
 # -- rook_call replies -------------------------------------------------------
