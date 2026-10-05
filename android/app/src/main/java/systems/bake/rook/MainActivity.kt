@@ -242,6 +242,7 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
         chat.notifyDataSetChanged()
         panels.resume()
         VoiceBus.listener = this
+        SpeakBridge.attachChat { addBubble(it, user = false) }   // voice.speak lines, incl. ones said while away
         onState(VoiceBus.state)
         if (intent?.action == Intent.ACTION_ASSIST) {
             intent.action = null
@@ -249,7 +250,7 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
         }
     }
 
-    override fun onPause() { panels.pause(); VoiceBus.listener = null; super.onPause() }
+    override fun onPause() { panels.pause(); VoiceBus.listener = null; SpeakBridge.detachChat(); super.onPause() }
 
     override fun onStop() {
         VoiceService.inst?.releaseIfIdle()
