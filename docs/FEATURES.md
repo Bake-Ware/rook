@@ -189,6 +189,7 @@ On top of the usual `shell.*`, `file.*` and `info.*`, the app adds what only a p
 | `location.get` | Where the device is, with accuracy and a map link |
 | `battery.status` | Charge level and state (also sent with every heartbeat) |
 | `device.find` | Ring at full volume to find a lost phone, even when it's silenced |
+| `voice.speak` · `voice.speak_stop` · `voice.speak_voices` | Say something out loud from the phone (on-device text-to-speech), so any agent or job on the band can talk to you; it waits for a voice reply in progress and shows the line in the app's chat |
 | `device.wake` · `device.unlock` · `device.launch` · `device.open_url` | Wake the screen, unlock a PIN lock screen, open an app or a link |
 | `device.torch` · `device.vibrate` · `device.clipboard_get` · `device.clipboard_set` | Flashlight, vibration and clipboard |
 
