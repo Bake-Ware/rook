@@ -35,7 +35,10 @@ still enabled, preserving the existing band settings and stable worker ID.
 
 ## Publishing
 
-Build the universal APK with the existing signing certificate, then run:
+Build the universal APK with the existing signing certificate. Stamp the hub's
+update public key into the bundled worker with `ROOK_UPDATE_PUBKEY=<base64>`
+(`python rook/remote/update_keys.py pubkey` on the hub prints it) so the build
+host never needs, or creates, a private signing key. Then run:
 
 ```
 python3 android/build_apk_manifest.py
