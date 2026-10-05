@@ -39,6 +39,7 @@ The tables are generated from the code by `tools/gen_skill_reference.py`; don't 
 | `rook_handoff_get` | thread_id | A thread's current handoff plus history. |
 | `rook_handoff_list` | limit=20, active_only=true | Recent handoff threads (latest per thread) with goal and freshness. |
 | `rook_handoff_save` | goal?, thread_id?, state?, decisions?, next_steps?, artifacts?, supersedes?, transcript_ref?, task?, status='active' | Save a handoff (state, not a transcript) so another agent can continue without asking: goal, state, decisions… |
+| `rook_install_claude_code` | installed? | Install or update the Rook mod for Claude Code. installed= the output of `claude plugin list --json`; returns… |
 | `rook_journal` | call_id?, worker?, cap_prefix?, since_secs?, only_failures?, limit=30 | Recorded rook_call replies. call_id=<reply id> returns that call's full output (recover lost or timed-out out… |
 | `rook_knowledge` | action='search', band?, id?, query?, data?, request_id? | Shared wiki: search\|get\|list\|context\|status\|create\|update\|link\|retract\|bands. search: 5 excerpts (data {limit… |
 | `rook_presence` | — | Agents seen over the MCP recently (online within ~90s) and live band workers. |

@@ -1291,6 +1291,10 @@ def build_server(client: "BandClient | MultiBandClient",
     _skill.register(mcp, store, lambda: mcp._rook_knowledge,
                     lambda: mcp._rook_hub.plugin("persona") if mcp._rook_hub is not None else None)
 
+    # The Claude Code mod: rook_install_claude_code returns install/update steps.
+    from . import claude_code as _claude_code
+    _claude_code.register(mcp)
+
     # Agent guidance: server instructions + tool tips applied now (after every
     # tool, including knowledge, is registered); cap tips ride on
     # rook_call replies. Edited from the site via guidance_web.
