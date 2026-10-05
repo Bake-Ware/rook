@@ -179,8 +179,11 @@ object SpeakBridge {
             val params = Bundle().apply { putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1f) }
             val mode = if (job.interrupt) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
             if (engine.speak(job.text, mode, params, job.id) != TextToSpeech.SUCCESS) {
-                // The engine service can die under us; rebuild it on the next call.
-                if (queue.finished(job.id, SpeakQueue.ERROR, "tts engine rejected the utterance")) abandonFocus()
+                // The engine service can die under us. Everything already handed to it is
+                // lost too: fail all in-flight jobs (not just this one) so waiters return and
+                // the ducking focus is released; still-pending jobs rebuild the engine.
+                queue.engineLost("tts engine rejected the utterance")
+                abandonFocus()
                 init = "none"; tts = null
                 try { engine.shutdown() } catch (_: Exception) {}
                 break

@@ -59,6 +59,21 @@ def _clamp(value, lo: float, hi: float, default: float) -> float:
     return max(lo, min(hi, v))
 
 
+_TRUE = {"1", "true", "yes", "on", "y", "t"}
+_FALSE = {"0", "false", "no", "off", "n", "f", ""}
+
+
+def _flag(value, name: str) -> bool:
+    """Coerce a boolean-ish arg; ``"false"`` must not become True. Raises ValueError."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and value == value:
+        return bool(value)
+    if isinstance(value, str) and value.strip().lower() in _TRUE | _FALSE:
+        return value.strip().lower() in _TRUE
+    raise ValueError(f"{name} must be true or false, got {value!r}")
+
+
 def _bridge_ready() -> bool:
     return _Bridge is not None and app_context() is not None
 
@@ -96,6 +111,14 @@ class AndroidSpeakPlugin(Plugin):
         chunks = split_text(str(text or "")[:MAX_TEXT])
         if not chunks:
             return {"ok": False, "error": "text is empty"}
+        # Validate every argument before anything is queued: a bad value must fail
+        # the call cleanly, never after speech has started (a retry would repeat it).
+        try:
+            interrupt, chat, wait = (_flag(interrupt, "interrupt"), _flag(chat, "chat"),
+                                     _flag(wait, "wait"))
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+        timeout_s = _clamp(timeout, 1.0, 600.0, 60.0)
         ctx = app_context()
         rate_f = _clamp(rate, 0.1, 4.0, 1.0)
         pitch_f = _clamp(pitch, 0.1, 4.0, 1.0)
@@ -106,7 +129,7 @@ class AndroidSpeakPlugin(Plugin):
             for i, chunk in enumerate(chunks):
                 # Only the first chunk interrupts; the rest queue behind it.
                 r = json.loads(str(_Bridge.speak(ctx, chunk, voice_s, rate_f, pitch_f,
-                                                 bool(interrupt) and i == 0)))
+                                                 interrupt and i == 0)))
                 if not r.get("ok"):
                     return {"ok": False, "error": r.get("error", "speak failed"), "ids": ids}
                 ids.append(r["id"])
@@ -116,7 +139,7 @@ class AndroidSpeakPlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}", "ids": ids}
 
-        out = {"ok": True, "id": ids[-1], "chunks": len(ids), "chat": bool(chat)}
+        out = {"ok": True, "id": ids[-1], "chunks": len(ids), "chat": chat}
         if len(ids) > 1:
             out["ids"] = ids
         for k in ("volume", "warning"):
@@ -127,7 +150,7 @@ class AndroidSpeakPlugin(Plugin):
         if not wait:
             out["state"] = first.get("state", "queued")
             return out
-        return {**out, **await self._wait(ids, float(timeout))}
+        return {**out, **await self._wait(ids, timeout_s)}
 
     async def _wait(self, ids: list[str], timeout: float) -> dict:
         """Poll the bridge until every chunk has ended or ``timeout`` passes."""
@@ -187,7 +210,8 @@ class AndroidSpeakPlugin(Plugin):
         ctx = app_context()
         deadline = time.monotonic() + 10
         while True:
-            r = json.loads(str(_Bridge.voices(ctx)))
+            # Binder IPC into the TTS engine can block: keep it off the event loop.
+            r = json.loads(str(await asyncio.to_thread(_Bridge.voices, ctx)))
             if r.get("ok") or r.get("engine") == "failed" or time.monotonic() >= deadline:
                 break
             await asyncio.sleep(0.25)

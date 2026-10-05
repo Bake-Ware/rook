@@ -118,6 +118,40 @@ def test_empty_text_rejected(mod, monkeypatch):
     assert b.spoken == []
 
 
+def test_bad_args_fail_before_anything_is_queued(mod, monkeypatch):
+    b = FakeBridge()
+    p = plugin(mod, monkeypatch, b)
+    for bad in (dict(interrupt="maybe"), dict(chat=[1]), dict(wait=None)):
+        r = asyncio.run(p._speak("hi", **bad))
+        assert r["ok"] is False and "must be true or false" in r["error"]
+    assert b.spoken == [] and b.chats == []
+
+
+def test_string_flags_and_bad_timeout_are_coerced_up_front(mod, monkeypatch):
+    b = FakeBridge(ticks=2)
+    p = plugin(mod, monkeypatch, b)
+    r = asyncio.run(p._speak("hi", interrupt="false", chat="0", wait="yes", timeout="soon"))
+    assert r["ok"] and r["spoken"] and r["chat"] is False
+    assert b.spoken[0]["interrupt"] is False and b.chats == []
+    r = asyncio.run(p._speak("hi", wait="false", timeout=float("nan")))
+    assert r["ok"] and r["state"] == "queued" and len(b.spoken) == 2
+
+
+def test_voices_runs_binder_call_off_the_event_loop(mod, monkeypatch):
+    import threading
+    b = FakeBridge()
+    seen = []
+
+    def voices(ctx):
+        seen.append(threading.current_thread() is threading.main_thread())
+        return json.dumps({"ok": True, "voices": [{"name": "a", "locale": "en-GB"},
+                                                  {"name": "b", "locale": "fr-FR"}], "count": 2})
+    b.voices = voices
+    r = asyncio.run(plugin(mod, monkeypatch, b)._voices(locale="en"))
+    assert r["ok"] and r["count"] == 1 and r["voices"][0]["name"] == "a"
+    assert seen == [False]
+
+
 def test_caps_describe_schema(mod):
     from rook.core.registry import CapabilityRegistry
     p = mod.AndroidSpeakPlugin()

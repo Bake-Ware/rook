@@ -54,6 +54,26 @@ class SpeakQueueTest {
         assertTrue(q.idle())
     }
 
+    @Test fun engineLossFailsEveryInFlightJobButKeepsPending() {
+        val q = SpeakQueue()
+        q.add(job("a")); q.add(job("b")); q.add(job("c"))
+        q.next(false); q.started("a")
+        q.next(false)                       // a and b both handed to the engine
+        assertEquals(2, q.engineLost("tts engine rejected the utterance"))
+        for (id in listOf("a", "b")) {
+            assertEquals(SpeakQueue.ERROR, q.get(id)?.state)
+            assertEquals("tts engine rejected the utterance", q.get(id)?.error)
+        }
+        assertEquals(SpeakQueue.QUEUED, q.get("c")?.state)
+        assertFalse(q.idle())
+        // A late callback from the dead engine changes nothing.
+        assertFalse(q.finished("a", SpeakQueue.DONE))
+        assertEquals(SpeakQueue.ERROR, q.get("a")?.state)
+        assertEquals("c", q.next(false)?.id)
+        assertTrue(q.finished("c", SpeakQueue.DONE))
+        assertTrue(q.idle())
+    }
+
     @Test fun historyIsBoundedToFinishedJobs() {
         val q = SpeakQueue(keep = 2)
         q.add(job("a")); q.next(false); q.finished("a", SpeakQueue.DONE)

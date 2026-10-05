@@ -70,6 +70,18 @@ class SpeakQueue(private val keep: Int = 64) {
         pending.clear(); inFlight.clear()
     }
 
+    /**
+     * The engine died or rejected an utterance: everything already handed to it is
+     * lost, so fail every in-flight job. Pending jobs stay queued for a rebuilt engine.
+     * Returns the number of jobs failed.
+     */
+    @Synchronized fun engineLost(error: String): Int {
+        val n = inFlight.size
+        for (j in inFlight.values) end(j, ERROR, error)
+        inFlight.clear()
+        return n
+    }
+
     @Synchronized fun stopAll(): Int {
         val n = pending.size + inFlight.size
         for (j in pending) end(j, STOPPED, "stopped by voice.speak_stop")
