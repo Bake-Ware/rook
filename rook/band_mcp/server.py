@@ -351,6 +351,68 @@ def build_server(client: "BandClient | MultiBandClient",
         vault = None
     mcp._rook_vault = vault
     mcp._rook_journal = journal
+    mcp._rook_store_dir = _store_dir
+
+    # Reverse masking (secret_mask.py): any known vault value in what an
+    # agent gets back from any tool becomes its {{secret:name}} stub; the
+    # stores (journal, chat, handoffs, console, knowledge) mask what they
+    # write through the same installed vault. rook_secret is exempt: its
+    # get action is the audited way to read a raw value.
+    from . import secret_mask as _secret_mask
+    _secret_mask.install(vault)
+    _masked_run = mcp._tool_manager.call_tool
+    _UNMASKED_TOOLS = {"rook_secret"}
+
+    # A tool marks its reply as not to be masked by setting "skip" in the
+    # dict this holds (rook_call does, for hub caps tagged sensitive, whose
+    # whole job is to hand a secret to a service).
+    import contextvars as _cv
+    _reply_unmasked: "_cv.ContextVar[dict | None]" = _cv.ContextVar("rook_reply_unmasked", default=None)
+
+    def _mask_text(text: str) -> str:
+        m = _secret_mask.current_matcher()
+        if text[:1] in "[{":
+            # Mask the parsed document, not its text: a stub must stand for
+            # the decoded string (an escaped form in JSON text is the raw
+            # value one level up), and a match must never eat JSON syntax.
+            try:
+                doc = json.loads(text)
+            except ValueError:
+                pass
+            else:
+                masked = m.mask(doc)
+                return text if masked == doc else _env.dumps(masked)
+        return m.sub(text)
+
+    async def _masked_call_tool(name, arguments, context=None, convert_result=False):
+        flag: dict = {}
+        tok = _reply_unmasked.set(flag)
+        try:
+            result = await _masked_run(name, arguments, context=context,
+                                       convert_result=convert_result)
+        finally:
+            _reply_unmasked.reset(tok)
+        if name in _UNMASKED_TOOLS or flag.get("skip") or not _secret_mask.current_matcher():
+            return result
+        try:
+            items, structured = (result if isinstance(result, tuple) else (result, None))
+            if isinstance(items, list):
+                for item in items:
+                    text = getattr(item, "text", None)
+                    if isinstance(text, str):
+                        item.text = _mask_text(text)
+            elif isinstance(items, str):
+                items = _mask_text(items)
+            elif isinstance(items, (dict, tuple)):
+                items = _secret_mask.scrub(items)
+            if isinstance(result, tuple):
+                return (items, _secret_mask.scrub(structured))
+            return items
+        except Exception:  # noqa: BLE001 — never log the payload
+            log.exception("masking the %s reply failed", name)
+            return result
+
+    mcp._tool_manager.call_tool = _masked_call_tool
 
     # Permissions (docs/design/permissions.md): policy evaluation + call
     # tickets inside the band client, so every path that emits a band call
@@ -760,7 +822,6 @@ def build_server(client: "BandClient | MultiBandClient",
                 return _fail(f"unknown secret {e.args[0]!r} in args; rook_secret(action='list') shows the names")
             for name in used:
                 _auto_link("secret", name, f"used in {cap} on {worker_name}")
-        secret_forms = [f for v in used.values() for f in _vault_mod.encoded_forms(v)]
         try:
             own = await _cap_timeout(target, cap, args)
         except Exception:
@@ -793,18 +854,29 @@ def build_server(client: "BandClient | MultiBandClient",
                          f"for long jobs use rook_console_open.")
         finally:
             _hub_authz.caller_journals.reset(jtok)
-        if secret_forms:
-            reply = _vault_mod.mask(reply, secret_forms)
+        hub = getattr(mcp, "_rook_hub", None)
+        sensitive = (hub is not None and target == hub.worker_id and isinstance(reply, dict)
+                     and "sensitive" in (getattr(hub.host.registry.meta(cap), "tags", ()) or ()))
+        if sensitive:
+            # Hub caps tagged sensitive (settings.fetch) exist to hand a vault
+            # value to a service: the caller gets it unmasked (here and in the
+            # tool-reply wrapper), the journal gets nothing.
+            holder = _reply_unmasked.get()
+            if holder is not None:
+                holder["skip"] = True
+        else:
+            # Every known vault value in the reply becomes {{secret:name}} (the
+            # values this call used are masked even below the length floor).
+            # The worker got the real values in send_args; nothing here touches them.
+            _masker = _secret_mask.installed()
+            if _masker is not None:
+                reply = _masker.mask(reply, extra=used)
         if cap == "caps.describe" and isinstance(reply, dict) and reply.get("ok"):
             _learn_timeouts(target, reply.get("result"))
         journal_reply = reply
-        hub = getattr(mcp, "_rook_hub", None)
-        if (hub is not None and target == hub.worker_id and isinstance(reply, dict)
-                and "sensitive" in (getattr(hub.host.registry.meta(cap), "tags", ()) or ())):
-            # Hub caps tagged sensitive (settings.fetch) reply with secrets:
-            # the caller gets them, the journal does not.
+        if sensitive:
             journal_reply = {"ok": reply.get("ok"), "result": "[sensitive: not journaled]"} \
-                if reply.get("ok") else reply
+                if reply.get("ok") else _secret_mask.scrub(reply, extra=used)
         cid = journal.record(cap=cap, worker=worker_name, identity=identity,
                              args=args, reply=journal_reply, audit=_caller_audit(),
                              authz=_decision_row())
@@ -895,7 +967,7 @@ def build_server(client: "BandClient | MultiBandClient",
                 return json.dumps({"ok": True, "name": name, "value": val}, indent=2)
             if action == "set":
                 res = vault.set(name, value or "", description or "", who)
-                redacted = journal.redact(_vault_mod.encoded_forms(value))
+                redacted = journal.redact_secret(name, value)
                 journal.record(cap="vault.set", worker=None, identity=_caller_identity(),
                                args={"name": name}, reply={"ok": True, **res}, audit=_caller_audit())
                 return json.dumps({"ok": True, **res, "journal_rows_masked": redacted}, indent=2)
@@ -1249,12 +1321,17 @@ def build_server(client: "BandClient | MultiBandClient",
                                        limit=limit), indent=2)
 
     @mcp.tool()
-    async def rook_console_write(room: str, text: str, newline: bool = True) -> str:
+    async def rook_console_write(room: str, text: str, newline: bool = True,
+                                 literal: bool = False) -> str:
         """Type into a live console room — this is the session's stdin.
 
         Sent verbatim, with no shell in between, so quotes and ``$`` need no
         escaping. Use it to answer a prompt ("y", a password, a menu choice) or
         to drive a REPL. Read the room afterwards to see what happened.
+
+        ``{{secret:<name>}}`` types that vault value (the transcript keeps
+        the placeholder); an unknown name fails. literal=True sends it as
+        written.
         """
         r = console.get(room)
         if r is None:
@@ -1264,9 +1341,24 @@ def build_server(client: "BandClient | MultiBandClient",
                          f"nothing is listening. Open a new console.")
         ident = _caller_identity()
         chat.touch(ident)
+        # {{secret:name}} types the value (a password prompt) without the
+        # agent ever holding it; the transcript echo keeps the placeholder.
+        data = text
+        if not literal and _vault_mod.PLACEHOLDER.search(text or ""):
+            if vault is None:
+                return _fail("text uses {{secret:…}} but the vault is unavailable on this hub")
+            try:
+                data, used = vault.substitute(text, _actor_name(),
+                                              via=f"console {room} on {r['worker_name']}",
+                                              task=_claimed_task())
+            except KeyError as e:
+                return _fail(f"unknown secret {e.args[0]!r}; rook_secret(action='list') shows the names")
+            for name in used:
+                _auto_link("secret", name, f"typed into console {room}")
+            console.remember_typed(room, used)
         try:
             reply = await _proc_call(r, "proc.write",
-                                     {"data": text, "newline": newline})
+                                     {"data": data, "newline": newline})
         except asyncio.TimeoutError:
             return _fail(f"worker {r['worker_name']!r} did not confirm the write")
         result = reply.get("result") or {}
@@ -1509,7 +1601,7 @@ async def _amain(args) -> None:
     from .vault_web import routes as vault_routes
     from . import vault as _vault_mod
     for route in vault_routes(mcp._rook_vault,
-                              lambda v: mcp._rook_journal.redact(_vault_mod.encoded_forms(v or "")),
+                              lambda n, v: mcp._rook_journal.redact_secret(n, v or ""),
                               AccountStore(enrollment)):
         app.router.routes.insert(0, route)
     from ..hub.settings_web import routes as settings_routes
@@ -1546,6 +1638,14 @@ async def _amain(args) -> None:
     # Needs the static token (the public hostname reaches it too).
     from .healthz import route as healthz_route
     app.router.routes.insert(0, healthz_route(mcp._session_manager, client, args.static_token or ""))
+
+    # /internal/mask: the dashboard masks vault values through this process
+    # (it holds no vault key itself). Token file beside the stores.
+    try:
+        from .mask_web import ensure_token as _mask_token, route as _mask_route
+        app.router.routes.insert(0, _mask_route(_mask_token(mcp._rook_store_dir)))
+    except Exception:
+        log.exception("secret mask endpoint unavailable; dashboard writes will not be masked")
 
     from .account_tokens import build_account_token_routes
     for route in reversed(build_account_token_routes(store, getattr(mcp, "_rook_chat", None))):

@@ -13,6 +13,9 @@ Agents use a secret two ways:
 
 Every read, use, set and delete is written to the access log. When a value is
 set, the hub also masks it anywhere it already appears in the call journal.
+Beyond that, secret_mask.py replaces any known value with its
+``{{secret:<name>}}`` stub in every tool reply and every store the hub writes
+(reverse masking).
 Nothing here gates a band call; an unknown placeholder only fails that call.
 """
 from __future__ import annotations
@@ -28,10 +31,14 @@ import time
 import nacl.secret
 import nacl.utils
 
+from .secret_mask import STUB as _STUB, encode as _encode
+
 log = logging.getLogger("rook.band_mcp.vault")
 
 NAME = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
-PLACEHOLDER = re.compile(r"\{\{secret:([a-z0-9][a-z0-9._-]{0,63})\}\}")
+# {{secret:name}} or an encoding-tagged {{secret:name|b64}} (see
+# secret_mask.ENCODERS). Group 1 is the name, group 2 the "|tag..." suffix.
+PLACEHOLDER = _STUB
 MASK = "***"
 MAX_VALUE = 16384
 
@@ -41,6 +48,7 @@ class Vault:
         self.path = path
         self.key_path = key_path or os.path.join(os.path.dirname(path) or ".", "vault.key")
         self._lock = threading.Lock()
+        self._gen = 0  # bumped on every set/delete; drives the reverse mask
         self._box = nacl.secret.SecretBox(self._load_key())
         self._db = sqlite3.connect(path, check_same_thread=False)
         self._db.executescript("""
@@ -116,6 +124,7 @@ class Vault:
                              (name, blob, description or (old[0] if old else ""),
                               old[1] if old else now, now, actor))
             self._audit(name, actor, "replace" if old else "create")
+            self._gen += 1
         return {"name": name, "replaced": bool(old)}
 
     def delete(self, name: str, actor: str) -> bool:
@@ -123,7 +132,28 @@ class Vault:
             gone = self._db.execute("DELETE FROM secrets WHERE name=?", (name,)).rowcount
             if gone:
                 self._audit(name, actor, "delete")
+                self._gen += 1
         return bool(gone)
+
+    # -- reverse masking (secret_mask.py) ---------------------------------------
+
+    def generation(self) -> int:
+        """Bumped on every set/delete in this process (cheap, no SQL)."""
+        return self._gen
+
+    def version(self):
+        """Changes whenever the set of secrets does (here or in another
+        process writing the same file)."""
+        with self._lock:
+            row = self._db.execute("SELECT count(*), max(updated), total(updated) FROM secrets").fetchone()
+        return (self._gen, row)
+
+    def masking_values(self) -> dict[str, str]:
+        """Every value, for building the reverse mask. Not an access: nothing
+        leaves the hub, so nothing is written to the access log."""
+        with self._lock:
+            rows = self._db.execute("SELECT name, value FROM secrets").fetchall()
+        return {n: self._box.decrypt(v).decode() for n, v in rows}
 
     # -- placeholders -------------------------------------------------------------
 
@@ -132,7 +162,7 @@ class Vault:
 
         def walk(o):
             if isinstance(o, str):
-                found.update(PLACEHOLDER.findall(o))
+                found.update(m.group(1) for m in PLACEHOLDER.finditer(o))
             elif isinstance(o, dict):
                 for v in o.values():
                     walk(v)
@@ -143,13 +173,15 @@ class Vault:
         return found
 
     def substitute(self, obj, actor: str, via: str, task: str | None = None):
-        """Return (obj with placeholders replaced, {name: value} used).
+        """Return (obj with placeholders replaced, {name: value} used). A
+        tagged placeholder ({{secret:name|b64}}) is replaced by the value in
+        that encoding (secret_mask.ENCODERS).
         Raises KeyError naming the first unknown secret."""
         values = {n: self.get(n, actor, via=via, task=task) for n in sorted(self.names_in(obj))}
 
         def walk(o):
             if isinstance(o, str):
-                return PLACEHOLDER.sub(lambda m: values[m.group(1)], o)
+                return PLACEHOLDER.sub(lambda m: _encode(values[m.group(1)], m.group(2)), o)
             if isinstance(o, dict):
                 return {k: walk(v) for k, v in o.items()}
             if isinstance(o, list):

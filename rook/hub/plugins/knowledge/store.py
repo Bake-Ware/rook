@@ -28,6 +28,7 @@ import sqlite3
 import time
 import uuid
 
+from ....band_mcp.secret_mask import scrub
 from ....core import migrations
 
 KINDS = ('concept', 'project', 'task', 'knowledge')
@@ -221,6 +222,9 @@ class KnowledgeStore:
         request = text(request or '', 160)
         if not request:
             raise ValueError('request_id is required for writes')
+        # Every record write (pages, tasks, attrs, outcomes, notes, links)
+        # passes here: known vault values become {{secret:name}} first.
+        data = scrub(data)
         signature = hashlib.sha256(packed([operation, data]).encode()).hexdigest()
         with self.db() as db:
             old = db.execute('SELECT * FROM receipts WHERE band=? AND actor=? AND request=?', (band, aid, request)).fetchone()
@@ -593,6 +597,7 @@ class KnowledgeStore:
         aid = actor.get('id')
         if not aid:
             return None
+        ref, note = scrub(str(ref)), scrub(note)
         with self.db() as db:
             if task:
                 row = db.execute("SELECT * FROM records WHERE (id=? OR slug=?) AND kind='task'", (task, task)).fetchall()
@@ -627,7 +632,7 @@ class KnowledgeStore:
             if dirty is not None:
                 db.execute('UPDATE claims SET dirty=? WHERE id=?', (dirty, claim_id))
             if actor and note:
-                self._event(db, c['band'], c['task'], actor, note, data or {})
+                self._event(db, c['band'], c['task'], actor, scrub(note), scrub(data or {}))
 
     # -- reads ------------------------------------------------------------------
 

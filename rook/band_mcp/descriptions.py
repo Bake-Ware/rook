@@ -48,7 +48,7 @@ TOOLS: dict[str, str] = {
 
     "rook_console_read": "Console output after since_seq (page with last_seq), or tail=true for the last limit lines. state says live or frozen.",
 
-    "rook_console_write": "Type into a live console's stdin, verbatim (no shell, no escaping).",
+    "rook_console_write": "Type into a live console's stdin, verbatim (no shell); {{secret:x}} types a vault value unless literal=true.",
 
     "rook_console_signal": "Signal a live console's process group: TERM, KILL, INT (ctrl-C) or HUP. The room survives.",
 

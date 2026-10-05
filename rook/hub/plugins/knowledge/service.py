@@ -14,6 +14,7 @@ all bands.
 import asyncio
 import logging
 import time
+from ....band_mcp.secret_mask import scrub
 from .store import KnowledgeStore
 from .search import Search
 
@@ -227,7 +228,16 @@ class KnowledgeService:
     async def dispatch(self, action, band=None, kind=None, rid=None, query='', data=None,
                        request_id=None, actor=None, lean=False):
         """``lean`` (MCP callers): search/list default to fewer rows, excerpts
-        and a small field set, overridable with data.limit / data.fields."""
+        and a small field set, overridable with data.limit / data.fields.
+
+        One door for the hub caps, the MCP tools and the Knowledge page, so
+        known vault values are masked here as {{secret:name}}: in what is
+        written (the store masks again) and in what is returned, which covers
+        records stored before a secret entered the vault."""
+        return scrub(await self._dispatch(action, band, kind, rid, query, scrub(data), request_id, actor, lean))
+
+    async def _dispatch(self, action, band=None, kind=None, rid=None, query='', data=None,
+                        request_id=None, actor=None, lean=False):
         data = dict(data or {})
         fields = data.pop('fields', None) if action in ('search', 'list', 'deck') else None
         if action == 'bands':
