@@ -176,6 +176,8 @@ class VoiceService : Service() {
             override fun onAssistantDone() = current { VoiceBus.emit(conn) { it.onAssistantDone() } }
             override fun onInterrupt() = current { VoiceBus.emit(conn) { it.onInterrupt() } }
             override fun onError(msg: String) = current { VoiceBus.emit(conn) { it.onError(msg) } }
+            // Retrying would only hit the same server and mode again; stay closed and say why.
+            override fun onRefused(msg: String) = current { VoiceBus.emit(conn) { it.onError(msg) }; closeSession() }
             override fun onTool(title: String, status: String) = current { VoiceBus.emit(conn) { it.onTool(title, status) } }
             override fun onBye(mode: String, afterMs: Long) = current {
                 Log.i(TAG, "bye mode=$mode after=${afterMs}ms")
