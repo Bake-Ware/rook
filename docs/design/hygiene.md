@@ -56,15 +56,21 @@ moment, to the agent that can fix it, and leave a mark for whoever comes next.
 
 ### Commits and PRs from band calls
 
-When a `rook_call` succeeds and its args mention `git` or `gh`, the reply's
-stdout is scanned for `git commit` output (`[branch 1a2b3c4] subject`) and, for
-`gh`, GitHub pull request URLs. Each is auto-linked:
+When a `rook_call` succeeds, the reply's stdout is scanned for `git commit`
+output (`[branch 1a2b3c4] subject`, only when the args run `git commit`) and
+for the pull request URL `gh pr create` prints (only for `gh pr create`:
+`gh pr view`/`list` print PRs that already exist). Each is auto-linked:
 
-- to the task the commit message names, as **evidence**: `rook: <task id or
-  slug>` anywhere in the args (or a bare `t_<id>`), the convention for commit
-  messages;
-- otherwise to the caller's live claim, as **produced** (the existing
-  auto-link rule: claims idle past `STALE_CLAIM_SECS` collect nothing).
+- to the task the commit message names, as **evidence**, only if the caller
+  holds a live claim on that task in the band of the worker the call ran on.
+  The name is `rook: <task id or slug>` (or a bare `t_<id>`), read from the
+  commit message only: the `-m`/`--message` values, the here-document fed to
+  `-F -`, and the subject line in the output. Text elsewhere in the args
+  (other commands, other fields) is ignored;
+- otherwise to the caller's own live claim (in that band), as **produced**
+  (the existing auto-link rule: claims idle past `STALE_CLAIM_SECS` collect
+  nothing). Never as evidence: a message can name any task, and an evidence
+  link is what lets a task go `done`.
 
 Then the `work_signal` above fires. A commit made through a console
 (`rook_console_write`) isn't seen; link it by hand or name the task.
@@ -74,21 +80,31 @@ seen. Adding one later only needs to call `HygieneEngine.on_link`.
 
 ## Delivery
 
-- `_hygiene` is added by the MCP bridge after any tool runs
-  (`server.py` `_with_hygiene`, `envelope.add_notice`): a JSON-object reply gets
-  the key, a plain-text reply (`text=true`) a last `[rook] {...}` line. Each
-  item is `{kind, id (slug), say, suggest?}`.
+- `_hygiene` rides only replies Rook builds itself. `rook_call` adds it to its
+  own notices: a key on the compact JSON envelope, or the same single
+  `[rook] {...}` line as `_task`/`_tips` with `text=true`; the worker's output
+  is never edited. The task/project/concept/knowledge tools (and a few other
+  Rook-built JSON objects, `server._HYGIENE_TOOLS`) get the key merged in
+  after the tool runs (`envelope.add_notice`). Any other reply (a list,
+  plain text, someone else's data) is left alone and the finding stays queued
+  for the next reply that can carry it: a finding is marked delivered only
+  once it is on a reply. Each item is `{kind, id (slug), say, suggest?}`.
 - The deck marks rows and projects with open findings (`hygiene: [kinds]`).
   `needs_hygiene` still means a dirty claim, now also set by the scan and by
   ended sessions.
-- `rook_task(action="hygiene", id?, data {mine, limit})` lists open findings.
+- `rook_task(action="hygiene", band?, id?, data {mine, limit})` lists open
+  findings in the caller's bands (`band` narrows to one).
   `rook_task(action="get")` and `rook_knowledge(action="get")` include the
   record's open findings as `hygiene`.
 - People: with `hygiene_notify_people` on, release proposals and finished
   projects are also posted through `notify.send` (Telegram/Discord), once per
   finding.
 - The §5 in-session nudge (`band_mcp/hygiene.py`) now takes its idle threshold
-  from `hygiene_idle_minutes` and stops when `hygiene_enabled` is off.
+  from `hygiene_idle_minutes` and stops when `hygiene_enabled` is off. An idle
+  period is announced once: the scan raises no `idle_claim` for a claim that
+  loop already nudged (`claims.nudged` with a `hygiene_nudge` event since the
+  claim went idle), and the loop skips a claim whose `idle_claim` finding was
+  already delivered.
 
 ## Settings
 
@@ -113,18 +129,25 @@ the canonical names (`ROOK_KNOWLEDGE_HYGIENE_IDLE_MINUTES` and so on).
 
 - `rook/hub/plugins/knowledge/hygiene.py`: `HygieneEngine` (findings table,
   event hooks, scan, delivery). Store-only, no network.
-- `rook/hub/plugins/knowledge/migrations/002_hygiene.sql`: the `hygiene` table.
-  A new table only, so `user_version` stays 2 and an older release still opens
-  the file.
+- `rook/hub/plugins/knowledge/migrations/002_hygiene.sql`: the `hygiene` table
+  and an `events(actor, ts)` index. New objects only, so `user_version` stays 2
+  and an older release still opens the file.
 - `rook/hub/plugins/knowledge/service.py`: hooks after `link`, `update`,
-  `claim`, `release` and knowledge writes; `auto_link`; the `hygiene` read
-  action; deck and get flags.
+  `claim`, `release` (each op of a `batch` too, which goes through the same
+  path), and the knowledge re-check after knowledge-page writes and links;
+  `auto_link`; the `hygiene` read action; deck and get flags.
+- The scan evaluates in a read transaction and writes (inserts, resolves,
+  dirty marks) in one short write transaction, only when there is something
+  to write.
 - `rook/hub/plugins/knowledge/__init__.py`: the settings and the scan loop
   (`hygiene_tick`, started with the plugin).
 - `rook/band_mcp/server.py`: `_hygiene` piggyback, the session-to-actor map and
   the session-end hook, `on_call` after each `rook_call`, `on_console_closed`.
 - `rook/band_mcp/http_sessions.py`: `on_session_end`, called on DELETE only (an
-  evicted session belongs to a client that never said it was done).
+  evicted session belongs to a client that never said it was done), and
+  `on_session_gone`, called when a session ends any way, which drops it from
+  the session-to-actor map (so a timed-out session doesn't count as "another
+  session of that actor is still open"). The map is also capped (LRU).
 
 ## First run on a hub with history
 
