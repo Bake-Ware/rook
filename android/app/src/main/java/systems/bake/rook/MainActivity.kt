@@ -39,6 +39,8 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
     private var connectionGeneration = -1L
     private var state = "idle"
     private var photoUri: Uri? = null
+    /** Last VoiceBus conversation event this screen rendered; the rest is replayed on resume. */
+    private var seenSeq = 0L
 
     private val micPermLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
@@ -100,6 +102,7 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
         b.input.setText("")
         curBot = null
         pendingUsers.addLast(addBubble(t, user = true))
+        seenSeq = VoiceBus.record { it.onUserText(t) }
         panels.begin("Planning")
         VoiceService.send(this, t, null, speak = false)
     }
@@ -131,6 +134,7 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
         val b64 = Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
         curBot = null
         pendingUsers.addLast(chat.add(caption, user = true, image = small))
+        seenSeq = VoiceBus.record { it.onUserText(caption.ifEmpty { "\uD83D\uDCF7" }) }   // photo bitmaps are not retained
         scrollToEnd()
         addSystem("photo sent (${out.size() / 1024} KB)")
         panels.begin("Planning")
@@ -160,17 +164,23 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
         }
         panels.state(s)
         state = s
-        b.stateText.text = getString(when (s) {
-            "standby" -> R.string.st_standby
-            "listening" -> R.string.st_listening
-            "thinking" -> R.string.st_thinking
-            "speaking" -> R.string.st_speaking
-            else -> R.string.st_idle
-        })
+        b.stateText.text = VoiceBus.micPaused ?: getString(stateLabel(s))
         b.btnTalk.contentDescription = getString(if (s == "thinking" || s == "speaking") R.string.voice_interrupt else R.string.btn_talk)
         b.btnSleep.contentDescription = getString(if (s == "idle") R.string.voice_on else R.string.voice_sleep)
         b.btnTalk.setImageResource(if (s in listOf("listening", "thinking", "speaking")) R.drawable.ic_mic_active else R.drawable.ic_mic)
     }
+
+    private fun stateLabel(s: String) = when (s) {
+        "standby" -> R.string.st_standby
+        "listening" -> R.string.st_listening
+        "thinking" -> R.string.st_thinking
+        "speaking" -> R.string.st_speaking
+        else -> R.string.st_idle
+    }
+
+    override fun onMicPaused(reason: String?) { b.stateText.text = reason ?: getString(stateLabel(state)) }
+    override fun onDelivered(seq: Long) { seenSeq = seq }
+    override fun onUserText(text: String) { curBot = null; addBubble(text, user = true) }
 
     override fun onTranscript(text: String) { curBot = null; addBubble(text, user = true) }
     override fun onAssistantDelta(text: String) {
@@ -179,8 +189,8 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
         tv.text += text; chat.changed(tv); scrollToEnd()
     }
     private fun syncConnection() {
-        if (connectionGeneration != VoiceBus.connectionGeneration) {
-            connectionGeneration = VoiceBus.connectionGeneration
+        if (connectionGeneration != VoiceBus.eventGeneration) {
+            connectionGeneration = VoiceBus.eventGeneration
             panels.sync(connectionGeneration); assistantTurns.clear(); curBot = null; eventTurn = null
         }
     }
@@ -220,7 +230,7 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
     override fun onAssistantDone() { curBot = null; panels.done() }
     override fun onInterrupt() { curBot?.let { it.alpha = 0.5f; chat.changed(it) }; curBot = null; panels.interrupt() }
     override fun onError(msg: String) { syncConnection(); panels.note(msg, failed = true); panels.done() }
-    override fun onWake() { addSystem("wake word"); panels.listening() }
+    override fun onWake() { addSystem("wake word"); if (!VoiceBus.replaying) panels.listening() }
     override fun onBye(mode: String) { addSystem(if (mode == "off") "voice off" else sleepingNote()) }
     override fun onTool(title: String, status: String) { syncConnection(); panels.tool(title, status) }
 
@@ -240,8 +250,9 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
     override fun onResume() {
         super.onResume()
         chat.notifyDataSetChanged()
+        // Merge whatever was heard/spoken while this screen was away (each event once).
+        VoiceBus.attach(this, seenSeq)
         panels.resume()
-        VoiceBus.listener = this
         onState(VoiceBus.state)
         if (intent?.action == Intent.ACTION_ASSIST) {
             intent.action = null
@@ -249,7 +260,7 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
         }
     }
 
-    override fun onPause() { panels.pause(); VoiceBus.listener = null; super.onPause() }
+    override fun onPause() { panels.pause(); if (VoiceBus.listener === this) VoiceBus.listener = null; super.onPause() }
 
     override fun onStop() {
         VoiceService.inst?.releaseIfIdle()
