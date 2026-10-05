@@ -22,6 +22,7 @@ import logging
 import os
 import sys
 import time
+from collections import OrderedDict
 
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import FastMCP
@@ -215,8 +216,9 @@ def build_server(client: "BandClient | MultiBandClient",
         preset = _hub_authz.current_principal.set(principal)
         try:
             _authorize_tool(name, arguments, principal)
-            return await _run_tool(name, arguments, context=context,
-                                   convert_result=convert_result)
+            result = await _run_tool(name, arguments, context=context,
+                                     convert_result=convert_result)
+            return _with_hygiene(name, result, context)
         finally:
             _hub_authz.current_principal.reset(preset)
             _attr.current.reset(reset)
@@ -236,6 +238,91 @@ def build_server(client: "BandClient | MultiBandClient",
             raise ToolError(d.denial()["error"] + f" (rule {d.rule}, policy rev {d.rev})")
 
     mcp._tool_manager.call_tool = _attributed_call_tool
+
+    # Tools whose reply is one JSON object Rook builds (not a worker's or a
+    # file's content): the only ones ``_hygiene`` is merged into after the
+    # fact. rook_call adds it to its own notices.
+    _HYGIENE_TOOLS = frozenset({
+        "rook_task", "rook_project", "rook_concept", "rook_knowledge",
+        "rook_whoami", "rook_handoff_save", "rook_chat_send"})
+
+    # Hygiene (rook/hub/plugins/knowledge/hygiene.py): findings for the
+    # caller ride its next reply as ``_hygiene``; a closed MCP session asks
+    # for a handoff on the claims its actor left open.
+    #
+    # MCP session id -> actor, most recently used last. An entry goes when
+    # its session ends any way (DELETE, idle timeout, eviction: see
+    # ``_session_gone``); the cap is a backstop that drops the oldest.
+    _session_actor: "OrderedDict[str, str]" = OrderedDict()
+    _SESSION_ACTOR_MAX = 5000
+
+    def _hygiene_engine():
+        k = getattr(mcp, "_rook_knowledge", None)
+        return (k, getattr(k, "hygiene", None)) if k is not None else (None, None)
+
+    def _hygiene_due():
+        """(engine, hints) for the current caller; hints are not yet marked
+        delivered (engine.delivered does that once they are on a reply)."""
+        k, engine = _hygiene_engine()
+        if engine is None:
+            return None, []
+        actor = k.actor().get("id")
+        if not actor or actor == "unverified":
+            return None, []
+        return engine, engine.due(actor)
+
+    def _with_hygiene(name, result, context):
+        k, engine = _hygiene_engine()
+        if engine is None:
+            return result
+        try:
+            actor = k.actor().get("id")
+            if not actor or actor == "unverified":
+                return result
+            try:
+                req = context.request_context.request if context is not None else None
+                sid = req.headers.get("mcp-session-id") if req is not None else None
+            except Exception:
+                sid = None
+            if sid:
+                _session_actor[sid] = actor
+                _session_actor.move_to_end(sid)
+                while len(_session_actor) > _SESSION_ACTOR_MAX:
+                    _session_actor.popitem(last=False)
+            if name not in _HYGIENE_TOOLS:
+                return result  # rook_call adds its own; other replies carry data we don't edit
+            hints = engine.due(actor)
+            if not hints:
+                return result
+            result, attached = _env.add_notice(result, "_hygiene", engine.public(hints))
+            if attached:
+                engine.delivered(hints)  # else it stays queued for the next reply
+            return result
+        except Exception:  # noqa: BLE001 — a nudge never breaks a reply
+            log.exception("hygiene piggyback failed")
+            return result
+
+    def _session_gone(sid: str) -> None:
+        """Any end of an MCP session (BoundedSessionManager.on_session_gone)."""
+        _session_actor.pop(sid, None)
+
+    def _session_ended(sid: str) -> None:
+        actor = _session_actor.pop(sid, None)
+        k, engine = _hygiene_engine()
+        if not actor or engine is None:
+            return
+        live = getattr(mcp._session_manager, "_server_instances", None)
+        for other, who in list(_session_actor.items()):
+            if live is not None and other not in live:
+                _session_actor.pop(other, None)  # missed cleanup: that session is gone
+            elif who == actor:
+                return  # another session of the same actor is still open
+        try:
+            engine.on_session_end(actor)
+        except Exception:
+            log.exception("hygiene session-end trigger failed")
+    mcp._session_manager.on_session_end = _session_ended
+    mcp._session_manager.on_session_gone = _session_gone
 
     # Compact replies and per-session notices (see envelope.py).
     from . import envelope as _env
@@ -379,8 +466,13 @@ def build_server(client: "BandClient | MultiBandClient",
             knowledge.enrollment = enrollment
             mcp._rook_knowledge = knowledge
             from .hygiene import Hygiene
+            def _idle_seconds():
+                engine = getattr(knowledge, "hygiene", None)
+                if engine is None:
+                    return 30 * 60
+                return engine.cfg("hygiene_idle_minutes") * 60 if engine.enabled else None
             mcp._rook_hygiene = Hygiene(knowledge, client, chat,
-                                        lambda: guidance.get("hygiene"), journal)
+                                        lambda: guidance.get("hygiene"), journal, idle=_idle_seconds)
         except Exception:
             log.exception("wiring the knowledge plugin failed; knowledge tools disabled")
             mcp._rook_knowledge = None
@@ -514,9 +606,35 @@ def build_server(client: "BandClient | MultiBandClient",
         if k is None or not ref:
             return None
         try:
-            return k.store.auto_link(k.actor(), kind, ref, note=note, task=task)
+            link = getattr(k, "auto_link", None) or k.store.auto_link
+            return link(k.actor(), kind, ref, note=note, task=task)
         except Exception:
             log.exception("auto-link failed")
+            return None
+
+    def _hygiene(name: str, *args, **kwargs):
+        """Run a hygiene trigger for the current caller (hygiene.py).
+        Bookkeeping only; never affects the call."""
+        k = getattr(mcp, "_rook_knowledge", None)
+        engine = getattr(k, "hygiene", None) if k is not None else None
+        if engine is None:
+            return None
+        try:
+            return getattr(engine, name)(k.actor(), *args, **kwargs)
+        except Exception:
+            log.exception("hygiene trigger %s failed", name)
+            return None
+
+    def _knowledge_band(worker: dict | None):
+        """The knowledge band of a worker (its band label/id), or None when
+        it can't be resolved (then hygiene links are not band-limited)."""
+        k = getattr(mcp, "_rook_knowledge", None)
+        label = (worker or {}).get("band")
+        if k is None or not label:
+            return None
+        try:
+            return k.band(label)
+        except Exception:
             return None
 
     def _actor_name() -> str:
@@ -763,6 +881,8 @@ def build_server(client: "BandClient | MultiBandClient",
                              args=args, reply=journal_reply, audit=_caller_audit(),
                              authz=_decision_row())
         linked = _auto_link("journal", cid, f"{cap} on {worker_name}")
+        # Commits / PRs in the output, linked within the worker's band.
+        _hygiene("on_call", cap, args, reply, worker_name, band=_knowledge_band(roster.get(target)))
         chat.touch(identity)
         if not isinstance(reply, dict):
             return _env.dumps(reply)
@@ -782,6 +902,23 @@ def build_server(client: "BandClient | MultiBandClient",
             notices.update(guidance.tips(session, cap, bool(hint)))
         except Exception:
             log.exception("guidance tips failed")
+        # Hygiene findings join the other notices (one [rook] line in text
+        # mode); marked delivered only once the reply below is built.
+        try:
+            h_engine, h_due = _hygiene_due()
+        except Exception:
+            log.exception("hygiene piggyback failed")
+            h_engine, h_due = None, []
+        if h_due:
+            notices["_hygiene"] = h_engine.public(h_due)
+
+        def _hygiene_sent(out):
+            if h_due:
+                try:
+                    h_engine.delivered(h_due)
+                except Exception:
+                    log.exception("hygiene delivery mark failed")
+            return out
         if cap == "caps.describe" and reply.get("ok") and isinstance(reply.get("result"), dict):
             if not _env.legacy():
                 reply = {**reply, "result": _env.describe_compact(reply["result"], describe_prefix or "")}
@@ -791,9 +928,9 @@ def build_server(client: "BandClient | MultiBandClient",
         if text:
             plain = _env.call_text(reply, cap, notices)
             if plain is not None:
-                return plain
+                return _hygiene_sent(plain)
         # ``id`` is the journal id: rook_journal(call_id=id) recovers this reply.
-        return _env.dumps(_env.call_reply(reply, cid, worker_name, cap, notices))
+        return _hygiene_sent(_env.dumps(_env.call_reply(reply, cid, worker_name, cap, notices)))
 
     @mcp.tool()
     async def rook_secret(action: str = "list", name: str = "",
@@ -1281,7 +1418,9 @@ def build_server(client: "BandClient | MultiBandClient",
                          f"call again with summary='what this session did and "
                          f"what came of it'. That text is what makes it findable "
                          f"later; the raw transcript is not.")
-        return json.dumps(console.freeze(room, summary=summary, by=ident), indent=2)
+        frozen = console.freeze(room, summary=summary, by=ident)
+        _hygiene("on_console_closed", room)
+        return json.dumps(frozen, indent=2)
 
     @mcp.tool()
     async def rook_console_list(worker: str | None = None,
@@ -1382,6 +1521,10 @@ def build_server(client: "BandClient | MultiBandClient",
     from . import skill as _skill
     _skill.register(mcp, store, lambda: mcp._rook_knowledge,
                     lambda: mcp._rook_hub.plugin("persona") if mcp._rook_hub is not None else None)
+
+    # The Claude Code mod: rook_install_claude_code returns install/update steps.
+    from . import claude_code as _claude_code
+    _claude_code.register(mcp)
 
     # Agent guidance: server instructions + tool tips applied now (after every
     # tool, including knowledge, is registered); cap tips ride on

@@ -31,6 +31,13 @@
     <!-- lets device.wake start the wake activity from the background (Android 10+) -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
+    <!-- voice.speak: Android 11+ package visibility hides TTS engines without this -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
@@ -48,6 +55,27 @@
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.ASSIST" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!-- Legacy voice/assist keys (BT headset voice button, search long-press,
+             headset long-press while locked) forward to MainActivity's ASSIST path. -->
+        <activity
+            android:name=".VoiceCommandActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="android.intent.action.VOICE_COMMAND" />
+                <action android:name="android.intent.action.SEARCH_LONG_PRESS" />
+                <action android:name="android.intent.action.VOICE_ASSIST" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.speech.action.VOICE_SEARCH_HANDS_FREE" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>

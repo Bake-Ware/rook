@@ -8,6 +8,8 @@ grants and permissions enforcement are specified in
 [settings.md](settings.md). This document owns the plugin contract and says
 where it hands off to those two. The persona plugin (a hub part and a worker
 part sharing the namespace `persona`) is specified in [persona.md](persona.md).
+The home agent (hub plugin `home`, the hub's own LLM) is in
+[home-agent.md](home-agent.md).
 
 ## 1. Goals
 
@@ -524,6 +526,7 @@ reply shape (`{"ok": true, "result": ...}` or `{"ok": false, "error", "code"}`).
 | `semantic` | bool | `true` (used only when `embedder` is set) | `ROOK_KNOWLEDGE_SEMANTIC` |
 | `embedder` | resource | empty = keyword search only | `ROOK_EMBED_URL` |
 | `embed_model` | str | `sentence-transformers/all-MiniLM-L6-v2` | `ROOK_EMBED_MODEL` |
+| `hygiene_*` | | see [hygiene.md](hygiene.md) (live) | `ROOK_KNOWLEDGE_HYGIENE_*` |
 
 `embedder` is `http(s)://…/embed` (the `services/knowledge-embeddings`
 service, as before; an existing `ROOK_EMBED_URL` keeps working) or a band cap

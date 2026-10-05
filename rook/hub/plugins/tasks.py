@@ -8,7 +8,8 @@ env ``ROOK_TASKS``) turns the task tools off while keeping the wiki.
 Caps (the ``rook_task`` / ``rook_project`` / ``rook_concept`` MCP tools route
 to them; ``kind`` picks the record kind, default ``task``):
 
-* ``task.read`` (risk ``read``): deck, search, list, get, context, status.
+* ``task.read`` (risk ``read``): deck, search, list, get, context, status,
+  hygiene (open hygiene findings, docs/design/hygiene.md).
 * ``task.write`` (risk ``write``): create, update, link, retract, claim,
   release (``review`` is for people, from the Knowledge page).
 
@@ -51,7 +52,10 @@ class Tasks(Plugin):
              "finish with `update` state done + `attrs.outcome` + an evidence `link`, or leave a "
              "handoff. Over the band: `task.read` (deck/search/list/get) and `task.write` "
              "(create/update/link/retract/claim/release) on worker `rook`, with "
-             "`kind=task|project|concept`.\n")
+             "`kind=task|project|concept`. Hygiene nudges ride replies as `_hygiene` and show on "
+             "the deck; `rook_task(action=\"hygiene\")` lists open ones (`data {mine: true}`). A commit "
+             "message with `rook: <task id or slug>` links the commit to that task as evidence "
+             "when you hold a claim on it.\n")
 
     def available(self) -> bool:
         return bool(self.settings.get("enabled", True))
@@ -71,7 +75,7 @@ class Tasks(Plugin):
     @capability("read", risk="read")
     async def read(self, action: str = 'deck', kind: str = 'task', band: str | None = None,
                    id: str | None = None, query: str = '', data: dict | None = None) -> dict:
-        """Read tasks/projects/concepts: deck|search|list|get|context|status.
+        """Read tasks/projects/concepts: deck|search|list|get|context|status|hygiene.
 
         Same arguments and result as rook_task's read actions; kind picks
         task (default), project or concept. deck: id=project narrows."""

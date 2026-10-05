@@ -33,6 +33,15 @@ def _persona(svc):
     return plugin
 
 
+def _home(svc):
+    """The home agent hub plugin behind the Manage > Home agent page."""
+    node = getattr(svc, "node", None)
+    plugin = node.plugin("home") if node is not None else None
+    if plugin is None:
+        raise SettingsError("The home agent plugin is not loaded on this hub.")
+    return plugin
+
+
 def routes(get_service, accounts):
     """``get_service()`` returns the live SettingsService (or None)."""
 
@@ -70,6 +79,8 @@ def routes(get_service, accounts):
                     data = svc.user_page(uid, label)
                 elif view == "persona":
                     data = _persona(svc).page()
+                elif view == "home":
+                    data = _home(svc).page(svc)
                 elif view == "search":
                     data = {"results": svc.search(q.get("q", ""))}
                 elif view == "history":
@@ -111,9 +122,11 @@ def routes(get_service, accounts):
                                               bool(data.get("enable")), actor)
             elif action in ("persona_save", "persona_assign", "persona_delete"):
                 res = _persona(svc).page_action(data, actor)
+            elif action in ("home_save", "home_models", "home_test"):
+                res = await _home(svc).page_action(svc, data, actor)
             else:
                 return _json({"error": "Use set, dry_run, reset, apply_worker, plugin or "
-                                       "persona_*"}, 400)
+                                       "persona_* or home_*"}, 400)
             return _json(res)
         except PermissionError as e:
             return _json({"error": str(e)}, 403)

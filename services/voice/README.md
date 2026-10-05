@@ -23,7 +23,10 @@ Runtime configuration:
 
 * `VOICE_TOKEN`: bearer credential. No hardcoded credential or implicit public
   access. LAN deployments must explicitly set `VOICE_ALLOW_ANONYMOUS=1` if they
-  intentionally have no credential.
+  intentionally have no credential. Keyless guests (and unprivileged keys) get
+  conversation and web search only: no band device listing, no device reads and
+  no agent. A key mapped to a device may read only that device; owner keys keep
+  full access.
 * `ROOK_MCP_URL`, `ROOK_MCP_TOKEN`: capability endpoint and runtime credential.
 * `ACP_HOST`, `ACP_PORT`: Hermes ACP endpoint. `ACP_AUTO_APPROVE=1` preserves the
   existing unattended permission-choice policy; set `0` to decline ACP permission
@@ -54,6 +57,29 @@ bounded to 40,000 serialized characters and complete tool pairs, with at most
 an unlimited personal memory store. Old records are pruned on startup after
 seven days. Interrupted generated speech is labelled as possibly unheard.
 Playback acknowledgements provide frame counts, not word-aligned timestamps.
+
+Conversation modes (`services/voice/modes.py`, `GET /modes`): the hello may carry
+`mode` (`assistant`, `conversation`, `dictate`, `brainstorm`, `roleplay`, `listen`)
+and an optional `mode_prompt`; `{"type":"mode","mode":...,"prompt":...}` switches
+live. A missing mode is `assistant`, the unchanged agent behaviour (a custom
+prompt there is appended as extra style instructions). An unknown mode never
+falls back: the hello gets an `error` with `code: "unknown_mode"` and the socket
+closes (4400); a bad live switch gets the same error and the mode is unchanged.
+The `session` event echoes `mode`; the APK and browser compare it with what they
+asked for and disconnect with a warning on a mismatch, so a client asking an old
+server for `conversation` never silently gets the full assistant. Other modes
+replace the agent prompt with a spoken-conversation prompt and offer no tools
+except `end_session`; the runtime refuses any other tool call. `dictate` never
+calls the model: segments go to their own `dictation` table (not the trimmed
+event history, never model-visible, capped at 200,000 characters; past that new
+speech is refused, old text is never dropped), read-backs are not recorded as
+history, and "read it back", "I'm done", "scratch that" and "start over" read,
+emit (`dictation` event; "I'm done" then clears it for the next dictation), trim
+or clear it. Mode prompts are client text: capped at 2,000 characters with
+control characters removed, and they never grant tools. Job reports wait until
+the session is back in `assistant` mode. The APK and browser keep a separate
+conversation per non-assistant mode; the browser reconnects on a mode change
+rather than switching the live session, so no mode inherits another's history.
 
 Jobs are independent of audio turns and survive socket closure. Read tools have
 45-second limits; Hermes jobs have 10-minute limits. Outcomes are persisted,

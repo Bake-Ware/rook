@@ -58,6 +58,8 @@ TOOLS: dict[str, str] = {
 
     "rook_console_search": "Full-text search of all console sessions; titles and summaries rank highest (search for the task, not the command). Hits carry seq: rook_console_read(room, since_seq=seq-1).",
 
+    "rook_install_claude_code": "Install or update the Rook mod for Claude Code. installed= the output of `claude plugin list --json`; returns status and the commands to run.",
+
     "rook_config_get": "A worker's config overrides and pending/confirm state.",
 
     "rook_config_apply": "Commit-confirmed config push: settings {name, announce_interval, log_level, hub, psk, env:{…}}. Waits for the worker to return, then confirms; one that doesn't auto-reverts after confirm_within s. Ask the user first.",

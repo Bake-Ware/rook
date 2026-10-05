@@ -39,6 +39,7 @@ The tables are generated from the code by `tools/gen_skill_reference.py`; don't 
 | `rook_handoff_get` | thread_id | A thread's current handoff plus history. |
 | `rook_handoff_list` | limit=20, active_only=true | Recent handoff threads (latest per thread) with goal and freshness. |
 | `rook_handoff_save` | goal?, thread_id?, state?, decisions?, next_steps?, artifacts?, supersedes?, transcript_ref?, task?, status='active' | Save a handoff (state, not a transcript) so another agent can continue without asking: goal, state, decisions… |
+| `rook_install_claude_code` | installed? | Install or update the Rook mod for Claude Code. installed= the output of `claude plugin list --json`; returns… |
 | `rook_journal` | call_id?, worker?, cap_prefix?, since_secs?, only_failures?, limit=30 | Recorded rook_call replies. call_id=<reply id> returns that call's full output (recover lost or timed-out out… |
 | `rook_knowledge` | action='search', band?, id?, query?, data?, request_id? | Shared wiki: search\|get\|list\|context\|status\|create\|update\|link\|retract\|bands. search: 5 excerpts (data {limit… |
 | `rook_presence` | — | Agents seen over the MCP recently (online within ~90s) and live band workers. |
@@ -70,6 +71,8 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `decide.stop` | run_id='' | write | Kill switch: stop one drive (`run_id`) or every live drive. |
 | `discord.send` | text, chat? | write | Post a message to the configured Discord channel. |
 | `discord.status` | — | read | Discord integration status: connected, channel and token configured (never the token), bridged rooms, counter… |
+| `home.ask` | question, context='' | write | Ask the hub's home agent (its own LLM) a question; returns its answer. |
+| `home.status` | — | read | Whether the home agent is on, its identity, endpoint host and model, and the last error (never the key). |
 | `hub.info` | — | read | What the hub runs: version, core API, roles, facts and plugins. |
 | `hub.plugins` | limit=50, fields? | read | Full manifests of the hub's loaded plugins (placement, settings schema, guidance slots, source). |
 | `knowledge.read` | action='search', band?, id?, query='', data? | read | Read the shared wiki: search\|get\|list\|context\|status\|bands\|deck. |
@@ -99,7 +102,7 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `settings.reset` | key, scope='', target='', note='' | admin | Remove a stored value so the key inherits again (in history). |
 | `settings.set` | key, value, scope='', target='', note='', dry_run=false | admin | Store a setting (validated, attributed, in history). |
 | `settings.worker_secret` | worker_id, names | read | Vault secrets a stored setting assigns to this worker (fetch at use). |
-| `task.read` | action='deck', kind='task', band?, id?, query='', data? | read | Read tasks/projects/concepts: deck\|search\|list\|get\|context\|status. |
+| `task.read` | action='deck', kind='task', band?, id?, query='', data? | read | Read tasks/projects/concepts: deck\|search\|list\|get\|context\|status\|hygiene. |
 | `task.write` | action, kind='task', band?, id?, data?, request_id? | write | Write tasks/projects/concepts: create\|update\|link\|retract\|claim\|release\|note\|batch. |
 | `telegram.send` | text, chat? | write | Post a message to the configured Telegram chat. |
 | `telegram.status` | — | read | Telegram integration status: connected, chat and token configured (never the token), bridged rooms, counters… |
@@ -112,6 +115,9 @@ One-pass decision model (worker `rook`). `decide.run(state, questions)` answers 
 
 ### discord
 When the Discord integration is on: `discord.send` (text) posts to the configured channel; `discord.status` shows whether it is connected. Prefer `notify.send` to reach every configured channel.
+
+### home agent
+The hub's own LLM (when the operator has set one up). Ask it with `rook_call(worker="rook", cap="home.ask", args={"question": "..."})` (or `rook_home_ask`); `home.status` says whether it is on. People reach it in chat as `@home` (or its configured name).
 
 ### hub
 `rook_call(cap="hub.info", worker="rook")` returns the hub's version, core API, roles, facts and plugins. `hub.plugins` lists full plugin manifests; pass `fields="*"` for every key.
@@ -135,7 +141,7 @@ What each worker hosts: `serves` on a `rook_workers` row is `{sites: [{name, url
 Hub, band, worker and user settings with their source (default / hub / band / worker / user / file / env) on worker `rook`: `settings.get(key=…)` or `settings.get(prefix="core.", scope="hub")`, `settings.history`, `settings.describe`. Writes (`settings.set`, `settings.reset`, `settings.apply_worker`) are admin actions: ask the user first. A key set by an environment variable is locked; the reply says which.
 
 ### tasks
-Tasks, projects and concepts. Use `rook_task(action="deck")` to see what is on; `claim` a task before working (your calls, consoles and handoffs then link to it); finish with `update` state done + `attrs.outcome` + an evidence `link`, or leave a handoff. Over the band: `task.read` (deck/search/list/get) and `task.write` (create/update/link/retract/claim/release) on worker `rook`, with `kind=task|project|concept`.
+Tasks, projects and concepts. Use `rook_task(action="deck")` to see what is on; `claim` a task before working (your calls, consoles and handoffs then link to it); finish with `update` state done + `attrs.outcome` + an evidence `link`, or leave a handoff. Over the band: `task.read` (deck/search/list/get) and `task.write` (create/update/link/retract/claim/release) on worker `rook`, with `kind=task|project|concept`. Hygiene nudges ride replies as `_hygiene` and show on the deck; `rook_task(action="hygiene")` lists open ones (`data {mine: true}`). A commit message with `rook: <task id or slug>` links the commit to that task as evidence when you hold a claim on it.
 
 ### telegram
 When the Telegram integration is on: `telegram.send` (text) posts to the configured chat; `telegram.status` shows whether it is connected. Prefer `notify.send` to reach every configured channel.

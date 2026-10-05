@@ -36,6 +36,8 @@ class VoiceClient(
         fun onDecision(decision: Decision) {}
         fun onActivity(event: ActivityEvent) {}
         fun onTurn(turn: Int) {}
+        /** The server would not run the requested mode; do not retry automatically. */
+        fun onRefused(msg: String) = onError(msg)
     }
     companion object { const val SR_IN = 16000; const val FRAME_BYTES = 640; const val PLAY_TAIL_MS = 200L }
     private data class Packet(val turn: Int, val sr: Int, val bytes: ByteArray)
@@ -75,7 +77,10 @@ class VoiceClient(
         if (insecureTls) VoiceTls.trustAll(builder)
         val client = builder.build(); http = client
         val prefs = ctx.getSharedPreferences("rook", Context.MODE_PRIVATE)
-        val scope = MessageDigest.getInstance("SHA-256").digest((url + "\u0000" + token).toByteArray()).joinToString("") { "%02x".format(it) }
+        // Mode and prompt are read per connection: a mode change applies on the next session.
+        val mode = VoiceModes.byId(prefs.getString(VoiceModes.PREF_MODE, VoiceModes.DEFAULT))
+        val modePrompt = prefs.getString(VoiceModes.promptKey(mode.id), "")?.take(VoiceModes.MAX_PROMPT) ?: ""
+        val scope = MessageDigest.getInstance("SHA-256").digest(VoiceModes.conversationScope(url, token, mode.id).toByteArray()).joinToString("") { "%02x".format(it) }
         val key = "voice_conversation_$scope"
         val conversation = prefs.getString(key, null) ?: UUID.randomUUID().toString().also { prefs.edit().putString(key, it).apply() }
         val thinking = prefs.getBoolean("show_thinking", false)
@@ -88,6 +93,7 @@ class VoiceClient(
                 ws = webSocket
                 webSocket.send(JSONObject().put("type", "hello").put("protocol", 2).put("client", "rook-android").put("activity", true)
                     .put("conversation", conversation).put("aec", aec)
+                    .put("mode", mode.id).apply { if (modePrompt.isNotBlank()) put("mode_prompt", modePrompt) }
                     .apply { if (thinking) put("thinking", true) }.toString())
                 webSocket.send(JSONObject().put("type", "voice")
                     .put("voice", prefs.getString("voice_choice", VoiceCatalog.FALLBACK)).toString())
@@ -103,7 +109,14 @@ class VoiceClient(
                 when (m.optString("type")) {
                     "activity" -> ActivityEvent.parse(m)?.let { listener.onActivity(it) }
                     "decision" -> if (thinking) Decision.parse(m)?.let { listener.onDecision(it) }
-                    "session" -> protocol = m.optInt("protocol", 1)
+                    "session" -> {
+                        protocol = m.optInt("protocol", 1)
+                        val echoed = if (m.has("mode")) m.optString("mode") else null
+                        if (!VoiceModes.sessionModeMatches(mode.id, echoed)) {
+                            refuse(VoiceModes.mismatchMessage(mode.id, echoed)); return
+                        }
+                    }
+                    "mode" -> if (m.optString("mode") != mode.id) { refuse(VoiceModes.mismatchMessage(mode.id, m.optString("mode"))); return }
                     "state" -> { if (m.optInt("turn", minimumTurn) >= minimumTurn) listener.onState(m.optString("state")) }
                     "stt" -> listener.onTranscript(m.optString("text"), eventTurn(m))
                     "assistant_delta", "assistant" -> if (!waitingInterrupt) listener.onAssistantDelta(m.optString("text"), eventTurn(m))
@@ -112,7 +125,7 @@ class VoiceClient(
                     "interrupt" -> { minimumTurn = m.optInt("turn", minimumTurn); flush(); waitingInterrupt = false; listener.onInterrupt() }
                     "bye" -> listener.onBye(m.optString("mode", "sleep"), m.optLong("after_ms", 0))
                     "tool" -> listener.onTool(m.optString("title"), m.optString("status"))
-                    "error" -> listener.onError(m.optString("msg"))
+                    "error" -> if (m.optString("code") == "unknown_mode") { refuse(m.optString("msg")); return } else listener.onError(m.optString("msg"))
                 }
             }
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
@@ -133,6 +146,13 @@ class VoiceClient(
             }
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) = shutdown()
         })
+    }
+
+    /** Stop before any audio or turn from a session in the wrong mode is used. */
+    private fun refuse(msg: String) {
+        if (!running) return
+        listener.onRefused(msg)
+        close()
     }
 
     private fun eventTurn(m: JSONObject): Int? = (m.opt("turn") as? Number)?.toDouble()

@@ -18,6 +18,7 @@ from .runtime import Connection
 from .state import Store
 from .identity import configured_identities, identity_for
 from .admin import AdminStore, router as admin_router
+from . import modes
 
 VERSION = '2.0.0'
 ROOT = Path(os.environ.get('VOICE_MODEL_DIR', '.'))
@@ -78,6 +79,10 @@ async def health():
 async def voices():
     return {'voices': app.state.provider.voices, 'default': app.state.provider.default_voice}
 
+@app.get('/modes')
+async def voice_modes():
+    return modes.catalog()
+
 @app.get('/')
 async def index():
     custom = ROOT / 'static' / 'index.html'
@@ -131,13 +136,23 @@ async def websocket(ws: WebSocket):
         if credential_id not in live_identities and not (not TOKEN and os.environ.get('VOICE_ALLOW_ANONYMOUS') == '1'):
             await ws.close(code=4401)
             return
+        try:
+            # Absent mode keeps old clients on assistant; an unknown one is refused
+            # rather than silently granted the most capable mode.
+            mode = modes.resolve(hello.get('mode'), hello.get('mode_prompt'))
+        except modes.UnknownMode as error:
+            await ws.send_json({'type': 'error', 'code': 'unknown_mode', 'msg': str(error)})
+            await ws.close(code=4400)
+            return
         conn = Connection(app.state.store, app.state.jobs, app.state.provider, key, send_json, send_bytes, protocol,
                           identity=identity_for(supplied, live_identities))
         conn.full_duplex = protocol == 2 and hello.get('aec') is True
+        conn.mode = mode
         connections[key] = conn, queue
         credential_sockets.setdefault(credential_id, []).append((ws, conn))
         credential_sessions.setdefault(credential_id, set()).add(key)
-        await conn.emit('session', conversation=conversation, protocol=protocol, version=VERSION, full_duplex=conn.full_duplex)
+        await conn.emit('session', conversation=conversation, protocol=protocol, version=VERSION, full_duplex=conn.full_duplex,
+                        mode=conn.mode.id, custom_mode=conn.mode.custom)
         await conn.emit('state', state='listening', turn=conn.epoch)
         for job in app.state.store.jobs(key):
             await conn.emit('tool', id=job['id'], title=job['name'], status=job['status'])
@@ -230,6 +245,16 @@ async def websocket(ws: WebSocket):
                         await conn.start(text=str(msg['text'])[:16000], speak=bool(msg.get('speak')))
                     elif kind == 'image' and msg.get('data'):
                         await conn.start(text=str(msg.get('text', ''))[:16000], image=msg['data'], speak=bool(msg.get('speak')))
+                    elif kind == 'mode':
+                        # Never fall back to assistant on a bad switch; keep the current mode.
+                        try:
+                            if msg.get('mode') is None:
+                                raise modes.UnknownMode('Mode switch needs a mode.')
+                            mode = modes.resolve(msg['mode'], msg.get('prompt'))
+                        except modes.UnknownMode as error:
+                            await conn.emit('error', code='unknown_mode', msg=f'{error} Mode unchanged: {conn.mode.id}.')
+                        else:
+                            await conn.set_mode(mode)
                     elif kind == 'voice' and msg.get('voice') in app.state.provider.voices:
                         conn.voice = msg['voice']
                 except (ValueError, TypeError):

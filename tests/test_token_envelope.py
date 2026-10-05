@@ -261,7 +261,7 @@ async def test_tools_list_fits_the_budget(tmp_path, monkeypatch):
         tools = (await rpc("tools/list", {}))["tools"]
         assert len(tools) >= 29
         size = len(json.dumps({"tools": tools}, separators=(",", ":"), ensure_ascii=False))
-        assert size <= 12400, size  # +300 task note/batch/deck options and handoff close; +100 console_write literal/secrets
+        assert size <= 12700, size  # +300 task note/batch/deck options and handoff close; +300 rook_install_claude_code; +100 console_write literal/secrets
         by = {t["name"]: t for t in tools}
         assert all("outputSchema" not in t for t in tools)
         # Schema slimming keeps a property literally named "title" and required args.
@@ -358,6 +358,9 @@ async def test_voice_agent_parses_compact_replies(tmp_path, monkeypatch):
         monkeypatch.setattr(rookmcp, "ROOK_MCP_TOKEN", STATIC)
         monkeypatch.setattr(rookmcp.RookMCP.__init__, "__defaults__",
                             ("http://localhost/mcp", STATIC, 30.0))
+        # Device tools are owner-only; this test is about reply parsing.
+        from services.voice.identity import Identity, current_identity
+        current_identity.set(Identity("owner", owner=True))
         said = await providers.tool_rook_devices({})
         assert said.startswith("4 devices on the band: worker-a (battery 70%)")
         assert "worker-b [stale]" not in said  # 80s old but still under the voice agent's 90s stale mark
