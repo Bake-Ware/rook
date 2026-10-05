@@ -1,0 +1,10 @@
+{
+  "name": "rook",
+  "version": "0.1.0",
+  "description": "Rook band views inside Claude Code: a live pane of bands and their workers, sessions across the fleet, and the work deck",
+  "author": { "name": "Bake-Ware", "url": "https://github.com/Bake-Ware" },
+  "homepage": "https://github.com/Bake-Ware/rook/tree/master/integrations/claude-code",
+  "repository": "https://github.com/Bake-Ware/rook",
+  "license": "Apache-2.0",
+  "types": "./types/index.d.ts"
+}
