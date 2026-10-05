@@ -1,0 +1,17 @@
+{
+  "name": "rook",
+  "owner": { "name": "Bake-Ware", "url": "https://github.com/Bake-Ware" },
+  "metadata": {
+    "description": "Claude Code plugins for Rook: see your band, its workers, sessions and work deck from inside Claude Code"
+  },
+  "plugins": [
+    {
+      "name": "rook",
+      "source": "./integrations/claude-code",
+      "description": "Rook band views inside Claude Code: a live pane of bands and their workers, sessions across the fleet, and the work deck",
+      "version": "0.1.0",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/Bake-Ware/rook/tree/master/integrations/claude-code"
+    }
+  ]
+}

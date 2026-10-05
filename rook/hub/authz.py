@@ -253,6 +253,7 @@ _TOOL_CAPS = {
     "rook_chat_delete": "chat.delete", "rook_presence": "chat.presence",
     "rook_console_list": "console.read", "rook_console_search": "console.read",
     "rook_console_read": "console.read",
+    "rook_install_claude_code": "hub.info",
 }
 _READ_ACTIONS = frozenset({"search", "get", "list", "context", "status", "deck"})
 
