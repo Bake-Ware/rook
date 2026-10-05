@@ -304,6 +304,18 @@ class ChatStore:
                                  (rid,)).fetchone()
         return int(r[0] or 0) if r else 0
 
+    def tail(self, rid: str, limit: int = 20) -> list[dict]:
+        """The last ``limit`` messages of a room, oldest first (read-only: no
+        read watermark moves). For an agent that needs recent context."""
+        if self._db is None:
+            return []
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT seq,ts,sender,text,mentions FROM messages WHERE room_id=? "
+                "ORDER BY seq DESC LIMIT ?", (rid, max(1, min(int(limit), 500)))).fetchall()
+        return [{"seq": s, "ts": t, "sender": snd, "text": txt,
+                 "mentions": json.loads(mn or "[]")} for (s, t, snd, txt, mn) in reversed(rows)]
+
     def rooms_for(self, identity: str, limit: int = 50,
                   include_all: bool = False) -> dict:
         """Rooms this identity participates in, newest-active first, with unread

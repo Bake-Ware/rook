@@ -99,6 +99,7 @@ class HubNode:
         self._on_band_call = on_band_call
         self._state_dir = state_dir
         self.attached = False  # set by attach_hub_node once a band client serves it
+        self.journal = None    # the bridge's call journal, set by attach_hub_node
         self.enrollment = enrollment
         # The shared settings store (rook.hub.settings_store). Opened lazily:
         # nothing is created on disk until a value is written or read back.
@@ -334,6 +335,9 @@ def attach_hub_node(client: Any, state_dir: str | None, *, vault: Any = None,
         node = HubNode(state_dir, client=client, vault=vault, on_band_call=journal_band_call,
                        enrollment=enrollment, chat=chat)
         holder["node"] = node
+        # Hub plugins that act as their own identity (the home agent) journal
+        # what they do themselves.
+        node.journal = journal
     except Exception:
         log.exception("hub plugin host failed to start; hub caps unavailable")
         return None
