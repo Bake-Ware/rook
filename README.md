@@ -112,6 +112,10 @@ Then ask it to "list my Rook workers and run `uptime` on my-worker". It will use
 `rook_workers` and `rook_call`. Any MCP client that supports streamable HTTP with a
 bearer header works the same way.
 
+In Claude Code you can also install the Rook mod, a pane showing your bands,
+sessions across the band and the work deck. See
+[integrations/claude-code](integrations/claude-code/README.md).
+
 **In the terminal UI:** run `rook` (or `rook band`). It connects to `http://127.0.0.1:7005`
 by default (`--url` for another hub) and prompts for the dashboard password.
 Every call it makes goes through the hub, under that login.
@@ -275,6 +279,7 @@ services/        optional voice and embeddings services
 scripts/         local-hub.sh
 docs/            feature tour, design notes, screenshots; docs/spec: the core spec for other implementations
 conformance/     test vectors and live harness for the core spec
+integrations/claude-code/  Claude Code plugin: the /rook-bands pane (marketplace in .claude-plugin/)
 examples/ports/  minimal workers in TypeScript and Rust that pass the conformance suite
 tests/           pytest suite
 ```
