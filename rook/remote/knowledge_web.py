@@ -78,7 +78,7 @@ class SettingsWeb(KnowledgeWeb):
     upstream limits non-operators to their own preferences (user scope)."""
     PATH = '/account/settings'
     UPSTREAM = ('ROOK_SETTINGS_ADMIN_URL', 'http://127.0.0.1:8765/settings/account-api')
-    ASSETS = ('settings-area.js',)
+    ASSETS = ('settings-area.js', 'home.js')
     UNAVAILABLE = 'The settings service is unavailable (is the MCP server running?).'
     ADMIN_ONLY = False
     TIMEOUT = 30   # a worker page asks the worker for its plugins and config

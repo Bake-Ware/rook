@@ -2266,7 +2266,28 @@ button:hover{{background:#22b88f}}
                 agents.append(ent)
             ent["worker"] = name
             ent["wake"] = wake
+        home = self._home_identity()
+        if home:
+            # The hub's home agent (hub plugin "home") answers by itself; it is
+            # online while the MCP server runs it.
+            ent = by_id.get(home)
+            if ent is None:
+                ent = {"identity": home, "online": False, "last_seen_age_secs": None}
+                agents.append(ent)
+            ent["home"] = True
         return web.json_response({"agents": agents, "workers": workers})
+
+    def _home_identity(self) -> str | None:
+        """``agent:<name>`` of the enabled home agent, from the shared
+        settings store (None when it is off or unreadable)."""
+        try:
+            vals = self._settings_store.namespace_values("home")
+        except Exception:
+            return None
+        if not vals.get("enabled"):
+            return None
+        name = str(vals.get("name") or "home").strip().lower()
+        return f"agent:{name}" if _re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,31}", name) else None
 
     async def _api_chat_wake(self, request: web.Request) -> web.Response:
         """Wake an agent to reply in a room. For a hermes box (hermes.chat cap)
