@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import os
 import shutil
 import subprocess
 import tempfile
@@ -166,8 +167,12 @@ def _stamp_pubkey(worker_dst: Path) -> None:
     import sys as _sys
     _sys.path.insert(0, str(REPO_ROOT))
     from rook.remote.update_keys import ensure_key, public_key_b64
-    sk = ensure_key()
-    pub = public_key_b64(sk) if sk else ""
+    # A build host that isn't the hub (e.g. the APK build) stamps the hub's
+    # public key without holding, or creating, a private signing key.
+    pub = os.environ.get("ROOK_UPDATE_PUBKEY", "").strip()
+    if not pub:
+        sk = ensure_key()
+        pub = public_key_b64(sk) if sk else ""
     (worker_dst / "_update_pubkey.py").write_text(
         '"""Generated at bundle time by build_band_worker.py — do not edit."""\n\n'
         f"PUBKEY_B64 = {pub!r}\n",
