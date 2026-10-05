@@ -189,6 +189,17 @@ are set only in the environment or on the command line.
 | `knowledge.semantic` | Semantic search | hub | bool | on | `ROOK_KNOWLEDGE_SEMANTIC` | restart |
 | `knowledge.embedder` | Embedding service | hub | resource |  | `ROOK_EMBED_URL`, `ROOK_KNOWLEDGE_EMBEDDER` | restart |
 | `knowledge.embed_model` | Embedding model | hub | str | `sentence-transformers/all-MiniLM-L6-v2` | `ROOK_EMBED_MODEL`, `ROOK_KNOWLEDGE_EMBED_MODEL` | restart |
+| `knowledge.hygiene_enabled` | Hygiene triggers | hub | bool | on | `ROOK_KNOWLEDGE_HYGIENE_ENABLED` | live |
+| `knowledge.hygiene_idle_minutes` | Idle claim nudge (minutes) | hub | int | `30` | `ROOK_KNOWLEDGE_HYGIENE_IDLE_MINUTES` | live |
+| `knowledge.hygiene_dirty_hours` | Mark needs_hygiene after (hours) | hub | float | `4.0` | `ROOK_KNOWLEDGE_HYGIENE_DIRTY_HOURS` | live |
+| `knowledge.hygiene_release_hours` | Propose releasing an idle claim after (hours) | hub | float | `24.0` | `ROOK_KNOWLEDGE_HYGIENE_RELEASE_HOURS` | live |
+| `knowledge.hygiene_renotify_hours` | Repeat an open nudge after (hours) | hub | float | `6.0` | `ROOK_KNOWLEDGE_HYGIENE_RENOTIFY_HOURS` | live |
+| `knowledge.hygiene_signal_hours` | Work-signal findings expire after (hours) | hub | float | `24.0` | `ROOK_KNOWLEDGE_HYGIENE_SIGNAL_HOURS` | live |
+| `knowledge.hygiene_done_window_days` | Check done tasks for knowledge (days back) | hub | float | `3.0` | `ROOK_KNOWLEDGE_HYGIENE_DONE_WINDOW_DAYS` | live |
+| `knowledge.hygiene_project_idle_hours` | Propose closing a finished project after (hours) | hub | float | `24.0` | `ROOK_KNOWLEDGE_HYGIENE_PROJECT_IDLE_HOURS` | live |
+| `knowledge.hygiene_hints_per_reply` | Nudges per MCP reply | hub | int | `1` | `ROOK_KNOWLEDGE_HYGIENE_HINTS_PER_REPLY` | live |
+| `knowledge.hygiene_scan_seconds` | Scan interval (seconds) | hub | int | `300` | `ROOK_KNOWLEDGE_HYGIENE_SCAN_SECONDS` | live |
+| `knowledge.hygiene_notify_people` | Also notify people | hub | bool | off | `ROOK_KNOWLEDGE_HYGIENE_NOTIFY_PEOPLE` | live |
 
 ## Memory (worker plugin, runs in worker)
 
