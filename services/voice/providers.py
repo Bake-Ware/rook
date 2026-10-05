@@ -6,7 +6,7 @@ import httpx
 from faster_whisper import WhisperModel
 from kokoro_onnx import Kokoro
 from .rookmcp import RookMCP
-from .identity import authorize_read
+from .identity import authorize_devices, authorize_read
 
 HERE = os.environ.get("VOICE_MODEL_DIR", os.path.dirname(os.path.abspath(__file__)))
 ACP_HOST = os.environ.get("ACP_HOST", "127.0.0.1")
@@ -165,6 +165,7 @@ async def tool_web_search(args):
 
 
 async def tool_rook_devices(args):
+    authorize_devices()
     try:
         raw = await RookMCP().call("rook_workers", {})
     except Exception as e:

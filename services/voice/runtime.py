@@ -93,11 +93,12 @@ class Connection:
                     {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + image}}]})
             # The model stream and playback consume separate bounded queues. A slow
             # synthesizer no longer holds up parsing tool-call fragments.
+            allowed = self._tools()
             clauses = asyncio.Queue(maxsize=8)
             async def on_clause(clause):
                 await clauses.put(clause)
             async def producer():
-                extra = {} if self.mode.tools is None else {"tools": self.mode.tools}
+                extra = {} if allowed is None else {"tools": allowed}
                 result = await asyncio.wait_for(self.provider.chat(messages, on_clause, reply_only=internal, **extra), 60)
                 await clauses.put(None)
                 return result
@@ -132,6 +133,10 @@ class Connection:
                     # The model was not offered this tool; never act on it.
                     if not content:
                         await self.say("I can't do that in this mode.", epoch)
+                    continue
+                if allowed is not None and name not in allowed:
+                    if not content:
+                        await self.say("That needs an owner voice key.", epoch)
                     continue
                 if name == "end_session":
                     await self.say("Talk to you later.", epoch)
@@ -191,6 +196,13 @@ class Connection:
             for old in list(table):
                 if old < epoch - 8:
                     del table[old]
+
+    def _tools(self):
+        """Tools offered this turn: the mode's set narrowed by the credential's."""
+        by_mode, by_identity = self.mode.tools, self.identity.tools()
+        if by_mode is None or by_identity is None:
+            return by_identity if by_mode is None else by_mode
+        return set(by_mode) & set(by_identity)
 
     async def set_mode(self, mode):
         self.mode = mode

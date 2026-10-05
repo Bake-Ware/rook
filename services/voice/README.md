@@ -23,7 +23,10 @@ Runtime configuration:
 
 * `VOICE_TOKEN`: bearer credential. No hardcoded credential or implicit public
   access. LAN deployments must explicitly set `VOICE_ALLOW_ANONYMOUS=1` if they
-  intentionally have no credential.
+  intentionally have no credential. Keyless guests (and unprivileged keys) get
+  conversation and web search only: no band device listing, no device reads and
+  no agent. A key mapped to a device may read only that device; owner keys keep
+  full access.
 * `ROOK_MCP_URL`, `ROOK_MCP_TOKEN`: capability endpoint and runtime credential.
 * `ACP_HOST`, `ACP_PORT`: Hermes ACP endpoint. `ACP_AUTO_APPROVE=1` preserves the
   existing unattended permission-choice policy; set `0` to decline ACP permission
