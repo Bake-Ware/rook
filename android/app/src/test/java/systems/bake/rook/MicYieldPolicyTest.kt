@@ -131,4 +131,12 @@ class MicYieldPolicyTest {
         assertTrue(MicYieldPolicy.callMode(MicYieldPolicy.MODE_IN_COMMUNICATION, rookOwnsMode = false))
         assertFalse(MicYieldPolicy.callMode(0, rookOwnsMode = false))
     }
+
+    @Test fun rookModeLingersUntilItChangesOrGraceEnds() {
+        val comm = MicYieldPolicy.MODE_IN_COMMUNICATION
+        assertTrue(MicYieldPolicy.rookModeLingers(comm, releasedAt = 1_000, now = 1_500, graceMs = 2_000))
+        assertFalse(MicYieldPolicy.rookModeLingers(0, releasedAt = 1_000, now = 1_500, graceMs = 2_000))
+        assertFalse(MicYieldPolicy.rookModeLingers(MicYieldPolicy.MODE_IN_CALL, 1_000, 1_500, 2_000))
+        assertFalse(MicYieldPolicy.rookModeLingers(comm, releasedAt = 1_000, now = 3_000, graceMs = 2_000))
+    }
 }

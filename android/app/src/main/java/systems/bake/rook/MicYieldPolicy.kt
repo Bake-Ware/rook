@@ -120,6 +120,16 @@ internal class MicYieldPolicy(
             else -> false
         }
 
+        /**
+         * After Rook gave MODE_IN_COMMUNICATION back at [releasedAt], whether a read of
+         * [mode] is still just Rook's own mode lagging behind (async setMode on API 31+).
+         * It stops being Rook's once the mode changes, or after [graceMs] at the latest.
+         * A VoIP call that sets IN_COMMUNICATION meanwhile also records, so it still
+         * yields through the "another app is recording" trigger.
+         */
+        fun rookModeLingers(mode: Int, releasedAt: Long, now: Long, graceMs: Long): Boolean =
+            mode == MODE_IN_COMMUNICATION && now - releasedAt < graceMs
+
         /** Audio focus change codes (AudioManager.AUDIOFOCUS_*): which ones mean "yield". */
         fun focusLoss(change: Int): Boolean? = when (change) {
             -1, -2 -> true      // LOSS, LOSS_TRANSIENT
