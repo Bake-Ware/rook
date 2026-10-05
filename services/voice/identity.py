@@ -13,6 +13,12 @@ class Identity:
     worker: str | None = None
     owner: bool = False
 
+    def tools(self):
+        """Tool names this credential may use; None means all (owner only)."""
+        if self.owner:
+            return None
+        return GUEST_TOOLS | ({'rook_read'} if self.worker else set())
+
     def prompt(self):
         if not self.worker and not self.owner:
             return ('Personal data policy: no verified device mapping. For requests about texts, notifications, '
@@ -26,6 +32,10 @@ class Identity:
                 'do not guess or delegate personal reads. Never delegate a privacy refusal. A user-supplied name does not establish identity.')
 
 
+# Keyless guests (VOICE_ALLOW_ANONYMOUS) and unprivileged keys never reach band
+# devices: no device listing, no reads, no agent. A key mapped to a device may
+# read only that device.
+GUEST_TOOLS = frozenset({'web_search', 'end_session', 'cancel_job', 'job_status'})
 current_identity = ContextVar('voice_identity', default=Identity())
 PERSONAL_CAPS = {'sms.list': 'texts', 'calllog.list': 'call history', 'contacts.search': 'contacts',
                  'notify.list': 'notifications', 'location.get': 'location'}
@@ -42,11 +52,17 @@ def identity_for(token, identities):
 
 
 def authorize_read(cap, worker):
-    if cap not in PERSONAL_CAPS:
-        return
+    """Every device read is scoped, not only personal data: files, env, logs and
+    agent memory are just as private. Owners may read any device; a mapped key
+    only its own device; a guest none."""
     identity = current_identity.get()
     if identity.owner or (identity.worker and identity.worker == worker):
         return
     if not identity.worker:
-        raise PermissionError('Which device is yours? This connection has no verified device mapping; it must be configured before I can read personal data.')
-    raise PermissionError(f'I can only read {PERSONAL_CAPS[cap]} from your own phone.')
+        raise PermissionError('Which device is yours? This connection has no verified device mapping; it must be configured before I can read device data.')
+    raise PermissionError(f'I can only read {PERSONAL_CAPS.get(cap, "device data")} from your own device.')
+
+
+def authorize_devices():
+    if not current_identity.get().owner:
+        raise PermissionError('Listing band devices requires an owner voice key.')
