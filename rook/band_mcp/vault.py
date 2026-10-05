@@ -13,6 +13,9 @@ Agents use a secret two ways:
 
 Every read, use, set and delete is written to the access log. When a value is
 set, the hub also masks it anywhere it already appears in the call journal.
+Beyond that, secret_mask.py replaces any known value with its
+``{{secret:<name>}}`` stub in every tool reply and every store the hub writes
+(reverse masking).
 Nothing here gates a band call; an unknown placeholder only fails that call.
 """
 from __future__ import annotations
@@ -41,6 +44,7 @@ class Vault:
         self.path = path
         self.key_path = key_path or os.path.join(os.path.dirname(path) or ".", "vault.key")
         self._lock = threading.Lock()
+        self._gen = 0  # bumped on every set/delete; drives the reverse mask
         self._box = nacl.secret.SecretBox(self._load_key())
         self._db = sqlite3.connect(path, check_same_thread=False)
         self._db.executescript("""
@@ -116,6 +120,7 @@ class Vault:
                              (name, blob, description or (old[0] if old else ""),
                               old[1] if old else now, now, actor))
             self._audit(name, actor, "replace" if old else "create")
+            self._gen += 1
         return {"name": name, "replaced": bool(old)}
 
     def delete(self, name: str, actor: str) -> bool:
@@ -123,7 +128,24 @@ class Vault:
             gone = self._db.execute("DELETE FROM secrets WHERE name=?", (name,)).rowcount
             if gone:
                 self._audit(name, actor, "delete")
+                self._gen += 1
         return bool(gone)
+
+    # -- reverse masking (secret_mask.py) ---------------------------------------
+
+    def version(self):
+        """Changes whenever the set of secrets does (here or in another
+        process writing the same file)."""
+        with self._lock:
+            row = self._db.execute("SELECT count(*), max(updated), total(updated) FROM secrets").fetchone()
+        return (self._gen, row)
+
+    def masking_values(self) -> dict[str, str]:
+        """Every value, for building the reverse mask. Not an access: nothing
+        leaves the hub, so nothing is written to the access log."""
+        with self._lock:
+            rows = self._db.execute("SELECT name, value FROM secrets").fetchall()
+        return {n: self._box.decrypt(v).decode() for n, v in rows}
 
     # -- placeholders -------------------------------------------------------------
 

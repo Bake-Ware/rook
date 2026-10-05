@@ -27,6 +27,8 @@ import threading
 import time
 import uuid
 
+from .secret_mask import scrub
+
 log = logging.getLogger("rook.band_mcp.journal")
 
 _MAX_ROWS = 20000          # prune oldest beyond this on write
@@ -106,6 +108,9 @@ class Journal:
         cid = call_id or (reply or {}).get("id") or uuid.uuid4().hex
         if self._db is None:
             return cid
+        # Known vault values become {{secret:name}} before the row is written.
+        # (``args`` is not stored; callers journal placeholders, never values.)
+        reply = scrub(reply)
         ok = 1 if (reply or {}).get("ok") else 0
         error = None if ok else str((reply or {}).get("error", ""))[:1000]
         # Store the full reply (it's the whole point — the output that would
@@ -238,7 +243,8 @@ class Journal:
                 except Exception:
                     e["reply"] = reply
             out.append(e)
-        return out
+        # Masked on read too, for rows written before a secret was set.
+        return scrub(out)
 
     def close(self) -> None:
         if self._db is not None:

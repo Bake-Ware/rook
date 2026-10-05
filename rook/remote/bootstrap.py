@@ -1038,6 +1038,17 @@ class CombinedServer:
             self._chat = ChatStore(chat_db)
         except Exception:
             log.warning("chat store unavailable; dashboard chat disabled", exc_info=True)
+        # Reverse secret masking for what this process writes and shows
+        # (dashboard chat, journal rows): a read-only view of the bridge's
+        # vault, when it sits beside the other hub stores and is readable.
+        try:
+            from ..band_mcp import secret_mask
+            from ..paths import data_path
+            if secret_mask.installed() is None:
+                secret_mask.install_from_dir(os.path.dirname(
+                    data_path("vault.db", "/var/lib/rook-band-mcp/vault.db")))
+        except Exception:
+            log.warning("secret masking unavailable in the dashboard", exc_info=True)
         self._push_task = None  # background: push signed manifest to behind workers
         from .band_overview import BandOverview
         self._overview = BandOverview(self._band_worker_rows, self._overview_call)

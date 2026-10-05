@@ -32,6 +32,8 @@ import threading
 import time
 import uuid
 
+from .secret_mask import scrub
+
 log = logging.getLogger("rook.band_mcp.chat_rooms")
 
 _PRESENCE_ONLINE_SECS = 90.0     # seen within this window ⇒ "online"
@@ -117,6 +119,7 @@ class ChatStore:
         if self._db is None:
             return {"ok": False, "error": "chat store not available"}
         rid = uuid.uuid4().hex[:16]
+        title = scrub(title)
         parts = []
         for p in [creator] + list(invite or []):
             p = str(p).strip()
@@ -232,7 +235,8 @@ class ChatStore:
         home worker exposes agent.wake is what the caller may then wake)."""
         if self._db is None:
             return {"ok": False, "error": "chat store not available"}
-        text = str(text or "").strip()
+        # Known vault values become {{secret:name}} before anything is stored.
+        text = scrub(str(text or "").strip())
         if not text:
             return {"ok": False, "error": "empty message"}
         room = self._room(rid)
@@ -290,7 +294,10 @@ class ChatStore:
                     "ON CONFLICT(identity,room_id) DO UPDATE SET last_read_seq=excluded.last_read_seq",
                     (reader, rid, msgs[-1]["seq"]))
                 self._db.commit()
-        return {"ok": True, "room": rid, "title": room["title"],
+        # Masked on read too: messages stored before a secret entered the
+        # vault (and the dashboard, which reads this store directly).
+        msgs = scrub(msgs)
+        return {"ok": True, "room": rid, "title": scrub(room["title"]),
                 "participants": room["participants"], "messages": msgs,
                 "last_seq": msgs[-1]["seq"] if msgs else int(since_seq)}
 
@@ -334,12 +341,12 @@ class ChatStore:
                 last = self._db.execute(
                     "SELECT sender,text FROM messages WHERE room_id=? ORDER BY seq DESC LIMIT 1",
                     (rid,)).fetchone()
-                out.append({"room": rid, "title": title,
+                out.append({"room": rid, "title": scrub(title),
                             "last_activity_age_secs": round(time.time() - la, 1),
                             "participants": plist, "member": member,
                             "unread": cnt,
                             "last_sender": last[0] if last else None,
-                            "last_text": (last[1][:120] if last else None)})
+                            "last_text": (scrub(last[1])[:120] if last else None)})
                 if len(out) >= limit:
                     break
         return {"ok": True, "count": len(out), "rooms": out}

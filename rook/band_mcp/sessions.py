@@ -28,6 +28,8 @@ import threading
 import time
 import uuid
 
+from .secret_mask import scrub
+
 log = logging.getLogger("rook.band_mcp.sessions")
 
 
@@ -92,11 +94,12 @@ class SessionStore:
             return {"ok": False, "error": "session store not available"}
         tid = (thread_id or "").strip() or uuid.uuid4().hex[:16]
         hid = uuid.uuid4().hex[:16]
+        # Known vault values become {{secret:name}} before anything is stored.
         row = (hid, tid, round(time.time(), 3), author or "anonymous", status,
-               str(goal or "").strip(), str(state or "").strip(),
-               json.dumps(self._as_list(decisions)),
-               json.dumps(self._as_list(next_steps)),
-               json.dumps(self._as_list(artifacts)),
+               scrub(str(goal or "").strip()), scrub(str(state or "").strip()),
+               json.dumps(scrub(self._as_list(decisions))),
+               json.dumps(scrub(self._as_list(next_steps))),
+               json.dumps(scrub(self._as_list(artifacts))),
                json.dumps(self._as_list(supersedes)),
                transcript_ref)
         try:
@@ -160,7 +163,7 @@ class SessionStore:
         out = {"ok": True, "current": current}
         if history and len(rows) > 1:
             out["history"] = [self._row_to_dict(r) for r in rows[1:]]
-        return out
+        return scrub(out)
 
     def list_recent(self, limit: int = 20, active_only: bool = True) -> dict:
         """List recent threads (one row per thread — its latest handoff)."""
@@ -182,7 +185,7 @@ class SessionStore:
         # Trim heavy fields for the listing.
         for i in items:
             i.pop("state", None)
-        return {"ok": True, "count": len(items), "threads": items}
+        return {"ok": True, "count": len(items), "threads": scrub(items)}
 
     def close_thread(self, thread_id: str, author: str | None = None,
                      reason: str = "") -> dict:

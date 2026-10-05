@@ -357,6 +357,13 @@ Nothing an agent writes is trusted by default: every page starts **unverified**.
 
 A vault on the hub for the credentials agents need. Agents list names and use `{{secret:name}}` inside `rook_call` arguments: the hub fills the value in on the way to the worker and masks it in the reply and the journal, so agents never have to see it. Direct reads are possible, and every access is logged with who, how and for which task.
 
+**Reverse masking.** The hub also works the other way: any vault value that turns up in content crossing or landing on the band is replaced with its `{{secret:name}}` stub, whoever put it there (a cap's output, a file read, a console, an agent pasting it). That covers every MCP tool reply except `rook_secret` itself, the call journal, chat messages and room titles, handoffs, knowledge pages and task attrs/outcomes (all writes through the knowledge service), console transcripts (output, stdin echoes, commands, summaries) and what the dashboard shows from those stores. A stub an agent gets back can be passed straight back in `rook_call` args (or typed with `rook_console_write`) and resolves again; the worker always receives what was sent.
+
+- Matches exact substrings of values of 8 characters or more (shorter ones would mangle ordinary text; a value a call used through a placeholder is still masked in that call's reply down to 4), plus the value JSON-escaped once or twice, base64 (standard or URL-safe, with or without padding) and URL-encoded. Leftmost match first, longest at a position, so a secret that contains another masks as the longer one.
+- Console output is masked as a stream: only a tail that could be the start of a value is held back between reads, so a value split across two reads is still caught. Separate `rook_call` replies (e.g. `proc.read` chunks fetched by hand) are masked one by one, so a value split across two of those is not.
+- One hub-wide vault, so every secret masks everywhere on the hub. The matcher is a prefix-tree regex rebuilt only when the vault changes (roughly 0.1 s per MB with 100 secrets; typical replies are microseconds). Building it decrypts the values in memory and is not an access-log entry; values are never logged.
+- Stores mask on write; chat, console, handoff, journal and knowledge reads are masked again, so text stored before a secret was added is masked when shown. Only the journal is rewritten in place when a secret is set. Not covered: a value base64-encoded inside a larger blob (e.g. `Basic` auth of `user:password`), hex or other encodings, and calls between workers that never pass through the hub.
+
 ![Secrets vault](img/vault.png)
 
 ### Agent instructions

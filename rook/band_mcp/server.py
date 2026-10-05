@@ -265,6 +265,58 @@ def build_server(client: "BandClient | MultiBandClient",
     mcp._rook_vault = vault
     mcp._rook_journal = journal
 
+    # Reverse masking (secret_mask.py): any known vault value in what an
+    # agent gets back from any tool becomes its {{secret:name}} stub; the
+    # stores (journal, chat, handoffs, console, knowledge) mask what they
+    # write through the same installed vault. rook_secret is exempt: its
+    # get action is the audited way to read a raw value.
+    from . import secret_mask as _secret_mask
+    _secret_mask.install(vault)
+    _masked_run = mcp._tool_manager.call_tool
+    _UNMASKED_TOOLS = {"rook_secret"}
+
+    def _mask_text(text: str) -> str:
+        m = _secret_mask.current_matcher()
+        masked = m.sub(text)
+        if masked == text or text[:1] not in "[{":
+            return masked
+        # A match that ate half of a JSON escape could break the document;
+        # if it did, mask the parsed value instead.
+        try:
+            json.loads(masked)
+            return masked
+        except ValueError:
+            pass
+        try:
+            return _env.dumps(m.mask(json.loads(text)))
+        except ValueError:
+            return masked
+
+    async def _masked_call_tool(name, arguments, context=None, convert_result=False):
+        result = await _masked_run(name, arguments, context=context,
+                                   convert_result=convert_result)
+        if name in _UNMASKED_TOOLS or not _secret_mask.current_matcher():
+            return result
+        try:
+            items, structured = (result if isinstance(result, tuple) else (result, None))
+            if isinstance(items, list):
+                for item in items:
+                    text = getattr(item, "text", None)
+                    if isinstance(text, str):
+                        item.text = _mask_text(text)
+            elif isinstance(items, str):
+                items = _mask_text(items)
+            elif isinstance(items, (dict, tuple)):
+                items = _secret_mask.scrub(items)
+            if isinstance(result, tuple):
+                return (items, _secret_mask.scrub(structured))
+            return items
+        except Exception:  # noqa: BLE001 — never log the payload
+            log.exception("masking the %s reply failed", name)
+            return result
+
+    mcp._tool_manager.call_tool = _masked_call_tool
+
     # Permissions (docs/design/permissions.md): policy evaluation + call
     # tickets inside the band client, so every path that emits a band call
     # is covered. Ships in audit mode: nothing is denied until the operator
@@ -642,7 +694,6 @@ def build_server(client: "BandClient | MultiBandClient",
                 return _fail(f"unknown secret {e.args[0]!r} in args; rook_secret(action='list') shows the names")
             for name in used:
                 _auto_link("secret", name, f"used in {cap} on {worker_name}")
-        secret_forms = [f for v in used.values() for f in _vault_mod.encoded_forms(v)]
         try:
             own = await _cap_timeout(target, cap, args)
         except Exception:
@@ -675,8 +726,12 @@ def build_server(client: "BandClient | MultiBandClient",
                          f"for long jobs use rook_console_open.")
         finally:
             _hub_authz.caller_journals.reset(jtok)
-        if secret_forms:
-            reply = _vault_mod.mask(reply, secret_forms)
+        # Every known vault value in the reply becomes {{secret:name}} (the
+        # values this call used are masked even below the length floor). The
+        # worker got the real values in send_args; nothing here touches them.
+        _masker = _secret_mask.installed()
+        if _masker is not None:
+            reply = _masker.mask(reply, extra=used)
         if cap == "caps.describe" and isinstance(reply, dict) and reply.get("ok"):
             _learn_timeouts(target, reply.get("result"))
         journal_reply = reply
@@ -758,7 +813,8 @@ def build_server(client: "BandClient | MultiBandClient",
                 return json.dumps({"ok": True, "name": name, "value": val}, indent=2)
             if action == "set":
                 res = vault.set(name, value or "", description or "", who)
-                redacted = journal.redact(_vault_mod.encoded_forms(value))
+                redacted = journal.redact(_vault_mod.encoded_forms(value),
+                                          mask=_secret_mask.stub(name))
                 journal.record(cap="vault.set", worker=None, identity=_caller_identity(),
                                args={"name": name}, reply={"ok": True, **res}, audit=_caller_audit())
                 return json.dumps({"ok": True, **res, "journal_rows_masked": redacted}, indent=2)
@@ -1127,9 +1183,23 @@ def build_server(client: "BandClient | MultiBandClient",
                          f"nothing is listening. Open a new console.")
         ident = _caller_identity()
         chat.touch(ident)
+        # {{secret:name}} types the value (a password prompt) without the
+        # agent ever holding it; the transcript echo keeps the placeholder.
+        data = text
+        if _vault_mod.PLACEHOLDER.search(text or ""):
+            if vault is None:
+                return _fail("text uses {{secret:…}} but the vault is unavailable on this hub")
+            try:
+                data, used = vault.substitute(text, _actor_name(),
+                                              via=f"console {room} on {r['worker_name']}",
+                                              task=_claimed_task())
+            except KeyError as e:
+                return _fail(f"unknown secret {e.args[0]!r}; rook_secret(action='list') shows the names")
+            for name in used:
+                _auto_link("secret", name, f"typed into console {room}")
         try:
             reply = await _proc_call(r, "proc.write",
-                                     {"data": text, "newline": newline})
+                                     {"data": data, "newline": newline})
         except asyncio.TimeoutError:
             return _fail(f"worker {r['worker_name']!r} did not confirm the write")
         result = reply.get("result") or {}

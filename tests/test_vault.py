@@ -111,7 +111,7 @@ async def test_placeholders_never_reach_agent_or_journal(tmp_path, monkeypatch):
 
         out = await env.tool('rook_call', cap='shell.exec', worker='gpu-box', args={'argv': ['login', '{{secret:pw}}']})
         assert env.band.sent[-1] == {'argv': ['login', SECRET]}  # worker got the real value
-        assert SECRET not in json.dumps(out) and '***' in out['result']['stdout']  # agent didn't
+        assert SECRET not in json.dumps(out) and '{{secret:pw}}' in out['result']['stdout']  # agent got the stub
         assert not leaks(env.journal)
 
         bad = await env.tool('rook_call', cap='shell.exec', worker='gpu-box', args={'cmd': '{{secret:nope}}'})
