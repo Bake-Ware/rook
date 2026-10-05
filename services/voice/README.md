@@ -89,3 +89,48 @@ Android instrumentation mode `voice` checks silence/noise and the bundled
 synthetic speech fixture. Physical-phone speaker, headset and Bluetooth acoustic
 checks remain necessary; emulator success does not establish real-room false
 wake rates or barge-in latency.
+
+## Voice admin and keys
+
+The bundled browser client is served when `VOICE_MODEL_DIR/static/index.html`
+was not supplied. It includes an **Admin** link at `/admin`; a custom static
+client can link to the same area. Admin login is separate from voice keys.
+There are no built-in admin credentials. Initialize an account interactively:
+
+```sh
+python -m services.voice.admin --db /path/to/voice-admin.sqlite3 --username admin
+```
+
+Set `VOICE_ADMIN_DB` to the same database path when starting the voice service.
+Its default is `VOICE_MODEL_DIR/voice-admin.sqlite3`. Passwords use scrypt; admin
+cookies require HTTPS and expire after eight hours. The admin area creates,
+edits and revokes voice keys, assigns a person and optional device, grants owner
+access, and changes the admin password. New voice keys are shown once and stored
+as digests. Revocation disconnects active sessions and requests cancellation of
+running jobs; already completed external effects cannot be undone.
+
+`VOICE_TOKEN`, when supplied, is imported as an owner key. Optional
+`VOICE_IDENTITIES_FILE` imports an existing JSON dictionary keyed by SHA-256
+credential digest, with `principal`, `worker` and `owner` fields. Revocation
+persists in the admin database and overrides imported entries after restart.
+Set `VOICE_TOKEN` empty and `VOICE_ALLOW_ANONYMOUS=1` to enable keyless chat.
+Guest keys and keyless connections cannot read private phone data or delegate
+unrestricted agent work. Device keys can read personal data from their mapped
+device; owner keys can select other devices and start agent work.
+
+## Speech speed and interruption
+
+`VOICE_TTS_THREADS` controls Kokoro's ONNX CPU inference threads (default eight).
+The bundled browser client uses protocol 2 and discards late audio from an
+interrupted response. With browser echo cancellation enabled, sustained local
+speech stops playback and sends `speech_start`; microphone preroll preserves the
+start of the new utterance. Space or tapping the orb stops playback immediately
+in all browsers. Automatic interruption still needs physical acoustic testing
+with the intended microphone and speakers.
+
+Additional checks (admin tests require the voice service dependencies):
+
+```sh
+pytest -q tests/test_voice_admin.py tests/test_voice_identity.py
+node tests/test_voice_browser.cjs
+```

@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Rook Voice</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, sans-serif; background:#0b0e14; color:#e6e6e6;
+         min-height:100vh; display:flex; flex-direction:column; align-items:center; }
+  header { padding:20px; font-size:14px; letter-spacing:.14em; text-transform:uppercase; color:#7aa2f7; }
+  .stage { display:flex; flex-direction:column; align-items:center; gap:14px; }
+  #orb { width:120px; height:120px; border-radius:50%; background:radial-gradient(circle at 40% 35%, #2a3350, #141824);
+         box-shadow:0 0 0 0 rgba(122,162,247,.5); transition:box-shadow .2s, background .3s; cursor:pointer;
+         display:flex; align-items:center; justify-content:center; font-size:12px; color:#9aa4bf; user-select:none; }
+  #orb.listening { background:radial-gradient(circle at 40% 35%, #1f6f4a, #10241c); box-shadow:0 0 34px 4px rgba(60,220,150,.35); }
+  #orb.thinking  { background:radial-gradient(circle at 40% 35%, #6b5a1f, #241f10); box-shadow:0 0 34px 4px rgba(240,200,80,.35); animation:pulse 1s ease-in-out infinite; }
+  #orb.speaking  { background:radial-gradient(circle at 40% 35%, #274b8f, #101a2e); box-shadow:0 0 46px 8px rgba(122,162,247,.55); animation:pulse .6s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.05)} }
+  .status { font-size:13px; color:#9aa4bf; height:16px; }
+  button.big { margin-top:2px; background:#7aa2f7; color:#0b0e14; border:0; border-radius:10px; padding:9px 20px; font-size:15px; font-weight:600; cursor:pointer; }
+  button.big.stop { background:#f7768e; }
+  .hint { font-size:11px; color:#5c6784; }
+  #log { width:min(760px,94vw); margin:22px auto 60px; display:flex; flex-direction:column; gap:8px; }
+  .msg { padding:9px 13px; border-radius:14px; max-width:82%; line-height:1.45; font-size:15px; white-space:pre-wrap; word-wrap:break-word; }
+  .user { align-self:flex-end; background:#243049; }
+  .bot  { align-self:flex-start; background:#182135; border:1px solid #26314d; }
+  .thought { align-self:flex-start; max-width:92%; font-size:12.5px; font-style:italic; color:#8a93ad;
+             background:#10141f; border-left:2px solid #3a4straight66; border-left:2px solid #3a4466; padding:6px 10px;
+             border-radius:6px; white-space:pre-wrap; max-height:160px; overflow:auto; }
+  .tool { align-self:flex-start; font-family:ui-monospace,Menlo,monospace; font-size:12px; padding:5px 10px;
+          border-radius:6px; background:#131a12; border:1px solid #2a3a24; color:#a8d08a; }
+  .tool .st { opacity:.8; }
+  .tool.in_progress { border-color:#6b5a1f; color:#e6c766; background:#1a170e; }
+  .tool.failed { border-color:#7a2a34; color:#f7768e; background:#1c1113; }
+  .tool.completed { border-color:#2a3a24; color:#9ece6a; }
+  .interrupted { opacity:.6; }
+</style>
+</head>
+<body>
+<header>Rook · Voice <a href="/admin" style="margin-left:20px;color:#7aa2f7;letter-spacing:normal;text-transform:none">Admin</a></header>
+<div class="stage">
+  <div id="orb">idle</div>
+  <div class="status" id="status">Click connect to start talking</div>
+  <button class="big" id="btn">Connect</button>
+  <div style="margin-top:6px"><label style="font-size:12px;color:#7a8299;margin-right:6px">Voice</label><select id="voiceSel" style="background:#141824;color:#e6e6e6;border:1px solid #26314d;border-radius:8px;padding:5px 8px;font-size:13px"></select></div>
+  <div class="hint">Uses your mic · talk naturally · press Space or tap the orb to interrupt · talk to interrupt when browser echo cancellation is available</div>
+</div>
+<div id="log"></div>
+<script>
+const orb=document.getElementById('orb'), statusEl=document.getElementById('status'),
+      btn=document.getElementById('btn'), logEl=document.getElementById('log');
+let ws, inputCtx, outputCtx, workletNode, micStream, running=false;
+let playhead=0, sources=[];
+let curBot=null, curThought=null, toolEls={};
+let outputSR=24000, activeTurn=0, blockedThrough=-1, speaking=false, fullDuplex=false, speechFrames=0, micPreroll=[];
+
+const workletCode=`
+class PCMWorklet extends AudioWorkletProcessor {
+  constructor(){ super(); this.buf=[]; this.need=320; }
+  process(inputs){
+    const ch=inputs[0][0];
+    if(ch){ for(let i=0;i<ch.length;i++) this.buf.push(ch[i]);
+      while(this.buf.length>=this.need){
+        const f=this.buf.splice(0,this.need); const i16=new Int16Array(this.need);
+        for(let i=0;i<this.need;i++){ let s=Math.max(-1,Math.min(1,f[i])); i16[i]=s<0?s*0x8000:s*0x7fff; }
+        let power=0; for(const sample of f) power+=sample*sample;
+        this.port.postMessage({pcm:i16.buffer,rms:Math.sqrt(power/f.length)},[i16.buffer]);
+      } }
+    return true;
+  }
+}
+registerProcessor('pcm-worklet', PCMWorklet);
+`;
+
+function setState(s){ speaking=s==='speaking'; orb.className=''; if(s&&s!=='idle') orb.classList.add(s);
+  orb.textContent = s==='listening'?'listening':s==='thinking'?'working':s==='speaking'?'speaking':(running?'…':'idle');
+  const t={listening:'Listening — go ahead',thinking:'Working…',speaking:fullDuplex?'Speaking — talk to interrupt':'Speaking — press Space or tap to interrupt'};
+  if(t[s]) statusEl.textContent=t[s]; }
+function scroll(el){ el.scrollIntoView({behavior:'smooth',block:'end'}); }
+function addUser(text){ const d=document.createElement('div'); d.className='msg user'; d.textContent=text; logEl.appendChild(d); scroll(d); }
+function addBot(){ const d=document.createElement('div'); d.className='msg bot'; logEl.appendChild(d); return d; }
+function addThought(){ const d=document.createElement('div'); d.className='thought'; d.textContent='💭 '; logEl.appendChild(d); return d; }
+function upsertTool(t){
+  let el=toolEls[t.id];
+  if(!el){ el=document.createElement('div'); el.className='tool'; logEl.appendChild(el); if(t.id) toolEls[t.id]=el; }
+  el.className='tool '+(t.status||'');
+  el.innerHTML='🔧 '+(t.title||t.kind||'tool')+' <span class="st">· '+(t.status||'')+'</span>';
+  scroll(el);
+}
+function abortPendingTools(){ for(const k in toolEls){ const el=toolEls[k]; if(el&&!el.classList.contains("completed")&&!el.classList.contains("failed")){ el.classList.add("interrupted"); const st=el.querySelector(".st"); if(st) st.textContent="· aborted"; } } }
+function stopPlayback(){ for(const s of sources){ try{s.stop()}catch(e){} } sources=[]; playhead=0; }
+function schedulePCM(ab){ if(!outputCtx || ab.byteLength<8) return;
+  const view=new DataView(ab); if(view.getUint32(0)!==0x524b3241) return;
+  const turn=view.getUint32(4); if(turn<=blockedThrough || turn<activeTurn) return;
+  activeTurn=turn;
+  const i16=new Int16Array(ab,8); const f32=new Float32Array(i16.length);
+  for(let i=0;i<i16.length;i++) f32[i]=i16[i]/32768;
+  const buf=outputCtx.createBuffer(1,f32.length,outputSR); buf.copyToChannel(f32,0);
+  const src=outputCtx.createBufferSource(); src.buffer=buf; src.connect(outputCtx.destination);
+  const now=outputCtx.currentTime; const at=Math.max(now,playhead); src.start(at); playhead=at+buf.duration;
+  sources.push(src); src.onended=()=>{ const i=sources.indexOf(src); if(i>=0) sources.splice(i,1); };
+}
+
+async function connect(){
+  const _tok=new URLSearchParams(location.search).get('token')||localStorage.getItem('voice_token')||''; if(_tok) localStorage.setItem('voice_token',_tok); ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws'+(_tok?'?token='+encodeURIComponent(_tok):''));
+  ws.binaryType='arraybuffer';
+  ws.onopen=async()=>{
+    let conversation=localStorage.getItem('voice_conversation');
+    if(!conversation){ conversation=crypto.randomUUID(); localStorage.setItem('voice_conversation',conversation); }
+    activeTurn=0; blockedThrough=-1; fullDuplex=false; speechFrames=0; micPreroll=[];
+    ws.send(JSON.stringify({type:'hello',protocol:2,conversation,aec:false}));
+    if(!navigator.mediaDevices){ statusEl.textContent='No mic API — needs HTTPS/secure context'; return; }
+    micStream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
+    fullDuplex=micStream.getAudioTracks()[0].getSettings().echoCancellation===true;
+    ws.send(JSON.stringify({type:'audio_config',aec:fullDuplex}));
+    inputCtx=new AudioContext({sampleRate:16000});
+    const blob=new Blob([workletCode],{type:'application/javascript'});
+    await inputCtx.audioWorklet.addModule(URL.createObjectURL(blob));
+    const srcNode=inputCtx.createMediaStreamSource(micStream);
+    workletNode=new AudioWorkletNode(inputCtx,'pcm-worklet');
+    const sink=inputCtx.createGain(); sink.gain.value=0;
+    srcNode.connect(workletNode); workletNode.connect(sink); sink.connect(inputCtx.destination);
+    workletNode.port.onmessage=e=>{
+      if(ws.readyState!==1) return;
+      // Require 120ms of echo-cancelled speech before automatic interruption.
+      if(fullDuplex && speaking && activeTurn>blockedThrough){
+        micPreroll.push(e.data.pcm); if(micPreroll.length>8) micPreroll.shift();
+        speechFrames=e.data.rms>0.02?speechFrames+1:0;
+        if(speechFrames>=6){
+          blockedThrough=activeTurn; stopPlayback(); speaking=false; speechFrames=0;
+          ws.send(JSON.stringify({type:'speech_start'}));
+          for(const pcm of micPreroll) ws.send(pcm); micPreroll=[];
+          setState('listening'); return;
+        }
+      } else { speechFrames=0; micPreroll=[]; }
+      ws.send(e.data.pcm);
+    };
+    outputCtx=new AudioContext({sampleRate:outputSR});
+    running=true; btn.textContent='Disconnect'; btn.classList.add('stop'); setState('listening'); if(ws.readyState===1) ws.send(JSON.stringify({type:'voice',voice:document.getElementById('voiceSel').value}));
+  };
+  ws.onmessage=ev=>{
+    if(typeof ev.data==='string'){
+      const m=JSON.parse(ev.data);
+      switch(m.type){
+        case 'state': activeTurn=Math.max(activeTurn,m.turn||0); setState(m.state); break;
+        case 'audio_sr': outputSR=m.sr; break;
+        case 'stt': abortPendingTools(); toolEls={}; addUser(m.text); curBot=null; curThought=null; break;
+        case 'assistant_delta': if(!curBot) curBot=addBot(); curBot.textContent+=m.text; curThought=null; scroll(curBot); break;
+        case 'assistant': if(curBot) curBot.textContent=m.text; else { curBot=addBot(); curBot.textContent=m.text; } break;
+        case 'assistant_done': curBot=null; curThought=null; break;
+        case 'thought': if(!curThought) curThought=addThought(); curThought.textContent+=m.text; curBot=null; scroll(curThought); break;
+        case 'tool': upsertTool(m); curBot=null; curThought=null; break;
+        case 'interrupt': activeTurn=Math.max(activeTurn,m.turn||0); stopPlayback(); abortPendingTools(); if(curBot) curBot.classList.add('interrupted'); break;
+        case 'error': statusEl.textContent='Error: '+m.msg; break;
+      }
+    } else { schedulePCM(ev.data); }
+  };
+  ws.onclose=()=>{ statusEl.textContent='Disconnected'; teardown(); };
+  ws.onerror=()=>{ statusEl.textContent='Connection error'; };
+}
+function teardown(){ running=false; btn.textContent='Connect'; btn.classList.remove('stop'); setState('idle'); stopPlayback();
+  try{workletNode&&workletNode.disconnect()}catch(e){} try{micStream&&micStream.getTracks().forEach(t=>t.stop())}catch(e){}
+  try{inputCtx&&inputCtx.close()}catch(e){} try{outputCtx&&outputCtx.close()}catch(e){} }
+const LANG={a:"US",b:"UK",e:"ES",f:"FR",h:"HI",i:"IT",j:"JP",p:"BR",z:"ZH"};
+function vlabel(v){ const nm=v.slice(3); const lang=LANG[v[0]]||v[0].toUpperCase(); const sx=v[1]==="f"?"♀":v[1]==="m"?"♂":""; return nm.charAt(0).toUpperCase()+nm.slice(1)+" · "+lang+" "+sx; }
+async function loadVoices(){ try{ const r=await fetch("/voices"); const d=await r.json(); const sel=document.getElementById("voiceSel"); sel.innerHTML="";
+  const order=["a","b","e","f","i","p","h","j","z"]; const GN={a:"English (US)",b:"English (UK)",e:"Spanish",f:"French",i:"Italian",p:"Portuguese",h:"Hindi",j:"Japanese",z:"Chinese"};
+  const groups={}; for(const v of d.voices){ (groups[v[0]]=groups[v[0]]||[]).push(v); }
+  for(const g of order){ if(!groups[g]) continue; const og=document.createElement("optgroup"); og.label=GN[g]||g; for(const v of groups[g]){ const o=document.createElement("option"); o.value=v; o.textContent=vlabel(v); if(v===d.default) o.selected=true; og.appendChild(o); } sel.appendChild(og); }
+  sel.onchange=()=>{ if(ws&&ws.readyState===1) ws.send(JSON.stringify({type:"voice",voice:sel.value})); };
+}catch(e){} }
+loadVoices();
+btn.onclick=()=>{ if(running){ try{ws.close()}catch(e){} teardown(); } else { connect(); } };
+function manualStop(){ if(running){ blockedThrough=activeTurn; speaking=false; micPreroll=[]; stopPlayback(); if(ws&&ws.readyState===1) ws.send(JSON.stringify({type:"stop"})); } }
+document.addEventListener("keydown",e=>{ if(e.code==="Space"&&running){ e.preventDefault(); manualStop(); } });
+orb.addEventListener("click",manualStop);
+</script>
+</body>
+</html>

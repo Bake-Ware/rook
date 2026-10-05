@@ -6,6 +6,7 @@ import httpx
 from faster_whisper import WhisperModel
 from kokoro_onnx import Kokoro
 from .rookmcp import RookMCP
+from .identity import authorize_read
 
 HERE = os.environ.get("VOICE_MODEL_DIR", os.path.dirname(os.path.abspath(__file__)))
 ACP_HOST = os.environ.get("ACP_HOST", "127.0.0.1")
@@ -191,6 +192,7 @@ async def tool_rook_read(args):
         raise Handoff(f"cap {cap!r} is not read-only")
     if not worker:
         raise Handoff("no worker given")
+    authorize_read(cap, worker)
     payload = {"cap": cap, "worker": worker}
     extra = args.get("args")
     if isinstance(extra, dict) and extra:
@@ -373,7 +375,14 @@ class Provider:
         from concurrent.futures import ThreadPoolExecutor
         from .turns import SmartTurn
         self.whisper = WhisperModel(WHISPER_MODEL, device=WHISPER_DEVICE, compute_type=WHISPER_COMPUTE)
-        self.kokoro = Kokoro(os.path.join(HERE, 'kokoro-v1.0.onnx'), os.path.join(HERE, 'voices-v1.0.bin'))
+        import onnxruntime as ort
+        options = ort.SessionOptions()
+        options.intra_op_num_threads = int(os.environ.get('VOICE_TTS_THREADS', '8'))
+        options.inter_op_num_threads = 1
+        self.kokoro = Kokoro.from_session(ort.InferenceSession(
+            os.path.join(HERE, 'kokoro-v1.0.onnx'), sess_options=options,
+            providers=[os.environ.get('ONNX_PROVIDER', 'CPUExecutionProvider')]),
+            os.path.join(HERE, 'voices-v1.0.bin'))
         self.voices = sorted(self.kokoro.get_voices())
         self.default_voice = _read_voice() or DEFAULT_VOICE
         if self.default_voice not in self.voices:

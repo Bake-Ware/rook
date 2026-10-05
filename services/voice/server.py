@@ -3,7 +3,6 @@ import asyncio
 from collections import deque
 import contextlib
 import hashlib
-import hmac
 import json
 import os
 from pathlib import Path
@@ -17,11 +16,21 @@ import webrtcvad
 from .jobs import Jobs
 from .runtime import Connection
 from .state import Store
+from .identity import configured_identities, identity_for
+from .admin import AdminStore, router as admin_router
 
 VERSION = '2.0.0'
 ROOT = Path(os.environ.get('VOICE_MODEL_DIR', '.'))
 TOKEN = os.environ.get('VOICE_TOKEN', '')
+IDENTITIES = configured_identities()
+if TOKEN:
+    IDENTITIES.setdefault(hashlib.sha256(TOKEN.encode()).hexdigest(),
+                          {'principal': os.environ.get('ROOK_VOICE_OWNER') or 'Owner', 'owner': True})
+ADMIN = AdminStore(os.environ.get('VOICE_ADMIN_DB', str(ROOT / 'voice-admin.sqlite3')))
+ADMIN.import_legacy(IDENTITIES)
 connections = {}
+credential_sockets = {}
+credential_sessions = {}
 
 @contextlib.asynccontextmanager
 async def lifespan(app):
@@ -37,12 +46,29 @@ async def lifespan(app):
                 with contextlib.suppress(asyncio.QueueEmpty):
                     queue.get_nowait()
             queue.put_nowait(event)
+        elif not any(job['status'] == 'running' for job in app.state.store.jobs(session)):
+            for credential, sessions in list(credential_sessions.items()):
+                sessions.discard(session)
+                if not sessions:
+                    credential_sessions.pop(credential, None)
     app.state.jobs = Jobs(app.state.store, DIRECT_TOOLS, ACP_HOST, ACP_PORT, notify)
     yield
     await app.state.jobs.close()
     app.state.store.db.close()
 
 app = FastAPI(lifespan=lifespan)
+
+async def invalidate_credential(credential):
+    for session in list(credential_sessions.get(credential, set())):
+        for job in app.state.store.jobs(session):
+            if job['status'] == 'running':
+                app.state.jobs.cancel(session, job['id'])
+    for ws, conn in list(credential_sockets.get(credential, [])):
+        await conn.close()
+        with contextlib.suppress(Exception):
+            await ws.close(code=4401)
+
+app.include_router(admin_router(ADMIN, IDENTITIES, invalidate_credential))
 
 @app.get('/health')
 async def health():
@@ -54,12 +80,15 @@ async def voices():
 
 @app.get('/')
 async def index():
-    return FileResponse(ROOT / 'static' / 'index.html')
+    custom = ROOT / 'static' / 'index.html'
+    return FileResponse(custom if custom.exists() else Path(__file__).parent / 'static' / 'index.html')
 
 @app.websocket('/ws')
 async def websocket(ws: WebSocket):
     supplied = ws.headers.get('authorization', '').removeprefix('Bearer ') or ws.query_params.get('token', '')
-    if (TOKEN and not hmac.compare_digest(TOKEN, supplied)) or (not TOKEN and os.environ.get('VOICE_ALLOW_ANONYMOUS') != '1'):
+    credential_id = hashlib.sha256(supplied.encode()).hexdigest()
+    accepted = bool(supplied) and credential_id in ADMIN.mappings(IDENTITIES)
+    if not accepted and not (not TOKEN and os.environ.get('VOICE_ALLOW_ANONYMOUS') == '1'):
         await ws.close(code=4401)
         return
     await ws.accept()
@@ -77,7 +106,7 @@ async def websocket(ws: WebSocket):
             hello = {}
         protocol = 2 if hello.get('type') == 'hello' and hello.get('protocol') == 2 else 1
         conversation = hello.get('conversation') if protocol == 2 else str(uuid.uuid4())
-        principal = hashlib.sha256(TOKEN.encode()).hexdigest()
+        principal = credential_id
         try:
             key = Store.key(principal, conversation)
         except (ValueError, TypeError, AttributeError):
@@ -98,9 +127,16 @@ async def websocket(ws: WebSocket):
         async def send_bytes(data):
             async with lock:
                 await ws.send_bytes(data)
-        conn = Connection(app.state.store, app.state.jobs, app.state.provider, key, send_json, send_bytes, protocol)
+        live_identities = ADMIN.mappings(IDENTITIES)
+        if credential_id not in live_identities and not (not TOKEN and os.environ.get('VOICE_ALLOW_ANONYMOUS') == '1'):
+            await ws.close(code=4401)
+            return
+        conn = Connection(app.state.store, app.state.jobs, app.state.provider, key, send_json, send_bytes, protocol,
+                          identity=identity_for(supplied, live_identities))
         conn.full_duplex = protocol == 2 and hello.get('aec') is True
         connections[key] = conn, queue
+        credential_sockets.setdefault(credential_id, []).append((ws, conn))
+        credential_sessions.setdefault(credential_id, set()).add(key)
         await conn.emit('session', conversation=conversation, protocol=protocol, version=VERSION, full_duplex=conn.full_duplex)
         await conn.emit('state', state='listening', turn=conn.epoch)
         for job in app.state.store.jobs(key):
@@ -208,6 +244,16 @@ async def websocket(ws: WebSocket):
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await sender
         if conn:
+            sockets = credential_sockets.get(credential_id, [])
+            if (ws, conn) in sockets:
+                sockets.remove((ws, conn))
+            if not sockets:
+                credential_sockets.pop(credential_id, None)
+            if not any(job['status'] == 'running' for job in app.state.store.jobs(key)):
+                sessions = credential_sessions.get(credential_id, set())
+                sessions.discard(key)
+                if not sessions:
+                    credential_sessions.pop(credential_id, None)
             await conn.close()
             if connections.get(key, (None,))[0] is conn:
                 connections.pop(key, None)

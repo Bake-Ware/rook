@@ -7,12 +7,14 @@ import struct
 import time
 import uuid
 import traceback
+from .identity import Identity, current_identity
 
 
 class Connection:
-    def __init__(self, store, jobs, provider, session, send_json, send_bytes, protocol=2):
+    def __init__(self, store, jobs, provider, session, send_json, send_bytes, protocol=2, identity=None):
         self.store, self.jobs, self.provider, self.session = store, jobs, provider, session
         self.send_json, self.send_bytes = send_json, send_bytes
+        self.identity = identity or Identity()
         self.protocol = protocol
         self.epoch = 0
         self.task = None
@@ -49,6 +51,13 @@ class Connection:
         self.task = asyncio.create_task(self._turn(epoch, text, pcm, image, internal))
 
     async def _turn(self, epoch, text, pcm, image, internal):
+        token = current_identity.set(self.identity)
+        try:
+            await self._turn_identified(epoch, text, pcm, image, internal)
+        finally:
+            current_identity.reset(token)
+
+    async def _turn_identified(self, epoch, text, pcm, image, internal):
         started = time.monotonic()
         try:
             await self.emit("state", state="thinking", turn=epoch)
@@ -60,7 +69,7 @@ class Connection:
             if not internal:
                 self.store.append(self.session, "user", {"text": (text or "Describe this image.") +
                                                          (" [image attached]" if image else "")})
-            messages = [{"role": "system", "content": self.provider.system}] + self.store.messages(self.session)
+            messages = [{"role": "system", "content": self.provider.system + "\n" + self.identity.prompt()}] + self.store.messages(self.session)
             # Job state is supplied as tool data; it is not another user's instruction.
             jobs = self.store.jobs(self.session)
             if jobs:
@@ -118,6 +127,9 @@ class Connection:
                 elif name == "job_status":
                     await self.say("Your job status is available in this conversation.", epoch)
                 else:
+                    if name == 'delegate_to_hermes' and not self.identity.owner:
+                        await self.say('An owner voice key is required for agent work and changes.', epoch)
+                        continue
                     jid = self.jobs.start(self.session, name, args, self.store.messages(self.session))
                     await self.emit("tool", id=jid, title=name, status="running")
                     if not content:
