@@ -49,10 +49,11 @@ def _attach_native_plugins(worker) -> None:
     from rook_android.plugins.calllog_android import AndroidCallLogPlugin
     from rook_android.plugins.location_android import AndroidLocationPlugin
     from rook_android.plugins.device_android import AndroidDevicePlugin
+    from rook_android.plugins.speak_android import AndroidSpeakPlugin
     natives = (AndroidScreenPlugin(), AndroidHidPlugin(), AndroidBatteryPlugin(),
                AndroidNotifyPlugin(), AndroidUiPlugin(), AndroidSmsPlugin(),
                AndroidContactsPlugin(), AndroidCallLogPlugin(),
-               AndroidLocationPlugin(), AndroidDevicePlugin())
+               AndroidLocationPlugin(), AndroidDevicePlugin(), AndroidSpeakPlugin())
     for plugin in natives:
         # battery gates on a readable battery; screen/hid are always available()
         # (they report readiness per-call). Never announce a cap we can't back.

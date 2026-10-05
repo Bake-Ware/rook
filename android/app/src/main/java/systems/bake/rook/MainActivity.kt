@@ -228,6 +228,7 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
     }
 
     override fun onAssistantDone() { curBot = null; panels.done() }
+    override fun onSpoken(text: String) { curBot = null; addBubble(text, user = false) }   // voice.speak lines
     override fun onInterrupt() { curBot?.let { it.alpha = 0.5f; chat.changed(it) }; curBot = null; panels.interrupt() }
     override fun onError(msg: String) { syncConnection(); panels.note(msg, failed = true); panels.done() }
     override fun onWake() { addSystem("wake word"); if (!VoiceBus.replaying) panels.listening() }

@@ -31,6 +31,13 @@
     <!-- lets device.wake start the wake activity from the background (Android 10+) -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
+    <!-- voice.speak: Android 11+ package visibility hides TTS engines without this -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"

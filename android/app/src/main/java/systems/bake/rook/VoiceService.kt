@@ -550,6 +550,8 @@ object VoiceBus {
         fun onMicPaused(reason: String?) {}
         /** A typed/photo turn this device sent (recorded so a recreated screen can show it). */
         fun onUserText(text: String) {}
+        /** A line said aloud by the voice.speak cap (not part of a voice-session turn). */
+        fun onSpoken(text: String) {}
         /** Bookkeeping: the conversation event with this sequence number was handled. */
         fun onDelivered(seq: Long) {}
     }
