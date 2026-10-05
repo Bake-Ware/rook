@@ -47,7 +47,8 @@ class Store:
         self.db.commit()
 
     def messages(self, session):
-        rows = self.db.execute("SELECT kind,body FROM events WHERE session=? ORDER BY id DESC LIMIT 80", (session,)).fetchall()
+        rows = self.db.execute("SELECT kind,body FROM events WHERE session=? AND kind!='dictation' "
+                               "ORDER BY id DESC LIMIT 80", (session,)).fetchall()
         groups, size = [], 0
         for row in rows:
             body = json.loads(row["body"])
@@ -65,6 +66,20 @@ class Store:
             size += n
             groups.append(group)
         return [message for group in reversed(groups) for message in group]
+
+    def dictation(self, session):
+        """Dictated segments, oldest first; kept apart from model-visible history."""
+        rows = self.db.execute("SELECT id,body FROM events WHERE session=? AND kind='dictation' ORDER BY id",
+                               (session,)).fetchall()
+        return [(row["id"], json.loads(row["body"])["text"]) for row in rows]
+
+    def drop_dictation(self, session, last=False):
+        if last:
+            self.db.execute("DELETE FROM events WHERE id=(SELECT MAX(id) FROM events WHERE session=? "
+                            "AND kind='dictation')", (session,))
+        else:
+            self.db.execute("DELETE FROM events WHERE session=? AND kind='dictation'", (session,))
+        self.db.commit()
 
     def job(self, jid, session):
         row = self.db.execute("SELECT * FROM jobs WHERE id=? AND session=?", (jid, session)).fetchone()

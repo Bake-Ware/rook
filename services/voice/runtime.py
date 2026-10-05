@@ -6,8 +6,10 @@ import logging
 import struct
 import time
 import uuid
+import re
 import traceback
 from .identity import Identity, current_identity
+from .modes import Mode, dictation_command
 
 
 class Connection:
@@ -27,6 +29,7 @@ class Connection:
         self.receiving_speech = False
         self.audio_sent = {}
         self.audio_played = {}
+        self.mode = Mode()
 
     async def emit(self, kind, **data):
         if not self.closed:
@@ -66,12 +69,19 @@ class Connection:
                 if not text:
                     return
                 await self.emit("stt", text=text, turn=epoch)
+            if not internal and not self.mode.uses_model:
+                if image:
+                    await self.emit("error", msg="Images are not used in dictation mode.")
+                if text and text.strip():
+                    await self._dictate(text.strip(), epoch)
+                return
             if not internal:
                 self.store.append(self.session, "user", {"text": (text or "Describe this image.") +
                                                          (" [image attached]" if image else "")})
-            messages = [{"role": "system", "content": self.provider.system + "\n" + self.identity.prompt()}] + self.store.messages(self.session)
+            system = self.mode.system(self.provider.system, self.identity.prompt())
+            messages = [{"role": "system", "content": system}] + self.store.messages(self.session)
             # Job state is supplied as tool data; it is not another user's instruction.
-            jobs = self.store.jobs(self.session)
+            jobs = self.store.jobs(self.session) if self.mode.agent else []
             if jobs:
                 messages += [{"role": "assistant", "content": None, "tool_calls": [{"id": "job_state",
                     "type": "function", "function": {"name": "job_status", "arguments": "{}"}}]},
@@ -87,7 +97,8 @@ class Connection:
             async def on_clause(clause):
                 await clauses.put(clause)
             async def producer():
-                result = await asyncio.wait_for(self.provider.chat(messages, on_clause, reply_only=internal), 60)
+                extra = {} if self.mode.tools is None else {"tools": self.mode.tools}
+                result = await asyncio.wait_for(self.provider.chat(messages, on_clause, reply_only=internal, **extra), 60)
                 await clauses.put(None)
                 return result
             producer_task = asyncio.create_task(producer())
@@ -117,6 +128,11 @@ class Connection:
                 args = json.loads(function.get("arguments") or "{}")
                 if not isinstance(args, dict):
                     raise ValueError("Invalid tool arguments")
+                if not self.mode.allows(name):
+                    # The model was not offered this tool; never act on it.
+                    if not content:
+                        await self.say("I can't do that in this mode.", epoch)
+                    continue
                 if name == "end_session":
                     await self.say("Talk to you later.", epoch)
                     await self.emit("bye", mode="off" if args.get("mode") == "off" else "sleep",
@@ -176,6 +192,33 @@ class Connection:
                 if old < epoch - 8:
                     del table[old]
 
+    async def set_mode(self, mode):
+        self.mode = mode
+        await self.emit("mode", mode=mode.id, custom=mode.custom)
+        self.drain_results()
+
+    async def _dictate(self, text, epoch):
+        """Dictation never calls the model: record speech, act only on explicit commands."""
+        command = dictation_command(text)
+        if command in ("undo", "clear"):
+            self.store.drop_dictation(self.session, last=command == "undo")
+            await self.say("Removed the last part." if command == "undo" else "Cleared.", epoch)
+            return
+        if command is None:
+            self.store.append(self.session, "dictation", {"text": text[:16000]})
+            return
+        body = " ".join(part for _, part in self.store.dictation(self.session))
+        await self.emit("dictation", text=body, final=command == "finish", turn=epoch)
+        if not body:
+            await self.say("Nothing has been dictated yet.", epoch)
+        elif command == "read":
+            # Synthesise sentence by sentence so long dictation stays within TTS limits.
+            for sentence in re.split(r"(?<=[.!?])\s+", body):
+                await self.say(sentence, epoch)
+        else:
+            await self.emit("assistant_delta", text=body, turn=epoch)
+            await self.say("That's your dictation so far.", epoch)
+
     def job_event(self, event):
         if self.closed:
             return
@@ -185,7 +228,9 @@ class Connection:
         # Caller owns a bounded outbound event queue; no task per progress token.
 
     def drain_results(self):
-        if self.closed or self.receiving_speech or (self.task and not self.task.done()) or not self.pending_results:
+        # Job reports wait for assistant mode; they are persisted and reported on switching back.
+        if self.closed or not self.mode.agent or self.receiving_speech or (self.task and not self.task.done()) \
+                or not self.pending_results:
             return
         event = self.pending_results.pop(0)
         async def report():

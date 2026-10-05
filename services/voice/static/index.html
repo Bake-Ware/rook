@@ -45,6 +45,15 @@
   <div class="status" id="status">Click connect to start talking</div>
   <button class="big" id="btn">Connect</button>
   <div style="margin-top:6px"><label style="font-size:12px;color:#7a8299;margin-right:6px">Voice</label><select id="voiceSel" style="background:#141824;color:#e6e6e6;border:1px solid #26314d;border-radius:8px;padding:5px 8px;font-size:13px"></select></div>
+  <div style="margin-top:6px;display:flex;flex-direction:column;align-items:center;gap:6px;width:min(560px,92vw)">
+    <div><label for="modeSel" style="font-size:12px;color:#7a8299;margin-right:6px">Mode</label><select id="modeSel" style="background:#141824;color:#e6e6e6;border:1px solid #26314d;border-radius:8px;padding:5px 8px;font-size:13px"><option value="assistant">Assistant</option></select>
+      <button id="modeEdit" type="button" style="background:none;border:0;color:#7aa2f7;font-size:12px;cursor:pointer">instructions</button></div>
+    <div id="modeBox" hidden style="width:100%">
+      <textarea id="modePrompt" rows="4" maxlength="2000" style="width:100%;background:#141824;color:#e6e6e6;border:1px solid #26314d;border-radius:8px;padding:6px 8px;font:13px system-ui"></textarea>
+      <div style="display:flex;gap:10px;justify-content:flex-end"><button id="modeReset" type="button" style="background:none;border:0;color:#7aa2f7;font-size:12px;cursor:pointer">Reset to default</button><button id="modeApply" type="button" style="background:none;border:0;color:#7aa2f7;font-size:12px;cursor:pointer">Apply</button></div>
+    </div>
+    <div class="hint" id="modeHint"></div>
+  </div>
   <div class="hint">Uses your mic · talk naturally · press Space or tap the orb to interrupt · talk to interrupt when browser echo cancellation is available</div>
 </div>
 <div id="log"></div>
@@ -54,6 +63,9 @@ const orb=document.getElementById('orb'), statusEl=document.getElementById('stat
 let ws, inputCtx, outputCtx, workletNode, micStream, running=false;
 let playhead=0, sources=[];
 let curBot=null, curThought=null, toolEls={};
+let modeCatalog={assistant:{label:'Assistant',prompt:''}};
+function lsGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+function lsSet(k,v){ try{ v===''||v==null?localStorage.removeItem(k):localStorage.setItem(k,v); }catch(e){} }
 let outputSR=24000, activeTurn=0, blockedThrough=-1, speaking=false, fullDuplex=false, speechFrames=0, micPreroll=[];
 
 const workletCode=`
@@ -107,10 +119,13 @@ async function connect(){
   const _tok=new URLSearchParams(location.search).get('token')||localStorage.getItem('voice_token')||''; if(_tok) localStorage.setItem('voice_token',_tok); ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws'+(_tok?'?token='+encodeURIComponent(_tok):''));
   ws.binaryType='arraybuffer';
   ws.onopen=async()=>{
-    let conversation=localStorage.getItem('voice_conversation');
-    if(!conversation){ conversation=crypto.randomUUID(); localStorage.setItem('voice_conversation',conversation); }
+    // Assistant keeps the original conversation; other modes each get their own history.
+    const mode=currentMode(), convKey=mode==='assistant'?'voice_conversation':'voice_conversation_'+mode;
+    let conversation=localStorage.getItem(convKey);
+    if(!conversation){ conversation=crypto.randomUUID(); localStorage.setItem(convKey,conversation); }
     activeTurn=0; blockedThrough=-1; fullDuplex=false; speechFrames=0; micPreroll=[];
-    ws.send(JSON.stringify({type:'hello',protocol:2,conversation,aec:false}));
+    const hello={type:'hello',protocol:2,conversation,aec:false,mode}; const mp=lsGet('voice_mode_prompt_'+mode); if(mp) hello.mode_prompt=mp;
+    ws.send(JSON.stringify(hello));
     if(!navigator.mediaDevices){ statusEl.textContent='No mic API — needs HTTPS/secure context'; return; }
     micStream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
     fullDuplex=micStream.getAudioTracks()[0].getSettings().echoCancellation===true;
@@ -154,6 +169,7 @@ async function connect(){
         case 'tool': upsertTool(m); curBot=null; curThought=null; break;
         case 'interrupt': activeTurn=Math.max(activeTurn,m.turn||0); stopPlayback(); abortPendingTools(); if(curBot) curBot.classList.add('interrupted'); break;
         case 'error': statusEl.textContent='Error: '+m.msg; break;
+        case 'mode': statusEl.textContent='Mode: '+((modeCatalog[m.mode]||{}).label||m.mode); break;
       }
     } else { schedulePCM(ev.data); }
   };
@@ -172,6 +188,24 @@ async function loadVoices(){ try{ const r=await fetch("/voices"); const d=await 
   sel.onchange=()=>{ if(ws&&ws.readyState===1) ws.send(JSON.stringify({type:"voice",voice:sel.value})); };
 }catch(e){} }
 loadVoices();
+const modeSel=document.getElementById('modeSel'), modePrompt=document.getElementById('modePrompt'), modeBox=document.getElementById('modeBox');
+const MODE_HINT={assistant:'Full agent: answers, lookups and tasks.',dictate:'Transcribes only. Say “read it back”, “scratch that”, “start over” or “I’m done”.'};
+function currentMode(){ const m=lsGet('voice_mode')||'assistant'; return modeCatalog[m]?m:'assistant'; }
+function showMode(){ const m=currentMode(); modeSel.value=m; const d=modeCatalog[m];
+  modePrompt.value=lsGet('voice_mode_prompt_'+m)||d.prompt; modePrompt.disabled=m==='dictate';
+  modePrompt.placeholder=m==='assistant'?'Extra instructions (optional)':'Mode instructions';
+  document.getElementById('modeHint').textContent=MODE_HINT[m]||'Talk only: no tools or device access.'; }
+function sendMode(){ const m=currentMode(); if(ws&&ws.readyState===1) ws.send(JSON.stringify({type:'mode',mode:m,prompt:lsGet('voice_mode_prompt_'+m)||''})); }
+function saveModePrompt(){ const m=currentMode(), t=modePrompt.value.trim().slice(0,2000); lsSet('voice_mode_prompt_'+m,t===modeCatalog[m].prompt?'':t); }
+async function loadModes(){ try{ const d=await (await fetch('/modes')).json(); if(!Array.isArray(d.modes)||!d.modes.length) throw 0; modeCatalog={}; modeSel.innerHTML='';
+  for(const m of d.modes){ modeCatalog[m.id]=m; const o=document.createElement('option'); o.value=m.id; o.textContent=m.label; modeSel.appendChild(o); }
+  if(d.max_prompt) modePrompt.maxLength=d.max_prompt; }catch(e){} showMode(); }
+// A live switch keeps the current socket and its history; reconnect to use the mode's own conversation.
+modeSel.onchange=()=>{ lsSet('voice_mode',modeSel.value); showMode(); sendMode(); };
+document.getElementById('modeEdit').onclick=()=>{ modeBox.hidden=!modeBox.hidden; };
+document.getElementById('modeReset').onclick=()=>{ modePrompt.value=modeCatalog[currentMode()].prompt; saveModePrompt(); sendMode(); };
+document.getElementById('modeApply').onclick=()=>{ saveModePrompt(); sendMode(); };
+loadModes();
 btn.onclick=()=>{ if(running){ try{ws.close()}catch(e){} teardown(); } else { connect(); } };
 function manualStop(){ if(running){ blockedThrough=activeTurn; speaking=false; micPreroll=[]; stopPlayback(); if(ws&&ws.readyState===1) ws.send(JSON.stringify({type:"stop"})); } }
 document.addEventListener("keydown",e=>{ if(e.code==="Space"&&running){ e.preventDefault(); manualStop(); } });

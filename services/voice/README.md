@@ -55,6 +55,20 @@ an unlimited personal memory store. Old records are pruned on startup after
 seven days. Interrupted generated speech is labelled as possibly unheard.
 Playback acknowledgements provide frame counts, not word-aligned timestamps.
 
+Conversation modes (`services/voice/modes.py`, `GET /modes`): the hello may carry
+`mode` (`assistant`, `conversation`, `dictate`, `brainstorm`, `roleplay`, `listen`)
+and an optional `mode_prompt`; `{"type":"mode","mode":...,"prompt":...}` switches
+live. A missing or unknown mode is `assistant`, the unchanged agent behaviour (a
+custom prompt there is appended as extra style instructions). Other modes replace
+the agent prompt with a spoken-conversation prompt and offer no tools except
+`end_session`; the runtime refuses any other tool call. `dictate` never calls the
+model: speech is stored as dictation, outside model-visible history, and "read it
+back", "I'm done", "scratch that" and "start over" read, emit (`dictation` event),
+trim or clear it. Mode prompts are client text: capped at 2,000 characters with
+control characters removed, and they never grant tools. Job reports wait until
+the session is back in `assistant` mode. The APK and browser keep a separate
+conversation per non-assistant mode.
+
 Jobs are independent of audio turns and survive socket closure. Read tools have
 45-second limits; Hermes jobs have 10-minute limits. Outcomes are persisted,
 including failed, unknown and cancellation-requested states. After a service

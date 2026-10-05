@@ -75,7 +75,10 @@ class VoiceClient(
         if (insecureTls) VoiceTls.trustAll(builder)
         val client = builder.build(); http = client
         val prefs = ctx.getSharedPreferences("rook", Context.MODE_PRIVATE)
-        val scope = MessageDigest.getInstance("SHA-256").digest((url + "\u0000" + token).toByteArray()).joinToString("") { "%02x".format(it) }
+        // Mode and prompt are read per connection: a mode change applies on the next session.
+        val mode = VoiceModes.byId(prefs.getString(VoiceModes.PREF_MODE, VoiceModes.DEFAULT))
+        val modePrompt = prefs.getString(VoiceModes.promptKey(mode.id), "")?.take(VoiceModes.MAX_PROMPT) ?: ""
+        val scope = MessageDigest.getInstance("SHA-256").digest(VoiceModes.conversationScope(url, token, mode.id).toByteArray()).joinToString("") { "%02x".format(it) }
         val key = "voice_conversation_$scope"
         val conversation = prefs.getString(key, null) ?: UUID.randomUUID().toString().also { prefs.edit().putString(key, it).apply() }
         val thinking = prefs.getBoolean("show_thinking", false)
@@ -88,6 +91,7 @@ class VoiceClient(
                 ws = webSocket
                 webSocket.send(JSONObject().put("type", "hello").put("protocol", 2).put("client", "rook-android").put("activity", true)
                     .put("conversation", conversation).put("aec", aec)
+                    .put("mode", mode.id).apply { if (modePrompt.isNotBlank()) put("mode_prompt", modePrompt) }
                     .apply { if (thinking) put("thinking", true) }.toString())
                 webSocket.send(JSONObject().put("type", "voice")
                     .put("voice", prefs.getString("voice_choice", VoiceCatalog.FALLBACK)).toString())
