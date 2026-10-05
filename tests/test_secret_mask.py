@@ -16,7 +16,7 @@ from rook.band_mcp import secret_mask
 from rook.band_mcp.chat_rooms import ChatStore
 from rook.band_mcp.console_rooms import ConsoleStore
 from rook.band_mcp.journal import Journal
-from rook.band_mcp.secret_mask import MIN_LEN, Matcher, SecretMasker, StreamMasker, VaultReader
+from rook.band_mcp.secret_mask import MIN_LEN, Matcher, SecretMasker, StreamMasker, encode, tagged_forms
 from rook.band_mcp.server import build_server
 from rook.band_mcp.sessions import SessionStore
 from rook.band_mcp.vault import Vault
@@ -39,7 +39,7 @@ def matcher(**secrets):
 
 # -- matcher ------------------------------------------------------------------
 
-def test_nested_json_bytes_and_keys():
+def test_nested_json_bytes_and_keys_are_left_alone():
     m = matcher(pw=PW, tok=TOKEN)
     obj = {'a': [f'x {PW} y', {'deep': (TOKEN, 3, None, True)}],
            TOKEN: 'key position', 'raw': f'..{TOKEN}..'.encode(),
@@ -47,14 +47,23 @@ def test_nested_json_bytes_and_keys():
     out = m.mask(obj)
     assert out['a'][0] == 'x {{secret:pw}} y'
     assert out['a'][1]['deep'] == ('{{secret:tok}}', 3, None, True)
-    assert out['{{secret:tok}}'] == 'key position'
+    # Keys are never masked: a masked key is never substituted back, and two
+    # keys could collide into one.
+    assert out[TOKEN] == 'key position' and len(out) == len(obj)
     assert out['raw'] == b'..{{secret:tok}}..'
-    # The value inside JSON-in-a-string is JSON-escaped (the quote) and still found.
-    assert json.loads(out['inner_json']) == {'cmd': 'login {{secret:pw}}'}
-    assert PW not in json.dumps(out, default=repr) and TOKEN not in json.dumps(out, default=repr)
+    # The value inside JSON-in-a-string is JSON-escaped (the quote): it is
+    # found, and its stub says so, so the string round-trips exactly.
+    assert json.loads(out['inner_json']) == {'cmd': 'login {{secret:pw|json}}'}
+    assert PW not in json.dumps(out['a']) and PW not in out['inner_json']
     # Twice-encoded: JSON text stored inside JSON text.
     twice = json.dumps(json.dumps({'v': PW}))
-    assert PW not in m.sub(twice) and '{{secret:pw}}' in m.sub(twice)
+    assert PW not in m.sub(twice) and '{{secret:pw|json|json}}' in m.sub(twice)
+
+
+def test_colliding_keys_are_not_merged():
+    m = matcher(a='aaaaaaaa1', b='bbbbbbbb2')
+    obj = {'aaaaaaaa1': 1, 'bbbbbbbb2': 2, 'k': 'aaaaaaaa1'}
+    assert m.mask(obj) == {'aaaaaaaa1': 1, 'bbbbbbbb2': 2, 'k': '{{secret:a}}'}
 
 
 def test_overlap_longest_wins_and_same_value_maps_to_one_name():
@@ -84,16 +93,101 @@ def test_short_values_are_skipped_but_explicit_use_still_masks():
     assert sm.mask('pin 12345', extra={'pin': '12345'}) == 'pin {{secret:pin}}'
 
 
-def test_encodings():
+def test_encodings_get_tagged_stubs():
     m = matcher(pw=PW)
     raw = PW.encode()
-    for form in (base64.b64encode(raw).decode(), base64.urlsafe_b64encode(raw).decode(),
-                 base64.b64encode(raw).decode().rstrip('='), quote(PW, safe=''), quote_plus(PW),
-                 json.dumps(PW)[1:-1]):
-        assert m.sub(f'<{form}>') == '<{{secret:pw}}>', form
+    cases = {base64.b64encode(raw).decode(): '|b64',
+             base64.b64encode(raw).decode().rstrip('='): '|b64np',
+             quote(PW, safe=''): '|url',
+             json.dumps(PW)[1:-1]: '|json'}
+    for form, tag in cases.items():
+        assert m.sub(f'<{form}>') == '<{{secret:pw%s}}>' % tag, form
+    # URL-safe base64 differs only when the value's base64 has + or /.
+    m2 = matcher(k='>>>???~~~')
+    url_safe = base64.urlsafe_b64encode(b'>>>???~~~').decode()
+    assert url_safe != base64.b64encode(b'>>>???~~~').decode()
+    assert m2.sub(url_safe) == '{{secret:k|b64url}}'
+    # quote_plus and quote(safe='/') differ from quote(safe='') with a space or '/'.
+    m3 = matcher(sp='pass word/x1')
+    assert m3.sub(quote_plus('pass word/x1')) == '{{secret:sp|urlplus}}'
+    assert m3.sub(quote('pass word/x1')) == '{{secret:sp|urlpath}}'
+    assert m.sub(f'<{PW}>') == '<{{secret:pw}}>'   # the raw value keeps the plain stub
     # Non-ASCII values: JSON's \\u escapes are covered too.
     m = matcher(u='pässwörd-ünïcode')
-    assert m.sub(json.dumps({'v': 'pässwörd-ünïcode'})) == '{"v": "{{secret:u}}"}'
+    assert m.sub(json.dumps({'v': 'pässwörd-ünïcode'})) == '{"v": "{{secret:u|jsona}}"}'
+
+
+@pytest.mark.parametrize('value', [PW, TOKEN, 'pässwörd-ünïcode/+?&= x', 'a/b+c==d?e~', '{"k": "v\\n"}'])
+def test_every_encoding_round_trips_through_the_vault(tmp_path, value):
+    """mask then substitute == the original, for every form we mask: a file
+    read, edited and written back keeps its bytes."""
+    v = Vault(str(tmp_path / 'vault.db'))
+    v.set('s', value, '', 'test')
+    m = Matcher({'s': value})
+    forms = tagged_forms(value)
+    assert len(forms) >= 3 and {'b64'} <= {t for _, chain in forms for t in chain}
+    for form, chain in forms:
+        assert encode(value, chain) == form
+        doc = f'before {form} after'
+        masked = m.sub(doc)
+        assert masked == 'before {{secret:%s}} after' % '|'.join(('s',) + chain), (chain, masked)
+        back, _ = v.substitute({'x': masked}, 'test', via='t')
+        assert back == {'x': doc}, chain
+    # Plain stubs are unchanged by the tag support.
+    assert v.substitute('{{secret:s}}', 'test', via='t')[0] == value
+    # An unknown tag is not a placeholder: it is sent as written.
+    assert v.substitute('{{secret:s|rot13}}', 'test', via='t')[0] == '{{secret:s|rot13}}'
+
+
+def test_extra_values_never_nest_stubs():
+    """A short value used by a call can occur inside another secret's stub
+    name; the stub must stay whole (one pass, existing stubs skipped)."""
+    class Src:
+        def version(self):
+            return 1
+
+        def masking_values(self):
+            return {'api-1234': 'longvalue-abcdef'}
+    sm = SecretMasker(Src())
+    out = sm.mask('key longvalue-abcdef pin 1234', extra={'pin': '1234'})
+    assert out == 'key {{secret:api-1234}} pin {{secret:pin}}'
+    # Re-masking already-masked text changes nothing.
+    assert sm.mask(out, extra={'pin': '1234'}) == out
+    assert Matcher({}, extra={'pin': '1234'}).sub('api-{{secret:pin}} 1234') == 'api-{{secret:pin}} {{secret:pin}}'
+    # A stub split across stream reads is held whole, not masked inside.
+    s = StreamMasker(lambda: sm.matcher_with({'pin': '1234'}))
+    out = s.feed('cat: {{secret:api-12') + s.feed('34}} and 12') + s.feed('34\n') + s.flush()
+    assert out == 'cat: {{secret:api-1234}} and {{secret:pin}}\n'
+
+
+def test_version_check_is_throttled(monkeypatch):
+    calls = []
+
+    class Src:
+        gen = 0
+
+        def generation(self):
+            return self.gen
+
+        def version(self):
+            calls.append(1)
+            return ('v', self.gen)
+
+        def masking_values(self):
+            return {'tok': TOKEN}
+    src = Src()
+    sm = SecretMasker(src)
+    clock = [100.0]
+    monkeypatch.setattr(secret_mask.time, 'monotonic', lambda: clock[0])
+    for _ in range(50):
+        assert sm.mask(TOKEN) == '{{secret:tok}}'
+    assert len(calls) == 1
+    clock[0] += 1.5          # another process may have changed the vault
+    sm.mask(TOKEN)
+    assert len(calls) == 2
+    src.gen += 1             # an in-process write is seen at once
+    sm.mask(TOKEN)
+    assert len(calls) == 3
 
 
 def test_split_chunk_stream_text_and_bytes():
@@ -134,13 +228,63 @@ def test_masker_rebuilds_when_the_vault_changes(tmp_path):
     assert [a['action'] for a in v.access_log()] == ['delete', 'create']
 
 
-def test_read_only_view_sees_changes_from_another_process(tmp_path):
+@pytest.mark.asyncio
+async def test_dashboard_masks_through_the_bridge(tmp_path, caplog):
+    """The dashboard holds no vault: it asks the bridge, with the token the
+    bridge keeps beside its stores; if it can't, it logs an error."""
+    import asyncio
+    import logging
+    import socket
+
+    import uvicorn
+    from starlette.applications import Starlette
+
+    from rook.band_mcp.mask_web import ensure_token, route
+    from rook.remote.mask_client import BridgeMask
+
+    caplog.set_level(logging.ERROR, logger='rook.remote.mask_client')
     v = Vault(str(tmp_path / 'vault.db'))
-    reader = SecretMasker(VaultReader(str(tmp_path / 'vault.db')))
-    assert reader.mask(TOKEN) == TOKEN
     v.set('tok', TOKEN, '', 'test')
-    assert reader.mask(TOKEN) == '{{secret:tok}}'
-    assert secret_mask.install_from_dir(str(tmp_path / 'nothing-here')) is None
+    secret_mask.install(v)
+    tok = ensure_token(str(tmp_path))
+    assert ensure_token(str(tmp_path)) == tok and (tmp_path / 'mask.token').stat().st_mode & 0o077 == 0
+    app = Starlette(routes=[route(tok)])
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://t') as c:
+        assert (await c.post('/internal/mask', json={'obj': TOKEN})).status_code == 401
+        r = await c.post('/internal/mask', json={'obj': {'text': f'use {TOKEN}'}},
+                         headers={'Authorization': 'Bearer ' + tok})
+        assert r.json()['obj'] == {'text': 'use {{secret:tok}}'}
+
+    # The client end, against the endpoint served over real HTTP.
+    sock = socket.socket()
+    sock.bind(('127.0.0.1', 0))
+    port = sock.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, log_level='error'))
+    task = asyncio.create_task(server.serve(sockets=[sock]))
+    try:
+        while not server.started:
+            await asyncio.sleep(0.01)
+        url = f'http://127.0.0.1:{port}/internal/mask'
+        client = BridgeMask([str(tmp_path / 'missing'), str(tmp_path / 'mask.token')], url=url)
+        assert await client.mask(f'the key is {TOKEN}') == 'the key is {{secret:tok}}'
+        assert not caplog.records
+        # A token the bridge does not know: unmasked, and an error is logged.
+        (tmp_path / 'stale.token').write_text('0' * 64)
+        stale = BridgeMask([str(tmp_path / 'stale.token')], url=url)
+        assert await stale.mask(TOKEN) == TOKEN
+        assert [r.levelname for r in caplog.records] == ['ERROR']
+    finally:
+        server.should_exit = True
+        await task
+    caplog.clear()
+    nobody = BridgeMask([str(tmp_path / 'mask.token')], url='http://127.0.0.1:9/internal/mask')
+    assert await nobody.mask(TOKEN) == TOKEN
+    assert [r.levelname for r in caplog.records] == ['ERROR']
+    # The dashboard process installs no vault and never opens the vault key.
+    import rook.remote.bootstrap as bootstrap
+    src = open(bootstrap.__file__).read()
+    assert 'install_from_dir' not in src and 'vault.key' not in src
+    assert not hasattr(secret_mask, 'VaultReader')
 
 
 # -- stores ---------------------------------------------------------------------
@@ -191,7 +335,7 @@ class FakeBand:
     def __init__(self):
         self.sent = []
         self.workers = {'w1': {'worker_id': 'w1', 'name': 'gpu-box', 'band': 'x', 'last_seen': 0,
-                               'caps': ['shell.exec', 'proc.start', 'proc.write']}}
+                               'caps': ['shell.exec', 'proc.start', 'proc.write', 'settings.fetch']}}
 
     async def call(self, cap, args=None, target=None, timeout=15.0, identity=None):
         self.sent.append((cap, args))
@@ -199,6 +343,8 @@ class FakeBand:
             return {'ok': True, 'result': {'ok': True, 'handle': 'h1', 'cmd': args.get('cmd', ''), 'pid': 1}}
         if cap == 'proc.write':
             return {'ok': True, 'result': {'ok': True}}
+        if cap == 'settings.fetch':
+            return {'id': 'f', 'ok': True, 'result': {'password': PW, 'note': f'b64 {base64.b64encode(TOKEN.encode()).decode()}'}}
         # A careless cap: echoes its args and leaks a secret it found on disk.
         return {'id': 'c-%d' % len(self.sent), 'from': target, 'ok': True,
                 'result': {'stdout': 'echo: ' + json.dumps(args),
@@ -256,11 +402,13 @@ async def test_forward_path_still_works_and_everything_else_is_masked(tmp_path, 
         out = await env.tool('rook_call', cap='shell.exec', worker='gpu-box', args={'argv': ['login', '{{secret:pw}}']})
         assert env.band.sent[-1] == ('shell.exec', {'argv': ['login', PW]})
         # ...and the reply comes back with stubs, including a base64 leak of another secret.
-        assert out['result']['file'] == '{{secret:tok}}' and '{{secret:pw}}' in out['result']['stdout']
+        assert out['result']['file'] == '{{secret:tok|b64}}' and '{{secret:pw|json}}' in out['result']['stdout']
         assert PW not in json.dumps(out) and TOKEN not in json.dumps(out)
 
-        # A stub the agent got back is usable as-is: round trip.
+        # A stub the agent got back is usable as-is and re-encodes: round trip.
         await env.tool('rook_call', cap='shell.exec', worker='gpu-box', args={'cmd': out['result']['file']})
+        assert env.band.sent[-1] == ('shell.exec', {'cmd': base64.b64encode(TOKEN.encode()).decode()})
+        await env.tool('rook_call', cap='shell.exec', worker='gpu-box', args={'cmd': '{{secret:tok}}'})
         assert env.band.sent[-1] == ('shell.exec', {'cmd': TOKEN})
 
         # An agent that pasted a raw value: the call is not broken (the worker
@@ -302,3 +450,87 @@ async def test_forward_path_still_works_and_everything_else_is_masked(tmp_path, 
         assert 'Password for {{secret:tok}}: ' in lines and '$ {{secret:pw}}' in lines
 
         assert leaked(tmp_path) == []
+
+
+@pytest.mark.asyncio
+async def test_sensitive_hub_cap_replies_are_not_masked(tmp_path, monkeypatch):
+    """settings.fetch exists to hand vault values to a service: its reply
+    reaches the caller whole (both in rook_call and in the reply wrapper),
+    while the journal keeps nothing of it."""
+    async with mcp_session(tmp_path, monkeypatch) as env:
+        assert (await env.tool('rook_secret', action='set', name='pw', value=PW))['ok']
+        assert (await env.tool('rook_secret', action='set', name='tok', value=TOKEN))['ok']
+        tags = {'settings.fetch': ('sensitive',)}
+        env.mcp._rook_hub = SimpleNamespace(worker_id='w1', host=SimpleNamespace(registry=SimpleNamespace(
+            meta=lambda cap: SimpleNamespace(tags=tags.get(cap, ())))))
+        got = await env.tool('rook_call', cap='settings.fetch', worker='gpu-box', args={'namespace': 'svc'})
+        assert got['result']['password'] == PW
+        assert got['result']['note'] == 'b64 ' + base64.b64encode(TOKEN.encode()).decode()
+        # Everything else is still masked, in the same session.
+        other = await env.tool('rook_call', cap='shell.exec', worker='gpu-box', args={'cmd': 'x'})
+        assert other['result']['file'] == '{{secret:tok|b64}}'
+        row = env.mcp._rook_journal.query(cap_prefix='settings.fetch', include_reply=True)[0]
+        assert row['reply']['result'] == '[sensitive: not journaled]'
+        assert leaked(tmp_path) == []
+
+
+@pytest.mark.asyncio
+async def test_console_masks_short_values_typed_into_that_room(tmp_path, monkeypatch):
+    async with mcp_session(tmp_path, monkeypatch) as env:
+        assert (await env.tool('rook_secret', action='set', name='pin', value='4321'))['ok']
+        a = (await env.tool('rook_console_open', worker='gpu-box', task='a', cmd='login', pty=True))['room']
+        b = (await env.tool('rook_console_open', worker='gpu-box', task='b', cmd='other', pty=True))['room']
+        w = await env.tool('rook_console_write', room=a, text='{{secret:pin}}')
+        assert w['ok'] and env.band.sent[-1][1]['data'] == '4321'
+        console = env.mcp._rook_console
+        console.append(a, 'PIN: 43')         # the terminal echoes it, split across reads
+        console.append(a, '21\nok 4321\n')
+        console.append(b, 'port 4321\n')    # another room: an ordinary number
+        lines = [l['text'] for l in (await env.tool('rook_console_read', room=a))['lines']]
+        assert '$ {{secret:pin}}' in lines and 'PIN: {{secret:pin}}' in lines and 'ok {{secret:pin}}' in lines
+        assert not [l for l in lines if '4321' in l]
+        assert [l['text'] for l in (await env.tool('rook_console_read', room=b))['lines']] == ['port 4321']
+
+
+@pytest.mark.asyncio
+async def test_console_write_literal_sends_placeholders_as_text(tmp_path, monkeypatch):
+    async with mcp_session(tmp_path, monkeypatch) as env:
+        room = (await env.tool('rook_console_open', worker='gpu-box', task='t', cmd='cat', pty=True))['room']
+        bad = await env.tool('rook_console_write', room=room, text='token: {{secret:nope}}')
+        assert not bad['ok'] and 'unknown secret' in bad['error']
+        ok = await env.tool('rook_console_write', room=room, text='token: {{secret:nope}}', literal=True)
+        assert ok['ok'] and env.band.sent[-1][1]['data'] == 'token: {{secret:nope}}'
+
+
+def test_console_sanitize_keeps_stubs_whole():
+    from rook.band_mcp.console_rooms import sanitize
+    assert sanitize('{{secret:github-token}}') == '{{secret:github-token}}'
+    assert sanitize('export TOKEN={{secret:gh|b64}} x') == 'export TOKEN={{secret:gh|b64}} x'
+    # Ordinary announced secrets are still redacted around a stub.
+    assert sanitize('password: hunter2xyz {{secret:pw}}') == 'password: «redacted» {{secret:pw}}'
+
+
+@pytest.mark.parametrize('value', ['true', '"ok":true', 'null}]'])
+def test_journal_redact_never_touches_json_syntax(tmp_path, value):
+    j = Journal(str(tmp_path / 'journal.db'))
+    reply = {'ok': True, 'result': {'flag': True, 'none': None, 'list': [1, 2], 'text': 'all good'}}
+    j.record(cap='x', worker='w', identity='a', args=None, reply=reply)
+    j.redact_secret('s', value)
+    assert j.query(include_reply=True)[0]['reply'] == reply
+
+
+def test_journal_redact_masks_string_content_with_tagged_stubs(tmp_path):
+    j = Journal(str(tmp_path / 'journal.db'))
+    j.record(cap='x', worker='w', identity='a', args=None,
+             reply={'ok': True, 'result': {'stdout': f'pw {PW}', 'b': base64.b64encode(PW.encode()).decode()}})
+    j.record(cap='x', worker='w', identity='a', args=None, reply={'ok': False, 'error': f'bad {PW}'})
+    j.record(cap='y', worker='w', identity='a', args=None, reply={'ok': True, 'result': 'clean'})
+    assert j.redact_secret('pw', PW) == 2
+    rows = {r['cap'] + str(r['ok']): r for r in j.query(include_reply=True)}
+    assert rows['xTrue']['reply']['result'] == {'stdout': 'pw {{secret:pw}}', 'b': '{{secret:pw|b64}}'}
+    assert rows['xFalse']['error'] == 'bad {{secret:pw}}'
+    with sqlite3.connect(tmp_path / 'journal.db') as db:
+        dump = ' '.join(f'{r} {e}' for r, e in db.execute('SELECT reply, error FROM calls'))
+    assert PW not in dump and json.dumps(PW)[1:-1] not in dump
+    # Below the masking floor nothing is redacted (as everywhere else).
+    assert j.redact_secret('short', 'pw') == 0

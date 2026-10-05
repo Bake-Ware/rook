@@ -35,7 +35,7 @@ The tables are generated from the code by `tools/gen_skill_reference.py`; don't 
 | `rook_console_read` | room, since_seq?, tail?, limit=300 | Console output after since_seq (page with last_seq), or tail=true for the last limit lines. state says live o… |
 | `rook_console_search` | query, worker?, limit=20 | Full-text search of all console sessions; titles and summaries rank highest (search for the task, not the com… |
 | `rook_console_signal` | room, sig='TERM' | Signal a live console's process group: TERM, KILL, INT (ctrl-C) or HUP. |
-| `rook_console_write` | room, text, newline=true | Type into a live console's stdin, verbatim (no shell, no escaping). |
+| `rook_console_write` | room, text, newline=true, literal? | Type into a live console's stdin, verbatim (no shell); {{secret:x}} types a vault value unless literal=true. |
 | `rook_handoff_get` | thread_id | A thread's current handoff plus history. |
 | `rook_handoff_list` | limit=20, active_only=true | Recent handoff threads (latest per thread) with goal and freshness. |
 | `rook_handoff_save` | goal?, thread_id?, state?, decisions?, next_steps?, artifacts?, supersedes?, transcript_ref?, task?, status='active' | Save a handoff (state, not a transcript) so another agent can continue without asking: goal, state, decisions… |

@@ -38,7 +38,7 @@ import threading
 import time
 import uuid
 
-from .secret_mask import scrub, stream as _secret_stream
+from .secret_mask import STUB as _STUB, scrub, stream as _secret_stream
 
 log = logging.getLogger("rook.band_mcp.console_rooms")
 
@@ -90,6 +90,18 @@ def sanitize(text: str) -> str:
         out.append(line)
     text = "\n".join(out)
     text = _CTRL.sub("", text)
+    # {{secret:name}} stubs are already safe; redacting one ("secret:" looks
+    # like a key) would break it. Redact only the text between stubs.
+    pieces, pos = [], 0
+    for m in _STUB.finditer(text):
+        pieces.append(_redact(text[pos:m.start()]))
+        pieces.append(m.group(0))
+        pos = m.end()
+    pieces.append(_redact(text[pos:]))
+    return "".join(pieces)
+
+
+def _redact(text: str) -> str:
     for pat, repl in _SECRETS:
         text = pat.sub(repl, text)
     return text
@@ -104,6 +116,11 @@ class ConsoleStore:
         # Per-room reverse secret mask over the out stream: holds back only a
         # tail that could be the start of a vault value split across reads.
         self._masks: dict = {}
+        # Per-room vault values typed into the room (rook_console_write with
+        # a placeholder): masked in that room's transcript whatever their
+        # length (down to secret_mask.MIN_EXTRA_LEN), so a short PIN the
+        # terminal echoes back is caught too.
+        self._typed: dict[str, dict[str, str]] = {}
         try:
             os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
             self._db = sqlite3.connect(path, check_same_thread=False)
@@ -168,6 +185,13 @@ class ConsoleStore:
         return {"ok": True, "room": rid, "title": title, "worker": worker_name,
                 "handle": handle, "state": "live"}
 
+    def remember_typed(self, rid: str, values: dict) -> None:
+        """Values (by vault name) typed into this room: masked in its
+        transcript from now on, even when shorter than the global floor."""
+        if values:
+            self._typed.setdefault(rid, {}).update(
+                {n: v for n, v in values.items() if isinstance(v, str) and v})
+
     def append(self, rid: str, text: str, *, stream: str = "out",
                sender: str | None = None, flush: bool = False) -> int:
         """Append sanitized output as whole lines. Returns the last seq written
@@ -191,7 +215,7 @@ class ConsoleStore:
             # split across two reads (the masker carries the possible start).
             masker = self._masks.get(rid)
             if masker is None:
-                masker = self._masks[rid] = _secret_stream()
+                masker = self._masks[rid] = _secret_stream(lambda: self._typed.get(rid))
             text = masker.feed(text, final=flush)
             if flush:
                 self._masks.pop(rid, None)
@@ -212,7 +236,7 @@ class ConsoleStore:
                     self._pending[rid] = tail
                 lines = parts
         else:
-            lines = scrub(text).split("\n")
+            lines = scrub(text, extra=self._typed.get(rid)).split("\n")
         lines = [ln for ln in lines if ln.strip()]
         if not lines:
             return 0
@@ -463,6 +487,7 @@ class ConsoleStore:
                 for rid in doomed:
                     self._pending.pop(rid, None)
                     self._masks.pop(rid, None)
+                    self._typed.pop(rid, None)
                     self._db.execute("DELETE FROM lines WHERE room_id=?", (rid,))
                     self._db.execute("DELETE FROM search WHERE room_id=?", (rid,))
                     self._db.execute("DELETE FROM rooms WHERE id=?", (rid,))
@@ -483,6 +508,7 @@ class ConsoleStore:
             return {"ok": False, "error": f"no such console room: {rid}"}
         self._pending.pop(rid, None)
         self._masks.pop(rid, None)
+        self._typed.pop(rid, None)
         with self._lock:
             self._db.execute("DELETE FROM lines WHERE room_id=?", (rid,))
             self._db.execute("DELETE FROM search WHERE room_id=?", (rid,))

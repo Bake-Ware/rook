@@ -29,7 +29,7 @@ def routes(vault, on_set, accounts):
             actor = 'human:' + str(user.get('username') or user['id'])
             if data.get('action') == 'set':
                 res = vault.set(data.get('name'), data.get('value'), data.get('description', ''), actor)
-                res['journal_rows_masked'] = on_set(data.get('value'))
+                res['journal_rows_masked'] = on_set(data.get('name'), data.get('value'))
             elif data.get('action') == 'describe':
                 # Update only the description: re-set with the existing value.
                 name = data.get('name')

@@ -15,12 +15,19 @@ Matching
   substring. Shorter values are skipped: masking every "admin" or "1234" in
   every payload would mangle ordinary text. (Values a call used explicitly via
   a placeholder are still masked in that call's reply down to 4 characters,
-  see ``SecretMasker.mask(extra=...)``.)
+  see ``SecretMasker.mask(extra=...)``; so are values typed into a console
+  room, in that room's transcript.)
 * Cheap encodings of each value: JSON-escaped once and twice (a value inside
   JSON inside JSON), base64 (standard and URL-safe, padded and not) of the
   whole value, and URL/percent encoding (``quote``, ``quote_plus``).
+* An encoded form becomes an encoding-tagged stub, ``{{secret:name|b64}}``,
+  so the forward path re-encodes the value and a read -> edit -> write of a
+  file round-trips to the same bytes. Tags chain left to right
+  (``{{secret:name|json|json}}`` is the value JSON-escaped twice); see
+  ``ENCODERS``. The raw value keeps the plain ``{{secret:name}}``.
 * Leftmost match wins, and at one position the longest form wins, so a secret
-  that contains another is masked as the longer one.
+  that contains another is masked as the longer one. Text that already is a
+  stub is left alone (no stub inside a stub). Dict keys are never masked.
 * One compiled trie-shaped regex (a prefix tree turned into nested
   alternations), rebuilt only when the vault changes.
 
@@ -35,10 +42,10 @@ import bisect
 import codecs
 import json
 import logging
-import os
 import re
-import sqlite3
 import threading
+import time
+from collections import OrderedDict
 from typing import Any, Callable
 from urllib.parse import quote, quote_plus
 
@@ -47,30 +54,67 @@ log = logging.getLogger("rook.band_mcp.secret_mask")
 MIN_LEN = 8          # raw values shorter than this are not masked everywhere
 MIN_EXTRA_LEN = 4    # values a call used explicitly are masked down to this
 HEAD = 16            # prefix length indexed for the stream hold-back check
+CHECK_INTERVAL = 1.0  # seconds between cross-process vault version checks
 
 
-def stub(name: str) -> str:
-    return "{{secret:%s}}" % name
+def _b64(value: str, enc=base64.b64encode) -> str:
+    return enc(value.encode("utf-8", "surrogatepass")).decode("ascii")
+
+
+# Encoding tags: ``{{secret:name|<tag>}}`` resolves to ENCODERS[tag](value).
+ENCODERS: dict[str, Callable[[str], str]] = {
+    "b64": lambda v: _b64(v),
+    "b64np": lambda v: _b64(v).rstrip("="),
+    "b64url": lambda v: _b64(v, base64.urlsafe_b64encode),
+    "b64urlnp": lambda v: _b64(v, base64.urlsafe_b64encode).rstrip("="),
+    "url": lambda v: quote(v, safe=""),
+    "urlpath": lambda v: quote(v),
+    "urlplus": lambda v: quote_plus(v),
+    "json": lambda v: json.dumps(v, ensure_ascii=False)[1:-1],
+    "jsona": lambda v: json.dumps(v)[1:-1],
+}
+_TAGS = "|".join(sorted(ENCODERS, key=len, reverse=True))
+# Any stub, plain or tagged. Group 1: the name; group 2: "|tag|tag" or "".
+STUB = re.compile(r"\{\{secret:([a-z0-9][a-z0-9._-]{0,63})((?:\|(?:%s))*)\}\}" % _TAGS)
+_STUB_OPEN = "{{secret:"
+_STUB_MAX = len(_STUB_OPEN) + 64 + 2 + 10 * 4  # name, braces, a few tags
+_STUB_NC = r"\{\{secret:[a-z0-9][a-z0-9._-]{0,63}(?:\|(?:%s))*\}\}" % _TAGS
+
+
+def stub(name: str, tags: "tuple[str, ...] | list[str]" = ()) -> str:
+    return "{{secret:%s}}" % "|".join((name, *tags))
+
+
+def encode(value: str, tags: "str | tuple[str, ...] | list[str]") -> str:
+    """Apply encoding tags left to right (``"|b64"`` or ``("b64",)``)."""
+    if isinstance(tags, str):
+        tags = [t for t in tags.split("|") if t]
+    for t in tags:
+        value = ENCODERS[t](value)
+    return value
+
+
+def tagged_forms(value: str) -> list[tuple[str, tuple[str, ...]]]:
+    """[(form, tags)] for the value and the encodings we look for, longest
+    first. ``encode(value, tags) == form`` for every pair; a form two chains
+    produce keeps the shorter chain."""
+    if not isinstance(value, str) or not value:
+        return []
+    chains: dict[str, tuple[str, ...]] = {value: ()}
+    for t in ("b64", "b64np", "b64url", "b64urlnp", "url", "urlpath", "urlplus"):
+        chains.setdefault(ENCODERS[t](value), (t,))
+    # JSON-escaped once and twice (a worker's stdout that itself holds JSON,
+    # stored again as JSON). Escaping leaves base64/percent forms unchanged.
+    for _ in range(2):
+        for form, chain in list(chains.items()):
+            for t in ("json", "jsona"):
+                chains.setdefault(ENCODERS[t](form), chain + (t,))
+    return sorted(((f, c) for f, c in chains.items() if f), key=lambda fc: len(fc[0]), reverse=True)
 
 
 def forms_for(value: str) -> list[str]:
     """The value plus the encodings we look for, longest first."""
-    if not isinstance(value, str) or not value:
-        return []
-    forms = {value}
-    raw = value.encode("utf-8", "surrogatepass")
-    for enc in (base64.b64encode, base64.urlsafe_b64encode):
-        b = enc(raw).decode("ascii")
-        forms.add(b)
-        forms.add(b.rstrip("="))
-    for q in (quote(value, safe=""), quote(value), quote_plus(value)):
-        forms.add(q)
-    # JSON-escaped once and twice (a worker's stdout that itself holds JSON,
-    # stored again as JSON).
-    for _ in range(2):
-        forms |= ({json.dumps(f)[1:-1] for f in forms}
-                  | {json.dumps(f, ensure_ascii=False)[1:-1] for f in forms})
-    return sorted((f for f in forms if f), key=len, reverse=True)
+    return [f for f, _ in tagged_forms(value)]
 
 
 # -- matcher -------------------------------------------------------------------
@@ -104,32 +148,41 @@ def _trie_regex(words: list[str]) -> str:
 
 
 class Matcher:
-    """An immutable matcher over one snapshot of {name: value}."""
+    """An immutable matcher over one snapshot of {name: value}. ``extra``
+    ({name: value}) adds values masked down to MIN_EXTRA_LEN characters (ones
+    known to be in play for one payload), in the same single pass."""
 
-    def __init__(self, secrets: dict[str, str], min_len: int = MIN_LEN) -> None:
-        names: dict[str, str] = {}
-        # Sorted by name so a value stored under two names always maps to the
-        # same (first) one.
-        for name in sorted(secrets):
-            value = secrets[name]
-            if not isinstance(value, str) or len(value) < min_len:
-                continue
-            for f in forms_for(value):
-                names.setdefault(f, name)
-        self._names = names
-        self.count = len({n for n in names.values()})
+    def __init__(self, secrets: dict[str, str], min_len: int = MIN_LEN,
+                 extra: "dict[str, str] | None" = None) -> None:
+        stubs: dict[str, str] = {}
+        named: set[str] = set()
+        for src, floor in ((secrets, min_len), (extra or {}, MIN_EXTRA_LEN)):
+            # Sorted by name so a value stored under two names always maps to
+            # the same (first) one.
+            for name in sorted(src):
+                value = src[name]
+                if not isinstance(value, str) or len(value) < floor:
+                    continue
+                named.add(name)
+                for f, tags in tagged_forms(value):
+                    stubs.setdefault(f, stub(name, tags))
+        self._stubs = stubs
+        self.count = len(named)
         self._pattern = None
         self._sorted: list[str] = []
         self._heads: set[str] = set()
         self.longest = 0
         self.shortest = 0
-        if not names:
+        if not stubs:
             return
-        words = sorted(names, key=len, reverse=True)
+        words = sorted(stubs, key=len, reverse=True)
+        # An existing stub is matched first and kept as it is, so a value that
+        # occurs inside a stub's name never nests one stub inside another.
         try:
-            self._pattern = re.compile(_trie_regex(words))
+            self._pattern = re.compile("(?P<stub>%s)|%s" % (_STUB_NC, _trie_regex(words)))
         except (RecursionError, re.error, OverflowError):
-            self._pattern = re.compile("|".join(re.escape(w) for w in words))
+            self._pattern = re.compile("(?P<stub>%s)|%s" % (
+                _STUB_NC, "|".join(re.escape(w) for w in words)))
         self._sorted = sorted(words)
         # Every form's first HEAD characters (and shorter prefixes): a cheap
         # filter before the exact prefix check when holding back a stream tail.
@@ -141,7 +194,9 @@ class Matcher:
         return self._pattern is not None
 
     def _repl(self, m: "re.Match") -> str:
-        return stub(self._names[m.group(0)])
+        if m.group("stub") is not None:
+            return m.group(0)
+        return self._stubs[m.group(0)]
 
     def sub(self, text: str) -> str:
         if self._pattern is None or len(text) < self.shortest:
@@ -158,7 +213,9 @@ class Matcher:
         if isinstance(o, str):
             return self.sub(o)
         if isinstance(o, dict):
-            return {(self.sub(k) if isinstance(k, str) else k): self._walk(v) for k, v in o.items()}
+            # Keys are left alone: a masked key is never substituted back, and
+            # two keys could collapse into one.
+            return {k: self._walk(v) for k, v in o.items()}
         if isinstance(o, list):
             return [self._walk(v) for v in o]
         if isinstance(o, tuple):
@@ -180,10 +237,18 @@ class Matcher:
         """Index where the shortest-possible held-back tail starts: the
         earliest position whose suffix could still grow into a match."""
         n = len(buf)
-        for i in range(max(0, n - self.longest + 1), n):
+        # A stub cut off at the end ("{{secret:ap") is held whole, so the
+        # next read cannot mask a value inside its name.
+        stub_at = n
+        i = buf.rfind("{{", max(0, n - _STUB_MAX))
+        if i >= 0 and "}}" not in buf[i:]:
+            tail = buf[i:i + len(_STUB_OPEN)]
+            if _STUB_OPEN.startswith(tail) or buf[i:].startswith(_STUB_OPEN):
+                stub_at = i
+        for i in range(max(0, n - self.longest + 1), min(n, stub_at)):
             if buf[i:i + HEAD] in self._heads and self._could_start(buf[i:]):
                 return i
-        return n
+        return stub_at
 
     def sub_stream(self, buf: str, final: bool) -> tuple[str, str]:
         """Mask what is safe to emit from ``buf``; return (emitted, carry)."""
@@ -240,74 +305,91 @@ class StreamMasker:
 class SecretMasker:
     """A cached Matcher over a vault, rebuilt when the vault changes.
 
-    ``source`` needs ``version()`` (any value that changes when secrets change)
-    and ``masking_values()`` ({name: value}, read without an access-log entry:
-    masking is not a use of the secret)."""
+    ``source`` needs ``version()`` (any value that changes when secrets change,
+    including from another process) and ``masking_values()`` ({name: value},
+    read without an access-log entry: masking is not a use of the secret).
+    An optional cheap ``generation()`` (changes on every in-process write)
+    lets the version query run at most once per CHECK_INTERVAL."""
+
+    _EXTRA_CACHE = 64
 
     def __init__(self, source: Any) -> None:
         self.source = source
         self._lock = threading.Lock()
         self._version: Any = object()
         self._matcher = EMPTY
+        self._values: dict[str, str] = {}
+        self._with_extra: "OrderedDict[tuple, Matcher]" = OrderedDict()
+        self._checked = float("-inf")
+        self._seen_gen: Any = object()
+
+    def _generation(self) -> Any:
+        fn = getattr(self.source, "generation", None)
+        try:
+            return fn() if callable(fn) else None
+        except Exception:  # noqa: BLE001
+            return object()  # never equal: forces the full check
 
     def matcher(self) -> Matcher:
+        now = time.monotonic()
+        gen = self._generation()
+        if gen == self._seen_gen and now - self._checked < CHECK_INTERVAL:
+            return self._matcher
         try:
             v = self.source.version()
         except Exception:  # noqa: BLE001 — keep the last good matcher
             log.debug("vault version check failed", exc_info=True)
             return self._matcher
+        self._checked, self._seen_gen = now, gen
         if v == self._version:
             return self._matcher
         with self._lock:
             if v != self._version:
                 try:
-                    self._matcher = Matcher(self.source.masking_values())
+                    values = self.source.masking_values()
+                    self._matcher = Matcher(values)
+                    self._values = values
+                    self._with_extra.clear()
                     self._version = v
                     log.info("secret mask rebuilt: %d secret(s)", self._matcher.count)
                 except Exception:  # noqa: BLE001 — never log the values
                     log.warning("secret mask rebuild failed (%s)", "vault read error")
         return self._matcher
 
+    def matcher_with(self, extra: "dict[str, str] | None") -> Matcher:
+        """The vault matcher plus ``extra`` values masked down to
+        MIN_EXTRA_LEN, as one matcher (one pass: no stub inside a stub)."""
+        base = self.matcher()
+        if not extra:
+            return base
+        key = tuple(sorted(extra.items()))
+        with self._lock:
+            got = self._with_extra.get(key)
+            if got is not None:
+                self._with_extra.move_to_end(key)
+                return got
+            values = self._values
+        got = Matcher(values, extra=extra)
+        with self._lock:
+            self._with_extra[key] = got
+            while len(self._with_extra) > self._EXTRA_CACHE:
+                self._with_extra.popitem(last=False)
+        return got
+
     def mask(self, obj: Any, extra: dict[str, str] | None = None) -> Any:
         """Mask known secrets in ``obj``. ``extra`` ({name: value}) adds values
         known to be in play for this payload (e.g. those a call substituted),
         masked even when shorter than MIN_LEN."""
-        obj = self.matcher().mask(obj)
-        if extra:
-            obj = Matcher(extra, min_len=MIN_EXTRA_LEN).mask(obj)
-        return obj
+        return self.matcher_with(extra).mask(obj)
 
-    def stream(self) -> StreamMasker:
-        return StreamMasker(self.matcher)
-
-
-class VaultReader:
-    """Read-only view of a hub vault (vault.db + vault.key) for a process that
-    does not own it (the dashboard). Never creates a key or a database."""
-
-    def __init__(self, path: str, key_path: str | None = None) -> None:
-        import nacl.secret
-        key_path = key_path or os.path.join(os.path.dirname(path) or ".", "vault.key")
-        with open(key_path, "rb") as f:
-            key = f.read()
-        self._box = nacl.secret.SecretBox(key)
-        self._db = sqlite3.connect(f"file:{path}?mode=ro", uri=True, check_same_thread=False)
-        self._lock = threading.Lock()
-
-    def version(self):
-        with self._lock:
-            return self._db.execute(
-                "SELECT count(*), max(updated), total(updated) FROM secrets").fetchone()
-
-    def masking_values(self) -> dict[str, str]:
-        with self._lock:
-            rows = self._db.execute("SELECT name, value FROM secrets").fetchall()
-        return {n: self._box.decrypt(v).decode() for n, v in rows}
+    def stream(self, extra: "Callable[[], dict[str, str] | None] | None" = None) -> StreamMasker:
+        return StreamMasker(lambda: self.matcher_with(extra() if extra else None))
 
 
 # -- process default ---------------------------------------------------------------
-# One hub per process: the bridge installs its vault at startup, the dashboard
-# a read-only view of the same files. Stores call scrub() on what they write.
+# One hub per process: the bridge installs its vault at startup. Stores call
+# scrub() on what they write. The dashboard holds no vault: it asks the
+# bridge to mask (mask_web.py, rook/remote/mask_client.py).
 
 _installed: SecretMasker | None = None
 
@@ -318,32 +400,18 @@ def install(source: Any) -> SecretMasker | None:
     return _installed
 
 
-def install_from_dir(state_dir: str) -> SecretMasker | None:
-    """Install a read-only view of ``state_dir``/vault.db if it exists and is
-    readable; otherwise leave masking as it is."""
-    path = os.path.join(state_dir or ".", "vault.db")
-    if not (os.path.exists(path) and os.path.exists(os.path.join(state_dir or ".", "vault.key"))):
-        return _installed
-    try:
-        return install(VaultReader(path))
-    except Exception as e:  # noqa: BLE001
-        log.warning("secret masking unavailable in this process: %s", type(e).__name__)
-        return _installed
-
-
 def installed() -> SecretMasker | None:
     return _installed
 
 
-def scrub(obj: Any) -> Any:
+def scrub(obj: Any, extra: "dict[str, str] | None" = None) -> Any:
     """Mask with the process's installed vault; a no-op without one. Never
     raises: a masking failure returns the object unchanged and logs (no
     values)."""
-    m = _installed
-    if m is None or obj is None:
+    if obj is None:
         return obj
     try:
-        return m.mask(obj)
+        return current_matcher_with(extra).mask(obj)
     except Exception:  # noqa: BLE001
         log.exception("secret masking failed")
         return obj
@@ -354,6 +422,16 @@ def current_matcher() -> Matcher:
     return m.matcher() if m is not None else EMPTY
 
 
-def stream() -> StreamMasker:
-    """A stream masker that follows whatever vault is installed."""
-    return StreamMasker(current_matcher)
+def current_matcher_with(extra: "dict[str, str] | None") -> Matcher:
+    m = _installed
+    if m is not None:
+        return m.matcher_with(extra)
+    return Matcher({}, extra=extra) if extra else EMPTY
+
+
+def stream(extra: "Callable[[], dict[str, str] | None] | None" = None) -> StreamMasker:
+    """A stream masker that follows whatever vault is installed, plus the
+    values ``extra()`` returns at each feed (masked down to MIN_EXTRA_LEN)."""
+    if extra is None:
+        return StreamMasker(current_matcher)
+    return StreamMasker(lambda: current_matcher_with(extra()))

@@ -1038,17 +1038,17 @@ class CombinedServer:
             self._chat = ChatStore(chat_db)
         except Exception:
             log.warning("chat store unavailable; dashboard chat disabled", exc_info=True)
-        # Reverse secret masking for what this process writes and shows
-        # (dashboard chat, journal rows): a read-only view of the bridge's
-        # vault, when it sits beside the other hub stores and is readable.
-        try:
-            from ..band_mcp import secret_mask
-            from ..paths import data_path
-            if secret_mask.installed() is None:
-                secret_mask.install_from_dir(os.path.dirname(
-                    data_path("vault.db", "/var/lib/rook-band-mcp/vault.db")))
-        except Exception:
-            log.warning("secret masking unavailable in the dashboard", exc_info=True)
+        # Reverse secret masking for the chat this process writes and shows.
+        # The dashboard holds no vault: the MCP bridge masks for it
+        # (mask_client.py -> /internal/mask), with the token it keeps beside
+        # its stores.
+        from ..paths import data_path
+        from .mask_client import BridgeMask
+        self._bridge_mask = BridgeMask([
+            os.environ.get("ROOK_MASK_TOKEN_FILE"),
+            os.path.join(os.path.dirname(getattr(self, "_chat_db", "") or ""), "mask.token")
+            if getattr(self, "_chat_db", None) else None,
+            data_path("mask.token", "/var/lib/rook-band-mcp/mask.token")]).mask
         self._push_task = None  # background: push signed manifest to behind workers
         from .band_overview import BandOverview
         self._overview = BandOverview(self._band_worker_rows, self._overview_call)
@@ -2164,8 +2164,8 @@ button:hover{{background:#22b88f}}
     async def _api_chat_rooms(self, request: web.Request) -> web.Response:
         if self._chat is None:
             return web.json_response({"error": "chat unavailable"}, status=503)
-        return web.json_response(
-            self._chat.rooms_for(self._OPERATOR, limit=200, include_all=True))
+        return web.json_response(await self._bridge_mask(
+            self._chat.rooms_for(self._OPERATOR, limit=200, include_all=True)))
 
     async def _api_chat_read(self, request: web.Request) -> web.Response:
         if self._chat is None:
@@ -2175,8 +2175,8 @@ button:hover{{background:#22b88f}}
             since = int(request.query.get("since", "0"))
         except ValueError:
             since = 0
-        return web.json_response(
-            self._chat.read(room, self._OPERATOR, since_seq=since))
+        return web.json_response(await self._bridge_mask(
+            self._chat.read(room, self._OPERATOR, since_seq=since)))
 
     async def _api_chat_send(self, request: web.Request) -> web.Response:
         if self._chat is None:
@@ -2191,6 +2191,7 @@ button:hover{{background:#22b88f}}
         if isinstance(mention, str):
             mention = [m.strip() for m in mention.split(",") if m.strip()]
         self._chat.touch(self._OPERATOR)
+        text = await self._bridge_mask(text)
         return web.json_response(self._chat.send(
             room, self._OPERATOR, text, mention,
             bool(data.get("expects_reply"))))
@@ -2207,7 +2208,7 @@ button:hover{{background:#22b88f}}
             invite = [s.strip() for s in invite.split(",") if s.strip()]
         self._chat.touch(self._OPERATOR)
         return web.json_response(self._chat.start(
-            str(data.get("title") or "chat"), self._OPERATOR, invite))
+            await self._bridge_mask(str(data.get("title") or "chat")), self._OPERATOR, invite))
 
     async def _api_chat_delete(self, request: web.Request) -> web.Response:
         """Delete a room (final). The dashboard operator oversees every room
@@ -2318,7 +2319,7 @@ button:hover{{background:#22b88f}}
                 ans = _clean_hermes_stdout(res.get("stdout", "")) if isinstance(res, dict) else ""
                 if not ans:
                     return web.json_response({"ok": False, "error": "hermes gave no parseable reply"})
-                self._chat.send(room, f"agent:hermes_{wname}", ans, [], False)
+                self._chat.send(room, f"agent:hermes_{wname}", await self._bridge_mask(ans), [], False)
                 return web.json_response({"ok": True, "via": "hermes.chat", "worker": wname})
             if "agent.wake" in caps:
                 wake_args = {"room": room, "thread_id": room,

@@ -111,7 +111,8 @@ async def test_placeholders_never_reach_agent_or_journal(tmp_path, monkeypatch):
 
         out = await env.tool('rook_call', cap='shell.exec', worker='gpu-box', args={'argv': ['login', '{{secret:pw}}']})
         assert env.band.sent[-1] == {'argv': ['login', SECRET]}  # worker got the real value
-        assert SECRET not in json.dumps(out) and '{{secret:pw}}' in out['result']['stdout']  # agent got the stub
+        # The agent got the stub (tagged: inside the echoed JSON the value is escaped).
+        assert SECRET not in json.dumps(out) and '{{secret:pw|json}}' in out['result']['stdout']
         assert not leaks(env.journal)
 
         bad = await env.tool('rook_call', cap='shell.exec', worker='gpu-box', args={'cmd': '{{secret:nope}}'})
@@ -140,7 +141,7 @@ async def test_operator_page_is_write_only(tmp_path):
     v = Vault(str(tmp_path / 'vault.db'))
     masked = []
     accounts = SimpleNamespace(session=lambda c: {'id': 'u1', 'username': 'operator', 'csrf': 'k', 'admin': c == 'admin'} if c else None)
-    app = Starlette(routes=routes(v, lambda val: masked.append(val) or 3, accounts))
+    app = Starlette(routes=routes(v, lambda name, val: masked.append((name, val)) or 3, accounts))
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://t') as c:
         api = '/vault/account-api'
         assert (await c.get(api)).status_code == 401
@@ -148,7 +149,7 @@ async def test_operator_page_is_write_only(tmp_path):
         h = {'Cookie': 'rook_account=admin'}
         assert (await c.post(api, headers=h, json={'action': 'set', 'name': 'gh', 'value': SECRET})).status_code == 403
         r = await c.post(api, headers=h, json={'csrf': 'k', 'action': 'set', 'name': 'gh', 'value': SECRET, 'description': 'GitHub PAT'})
-        assert r.status_code == 200 and r.json()['journal_rows_masked'] == 3 and masked == [SECRET]
+        assert r.status_code == 200 and r.json()['journal_rows_masked'] == 3 and masked == [('gh', SECRET)]
         page = await c.get(api, headers=h)
         assert SECRET not in page.text and page.json()['secrets'][0]['description'] == 'GitHub PAT'
         r = await c.post(api, headers=h, json={'csrf': 'k', 'action': 'describe', 'name': 'gh', 'description': 'PAT for Bake-Ware'})

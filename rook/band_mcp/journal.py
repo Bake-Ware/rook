@@ -27,7 +27,7 @@ import threading
 import time
 import uuid
 
-from .secret_mask import scrub
+from .secret_mask import Matcher, forms_for, scrub
 
 log = logging.getLogger("rook.band_mcp.journal")
 
@@ -147,22 +147,38 @@ class Journal:
             log.debug("journal record failed", exc_info=True)
         return cid
 
-    def redact(self, forms: list[str], mask: str = "***") -> int:
-        """Mask these strings wherever they appear in stored replies/errors
-        (used when a secret enters the vault). Returns rows changed."""
+    def redact_secret(self, name: str, value: str) -> int:
+        """Mask one vault value (and its encodings) as ``{{secret:name}}``
+        stubs in rows already stored (used when a secret enters the vault).
+        Same floor as reverse masking everywhere (secret_mask.MIN_LEN), and
+        the reply is re-masked as parsed JSON, so only string content changes:
+        a short value can never eat JSON syntax like ``true``. Returns rows
+        changed."""
         if self._db is None:
             return 0
+        m = Matcher({name: value})
+        if not m:
+            return 0
+        forms = forms_for(value)
+        where = " OR ".join(["instr(coalesce(reply,''), ?) > 0 OR instr(coalesce(error,''), ?) > 0"] * len(forms))
+        params = [f for f in forms for _ in (0, 1)]
         changed = 0
         try:
             with self._lock:
-                for f in forms:
-                    if not f or len(f) < 4:
-                        continue
-                    cur = self._db.execute(
-                        "UPDATE calls SET reply=replace(reply, ?, ?), error=replace(error, ?, ?) "
-                        "WHERE instr(reply, ?) > 0 OR instr(coalesce(error,''), ?) > 0",
-                        (f, mask, f, mask, f, f))
-                    changed += cur.rowcount
+                rows = self._db.execute(
+                    f"SELECT seq, reply, error FROM calls WHERE {where}", params).fetchall()
+                for seq, reply, error in rows:
+                    new_reply = reply
+                    if reply:
+                        try:
+                            new_reply = json.dumps(m.mask(json.loads(reply)), separators=(",", ":"))
+                        except ValueError:  # truncated or unserializable blob
+                            new_reply = m.sub(reply)
+                    new_error = m.sub(error) if error else error
+                    if (new_reply, new_error) != (reply, error):
+                        self._db.execute("UPDATE calls SET reply=?, error=? WHERE seq=?",
+                                         (new_reply, new_error, seq))
+                        changed += 1
                 self._db.commit()
         except Exception:
             log.exception("journal redact failed")

@@ -31,10 +31,14 @@ import time
 import nacl.secret
 import nacl.utils
 
+from .secret_mask import STUB as _STUB, encode as _encode
+
 log = logging.getLogger("rook.band_mcp.vault")
 
 NAME = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
-PLACEHOLDER = re.compile(r"\{\{secret:([a-z0-9][a-z0-9._-]{0,63})\}\}")
+# {{secret:name}} or an encoding-tagged {{secret:name|b64}} (see
+# secret_mask.ENCODERS). Group 1 is the name, group 2 the "|tag..." suffix.
+PLACEHOLDER = _STUB
 MASK = "***"
 MAX_VALUE = 16384
 
@@ -133,6 +137,10 @@ class Vault:
 
     # -- reverse masking (secret_mask.py) ---------------------------------------
 
+    def generation(self) -> int:
+        """Bumped on every set/delete in this process (cheap, no SQL)."""
+        return self._gen
+
     def version(self):
         """Changes whenever the set of secrets does (here or in another
         process writing the same file)."""
@@ -154,7 +162,7 @@ class Vault:
 
         def walk(o):
             if isinstance(o, str):
-                found.update(PLACEHOLDER.findall(o))
+                found.update(m.group(1) for m in PLACEHOLDER.finditer(o))
             elif isinstance(o, dict):
                 for v in o.values():
                     walk(v)
@@ -165,13 +173,15 @@ class Vault:
         return found
 
     def substitute(self, obj, actor: str, via: str, task: str | None = None):
-        """Return (obj with placeholders replaced, {name: value} used).
+        """Return (obj with placeholders replaced, {name: value} used). A
+        tagged placeholder ({{secret:name|b64}}) is replaced by the value in
+        that encoding (secret_mask.ENCODERS).
         Raises KeyError naming the first unknown secret."""
         values = {n: self.get(n, actor, via=via, task=task) for n in sorted(self.names_in(obj))}
 
         def walk(o):
             if isinstance(o, str):
-                return PLACEHOLDER.sub(lambda m: values[m.group(1)], o)
+                return PLACEHOLDER.sub(lambda m: _encode(values[m.group(1)], m.group(2)), o)
             if isinstance(o, dict):
                 return {k: walk(v) for k, v in o.items()}
             if isinstance(o, list):

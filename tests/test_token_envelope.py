@@ -261,7 +261,7 @@ async def test_tools_list_fits_the_budget(tmp_path, monkeypatch):
         tools = (await rpc("tools/list", {}))["tools"]
         assert len(tools) >= 29
         size = len(json.dumps({"tools": tools}, separators=(",", ":"), ensure_ascii=False))
-        assert size <= 12300, size  # +300 for task note/batch/deck options and handoff close
+        assert size <= 12400, size  # +300 task note/batch/deck options and handoff close; +100 console_write literal/secrets
         by = {t["name"]: t for t in tools}
         assert all("outputSchema" not in t for t in tools)
         # Schema slimming keeps a property literally named "title" and required args.
