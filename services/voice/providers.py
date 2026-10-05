@@ -6,7 +6,7 @@ import httpx
 from faster_whisper import WhisperModel
 from kokoro_onnx import Kokoro
 from .rookmcp import RookMCP
-from .identity import authorize_read
+from .identity import authorize_devices, authorize_read
 
 HERE = os.environ.get("VOICE_MODEL_DIR", os.path.dirname(os.path.abspath(__file__)))
 ACP_HOST = os.environ.get("ACP_HOST", "127.0.0.1")
@@ -165,6 +165,7 @@ async def tool_web_search(args):
 
 
 async def tool_rook_devices(args):
+    authorize_devices()
     try:
         raw = await RookMCP().call("rook_workers", {})
     except Exception as e:
@@ -423,7 +424,8 @@ class Provider:
         samples, sr = await self._model('tts', lambda: self.kokoro.create(clean_tts(text), voice=voice, speed=1.0, lang='en-us'))
         return (np.clip(samples, -1, 1) * 32767).astype('<i2').tobytes(), int(sr)
 
-    async def chat(self, messages, on_clause, reply_only=False):
+    async def chat(self, messages, on_clause, reply_only=False, tools=None):
+        # ``tools`` narrows the offered tools by name (conversation modes); None offers all.
         # Structured selection prevents a filler-only generation from looking like
         # a running tool. The runtime acknowledges work only after queuing a job.
         respond = {"type": "function", "function": {"name": "respond",
@@ -435,7 +437,7 @@ class Provider:
                   "Completed/failed job records are facts: report their actual status, never start them again just to summarize.")
         planned_messages = [{**messages[0], "content": messages[0]["content"] + "\n" + policy}] + messages[1:]
         payload = {"model": VLLM_MODEL, "messages": planned_messages,
-                   "max_tokens": 450, "temperature": 0, "tools": [respond] + ([] if reply_only else TOOLS),
+                   "max_tokens": 450, "temperature": 0, "tools": [respond] + ([] if reply_only else [t for t in TOOLS if tools is None or t["function"]["name"] in tools]),
                    "tool_choice": "required", "parallel_tool_calls": False,
                    "chat_template_kwargs": {"enable_thinking": False}}
         calls = []

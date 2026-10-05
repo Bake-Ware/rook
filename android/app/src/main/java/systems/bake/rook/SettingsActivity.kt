@@ -28,6 +28,7 @@ class SettingsActivity : AppCompatActivity() {
 
     private var voiceFetch: Job? = null
     private var voiceChoices = emptyList<String>()
+    private var modeShown = VoiceModes.byId(null)
     private lateinit var b: ActivitySettingsBinding
 
     private val projectionLauncher =
@@ -140,6 +141,17 @@ class SettingsActivity : AppCompatActivity() {
         }
         b.btnRetryVoices.setOnClickListener { fetchVoices() }
         fetchVoices()
+        b.voiceMode.setAdapter(ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, VoiceModes.ALL.map { it.label }))
+        showMode(VoiceModes.byId(prefs.getString(VoiceModes.PREF_MODE, VoiceModes.DEFAULT)))
+        b.voiceMode.setOnClickListener { b.voiceMode.showDropDown() }
+        b.voiceMode.setOnItemClickListener { _, _, position, _ ->
+            val mode = VoiceModes.ALL.getOrNull(position) ?: return@setOnItemClickListener
+            saveModePrompt()
+            prefs.edit().putString(VoiceModes.PREF_MODE, mode.id).apply()
+            showMode(mode)
+            status("mode: ${mode.label} (takes effect on next Voice on)")
+        }
+        b.btnModeDefault.setOnClickListener { b.voiceModePrompt.setText(modeShown.defaultPrompt) }
         b.showThinking.isChecked = prefs.getBoolean("show_thinking", false)
         b.showThinking.setOnCheckedChangeListener { _, enabled ->
             prefs.edit().putBoolean("show_thinking", enabled).apply()
@@ -163,6 +175,7 @@ class SettingsActivity : AppCompatActivity() {
                 .putBoolean("voice_insecure", b.voiceInsecure.isChecked)
                 .putBoolean("wake_enabled", b.wakeEnabled.isChecked)
                 .apply()
+            saveModePrompt()
             val service = VoiceService.inst
             if (service != null) service.wakeSettingChanged()
             else if (b.wakeEnabled.isChecked &&
@@ -172,6 +185,29 @@ class SettingsActivity : AppCompatActivity() {
             fetchVoices()
             status("voice settings saved (takes effect on next Voice on)")
         }
+    }
+
+    private fun showMode(mode: VoiceModes.Mode) {
+        modeShown = mode
+        b.voiceMode.setText(mode.label, false)
+        val stored = getSharedPreferences("rook", MODE_PRIVATE).getString(VoiceModes.promptKey(mode.id), "")
+        b.voiceModePrompt.setText(VoiceModes.shownPrompt(mode, stored))
+        val dictate = mode.id == "dictate"
+        b.voiceModePrompt.isEnabled = !dictate
+        b.btnModeDefault.isEnabled = !dictate
+        b.voiceModePrompt.hint = if (mode.id == VoiceModes.DEFAULT) "Extra instructions (optional)" else getString(R.string.voice_mode_prompt)
+        b.voiceModeHelp.text = when (mode.id) {
+            "assistant" -> "The full agent: answers, looks things up and runs tasks."
+            "dictate" -> "Transcribes only, no replies. Say “read it back”, “scratch that”, “start over” or “I’m done”."
+            else -> "Talk only: no tools or device access. Each mode keeps its own conversation."
+        }
+    }
+
+    private fun saveModePrompt() {
+        val mode = modeShown
+        if (mode.id == "dictate") return
+        getSharedPreferences("rook", MODE_PRIVATE).edit()
+            .putString(VoiceModes.promptKey(mode.id), VoiceModes.storedPrompt(mode, b.voiceModePrompt.text.toString())).apply()
     }
 
     private fun showVoices(catalog: VoiceCatalog) {
@@ -251,6 +287,11 @@ class SettingsActivity : AppCompatActivity() {
                     .putInt("band_epoch", band.getInt("epoch")).apply()
                 status("Selected ${names[index]}. Tap Start to connect.")
             }.setNegativeButton("Cancel", null).show()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        saveModePrompt()   // keep prompt edits even when leaving without tapping Save
     }
 
     override fun onResume() {
