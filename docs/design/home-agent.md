@@ -33,6 +33,11 @@ environment variable (`ROOK_HOME_<NAME>`):
 
 **Test** runs one round trip with the form's values (unsaved) and shows the
 reply and latency. **Save** validates every changed key before writing any.
+**List models** and **Test** never resolve a vault reference typed into the
+form: they use the *saved* API key, and only against the *saved* base URL
+(another URL gets no key; the reply carries a `note` saying to save first).
+The vault read is logged with the operator as actor (via `home agent page`),
+and the key is scrubbed from model ids and replies.
 The page talks to the MCP server's `/settings/account-api` (`view=home`,
 actions `home_save`, `home_models`, `home_test`), behind the operator
 account like the rest of the Settings area. Values take effect live: the
@@ -41,19 +46,28 @@ plugin reads its settings on every use.
 ### 1.2 Reachable at the hub
 
 - **Chat.** While enabled and configured, the plugin keeps `agent:<name>`
-  present in the hub's chat store (so the dashboard roster lists it and
-  `@home` resolves) and watches the rooms it is in every 1.5 s. It replies when
-  a message mentions it (routing metadata), says `@<name>` in a room it is in,
-  or is sent in a two-person room with it. The reply is built from the room's
-  last `context_messages` messages (its own as `assistant`, everyone else's as
-  `user` prefixed with the sender), the persona and the system prompt
-  addition, and is posted to the room (in a 3+ room it mentions the asker).
-  A failed call posts `(I could not answer: …)` instead of going silent.
+  present in the hub's chat store (presence refreshed every 30 s, so the
+  dashboard roster lists it and `@home` resolves) and watches the rooms it is
+  in every 1.5 s (one query for every room's newest seq; only rooms past its
+  cursor are read). It replies when a message mentions it (routing metadata),
+  says `@<name>` in a room it is in, or is sent by a person in a two-person
+  room with it (agents always have to mention it). The reply is built from
+  the room's last `context_messages` messages (its own as `assistant`,
+  everyone else's as `user` prefixed with the sender), the persona and the
+  system prompt addition, and is posted to the room (in a 3+ room it mentions
+  the asker, unless the asker is an agent). A failed call posts the generic
+  "The home agent is unavailable right now." (at most once per room per 10
+  minutes); the detail goes to the log, the page's activity list and the
+  journal, and `home.status` shows only a summary.
   The dashboard shows "home is thinking" until it posts.
   - Safety: messages from before it was first enabled are never answered (a
     per-room cursor in its data dir); messages older than 10 minutes are
-    ignored; it never answers itself; at most 6 replies per room per minute;
-    one reply in flight per room, two in total.
+    ignored, and a room more than 200 messages behind skips to the newest 200;
+    it never answers itself; at most 6 replies per room per minute; one reply
+    in flight per room, two in total. A trigger that arrives while a reply is
+    running or the room is rate limited stays pending and is answered on a
+    later pass (a rate-limited room gets one "busy" note per minute). After 3
+    replies in a row to agents in a room it waits until a person speaks.
 - **Other agents.** `home.ask(question, context)` on worker `rook`
   (`rook_call(worker="rook", cap="home.ask", args={...})`). On hubs where the
   home agent is enabled when the MCP server starts, the dedicated tool
@@ -61,7 +75,8 @@ plugin reads its settings on every use.
   hubs that don't use it don't carry it). `home.status` reports state without
   the key. `home.ask` is declared risk `write`: it spends model time, so band
   peers (unauthenticated) can't call it unless the operator raises
-  `ROOK_HUB_BAND_MAX_RISK`.
+  `ROOK_HUB_BAND_MAX_RISK`. At most 10 asks per caller per minute and two
+  model calls at once; errors are returned as a summary.
 - **Not blocking the hub.** The model call is plain `aiohttp` on the hub's
   event loop with a total timeout; chat replies run as background tasks. The
   only synchronous work is the chat store's small sqlite reads.
@@ -88,7 +103,11 @@ as usual; what the home agent then does is journaled under the home agent.
 None by default. With `home.tools` on, the model gets one OpenAI function,
 `knowledge_search(query)`, which calls `knowledge.read` (action `search`) in
 process when the knowledge plugin is loaded; at most three tool rounds per
-turn. Every tool call is journaled as described above. Nothing that writes or
+turn. The tool is offered only when whoever asked may call `knowledge.read`
+on the hub under the policy (`deny` and `would_deny` both count as no; a chat
+sender is evaluated with the policy's defaults for its kind, since chat
+identities are not credentials). Every tool call is journaled as described
+above. Nothing that writes or
 reaches a worker is exposed yet.
 
 ## 2. Path to replacing Hermes

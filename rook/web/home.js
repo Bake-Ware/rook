@@ -65,13 +65,13 @@ export async function mountHome(root){
     const run=async(b,work)=>{if(busy)return;busy=true;b.disabled=true;err.textContent='';try{await work();}catch(e){err.textContent=e.message;}finally{busy=false;b.disabled=false;}};
     const fetchModels=btn('List models','',()=>run(fetchModels,async()=>{
       const r=await post({action:'home_models',values:values()});
-      if(!r.ok)throw Error(r.error);models=r.models;dl.replaceChildren(...models.map(m=>h('option',{value:m})));
-      status.textContent=models.length+' model'+(models.length===1?'':'s')+' at '+(base.value||'the endpoint')+'.'+(models.length&&!model.value?' Pick one in Model.':'');
+      if(!r.ok)throw Error(r.error+(r.note?' '+r.note:''));models=r.models;dl.replaceChildren(...models.map(m=>h('option',{value:m})));
+      status.textContent=models.length+' model'+(models.length===1?'':'s')+' at '+(base.value||'the endpoint')+'.'+(models.length&&!model.value?' Pick one in Model.':'')+(r.note?' '+r.note:'');
       if(!model.value&&models.length===1)model.value=models[0];}));
     const test=btn('Test','soft',()=>run(test,async()=>{
       out.hidden=false;out.textContent='Asking '+(model.value||'the model')+'…';
       const r=await post({action:'home_test',values:values()});
-      out.textContent=r.ok?r.model+' answered in '+(r.latency_ms/1000).toFixed(1)+' s:\n\n'+r.reply:'Test failed: '+r.error;
+      out.textContent=(r.ok?r.model+' answered in '+(r.latency_ms/1000).toFixed(1)+' s:\n\n'+r.reply:'Test failed: '+r.error)+(r.note?'\n\n'+r.note:'');
       out.className=r.ok?'':'mg-bad';refresh().catch(()=>{});}));
     const save=btn('Save','primary',()=>run(save,async()=>{
       const r=await post({action:'home_save',values:values()});

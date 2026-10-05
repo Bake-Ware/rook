@@ -6,8 +6,9 @@ on the dashboard's Manage > Home agent page. The agent is then:
 
 * **a chat participant.** It keeps itself present in the hub's chat rooms as
   ``agent:<name>`` (default ``agent:home``). A message that mentions it, that
-  says ``@<name>`` in a room it is in, or that is sent in a two-person room
-  with it gets a reply built from the room's recent messages. Rooms are
+  says ``@<name>`` in a room it is in, or that a person sends in a two-person
+  room with it gets a reply built from the room's recent messages (agents
+  always have to mention it; see ``tick`` for the loop and backlog limits). Rooms are
   watched in the hub's own loop; the model call runs as a background task with
   a timeout, so nothing blocks the hub.
 * **askable by other agents.** ``home.ask`` on worker ``rook`` (and the MCP
@@ -35,7 +36,7 @@ from typing import Any
 from ....core import context
 from ....core.plugin import Plugin, capability, place, setting
 from ....core.settings import SECRET_REF
-from .llm import PROVIDERS, ChatClient, LLMError, aiohttp_request
+from .llm import PROVIDERS, ChatClient, LLMError, aiohttp_request, base_url
 
 log = logging.getLogger("rook.hub.plugins.home")
 
@@ -45,6 +46,20 @@ KEY_REF = r"(\{\{secret:[a-z0-9][a-z0-9._-]{0,63}\}\})?"
 MAX_AGE_S = 600.0
 #: Replies per room per minute (a loop breaker between chatty participants).
 ROOM_RATE = 6
+#: home.ask calls per caller per minute.
+ASK_RATE = 10
+#: Replies in a row to agents in one room before it waits for a person.
+AGENT_STREAK = 3
+#: Most messages read from one room per tick (older ones are history anyway).
+READ_LIMIT = 200
+#: How often the agent refreshes its chat presence.
+TOUCH_S = 30.0
+#: At most one "unavailable" note per room in this many seconds.
+ERROR_NOTE_S = 600.0
+#: At most one "busy" note per room in this many seconds.
+BUSY_NOTE_S = 60.0
+UNAVAILABLE = "The home agent is unavailable right now."
+BUSY = "(Busy: I will answer shortly.)"
 MAX_TOOL_ROUNDS = 3
 TOOL_RESULT_CHARS = 4000
 
@@ -62,6 +77,28 @@ class HomeError(ValueError):
 def _actor() -> str:
     ident = context.caller_identity.get()
     return str(ident) if ident else "system:rook-hub"
+
+
+def _is_agent(identity: Any) -> bool:
+    return str(identity or "").startswith("agent:")
+
+
+def summarise(err: str) -> str:
+    """A failure as one generic line (no hosts, URLs or secret names), for
+    places readers below the operator see: ``home.status``, ``home.ask``."""
+    e = str(err or "")
+    m = re.search(r"HTTP (\d{3})", e)
+    if m:
+        return f"the model endpoint returned HTTP {m.group(1)}"
+    if "did not answer" in e:
+        return "the model endpoint timed out"
+    if "cannot reach" in e:
+        return "the model endpoint is unreachable"
+    if "vault" in e or "secret" in e or "API key" in e:
+        return "the API key is unavailable (check Manage > Home agent)"
+    if "base URL" in e or "model" in e or "provider" in e:
+        return "the home agent is not fully configured (Manage > Home agent)"
+    return "the model call failed"
 
 
 class HomeAgent(Plugin):
@@ -122,9 +159,14 @@ class HomeAgent(Plugin):
         self._replies: set[asyncio.Task] = set()
         self._busy: set[str] = set()
         self._sem = asyncio.Semaphore(2)
+        self._ask_sem = asyncio.Semaphore(2)
         self._cursor: dict[str, int] = {}
         self._baseline = False
         self._rate: dict[str, collections.deque] = {}
+        self._ask_rate: dict[str, collections.deque] = {}
+        self._streak: dict[str, int] = {}               # replies in a row to agents, per room
+        self._noted: dict[tuple[str, str], float] = {}  # (room, kind) -> last note posted
+        self._touched = 0.0
         self.activity: collections.deque = collections.deque(maxlen=50)
         self.last_error = ""
         self._http = aiohttp_request          # tests swap in a fake endpoint
@@ -178,7 +220,8 @@ class HomeAgent(Plugin):
         cfg = cfg or self.config()
         return [k for k in ("base_url", "model") if not str(cfg.get(k) or "").strip()]
 
-    def _api_key(self, ref: str | None) -> str | None:
+    def _api_key(self, ref: str | None, actor: str | None = None,
+                 via: str = "home agent") -> str | None:
         ref = (ref or "").strip()
         if not ref:
             return None
@@ -189,11 +232,12 @@ class HomeAgent(Plugin):
         if vault is None:
             raise HomeError("the vault is unavailable on this hub")
         try:
-            return vault.get(m.group(1), self.identity, via="home agent")
+            return vault.get(m.group(1), actor or self.identity, via=via)
         except KeyError:
             raise HomeError(f"no vault secret named {m.group(1)!r}") from None
 
-    def client(self, cfg: dict | None = None, *, need_model: bool = True) -> ChatClient:
+    def client(self, cfg: dict | None = None, *, need_model: bool = True,
+               key_actor: str | None = None, key_via: str = "home agent") -> ChatClient:
         cfg = cfg or self.config()
         if cfg.get("provider", "openai") not in PROVIDERS:
             raise HomeError(f"provider must be one of {list(PROVIDERS)}")
@@ -203,7 +247,7 @@ class HomeAgent(Plugin):
             raise HomeError("pick the home agent's model first")
         try:
             return ChatClient(str(cfg["base_url"]), str(cfg.get("model") or ""),
-                              self._api_key(cfg.get("api_key")),
+                              self._api_key(cfg.get("api_key"), key_actor, key_via),
                               float(cfg.get("timeout_s") or 90.0), self._http)
         except LLMError as e:
             raise HomeError(str(e)) from None
@@ -234,11 +278,15 @@ class HomeAgent(Plugin):
 
     # -- the model, with optional read-only tools ---------------------------
     async def complete(self, messages: list[dict], cfg: dict, *, thread: str | None = None,
-                       via: str = "") -> dict:
+                       via: str = "", may_search: bool = True,
+                       cli: ChatClient | None = None) -> dict:
         """Run one turn (and up to MAX_TOOL_ROUNDS tool rounds). Returns
-        ``{content, model, latency_ms, tools_used}``."""
-        cli = self.client(cfg)
-        tools = [KNOWLEDGE_TOOL] if cfg.get("tools") and self._has_knowledge() else None
+        ``{content, model, latency_ms, tools_used}`` with the API key scrubbed.
+        ``may_search`` is False when whoever asked may not read the knowledge
+        wiki themselves; the tool is then not offered."""
+        cli = cli or self.client(cfg)
+        tools = ([KNOWLEDGE_TOOL] if cfg.get("tools") and may_search and self._has_knowledge()
+                 else None)
         used: list[str] = []
         total = 0
         msgs = list(messages)
@@ -248,7 +296,8 @@ class HomeAgent(Plugin):
                                  tools=tools if _round < MAX_TOOL_ROUNDS else None)
             total += res["latency_ms"]
             if not res["tool_calls"] or not tools:
-                return {"content": res["content"], "model": res["model"],
+                return {"content": cli._scrub(res["content"] or ""),
+                        "model": cli._scrub(res["model"] or ""),
                         "latency_ms": total, "tools_used": used}
             msgs.append({"role": "assistant", "content": res["content"] or None,
                          "tool_calls": res["tool_calls"]})
@@ -262,6 +311,54 @@ class HomeAgent(Plugin):
 
     def _has_knowledge(self) -> bool:
         return self._node is not None and self._node.plugin("knowledge") is not None
+
+    def may_read_knowledge(self, principal: Any) -> bool:
+        """May ``principal`` call ``knowledge.read`` on the hub under the
+        current policy? The tool runs as the home agent, so this keeps it from
+        reading for someone who may not read themselves. ``deny`` and
+        ``would_deny`` both count as no. With no permission layer (plain hubs,
+        tests) nothing is enforced anywhere, so yes."""
+        authz = getattr(getattr(self._node, "client", None), "authz", None)
+        if authz is None or principal is None:
+            return True
+        try:
+            from ...authz import target_from_entry
+            try:
+                entry = self._node.entry()
+            except Exception:  # noqa: BLE001
+                entry = {"name": "rook", "roles": ["is_hub"]}
+            d = authz.store.current().evaluate(
+                [principal], "knowledge.read",
+                target_from_entry(getattr(self._node, "worker_id", None), entry, local=True))
+        except Exception:  # noqa: BLE001 - when unsure, do not offer the tool
+            log.exception("home agent: knowledge.read policy check failed")
+            return False
+        return d.decision in ("allow", "off")
+
+    @staticmethod
+    def chat_principal(sender: str) -> Any:
+        """A policy principal for a chat sender. Chat identities are display
+        strings, not credentials, so this applies the policy's defaults for the
+        sender's kind: ``agent:*`` as an agent token, ``user:*`` / ``human:*``
+        as a band member, anything else as unverified."""
+        from ...policy import Principal
+        s = str(sender or "")
+        if s.startswith("agent:"):
+            return Principal(f"token:{s[6:]}", "token", "agent", label=s)
+        if s.startswith(("user:", "human:")):
+            return Principal("human:" + s.split(":", 1)[1], "human", "member",
+                             ("human:member",), label=s)
+        return Principal("unverified", "unverified", verified=False, label=s)
+
+    @staticmethod
+    def ask_principal() -> Any:
+        """The verified principal of the current call, or None (in-process
+        hub code without one)."""
+        try:
+            from ...authz import current_principal
+        except Exception:  # noqa: BLE001
+            return None
+        return current_principal.get()
 
     @contextlib.contextmanager
     def _as_self(self):
@@ -314,10 +411,21 @@ class HomeAgent(Plugin):
                           default=str)[:TOOL_RESULT_CHARS]
 
     def _note(self, via: str, ok: bool, **extra) -> None:
+        """Activity for the operator's page keeps the detail; ``last_error``
+        (read-tier ``home.status``) keeps only a summary."""
         row = {"ts": time.time(), "via": via, "ok": ok, **extra}
         if not ok:
-            self.last_error = str(extra.get("error") or "")
+            self.last_error = summarise(str(extra.get("error") or ""))
         self.activity.appendleft(row)
+
+    def _once(self, rid: str, kind: str, every: float) -> bool:
+        """True at most once per ``every`` seconds per (room, kind)."""
+        now = time.monotonic()
+        last = self._noted.get((rid, kind))
+        if last is not None and now - last < every:
+            return False
+        self._noted[(rid, kind)] = now
+        return True
 
     # -- chat ----------------------------------------------------------------
     def _cursor_path(self):
@@ -340,8 +448,8 @@ class HomeAgent(Plugin):
 
     def _take_baseline(self, store) -> None:
         """First time on: everything already said is history."""
-        for r in store.rooms_for(self.identity, limit=10000, include_all=True).get("rooms", []):
-            self._cursor[r["room"]] = store.last_seq(r["room"])
+        for r in store.room_heads(None):
+            self._cursor[r["room"]] = r["last_seq"]
         self._baseline = True
         self._save_cursor()
 
@@ -356,53 +464,87 @@ class HomeAgent(Plugin):
             await asyncio.sleep(self.POLL_S)
 
     def addressed(self, msg: dict, participants: list[str]) -> bool:
+        """Mentioned (metadata, or ``@name`` in a room it is in), or a person
+        writing in a 1:1 room with it. Agents always have to mention it, so two
+        bots in a 1:1 room do not answer each other forever."""
         if msg.get("sender") == self.identity:
             return False
         if self.identity in (msg.get("mentions") or []):
             return True
         if self.identity not in participants:
             return False
-        if len(participants) == 2:
+        if len(participants) == 2 and not _is_agent(msg.get("sender")):
             return True
         return re.search(rf"(?<![\w@])@{re.escape(self.agent_name)}\b", msg.get("text") or "",
                          re.I) is not None
 
     async def tick(self) -> list[asyncio.Task]:
         """One pass over the rooms: spawn a reply task per room where someone
-        addressed the agent since the last pass. Returns the tasks started."""
+        addressed the agent since the last pass. Returns the tasks started.
+
+        A trigger that cannot be answered yet (a reply already running in the
+        room, or the room's rate limit) stays pending: the cursor stops just
+        before it and the next pass tries again, until it is older than
+        MAX_AGE_S. Rooms are found with one query (``room_heads``); only rooms
+        with something past the cursor are read."""
         store = self._store()
         if store is None or not self.enabled() or self.missing():
             return []
-        store.touch(self.identity)
+        mono = time.monotonic()
+        if mono - self._touched >= TOUCH_S:
+            store.touch(self.identity)
+            self._touched = mono
         if not self._baseline:
             self._take_baseline(store)
         started: list[asyncio.Task] = []
         dirty = False
-        rooms = store.rooms_for(self.identity, limit=200).get("rooms", [])
-        for r in rooms:
-            rid = r["room"]
+        for head in store.room_heads(self.identity):
+            rid, last = head["room"], head["last_seq"]
             if rid not in self._cursor:
                 self._cursor[rid] = 0
                 dirty = True
-            if not r.get("unread") and self._cursor[rid] >= store.last_seq(rid):
+            cur = self._cursor[rid]
+            if last <= cur:
                 continue
-            got = store.read(rid, self.identity, since_seq=self._cursor[rid], mark=True, limit=200)
-            msgs = got.get("messages") or [] if got.get("ok") else []
-            if not msgs:
+            if last - cur > READ_LIMIT:           # only the newest can be answered anyway
+                cur = last - READ_LIMIT
+            got = store.read(rid, self.identity, since_seq=cur, mark=True, limit=READ_LIMIT)
+            if not got.get("ok"):
                 continue
-            self._cursor[rid] = got["last_seq"]
-            dirty = True
+            msgs = got.get("messages") or []
+            participants = got.get("participants") or []
+            new_cursor = int(got["last_seq"]) if msgs else last
             now = time.time()
             trigger = None
             for m in msgs:
+                if m.get("sender") != self.identity and not _is_agent(m.get("sender")):
+                    self._streak[rid] = 0          # a person spoke: agents may go again
                 if now - float(m.get("ts") or 0) <= MAX_AGE_S and \
-                        self.addressed(m, got.get("participants") or []):
+                        self.addressed(m, participants):
                     trigger = m
-            if trigger is None or rid in self._busy or not self._room_allows(rid):
+            if trigger is not None and _is_agent(trigger.get("sender")) and \
+                    self._streak.get(rid, 0) >= AGENT_STREAK:
+                log.info("home agent: %s: %d replies in a row to agents; waiting for a person",
+                         rid, self._streak[rid])
+                trigger = None
+            pending = False
+            if trigger is not None:
+                busy = rid in self._busy
+                if busy or not self._room_allows(rid):
+                    pending = True
+                    new_cursor = max(cur, int(trigger["seq"]) - 1)   # retried next pass
+                    if not busy and self._once(rid, "busy", BUSY_NOTE_S):
+                        store.send(rid, self.identity, BUSY, [], False)
+            if new_cursor != self._cursor[rid]:
+                self._cursor[rid] = new_cursor
+                dirty = True
+            if trigger is None or pending:
                 continue
+            if _is_agent(trigger.get("sender")):
+                self._streak[rid] = self._streak.get(rid, 0) + 1
             self._busy.add(rid)
             task = asyncio.get_running_loop().create_task(
-                self._reply(rid, got.get("title") or rid, got.get("participants") or [], trigger))
+                self._reply(rid, got.get("title") or rid, participants, trigger))
             self._replies.add(task)
             task.add_done_callback(self._replies.discard)
             started.append(task)
@@ -410,20 +552,26 @@ class HomeAgent(Plugin):
             self._save_cursor()
         return started
 
-    def _room_allows(self, rid: str) -> bool:
-        q = self._rate.setdefault(rid, collections.deque())
+    @staticmethod
+    def _allow(buckets: dict, key: str, limit: int, window: float = 60.0) -> bool:
+        q = buckets.setdefault(key, collections.deque())
         now = time.monotonic()
-        while q and now - q[0] > 60:
+        while q and now - q[0] > window:
             q.popleft()
-        if len(q) >= ROOM_RATE:
+        if len(q) >= limit:
             return False
         q.append(now)
         return True
+
+    def _room_allows(self, rid: str) -> bool:
+        return self._allow(self._rate, rid, ROOM_RATE)
 
     def room_messages(self, store, rid: str, cfg: dict) -> list[dict]:
         out = []
         for m in store.tail(rid, int(cfg.get("context_messages") or 20)):
             if m["sender"] == self.identity:
+                if m["text"] in (BUSY, UNAVAILABLE):      # status notes, not answers
+                    continue
                 out.append({"role": "assistant", "content": m["text"]})
             else:
                 out.append({"role": "user", "content": f"[{m['sender']}] {m['text']}"})
@@ -441,9 +589,14 @@ class HomeAgent(Plugin):
                          f"{trigger['sender']}.")
                 msgs = [{"role": "system", "content": self.system_prompt(cfg, where)}]
                 msgs += self.room_messages(store, rid, cfg)
-                res = await self.complete(msgs, cfg, thread=rid, via="chat")
+                res = await self.complete(
+                    msgs, cfg, thread=rid, via="chat",
+                    may_search=self.may_read_knowledge(self.chat_principal(trigger["sender"])))
             text = res["content"] or "(no answer)"
-            ments = [trigger["sender"]] if len(participants) > 2 else []
+            # Address the person who asked in a group room; never @mention an
+            # agent (a mention is what makes the other bot answer back).
+            ments = ([trigger["sender"]] if len(participants) > 2
+                     and not _is_agent(trigger["sender"]) else [])
             store.send(rid, self.identity, text, ments, False)
             self._note("chat", True, room=title, sender=trigger["sender"], model=res["model"],
                        latency_ms=res["latency_ms"], tools=res["tools_used"])
@@ -457,8 +610,10 @@ class HomeAgent(Plugin):
         except Exception as e:  # noqa: BLE001 - say so in the room instead of going silent
             err = str(e) if isinstance(e, (LLMError, HomeError)) else f"{type(e).__name__}: {e}"
             log.warning("home agent: reply in %s failed: %s", rid, err)
-            if store is not None:
-                store.send(rid, self.identity, f"(I could not answer: {err[:200]})", [], False)
+            # The room gets a generic line (at most one per room per
+            # ERROR_NOTE_S); the detail stays in the log, activity and journal.
+            if store is not None and self._once(rid, "error", ERROR_NOTE_S):
+                store.send(rid, self.identity, UNAVAILABLE, [], False)
             self._note("chat", False, room=title, sender=trigger.get("sender"), error=err[:300],
                        latency_ms=round((time.monotonic() - t0) * 1000))
             self.journal("home.reply", {"room": rid, "to": trigger.get("sender")},
@@ -472,7 +627,8 @@ class HomeAgent(Plugin):
         """Ask the hub's home agent (its own LLM) a question; returns its answer.
 
         ``context`` is extra text it should consider (it cannot see your
-        conversation). Errors when the home agent is off or not configured."""
+        conversation). Errors when the home agent is off or not configured, and
+        when one caller asks more than ASK_RATE times a minute."""
         if not self.enabled():
             raise HomeError("the home agent is off (Manage > Home agent)")
         question = str(question or "").strip()
@@ -480,15 +636,22 @@ class HomeAgent(Plugin):
             raise HomeError("ask needs a question")
         cfg = self.config()
         who = _actor()
+        principal = self.ask_principal()
+        if not self._allow(self._ask_rate, principal.id if principal is not None else who,
+                           ASK_RATE):
+            raise HomeError(f"rate limited: at most {ASK_RATE} home.ask calls a minute; "
+                            "try again shortly")
         user = f"[{who}] {question}" + (f"\n\nContext:\n{context.strip()}" if context else "")
         msgs = [{"role": "system", "content": self.system_prompt(
                     cfg, "Another agent or a person is asking you directly, not in a chat room.")},
                 {"role": "user", "content": user[:20000]}]
         try:
-            res = await self.complete(msgs, cfg, via="ask")
+            async with self._ask_sem:
+                res = await self.complete(msgs, cfg, via="ask",
+                                          may_search=self.may_read_knowledge(principal))
         except (LLMError, HomeError) as e:
             self._note("ask", False, sender=who, error=str(e)[:300])
-            raise HomeError(str(e)) from None
+            raise HomeError(summarise(str(e))) from None
         self._note("ask", True, sender=who, model=res["model"], latency_ms=res["latency_ms"],
                    tools=res["tools_used"])
         return {"agent": self.identity, "answer": res["content"], "model": res["model"],
@@ -579,30 +742,64 @@ class HomeAgent(Plugin):
                     svc.set(key, value, actor=actor, source="ui", note="Home agent page")
                 saved.append(key)
             return {"ok": True, "saved": saved, **self.page(svc)}
-        cfg = self.config(self._form(data))
+        if action not in ("home_models", "home_test"):
+            raise HomeError("use home_save, home_models or home_test")
+        cfg, note = self._probe_config(self._form(data))
+        extra = {"note": note} if note else {}
+        try:
+            cli = self.client(cfg, need_model=action == "home_test", key_actor=actor,
+                              key_via="home agent page")
+        except (LLMError, HomeError) as e:
+            return {"ok": False, "error": str(e), **extra}
         if action == "home_models":
             try:
-                models = await self.client(cfg, need_model=False).models(
-                    timeout=min(float(cfg.get("timeout_s") or 20), 20.0))
+                models = await cli.models(timeout=min(float(cfg.get("timeout_s") or 20), 20.0))
             except (LLMError, HomeError) as e:
-                return {"ok": False, "error": str(e)}
-            return {"ok": True, "models": models}
-        if action == "home_test":
-            cfg["tools"] = False
-            cfg["timeout_s"] = min(float(cfg.get("timeout_s") or 25), 25.0)
-            msgs = [{"role": "system", "content": self.system_prompt(
-                        cfg, "This is a connection test from the hub's settings page.")},
-                    {"role": "user", "content": "Say hello in one short sentence."}]
-            try:
-                res = await self.complete(msgs, cfg, via="test")
-            except (LLMError, HomeError) as e:
-                self._note("test", False, sender=actor, error=str(e)[:300])
-                return {"ok": False, "error": str(e)}
-            self._note("test", True, sender=actor, model=res["model"],
-                       latency_ms=res["latency_ms"])
-            return {"ok": True, "reply": res["content"], "model": res["model"],
-                    "latency_ms": res["latency_ms"]}
-        raise HomeError("use home_save, home_models or home_test")
+                return {"ok": False, "error": str(e), **extra}
+            return {"ok": True, "models": [cli._scrub(m) for m in models], **extra}
+        cfg["tools"] = False
+        cfg["timeout_s"] = min(float(cfg.get("timeout_s") or 25), 25.0)
+        cli.timeout = cfg["timeout_s"]
+        msgs = [{"role": "system", "content": self.system_prompt(
+                    cfg, "This is a connection test from the hub's settings page.")},
+                {"role": "user", "content": "Say hello in one short sentence."}]
+        try:
+            res = await self.complete(msgs, cfg, via="test", cli=cli)
+        except (LLMError, HomeError) as e:
+            self._note("test", False, sender=actor, error=str(e)[:300])
+            return {"ok": False, "error": str(e), **extra}
+        self._note("test", True, sender=actor, model=res["model"],
+                   latency_ms=res["latency_ms"])
+        return {"ok": True, "reply": res["content"], "model": res["model"],
+                "latency_ms": res["latency_ms"], **extra}
+
+    def _probe_config(self, form: dict) -> tuple[dict, str]:
+        """The settings for a models/test probe from unsaved form values, with
+        the API key decided from the SAVED settings only: a vault reference
+        typed into the form is never resolved (that would let the page send
+        any vault secret anywhere), and the saved key goes only to the saved
+        base URL. Returns ``(cfg, note)``; the note says why no key or the
+        saved key was used."""
+        saved = self.config()
+        cfg = self.config(form)
+        saved_ref = str(saved.get("api_key") or "").strip()
+        form_ref = str(form.get("api_key", saved_ref) or "").strip()
+        same_url = (base_url(str(cfg.get("base_url") or ""))
+                    == base_url(str(saved.get("base_url") or "")))
+        note, key = "", ""
+        if not form_ref:
+            pass                                       # testing without a key
+        elif not saved_ref:
+            note = "Save the API key first; probes only use a saved key."
+        elif not same_url:
+            note = ("The saved API key is only sent to the saved base URL; save the new URL "
+                    "first to use the key with it.")
+        else:
+            key = saved_ref
+            if form_ref != saved_ref:
+                note = "Used the saved API key; save to try the new one."
+        cfg["api_key"] = key
+        return cfg, note
 
 
 PLUGIN = HomeAgent

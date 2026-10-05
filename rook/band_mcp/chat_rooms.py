@@ -316,6 +316,25 @@ class ChatStore:
         return [{"seq": s, "ts": t, "sender": snd, "text": txt,
                  "mentions": json.loads(mn or "[]")} for (s, t, snd, txt, mn) in reversed(rows)]
 
+    def room_heads(self, identity: str | None = None) -> list[dict]:
+        """``[{room, last_seq, participants}]`` for every room (or only those
+        ``identity`` is in), in one query and without unread counts or read
+        marks. For a watcher that polls many rooms each tick (the home agent)."""
+        if self._db is None:
+            return []
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT r.id, r.participants, "
+                "(SELECT MAX(m.seq) FROM messages m WHERE m.room_id=r.id) FROM rooms r"
+            ).fetchall()
+        out = []
+        for (rid, parts, seq) in rows:
+            plist = json.loads(parts or "[]")
+            if identity is not None and identity not in plist:
+                continue
+            out.append({"room": rid, "last_seq": int(seq or 0), "participants": plist})
+        return out
+
     def rooms_for(self, identity: str, limit: int = 50,
                   include_all: bool = False) -> dict:
         """Rooms this identity participates in, newest-active first, with unread

