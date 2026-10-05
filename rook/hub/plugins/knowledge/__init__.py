@@ -28,6 +28,7 @@ from pathlib import Path
 
 from ....core.context import current_identity
 from ....core.plugin import Plugin, capability, place, resource, setting
+from .hygiene import NOTIFY_KINDS, HygieneEngine
 from .search import DEFAULT_MODEL, Search
 from .service import WRITES, KnowledgeService
 from .store import LINK_KINDS, RELATIONS
@@ -35,7 +36,7 @@ from .store import LINK_KINDS, RELATIONS
 log = logging.getLogger("rook.hub.plugins.knowledge")
 
 #: Read actions (the rest of ``KnowledgeService.dispatch``'s actions are WRITES).
-READS = ('bands', 'deck', 'list', 'get', 'search', 'context', 'status')
+READS = ('bands', 'deck', 'hygiene', 'list', 'get', 'search', 'context', 'status')
 ERRORS = (ValueError, KeyError, TypeError, PermissionError)
 
 
@@ -98,6 +99,37 @@ class Knowledge(Plugin):
         setting("embed_model", str, default=DEFAULT_MODEL, env="ROOK_EMBED_MODEL",
                 apply="restart", group="Search", label="Embedding model",
                 help="Must match the model the embedding service reports."),
+        # Hygiene triggers (hygiene.py, docs/design/hygiene.md). All live.
+        setting("hygiene_enabled", bool, default=True, group="Hygiene", order=1,
+                label="Hygiene triggers",
+                help="Findings when work looks finished, idle or unrecorded: shown as _hygiene on the "
+                     "actor's next MCP reply and on the deck. Never changes a task's state."),
+        setting("hygiene_idle_minutes", int, default=30, min=5, max=10080, group="Hygiene", order=2,
+                label="Idle claim nudge (minutes)",
+                help="A claimed task idle this long with work since its last handoff gets a nudge "
+                     "(into the agent's session when possible, else on its next reply)."),
+        setting("hygiene_dirty_hours", float, default=4.0, min=0.1, max=720, group="Hygiene", order=3,
+                label="Mark needs_hygiene after (hours)"),
+        setting("hygiene_release_hours", float, default=24.0, min=1, max=2160, group="Hygiene", order=4,
+                label="Propose releasing an idle claim after (hours)"),
+        setting("hygiene_renotify_hours", float, default=6.0, min=0.25, max=720, group="Hygiene", order=5,
+                label="Repeat an open nudge after (hours)",
+                help="Also the rate limit: the same finding is not raised again within this period."),
+        setting("hygiene_signal_hours", float, default=24.0, min=1, max=720, group="Hygiene", order=6,
+                label="Work-signal findings expire after (hours)", advanced=True),
+        setting("hygiene_done_window_days", float, default=3.0, min=0, max=365, group="Hygiene", order=7,
+                label="Check done tasks for knowledge (days back)",
+                help="Tasks finished longer ago than this are not checked by the scan."),
+        setting("hygiene_project_idle_hours", float, default=24.0, min=0, max=2160, group="Hygiene", order=8,
+                label="Propose closing a finished project after (hours)"),
+        setting("hygiene_hints_per_reply", int, default=1, min=0, max=5, group="Hygiene", order=9,
+                label="Nudges per MCP reply", help="0 = deck and rook_task(action=\"hygiene\") only."),
+        setting("hygiene_scan_seconds", int, default=300, min=30, max=86400, group="Hygiene", order=10,
+                label="Scan interval (seconds)", advanced=True),
+        setting("hygiene_notify_people", bool, default=False, group="Hygiene", order=11,
+                label="Also notify people",
+                help="Post release proposals, ended sessions and finished projects through notify.send "
+                     "(Telegram/Discord)."),
     )
     GUIDANCE = {
         "tool:rook_knowledge": "",
@@ -120,6 +152,7 @@ class Knowledge(Plugin):
         self.principal = None
         self._node = None
         self._maintain: asyncio.Task | None = None
+        self._hygiene: asyncio.Task | None = None
 
     # -- setup -------------------------------------------------------------
     def db_path(self) -> Path:
@@ -153,6 +186,7 @@ class Knowledge(Plugin):
             return False
         try:
             self.service = KnowledgeService(self.db_path(), self._principal, search=self._search)
+            self.service.hygiene = HygieneEngine(self.service.store, conf=self._hygiene_conf)
         except Exception:
             log.exception("knowledge store unavailable; knowledge and task caps disabled")
             return False
@@ -164,12 +198,46 @@ class Knowledge(Plugin):
     async def start(self) -> None:
         if self.service is not None and self._maintain is None:
             self._maintain = asyncio.get_running_loop().create_task(self.service.maintain())
+        if self.service is not None and self._hygiene is None:
+            self._hygiene = asyncio.get_running_loop().create_task(self._hygiene_loop())
 
     async def stop(self) -> None:
-        if self._maintain is not None:
-            self._maintain.cancel()
-            await asyncio.gather(self._maintain, return_exceptions=True)
-            self._maintain = None
+        for name in ('_maintain', '_hygiene'):
+            task = getattr(self, name)
+            if task is not None:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+                setattr(self, name, None)
+
+    # -- hygiene -------------------------------------------------------------
+    def _hygiene_conf(self) -> dict:
+        return {s.name: self.settings.get(s.name) for s in self.SETTINGS if s.name.startswith('hygiene_')}
+
+    async def hygiene_tick(self, now=None) -> list:
+        """One scan, then notify people of the new findings that warrant it."""
+        engine = self.service.hygiene if self.service is not None else None
+        if engine is None:
+            return []
+        raised = await asyncio.to_thread(engine.scan, now)
+        if raised and engine.cfg('hygiene_notify_people') and self._node is not None:
+            notify = self._node.plugin('notify')
+            for f in raised:
+                if notify is None or f['kind'] not in NOTIFY_KINDS or not f.get('text'):
+                    continue
+                try:
+                    await notify.send('Rook hygiene: ' + f['text'].replace('[[', '').replace(']]', ''))
+                except Exception:
+                    log.exception('hygiene notify failed')
+        return raised
+
+    async def _hygiene_loop(self) -> None:
+        while True:
+            try:
+                await self.hygiene_tick()
+            except Exception:
+                log.exception('hygiene scan failed')
+            engine = self.service.hygiene if self.service is not None else None
+            await asyncio.sleep(max(30, int(engine.cfg('hygiene_scan_seconds') if engine else 300)))
 
     # -- attribution -------------------------------------------------------
     def _principal(self):

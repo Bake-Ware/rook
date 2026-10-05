@@ -50,6 +50,12 @@ class BoundedSessionManager(StreamableHTTPSessionManager):
         self._admission = anyio.Lock()
         self.evicted = 0
         self._evict_logged = 0.0
+        # callable(session_id) when a client closes its session (HTTP DELETE).
+        # Evictions and crashes don't count: a leaky client is not "done".
+        self.on_session_end = None
+        # callable(session_id) when a session ends any way (DELETE, idle
+        # timeout, eviction, crash): for per-session bookkeeping.
+        self.on_session_gone = None
 
     @staticmethod
     def _key(request) -> str:
@@ -108,6 +114,11 @@ class BoundedSessionManager(StreamableHTTPSessionManager):
         transport = None
         owner = None
         posting = request.method == 'POST'
+        if request.method == 'DELETE' and sid and sid in self._server_instances and self.on_session_end:
+            try:
+                self.on_session_end(sid)
+            except Exception:
+                log.exception("session-end hook failed")
         try:
             if sid is None:
                 # Reserve and start atomically; don't hold this across network I/O.
@@ -157,6 +168,11 @@ class BoundedSessionManager(StreamableHTTPSessionManager):
                             if self._owners.get(sid) is owner:
                                 self._server_instances.pop(sid, None)
                                 self._owners.pop(sid, None)
+                            if self.on_session_gone:
+                                try:
+                                    self.on_session_gone(sid)
+                                except Exception:
+                                    log.exception("session-gone hook failed")
                             with anyio.CancelScope(shield=True):
                                 await transport.terminate()
 

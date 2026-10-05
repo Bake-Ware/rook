@@ -179,6 +179,9 @@ Most real work happens on workers, where the hub can see activity stop.
 - **Safety:** the trigger never changes task state itself. Each nudge is
   recorded as an event and link on the task. It's rate-limited per task and
   per worker.
+- **More triggers** (commits and PRs, handoffs, ended sessions, done without
+  knowledge, finished projects, stale pages) and the `_hygiene` reply notice:
+  [design/hygiene.md](design/hygiene.md).
 
 ## 6. Memory migration into knowledge
 

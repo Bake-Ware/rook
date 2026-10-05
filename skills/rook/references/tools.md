@@ -102,7 +102,7 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `settings.reset` | key, scope='', target='', note='' | admin | Remove a stored value so the key inherits again (in history). |
 | `settings.set` | key, value, scope='', target='', note='', dry_run=false | admin | Store a setting (validated, attributed, in history). |
 | `settings.worker_secret` | worker_id, names | read | Vault secrets a stored setting assigns to this worker (fetch at use). |
-| `task.read` | action='deck', kind='task', band?, id?, query='', data? | read | Read tasks/projects/concepts: deck\|search\|list\|get\|context\|status. |
+| `task.read` | action='deck', kind='task', band?, id?, query='', data? | read | Read tasks/projects/concepts: deck\|search\|list\|get\|context\|status\|hygiene. |
 | `task.write` | action, kind='task', band?, id?, data?, request_id? | write | Write tasks/projects/concepts: create\|update\|link\|retract\|claim\|release\|note\|batch. |
 | `telegram.send` | text, chat? | write | Post a message to the configured Telegram chat. |
 | `telegram.status` | — | read | Telegram integration status: connected, chat and token configured (never the token), bridged rooms, counters… |
@@ -141,7 +141,7 @@ What each worker hosts: `serves` on a `rook_workers` row is `{sites: [{name, url
 Hub, band, worker and user settings with their source (default / hub / band / worker / user / file / env) on worker `rook`: `settings.get(key=…)` or `settings.get(prefix="core.", scope="hub")`, `settings.history`, `settings.describe`. Writes (`settings.set`, `settings.reset`, `settings.apply_worker`) are admin actions: ask the user first. A key set by an environment variable is locked; the reply says which.
 
 ### tasks
-Tasks, projects and concepts. Use `rook_task(action="deck")` to see what is on; `claim` a task before working (your calls, consoles and handoffs then link to it); finish with `update` state done + `attrs.outcome` + an evidence `link`, or leave a handoff. Over the band: `task.read` (deck/search/list/get) and `task.write` (create/update/link/retract/claim/release) on worker `rook`, with `kind=task|project|concept`.
+Tasks, projects and concepts. Use `rook_task(action="deck")` to see what is on; `claim` a task before working (your calls, consoles and handoffs then link to it); finish with `update` state done + `attrs.outcome` + an evidence `link`, or leave a handoff. Over the band: `task.read` (deck/search/list/get) and `task.write` (create/update/link/retract/claim/release) on worker `rook`, with `kind=task|project|concept`. Hygiene nudges ride replies as `_hygiene` and show on the deck; `rook_task(action="hygiene")` lists open ones (`data {mine: true}`). A commit message with `rook: <task id or slug>` links the commit to that task as evidence when you hold a claim on it.
 
 ### telegram
 When the Telegram integration is on: `telegram.send` (text) posts to the configured chat; `telegram.status` shows whether it is connected. Prefer `notify.send` to reach every configured channel.

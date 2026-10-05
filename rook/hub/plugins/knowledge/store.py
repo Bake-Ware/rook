@@ -583,12 +583,13 @@ class KnowledgeStore:
                     {'claim': mine['id'], **({'of': aid, 'stale': True} if aid != me else {})})
         return {'released': mine['id'], 'task': r['id']}
 
-    def auto_link(self, actor, kind, ref, relation='touched', note='', task=None):
+    def auto_link(self, actor, kind, ref, relation='touched', note='', task=None, band=None):
         """Attach an artifact to the actor's most recently claimed open task,
         or to ``task`` (id or slug) when the caller names one. A claim idle
         longer than STALE_CLAIM_SECS is skipped: the actor has moved on, and
-        its later work belongs to something else. Called by the hub on the
-        actor's behalf; returns the task id or None."""
+        its later work belongs to something else. ``band`` limits the claim
+        lookup to one band. Called by the hub on the actor's behalf; returns
+        the task id or None."""
         aid = actor.get('id')
         if not aid:
             return None
@@ -602,7 +603,8 @@ class KnowledgeStore:
                            (time.time(), row[0]['id'], aid))
                 return row[0]['id']
             claim = db.execute('SELECT * FROM claims WHERE actor=? AND released IS NULL AND last_active>=? '
-                               'ORDER BY started DESC LIMIT 1', (aid, time.time() - STALE_CLAIM_SECS)).fetchone()
+                               + ('AND band=? ' if band else '') + 'ORDER BY started DESC LIMIT 1',
+                               (aid, time.time() - STALE_CLAIM_SECS, *([band] if band else []))).fetchone()
             if not claim:
                 return None
             self._link(db, claim['band'], claim['task'], actor, kind, str(ref)[:500], relation, note, auto=True)
