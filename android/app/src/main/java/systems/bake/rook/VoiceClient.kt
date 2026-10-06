@@ -104,6 +104,9 @@ class VoiceClient(
                 webSocket.send(JSONObject().put("type", "hello").put("protocol", 2).put("client", "rook-android").put("activity", true)
                     .put("background", true).put("timers", true)
                     .put("pipeline", if (fastVoice) "front_background" else "classic")
+                    // This phone's band worker name: an owner key uses it as "my device"
+                    // (battery, location, calendar, mail). Other keys ignore it server-side.
+                    .apply { prefs.getString("name", null)?.takeIf { it.isNotBlank() }?.let { put("device", it) } }
                     .put("conversation", conversation).put("aec", aec)
                     .put("mode", mode.id).apply { if (modePrompt.isNotBlank()) put("mode_prompt", modePrompt) }
                     .apply { if (thinking) put("thinking", true) }.toString())

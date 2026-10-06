@@ -1199,3 +1199,54 @@ def test_split_models_default_to_the_classic_endpoint():
         assert not os.environ.get(k)
     assert providers.FRONT_MODEL == providers.VLLM_MODEL == providers.BACKGROUND_MODEL
     assert providers.FRONT_URL == providers.VLLM_URL == providers.BACKGROUND_URL
+
+
+def test_owner_hello_device_becomes_default_device_but_never_for_other_keys():
+    from services.voice.identity import with_hello_device
+    owner = Identity('Owner', owner=True)
+    assert with_hello_device(owner, 'bakephone').worker == 'bakephone'
+    assert with_hello_device(owner, None).worker is None
+    assert with_hello_device(owner, '../etc; rm').worker is None          # junk names ignored
+    assert with_hello_device(Identity('Owner', worker='tablet', owner=True), 'phone').worker == 'tablet'
+    assert with_hello_device(GUEST, 'phone') == GUEST                       # guests never get a device
+    assert with_hello_device(DEVICE, 'phone') == DEVICE                     # mapped keys keep their mapping
+
+
+def test_prefetch_device_state_includes_location_with_place_name():
+    def geocode(request):
+        assert request.url.host == 'api.bigdatacloud.net'
+        return httpx.Response(200, json={'locality': 'Helotes', 'principalSubdivision': 'Texas'})
+    reads = Reads({'battery.status': {'percent': 81, 'charging': False},
+                   'location.get': {'lat': 29.5781, 'lon': -98.6897}})
+    board = Board()
+    box = Toolbox('s', Store(':memory:'), board, read=reads, http_transport=httpx.MockTransport(geocode))
+    token = current_identity.set(OWNER)
+    try:
+        text = asyncio.run(box.device_state())
+    finally:
+        current_identity.reset(token)
+    assert '81% battery' in text and 'Helotes, Texas' in text
+    assert 'Helotes, Texas' in board.get('location')['text']
+    assert ('phone', 'location.get', {'timeout': 8}) in reads.calls
+
+
+def test_prefetch_location_without_place_name_and_without_device():
+    def down(request):
+        raise httpx.ConnectError('offline')
+    reads = Reads({'battery.status': {'percent': 50}, 'location.get': {'lat': 1.0, 'lon': 2.0}})
+    box = Toolbox('s', Store(':memory:'), Board(), read=reads, http_transport=httpx.MockTransport(down))
+    token = current_identity.set(OWNER)
+    try:
+        text = asyncio.run(box.device_state())
+    finally:
+        current_identity.reset(token)
+    assert 'about 1.000, 2.000' in text
+    token = current_identity.set(GUEST)
+    try:
+        assert asyncio.run(box.device_state()) is None                     # guests: no device reads at all
+    finally:
+        current_identity.reset(token)
+
+
+def test_front_rules_answer_general_knowledge_directly():
+    assert 'general knowledge' in front_mod.RULES and 'live or personal information' in front_mod.RULES

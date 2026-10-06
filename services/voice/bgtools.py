@@ -410,15 +410,42 @@ class Toolbox:
         if not identity.worker:
             return None
         authorize_read('battery.status', identity.worker)
-        result = await self.read(identity.worker, 'battery.status', {})
-        if isinstance(result, dict) and result.get('percent') is not None:
-            text = f"The caller's device {identity.worker} is at {result['percent']}% battery" + \
-                   (', charging.' if result.get('charging') else '.')
+        battery, place = await asyncio.gather(self.read(identity.worker, 'battery.status', {}),
+                                              self.device_location(), return_exceptions=True)
+        texts = []
+        if isinstance(battery, dict) and battery.get('percent') is not None:
+            text = f"The caller's device {identity.worker} is at {battery['percent']}% battery" + \
+                   (', charging.' if battery.get('charging') else '.')
             self.note('device', text, 300)
-            return text
-        return None
+            texts.append(text)
+        if isinstance(place, str) and place:
+            texts.append(place)
+        return ' '.join(texts) or None
 
-    async def _location(self):
+    async def device_location(self):
+        """Prefetch: where the caller's own device is (coordinates + a place name when
+        the reverse lookup answers). Owner keys and device keys only."""
+        lat, lon, where = await self._location(device_only=True)
+        name = await self._place_name(lat, lon)
+        text = (f"The caller's device is in or near {name} (about {lat:.3f}, {lon:.3f})." if name
+                else f"The caller's device is at about {lat:.3f}, {lon:.3f}.")
+        self.note('location', text, 600)
+        return text
+
+    async def _place_name(self, lat, lon):
+        """Best-effort reverse geocode (BigDataCloud client endpoint, no key). '' on failure."""
+        try:
+            async with httpx.AsyncClient(timeout=3, transport=self.http_transport, trust_env=False) as client:
+                response = await client.get('https://api.bigdatacloud.net/data/reverse-geocode-client',
+                                            params={'latitude': round(lat, 3), 'longitude': round(lon, 3),
+                                                    'localityLanguage': 'en'})
+                data = response.json() if response.status_code == 200 else {}
+        except Exception:
+            return ''
+        parts = [data.get('locality') or data.get('city'), data.get('principalSubdivision')]
+        return ', '.join(str(p)[:60] for p in parts if p)
+
+    async def _location(self, device_only=False):
         identity = current_identity.get()
         if identity.worker:
             if self.location and time.monotonic() - self.location[0] < 600:
@@ -432,7 +459,11 @@ class Toolbox:
                     self.location = (time.monotonic(), (float(lat), float(lon), 'your location'))
                     return self.location[1]
             except Exception:
-                pass    # no device location (denied, offline, no grant): use the home location
+                if device_only:
+                    raise
+                # no device location (denied, offline, no grant): use the home location
+        if device_only:
+            raise ValueError('No device location')
         lat, lon = os.environ.get('VOICE_HOME_LAT', ''), os.environ.get('VOICE_HOME_LON', '')
         try:
             return float(lat), float(lon), 'home'
