@@ -81,6 +81,30 @@ def resample(samples, src, dst):
     return np.interp(np.linspace(0, len(samples) - 1, n), np.arange(len(samples)), samples).astype(np.float32)
 
 
+TARGET_DBFS = float(os.environ.get("VOICE_TTS_TARGET_DBFS", "-20"))   # speech RMS both engines are lifted to
+PEAK_CEILING = 0.89     # -1 dBFS: gain never pushes a peak past this
+MAX_GAIN = 4.0          # +12 dB at most; very quiet output is left quiet rather than amplifying noise
+
+
+def level(samples, target_dbfs=None):
+    """Scale an utterance so its speech (20 ms frames above -50 dBFS) has RMS
+    ``target_dbfs``, capped by PEAK_CEILING and MAX_GAIN. Never turns audio down."""
+    x = np.asarray(samples, dtype=np.float32)
+    if x.size == 0:
+        return x
+    target = TARGET_DBFS if target_dbfs is None else target_dbfs
+    n = 480                                       # 20 ms at 24 kHz
+    frames = x[: x.size // n * n].reshape(-1, n) if x.size >= n else x.reshape(1, -1)
+    rms = np.sqrt(np.mean(frames ** 2, axis=1))
+    speech = rms[rms > 10 ** (-50 / 20)]
+    peak = float(np.max(np.abs(x)))
+    if speech.size == 0 or peak == 0:
+        return x
+    loud = float(np.sqrt(np.mean(speech ** 2)))
+    gain = min(10 ** (target / 20) / loud, PEAK_CEILING / peak, MAX_GAIN)
+    return x * gain if gain > 1 else x
+
+
 def to_pcm16(samples):
     return (np.clip(np.asarray(samples, dtype=np.float32), -1, 1) * 32767).astype("<i2").tobytes()
 
@@ -247,14 +271,14 @@ class Catalog:
                     raise RuntimeError("chatterbox returned no audio")
                 if self.target_sr and int(sr) != self.target_sr:
                     samples, sr = resample(samples, int(sr), self.target_sr), self.target_sr
-                return to_pcm16(samples), int(sr)
+                return to_pcm16(level(samples)), int(sr)
             except Exception as error:
                 log.warning("chatterbox failed, speaking with kokoro: %s", error)
                 if on_fallback:
                     on_fallback(error)
                 name = self.kokoro_default
         samples, sr = self.kokoro.synthesize(strip_tags(text), name)
-        return to_pcm16(samples), int(sr)
+        return to_pcm16(level(samples)), int(sr)
 
 
 def load_chatterbox(environ=None):
