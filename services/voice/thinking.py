@@ -79,16 +79,24 @@ def validate_object(args, schema):
             raise ValueError('Invalid argument choice for ' + key)
 
 
+class SchemaCache:
+    """Capability schemas by worker and the hub tool catalog. One per agent by
+    default; a voice connection shares one across its per-turn agents."""
+
+    def __init__(self):
+        self.schemas, self.hub_tools = {}, None
+        self.lock = asyncio.Lock()
+
+
 class ThinkingAgent:
-    def __init__(self, complete=None, mcp=None, devices=None, direct=None, max_steps=None):
+    def __init__(self, complete=None, mcp=None, devices=None, direct=None, max_steps=None, cache=None):
         self.complete, self.mcp = complete, mcp or RookMCP(timeout=190)
         self.devices, self.direct = devices or inventory, direct
         self.max_steps = max_steps or int(os.environ.get('VOICE_TOOL_MAX_STEPS', '24'))
         self.effort = os.environ.get('VOICE_TOOL_REASONING_EFFORT', 'high')
         if self.effort not in ('low', 'medium', 'high', 'xhigh'):
             raise ValueError('Tool reasoning must be enabled: low, medium, high or xhigh')
-        self.schemas, self.hub_tools = {}, None
-        self.schema_lock = asyncio.Lock()
+        self.cache = cache if cache is not None else SchemaCache()
         # Subclasses (the voice Background worker) narrow or extend these.
         self.tools, self.system = TOOLS, SYSTEM
 
@@ -104,24 +112,26 @@ class ThinkingAgent:
         row = await self.worker(worker)
         if cap not in row.get('caps', []):
             raise ValueError(f'{worker} does not offer {cap}')
-        async with self.schema_lock:
-            old = self.schemas.get(worker)
+        cache = self.cache
+        async with cache.lock:
+            old = cache.schemas.get(worker)
             caps = tuple(sorted(row.get('caps', [])))
             if old is None or old[0] != caps or time.monotonic() - old[1] >= 3600:
                 reply = decode(await self.mcp.call('rook_call', {'worker': worker, 'cap': 'caps.describe'}))
                 if not isinstance(reply, dict) or not reply.get('ok') or not isinstance(reply.get('result'), dict):
                     raise ValueError('Cannot get capability schemas: ' + str(reply)[:1000])
-                old = self.schemas[worker] = (caps, time.monotonic(), reply['result'])
+                old = cache.schemas[worker] = (caps, time.monotonic(), reply['result'])
             if cap not in old[2]:
                 raise ValueError('Capability schema unavailable: ' + cap)
             return old[2][cap]
 
     async def hub_catalog(self):
-        async with self.schema_lock:
-            if self.hub_tools is None or time.monotonic() - self.hub_tools[0] >= 3600:
+        cache = self.cache
+        async with cache.lock:
+            if cache.hub_tools is None or time.monotonic() - cache.hub_tools[0] >= 3600:
                 tools = await self.mcp.list_tools()
-                self.hub_tools = (time.monotonic(), {t['name']: t for t in tools})
-            return self.hub_tools[1]
+                cache.hub_tools = (time.monotonic(), {t['name']: t for t in tools})
+            return cache.hub_tools[1]
 
     async def dispatch(self, name, args, trace, writes, on_event):
         from .providers import READ_CAPS, DIRECT_TOOLS

@@ -108,9 +108,13 @@ Never sent to guest or device-mapped identities. The app shows these in the
 ```
 `id` must be globally unique per timer (server: `uuid4().hex`), never reused
 for a different timer, even across conversations or server restarts. A resend
-(reconnect) carries the same `id` and the same `fires_at`; the client ignores a
-`set` whose (`id`, `fires_at`) already rang or was cancelled, and treats a
-`set` for an armed `id` with a different `fires_at` as a reschedule.
+(reconnect) carries the same `id` and the same `fires_at`, with `duration_s` set
+to the time left at resend (`max(1, ceil((fires_at - now) / 1000))`), so a client
+that never armed it rings on time. The client identifies a timer by (`id`,
+`fires_at`) only: it ignores a `set` whose pair already rang or was cancelled,
+keeps its own fire time for a `set` matching an armed pair (whatever its
+`duration_s`), and treats a `set` for an armed `id` with a different
+`fires_at` as a reschedule.
 
 Fire time: when `duration_s > 0` the client fires at *its own* arrival time +
 `duration_s` (phone and server clocks may differ), and uses `fires_at` only as

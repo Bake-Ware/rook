@@ -185,31 +185,62 @@ class HomeAssistant:
     def _norm(text):
         return ' '.join(re.sub(r'[^a-z0-9 ]+', ' ', str(text).lower().replace('_', ' ')).split())
 
+    # Words that say which kind of thing, not which one.
+    FILLERS = frozenset({'the', 'my', 'a', 'an', 'please', 'in', 'on', 'of'})
+    DOMAIN_WORDS = {'light': {'light', 'lights'}, 'switch': {'switch'}, 'scene': {'scene'},
+                    'media_player': {'media', 'player'}}
+    SURE, MARGIN = .85, .1
+
+    @staticmethod
+    def _stem(word):
+        return word[:-1] if len(word) > 3 and word.endswith('s') else word
+
+    def _score(self, want, words, e):
+        """(score, every request word names this entity). Score 1.0 is an exact name."""
+        domain, obj = e['entity_id'].split('.', 1)
+        labels = (self._norm(e['name']), self._norm(obj))
+        if want in labels:
+            return 1.0, True
+        name_words = {self._stem(w) for label in labels for w in label.split()}
+        vocab = name_words | {self._stem(w) for w in self.DOMAIN_WORDS.get(domain, ())}
+        covers = bool(words) and all(w in vocab for w in words)
+        ratio = max(difflib.SequenceMatcher(None, want, label).ratio() for label in labels)
+        if not covers:
+            return min(ratio, self.SURE - .01), False
+        named = {self._stem(w) for w in self._norm(e['name']).split()} or name_words
+        # All the request's words fit; the more of the entity's own name it says, the surer.
+        return max(ratio, self.SURE + .15 * len(named & set(words)) / len(named)), True
+
     def match(self, target, entities, domain=None):
-        """Exact entity id, else the closest friendly name (fuzzy, word-aware)."""
+        """(entity, candidates). Acts only on an exact entity id or one clear match:
+        score >= SURE, every significant word of the request belongs to that entity,
+        and MARGIN ahead of the runner-up. Otherwise entity is None and candidates
+        are the closest names, for asking the user which one."""
         pool = [e for e in entities if not domain or e['entity_id'].startswith(domain + '.')]
+        target = str(target).strip()
         for e in pool:
             if e['entity_id'] == target:
-                return e
+                return e, []
         want = self._norm(target)
-        for filler in ('the ', 'my '):
-            if want.startswith(filler):
-                want = want[len(filler):]
-        best, score = None, 0.0
-        for e in pool:
-            for label in (self._norm(e['name']), self._norm(e['entity_id'].split('.', 1)[-1])):
-                s = difflib.SequenceMatcher(None, want, label).ratio()
-                if want and (want in label or label in want):
-                    s = max(s, .85)
-                if s > score:
-                    best, score = e, s
-        return best if score >= .6 else None
+        words = [self._stem(w) for w in want.split() if w not in self.FILLERS]
+        want = ' '.join(w for w in want.split() if w not in self.FILLERS)
+        if not want:
+            return None, []
+        scored = sorted(((*self._score(want, words, e), e) for e in pool), key=lambda r: r[0], reverse=True)
+        if scored:
+            score, covers, best = scored[0]
+            runner = scored[1][0] if len(scored) > 1 else 0.0
+            if covers and score >= self.SURE and score - runner >= self.MARGIN:
+                return best, []
+        return None, [e for score, _, e in scored[:3] if score >= .4]
 
     async def call(self, target, action):
         entities = await self.entities()
-        entity = self.match(target, entities)
+        entity, candidates = self.match(target, entities)
         if entity is None:
-            raise ValueError(f'No light, switch, scene or media player matches {target!r}')
+            hint = ('. Closest: ' + ', '.join(f"{e['name']} ({e['entity_id']})" for e in candidates) +
+                    '. Ask the user which one they mean; do not pick one.') if candidates else ''
+            raise ValueError(f'No light, switch, scene or media player clearly matches {target!r}' + hint)
         domain = entity['entity_id'].split('.', 1)[0]
         service = self.SERVICES.get(domain, {}).get(action)
         if domain not in self.DOMAINS or service is None:
@@ -265,7 +296,8 @@ class Toolbox:
         now = time.time() * 1000
         parts = [f"{t['label'] or 'timer'} ({duration_words(max(1, math.ceil((t['fires_at'] - now) / 1000)))} left)"
                  for t in timers[:5]]
-        self.note('timers', 'Active timers: ' + '; '.join(parts) + '.', 60)
+        # Labels are model-written: Front may say them, Background never acts on them.
+        self.note('timers', 'Active timers: ' + '; '.join(parts) + '.', 60, untrusted=True)
 
     async def tool_timer_set(self, args):
         if not self.timers_enabled:
@@ -423,19 +455,29 @@ class Toolbox:
                                         params=params)
             response.raise_for_status()
             data = response.json()
-        cur, daily = data.get('current') or {}, data.get('daily') or {}
+        cur = data.get('current') if isinstance(data, dict) and isinstance(data.get('current'), dict) else {}
+        daily = data.get('daily') if isinstance(data, dict) and isinstance(data.get('daily'), dict) else {}
+        def number(value):
+            return value if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) \
+                else None
         def first(key):
-            values = daily.get(key) or [None]
-            return values[0]
+            values = daily.get(key)
+            return values[0] if isinstance(values, list) and values else None
         deg = '°F' if units == 'fahrenheit' else '°C'
-        text = (f"Weather at {where}: {WEATHER_CODES.get(cur.get('weather_code'), 'unknown conditions')}, "
-                f"{round(cur.get('temperature_2m', 0))}{deg}")
-        if cur.get('apparent_temperature') is not None and abs(cur['apparent_temperature'] - cur.get('temperature_2m', 0)) >= 3:
-            text += f" (feels like {round(cur['apparent_temperature'])}{deg})"
-        if first('temperature_2m_max') is not None:
-            text += f"; today {WEATHER_CODES.get(first('weather_code'), '').strip() or 'mixed'}, high {round(first('temperature_2m_max'))}{deg}, low {round(first('temperature_2m_min'))}{deg}"
-        if first('precipitation_probability_max') is not None:
-            text += f", {first('precipitation_probability_max')}% chance of precipitation"
+        temp, feels = number(cur.get('temperature_2m')), number(cur.get('apparent_temperature'))
+        high, low = number(first('temperature_2m_max')), number(first('temperature_2m_min'))
+        rain = number(first('precipitation_probability_max'))
+        text = f"Weather at {where}: {WEATHER_CODES.get(number(cur.get('weather_code')), 'unknown conditions')}"
+        if temp is not None:
+            text += f", {round(temp)}{deg}"
+            if feels is not None and abs(feels - temp) >= 3:
+                text += f" (feels like {round(feels)}{deg})"
+        today = [f"high {round(high)}{deg}" if high is not None else '', f"low {round(low)}{deg}" if low is not None else '']
+        if any(today):
+            text += f"; today {WEATHER_CODES.get(number(first('weather_code')), '').strip() or 'mixed'}, " + \
+                ', '.join(t for t in today if t)
+        if rain is not None:
+            text += f", {round(rain)}% chance of precipitation"
         text += '.'
         self.note('weather', text, 1800)
         return text

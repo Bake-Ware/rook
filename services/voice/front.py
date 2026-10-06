@@ -6,6 +6,7 @@ prefix caching: a fixed block (persona, mode, rules) that never changes within
 a conversation, then the context board, then the last N turns, then the
 utterance. Nothing that changes per turn sits before the fixed block.
 """
+import contextlib
 import json
 import os
 
@@ -92,15 +93,18 @@ def payload(messages):
             'reasoning_effort': 'none', 'chat_template_kwargs': {'enable_thinking': False}}
 
 
-async def stream(messages, on_clause, on_token=None, transport=None, url=None):
+async def stream(messages, on_clause, on_token=None, transport=None, url=None, client=None):
     """Stream one Front reply. Calls ``on_token()`` at the first content token
-    and ``on_clause(text)`` per complete clause. Returns the full text."""
+    and ``on_clause(text)`` per complete clause. Returns the full text.
+    ``client``: a caller-owned httpx.AsyncClient to reuse (kept open)."""
     body = payload(messages)
-    kwargs = {'timeout': float(os.environ.get('VOICE_FRONT_TIMEOUT_S', '30')), 'trust_env': False}
-    if transport is not None:
-        kwargs['transport'] = transport
     content, pending, first = '', '', True
-    async with httpx.AsyncClient(**kwargs) as client:
+    async with contextlib.AsyncExitStack() as stack:
+        if client is None:
+            kwargs = {'timeout': float(os.environ.get('VOICE_FRONT_TIMEOUT_S', '30')), 'trust_env': False}
+            if transport is not None:
+                kwargs['transport'] = transport
+            client = await stack.enter_async_context(httpx.AsyncClient(**kwargs))
         async with client.stream('POST', url or providers.VLLM_URL, json=body) as response:
             response.raise_for_status()
             async for line in response.aiter_lines():

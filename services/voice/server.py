@@ -323,6 +323,10 @@ async def websocket(ws: WebSocket):
                     if kind == 'stop':
                         utterance.clear(); preroll.clear(); speech = silence = 0
                         conn.receiving_speech = False
+                        if conn.fb:
+                            # Stop means stop: results still on their way stay silent.
+                            # Before interrupt, so no waiting follow-up starts in between.
+                            conn.fb.drop_followups()
                         await conn.interrupt()
                     elif kind == 'client_state':
                         was_sleeping = conn.sleeping
@@ -337,6 +341,8 @@ async def websocket(ws: WebSocket):
                         conn.last_speech = time.monotonic()
                         speech_permission_until = time.monotonic() + 35
                         conn.receiving_speech = True
+                        if conn.fb:
+                            conn.fb.drop_followups()
                         await conn.interrupt()
                     elif kind == 'audio_config':
                         conn.full_duplex = protocol == 2 and msg.get('aec') is True

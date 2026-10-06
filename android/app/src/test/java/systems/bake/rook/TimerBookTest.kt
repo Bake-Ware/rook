@@ -111,6 +111,12 @@ class TimerBookTest {
         assertEquals(TimerBook.Change.None, b.apply(e))
         assertEquals(armedAt + 600_000, b.get("pasta")!!.firesAt)
         assertEquals(armedAt + 600_000, book(b.toJson()).get("pasta")!!.firesAt)
+        // The server resends the time left (570 s) with the same fires_at: still the original fire time.
+        assertEquals(TimerBook.Change.None, b.apply(e.copy(durationS = 570)))
+        assertEquals(armedAt + 600_000, b.get("pasta")!!.firesAt)
+        // A phone that never armed it rings at arrival + time left.
+        val fresh = book()
+        assertEquals(now + 570_000, (fresh.apply(e.copy(durationS = 570)) as TimerBook.Change.Arm).timer.firesAt)
         // Server clock far behind: a duration timer still rings on time instead of being dropped as stale.
         val behind = TimerEvent("set", "eggs", "", now - 2 * TimerBook.LATE_LIMIT_MS, 300)
         assertEquals(now + 300_000, (b.apply(behind) as TimerBook.Change.Arm).timer.firesAt)

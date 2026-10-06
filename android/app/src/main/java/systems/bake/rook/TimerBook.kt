@@ -106,7 +106,8 @@ class TimerBook(private val clock: () -> Long = System::currentTimeMillis) {
         if (Finished(e.id, e.firesAt) in finished) return Change.None    // resent after it rang or was cancelled
         val old = active[e.id]
         // Resent while armed (reconnect): keep the phone's own fire time; only a label change is taken.
-        if (old != null && old.serverFiresAt == e.firesAt && old.durationS == e.durationS) {
+        // Identity is (id, fires_at) alone: a resend carries the time left as duration_s, not the original.
+        if (old != null && old.serverFiresAt == e.firesAt) {
             if (old.label == e.label) return Change.None
             active[e.id] = old.copy(label = e.label)
             return Change.None
