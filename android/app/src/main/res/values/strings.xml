@@ -40,6 +40,7 @@
     <string name="st_thinking">thinking</string>
     <string name="st_speaking">speaking</string>
     <string name="show_thinking">Show thinking</string>
+    <string name="fast_voice">Fast voice (preview): answer right away, look things up in the background</string>
     <string name="voice_picker">Voice</string>
     <string name="retry_voices">Reload voices</string>
     <string name="mic_paused">mic paused</string>
