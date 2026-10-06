@@ -84,3 +84,15 @@ def test_revoke_cancels_jobs_after_socket_disconnect(server):
     module.app.state.jobs.cancel=lambda session,jid:cancelled.append((session,jid))
     assert client.delete('/admin/api/keys/'+result['id'],headers=headers).status_code==200
     assert cancelled==[(session,job)]
+
+
+def test_api_voice_follows_the_guest_rule(server,monkeypatch):
+    module,client,headers=server
+    body={'text':'Hello there.'}
+    assert client.post('/api/voice',json=body).status_code==401                   # no guests configured
+    monkeypatch.setenv('VOICE_ALLOW_ANONYMOUS','1')
+    assert client.post('/api/voice',json=body).status_code!=401                   # keyless guest admitted
+    bad=client.post('/api/voice',json=body,headers={'Authorization':'Bearer not-a-key'})
+    assert bad.status_code==401                                                   # a wrong key is never a guest
+    ok=client.post('/api/voice',json=body,headers={'Authorization':'Bearer legacy-owner'})
+    assert ok.status_code!=401

@@ -213,7 +213,7 @@ async function loadVoices(){ try{ const r=await fetch("/voices"); const d=await 
 loadVoices();
 
 // "Speak this": the selected voice reads the box aloud through /api/voice (same key as the
-// chat connection). No mic or session needed; nothing is added to the conversation.
+// chat connection; keyless works when the server admits guests). No mic or session needed; nothing is added to the conversation.
 const sayText=document.getElementById('sayText'), sayBtn=document.getElementById('sayBtn'),
       sayStop=document.getElementById('sayStop'), sayStatus=document.getElementById('sayStatus');
 let sayRun=0, sayAudio=null;
@@ -228,9 +228,10 @@ function sayChunks(text){
   return out;
 }
 async function sayFetch(text, voice, token){
-  const r=await fetch('/api/voice',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
+  const headers={'Content-Type':'application/json'}; if(token) headers.Authorization='Bearer '+token;
+  const r=await fetch('/api/voice',{method:'POST',headers,
                                     body:JSON.stringify({text,voice})});
-  if(r.status===401){ sayKeyRow.hidden=false; throw new Error('that voice key was not accepted'); }
+  if(r.status===401){ sayKeyRow.hidden=false; sayKey.focus(); throw new Error(token?'that voice key was not accepted':'this server needs a voice key'); }
   if(!r.ok){ let msg=r.status+''; try{ msg=(await r.json()).detail||msg; }catch(e){} throw new Error(msg); }
   return URL.createObjectURL(await r.blob());
 }
@@ -238,7 +239,6 @@ function sayStopAll(){ sayRun++; if(sayAudio){ sayAudio.pause(); sayAudio=null; 
 async function speakThis(){
   const text=sayText.value.trim(); if(!text) return;
   const token=new URLSearchParams(location.search).get('token')||lsGet('voice_token')||'';
-  if(!token){ sayStatus.textContent='Enter a voice key (saved in this browser).'; sayKeyRow.hidden=false; sayKey.focus(); return; }
   sayStopAll(); const run=sayRun, voice=document.getElementById('voiceSel').value;
   const chunks=sayChunks(text); sayStop.hidden=false; sayBtn.disabled=true;
   try{

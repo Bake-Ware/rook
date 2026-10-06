@@ -18,7 +18,7 @@ def install(app, authorize):
     @app.post('/api/voice')
     async def voice(request: Request):
         supplied = request.headers.get('authorization', '').removeprefix('Bearer ')
-        if not supplied or not authorize(supplied):
+        if not authorize(supplied):   # authorize decides about keyless callers (guests)
             raise HTTPException(401, 'A valid voice key is required.')
         if request.headers.get('content-type', '').split(';')[0].strip() != 'application/json':
             raise HTTPException(415, 'Send JSON.')
