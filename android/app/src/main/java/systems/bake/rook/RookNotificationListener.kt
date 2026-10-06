@@ -51,6 +51,10 @@ class RookNotificationListener : NotificationListenerService() {
         o.put("title", title ?: JSONObject.NULL)
         o.put("text", text ?: JSONObject.NULL)
         o.put("ts", sbn.postTime / 1000.0)
+        o.put("posted_ms", sbn.postTime)
+        // Mail apps: subText is usually the account, bigText the subject plus a preview.
+        ex?.getCharSequence("android.subText")?.toString()?.let { o.put("sub_text", it) }
+        ex?.getCharSequence("android.bigText")?.toString()?.takeIf { it != text }?.let { o.put("big_text", it.take(1000)) }
         o.put("clearable", sbn.isClearable)
         synchronized(ring) {
             ring.addLast(o)

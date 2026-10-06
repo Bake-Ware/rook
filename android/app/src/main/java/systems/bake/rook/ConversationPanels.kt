@@ -15,11 +15,13 @@ import java.util.Date
 import java.util.Locale
 
 /** Activity-local presentation, separate from conversation bubbles and transport behavior. */
-class ConversationPanels(private val ctx: Context, private val b: ActivityMainBinding, private val openDecision: (TurnKey) -> Unit) {
+class ConversationPanels(private val ctx: Context, private val b: ActivityMainBinding) {
     private val timeline = ActivityTimeline()
-    private val decisions = linkedMapOf<TurnKey, Decision>()
+    private val background = BackgroundTimeline()
+    /** Collapsible parts the user opened: "<connection>:<seq>:args|result". */
+    private val expanded = mutableSetOf<String>()
     private val activityUnread = UnseenItems()
-    private val decisionUnread = UnseenItems()
+    private val backgroundUnread = UnseenItems()
     private val status = TurnStatus()
     private var connection = -1L
     private var turn = -1
@@ -30,12 +32,11 @@ class ConversationPanels(private val ctx: Context, private val b: ActivityMainBi
     private val tick = object : Runnable { override fun run() { renderStatus(); main.postDelayed(this, 1000) } }
     private val red = Color.rgb(239, 120, 120)
     private val amber = Color.rgb(216, 173, 109)
-    private fun thinking() = ctx.getSharedPreferences("rook", Context.MODE_PRIVATE).getBoolean("show_thinking", false)
     private fun dp(n: Int) = (n * ctx.resources.displayMetrics.density).toInt()
     init {
         b.tabs.setTabTextColors(ctx.getColor(R.color.rook_dim), ctx.getColor(R.color.rook_accent))
         b.tabs.setSelectedTabIndicatorColor(ctx.getColor(R.color.rook_accent))
-        listOf("Chat", "Activity", "Decisions").forEach { name ->
+        listOf("Chat", "Activity", "Background").forEach { name ->
             b.tabs.addTab(b.tabs.newTab().setText(name))
         }
         // Material's default text appearance may uppercase labels: explicitly preserve sentence case.
@@ -49,15 +50,15 @@ class ConversationPanels(private val ctx: Context, private val b: ActivityMainBi
                 selected = tab.position
                 b.chatList.visibility = if (selected == 0) View.VISIBLE else View.GONE
                 b.activityScroll.visibility = if (selected == 1) View.VISIBLE else View.GONE
-                b.decisionsScroll.visibility = if (selected == 2) View.VISIBLE else View.GONE
+                b.backgroundScroll.visibility = if (selected == 2) View.VISIBLE else View.GONE
                 if (selected == 1) activityUnread.seen()
-                if (selected == 2) { decisionUnread.seen(); renderDecisions() }
+                if (selected == 2) { backgroundUnread.seen(); renderBackground() }
                 badges()
             }
             override fun onTabUnselected(tab: TabLayout.Tab) {}
             override fun onTabReselected(tab: TabLayout.Tab) = onTabSelected(tab)
         })
-        renderDecisions()
+        renderBackground()
     }
     fun sync(generation: Long) { if (generation != connection) { connection = generation; turn = -1; hasActivity = false; status.reset() } }
     fun turn(id: Int) { turn = id }
@@ -71,7 +72,7 @@ class ConversationPanels(private val ctx: Context, private val b: ActivityMainBi
     }
     fun done() { status.finishLegacy(); renderStatus() }
     fun interrupt() { listeningRequested = false; status.finish(); renderStatus() }
-    fun resume() { sync(VoiceBus.connectionGeneration); renderDecisions(); main.removeCallbacks(tick); main.post(tick) }
+    fun resume() { sync(VoiceBus.connectionGeneration); renderBackground(); main.removeCallbacks(tick); main.post(tick) }
     fun pause() { main.removeCallbacks(tick) }
     fun activity(e: ActivityEvent) {
         if (!timeline.add(connection, e)) return
@@ -86,17 +87,17 @@ class ConversationPanels(private val ctx: Context, private val b: ActivityMainBi
         activityUnread.add(failed, selected == 1); renderActivity(); badges()
     }
     fun tool(title: String, state: String) { if (!hasActivity) note("$title · $state", state in listOf("error", "failed")) }
-    fun decision(d: Decision) {
-        if (!thinking()) return
-        val key = TurnKey(connection, d.turn)
-        if (decisions[key] == d) return
-        decisions[key] = d
-        decisionUnread.add(d.failed, selected == 2); renderDecisions(); badges()
+    fun background(e: BackgroundEvent) {
+        if (!background.add(connection, e)) return
+        if (expanded.size > 200) expanded.clear()
+        backgroundUnread.add(e.failed, selected == 2)
+        if (selected == 2) renderBackground()
+        badges()
     }
     private fun badges() {
-        listOf(1 to activityUnread, 2 to decisionUnread).forEach { (index, unseen) ->
+        listOf(1 to activityUnread, 2 to backgroundUnread).forEach { (index, unseen) ->
             val tab = b.tabs.getTabAt(index) ?: return@forEach
-            if (unseen.count == 0 || (index == 2 && !thinking())) tab.removeBadge()
+            if (unseen.count == 0) tab.removeBadge()
             else tab.orCreateBadge.apply { number = unseen.count; backgroundColor = if (unseen.failed) red else amber
                 badgeTextColor = ctx.getColor(R.color.rook_bg) }
         }
@@ -122,22 +123,40 @@ class ConversationPanels(private val ctx: Context, private val b: ActivityMainBi
         }
         b.activityScroll.post { b.activityScroll.fullScroll(View.FOCUS_DOWN) }
     }
-    private fun renderDecisions() {
-        b.decisionsList.removeAllViews()
-        if (!thinking()) {
-            text(card(b.decisionsList), "Turn on Show thinking in settings to see decisions")
-            badges(); return
+    /** A tappable "label ▸" line that shows [body] under it while expanded. */
+    private fun collapsible(parent: LinearLayout, key: String, label: String, body: String) {
+        val open = key in expanded
+        val head = TextView(ctx).apply {
+            text = "$label ${if (open) "▾" else "▸"}"; textSize = 12f; setTextColor(amber)
+            setPadding(dp(12), dp(2), 0, dp(2)); isFocusable = true
+            contentDescription = "$label, ${if (open) "expanded" else "collapsed"}. Tap to ${if (open) "hide" else "show"}"
+            setOnClickListener { if (!expanded.remove(key)) expanded.add(key); renderBackground(scroll = false) }
         }
-        if (decisions.isEmpty()) text(card(b.decisionsList), "Decisions will appear here when the server sends them.")
-        for ((key, d) in decisions) {
-            val group = card(b.decisionsList)
-            text(group, "${title(key)}  ·  ${d.mode.ifBlank { "shadow" }}", amber)
-            DecisionContent.fill(group, d)
-            group.contentDescription = "${title(key)}, ${d.engineLabel}. Show decision in chat"
-            group.isFocusable = true
-            group.setOnClickListener { b.tabs.getTabAt(0)?.select(); openDecision(key) }
+        parent.addView(head)
+        if (open) parent.addView(TextView(ctx).apply {
+            text = body; textSize = 12f; typeface = android.graphics.Typeface.MONOSPACE; setTextIsSelectable(true)
+            setTextColor(ctx.getColor(R.color.rook_dim)); setPadding(dp(12), dp(2), 0, dp(6))
+        })
+    }
+    private fun renderBackground(scroll: Boolean = true) {
+        b.backgroundList.removeAllViews()
+        if (background.turns.isEmpty()) {
+            text(card(b.backgroundList), "Background work appears here: what was looked up or done for each turn, step by step.", ctx.getColor(R.color.rook_dim))
+            return
         }
-        b.decisionsScroll.post { b.decisionsScroll.fullScroll(View.FOCUS_DOWN) }
+        val format = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+        for ((key, events) in background.turns) {
+            val group = card(b.backgroundList)
+            text(group, title(key) + if (background.running(key)) " · running" else "", amber)
+            for (e in events) {
+                val line = listOfNotNull("${format.format(Date(e.ts))}  ${e.icon}  ${e.text}", e.tool,
+                    e.status?.takeIf { it != "ok" }, e.elapsedMs?.let { "$it ms" }).joinToString(" · ")
+                text(group, line, if (e.failed) red else ctx.getColor(R.color.rook_fg))
+                e.args?.let { collapsible(group, "${key.connection}:${e.seq}:args", "args", it) }
+                e.result?.let { collapsible(group, "${key.connection}:${e.seq}:result", "result", it) }
+            }
+        }
+        if (scroll) b.backgroundScroll.post { b.backgroundScroll.fullScroll(View.FOCUS_DOWN) }
     }
     private fun renderStatus() {
         val d = status.display(SystemClock.elapsedRealtime())

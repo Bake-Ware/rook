@@ -60,13 +60,11 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
         chat = ChatAdapter { prefs.getBoolean("show_thinking", false) }
         b.chatList.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(this).apply { stackFromEnd = true }
         b.chatList.adapter = chat
-        panels = ConversationPanels(this, b) { key ->
-            val index = chat.expand(key)
-            if (index >= 0) b.chatList.post { b.chatList.smoothScrollToPosition(index) }
-            else android.widget.Toast.makeText(this, "No chat message available for this turn", android.widget.Toast.LENGTH_SHORT).show()
-        }
+        panels = ConversationPanels(this, b)
         b.versionLabel.text = "APK ${BuildConfig.VERSION_NAME} · ${BuildConfig.VERSION_CODE}"
         maybeRequestNotifications()
+        // A force-stop clears alarms without telling us; arming again is idempotent.
+        Timers.rearm(this)
 
         b.btnSettings.setOnClickListener { startActivity(Intent(this, SettingsActivity::class.java)) }
         b.btnTalk.setOnClickListener {
@@ -219,12 +217,42 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
 
     override fun onTurn(turn: Int) { syncConnection(); eventTurn = turn; panels.turn(turn) }
     override fun onActivity(event: ActivityEvent) { syncConnection(); panels.activity(event) }
-    override fun onDecision(decision: Decision) {
-        syncConnection()
-        if (prefs.getBoolean("show_thinking", false)) {
-            chat.decision(TurnKey(connectionGeneration, decision.turn), decision)
-            panels.decision(decision)
+    // The decision engine is paused: `decision` events are parsed but no longer shown.
+    override fun onDecision(decision: Decision) {}
+    override fun onBackground(event: BackgroundEvent) { syncConnection(); panels.background(event) }
+    override fun onTimersChanged() = renderTimers()
+
+    // ---- timers ---------------------------------------------------------
+
+    private val timerTick = object : Runnable {
+        override fun run() = renderTimers()
+    }
+
+    /** One chip per armed timer with its countdown; tap to cancel. Ticks every second while any exist. */
+    private fun renderTimers() {
+        b.timersRow.removeCallbacks(timerTick)
+        val timers = Timers.list(this)
+        b.timersRow.removeAllViews()
+        b.timersScroll.visibility = if (timers.isEmpty()) android.view.View.GONE else android.view.View.VISIBLE
+        val now = System.currentTimeMillis()
+        val dp = resources.displayMetrics.density
+        for (t in timers) {
+            val left = timerRemaining(t.firesAt, now)
+            b.timersRow.addView(android.widget.TextView(this).apply {
+                text = "\u23F1 ${t.title}  $left   \u2715"
+                textSize = 13f; setTextColor(getColor(R.color.rook_fg))
+                setBackgroundResource(R.drawable.rook_panel)
+                setPadding((12 * dp).toInt(), (6 * dp).toInt(), (12 * dp).toInt(), (6 * dp).toInt())
+                contentDescription = "${t.title} timer, $left left. Tap to cancel"
+                setOnClickListener {
+                    androidx.appcompat.app.AlertDialog.Builder(this@MainActivity)
+                        .setMessage("Cancel the ${t.title.lowercase()} timer?")
+                        .setPositiveButton("Cancel timer") { _, _ -> Timers.cancel(this@MainActivity, t.id) }
+                        .setNegativeButton("Keep", null).show()
+                }
+            }, android.widget.LinearLayout.LayoutParams(-2, -2).apply { marginEnd = (8 * dp).toInt() })
         }
+        if (timers.isNotEmpty()) b.timersRow.postDelayed(timerTick, 1000)
     }
 
     override fun onAssistantDone() { curBot = null; panels.done() }
@@ -254,6 +282,7 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
         // Merge whatever was heard/spoken while this screen was away (each event once).
         VoiceBus.attach(this, seenSeq)
         panels.resume()
+        renderTimers()
         onState(VoiceBus.state)
         if (intent?.action == Intent.ACTION_ASSIST) {
             intent.action = null
@@ -261,7 +290,7 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
         }
     }
 
-    override fun onPause() { panels.pause(); if (VoiceBus.listener === this) VoiceBus.listener = null; super.onPause() }
+    override fun onPause() { panels.pause(); b.timersRow.removeCallbacks(timerTick); if (VoiceBus.listener === this) VoiceBus.listener = null; super.onPause() }
 
     override fun onStop() {
         VoiceService.inst?.releaseIfIdle()

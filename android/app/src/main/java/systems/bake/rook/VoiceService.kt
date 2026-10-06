@@ -176,6 +176,9 @@ class VoiceService : Service() {
             override fun onTurn(turn: Int) = current { VoiceBus.emit(conn) { it.onTurn(turn) } }
             override fun onActivity(event: ActivityEvent) = current { VoiceBus.emit(conn) { it.onActivity(event) } }
             override fun onDecision(decision: Decision) = current { VoiceBus.emit(conn) { it.onDecision(decision) } }
+            override fun onBackground(event: BackgroundEvent) = current { VoiceBus.emit(conn) { it.onBackground(event) } }
+            // Timers stand on their own once set: apply even if this connection was since replaced.
+            override fun onTimer(event: TimerEvent) = post { Timers.handle(this@VoiceService, event) }
             override fun onAssistantDone() = current { VoiceBus.emit(conn) { it.onAssistantDone() } }
             override fun onInterrupt() = current { VoiceBus.emit(conn) { it.onInterrupt() } }
             override fun onError(msg: String) = current { VoiceBus.emit(conn) { it.onError(msg) } }
@@ -608,6 +611,9 @@ object VoiceBus {
         fun onAssistantDelta(text: String, turn: Int?) = onAssistantDelta(text)
         fun onDecision(decision: Decision) {}
         fun onActivity(event: ActivityEvent) {}
+        fun onBackground(event: BackgroundEvent) {}
+        /** Timers were set, cancelled or rang (not logged: the screen re-reads [Timers.list]). */
+        fun onTimersChanged() {}
         fun onTurn(turn: Int) {}
         /** Mic released for another app/call ([reason] is user-facing text), or null when held again. */
         fun onMicPaused(reason: String?) {}

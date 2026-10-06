@@ -35,6 +35,8 @@ class VoiceClient(
         fun onAssistantDelta(text: String, turn: Int?) = onAssistantDelta(text)
         fun onDecision(decision: Decision) {}
         fun onActivity(event: ActivityEvent) {}
+        fun onBackground(event: BackgroundEvent) {}
+        fun onTimer(event: TimerEvent) {}
         fun onTurn(turn: Int) {}
         /** The server would not run the requested mode; do not retry automatically. */
         fun onRefused(msg: String) = onError(msg)
@@ -92,6 +94,7 @@ class VoiceClient(
                 if (!running) { webSocket.close(1000, "closed"); return }
                 ws = webSocket
                 webSocket.send(JSONObject().put("type", "hello").put("protocol", 2).put("client", "rook-android").put("activity", true)
+                    .put("background", true).put("timers", true)
                     .put("conversation", conversation).put("aec", aec)
                     .put("mode", mode.id).apply { if (modePrompt.isNotBlank()) put("mode_prompt", modePrompt) }
                     .apply { if (thinking) put("thinking", true) }.toString())
@@ -108,6 +111,9 @@ class VoiceClient(
                 }
                 when (m.optString("type")) {
                     "activity" -> ActivityEvent.parse(m)?.let { listener.onActivity(it) }
+                    "background" -> BackgroundEvent.parse(m)?.let { listener.onBackground(it) }
+                    "timer" -> TimerEvent.parse(m)?.let { listener.onTimer(it) }
+                    // The decision engine is paused; still parsed (harmless) but the app no longer renders it.
                     "decision" -> if (thinking) Decision.parse(m)?.let { listener.onDecision(it) }
                     "session" -> {
                         protocol = m.optInt("protocol", 1)
