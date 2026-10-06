@@ -5,7 +5,16 @@ import logging
 log=logging.getLogger('rook.android.runtime')
 _loop=None
 _stop=None
+#: Every runner still alive, as (loop, stop event). stop() signals all of them,
+#: so a runner whose shutdown was still in flight when the service restarted
+#: cannot survive as an orphan that keeps its own 30 s refresh going.
+_runners=set()
 REFRESH_SECONDS=30
+#: A connection that dies sooner than this counts as a failed start: the next
+#: attempt waits (doubling up to BACKOFF_MAX) instead of reconnecting at once.
+STABLE_SECONDS=10
+BACKOFF_MIN=2
+BACKOFF_MAX=60
 
 
 def start(hub,psk,name):
@@ -18,17 +27,33 @@ def start(hub,psk,name):
     prefs=context.getSharedPreferences('rook',0) if context else None
     fallback=(hub,psk,name)
 
-    async def desired():
+    # The last device-authorized config and when it was fetched (loop time).
+    # Reconnects reuse it inside REFRESH_SECONDS: one challenge + one config
+    # per window per phone, however often the worker itself restarts.
+    fetched=[None,None]
+
+    from rook_android import roster
+
+    async def desired(force=False):
         current=tuple(str(prefs.getString(k,v) or v) for k,v in zip(('hub','psk','name'),fallback)) if prefs else fallback
         saved=enroll.load()
         selected=str(prefs.getString('band_id','') or '') if prefs else ''
         use_identity=saved.get('auto_start') and saved.get('device') and (not selected or selected==saved.get('active_band'))
         if use_identity:
-            saved=await asyncio.to_thread(enroll.refresh)
+            now=asyncio.get_running_loop().time()
+            if force or fetched[0] is None or now-fetched[0]>=REFRESH_SECONDS:
+                # The same proof also fetches the account's band rosters for the
+                # Workers tab (hubs without it just leave them out).
+                fetched[1]=await asyncio.to_thread(enroll.refresh,want=('workers',),on_result=roster.hub_result)
+                fetched[0]=asyncio.get_running_loop().time()
+            saved=fetched[1]
             band=next(b for b in saved['bands'] if b['id']==saved['active_band'])
+            roster.note_identity(True,band)
             current=(band['hub'],band['psk'],current[2])
             if prefs:
                 prefs.edit().putString('hub',band['hub']).putString('psk',band['psk']).putString('band_id',band['id']).putInt('band_epoch',band['epoch']).apply()
+        else:
+            roster.note_identity(False)
         cfg=wconfig.load();wconfig.apply_env(cfg)
         return (current[0] if use_identity else cfg.get('hub',current[0]),
                 current[1] if use_identity else cfg.get('psk',current[1]),
@@ -36,9 +61,14 @@ def start(hub,psk,name):
 
     async def runner():
         global _stop,_loop
-        _loop=asyncio.get_running_loop();_stop=asyncio.Event()
+        # This runner's own stop event: never re-read the module globals, which
+        # a newer runner may already have replaced.
+        loop=asyncio.get_running_loop();stopping=asyncio.Event()
+        _loop,_stop=loop,stopping
+        me=(loop,stopping);_runners.add(me)
+        backoff=0
         try:
-            while not _stop.is_set():
+            while not stopping.is_set():
                 wconfig.boot_reconcile()
                 try:current=await desired()
                 except Exception as error:
@@ -53,7 +83,6 @@ def start(hub,psk,name):
                                       'code':int(package.versionCode)} if package else {}
                 _attach_native_plugins(worker)
                 # The app's Workers tab: band announces this worker already receives.
-                from rook_android import roster
                 roster.attach(worker)
                 cycle=asyncio.Event()
 
@@ -74,29 +103,46 @@ def start(hub,psk,name):
                 worker.registry.register('worker.restart',restart)
                 worker.registry.register('worker.status',status)
                 task=asyncio.create_task(worker.run())
+                began=loop.time()
                 try:
-                    checked=_loop.time()
-                    while not _stop.is_set() and not cycle.is_set() and not task.done():
-                        try:await asyncio.wait_for(_stop.wait(),1)
+                    checked=loop.time()
+                    while not stopping.is_set() and not cycle.is_set() and not task.done():
+                        try:await asyncio.wait_for(stopping.wait(),1)
                         except asyncio.TimeoutError:pass
-                        if _loop.time()-checked>=REFRESH_SECONDS:
-                            checked=_loop.time()
+                        if loop.time()-checked>=REFRESH_SECONDS:
+                            checked=loop.time()
                             try:
-                                if await desired()!=current:break
+                                if await desired(force=True)!=current:break
                             except Exception as error:
                                 log.error('Device authorization unavailable (%s); leaving band.',type(error).__name__)
-                                _stop.set()
+                                stopping.set()
                 finally:
                     roster.detach(worker)
                     await worker.shutdown()
                     try:await asyncio.wait_for(task,2)
                     except (Exception,asyncio.CancelledError):pass
+                if task.done() and not cycle.is_set() and not stopping.is_set():
+                    # The worker died on its own. Without this pause a worker
+                    # that fails at start reconnects (and, before the refresh
+                    # cache, re-authenticated) about once a second.
+                    if loop.time()-began<STABLE_SECONDS:
+                        backoff=min(BACKOFF_MAX,max(BACKOFF_MIN,backoff*2))
+                    else:
+                        backoff=BACKOFF_MIN
+                    log.warning('Band worker exited; reconnecting in %ss.',backoff)
+                    try:await asyncio.wait_for(stopping.wait(),backoff)
+                    except asyncio.TimeoutError:pass
+                else:
+                    backoff=0
         finally:
-            _loop=None;_stop=None
+            _runners.discard(me)
+            if _stop is stopping:
+                _loop=None;_stop=None
 
     asyncio.run(runner())
 
 
 def stop():
-    loop,event=_loop,_stop
-    if loop is not None and event is not None:loop.call_soon_threadsafe(event.set)
+    for loop,event in list(_runners):
+        try:loop.call_soon_threadsafe(event.set)
+        except RuntimeError:pass   # that loop already closed

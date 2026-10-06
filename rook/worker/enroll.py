@@ -111,14 +111,21 @@ def expires_at(device):
     return x509.load_pem_x509_certificate(device['certificate'].encode()).not_valid_after_utc.timestamp()
 
 
-def refresh():
-    """Fetch current credentials with the device key; never fall back on denial."""
+def refresh(want=(),on_result=None):
+    """Fetch current credentials with the device key; never fall back on denial.
+
+    ``want`` names optional extras the hub may attach to the same config
+    response (``'workers'``: the account's band rosters), and ``on_result``
+    receives that response; extras are never saved with the credentials.
+    """
     saved=load()
     if not saved.get('device'):
         return saved
     import urllib.error
     try:
-        result=post(saved['server'],'/auth/devices/config',proof(saved,'config'))
+        body=proof(saved,'config')
+        if want:body['want']=list(want)
+        result=post(saved['server'],'/auth/devices/config',body)
     except (urllib.error.URLError,TimeoutError,OSError) as error:
         if isinstance(error,urllib.error.HTTPError) and error.code != 429 and error.code < 500:
             raise ValueError('Device authorization was denied. Re-enroll through an owner.') from None
@@ -141,6 +148,9 @@ def refresh():
         saved['bands']=[band]
     else:
         saved['bands']=[band if b['id']==band['id'] else b for b in saved['bands']]
+    if on_result is not None:
+        try:on_result(result)
+        except Exception:pass
     saved['last_verified']=time.time()
     saved['migration']=result.get('migration')
     if expires_at(saved['device'])-time.time()<7*86400:

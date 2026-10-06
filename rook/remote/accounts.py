@@ -458,4 +458,4 @@ class AccountStore:
             db.execute('DELETE FROM device_logins WHERE hash=?',(row['hash'],))
         if not self.user(uid):return {'error':'expired_token'}
         bands=self.bands(uid,configs=True)
-        return {'bands':bands,'enrollment_grants':{band['id']:self.grant('device_enroll',{'user_id':uid,'band_id':band['id']},300) for band in bands}}
+        return {'bands':bands,'enrollment_grants':{band['id']:self.grant('device_enroll',{'user_id':uid,'band_id':band['id'],'scope':'account'},300) for band in bands}}
