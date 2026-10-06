@@ -58,7 +58,9 @@ def service_environment(unit, select='/usr/local/sbin/voice-select'):
     return env
 
 
-CPU_DEVICES = {'WHISPER_DEVICE': 'cpu', 'WHISPER_COMPUTE': 'int8', 'ONNX_PROVIDER': 'CPUExecutionProvider'}
+# VOICE_CHATTERBOX_DEVICE empty: the candidate loads no second Chatterbox on the live GPU (Kokoro only).
+CPU_DEVICES = {'WHISPER_DEVICE': 'cpu', 'WHISPER_COMPUTE': 'int8', 'ONNX_PROVIDER': 'CPUExecutionProvider',
+               'VOICE_CHATTERBOX_DEVICE': ''}
 
 
 def candidate_devices(live_devices=False):

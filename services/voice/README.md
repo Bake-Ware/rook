@@ -164,6 +164,48 @@ Guest keys and keyless connections cannot read private phone data or delegate
 unrestricted agent work. Device keys can read personal data from their mapped
 device; owner keys can select other devices and start agent work.
 
+## Voices: Kokoro and Chatterbox
+
+The server speaks with two TTS engines, both selectable per session:
+
+* **Kokoro** (kokoro-onnx, CPU) is always loaded. `VOICE_TTS_THREADS` sets its
+  ONNX threads.
+* **Chatterbox Turbo** (Resemble AI, ~350M parameters, GPU, MIT) is loaded when
+  `VOICE_CHATTERBOX_DEVICE` is set (for example `cuda:0`). It runs in its own
+  Python so torch never enters the voice venv: `VOICE_CHATTERBOX_PYTHON` points
+  at a venv with `chatterbox-tts` installed, and the server starts
+  `chatterbox_worker.py` with it. Without `VOICE_CHATTERBOX_PYTHON` the worker
+  code is imported in-process (only if the voice venv itself has chatterbox).
+  `VOICE_CHATTERBOX_VOICES_DIR` (optional): each `<name>.wav` there (5-20 s of
+  clean speech) becomes the voice `chatterbox:<name>`; the built-in voice is
+  `chatterbox:default`. If Chatterbox does not load, the server logs why, leaves
+  it out of `/voices` and runs with Kokoro alone.
+
+Voice ids are engine-namespaced: `kokoro:af_heart`, `chatterbox:default`. A bare
+id such as `af_heart` is a legacy Kokoro id and still works everywhere (`voice`
+messages, `/api/voice`, `VOICE`, `VOICE_TTS_DEFAULT`). `GET /voices` returns
+`voices` (ids), `default`, `catalog` (`id`, `engine`, `name`, `label`) and
+`engines` (availability, load error). The default is `VOICE_TTS_DEFAULT`, else
+the saved `voice.state`, else `VOICE` (default `af_heart`); an unavailable
+default becomes the Kokoro default. A `{"type":"voice","voice":"<id>"}` message
+switches the session's voice; unknown ids are ignored.
+
+Chatterbox renders sound tags such as `[laugh]`, `[chuckle]` and `[sigh]`; they
+are stripped before Kokoro. When the session's voice is Chatterbox, Front's
+prompt allows those three tags, sparingly. If Chatterbox fails for an utterance,
+Kokoro (the default Kokoro voice) speaks it, and the session gets one `error`
+event with `code: "tts_fallback"` plus an activity error. A crashed worker is
+restarted at most once a minute. Chatterbox audio is resampled to Kokoro's
+24 kHz, so clients see one format. Release candidates set
+`VOICE_CHATTERBOX_DEVICE` empty and never load a second copy on the GPU.
+
+Installing the Chatterbox venv (on the GPU host, outside the voice venv):
+
+```sh
+python3 -m venv /home/bake/voice-tts/chatterbox-turbo/.venv
+/home/bake/voice-tts/chatterbox-turbo/.venv/bin/pip install chatterbox-tts
+```
+
 ## Speech speed and interruption
 
 `VOICE_TTS_THREADS` controls Kokoro's ONNX CPU inference threads (default eight).

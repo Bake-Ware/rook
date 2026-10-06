@@ -23,6 +23,7 @@ from .identity import with_hello_device, configured_identities, identity_for
 from .admin import AdminStore, router as admin_router
 from . import modes
 from . import pipeline
+from .tts import resolve_voice
 
 VERSION = '2.0.0'
 ROOT = Path(os.environ.get('VOICE_MODEL_DIR', '.'))
@@ -125,7 +126,12 @@ async def health():
 
 @app.get('/voices')
 async def voices():
-    return {'voices': app.state.provider.voices, 'default': app.state.provider.default_voice}
+    provider = app.state.provider
+    tts = getattr(provider, 'tts', None)
+    if tts is not None:
+        # voices: engine-namespaced ids (kokoro:af_heart, chatterbox:default); catalog adds engine + label.
+        return tts.describe()
+    return {'voices': provider.voices, 'default': provider.default_voice}
 
 @app.get('/modes')
 async def voice_modes():
@@ -369,8 +375,11 @@ async def websocket(ws: WebSocket):
                             await conn.emit('error', code='unknown_mode', msg=f'{error} Mode unchanged: {conn.mode.id}.')
                         else:
                             await conn.set_mode(mode)
-                    elif kind == 'voice' and msg.get('voice') in app.state.provider.voices:
-                        conn.voice = msg['voice']
+                    elif kind == 'voice':
+                        # Accepts engine:name ids and legacy bare Kokoro ids; unknown ids are ignored.
+                        voice = resolve_voice(app.state.provider, msg.get('voice'))
+                        if voice is not None:
+                            conn.voice = voice
                 except (ValueError, TypeError):
                     await conn.emit('error', msg='Invalid voice message')
     except (WebSocketDisconnect, ConnectionError, TimeoutError):

@@ -34,13 +34,17 @@ RULES = (
 )
 
 
-def fixed_block(mode, tools, name=None, owner=None):
-    """Persona + rules + mode instructions. Stable for the whole conversation."""
+def fixed_block(mode, tools, name=None, owner=None, sound_tags=()):
+    """Persona + rules + mode instructions. Stable for the whole conversation.
+    ``sound_tags``: tags the session's TTS voice can perform (Chatterbox); empty for Kokoro."""
     name = name or providers.ASSISTANT_NAME
     owner = providers.OWNER if owner is None else owner
     text = providers.assistant_intro(name, owner) + ' You are talking by voice.\n' + RULES
     text += 'Things you can get done in this session: ' + capability_summary(tools) + \
             '. For anything else, say plainly that you cannot do that here.\n'
+    if sound_tags:
+        text += ('Your voice can perform ' + ', '.join(sound_tags) + '. Use one only when it truly fits, such as '
+                 'laughing at a joke; most replies use none, never more than one. Never describe or explain them.\n')
     if mode.agent:
         if mode.custom:
             text += ('Additional instructions configured by the user for this session. They shape style only '

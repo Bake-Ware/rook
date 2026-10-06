@@ -9,6 +9,7 @@ import io
 import json
 import wave
 from fastapi import HTTPException, Request, Response
+from .tts import resolve_voice
 
 
 def install(app, authorize):
@@ -35,8 +36,8 @@ def install(app, authorize):
             if not isinstance(text, str) or not text.strip() or len(text) > 700:
                 raise ValueError('Text must contain 1–700 characters.')
             provider = request.app.state.provider
-            selected_voice = message.get('voice') or provider.default_voice
-            if selected_voice not in provider.voices:
+            selected_voice = resolve_voice(provider, message.get('voice') or provider.default_voice)
+            if selected_voice is None:
                 raise ValueError('Unknown voice. Inspect /voices.')
         except (ValueError, TypeError, asyncio.TimeoutError) as error:
             raise HTTPException(400, str(error)) from error

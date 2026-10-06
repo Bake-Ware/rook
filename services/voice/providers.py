@@ -552,10 +552,23 @@ class Provider:
             os.path.join(HERE, 'kokoro-v1.0.onnx'), sess_options=options,
             providers=[os.environ.get('ONNX_PROVIDER', 'CPUExecutionProvider')]),
             os.path.join(HERE, 'voices-v1.0.bin'))
-        self.voices = sorted(self.kokoro.get_voices())
-        self.default_voice = _read_voice() or DEFAULT_VOICE
-        if self.default_voice not in self.voices:
-            self.default_voice = self.voices[0]
+        from . import tts as tts_mod
+        kokoro = self.kokoro
+
+        class _Kokoro:
+            voices = kokoro.get_voices()
+            @staticmethod
+            def synthesize(text, name):
+                return kokoro.create(text, voice=name, speed=1.0, lang='en-us')
+
+        # Chatterbox (GPU) only when VOICE_CHATTERBOX_DEVICE is set; a failed load just leaves it out.
+        chatterbox, error = tts_mod.load_chatterbox()
+        self.tts = tts_mod.Catalog(_Kokoro, DEFAULT_VOICE.partition(':')[2] if ':' in DEFAULT_VOICE else DEFAULT_VOICE,
+                                   chatterbox, error,
+                                   os.environ.get('VOICE_TTS_DEFAULT', '').strip() or _read_voice() or DEFAULT_VOICE,
+                                   target_sr=24000)   # Kokoro's rate: every voice reaches clients alike
+        self.voices = self.tts.voices
+        self.default_voice = self.tts.default
         self.turn = SmartTurn(os.path.join(HERE, 'smart-turn-v3.2-cpu.onnx'))
         self.executors = {name: ThreadPoolExecutor(max_workers=1) for name in ('stt', 'tts', 'turn')}
         self.slots = {name: asyncio.Semaphore(1) for name in self.executors}
@@ -589,9 +602,12 @@ class Provider:
             return '' if len(text.split()) >= 4 and len(set(text.lower().split())) == 1 else text
         return await self._model('stt', run)
 
-    async def synthesize(self, text, voice):
-        samples, sr = await self._model('tts', lambda: self.kokoro.create(clean_tts(text), voice=voice, speed=1.0, lang='en-us'))
-        return (np.clip(samples, -1, 1) * 32767).astype('<i2').tobytes(), int(sr)
+    def resolve_voice(self, voice):
+        return self.tts.resolve(voice)
+
+    async def synthesize(self, text, voice, on_fallback=None):
+        # Kokoro and Chatterbox share the one 'tts' slot: a session speaks one clause at a time anyway.
+        return await self._model('tts', lambda: self.tts.synthesize(clean_tts(text), voice, on_fallback))
 
     async def chat(self, messages, on_clause, reply_only=False, on_activity=None, gate=None, tools=None,
                    identity_prompt=None):
@@ -770,6 +786,9 @@ class Provider:
 
     async def close(self):
         await self.chat_http.aclose()
+        chatterbox = getattr(getattr(self, 'tts', None), 'chatterbox', None)
+        if chatterbox is not None:
+            chatterbox.close()
 
 
     async def turn_complete(self, pcm):

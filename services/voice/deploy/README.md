@@ -192,6 +192,7 @@ EnvironmentFile before switching, in particular:
 * `ROOK_VOICE_ASSISTANT_NAME` and `ROOK_VOICE_OWNER` (system prompt and tool
   descriptions; default "Rook" and "the user's");
 * `VLLM_URL`/`VLLM_MODEL`, `LLM_PRIMARY_*`, `WHISPER_*`, `VOICE_TTS_THREADS`,
+  `VOICE_TTS_DEFAULT`, `VOICE_CHATTERBOX_*` (see the service README, "Voices: Kokoro and Chatterbox"),
   `VOICE_TOOL_REASONING_EFFORT`, `VOICE_TOOL_MAX_TOKENS`;
 * `VOICE_ADMIN_DB`, `VOICE_STATE_DB`, `VOICE_IDENTITIES_FILE`, TLS paths;
 * `VOICE_TOKEN` empty plus `VOICE_ALLOW_ANONYMOUS=1` for keyless guest chat.

@@ -7,9 +7,14 @@ import org.json.JSONObject
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
-/** Voice IDs stay opaque on the wire; known Kokoro prefixes are only display labels. */
+/** Voice IDs stay opaque on the wire; known Kokoro prefixes are only display labels.
+ *  Newer servers namespace ids by engine ("kokoro:af_heart", "chatterbox:default"); a saved
+ *  bare Kokoro id still works there and is shown as its namespaced twin. */
 data class VoiceCatalog(val voices: List<String>, val default: String) {
-    fun choices(saved: String?): List<String> = (listOf(saved ?: default) + voices).distinct()
+    fun choices(saved: String?): List<String> {
+        val current = saved?.let { if (':' !in it && "kokoro:$it" in voices) "kokoro:$it" else it } ?: default
+        return (listOf(current) + voices).distinct()
+    }
     companion object {
         const val FALLBACK = "af_heart"
         fun parse(json: JSONObject): VoiceCatalog {
@@ -20,6 +25,13 @@ data class VoiceCatalog(val voices: List<String>, val default: String) {
             return VoiceCatalog(ids, default)
         }
         fun label(id: String): String {
+            val engine = id.substringBefore(':', "")
+            if (engine == "kokoro") return label(id.substringAfter(':'))
+            if (engine == "chatterbox") {
+                val name = id.substringAfter(':')
+                return if (name == "default") "Chatterbox (default)"
+                else name.split('_').joinToString(" ") { it.replaceFirstChar { c -> c.titlecase(Locale.ROOT) } } + " (Chatterbox)"
+            }
             val languages = mapOf('a' to "US", 'b' to "UK", 'e' to "Spanish", 'f' to "French", 'h' to "Hindi",
                 'i' to "Italian", 'j' to "Japanese", 'p' to "Brazilian Portuguese", 'z' to "Mandarin")
             if (id.length < 4 || id[2] != '_') return id
