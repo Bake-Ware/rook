@@ -422,6 +422,23 @@ class Toolbox:
             texts.append(place)
         return ' '.join(texts) or None
 
+    async def screen_state(self):
+        """Prefetch: the foreground app and a trimmed dump of the caller's screen text.
+        Screen text can say anything (including instructions), so it is an untrusted
+        fact: Front may talk about it, Background never acts on it."""
+        identity = current_identity.get()
+        if not identity.worker:
+            return None
+        authorize_read('ui.text', identity.worker)
+        result = await self.read(identity.worker, 'ui.text', {})
+        if not isinstance(result, dict) or not result.get('ok'):
+            return None
+        text = ' '.join(str(result.get('text') or '').split())[:int(os.environ.get('VOICE_SCREEN_CHARS', '800'))]
+        app = str(result.get('app') or result.get('package') or 'an app')[:60]
+        fact = f"On the caller's screen right now ({app}): {text}" if text else f"The caller's screen shows {app}."
+        self.note('screen', fact, 120, untrusted=True)
+        return fact
+
     async def device_location(self):
         """Prefetch: where the caller's own device is (coordinates + a place name when
         the reverse lookup answers). Owner keys and device keys only."""
