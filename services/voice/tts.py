@@ -93,6 +93,7 @@ class ChatterboxEngine:
     def __init__(self, device, python=None, voices_dir=None, spawn=None, timeout=30.0):
         self.device, self.python, self.voices_dir = device, python, voices_dir
         self.timeout = timeout
+        self.start_timeout = max(timeout, float(os.environ.get("VOICE_CHATTERBOX_START_TIMEOUT_S", "180")))
         self._spawn = spawn or self._spawn_process
         self._lock = threading.Lock()
         self._proc = None
@@ -107,10 +108,23 @@ class ChatterboxEngine:
         return subprocess.Popen([self.python, WORKER], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                 stderr=None, env=env)
 
+    def _watchdog(self, seconds):
+        """Kill the worker if it doesn't answer in time (a hung GPU would otherwise
+        block readline forever while holding the lock, stalling every reply)."""
+        proc = self._proc
+        timer = threading.Timer(seconds, lambda: proc is not None and proc.poll() is None and proc.kill())
+        timer.daemon = True
+        timer.start()
+        return timer
+
     def _start(self):
         if self.python:
             self._proc = self._spawn()
-            ready = self._read_header()
+            timer = self._watchdog(self.start_timeout)
+            try:
+                ready = self._read_header()
+            finally:
+                timer.cancel()
             if not ready.get("ready"):
                 self.close()
                 raise RuntimeError(ready.get("error") or "chatterbox worker did not start")
@@ -153,6 +167,7 @@ class ChatterboxEngine:
                 except Exception:
                     self._dead_since = time.monotonic()
                     raise
+            timer = self._watchdog(self.timeout)
             try:
                 self._proc.stdin.write((json.dumps({"text": text, "voice": name}) + "\n").encode())
                 self._proc.stdin.flush()
@@ -161,10 +176,12 @@ class ChatterboxEngine:
                     data = self._proc.stdout.read(int(head["bytes"]))
                     if len(data) != int(head["bytes"]):
                         raise RuntimeError("chatterbox worker sent short audio")
-            except Exception as error:     # the pipe is broken or out of step: drop the worker
+            except Exception as error:     # the pipe is broken, out of step or timed out: drop the worker
+                timer.cancel()
                 self.close()
                 self._dead_since = time.monotonic()
                 raise RuntimeError(f"chatterbox worker failed: {error}") from error
+            timer.cancel()
             if not head.get("ok"):         # the worker is fine; this one utterance failed
                 raise RuntimeError(head.get("error") or "chatterbox synthesis failed")
             samples = np.frombuffer(data, dtype="<i2").astype(np.float32) / 32768

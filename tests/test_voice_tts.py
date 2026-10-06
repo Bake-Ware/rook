@@ -4,6 +4,8 @@ import io
 import json
 import os
 import sys
+import threading
+import time
 
 import numpy as np
 import pytest
@@ -249,3 +251,41 @@ def test_worker_module_imports_without_torch():
     # The voice service must be able to import the worker module (in-process mode is lazy).
     import services.voice.chatterbox_worker as worker
     assert hasattr(worker, 'Synth') and hasattr(worker, 'main')
+
+
+class HangProc(FakeProc):
+    """Answers the ready line, then hangs on every request until killed (a stuck GPU)."""
+    def __init__(self):
+        super().__init__()
+        self.killed = threading.Event()
+        ready_line = self.stdout.readline()
+        outer = self
+
+        class Out:
+            def __init__(self):
+                self.lines = [ready_line]
+            def readline(self):
+                if self.lines:
+                    return self.lines.pop(0)
+                outer.killed.wait(10)
+                return b''
+            def read(self, n):
+                return b''
+        self.stdout = Out()
+
+    def write(self, data):
+        self.requests.append(json.loads(data))
+
+    def kill(self):
+        self.dead = True
+        self.killed.set()
+
+
+def test_hung_worker_is_killed_after_timeout_and_fails_fast():
+    proc = HangProc()
+    engine = tts.ChatterboxEngine('cuda:0', python='p', spawn=lambda: proc, timeout=0.3)
+    started = time.monotonic()
+    with pytest.raises(RuntimeError):
+        engine.synthesize('Hello there.', 'default')
+    assert time.monotonic() - started < 3          # not forever
+    assert proc.killed.is_set()
