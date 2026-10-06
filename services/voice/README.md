@@ -199,12 +199,32 @@ restarted at most once a minute. Chatterbox audio is resampled to Kokoro's
 24 kHz, so clients see one format. Release candidates set
 `VOICE_CHATTERBOX_DEVICE` empty and never load a second copy on the GPU.
 
-Installing the Chatterbox venv (on the GPU host, outside the voice venv):
+Installing the Chatterbox venv (on the GPU host, outside the voice venv;
+Python 3.11, torch 2.6 with CUDA 12.4 wheels):
 
 ```sh
-python3 -m venv /home/bake/voice-tts/chatterbox-turbo/.venv
-/home/bake/voice-tts/chatterbox-turbo/.venv/bin/pip install chatterbox-tts
+git clone https://github.com/resemble-ai/chatterbox.git chatterbox-src
+uv venv -p 3.11 chatterbox-turbo/.venv
+uv pip install -p chatterbox-turbo/.venv/bin/python ./chatterbox-src
 ```
+
+Environment for the voice service (the model downloads from Hugging Face on
+first load, ~10 s to load once cached):
+
+```sh
+VOICE_CHATTERBOX_DEVICE=cuda:0
+VOICE_CHATTERBOX_PYTHON=/path/to/chatterbox-turbo/.venv/bin/python
+CUDA_DEVICE_ORDER=PCI_BUS_ID      # cuda:N numbered like nvidia-smi
+# VOICE_TTS_DEFAULT=chatterbox:default   # optional; otherwise the Kokoro default stays
+```
+
+Measured on an RTX 3090 (Chatterbox Turbo, built-in voice): ~3.2-3.7 GiB of
+VRAM, first audio for a one-sentence reply ~0.65 s (Kokoro on 8 CPU threads:
+~0.43 s), real-time factor ~0.21 (Kokoro ~0.18). Chatterbox has no streaming
+API; the server synthesizes clause by clause, so first audio is the first
+clause's synthesis time. While it synthesizes it time-slices the GPU with
+anything else there (an LLM sharing the card decodes ~40% slower during
+synthesis bursts).
 
 ## Speech speed and interruption
 
