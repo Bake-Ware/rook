@@ -3,11 +3,12 @@ import {h,ago,useCss,btn} from '/account/bands/assets/manage.js';
 
 const KINDS=[
  ['server','On connect','Sent once, when an agent connects. Keep it to what every agent needs.',6000],
+ ['contact','Reaching the user','Appended to the connection instructions: how an agent contacts the person when they are not in the conversation (notifications, voice, a messaging bridge).',2000],
  ['hygiene','While working','Sent when a claimed task sits idle for 30 minutes with work since its last handoff. Placeholders: {slug} {title} {id} {idle} {actor}.',2000],
  ['tool','Tool tips','Added to the tool’s description as “Tip: …”. Agents see it when they list tools.',1000],
  ['cap','Capability tips','Attached as _tips to the first rook_call reply in a session whose cap starts with this prefix.',1000],
 ];
-const TITLES={server:'Connection instructions',hygiene:'Hygiene prompt'};
+const TITLES={server:'Connection instructions',contact:'Contacting the user',hygiene:'Hygiene prompt'};
 const SAMPLE={slug:'menu-compiler',title:'Menu compiler',id:'t_4f32…',idle:'34',actor:'agent:claude'};
 
 export async function mountGuidance(root){
@@ -23,7 +24,7 @@ export async function mountGuidance(root){
   const name=s=>TITLES[s.kind]||s.key.slice(s.key.indexOf(':')+1);
   const kind=k=>KINDS.find(x=>x[0]===k)||KINDS[3];
   function seen(s,text){
-    if(!text)return s.kind==='server'||s.kind==='hygiene'?'(nothing is sent)':'(no tip: the agent sees nothing extra)';
+    if(!text)return s.kind==='server'||s.kind==='contact'||s.kind==='hygiene'?'(nothing is sent)':'(no tip: the agent sees nothing extra)';
     if(s.kind==='hygiene')return text.replace(/\{(slug|title|id|idle|actor)\}/g,(_,k)=>SAMPLE[k]);
     if(s.kind==='tool')return 'Tip: '+text;
     if(s.kind==='cap')return '"_tips": ['+JSON.stringify(text)+']';
