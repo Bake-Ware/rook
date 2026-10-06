@@ -22,6 +22,7 @@ from .feedback import FeedbackStore
 from .identity import configured_identities, identity_for
 from .admin import AdminStore, router as admin_router
 from . import modes
+from . import pipeline
 
 VERSION = '2.0.0'
 ROOT = Path(os.environ.get('VOICE_MODEL_DIR', '.'))
@@ -213,12 +214,18 @@ async def websocket(ws: WebSocket):
                           progress_updates=hello.get('progress_updates'), identity=identity_for(supplied, live_identities))
         conn.full_duplex = protocol == 2 and hello.get('aec') is True
         conn.mode = mode
+        # Opt-in per connection; anything but an exact "front_background" stays classic.
+        conn.pipeline = pipeline.resolve(hello.get('pipeline')) if protocol == 2 else 'classic'
+        if conn.pipeline == 'front_background':
+            conn.fb = pipeline.FrontBackground(conn, background_events=hello.get('background') is True,
+                                               timers=hello.get('timers') is True)
         connections[key] = conn, queue
         credential_sockets.setdefault(credential_id, []).append((ws, conn))
         credential_sessions.setdefault(credential_id, set()).add(key)
+        extra = {'pipeline': conn.pipeline} if conn.fb else {}
         await conn.emit('session', conversation=conversation, protocol=protocol, version=VERSION, full_duplex=conn.full_duplex,
                         mode=conn.mode.id, custom_mode=conn.mode.custom, thinking=conn.thinking,
-                        activity=conn.activity_enabled)
+                        activity=conn.activity_enabled, **extra)
         await conn.emit('state', state='listening', turn=conn.epoch)
         for job in app.state.store.jobs(key):
             await conn.emit('tool', id=job['id'], title=job['name'], status=job['status'])
@@ -240,6 +247,9 @@ async def websocket(ws: WebSocket):
                 if event.get('type') == 'tool':
                     conn.drain_results()
         sender = asyncio.create_task(progress())
+        if conn.fb:
+            conn.fb.resend_timers()
+            conn.fb.prefetch('session')
         vad = webrtcvad.Vad(3)
         preroll = deque(maxlen=10)
         utterance = bytearray()
@@ -269,6 +279,8 @@ async def websocket(ws: WebSocket):
                     if analysis is not None:
                         analysis.cancel(); analysis = None
                     if not utterance:
+                        if conn.fb:
+                            conn.fb.prefetch('speech')
                         utterance.extend(b''.join(preroll))
                         preroll.clear()
                     utterance.extend(data)
@@ -311,15 +323,26 @@ async def websocket(ws: WebSocket):
                     if kind == 'stop':
                         utterance.clear(); preroll.clear(); speech = silence = 0
                         conn.receiving_speech = False
+                        if conn.fb:
+                            # Stop means stop: results still on their way stay silent.
+                            # Before interrupt, so no waiting follow-up starts in between.
+                            conn.fb.drop_followups()
                         await conn.interrupt()
                     elif kind == 'client_state':
+                        was_sleeping = conn.sleeping
                         conn.sleeping = msg.get('mode') in ('sleep', 'off')
                         if conn.sleeping:
                             conn.progress.cancel_speech()
+                        elif was_sleeping and conn.fb:
+                            conn.fb.prefetch('wake')
+                    elif kind == 'timer' and conn.fb:
+                        conn.fb.client_timer(msg)
                     elif kind == 'speech_start' and conn.full_duplex:
                         conn.last_speech = time.monotonic()
                         speech_permission_until = time.monotonic() + 35
                         conn.receiving_speech = True
+                        if conn.fb:
+                            conn.fb.drop_followups()
                         await conn.interrupt()
                     elif kind == 'audio_config':
                         conn.full_duplex = protocol == 2 and msg.get('aec') is True

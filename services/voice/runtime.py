@@ -41,6 +41,9 @@ class Connection:
         self.audio_played = {}
         self.timing = None
         self.mode = Mode()
+        # 'classic' (default) or 'front_background' (hello opt-in); see pipeline.py.
+        self.pipeline = 'classic'
+        self.fb = None
         self.thinking = protocol == 2 and thinking is True
         self.enqueue = enqueue
         self.outbox = None
@@ -216,6 +219,11 @@ class Connection:
                 self.activity_event('heard', epoch, 'Heard you', detail=text or 'Describe this image.')
                 self.store.append(self.session, "user", {"text": (text or "Describe this image.") +
                                                          (" [image attached]" if image else "")})
+            if self.fb is not None and not internal and not image:
+                # Fast Front reply plus a parallel Background worker; no planner call here.
+                decision_reason = 'front_background pipeline'
+                await self.fb.turn(epoch, text, timing)
+                return
             # The planner appends the personal-data policy (agent modes only).
             system = self.mode.system(self.provider.system)
             messages = [{"role": "system", "content": system}] + self.store.messages(self.session)
@@ -367,7 +375,9 @@ class Connection:
         finally:
             current_identity.reset(identity_token)
             self.finish_decision(epoch, decision_reason)
-            timed = timing.finish(turn_status)
+            timing.front_status = turn_status
+            # front_background logs the line once Background (and its follow-up) finish.
+            timed = timing.finish(turn_status, emit=not getattr(timing, 'deferred', False))
             if self.timing is timing:
                 self.timing = None
             self.activity_event('done', epoch, 'Turn finished', status=turn_status,
@@ -379,7 +389,7 @@ class Connection:
                 await self.emit("metrics", turn=epoch, duration_ms=int((time.monotonic()-started)*1000))
                 asyncio.get_running_loop().call_soon(self.drain_results)
 
-    async def say(self, text, epoch, progress_job=None):
+    async def say(self, text, epoch, progress_job=None, record=True, on_audio=None):
         if epoch != self.epoch or self.closed or not text.strip():
             return
         if progress_job is not None:
@@ -400,9 +410,9 @@ class Connection:
         # Dictation mode speaks only read-backs and confirmations: none of it is
         # conversation, and read-back would copy the dictated text into model history.
         speaking = self.speak_out or progress_job is not None
-        if self.mode.uses_model and (progress_job is None or self.mode.agent):
-            record = text if not speaking else "[Spoken response generated; playback may be interrupted] " + text
-            self.store.append(self.session, "assistant", {"text": record})
+        if self.mode.uses_model and record and (progress_job is None or self.mode.agent):
+            entry = text if not speaking else "[Spoken response generated; playback may be interrupted] " + text
+            self.store.append(self.session, "assistant", {"text": entry})
         # Reply is on the websocket path and history is committed before any
         # advisory request can begin. No shadow network or DB operation is awaited.
         if not speaking:
@@ -423,6 +433,8 @@ class Connection:
             if offset == 0:
                 if timing:
                     timing.mark('first_audio_ms')
+                if on_audio:
+                    on_audio()
                 if progress_job is None:
                     self.dispatch_decision(epoch)
                 else:
@@ -516,6 +528,8 @@ class Connection:
         self.closed = True
         await self.interrupt()
         await self.progress.close()
+        if self.fb:
+            await self.fb.close()
         if self.shadow:
             await self.shadow.close()
         if self.activity:

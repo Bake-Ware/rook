@@ -140,7 +140,7 @@ READ_CAPS = {
     "file.read", "file.list", "file.exists", "file.search",
     "shell.which", "shell.env.get", "shell.env.list",
     "battery.status", "device.info", "location.get",
-    "notify.list", "sms.list", "calllog.list", "contacts.search",
+    "notify.list", "sms.list", "calllog.list", "contacts.search", "calendar.list",
     "deluge.list", "deluge.status", "deluge.files",
     "hermes.status", "hermes.memory.read", "hermes.memory.status",
     "hermes.sessions.list", "hermes.skills.list", "hermes.skills.search", "hermes.mcp.list",

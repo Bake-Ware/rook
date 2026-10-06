@@ -291,6 +291,44 @@ start). `endpoint_ms` is the end-of-utterance wait, `stt_ms` the transcription,
 `total_ms` the end of the turn. Missing keys mean the stage did not happen
 (typed, unspoken or tool-only turns). No transcript or reply text is logged.
 
+In the `front_background` pipeline the line is written once Background (and
+its follow-up) finished, and adds `front_first_token_ms`,
+`front_first_audio_ms`, `background_ms` and `followup_ms` (first follow-up
+audio); the same object is in the Background `done` event.
+
+## Front/Background pipeline (opt-in)
+
+Design: [docs/design/voice-front-background.md](../../docs/design/voice-front-background.md).
+A connection opts in with hello `"pipeline": "front_background"` (protocol 2);
+anything else, or no field, keeps the classic planner path unchanged. Code:
+`pipeline.py` (orchestration, Background agent, `background` events),
+`front.py` (prompt layout and streaming), `board.py`, `policy.py` (tool table),
+`bgtools.py` (timers, weather, calendar, mail, Rook tasks, music, Home Assistant).
+
+* Front: one streaming completion per turn to `VLLM_URL`/`VLLM_MODEL`, no tools,
+  thinking off. Prompt = fixed block (persona, rules, mode) + board + last
+  `VOICE_FRONT_TURNS` (6) exchanges + utterance. `VOICE_FRONT_MAX_TOKENS` (200),
+  `VOICE_FRONT_TIMEOUT_S` (30).
+* Background: the thinking agent's tool loop with only the policy tools, effort
+  `VOICE_BACKGROUND_EFFORT` (`low`), `VOICE_BACKGROUND_MAX_STEPS` (8),
+  `VOICE_BACKGROUND_TIMEOUT_S` (120). It sees only the user's own lines and
+  trusted board facts; after any tool that returns outside text (web, mail,
+  calendar, device or hub reads) the rest of that run has no acting tools.
+  Follow-ups wait up to `VOICE_FOLLOWUP_WAIT_S` (90) for Front to finish.
+* Prefetch (session start, wake, speech onset when older than
+  `VOICE_PREFETCH_EVERY_S` (120)): clock, caller device battery, timers, owner
+  tasks; bounded by `VOICE_PREFETCH_TIMEOUT_S` (4).
+* `background` events go only to owner keys whose hello had `background: true`;
+  `timer` events and timer tools need hello `timers: true`.
+* Weather: Open-Meteo, device location when the key may read its device, else
+  `VOICE_HOME_LAT`/`VOICE_HOME_LON`; `VOICE_WEATHER_UNITS` (`celsius` or
+  `fahrenheit`), `VOICE_TZ` (IANA zone for "at 7pm" timers; default host zone).
+* Music: `VOICE_PIANOBAR_WORKER` (worker holding `cmd.pianobar-*`).
+* Home Assistant: `VOICE_HASS_URL`, `VOICE_HASS_TOKEN` (from the secret store
+  at deploy time, never in a file in Git), `VOICE_HASS_VERIFY_TLS=0` for a
+  self-signed certificate. Lights, switches, scenes and media players only;
+  services turn_on/turn_off/toggle, scene activate, media play/pause/next.
+
 ## Deployment
 
 See [deploy/README.md](deploy/README.md): releases are built from a commit,

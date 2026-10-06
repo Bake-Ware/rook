@@ -12,7 +12,10 @@ import os
 import sys
 import time
 
-FIELDS = ('endpoint_ms', 'stt_ms', 'plan_ms', 'llm_ms', 'first_text_ms', 'first_audio_ms', 'total_ms')
+FIELDS = ('endpoint_ms', 'stt_ms', 'plan_ms', 'llm_ms', 'first_text_ms', 'first_audio_ms', 'total_ms',
+          # front_background pipeline only: Front's first streamed token and first
+          # audio packet, Background's completion, and the follow-up's first audio.
+          'front_first_token_ms', 'front_first_audio_ms', 'background_ms', 'followup_ms')
 
 log = logging.getLogger('voice.timing')
 if os.environ.get('VOICE_TIMING_LOG', '1') != '0' and not log.handlers:
@@ -49,8 +52,16 @@ class TurnTiming:
     def fields(self):
         return {'source': self.source, **{k: self.marks[k] for k in FIELDS if k in self.marks}}
 
-    def finish(self, status, now=None):
+    def finish(self, status, now=None, emit=True):
+        """Close the spoken turn. ``emit=False`` defers the log line to a later
+        :meth:`log` (front_background: once Background and its follow-up finish)."""
         self.mark('total_ms', now)
+        fields = self.fields()
+        if emit:
+            self.log(status)
+        return fields
+
+    def log(self, status):
         fields = self.fields()
         log.info(json.dumps({'event': 'voice_turn_timing', 'turn': self.turn, 'status': status, **fields},
                             separators=(',', ':')))
