@@ -122,7 +122,10 @@ from .pianobar_tts import install as install_pianobar_tts
 
 
 def _pianobar_voice_authorized(supplied):
-    return bool(supplied) and hashlib.sha256(supplied.encode()).hexdigest() in ADMIN.mappings(IDENTITIES)
+    """Same rule as the chat socket: a valid key, or no key at all when guests are allowed."""
+    if not supplied:
+        return guest_allowed(supplied)
+    return hashlib.sha256(supplied.encode()).hexdigest() in ADMIN.mappings(IDENTITIES)
 
 
 install_pianobar_tts(app, _pianobar_voice_authorized)
