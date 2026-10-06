@@ -110,7 +110,7 @@ async def test_operator_edits_apply_live_with_history_and_reset(tmp_path):
         await env.http.post(api, headers=admin, json={"csrf": "k", "action": "set", "key": "tool:rook_caps", "text": ""})
         await env.http.post(api, headers=admin, json={"csrf": "k", "action": "set", "key": "cap:info.", "text": "Cheap; safe to call first."})
         init, rpc = await env.connect()
-        assert init["instructions"] == "Be brief."
+        assert init["instructions"] == "Be brief.\n\n" + guidance_mod.DEFAULTS["contact"]
         tools = {t["name"]: t["description"] for t in (await rpc("tools/list", {}))["tools"]}
         assert "Tip:" not in tools["rook_caps"]  # empty text disables the tip
         res = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "info.host", "worker": "gpu-box"}}))
@@ -119,7 +119,7 @@ async def test_operator_edits_apply_live_with_history_and_reset(tmp_path):
         assert hist[0] == {"text": "Be brief.", "ts": hist[0]["ts"], "actor": "human:operator"}
         await env.http.post(api, headers=admin, json={"csrf": "k", "action": "reset", "key": "server"})
         init, _ = await env.connect()
-        assert init["instructions"] == guidance_mod.DEFAULTS["server"]
+        assert init["instructions"] == guidance_mod.DEFAULTS["server"] + "\n\n" + guidance_mod.DEFAULTS["contact"]
         slot = next(s for s in (await env.http.get(api, headers=admin)).json()["slots"] if s["key"] == "cap:info.")
         assert slot["edited"] and slot["default"] is None and slot["actor"] == "human:operator"
 
@@ -146,3 +146,10 @@ def test_every_default_key_is_valid_within_limits_and_host_neutral():
         assert not re.search(r"\d\s*[KMG]i?B\b", text), key  # no point-in-time size estimates
         assert guidance_mod.KEY.match(key), key
         assert len(text) <= guidance_mod.LIMITS.get(key, guidance_mod.MAX_TIP), key
+
+
+def test_contact_slot_is_appended_and_can_be_cleared():
+    from rook.band_mcp.guidance import compose_instructions
+    assert compose_instructions("Server.", "Call Sam.") == "Server.\n\nCall Sam."
+    assert compose_instructions("Server.", "") == "Server."
+    assert "notify.post" in guidance_mod.DEFAULTS["contact"] and "voice.speak" in guidance_mod.DEFAULTS["contact"]

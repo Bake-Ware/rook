@@ -434,7 +434,7 @@ async def mcp_hub(tmp_path, monkeypatch):
             return body["result"].get("instructions")
         yield SimpleNamespace(mcp=mcp, initialize=initialize,
                               plugin=mcp._rook_hub.plugin("persona"),
-                              server_text=mcp._rook_guidance[0].get("server"))
+                              server_text=mcp._rook_guidance[0].get("server") + "\n\n" + mcp._rook_guidance[0].get("contact"))
 
 
 @pytest.mark.asyncio
