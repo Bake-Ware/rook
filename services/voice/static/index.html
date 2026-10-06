@@ -56,6 +56,15 @@
   </div>
   <div class="hint">Uses your mic · talk naturally · press Space or tap the orb to interrupt · talk to interrupt when browser echo cancellation is available</div>
 </div>
+<div id="sayBox" style="width:min(560px,92vw);margin-top:14px;display:flex;flex-direction:column;gap:6px">
+  <label for="sayText" style="font-size:12px;color:#7a8299">Speak this</label>
+  <textarea id="sayText" rows="3" maxlength="4000" placeholder="Type something for the selected voice to say. Ctrl+Enter speaks." style="width:100%;background:#141824;color:#e6e6e6;border:1px solid #26314d;border-radius:8px;padding:6px 8px;font:14px system-ui"></textarea>
+  <div style="display:flex;gap:10px;align-items:center;justify-content:flex-end">
+    <span class="hint" id="sayStatus" style="margin-right:auto"></span>
+    <button id="sayStop" type="button" hidden style="background:none;border:0;color:#f7768e;font-size:13px;cursor:pointer">Stop</button>
+    <button id="sayBtn" type="button" style="background:#7aa2f7;color:#0b0e14;border:0;border-radius:8px;padding:6px 14px;font-size:13px;font-weight:600;cursor:pointer">Speak</button>
+  </div>
+</div>
 <div id="log"></div>
 <script>
 const orb=document.getElementById('orb'), statusEl=document.getElementById('status'),
@@ -201,6 +210,52 @@ async function loadVoices(){ try{ const r=await fetch("/voices"); const d=await 
   sel.onchange=()=>{ if(ws&&ws.readyState===1) ws.send(JSON.stringify({type:"voice",voice:sel.value})); };
 }catch(e){} }
 loadVoices();
+
+// "Speak this": the selected voice reads the box aloud through /api/voice (same key as the
+// chat connection). No mic or session needed; nothing is added to the conversation.
+const sayText=document.getElementById('sayText'), sayBtn=document.getElementById('sayBtn'),
+      sayStop=document.getElementById('sayStop'), sayStatus=document.getElementById('sayStatus');
+let sayRun=0, sayAudio=null;
+function sayChunks(text){
+  const out=[]; let cur='';
+  for(const part of text.replace(/\s+/g,' ').match(/[^.!?]+[.!?]*\s*|[.!?]+\s*/g)||[text]){
+    if(cur && (cur+part).length>600){ out.push(cur.trim()); cur=''; }
+    cur+=part;
+    while(cur.length>600){ out.push(cur.slice(0,600)); cur=cur.slice(600); }
+  }
+  if(cur.trim()) out.push(cur.trim());
+  return out;
+}
+async function sayFetch(text, voice, token){
+  const r=await fetch('/api/voice',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
+                                    body:JSON.stringify({text,voice})});
+  if(!r.ok){ let msg=r.status+''; try{ msg=(await r.json()).detail||msg; }catch(e){} throw new Error(msg); }
+  return URL.createObjectURL(await r.blob());
+}
+function sayStopAll(){ sayRun++; if(sayAudio){ sayAudio.pause(); sayAudio=null; } sayStop.hidden=true; sayBtn.disabled=false; }
+async function speakThis(){
+  const text=sayText.value.trim(); if(!text) return;
+  const token=new URLSearchParams(location.search).get('token')||lsGet('voice_token')||'';
+  if(!token){ sayStatus.textContent='Needs a voice key: open this page with ?token=…'; return; }
+  sayStopAll(); const run=sayRun, voice=document.getElementById('voiceSel').value;
+  const chunks=sayChunks(text); sayStop.hidden=false; sayBtn.disabled=true;
+  try{
+    let next=sayFetch(chunks[0], voice, token);
+    for(let i=0;i<chunks.length;i++){
+      sayStatus.textContent=chunks.length>1?('Speaking '+(i+1)+'/'+chunks.length+'…'):'Speaking…';
+      const url=await next; if(run!==sayRun){ URL.revokeObjectURL(url); return; }
+      // The server synthesizes one request at a time: fetch the next part only once this one is in hand.
+      next=i+1<chunks.length?sayFetch(chunks[i+1], voice, token):null; if(next) next.catch(()=>{});
+      sayAudio=new Audio(url);
+      await new Promise((done,fail)=>{ sayAudio.onended=done; sayAudio.onerror=()=>fail(new Error('playback failed')); sayAudio.onpause=done; sayAudio.play().catch(fail); });
+      URL.revokeObjectURL(url); if(run!==sayRun) return;
+    }
+    sayStatus.textContent='';
+  }catch(e){ if(run===sayRun) sayStatus.textContent='Could not speak: '+e.message; }
+  finally{ if(run===sayRun){ sayStop.hidden=true; sayBtn.disabled=false; sayAudio=null; } }
+}
+sayBtn.onclick=speakThis; sayStop.onclick=()=>{ sayStopAll(); sayStatus.textContent='Stopped'; };
+sayText.addEventListener('keydown',e=>{ if(e.key==='Enter' && (e.ctrlKey||e.metaKey)){ e.preventDefault(); speakThis(); } });
 const modeSel=document.getElementById('modeSel'), modePrompt=document.getElementById('modePrompt'), modeBox=document.getElementById('modeBox');
 const MODE_HINT={assistant:'Full agent: answers, lookups and tasks.',dictate:'Transcribes only. Say “read it back”, “scratch that”, “start over” or “I’m done”.'};
 function wantedMode(){ return lsGet('voice_mode')||'assistant'; }
