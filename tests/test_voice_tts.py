@@ -30,8 +30,10 @@ class FakeChatterbox:
     voices = ['default', 'warm']
     sample_rate = 24000
 
-    def __init__(self, fail=False, sr=24000):
+    def __init__(self, fail=False, sr=24000, voices=None):
         self.calls, self.fail, self.sr = [], fail, sr
+        if voices is not None:
+            self.voices = list(voices)
 
     def synthesize(self, text, name):
         self.calls.append((text, name))
@@ -46,7 +48,7 @@ class FakeChatterbox:
 # --- ids --------------------------------------------------------------------
 @pytest.mark.parametrize('raw,expected', [
     ('kokoro:af_nova', ('kokoro', 'af_nova')),
-    ('af_nova', ('kokoro', 'af_nova')),             # legacy bare id = Kokoro
+    ('af_nova', (None, 'af_nova')),                 # bare id: the engine comes from the catalog
     ('chatterbox:default', ('chatterbox', 'default')),
     ('Chatterbox: warm ', ('chatterbox', 'warm')),
     ('piper:amy', None), ('chatterbox:', None), ('', None), (None, None), (42, None), ('x' * 200, None),
@@ -62,33 +64,40 @@ def test_strip_tags_removes_sound_tags_only():
 
 
 # --- catalog ----------------------------------------------------------------
-def test_catalog_kokoro_only_lists_namespaced_ids_and_reports_chatterbox_missing():
+def test_catalog_kokoro_only_lists_bare_ids_and_reports_chatterbox_missing():
     cat = tts.Catalog(FakeKokoro(), 'af_heart', None, RuntimeError('no torch'), default='chatterbox:default')
     d = cat.describe()
-    assert d['voices'] == ['kokoro:af_heart', 'kokoro:af_nova', 'kokoro:bf_emma']
-    assert d['default'] == 'kokoro:af_heart'          # chatterbox default unavailable -> Kokoro default
+    assert d['voices'] == ['af_heart', 'af_nova', 'bf_emma']
+    assert d['default'] == 'af_heart'          # chatterbox default unavailable -> Kokoro default
     assert d['engines']['chatterbox'] == {'available': False, 'error': 'no torch'}
     assert {e['engine'] for e in d['catalog']} == {'kokoro'}
     assert d['catalog'][0]['label'] == 'Heart (US female)'
-    assert cat.resolve('chatterbox:default') is None
+    assert cat.resolve('chatterbox:default') is None and cat.resolve('default') is None
 
 
-def test_catalog_with_both_engines():
+def test_catalog_with_both_engines_uses_bare_ids():
     cat = tts.Catalog(FakeKokoro(), 'af_heart', FakeChatterbox(), default='chatterbox:default')
-    assert cat.default == 'chatterbox:default'
-    assert 'chatterbox:warm' in cat.voices and 'kokoro:bf_emma' in cat.voices
+    assert cat.default == 'default'
+    assert cat.voices == ['af_heart', 'af_nova', 'bf_emma', 'default', 'warm']
     entries = {e['id']: e for e in cat.describe()['catalog']}
-    assert entries['chatterbox:default']['engine'] == 'chatterbox'
-    assert entries['chatterbox:default']['label'] == 'Chatterbox (default)'
+    assert entries['default']['engine'] == 'chatterbox' and entries['af_nova']['engine'] == 'kokoro'
+    assert entries['default']['label'] == 'Chatterbox (default)' and entries['warm']['label'] == 'Warm'
     assert cat.describe()['engines']['chatterbox'] == {'available': True}
-    assert cat.resolve('bf_emma') == 'kokoro:bf_emma'     # legacy id still selects Kokoro
-    assert cat.resolve('kokoro:nope') is None
-    assert cat.supports_tags('chatterbox:warm') and not cat.supports_tags('af_heart')
+    assert cat.resolve('warm') == 'warm' and cat.resolve('chatterbox:warm') == 'warm'   # old form still works
+    assert cat.resolve('kokoro:bf_emma') == 'bf_emma'
+    assert cat.resolve('kokoro:warm') is None and cat.resolve('kokoro:nope') is None   # engine must match
+    assert cat.supports_tags('warm') and cat.supports_tags('chatterbox:warm') and not cat.supports_tags('af_heart')
 
 
-def test_catalog_default_accepts_legacy_and_bad_ids():
-    assert tts.Catalog(FakeKokoro(), 'af_heart', default='af_nova').default == 'kokoro:af_nova'
-    assert tts.Catalog(FakeKokoro(), 'missing', default='junk:1').default == 'kokoro:af_heart'
+def test_chatterbox_clip_named_like_a_kokoro_voice_is_skipped():
+    cat = tts.Catalog(FakeKokoro(), 'af_heart', FakeChatterbox(voices=('default', 'af_nova')))
+    assert cat.voices.count('af_nova') == 1 and cat.engine_of('af_nova') == 'kokoro'
+    assert 'default' in cat.voices
+
+
+def test_catalog_default_accepts_old_and_bad_ids():
+    assert tts.Catalog(FakeKokoro(), 'af_heart', default='kokoro:af_nova').default == 'af_nova'
+    assert tts.Catalog(FakeKokoro(), 'missing', default='junk:1').default == 'af_heart'
 
 
 # --- synthesis --------------------------------------------------------------
@@ -133,7 +142,7 @@ def test_resolve_voice_helper_supports_catalog_and_plain_providers():
         def resolve_voice(self, v):
             return self.tts.resolve(v)
     assert tts.resolve_voice(Plain(), 'test') == 'test' and tts.resolve_voice(Plain(), 'x') is None
-    assert tts.resolve_voice(WithCatalog(), 'af_nova') == 'kokoro:af_nova'
+    assert tts.resolve_voice(WithCatalog(), 'kokoro:af_nova') == 'af_nova'
 
 
 # --- loading ----------------------------------------------------------------
@@ -234,8 +243,8 @@ def test_session_reports_fallback_once():
         await conn.synthesize('Again.', 0)
         errors = [m for m in sent if m.get('type') == 'error']
         assert len(errors) == 1 and errors[0]['code'] == 'tts_fallback'
-        conn.voice = conn.provider.resolve_voice('af_nova')   # per-session switch, legacy id
-        assert conn.voice == 'kokoro:af_nova'
+        conn.voice = conn.provider.resolve_voice('kokoro:af_nova')   # per-session switch, old id form
+        assert conn.voice == 'af_nova'
     asyncio.run(scenario())
 
 

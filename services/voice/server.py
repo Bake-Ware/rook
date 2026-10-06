@@ -129,7 +129,7 @@ async def voices():
     provider = app.state.provider
     tts = getattr(provider, 'tts', None)
     if tts is not None:
-        # voices: engine-namespaced ids (kokoro:af_heart, chatterbox:default); catalog adds engine + label.
+        # voices: bare ids, unique across engines (af_heart, sojourn); catalog adds engine + label.
         return tts.describe()
     return {'voices': provider.voices, 'default': provider.default_voice}
 

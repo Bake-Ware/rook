@@ -192,11 +192,11 @@ function teardown(){ running=false; btn.textContent='Connect'; btn.classList.rem
   try{inputCtx&&inputCtx.close()}catch(e){} try{outputCtx&&outputCtx.close()}catch(e){} }
 const LANG={a:"US",b:"UK",e:"ES",f:"FR",h:"HI",i:"IT",j:"JP",p:"BR",z:"ZH"};
 function vlabel(v){ const nm=v.slice(3); const lang=LANG[v[0]]||v[0].toUpperCase(); const sx=v[1]==="f"?"♀":v[1]==="m"?"♂":""; return nm.charAt(0).toUpperCase()+nm.slice(1)+" · "+lang+" "+sx; }
-// Ids are engine-namespaced ("kokoro:af_heart", "chatterbox:default"); older servers send bare Kokoro ids.
+// Ids are bare names ("af_heart", "sojourn"); the catalog gives each one's engine. Some servers sent "engine:name".
 async function loadVoices(){ try{ const r=await fetch("/voices"); const d=await r.json(); const sel=document.getElementById("voiceSel"); sel.innerHTML="";
   const order=["chatterbox","a","b","e","f","i","p","h","j","z"]; const GN={chatterbox:"Chatterbox (expressive)",a:"English (US)",b:"English (UK)",e:"Spanish",f:"French",i:"Italian",p:"Portuguese",h:"Hindi",j:"Japanese",z:"Chinese"};
-  const groups={}, labels={}; for(const e of (d.catalog||[])) labels[e.id]=e.label;
-  for(const v of d.voices){ const i=v.indexOf(":"), eng=i<0?"kokoro":v.slice(0,i), nm=i<0?v:v.slice(i+1); const g=eng==="kokoro"?nm[0]:eng; (groups[g]=groups[g]||[]).push([v,eng==="kokoro"?vlabel(nm):(labels[v]||nm)]); }
+  const groups={}, labels={}, engines={}; for(const e of (d.catalog||[])){ labels[e.id]=e.label; engines[e.id]=e.engine; }
+  for(const v of d.voices){ const i=v.indexOf(":"), eng=engines[v]||(i<0?"kokoro":v.slice(0,i)), nm=i<0?v:v.slice(i+1); const g=eng==="kokoro"?nm[0]:eng; (groups[g]=groups[g]||[]).push([v,eng==="kokoro"?vlabel(nm):(labels[v]||nm)]); }
   for(const g of order.concat(Object.keys(groups).filter(k=>!order.includes(k)))){ if(!groups[g]) continue; const og=document.createElement("optgroup"); og.label=GN[g]||g; for(const [v,lb] of groups[g]){ const o=document.createElement("option"); o.value=v; o.textContent=lb; if(v===d.default) o.selected=true; og.appendChild(o); } sel.appendChild(og); }
   sel.onchange=()=>{ if(ws&&ws.readyState===1) ws.send(JSON.stringify({type:"voice",voice:sel.value})); };
 }catch(e){} }

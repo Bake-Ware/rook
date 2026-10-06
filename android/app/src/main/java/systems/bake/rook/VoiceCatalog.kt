@@ -8,11 +8,19 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 /** Voice IDs stay opaque on the wire; known Kokoro prefixes are only display labels.
- *  Newer servers namespace ids by engine ("kokoro:af_heart", "chatterbox:default"); a saved
- *  bare Kokoro id still works there and is shown as its namespaced twin. */
+ *  Servers send bare ids, unique across engines ("af_heart", "sojourn"). Some sent
+ *  "engine:name"; a saved id in either form is shown as its twin from the list. */
 data class VoiceCatalog(val voices: List<String>, val default: String) {
     fun choices(saved: String?): List<String> {
-        val current = saved?.let { if (':' !in it && "kokoro:$it" in voices) "kokoro:$it" else it } ?: default
+        val current = saved?.let { id ->
+            val bare = id.substringAfter(':')
+            when {
+                id in voices -> id
+                bare in voices -> bare
+                "kokoro:$id" in voices -> "kokoro:$id"
+                else -> id
+            }
+        } ?: default
         return (listOf(current) + voices).distinct()
     }
     companion object {
@@ -26,17 +34,14 @@ data class VoiceCatalog(val voices: List<String>, val default: String) {
         }
         fun label(id: String): String {
             val engine = id.substringBefore(':', "")
-            if (engine == "kokoro") return label(id.substringAfter(':'))
-            if (engine == "chatterbox") {
-                val name = id.substringAfter(':')
-                return if (name == "default") "Chatterbox (default)"
-                else name.split('_').joinToString(" ") { it.replaceFirstChar { c -> c.titlecase(Locale.ROOT) } } + " (Chatterbox)"
-            }
+            if (engine == "kokoro" || engine == "chatterbox") return label(id.substringAfter(':'))
+            if (id == "default") return "Chatterbox (default)"
+            val titled = id.split('_').joinToString(" ") { it.replaceFirstChar { c -> c.titlecase(Locale.ROOT) } }
             val languages = mapOf('a' to "US", 'b' to "UK", 'e' to "Spanish", 'f' to "French", 'h' to "Hindi",
                 'i' to "Italian", 'j' to "Japanese", 'p' to "Brazilian Portuguese", 'z' to "Mandarin")
-            if (id.length < 4 || id[2] != '_') return id
-            val language = languages[id[0]] ?: return id
-            val gender = when (id[1]) { 'f' -> "female"; 'm' -> "male"; else -> return id }
+            if (id.length < 4 || id[2] != '_') return titled
+            val language = languages[id[0]] ?: return titled
+            val gender = when (id[1]) { 'f' -> "female"; 'm' -> "male"; else -> return titled }
             val name = id.substring(3).split('_').joinToString(" ") { it.replaceFirstChar { c -> c.titlecase(Locale.ROOT) } }
             return "$name ($language $gender)"
         }
