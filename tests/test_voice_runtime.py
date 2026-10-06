@@ -88,7 +88,7 @@ class Provider:
     default_voice='test'
     system='test'
     async def transcribe(self, pcm): return 'hello'
-    async def chat(self, messages, on_clause, reply_only=False):
+    async def chat(self, messages, on_clause, reply_only=False, **kwargs):
         await on_clause('Hello.')
         return 'Hello.',[]
     async def synthesize(self,text,voice): return b'\0'*3200,16000
@@ -128,7 +128,8 @@ def test_failed_and_timed_out_tools_are_terminal_not_success():
         ids=[jobs.start('s',name,{},[]) for name in ['fail','hang']]
         await asyncio.gather(*list(jobs.tasks.values()))
         assert all(store.job(jid,'s')['status']=='failed' for jid in ids)
-        assert all('private tool response' not in store.job(jid,'s')['result'] for jid in ids)
+        assert 'private tool response' in store.job(ids[0],'s')['result']
+        assert 'timed out or disconnected' in store.job(ids[1],'s')['result']
         await jobs.close()
     run(scenario)
 
@@ -136,7 +137,7 @@ def test_failed_and_timed_out_tools_are_terminal_not_success():
 def test_model_failure_does_not_leave_tts_consumer_waiting():
     async def scenario():
         class Broken(Provider):
-            async def chat(self,messages,on_clause,reply_only=False): raise ValueError('bad model')
+            async def chat(self,messages,on_clause,reply_only=False, **kwargs): raise ValueError('bad model')
         events=[]
         async def send(e): events.append(e)
         async def audio(b): pass
@@ -157,7 +158,7 @@ def test_cancel_job_cannot_cross_sessions():
     with pytest.raises(ValueError): jobs.cancel('bob',jid)
 
 
-def test_planner_retries_missing_call_before_speaking_or_starting_work():
+def test_planner_retries_missing_call_before_speaking_or_starting_work(monkeypatch):
     import ast
     from pathlib import Path
     from types import SimpleNamespace
@@ -166,6 +167,7 @@ def test_planner_retries_missing_call_before_speaking_or_starting_work():
     chat=next(n for n in provider.body if isinstance(n,ast.AsyncFunctionDef) and n.name=='chat')
     requests=[];spoken=[]
     class Response:
+        status_code = 200
         def __init__(self,index):self.index=index
         def raise_for_status(self):pass
         def json(self):
@@ -178,13 +180,20 @@ def test_planner_retries_missing_call_before_speaking_or_starting_work():
         async def post(self,url,json):
             requests.append(json)
             return Response(len(requests))
-    namespace={'httpx':SimpleNamespace(AsyncClient=Client),'VLLM_URL':'local','VLLM_MODEL':'model','TOOLS':[], 'json':json,'split_sentences':lambda t:([],t)}
-    exec(compile(ast.Module(body=[chat],type_ignores=[]),'planner-test','exec'),namespace)
+    from services.voice import providers
+    monkeypatch.setattr(providers.httpx, 'AsyncClient', Client)
+    monkeypatch.setattr(providers, 'log_rejected_plan', lambda *args: None)
+    from services.voice.workers import WorkerInventory
+    monkeypatch.setattr(providers, 'inventory', WorkerInventory())   # no live worker enum from other tests
+    namespace={'chat':providers.Provider.chat}
     async def scenario():
         async def on_clause(text):spoken.append(text)
+        from services.voice.identity import Identity, current_identity
+        current_identity.set(Identity('Alex', owner=True))
         text,calls=await namespace['chat'](None,[{'role':'system','content':'policy'},{'role':'user','content':'Check uptime'}],on_clause)
         assert text=='' and calls[0]['function']['name']=='rook_read'
         assert not spoken and len(requests)==2
         assert all(m['role']!='system' for m in requests[0]['messages'][1:])
-        assert requests[0]['tool_choice']=='required'
+        assert requests[0]['response_format']['type']=='json_schema'
+        assert 'tools' not in requests[0]
     run(scenario)

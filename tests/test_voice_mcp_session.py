@@ -1,13 +1,17 @@
 """The voice agent must not exhaust the hub's MCP session table (2026-09-23
-outage): one shared session per process, re-established when the hub drops it."""
+outage): one shared session per process, re-established when the hub drops it,
+and capability schemas described only when new, changed or stale."""
 import asyncio
 import json
+import time
 
 import httpx
+import pytest
 from mcp.server.fastmcp import FastMCP
 
-from services.voice import rookmcp
+from services.voice import rookmcp, workers
 from services.voice.rookmcp import RookMCP
+from services.voice.workers import WorkerInventory
 
 
 def hub():
@@ -49,3 +53,42 @@ def test_calls_share_one_session_and_recover_when_the_hub_drops_it(monkeypatch):
             assert len(inits) == 3
     asyncio.run(scenario())
 
+
+def test_schemas_are_described_only_when_new_changed_or_stale(monkeypatch):
+    pytest.importorskip('numpy')   # refresh_schemas imports providers (audio deps); runs on the voice host
+    roster = [{'name': 'gpu-box', 'caps': ['info.host']}, {'name': 'phone', 'caps': ['battery.status']}]
+    described, broken = [], set()
+    class MCP:
+        async def call(self, tool, args):
+            if tool == 'rook_workers':
+                return json.dumps(roster)
+            described.append(args['worker'])
+            if args['worker'] in broken:
+                return json.dumps({'ok': False, 'error': 'offline'})
+            return json.dumps({'ok': True, 'result': {'info.host': {'params': []}, 'battery.status': {'params': []}}})
+    monkeypatch.setattr(workers, 'RookMCP', MCP)
+    inv = WorkerInventory(ttl=0, schema_ttl=3600, retry_seconds=600)
+    async def scenario():
+        await inv.refresh_schemas()
+        assert sorted(described) == ['gpu-box', 'phone'] and 'info.host' in inv.schemas['gpu-box']
+        described.clear()
+        for _ in range(10):                      # the 60s maintenance loop: nothing new, no traffic
+            await inv.refresh_schemas()
+        assert described == []
+        roster[1]['caps'] = ['battery.status', 'sms.list']   # a worker's caps change: only it is re-described
+        roster.append({'name': 'pi', 'caps': ['info.host']})
+        broken.add('pi')
+        await inv.refresh_schemas()
+        assert sorted(described) == ['phone', 'pi']
+        described.clear()
+        await inv.refresh_schemas()
+        assert described == []                   # a failed describe waits retry_seconds
+        inv.schema_due['pi'] = time.monotonic() - 1
+        broken.clear()
+        await inv.refresh_schemas()
+        assert described == ['pi'] and 'info.host' in inv.schemas['pi']
+        described.clear()
+        for name in inv.schema_due: inv.schema_due[name] = time.monotonic() - 1   # an hour later: all refreshed once
+        await inv.refresh_schemas()
+        assert sorted(described) == ['gpu-box', 'phone', 'pi']
+    asyncio.run(scenario())

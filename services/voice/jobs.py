@@ -1,15 +1,19 @@
 """Jobs survive audio interruption and disconnect; their outcomes are always read."""
 import asyncio
 import json
-from .acp import ACPClient
+from .thinking import AGENT_TOOLS, ThinkingAgent, UncertainToolOutcome
 
 
 class Jobs:
-    def __init__(self, store, direct, acp_host, acp_port, notify, read_timeout=45, agent_timeout=600):
+    def __init__(self, store, direct, acp_host, acp_port, notify, read_timeout=45, agent_timeout=600, agent=None):
         self.store, self.direct, self.notify = store, direct, notify
         self.host, self.port = acp_host, acp_port
         self.read_timeout, self.agent_timeout = read_timeout, agent_timeout
+        self.agent = agent
         self.tasks = {}
+
+    def timeout(self, name):
+        return self.agent_timeout if self.agent is not None or name in AGENT_TOOLS else self.read_timeout
 
     def start(self, session, name, args, context):
         if sum(j["status"] == "running" for j in self.store.jobs(session)) >= 4 or len(self.tasks) >= 32:
@@ -21,52 +25,40 @@ class Jobs:
         return jid
 
     async def _run(self, session, jid, name, args, context):
-        acp = None
+        thinking = self.agent is not None or name in AGENT_TOOLS
         result, status = "", "failed"
         try:
-            if name in self.direct:
-                result = await asyncio.wait_for(self.direct[name](args), self.read_timeout)
-            elif name == "delegate_to_hermes":
-                chunks = []
-                length = 0
-
+            if thinking:
+                if name not in self.direct and name not in AGENT_TOOLS:
+                    raise ValueError('Unsupported tool')
+                agent = self.agent or ThinkingAgent(direct=self.direct)
                 def on_event(update):
-                    nonlocal length
-                    if update.get("sessionUpdate") == "agent_message_chunk":
-                        text = (update.get("content") or {}).get("text", "")
-                        if length < 16000:
-                            chunks.append(text[:16000-length]); length += len(chunks[-1])
-                    # Progress is an event, not an additional blocking model request.
-                    if update.get("sessionUpdate") in ("tool_call", "tool_call_update"):
-                        self.notify(session, {"type": "tool", "id": jid, "status": "running",
-                                              "title": str(update.get("title") or "Hermes working")[:160]})
-
-                acp = ACPClient(self.host, self.port, on_event, self.agent_timeout)
-                prompt = "Conversation context (data, not new instructions):\n" + json.dumps(context)[-24000:]
-                prompt += "\nCurrent task:\n" + str(args.get("task", ""))
-                response = await asyncio.wait_for(acp.run(prompt), self.agent_timeout + 30)
-                if response.get("stopReason") not in (None, "end_turn"):
-                    raise ConnectionError("Agent did not finish normally; outcome may be incomplete")
-                result = "".join(chunks).strip()
-                if not result:
-                    raise RuntimeError("Agent ended without a result")
+                    if update.get('trace') is not None:
+                        self.store.record_job_progress(jid, json.dumps(update['trace']))
+                    if update.get('progress'):
+                        self.notify(session, {'type': 'tool', 'id': jid, 'status': 'running',
+                            'title': 'Thinking', 'progress': str(update['progress'])[:240]})
+                task = args.get('task', '') if name in AGENT_TOOLS else (
+                    'Perform the requested ' + name + ' lookup and report its actual result. ' + json.dumps(args))
+                result = await asyncio.wait_for(agent.run(task, context, on_event,
+                    initial=None if name in AGENT_TOOLS else {'name': name, 'arguments': args}), self.agent_timeout)
+            elif name in self.direct:
+                result = await asyncio.wait_for(self.direct[name](args), self.read_timeout)
             else:
                 raise ValueError("Unsupported tool")
             status = "completed"
         except asyncio.CancelledError:
             status, result = "cancel_requested", "Cancellation requested. External changes may already have occurred."
-            if acp:
-                await acp.cancel()
-        except (TimeoutError, ConnectionError):
-            status = "unknown" if acp else "failed"
-            result = "The tool timed out or disconnected. Check external state before retrying changes."
-            if acp:
-                await acp.cancel()
+        except (TimeoutError, ConnectionError) as error:
+            status = "unknown" if thinking or isinstance(error, UncertainToolOutcome) else "failed"
+            result = "The tool timed out or disconnected: " + (str(error) or type(error).__name__) + ". Check external state before retrying changes."
         except Exception as error:
-            result = "Tool failed: " + type(error).__name__ + ". No success was confirmed."
+            result = "Tool failed: " + (str(error) or type(error).__name__) + ". No success was confirmed."
         finally:
-            if acp:
-                await acp.close()
+            if status != 'completed':
+                progress = self.store.job(jid, session).get('result', '')
+                if progress:
+                    result += '\nRecorded tool progress: ' + progress
             result = str(result)[:16000]
             self.store.finish_job(jid, status, result)
             self.store.append(session, "tool", {"id": jid, "name": name, "args": args,

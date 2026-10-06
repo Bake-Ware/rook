@@ -66,8 +66,9 @@ class Provider:
     async def transcribe(self, pcm):
         return 'hello'
 
-    async def chat(self, messages, on_clause, reply_only=False, tools=None):
-        self.seen.append({'messages': messages, 'tools': tools, 'reply_only': reply_only})
+    async def chat(self, messages, on_clause, reply_only=False, tools=None, identity_prompt=None, **kwargs):
+        self.seen.append({'messages': messages, 'tools': tools, 'reply_only': reply_only,
+                          'identity_prompt': identity_prompt})
         if self.calls:
             return '', self.calls
         await on_clause('Hi there.')
@@ -111,6 +112,7 @@ def test_conversation_mode_uses_mode_prompt_and_offers_no_agent_tools():
         system = call['messages'][0]['content']
         assert modes.MODES['conversation']['prompt'] in system
         assert 'AGENT SYSTEM' not in system and 'Authenticated owner' not in system
+        assert call['identity_prompt'] == ''   # the planner adds no personal-data policy
         assert call['tools'] == {'end_session'}
         assert any(e['type'] == 'assistant_delta' and e['text'] == 'Hi there.' for e in events)
         await conn.close()
@@ -124,7 +126,9 @@ def test_assistant_mode_still_offers_every_tool():
         await conn.start(text='hi', speak=False)
         await conn.task
         assert provider.seen[0]['tools'] is None
-        assert provider.seen[0]['messages'][0]['content'].startswith('AGENT SYSTEM\nPersonal data policy')
+        # The planner appends the personal-data policy after its own rules (as before modes).
+        assert provider.seen[0]['messages'][0]['content'] == 'AGENT SYSTEM'
+        assert provider.seen[0]['identity_prompt'] is None
         await conn.close()
     asyncio.run(scenario())
 

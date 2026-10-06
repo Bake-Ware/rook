@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const elements = new Map();
-const element = () => ({classList:{add(){}},addEventListener(){},appendChild(){},scrollIntoView(){},value:'af_heart'});
+const element = () => ({classList:{add(){}},addEventListener(){},appendChild(){},scrollIntoView(){},value:'af_heart',style:{}});
 let stopped=0, scheduled=0;
 class AudioContext {
  constructor(){this.currentTime=0;this.audioWorklet={addModule:async()=>{}};this.destination={};}
@@ -22,7 +22,7 @@ const ctx = vm.createContext({console,Float32Array,Int16Array,ArrayBuffer,DataVi
 const source=fs.readFileSync(__dirname+'/../services/voice/static/index.html','utf8').split('<script>')[1].split('</script>')[0];
 vm.runInContext(source,ctx);
 (async()=>{
- await vm.runInContext('connect(); ws.onopen()',ctx);
+ await vm.runInContext('connect().then(()=>ws.onopen())',ctx);
  const messages=()=>vm.runInContext('ws.sent.filter(x=>typeof x==="string").map(x=>JSON.parse(x))',ctx);
  assert.equal(messages()[0].type,'hello');assert.equal(messages()[0].protocol,2);
  assert.equal(messages()[1].type,'audio_config');assert.equal(messages()[1].aec,true);

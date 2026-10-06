@@ -26,3 +26,11 @@ Per turn (voice or typed text), server emits at most one:
 - The event may arrive before OR after `assistant_delta` for the same turn; clients attach it by `turn`.
 - Unknown answer ids must be ignored by clients (forward compatible). Numbers are 0..1 probabilities.
 - Clients must tolerate `status != ok` with empty `answers`.
+
+The activity contract (`services/voice/CONTRACT-activity.md`) strengthens this to
+exactly one event per connected turn with thinking:true. `engine_status` is
+`ok|disabled|skipped|timeout|error`; `answers` exists only for ok. `elapsed_ms`,
+optional `detail`, and model/adapter aliases are also supplied. For compatibility,
+legacy `status` represents skipped as disabled. Engine work starts only after
+reply dispatch and foreground completion; an interrupted undispatched turn gets
+a visible skipped event. Activity and thinking are independent opt-ins.

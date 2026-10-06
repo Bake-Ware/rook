@@ -14,8 +14,11 @@ from fastapi.responses import FileResponse
 import uvicorn
 import webrtcvad
 from .jobs import Jobs
+from .thinking import ThinkingAgent
 from .runtime import Connection
 from .state import Store
+from .decision import DecisionClient, gate_threshold
+from .feedback import FeedbackStore
 from .identity import configured_identities, identity_for
 from .admin import AdminStore, router as admin_router
 from . import modes
@@ -36,25 +39,60 @@ credential_sessions = {}
 @contextlib.asynccontextmanager
 async def lifespan(app):
     from .providers import Provider, DIRECT_TOOLS, ACP_HOST, ACP_PORT
+    from .workers import inventory
     app.state.provider = Provider()
+    async def maintain_workers():
+        while True:
+            with contextlib.suppress(Exception):
+                await inventory.refresh()
+            await asyncio.sleep(30)
+    async def maintain_schemas():
+        while True:
+            with contextlib.suppress(Exception):
+                await inventory.refresh_schemas()
+            await asyncio.sleep(60)
+    worker_maintenance = asyncio.create_task(maintain_workers())
+    schema_maintenance = asyncio.create_task(maintain_schemas())
     app.state.store = Store(os.environ.get('VOICE_STATE_DB', str(ROOT / 'voice-state.sqlite3')))
+    app.state.decision = DecisionClient()
+    app.state.feedback = None
+    maintenance = None
+    if app.state.decision.url:
+        app.state.feedback = FeedbackStore(os.environ.get('VOICE_STATE_DB', str(ROOT / 'voice-state.sqlite3')))
+        async def maintain_decisions():
+            while True:
+                await asyncio.sleep(60)
+                if app.state.feedback.db is not None:
+                    app.state.feedback.submit('prune')
+                    await app.state.decision.refresh_info()
+        maintenance = asyncio.create_task(maintain_decisions())
     def notify(session, event):
         current = connections.get(session)
         if current:
             conn, queue = current
             conn.job_event(event)
-            if queue.full():
-                with contextlib.suppress(asyncio.QueueEmpty):
-                    queue.get_nowait()
-            queue.put_nowait(event)
+            conn.queue_event(event)
         elif not any(job['status'] == 'running' for job in app.state.store.jobs(session)):
             for credential, sessions in list(credential_sessions.items()):
                 sessions.discard(session)
                 if not sessions:
                     credential_sessions.pop(credential, None)
-    app.state.jobs = Jobs(app.state.store, DIRECT_TOOLS, ACP_HOST, ACP_PORT, notify)
+    app.state.jobs = Jobs(app.state.store, DIRECT_TOOLS, ACP_HOST, ACP_PORT, notify,
+                          agent=ThinkingAgent(direct=DIRECT_TOOLS))
     yield
+    worker_maintenance.cancel()
+    schema_maintenance.cancel()
+    await asyncio.gather(worker_maintenance, schema_maintenance, return_exceptions=True)
+    if maintenance:
+        maintenance.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await maintenance
+    await app.state.decision.close()
+    if app.state.feedback:
+        await app.state.feedback.close()
     await app.state.jobs.close()
+    if hasattr(app.state.provider, 'close'):
+        await app.state.provider.close()
     app.state.store.db.close()
 
 app = FastAPI(lifespan=lifespan)
@@ -70,6 +108,15 @@ async def invalidate_credential(credential):
             await ws.close(code=4401)
 
 app.include_router(admin_router(ADMIN, IDENTITIES, invalidate_credential))
+
+from .pianobar_tts import install as install_pianobar_tts
+
+
+def _pianobar_voice_authorized(supplied):
+    return bool(supplied) and hashlib.sha256(supplied.encode()).hexdigest() in ADMIN.mappings(IDENTITIES)
+
+
+install_pianobar_tts(app, _pianobar_voice_authorized)
 
 @app.get('/health')
 async def health():
@@ -124,7 +171,7 @@ async def websocket(ws: WebSocket):
             await ws.send_json({'type': 'error', 'msg': 'Conversation already connected. Retry shortly.'})
             await ws.close(code=4409)
             return
-        queue = asyncio.Queue(maxsize=32)
+        queue = asyncio.Queue(maxsize=256)
         lock = asyncio.Lock()
         async def send_json(event):
             async with lock:
@@ -144,23 +191,54 @@ async def websocket(ws: WebSocket):
             await ws.send_json({'type': 'error', 'code': 'unknown_mode', 'msg': str(error)})
             await ws.close(code=4400)
             return
+        # The reply gate records every voice turn, not only clients that opted into thinking events.
+        if (app.state.feedback and app.state.feedback.db is None and
+                ((protocol == 2 and hello.get('thinking') is True) or gate_threshold() is not None)):
+            with contextlib.suppress(Exception):
+                await app.state.feedback.open()
+                await app.state.decision.refresh_info()
+        def enqueue(event):
+            try:
+                queue.put_nowait(event)
+            except asyncio.QueueFull:
+                # Never silently discard a decision or reorder activity seq.
+                # A stalled consumer must reconnect instead of losing turn status.
+                if conn and not conn.closed:
+                    conn.closed = True
+                    task = asyncio.create_task(ws.close(code=1013))
+                    task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
         conn = Connection(app.state.store, app.state.jobs, app.state.provider, key, send_json, send_bytes, protocol,
-                          identity=identity_for(supplied, live_identities))
+                          app.state.decision, app.state.feedback, hello.get('thinking') is True, conversation,
+                          activity=hello.get('activity') is True, enqueue=enqueue,
+                          progress_updates=hello.get('progress_updates'), identity=identity_for(supplied, live_identities))
         conn.full_duplex = protocol == 2 and hello.get('aec') is True
         conn.mode = mode
         connections[key] = conn, queue
         credential_sockets.setdefault(credential_id, []).append((ws, conn))
         credential_sessions.setdefault(credential_id, set()).add(key)
         await conn.emit('session', conversation=conversation, protocol=protocol, version=VERSION, full_duplex=conn.full_duplex,
-                        mode=conn.mode.id, custom_mode=conn.mode.custom)
+                        mode=conn.mode.id, custom_mode=conn.mode.custom, thinking=conn.thinking,
+                        activity=conn.activity_enabled)
         await conn.emit('state', state='listening', turn=conn.epoch)
         for job in app.state.store.jobs(key):
             await conn.emit('tool', id=job['id'], title=job['name'], status=job['status'])
+            if job['status'] == 'running':
+                timeout = app.state.jobs.timeout(job['name'])
+                elapsed = max(0, int((time.time()-job['updated'])*1000))
+                conn.progress.start(job['id'], conn.epoch, job['name'], json.loads(job['args']), elapsed)
+                if conn.activity:
+                    conn.activity.start_job(job['id'], conn.epoch, job['name'], json.loads(job['args']),
+                                            int(timeout * 1000), elapsed)
         async def progress():
             while True:
                 event = await queue.get()
-                await send_json({k: v for k, v in event.items() if k != 'result'})
-                conn.drain_results()
+                try:
+                    await asyncio.wait_for(send_json({k: v for k, v in event.items() if k != 'result'}), 5)
+                except Exception:
+                    await ws.close(code=1013)
+                    return
+                if event.get('type') == 'tool':
+                    conn.drain_results()
         sender = asyncio.create_task(progress())
         vad = webrtcvad.Vad(3)
         preroll = deque(maxlen=10)
@@ -185,6 +263,9 @@ async def websocket(ws: WebSocket):
                     continue
                 sp = vad.is_speech(data, 16000)
                 if sp:
+                    conn.last_speech = time.monotonic()
+                    conn.progress.cancel_speech()
+                    conn.shadow_hook('activity')
                     if analysis is not None:
                         analysis.cancel(); analysis = None
                     if not utterance:
@@ -231,7 +312,12 @@ async def websocket(ws: WebSocket):
                         utterance.clear(); preroll.clear(); speech = silence = 0
                         conn.receiving_speech = False
                         await conn.interrupt()
+                    elif kind == 'client_state':
+                        conn.sleeping = msg.get('mode') in ('sleep', 'off')
+                        if conn.sleeping:
+                            conn.progress.cancel_speech()
                     elif kind == 'speech_start' and conn.full_duplex:
+                        conn.last_speech = time.monotonic()
                         speech_permission_until = time.monotonic() + 35
                         conn.receiving_speech = True
                         await conn.interrupt()

@@ -1,0 +1,194 @@
+"""Side-channel lifecycle: never consult decisions from the normal voice path."""
+import asyncio
+from collections import deque
+import contextlib
+import json
+import logging
+import os
+import re
+import time
+import uuid
+
+
+class Shadow:
+    def __init__(self, connection, client, feedback, conversation):
+        self.conn, self.client, self.feedback = connection, client, feedback
+        self.conversation = conversation
+        self.tasks = set()
+        self.dispatches = {}
+        self.requests = {}
+        self.operations = deque()
+        self.writer = None
+        self.current_id = None
+        self.current_turn = None
+        self.current_state = None
+        self.interrupted_playback = False
+        self.silence_task = None
+        self.last_spoke = 0
+        self.last_reply = ''
+        self.reply_turn = None
+        self.recent_seconds = float(os.environ.get('DECISION_RECENT_SPEECH_SECONDS', '15'))
+        self.silence_seconds = float(os.environ.get('DECISION_SILENCE_SECONDS', '15'))
+        names = [n.strip() for n in os.environ.get('DECISION_ASSISTANT_NAMES', 'rook,assistant').split(',') if n.strip()]
+        self.wake = re.compile(r'\b(?:' + '|'.join(re.escape(n) for n in names) + r')\b', re.I) if names else None
+        row = connection.store.db.execute("SELECT body FROM events WHERE session=? AND kind='assistant' ORDER BY id DESC LIMIT 1",
+                                           (connection.session,)).fetchone()
+        if row:
+            self.last_reply = json.loads(row['body']).get('text', '').removeprefix(
+                '[Spoken response generated; playback may be interrupted] ')[:1000]
+
+    def _track(self, coroutine):
+        task = asyncio.create_task(coroutine)
+        self.tasks.add(task)
+        def done(t):
+            self.tasks.discard(t)
+            if not t.cancelled() and t.exception():
+                logging.warning('Decision shadow task failed: %s', type(t.exception()).__name__)
+        task.add_done_callback(done)
+        return task
+
+    async def _foreground_done(self):
+        # The engine shares the mouthpiece GPU. Start telemetry after the dispatched
+        # turn finishes, including history commits and assistant_done. Late events
+        # are explicitly supported by the protocol; no GPU/SQLite contention on reply.
+        while self.conn.task and not self.conn.task.done():
+            await asyncio.wait({self.conn.task})
+
+    def _submit(self, operation, *args):
+        if len(self.operations) >= 256:
+            return
+        self.operations.append((operation, args))
+        if self.writer is None or self.writer.done():
+            self.writer = self._track(self._persist())
+
+    async def _persist(self):
+        await self._foreground_done()
+        while self.operations:
+            operation, args = self.operations.popleft()
+            self.feedback.submit(operation, *args)
+
+    def activity(self):
+        if self.silence_task:
+            self.silence_task.cancel()
+            self.silence_task = None
+
+    def interrupt(self, playing, reply_active):
+        self.activity()
+        self.interrupted_playback |= playing
+        if self.current_id and (playing or reply_active):
+            self._submit('signal', self.current_id, 'reply_interrupted',
+                                 {'playback': playing, 'generation': reply_active})
+
+    def begin(self, text, source, turn, immediate=False):
+        """Record the turn and request a decision. immediate=True decides now (reply gate) and
+        returns a future for the event; otherwise the request waits for reply dispatch."""
+        self.activity()
+        self.current_id = uuid.uuid4().hex
+        self.current_turn = turn
+        state = {'text': (text or '')[:8000], 'source': source,
+                 'assistant_spoke_recently': time.monotonic() - self.last_spoke <= self.recent_seconds,
+                 'recent_speech_window_seconds': self.recent_seconds,
+                 'contains_wake_word_or_assistant_name': bool(self.wake and self.wake.search(text or '')),
+                 'previous_assistant_reply': self.last_reply[:1000],
+                 'interrupted_playback': self.interrupted_playback}
+        self.interrupted_playback = False
+        self.current_state = state
+        did = self.current_id
+        self._submit('begin', did, self.conn.session, self.conversation, turn, source, state, time.time())
+        if len(self.tasks) >= 8:
+            # Capacity applies only to telemetry, never to the normal turn.
+            event = self.client.event(source, turn, 'skipped')
+            event['error'] = event['detail'] = 'Decision shadow capacity exceeded'
+            self._submit('finish', did, event, dict(self.client.info))
+            self.conn.decision_event(turn, event)
+            return None
+        ready = asyncio.Event()
+        self.dispatches[turn] = ready
+        result = asyncio.get_running_loop().create_future() if immediate else None
+        self.requests[turn] = self._track(self._decide(did, state, source, turn, ready, result))
+        return result
+
+    def gate_outcome(self, turn, kind, value, retrain=None):
+        """Record how the model treated a gated turn; retrain records go to the durable retrain log."""
+        if turn != self.current_turn:
+            return
+        self._submit('outcome', self.current_id, '', kind, value)
+        if retrain is not None:
+            self._submit('retrain', {'decision_id': self.current_id, 'session': self.conn.session,
+                                     'conversation': self.conversation, 'turn': turn, 'created': time.time(),
+                                     'state': self.current_state, 'engine': dict(self.client.info), **retrain})
+
+    def dispatch(self, turn):
+        ready = self.dispatches.get(turn)
+        if ready is None:
+            return False
+        ready.set()
+        return True
+
+    def abandon(self, turn):
+        self.dispatches.pop(turn, None)
+        task = self.requests.pop(turn, None)
+        if task:
+            task.cancel()
+
+    async def _decide(self, did, state, source, turn, ready, result=None):
+        try:
+            if result is None:
+                await ready.wait()
+                await self._foreground_done()
+                if turn not in self.conn.decision_turns:
+                    return
+            try:
+                event = await self.client.decide(state, source, turn)
+            except Exception:
+                event = self.client.event(source, turn, 'error')
+                event['error'] = event['detail'] = 'Decision engine request failed'
+            if result is not None and not result.done():
+                result.set_result(event)
+            self._submit('finish', did, event, dict(self.client.info))
+            if result is not None:
+                # The client event keeps protocol order: after reply dispatch or chosen silence.
+                await ready.wait()
+                if turn not in self.conn.decision_turns:
+                    return
+            self.conn.decision_event(turn, event)
+        finally:
+            if result is not None and not result.done():
+                result.cancel()
+            self.dispatches.pop(turn, None)
+            self.requests.pop(turn, None)
+
+    def reply(self, text, turn):
+        if self.reply_turn != turn:
+            self.last_reply = ''
+            self.reply_turn = turn
+        self.last_reply = (self.last_reply + ' ' + text).strip()[:1000]
+        if turn == self.current_turn:
+            self._submit('reply', self.current_id, text)
+
+    def completed(self, turn):
+        if turn != self.current_turn:
+            return
+        self._submit('completed', self.current_id)
+        if self.reply_turn == turn:
+            self.activity()
+            self.silence_task = self._track(self._silence(self.current_id, turn))
+
+    async def _silence(self, did, turn):
+        # Wait for playback drain AND an observation window. Disconnect, input,
+        # barge-in and newer turns cancel this; silence does not imply approval.
+        await asyncio.sleep(max(0, self.conn.play_until - time.monotonic()) + self.silence_seconds)
+        if not self.conn.closed and not self.conn.receiving_speech and self.current_turn == turn:
+            self._submit('signal', did, 'no_followup',
+                                 {'window_seconds': self.silence_seconds, 'connected': True, 'approval': None})
+
+    async def close(self):
+        self.activity()
+        # Let short inference finish/persist even when the caller closes after done.
+        deadline = time.monotonic() + self.client.timeout + .1
+        while self.tasks and time.monotonic() < deadline:
+            await asyncio.wait(tuple(self.tasks), timeout=max(0, deadline - time.monotonic()))
+        pending = tuple(self.tasks)
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)

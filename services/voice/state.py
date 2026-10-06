@@ -33,7 +33,7 @@ class Store:
         self.db.execute("INSERT INTO dictation(session,text,created) SELECT session,json_extract(body,'$.text'),created "
                         "FROM events WHERE kind='dictation' ORDER BY id")
         self.db.execute("DELETE FROM events WHERE kind='dictation'")
-        self.db.execute("UPDATE jobs SET status='unknown', result=? WHERE status='running'",
+        self.db.execute("UPDATE jobs SET status='unknown', result=? || CASE WHEN result != '' THEN '\nLast tool progress: ' || result ELSE '' END WHERE status='running'",
                         ("Voice service restarted; do not repeat changes without checking their outcome.",))
         cutoff = time.time() - 7 * 86400
         self.db.execute("DELETE FROM events WHERE created < ?", (cutoff,))
@@ -124,4 +124,8 @@ class Store:
     def finish_job(self, jid, status, result):
         self.db.execute("UPDATE jobs SET status=?,result=?,updated=? WHERE id=? AND status='running'",
                         (status, result[:16000], time.time(), jid))
+        self.db.commit()
+
+    def record_job_progress(self, jid, result):
+        self.db.execute("UPDATE jobs SET result=? WHERE id=? AND status='running'", (result[:12000], jid))
         self.db.commit()

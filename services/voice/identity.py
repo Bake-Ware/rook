@@ -36,6 +36,13 @@ class Identity:
 # devices: no device listing, no reads, no agent. A key mapped to a device may
 # read only that device.
 GUEST_TOOLS = frozenset({'web_search', 'end_session', 'cancel_job', 'job_status'})
+
+
+def allowed_tools(identity):
+    """Tool names this credential may be offered; None means all (owner only)."""
+    return identity.tools()
+
+
 current_identity = ContextVar('voice_identity', default=Identity())
 PERSONAL_CAPS = {'sms.list': 'texts', 'calllog.list': 'call history', 'contacts.search': 'contacts',
                  'notify.list': 'notifications', 'location.get': 'location'}
