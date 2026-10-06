@@ -46,7 +46,8 @@ def roster_row(worker,now):
             'caps':len(caps) if isinstance(caps,(list,tuple)) else 0,
             'version':_text(worker.get('version'),40),
             'build':build if isinstance(build,int) and not isinstance(build,bool) else None,
-            'app_release':{k:app[k] for k in ('platform','version','code') if isinstance(app.get(k),(str,int)) and not isinstance(app.get(k),bool)},
+            'app_release':{k:_text(app[k],40) if isinstance(app[k],str) else app[k]
+                           for k in ('platform','version','code') if isinstance(app.get(k),(str,int)) and not isinstance(app.get(k),bool)},
             'hb':{'battery':{k:battery[k] for k in ('percent','charging') if isinstance(battery.get(k),(int,float,bool))}} if battery else {},
             'last_seen_age_secs':round(max(0.0,now-float(worker.get('last_seen') or 0.0)),1)}
 
@@ -317,6 +318,11 @@ class AccountWeb:
                 raise web.HTTPTooManyRequests()
             user=self.current(request)
             grant={}
+            # Only the account itself enrolling (a signed-in session, or a
+            # device-login grant the user approved) makes the device account
+            # scoped. Migration grants (csr_hash) enroll every worker that held
+            # the band key, a friend's device included: band scope only.
+            account_scope=False
             if data.get('enrollment_grant'):
                 grant=self.store.consume(str(data['enrollment_grant']),'device_enroll')
                 bid=grant['band_id'];sponsor=grant['user_id']
@@ -325,14 +331,16 @@ class AccountWeb:
                     import hashlib
                     if hashlib.sha256(str(data.get('csr','')).encode()).hexdigest()!=grant['csr_hash']:
                         raise PermissionError('Enrollment grant belongs to a different device key.')
+                account_scope=grant.get('scope')=='account' and not grant.get('csr_hash')
             elif user:
                 if not request.headers.get('Authorization','').startswith('Bearer '):self.csrf(request,data,user)
                 bid=str(data.get('band_id',''));sponsor=user['id']
                 self.store.require_band(sponsor,bid)
+                account_scope=True
             else:
                 band=self.server._enrollment.redeem(str(data.get('code','')),request.remote or 'unknown')
                 bid=band['id'];sponsor=None
-            result=self.devices.enroll(bid,sponsor,data.get('csr',''),data.get('name','worker'))
+            result=self.devices.enroll(bid,sponsor,data.get('csr',''),data.get('name','worker'),account_scope=account_scope)
             if grant.get('csr_hash'):
                 # A copied grant/CSR cannot disclose any band credential. The
                 # new key must prove possession in a separate config request.

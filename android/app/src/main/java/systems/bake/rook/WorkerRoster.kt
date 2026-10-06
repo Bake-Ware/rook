@@ -32,12 +32,14 @@ data class RosterBand(val id: String, val name: String, val current: Boolean, va
 enum class RosterSource {
     /** Hub rosters for every band of the account that enrolled this phone. */
     ACCOUNT,
-    /** Hub roster of this band only: a pairing-code enrollment vouches for one band. */
+    /** Hub roster of this band only: a pairing code or band migration vouches for one band. */
     HUB_BAND_ONLY,
     /** Heard locally; the phone joined with a band key, not as an enrolled device. */
     LOCAL_NOT_ENROLLED,
     /** Heard locally; the phone is enrolled but the hub's rosters aren't available. */
     LOCAL_HUB_UNAVAILABLE,
+    /** Heard locally; the hub answers the phone's config refresh but has no roster feature. */
+    LOCAL_HUB_UNSUPPORTED,
 }
 
 data class WorkerRoster(
@@ -52,9 +54,10 @@ data class WorkerRoster(
     /** Why only this band is listed, or null when the account's bands are all here. */
     val notice: String? get() = when (source) {
         RosterSource.ACCOUNT -> null
-        RosterSource.HUB_BAND_ONLY -> "Only this band is shown: this phone was paired with a code, which doesn't open your other bands. Enroll it from your account to see them."
+        RosterSource.HUB_BAND_ONLY -> "Only this band is shown: this phone was paired with a code or moved by a band migration, which doesn't open your other bands. Enroll it from your account to see them."
         RosterSource.LOCAL_NOT_ENROLLED -> "Only this band is shown: this phone joined with a band key, not as an enrolled device of your account."
         RosterSource.LOCAL_HUB_UNAVAILABLE -> "Only this band is shown: your other bands couldn't be loaded from the hub just now."
+        RosterSource.LOCAL_HUB_UNSUPPORTED -> "Only this band is shown: your hub doesn't provide other bands."
     }
 
     companion object {
@@ -107,6 +110,7 @@ data class WorkerRoster(
             val selfId = root.optString("self_id")
             val identity = root.optBoolean("identity", false)
             val hub = if (identity) root.optJSONObject("hub") else null
+            val unsupported = identity && root.optBoolean("hub_unsupported", false)
             val currentId = root.optString("band_id")
             val currentName = root.optString("band_name").ifEmpty { "This band" }
             if (!running) return WorkerRoster(false, emptyList(), emptyList(),
@@ -124,6 +128,7 @@ data class WorkerRoster(
             }
             val source = when {
                 !identity -> RosterSource.LOCAL_NOT_ENROLLED
+                (hub == null || bands.isEmpty()) && unsupported -> RosterSource.LOCAL_HUB_UNSUPPORTED
                 hub == null || bands.isEmpty() -> RosterSource.LOCAL_HUB_UNAVAILABLE
                 hub.optString("scope") == "account" -> RosterSource.ACCOUNT
                 else -> RosterSource.HUB_BAND_ONLY

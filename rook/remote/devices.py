@@ -23,27 +23,21 @@ UTC=dt.timezone.utc
 
 
 def upgrade_schema(db):
-    """Add ``devices.account_scope``: 1 only when an account explicitly sponsored
-    the enrollment (a signed-in session or a grant minted for that account).
+    """Add ``devices.account_scope``: 1 only when the account itself enrolled
+    the device (a signed-in session, or a device-login grant the user
+    approved), so the device may see that account's other bands.
 
-    Pair-code enrollments get 0: the hub names the band's first owner as the
-    sponsor, but whoever held the code is not necessarily that owner, so such
-    a device must never see the owner's other bands. Existing rows are
-    backfilled once: a device enrolled by an owner-run migration (created in
-    the ten minutes before the migration that lists it, by that migration's
-    owner) was enrolled through an account grant; every other existing row
-    stays band-scoped until it is enrolled again through an account.
+    Pair-code and migration enrollments stay 0: a pair code names the band's
+    first owner as sponsor, and a migration enrolls every worker that held the
+    band key (a friend's device included) under the owner running it; neither
+    proves the device is the account's own. Existing rows are not inferred:
+    they stay band-scoped until enrolled again through the account.
     """
     if not db.in_transaction:
         db.execute('BEGIN IMMEDIATE')
     if 'account_scope' in {r[1] for r in db.execute('PRAGMA table_info(devices)')}:
         return
     db.execute('ALTER TABLE devices ADD COLUMN account_scope INTEGER NOT NULL DEFAULT 0')
-    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='migration_workers'").fetchone():
-        db.execute('''UPDATE devices SET account_scope=1 WHERE EXISTS(
-            SELECT 1 FROM migration_workers w JOIN band_migrations m ON m.id=w.migration_id
-            WHERE w.device_id=devices.id AND m.owner=devices.sponsor
-              AND devices.created BETWEEN m.created-600 AND m.created)''')
 
 
 class DeviceStore:
@@ -99,7 +93,10 @@ class DeviceStore:
         db.execute('INSERT INTO device_certificates VALUES(?,?,?,?)',(cert.fingerprint(hashes.SHA256()).hex(),device_id,pem,cert.not_valid_after_utc.timestamp()))
         return pem.decode()
 
-    def enroll(self,band_id,sponsor,csr_pem,name):
+    def enroll(self,band_id,sponsor,csr_pem,name,account_scope=False):
+        """Issue a device certificate. ``account_scope`` is set only by the
+        caller that knows the account itself enrolled the device (a session,
+        or a device-login grant); pair codes and migration grants never are."""
         if not isinstance(csr_pem,str) or len(csr_pem)>16000:raise ValueError('Invalid certificate request.')
         csr=x509.load_pem_x509_csr(csr_pem.encode())
         key=csr.public_key()
@@ -107,9 +104,7 @@ class DeviceStore:
         if not csr.is_signature_valid or not supported:
             raise ValueError('Use a signed P-256 or Ed25519 certificate request.')
         public_hash=hashlib.sha256(key.public_bytes(serialization.Encoding.DER,serialization.PublicFormat.SubjectPublicKeyInfo)).hexdigest()
-        # An explicit sponsor (session or account grant) vouches for this device
-        # as the account's own; a pair code only vouches for one band.
-        account_scope=0 if sponsor is None else 1
+        account_scope=1 if account_scope and sponsor is not None else 0
         with self.accounts.db() as db:
             if sponsor is None:
                 row=db.execute("SELECT user_id FROM memberships WHERE band_id=? AND role='owner' ORDER BY user_id LIMIT 1",(band_id,)).fetchone()

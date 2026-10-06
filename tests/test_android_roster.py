@@ -125,3 +125,55 @@ def test_psk_only_phone_never_shows_a_hub_roster():
     assert snap["identity"] is False and snap["hub"] is None
     mod.hub_result(HUB)                              # even if a result slipped in
     assert json.loads(mod.snapshot())["hub"] is None
+
+
+def test_band_change_drops_the_old_bands_hub_roster():
+    mod = load()
+    _attached(mod)
+    mod.note_identity(True, {"id": "b1", "name": "Home"})
+    mod.hub_result(HUB)
+    assert json.loads(mod.snapshot())["hub"] is not None
+    mod.note_identity(True, {"id": "b9", "name": "Elsewhere"})   # moved band
+    snap = json.loads(mod.snapshot())
+    assert snap["band_id"] == "b9" and snap["hub"] is None
+    mod.note_identity(True, {"id": "b1", "name": "Home"})        # and back: still gone
+    assert json.loads(mod.snapshot())["hub"] is None
+    # A refresh delivers the new band's roster before the identity is noted.
+    mod.hub_result({**HUB, "band": {"id": "b9"}})
+    mod.note_identity(True, {"id": "b9", "name": "Elsewhere"})
+    assert json.loads(mod.snapshot())["hub"] is not None
+
+
+def test_hub_without_the_roster_is_reported_as_unsupported_not_failing():
+    mod = load()
+    _attached(mod)
+    mod.note_identity(True, {"id": "b1"})
+    mod.hub_result({"band": {"id": "b1"}})          # one miss may be the hub's throttle
+    assert json.loads(mod.snapshot())["hub_unsupported"] is False
+    mod.hub_result({"band": {"id": "b1"}})
+    snap = json.loads(mod.snapshot())
+    assert snap["hub"] is None and snap["hub_unsupported"] is True
+    mod.hub_result(HUB)                              # a roster after all
+    snap = json.loads(mod.snapshot())
+    assert snap["hub"] is not None and snap["hub_unsupported"] is False
+    mod.note_identity(False)
+    mod.hub_result({"band": {"id": "b1"}})
+    mod.hub_result({"band": {"id": "b1"}})
+    assert json.loads(mod.snapshot())["hub_unsupported"] is False   # PSK phone: no claim
+
+
+def test_hub_rows_are_rebuilt_with_capped_fields():
+    mod = load()
+    _attached(mod)
+    mod.note_identity(True, {"id": "b1"})
+    long = "x" * 5000
+    mod.hub_result({"band": {"id": "b1"}, "workers": {"scope": "account", "bands": [
+        {"id": "b1", "name": "Home", "current": True, "workers": [
+            {"worker_id": "w" * 100, "name": long, "description": long, "version": long, "caps": 3,
+             "secret": "s", "app_release": {"platform": long, "version": long, "code": 15, "x": 1},
+             "hb": {"battery": {"percent": 50, "temp": 9}, "load": 1}, "last_seen_age_secs": 2}]}]}})
+    (row,) = json.loads(mod.snapshot())["hub"]["bands"][0]["workers"]
+    assert len(row["worker_id"]) == 64 and len(row["name"]) == 80 and len(row["version"]) == 40
+    assert len(row["description"]) == 280 and "secret" not in row
+    assert row["app_release"] == {"platform": "x" * 40, "version": "x" * 40, "code": 15}
+    assert row["hb"] == {"battery": {"percent": 50}}

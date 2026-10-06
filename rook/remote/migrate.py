@@ -73,7 +73,7 @@ async def run(args):
                 else:
                     if prepared['worker_id']!=wid or hashlib.sha256(prepared['csr'].encode()).hexdigest()!=prepared['csr_hash']:
                         raise ValueError('Worker CSR response was inconsistent.')
-                    grant=accounts.grant('device_enroll',{'user_id':owner,'band_id':args.band,'csr_hash':prepared['csr_hash']},300)
+                    grant=accounts.grant('device_enroll',{'user_id':owner,'band_id':args.band,'csr_hash':prepared['csr_hash'],'scope':'band'},300)
                     finished=await call(client,'worker.enrollment_finish',wid,{'grant':grant})
                 if finished['band_id']!=args.band or finished['worker_id']!=wid:raise ValueError('Enrolled device identity/band mismatch.')
                 mapping[wid]=finished['device_id']

@@ -82,6 +82,15 @@ class WorkerRosterTest {
         assertEquals(listOf("pixel", "desk", "new laptop"), failed.workers.map { it.name })
         assertTrue(failed.notice!!.contains("couldn't be loaded"))
 
+        // Config refreshes arrive but never carry a roster: a neutral notice, not an error.
+        val old = WorkerRoster.parse(noHub.replace("\"identity\":true", "\"identity\":true,\"hub_unsupported\":true"))
+        assertEquals(RosterSource.LOCAL_HUB_UNSUPPORTED, old.source)
+        assertEquals("Only this band is shown: your hub doesn't provide other bands.", old.notice)
+        assertEquals(listOf("pixel", "desk", "new laptop"), old.workers.map { it.name })
+        // A roster that did arrive wins over a stale flag.
+        val both = WorkerRoster.parse(account.replace("\"identity\":true", "\"identity\":true,\"hub_unsupported\":true"))
+        assertEquals(RosterSource.ACCOUNT, both.source)
+
         val psk = WorkerRoster.parse(account.replace("\"identity\":true", "\"identity\":false"))
         assertEquals(RosterSource.LOCAL_NOT_ENROLLED, psk.source)     // a hub copy is ignored
         assertEquals(1, psk.bands.size); assertEquals(3, psk.workers.size)

@@ -168,7 +168,7 @@ class BandWeb:
                 csr_hash = hashlib.sha256(csr.encode()).hexdigest()
                 if not csr or csr_hash != prepared.get('csr_hash'):
                     raise ValueError('Worker certificate request was inconsistent.')
-                grant = self.store.grant('device_enroll', {'user_id': uid, 'band_id': source['id'], 'csr_hash': csr_hash}, 300)
+                grant = self.store.grant('device_enroll', {'user_id': uid, 'band_id': source['id'], 'csr_hash': csr_hash, 'scope': 'band'}, 300)
                 finished = await self.rpc(client, 'worker.enrollment_finish', wid, {'grant': grant})
             if finished.get('worker_id') != wid or finished.get('band_id') != source['id']:
                 raise ValueError('Worker is enrolled in a different band or server.')
