@@ -61,6 +61,7 @@
   <textarea id="sayText" rows="3" maxlength="4000" placeholder="Type something for the selected voice to say. Ctrl+Enter speaks." style="width:100%;background:#141824;color:#e6e6e6;border:1px solid #26314d;border-radius:8px;padding:6px 8px;font:14px system-ui"></textarea>
   <div style="display:flex;gap:10px;align-items:center;justify-content:flex-end">
     <span class="hint" id="sayStatus" style="margin-right:auto"></span>
+    <span id="sayKeyRow" hidden><input id="sayKey" type="password" autocomplete="off" placeholder="Voice key" style="width:170px;background:#141824;color:#e6e6e6;border:1px solid #26314d;border-radius:8px;padding:5px 8px;font:13px system-ui"> <button id="sayKeySave" type="button" style="background:none;border:0;color:#7aa2f7;font-size:13px;cursor:pointer">Save key</button></span>
     <button id="sayStop" type="button" hidden style="background:none;border:0;color:#f7768e;font-size:13px;cursor:pointer">Stop</button>
     <button id="sayBtn" type="button" style="background:#7aa2f7;color:#0b0e14;border:0;border-radius:8px;padding:6px 14px;font-size:13px;font-weight:600;cursor:pointer">Speak</button>
   </div>
@@ -229,6 +230,7 @@ function sayChunks(text){
 async function sayFetch(text, voice, token){
   const r=await fetch('/api/voice',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
                                     body:JSON.stringify({text,voice})});
+  if(r.status===401){ sayKeyRow.hidden=false; throw new Error('that voice key was not accepted'); }
   if(!r.ok){ let msg=r.status+''; try{ msg=(await r.json()).detail||msg; }catch(e){} throw new Error(msg); }
   return URL.createObjectURL(await r.blob());
 }
@@ -236,7 +238,7 @@ function sayStopAll(){ sayRun++; if(sayAudio){ sayAudio.pause(); sayAudio=null; 
 async function speakThis(){
   const text=sayText.value.trim(); if(!text) return;
   const token=new URLSearchParams(location.search).get('token')||lsGet('voice_token')||'';
-  if(!token){ sayStatus.textContent='Needs a voice key: open this page with ?token=…'; return; }
+  if(!token){ sayStatus.textContent='Enter a voice key (saved in this browser).'; sayKeyRow.hidden=false; sayKey.focus(); return; }
   sayStopAll(); const run=sayRun, voice=document.getElementById('voiceSel').value;
   const chunks=sayChunks(text); sayStop.hidden=false; sayBtn.disabled=true;
   try{
@@ -254,6 +256,11 @@ async function speakThis(){
   }catch(e){ if(run===sayRun) sayStatus.textContent='Could not speak: '+e.message; }
   finally{ if(run===sayRun){ sayStop.hidden=true; sayBtn.disabled=false; sayAudio=null; } }
 }
+const sayKeyRow=document.getElementById('sayKeyRow'), sayKey=document.getElementById('sayKey');
+// The same stored key the Connect button uses, so saving it here also signs in the chat.
+function saySaveKey(){ const k=sayKey.value.trim(); if(!k) return; lsSet('voice_token',k); sayKey.value=''; sayKeyRow.hidden=true; sayStatus.textContent='Key saved.'; }
+document.getElementById('sayKeySave').onclick=()=>{ saySaveKey(); speakThis(); };
+sayKey.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); saySaveKey(); speakThis(); } });
 sayBtn.onclick=speakThis; sayStop.onclick=()=>{ sayStopAll(); sayStatus.textContent='Stopped'; };
 sayText.addEventListener('keydown',e=>{ if(e.key==='Enter' && (e.ctrlKey||e.metaKey)){ e.preventDefault(); speakThis(); } });
 const modeSel=document.getElementById('modeSel'), modePrompt=document.getElementById('modePrompt'), modeBox=document.getElementById('modeBox');
