@@ -28,16 +28,14 @@ data class ActivityEvent(val turn: Int, val seq: Long, val ts: Long, val phase: 
 }
 
 data class TurnKey(val connection: Long, val turn: Int)
-class ActivityTimeline {
-    val turns = linkedMapOf<TurnKey, MutableList<ActivityEvent>>()
+/** Accepts each activity sequence number once per voice connection (replays and repeats are dropped). */
+class ActivitySeqGate {
     private var connection = -1L
     private var lastSeq = -1L
-    fun local(connection: Long, event: ActivityEvent) { turns.getOrPut(TurnKey(connection, event.turn)) { mutableListOf() }.add(event) }
-    fun add(connection: Long, event: ActivityEvent): Boolean {
+    fun accept(connection: Long, seq: Long): Boolean {
         if (this.connection != connection) { this.connection = connection; lastSeq = -1 }
-        if (event.seq <= lastSeq) return false
-        lastSeq = event.seq
-        turns.getOrPut(TurnKey(connection, event.turn)) { mutableListOf() }.add(event)
+        if (seq <= lastSeq) return false
+        lastSeq = seq
         return true
     }
 }

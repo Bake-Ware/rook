@@ -13,6 +13,7 @@ def test_native_reconnects_and_stops_on_revocation(monkeypatch):
     spec=importlib.util.spec_from_file_location('runtime_test',path)
     runtime=importlib.util.module_from_spec(spec);spec.loader.exec_module(runtime)
     runtime.REFRESH_SECONDS=.01
+    monkeypatch.syspath_prepend(str(Path(__file__).parents[1]/'android/app/src/main/python'))
     monkeypatch.setitem(sys.modules,'rook_android.androidctx',SimpleNamespace(app_context=lambda:None))
     monkeypatch.setitem(sys.modules,'worker_entry',SimpleNamespace(_attach_native_plugins=lambda w:None,_builtin_enabled=lambda:[]))
     saved={'auto_start':True,'device':{'id':'device'},'active_band':'band'}

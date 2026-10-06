@@ -1,71 +1,100 @@
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent">
-  <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="20dp">
-    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="ROOK / SETTINGS" android:textSize="24sp" android:textColor="@color/rook_fg" android:fontFamily="sans-serif-medium" />
-    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="" android:textSize="12sp" android:textColor="@color/rook_dim" android:id="@+id/versionInfo" android:fontFamily="monospace" android:paddingTop="8dp" android:paddingBottom="12dp" />
-    <Button style="@style/RookOutlinedButton" android:id="@+id/btnBack" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Back to conversation" />
-    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="16dp" android:layout_marginTop="16dp" android:background="@drawable/rook_panel">
-      <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="01 / CONNECT" android:textSize="12sp" android:textColor="@color/rook_accent" android:fontFamily="monospace" android:letterSpacing="0.08" android:paddingBottom="12dp" />
-      <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Rook server" android:textSize="12sp" android:textColor="@color/rook_dim" android:paddingTop="10dp" android:paddingBottom="6dp" />
-      <EditText android:id="@+id/accountServer" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="https://rook.example.com" android:inputType="textUri" />
-      <Button android:id="@+id/btnGoogle" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Sign in with Google" style="@style/RookOutlinedButton" />
-      <Button android:id="@+id/btnSavedBands" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Choose a saved band" style="@style/RookOutlinedButton" />
-      <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Six-character pairing code" android:textSize="12sp" android:textColor="@color/rook_dim" android:paddingTop="10dp" android:paddingBottom="6dp" />
-      <EditText android:id="@+id/pairingCode" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Six-character pairing code" android:inputType="textNoSuggestions" android:maxLength="6" />
-      <Button android:id="@+id/btnPair" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Fetch band with pairing code" style="@style/RookOutlinedButton" />
-    </LinearLayout>
-    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="16dp" android:layout_marginTop="16dp" android:background="@drawable/rook_panel">
-      <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="02 / THIS DEVICE" android:textSize="12sp" android:textColor="@color/rook_accent" android:fontFamily="monospace" android:letterSpacing="0.08" android:paddingBottom="12dp" />
-      <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/hint_hub" android:textSize="12sp" android:textColor="@color/rook_dim" android:paddingTop="10dp" android:paddingBottom="6dp" />
-      <EditText android:id="@+id/hub" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="@string/hint_hub" android:inputType="textNoSuggestions" />
-      <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/hint_psk" android:textSize="12sp" android:textColor="@color/rook_dim" android:paddingTop="10dp" android:paddingBottom="6dp" />
-      <EditText android:id="@+id/psk" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="@string/hint_psk" android:inputType="textPassword" />
-      <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/hint_name" android:textSize="12sp" android:textColor="@color/rook_dim" android:paddingTop="10dp" android:paddingBottom="6dp" />
-      <EditText android:id="@+id/name" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="@string/hint_name" android:inputType="textNoSuggestions" />
-      <Button android:id="@+id/btnStart" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/start" style="@style/RookOutlinedButton" />
-      <Button android:id="@+id/btnStop" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/stop" style="@style/RookOutlinedButton" />
-    </LinearLayout>
-    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="16dp" android:layout_marginTop="16dp" android:background="@drawable/rook_panel">
-      <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="03 / PERMISSIONS" android:textSize="12sp" android:textColor="@color/rook_accent" android:fontFamily="monospace" android:letterSpacing="0.08" android:paddingBottom="12dp" />
-      <Button android:id="@+id/btnGrantScreen" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/grant_screen" style="@style/RookOutlinedButton" />
-      <Button android:id="@+id/btnGrantA11y" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/grant_a11y" style="@style/RookOutlinedButton" />
-      <Button android:id="@+id/btnGrantBattery" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/grant_battery" style="@style/RookOutlinedButton" />
-      <Button android:id="@+id/btnGrantNotif" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/grant_notif" style="@style/RookOutlinedButton" />
-      <Button android:id="@+id/btnGrantPerms" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/grant_perms" style="@style/RookOutlinedButton" />
-      <Button android:id="@+id/btnGrantOverlay" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/grant_overlay" style="@style/RookOutlinedButton" />
-      <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Remote location needs “Allow all the time”. After granting it, stop and start the worker." android:textSize="12sp" android:textColor="@color/rook_dim" android:paddingTop="12dp" />
-      <Button android:id="@+id/btnLocation" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Background location" />
-      <Button android:id="@+id/btnStopFind" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Stop find-device ring" />
-    </LinearLayout>
-    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="16dp" android:layout_marginTop="16dp" android:background="@drawable/rook_panel">
-      <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="04 / VOICE" android:textSize="12sp" android:textColor="@color/rook_accent" android:fontFamily="monospace" android:letterSpacing="0.08" android:paddingBottom="12dp" />
-      <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/hint_voice_url" android:textSize="12sp" android:textColor="@color/rook_dim" android:paddingTop="10dp" android:paddingBottom="6dp" />
-      <EditText android:id="@+id/voiceUrl" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="@string/hint_voice_url" android:inputType="textUri" />
-      <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/hint_voice_token" android:textSize="12sp" android:textColor="@color/rook_dim" android:paddingTop="10dp" android:paddingBottom="6dp" />
-      <EditText android:id="@+id/voiceToken" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="@string/hint_voice_token" android:inputType="textPassword" />
-      <CheckBox android:id="@+id/voiceInsecure" android:layout_width="match_parent" android:layout_height="wrap_content" android:checked="false" android:text="@string/voice_insecure" />
-      <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:labelFor="@id/voicePicker" android:text="@string/voice_picker" android:textColor="@color/rook_dim" />
-      <AutoCompleteTextView android:id="@+id/voicePicker" android:layout_width="match_parent" android:layout_height="48dp" android:inputType="none" android:focusable="false" android:contentDescription="@string/voice_picker" android:drawableEnd="@android:drawable/arrow_down_float" />
-      <TextView android:id="@+id/voiceListStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="12sp" android:textColor="@color/rook_dim" android:accessibilityLiveRegion="polite" />
-      <Button android:id="@+id/btnRetryVoices" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/retry_voices" style="@style/RookOutlinedButton" />
-      <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:labelFor="@id/voiceMode" android:text="@string/voice_mode" android:textColor="@color/rook_dim" android:paddingTop="10dp" />
-      <AutoCompleteTextView android:id="@+id/voiceMode" android:layout_width="match_parent" android:layout_height="48dp" android:inputType="none" android:focusable="false" android:contentDescription="@string/voice_mode" android:drawableEnd="@android:drawable/arrow_down_float" />
-      <EditText android:id="@+id/voiceModePrompt" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="@string/voice_mode_prompt" android:inputType="textMultiLine|textCapSentences" android:minLines="2" android:maxLines="8" android:maxLength="2000" android:gravity="top" />
-      <TextView android:id="@+id/voiceModeHelp" android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="12sp" android:textColor="@color/rook_dim" />
-      <Button android:id="@+id/btnModeDefault" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/voice_mode_reset" style="@style/RookOutlinedButton" />
-      <CheckBox android:id="@+id/fastVoice" android:layout_width="match_parent" android:layout_height="wrap_content" android:checked="false" android:text="@string/fast_voice" />
-      <CheckBox android:id="@+id/showThinking" android:layout_width="match_parent" android:layout_height="wrap_content" android:checked="false" android:text="@string/show_thinking" />
-      <CheckBox android:id="@+id/wakeEnabled" android:layout_width="match_parent" android:layout_height="wrap_content" android:checked="true" android:text="@string/wake_enabled" />
-      <Button android:id="@+id/btnDefaultAssistant" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Use Rook as default assistant" style="@style/RookOutlinedButton" />
-      <Button android:id="@+id/btnSaveVoice" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/save_voice" style="@style/RookOutlinedButton" />
-      <TextView android:id="@+id/status" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="16dp" android:fontFamily="monospace" android:textIsSelectable="true" />
-    </LinearLayout>
-    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="16dp" android:layout_marginTop="16dp" android:background="@drawable/rook_panel">
-      <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="05 / APP UPDATES" android:textColor="@color/rook_accent" android:fontFamily="monospace" />
-      <CheckBox android:id="@+id/autoUpdates" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Automatic APK updates" />
-      <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Checks every six hours while the worker runs. Android may ask you to confirm installation." android:textColor="@color/rook_dim" />
-      <TextView android:id="@+id/updateStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:paddingTop="12dp" android:textIsSelectable="true" />
-      <Button android:id="@+id/btnAllowUpdates" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Allow installation from Rook" />
-      <Button android:id="@+id/btnUpdate" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Download APK in browser ↗" style="@style/RookOutlinedButton" />
-    </LinearLayout>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical">
+  <!-- Header: back, title, version. -->
+  <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:orientation="horizontal" android:paddingStart="4dp" android:paddingEnd="16dp" android:paddingTop="4dp" android:paddingBottom="4dp">
+    <ImageButton android:id="@+id/btnBack" android:layout_width="48dp" android:layout_height="48dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="Back to conversation" android:src="?attr/homeAsUpIndicator" android:tint="@color/rook_accent" />
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="SETTINGS" android:textSize="18sp" android:textStyle="bold" android:letterSpacing="0.06" android:textColor="@color/rook_accent" />
+    <TextView android:id="@+id/versionInfo" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:layout_marginStart="10dp" android:gravity="end" android:maxLines="1" android:ellipsize="end" android:textSize="11sp" android:textColor="@color/rook_dim" android:fontFamily="monospace" />
   </LinearLayout>
-</ScrollView>
+  <com.google.android.material.tabs.TabLayout android:id="@+id/settingsTabs" android:layout_width="match_parent" android:layout_height="40dp" android:background="@color/rook_bg" />
+
+  <ScrollView android:id="@+id/settingsScroll" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+    <FrameLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:paddingStart="16dp" android:paddingEnd="16dp" android:paddingBottom="16dp">
+
+      <!-- ===== Voice ===== -->
+      <LinearLayout android:id="@+id/pageVoice" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
+        <LinearLayout style="@style/RookPanel">
+          <TextView style="@style/RookSectionLabel" android:text="CONVERSATION MODE" />
+          <AutoCompleteTextView android:id="@+id/voiceMode" android:layout_width="match_parent" android:layout_height="48dp" android:inputType="none" android:focusable="false" android:contentDescription="@string/voice_mode" android:drawableEnd="@android:drawable/arrow_down_float" />
+          <TextView android:id="@+id/voiceModeHelp" style="@style/RookHelp" android:paddingBottom="8dp" />
+          <EditText android:id="@+id/voiceModePrompt" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="@string/voice_mode_prompt" android:inputType="textMultiLine|textCapSentences" android:minLines="2" android:maxLines="8" android:maxLength="2000" android:gravity="top" />
+          <Button android:id="@+id/btnModeDefault" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/voice_mode_reset" style="@style/RookOutlinedButton" />
+        </LinearLayout>
+        <LinearLayout style="@style/RookPanel">
+          <TextView style="@style/RookSectionLabel" android:text="VOICE" android:labelFor="@id/voicePicker" />
+          <AutoCompleteTextView android:id="@+id/voicePicker" android:layout_width="match_parent" android:layout_height="48dp" android:inputType="none" android:focusable="false" android:contentDescription="@string/voice_picker" android:drawableEnd="@android:drawable/arrow_down_float" />
+          <TextView android:id="@+id/voiceListStatus" style="@style/RookHelp" android:accessibilityLiveRegion="polite" />
+          <Button android:id="@+id/btnRetryVoices" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/retry_voices" style="@style/RookOutlinedButton" />
+        </LinearLayout>
+        <LinearLayout style="@style/RookPanel">
+          <TextView style="@style/RookSectionLabel" android:text="BEHAVIOUR" />
+          <CheckBox android:id="@+id/fastVoice" android:layout_width="match_parent" android:layout_height="wrap_content" android:checked="false" android:text="@string/fast_voice" />
+          <CheckBox android:id="@+id/showThinking" android:layout_width="match_parent" android:layout_height="wrap_content" android:checked="false" android:text="@string/show_thinking" />
+          <CheckBox android:id="@+id/wakeEnabled" android:layout_width="match_parent" android:layout_height="wrap_content" android:checked="true" android:text="@string/wake_enabled" />
+          <Button android:id="@+id/btnDefaultAssistant" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Use Rook as default assistant" style="@style/RookOutlinedButton" />
+          <TextView android:id="@+id/assistantState" style="@style/RookHelp" />
+        </LinearLayout>
+        <Button android:id="@+id/btnSaveVoice" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:text="@string/save_voice" />
+      </LinearLayout>
+
+      <!-- ===== Band ===== -->
+      <LinearLayout android:id="@+id/pageBand" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:visibility="gone">
+        <LinearLayout style="@style/RookPanel">
+          <TextView style="@style/RookSectionLabel" android:text="CONNECT" />
+          <TextView style="@style/RookFieldLabel" android:text="Rook server" />
+          <EditText android:id="@+id/accountServer" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="https://rook.example.com" android:inputType="textUri" />
+          <Button android:id="@+id/btnGoogle" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Sign in with Google" style="@style/RookOutlinedButton" />
+          <Button android:id="@+id/btnSavedBands" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Choose a saved band" style="@style/RookOutlinedButton" />
+          <TextView style="@style/RookFieldLabel" android:text="Six-character pairing code" />
+          <EditText android:id="@+id/pairingCode" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Six-character pairing code" android:inputType="textNoSuggestions" android:maxLength="6" />
+          <Button android:id="@+id/btnPair" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Fetch band with pairing code" style="@style/RookOutlinedButton" />
+        </LinearLayout>
+        <LinearLayout style="@style/RookPanel">
+          <TextView style="@style/RookSectionLabel" android:text="THIS DEVICE" />
+          <TextView style="@style/RookFieldLabel" android:text="@string/hint_hub" />
+          <EditText android:id="@+id/hub" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="@string/hint_hub" android:inputType="textNoSuggestions" />
+          <TextView style="@style/RookFieldLabel" android:text="@string/hint_psk" />
+          <EditText android:id="@+id/psk" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="@string/hint_psk" android:inputType="textPassword" />
+          <TextView style="@style/RookFieldLabel" android:text="@string/hint_name" />
+          <EditText android:id="@+id/name" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="@string/hint_name" android:inputType="textNoSuggestions" />
+          <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:paddingTop="8dp">
+            <Button android:id="@+id/btnStart" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:layout_marginEnd="6dp" android:text="@string/start" />
+            <Button android:id="@+id/btnStop" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:layout_marginStart="6dp" android:text="@string/stop" style="@style/RookOutlinedButton" />
+          </LinearLayout>
+          <Button android:id="@+id/btnStopFind" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Stop find-device ring" style="@style/RookOutlinedButton" />
+        </LinearLayout>
+      </LinearLayout>
+
+      <!-- ===== Permissions: rows are built in code with their live state. ===== -->
+      <LinearLayout android:id="@+id/pagePermissions" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:visibility="gone">
+        <TextView style="@style/RookHelp" android:paddingTop="12dp" android:text="Tap a row to grant it. States refresh when you come back to this screen." />
+        <LinearLayout android:id="@+id/permList" style="@style/RookPanel" android:padding="0dp" />
+        <Button android:id="@+id/btnGrantPerms" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:text="@string/grant_perms" style="@style/RookOutlinedButton" />
+      </LinearLayout>
+
+      <!-- ===== App ===== -->
+      <LinearLayout android:id="@+id/pageApp" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:visibility="gone">
+        <LinearLayout style="@style/RookPanel">
+          <TextView style="@style/RookSectionLabel" android:text="UPDATES" />
+          <TextView android:id="@+id/appVersion" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="@color/rook_fg" android:fontFamily="monospace" />
+          <TextView android:id="@+id/updateStatus" style="@style/RookHelp" android:textIsSelectable="true" />
+          <CheckBox android:id="@+id/autoUpdates" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="Automatic APK updates" />
+          <TextView style="@style/RookHelp" android:text="Checks every six hours while the worker runs. Android may ask you to confirm installation." />
+          <Button android:id="@+id/btnAllowUpdates" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="Allow installation from Rook" style="@style/RookOutlinedButton" />
+          <Button android:id="@+id/btnUpdate" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Download APK in browser ↗" style="@style/RookOutlinedButton" />
+        </LinearLayout>
+        <LinearLayout style="@style/RookPanel">
+          <TextView style="@style/RookSectionLabel" android:text="ADVANCED · VOICE CONNECTION" />
+          <TextView style="@style/RookFieldLabel" android:text="@string/hint_voice_url" />
+          <EditText android:id="@+id/voiceUrl" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="@string/hint_voice_url" android:inputType="textUri" />
+          <TextView style="@style/RookFieldLabel" android:text="@string/hint_voice_token" />
+          <EditText android:id="@+id/voiceToken" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="@string/hint_voice_token" android:inputType="textPassword" />
+          <CheckBox android:id="@+id/voiceInsecure" android:layout_width="match_parent" android:layout_height="wrap_content" android:checked="false" android:text="@string/voice_insecure" />
+          <Button android:id="@+id/btnSaveConnection" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="Save voice connection" />
+        </LinearLayout>
+      </LinearLayout>
+    </FrameLayout>
+  </ScrollView>
+
+  <!-- Status footer, shown on every tab. -->
+  <TextView android:id="@+id/status" android:layout_width="match_parent" android:layout_height="wrap_content" android:background="@color/rook_panel" android:paddingStart="16dp" android:paddingEnd="16dp" android:paddingTop="8dp" android:paddingBottom="10dp" android:minLines="1" android:maxLines="3" android:textSize="12sp" android:textColor="@color/rook_dim" android:fontFamily="monospace" android:textIsSelectable="true" android:accessibilityLiveRegion="polite" android:text="ready" />
+</LinearLayout>

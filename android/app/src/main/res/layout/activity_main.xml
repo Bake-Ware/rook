@@ -16,9 +16,11 @@
     <LinearLayout android:id="@+id/timersRow" android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="horizontal" />
   </HorizontalScrollView>
   <androidx.recyclerview.widget.RecyclerView android:id="@+id/chatList" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:clipToPadding="false" android:paddingBottom="12dp" />
-  <ScrollView android:id="@+id/activityScroll" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:visibility="gone" android:paddingStart="12dp" android:paddingEnd="12dp">
-    <LinearLayout android:id="@+id/activityList" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingBottom="12dp" />
-  </ScrollView>
+  <androidx.swiperefreshlayout.widget.SwipeRefreshLayout android:id="@+id/workersRefresh" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:visibility="gone">
+    <ScrollView android:id="@+id/workersScroll" android:layout_width="match_parent" android:layout_height="match_parent" android:paddingStart="12dp" android:paddingEnd="12dp">
+      <LinearLayout android:id="@+id/workersList" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingBottom="12dp" />
+    </ScrollView>
+  </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
   <ScrollView android:id="@+id/backgroundScroll" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:visibility="gone" android:paddingStart="12dp" android:paddingEnd="12dp">
     <LinearLayout android:id="@+id/backgroundList" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingBottom="12dp" />
   </ScrollView>

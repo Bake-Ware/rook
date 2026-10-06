@@ -12,6 +12,7 @@ import android.view.inputmethod.EditorInfo
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
+import androidx.lifecycle.lifecycleScope
 import systems.bake.rook.databinding.ActivityMainBinding
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -60,7 +61,7 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
         chat = ChatAdapter { prefs.getBoolean("show_thinking", false) }
         b.chatList.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(this).apply { stackFromEnd = true }
         b.chatList.adapter = chat
-        panels = ConversationPanels(this, b)
+        panels = ConversationPanels(this, b, lifecycleScope)
         b.versionLabel.text = "APK ${BuildConfig.VERSION_NAME} · ${BuildConfig.VERSION_CODE}"
         maybeRequestNotifications()
         // A force-stop clears alarms without telling us; arming again is idempotent.
