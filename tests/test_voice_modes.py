@@ -199,6 +199,7 @@ def test_job_reports_wait_for_assistant_mode():
     asyncio.run(scenario())
 
 
+@pytest.mark.skipif(not Path('android').is_dir(), reason='needs the full repository (a voice release has no android/)')
 def test_android_defaults_match_server():
     source = Path('android/app/src/main/java/systems/bake/rook/VoiceModes.kt').read_text()
     android = {m[0]: (m[1], m[2]) for m in re.findall(r'Mode\("(\w+)", "([^"]*)", "([^"]*)"\)', source)}
