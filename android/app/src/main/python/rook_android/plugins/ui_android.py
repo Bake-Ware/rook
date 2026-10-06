@@ -28,7 +28,14 @@ class AndroidUiPlugin(Plugin):
         try:
             txt = _Hid.screenText()
             s = str(txt) if txt is not None else ""
-            return {"ok": True, "text": s, "lines": s.count("\n") + (1 if s else 0)}
+            out = {"ok": True, "text": s, "lines": s.count("\n") + (1 if s else 0)}
+            try:
+                app = _Hid.screenApp()
+                if app is not None and len(app) == 2:
+                    out["package"], out["app"] = str(app[0]), str(app[1])
+            except Exception:
+                pass    # older service build: text only
+            return out
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 

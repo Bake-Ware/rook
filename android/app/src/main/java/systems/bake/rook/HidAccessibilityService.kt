@@ -106,5 +106,15 @@ class HidAccessibilityService : AccessibilityService() {
 
         /** All visible text on the current screen, or null if not enabled. */
         @JvmStatic fun screenText(): String? = instance?.dumpTextInternal()
+
+        /** Package and label of the app in the active window, or null. */
+        @JvmStatic fun screenApp(): Array<String>? = instance?.let { svc ->
+            val pkg = svc.rootInActiveWindow?.packageName?.toString() ?: return@let null
+            val label = try {
+                val pm = svc.packageManager
+                pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+            } catch (_: Exception) { pkg }
+            arrayOf(pkg, label)
+        }
     }
 }

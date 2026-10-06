@@ -19,7 +19,7 @@ from .runtime import Connection
 from .state import Store
 from .decision import DecisionClient, gate_threshold
 from .feedback import FeedbackStore
-from .identity import configured_identities, identity_for
+from .identity import with_hello_device, configured_identities, identity_for
 from .admin import AdminStore, router as admin_router
 from . import modes
 from . import pipeline
@@ -213,6 +213,11 @@ async def websocket(ws: WebSocket):
                           activity=hello.get('activity') is True, enqueue=enqueue,
                           progress_updates=hello.get('progress_updates'), identity=identity_for(supplied, live_identities))
         conn.full_duplex = protocol == 2 and hello.get('aec') is True
+        # An owner key may name the device it is talking from (the app sends its worker
+        # name), so "my battery / where am I / my calendar" default to that device. Never
+        # for other keys: their device comes only from the key's server-side mapping.
+        if protocol == 2:
+            conn.identity = with_hello_device(conn.identity, hello.get('device'))
         conn.mode = mode
         # Opt-in per connection; anything but an exact "front_background" stays classic.
         conn.pipeline = pipeline.resolve(hello.get('pipeline')) if protocol == 2 else 'classic'

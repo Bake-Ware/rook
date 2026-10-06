@@ -1,6 +1,8 @@
 """Trusted credential identity; hello fields never grant device access."""
 from contextvars import ContextVar
 from dataclasses import dataclass
+import dataclasses
+import re
 import hashlib
 import json
 import os
@@ -45,7 +47,7 @@ def allowed_tools(identity):
 
 current_identity = ContextVar('voice_identity', default=Identity())
 PERSONAL_CAPS = {'sms.list': 'texts', 'calllog.list': 'call history', 'contacts.search': 'contacts',
-                 'notify.list': 'notifications', 'location.get': 'location', 'calendar.list': 'calendar'}
+                 'notify.list': 'notifications', 'location.get': 'location', 'calendar.list': 'calendar', 'ui.text': 'screen'}
 
 
 def configured_identities():
@@ -78,3 +80,15 @@ def authorize_read(cap, worker):
 def authorize_devices():
     if not current_identity.get().owner:
         raise PolicyRefusal('Listing band devices requires an owner voice key.')
+
+
+_DEVICE_NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9._ -]{0,63}')
+
+
+def with_hello_device(identity, device):
+    """An owner key may name the device it talks from (hello ``device``), which
+    becomes its default device for battery/location/calendar/mail. Any other key
+    keeps only its server-side mapping; hello fields never grant device access."""
+    if identity.owner and not identity.worker and isinstance(device, str) and _DEVICE_NAME.fullmatch(device):
+        return dataclasses.replace(identity, worker=device)
+    return identity

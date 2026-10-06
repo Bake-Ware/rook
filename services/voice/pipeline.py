@@ -284,6 +284,8 @@ class FrontBackground:
             jobs = {}
             if 'rook_read' in allowed and self.conn.identity.worker:
                 jobs['device'] = asyncio.create_task(self.toolbox.device_state())
+                jobs['screen'] = asyncio.create_task(self.toolbox.screen_state())
+                jobs['notifications'] = asyncio.create_task(self.toolbox.notifications_state())
             if 'tasks_deck' in allowed:
                 jobs['tasks'] = asyncio.create_task(self.toolbox.tool_tasks_deck({}))
             if not jobs:
