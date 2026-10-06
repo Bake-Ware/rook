@@ -24,6 +24,14 @@ class VoiceCatalogTest {
         assertEquals(listOf("af_heart"), VoiceCatalog(emptyList(), VoiceCatalog.FALLBACK).choices(null))
         assertEquals(listOf("custom"), VoiceCatalog(emptyList(), VoiceCatalog.FALLBACK).choices("custom"))
     }
+    @Test fun namespacedEngineIds() {
+        assertEquals("Heart (US female)", VoiceCatalog.label("kokoro:af_heart"))
+        assertEquals("Chatterbox (default)", VoiceCatalog.label("chatterbox:default"))
+        assertEquals("Warm Narrator (Chatterbox)", VoiceCatalog.label("chatterbox:warm_narrator"))
+        val c = VoiceCatalog.parse(JSONObject("""{"voices":["kokoro:af_heart","chatterbox:default"],"default":"chatterbox:default"}"""))
+        assertEquals(listOf("kokoro:af_heart", "chatterbox:default"), c.choices("af_heart"))
+        assertEquals(listOf("chatterbox:default", "kokoro:af_heart"), c.choices(null))
+    }
     @Test(expected = IllegalArgumentException::class) fun emptyListFailsForRetry() {
         VoiceCatalog.parse(JSONObject("""{"voices":[]}"""))
     }

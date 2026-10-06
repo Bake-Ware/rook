@@ -136,7 +136,8 @@ def test_candidate_defaults_to_cpu_for_stt_and_tts():
     candidate = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(candidate)
     assert candidate.candidate_devices() == {'WHISPER_DEVICE': 'cpu', 'WHISPER_COMPUTE': 'int8',
-                                             'ONNX_PROVIDER': 'CPUExecutionProvider'}
+                                             'ONNX_PROVIDER': 'CPUExecutionProvider',
+                                             'VOICE_CHATTERBOX_DEVICE': ''}
     assert candidate.candidate_devices(live_devices=True) == {}
 
 

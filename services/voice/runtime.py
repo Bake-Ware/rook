@@ -30,6 +30,7 @@ class Connection:
         self.speak_out = True
         self.full_duplex = False
         self.voice = provider.default_voice
+        self.tts_fallback_reported = False
         self.play_until = 0.0
         self.pending_results = []
         self.receiving_speech = False
@@ -389,13 +390,28 @@ class Connection:
                 await self.emit("metrics", turn=epoch, duration_ms=int((time.monotonic()-started)*1000))
                 asyncio.get_running_loop().call_soon(self.drain_results)
 
+    async def synthesize(self, text, epoch):
+        """One clause in this session's voice. A Chatterbox failure is spoken by Kokoro
+        instead (inside the provider); the session is told once."""
+        if not hasattr(self.provider, 'resolve_voice'):
+            return await self.provider.synthesize(text, self.voice)
+        failures = []
+        result = await self.provider.synthesize(text, self.voice, on_fallback=failures.append)
+        if failures and not self.tts_fallback_reported and not self.closed:
+            self.tts_fallback_reported = True
+            self.activity_event('error', epoch, 'Voice engine failed; speaking with Kokoro',
+                                detail=(str(failures[0]) or type(failures[0]).__name__)[:300])
+            await self.emit('error', code='tts_fallback',
+                            msg='The selected voice engine failed, so the Kokoro voice is speaking instead.')
+        return result
+
     async def say(self, text, epoch, progress_job=None, record=True, on_audio=None):
         if epoch != self.epoch or self.closed or not text.strip():
             return
         if progress_job is not None:
             # Synthesis can be slow. Recheck the live job and suppression before
             # publishing any text/audio; a completed result always wins.
-            pcm, sr = await asyncio.wait_for(self.provider.synthesize(text, self.voice), 25)
+            pcm, sr = await asyncio.wait_for(self.synthesize(text, epoch), 25)
             if (progress_job not in self.progress.jobs.values() or self.progress.suppressed() or
                     epoch != self.epoch):
                 return False
@@ -421,7 +437,7 @@ class Connection:
         await self.emit("state", state="speaking", turn=epoch)
         self.activity_event('speaking', epoch, 'Speaking')
         if progress_job is None:
-            pcm, sr = await asyncio.wait_for(self.provider.synthesize(text, self.voice), 25)
+            pcm, sr = await asyncio.wait_for(self.synthesize(text, epoch), 25)
         await self.emit("audio_sr", sr=sr, turn=epoch)
         step = int(sr * .04) * 2
         for offset in range(0, len(pcm), step):

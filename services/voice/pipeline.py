@@ -35,6 +35,7 @@ from .board import boards
 from .identity import PolicyRefusal, current_identity
 from .policy import TIMER_TOOLS, background_tools
 from .thinking import TOOLS as THINKING_TOOLS, SchemaCache, ThinkingAgent, function
+from .tts import FRONT_TAGS as TTS_FRONT_TAGS
 
 PIPELINES = ('classic', 'front_background')
 KINDS = ('start', 'prefetch', 'thought', 'tool_call', 'tool_result', 'board', 'followup', 'dropped', 'done', 'error')
@@ -240,7 +241,9 @@ class FrontBackground:
         return tools if self.timers_enabled else tools - TIMER_TOOLS
 
     def fixed(self):
-        return front_mod.fixed_block(self.conn.mode, self.allowed())
+        tts = getattr(self.conn.provider, 'tts', None)
+        tags = TTS_FRONT_TAGS if tts is not None and tts.supports_tags(self.conn.voice) else ()
+        return front_mod.fixed_block(self.conn.mode, self.allowed(), sound_tags=tags)
 
     def _time_fact(self):
         now = now_local()
