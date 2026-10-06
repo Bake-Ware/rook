@@ -9,8 +9,10 @@ Two engines, both first-class:
   ``chatterbox_worker.py`` so torch never shares this process; without that
   variable the worker code is imported in-process instead.
 
-Voice ids are namespaced by engine: ``kokoro:af_heart``, ``chatterbox:default``.
-A bare id (``af_heart``) is a legacy Kokoro id and keeps meaning Kokoro.
+Voice ids are bare names (``af_heart``, ``sojourn``), unique across engines; the
+catalog records each voice's engine. A Chatterbox clip whose name is already a
+Kokoro voice is skipped. The older engine-namespaced form (``kokoro:af_heart``,
+``chatterbox:sojourn``) is still accepted and resolves to the bare name.
 
 Paralinguistic tags such as ``[laugh]`` go to Chatterbox unchanged and are
 stripped before Kokoro, which would read them aloud. If Chatterbox fails for an
@@ -41,7 +43,7 @@ def strip_tags(text):
 
 
 def parse_voice_id(voice):
-    """``'kokoro:af_heart'`` -> ``('kokoro', 'af_heart')``; a bare id is Kokoro; bad input -> None."""
+    """``'kokoro:af_heart'`` -> ``('kokoro', 'af_heart')``; a bare id -> ``(None, id)``; bad input -> None."""
     if not isinstance(voice, str):
         return None
     voice = voice.strip()
@@ -49,7 +51,7 @@ def parse_voice_id(voice):
         return None
     engine, sep, name = voice.partition(":")
     if not sep:
-        return KOKORO, voice
+        return None, voice
     engine = engine.strip().lower()
     if engine not in ENGINES or not name.strip():
         return None
@@ -203,27 +205,31 @@ class Catalog:
             self.engines[CHATTERBOX]["error"] = str(chatterbox_error)[:200]
         self.kokoro_voices = sorted(kokoro.voices)
         self.kokoro_default = kokoro_default if kokoro_default in self.kokoro_voices else self.kokoro_voices[0]
-        entries = [{"id": f"{KOKORO}:{v}", "engine": KOKORO, "name": v, "label": kokoro_label(v)}
-                   for v in self.kokoro_voices]
-        if chatterbox is not None:
-            entries += [{"id": f"{CHATTERBOX}:{v}", "engine": CHATTERBOX, "name": v,
-                         "label": "Chatterbox " + ("(default)" if v == "default" else v.replace("_", " ").title())}
-                        for v in chatterbox.voices]
+        self.engine = {v: KOKORO for v in self.kokoro_voices}
+        entries = [{"id": v, "engine": KOKORO, "name": v, "label": kokoro_label(v)} for v in self.kokoro_voices]
+        for v in (chatterbox.voices if chatterbox is not None else ()):
+            if v in self.engine:
+                log.warning("chatterbox voice %r skipped: a %s voice already has that name", v, self.engine[v])
+                continue
+            self.engine[v] = CHATTERBOX
+            entries.append({"id": v, "engine": CHATTERBOX, "name": v,
+                            "label": "Chatterbox (default)" if v == "default" else v.replace("_", " ").title()})
         self.entries = entries
         self.voices = [e["id"] for e in entries]
-        self.default = self.resolve(default) or f"{KOKORO}:{self.kokoro_default}"
+        self.default = self.resolve(default) or self.kokoro_default
 
     def resolve(self, voice):
-        """Canonical ``engine:name`` for any accepted id (legacy bare ids included), else None."""
+        """The voice's id (its bare name) for any accepted form, else None."""
         parsed = parse_voice_id(voice)
         if parsed is None:
             return None
-        canonical = f"{parsed[0]}:{parsed[1]}"
-        return canonical if canonical in self.voices else None
+        engine, name = parsed
+        if name not in self.engine or (engine is not None and self.engine[name] != engine):
+            return None
+        return name
 
     def engine_of(self, voice):
-        parsed = parse_voice_id(self.resolve(voice) or "")
-        return parsed[0] if parsed else KOKORO
+        return self.engine.get(self.resolve(voice), KOKORO)
 
     def supports_tags(self, voice):
         return self.engine_of(voice) == CHATTERBOX
@@ -233,9 +239,8 @@ class Catalog:
 
     def synthesize(self, text, voice, on_fallback=None):
         """Blocking. Returns (int16 PCM bytes, sample rate)."""
-        canonical = self.resolve(voice) or self.default
-        engine, name = parse_voice_id(canonical)
-        if engine == CHATTERBOX:
+        name = self.resolve(voice) or self.default
+        if self.engine[name] == CHATTERBOX:
             try:
                 samples, sr = self.chatterbox.synthesize(text, name)
                 if len(samples) == 0:

@@ -177,13 +177,14 @@ The server speaks with two TTS engines, both selectable per session:
   `chatterbox_worker.py` with it. Without `VOICE_CHATTERBOX_PYTHON` the worker
   code is imported in-process (only if the voice venv itself has chatterbox).
   `VOICE_CHATTERBOX_VOICES_DIR` (optional): each `<name>.wav` there (5-20 s of
-  clean speech) becomes the voice `chatterbox:<name>`; the built-in voice is
-  `chatterbox:default`. If Chatterbox does not load, the server logs why, leaves
+  clean speech) becomes the voice `<name>`; the built-in voice is `default`.
+  A clip named like an existing Kokoro voice is skipped (logged). If Chatterbox does not load, the server logs why, leaves
   it out of `/voices` and runs with Kokoro alone.
 
-Voice ids are engine-namespaced: `kokoro:af_heart`, `chatterbox:default`. A bare
-id such as `af_heart` is a legacy Kokoro id and still works everywhere (`voice`
-messages, `/api/voice`, `VOICE`, `VOICE_TTS_DEFAULT`). `GET /voices` returns
+Voice ids are bare names, unique across engines: `af_heart`, `sojourn`. The
+older engine-namespaced form (`kokoro:af_heart`, `chatterbox:sojourn`) is still
+accepted everywhere (`voice` messages, `/api/voice`, `VOICE`,
+`VOICE_TTS_DEFAULT`) and resolves to the bare id. `GET /voices` returns
 `voices` (ids), `default`, `catalog` (`id`, `engine`, `name`, `label`) and
 `engines` (availability, load error). The default is `VOICE_TTS_DEFAULT`, else
 the saved `voice.state`, else `VOICE` (default `af_heart`); an unavailable
@@ -215,7 +216,7 @@ first load, ~10 s to load once cached):
 VOICE_CHATTERBOX_DEVICE=cuda:0
 VOICE_CHATTERBOX_PYTHON=/path/to/chatterbox-turbo/.venv/bin/python
 CUDA_DEVICE_ORDER=PCI_BUS_ID      # cuda:N numbered like nvidia-smi
-# VOICE_TTS_DEFAULT=chatterbox:default   # optional; otherwise the Kokoro default stays
+# VOICE_TTS_DEFAULT=default   # optional; otherwise the Kokoro default stays
 ```
 
 Measured on an RTX 3090 (Chatterbox Turbo, built-in voice): ~3.2-3.7 GiB of
