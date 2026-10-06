@@ -52,6 +52,7 @@
       <EditText android:id="@+id/voiceModePrompt" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="@string/voice_mode_prompt" android:inputType="textMultiLine|textCapSentences" android:minLines="2" android:maxLines="8" android:maxLength="2000" android:gravity="top" />
       <TextView android:id="@+id/voiceModeHelp" android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="12sp" android:textColor="@color/rook_dim" />
       <Button android:id="@+id/btnModeDefault" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/voice_mode_reset" style="@style/RookOutlinedButton" />
+      <CheckBox android:id="@+id/fastVoice" android:layout_width="match_parent" android:layout_height="wrap_content" android:checked="false" android:text="@string/fast_voice" />
       <CheckBox android:id="@+id/showThinking" android:layout_width="match_parent" android:layout_height="wrap_content" android:checked="false" android:text="@string/show_thinking" />
       <CheckBox android:id="@+id/wakeEnabled" android:layout_width="match_parent" android:layout_height="wrap_content" android:checked="true" android:text="@string/wake_enabled" />
       <Button android:id="@+id/btnDefaultAssistant" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Use Rook as default assistant" style="@style/RookOutlinedButton" />

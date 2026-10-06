@@ -21,20 +21,45 @@ except Exception:  # pragma: no cover
     _Listener = None
 
 
+def _packages(value) -> set[str]:
+    """Package filter from a list or a comma/space separated string (empty = all)."""
+    if value is None:
+        return set()
+    parts = value if isinstance(value, (list, tuple, set)) else str(value).replace(",", " ").split()
+    return {str(p).strip() for p in parts if str(p).strip()}
+
+
 class AndroidNotifyPlugin(Plugin):
     NAMESPACE = "notify"
 
     @capability("list")
-    def _list(self, limit: int = 40) -> dict:
-        """Recent notifications, newest first: {package, title, text, ts, key}."""
+    def _list(self, limit: int = 40, packages: str | list | None = None) -> dict:
+        """Recent notifications, newest first.
+
+        Args:
+          limit: most notifications to return (1-200, default 40).
+          packages: only these apps, as a list or comma-separated package names,
+            e.g. "com.google.android.gm,com.microsoft.office.outlook" for mail.
+
+        Each item: {package, title, text, ts (epoch s), posted_ms (epoch ms), key,
+        clearable, sub_text?, big_text?}. Mail apps usually put the sender in
+        title, the subject in text, the account in sub_text and a preview in big_text.
+        """
         if _Listener is None:
             return {"ok": False, "error": "not an Android host"}
         ctx = app_context()
         if ctx is not None and not _Listener.isEnabled(ctx):
             return {"ok": False, "error": "notification access not granted (grant it in the app)"}
         try:
-            raw = _Listener.snapshotJson(max(1, min(int(limit), 200)))
+            n = max(1, min(int(limit), 200))
+            wanted = _packages(packages)
+            raw = _Listener.snapshotJson(200 if wanted else n)
             items = json.loads(str(raw))
+            if wanted:
+                items = [i for i in items if i.get("package") in wanted][:n]
+            for i in items:
+                if "posted_ms" not in i and isinstance(i.get("ts"), (int, float)):
+                    i["posted_ms"] = int(i["ts"] * 1000)
             return {"ok": True, "count": len(items), "connected": bool(_Listener.isConnected()),
                     "notifications": items}
         except Exception as e:

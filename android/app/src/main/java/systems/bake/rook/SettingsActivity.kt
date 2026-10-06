@@ -120,6 +120,7 @@ class SettingsActivity : AppCompatActivity() {
             permsLauncher.launch(arrayOf(
                 android.Manifest.permission.READ_SMS, android.Manifest.permission.SEND_SMS,
                 android.Manifest.permission.READ_CONTACTS, android.Manifest.permission.READ_CALL_LOG,
+                android.Manifest.permission.READ_CALENDAR,
                 android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION, android.Manifest.permission.RECORD_AUDIO,
             ))
         }
@@ -152,6 +153,11 @@ class SettingsActivity : AppCompatActivity() {
             status("mode: ${mode.label} (takes effect on next Voice on)")
         }
         b.btnModeDefault.setOnClickListener { b.voiceModePrompt.setText(modeShown.defaultPrompt) }
+        b.fastVoice.isChecked = prefs.getBoolean(PREF_FAST_VOICE, false)
+        b.fastVoice.setOnCheckedChangeListener { _, enabled ->
+            prefs.edit().putBoolean(PREF_FAST_VOICE, enabled).apply()
+            status("fast voice ${if (enabled) "on" else "off"} (takes effect on next Voice on)")
+        }
         b.showThinking.isChecked = prefs.getBoolean("show_thinking", false)
         b.showThinking.setOnCheckedChangeListener { _, enabled ->
             prefs.edit().putBoolean("show_thinking", enabled).apply()

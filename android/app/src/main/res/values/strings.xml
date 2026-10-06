@@ -10,7 +10,7 @@
     <string name="grant_battery">Ignore battery optimization</string>
     <string name="accessibility_description">Lets the Rook worker send taps, swipes, and text on your behalf for remote control over the band.</string>
     <string name="grant_notif">Grant notification access</string>
-    <string name="grant_perms">Grant SMS / contacts / location</string>
+    <string name="grant_perms">Grant SMS / contacts / calendar / location</string>
     <string name="grant_overlay">Grant display-over-apps (wake)</string>
     <string name="hint_voice_url">Voice server (wss://host:8900/ws)</string>
     <string name="voice_insecure">Accept self-signed TLS cert</string>
@@ -40,6 +40,7 @@
     <string name="st_thinking">thinking</string>
     <string name="st_speaking">speaking</string>
     <string name="show_thinking">Show thinking</string>
+    <string name="fast_voice">Fast voice (preview): answer right away, look things up in the background</string>
     <string name="voice_picker">Voice</string>
     <string name="retry_voices">Reload voices</string>
     <string name="mic_paused">mic paused</string>

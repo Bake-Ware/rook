@@ -9,6 +9,12 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action
         if (action == Intent.ACTION_MY_PACKAGE_REPLACED) ApkUpdater.replaced(context)
+        // Alarms are cleared by a reboot and an app update; voice timers are armed again
+        // (whether or not the worker autostarts), and re-armed exact once that is allowed.
+        if (action == Intent.ACTION_MY_PACKAGE_REPLACED || action == Intent.ACTION_BOOT_COMPLETED ||
+            action == "android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED") {
+            try { Timers.rearm(context) } catch (t: Throwable) { android.util.Log.w("RookBootReceiver", "timer re-arm failed", t) }
+        }
         if (action != Intent.ACTION_MY_PACKAGE_REPLACED && action != Intent.ACTION_BOOT_COMPLETED &&
             action != Intent.ACTION_LOCKED_BOOT_COMPLETED) return
 

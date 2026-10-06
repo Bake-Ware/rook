@@ -50,10 +50,12 @@ def _attach_native_plugins(worker) -> None:
     from rook_android.plugins.location_android import AndroidLocationPlugin
     from rook_android.plugins.device_android import AndroidDevicePlugin
     from rook_android.plugins.speak_android import AndroidSpeakPlugin
+    from rook_android.plugins.calendar_android import AndroidCalendarPlugin
     natives = (AndroidScreenPlugin(), AndroidHidPlugin(), AndroidBatteryPlugin(),
                AndroidNotifyPlugin(), AndroidUiPlugin(), AndroidSmsPlugin(),
                AndroidContactsPlugin(), AndroidCallLogPlugin(),
-               AndroidLocationPlugin(), AndroidDevicePlugin(), AndroidSpeakPlugin())
+               AndroidLocationPlugin(), AndroidDevicePlugin(), AndroidSpeakPlugin(),
+               AndroidCalendarPlugin())
     # Native plugins skip the plugin host, so give them the node's plugin state
     # directory ourselves; the default is relative to the cwd, which on Android
     # is the read-only root.
