@@ -33,7 +33,9 @@ class Synth:
                 if ext.lower() not in (".wav", ".flac", ".mp3") or not stem.replace("_", "").replace("-", "").isalnum():
                     continue
                 try:
-                    self.model.prepare_conditionals(os.path.join(voices_dir, file))
+                    # Without inference_mode autograd keeps ~270 MB of GPU activations alive per voice.
+                    with torch.inference_mode():
+                        self.model.prepare_conditionals(os.path.join(voices_dir, file))
                     self.conds[stem.lower()] = self.model.conds
                 except Exception as error:   # a bad clip only drops that voice
                     print(f"chatterbox: skipped voice {file}: {error}", file=sys.stderr)
