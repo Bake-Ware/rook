@@ -88,7 +88,7 @@ def followup_note(facts):
 
 
 def payload(messages):
-    return {'model': providers.VLLM_MODEL, 'messages': messages, 'stream': True,
+    return {'model': providers.FRONT_MODEL, 'messages': messages, 'stream': True,
             'max_tokens': int(os.environ.get('VOICE_FRONT_MAX_TOKENS', '200')), 'temperature': 0.5,
             'reasoning_effort': 'none', 'chat_template_kwargs': {'enable_thinking': False}}
 
@@ -105,7 +105,7 @@ async def stream(messages, on_clause, on_token=None, transport=None, url=None, c
             if transport is not None:
                 kwargs['transport'] = transport
             client = await stack.enter_async_context(httpx.AsyncClient(**kwargs))
-        async with client.stream('POST', url or providers.VLLM_URL, json=body) as response:
+        async with client.stream('POST', url or providers.FRONT_URL, json=body) as response:
             response.raise_for_status()
             async for line in response.aiter_lines():
                 if not line.startswith('data:'):

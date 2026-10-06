@@ -150,6 +150,9 @@ class FrontBackground:
                                           emit_timer=self._emit_timer, on_board=self._on_board,
                                           mcp=mcp, read=read, http_transport=http_transport, hass=hass)
         self.front = front or self._front_stream
+        if complete is None:
+            from .providers import background_chat
+            complete = background_chat
         self.complete, self.mcp, self.devices = complete, mcp, devices
         # Per connection, not per turn: capability schemas and the hub catalog
         # for Background, and one HTTP client (keep-alive) for Front.

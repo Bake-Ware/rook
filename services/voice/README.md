@@ -305,16 +305,20 @@ anything else, or no field, keeps the classic planner path unchanged. Code:
 `front.py` (prompt layout and streaming), `board.py`, `policy.py` (tool table),
 `bgtools.py` (timers, weather, calendar, mail, Rook tasks, music, Home Assistant).
 
-* Front: one streaming completion per turn to `VLLM_URL`/`VLLM_MODEL`, no tools,
-  thinking off. Prompt = fixed block (persona, rules, mode) + board + last
+* Front: one streaming completion per turn to `VOICE_FRONT_URL`/`VOICE_FRONT_MODEL`
+  (default `VLLM_URL`/`VLLM_MODEL`), no tools, thinking off. Prompt = fixed block (persona, rules, mode) + board + last
   `VOICE_FRONT_TURNS` (6) exchanges + utterance. `VOICE_FRONT_MAX_TOKENS` (200),
   `VOICE_FRONT_TIMEOUT_S` (30).
-* Background: the thinking agent's tool loop with only the policy tools, effort
+* Background: the thinking agent's tool loop on `VOICE_BACKGROUND_URL`/
+  `VOICE_BACKGROUND_MODEL` (default `VLLM_*`) with only the policy tools, effort
   `VOICE_BACKGROUND_EFFORT` (`low`), `VOICE_BACKGROUND_MAX_STEPS` (8),
   `VOICE_BACKGROUND_TIMEOUT_S` (120). It sees only the user's own lines and
   trusted board facts; after any tool that returns outside text (web, mail,
   calendar, device or hub reads) the rest of that run has no acting tools.
   Follow-ups wait up to `VOICE_FOLLOWUP_WAIT_S` (90) for Front to finish.
+* Pin Front and Background to separate model instances (e.g. one llmanifold
+  model per GPU) so Front never queues behind Background and each side keeps a
+  warm prompt cache. The classic path and the classic thinking agent keep `VLLM_*`.
 * Prefetch (session start, wake, speech onset when older than
   `VOICE_PREFETCH_EVERY_S` (120)): clock, caller device battery, timers, owner
   tasks; bounded by `VOICE_PREFETCH_TIMEOUT_S` (4).
