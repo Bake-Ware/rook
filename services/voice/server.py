@@ -28,6 +28,13 @@ from .tts import resolve_voice
 VERSION = '2.0.0'
 ROOT = Path(os.environ.get('VOICE_MODEL_DIR', '.'))
 TOKEN = os.environ.get('VOICE_TOKEN', '')
+
+
+def guest_allowed(supplied):
+    """Keyless connections are guests when VOICE_ALLOW_ANONYMOUS=1, even with keys
+    configured. A supplied key that isn't valid (revoked, mistyped) is refused,
+    never downgraded to guest."""
+    return not supplied and os.environ.get('VOICE_ALLOW_ANONYMOUS') == '1'
 IDENTITIES = configured_identities()
 if TOKEN:
     IDENTITIES.setdefault(hashlib.sha256(TOKEN.encode()).hexdigest(),
@@ -147,7 +154,7 @@ async def websocket(ws: WebSocket):
     supplied = ws.headers.get('authorization', '').removeprefix('Bearer ') or ws.query_params.get('token', '')
     credential_id = hashlib.sha256(supplied.encode()).hexdigest()
     accepted = bool(supplied) and credential_id in ADMIN.mappings(IDENTITIES)
-    if not accepted and not (not TOKEN and os.environ.get('VOICE_ALLOW_ANONYMOUS') == '1'):
+    if not accepted and not guest_allowed(supplied):
         await ws.close(code=4401)
         return
     await ws.accept()
@@ -187,7 +194,7 @@ async def websocket(ws: WebSocket):
             async with lock:
                 await ws.send_bytes(data)
         live_identities = ADMIN.mappings(IDENTITIES)
-        if credential_id not in live_identities and not (not TOKEN and os.environ.get('VOICE_ALLOW_ANONYMOUS') == '1'):
+        if credential_id not in live_identities and not guest_allowed(supplied):
             await ws.close(code=4401)
             return
         try:

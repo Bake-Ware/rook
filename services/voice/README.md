@@ -22,8 +22,8 @@ outside Git. The existing browser UI can live in `VOICE_MODEL_DIR/static`.
 Runtime configuration:
 
 * `VOICE_TOKEN`: bearer credential. No hardcoded credential or implicit public
-  access. LAN deployments must explicitly set `VOICE_ALLOW_ANONYMOUS=1` if they
-  intentionally have no credential. Keyless guests (and unprivileged keys) get
+  access. `VOICE_ALLOW_ANONYMOUS=1` lets keyless clients in as guests, with or
+  without keys configured; a supplied key that isn't valid is still refused. Keyless guests (and unprivileged keys) get
   conversation and web search only: no band device listing, no device reads and
   no agent. A key mapped to a device may read only that device; owner keys keep
   full access.
@@ -159,7 +159,7 @@ running jobs; already completed external effects cannot be undone.
 `VOICE_IDENTITIES_FILE` imports an existing JSON dictionary keyed by SHA-256
 credential digest, with `principal`, `worker` and `owner` fields. Revocation
 persists in the admin database and overrides imported entries after restart.
-Set `VOICE_TOKEN` empty and `VOICE_ALLOW_ANONYMOUS=1` to enable keyless chat.
+Set `VOICE_ALLOW_ANONYMOUS=1` to enable keyless (guest) chat alongside keys.
 Guest keys and keyless connections cannot read private phone data or delegate
 unrestricted agent work. Device keys can read personal data from their mapped
 device; owner keys can select other devices and start agent work.
