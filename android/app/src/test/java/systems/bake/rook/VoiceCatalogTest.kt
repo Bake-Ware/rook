@@ -17,7 +17,8 @@ class VoiceCatalogTest {
         assertEquals("Emma (UK female)", VoiceCatalog.label("bf_emma"))
         assertEquals("George (UK male)", VoiceCatalog.label("bm_george"))
         assertEquals("Alpha (Japanese female)", VoiceCatalog.label("jf_alpha"))
-        assertEquals("custom_voice", VoiceCatalog.label("custom_voice"))
+        assertEquals("Custom Voice", VoiceCatalog.label("custom_voice"))
+        assertEquals("Sojourn", VoiceCatalog.label("sojourn"))
     }
     @Test fun missingDefaultAndSavedFallback() {
         assertEquals("am_adam", VoiceCatalog.parse(JSONObject("""{"voices":["am_adam"],"default":null}""")).default)
@@ -27,10 +28,16 @@ class VoiceCatalogTest {
     @Test fun namespacedEngineIds() {
         assertEquals("Heart (US female)", VoiceCatalog.label("kokoro:af_heart"))
         assertEquals("Chatterbox (default)", VoiceCatalog.label("chatterbox:default"))
-        assertEquals("Warm Narrator (Chatterbox)", VoiceCatalog.label("chatterbox:warm_narrator"))
+        assertEquals("Warm Narrator", VoiceCatalog.label("chatterbox:warm_narrator"))
         val c = VoiceCatalog.parse(JSONObject("""{"voices":["kokoro:af_heart","chatterbox:default"],"default":"chatterbox:default"}"""))
         assertEquals(listOf("kokoro:af_heart", "chatterbox:default"), c.choices("af_heart"))
         assertEquals(listOf("chatterbox:default", "kokoro:af_heart"), c.choices(null))
+    }
+    @Test fun bareIdsMatchSavedNamespacedIds() {
+        val c = VoiceCatalog.parse(JSONObject("""{"voices":["af_heart","default","alan"],"default":"alan"}"""))
+        assertEquals(listOf("alan", "af_heart", "default"), c.choices("chatterbox:alan"))
+        assertEquals(listOf("af_heart", "default", "alan"), c.choices("kokoro:af_heart"))
+        assertEquals("Chatterbox (default)", VoiceCatalog.label("default"))
     }
     @Test(expected = IllegalArgumentException::class) fun emptyListFailsForRetry() {
         VoiceCatalog.parse(JSONObject("""{"voices":[]}"""))
