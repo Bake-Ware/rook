@@ -210,7 +210,7 @@ def server(tmp_path, monkeypatch):
         await asyncio.sleep(.2)
         await on_clause('One moment.')
         return 'One moment.'
-    async def fake_think(messages, tools, effort):
+    async def fake_think(messages, tools, effort, **kwargs):
         await asyncio.sleep(.3)
         return call('no_action')
     monkeypatch.setattr(front_mod, 'stream', fake_front)
@@ -1067,7 +1067,7 @@ def test_stop_drops_followup_already_waiting_for_front(tmp_path):
 
 def test_server_stop_drops_followup(server, monkeypatch):
     from fastapi.testclient import TestClient
-    async def think(messages, tools, effort):
+    async def think(messages, tools, effort, **kwargs):
         await asyncio.sleep(.4)
         return call('finish', {'text': 'It is sunny.'})
     monkeypatch.setattr(providers, 'thinking_chat', think)
@@ -1171,3 +1171,31 @@ def test_caches_and_front_client_live_per_connection(tmp_path, monkeypatch):
         assert fb.http is None
         await wait_for(lambda: client.is_closed)
     asyncio.run(scenario())
+
+
+def test_front_and_background_can_use_their_own_model(monkeypatch):
+    from services.voice import providers
+    monkeypatch.setattr(providers, 'FRONT_MODEL', 'voice-front')
+    monkeypatch.setattr(providers, 'FRONT_URL', 'http://front.invalid/v1/chat/completions')
+    assert front_mod.payload([{'role': 'user', 'content': 'hi'}])['model'] == 'voice-front'
+
+    seen = {}
+
+    async def fake_thinking(messages, tools, effort, url=None, model=None):
+        seen.update(url=url, model=model)
+        return {'content': 'ok'}
+
+    monkeypatch.setattr(providers, 'thinking_chat', fake_thinking)
+    monkeypatch.setattr(providers, 'BACKGROUND_URL', 'http://back.invalid/v1/chat/completions')
+    monkeypatch.setattr(providers, 'BACKGROUND_MODEL', 'voice-back')
+    asyncio.run(providers.background_chat([], [], 'low'))
+    assert seen == {'url': 'http://back.invalid/v1/chat/completions', 'model': 'voice-back'}
+
+
+def test_split_models_default_to_the_classic_endpoint():
+    from services.voice import providers
+    import importlib, os
+    for k in ('VOICE_FRONT_URL', 'VOICE_FRONT_MODEL', 'VOICE_BACKGROUND_URL', 'VOICE_BACKGROUND_MODEL'):
+        assert not os.environ.get(k)
+    assert providers.FRONT_MODEL == providers.VLLM_MODEL == providers.BACKGROUND_MODEL
+    assert providers.FRONT_URL == providers.VLLM_URL == providers.BACKGROUND_URL

@@ -13,6 +13,13 @@ ACP_HOST = os.environ.get("ACP_HOST", "127.0.0.1")
 ACP_PORT = int(os.environ.get("ACP_PORT", "9200"))
 VLLM_URL = os.environ.get("VLLM_URL", "http://127.0.0.1:1234/v1/chat/completions")
 VLLM_MODEL = os.environ.get("VLLM_MODEL", "qwen3.8-flash-next-iq2_xs")
+# The front_background pipeline can pin each side to its own endpoint/model (e.g. one
+# llmanifold model per GPU instance) so Front never queues behind Background and each
+# keeps a warm prompt cache. Unset means the classic VLLM_URL/VLLM_MODEL.
+FRONT_URL = os.environ.get("VOICE_FRONT_URL", "").strip() or VLLM_URL
+FRONT_MODEL = os.environ.get("VOICE_FRONT_MODEL", "").strip() or VLLM_MODEL
+BACKGROUND_URL = os.environ.get("VOICE_BACKGROUND_URL", "").strip() or VLLM_URL
+BACKGROUND_MODEL = os.environ.get("VOICE_BACKGROUND_MODEL", "").strip() or VLLM_MODEL
 # Optional hosted primary (OpenAI-compatible). When set, model calls try it first and fall
 # back to the local VLLM_URL/VLLM_MODEL on transport, timeout, auth, rate-limit or 5xx failures.
 PRIMARY_URL = os.environ.get("LLM_PRIMARY_URL", "")
@@ -326,20 +333,26 @@ def mouthpiece_body(payload, overrides, hosted):
     return body
 
 
-async def thinking_chat(messages, tools, effort):
-    """Native tool calls with reasoning on, through the same configured model."""
-    payload = {'model': VLLM_MODEL, 'messages': messages, 'tools': tools,
+async def thinking_chat(messages, tools, effort, url=None, model=None):
+    """Native tool calls with reasoning on, through the configured model
+    (``url``/``model`` override it, e.g. for the Background side)."""
+    payload = {'model': model or VLLM_MODEL, 'messages': messages, 'tools': tools,
                'tool_choice': 'required', 'parallel_tool_calls': False,
                'temperature': 0, 'max_tokens': int(os.environ.get('VOICE_TOOL_MAX_TOKENS', '4096')),
                'reasoning_effort': effort, 'chat_template_kwargs': {'reasoning_effort': effort}}
     async with httpx.AsyncClient(timeout=float(os.environ.get('VOICE_TOOL_MODEL_TIMEOUT_S', '180')),
                                  trust_env=False) as client:
-        response = await client.post(VLLM_URL, json=payload)
+        response = await client.post(url or VLLM_URL, json=payload)
         response.raise_for_status()
         result = response.json()['choices'][0]
         if result.get('finish_reason') == 'length':
             raise RuntimeError('Thinking reached its token budget before selecting a complete tool')
         return result['message']
+
+
+async def background_chat(messages, tools, effort):
+    """thinking_chat on the Background endpoint/model (front_background pipeline)."""
+    return await thinking_chat(messages, tools, effort, url=BACKGROUND_URL, model=BACKGROUND_MODEL)
 
 
 def should_fall_back(exc):
