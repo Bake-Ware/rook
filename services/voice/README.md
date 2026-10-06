@@ -197,7 +197,9 @@ prompt allows those three tags, sparingly. If Chatterbox fails for an utterance,
 Kokoro (the default Kokoro voice) speaks it, and the session gets one `error`
 event with `code: "tts_fallback"` plus an activity error. A crashed worker is
 restarted at most once a minute. Chatterbox audio is resampled to Kokoro's
-24 kHz, so clients see one format. Release candidates set
+24 kHz, so clients see one format. Every utterance from either engine is lifted so its
+speech sits at `VOICE_TTS_TARGET_DBFS` (default -20 dBFS RMS), at most +12 dB and
+never past -1 dBFS peak; louder audio is left alone. Release candidates set
 `VOICE_CHATTERBOX_DEVICE` empty and never load a second copy on the GPU.
 
 Installing the Chatterbox venv (on the GPU host, outside the voice venv;

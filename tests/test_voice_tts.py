@@ -100,6 +100,25 @@ def test_catalog_default_accepts_old_and_bad_ids():
     assert tts.Catalog(FakeKokoro(), 'missing', default='junk:1').default == 'af_heart'
 
 
+# --- level ------------------------------------------------------------------
+def _db(x):
+    return 20 * np.log10(np.sqrt(np.mean(np.square(x))))
+
+
+def test_level_lifts_quiet_speech_to_target_without_clipping():
+    t = np.arange(24000) / 24000
+    quiet = (0.02 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)          # about -37 dBFS
+    out = tts.level(quiet, -20)
+    assert abs(_db(out) - (_db(quiet) + 12)) < 0.1                          # capped at +12 dB
+    mid = (0.05 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)            # about -29 dBFS
+    assert abs(_db(tts.level(mid, -20)) + 20) < 0.2
+    spiky = mid.copy(); spiky[100] = 0.6                                     # one peak limits the gain
+    assert np.max(np.abs(tts.level(spiky, -20))) <= tts.PEAK_CEILING + 1e-6
+    loud = (0.5 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+    assert np.array_equal(tts.level(loud, -20), loud)                       # never turned down
+    assert tts.level(np.zeros(100, np.float32)).size == 100 and tts.level(np.array([], np.float32)).size == 0
+
+
 # --- synthesis --------------------------------------------------------------
 def test_chatterbox_gets_tags_and_kokoro_gets_them_stripped():
     kokoro, chatter = FakeKokoro(), FakeChatterbox()
