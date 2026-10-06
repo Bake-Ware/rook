@@ -17,6 +17,9 @@ import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 
 /** Versioned voice transport. Audio has response IDs; the shared service owns the mic. */
+/** SharedPreferences key: use the front/background voice pipeline. */
+const val PREF_FAST_VOICE = "fast_voice"
+
 class VoiceClient(
     private val ctx: Context, private val url: String, private val insecureTls: Boolean,
     private val listener: Listener, private val ownMic: Boolean = false, private val token: String = "",
@@ -88,6 +91,9 @@ class VoiceClient(
         val key = "voice_conversation_$scope"
         val conversation = prefs.getString(key, null) ?: UUID.randomUUID().toString().also { prefs.edit().putString(key, it).apply() }
         val thinking = prefs.getBoolean("show_thinking", false)
+        // Front/background pipeline (fast front voice over a background worker); servers
+        // that don't know the flag ignore it and stay on the classic pipeline.
+        val fastVoice = prefs.getBoolean(PREF_FAST_VOICE, false)
         val request = Request.Builder().url(url).apply { if (token.isNotEmpty()) header("Authorization", "Bearer $token") }.build()
         running = true
         startPlayer()
@@ -97,6 +103,7 @@ class VoiceClient(
                 ws = webSocket
                 webSocket.send(JSONObject().put("type", "hello").put("protocol", 2).put("client", "rook-android").put("activity", true)
                     .put("background", true).put("timers", true)
+                    .put("pipeline", if (fastVoice) "front_background" else "classic")
                     .put("conversation", conversation).put("aec", aec)
                     .put("mode", mode.id).apply { if (modePrompt.isNotBlank()) put("mode_prompt", modePrompt) }
                     .apply { if (thinking) put("thinking", true) }.toString())
