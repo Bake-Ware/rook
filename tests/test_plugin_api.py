@@ -775,3 +775,21 @@ def test_caps_roster_does_not_count_the_hub_node():
     view = roster.caps_view(workers)
     assert view["workers"] == 4
     assert view["caps"] == {"caps.describe": "*", "shell.exec": "*", "hub.info": ["rook"]}
+
+
+def test_listing_caps_has_no_side_effects(tmp_path, monkeypatch):
+    """caps() must not touch properties: data_dir creates a directory, and a
+    plugin attached outside a host (Android native plugins) has no data root,
+    so it would mkdir relative to a possibly read-only cwd."""
+    from rook.core.plugin import Plugin, capability
+
+    class P(Plugin):
+        NAMESPACE = "probe"
+
+        @capability("ping")
+        async def ping(self):
+            return "pong"
+
+    monkeypatch.chdir(tmp_path)
+    assert set(P().caps()) == {"probe.ping"}
+    assert not (tmp_path / ".rook-plugin-data").exists()

@@ -482,7 +482,12 @@ class Plugin:
     # capabilities ------------------------------------------------------
     def caps(self) -> dict[str, Callable[..., Any]]:
         out: dict[str, Callable[..., Any]] = {}
+        cls = type(self)
         for name in dir(self):
+            # Never evaluate properties here: some (data_dir) create state on
+            # access, and listing caps must have no side effects.
+            if isinstance(getattr(cls, name, None), property):
+                continue
             attr = getattr(self, name, None)
             if attr is None or not callable(attr):
                 continue
