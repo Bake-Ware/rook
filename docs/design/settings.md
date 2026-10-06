@@ -256,7 +256,7 @@ Run as `python -m services.voice.server`. Configuration is env only.
 | `VOICE_BIND`, `VOICE_PORT` | `127.0.0.1`, `8900` | hub (service) | `server.py` | no |
 | `VOICE_TLS_KEY`, `VOICE_TLS_CERT` | unset | service | `server.py` | key path |
 | `VOICE_TOKEN` | empty | service | `server.py`, `smoke.py` | **yes** |
-| `VOICE_ALLOW_ANONYMOUS` | unset (refuse when no token) | service | `server.py` | no |
+| `VOICE_ALLOW_ANONYMOUS` | unset (refuse keyless clients) | service | `server.py` | no |
 | `VOICE_MODEL_DIR` | `.` (server) / module dir (providers) | service | `server.py`, `providers.py` | no |
 | `VOICE_STATE_DB` | `$VOICE_MODEL_DIR/voice-state.sqlite3` | service | `server.py` | no |
 | `VOICE` | `af_heart` | service (default voice) | `providers.py` | no |

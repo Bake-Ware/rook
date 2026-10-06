@@ -141,8 +141,7 @@ def router(store, legacy, invalidate):
     @routes.get('/admin/api/session')
     async def status(request: Request, response: Response):
         response.headers['Cache-Control'] = 'no-store'
-        return {'csrf': session(request), 'open': not os.environ.get('VOICE_TOKEN') and
-                os.environ.get('VOICE_ALLOW_ANONYMOUS') == '1'}
+        return {'csrf': session(request), 'open': os.environ.get('VOICE_ALLOW_ANONYMOUS') == '1'}
 
     @routes.post('/admin/api/logout')
     async def logout(request: Request, response: Response):

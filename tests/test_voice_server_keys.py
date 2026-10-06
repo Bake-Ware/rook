@@ -60,12 +60,16 @@ def test_created_key_is_live_and_guest_identity_stays_unprivileged(server,monkey
         hello(ws)
         connection=next(iter(module.connections.values()))[0]
         assert connection.identity.worker=='phone' and not connection.identity.owner
-    monkeypatch.setattr(module,'TOKEN','')
-    monkeypatch.setenv('VOICE_ALLOW_ANONYMOUS','1')
+    monkeypatch.setenv('VOICE_ALLOW_ANONYMOUS','1')     # guests allowed even though VOICE_TOKEN is set
     with client.websocket_connect('/ws') as ws:
         hello(ws)
         connection=next(iter(module.connections.values()))[0]
         assert not connection.identity.owner and connection.identity.worker is None
+    with pytest.raises(WebSocketDisconnect):              # a wrong key is refused, not made a guest
+        with client.websocket_connect('/ws?token=not-a-key') as ws: ws.receive_json()
+    monkeypatch.delenv('VOICE_ALLOW_ANONYMOUS')
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect('/ws') as ws: ws.receive_json()
 
 
 def test_revoke_cancels_jobs_after_socket_disconnect(server):
