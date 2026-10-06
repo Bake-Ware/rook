@@ -18,16 +18,14 @@ class ActivityEventTest {
         assertEquals("Still checking pixel-8", status.display(26000)!!.text)
         assertEquals(0, status.display(26000)!!.severity)
     }
-    @Test fun groupsTurnsAndIsolatesConnectionsAndIgnoresRepeatedSequence() {
-        val timeline = ActivityTimeline()
-        assertTrue(timeline.add(1, event(seq=1)))
-        assertFalse(timeline.add(1, event(seq=1)))
-        assertTrue(timeline.add(1, event(turn=2, seq=2)))
-        assertTrue(timeline.add(1, event(turn=1, seq=3)))
-        assertTrue(timeline.add(2, event(seq=1)))
-        assertEquals(3, timeline.turns.size)
-        assertEquals(2, timeline.turns[TurnKey(1,1)]!!.size)
-        assertEquals(1, timeline.turns[TurnKey(2,1)]!!.size)
+    @Test fun isolatesConnectionsAndIgnoresRepeatedSequence() {
+        val gate = ActivitySeqGate()
+        assertTrue(gate.accept(1, 1))
+        assertFalse(gate.accept(1, 1))
+        assertTrue(gate.accept(1, 2))
+        assertFalse(gate.accept(1, 0))
+        assertTrue(gate.accept(2, 1))   // a new connection restarts numbering
+        assertTrue(gate.accept(1, 1))   // and so does switching back
     }
     @Test fun stallsAt15And45SecondsButHeartbeatsResetSilence() {
         val s = TurnStatus(); s.event(event(), 1000)

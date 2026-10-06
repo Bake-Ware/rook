@@ -36,3 +36,25 @@ Unit coverage includes parsing, grouping, duplicate sequences, old-server
 fallback, stall boundaries and heartbeats, engine status, unread failures,
 early/late attachment, user fallback, expansion persistence, and card jumps.
 Owner screenshots are optional; missing capture permission is not an OTA gate.
+
+## Workers replaces Activity (0.4.10)
+
+The main tabs are now Chat / Workers / Background. Background already shows
+each turn's steps, so the Activity timeline and its badge are gone. Activity
+events are still parsed (deduplicated by sequence per connection) because they
+drive the status strip and its stall warnings. System notes and errors that
+used to go to the timeline now show in the strip for a few seconds; errors
+take priority over the turn display for that time.
+
+Workers lists the band as the phone's own band worker hears it. Every member
+re-announces about every 30 s and the hub relays announces to the whole band
+(the MCP bridge's `rook_workers` is built from the same packets).
+`rook_android/roster.py` registers a non-consuming binary handler on the
+embedded worker that records each announce: name, description, caps count,
+version/build, app release and the battery heartbeat. The app reads it with
+`roster.snapshot()` over Chaquopy. There is no new band traffic, no hub call and
+no dashboard login. Online means heard in the last 65 s, the same threshold the
+hub uses. Limits: only workers heard since this phone's worker connected are
+listed, and the list is empty while the worker is stopped. The tab refreshes
+on pull-down and every 30 s while visible. Tap a worker for its description,
+caps count and id.

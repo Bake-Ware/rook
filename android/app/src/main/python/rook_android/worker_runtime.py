@@ -52,6 +52,9 @@ def start(hub,psk,name):
                 worker.app_release = {'platform':'android', 'version':str(package.versionName),
                                       'code':int(package.versionCode)} if package else {}
                 _attach_native_plugins(worker)
+                # The app's Workers tab: band announces this worker already receives.
+                from rook_android import roster
+                roster.attach(worker)
                 cycle=asyncio.Event()
 
                 async def restart():
@@ -84,6 +87,7 @@ def start(hub,psk,name):
                                 log.error('Device authorization unavailable (%s); leaving band.',type(error).__name__)
                                 _stop.set()
                 finally:
+                    roster.detach(worker)
                     await worker.shutdown()
                     try:await asyncio.wait_for(task,2)
                     except (Exception,asyncio.CancelledError):pass
