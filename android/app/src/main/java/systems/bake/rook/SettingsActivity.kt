@@ -120,6 +120,7 @@ class SettingsActivity : AppCompatActivity() {
             permsLauncher.launch(arrayOf(
                 android.Manifest.permission.READ_SMS, android.Manifest.permission.SEND_SMS,
                 android.Manifest.permission.READ_CONTACTS, android.Manifest.permission.READ_CALL_LOG,
+                android.Manifest.permission.READ_CALENDAR,
                 android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION, android.Manifest.permission.RECORD_AUDIO,
             ))
         }

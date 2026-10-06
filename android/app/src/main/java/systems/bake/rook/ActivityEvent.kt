@@ -46,6 +46,7 @@ class UnseenItems {
     var count = 0; private set
     var failed = false; private set
     fun add(isFailure: Boolean, visible: Boolean) { if (!visible) { count++; failed = failed || isFailure } }
+    fun addMany(n: Int, anyFailure: Boolean) { if (n > 0) { count += n; failed = failed || anyFailure } }
     fun seen() { count = 0; failed = false }
 }
 

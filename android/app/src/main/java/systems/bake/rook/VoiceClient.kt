@@ -35,6 +35,10 @@ class VoiceClient(
         fun onAssistantDelta(text: String, turn: Int?) = onAssistantDelta(text)
         fun onDecision(decision: Decision) {}
         fun onActivity(event: ActivityEvent) {}
+        fun onBackground(event: BackgroundEvent) {}
+        fun onTimer(event: TimerEvent) {}
+        /** Hello sent: the connection takes client messages now. */
+        fun onOpen() {}
         fun onTurn(turn: Int) {}
         /** The server would not run the requested mode; do not retry automatically. */
         fun onRefused(msg: String) = onError(msg)
@@ -92,6 +96,7 @@ class VoiceClient(
                 if (!running) { webSocket.close(1000, "closed"); return }
                 ws = webSocket
                 webSocket.send(JSONObject().put("type", "hello").put("protocol", 2).put("client", "rook-android").put("activity", true)
+                    .put("background", true).put("timers", true)
                     .put("conversation", conversation).put("aec", aec)
                     .put("mode", mode.id).apply { if (modePrompt.isNotBlank()) put("mode_prompt", modePrompt) }
                     .apply { if (thinking) put("thinking", true) }.toString())
@@ -99,6 +104,7 @@ class VoiceClient(
                     .put("voice", prefs.getString("voice_choice", VoiceCatalog.FALLBACK)).toString())
                 connected = true
                 while (true) webSocket.send(outbox.poll() ?: break)
+                listener.onOpen()
             }
             override fun onMessage(webSocket: WebSocket, text: String) {
                 if (!running) return
@@ -108,6 +114,9 @@ class VoiceClient(
                 }
                 when (m.optString("type")) {
                     "activity" -> ActivityEvent.parse(m)?.let { listener.onActivity(it) }
+                    "background" -> BackgroundEvent.parse(m)?.let { listener.onBackground(it) }
+                    "timer" -> TimerEvent.parse(m)?.let { listener.onTimer(it) }
+                    // The decision engine is paused; still parsed (harmless) but the app no longer renders it.
                     "decision" -> if (thinking) Decision.parse(m)?.let { listener.onDecision(it) }
                     "session" -> {
                         protocol = m.optInt("protocol", 1)
@@ -191,6 +200,12 @@ class VoiceClient(
     }
     fun sendText(text: String, speak: Boolean) = enqueue(JSONObject().put("type", "text").put("text", text).put("speak", speak))
     fun sendImage(b64: String, caption: String, speak: Boolean) = enqueue(JSONObject().put("type", "image").put("data", b64).put("text", caption).put("speak", speak))
+    /** The user cancelled timer [id] on the phone. False when not connected (the caller keeps it queued). */
+    fun sendTimerCancel(id: String): Boolean {
+        val socket = ws
+        if (!connected || socket == null) return false
+        return socket.send(JSONObject().put("type", "timer").put("action", "cancel").put("id", id).toString())
+    }
     fun setVoice(voice: String) = enqueue(JSONObject().put("type", "voice").put("voice", voice))
     fun interrupt() { waitingInterrupt = protocol >= 2; flush(); enqueue(JSONObject().put("type", "stop")) }
     fun close() { ws?.close(1000, "bye"); shutdown() }
