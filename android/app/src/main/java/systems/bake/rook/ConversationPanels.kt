@@ -17,7 +17,10 @@ import java.util.Locale
 /** Activity-local presentation, separate from conversation bubbles and transport behavior. */
 class ConversationPanels(private val ctx: Context, private val b: ActivityMainBinding) {
     private val timeline = ActivityTimeline()
-    private val background = BackgroundTimeline()
+    /** Shared with the service (outlives this screen); read directly, never replayed. */
+    private val background get() = VoiceBus.background
+    /** [BackgroundTimeline.version] this screen has counted toward its unread badge. */
+    private var backgroundCounted = 0L
     /** Collapsible parts the user opened: "<connection>:<seq>:args|result". */
     private val expanded = mutableSetOf<String>()
     private val activityUnread = UnseenItems()
@@ -52,13 +55,13 @@ class ConversationPanels(private val ctx: Context, private val b: ActivityMainBi
                 b.activityScroll.visibility = if (selected == 1) View.VISIBLE else View.GONE
                 b.backgroundScroll.visibility = if (selected == 2) View.VISIBLE else View.GONE
                 if (selected == 1) activityUnread.seen()
-                if (selected == 2) { backgroundUnread.seen(); renderBackground() }
+                if (selected == 2) { countBackground(); backgroundUnread.seen(); renderBackground() }
                 badges()
             }
             override fun onTabUnselected(tab: TabLayout.Tab) {}
             override fun onTabReselected(tab: TabLayout.Tab) = onTabSelected(tab)
         })
-        renderBackground()
+        // The Background tab is first rendered by [resume], after the screen attaches.
     }
     fun sync(generation: Long) { if (generation != connection) { connection = generation; turn = -1; hasActivity = false; status.reset() } }
     fun turn(id: Int) { turn = id }
@@ -72,7 +75,13 @@ class ConversationPanels(private val ctx: Context, private val b: ActivityMainBi
     }
     fun done() { status.finishLegacy(); renderStatus() }
     fun interrupt() { listeningRequested = false; status.finish(); renderStatus() }
-    fun resume() { sync(VoiceBus.connectionGeneration); renderBackground(); main.removeCallbacks(tick); main.post(tick) }
+    /** After [VoiceBus.attach]: counts Background steps missed while away and renders the tab once. */
+    fun resume() {
+        sync(VoiceBus.connectionGeneration)
+        countBackground()
+        renderBackground(); badges()
+        main.removeCallbacks(tick); main.post(tick)
+    }
     fun pause() { main.removeCallbacks(tick) }
     fun activity(e: ActivityEvent) {
         if (!timeline.add(connection, e)) return
@@ -87,12 +96,19 @@ class ConversationPanels(private val ctx: Context, private val b: ActivityMainBi
         activityUnread.add(failed, selected == 1); renderActivity(); badges()
     }
     fun tool(title: String, state: String) { if (!hasActivity) note("$title · $state", state in listOf("error", "failed")) }
-    fun background(e: BackgroundEvent) {
-        if (!background.add(connection, e)) return
+    /** A Background step was added to [VoiceBus.background]. */
+    fun background(@Suppress("UNUSED_PARAMETER") e: BackgroundEvent) {
         if (expanded.size > 200) expanded.clear()
-        backgroundUnread.add(e.failed, selected == 2)
-        if (selected == 2) renderBackground()
+        countBackground()
+        // A replay into a resuming screen renders once in [resume], not once per event.
+        if (selected == 2 && !VoiceBus.replaying) renderBackground()
         badges()
+    }
+    private fun countBackground() {
+        val missed = background.version - backgroundCounted
+        if (missed > 0 && selected != 2) backgroundUnread.addMany(missed.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+            background.lastFailure > backgroundCounted)
+        backgroundCounted = background.version
     }
     private fun badges() {
         listOf(1 to activityUnread, 2 to backgroundUnread).forEach { (index, unseen) ->
@@ -148,6 +164,7 @@ class ConversationPanels(private val ctx: Context, private val b: ActivityMainBi
         for ((key, events) in background.turns) {
             val group = card(b.backgroundList)
             text(group, title(key) + if (background.running(key)) " · running" else "", amber)
+            background.truncated[key]?.let { text(group, "… $it earlier steps not shown", ctx.getColor(R.color.rook_dim), 12f) }
             for (e in events) {
                 val line = listOfNotNull("${format.format(Date(e.ts))}  ${e.icon}  ${e.text}", e.tool,
                     e.status?.takeIf { it != "ok" }, e.elapsedMs?.let { "$it ms" }).joinToString(" · ")

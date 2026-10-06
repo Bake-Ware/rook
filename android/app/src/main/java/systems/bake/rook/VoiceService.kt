@@ -176,9 +176,11 @@ class VoiceService : Service() {
             override fun onTurn(turn: Int) = current { VoiceBus.emit(conn) { it.onTurn(turn) } }
             override fun onActivity(event: ActivityEvent) = current { VoiceBus.emit(conn) { it.onActivity(event) } }
             override fun onDecision(decision: Decision) = current { VoiceBus.emit(conn) { it.onDecision(decision) } }
-            override fun onBackground(event: BackgroundEvent) = current { VoiceBus.emit(conn) { it.onBackground(event) } }
+            // Kept out of the conversation log (own bounded buffer) so chat replay is not crowded out.
+            override fun onBackground(event: BackgroundEvent) = current { VoiceBus.emitBackground(conn, event) }
             // Timers stand on their own once set: apply even if this connection was since replaced.
             override fun onTimer(event: TimerEvent) = post { Timers.handle(this@VoiceService, event) }
+            override fun onOpen() = current { flushTimerCancels() }
             override fun onAssistantDone() = current { VoiceBus.emit(conn) { it.onAssistantDone() } }
             override fun onInterrupt() = current { VoiceBus.emit(conn) { it.onInterrupt() } }
             override fun onError(msg: String) = current { VoiceBus.emit(conn) { it.onError(msg) } }
@@ -208,6 +210,15 @@ class VoiceService : Service() {
         }, ownMic = false, token = token).also { it.setAecAvailable(aecAvailable); it.connect() }
         main.removeCallbacks(idleCheck)
         main.postDelayed(idleCheck, IDLE_CLOSE_MS)
+    }
+
+    /** Main thread: tell the server about timers the user cancelled on the phone, if connected (else after the next hello). */
+    fun flushTimerCancels() {
+        val c = client ?: return
+        for (id in Timers.pendingCancels(this)) {
+            if (!c.sendTimerCancel(id)) return
+            Timers.cancelSent(this, id)
+        }
     }
 
     /** Close/cancel the predecessor before opening its replacement; invalidate queued callbacks. */
@@ -632,6 +643,19 @@ object VoiceBus {
     var replaying = false
         private set
     private val log = ConversationLog<(Listener) -> Unit>()
+    /**
+     * Background steps, separate from [log]: bounded by turns and steps per turn, read directly
+     * by the screen instead of being replayed, so they never push chat history out of the log.
+     */
+    val background = BackgroundTimeline()
+
+    /** Main thread: record a Background step and show it on the live screen, if any. */
+    fun emitBackground(generation: Long, event: BackgroundEvent) {
+        if (!background.add(generation, event)) return
+        val l = listener ?: return
+        delivering = generation
+        try { l.onBackground(event) } finally { delivering = null }
+    }
 
     /**
      * Main thread: record a conversation event and hand it to the live screen if there

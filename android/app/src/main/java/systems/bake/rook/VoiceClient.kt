@@ -37,6 +37,8 @@ class VoiceClient(
         fun onActivity(event: ActivityEvent) {}
         fun onBackground(event: BackgroundEvent) {}
         fun onTimer(event: TimerEvent) {}
+        /** Hello sent: the connection takes client messages now. */
+        fun onOpen() {}
         fun onTurn(turn: Int) {}
         /** The server would not run the requested mode; do not retry automatically. */
         fun onRefused(msg: String) = onError(msg)
@@ -102,6 +104,7 @@ class VoiceClient(
                     .put("voice", prefs.getString("voice_choice", VoiceCatalog.FALLBACK)).toString())
                 connected = true
                 while (true) webSocket.send(outbox.poll() ?: break)
+                listener.onOpen()
             }
             override fun onMessage(webSocket: WebSocket, text: String) {
                 if (!running) return
@@ -197,6 +200,12 @@ class VoiceClient(
     }
     fun sendText(text: String, speak: Boolean) = enqueue(JSONObject().put("type", "text").put("text", text).put("speak", speak))
     fun sendImage(b64: String, caption: String, speak: Boolean) = enqueue(JSONObject().put("type", "image").put("data", b64).put("text", caption).put("speak", speak))
+    /** The user cancelled timer [id] on the phone. False when not connected (the caller keeps it queued). */
+    fun sendTimerCancel(id: String): Boolean {
+        val socket = ws
+        if (!connected || socket == null) return false
+        return socket.send(JSONObject().put("type", "timer").put("action", "cancel").put("id", id).toString())
+    }
     fun setVoice(voice: String) = enqueue(JSONObject().put("type", "voice").put("voice", voice))
     fun interrupt() { waitingInterrupt = protocol >= 2; flush(); enqueue(JSONObject().put("type", "stop")) }
     fun close() { ws?.close(1000, "bye"); shutdown() }

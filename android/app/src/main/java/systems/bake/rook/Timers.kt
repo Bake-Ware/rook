@@ -7,7 +7,9 @@ import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.media.AudioAttributes
+import android.media.Ringtone
 import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
@@ -15,6 +17,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import org.json.JSONObject
 
 /**
@@ -28,9 +31,16 @@ object Timers {
     private const val TAG = "RookTimers"
     private const val PREFS = "rook_timers"
     private const val KEY = "book"
-    const val CHANNEL = "rook_timers"
+    /** Silent (vibrate only): the sound is the alarm-stream ringtone [TimerReceiver] plays. */
+    const val CHANNEL = "rook_timer_alerts"
+    private const val OLD_CHANNEL = "rook_timers"
+    /** How long the alarm sound plays at most (it also stops when the spoken line ends). */
+    const val RING_MS = 10_000L
     const val ACTION_FIRE = "systems.bake.rook.TIMER_FIRE"
     const val EXTRA_ID = "id"
+
+    /** Without exact-alarm access, ring within this long after the time (plain inexact alarms can be ~75% late). */
+    private const val INEXACT_WINDOW_MS = 60_000L
 
     private val lock = Any()
 
@@ -53,11 +63,20 @@ object Timers {
         changed()
     }
 
-    /** The user cancelled a timer in the app. */
+    /** The user cancelled a timer in the app: also tells the server (now, or after the next connect). */
     fun cancel(ctx: Context, id: String) {
-        act(ctx, edit(ctx) { it.cancel(id) })
+        act(ctx, edit(ctx) { it.userCancel(id) })
         changed()
+        VoiceService.inst?.flushTimerCancels()
     }
+
+    /** Cancels made on the phone that the server has not been told about yet. */
+    fun pendingCancels(ctx: Context): List<String> = synchronized(lock) {
+        TimerBook.load(ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)).pendingCancels()
+    }
+
+    /** [id]'s cancel was handed to an open voice connection. */
+    fun cancelSent(ctx: Context, id: String) = edit(ctx) { it.sent(id) }
 
     /** After reboot, app update, or an exact-alarm permission change. */
     fun rearm(ctx: Context) {
@@ -94,7 +113,7 @@ object Timers {
 
     fun notificationId(id: String) = 0x7100_0000 or (id.hashCode() and 0x00ff_ffff)
 
-    /** Exact when allowed (USE_EXACT_ALARM / SCHEDULE_EXACT_ALARM), otherwise a Doze-safe inexact alarm. */
+    /** Exact when allowed (USE_EXACT_ALARM / SCHEDULE_EXACT_ALARM), otherwise a one-minute window. */
     fun canExact(ctx: Context): Boolean {
         val am = alarms(ctx) ?: return false
         return Build.VERSION.SDK_INT < Build.VERSION_CODES.S || am.canScheduleExactAlarms()
@@ -105,11 +124,11 @@ object Timers {
         val pi = pending(ctx, t.id)
         try {
             if (canExact(ctx)) am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, t.firesAt, pi)
-            else am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, t.firesAt, pi)
+            else am.setWindow(AlarmManager.RTC_WAKEUP, t.firesAt, INEXACT_WINDOW_MS, pi)
         } catch (e: SecurityException) {
             // Exact-alarm access revoked between the check and the call.
-            Log.w(TAG, "exact alarm refused, using inexact: $e")
-            am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, t.firesAt, pi)
+            Log.w(TAG, "exact alarm refused, using a ${INEXACT_WINDOW_MS / 1000} s window: $e")
+            am.setWindow(AlarmManager.RTC_WAKEUP, t.firesAt, INEXACT_WINDOW_MS, pi)
         }
     }
 
@@ -119,12 +138,11 @@ object Timers {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val nm = notifications(ctx) ?: return
         if (nm.getNotificationChannel(CHANNEL) != null) return
+        // Earlier builds used a channel with its own sound; the alarm sound is now played on the alarm stream.
+        if (nm.getNotificationChannel(OLD_CHANNEL) != null) nm.deleteNotificationChannel(OLD_CHANNEL)
         val ch = NotificationChannel(CHANNEL, "Timers", NotificationManager.IMPORTANCE_HIGH).apply {
             description = "Timers you set by voice"
-            setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-                ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION),
-                AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
+            setSound(null, null)
             enableVibration(true)
         }
         nm.createNotificationChannel(ch)
@@ -142,16 +160,38 @@ object Timers {
                 .setContentText(if (t.durationS > 0) "${t.title} · ${timerRemaining(t.durationS * 1000, 0)}" else t.title)
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setCategory(NotificationCompat.CATEGORY_ALARM)
-                .setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM))
                 .setDefaults(NotificationCompat.DEFAULT_VIBRATE)
                 .setAutoCancel(true)
                 .setContentIntent(NotificationNavigation.mainActivity(ctx))
                 .build()
             notifications(ctx)?.notify(notificationId(id), n)
         } catch (e: SecurityException) { Log.w(TAG, "timer notification not allowed: $e") }
+        if (!notificationsAllowed(ctx))
+            Log.w(TAG, "notifications are off (POST_NOTIFICATIONS denied or blocked): timer '${t.title}' rings by sound and speech only")
         Handler(Looper.getMainLooper()).post { VoiceBus.emit { it.onSpoken(t.doneText) } }
         return t
     }
+
+    private fun notificationsAllowed(ctx: Context): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ctx.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return false
+        return NotificationManagerCompat.from(ctx).areNotificationsEnabled()
+    }
+
+    /**
+     * Starts the default alarm sound on the alarm stream, so a timer is heard with media
+     * volume at 0 or notifications denied. The caller stops it; null if none could play.
+     */
+    fun startAlarmSound(ctx: Context): Ringtone? = try {
+        val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+            ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+        RingtoneManager.getRingtone(ctx, uri)?.apply {
+            audioAttributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) isLooping = true
+            play()
+        }
+    } catch (e: Exception) { Log.w(TAG, "alarm sound failed: $e"); null }
 }
 
 /** Alarm target: rings the timer and speaks it, keeping the process alive until speech ends. */
@@ -164,12 +204,19 @@ class TimerReceiver : BroadcastReceiver() {
         val result = goAsync()
         val main = Handler(Looper.getMainLooper())
         val started = System.currentTimeMillis()
+        val ringtone = Timers.startAlarmSound(ctx)
         val sid = try {
             JSONObject(SpeakBridge.speak(ctx, t.doneText, "", 1f, 1f, false)).optString("id")
         } catch (e: Exception) { Log.w("RookTimers", "speak failed: $e"); "" }
+        var spoken = false
         fun poll() {
-            val done = sid.isEmpty() || try { JSONObject(SpeakBridge.status(sid)).optBoolean("done", true) } catch (_: Exception) { true }
-            if (done || System.currentTimeMillis() - started > 25_000) result.finish()
+            val elapsed = System.currentTimeMillis() - started
+            spoken = spoken || sid.isEmpty() || try { JSONObject(SpeakBridge.status(sid)).optBoolean("done", true) } catch (_: Exception) { true }
+            // The alarm sound stops when the line has been spoken or after RING_MS, whichever is first
+            // (the full RING_MS when speech could not start).
+            val ringDone = ringtone == null || (spoken && sid.isNotEmpty()) || elapsed > Timers.RING_MS
+            if (ringDone) try { ringtone?.stop() } catch (_: Exception) {}
+            if (ringDone && (spoken || elapsed > 25_000)) result.finish()
             else main.postDelayed({ poll() }, 250)
         }
         main.postDelayed({ poll() }, 250)

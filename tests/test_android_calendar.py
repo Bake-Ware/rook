@@ -10,6 +10,8 @@ import pytest
 PY = Path(__file__).parents[1] / "android/app/src/main/python"
 HOUR = 3600 * 1000
 CDT = -5 * HOUR  # a fixed device offset for the tests
+DAY = 24 * HOUR
+TZ = {"offset": CDT}  # the fake device zone (fake_jclass)
 
 
 def load(monkeypatch, name):
@@ -56,11 +58,12 @@ def fake_jclass(name):
     if name == "android.net.Uri":
         return SimpleNamespace(parse=lambda s: s)
     if name == "java.util.TimeZone":
-        return SimpleNamespace(getDefault=lambda: SimpleNamespace(getOffset=lambda ms: CDT))
+        return SimpleNamespace(getDefault=lambda: SimpleNamespace(getOffset=lambda ms: TZ["offset"]))
     raise AssertionError(name)
 
 
-def plugin(cal, monkeypatch, rows, granted=True):
+def plugin(cal, monkeypatch, rows, granted=True, tz=CDT):
+    monkeypatch.setitem(TZ, "offset", tz)
     resolver = FakeResolver(rows)
     monkeypatch.setattr(cal, "app_context", lambda: SimpleNamespace(getContentResolver=lambda: resolver))
     monkeypatch.setattr(cal, "has_permission", lambda p: granted and p == "android.permission.READ_CALENDAR")
@@ -111,7 +114,8 @@ def test_list_queries_instances_window_and_limits(cal, monkeypatch):
     assert r["events"][0]["account"] == "me@gmail.example" and r["timezone_offset_min"] == -300
     q = resolver.queries[0]
     begin = 1_791_176_400_000
-    assert q["uri"] == f"content://com.android.calendar/instances/when/{begin}/{begin + 24 * HOUR}"
+    # Widened a day each side (all-day rows are filtered by local date afterwards).
+    assert q["uri"] == f"content://com.android.calendar/instances/when/{begin - DAY}/{begin + 2 * DAY}"
     assert q["selection"] == "visible = 1" and q["order"].startswith("begin ASC")
     assert resolver.cursor.closed
 
@@ -121,7 +125,67 @@ def test_list_defaults_to_next_24_hours(cal, monkeypatch):
     monkeypatch.setattr(cal.time, "time", lambda: 1_790_000_000.0)
     r = p._list()
     assert r == {"ok": True, "count": 0, "start": r["start"], "end": r["end"], "timezone_offset_min": -300, "events": []}
-    assert resolver.queries[0]["uri"].endswith(f"/1790000000000/{1_790_000_000_000 + 24 * HOUR}")
+    assert resolver.queries[0]["uri"].endswith(f"/{1_790_000_000_000 - DAY}/{1_790_000_000_000 + 2 * DAY}")
+
+
+def utc_ms(y, mo, d, h=0, mi=0):
+    from datetime import datetime, timezone
+    return int(datetime(y, mo, d, h, mi, tzinfo=timezone.utc).timestamp() * 1000)
+
+
+def all_day(title, y, mo, d, days=1):
+    b = utc_ms(y, mo, d)
+    return {"title": title, "begin": b, "end": b + days * DAY, "allDay": 1, "event_id": len(title)}
+
+
+def timed(title, start_ms, minutes=30):
+    return {"title": title, "begin": start_ms, "end": start_ms + minutes * 60_000, "allDay": 0, "event_id": start_ms}
+
+
+# All-day rows (UTC midnight) around 2026-10-05; the fake cursor returns them all,
+# as Android's widened instances query would.
+DAYS = [all_day("Oct4", 2026, 10, 4), all_day("Oct5", 2026, 10, 5), all_day("Oct6", 2026, 10, 6),
+        all_day("Trip", 2026, 10, 3, days=3)]  # Oct 3-5
+
+
+def titles(r):
+    assert r["ok"], r
+    return [e["title"] for e in r["events"]]
+
+
+def test_all_day_utc_minus_5(cal, monkeypatch):
+    p, _ = plugin(cal, monkeypatch, DAYS + [timed("Late", utc_ms(2026, 10, 6, 0, 30))], tz=-5 * HOUR)  # 19:30 local Oct 5
+    # Local "today": Oct 5 only (UTC-midnight rows used to leak tomorrow in).
+    assert titles(p._list(start="2026-10-05", end="2026-10-06")) == ["Trip", "Oct5", "Late"]
+    # After 19:00 local (past UTC midnight): today's all-day events still show, tomorrow's don't.
+    assert titles(p._list(start="2026-10-05T20:00", end="2026-10-05T23:00")) == ["Trip", "Oct5"]
+    # A window into tomorrow includes tomorrow's all-day event, sorted at local midnight.
+    assert titles(p._list(start="2026-10-05T20:00", end="2026-10-06T12:00")) == ["Trip", "Oct5", "Oct6"]
+
+
+def test_all_day_utc_plus_9(cal, monkeypatch):
+    morning = timed("Breakfast", utc_ms(2026, 10, 4, 23))  # 08:00 local Oct 5
+    p, _ = plugin(cal, monkeypatch, DAYS + [morning], tz=9 * HOUR)
+    r = p._list(start="2026-10-05", end="2026-10-06")
+    # Yesterday's all-day event no longer leaks in; the all-day event sorts before 08:00.
+    assert titles(r) == ["Trip", "Oct5", "Breakfast"]
+    assert r["events"][1]["start"] == r["events"][1]["end"] == "2026-10-05"
+    assert r["events"][2]["start"] == "2026-10-05T08:00+09:00"
+    assert titles(p._list(start="2026-10-05T18:00", end="2026-10-05T23:00")) == ["Trip", "Oct5"]
+
+
+def test_all_day_utc(cal, monkeypatch):
+    p, _ = plugin(cal, monkeypatch, DAYS + [timed("Noon", utc_ms(2026, 10, 5, 12))], tz=0)
+    assert titles(p._list(start="2026-10-05", end="2026-10-06")) == ["Trip", "Oct5", "Noon"]
+    assert titles(p._list(start="2026-10-06", end="2026-10-07")) == ["Oct6"]
+    assert titles(p._list(start="2026-10-05", end="2026-10-07", limit=3)) == ["Trip", "Oct5", "Noon"]
+
+
+def test_timed_rows_outside_widened_window_are_dropped(cal, monkeypatch):
+    rows = [timed("Before", utc_ms(2026, 10, 5, 3)), timed("Ongoing", utc_ms(2026, 10, 5, 4, 45), 60),
+            timed("In", utc_ms(2026, 10, 5, 15)), timed("After", utc_ms(2026, 10, 6, 5))]
+    p, _ = plugin(cal, monkeypatch, rows, tz=-5 * HOUR)
+    assert titles(p._list(start="2026-10-05", end="2026-10-06")) == ["Ongoing", "In"]
 
 
 def test_permission_and_argument_errors(cal, monkeypatch):

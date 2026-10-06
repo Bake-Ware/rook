@@ -281,6 +281,7 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
         chat.notifyDataSetChanged()
         // Merge whatever was heard/spoken while this screen was away (each event once).
         VoiceBus.attach(this, seenSeq)
+        // After the replay: panels skip per-event renders while replaying and render once here.
         panels.resume()
         renderTimers()
         onState(VoiceBus.state)

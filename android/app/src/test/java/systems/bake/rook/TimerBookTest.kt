@@ -13,7 +13,9 @@ class TimerBookTest {
         val e = TimerEvent.parse(JSONObject("""{"type":"timer","action":"set","id":"t1","label":" Pasta ","fires_at":1700000000000,"duration_s":600}"""))!!
         assertEquals(TimerEvent("set", "t1", "Pasta", 1700000000000, 600), e)
         assertEquals("cancel", TimerEvent.parse(JSONObject("""{"type":"timer","action":"cancel","id":"t1"}"""))!!.action)
-        for (bad in listOf("""{"type":"timer","action":"set","id":"t1"}""", """{"type":"timer","action":"snooze","id":"t1","fires_at":5}""",
+        // "In 10 minutes" with no server clock time is still a valid set.
+        assertEquals(600L, TimerEvent.parse(JSONObject("""{"type":"timer","action":"set","id":"t1","duration_s":600}"""))!!.durationS)
+        for (bad in listOf("""{"type":"timer","action":"set","id":"t1"}""", """{"type":"timer","action":"set","id":"t1","duration_s":0}""", """{"type":"timer","action":"snooze","id":"t1","fires_at":5}""",
                 """{"type":"timer","action":"set","id":"","fires_at":5}""", """{"type":"timer","action":"set","id":"t1","fires_at":-1}""",
                 """{"type":"background","action":"set","id":"t1","fires_at":5}"""))
             assertNull(bad, TimerEvent.parse(JSONObject(bad)))
@@ -73,9 +75,62 @@ class TimerBookTest {
     @Test fun corruptStoreStartsEmptyAndFinishedIsBounded() {
         assertTrue(book("{not json").timers().isEmpty())
         val b = book()
-        repeat(TimerBook.MAX_FINISHED + 10) { b.cancel("x$it") }
+        repeat(TimerBook.MAX_FINISHED + 10) { b.apply(set("x$it", 1000)); b.cancel("x$it") }
         assertFalse(b.isFinished("x0"))
         assertTrue(b.isFinished("x${TimerBook.MAX_FINISHED + 9}"))
+    }
+
+    @Test fun reusedIdWithNewFireTimeStillArms() {
+        val b = book()
+        val first = TimerEvent("set", "t1", "tea", now + 60_000, 0)
+        b.apply(first)
+        now += 60_000
+        assertNotNull(b.fired("t1"))
+        assertEquals(TimerBook.Change.None, b.apply(first))                 // resend of the one that rang
+        val again = TimerEvent("set", "t1", "tea", now + 300_000, 0)          // same id, a new timer
+        assertTrue(b.apply(again) is TimerBook.Change.Arm)
+        assertTrue(b.isFinished("t1", first.firesAt)); assertFalse(b.isFinished("t1", again.firesAt))
+        b.cancel("t1")
+        assertEquals(TimerBook.Change.None, b.apply(again))                 // resend after cancel
+        // Survives a restart.
+        val restored = book(b.toJson())
+        assertEquals(TimerBook.Change.None, restored.apply(first))
+        assertEquals(TimerBook.Change.None, restored.apply(again))
+        assertTrue(restored.apply(TimerEvent("set", "t1", "tea", now + 900_000, 0)) is TimerBook.Change.Arm)
+    }
+
+    @Test fun durationUsesPhoneArrivalTimeNotServerClock() {
+        val b = book()
+        // Server clock 2 minutes fast: its fires_at is 2 min later than the phone's now + 10 min.
+        val e = TimerEvent("set", "pasta", "pasta", now + 120_000 + 600_000, 600)
+        val armed = (b.apply(e) as TimerBook.Change.Arm).timer
+        assertEquals(now + 600_000, armed.firesAt)
+        assertEquals(e.firesAt, armed.serverFiresAt)
+        // Reconnect resend 30 s later: unchanged, keeps the original phone fire time.
+        val armedAt = now; now += 30_000
+        assertEquals(TimerBook.Change.None, b.apply(e))
+        assertEquals(armedAt + 600_000, b.get("pasta")!!.firesAt)
+        assertEquals(armedAt + 600_000, book(b.toJson()).get("pasta")!!.firesAt)
+        // Server clock far behind: a duration timer still rings on time instead of being dropped as stale.
+        val behind = TimerEvent("set", "eggs", "", now - 2 * TimerBook.LATE_LIMIT_MS, 300)
+        assertEquals(now + 300_000, (b.apply(behind) as TimerBook.Change.Arm).timer.firesAt)
+        // No duration ("at 7pm"): fires_at is used as is.
+        val at = TimerEvent("set", "seven", "", now + 3_600_000, 0)
+        assertEquals(at.firesAt, (b.apply(at) as TimerBook.Change.Arm).timer.firesAt)
+    }
+
+    @Test fun userCancelIsQueuedForTheServerAndPersisted() {
+        val b = book()
+        b.apply(set("t1", 60_000)); b.apply(set("t2", 60_000))
+        assertEquals(TimerBook.Change.Disarm("t1"), b.userCancel("t1"))
+        assertEquals(TimerBook.Change.None, b.userCancel("nope"))
+        b.apply(TimerEvent("cancel", "t2", "", 0, 0))                        // server cancel: nothing to send back
+        assertEquals(listOf("t1"), b.pendingCancels())
+        val restored = book(b.toJson())
+        assertEquals(listOf("t1"), restored.pendingCancels())
+        restored.sent("t1")
+        assertTrue(restored.pendingCancels().isEmpty())
+        assertTrue(book(restored.toJson()).pendingCancels().isEmpty())
     }
 
     @Test fun spokenTextAndCountdown() {

@@ -46,17 +46,32 @@ data class BackgroundEvent(
     }
 }
 
-/** Background steps grouped by turn; ignores replays within a connection; keeps the newest turns. */
-class BackgroundTimeline(private val maxTurns: Int = 40) {
-    val turns = linkedMapOf<TurnKey, MutableList<BackgroundEvent>>()
+/**
+ * Background steps grouped by turn; ignores replays within a connection; keeps the newest
+ * [maxTurns] turns and the newest [maxSteps] steps of each turn (older ones counted in [truncated]).
+ * Main thread only.
+ */
+class BackgroundTimeline(private val maxTurns: Int = 40, private val maxSteps: Int = 200) {
+    val turns = linkedMapOf<TurnKey, ArrayDeque<BackgroundEvent>>()
+    /** Steps dropped from the start of a turn because it exceeded [maxSteps]. */
+    val truncated = mutableMapOf<TurnKey, Int>()
+    /** Count of steps ever accepted, so a screen can tell how many it has not seen. */
+    var version = 0L; private set
+    /** [version] at the newest failed step (0 if none). */
+    var lastFailure = 0L; private set
     private var connection = -1L
     private var lastSeq = -1L
     fun add(connection: Long, event: BackgroundEvent): Boolean {
         if (this.connection != connection) { this.connection = connection; lastSeq = -1 }
         if (event.seq <= lastSeq) return false
         lastSeq = event.seq
-        turns.getOrPut(TurnKey(connection, event.turn)) { mutableListOf() }.add(event)
-        while (turns.size > maxTurns) turns.remove(turns.keys.first())
+        val key = TurnKey(connection, event.turn)
+        val steps = turns.getOrPut(key) { ArrayDeque() }
+        steps.addLast(event)
+        if (steps.size > maxSteps) { steps.removeFirst(); truncated[key] = (truncated[key] ?: 0) + 1 }
+        while (turns.size > maxTurns) truncated.remove(turns.keys.first().also { turns.remove(it) })
+        version++
+        if (event.failed) lastFailure = version
         return true
     }
     /** A turn is still running until Background reports done, error or dropped. */

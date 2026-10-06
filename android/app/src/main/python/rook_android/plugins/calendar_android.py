@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from rook.worker.plugin import Plugin, capability
 from rook_android.androidctx import app_context, jclass, has_permission
@@ -21,6 +21,8 @@ NO_PERMISSION = ("calendar access not granted: open Rook on the phone, Settings 
 DAY_MS = 24 * 3600 * 1000
 MAX_LIMIT = 200
 MAX_SPAN_MS = 366 * DAY_MS
+# Rows read from one (widened) instances query before filtering; a runaway guard.
+MAX_ROWS = 5000
 
 # CalendarContract.Instances columns.
 _COLUMNS = ["title", "begin", "end", "allDay", "eventLocation", "calendar_displayName",
@@ -75,6 +77,46 @@ def iso_local(epoch_ms: int, offset=_offset_ms) -> str:
 def iso_date_utc(epoch_ms: int) -> str:
     """All-day events are stored at UTC midnight: report the calendar date."""
     return datetime.fromtimestamp(epoch_ms / 1000, timezone.utc).date().isoformat()
+
+
+def local_date(epoch_ms: int, offset=_offset_ms) -> date:
+    """The device-local calendar date at ``epoch_ms``."""
+    return datetime.fromtimestamp((epoch_ms + offset(epoch_ms)) / 1000, timezone.utc).date()
+
+
+def all_day_dates(begin: int, end: int) -> tuple[date, date]:
+    """An all-day row's calendar dates as (first, last+1): stored as UTC midnights, end exclusive."""
+    first = datetime.fromtimestamp(begin / 1000, timezone.utc).date()
+    if end <= begin:
+        return first, first + timedelta(days=1)
+    return first, datetime.fromtimestamp((end - 1) / 1000, timezone.utc).date() + timedelta(days=1)
+
+
+def select_rows(rows: list[dict], begin: int, finish: int, n: int, offset=_offset_ms) -> list[dict]:
+    """Rows from a widened instances query that belong to the local window [begin, finish).
+
+    All-day rows are kept when their dates overlap the window's local dates (Android's
+    window test compares their UTC-midnight times with local instants, which is a day off
+    either side of UTC). Sorted by local start: an all-day event at local midnight of its
+    first date, before timed events starting then. At most ``n``.
+    """
+    first_day, last_day = local_date(begin, offset), local_date(finish - 1, offset)
+    keep = []
+    for r in rows:
+        b, e = int(r.get("begin") or 0), int(r.get("end") or 0)
+        if r.get("allDay"):
+            d0, d_end = all_day_dates(b, e)
+            if not (d0 <= last_day and d_end > first_day):
+                continue
+            key = parse_time(d0.isoformat(), 0, offset)
+        else:
+            # Overlaps the window; a zero-length event counts when it starts inside it.
+            if not (b < finish and (e > begin or b >= begin)):
+                continue
+            key = b
+        keep.append((key, 0 if r.get("allDay") else 1, str(r.get("title") or ""), r))
+    keep.sort(key=lambda k: k[:3])
+    return [k[3] for k in keep[:n]]
 
 
 def event_row(row: dict, offset=_offset_ms) -> dict:
@@ -143,10 +185,11 @@ class AndroidCalendarPlugin(Plugin):
         if finish - begin > MAX_SPAN_MS:
             return {"ok": False, "error": "window too long (366 days at most)"}
         try:
-            rows = self._query(ctx, begin, finish, n)
+            # Widened by a day each side: all-day rows sit at UTC midnight, the window is local.
+            rows = self._query(ctx, begin - DAY_MS, finish + DAY_MS, MAX_ROWS)
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
-        events = [event_row(r) for r in rows]
+        events = [event_row(r) for r in select_rows(rows, begin, finish, n)]
         return {"ok": True, "count": len(events), "start": iso_local(begin), "end": iso_local(finish),
                 "timezone_offset_min": _offset_ms(begin) // 60000, "events": events}
 

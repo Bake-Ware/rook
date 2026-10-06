@@ -106,10 +106,33 @@ Never sent to guest or device-mapped identities. The app shows these in the
 { "type":"timer", "action":"set|cancel", "id":<str>, "label":<str>,
   "fires_at":<epoch ms>, "duration_s":<int> }
 ```
-Client: Android schedules an exact alarm (AlarmManager; falls back to inexact
-if the exact-alarm permission is missing), shows a notification, speaks
+`id` must be globally unique per timer (server: `uuid4().hex`), never reused
+for a different timer, even across conversations or server restarts. A resend
+(reconnect) carries the same `id` and the same `fires_at`; the client ignores a
+`set` whose (`id`, `fires_at`) already rang or was cancelled, and treats a
+`set` for an armed `id` with a different `fires_at` as a reschedule.
+
+Fire time: when `duration_s > 0` the client fires at *its own* arrival time +
+`duration_s` (phone and server clocks may differ), and uses `fires_at` only as
+part of the resend identity. When `duration_s` is absent or 0 ("at 7pm"
+timers) the client fires at `fires_at`. A `set` needs `fires_at > 0` or
+`duration_s > 0`.
+
+Client: Android schedules an exact alarm (AlarmManager; falls back to a
+one-minute window if the exact-alarm permission is missing), plays the default
+alarm sound on the alarm stream for up to ~10 s, shows a notification, speaks
 "<label> timer is done" through on-device TTS (SpeakBridge) and adds a chat
 line; the browser uses setTimeout + speechSynthesis. Cancel removes it.
+
+### `timer` client message — client → server, if hello had `timers:true`
+```
+{ "type":"timer", "action":"cancel", "id":<str> }
+```
+Sent when the user cancels a timer on the device (Android: tapping a timer
+chip). Sent at once when the voice connection is open; otherwise queued on the
+device and sent right after the next `hello`. The server removes the timer from
+its per-conversation state (so `timer_list` and reconnect resends no longer
+include it) and does not echo a `cancel` back. Unknown ids are ignored.
 
 ### Timing (every turn, server log + `background` kind `done`)
 `stt_ms, front_first_token_ms, front_first_audio_ms, background_ms,
