@@ -439,6 +439,35 @@ class Toolbox:
         self.note('screen', fact, 120, untrusted=True)
         return fact
 
+    async def notifications_state(self):
+        """Prefetch: the caller's recent notifications (last 30 min, newest first, at
+        most 8). Untrusted like the screen: anyone can send a notification."""
+        identity = current_identity.get()
+        if not identity.worker:
+            return None
+        authorize_read('notify.list', identity.worker)
+        result = await self.read(identity.worker, 'notify.list', {'limit': 30})
+        items = (result or {}).get('notifications') or [] if isinstance(result, dict) else []
+        cutoff = (time.time() - float(os.environ.get('VOICE_NOTIFY_WINDOW_S', '1800'))) * 1000
+        skip = {'android', 'com.android.systemui', 'systems.bake.rook'}
+        recent = []
+        for item in items:
+            posted = item.get('posted_ms') or (item.get('ts') or 0) * 1000
+            if item.get('package') in skip or not isinstance(posted, (int, float)) or posted < cutoff:
+                continue
+            app = str(item.get('package') or 'app').rsplit('.', 1)[-1][:24]
+            title = ' '.join(str(item.get('title') or '').split())[:60]
+            body = ' '.join(str(item.get('text') or '').split())[:100]
+            recent.append(f"{app}: {title}" + (f" - {body}" if body else ''))
+            if len(recent) >= 8:
+                break
+        if not recent:
+            self.note('notifications', 'No new notifications on the caller\'s device in the last half hour.', 120)
+            return None
+        fact = f"Recent notifications on the caller's device (newest first): " + '; '.join(recent) + '.'
+        self.note('notifications', fact, 120, untrusted=True)
+        return fact
+
     async def device_location(self):
         """Prefetch: where the caller's own device is (coordinates + a place name when
         the reverse lookup answers). Owner keys and device keys only."""

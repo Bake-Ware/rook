@@ -808,7 +808,8 @@ def test_home_assistant_allowlist_and_fuzzy_names():
 # --- prefetch -----------------------------------------------------------------------
 def test_prefetch_puts_clock_device_timers_and_tasks_on_board(tmp_path):
     reads = Reads({'battery.status': {'percent': 42, 'charging': True},
-                   'ui.text': {'ok': True, 'text': 'Home screen', 'app': 'Launcher'}})
+                   'ui.text': {'ok': True, 'text': 'Home screen', 'app': 'Launcher'},
+                   'notify.list': {'notifications': []}})
     async def scenario():
         conn, store, jobs, events, _ = connection(tmp_path, read=reads, background_events=True, timers=True)
         try:
@@ -822,7 +823,7 @@ def test_prefetch_puts_clock_device_timers_and_tasks_on_board(tmp_path):
         assert 'oven' in board.get('timers')['text']
         assert board.get('tasks')['text'] == '1 open Rook task: Fix the gate.'
         pre = [e for e in events if e.get('kind') == 'prefetch']
-        assert {e['tool'] for e in pre} == {'time', 'device', 'screen', 'tasks'} and all(e['status'] == 'ok' for e in pre)
+        assert {e['tool'] for e in pre} == {'time', 'device', 'screen', 'notifications', 'tasks'} and all(e['status'] == 'ok' for e in pre)
     asyncio.run(scenario())
 
 
@@ -1271,3 +1272,20 @@ def test_prefetch_screen_is_untrusted_and_owner_device_only():
     finally:
         current_identity.reset(token)
     assert len(reads.calls) == 1
+
+
+def test_prefetch_notifications_recent_untrusted_and_trimmed():
+    now_ms = time.time() * 1000
+    items = [{'package': 'com.whatsapp', 'title': 'Mom', 'text': 'Dinner at 6?', 'posted_ms': now_ms - 60_000},
+             {'package': 'systems.bake.rook', 'title': 'Rook', 'text': 'worker running', 'posted_ms': now_ms},
+             {'package': 'com.google.android.gm', 'title': 'Bank', 'text': 'old', 'posted_ms': now_ms - 7_200_000}]
+    reads = Reads({'notify.list': {'notifications': items}})
+    board = Board()
+    box = Toolbox('s', Store(':memory:'), board, read=reads)
+    token = current_identity.set(OWNER)
+    try:
+        fact = asyncio.run(box.notifications_state())
+    finally:
+        current_identity.reset(token)
+    assert fact == "Recent notifications on the caller's device (newest first): whatsapp: Mom - Dinner at 6?."
+    assert 'Mom' not in board.render(trusted_only=True)
