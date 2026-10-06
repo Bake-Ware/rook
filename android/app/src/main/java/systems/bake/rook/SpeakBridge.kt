@@ -41,6 +41,7 @@ object SpeakBridge {
     @Volatile private var initError: String? = null
     private var focusRequest: AudioFocusRequest? = null
     private var focusHeld = false
+    private var speechHold = false
     private var pumpScheduled = false
     private var counter = 0L
 
@@ -225,6 +226,8 @@ object SpeakBridge {
     private fun audio(): AudioManager? = app?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
 
     private fun requestFocus() {
+        // Step wake standby out of call audio mode so the line is actually audible.
+        if (!speechHold) speechHold = try { VoiceService.inst?.holdForSpeech() == true } catch (e: Exception) { Log.w(TAG, "speech hold: $e"); false }
         if (focusHeld) return
         val am = audio() ?: return
         focusHeld = try {
@@ -242,6 +245,10 @@ object SpeakBridge {
     }
 
     private fun abandonFocus() {
+        if (speechHold) {
+            speechHold = false
+            try { VoiceService.inst?.releaseSpeechHold() } catch (e: Exception) { Log.w(TAG, "speech hold release: $e") }
+        }
         if (!focusHeld) return
         focusHeld = false
         val am = audio() ?: return

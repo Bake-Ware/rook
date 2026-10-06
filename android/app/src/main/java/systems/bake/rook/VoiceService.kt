@@ -50,6 +50,9 @@ class VoiceService : Service() {
     private var detector: WakeWordDetector? = null
     private var micThread: Thread? = null
     @Volatile private var micRunning = false
+    private var speechHold = false
+    private val callLock = Any()
+    @Volatile private var callMode = false
     private var standby: Boolean
         get() = capture.standby
         set(value) { capture.standby = value }
@@ -127,7 +130,7 @@ class VoiceService : Service() {
     /** Push-to-talk: open a voice session now (Talk button, notification, headset key). */
     private fun startVoiceSession() {
         standby = wakeEnabled; capture.voiceSession = true; sessionWanted = true
-        ensureForeground(); ensureMic(); openSession(); syncFocus()
+        ensureForeground(); ensureMic(); if (micRunning) enterCallMode(); openSession(); syncFocus()
     }
 
     private fun headsetTalk() {
@@ -230,6 +233,7 @@ class VoiceService : Service() {
 
     private fun settleCapture() {
         capture.reconcile()
+        if (!liveSession()) leaveCallMode()   // back to plain standby: normal audio mode
         syncFocus()
         if (!sessionWanted) {
             setState(if (capture.wakeStandby) "standby" else "idle")
@@ -262,9 +266,32 @@ class VoiceService : Service() {
 
     // ---- mic (shared by detector + session) -------------------------------
 
+    /**
+     * voice.speak plays on the main audio path. Wake standby keeps the phone in
+     * MODE_IN_COMMUNICATION (for echo cancellation), where Samsung all but mutes other
+     * playback, and the detector would hear the speech. While a spoken line plays outside
+     * a live conversation, release the mic (and with it the call mode); resume after.
+     * Main thread. Returns true if standby capture was paused.
+     */
+    fun holdForSpeech(): Boolean {
+        if (speechHold) return true
+        if (destroyed || (sessionWanted && capture.voiceSession) || !micRunning) return false
+        speechHold = true
+        stopMic()
+        return true
+    }
+
+    /** Main thread: the spoken line(s) finished; take the mic back if standby still wants it. */
+    fun releaseSpeechHold() {
+        if (!speechHold) return
+        speechHold = false
+        if (!destroyed && capture.needsCapture) { ensureForeground(); ensureMic() }
+    }
+
     @SuppressLint("MissingPermission")
     private fun ensureMic() {
         if (destroyed || !capture.needsCapture) return
+        if (speechHold) return
         if (micRunning) return
         // Another app or a call has the mic: stay released until MicArbiter hands it back.
         if (!arbiter.mayCapture()) return
@@ -285,16 +312,26 @@ class VoiceService : Service() {
                 if (wakeEnabled && WAKE_MODEL.isNotEmpty()) wake = WakeWordDetector(this, WAKE_MODEL, WAKE_THRESHOLD)
                 detector = wake
                 val minBuf = AudioRecord.getMinBufferSize(VoiceClient.SR_IN, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
-                // Save the pre-Rook routing (never a leftover of Rook's own forced state).
-                audioRoute.begin(audio.mode, audio.isSpeakerphoneOn)
-                arbiter.modeTaken()
-                audio.mode = AudioManager.MODE_IN_COMMUNICATION
-                if (!audio.isBluetoothScoOn && !audio.isWiredHeadsetOn && !audio.isSpeakerphoneOn) {
-                    audioRoute.speakerForced()
-                    audio.isSpeakerphoneOn = true
-                }
-                rec = AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, VoiceClient.SR_IN,
-                    AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(minBuf, VoiceClient.FRAME_BYTES * 8))
+                // Call audio mode only for a live conversation (echo cancellation while Rook talks).
+                // Plain wake standby stays in normal mode: in call mode Samsung's camera refuses to
+                // record ("can't record during calls") and other playback is attenuated.
+                if (liveSession()) enterCallMode()
+                val bufBytes = maxOf(minBuf, VoiceClient.FRAME_BYTES * 8)
+                val built = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    // VOICE_COMMUNICATION is privacy-sensitive by default, which makes Android refuse
+                    // every other app's capture (the camera can't record video at all) instead of
+                    // silencing us. Not privacy-sensitive: the foreground app wins the mic, we get
+                    // silenced, and MicArbiter yields the recorder.
+                    AudioRecord.Builder()
+                        .setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
+                        .setAudioFormat(AudioFormat.Builder().setSampleRate(VoiceClient.SR_IN)
+                            .setChannelMask(AudioFormat.CHANNEL_IN_MONO).setEncoding(AudioFormat.ENCODING_PCM_16BIT).build())
+                        .setBufferSizeInBytes(bufBytes)
+                        .setPrivacySensitive(false)
+                        .build()
+                } else AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, VoiceClient.SR_IN,
+                    AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufBytes)
+                rec = built
                 check(rec.state == AudioRecord.STATE_INITIALIZED) { "mic init failed" }
                 arbiter.ownSessionId = rec.audioSessionId   // before start: our own config is not "another app"
                 if (AcousticEchoCanceler.isAvailable()) echo = AcousticEchoCanceler.create(rec.audioSessionId)?.also { it.enabled = true }
@@ -347,9 +384,8 @@ class VoiceService : Service() {
                         { detector = null },
                         // Below Android 12 mode/speaker are global: undo Rook's speakerphone always,
                         // and its MODE_IN_COMMUNICATION unless a call has already replaced it.
-                        { restoreAudioRoute(audio) },
-                        // setMode is async on 12+: keep treating IN_COMMUNICATION as Rook's until it changes.
-                        { arbiter.ownSessionId = 0; arbiter.modeReleased() })
+                        { leaveCallMode() },
+                        { arbiter.ownSessionId = 0 })
                 )
             }
         }
@@ -365,12 +401,39 @@ class VoiceService : Service() {
         post {
             if (destroyed || !capture.wakeStandby) return@post
             capture.voiceSession = true
+            if (micRunning) enterCallMode()
             VoiceBus.emit { it.onWake() }
             val c = client
             if (c?.isRunning == true) { c.interrupt(); lastActivityAt = SystemClock.elapsedRealtime() }
             else openSession()
             syncFocus()
         }
+    }
+
+    private fun liveSession() = sessionWanted && capture.voiceSession
+
+    /** Any thread: put the phone in call mode (and speakerphone if nothing else is routed). */
+    private fun enterCallMode() = synchronized(callLock) {
+        if (callMode || destroyed) return@synchronized
+        val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        // Save the pre-Rook routing (never a leftover of Rook's own forced state).
+        audioRoute.begin(audio.mode, audio.isSpeakerphoneOn)
+        arbiter.modeTaken()
+        audio.mode = AudioManager.MODE_IN_COMMUNICATION
+        if (!audio.isBluetoothScoOn && !audio.isWiredHeadsetOn && !audio.isSpeakerphoneOn) {
+            audioRoute.speakerForced()
+            audio.isSpeakerphoneOn = true
+        }
+        callMode = true
+    }
+
+    /** Any thread: give back call mode/speakerphone (a call that replaced the mode keeps it). */
+    private fun leaveCallMode() = synchronized(callLock) {
+        if (!callMode) return@synchronized
+        callMode = false
+        restoreAudioRoute(getSystemService(Context.AUDIO_SERVICE) as AudioManager)
+        // setMode is async on 12+: keep treating IN_COMMUNICATION as Rook's until it changes.
+        arbiter.modeReleased()
     }
 
     private fun restoreAudioRoute(audio: AudioManager) {

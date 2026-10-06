@@ -54,7 +54,13 @@ def _attach_native_plugins(worker) -> None:
                AndroidNotifyPlugin(), AndroidUiPlugin(), AndroidSmsPlugin(),
                AndroidContactsPlugin(), AndroidCallLogPlugin(),
                AndroidLocationPlugin(), AndroidDevicePlugin(), AndroidSpeakPlugin())
+    # Native plugins skip the plugin host, so give them the node's plugin state
+    # directory ourselves; the default is relative to the cwd, which on Android
+    # is the read-only root.
+    data_root = getattr(getattr(worker, "host", None), "_data_root", None)
     for plugin in natives:
+        if data_root:
+            plugin.__dict__.setdefault("_data_root", data_root)
         # battery gates on a readable battery; screen/hid are always available()
         # (they report readiness per-call). Never announce a cap we can't back.
         try:
@@ -71,10 +77,41 @@ def _attach_native_plugins(worker) -> None:
                  plugin.NAMESPACE, len(plugin.caps()))
 
 
+def _setup_logging() -> None:
+    """Send worker logs to logcat (via stderr) and to a small file in the app's
+    data, so a worker that stops can be diagnosed over adb (run-as) later."""
+    import sys
+    from logging.handlers import RotatingFileHandler
+    from pathlib import Path
+    root = logging.getLogger()
+    if getattr(root, "_rook_android", False):
+        return
+    fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    handlers = [logging.StreamHandler(sys.stderr)]
+    try:
+        path = Path.home() / ".rook-band-worker" / "android-worker.log"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handlers.append(RotatingFileHandler(path, maxBytes=512 * 1024, backupCount=1))
+    except Exception:  # logging must never stop the worker
+        pass
+    for h in handlers:
+        h.setFormatter(fmt)
+        root.addHandler(h)
+    root.setLevel(logging.INFO)
+    root._rook_android = True
+
+
 def start(hub: str, psk: str, name: str) -> None:
     """Run/reconnect the embedded worker without re-executing app_process."""
+    _setup_logging()
     from rook_android.worker_runtime import start as run
-    run(hub,psk,name)
+    log.info("worker runtime starting as %s -> %s", name, hub)
+    try:
+        run(hub,psk,name)
+    except BaseException:
+        log.exception("worker runtime crashed")
+        raise
+    log.warning("worker runtime exited")
 
 
 def stop() -> None:
