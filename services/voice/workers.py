@@ -83,8 +83,11 @@ class WorkerInventory:
                 self.schemas[name] = spec
         self.schemas_updated = time.monotonic()
 
-    def read_catalog(self, allowed):
-        rows = [row for row in (self.rows or []) if row['name'] in self.names]
+    def read_catalog(self, allowed, workers=None):
+        """``workers`` limits the catalog to those names (a device-mapped key sees
+        only its own device); None lists every live worker (owner)."""
+        rows = [row for row in (self.rows or []) if row['name'] in self.names
+                and (workers is None or row['name'] in workers)]
         caps = sorted(allowed.intersection({cap for row in rows for cap in row.get('caps', [])}))
         groups = {}
         for cap in caps:
@@ -111,7 +114,11 @@ class WorkerInventory:
     async def validate(self, worker):
         await self.refresh()
         if worker not in self.names:
-            raise ValueError(f"no Rook worker named {worker!r}; available: {', '.join(self.names) or '(none)'}")
+            # Only an owner may learn the other worker names.
+            from .identity import current_identity
+            if current_identity.get().owner:
+                raise ValueError(f"no Rook worker named {worker!r}; available: {', '.join(self.names) or '(none)'}")
+            raise ValueError(f"no Rook worker named {worker!r} is online")
         return worker
 
 

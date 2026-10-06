@@ -223,7 +223,7 @@ async def websocket(ws: WebSocket):
         for job in app.state.store.jobs(key):
             await conn.emit('tool', id=job['id'], title=job['name'], status=job['status'])
             if job['status'] == 'running':
-                timeout = app.state.jobs.timeout(job['name'])
+                timeout = app.state.jobs.timeout(job['name'], conn.identity.owner)
                 elapsed = max(0, int((time.time()-job['updated'])*1000))
                 conn.progress.start(job['id'], conn.epoch, job['name'], json.loads(job['args']), elapsed)
                 if conn.activity:

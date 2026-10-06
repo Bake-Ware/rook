@@ -400,7 +400,7 @@ class Connection:
         # Dictation mode speaks only read-backs and confirmations: none of it is
         # conversation, and read-back would copy the dictated text into model history.
         speaking = self.speak_out or progress_job is not None
-        if self.mode.uses_model:
+        if self.mode.uses_model and (progress_job is None or self.mode.agent):
             record = text if not speaking else "[Spoken response generated; playback may be interrupted] " + text
             self.store.append(self.session, "assistant", {"text": record})
         # Reply is on the websocket path and history is committed before any

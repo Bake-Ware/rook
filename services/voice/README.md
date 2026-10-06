@@ -50,11 +50,13 @@ Runtime configuration:
 The mouthpiece uses structured selection of either a reply or a real tool.
 Its HTTP client is reused across turns and closed at service shutdown.
 It announces work only after queuing a job. Invalid plans are retried once with the rejected output in context before any
-work starts. A second invalid plan yields the fixed clarification fallback;
-unstructured model prose is never spoken. External jobs are never implicitly
+work starts. If both attempts were rejected and either one answered in plain
+prose (no tool call, not JSON, at most 1,200 characters), that prose is spoken
+as a `respond` reply; it can never start a job. Otherwise the fixed
+clarification fallback is spoken. External jobs are never implicitly
 retried. Raw rejected outputs go to mode-0600 `rejected-voice-plans.jsonl` beneath
 `VOICE_MODEL_DIR` (1 MB plus two rotations); these private diagnostics can contain
-conversation-derived data. Jobs preserve the actual failure message. Rook worker
+conversation-derived data. Owner jobs preserve the actual (scrubbed) failure message. Rook worker
 names refresh every 60 seconds for planner context and validation; unknown names
 fail before a capability call.
 
@@ -91,9 +93,16 @@ the session is back in `assistant` mode. The APK and browser keep a separate
 conversation per non-assistant mode; the browser reconnects on a mode change
 rather than switching the live session, so no mode inherits another's history.
 
-Jobs are independent of audio turns and survive socket closure. Read tools have
+Jobs are independent of audio turns and survive socket closure. Owner jobs have
 10-minute limits in production, including single lookups. Every external lookup
-and escalation runs through the same Qwen agent with thinking enabled. Outcomes are persisted,
+and escalation runs through the same Qwen agent with thinking enabled, but only
+an owner's `escalate` gets the full toolset (`rook_call`, `rook_mcp`). Lookup jobs
+(`web_search`, `rook_read`, `rook_devices`) read untrusted text, so their loop gets
+read-only tools only (`web_search`, identity-checked `rook_read`/`rook_describe`/
+`rook_devices`, `finish`). Non-owner jobs time out after 60 seconds, and at most 2
+per conversation and 8 in total run at once. Failures are reported to owners with
+the scrubbed, truncated error text; other keys hear only "That didn't work."
+Outcomes are persisted,
 including failed, unknown and cancellation-requested states. After a service
 restart, formerly running jobs become unknown and are not rerun. An audio stop
 never silently cancels external work. `cancel_job` requires the job to belong to

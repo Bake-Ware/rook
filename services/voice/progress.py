@@ -63,7 +63,10 @@ class ProgressUpdates:
     def suppressed(self):
         c = self.conn
         now = time.monotonic()
-        return (c.closed or c.sleeping or c.receiving_speech or
+        # Job progress belongs to assistant mode; other modes (chat, dictation)
+        # neither hear it nor record it. The result is reported on switching back.
+        mode = getattr(c, 'mode', None)
+        return (c.closed or c.sleeping or c.receiving_speech or (mode is not None and not mode.agent) or
                 now - c.last_speech < self.quiet_seconds or now < c.play_until or
                 bool(c.task and not c.task.done()) or bool(c.pending_results))
 

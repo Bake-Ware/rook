@@ -116,6 +116,8 @@ def test_worker_cache_refresh_validation_and_no_handoff_to_invented_host(monkeyp
 
 def test_failed_job_preserves_readable_message():
     async def scenario():
+        from services.voice.identity import Identity, current_identity
+        current_identity.set(Identity('Alex', owner=True))   # only owners get raw error text
         store = Store(':memory:')
         async def fail(args):
             raise providers.Handoff("no Rook worker named 'mystery-box'; available: gpu-box")

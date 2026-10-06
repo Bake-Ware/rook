@@ -102,10 +102,11 @@ def test_invalid_arguments_corrected_before_dispatch_and_duplicate_write_blocked
 def test_all_production_tool_jobs_use_own_agent_and_preserve_unknown_outcomes(name):
     async def scenario():
         class Agent:
-            async def run(self, task, context, on_event, initial=None):
+            async def run(self, task, context, on_event, initial=None, tools=None):
                 on_event({'trace': [{'operation': 'write', 'status': 'dispatched'}]})
                 raise UncertainToolOutcome('check journal-id')
         async def direct(args): pytest.fail('Bypassed thinking mode')
+        current_identity.set(Identity('Alex', owner=True))
         store = Store(':memory:')
         jobs = Jobs(store, {'rook_read': direct}, 'unreachable-hermes', 1, lambda *a: None, agent=Agent())
         jid = jobs.start('s', name, {'task': 'work'}, [])

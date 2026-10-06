@@ -3,11 +3,16 @@ import asyncio
 import json
 import os
 import time
-from .identity import authorize_devices, authorize_read, current_identity
+from .identity import PolicyRefusal, authorize_devices, authorize_read, current_identity
 from .rookmcp import RookMCP
 from .workers import inventory
 
 AGENT_TOOLS = frozenset({'escalate', 'delegate_to_hermes'})
+# A lookup job (web_search, rook_read, rook_devices) reads untrusted text, so its
+# thinking loop never gets rook_call/rook_mcp. Reads stay identity-checked.
+READONLY_TOOLS = frozenset({'web_search', 'rook_read', 'rook_describe', 'rook_devices', 'finish'})
+READONLY_PROMPT = ('This job is read-only: only the supplied read tools exist. Do not attempt changes, shell '
+                   'commands or hub tools; if the task needs them, finish and say an owner must ask for it directly.')
 
 
 class UncertainToolOutcome(ConnectionError):
@@ -87,7 +92,7 @@ class ThinkingAgent:
 
     def owner(self):
         if not current_identity.get().owner:
-            raise PermissionError('This connection needs a verified owner mapping for changes or unrestricted Rook tools.')
+            raise PolicyRefusal('This connection needs a verified owner mapping for changes or unrestricted Rook tools.')
 
     async def worker(self, name):
         await self.devices.validate(name)
@@ -211,14 +216,17 @@ class ThinkingAgent:
         on_event({'trace': list(trace)})
         return reply
 
-    async def run(self, task, context, on_event, initial=None):
+    async def run(self, task, context, on_event, initial=None, tools=None):
+        """``tools`` limits the offered and dispatchable tool names (finish is
+        always available); None offers the full toolset."""
         if not isinstance(task, str) or not task.strip():
             raise ValueError('A task is required')
+        offered = [t for t in TOOLS if tools is None or t['function']['name'] in tools or t['function']['name'] == 'finish']
         complete = self.complete
         if complete is None:
             from .providers import thinking_chat
             complete = thinking_chat
-        prompt = SYSTEM + '\n' + current_identity.get().prompt()
+        prompt = SYSTEM + '\n' + current_identity.get().prompt() + ('\n' + READONLY_PROMPT if tools is not None else '')
         images, text_context = [], []
         for message in context:
             body = message.get('content')
@@ -236,7 +244,7 @@ class ThinkingAgent:
         on_event({'progress': 'Thinking through the task'})
         for step in range(self.max_steps):
             try:
-                message = await complete(messages, TOOLS, self.effort)
+                message = await complete(messages, offered, self.effort)
             except Exception as error:
                 if writes:
                     raise UncertainToolOutcome('Thinking stopped after tools were dispatched. Inspect the recorded tool progress before retrying changes.') from error
@@ -264,9 +272,9 @@ class ThinkingAgent:
             try:
                 name = call['function']['name']
                 args = json.loads(call['function'].get('arguments') or '{}')
-                spec = next((t['function']['parameters'] for t in TOOLS if t['function']['name'] == name), None)
+                spec = next((t['function']['parameters'] for t in offered if t['function']['name'] == name), None)
                 if spec is None:
-                    raise ValueError('Unknown tool: ' + name)
+                    raise ValueError('Unknown or unavailable tool: ' + name)
                 validate_object(args, spec)
                 if name == 'finish':
                     text = args['text'].strip()

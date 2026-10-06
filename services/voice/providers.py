@@ -608,17 +608,22 @@ class Provider:
             payload['tools'] = [t for t in payload['tools'] if t['function']['name'] == 'respond' or t['function']['name'] in allowed]
         if not reply_only:
             payload['tools'] = copy.deepcopy(payload['tools'])
+            identity = current_identity.get()
+            # A device-mapped key may read only its own device: never list or
+            # describe the rest of the band to it.
+            own = None if identity.owner else ({identity.worker} if identity.worker else set())
             for tool in payload['tools']:
                 if tool['function']['name'] == 'rook_read':
-                    caps, description = inventory.read_catalog(READ_CAPS)
+                    caps, description = inventory.read_catalog(READ_CAPS, own)
                     tool['function']['description'] = 'Run ONE read-only lookup directly. ' + description
                     props = tool['function']['parameters']['properties']
                     # Simultaneous worker/cap enums trigger malformed Gemma native calls.
                     # The catalog supplies live cap examples; the adapter enforces READ_CAPS.
                     props['cap'] = {'type': 'string', 'description': 'Exact live read capability.'}
                     props['worker']['description'] = 'Exact live worker name. Never invent a target or substitute an unknown device without clarification.'
-                    if inventory.names:
-                        props['worker']['enum'] = list(inventory.names)
+                    names = list(inventory.names) if own is None else sorted(own)
+                    if names:
+                        props['worker']['enum'] = names
         if gate:
             # Reply gate: the decision engine judged this speech not addressed to the assistant.
             # The model may agree (stay_silent) or override by answering; overrides are flagged for retraining.

@@ -128,8 +128,29 @@ def test_failed_and_timed_out_tools_are_terminal_not_success():
         ids=[jobs.start('s',name,{},[]) for name in ['fail','hang']]
         await asyncio.gather(*list(jobs.tasks.values()))
         assert all(store.job(jid,'s')['status']=='failed' for jid in ids)
-        assert 'private tool response' in store.job(ids[0],'s')['result']
+        # Not an owner: raw error text is never spoken or stored.
+        assert all('private tool response' not in store.job(jid,'s')['result'] for jid in ids)
+        assert store.job(ids[0],'s')['result']=="That didn't work."
         assert 'timed out or disconnected' in store.job(ids[1],'s')['result']
+        await jobs.close()
+    run(scenario)
+
+
+def test_owner_gets_readable_scrubbed_truncated_error():
+    from services.voice.identity import Identity, current_identity
+    async def scenario():
+        current_identity.set(Identity('Alex', owner=True))
+        store=Store(':memory:')
+        async def fail(args): raise ValueError('disk full; api_key=abcdef123456 ' + 'x'*2000)
+        async def hang(args): await asyncio.Event().wait()
+        jobs=Jobs(store,{'fail':fail,'hang':hang},'',0,lambda s,e:None,read_timeout=.02)
+        ids=[jobs.start('s',name,{},[]) for name in ['fail','hang']]
+        await asyncio.gather(*list(jobs.tasks.values()))
+        result=store.job(ids[0],'s')['result']
+        assert store.job(ids[0],'s')['status']=='failed'
+        assert result.startswith('Tool failed: disk full;') and 'abcdef123456' not in result
+        assert '[redacted]' in result and len(result) < 600
+        assert 'timed out or disconnected: TimeoutError' in store.job(ids[1],'s')['result']
         await jobs.close()
     run(scenario)
 
