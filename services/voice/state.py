@@ -28,6 +28,10 @@ class Store:
             CREATE TABLE IF NOT EXISTS dictation (
               id INTEGER PRIMARY KEY, session TEXT, text TEXT, created REAL);
             CREATE INDEX IF NOT EXISTS dictation_session ON dictation(session, id);
+            CREATE TABLE IF NOT EXISTS timers (
+              id TEXT PRIMARY KEY, session TEXT, label TEXT, fires_at INTEGER,
+              duration_s INTEGER, created REAL);
+            CREATE INDEX IF NOT EXISTS timers_session ON timers(session, fires_at);
         """)
         # Dictation used to share the trimmed event history; move any such rows out.
         self.db.execute("INSERT INTO dictation(session,text,created) SELECT session,json_extract(body,'$.text'),created "
@@ -39,6 +43,7 @@ class Store:
         self.db.execute("DELETE FROM events WHERE created < ?", (cutoff,))
         self.db.execute("DELETE FROM jobs WHERE updated < ? AND status != 'running'", (cutoff,))
         self.db.execute("DELETE FROM dictation WHERE created < ?", (cutoff,))
+        self.db.execute("DELETE FROM timers WHERE fires_at < ?", (int((time.time() - 86400) * 1000),))
         self.db.commit()
 
     @staticmethod
@@ -129,3 +134,29 @@ class Store:
     def record_job_progress(self, jid, result):
         self.db.execute("UPDATE jobs SET result=? WHERE id=? AND status='running'", (result[:12000], jid))
         self.db.commit()
+
+    # Voice timers (front_background). The client schedules and rings them; the
+    # server keeps the active set per conversation for list/cancel and resends.
+    MAX_TIMERS = 20
+
+    def add_timer(self, session, label, fires_at, duration_s):
+        """Store a new timer; returns its row. Ids are uuid4 hex, never reused."""
+        if len(self.timers(session)) >= self.MAX_TIMERS:
+            raise ValueError('Too many active timers')
+        tid = uuid.uuid4().hex
+        self.db.execute("INSERT INTO timers VALUES(?,?,?,?,?,?)",
+                        (tid, session, label, int(fires_at), int(duration_s), time.time()))
+        self.db.commit()
+        return {'id': tid, 'label': label, 'fires_at': int(fires_at), 'duration_s': int(duration_s)}
+
+    def timers(self, session, now_ms=None):
+        """Active (not yet due) timers, soonest first."""
+        now_ms = int(time.time() * 1000) if now_ms is None else now_ms
+        rows = self.db.execute("SELECT id,label,fires_at,duration_s FROM timers WHERE session=? AND fires_at>? "
+                               "ORDER BY fires_at", (session, now_ms)).fetchall()
+        return [dict(row) for row in rows]
+
+    def remove_timer(self, session, tid):
+        cur = self.db.execute("DELETE FROM timers WHERE session=? AND id=?", (session, str(tid)))
+        self.db.commit()
+        return cur.rowcount > 0

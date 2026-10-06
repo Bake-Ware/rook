@@ -45,7 +45,7 @@ def allowed_tools(identity):
 
 current_identity = ContextVar('voice_identity', default=Identity())
 PERSONAL_CAPS = {'sms.list': 'texts', 'calllog.list': 'call history', 'contacts.search': 'contacts',
-                 'notify.list': 'notifications', 'location.get': 'location'}
+                 'notify.list': 'notifications', 'location.get': 'location', 'calendar.list': 'calendar'}
 
 
 def configured_identities():

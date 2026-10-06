@@ -89,6 +89,8 @@ class ThinkingAgent:
             raise ValueError('Tool reasoning must be enabled: low, medium, high or xhigh')
         self.schemas, self.hub_tools = {}, None
         self.schema_lock = asyncio.Lock()
+        # Subclasses (the voice Background worker) narrow or extend these.
+        self.tools, self.system = TOOLS, SYSTEM
 
     def owner(self):
         if not current_identity.get().owner:
@@ -216,17 +218,22 @@ class ThinkingAgent:
         on_event({'trace': list(trace)})
         return reply
 
-    async def run(self, task, context, on_event, initial=None, tools=None):
-        """``tools`` limits the offered and dispatchable tool names (finish is
-        always available); None offers the full toolset."""
+    async def run(self, task, context, on_event, initial=None, tools=None, on_step=None):
+        """Bounded tool loop. ``tools`` limits the offered and dispatchable tool
+        names (finish is always available); None offers the agent's full toolset.
+        ``on_step(kind, **fields)``, when given, sees every model thought, tool
+        call and tool result (display only)."""
         if not isinstance(task, str) or not task.strip():
             raise ValueError('A task is required')
-        offered = [t for t in TOOLS if tools is None or t['function']['name'] in tools or t['function']['name'] == 'finish']
+        def offer():
+            # Recomputed each step: a subclass may narrow self.tools mid-run.
+            return [t for t in self.tools if tools is None or t['function']['name'] in tools or t['function']['name'] == 'finish']
         complete = self.complete
         if complete is None:
             from .providers import thinking_chat
             complete = thinking_chat
-        prompt = SYSTEM + '\n' + current_identity.get().prompt() + ('\n' + READONLY_PROMPT if tools is not None else '')
+        step_event = on_step or (lambda kind, **fields: None)
+        prompt = self.system + '\n' + current_identity.get().prompt() + ('\n' + READONLY_PROMPT if tools is not None else '')
         images, text_context = [], []
         for message in context:
             body = message.get('content')
@@ -244,12 +251,16 @@ class ThinkingAgent:
         on_event({'progress': 'Thinking through the task'})
         for step in range(self.max_steps):
             try:
+                offered = offer()
                 message = await complete(messages, offered, self.effort)
             except Exception as error:
                 if writes:
                     raise UncertainToolOutcome('Thinking stopped after tools were dispatched. Inspect the recorded tool progress before retrying changes.') from error
                 raise
             calls = message.get('tool_calls') or []
+            thought = message.get('reasoning_content') or (message.get('content') if calls else '')
+            if isinstance(thought, str) and thought.strip():
+                step_event('thought', text=thought.strip()[:2000])
             if not calls:
                 # Native tool_choice enforcement is model-dependent. Retry a plan,
                 # not an operation; no tools were dispatched by this generation.
@@ -281,15 +292,24 @@ class ThinkingAgent:
                     if not text:
                         raise ValueError('Final result must not be empty')
                     return text
+                if name == 'no_action':
+                    return ''
+                step_event('tool_call', tool=name, args=args)
+                started = time.monotonic()
                 reply = await self.dispatch(name, args, trace, writes, on_event)
-            except UncertainToolOutcome:
+                step_event('tool_result', tool=name, result=reply, status='ok',
+                           elapsed_ms=int((time.monotonic() - started) * 1000))
+            except UncertainToolOutcome as error:
+                step_event('tool_result', tool=call['function'].get('name'), result=str(error), status='failed')
                 raise
-            except PermissionError:
+            except PermissionError as error:
                 # Privacy refusal is terminal, never a reason to try a shell or
                 # an alternate tool for the same data.
+                step_event('tool_result', tool=call['function'].get('name'), result=str(error), status='failed')
                 raise
             except Exception as error:
                 reply = {'error': str(error) or type(error).__name__}
+                step_event('tool_result', tool=call['function'].get('name'), result=reply['error'], status='failed')
             messages.append({'role': 'tool', 'tool_call_id': call['id'],
                              'content': json.dumps(reply, ensure_ascii=False)[:16000]})
         if writes:
