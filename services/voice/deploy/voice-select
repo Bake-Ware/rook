@@ -1,0 +1,134 @@
+#!/bin/bash
+# voice-select: the only privileged step of services/voice/deploy/release.sh.
+#
+# Installed once by the operator, root-owned, at /usr/local/sbin/voice-select,
+# and allowed to the service user by a single sudoers line (see deploy/README.md).
+# It trusts nothing from the caller but a release tag:
+#
+#   voice-select activate <tag>   select releases/<tag>: write the one managed
+#                                 drop-in (WorkingDirectory only), daemon-reload,
+#                                 restart the unit
+#   voice-select rollback         restore the previous selection, reload, restart
+#   voice-select environ          print the running unit's environment (NUL-separated)
+#   voice-select cwd              print the running unit's working directory
+#
+# The releases directory, unit and drop-in name come from the root-owned
+# /etc/voice-select.conf (KEY=value lines; nothing is sourced):
+#
+#   RELEASES=/home/voice/voice-agent/releases   (required)
+#   UNIT=voice-agent.service                    (default)
+#   DROPIN=zzzzzzzzzz-release.conf              (default; must sort last)
+#
+# The selection history lives in root-owned /var/lib/voice-select/history.
+set -euo pipefail
+umask 022
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export LC_ALL=C
+
+CONF=/etc/voice-select.conf
+STATE=/var/lib/voice-select
+HISTORY=$STATE/history
+
+die() { echo "voice-select: $*" >&2; exit 1; }
+
+[ "$(id -u)" = 0 ] || die "must run as root (sudo -n /usr/local/sbin/voice-select ...)"
+[ -f "$CONF" ] || die "$CONF is missing"
+[ "$(stat -c %u "$CONF")" = 0 ] || die "$CONF must be owned by root"
+case $(stat -c %A "$CONF") in ?????w????|????????w?) die "$CONF must not be group- or world-writable" ;; esac
+
+RELEASES= UNIT=voice-agent.service DROPIN_NAME=zzzzzzzzzz-release.conf
+while IFS= read -r line || [ -n "$line" ]; do
+  case $line in
+    RELEASES=*) RELEASES=${line#RELEASES=} ;;
+    UNIT=*) UNIT=${line#UNIT=} ;;
+    DROPIN=*) DROPIN_NAME=${line#DROPIN=} ;;
+    ''|'#'*) ;;
+    *) die "unknown line in $CONF: $line" ;;
+  esac
+done < "$CONF"
+
+[[ $UNIT =~ ^[A-Za-z0-9@._-]+\.service$ ]] || die "bad UNIT in $CONF"
+[[ $DROPIN_NAME =~ ^[A-Za-z0-9._-]+\.conf$ ]] || die "bad DROPIN in $CONF"
+[[ $RELEASES == /* ]] || die "RELEASES in $CONF must be an absolute path"
+REAL_RELEASES=$(realpath -e -- "$RELEASES") || die "releases directory $RELEASES does not exist"
+DROPIN_DIR=/etc/systemd/system/$UNIT.d
+DROPIN=$DROPIN_DIR/$DROPIN_NAME
+
+safe_dir() {  # <dir>: a release directory inside RELEASES that is safe in a unit file
+  local dir=$1
+  [[ $dir =~ ^/[A-Za-z0-9._/-]+$ ]] || die "unsafe release path: $dir"
+  case $dir in "$REAL_RELEASES"/*) ;; *) die "$dir is not under $REAL_RELEASES" ;; esac
+  [ -f "$dir/services/voice/server.py" ] || die "no voice release at $dir"
+}
+
+resolve() {  # <tag> -> real release directory
+  local tag=${1:-} dir
+  [[ $tag =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "invalid release tag: ${tag:-(empty)}"
+  dir=$(realpath -e -- "$REAL_RELEASES/$tag") || die "no release $tag"
+  safe_dir "$dir"
+  echo "$dir"
+}
+
+main_pid() {
+  local pid; pid=$(systemctl show -p MainPID --value "$UNIT")
+  [[ $pid =~ ^[1-9][0-9]*$ ]] || die "$UNIT is not running"
+  echo "$pid"
+}
+
+check_order() {
+  # The selector must be applied last or an older selector's WorkingDirectory wins.
+  local last
+  last=$( { ls -1 "$DROPIN_DIR" 2>/dev/null | grep '\.conf$' || true; echo "$DROPIN_NAME"; } | sort | tail -1)
+  [ "$last" = "$DROPIN_NAME" ] || die "$DROPIN_NAME would not sort last in $DROPIN_DIR (last is $last)"
+}
+
+current() {
+  if [ -f "$DROPIN" ]; then echo "dir $(sed -n 's/^WorkingDirectory=//p' "$DROPIN")"; else echo absent; fi
+}
+
+write_selection() {  # <dir> <label>
+  local tmp
+  mkdir -p "$DROPIN_DIR"
+  tmp=$(mktemp "$DROPIN_DIR/.voice-select.XXXXXX")
+  printf '# Managed by voice-select (services/voice/deploy): selects the voice release.\n# %s, %s\n[Service]\nWorkingDirectory=%s\n' \
+    "$2" "$(date -Is)" "$1" > "$tmp"
+  chmod 644 "$tmp"; mv -f "$tmp" "$DROPIN"
+}
+
+restart() {
+  systemctl daemon-reload
+  systemctl restart "$UNIT"
+}
+
+case ${1:-} in
+  activate)
+    [ $# = 2 ] || die "usage: activate <tag>"
+    dir=$(resolve "$2")
+    check_order
+    mkdir -p -m 755 "$STATE"
+    current >> "$HISTORY"
+    write_selection "$dir" "release $2"
+    restart
+    echo "selected $dir" ;;
+  rollback)
+    [ $# = 1 ] || die "usage: rollback"
+    [ -s "$HISTORY" ] || die "no previous selection recorded"
+    previous=$(tail -1 "$HISTORY")
+    if [ "$previous" = absent ]; then
+      rm -f "$DROPIN"; echo "removed $DROPIN (back to the older selector drop-ins)"
+    else
+      dir=${previous#dir }
+      safe_dir "$dir"
+      check_order
+      write_selection "$dir" rollback; echo "selected $dir"
+    fi
+    sed -i '$d' "$HISTORY"
+    restart ;;
+  environ)
+    [ $# = 1 ] || die "usage: environ"
+    cat "/proc/$(main_pid)/environ" ;;
+  cwd)
+    [ $# = 1 ] || die "usage: cwd"
+    readlink "/proc/$(main_pid)/cwd" ;;
+  *) sed -n '2,22p' "$0" >&2; exit 2 ;;
+esac
