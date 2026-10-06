@@ -19,7 +19,8 @@ def test_native_reconnects_and_stops_on_revocation(monkeypatch):
     saved={'auto_start':True,'device':{'id':'device'},'active_band':'band'}
     monkeypatch.setattr(enroll,'load',lambda:saved)
     calls=[];started=[];stopped=[]
-    def refresh():
+    def refresh(**kwargs):
+        assert kwargs['want']==('workers',) and callable(kwargs['on_result'])
         calls.append(1)
         if len(calls)>=4:raise ValueError('revoked')
         key='old' if len(calls)==1 else 'new'

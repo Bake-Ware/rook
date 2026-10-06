@@ -22,6 +22,35 @@ COOKIE='rook_account'
 NO_STORE={'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff'}
 
 
+#: A phone asks for the roster on every 30 s config refresh; anything faster
+#: (bursts, restarts) gets the config without it and keeps its cached copy.
+ROSTER_MIN_INTERVAL=20
+ROSTER_MAX_WORKERS=500
+
+
+def _text(value,limit):
+    return value[:limit] if isinstance(value,str) else ''
+
+
+def roster_row(worker,now):
+    """One worker for a device's Workers tab: display facts only (no caps
+    list, plugins, facts, roles or addresses)."""
+    caps=worker.get('caps')
+    app=worker.get('app_release') if isinstance(worker.get('app_release'),dict) else {}
+    hb=worker.get('hb') if isinstance(worker.get('hb'),dict) else {}
+    battery=hb.get('battery') if isinstance(hb.get('battery'),dict) else None
+    build=worker.get('build')
+    return {'worker_id':_text(worker.get('worker_id'),64),
+            'name':_text(worker.get('name'),80),
+            'description':_text(worker.get('description'),280),
+            'caps':len(caps) if isinstance(caps,(list,tuple)) else 0,
+            'version':_text(worker.get('version'),40),
+            'build':build if isinstance(build,int) and not isinstance(build,bool) else None,
+            'app_release':{k:app[k] for k in ('platform','version','code') if isinstance(app.get(k),(str,int)) and not isinstance(app.get(k),bool)},
+            'hb':{'battery':{k:battery[k] for k in ('percent','charging') if isinstance(battery.get(k),(int,float,bool))}} if battery else {},
+            'last_seen_age_secs':round(max(0.0,now-float(worker.get('last_seen') or 0.0)),1)}
+
+
 def esc(value):
     return html.escape(str(value),quote=True)
 
@@ -48,6 +77,7 @@ class AccountWeb:
         self.origin='https://'+server.domain
         self.callback=self.origin+'/auth/google/callback'
         self.google_web_login=os.environ.get('ROOK_GOOGLE_WEB_LOGIN','1')=='1'
+        self._roster_served={}
 
     def handles(self,path):
         return path=='/account' or path.startswith('/account/') or path.startswith('/auth/')
@@ -339,9 +369,38 @@ class AccountWeb:
         try:
             data=await request.json()
             result=getattr(self.devices,operation)(data)
+            if operation=='config' and isinstance(data.get('want'),list) and 'workers' in data['want']:
+                # Rides on the config proof the phone already sends every 30 s:
+                # no second challenge, no second request.
+                workers=self.device_roster(result['device_id'],result['band']['id'])
+                if workers is not None:
+                    result={**result,'workers':workers}
             return web.json_response(result,headers=NO_STORE)
         except (ValueError,TypeError,AttributeError,PermissionError):
             return web.json_response({'error':'Device proof expired or access revoked.'},status=403,headers=NO_STORE)
+
+    def device_roster(self,device_id,current_band_id):
+        """Live rosters of the bands this device may see (see
+        ``DeviceStore.roster_scope``), from the hub's in-memory band client.
+        ``None`` when this device asked less than ROSTER_MIN_INTERVAL ago."""
+        now=time.time()
+        if now-self._roster_served.get(device_id,0)<ROSTER_MIN_INTERVAL:
+            return None
+        if len(self._roster_served)>4096:
+            self._roster_served={k:v for k,v in self._roster_served.items() if now-v<ROSTER_MIN_INTERVAL}
+        self._roster_served[device_id]=now
+        scope,bands=self.devices.roster_scope(device_id,current_band_id)
+        band_client=getattr(self.server,'_band',None)
+        live=list(band_client.workers.values()) if band_client is not None else []
+        out=[]
+        for band in bands:
+            rows=[roster_row(w,now) for w in live if w.get('band')==band['label']][:ROSTER_MAX_WORKERS]
+            rows=[r for r in rows if r['worker_id']]
+            rows.sort(key=lambda r:(r['name'].lower(),r['worker_id']))
+            out.append({'id':band['id'],'name':band['name'],'role':band['role'],'current':band['current'],'workers':rows})
+        out.sort(key=lambda b:(not b['current'],b['name'].lower(),b['id']))
+        return {'scope':scope,'connected':band_client is not None,
+                'generated_at':now,'bands':out}
 
     async def pairing_refresh(self,request):
         user=self.require(request)

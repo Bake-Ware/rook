@@ -22,9 +22,12 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * The main screen's Workers tab: the band's workers as this phone's own band
- * worker hears them (`rook_android.roster`, fed by band announces; no hub call,
- * no credentials). Refreshes on pull and every [REFRESH_MS] while visible.
+ * The main screen's Workers tab, grouped by band (this phone's band first): the
+ * workers its own band worker hears (`rook_android.roster`, fed by band
+ * announces) plus, for a phone enrolled through an account, the hub's rosters
+ * of that account's other bands (fetched by the worker's device-config
+ * refresh; the app makes no hub call and holds no credentials). Refreshes on
+ * pull and every [REFRESH_MS] while visible.
  */
 class WorkersPanel(private val ctx: Context, private val b: ActivityMainBinding, private val scope: LifecycleCoroutineScope) {
     private val main = Handler(Looper.getMainLooper())
@@ -97,12 +100,28 @@ class WorkersPanel(private val ctx: Context, private val b: ActivityMainBinding,
             r == null -> text(card(list), "Loading workers…", color(R.color.rook_dim))
             !r.running -> text(card(list), "The band worker isn't running on this phone. Start it in Settings → Band to see the band's workers.", color(R.color.rook_dim))
             else -> {
-                text(list, "${r.onlineCount} online · ${r.workers.size} seen$updated", color(R.color.rook_dim), 12f, mono = true)
+                val bandCount = if (r.bands.size > 1) " · ${r.bands.size} bands" else ""
+                text(list, "${r.onlineCount} online · ${r.workers.size} seen$bandCount$updated", color(R.color.rook_dim), 12f, mono = true)
                     .setPadding(dp(4), dp(10), 0, dp(2))
-                for (w in r.workers) row(list, w)
-                if (r.workers.size <= 1) text(card(list),
-                    "Listening for other workers. Each one announces about every 30 seconds; pull down to refresh.", color(R.color.rook_dim), 12f)
+                r.notice?.let { text(card(list), it, color(R.color.rook_dim), 12f) }
+                for (band in r.bands) {
+                    if (r.bands.size > 1 || r.source == RosterSource.ACCOUNT) bandHeader(list, band)
+                    for (w in band.workers) row(list, w)
+                    if (band.current && band.workers.size <= 1) text(card(list),
+                        "Listening for other workers. Each one announces about every 30 seconds; pull down to refresh.", color(R.color.rook_dim), 12f)
+                    if (!band.current && band.workers.isEmpty()) text(card(list), "No workers on this band right now.", color(R.color.rook_dim), 12f)
+                }
             }
+        }
+    }
+
+    private fun bandHeader(list: LinearLayout, band: RosterBand) {
+        val label = band.name + (if (band.current) "  · this phone's band" else "") + "   ${band.onlineCount}/${band.workers.size} online"
+        text(list, label, color(R.color.rook_accent), 13f).apply {
+            setPadding(dp(4), dp(16), 0, dp(0))
+            typeface = Typeface.DEFAULT_BOLD
+            contentDescription = "Band ${band.name}" + (if (band.current) ", this phone's band" else "") +
+                ", ${band.onlineCount} of ${band.workers.size} online"
         }
     }
 
@@ -136,6 +155,7 @@ class WorkersPanel(private val ctx: Context, private val b: ActivityMainBinding,
         text(body, w.description.ifEmpty { "No description set." }, if (w.description.isEmpty()) color(R.color.rook_dim) else color(R.color.rook_fg), 14f)
             .setPadding(0, dp(10), 0, dp(10))
         fun field(label: String, value: String?) { if (!value.isNullOrEmpty()) text(body, "$label  $value", color(R.color.rook_dim), 12f, mono = true) }
+        field("band   ", w.band)
         field("caps   ", w.caps.toString())
         field("build  ", w.build?.toString())
         field("version", w.version)

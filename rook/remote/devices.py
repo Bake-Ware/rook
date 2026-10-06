@@ -22,6 +22,30 @@ from .accounts import digest
 UTC=dt.timezone.utc
 
 
+def upgrade_schema(db):
+    """Add ``devices.account_scope``: 1 only when an account explicitly sponsored
+    the enrollment (a signed-in session or a grant minted for that account).
+
+    Pair-code enrollments get 0: the hub names the band's first owner as the
+    sponsor, but whoever held the code is not necessarily that owner, so such
+    a device must never see the owner's other bands. Existing rows are
+    backfilled once: a device enrolled by an owner-run migration (created in
+    the ten minutes before the migration that lists it, by that migration's
+    owner) was enrolled through an account grant; every other existing row
+    stays band-scoped until it is enrolled again through an account.
+    """
+    if not db.in_transaction:
+        db.execute('BEGIN IMMEDIATE')
+    if 'account_scope' in {r[1] for r in db.execute('PRAGMA table_info(devices)')}:
+        return
+    db.execute('ALTER TABLE devices ADD COLUMN account_scope INTEGER NOT NULL DEFAULT 0')
+    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='migration_workers'").fetchone():
+        db.execute('''UPDATE devices SET account_scope=1 WHERE EXISTS(
+            SELECT 1 FROM migration_workers w JOIN band_migrations m ON m.id=w.migration_id
+            WHERE w.device_id=devices.id AND m.owner=devices.sponsor
+              AND devices.created BETWEEN m.created-600 AND m.created)''')
+
+
 class DeviceStore:
     def __init__(self,accounts):
         self.accounts=accounts
@@ -41,6 +65,7 @@ class DeviceStore:
                     fingerprint TEXT PRIMARY KEY, device_id TEXT NOT NULL REFERENCES devices(id),
                     pem BLOB NOT NULL, expires REAL NOT NULL);
             ''')
+            upgrade_schema(db)
             row=db.execute('SELECT * FROM device_ca WHERE id=1').fetchone()
             if row:
                 self.key=serialization.load_pem_private_key(row['private_key'],password=None)
@@ -82,6 +107,9 @@ class DeviceStore:
         if not csr.is_signature_valid or not supported:
             raise ValueError('Use a signed P-256 or Ed25519 certificate request.')
         public_hash=hashlib.sha256(key.public_bytes(serialization.Encoding.DER,serialization.PublicFormat.SubjectPublicKeyInfo)).hexdigest()
+        # An explicit sponsor (session or account grant) vouches for this device
+        # as the account's own; a pair code only vouches for one band.
+        account_scope=0 if sponsor is None else 1
         with self.accounts.db() as db:
             if sponsor is None:
                 row=db.execute("SELECT user_id FROM memberships WHERE band_id=? AND role='owner' ORDER BY user_id LIMIT 1",(band_id,)).fetchone()
@@ -95,12 +123,14 @@ class DeviceStore:
                 if not existing['active'] or existing['sponsor']!=sponsor:
                     raise ValueError('This device key is revoked or belongs to another sponsor.')
                 device_id=existing['id']
+                if account_scope and not existing['account_scope']:
+                    db.execute('UPDATE devices SET account_scope=1 WHERE id=?',(device_id,))
                 previous=db.execute('SELECT pem FROM device_certificates WHERE device_id=? AND expires>? ORDER BY expires DESC LIMIT 1',(device_id,time.time())).fetchone()
                 cert=previous['pem'].decode() if previous else self.issue(db,device_id,key)
             else:
                 device_id=secrets.token_hex(16)
-                db.execute('INSERT INTO devices(id,band_id,sponsor,name,public_hash,created,credential_epoch) VALUES(?,?,?,?,?,?,?)',
-                           (device_id,band_id,sponsor,str(name or 'worker')[:100],public_hash,time.time(),band['epoch']))
+                db.execute('INSERT INTO devices(id,band_id,sponsor,name,public_hash,created,credential_epoch,account_scope) VALUES(?,?,?,?,?,?,?,?)',
+                           (device_id,band_id,sponsor,str(name or 'worker')[:100],public_hash,time.time(),band['epoch'],account_scope))
                 cert=self.issue(db,device_id,key)
                 self.accounts.audit(db,sponsor,'device_enroll',device_id)
             return {'device_id':device_id,'certificate':cert,'ca_certificate':self.ca_pem().decode(),
@@ -148,6 +178,25 @@ class DeviceStore:
             if migration and migration['phase']=='active':result['band']=migration['band']
             db.execute('UPDATE devices SET credential_epoch=? WHERE id=?',(result['band']['epoch'],device['id']))
             return result
+
+    def roster_scope(self,device_id,current_band_id):
+        """Bands whose rosters an authenticated device may read, as
+        ``(scope, [{id,name,role,label,current}])``. An account-scoped device
+        sees every active band its sponsoring account belongs to; any other
+        device sees only the band it was just configured for."""
+        with self.accounts.db() as db:
+            device=db.execute('SELECT sponsor,account_scope FROM devices WHERE id=? AND active=1',(device_id,)).fetchone()
+            if not device:raise PermissionError('Device revoked.')
+            if device['account_scope']:
+                rows=db.execute('SELECT b.id,b.name,b.psk_hash,m.role FROM bands b JOIN memberships m ON m.band_id=b.id '
+                                'WHERE m.user_id=? AND b.active=1 AND b.deleted=0 ORDER BY b.name,b.id',(device['sponsor'],)).fetchall()
+                scope='account'
+            else:
+                rows=db.execute('SELECT b.id,b.name,b.psk_hash,m.role FROM bands b JOIN memberships m ON m.band_id=b.id AND m.user_id=? '
+                                'WHERE b.id=? AND b.active=1 AND b.deleted=0',(device['sponsor'],current_band_id)).fetchall()
+                scope='band'
+        return scope,[{'id':r['id'],'name':r['name'],'role':r['role'],'label':r['psk_hash'][:8],
+                       'current':r['id']==current_band_id} for r in rows]
 
     def staged(self,proof):
         mid=str(proof.get('migration_id',''))

@@ -32,6 +32,8 @@ def start(hub,psk,name):
     # per window per phone, however often the worker itself restarts.
     fetched=[None,None]
 
+    from rook_android import roster
+
     async def desired(force=False):
         current=tuple(str(prefs.getString(k,v) or v) for k,v in zip(('hub','psk','name'),fallback)) if prefs else fallback
         saved=enroll.load()
@@ -40,13 +42,18 @@ def start(hub,psk,name):
         if use_identity:
             now=asyncio.get_running_loop().time()
             if force or fetched[0] is None or now-fetched[0]>=REFRESH_SECONDS:
-                fetched[1]=await asyncio.to_thread(enroll.refresh)
+                # The same proof also fetches the account's band rosters for the
+                # Workers tab (hubs without it just leave them out).
+                fetched[1]=await asyncio.to_thread(enroll.refresh,want=('workers',),on_result=roster.hub_result)
                 fetched[0]=asyncio.get_running_loop().time()
             saved=fetched[1]
             band=next(b for b in saved['bands'] if b['id']==saved['active_band'])
+            roster.note_identity(True,band)
             current=(band['hub'],band['psk'],current[2])
             if prefs:
                 prefs.edit().putString('hub',band['hub']).putString('psk',band['psk']).putString('band_id',band['id']).putInt('band_epoch',band['epoch']).apply()
+        else:
+            roster.note_identity(False)
         cfg=wconfig.load();wconfig.apply_env(cfg)
         return (current[0] if use_identity else cfg.get('hub',current[0]),
                 current[1] if use_identity else cfg.get('psk',current[1]),
@@ -76,7 +83,6 @@ def start(hub,psk,name):
                                       'code':int(package.versionCode)} if package else {}
                 _attach_native_plugins(worker)
                 # The app's Workers tab: band announces this worker already receives.
-                from rook_android import roster
                 roster.attach(worker)
                 cycle=asyncio.Event()
 

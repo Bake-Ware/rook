@@ -208,8 +208,10 @@ class MigrationStore:
                 raise ValueError('Device authorization changed; review before finalizing.')
             self._inventory_unchanged(db,row)
             if row['target_band_id']:
-                db.execute('UPDATE devices SET band_id=?,sponsor=?,credential_epoch=? WHERE id IN (SELECT device_id FROM migration_workers WHERE migration_id=?)',
-                           (row['target_band_id'],row['owner'],row['target_epoch'],mid))
+                # A device that changes sponsor is no longer vouched for by the
+                # account that enrolled it: it keeps only band-scoped visibility.
+                db.execute('UPDATE devices SET band_id=?,sponsor=?,credential_epoch=?,account_scope=CASE WHEN sponsor=? THEN account_scope ELSE 0 END WHERE id IN (SELECT device_id FROM migration_workers WHERE migration_id=?)',
+                           (row['target_band_id'],row['owner'],row['target_epoch'],row['owner'],mid))
                 db.execute("UPDATE band_migrations SET phase='complete',new_psk=NULL WHERE id=?",(mid,))
                 self.accounts.audit(db,uid,'workers_moved',mid)
                 return
