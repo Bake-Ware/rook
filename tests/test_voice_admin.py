@@ -48,10 +48,10 @@ def test_login_csrf_and_no_credentials_leaked(setup):
 def test_create_edit_revoke_live_mapping(setup):
     store, legacy, invalidated, c = setup
     headers = login(c)
-    r = c.post('/admin/api/keys', json={'label': 'Phone', 'principal': 'Autumn', 'worker': 'Autumnphone'}, headers=headers)
+    r = c.post('/admin/api/keys', json={'label': 'Phone', 'principal': 'Sam', 'worker': 'Samphone'}, headers=headers)
     assert r.status_code == 200
     token, key = r.json()['token'], r.json()['id']
-    assert store.mappings(legacy)[key]['worker'] == 'Autumnphone'
+    assert store.mappings(legacy)[key]['worker'] == 'Samphone'
     assert token not in c.get('/admin/api/keys').text
     assert c.put('/admin/api/keys/'+key, json={'label': 'Owner', 'principal': 'Alex', 'owner': True}, headers=headers).status_code == 200
     assert store.mappings(legacy)[key]['owner'] is True

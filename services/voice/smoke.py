@@ -2,6 +2,7 @@
 import asyncio
 import json
 import os
+import ssl
 import uuid
 import websockets
 
@@ -10,9 +11,14 @@ async def main():
     SMOKE_WORKER=os.environ.get('VOICE_SMOKE_WORKER','gpu-box')
     headers={'Authorization':'Bearer '+os.environ['VOICE_TOKEN']} if os.environ.get('VOICE_TOKEN') else {}
     cid=str(uuid.uuid4())
+    tls=None
+    if uri.startswith('wss://') and os.environ.get('VOICE_SMOKE_INSECURE')=='1':
+        # Test-only: a loopback candidate serving the host's self-signed certificate.
+        tls=ssl.create_default_context(); tls.check_hostname=False; tls.verify_mode=ssl.CERT_NONE
+    timings=[]
     async def connect():
-        ws=await websockets.connect(uri,additional_headers=headers)
-        await ws.send(json.dumps({'type':'hello','protocol':2,'conversation':cid,'aec':True}))
+        ws=await websockets.connect(uri,additional_headers=headers,**({'ssl':tls} if tls else {}))
+        await ws.send(json.dumps({'type':'hello','protocol':2,'conversation':cid,'aec':True,'activity':True}))
         return ws
     async def until(ws,kind,timeout=70):
         text=[]; packets=0
@@ -23,6 +29,7 @@ async def main():
                     assert event.startswith(b'RK2A'); packets+=1;continue
                 event=json.loads(event)
                 if event['type']=='error':raise AssertionError(event['msg'])
+                if event['type']=='activity' and event.get('phase')=='done': timings.append(event.get('timing'))
                 if event['type']=='assistant_delta': text.append(event['text'])
                 if event['type']==kind:return '\n'.join(text),packets,event
     ws=await connect()
@@ -48,6 +55,11 @@ async def main():
         async with asyncio.timeout(.5):
             while True: assert not isinstance(await ws.recv(),bytes), 'stale audio after stop acknowledgement'
     print('PASS: real TTS framing and interruption')
+    assert timings and all(t and 'total_ms' in t for t in timings), timings
+    print('PASS: per-turn timing', json.dumps(timings[-1]))
+    if not headers:
+        print('SKIP: read-only Rook job (no VOICE_TOKEN; keyless guests have no device tools)')
+        await ws.close(); return
     await ws.send(json.dumps({'type':'text','text':f'Use rook_read to get info.uptime from {SMOKE_WORKER}.','speak':False}))
     async with asyncio.timeout(90):
         started=False

@@ -36,6 +36,13 @@ class Identity:
 # devices: no device listing, no reads, no agent. A key mapped to a device may
 # read only that device.
 GUEST_TOOLS = frozenset({'web_search', 'end_session', 'cancel_job', 'job_status'})
+
+
+def allowed_tools(identity):
+    """Tool names this credential may be offered; None means all (owner only)."""
+    return identity.tools()
+
+
 current_identity = ContextVar('voice_identity', default=Identity())
 PERSONAL_CAPS = {'sms.list': 'texts', 'calllog.list': 'call history', 'contacts.search': 'contacts',
                  'notify.list': 'notifications', 'location.get': 'location'}
@@ -51,6 +58,11 @@ def identity_for(token, identities):
     return Identity(str(row.get('principal', 'unmapped')), row.get('worker'), row.get('owner') is True)
 
 
+class PolicyRefusal(PermissionError):
+    """A fixed, user-facing identity-policy refusal. Unlike raw tool errors its
+    text is safe to speak to any key."""
+
+
 def authorize_read(cap, worker):
     """Every device read is scoped, not only personal data: files, env, logs and
     agent memory are just as private. Owners may read any device; a mapped key
@@ -59,10 +71,10 @@ def authorize_read(cap, worker):
     if identity.owner or (identity.worker and identity.worker == worker):
         return
     if not identity.worker:
-        raise PermissionError('Which device is yours? This connection has no verified device mapping; it must be configured before I can read device data.')
-    raise PermissionError(f'I can only read {PERSONAL_CAPS.get(cap, "device data")} from your own device.')
+        raise PolicyRefusal('Which device is yours? This connection has no verified device mapping; it must be configured before I can read device data.')
+    raise PolicyRefusal(f'I can only read {PERSONAL_CAPS.get(cap, "device data")} from your own device.')
 
 
 def authorize_devices():
     if not current_identity.get().owner:
-        raise PermissionError('Listing band devices requires an owner voice key.')
+        raise PolicyRefusal('Listing band devices requires an owner voice key.')

@@ -97,7 +97,7 @@ def test_device_mapped_key_reads_only_its_own_device():
         assert set(started)=={'rook_read'}  # rook_devices and delegate never became jobs
         await asyncio.gather(*list(jobs.tasks.values()))
         results=sorted((json.loads(j['args'])['worker'],j['status'],j['result']) for j in store.jobs('session'))
-        assert results[0][:2]==('nas','failed') and 'PermissionError' in results[0][2]
+        assert results[0][:2]==('nas','failed') and 'own device' in results[0][2]
         assert results[1][:2]==('phone','completed')
         assert reads==['phone']
         assert sum('owner voice key' in e.get('text','') for e in events if e['type']=='assistant_delta')==2

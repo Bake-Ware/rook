@@ -97,3 +97,12 @@ class RookMCP:
             raise RuntimeError(out['error'].get('message', 'mcp error'))
         content = out.get('result', {}).get('content', [])
         return ''.join((c.get('text', '') for c in content if c.get('type') == 'text'))
+
+    async def list_tools(self):
+        """Discover hub schemas without creating a separate MCP session."""
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            sid = await self._session(client)
+            _, out = await self._post(client, 'tools/list', {}, sid=sid)
+        if 'error' in out:
+            raise RuntimeError(out['error'].get('message', 'MCP tool discovery failed'))
+        return out['result']['tools']
