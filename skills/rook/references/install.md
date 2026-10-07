@@ -66,7 +66,7 @@ Gotchas:
 - A worker appears within ~30 s (announce interval). Verify with `rook_call("info.ping", worker=NAME)`, not `rook_workers`.
 - Saved state in `~/.rook-band-worker/` overrides `--hub/--psk` (it logs a warning). For a throwaway second worker on the same box: `HOME=$(mktemp -d) rook-worker …`.
 - The installer returns 403 with a missing, expired or revoked code — get a fresh one.
-- Windows workers can't allocate a PTY. For interactive sessions (resuming `claude`/`codex`), run a second worker inside WSL on the same machine (`<name>-wsl`).
+- Windows 10 1809+ workers run interactive terminals (`work.stream.*`, the web Sessions page) on ConPTY; `proc.start(pty=True)` and pty console rooms still need a POSIX worker. On older Windows, or for those, run a second worker inside WSL on the same machine (`<name>-wsl`).
 - Source/pip workers trust no update key unless `ROOK_UPDATE_PUBKEY` is set (`python rook/remote/update_keys.py pubkey`).
 - Linux service unit is `rook-band-worker.service` (user or system unit depending on installer); `journalctl [--user] -u rook-band-worker -n 50 --no-pager` for logs.
 

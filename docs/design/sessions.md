@@ -22,7 +22,7 @@ changes this document in the same PR.
 
 | Piece | Where | What it does |
 |---|---|---|
-| Live terminals | `rook/worker/plugins/terminals.py` (`work.stream.*`), `rook/remote/term_hub.py`, `rook/web/worklog.js` | PTY on the worker, byte ring with cursor long-poll, hub fan-out, xterm.js in the browser, one input holder. Linux/macOS only (`has('pty')`). Docs: `docs/web/worklog.md`. |
+| Live terminals | `rook/worker/plugins/terminals.py` (`work.stream.*`), `rook/remote/term_hub.py`, `rook/web/worklog.js` | PTY on the worker, byte ring with cursor long-poll, hub fan-out, xterm.js in the browser, one input holder. Linux/macOS PTYs; Windows 10 1809+ ConPTY (`rook/worker/conpty.py`). Placement `has('pty')`. Docs: `docs/web/worklog.md`. |
 | Session catalog | `work.sessions` (terminals.py) | Live terminals plus Claude/Codex history on one host. |
 | History | `claude-history.*`, `codex-history.*` | List, search, read, `follow` (transcript tail by version), `transcript`/`export` (`rook.transcript/1`), `resume` (through `proc.start`), `send`. |
 | Session inbox | `rook/worker/session_messages.py`, `codex_input.py` | Claude: the peer messaging socket (arrives as a user turn; `crossSessionInbound` decides hold/accept). Codex: app-server control socket, or typing into Konsole over D-Bus. |
@@ -33,7 +33,7 @@ changes this document in the same PR.
 | Web | Dashboard **Sessions** tab (`work.js`: worklog or classic), **Work** tab (tasks) | Two views of sessions, a separate task board. |
 | Claude Code mod | `integrations/claude-code/` | Pane with Bands, Sessions (calls `claude-history` directly), Deck, Settings. |
 | Tasks and handoffs | `rook_task`, `rook_handoff_*`, journal | Work tracking; `ROOK_WORK_SESSION` env links a Rook-launched terminal to its hub session. |
-| Home agent | `rook/hub/plugins/home/`, Manage > Home agent (`home.js`) | Hub LLM reachable as `@home` in chat rooms and `home.ask`. Config page only, no chat on the page. |
+| Home agent | `rook/hub/plugins/home/`, Manage > Home agent (`home.js`) | Hub LLM reachable as `@home` in chat rooms and `home.ask`. Config page with a chat panel (workstream E, polls the shared 1:1 room). |
 
 The pieces work; they disagree. A Claude session has a session id, maybe a
 terminal id, maybe a proc handle, maybe a console room, maybe a hub work
@@ -100,7 +100,7 @@ not want a wrapper. So there are three tiers, and the page always shows the
 best one available:
 
 1. **Terminal** (raw bytes, full control). Sessions started or resumed by
-   Rook. Exists today on Linux/macOS; Windows needs ConPTY (workstream D).
+   Rook. Linux/macOS (PTY) and Windows 10 1809+ (ConPTY, workstream D).
 2. **Mirror** (live events, near real time). A Claude Code session with the
    Rook mod installed writes its own events (prompt, streamed assistant
    text, tool calls and results, turn end, session start/end) to a spool
@@ -252,7 +252,13 @@ are covered. Tests: browser tests in `tests/browser_*.py`.
 **D. Windows terminals.** ConPTY behind `work.stream.*` on Windows
 (pywinpty or ctypes ConPTY), so new and resumed sessions stream from
 Windows workers; Claude inbox on Windows (named pipe if that is what Claude
-Code uses there); Codex control socket path on Windows.
+Code uses there); Codex control socket path on Windows. *Done:* pure-ctypes
+ConPTY with a kill-on-close Job Object, PowerShell as the shell, Claude's
+named-pipe inbox (`\\.\pipe\LOCAL\cc-msg-<hex>`, FILETIME `procStart`,
+owner/DACL checks, `GetNamedPipeServerProcessId`). Codex has no control
+socket on Windows (its control endpoint is a Unix socket Python cannot reach
+there), so Codex input on Windows goes through a Rook terminal. Details and
+the platform table: `docs/web/worklog.md`.
 
 **E. Home agent chat.** A chat panel on Manage > Home agent: talks to the
 home agent in a two-person room through the existing chat store (so the

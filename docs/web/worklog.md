@@ -25,13 +25,59 @@ worker PTY ──ring──▶ work.stream.read (long-poll, compressed) ──ba
 **Worker** (`rook/worker/plugins/terminals.py`, caps `work.stream.*`,
 placement `not is_hub and has('pty')`). A harness runs under a PTY, with that
 PTY as its controlling terminal, so Ctrl-C and job control behave as they do
-locally. Output lands in a ring (256 KB default, 1 MB max) addressed by
+locally (Windows: see Platform support below). Output lands in a ring (256 KB default, 1 MB max) addressed by
 absolute byte offset. `work.stream.read(id, cursor, wait)` returns as soon as
 bytes exist past `cursor`, or after `wait` seconds (maximum 25). It first waits
 12 ms to coalesce a burst. A live terminal therefore costs one outstanding
 request, not a polling loop. A lost reply costs one round trip and never data,
 because the cursor advances only on a reply that arrived. At most 8 live
 terminals run per worker. Finished terminals stay readable for 15 minutes.
+
+### Platform support
+
+| Platform | Terminal backend | `shell` harness | Inbox for sessions started outside Rook |
+|---|---|---|---|
+| Linux, macOS | POSIX PTY (`pty`, controlling tty) | `$SHELL -l` | Claude: Unix socket. Codex: app-server control socket, or Konsole over D-Bus |
+| Windows 10 1809+ / 11 | ConPTY (`rook/worker/conpty.py`, pure ctypes, no extra package in the worker bundle) | `powershell.exe -NoLogo` (`pwsh.exe`, then `cmd.exe`, if PowerShell 5 is missing) | Claude: local named pipe. Codex: none (use a Rook terminal) |
+| Windows before 1809 | none: the worker does not advertise `pty`, so `work.stream.*` is absent | | |
+
+On Windows the worker advertises the `pty` fact only when `kernel32` has
+`CreatePseudoConsole`. Each terminal's child is created suspended, placed in
+a Job Object with kill-on-close, then resumed, so everything it starts ends
+with the terminal. Signals map as follows: `INT` writes Ctrl-C (`0x03`) to the
+console, which delivers CTRL_C_EVENT to the foreground program the way a
+keyboard does. `HUP` closes the pseudoconsole (CTRL_CLOSE_EVENT to every
+attached program). `TERM`, `QUIT` and `KILL` terminate the job.
+`work.stream.close` sends `HUP`, waits 1.5 s, then terminates the job. Resize
+is `ResizePseudoConsole`.
+
+Harness launch on Windows uses the same environment (`TERM=xterm-256color`,
+`ROOK_MCP_URL`/`ROOK_MCP_TOKEN`, `ROOK_WORK_SESSION`, persona) and the same
+per-session files. The terminal folder and the Claude `--mcp-config` file get
+an owner-only ACL, the Windows equivalent of modes 0700 and 0600. The ACL is
+applied before the token is written. npm installs CLIs such as `codex` as
+`.cmd` shims. The worker runs the shim's target (`node <script>` or the
+`.exe`) directly, so cmd.exe never re-parses arguments such as persona text.
+A `.cmd`/`.bat` launcher it cannot resolve runs through `cmd.exe /d /s /c`
+only when no argument contains a cmd.exe metacharacter. Otherwise the launch
+is refused.
+
+Claude Code on Windows exposes its peer inbox as a local named pipe
+(`\\.\pipe\LOCAL\cc-msg-<hex>`). Its marker
+`%USERPROFILE%\.claude\sessions\<pid>.json` records `procStart` as the
+process creation FILETIME, and the token file is named after the lower-cased
+pipe path. Before sending, the worker checks all of the following:
+
+- the marker and token files are owned by the worker's user and grant access
+  to no one but that user, SYSTEM and Administrators,
+- the process is a live `claude.exe` of the same user with the recorded
+  creation time,
+- the pipe path is a single local pipe name,
+- the token file matches that process start (`procStartFt`, `pidDomain`),
+- after connecting, `GetNamedPipeServerProcessId` is that process.
+
+The pipe is opened at SECURITY_IDENTIFICATION level, so the server cannot act
+as the worker's user.
 
 **Framing** (`rook/worker/termwire.py`). Band messages are JSON, and every
 packet is fragmented at about 1 KB with no retransmit. Each chunk travels in
@@ -144,7 +190,7 @@ and callable with `rook_call`. No new MCP tools were added.
 | `work.stream.read` | read | long-poll output from `cursor` (`wait` up to 25 s) |
 | `work.stream.write` | exec | raw input (`\r` for Enter, `\x03` for Ctrl-C) |
 | `work.stream.resize` | write | set cols/rows |
-| `work.stream.signal` | exec | INT/TERM/HUP/QUIT/KILL to the process group |
+| `work.stream.signal` | exec | INT/TERM/HUP/QUIT/KILL to the process group (Windows mapping under Platform support) |
 | `work.stream.close` | exec | stop and drop the terminal |
 | `work.stream.list` | read | live and recently finished terminals, installed harnesses |
 | `work.sessions` | read | live terminals plus Claude/Codex history as one resumable catalog (`limit`, `offset`, `query`) |
@@ -207,6 +253,15 @@ be published as `rook.transcript/2`.
   injection and cleanup, transcript export, hub fan-out (holder rules, replay,
   slow-viewer resync, lost worker), and web launch, stream, close and revoke,
   PTY vs `proc.*` resume, the flag, and the token-scope validation.
+- `pytest tests/test_windows_terminals.py`: the ConPTY backend and the
+  Windows Claude inbox on Linux, with kernel32 faked at the ctypes boundary.
+  It covers the call sequence, suspended start and job, handle cleanup,
+  streaming, resize, signal mapping, exit drain, owner-only files, npm shim
+  resolution, and the inbox's match and refusal rules.
+- `py tests\integration\windows_conpty_check.py [--claude] [--inbox]` on a
+  Windows machine (manual): real ConPTY output, input, resize, Ctrl-C, exit
+  codes, job teardown of grandchildren, PowerShell through the plugin, ACLs,
+  and, optionally, Claude Code in a terminal and one inbox message (`--send`).
 - `ROOK_IT=1 pytest tests/integration/test_work_stream.py`: 20,000 lines
   through a real band, over MCP long-polls and through `TermHub` with two
   viewers, checked byte for byte.
