@@ -30,13 +30,20 @@ in a pane beside the chat.
 
 ## Live sessions on the Sessions page
 
-When a Rook worker runs on the same machine, the plugin mirrors this session
-for the hub's **Sessions** page: the prompts, the assistant's text as it
+**Mirroring is on by default. To turn it off on a machine, set "Mirror this
+session to Rook" to false** (`/config`, the plugin's Settings tab, or
+`pluginConfigs.rook.mirror` in settings). Off, the plugin writes nothing and
+creates no folder; the session still shows on the Sessions page from its
+transcript, a second or two behind, as any session without the plugin does.
+
+When a Rook worker runs on the same machine and mirroring is on, the plugin
+mirrors this session for the hub's **Sessions** page: the prompts, the assistant's text as it
 streams, tool calls and their results (clipped), turn ends and whether the
 session is working, idle or waiting on a permission prompt. Start Claude Code
 however you like (any terminal, any OS); nothing wraps it. The events go to a
 spool file in the worker's state folder (`~/.rook-band-worker/mirror/claude/`,
-or under `ROOK_WORKER_HOME`), readable by your user only, and the worker serves
+or under `ROOK_WORKER_HOME`), readable by your user only (on Windows: your
+account, by SID, and SYSTEM), and the worker serves
 it as `sessions.mirror`. Writes are batched and never hold up a turn. Without
 a worker on the machine nothing is written. The worker deletes the spools of
 sessions that ended a week ago. The plugin has no access to the vault, so it
@@ -66,7 +73,12 @@ own, but asks before any `rook_call` or other write.
 
 ## Options
 
-These are set in `/config` (or under `pluginConfigs` in settings).
+These are set in `/config` (or under `pluginConfigs` in settings), and show on
+the pane's Settings tab.
+
+- **Mirror this session to Rook** (`mirror`, on by default): writes this
+  session's prompts, replies and clipped tool calls to the local Rook worker so
+  the Sessions page can show it live (see above). Off: nothing is written.
 
 - **Hosting sync button** (`hostingSync`, off by default): adds `h · sync
   hosting` to the bands tab. It is for a band that runs a Cloudflare tunnel

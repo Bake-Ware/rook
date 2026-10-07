@@ -167,9 +167,17 @@ Rules: `seq` increases by one per line across the chunks (a reload of the
 mod, or a `/resume` of the same session in a new process, reads the last
 `seq` and carries on); the worker deletes spools of closed sessions after 7
 days (a spool with no `session.end` whose process may still run is kept).
-The mod writes only where the worker's state dir already exists. The spool
-folder is owner-only: 0700 with 0600 chunks on POSIX, an owner-only ACL
-(`icacls /inheritance:r`) on Windows. Secrets: the mod has no access to the
+The mod writes only where the worker's state dir already exists, and only
+while its `mirror` option ("Mirror this session to Rook", default on) is on;
+off, it writes nothing and creates no folder. The spool folder is owner-only:
+0700 with 0600 chunks on POSIX. On Windows, `icacls <state>\mirror
+/inheritance:r /grant:r *<user SID>:(OI)(CI)F *S-1-5-18:(OI)(CI)F`: the
+person's own SID (from `whoami /user`, so a domain account is never
+ambiguous; `DOMAIN\user` if that fails) plus SYSTEM. The band worker
+installs as a logon scheduled task running as the person (elevated), and the
+older `rook/remote/worker.py` installer can run it as an NSSM service under
+LocalSystem, so both must be able to read the spool. If the person cannot be
+named, the folder keeps its inherited ACL. Secrets: the mod has no access to the
 vault, so it masks nothing itself; the hub masks known vault values in every
 reply that crosses it, `sessions.mirror` included. Tool inputs and results are
 clipped, never expanded.

@@ -27,12 +27,14 @@ const AGENT = 'claude'
  * test can build it from anything.
  */
 export type MirrorIO = {
-  env: (name: 'OS' | 'ROOK_WORKER_HOME' | 'USERPROFILE' | 'HOME' | 'USERNAME' | 'CLAUDE_CONFIG_DIR') => Promise<string | undefined>
+  env: (
+    name: 'OS' | 'ROOK_WORKER_HOME' | 'USERPROFILE' | 'HOME' | 'USERNAME' | 'USERDOMAIN' | 'CLAUDE_CONFIG_DIR',
+  ) => Promise<string | undefined>
   exists: (path: string) => Promise<boolean>
   list: (path: string) => Promise<ReadonlyArray<{ name: string }>>
   read: (path: string) => Promise<string>
   write: (path: string, text: string) => Promise<void>
-  run: (argv: readonly string[], init?: { timeoutMs?: number }) => Promise<unknown>
+  run: (argv: readonly string[], init?: { timeoutMs?: number }) => Promise<{ exitCode: number; stdout: string }>
   now: () => Promise<number>
   after: (ms: number, fn: () => void) => void
   sessionId: () => Promise<string>
@@ -201,6 +203,40 @@ export async function claudeDir(io: MirrorIO): Promise<string> {
 
 const wallClock = (): number | undefined => (typeof Date === 'undefined' ? undefined : Date.now())
 
+/** The SID in `whoami /user /fo csv /nh` output (`"domain\\user","S-1-5-21-…"`). */
+export function parseSid(stdout: string): string | undefined {
+  return /\bS-1-5-[0-9-]+\b/.exec(stdout)?.[0]
+}
+
+/** The SID for LocalSystem: a band worker runs as the person (a logon task), a service as SYSTEM. */
+export const SYSTEM_SID = 'S-1-5-18'
+
+/**
+ * The `icacls` call that makes the spool folder the person's and SYSTEM's
+ * alone: inheritance off, full control for the person (by SID, so a domain
+ * account is never ambiguous; `DOMAIN\user` when the SID is unknown) and for
+ * SYSTEM, so a worker running as either can read it. Undefined when the
+ * person cannot be named: then the folder keeps what it inherits.
+ */
+export function windowsAcl(
+  root: string,
+  sid: string | undefined,
+  domain: string | undefined,
+  user: string | undefined,
+): string[] | undefined {
+  const who =
+    sid !== undefined
+      ? `*${sid}`
+      : user !== undefined && user !== ''
+        ? domain !== undefined && domain !== ''
+          ? `${domain}\\${user}`
+          : undefined
+        : undefined
+  if (who === undefined) return undefined
+
+  return ['icacls', root, '/inheritance:r', '/grant:r', `${who}:(OI)(CI)F`, `*${SYSTEM_SID}:(OI)(CI)F`, '/T', '/Q']
+}
+
 /**
  * One session's spool: batches events and writes them, in order, never in a
  * hook's way. Plain data; the functions below take the hook's MirrorIO.
@@ -327,13 +363,15 @@ async function secureFolder(io: MirrorIO, s: Spool): Promise<void> {
   s.isSecured = true
   try {
     if (s.place.isWindows) {
-      const user = await io.env('USERNAME')
       await io.write(`${spoolFolder(s)}${s.place.sep}.keep`, '')
-      if (user !== undefined && user !== '') {
-        await io.run(['icacls', spoolRoot(s), '/inheritance:r', '/grant:r', `${user}:(OI)(CI)F`, '/T', '/Q'], {
-          timeoutMs: 10_000,
-        })
-      }
+      const whoami = await io.run(['whoami', '/user', '/fo', 'csv', '/nh'], { timeoutMs: 10_000 }).catch(() => undefined)
+      const argv = windowsAcl(
+        spoolRoot(s),
+        whoami?.exitCode === 0 ? parseSid(whoami.stdout) : undefined,
+        await io.env('USERDOMAIN'),
+        await io.env('USERNAME'),
+      )
+      if (argv !== undefined) await io.run(argv, { timeoutMs: 10_000 })
     } else {
       await io.run(
         ['sh', '-c', 'umask 077 && mkdir -p "$1" && chmod 700 "$2" "$1"', 'sh', spoolFolder(s), spoolRoot(s)],

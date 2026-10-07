@@ -12,6 +12,9 @@ import {
   emitDelta,
   endMirror,
   inboundOf,
+  parseSid,
+  SYSTEM_SID,
+  windowsAcl,
   lastSeq,
   newMirror,
   promptFrom,
@@ -53,6 +56,8 @@ function fakeHost(files: Record<string, string> = {}) {
     },
     run: async argv => {
       runs.push([...argv])
+
+      return { exitCode: 0, stdout: '' }
     },
     now: async () => 1_700_000_000_000,
     after: (_, fn) => void timers.push(fn),
@@ -147,6 +152,41 @@ test('the spool rotates into chunks and a reload carries on from the last seq', 
   expect(after[after.length - 1]).toMatchObject({ type: 'session.start', seq: 10 })
 })
 
+test('Windows: the spool folder is the person (by SID) and SYSTEM alone', async () => {
+  const SID_TEXT = '"corp\\pat","S-1-5-21-1111-2222-3333-1001"\r\n'
+  expect(parseSid(SID_TEXT)).toBe('S-1-5-21-1111-2222-3333-1001')
+  expect(parseSid('')).toBeUndefined()
+  const root = 'C:\\Users\\pat\\.rook-band-worker\\mirror'
+  expect(windowsAcl(root, 'S-1-5-21-1', 'CORP', 'pat')).toEqual([
+    'icacls', root, '/inheritance:r', '/grant:r', '*S-1-5-21-1:(OI)(CI)F', `*${SYSTEM_SID}:(OI)(CI)F`, '/T', '/Q',
+  ])
+  // No SID: the qualified name, never a bare user name a domain could make ambiguous.
+  expect(windowsAcl(root, undefined, 'CORP', 'pat')?.[4]).toBe('CORP\\pat:(OI)(CI)F')
+  expect(windowsAcl(root, undefined, undefined, 'pat')).toBeUndefined()
+
+  const host = fakeHost()
+  const runs: string[][] = []
+  const io: MirrorIO = {
+    ...host.io,
+    env: async name =>
+      ({ OS: 'Windows_NT', USERPROFILE: 'C:\\Users\\pat', USERDOMAIN: 'CORP', USERNAME: 'pat' })[
+        name as 'OS'
+      ],
+    exists: async path => path === 'C:\\Users\\pat\\.rook-band-worker' || path in host.files,
+    run: async argv => {
+      runs.push([...argv])
+
+      return { exitCode: 0, stdout: argv[0] === 'whoami' ? SID_TEXT : '' }
+    },
+  }
+  const m = newMirror()
+  startMirror(io, m, 'C:\\work')
+  await settleMirror(io, m)
+  const acl = runs.find(argv => argv[0] === 'icacls')
+  expect(acl).toEqual(windowsAcl(root, 'S-1-5-21-1111-2222-3333-1001', 'CORP', 'pat'))
+  expect(Object.keys(host.files)).toContain(`${root}\\claude\\${SID}.jsonl`)
+})
+
 test('no worker on this host: nothing is written', async () => {
   const host = fakeHost()
   const io: MirrorIO = { ...host.io, exists: async () => false }
@@ -210,7 +250,12 @@ function host($: TestEngine, on: On, caps: Record<string, unknown>) {
       value: names.map(name => ({ name: name.slice(e.path.length + 1), kind: 'file', size: 1, mtimeMs: 0, isLink: false })),
     } as never
   })
-  on('process.run', async () => ({ value: { exitCode: 0, stdout: '', stderr: '' } }) as never)
+  const runs: unknown[] = []
+  on('process.run', async (_, e) => {
+    runs.push(e)
+
+    return { value: { exitCode: 0, stdout: '', stderr: '' } } as never
+  })
   on('session.id', async () => ({ value: SID }))
   on('session.cwd', async () => ({ value: '/home/user/proj' }))
   on('command.list', async () => ({ value: [{ name: 'exit', description: 'Exit', source: 'builtin' }] }) as never)
@@ -220,7 +265,7 @@ function host($: TestEngine, on: On, caps: Record<string, unknown>) {
     return { text: 'bye' }
   })
 
-  return { clock, files, calls, commands }
+  return { clock, files, calls, commands, runs }
 }
 
 test('the hooks mirror a session through the engine, from start to end', async ($, on) => {
@@ -239,6 +284,48 @@ test('the hooks mirror a session through the engine, from start to end', async (
   expect(got.map(one => one.type)).toEqual(['session.start', 'turn.end', 'state', 'session.end'])
   expect(got[0]).toMatchObject({ cwd: '/home/user/proj', pid: 4242 })
   expect(got[3]).toMatchObject({ reason: 'prompt_input_exit', seq: 4 })
+})
+
+test(
+  'with mirroring turned off, a session writes nothing and makes no folder',
+  { options: { mirror: false } },
+  async ($, on) => {
+    const { clock, files, runs } = host($, on, {})
+    on('command.register', async (_, e) => ({ value: { command: e.name } }) as never)
+    on('tool.register', async () => ({ value: {} }) as never)
+    on('ui.open', async () => ({ value: { isPlaced: false } }) as never)
+    on('session.start', async (_, e) => ({ cwd: e.cwd }))
+    on('turn.complete', async (_, e) => ({ text: e.answer }))
+    on('session.end', async (_, e) => ({ sessionId: e.sessionId }))
+    const before = Object.keys(files).sort()
+    await $.session.start({ cwd: '/home/user/proj', surface: 'terminal', isInteractive: true })
+    await clock.settle()
+    await $.turn.complete({ answer: 'done', durationMs: 5, isAborted: false, turnId: 'u1', reason: 'answer' } as never)
+    await $.session.end({ reason: 'prompt_input_exit', sessionId: SID, resume: { id: SID } })
+    await clock.advance(1_000)
+    expect(Object.keys(files).sort()).toEqual(before)
+    expect(runs).toEqual([])
+  },
+)
+
+test('the mirror switch shows on the settings tab and saves like any rook option', async ($, on) => {
+  host($, on, {})
+  const rows = [
+    { key: 'rook.mirror', label: 'Mirror this session to Rook', kind: 'boolean', value: true, provider: { plugin: 'rook', tier: 'user' }, isLocked: false },
+  ]
+  const sets: Array<{ key: string; value: unknown }> = []
+  on('config.list', async () => ({ value: rows }) as never)
+  on('config.set', async (_, e) => {
+    sets.push({ key: e.key, value: e.value })
+
+    return { value: e.value }
+  })
+  const ui = await $.ui.mount({ plugin: 'rook', surface: 'terminal', component: 'Pane', requestId: 'rook-bands', props: { bodyColumns: 60 } as never })
+  await ui.press({ key: 'tab:settings' })
+  expect(await ui.find({ type: 'Text', text: /MIRROR THIS SESSION TO ROOK/ })).toBeDefined()
+  await ui.press({ key: 'set:rook.mirror:false' })
+  expect(sets).toEqual([{ key: 'rook.mirror', value: false }])
+  await ui.unmount()
 })
 
 test('/rook-move asks first, then hands the session to a Rook terminal and exits', async ($, on) => {

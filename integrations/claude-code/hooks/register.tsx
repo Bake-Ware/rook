@@ -777,6 +777,7 @@ function mirrorIO($: EngineInterface): MirrorIO {
     USERPROFILE: () => $.env.get('USERPROFILE'),
     HOME: () => $.env.get('HOME'),
     USERNAME: () => $.env.get('USERNAME'),
+    USERDOMAIN: () => $.env.get('USERDOMAIN'),
     CLAUDE_CONFIG_DIR: () => $.env.get('CLAUDE_CONFIG_DIR'),
   }
 
@@ -849,6 +850,8 @@ async function drive($: EngineInterface, input: Raw): Promise<string> {
 export const register: Register = (on, options) => {
   // The hosting sync is the person's own deployment's: off unless they turn it on.
   const hosting: HostingConfig | undefined = hostingConfig(options)
+  // Mirroring is on unless the person turned it off (rook.mirror); off writes nothing.
+  const isMirrored = options.mirror !== false
 
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -861,7 +864,7 @@ export const register: Register = (on, options) => {
     })
     await $.tool.register(PANE_TOOL_SPEC)
     // Mirrored for the Sessions page when a Rook worker lives on this host.
-    if (e.isInteractive) startMirror(mirrorIO($), mirror, e.cwd)
+    if (e.isInteractive && isMirrored) startMirror(mirrorIO($), mirror, e.cwd)
     // Unasked, the engine seats a pane only in a wide terminal: say how to get it.
     void $.ui.open({ id: PANE, title: TITLE }).then(opened => {
       if (opened.isPlaced) return connect($)
