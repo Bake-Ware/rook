@@ -426,6 +426,9 @@ class VoiceService : Service() {
 
     private fun liveSession() = sessionWanted && capture.voiceSession
 
+    /** A live voice conversation owns the mic (voice.speak has no reply window then). */
+    fun inConversation(): Boolean = liveSession()
+
     /** Any thread: put the phone in call mode (and speakerphone if nothing else is routed). */
     private fun enterCallMode() = synchronized(callLock) {
         if (callMode || destroyed) return@synchronized

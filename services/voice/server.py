@@ -130,6 +130,10 @@ def _pianobar_voice_authorized(supplied):
 
 install_pianobar_tts(app, _pianobar_voice_authorized)
 
+from .transcribe_api import install as install_transcribe
+
+install_transcribe(app, _pianobar_voice_authorized)
+
 @app.get('/health')
 async def health():
     return {'ok': True, 'version': VERSION, 'protocol': 2}

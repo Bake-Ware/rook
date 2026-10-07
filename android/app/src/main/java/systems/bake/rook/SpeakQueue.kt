@@ -19,6 +19,16 @@ class SpeakQueue(private val keep: Int = 64) {
         @Volatile var error: String? = null
         @Volatile var note: String? = null
         @Volatile var via: String? = null        // "server" (voice server) or "device" (on-device TTS)
+        // Reply window (voice.speak reply=true): docs/design/voice-replies.md
+        @Volatile var replyTimeoutS: Int = 0     // > 0: listen for an answer after this line
+        @Volatile var replyState: String? = null // listening | transcribing | received | none | error | skipped
+        @Volatile var replyText: String? = null
+        @Volatile var replyVia: String? = null   // "voice" or "text"
+        @Volatile var replyAt: Long = 0
+        @Volatile var replySeconds: Double = 0.0
+        @Volatile var replyError: String? = null
+        @Volatile var spokenAt: Long = 0
+        val replyFinal get() = replyState in REPLY_FINAL
         val done get() = state in FINAL
     }
 
@@ -113,5 +123,6 @@ class SpeakQueue(private val keep: Int = 64) {
         const val STOPPED = "stopped"
         const val ERROR = "error"
         val FINAL = setOf(DONE, STOPPED, ERROR)
+        val REPLY_FINAL = setOf("received", "none", "error", "skipped")
     }
 }
