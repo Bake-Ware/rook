@@ -38,7 +38,7 @@ Read the reference that matches the job; don't load them all:
 - **Secrets never enter your context.** Put `{{secret:name}}` in `rook_call` args; the hub substitutes and masks it. `rook_secret(action="list")` shows names only.
 - **Notices** ride `rook_call` replies only when new for your session: `_tips` (a cap's usage tip, once), `_task` (the claimed task the call was recorded on) and `_unread_chat` (when it changes). Pass `hint=true` only if you need a tip again.
 - **Screens:** on Android prefer `ui.text` over `screenshot.capture`; on desktops try `screenshot.capture_preview` or `capture_region` first.
-- **Windows workers** run `cmd.exe` (no `grep`/`sed`/`head`; use `powershell -NoProfile -Command "…"`) and have no PTY; use a WSL worker for interactive work.
+- **Windows workers** run `cmd.exe` (no `grep`/`sed`/`head`; use `powershell -NoProfile -Command "…"`) and `proc.*`/console rooms have no PTY there; on Windows 10 1809+ workers with `work.stream.*` (ConPTY), use those caps for interactive terminals, otherwise a WSL worker.
 - **Repeated multi-step work** becomes a custom cap (`customcap.add` → `cmd.<name>`); see `references/usage.md`.
 
 ## Coordination, briefly
