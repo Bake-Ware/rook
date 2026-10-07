@@ -217,7 +217,8 @@ def record(agent: str, native_id: str, *, worker=None, meta: dict | None = None,
                  "transcript": transcript},
         "input": how,
         "inbox_policy": policy,
-        "links": {"work_session": term["session"]} if term and term.get("session") else {},
+        "links": {k: term[f] for k, f in (("work_session", "session"), ("task", "task"),
+                                           ("console_room", "room")) if term and term.get(f)},
         "resumable": state == "closed" and transcript,
     }
     if activity:

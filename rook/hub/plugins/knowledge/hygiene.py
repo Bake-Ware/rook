@@ -35,7 +35,10 @@ Triggers:
   releasing the claim with a handoff (anyone may, per STALE_CLAIM_SECS).
 * ``session_ended`` (event): an MCP session closed (DELETE) while its actor
   held an in-progress claim with work since the last handoff, and no other
-  session of that actor is open. The claim is marked dirty.
+  session of that actor is open. The claim is marked dirty. Also raised
+  (with a note on the task) when a session linked to the task ends on its
+  own: a console room's process exits, or a Rook terminal started for the
+  task (Sessions page, ``work.stream.open(task=…)``) closes.
 * ``done_without_knowledge`` (event + scan): a task went ``done`` and no
   knowledge page links it, mentions it, or was written by its claimants while
   they worked on it. Suggests existing pages from search.
@@ -451,6 +454,53 @@ class HygieneEngine:
             tasks = {l['record'] for l in db.execute(
                 "SELECT record FROM links WHERE kind='console' AND ref=? AND retracts IS NULL", (room,))}
         return [h for t in sorted(tasks) for h in self._signal(actor, t, f'Console {room[:40]} closed', now)]
+
+    def on_linked_session_end(self, kind, ref, what, now=None):
+        """A session that open tasks link to ended on its own: a console
+        room's process exited (``kind`` ``console``, ``ref`` the room id) or a
+        Rook terminal started for a task closed (``kind`` ``session``, ``ref``
+        ``<worker_id>/<agent>/<terminal id>``). Each such task gets a note
+        saying so, and its claimants a ``session_ended`` finding asking for a
+        handoff (:meth:`session_end_prompt`). Never changes a task's state or
+        claims. Returns the task ids noted."""
+        if not ref or kind not in ('console', 'session'):
+            return []
+        now = now or time.time()
+        noted = []
+        with self.store.db() as db:
+            tasks = [r['record'] for r in db.execute(
+                'SELECT DISTINCT record FROM links WHERE kind=? AND ref=? AND retracts IS NULL', (kind, ref))]
+            for tid in tasks:
+                t = self._task(db, tid)
+                if t is None or t['state'] in FINISHED:
+                    continue
+                label = f'Console room {ref}' if kind == 'console' else f'Session {ref}'
+                self.store._event(db, t['band'], t['id'], SYSTEM, 'note',
+                                  {'text': f'{label} ended: {what}'[:4000], 'session': {'kind': kind, 'ref': ref}})
+                noted.append(t['id'])
+                self.session_end_prompt(t['id'], ref, None, now, db)
+        return noted
+
+    def session_end_prompt(self, task_id, ref, actor=None, now=None, db=None):
+        """Ask the task's claimants (and ``actor``, a person or agent) for a
+        handoff now that a session working on it ended: a ``session_ended``
+        finding. Returns the finding ids."""
+        if not self.enabled or not task_id:
+            return []
+        if db is None:
+            with self.store.db() as db:
+                return self.session_end_prompt(task_id, ref, actor, now, db)
+        t = self._task(db, task_id)
+        if t is None or t['state'] in FINISHED:
+            return []
+        say = (f'A session working on [[{t["slug"]}]] ended ({str(ref)[:80]}). Leave a handoff '
+               f'(rook_handoff_save task={t["slug"]}, or the task page), then set the state or release it. '
+               f'Still working on it? Ignore this.')
+        who = set(self._claimants(db, t['id']))
+        if actor and actor.get('id') and actor.get('kind') != 'system':
+            who.add(actor['id'])
+        return [h for a in sorted(who or {''})
+                if (h := self.raise_(t['band'], t['id'], 'session_ended', a, say, {'session': str(ref)[:200]}, now, db))]
 
     def on_record_changed(self, actor, before, after, now=None):
         """An update went through. Finishing or stopping a task resolves the

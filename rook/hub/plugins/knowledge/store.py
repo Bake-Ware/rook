@@ -42,7 +42,10 @@ INITIAL = {'task': 'todo', 'project': 'active', 'concept': 'active', 'knowledge'
 OPEN_TASK = ('todo', 'in_progress', 'blocked', 'paused')
 VERIFICATION = ('unverified', 'verified', 'disputed')
 KNOWLEDGE_KINDS = ('fact', 'decision', 'procedure', 'observation', 'question', 'summary')
-LINK_KINDS = ('journal', 'console', 'handoff', 'chat', 'file', 'commit', 'agent', 'record', 'secret', 'url', 'human')
+# session: an agent or terminal session, by its catalog key
+# <worker_id>/<agent>/<native id> (docs/design/sessions.md §3.1).
+LINK_KINDS = ('journal', 'console', 'handoff', 'chat', 'file', 'commit', 'agent', 'record', 'secret', 'url',
+              'session', 'human')
 RELATIONS = ('produced', 'evidence', 'touched', 'discussed_in', 'blocked_by', 'duplicates',
              'supersedes', 'mentions', 'source', 'closed_by')
 REVIEW_ATTRS = {'reviewed_by', 'reviewed_label', 'reviewed_at', 'reviewed_revision', 'review_note', 'dispute_reason'}

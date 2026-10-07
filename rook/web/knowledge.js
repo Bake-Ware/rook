@@ -202,7 +202,7 @@ export async function mountTasks(root){
     const cname=id=>(concepts.find(x=>x.id===id)||{}).title||'Other projects';
     for(const [cid,ps] of Object.entries(byConcept)){side.append(el('h3',cname(cid)));for(const p of ps){const n=p.in_progress.length,b2=p.blocked.length,t=p.todo.length;const a=btn('',()=>go({p:p.project.slug,b:p.band}),'kn-index-item');a.append(el('span',p.project.title),el('small',[n&&n+' active',b2&&b2+' blocked',t&&t+' to do'].filter(Boolean).join(' · ')||'nothing open'));side.append(a);}}
     if(!deck.length)side.append(el('p','No projects yet. Agents create them as they work.','kn-dim'));}
-  function drawOverview(){main.replaceChildren(el('h1','Work'),el('p','What the agents are tracking across all bands. Ask an agent about a project and tell it what to pick up; it records the work here.','kn-dim'));
+  function drawOverview(){main.replaceChildren(el('h1','Work'),el('p','Tasks the agents are tracking across all bands. Ask an agent about a project and tell it what to pick up; it records the work here. The sessions doing the work (agents and terminals) are on the Sessions page, linked to their task.','kn-dim'));
     const all=k=>deck.flatMap(p=>p[k].map(t=>({...t,_band:p.band,_project:p.project.title})));
     const hygiene=all('in_progress').filter(t=>t.needs_hygiene);
     for(const [title,items] of [['Needs hygiene',hygiene],['In progress',all('in_progress')],['Blocked',all('blocked')],['Paused',all('paused')],['Recently done',all('recently_done')]]){const s=section(title,items);if(s)main.append(s);}

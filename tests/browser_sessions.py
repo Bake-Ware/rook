@@ -172,6 +172,13 @@ async def main(shots):
         plugin = TerminalsPlugin()
         band = SessionsBand(plugin, project)
         p.server._band = band
+        # Task claims, links and end notes go to the knowledge service: recorded, never sent.
+        task_writes = []
+
+        async def knowledge_call(request, user, payload):
+            task_writes.append(payload)
+            return {'task': payload.get('id')} if payload.get('action') == 'claim' else {}
+        p.account.work_web.knowledge_call = knowledge_call
 
         async def index(request):
             return web.Response(content_type='text/html', text=(ROOT / 'rook/web/index.html').read_text())
@@ -296,6 +303,8 @@ async def main(shots):
             await expect(term.locator('.xterm-rows')).to_contain_text('hello-42', timeout=10000)
             await expect(term.locator('.sx-holder')).to_contain_text('You have control')
             await expect(item('Build the thing')).to_contain_text('task t_feedbeef', timeout=15000)
+            # Started for a task: the task is claimed and the terminal linked to it.
+            assert [w['action'] for w in task_writes if w['id'] == 't_feedbeef'][:2] == ['claim', 'link']
             # Send into a Rook terminal types keys.
             await detail.locator('#sx-send-text').fill('echo typed-$((2+3))')
             await detail.locator('.sx-send button').click()

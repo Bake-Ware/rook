@@ -140,7 +140,7 @@ directory (an absolute POSIX path, or a Windows drive path such as `C:\src`):
 
 Every harness also gets `TERM=xterm-256color`, `ROOK_MCP_URL`,
 `ROOK_MCP_TOKEN` (when requested), `ROOK_WORK_SESSION` (hub session id),
-`ROOK_WORK_TERMINAL`, `ROOK_PERSONA` and, when a persona applies,
+`ROOK_WORK_TERMINAL`, `ROOK_TASK` (when started for a task), `ROOK_PERSONA` and, when a persona applies,
 `ROOK_PERSONA_FILE`. The worker strips its own band secret
 from the environment. Workers advertise installed harnesses in their heartbeat
 (`hb.work.harnesses`), and the form offers only those.
@@ -182,7 +182,7 @@ and callable with `rook_call`. No new MCP tools were added.
 
 | Cap | Risk | Purpose |
 |---|---|---|
-| `work.stream.open` | exec | start a harness under a PTY; returns `id`. With `resume` and `handoff_pid` it waits for that process (a Claude Code running `/rook-move`) to exit before resuming |
+| `work.stream.open` | exec | start a harness under a PTY; returns `id`. With `resume` and `handoff_pid` it waits for that process (a Claude Code running `/rook-move`) to exit before resuming. With `argv` (a list, no shell) or `cmd` (`/bin/sh -c`, `cmd.exe /d /s /c` on Windows), harness `shell` only, it runs that command instead of the login shell, with `env` added and `PAGER`/`GIT_PAGER` set to `cat`. `task` (task id or slug, also exported as `ROOK_TASK`) and `room` (console room id) are recorded on the terminal (`work.stream.list`) and its `sessions.list` record (`links.task`, `links.console_room`) |
 | `work.stream.read` | read | long-poll output from `cursor` (`wait` up to 25 s) |
 | `work.stream.write` | exec | raw input (`\r` for Enter, `\x03` for Ctrl-C) |
 | `work.stream.resize` | write | set cols/rows |
@@ -246,6 +246,12 @@ be published as `rook.transcript/2`.
   **Resume on host** attaches that terminal to the session.
 - The hub's merged catalog for the Sessions page is
   `GET /account/work/sessions` (docs/design/sessions.md §3.6).
+- Workers whose `work.stream.open` takes commands announce
+  `hb.work.commands = 1`. Only those get `argv`/`cmd`/`env`/`task`/`room` from
+  the hub: console rooms (`rook_console_open`) run in a Rook terminal there,
+  and a Sessions-page launch for a task records the task on the terminal.
+  Older workers keep console rooms on `proc.*` and get no `task` argument
+  (they refuse arguments they do not know).
 - No wire format changed. The new caps, the `hb.work` heartbeat key and the
   new token-route `scopes` field are all optional additions.
 - The classic view keeps working against the same session records.

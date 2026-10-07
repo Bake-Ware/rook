@@ -4,7 +4,7 @@
 
 Workers with `$CODEX_HOME/sessions` (default `~/.codex/sessions`) advertise
 `codex-history.pull`, `.read`, `.search`, `.analyze`, `.export`, `.resume`, and
-`.resumed`: the same operations as `claude-history.*`. Both appear automatically in the web Work view, which replaces Sessions; all capabilities also work through Rook MCP
+`.resumed`: the same operations as `claude-history.*`. Both appear automatically on the dashboard's Sessions page; all capabilities also work through Rook MCP
 and the terminal capability browser. A worker restart discovers newly installed
 agent histories. The CLI and its login must exist on the worker's machine.
 

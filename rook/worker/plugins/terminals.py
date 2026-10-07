@@ -60,6 +60,8 @@ COALESCE_SECS = 0.012               # gather a burst before answering a long-pol
 MAX_WRITE = 16 * 1024
 HANDOFF_SECS = 120.0                # how long a handoff waits for the old process to exit
 _ID = re.compile(r"[A-Za-z0-9_-]{1,100}")
+# A Rook task id or slug (the hub checks that it exists; the worker only records it).
+_TASK = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,119}")
 # Never hand the worker's own band secret to an agent's environment.
 _STRIP_ENV = ("ROOK_BAND_PSK", "ROOK_PSK", "ROOK_MCP_STATIC_TOKEN")
 _IS_WIN = sys.platform == "win32"
@@ -209,6 +211,9 @@ class _Term:
         self.resume = ""
         self.model = ""
         self.session = ""               # the hub's Work session, if any
+        self.task = ""                  # the Rook task it was started for, if any
+        self.room = ""                  # the console room it feeds, if any
+        self.cmd = ""                   # the command it runs, when not a harness
         self.started = time.time()
         self.ended: float | None = None
         self.exit_code: int | None = None
@@ -272,7 +277,8 @@ class _Term:
     def info(self) -> dict:
         return {"id": self.id, "harness": self.harness, "title": self.title,
                 "cwd": self.cwd, "resume": self.resume or None, "model": self.model or None,
-                "session": self.session or None,
+                "session": self.session or None, "task": self.task or None,
+                "room": self.room or None, "cmd": self.cmd or None,
                 "pid": self.pid, "running": self.running, "exit_code": self.exit_code,
                 "started": self.started, "ended": self.ended, "cols": self.cols,
                 "rows": self.rows, "total": self.total, "first": self.buf_start,
@@ -283,8 +289,9 @@ class TerminalsPlugin(Plugin):
     NAMESPACE = "work"
     NAME = "terminals"
     PLACEMENT = place("not is_hub and has('pty')")
-    SKILL = ("Live terminals: `work.stream.open` starts claude/codex/hermes/shell under a "
-             "PTY on a worker; follow it with `work.stream.read(id, cursor, wait=10)` "
+    SKILL = ("Live terminals: `work.stream.open` starts claude/codex/hermes/shell (or a "
+             "command: `argv`/`cmd`) under a PTY on a worker, shown on the Sessions page; "
+             "`task=<id>` claims that task for you and links the terminal; follow it with `work.stream.read(id, cursor, wait=10)` "
              "(returns when output arrives), type with `work.stream.write` (raw bytes, "
              "include \\r for Enter), stop with `work.stream.close`. `work.sessions` lists "
              "live terminals and resumable history; `work.export` returns a transcript "
@@ -322,7 +329,9 @@ class TerminalsPlugin(Plugin):
         now = time.monotonic()
         if now - self._probed > 300:
             self._harnesses, self._probed = available_harnesses(), now
-        out = {"harnesses": self._harnesses}
+        # commands: work.stream.open takes argv/cmd/env/task/room, so the hub
+        # runs console rooms here rather than on proc.* (docs/design/sessions.md).
+        out = {"harnesses": self._harnesses, "commands": 1}
         live = sum(1 for t in self.terms.values() if t.running)
         if live:
             out["terms"] = live
@@ -349,6 +358,26 @@ class TerminalsPlugin(Plugin):
         import termios
         fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
 
+    @staticmethod
+    def _command(harness: str, argv, cmd: str, resume: str) -> list[str] | None:
+        """The argv for a command terminal (``argv``/``cmd``), or None for a
+        harness launch."""
+        if not argv and not cmd:
+            return None
+        if argv and cmd:
+            raise ValueError("pass argv or cmd, not both")
+        if harness != "shell" or resume:
+            raise ValueError("argv/cmd run a command in a shell terminal: harness shell, no resume")
+        if argv:
+            if not isinstance(argv, list) or not all(isinstance(a, (str, int, float)) for a in argv):
+                raise ValueError("argv must be a list of strings")
+            return [str(a) for a in argv]
+        if not isinstance(cmd, str):
+            raise ValueError("cmd must be a string")
+        if _IS_WIN:
+            return [os.environ.get("COMSPEC") or "cmd.exe", "/d", "/s", "/c", cmd]
+        return ["/bin/sh", "-c", cmd]
+
     def _session_dir(self) -> Path:
         base = Path(os.environ.get("ROOK_WORK_TERM_DIR", "~/.rook-band-worker/terminals")).expanduser()
         winsec.make_private_dir(base)
@@ -369,9 +398,17 @@ class TerminalsPlugin(Plugin):
                    model: str = "", resume: str = "", persona: str = "",
                    mcp_url: str = "", mcp_token: str = "", session: str = "",
                    remote_control: str = "", cols: int = 120, rows: int = 32,
-                   buffer_bytes: int = DEFAULT_RING, handoff_pid: int = 0) -> dict:
+                   buffer_bytes: int = DEFAULT_RING, handoff_pid: int = 0,
+                   argv: list | None = None, cmd: str = "", env: dict | None = None,
+                   task: str = "", room: str = "") -> dict:
         """Start a harness (shell|claude|codex|hermes) under a PTY and return
-        its terminal ``id`` immediately. ``resume`` is a Claude/Codex session id
+        its terminal ``id`` immediately. With ``argv`` (a list, no shell) or
+        ``cmd`` (a string through /bin/sh -c, cmd.exe /c on Windows) it runs
+        that command instead of the login shell (harness shell only); ``env``
+        adds variables, and PAGER/GIT_PAGER default to cat so nothing waits
+        on a pager. ``task`` (a Rook task id or slug) and ``room`` (a console
+        room id) are recorded on the terminal and its session record; the
+        hub claims the task. ``resume`` is a Claude/Codex session id
         to continue. ``mcp_url``/``mcp_token`` inject a Rook MCP connection
         (env ROOK_MCP_URL/ROOK_MCP_TOKEN; claude also gets --mcp-config, codex
         -c mcp_servers.rook.*). ``session`` is the hub's Work session id,
@@ -412,7 +449,16 @@ class TerminalsPlugin(Plugin):
                     raise ValueError(f"that session is already running in terminal {t.id}")
         if session:
             _check_id(session, "session")
-        binary = _binary(harness)
+        task, room = str(task or ""), str(room or "")
+        if task and not _TASK.fullmatch(task):
+            raise ValueError("invalid task (a Rook task id or slug)")
+        if room:
+            _check_id(room, "room")
+        command = self._command(harness, argv, cmd, resume)
+        if command is not None:
+            binary = command[0]
+        else:
+            binary = _binary(harness)
         if not binary:
             raise ValueError(f"{harness} is not installed on this host")
         cols = max(20, min(int(cols), 500))
@@ -420,14 +466,32 @@ class TerminalsPlugin(Plugin):
         ring = max(16 * 1024, min(int(buffer_bytes), MAX_RING))
 
         tid = uuid.uuid4().hex[:12]
-        t = _Term(tid, harness, (title or f"{harness} in {os.path.basename(cwd) or cwd}")[:160], cwd, ring)
+        shown = (str(cmd) if cmd else " ".join(command)) if command is not None else ""
+        t = _Term(tid, harness, (title or shown or f"{harness} in {os.path.basename(cwd) or cwd}")[:160], cwd, ring)
         t.resume, t.model, t.cols, t.rows = resume, model[:100], cols, rows
-        t.session = session
+        t.session, t.task, t.room, t.cmd = session, task, room, shown[:2000]
 
+        extra = {str(k): str(v) for k, v in (env or {}).items()}
         env = {k: v for k, v in os.environ.items() if k not in _STRIP_ENV}
         env.update(TERM="xterm-256color", COLORTERM="truecolor", ROOK_WORK_TERMINAL=tid)
         if session:
             env["ROOK_WORK_SESSION"] = session
+        if task:
+            env["ROOK_TASK"] = task
+        if command is not None:
+            # Nobody may be at this terminal (a console room an agent reads):
+            # a pager waiting for a key would hang it.
+            env.update(PAGER="cat", GIT_PAGER="cat")
+            env.update(extra)
+            self.terms[tid] = t
+            try:
+                await self._spawn(t, command, cwd, env)
+            except Exception:
+                self.terms.pop(tid, None)
+                raise
+            log.info("terminal %s started: %s (pid %s)", tid, shown[:80], t.pid)
+            return {"ok": True, **t.info()}
+        env.update(extra)
         persona_text = await self._persona_text(harness, persona) if harness != "shell" else ""
         if persona:
             env["ROOK_PERSONA"] = str(persona)[:100]

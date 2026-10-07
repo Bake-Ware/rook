@@ -20,9 +20,13 @@ in a pane beside the chat.
   as "waiting for approval" where that machine holds such messages), or typed
   into its Rook terminal when that is all it has. Older workers take
   `claude-history.send`.
-- **Deck**: open tasks and handoffs from the work deck. You can claim a task,
-  load a task or handoff into the chat, or send the whole deck to the chat for
-  grooming.
+- **Deck**: open tasks and handoffs, the same work the dashboard's **Work**
+  page tracks (`rook_task(action="deck")`). You can claim a task, load a task
+  or handoff into the chat, or send them all to the chat for grooming.
+
+Words, as everywhere in Rook: a **session** is an agent or terminal session
+(the Sessions tab here, the dashboard's Sessions page); **work** is tasks (the
+Deck here, the dashboard's Work page).
 - **Settings**: the Claude Code settings that matter to Rook, changed in
   place. "Messages from your other sessions" (`crossSessionInbound`) decides
   whether a message another session sends here, such as a Rook poke through

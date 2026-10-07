@@ -339,6 +339,10 @@ class KnowledgeService:
             self._hook('on_claim', actor.get('id'), result.get('task'))
         elif action == 'release':
             self._hook('on_release', result.get('task'), data.get('actor') or actor.get('id'))
+        elif action == 'note' and data.get('session_end'):
+            # A note saying a session working on the task ended (the Sessions
+            # page posts one): ask for a handoff.
+            self._hook('session_end_prompt', result.get('id'), str(data['session_end'])[:200], actor)
         # A new or changed knowledge page, or a new link, can cover a done
         # task; task writes, claims and retractions cannot.
         if action == 'link' or (action in ('create', 'update') and result.get('kind') == 'knowledge'):

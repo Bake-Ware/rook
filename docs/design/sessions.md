@@ -3,7 +3,15 @@
 Status: master plan, October 2026. Work lands as PRs to the `beta` branch;
 each workstream below is one PR (or a short series). This document is the
 contract between them: if a PR needs to change a shape defined here, it
-changes this document in the same PR.
+changes this document in the same PR. All six workstreams (§4, A-F) have
+landed on `beta`; none is promoted yet.
+
+Words (workstream F): **Sessions** means agent and terminal sessions
+everywhere (dashboard Sessions page, the mod's Sessions tab, console rooms,
+`sessions.*` and `work.stream.*` caps); **Work** means tasks (dashboard Work
+page, the mod's Deck tab, `rook_task`). Cap, route and tool names that say
+`work` for sessions (`work.stream.*`, `/account/work/*`, `ROOK_WORK_SESSION`,
+the hub's "Work session" record) keep their names.
 
 ## 1. What Bake asked for
 
@@ -28,10 +36,10 @@ changes this document in the same PR.
 | Session inbox | `rook/worker/session_messages.py`, `codex_input.py` | Claude: the peer messaging socket (arrives as a user turn; `crossSessionInbound` decides hold/accept). Codex: app-server control socket, or typing into Konsole over D-Bus. |
 | Activity | `rook/worker/agent_activity.py` | Which history sessions have a live process. Linux `/proc` only; other platforms report nothing. |
 | Processes | `proc.*` | Pipe or PTY processes with a handle; no ring, no hub fan-out. |
-| Console rooms | `rook/band_mcp/console_rooms.py` | Named, archived, searchable "terminal as chat room", pumped from `proc.read`, ANSI stripped. |
+| Console rooms | `rook/band_mcp/console_rooms.py`, `console_pump.py` | Named, archived, searchable "terminal as chat room", ANSI stripped. Pumped from `work.stream.read` (the process is a Rook terminal, on the Sessions page) where the worker's terminals take commands, else from `proc.read` (§3.7). |
 | Codex app-server work | `work.*` (`rook/worker/plugins/work.py`, `work_runtime.py`) | Web-initiated Codex sessions driven through the app-server protocol (the classic Work view). |
 | Web | Dashboard **Sessions** tab (`sessions.js`, the Sessions page; `work.js` keeps the classic view behind a link), **Work** tab (tasks) | One list of sessions, a separate task board. Docs: `docs/web/sessions.md`. |
-| Claude Code mod | `integrations/claude-code/` | Pane with Bands, Sessions (calls `claude-history` directly), Deck, Settings. |
+| Claude Code mod | `integrations/claude-code/` | Pane with Bands, Sessions (`sessions.list`, falling back to `claude-history`), Deck (open tasks and handoffs: Work), Settings. |
 | Tasks and handoffs | `rook_task`, `rook_handoff_*`, journal | Work tracking; `ROOK_WORK_SESSION` env links a Rook-launched terminal to its hub session. |
 | Home agent | `rook/hub/plugins/home/`, Manage > Home agent (`home.js`) | Hub LLM reachable as `@home` in chat rooms and `home.ask`. Config page with a chat panel (workstream E, polls the shared 1:1 room). |
 
@@ -116,8 +124,9 @@ How the worker fills the record (as built, `rook/worker/plugins/sessions.py`):
 - **view.mirror**: the session has a spool (§3.4; read through
   `rook.worker.session_mirror.spools()` / `chunks()`, the same helpers
   `sessions.mirror` uses). **view.transcript**: claude/codex with a known native id.
-- **links**: the worker only knows `work_session` (the hub session a Rook
-  terminal was launched for); the hub adds the rest.
+- **links**: the worker only knows what its Rook terminal was opened with:
+  `work_session` (the hub session it was launched for), `task` and
+  `console_room` (§3.7); the hub adds the rest (and its own `task` link wins).
 - Extra fields that may appear: `activity` (`working`/`ready`/`pending`),
   `pid` (live only), `model`.
 
@@ -132,7 +141,7 @@ How the worker fills the record (as built, `rook/worker/plugins/sessions.py`):
 | resume | reopen a closed session | `*-history.resume` (proc) or `work.stream.open(resume=)` | always `work.stream.open(resume=)` so it is streamable |
 | stop | end it | `work.stream.close`, `proc.close` | `sessions.stop` |
 | export | transcript pages | `work.export` (`rook.transcript/1`) | unchanged |
-| link | attach to a task | env var at launch only | `sessions.link` (hub) and automatic on launch-for-task |
+| link | attach to a task | env var at launch only | built: the hub's `link` route (§3.6) and automatic on launch-for-task (§3.7) |
 
 ### 3.3 Streaming a session Rook did not start
 
@@ -282,6 +291,13 @@ namespace). Old caps stay as thin aliases for at least one release.
   the worker has `work.stream.open`, and returns `terminal` (the terminal
   id) instead of `handle`; `*-history.resumed` entries carry `terminal` or
   `handle`. Workers without `work.stream` keep the `proc.*` path.
+  Workstream F adds `work.stream.open(argv=[…] | cmd="…", env={…},
+  task="<id or slug>", room="<console room id>")`: `argv`/`cmd` run a
+  command instead of the login shell (harness `shell` only, no `resume`;
+  `PAGER`/`GIT_PAGER` set to `cat`), and `task`/`room` are recorded on the
+  terminal (`task`, `room`, `cmd` in terminal info; `ROOK_TASK` in its
+  environment). Workers with these arguments announce `hb.work.commands = 1`;
+  the hub sends them to no other worker.
 - Heartbeat: `hb.sessions = {live, idle}`, recounted every 2 minutes from
   process evidence and terminals only (no transcript reads) and after every
   `sessions.list`. It sits under `sessions`, not `work`, so a worker
@@ -353,24 +369,80 @@ namespace). Old caps stay as thin aliases for at least one release.
   | `resume` | `id` (command id, 8-100 chars), `cwd?`, `title?`, `mcp?`, `cols?`, `rows?` | `{session, terminal, title}`: a Work session (the same id history discovery uses for that conversation) resumed with `work.stream.open(resume=native_id)`. claude/codex, hosts with `work.stream.*` only; idempotent per `id`, and a session already running returns its terminal |
   | `new` | `id`, `harness`, `cwd`, `model?`, `title?`, `persona?`, `task?`, `mcp?`, `cols?`, `rows?` (no `agent`/`native_id`) | `{session, terminal, title}`: the Work socket's `launch` (same validation, token minting and Work session), awaited. `harness` must be one the host reports; `cwd` absolute (POSIX or `X:\`) |
   | `attach` | `terminal` | `{session}`: a Work session for a running Rook terminal the hub had none for (checked with `work.stream.list`) |
-  | `link` | `task` (`t_…` or slug; `""` unlinks), `work_session?` | `{links: {task}}`. Stored on the hub by catalog key (and on the Work session when given); the merged list returns it as `links.task` |
+  | `link` | `task` (`t_…` or slug; `""` unlinks), `work_session?` | `{links: {task}, note?}`. Stored on the hub by catalog key (and on the Work session when given); the merged list returns it as `links.task`. Also added to the task's links (kind `session`, relation `touched`; `note` says why not when that fails). Linking does not claim |
 - The classic Work view's non-PTY **Resume on host** accepts a `terminal`
   result from `*-history.resume` and attaches the session's terminal.
 - MCP: no new tools. Agents use `rook_call` on these caps; `rook_console_*`
-  keeps working.
+  keeps its names, arguments and replies (one optional argument, `task_id`,
+  and an extra reply field, `terminal`; §3.7).
+
+### 3.7 Console rooms and task links (workstream F)
+
+**Console rooms on Rook terminals.** `rook_console_open` starts its process
+with `work.stream.open(harness="shell", argv|cmd, cwd, env, title=<task
+title>, room=<room id>, task=<linked task>)` when the worker has
+`work.stream.open/read/write` and `hb.work.commands >= 1`; the process is then
+a Rook terminal, streamable on the Sessions page, listed by `sessions.list`
+(agent `shell`, native id the terminal id) with `links.console_room` and
+`links.task`. It is always a tty there, whatever `pty` says. Otherwise (older
+workers, or `too many live terminals`) the room runs on `proc.*` as before.
+Each room records its `transport` (`term` or `proc`; rooms in an older
+`console.db` are `proc`), and the tools route by it:
+
+| Tool | `proc` | `term` |
+|---|---|---|
+| open | `proc.start` → `handle` | `work.stream.open` → `handle` = terminal id, reply also has `terminal` |
+| pump | `proc.read(handle, cursor)` → `chunk`, `next_cursor` | `work.stream.read(id, cursor)` → decoded bytes (UTF-8, incremental), `next`; "no such terminal" closes the room |
+| write | `proc.write(data, newline)` | `work.stream.write(data + "\r" if newline)`; reply gains `handle` |
+| signal | `proc.signal(sig)` | `work.stream.signal(sig)` |
+| close kill | `proc.close` | `work.stream.close` |
+
+The archive is unchanged: sanitized text, secret masking, freeze on exit,
+FTS. In a terminal the process's own echo of typed input also lands in the
+room (beside the `$ text` row the hub writes), masked like any output.
+`proc.*` stays for non-terminal jobs and as this fallback.
+
+**Launch for a task.** A session started for a task claims it for the
+session's identity and links the session; nothing closes the task.
+
+| Started by | Claimed as | Link on the task |
+|---|---|---|
+| Sessions page **New session** with `task` | the signed-in operator (`human:<account id>`), through the knowledge service's account API; `provider_session` = Work session id | kind `session`, ref `<worker_id>/<harness>/<terminal id>` |
+| `rook_console_open(task_id=…)` | the calling agent (fails the call if the task cannot be claimed) | kind `console`, ref the room id |
+| `rook_call("work.stream.open", args={…, "task": …})` | the calling agent (a failure is `_task_error` on the reply; the terminal still runs) | kind `session`, ref as above |
+
+Without `task_id`, a console room still links to the caller's claimed task
+(as before) and passes it to the terminal as `task`.
+
+**Ending.** When a linked session ends on its own, the task gets a `note`
+event ("… ended: …") and its claimants a `session_ended` hygiene finding
+asking for a handoff (docs/design/hygiene.md); task state and claims are
+untouched. Who notices:
+
+- console rooms: the pump, when the process exits or the worker loses it
+  (`HygieneEngine.on_linked_session_end("console", room, …)`);
+- agent terminals: the pump watches them (`term_watch` in `console.db`, one
+  `work.stream.list` per worker every 30 s; dropped after 7 days if the worker
+  never answers);
+- Sessions-page terminals: the hub marks the Work session
+  `task_end_pending` when the terminal ends, and posts the note (a task
+  `note` with `data.session_end` = the link ref, which raises the finding)
+  with the operator's next dashboard request (at most every 30 s; at once on
+  **Stop**). A closed session linked to a task shows the same reminder on
+  the page.
 
 ## 4. Workstreams
 
 Each is one PR to `beta` unless it says otherwise. Shared shapes are §3.
 
-**A. Catalog and verbs (worker + hub).** `sessions.list/follow/send/stop`,
+**A. Catalog and verbs (worker + hub).** *Done.* `sessions.list/follow/send/stop`,
 the record of §3.1 (state, origin, view, input, inbox policy, links),
 activity detection on Windows and macOS (process list, Claude PID markers),
 resume through `work.stream.open` everywhere, hub cache and merged list API
 for the page. Tests: unit, plus the existing `test_work_terminals.py` and
 `test_work_sessions.py` stay green.
 
-**B. Mirror (Claude Code mod + worker).** Mod hooks write the spool of
+**B. Mirror (Claude Code mod + worker).** *Done.* Mod hooks write the spool of
 §3.4; worker `sessions.mirror`; mod `/rook-move`; the mod's Sessions tab
 reads `sessions.list` (falls back to `claude-history.pull` on older
 workers). Mod version bump. Tests: mod tests (`claude plugin test`), worker
@@ -399,7 +471,7 @@ socket on Windows (its control endpoint is a Unix socket Python cannot reach
 there), so Codex input on Windows goes through a Rook terminal. Details and
 the platform table: `docs/web/worklog.md`.
 
-**E. Home agent chat.** A chat panel on Manage > Home agent: talks to the
+**E. Home agent chat.** *Done.* A chat panel on Manage > Home agent: talks to the
 home agent in a two-person room through the existing chat store (so the
 conversation also shows in Chat), streaming the reply if the plugin can,
 with the room's history. Tests: unit and a browser test.
@@ -408,7 +480,12 @@ with the room's history. Tests: unit and a browser test.
 instead of `proc.read` pumping (`proc.*` stays for non-terminal jobs);
 launch-for-task claims the task and ending a session offers a handoff;
 vocabulary: the dashboard tab, the mod tab and the docs all say
-**Sessions** for sessions and **Work** for tasks.
+**Sessions** for sessions and **Work** for tasks. *Done:* §3.7 (console
+rooms on Rook terminals with the `proc.*` fallback, launch-for-task claims
+and end notes from the page, `rook_console_open(task_id=)` and
+`work.stream.open(task=)`), the `session` link kind, and the vocabulary
+pass (mod 0.3.3: the Deck tab's help and headings say tasks and Work).
+Tests: `tests/test_sessions_consistency.py`, `tests/test_sessions_page.py`.
 
 Order: A first (contract), B, C, D and E in parallel against §3, then F.
 

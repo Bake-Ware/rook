@@ -25,7 +25,9 @@ rook_call("customcap.add", worker="gpu-box", args={
 - `rook_console_write` answers prompts (verbatim). `pty=true` for passwords, REPLs, TUIs, interactive agent sessions.
 - Always `rook_console_close(room, summary=…)` with what worked and what to watch; the summary ranks highest in future searches.
 - Don't stream a full build log: `… 2>&1 | tail -n 30`, or grep for `error|warning` at the end.
-- `proc.*` caps are the raw layer under consoles; prefer consoles (searchable, band-visible).
+- `task_id=<task id or slug>` claims that task for you and links the room; when the process exits the task gets a note asking for a handoff (nothing is closed for you).
+- Where the worker runs Rook terminals (`work.stream.*`), a console's process is one: always a tty, and the person can watch and type into it on the dashboard's **Sessions** page (the reply's `terminal`). Elsewhere it runs on `proc.*`, the raw layer for non-terminal jobs; prefer consoles either way (searchable, band-visible).
+- A bare interactive terminal for a task: `rook_call("work.stream.open", worker=…, args={"harness": "shell", "cwd": …, "task": "<id or slug>"})` claims and links it the same way.
 
 ## Tasks, handoffs, knowledge, chat
 
