@@ -6,6 +6,7 @@ type TestEngine = Parameters<TestBody>[0]
 
 import { fleetBuild, groupBands, parseBands, parseWorkers } from './bands'
 import { hostingConfig, hostingPrompt, paneText } from './pane'
+import { inboundFromFile } from './settings'
 import { GROOM_PROMPT, groomText } from './deck'
 import { loadText, unwrap } from './sessions'
 
@@ -415,4 +416,35 @@ test('the pane tool reads the settings tab but has no way to change one', async 
   )
   expect(text).toContain('value: hold')
   expect(text).toContain('Held until you approve each one.')
+})
+
+test('when Claude Code hides the inbound row, the tab reads it from the settings file, read-only', async ($, on) => {
+  const sets: string[] = []
+  on('config.list', async () => ({ value: [] }) as never)
+  on('config.set', async (_, e) => {
+    sets.push(e.key)
+
+    return { value: e.value }
+  })
+  on('env.get', async (_, e) => ({ value: (e as { name: string }).name === 'HOME' ? '/home/user' : undefined }) as never)
+  on('fs.read', async (_, e) => {
+    const path = String((e as { path: string }).path)
+    if (path !== '/home/user/.claude/settings.json') throw new Error(`unexpected read ${path}`)
+
+    return { value: JSON.stringify({ crossSessionInbound: 'accept' }) } as never
+  })
+  const { ui } = await fleet($, on)
+  await ui.press({ key: 'tab:settings' })
+  expect(await ui.find({ type: 'Text', text: /change it in \/config/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /starts a turn without a click/ })).toBeDefined()
+  expect(await ui.find({ key: 'set:crossSessionInbound:hold', type: 'Button' })).toBeUndefined()
+  expect(sets).toEqual([])
+  await ui.unmount()
+})
+
+test('the inbound value falls back to default on a missing or odd file', async () => {
+  expect(inboundFromFile(undefined).value).toBe('default')
+  expect(inboundFromFile('not json').value).toBe('default')
+  expect(inboundFromFile('{"crossSessionInbound":"yolo"}').value).toBe('default')
+  expect(inboundFromFile('{"crossSessionInbound":"refuse"}').value).toBe('refuse')
 })
