@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import sqlite3
 import time
 import uuid
@@ -28,7 +29,7 @@ METADATA_KEYS = frozenset(('id', 'owner', 'title', 'cwd', 'model', 'worker_id',
     'external_handle', 'external_cursor', 'resume_note', 'remote_runtime',
     'worker_revision', 'running', 'needs_input', 'legacy_runtime', 'active', 'messageable', 'message_note',
     'created_by', 'harness', 'term_id', 'term_running', 'term_exit', 'term_note',
-    'term_started', 'mcp_token_id', 'mcp_token_revoke', 'persona'))
+    'term_started', 'mcp_token_id', 'mcp_token_revoke', 'persona', 'task'))
 
 HARNESSES = ('shell', 'claude', 'codex', 'hermes')
 TERM_CAPS = ('work.stream.open', 'work.stream.read', 'work.stream.write')
@@ -43,6 +44,34 @@ INPUT_FRAME_MAX = 96 * 1024
 CATALOG_LIMIT = 50                  # sessions asked of each worker by default
 CATALOG_LIMIT_MAX = 200
 CATALOG_TIMEOUT = 15
+# The Sessions page's per-session routes, POST /account/work/session/<op>
+# (docs/design/sessions.md §3.6).
+SESSION_OPS = ('mirror', 'follow', 'send', 'stop', 'resume', 'new', 'attach', 'link')
+MIRROR_WAIT_MAX = 20                # seconds a mirror long-poll may hold
+MIRROR_WATCHERS = 32                # long-polls held at once, hub-wide (bounded memory)
+MIRROR_EVENTS_MAX = 500
+TEXT_MAX = 24000
+TASK_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.:-]{0,119}$')
+
+
+class HostError(Exception):
+    """The worker failed or refused; the page shows the message."""
+
+
+def check_cwd(value):
+    """An absolute directory on the host (POSIX, or a Windows drive path)."""
+    cwd = str(value or '').strip()
+    if len(cwd) > 2000 or not (cwd.startswith('/') or re.match(r'^[A-Za-z]:[\\/]', cwd)):
+        raise ValueError('Enter an absolute working directory.')
+    return cwd
+
+
+def check_task(value):
+    """A Rook task id or slug, or '' for none."""
+    task = str(value or '').strip()
+    if task and not TASK_RE.match(task):
+        raise ValueError('Enter a task id (t_…) or slug.')
+    return task
 
 
 
@@ -128,6 +157,9 @@ class WorkStore:
                 CREATE TABLE IF NOT EXISTS work_commands(
                     session TEXT NOT NULL, id TEXT NOT NULL, result TEXT NOT NULL,
                     PRIMARY KEY(session,id));
+                CREATE TABLE IF NOT EXISTS session_links(
+                    owner TEXT NOT NULL, key TEXT NOT NULL, task TEXT NOT NULL,
+                    updated REAL NOT NULL, PRIMARY KEY(owner,key));
             """)
             # Audit attribution: which account submitted each command.
             if 'actor' not in {r[1] for r in db.execute('PRAGMA table_info(work_commands)')}:
@@ -205,6 +237,20 @@ class WorkStore:
             db.execute('INSERT OR REPLACE INTO work_index VALUES(?,?,?,?)',
                        (state['id'], state['owner'], state['updated'], json.dumps(state)))
 
+    def set_task(self, owner, key, task):
+        """Link a host session (by its catalog key) to a task; '' unlinks."""
+        with self.db() as db:
+            if task:
+                db.execute('INSERT OR REPLACE INTO session_links VALUES(?,?,?,?)',
+                           (owner, key, task, time.time()))
+            else:
+                db.execute('DELETE FROM session_links WHERE owner=? AND key=?', (owner, key))
+
+    def tasks(self, owner):
+        with self.db() as db:
+            return {r['key']: r['task'] for r in
+                    db.execute('SELECT key,task FROM session_links WHERE owner=?', (owner,))}
+
     def claim(self, sid, cid, actor=None):
         with self.db() as db:
             cur = db.execute('INSERT OR IGNORE INTO work_commands(session,id,result,actor) VALUES(?,?,?,?)',
@@ -231,7 +277,7 @@ class WorkWeb:
         self.pump = None
         self.discovery = None
         self.external_output = {}
-        # Worklog view (live terminals). ROOK_WORK_V2=0 keeps only the classic view.
+        # Sessions page with live terminals. ROOK_WORK_V2=0 keeps only the classic view.
         self.v2 = os.environ.get('ROOK_WORK_V2', '1') != '0'
         self.terms = TermHub(lambda: self.server._band, on_end=self.term_ended)
         self.token_url = os.environ.get('ROOK_TOKEN_ADMIN_URL', 'http://127.0.0.1:8765/tokens/account-api')
@@ -240,6 +286,7 @@ class WorkWeb:
         # worker_id -> the latest unfiltered catalog fetched from it, served
         # (marked stale) when the worker does not answer.
         self.catalogs = {}
+        self.watching = 0             # mirror long-polls held right now
 
     def lock(self, sid):
         return self.locks.setdefault(sid, asyncio.Lock())
@@ -253,6 +300,7 @@ class WorkWeb:
         app.router.add_get('/account/work/assets/vendor/{name}', self.vendor_asset)
         app.router.add_get('/account/work/term/{session}', self.term_socket)
         app.router.add_get('/account/work/sessions', self.sessions_list)
+        app.router.add_post('/account/work/session/{op}', self.session_op)
         app.on_startup.append(self.start)
         app.on_cleanup.append(self.stop)
 
@@ -308,7 +356,7 @@ class WorkWeb:
 
     async def asset(self, request):
         name = request.match_info['name']
-        if name not in ('work.js', 'work.css', 'worklog.js', 'worklog.css'):
+        if name not in ('work.js', 'work.css', 'worklog.js', 'sessions.js', 'sessions.css'):
             raise web.HTTPNotFound()
         return web.Response(text=(Path(__file__).parents[1] / 'web' / name).read_text(),
                             content_type='text/css' if name.endswith('css') else 'application/javascript',
@@ -538,6 +586,42 @@ class WorkWeb:
         job = asyncio.create_task(self.open_terminal(request, user, sid, cid, data))
         self.jobs.add(job)
         job.add_done_callback(self.jobs.discard)
+        return job
+
+    def new_launch(self, request, user, cid, data):
+        """Record and start a new terminal session (the ``launch`` op of the
+        Work socket and the Sessions page's New session). Idempotent per
+        command id: returns ``(session id, launch job or None when that
+        command already ran)``."""
+        if not self.v2:
+            raise ValueError('Live terminals are disabled on this hub.')
+        sid = uuid.uuid5(uuid.NAMESPACE_URL, user['id'] + ':' + cid).hex
+        try:
+            self.store.get(sid, user['id'])
+            return sid, None
+        except web.HTTPNotFound:
+            pass
+        w = next((h for h in self.hosts() if h['id'] == data.get('worker') and h['term']), None)
+        if not w:
+            raise ValueError('Choose a connected host that supports live terminals.')
+        harness = data.get('harness')
+        if harness not in HARNESSES:
+            raise ValueError('Choose claude, codex, hermes or shell.')
+        if harness not in w['harnesses']:
+            raise ValueError(f"{harness} is not installed on {w.get('name') or 'that host'}.")
+        cwd = check_cwd(data.get('cwd'))
+        task = check_task(data.get('task'))
+        folder = re.split(r'[\\/]', cwd.rstrip('/\\'))[-1] or cwd
+        title = str(data.get('title') or '').strip()[:160] or f'{harness} · {folder}'
+        s = dict(id=sid, owner=user['id'], title=title, worker_id=w['id'],
+                 worker_name=w.get('name'), band=w.get('band'), cwd=cwd,
+                 model=str(data.get('model') or '')[:100], agent=harness, harness=harness,
+                 persona=str(data.get('persona') or '')[:100] or None, task=task or None,
+                 status='starting', thread_id=None, turn_id=None, error='',
+                 created_by=actor(user), term_running=False)
+        self.store.save(s)
+        self.store.claim(sid, cid, actor(user))
+        return sid, self.launch_terminal(request, user, sid, cid, data)
 
     async def close_terminal(self, s):
         if s.get('term_id') and s.get('term_running'):
@@ -626,6 +710,8 @@ class WorkWeb:
         fetched = await asyncio.gather(*(self.fetch_catalog(w, query, live_only, limit, actor(user))
                                          for w in targets))
         links = self.session_links(user['id'])
+        tasks = (self.store.tasks(user['id']),
+                 {s['id']: s['task'] for s in self.store.all(user['id'], details=False) if s.get('task')})
         sessions, workers, errors = [], [], []
         for w, got in zip(targets, fetched):
             if got is None:
@@ -638,7 +724,7 @@ class WorkWeb:
                             'counts': {k: hb[k] for k in ('live', 'idle') if isinstance(hb.get(k), int)} or None})
             if got.get('error'):
                 errors.append({'worker_id': w['worker_id'], 'worker': w.get('name', ''), 'error': got['error']})
-            sessions += [self.place_record(item, w, links) for item in got['items']]
+            sessions += [self.place_record(item, w, links, tasks) for item in got['items']]
         sessions.sort(key=lambda r: (r.get('state') == 'closed', -(r.get('updated') or 0)))
         return web.json_response({'sessions': sessions, 'workers': workers, 'errors': errors,
                                   'generated': time.time()}, headers=NO_STORE)
@@ -709,8 +795,10 @@ class WorkWeb:
         return out
 
     @staticmethod
-    def place_record(item, worker, links):
-        """Stamp a worker's record with the hub's view of it."""
+    def place_record(item, worker, links, tasks=({}, {})):
+        """Stamp a worker's record with the hub's view of it: its key, the
+        operator's Work session for it and the task it is linked to
+        (``tasks`` = (by catalog key, by Work session id))."""
         rec = dict(item)
         agent, native = rec['agent'], str(rec['native_id'])
         rec.update(worker_id=worker['worker_id'], worker=worker.get('name', ''),
@@ -721,7 +809,262 @@ class WorkWeb:
             links.get((worker['worker_id'], 'term', term)) if term else None)
         if found and not rec['links'].get('work_session'):
             rec['links']['work_session'] = found
+        task = tasks[0].get(rec['key']) or tasks[1].get(rec['links'].get('work_session'))
+        if task:
+            rec['links']['task'] = task
         return rec
+
+    # -- per-session routes of the Sessions page (docs/design/sessions.md §3.6) --
+
+    async def session_op(self, request):
+        """``POST /account/work/session/<op>``: one JSON request per action on
+        a host session, addressed by ``worker`` (id), ``agent`` and
+        ``native_id``. Operator only, dashboard Origin, CSRF token in the body.
+        Replies ``{ok: true, …}``, or ``{ok: false, error}`` with 400 (bad
+        request), 404 (unknown op), 429 (too many live views) or 502 (the host
+        failed or refused)."""
+        user = self.user(request)
+        if request.headers.get('Origin') != self.account.origin:
+            raise web.HTTPForbidden(text='Origin mismatch')
+        op = request.match_info['op']
+        if op not in SESSION_OPS:
+            raise web.HTTPNotFound()
+
+        def fail(status, error):
+            return web.json_response({'ok': False, 'error': error}, status=status, headers=NO_STORE)
+        try:
+            data = await request.json()
+            if not isinstance(data, dict):
+                raise ValueError
+        except (ValueError, json.JSONDecodeError):
+            return fail(400, 'Expected a JSON object.')
+        try:
+            self.account.csrf(request, data, user)
+        except PermissionError as error:
+            return fail(403, str(error))
+        try:
+            result = await getattr(self, 'op_' + op)(request, user, data)
+        except HostError as error:
+            return fail(502, str(error) or 'The host did not answer.')
+        except OverflowError as error:
+            return fail(429, str(error))
+        except (ValueError, TypeError, KeyError) as error:
+            return fail(400, str(error) or 'Invalid request.')
+        except web.HTTPNotFound:
+            return fail(404, 'Session not found.')
+        return web.json_response({'ok': True, **result}, headers=NO_STORE)
+
+    def session_target(self, data, cap=None):
+        """The connected worker ``data['worker']`` names, holding ``cap``."""
+        wid = str(data.get('worker') or '')
+        w = next((w for w in self.workers(history=True) if w['worker_id'] == wid), None)
+        if w is None:
+            raise ValueError('That host is not connected.')
+        if cap and cap not in w.get('caps', []):
+            raise ValueError(f"{w.get('name') or 'That host'} has no {cap}; update its worker.")
+        return w
+
+    @staticmethod
+    def session_ident(data, agents=HARNESSES):
+        agent, native = data.get('agent'), str(data.get('native_id') or '')
+        if agent not in agents:
+            raise ValueError('Unknown agent.')
+        if not 0 < len(native) <= 200:
+            raise ValueError('A session id is required.')
+        return agent, native
+
+    async def host_call(self, worker, cap, args, user, timeout=20):
+        try:
+            return await self.rpc(dict(worker_id=worker['worker_id'], band=worker.get('band')), cap, args,
+                                  timeout=timeout, identity=actor(user))
+        except (ValueError, TimeoutError, asyncio.TimeoutError) as error:
+            raise HostError(str(error) or 'The host did not answer in time.') from error
+
+    async def masked(self, obj):
+        """Known vault values masked, as everywhere else on the dashboard."""
+        mask = getattr(self.server, '_bridge_mask', None)
+        return await mask(obj) if callable(mask) else obj
+
+    async def op_mirror(self, request, user, data):
+        """Relay ``sessions.mirror``: ``{cursor, wait}`` → ``{events, cursor, done, exists}``."""
+        agent, native = self.session_ident(data)
+        w = self.session_target(data, 'sessions.mirror')
+        cursor = max(0, int(data.get('cursor') or 0))
+        wait = max(0.0, min(float(data.get('wait') or 0), MIRROR_WAIT_MAX))
+        if wait and self.watching >= MIRROR_WATCHERS:
+            raise OverflowError('Too many live views are open on this dashboard. Close one and retry.')
+        self.watching += 1 if wait else 0
+        try:
+            out = await self.host_call(w, 'sessions.mirror', dict(
+                agent=agent, native_id=native, cursor=cursor, wait=wait,
+                max_events=max(1, min(int(data.get('max_events') or MIRROR_EVENTS_MAX), MIRROR_EVENTS_MAX))),
+                user, timeout=wait + 15)
+        finally:
+            self.watching -= 1 if wait else 0
+        events = [e for e in out.get('events') or [] if isinstance(e, dict)]
+        return await self.masked({'events': events, 'cursor': int(out.get('cursor') or cursor),
+                                  'done': bool(out.get('done')), 'exists': out.get('exists', bool(events))})
+
+    async def op_follow(self, request, user, data):
+        """Relay ``sessions.follow`` (older workers: ``<agent>-history.follow``)."""
+        agent, native = self.session_ident(data, ('claude', 'codex'))
+        w = self.session_target(data)
+        offset = max(0, int(data.get('offset') or 0))
+        version = str(data.get('version') or '')[:200]
+        if 'sessions.follow' in w.get('caps', []):
+            out = await self.host_call(w, 'sessions.follow', dict(agent=agent, native_id=native,
+                                                                  offset=offset, version=version), user)
+        elif agent + '-history.follow' in w.get('caps', []):
+            out = await self.host_call(w, agent + '-history.follow', dict(session_id=native, offset=offset,
+                                                                          version=version), user)
+        else:
+            raise ValueError('This host cannot show transcripts; update its worker.')
+        keep = ('unchanged', 'version', 'replace_from', 'messages', 'truncated', 'next_offset',
+                'next_content_offset', 'total_messages', 'activity', 'active')
+        return await self.masked({k: out[k] for k in keep if k in out})
+
+    async def op_send(self, request, user, data):
+        """``sessions.send``: ``{text, command_id?}`` → ``{delivery, note, …}``."""
+        agent, native = self.session_ident(data)
+        text = data.get('text')
+        if not isinstance(text, str) or not text.strip() or len(text) > TEXT_MAX:
+            raise ValueError(f'Enter a message of 1–{TEXT_MAX} characters.')
+        command_id = str(data.get('command_id') or uuid.uuid4().hex)[:100]
+        w = self.session_target(data)
+        if 'sessions.send' in w.get('caps', []):
+            out = await self.host_call(w, 'sessions.send', dict(agent=agent, native_id=native, text=text,
+                                                                command_id=command_id), user, timeout=40)
+        elif agent + '-history.send' in w.get('caps', []):
+            out = await self.host_call(w, agent + '-history.send', dict(session_id=native, text=text,
+                                                                        command_id=command_id), user, timeout=40)
+            out = dict(out, delivery='turn', detail=out.get('delivery'))
+        else:
+            raise ValueError('This host cannot take messages for its sessions; update its worker.')
+        return {k: out[k] for k in ('delivery', 'note', 'detail', 'terminal', 'native_id') if k in out}
+
+    async def op_stop(self, request, user, data):
+        """``sessions.stop``; a hub Work session on that terminal is closed too
+        (which revokes its MCP token)."""
+        agent, native = self.session_ident(data)
+        w = self.session_target(data, 'sessions.stop')
+        out = await self.host_call(w, 'sessions.stop', dict(agent=agent, native_id=native), user, timeout=30)
+        if out.get('stopped') == 'terminal' and out.get('terminal'):
+            for s in self.store.all(user['id'], details=False):
+                if s.get('worker_id') == w['worker_id'] and s.get('term_id') == out['terminal']:
+                    stream = self.terms.get(w['worker_id'], out['terminal'])
+                    if stream is not None:
+                        stream.finish(out.get('exit_code'))
+                    async with self.lock(s['id']):
+                        self.mark_term_done(s['id'], out.get('exit_code'))
+        return {k: out[k] for k in ('stopped', 'terminal', 'handle', 'exit_code', 'note') if k in out}
+
+    async def started(self, sid, cid, job):
+        """Wait for a launch (shielded: a closed page must not cancel it half
+        way) and return the session, or raise its error."""
+        if job is not None:
+            await asyncio.shield(job)
+        result = self.store.result(sid, cid) or {}
+        if result.get('status') == 'error':
+            raise HostError(result.get('error') or 'The host could not start the terminal.')
+        s = self.store.get(sid)
+        return {'session': sid, 'terminal': s.get('term_id'), 'title': s.get('title')}
+
+    def command_id(self, data):
+        cid = str(data.get('id') or '')
+        if not 8 <= len(cid) <= 100:
+            raise ValueError('A command ID is required.')
+        return cid
+
+    async def op_new(self, request, user, data):
+        """New session in a Rook terminal: the Work socket's ``launch``, awaited.
+        ``{id, worker, harness, cwd, model?, title?, persona?, task?, mcp?, cols?, rows?}``
+        → ``{session, terminal, title}`` (``session`` opens /account/work/term/<session>)."""
+        cid = self.command_id(data)
+        sid, job = self.new_launch(request, user, cid, data)
+        return await self.started(sid, cid, job)
+
+    async def op_resume(self, request, user, data):
+        """Resume a closed Claude/Codex session into a Rook terminal
+        (``work.stream.open(resume=…)``). ``{id, worker, agent, native_id,
+        cwd?, title?, mcp?}`` → ``{session, terminal, title}``."""
+        if not self.v2:
+            raise ValueError('Live terminals are disabled on this hub.')
+        cid = self.command_id(data)
+        agent, native = self.session_ident(data, ('claude', 'codex'))
+        w = self.session_target(data)
+        if not all(c in w.get('caps', []) for c in TERM_CAPS):
+            raise ValueError(f"{w.get('name') or 'That host'} cannot run Rook terminals; resume it from the Classic view.")
+        existing = next((s for s in self.store.all(user['id'], details=False)
+                         if s.get('worker_id') == w['worker_id'] and (s.get('agent') or 'codex') == agent
+                         and str(s.get('source_id') or '').lower() == native.lower()), None)
+        if existing and existing.get('term_running'):
+            return {'session': existing['id'], 'terminal': existing.get('term_id'), 'title': existing.get('title')}
+        if existing and existing.get('external_handle'):
+            raise ValueError('This session is already running on its host.')
+        # The id history discovery gives the same session, so both views share it.
+        sid = existing['id'] if existing else uuid.uuid5(uuid.NAMESPACE_URL, json.dumps(
+            [user['id'], w.get('band'), w['worker_id'], agent, native])).hex
+        if self.store.result(sid, cid):
+            return await self.started(sid, cid, None)
+        async with self.lock(sid):
+            if existing:
+                s = self.store.get(sid)
+            else:
+                s = dict(id=sid, owner=user['id'], worker_id=w['worker_id'], band=w.get('band'),
+                         worker_name=w.get('name'), agent=agent, imported=True, source_id=native,
+                         thread_id=None, turn_id=None, model='', error='', status='pending',
+                         title=str(data.get('title') or '')[:160] or native)
+            if data.get('cwd'):
+                s['cwd'] = check_cwd(data['cwd'])
+            s.update(harness=agent, review_status=None)
+            self.store.save(s)
+        self.store.claim(sid, cid, actor(user))
+        return await self.started(sid, cid, self.launch_terminal(request, user, sid, cid, data))
+
+    async def op_attach(self, request, user, data):
+        """Watch a Rook terminal the hub has no Work session for (one started
+        by an agent, or a session moved with /rook-move): ``{worker, agent,
+        native_id, terminal}`` → ``{session}`` for /account/work/term/<session>."""
+        agent, native = self.session_ident(data)
+        w = self.session_target(data, 'work.stream.list')
+        term = str(data.get('terminal') or '')
+        if not 0 < len(term) <= 100:
+            raise ValueError('A terminal id is required.')
+        for s in self.store.all(user['id'], details=False):
+            if s.get('worker_id') == w['worker_id'] and s.get('term_id') == term:
+                return {'session': s['id']}
+        listed = await self.host_call(w, 'work.stream.list', {}, user)
+        t = next((t for t in listed.get('terminals') or [] if t.get('id') == term), None)
+        if t is None or not t.get('running'):
+            raise HostError('This terminal has ended.')
+        sid = uuid.uuid5(uuid.NAMESPACE_URL, json.dumps([user['id'], w['worker_id'], 'term', term])).hex
+        harness = t.get('harness') if t.get('harness') in HARNESSES else agent
+        self.store.save(dict(id=sid, owner=user['id'], worker_id=w['worker_id'], band=w.get('band'),
+                             worker_name=w.get('name'), title=str(t.get('title') or data.get('title') or native)[:160],
+                             cwd=t.get('cwd') or '', model='', agent=harness, harness=harness, status='working',
+                             thread_id=None, turn_id=None, error='', created_by=actor(user),
+                             term_id=term, term_running=True, term_exit=None, term_note='',
+                             term_started=time.time(), last_activity=time.time()))
+        return {'session': sid}
+
+    async def op_link(self, request, user, data):
+        """Link a session to a Rook task: ``{worker, agent, native_id, task,
+        work_session?}``; an empty ``task`` unlinks. Stored on the hub by the
+        catalog key, and on the Work session when there is one (it outlives
+        the key change when an agent reports its own id)."""
+        agent, native = self.session_ident(data)
+        task = check_task(data.get('task'))
+        wid = str(data.get('worker') or '')
+        if not 0 < len(wid) <= 200:
+            raise ValueError('A host is required.')
+        self.store.set_task(user['id'], f'{wid}/{agent}/{native}', task)
+        if data.get('work_session'):
+            sid = str(data['work_session'])
+            async with self.lock(sid):
+                s = self.store.get(sid, user['id'])
+                s['task'] = task or None
+                self.store.save(s)
+        return {'links': {'task': task or None}}
 
     @staticmethod
     def summary(s):
@@ -823,31 +1166,7 @@ class WorkWeb:
                     selected, last_revision = sid, None
                     await ws.send_json({'type': 'selected', 'session': sid})
                 elif data.get('op') == 'launch':
-                    if not self.v2:
-                        raise ValueError('Live terminals are disabled on this hub.')
-                    sid = uuid.uuid5(uuid.NAMESPACE_URL, user['id'] + ':' + cid).hex
-                    try:
-                        self.store.get(sid, user['id'])
-                    except web.HTTPNotFound:
-                        w = next((h for h in self.hosts() if h['id'] == data.get('worker') and h['term']), None)
-                        if not w:
-                            raise ValueError('Choose a connected host that supports live terminals.')
-                        harness = data.get('harness')
-                        if harness not in HARNESSES:
-                            raise ValueError('Choose claude, codex, hermes or shell.')
-                        cwd = str(data.get('cwd', '')).strip()
-                        if not cwd.startswith('/') or len(cwd) > 2000:
-                            raise ValueError('Enter an absolute working directory.')
-                        title = str(data.get('title') or '').strip()[:160] or f'{harness} · {cwd.rstrip("/").rsplit("/", 1)[-1] or cwd}'
-                        s = dict(id=sid, owner=user['id'], title=title, worker_id=w['id'],
-                                 worker_name=w.get('name'), band=w.get('band'), cwd=cwd,
-                                 model=str(data.get('model') or '')[:100], agent=harness, harness=harness,
-                                 persona=str(data.get('persona') or '')[:100] or None,
-                                 status='starting', thread_id=None, turn_id=None, error='',
-                                 created_by=actor(user), term_running=False)
-                        self.store.save(s)
-                        self.store.claim(sid, cid, actor(user))
-                        self.launch_terminal(request, user, sid, cid, data)
+                    sid, _ = self.new_launch(request, user, cid, data)
                     pending_receipts[cid] = sid
                     await ws.send_json({'type': 'launched', 'session': sid, 'id': cid})
                 else:

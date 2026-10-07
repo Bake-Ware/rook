@@ -9,7 +9,7 @@
       "name": "rook",
       "source": "./integrations/claude-code",
       "description": "Rook band views inside Claude Code: a live pane of bands and their workers, sessions across the fleet, and the work deck",
-      "version": "0.3.1",
+      "version": "0.3.2",
       "license": "Apache-2.0",
       "homepage": "https://github.com/Bake-Ware/rook/tree/master/integrations/claude-code"
     }

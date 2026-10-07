@@ -1,9 +1,9 @@
 # Work sessions
 
-> The default Work view is now the **worklog**: live terminals grouped by
-> project and host. See [worklog.md](worklog.md). This page describes the
-> classic view, which stays available (**Classic view** button, or
-> `ROOK_WORK_V2=0` on the dashboard) during rollout.
+> The default view of the dashboard's Sessions tab is now the **Sessions
+> page** ([sessions.md](sessions.md)). This page describes the classic view,
+> which stays available (**Classic view** link in the Sessions header, or
+> `ROOK_WORK_V2=0` on the dashboard) until the Sessions page covers it.
 
 Work replaces the old Sessions view; saved `#sessions` links redirect to `#work`.
 The server discovers Claude and Codex histories on connected workers every 15
