@@ -22,7 +22,7 @@ changes this document in the same PR.
 
 | Piece | Where | What it does |
 |---|---|---|
-| Live terminals | `rook/worker/plugins/terminals.py` (`work.stream.*`), `rook/remote/term_hub.py`, `rook/web/worklog.js` | PTY on the worker, byte ring with cursor long-poll, hub fan-out, xterm.js in the browser, one input holder. Linux/macOS only (`has('pty')`). Docs: `docs/web/worklog.md`. |
+| Live terminals | `rook/worker/plugins/terminals.py` (`work.stream.*`), `rook/remote/term_hub.py`, `rook/web/worklog.js` | PTY on the worker, byte ring with cursor long-poll, hub fan-out, xterm.js in the browser, one input holder. Linux/macOS PTYs; Windows 10 1809+ ConPTY (`rook/worker/conpty.py`). Placement `has('pty')`. Docs: `docs/web/worklog.md`. |
 | Session catalog | `work.sessions` (terminals.py) | Live terminals plus Claude/Codex history on one host. |
 | History | `claude-history.*`, `codex-history.*` | List, search, read, `follow` (transcript tail by version), `transcript`/`export` (`rook.transcript/1`), `resume` (through `proc.start`), `send`. |
 | Session inbox | `rook/worker/session_messages.py`, `codex_input.py` | Claude: the peer messaging socket (arrives as a user turn; `crossSessionInbound` decides hold/accept). Codex: app-server control socket, or typing into Konsole over D-Bus. |
@@ -33,7 +33,7 @@ changes this document in the same PR.
 | Web | Dashboard **Sessions** tab (`work.js`: worklog or classic), **Work** tab (tasks) | Two views of sessions, a separate task board. |
 | Claude Code mod | `integrations/claude-code/` | Pane with Bands, Sessions (calls `claude-history` directly), Deck, Settings. |
 | Tasks and handoffs | `rook_task`, `rook_handoff_*`, journal | Work tracking; `ROOK_WORK_SESSION` env links a Rook-launched terminal to its hub session. |
-| Home agent | `rook/hub/plugins/home/`, Manage > Home agent (`home.js`) | Hub LLM reachable as `@home` in chat rooms and `home.ask`. Config page only, no chat on the page. |
+| Home agent | `rook/hub/plugins/home/`, Manage > Home agent (`home.js`) | Hub LLM reachable as `@home` in chat rooms and `home.ask`. Config page with a chat panel (workstream E, polls the shared 1:1 room). |
 
 The pieces work; they disagree. A Claude session has a session id, maybe a
 terminal id, maybe a proc handle, maybe a console room, maybe a hub work
@@ -89,19 +89,22 @@ How the worker fills the record (as built, `rook/worker/plugins/sessions.py`):
   it; `closed` otherwise. Activity detection: Linux `/proc`; macOS `ps` plus
   `lsof` for open transcripts; Windows the process snapshot (no command
   lines there, so only Claude's markers count, checked against the process
-  start time). Codex sessions on Windows are not detected as live yet.
+  creation FILETIME Claude records as `procStart`). Codex sessions on
+  Windows are not detected as live yet.
 - **origin**: `rook` while the worker still has the Rook terminal (running,
   or up to 15 minutes after it ended); `external` otherwise, including a
   closed session that once ran in a Rook terminal.
 - **native_id** of a Rook terminal: the `resume` id, else the session the
   terminal's process (or its child) holds once the agent reports it, else
   the terminal id. The key changes when the native id appears.
-- **input**: `inbox` when the session has a reachable inbox and the policy
+- **input**: a reachable inbox is `session_messages.messageable`: Claude's
+  Unix socket on Linux/macOS or its named pipe on Windows, Codex's control
+  socket or Konsole. `inbox` when the session has one and the policy
   is `accept` or `unknown`; else `pty` when a Rook terminal runs it; else
   `inbox` when the policy is `hold` (the message will wait for approval);
   else `none`. `refuse` never routes to the inbox.
-- **inbox_policy** (Claude): the mod's live `inbound` from the mirror
-  spool's `session.start`, else `crossSessionInbound` from managed settings,
+- **inbox_policy** (Claude): the mod's live `inbound` from the latest
+  `session.start` in the mirror spool, else `crossSessionInbound` from managed settings,
   else the user's `~/.claude/settings.json`. Its `default` holds while
   permissions are bypassed: `--dangerously-skip-permissions` or
   `--permission-mode bypassPermissions` on the process command line, or
@@ -110,8 +113,9 @@ How the worker fills the record (as built, `rook/worker/plugins/sessions.py`):
   (Windows) a default the settings do not decide is `unknown`. Codex:
   `accept` when it has an inbox, else `unknown`; shells and Hermes
   `unknown`.
-- **view.mirror**: a spool file exists at the §3.4 path (or its rotated
-  `.1.jsonl`). **view.transcript**: claude/codex with a known native id.
+- **view.mirror**: the session has a spool (§3.4; read through
+  `rook.worker.session_mirror.spools()` / `chunks()`, the same helpers
+  `sessions.mirror` uses). **view.transcript**: claude/codex with a known native id.
 - **links**: the worker only knows `work_session` (the hub session a Rook
   terminal was launched for); the hub adds the rest.
 - Extra fields that may appear: `activity` (`working`/`ready`/`pending`),
@@ -137,7 +141,7 @@ not want a wrapper. So there are three tiers, and the page always shows the
 best one available:
 
 1. **Terminal** (raw bytes, full control). Sessions started or resumed by
-   Rook. Exists today on Linux/macOS; Windows needs ConPTY (workstream D).
+   Rook. Linux/macOS (PTY) and Windows 10 1809+ (ConPTY, workstream D).
 2. **Mirror** (live events, near real time). A Claude Code session with the
    Rook mod installed writes its own events (prompt, streamed assistant
    text, tool calls and results, turn end, session start/end) to a spool
@@ -155,7 +159,13 @@ is waiting for approval on that machine.
 
 **Take over.** The mod adds `/rook-move` to Claude Code: it resumes the same
 conversation in a Rook terminal on the same host and exits the local Claude
-Code, so from then on the session is tier 1. The Sessions page cannot move a
+Code, so from then on the session is tier 1. Two processes must never hold
+one session, so the mod calls `work.stream.open(harness="claude",
+resume=<id>, cwd=<cwd>, handoff_pid=<its own pid>)`: the worker returns the
+terminal at once and starts the harness only after that pid has exited (it
+gives up after 2 minutes), then the mod runs `/exit`. The pid comes from
+Claude Code's own PID marker (`~/.claude/sessions/<pid>.json`); without one
+the mod does not move and says to `/exit` and resume from the Sessions page. The Sessions page cannot move a
 live external session by itself (only the person at that terminal can end
 it); it shows the hint "run /rook-move there" on such sessions, and offers
 **Resume in a Rook terminal** once the session is closed.
@@ -172,33 +182,70 @@ overridable by `ROOK_WORKER_HOME`. One JSON object per line:
 
 | `type` | Fields |
 |---|---|
-| `session.start` | `cwd`, `title?`, `model?`, `pid`, `version` (Claude Code), `inbound` (accept/hold/refuse/default) |
-| `prompt` | `text`, `from` (`person` or `peer`) |
-| `assistant.delta` | `text` (streamed) |
+| `session.start` | `cwd`, `title?`, `model?`, `pid` (null when Claude Code recorded none), `version` (Claude Code), `inbound` (accept/hold/refuse/default) |
+| `prompt` | `text`, `from` (`person` or `peer`), `origin` (Claude Code's own word for where it came from: `composer`, `bridge`, `peer`, …) |
+| `assistant.delta` | `text` (streamed; the pieces of one flush, about 250 ms, arrive as one event) |
 | `assistant.done` | `text` (the full message, so a late viewer needs no deltas) |
 | `tool.call` | `id`, `name`, `input` (clipped to 2,000 chars) |
 | `tool.result` | `id`, `ok`, `text` (clipped to 4,000 chars) |
-| `turn.end` | `stop_reason?` |
+| `turn.end` | `stop_reason?` (`answer`, `aborted`, `refusal`, `error`) |
 | `state` | `state` (`working`, `idle`, `waiting` (on a permission prompt)) |
 | `session.end` | `reason?` |
 
-Rules: append-only; `seq` increases by one per line; the mod rotates to
-`<native_id>.1.jsonl` past 4 MB and the worker reads across the rotation;
-the worker deletes spools of closed sessions after 7 days. The spool is
-written with mode 0600 (owner-only ACL on Windows). Secrets: the mod runs
-text through the same masking the band uses where available; tool inputs
-and results are clipped, never expanded.
+Only the main conversation is mirrored; a subagent's work shows in its
+tool result. Readers ignore fields they do not know.
 
-Worker cap: `sessions.mirror(agent, native_id, cursor=0, wait=0)` returns
-`{ok, events: [...], cursor, done}`, long-polling like `work.stream.read`
-(wait up to 25 s).
+**Chunks.** The mod API has no append, so the spool is cut into chunks and
+the mod rewrites the newest chunk whole on each flush (at most one write per
+250 ms, never awaited by a hook): `<native_id>.jsonl`, then
+`<native_id>.1.jsonl`, `<native_id>.2.jsonl`, … each up to 256 KiB. A chunk
+is never written again once the next exists. Past 64 chunks (16 MiB) the mod
+empties the oldest (it cannot delete); readers skip empty chunks. A reader
+counts only whole lines (ending in a newline) and skips a line that does not
+parse, so a read that catches a rewrite half done just returns fewer events.
+
+Rules: `seq` increases by one per line across the chunks (a reload of the
+mod, or a `/resume` of the same session in a new process, reads the last
+`seq` and carries on); the worker deletes spools of closed sessions after 7
+days (a spool with no `session.end` whose process may still run is kept).
+The mod writes only where the worker's state dir already exists, and only
+while its `mirror` option ("Mirror this session to Rook", default on) is on;
+off, it writes nothing and creates no folder. The spool folder is owner-only:
+0700 with 0600 chunks on POSIX. On Windows, `icacls <state>\mirror
+/inheritance:r /grant:r *<user SID>:(OI)(CI)F *S-1-5-18:(OI)(CI)F`: the
+person's own SID (from `whoami /user`, so a domain account is never
+ambiguous; `DOMAIN\user` if that fails) plus SYSTEM. The band worker
+installs as a logon scheduled task running as the person (elevated), and the
+older `rook/remote/worker.py` installer can run it as an NSSM service under
+LocalSystem, so both must be able to read the spool. If the person cannot be
+named, the folder keeps its inherited ACL. Secrets: the mod has no access to the
+vault, so it masks nothing itself; the hub masks known vault values in every
+reply that crosses it, `sessions.mirror` included. Tool inputs and results are
+clipped, never expanded.
+
+Worker cap: `sessions.mirror(agent, native_id, cursor=0, wait=0, max_events=500)`
+returns `{ok, events: [...], cursor, done, exists}`, long-polling like
+`work.stream.read` (wait up to 25 s). `cursor` is the last `seq` the caller
+has (0 for everything); pass the returned `cursor` back. `done` is true when
+the last event is `session.end`, or when the process of the last
+`session.start` is gone (POSIX only). `exists` is false when there is no
+spool. `rook.worker.session_mirror.spools()` lists the spools on the host,
+for the catalog's `view.mirror`.
+
+The mirror plugin (`rook/worker/plugins/session_mirror.py`) shares the
+`sessions` namespace with the catalog plugin. The loader registers caps by
+their full name and refuses only a duplicate cap, so both load side by side.
+Two things key on the namespace and would collide: `host.plugin("sessions")`
+(a `DEPENDS` lookup) finds the first one loaded, and a heartbeat or settings
+schema is filed under the namespace. The mirror plugin has neither; the
+catalog plugin's heartbeat (`hb.sessions`, §3.5) is the only one there.
 
 ### 3.5 Worker caps
 
 `sessions.list/follow/send/stop` live in their own plugin,
 `rook/worker/plugins/sessions.py` (namespace `sessions`), because they work
-on every OS (history, inboxes, process evidence) while the `terminals`
-plugin needs a PTY. `sessions.mirror` is in `session_mirror.py` (same
+wherever there is agent history, inboxes or process evidence, while the
+`terminals` plugin needs a PTY (or ConPTY on Windows 10 1809+). `sessions.mirror` is in `session_mirror.py` (same
 namespace). Old caps stay as thin aliases for at least one release.
 
 - `sessions.list(limit=20, offset=0, query="", live_only=false)` →
@@ -207,7 +254,7 @@ namespace). Old caps stay as thin aliases for at least one release.
   and native id (scans the newest 500 transcripts per agent); `live_only`
   drops closed ones. `limit` up to 200. Supersedes `work.sessions`, which
   keeps its old shape for the worklog page and older hubs. Risk read.
-- `sessions.mirror(agent, native_id, cursor, wait)` (above; workstream B).
+- `sessions.mirror(agent, native_id, cursor, wait, max_events)` (above; its own plugin, `session_mirror`).
 - `sessions.follow(agent, native_id, offset=0, version="")` → the
   `claude-history.follow` / `codex-history.follow` reply (`unchanged`, or
   `messages`, `version`, `replace_from`, …) plus `agent`, `native_id`.
@@ -228,15 +275,17 @@ namespace). Old caps stay as thin aliases for at least one release.
   started outside Rook is refused (end it on its host, or `/rook-move`); a
   closed one returns `{ok: true, stopped: null}`. Risk exec, destructive.
 - `work.stream.*` unchanged except `work.stream.open(remote_control=label)`
-  (claude only) and a `session` field in terminal info. `*-history.resume`
+  (claude only), `work.stream.open(handoff_pid=…)` (§3.3, Take over), a
+  `session` field in terminal info, and ConPTY on Windows (workstream D:
+  the same caps, so resume and `sessions.send` keys work there too). `*-history.resume`
   delegates to `work.stream.open(harness=agent, resume=id, cwd=…)` where
   the worker has `work.stream.open`, and returns `terminal` (the terminal
   id) instead of `handle`; `*-history.resumed` entries carry `terminal` or
   `handle`. Workers without `work.stream` keep the `proc.*` path.
 - Heartbeat: `hb.sessions = {live, idle}`, recounted every 2 minutes from
   process evidence and terminals only (no transcript reads) and after every
-  `sessions.list`. It sits under `sessions`, not `work`, so Windows workers
-  (no `terminals` plugin) report it too.
+  `sessions.list`. It sits under `sessions`, not `work`, so a worker
+  without the `terminals` plugin (no PTY/ConPTY) reports it too.
 
 ### 3.6 Hub
 
@@ -323,7 +372,13 @@ are covered. Tests: browser tests in `tests/browser_*.py`.
 **D. Windows terminals.** ConPTY behind `work.stream.*` on Windows
 (pywinpty or ctypes ConPTY), so new and resumed sessions stream from
 Windows workers; Claude inbox on Windows (named pipe if that is what Claude
-Code uses there); Codex control socket path on Windows.
+Code uses there); Codex control socket path on Windows. *Done:* pure-ctypes
+ConPTY with a kill-on-close Job Object, PowerShell as the shell, Claude's
+named-pipe inbox (`\\.\pipe\LOCAL\cc-msg-<hex>`, FILETIME `procStart`,
+owner/DACL checks, `GetNamedPipeServerProcessId`). Codex has no control
+socket on Windows (its control endpoint is a Unix socket Python cannot reach
+there), so Codex input on Windows goes through a Rook terminal. Details and
+the platform table: `docs/web/worklog.md`.
 
 **E. Home agent chat.** A chat panel on Manage > Home agent: talks to the
 home agent in a two-person room through the existing chat store (so the

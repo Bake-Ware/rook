@@ -133,6 +133,7 @@ _TABLE_SPEC = {
     "work.export": "R s",
     "sessions.list": "R", "sessions.follow": "R s", "sessions.send": "X",
     "sessions.stop": "X d",
+    "sessions.mirror": "R s",
     # A.2 hub caps (worker `rook`)
     "identity.whoami": "R", "band.workers": "R", "band.caps": "R",
     "secret.list": "R", "secret.log": "R s", "secret.get": "A s", "secret.set": "A d",

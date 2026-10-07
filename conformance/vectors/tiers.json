@@ -567,6 +567,12 @@
   "sessions.list": {
    "tier": "read"
   },
+  "sessions.mirror": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
   "sessions.send": {
    "tier": "exec"
   },

@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, McpToolResult, Register } from 'claude-code'
 
-import type { BandInfo, Item, Roster, SessionMeta, SettingRow, View, Worker } from '../types'
+import type { BandInfo, Item, MovePlan, Roster, SessionMeta, SettingRow, View, Worker } from '../types'
 import { groupBands, fleetBuild, HUB_BAND, parseBands, parseWorkers, STALE_SECS } from './bands'
 import { deckItems, findWorker, hostedCount, hostingConfig, hostingPrompt, paneText } from './pane'
 import type { HostingConfig } from './pane'
@@ -23,6 +23,7 @@ import {
   LOAD_MESSAGES,
   loadText,
   parseHits,
+  parseCatalog,
   parseMessages,
   parseReply,
   parseSessions,
@@ -35,6 +36,22 @@ import {
 import type { Raw, Source } from './sessions'
 import { INBOUND, INBOUND_HELP, INBOUND_MENU, inboundFromFile, pickSettings, showValue } from './settings'
 import { asRecord } from './sessions'
+import {
+  assistantText,
+  claudeDir,
+  emit,
+  emitDelta,
+  emitPrompt,
+  emitState,
+  endMirror,
+  newMirror,
+  sessionPid,
+  startMirror,
+  toolInput,
+  toolOutput,
+  workerPlace,
+} from './mirror'
+import type { MirrorIO } from './mirror'
 
 const PANE = 'rook-bands'
 const TITLE = 'Rook'
@@ -272,6 +289,36 @@ async function sources($: EngineInterface, scope: View['scope']): Promise<Source
     )
 }
 
+// Workers whose build answers no `sessions.list`: asked through `<agent>-history.pull`.
+const NO_CATALOG = new Set<string>()
+
+/** One worker's newest sessions from its `sessions.list`; undefined where it has none. */
+async function catalog(
+  $: EngineInterface,
+  group: Source[],
+  limit: number,
+): Promise<SessionMeta[] | undefined> {
+  const first = group[0]
+  if (first === undefined || NO_CATALOG.has(first.workerId)) return undefined
+  try {
+    const result = await rookCall($, first.workerId, 'sessions.list', { limit })
+
+    return parseCatalog(result, first, group.map(source => source.agent))
+  } catch (error) {
+    if (/no such cap|unknown cap/i.test(reason(error))) NO_CATALOG.add(first.workerId)
+
+    return undefined
+  }
+}
+
+/** A worker's sources, one group per worker, in roster order. */
+function byWorker(from: Source[]): Source[][] {
+  const groups = new Map<string, Source[]>()
+  for (const source of from) groups.set(source.workerId, [...(groups.get(source.workerId) ?? []), source])
+
+  return [...groups.values()]
+}
+
 /** Every history worker's newest sessions, or the hits of a search, merged. */
 async function listSessions(
   $: EngineInterface,
@@ -290,23 +337,32 @@ async function listSessions(
   })
   try {
     const from = await sources($, scope)
+    const limit = scope === undefined ? FLEET_LIMIT : SCOPED_LIMIT
+    // A worker with the session catalog answers for all its agents at once;
+    // an older one is asked agent by agent. A search goes agent by agent.
+    const groups = query === undefined ? byWorker(from) : from.map(source => [source])
     const settled = await Promise.allSettled(
-      from.map(async source =>
+      groups.map(async group =>
         query === undefined
-          ? parseSessions(
-              await historyCall($, source, 'pull', {
-                limit: scope === undefined ? FLEET_LIMIT : SCOPED_LIMIT,
-              }),
-              source,
-            )
-          : parseHits(
-              await historyCall($, source, 'search', { query, limit: SEARCH_LIMIT }),
-              source,
-            ),
+          ? ((await catalog($, group, limit)) ??
+            (
+              await Promise.all(
+                group.map(async source =>
+                  parseSessions(await historyCall($, source, 'pull', { limit }), source),
+                ),
+              )
+            ).flat())
+          : (
+              await Promise.all(
+                group.map(async source =>
+                  parseHits(await historyCall($, source, 'search', { query, limit: SEARCH_LIMIT }), source),
+                ),
+              )
+            ).flat(),
       ),
     )
     const failed = settled.flatMap((one, index) =>
-      one.status === 'rejected' ? [`${from[index]?.workerName}: ${reason(one.reason)}`] : [],
+      one.status === 'rejected' ? [`${groups[index]?.[0]?.workerName}: ${reason(one.reason)}`] : [],
     )
     const sessions = settled
       .flatMap(one => (one.status === 'fulfilled' ? one.value : []))
@@ -619,6 +675,144 @@ async function refreshTab($: EngineInterface): Promise<void> {
   return listSessions($, at.scope, at.query)
 }
 
+// ---- /rook-move: this conversation goes on in a Rook terminal on this host
+
+/** How long the worker waits for this Claude Code to exit before it gives up. */
+const HANDOFF_MINUTES = 2
+
+/** Everything a move needs, or the reason it cannot happen here. */
+async function movePlan($: EngineInterface): Promise<MovePlan> {
+  const inTerminal = await $.env.get('ROOK_WORK_TERMINAL')
+  if (inTerminal !== undefined && inTerminal !== '') {
+    throw new Error('this session already runs in a Rook terminal: it is on the Sessions page as it is')
+  }
+  const io = mirrorIO($)
+  const place = await workerPlace(io)
+  if (place === undefined) throw new Error('no Rook worker is installed on this host')
+  let workerId = ''
+  try {
+    workerId = (await $.fs.read(`${place.state}${place.sep}worker_id`)).trim()
+  } catch {
+    // Said below.
+  }
+  if (workerId === '') throw new Error('the Rook worker on this host has not enrolled yet (no worker id)')
+  const [sessionId, cwd] = await Promise.all([$.session.id(), $.session.cwd()])
+  const pid = await sessionPid(io, await claudeDir(io), sessionId)
+  if (pid === undefined) {
+    throw new Error(
+      'Claude Code did not record a process id for this session, so the move could not wait for it to end. ' +
+        'Run /exit, then resume it from the Sessions page.',
+    )
+  }
+  let { workers } = await read($, roster)
+  if (workers.length === 0 && (await refresh($, true))) workers = (await read($, roster)).workers
+  const workerName = workers.find(worker => worker.id === workerId)?.name ?? 'this host'
+
+  return { workerId, workerName, sessionId, cwd, pid }
+}
+
+/** Opens the pane on the move's confirmation; nothing moves until the person says yes. */
+async function askMove($: EngineInterface): Promise<string> {
+  void $.ui.open({ id: PANE, title: TITLE }).catch(() => undefined)
+  await set($, { ...CLEAR, confirm: 'move', move: undefined, busy: true })
+  try {
+    const move = await movePlan($)
+    await set($, { busy: undefined, move })
+
+    return `Move to a Rook terminal on ${move.workerName}? Confirm in the Rook pane (y), or cancel (n).`
+  } catch (error) {
+    await set($, { busy: undefined, move: undefined, error: `cannot move: ${reason(error)}` })
+
+    return `Cannot move this session: ${reason(error)}`
+  }
+}
+
+const OLD_WORKER =
+  'the worker on this host cannot take a session over yet: it needs Rook terminals (Linux or macOS) and a build with handoff_pid'
+
+/** The person said yes: the worker opens the terminal, then this Claude Code exits. */
+async function doMove($: EngineInterface): Promise<void> {
+  const { move } = await read($, view)
+  if (move === undefined) return
+  await set($, { ...CLEAR, confirm: 'move', busy: true, note: `starting a Rook terminal on ${move.workerName}…` })
+  try {
+    const opened = await rookCall($, move.workerId, 'work.stream.open', {
+      harness: 'claude',
+      resume: move.sessionId,
+      cwd: move.cwd,
+      handoff_pid: move.pid,
+    })
+    const terminal = String(opened.id ?? '')
+    await set($, {
+      busy: undefined,
+      move: { ...move, terminal },
+      note:
+        `Moved: this conversation continues in Rook terminal ${terminal} on ${move.workerName}. ` +
+        'Watch and type in it from the Sessions page. Closing this Claude Code now…',
+    })
+    void $.ui.toast('rook: this session continues on the Sessions page', { timeoutMs: 8000 })
+    $.clock.after(1500, () => void exitHere($))
+  } catch (error) {
+    const why = reason(error)
+    await set($, {
+      busy: undefined,
+      note: undefined,
+      move: undefined,
+      error: /no such cap|unknown cap|unexpected keyword|handoff_pid/i.test(why) ? OLD_WORKER : `move failed: ${why}`,
+    })
+  }
+}
+
+/** Ends this Claude Code so the Rook terminal can resume the session. */
+async function exitHere($: EngineInterface): Promise<void> {
+  const tell = (why: string) =>
+    set($, {
+      error:
+        `Claude Code could not close itself (${why}). Type /exit now: the Rook terminal waits ` +
+        `${HANDOFF_MINUTES} minutes for this one to end, then resumes the conversation.`,
+    })
+  try {
+    const names = (await $.command.list()).map(command => command.name)
+    if (!names.includes('exit')) return void (await tell('no /exit command here'))
+    await $.command.run({ command: 'exit' })
+  } catch (error) {
+    await tell(reason(error))
+  }
+}
+
+// ---- the session mirror: this session's events, served by the worker as sessions.mirror
+
+const mirror = newMirror()
+
+/** What the mirror and /rook-move read and write, through this session's `$`. */
+function mirrorIO($: EngineInterface): MirrorIO {
+  const env = {
+    OS: () => $.env.get('OS'),
+    ROOK_WORKER_HOME: () => $.env.get('ROOK_WORKER_HOME'),
+    USERPROFILE: () => $.env.get('USERPROFILE'),
+    HOME: () => $.env.get('HOME'),
+    USERNAME: () => $.env.get('USERNAME'),
+    USERDOMAIN: () => $.env.get('USERDOMAIN'),
+    CLAUDE_CONFIG_DIR: () => $.env.get('CLAUDE_CONFIG_DIR'),
+  }
+
+  return {
+    env: name => env[name](),
+    exists: path => $.fs.exists(path),
+    list: path => $.fs.list(path),
+    read: path => $.fs.read(path),
+    write: (path, text) => $.fs.write(path, text),
+    run: (argv, init) => $.process.run(argv, init),
+    now: () => $.clock.now(),
+    after: (ms, fn) => void $.clock.after(ms, fn),
+    sessionId: () => $.session.id(),
+    cwd: () => $.session.cwd(),
+    model: () => $.session.model(),
+    version: () => $.session.version().then(v => v.version),
+    settings: () => $.settings.read(),
+  }
+}
+
 // ---- the pane as a tool: Claude reads what it shows and drives it
 
 async function drive($: EngineInterface, input: Raw): Promise<string> {
@@ -671,13 +865,21 @@ async function drive($: EngineInterface, input: Raw): Promise<string> {
 export const register: Register = (on, options) => {
   // The hosting sync is the person's own deployment's: off unless they turn it on.
   const hosting: HostingConfig | undefined = hostingConfig(options)
+  // Mirroring is on unless the person turned it off (rook.mirror); off writes nothing.
+  const isMirrored = options.mirror !== false
 
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'rook-bands',
       description: 'Show rook in a pane: bands and workers, sessions across the fleet, the work deck',
     })
+    await $.command.register({
+      name: 'rook-move',
+      description: 'Move this conversation into a Rook terminal on this host, watchable and typeable from the Sessions page',
+    })
     await $.tool.register(PANE_TOOL_SPEC)
+    // Mirrored for the Sessions page when a Rook worker lives on this host.
+    if (e.isInteractive && isMirrored) startMirror(mirrorIO($), mirror, e.cwd)
     // Unasked, the engine seats a pane only in a wide terminal: say how to get it.
     void $.ui.open({ id: PANE, title: TITLE }).then(opened => {
       if (opened.isPlaced) return connect($)
@@ -704,7 +906,22 @@ export const register: Register = (on, options) => {
   on('tool.call', async ($, e, next) => {
     // The tool's own arguments sit beside `tool` on the event.
     const call = asRecord(e)
-    if (call.tool !== PANE_TOOL) return next(e)
+    if (call.tool !== PANE_TOOL) {
+      // Mirrored (the main conversation's calls; a subagent's show in its result).
+      if (e.agentId !== undefined) return next(e)
+      const id = e.tool_use_id ?? ''
+      emit(mirrorIO($), mirror, { type: 'tool.call', id, name: String(e.tool), input: toolInput(e) })
+      try {
+        const result = await next(e)
+        emit(mirrorIO($), mirror, { type: 'tool.result', id, ...toolOutput(result) })
+        emitState(mirrorIO($), mirror, 'working')
+
+        return result
+      } catch (error) {
+        emit(mirrorIO($), mirror, { type: 'tool.result', id, ok: false, text: reason(error) })
+        throw error
+      }
+    }
     let result: string
     try {
       result = await drive($, call)
@@ -726,6 +943,58 @@ export const register: Register = (on, options) => {
     void refresh($)
 
     return { text: 'Rook pane opened.' }
+  })
+
+  on('command.run', { command: 'rook-move' }, async $ => ({ text: await askMove($) }))
+
+  // ---- the session mirror. Each hook only queues an event; the writes are
+  // batched on a timer, so no turn waits on the disk.
+
+  on('prompt.submit', async ($, e, next) => {
+    emitPrompt(mirrorIO($), mirror, e.text, e.origin.kind)
+
+    return next(e)
+  })
+
+  on('turn.start', async ($, e, next) => {
+    emitState(mirrorIO($), mirror, 'working')
+
+    return next(e)
+  })
+
+  on('turn.step', async function* ($, e, next) {
+    const stream = next(e)
+    if (e.agentId !== undefined) return yield* stream
+    for await (const chunk of stream) {
+      if (chunk.kind === 'text') emitDelta(mirrorIO($), mirror, chunk.text)
+      yield chunk
+    }
+    const step = await stream.result
+    if (step.answer !== '') emit(mirrorIO($), mirror, { type: 'assistant.done', text: assistantText(step.answer) })
+
+    return step
+  })
+
+  on('tool.check', async ($, e, next) => {
+    const verdict = await next(e)
+    if (verdict.decision === 'ask') emitState(mirrorIO($), mirror, 'waiting')
+
+    return verdict
+  })
+
+  on('turn.complete', async ($, e, next) => {
+    if (e.agentId === undefined) {
+      emit(mirrorIO($), mirror, { type: 'turn.end', stop_reason: e.reason })
+      emitState(mirrorIO($), mirror, 'idle')
+    }
+
+    return next(e)
+  })
+
+  on('session.end', async ($, e, next) => {
+    await endMirror(mirrorIO($), mirror, e.reason).catch(() => undefined)
+
+    return next(e)
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
@@ -812,6 +1081,40 @@ export const register: Register = (on, options) => {
       </Box>
     )
     const MOVE = 'tab / arrows move · enter opens · esc returns to the prompt'
+
+    if (at.confirm === 'move') {
+      const plan = at.move
+      const isAsking = plan !== undefined && plan.terminal === undefined && at.busy !== true
+
+      return (
+        <Box flexDirection="column">
+          {tabs}
+          <Text bold>Move this conversation to a Rook terminal</Text>
+          {plan !== undefined && (
+            <Text wrap="wrap">
+              {`Resume it on ${plan.workerName} in ${home(plan.cwd)}, then close this Claude Code. ` +
+                'From then on it lives on the Sessions page: watch it, type into it, stop it from any browser. ' +
+                `The terminal waits up to ${HANDOFF_MINUTES} minutes for this one to end.`}
+            </Text>
+          )}
+          {status}
+          {at.busy !== true && plan?.terminal === undefined && (
+            <Box flexDirection="row" columnGap={2} marginTop={1}>
+              {isAsking && (
+                <Button key="move-yes" variant="primary" hotkey="y" label="y · move it" onPress={() => doMove($)} />
+              )}
+              <Button
+                key="move-no"
+                hotkey="n"
+                label={isAsking ? 'n · cancel' : 'n · close'}
+                onPress={() => set($, { ...CLEAR, move: undefined })}
+              />
+            </Box>
+          )}
+          {keys('y moves this conversation and closes Claude Code here · n keeps it here')}
+        </Box>
+      )
+    }
 
     if (tab === 'sessions' && at.screen === 'session' && at.session !== undefined) {
       const session = at.session

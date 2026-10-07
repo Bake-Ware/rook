@@ -36,7 +36,7 @@ import uuid
 from pathlib import Path
 
 from ..plugin import Plugin, capability
-from .. import agent_activity
+from .. import agent_activity, session_mirror
 
 log = logging.getLogger("rook.worker.plugins.sessions")
 
@@ -53,47 +53,43 @@ _INBOUND = ("accept", "hold", "refuse")
 
 # -- mirror spool (§3.4) ------------------------------------------------------------
 
-def worker_home() -> Path:
-    """The worker's state dir: ``~/.rook-band-worker`` (``%USERPROFILE%`` on
-    Windows), or ``ROOK_WORKER_HOME``."""
-    override = os.environ.get("ROOK_WORKER_HOME")
-    if override:
-        return Path(override).expanduser()
-    home = os.environ.get("USERPROFILE") if sys.platform == "win32" else None
-    return Path(home or Path.home()) / ".rook-band-worker"
-
-
-def mirror_spool_path(agent: str, native_id: str, part: int = 0) -> Path | None:
-    """Where the mod writes a session's events; ``part`` 1 is the rotated
-    file. None for ids that cannot be a file name."""
-    if agent not in AGENTS or not isinstance(native_id, str) or not _ID.fullmatch(native_id) \
-            or native_id.startswith("."):
-        return None
-    name = f"{native_id}.{part}.jsonl" if part else f"{native_id}.jsonl"
-    return worker_home() / "mirror" / agent / name
-
+# The spool layout and readers are rook.worker.session_mirror's; the catalog
+# only asks which spools exist and what inbound setting the mod saw.
 
 def mirror_spool_exists(agent: str, native_id: str) -> bool:
-    for part in (0, 1):
-        path = mirror_spool_path(agent, native_id, part)
-        if path is not None and path.is_file():
-            return True
-    return False
+    """A mirror spool exists for this session (``view.mirror``)."""
+    try:
+        return bool(session_mirror.chunks(agent, native_id))
+    except ValueError:      # not a name a spool can have
+        return False
+
+
+def mirror_spool_keys() -> set[tuple[str, str]]:
+    """``(agent, native_id)`` of every spool on this host, in one listing."""
+    try:
+        return {(row["agent"], row["native_id"]) for row in session_mirror.spools()}
+    except OSError:
+        return set()
 
 
 def mirror_inbound(agent: str, native_id: str) -> str | None:
-    """The ``inbound`` setting the mod saw at ``session.start`` (the first
-    spool line), or None."""
-    for part in (1, 0):  # the rotated file holds the oldest lines
-        path = mirror_spool_path(agent, native_id, part)
+    """The ``inbound`` setting the mod reported at the latest
+    ``session.start`` in the spool (a later process that resumes the session
+    reports again), or None. Reads chunks newest first and stops at the
+    first ``session.start``."""
+    try:
+        found = session_mirror.chunks(agent, native_id)
+    except ValueError:
+        return None
+    for _n, path in reversed(found):
         try:
-            with open(path, encoding="utf-8") as f:
-                first = json.loads(f.readline() or "{}")
-        except (OSError, TypeError, ValueError):
+            events = session_mirror.parse_lines(path.read_bytes())
+        except OSError:
             continue
-        if isinstance(first, dict) and first.get("type") == "session.start":
-            value = first.get("inbound")
-            return value if isinstance(value, str) else None
+        for ev in reversed(events):
+            if ev.get("type") == "session.start":
+                value = ev.get("inbound")
+                return value if isinstance(value, str) else None
     return None
 
 
@@ -262,7 +258,11 @@ class SessionsPlugin(Plugin):
         from .codex_history import _root as codex_root
         if _default_root().is_dir() or codex_root().is_dir():
             return True
-        return sys.platform != "win32" and os.name == "posix"   # shells in Rook terminals
+        # Shells in Rook terminals: a PTY, or ConPTY on Windows.
+        if sys.platform == "win32":
+            from .. import conpty
+            return conpty.available()
+        return os.name == "posix"
 
     def bind_worker(self, worker) -> None:
         self._worker = worker
@@ -399,6 +399,7 @@ class SessionsPlugin(Plugin):
                 if key[0] not in TRANSCRIPT_AGENTS or key[1] == term_of[key]["id"]:
                     total += 1
         out = []
+        spooled = await asyncio.to_thread(mirror_spool_keys)
         for (agent, sid), info in by_key.items():
             term = term_of.get((agent, sid))
             marker = procs["markers"].get(sid) if agent == "claude" else None
@@ -408,7 +409,7 @@ class SessionsPlugin(Plugin):
             out.append(record(agent, sid, worker=self._worker, meta=info["meta"], term=term,
                               marker=marker, live=live, activity=info["activity"],
                               messageable=info["messageable"], policy=policy,
-                              mirror=mirror_spool_exists(agent, sid)))
+                              mirror=(agent, sid) in spooled))
         out.sort(key=_rank)
         return out, total
 

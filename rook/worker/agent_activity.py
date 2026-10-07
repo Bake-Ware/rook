@@ -4,9 +4,12 @@ Linux reads ``/proc`` (open transcript files, exact resume arguments, Claude
 PID markers checked against the process start tick). macOS lists processes
 with ``ps`` (and ``lsof`` for open transcripts); Windows uses the Toolhelp
 process snapshot, which has no command lines, so there only Claude's PID
-markers count. Claude writes ``~/.claude/sessions/<pid>.json`` on every OS;
-off Linux a marker is trusted only while its PID is a plausible Claude
-process that started within a few minutes of the marker's ``startedAt``.
+markers count. Claude writes ``~/.claude/sessions/<pid>.json`` on every OS.
+A marker is trusted only while its PID is a plausible Claude process that is
+the one that wrote it: ``procStart`` must equal the process start (the
+/proc start tick on Linux, the creation FILETIME on Windows); where neither
+is available (macOS), the process must have started within a few minutes of
+the marker's ``startedAt``.
 """
 import json
 import os
@@ -102,8 +105,9 @@ def process_table(proc_root=Path('/proc')):
     """``{pid: {name, argv, ppid, started, zombie, proc_start}}`` for this host.
 
     ``argv`` is None where the platform hides command lines (Windows);
-    ``started`` is epoch seconds or None; ``proc_start`` is Linux's raw start
-    tick (what Claude records as ``procStart``)."""
+    ``started`` is epoch seconds or None; ``proc_start`` is what Claude
+    records as ``procStart``: the /proc start tick on Linux, the creation
+    FILETIME on Windows, None on macOS."""
     if proc_root.is_dir():
         return _linux_table(proc_root)
     if proc_root != Path('/proc'):
@@ -201,16 +205,16 @@ def _windows_table():
         entry.dwSize = ctypes.sizeof(Entry)
         more = kernel.Process32FirstW(snap, ctypes.byref(entry))
         while more:
-            pid, started = int(entry.th32ProcessID), None
+            pid, started, created = int(entry.th32ProcessID), None, None
             handle = kernel.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
             if handle:
                 times = [wintypes.FILETIME() for _ in range(4)]
                 if kernel.GetProcessTimes(handle, *(ctypes.byref(t) for t in times)):
                     ticks = (times[0].dwHighDateTime << 32) | times[0].dwLowDateTime
-                    started = (ticks - 116444736000000000) / 1e7
+                    started, created = (ticks - 116444736000000000) / 1e7, str(ticks)
                 kernel.CloseHandle(handle)
             table[pid] = dict(name=entry.szExeFile, argv=None, ppid=int(entry.th32ParentProcessID),
-                              zombie=False, started=started, proc_start=None)
+                              zombie=False, started=started, proc_start=created)
             more = kernel.Process32NextW(snap, ctypes.byref(entry))
     finally:
         kernel.CloseHandle(snap)

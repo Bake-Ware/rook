@@ -4,13 +4,20 @@ import os
 import re
 import shutil
 import stat
+import sys
 from pathlib import Path
 
 import aiohttp
 
 
 def control_socket():
-    home = Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex')))
+    if sys.platform == 'win32':
+        # Codex's app-server control endpoint is a Unix socket; Python on
+        # Windows has no AF_UNIX client (asyncio/aiohttp), and Codex creates
+        # none there today. Codex on Windows takes input through a Rook
+        # terminal (work.stream.write) instead.
+        return None
+    home =Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex')))
     path = Path(os.environ.get('ROOK_CODEX_CONTROL_SOCKET', str(home / 'app-server-control/app-server-control.sock')))
     try:
         info = path.lstat()

@@ -11,7 +11,7 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
 from test_band_management import portal  # noqa: F401 — fixture
-from rook.worker import agent_activity as aa
+from rook.worker import agent_activity as aa, session_mirror
 from rook.worker.plugins import sessions as sp
 from rook.worker.plugins.claude_history import ClaudeHistoryPlugin
 from rook.worker.plugins.codex_history import CodexHistoryPlugin
@@ -82,6 +82,13 @@ def test_markers_off_linux_use_start_time_against_pid_reuse(tmp_path):
     assert aa.claude_markers(home, reused, tmp_path / "missing") == {}
     other = {42: dict(win[42], name="explorer.exe")}
     assert aa.claude_markers(home, other, tmp_path / "missing") == {}
+    # Windows: Claude records the creation FILETIME as procStart; match it exactly.
+    ft = "133430000000000000"
+    (home / "sessions" / "42.json").write_text(json.dumps(
+        {"pid": 42, "sessionId": C1, "procStart": ft, "startedAt": started * 1000}))
+    exact = {42: dict(win[42], name="claude.exe", proc_start=ft)}
+    assert C1 in aa.claude_markers(home, exact, tmp_path / "missing")
+    assert aa.claude_markers(home, {42: dict(exact[42], proc_start="1")}, tmp_path / "missing") == {}
 
 
 def test_ps_table_and_active_sessions_elsewhere(monkeypatch, tmp_path):
@@ -137,18 +144,20 @@ def test_inbox_policy_layers(tmp_path, monkeypatch):
     assert sp.inbox_policy(str(project), bypass, inbound="default", home=home) == "refuse"
 
 
-def test_mirror_spool_paths(tmp_path, monkeypatch):
+def test_mirror_spool_through_the_shared_helpers(tmp_path, monkeypatch):
     monkeypatch.setenv("ROOK_WORKER_HOME", str(tmp_path))
-    assert sp.mirror_spool_path("claude", C1) == tmp_path / "mirror" / "claude" / f"{C1}.jsonl"
-    assert sp.mirror_spool_path("claude", "../etc") is None
-    assert sp.mirror_spool_path("claude", "..") is None
-    assert sp.mirror_spool_path("bogus", C1) is None
+    folder = tmp_path / "mirror" / "claude"
     assert not sp.mirror_spool_exists("claude", C1)
-    spool = sp.mirror_spool_path("claude", C1, 1)
-    spool.parent.mkdir(parents=True)
-    spool.write_text(json.dumps({"v": 1, "seq": 0, "type": "session.start", "inbound": "hold"}) + "\n")
-    assert sp.mirror_spool_exists("claude", C1)
-    assert sp.mirror_inbound("claude", C1) == "hold"
+    assert not sp.mirror_spool_exists("claude", "../etc") and sp.mirror_inbound("claude", "..") is None
+    assert sp.mirror_spool_keys() == set()
+    folder.mkdir(parents=True)
+    line = lambda seq, **kw: json.dumps({"v": 1, "seq": seq, **kw}) + "\n"
+    (folder / f"{C1}.jsonl").write_text(line(1, type="session.start", inbound="hold") + line(2, type="prompt"))
+    assert sp.mirror_spool_exists("claude", C1) and sp.mirror_inbound("claude", C1) == "hold"
+    # A later process resuming the session reports again, in a later chunk.
+    (folder / f"{C1}.1.jsonl").write_text(line(3, type="session.start", inbound="accept") + line(4, type="turn.end"))
+    assert sp.mirror_inbound("claude", C1) == "accept"
+    assert sp.mirror_spool_keys() == {("claude", C1)}
 
 
 # -- the worker plugin ----------------------------------------------------------------
@@ -261,9 +270,9 @@ async def test_list_filters_and_pages(plugin, tmp_path):
     assert [i["native_id"] for i in found["items"]] == [C2]
     page = await plugin.list(limit=2)
     assert len(page["items"]) == 2 and page["next_offset"] == 2
-    spool = sp.mirror_spool_path("claude", C1)
+    spool = session_mirror.mirror_root() / "claude" / f"{C1}.jsonl"
     spool.parent.mkdir(parents=True)
-    spool.write_text(json.dumps({"type": "session.start", "inbound": "accept"}) + "\n")
+    spool.write_text(json.dumps({"seq": 1, "type": "session.start", "inbound": "accept"}) + "\n")
     rec = next(i for i in (await plugin.list())["items"] if i["native_id"] == C1)
     assert rec["view"]["mirror"] is True and rec["inbox_policy"] == "accept"
 
@@ -388,6 +397,39 @@ def test_remote_control_launch_template():
     argv = build_argv("claude", "/bin/claude", resume=C1, remote_control="fix it")
     assert argv == ["/bin/claude", "--resume", C1, "--remote-control", "fix it"]
     assert "--remote-control" not in build_argv("codex", "/bin/codex", remote_control="x")
+
+
+@pytest.mark.skipif(__import__("os").name != "posix", reason="PTY test")
+@pytest.mark.asyncio
+async def test_remote_control_and_handoff_together(tmp_path, monkeypatch):
+    import subprocess
+    from rook.worker import termwire
+    from rook.worker.plugins import terminals
+    monkeypatch.setenv("ROOK_WORK_TERM_DIR", str(tmp_path / "terms"))
+    fake = tmp_path / "claude"
+    fake.write_text('#!/bin/sh\necho "STARTED $*"\nsleep 5\n')
+    fake.chmod(0o755)
+    monkeypatch.setattr(terminals, "_binary", lambda h: str(fake))
+    p = terminals.TerminalsPlugin()
+    old = subprocess.Popen(["sleep", "30"])     # the process handing the session over
+    try:
+        r = await p.open(harness="claude", cwd=str(tmp_path), resume=C2, remote_control="moved here",
+                         handoff_pid=old.pid, session="ws-1")
+        assert r["waiting"] and r["session"] == "ws-1"
+        old.terminate()
+        old.wait()
+        out, cursor = b"", 0
+        async with asyncio.timeout(8):
+            while b"STARTED" not in out:
+                got = await p.read(r["id"], cursor=cursor, wait=1)
+                out += termwire.decode(got["enc"], got["data"])
+                cursor = got["next"]
+        assert f"--resume {C2} --remote-control moved here".encode() in out
+    finally:
+        if old.poll() is None:
+            old.kill()
+            old.wait()
+        await p.stop()
 
 
 # -- hub merged list ---------------------------------------------------------------------

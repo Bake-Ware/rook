@@ -17,7 +17,7 @@ Preparation for public use.
   macOS and Windows too; `*-history.resume` opens a Rook terminal where the
   worker has one; the hub serves the merged list at
   `GET /account/work/sessions`; workers report `hb.sessions` counts. Claude
-  Code mod 0.2.2 stops a terminal-resumed session by closing its terminal.
+  Code mod 0.3.1 stops a terminal-resumed session by closing its terminal.
 - Dashboard workers page: a **3D view** beside list and grid (the hub as a
   rook, each worker a pawn on a polar board; a quiet worker's pawn tips over,
   a heartbeat sends a spark to the hub, a ring marks a worker that hosts

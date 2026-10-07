@@ -396,6 +396,12 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 | `worker.status` | — |  |
 | `worker.update` | url?, hub?, psk?, name?, manifest? | Install a worker bundle, optionally repoint at a new band, then restart. |
 
+**session_mirror**
+
+| Cap | Args | Does |
+|---|---|---|
+| `sessions.mirror` | agent, native_id, cursor=0, wait=0, max_events=500 | Live events of a session the Rook Claude Code mod mirrors on this host, those after `cursor` (the last `seq`… |
+
 **sessions**
 
 | Cap | Args | Does |
@@ -422,7 +428,7 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 | `work.sessions` | limit=20, offset=0, history=true, query='' | One catalog of this host's work: live terminals plus Claude/Codex history, newest first. |
 | `work.stream.close` | id | Stop the terminal's process (SIGHUP, then SIGKILL) and drop it. |
 | `work.stream.list` | — | Live and recently finished terminals on this worker. |
-| `work.stream.open` | harness='shell', cwd='', title='', model='', resume='', persona='', mcp_url='', mcp_token='', session='', remote_control='', cols=120, rows=32, buffer_bytes=262144 | Start a harness (shell\|claude\|codex\|hermes) under a PTY and return its terminal `id` immediately. |
+| `work.stream.open` | harness='shell', cwd='', title='', model='', resume='', persona='', mcp_url='', mcp_token='', session='', remote_control='', cols=120, rows=32, buffer_bytes=262144, handoff_pid=0 | Start a harness (shell\|claude\|codex\|hermes) under a PTY and return its terminal `id` immediately. |
 | `work.stream.read` | id, cursor=0, max_bytes=16384, wait=0, accept='tbz' | Output from byte `cursor` on. |
 | `work.stream.resize` | id, cols, rows | Set the terminal size in character cells (sends SIGWINCH). |
 | `work.stream.signal` | id, sig='INT' | Signal the terminal's process group: INT, TERM, HUP, KILL. |

@@ -15,6 +15,11 @@ sets the PTY window size, which delivers SIGWINCH to the foreground job. The
 child gets the PTY as its controlling terminal, so Ctrl-C and job control work
 as they would locally.
 
+On Windows (10 1809+) the same interface runs on a ConPTY pseudoconsole
+(:mod:`rook.worker.conpty`, pure ctypes): the child sits in a kill-on-close
+Job Object, Ctrl-C is the 0x03 byte, hang-up closes the pseudoconsole and
+kill terminates the job. The shell harness is PowerShell there.
+
 ``work.sessions`` lists live terminals plus the host's Claude/Codex history as
 one resumable catalog (the richer ``sessions.list`` in sessions.py supersedes
 it); ``work.export`` returns a historical transcript in the
@@ -33,12 +38,13 @@ import re
 import shutil
 import signal as _signal
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
 
 from ..plugin import Plugin, capability, place
-from .. import termwire
+from .. import conpty, termwire, winsec
 
 log = logging.getLogger("rook.worker.plugins.terminals")
 
@@ -52,9 +58,20 @@ MAX_READ = 32 * 1024
 MAX_WAIT = 25.0                     # long-poll ceiling, seconds
 COALESCE_SECS = 0.012               # gather a burst before answering a long-poll
 MAX_WRITE = 16 * 1024
+HANDOFF_SECS = 120.0                # how long a handoff waits for the old process to exit
 _ID = re.compile(r"[A-Za-z0-9_-]{1,100}")
 # Never hand the worker's own band secret to an agent's environment.
 _STRIP_ENV = ("ROOK_BAND_PSK", "ROOK_PSK", "ROOK_MCP_STATIC_TOKEN")
+_IS_WIN = sys.platform == "win32"
+# cmd.exe would interpret these inside arguments to a .cmd/.bat launcher.
+_CMD_META = re.compile(r'[\r\n"%^&|<>!()]')
+# The target of an npm cmd-shim: "%dp0%\node_modules\pkg\bin\cli.js" %*
+_NPM_SHIM = re.compile(r'"%~?dp0%?\\([^"%*\r\n]+?\.(?:js|cjs|mjs|exe))"', re.I)
+
+
+def _pid_alive(pid: int) -> bool | None:
+    from ..session_mirror import pid_alive
+    return pid_alive(pid)
 
 
 def _check_id(value: str, what: str = "id") -> str:
@@ -64,6 +81,15 @@ def _check_id(value: str, what: str = "id") -> str:
 
 
 def _binary(harness: str) -> str | None:
+    if _IS_WIN:
+        if harness == "shell":
+            return (shutil.which("powershell.exe") or shutil.which("pwsh.exe")
+                    or os.environ.get("COMSPEC") or shutil.which("cmd.exe"))
+        if harness == "claude":
+            from .claude_history import _claude_bin
+            return _claude_bin()
+        # PATHEXT order: a native .exe before an npm .cmd shim.
+        return shutil.which(harness)
     if harness == "shell":
         return os.environ.get("SHELL") or shutil.which("bash") or shutil.which("sh")
     if harness == "claude":
@@ -101,7 +127,10 @@ def build_argv(harness: str, binary: str, *, model: str = "", resume: str = "",
                remote_control: str = "") -> list[str]:
     """The launch template for one harness. Pure, so it is unit-testable."""
     if harness == "shell":
-        return [binary, "-l"] if os.path.basename(binary) in ("bash", "zsh", "fish", "sh") else [binary]
+        name = os.path.basename(binary.replace("\\", "/")).lower().removesuffix(".exe")
+        if name in ("powershell", "pwsh"):
+            return [binary, "-NoLogo"]
+        return [binary, "-l"] if name in ("bash", "zsh", "fish", "sh") else [binary]
     argv = [binary]
     if harness == "claude":
         if resume:
@@ -127,6 +156,48 @@ def build_argv(harness: str, binary: str, *, model: str = "", resume: str = "",
     return argv + persona_args(harness, persona)
 
 
+def _npm_shim_target(path: str) -> list[str] | None:
+    """[node, script] (or [exe]) behind an npm cmd-shim, so the harness runs
+    without cmd.exe re-parsing its arguments. None if it isn't one."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            m = _NPM_SHIM.search(f.read(16384))
+    except OSError:
+        return None
+    if not m:
+        return None
+    base = os.path.dirname(path)
+    target = os.path.normpath(os.path.join(base, *re.split(r"[\\/]", m.group(1))))
+    if not os.path.isfile(target):
+        return None
+    if target.lower().endswith(".exe"):
+        return [target]
+    node = os.path.join(base, "node.exe")
+    if not os.path.isfile(node):
+        node = shutil.which("node")
+    return [node, target] if node else None
+
+
+def windows_command(argv: list[str]) -> str:
+    """The CreateProcess command line for a harness argv on Windows. npm
+    installs CLIs as .cmd shims, which only cmd.exe can run and which would
+    let cmd.exe reinterpret our arguments (persona text, model names): run
+    the shim's real target instead, and fall back to cmd.exe only when no
+    argument contains a character cmd.exe treats specially."""
+    argv = [str(a) for a in argv]
+    if argv[0].lower().endswith((".cmd", ".bat")):
+        target = _npm_shim_target(argv[0])
+        if target:
+            argv = target + argv[1:]
+        else:
+            if any(_CMD_META.search(a) for a in argv):
+                raise ValueError(f"{os.path.basename(argv[0])} is a batch launcher; these launch "
+                                 "options cannot be passed to it safely")
+            comspec = os.environ.get("COMSPEC") or "cmd.exe"
+            return f'"{comspec}" /d /s /c "{conpty.cmdline(argv)}"'
+    return conpty.cmdline(argv)
+
+
 class _Term:
     """One PTY-backed process plus its output ring."""
 
@@ -144,6 +215,8 @@ class _Term:
         self.proc: asyncio.subprocess.Process | None = None
         self.pid: int | None = None
         self.master: int | None = None
+        self.conpty: conpty.ConPty | None = None      # Windows
+        self.wlock: asyncio.Lock | None = None
         self.cols = 120
         self.rows = 32
         self.limit = ring
@@ -155,6 +228,7 @@ class _Term:
         self.waiters: set[asyncio.Future] = set()
         self.files: list[str] = []      # per-session files to remove at close
         self.waiter_task: asyncio.Task | None = None
+        self.handoff_task: asyncio.Task | None = None   # waiting for the old process (handoff_pid)
 
     @property
     def running(self) -> bool:
@@ -224,8 +298,8 @@ class TerminalsPlugin(Plugin):
         self._probed = -1e9
 
     def available(self) -> bool:
-        if sys.platform == "win32":
-            return False
+        if _IS_WIN:
+            return conpty.available()
         try:
             import pty  # noqa: F401
             import termios  # noqa: F401
@@ -277,7 +351,7 @@ class TerminalsPlugin(Plugin):
 
     def _session_dir(self) -> Path:
         base = Path(os.environ.get("ROOK_WORK_TERM_DIR", "~/.rook-band-worker/terminals")).expanduser()
-        base.mkdir(mode=0o700, parents=True, exist_ok=True)
+        winsec.make_private_dir(base)
         return base
 
     def _cleanup_files(self, t: _Term) -> None:
@@ -295,15 +369,19 @@ class TerminalsPlugin(Plugin):
                    model: str = "", resume: str = "", persona: str = "",
                    mcp_url: str = "", mcp_token: str = "", session: str = "",
                    remote_control: str = "", cols: int = 120, rows: int = 32,
-                   buffer_bytes: int = DEFAULT_RING) -> dict:
+                   buffer_bytes: int = DEFAULT_RING, handoff_pid: int = 0) -> dict:
         """Start a harness (shell|claude|codex|hermes) under a PTY and return
         its terminal ``id`` immediately. ``resume`` is a Claude/Codex session id
         to continue. ``mcp_url``/``mcp_token`` inject a Rook MCP connection
         (env ROOK_MCP_URL/ROOK_MCP_TOKEN; claude also gets --mcp-config, codex
         -c mcp_servers.rook.*). ``session`` is the hub's Work session id,
         exported as ROOK_WORK_SESSION. ``remote_control`` (claude only) is a
-        Remote Control label, so the session also shows in claude.ai. Follow
-        output with work.stream.read."""
+        Remote Control label, so the session also shows in claude.ai.
+        ``handoff_pid`` (with ``resume``) is the
+        process that holds the session now, such as a Claude Code moving itself
+        here with /rook-move: the terminal is returned at once and the harness
+        starts once that process has exited (up to 2 minutes). Follow output
+        with work.stream.read."""
         self._reap()
         if harness not in HARNESSES:
             raise ValueError(f"harness must be one of {', '.join(HARNESSES)}")
@@ -312,10 +390,16 @@ class TerminalsPlugin(Plugin):
         cwd = cwd or os.path.expanduser("~")
         if not os.path.isabs(cwd) or not os.path.isdir(cwd):
             raise ValueError(f"working directory does not exist: {cwd}")
+        handoff_pid = int(handoff_pid or 0)
+        if handoff_pid and not resume:
+            raise ValueError("handoff_pid needs resume: it hands over a running session")
+        if handoff_pid and _pid_alive(handoff_pid) is not True:
+            handoff_pid = 0     # already gone: resume now, with the usual checks
         if resume:
             _check_id(resume, "resume session id")
             if harness not in ("claude", "codex"):
                 raise ValueError("resume is only supported for claude and codex")
+        if resume and not handoff_pid:
             from ..agent_activity import active_sessions
             try:
                 _paths, ids = active_sessions(harness)
@@ -349,9 +433,7 @@ class TerminalsPlugin(Plugin):
             env["ROOK_PERSONA"] = str(persona)[:100]
         if persona_text:
             ppath = self._session_dir() / f"persona-{tid}.md"
-            fd = os.open(ppath, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(persona_text)
+            winsec.write_private_file(ppath, persona_text)
             env["ROOK_PERSONA_FILE"] = str(ppath)
             t.files.append(str(ppath))
         mcp_config = ""
@@ -359,16 +441,21 @@ class TerminalsPlugin(Plugin):
             env.update(ROOK_MCP_URL=mcp_url, ROOK_MCP_TOKEN=mcp_token)
             if harness == "claude":
                 path = self._session_dir() / f"mcp-{tid}.json"
-                fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-                with os.fdopen(fd, "w") as f:
-                    json.dump({"mcpServers": {"rook": {"type": "http", "url": mcp_url,
-                               "headers": {"Authorization": f"Bearer {mcp_token}"}}}}, f)
+                winsec.write_private_file(path, json.dumps(
+                    {"mcpServers": {"rook": {"type": "http", "url": mcp_url,
+                     "headers": {"Authorization": f"Bearer {mcp_token}"}}}}))
                 mcp_config = str(path)
                 t.files.append(mcp_config)
         argv = build_argv(harness, binary, model=model, resume=resume,
                           mcp_url=mcp_url if mcp_token else "", mcp_config=mcp_config,
                           persona=persona_text,
                           remote_control=str(remote_control or "") if harness == "claude" else "")
+        if handoff_pid:
+            self.terms[tid] = t
+            t.append(b"[rook] waiting for the session's current process to exit...\r\n")
+            t.handoff_task = asyncio.create_task(self._handoff(t, handoff_pid, argv, cwd, env))
+            log.info("terminal %s waiting for pid %s to hand over %s", tid, handoff_pid, resume)
+            return {"ok": True, **t.info(), "waiting": True}
         try:
             await self._spawn(t, argv, cwd, env)
         except Exception:
@@ -377,6 +464,38 @@ class TerminalsPlugin(Plugin):
         self.terms[tid] = t
         log.info("terminal %s started: %s (pid %s)", tid, harness, t.pid)
         return {"ok": True, **t.info()}
+
+    async def _handoff(self, t: _Term, pid: int, argv: list[str], cwd: str, env: dict) -> None:
+        """Starts the harness once ``pid`` has exited; gives up after HANDOFF_SECS."""
+        loop = asyncio.get_running_loop()
+        end = loop.time() + HANDOFF_SECS
+        why = ""
+        try:
+            while _pid_alive(pid) is True:
+                if loop.time() >= end:
+                    why = "the session's current process did not exit within 2 minutes; nothing was resumed"
+                    break
+                await asyncio.sleep(0.25)
+            if not why:
+                from ..agent_activity import active_sessions
+                try:
+                    _paths, ids = active_sessions(t.harness)
+                except Exception:
+                    ids = set()
+                if t.resume.lower() in ids:
+                    why = "another process still holds that session; nothing was resumed"
+            if not why:
+                await self._spawn(t, argv, cwd, env)
+                log.info("terminal %s took over session %s (pid %s)", t.id, t.resume, t.pid)
+                return
+        except asyncio.CancelledError:
+            why = "closed before the handover"
+        except Exception as e:
+            why = f"could not start {t.harness}: {e}"
+        t.append(f"[rook] {why}\r\n".encode())
+        t.exit_code, t.ended = None, time.time()
+        self._cleanup_files(t)
+        t.wake()
 
     async def _persona_text(self, harness: str, persona: str) -> str:
         """The rendered persona for this launch from the hub
@@ -387,6 +506,8 @@ class TerminalsPlugin(Plugin):
         return str((got or {}).get("text") or "")
 
     async def _spawn(self, t: _Term, argv: list[str], cwd: str, env: dict) -> None:
+        if _IS_WIN:
+            return await self._spawn_conpty(t, argv, cwd, env)
         import pty
         import termios
         import fcntl
@@ -450,6 +571,60 @@ class TerminalsPlugin(Plugin):
         t.wake()
         log.info("terminal %s exited (%s)", t.id, code)
 
+    async def _spawn_conpty(self, t: _Term, argv: list[str], cwd: str, env: dict) -> None:
+        command = windows_command(argv)
+        pty = await asyncio.to_thread(conpty.ConPty.spawn, command, cwd, env, t.cols, t.rows)
+        t.conpty, t.pid, t.wlock = pty, pty.pid, asyncio.Lock()
+        loop = asyncio.get_running_loop()
+        eof = asyncio.Event()
+        exited: asyncio.Future = loop.create_future()
+
+        def _post_exit(code) -> None:
+            if not exited.done():
+                exited.set_result(code)
+
+        def _exit_watch() -> None:  # one blocking wait per terminal, off the loop
+            try:
+                code = pty.wait()
+            except Exception:
+                code = None
+            loop.call_soon_threadsafe(_post_exit, -1 if code is None else code)
+
+        pty.start_reader(lambda data: loop.call_soon_threadsafe(t.append, data),
+                         lambda: loop.call_soon_threadsafe(eof.set))
+        threading.Thread(target=_exit_watch, name=f"conpty-wait-{t.id}", daemon=True).start()
+        t.waiter_task = asyncio.create_task(self._wait_conpty(t, exited, eof))
+
+    async def _wait_conpty(self, t: _Term, exited: asyncio.Future, eof: asyncio.Event) -> None:
+        code = await exited
+        # Hang up and kill what is left in the job; the reader then drains the
+        # remaining output to EOF (its chunks are queued before the EOF mark).
+        await asyncio.to_thread(t.conpty.close)
+        try:
+            await asyncio.wait_for(eof.wait(), 3.0)
+        except asyncio.TimeoutError:
+            pass
+        t.exit_code, t.ended = code, time.time()
+        self._cleanup_files(t)
+        t.wake()
+        log.info("terminal %s exited (%s)", t.id, code)
+
+    async def _terminate_conpty(self, t: _Term) -> None:
+        # Hang-up first (CTRL_CLOSE_EVENT lets programs save), then the job.
+        for step, grace in (("hangup", 1.5), ("kill", 3.0)):
+            if not t.running:
+                break
+            try:
+                await asyncio.to_thread(getattr(t.conpty, step))
+            except OSError:
+                pass
+            try:
+                await asyncio.wait_for(asyncio.shield(t.waiter_task), grace)
+                break
+            except asyncio.TimeoutError:
+                continue
+        t.wake()
+
     def _close_master(self, t: _Term) -> None:
         if t.master is None:
             return
@@ -464,6 +639,16 @@ class TerminalsPlugin(Plugin):
         t.master = None
 
     async def _terminate(self, t: _Term) -> None:
+        if t.handoff_task is not None and not t.handoff_task.done():
+            t.handoff_task.cancel()
+            try:
+                await t.handoff_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            if t.proc is None and t.conpty is None and t.ended is None:  # cancelled before it ran
+                t.exit_code, t.ended = None, time.time()
+        if t.conpty is not None:
+            return await self._terminate_conpty(t)
         if t.running and t.proc is not None:
             for sig, grace in ((_signal.SIGHUP, 1.5), (_signal.SIGKILL, 3.0)):
                 try:
@@ -519,11 +704,21 @@ class TerminalsPlugin(Plugin):
         """Write raw input to the terminal (keystrokes, pastes; send "\\r" for
         Enter, "\\x03" for Ctrl-C). ``enc`` is t (text) or b (base64)."""
         t = self._get(id)
-        if not t.running or t.master is None:
+        if not t.running or (t.master is None and t.conpty is None):
             raise ValueError("terminal has exited")
         payload = termwire.decode(enc, data, limit=MAX_WRITE)
         if len(payload) > MAX_WRITE:
             raise ValueError(f"input larger than {MAX_WRITE} bytes; split it")
+        if t.conpty is not None:
+            async with t.wlock:  # keep pastes whole and in order
+                try:
+                    await asyncio.wait_for(asyncio.to_thread(t.conpty.write, payload), 5)
+                except asyncio.TimeoutError:
+                    raise ValueError("terminal input is not being read") from None
+                except OSError:
+                    raise ValueError("terminal has exited") from None
+            t.last_input = time.time()
+            return {"ok": True, "id": t.id, "written": len(payload)}
         view = memoryview(payload)
         deadline = time.monotonic() + 5
         while view:
@@ -543,18 +738,36 @@ class TerminalsPlugin(Plugin):
         t = self._get(id)
         cols = max(20, min(int(cols), 500))
         rows = max(5, min(int(rows), 200))
-        if t.master is not None and (cols, rows) != (t.cols, t.rows):
-            self._winsize(t.master, rows, cols)
+        if (cols, rows) != (t.cols, t.rows):
+            if t.conpty is not None and t.running:
+                t.conpty.resize(cols, rows)
+            elif t.master is not None:
+                self._winsize(t.master, rows, cols)
         t.cols, t.rows = cols, rows
         return {"ok": True, "id": t.id, "cols": cols, "rows": rows}
 
     @capability("stream.signal", risk="exec")
     def signal(self, id: str, sig: str = "INT") -> dict:
-        """Signal the terminal's process group: INT, TERM, HUP, KILL."""
+        """Signal the terminal's process group: INT, TERM, HUP, KILL. On
+        Windows INT is Ctrl-C (0x03 to the console), HUP closes the console
+        and TERM/QUIT/KILL terminate the terminal's job."""
         t = self._get(id)
         name = str(sig).upper().removeprefix("SIG")
         if name not in ("INT", "TERM", "HUP", "KILL", "QUIT"):
             raise ValueError("signal must be INT, TERM, HUP, QUIT or KILL")
+        if t.conpty is not None:
+            if t.running:
+                try:
+                    if name == "INT":
+                        t.conpty.interrupt()
+                    elif name == "HUP":
+                        # May wait for output to drain on older Windows: never on the loop.
+                        threading.Thread(target=t.conpty.hangup, daemon=True).start()
+                    else:
+                        t.conpty.kill()
+                except OSError:
+                    pass
+            return {"ok": True, "id": t.id, "sent": "SIG" + name}
         if t.running and t.pid:
             try:
                 os.killpg(os.getpgid(t.pid), getattr(_signal, "SIG" + name))
