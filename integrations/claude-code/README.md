@@ -5,12 +5,14 @@ in a pane beside the chat.
 
 ## What it does
 
-`/rook-bands` opens the **Rook** pane. It has three tabs:
+`/rook-bands` opens the **Rook** pane. It has four tabs:
 
 - **Bands**: every band and its workers, with build, battery, last seen and
   what each worker hosts. Behind-the-fleet builds are flagged.
 - **Sessions**: Claude Code and Codex sessions from every worker that runs a
-  `claude-history` or `codex-history` plugin. You can list them, search across
+  `claude-history` or `codex-history` plugin, read from the worker's session
+  catalog (`sessions.list`) where it has one and from its history plugins
+  otherwise. You can list them, search across
   the band, read a session's tail and load it into this chat as reference. You
   can also resume a session on its own worker (with Remote Control where
   available), send it a message and stop it.
@@ -25,6 +27,29 @@ in a pane beside the chat.
   (`refuse`). The plugin's own options are listed too. A pick is saved to
   your user settings, as `/config` would save it. If Claude Code refuses a
   plugin's change, the tab says so and points you to `/config`.
+
+## Live sessions on the Sessions page
+
+When a Rook worker runs on the same machine, the plugin mirrors this session
+for the hub's **Sessions** page: the prompts, the assistant's text as it
+streams, tool calls and their results (clipped), turn ends and whether the
+session is working, idle or waiting on a permission prompt. Start Claude Code
+however you like (any terminal, any OS); nothing wraps it. The events go to a
+spool file in the worker's state folder (`~/.rook-band-worker/mirror/claude/`,
+or under `ROOK_WORKER_HOME`), readable by your user only, and the worker serves
+it as `sessions.mirror`. Writes are batched and never hold up a turn. Without
+a worker on the machine nothing is written. The worker deletes the spools of
+sessions that ended a week ago. The plugin has no access to the vault, so it
+cannot mask secrets itself: text that crosses the hub is masked there, as
+every band reply is.
+
+`/rook-move` moves this conversation into a Rook terminal on the same
+machine, so you can watch it, type into it and stop it from any browser. It
+asks in the pane first. On yes, the worker opens a terminal that waits for
+this Claude Code to end, Claude Code closes itself, and the terminal resumes
+the conversation (`claude --resume`). If Claude Code cannot close itself, the
+pane says so: type `/exit` within two minutes. It needs a worker with Rook
+terminals (Linux or macOS).
 
 The plugin also gives the model a tool, `mcp__rook__pane`. Claude uses it to
 read what the pane shows and to drive it (switch tabs, open a worker, search
