@@ -39,12 +39,68 @@ VENDOR = {'xterm.mjs': 'application/javascript', 'xterm.css': 'text/css',
 # operator API token can. See docs/web/worklog.md.
 SESSION_TOKEN_TTL = 86400
 INPUT_FRAME_MAX = 96 * 1024
+# The merged Sessions catalog (docs/design/sessions.md §3.6).
+CATALOG_LIMIT = 50                  # sessions asked of each worker by default
+CATALOG_LIMIT_MAX = 200
+CATALOG_TIMEOUT = 15
 
 
 
 def actor(user):
     """Audit identity for a signed-in account, stamped on band calls."""
     return 'human:' + str(user.get('username') or user['id'])
+
+
+def legacy_records(items, live):
+    """§3.1 records from an older worker's ``work.sessions`` shape (history
+    ``items`` plus ``live`` terminals) or its ``*-history.pull`` entries.
+    What it cannot know stays conservative: no mirror, unknown inbox policy."""
+    terms = {}
+    for t in live:
+        if not isinstance(t, dict) or not t.get('id'):
+            continue
+        agent = t.get('harness') if t.get('harness') in HARNESSES else 'shell'
+        native = str(t.get('resume') or t['id'])
+        if (agent, native) not in terms or t.get('running'):
+            terms[(agent, native)] = t
+    out, seen = [], set()
+    for i in items:
+        agent, native = i.get('agent'), i.get('session_id')
+        if agent not in ('claude', 'codex') or not native:
+            continue
+        seen.add((agent, native))
+        term = terms.get((agent, native))
+        running = bool(term and term.get('running'))
+        active = bool(i.get('active')) or running
+        state = 'closed' if not active else 'idle' if i.get('activity') == 'ready' and not running else 'live'
+        inbox = active and bool(i.get('messageable'))
+        out.append({'agent': agent, 'native_id': native, 'title': i.get('title') or native,
+                    'cwd': i.get('cwd'), 'state': state, 'origin': 'rook' if term else 'external',
+                    'updated': i.get('updated'), 'messages': i.get('messages'),
+                    'view': {'terminal': term['id'] if term else None, 'mirror': False, 'transcript': True},
+                    'input': 'pty' if running else 'inbox' if inbox else 'none',
+                    'inbox_policy': 'unknown', 'links': {}, 'resumable': state == 'closed',
+                    **({'activity': i['activity']} if i.get('activity') else {})})
+    for (agent, native), t in terms.items():
+        if (agent, native) in seen:
+            continue
+        running = bool(t.get('running'))
+        transcript = agent in ('claude', 'codex') and native != t['id']
+        out.append({'agent': agent, 'native_id': native, 'title': t.get('title') or native,
+                    'cwd': t.get('cwd'), 'state': 'live' if running else 'closed', 'origin': 'rook',
+                    'updated': t.get('last_output') or t.get('started'), 'messages': None,
+                    'view': {'terminal': t['id'], 'mirror': False, 'transcript': transcript},
+                    'input': 'pty' if running else 'none', 'inbox_policy': 'unknown',
+                    'links': {'work_session': t['session']} if t.get('session') else {},
+                    'resumable': not running and transcript})
+    return out
+
+
+def filter_records(items, query, live_only):
+    q = (query or '').lower()
+    return [i for i in items
+            if (not live_only or i.get('state') in ('live', 'idle'))
+            and (not q or q in f"{i.get('title')} {i.get('cwd')} {i.get('native_id')}".lower())]
 
 
 class WorkStore:
@@ -181,6 +237,9 @@ class WorkWeb:
         self.token_url = os.environ.get('ROOK_TOKEN_ADMIN_URL', 'http://127.0.0.1:8765/tokens/account-api')
         self.mcp_url = os.environ.get('ROOK_WORK_MCP_URL', '')
         self._ticks = 0
+        # worker_id -> the latest unfiltered catalog fetched from it, served
+        # (marked stale) when the worker does not answer.
+        self.catalogs = {}
 
     def lock(self, sid):
         return self.locks.setdefault(sid, asyncio.Lock())
@@ -193,6 +252,7 @@ class WorkWeb:
         app.router.add_get('/account/work/assets/{name}', self.asset)
         app.router.add_get('/account/work/assets/vendor/{name}', self.vendor_asset)
         app.router.add_get('/account/work/term/{session}', self.term_socket)
+        app.router.add_get('/account/work/sessions', self.sessions_list)
         app.on_startup.append(self.start)
         app.on_cleanup.append(self.stop)
 
@@ -548,6 +608,121 @@ class WorkWeb:
         except (ValueError, TimeoutError) as error:
             return web.json_response({'error': str(error) or 'Host request timed out.'}, status=503, headers=NO_STORE)
 
+    # -- merged session catalog (docs/design/sessions.md §3.6) -----------------
+
+    async def sessions_list(self, request):
+        """Every connected worker's sessions as §3.1 records, merged:
+        ``GET /account/work/sessions?query=&live_only=&limit=&worker=``."""
+        user = self.user(request)
+        query = request.query.get('query', '').strip()[:200]
+        live_only = request.query.get('live_only', '').lower() in ('1', 'true', 'yes', 'on')
+        try:
+            limit = max(1, min(int(request.query.get('limit', CATALOG_LIMIT)), CATALOG_LIMIT_MAX))
+        except ValueError:
+            return web.json_response({'error': 'limit must be a number'}, status=400, headers=NO_STORE)
+        only = request.query.get('worker', '')
+        targets = [w for w in self.workers(history=True)
+                   if not only or only in (w['worker_id'], w.get('name'))]
+        fetched = await asyncio.gather(*(self.fetch_catalog(w, query, live_only, limit, actor(user))
+                                         for w in targets))
+        links = self.session_links(user['id'])
+        sessions, workers, errors = [], [], []
+        for w, got in zip(targets, fetched):
+            if got is None:
+                continue
+            hb = (w.get('hb') or {}).get('sessions') or {}
+            workers.append({'worker_id': w['worker_id'], 'name': w.get('name', ''), 'band': w.get('band'),
+                            'source': got['source'], 'count': len(got['items']), 'total': got['total'],
+                            'stale': got['stale'], 'fetched': got['fetched'],
+                            'harnesses': got.get('harnesses') or [],
+                            'counts': {k: hb[k] for k in ('live', 'idle') if isinstance(hb.get(k), int)} or None})
+            if got.get('error'):
+                errors.append({'worker_id': w['worker_id'], 'worker': w.get('name', ''), 'error': got['error']})
+            sessions += [self.place_record(item, w, links) for item in got['items']]
+        sessions.sort(key=lambda r: (r.get('state') == 'closed', -(r.get('updated') or 0)))
+        return web.json_response({'sessions': sessions, 'workers': workers, 'errors': errors,
+                                  'generated': time.time()}, headers=NO_STORE)
+
+    async def fetch_catalog(self, worker, query, live_only, limit, identity):
+        """One worker's catalog through the newest cap it has: sessions.list,
+        else work.sessions, else *-history.pull (records built here). None
+        for a worker with no sessions at all."""
+        caps = worker.get('caps', [])
+        target = dict(worker_id=worker['worker_id'], band=worker.get('band'))
+        if 'sessions.list' in caps:
+            source = 'sessions.list'
+        elif 'work.sessions' in caps:
+            source = 'work.sessions'
+        elif any(a + '-history.pull' in caps for a in ('claude', 'codex')):
+            source = 'history'
+        else:
+            return None
+        try:
+            if source == 'sessions.list':
+                result = await self.rpc(target, 'sessions.list', dict(limit=limit, query=query, live_only=live_only),
+                                        timeout=CATALOG_TIMEOUT, identity=identity)
+                items, total = result.get('items') or [], result.get('total') or 0
+                harnesses = result.get('harnesses')
+            elif source == 'work.sessions':
+                result = await self.rpc(target, 'work.sessions', dict(limit=limit, query=query),
+                                        timeout=CATALOG_TIMEOUT, identity=identity)
+                items = legacy_records(result.get('items') or [], result.get('live') or [])
+                total, harnesses = result.get('total') or 0, result.get('harnesses')
+            else:
+                items, total, harnesses = [], 0, []
+                for agent in ('claude', 'codex'):
+                    if agent + '-history.pull' not in caps:
+                        continue
+                    result = await self.rpc(target, agent + '-history.pull', dict(limit=limit),
+                                            timeout=CATALOG_TIMEOUT, identity=identity)
+                    items += legacy_records([dict(s, agent=agent, updated=s.get('last_modified'),
+                                                  messages=s.get('message_count'))
+                                             for s in result.get('sessions') or []], [])
+                    total += result.get('total') or 0
+            items = [i for i in items if isinstance(i, dict) and i.get('agent') and i.get('native_id')]
+            if source != 'sessions.list':
+                items = filter_records(items, query, live_only)
+                if query or live_only:
+                    total = len(items)
+            got = dict(source=source, items=items, total=max(int(total), len(items)),
+                       harnesses=harnesses, fetched=time.time(), stale=False)
+            if not query and not live_only:
+                self.catalogs[worker['worker_id']] = got
+            return got
+        except Exception as error:  # one bad host must not sink the whole list
+            message = str(error) or ('Host request timed out.' if isinstance(error, TimeoutError) else type(error).__name__)
+            cached = self.catalogs.get(worker['worker_id'])
+            if cached is None:
+                return dict(source=source, items=[], total=0, fetched=None, stale=True, error=message)
+            items = filter_records(cached['items'], query, live_only)
+            return dict(cached, items=items, total=len(items), stale=True, error=message)
+
+    def session_links(self, owner):
+        """What only the hub knows: the operator's Work session for a host
+        session (the id the worklog view and its terminal socket use)."""
+        out = {}
+        for s in self.store.all(owner, details=False):
+            if s.get('source_id'):
+                out[(s.get('worker_id'), s.get('agent') or 'codex', str(s['source_id']).lower())] = s['id']
+            if s.get('term_id'):
+                out[(s.get('worker_id'), 'term', s['term_id'])] = s['id']
+        return out
+
+    @staticmethod
+    def place_record(item, worker, links):
+        """Stamp a worker's record with the hub's view of it."""
+        rec = dict(item)
+        agent, native = rec['agent'], str(rec['native_id'])
+        rec.update(worker_id=worker['worker_id'], worker=worker.get('name', ''),
+                   key=f"{worker['worker_id']}/{agent}/{native}")
+        rec['links'] = dict(rec.get('links') or {})
+        term = (rec.get('view') or {}).get('terminal')
+        found = links.get((worker['worker_id'], agent, native.lower())) or (
+            links.get((worker['worker_id'], 'term', term)) if term else None)
+        if found and not rec['links'].get('work_session'):
+            rec['links']['work_session'] = found
+        return rec
+
     @staticmethod
     def summary(s):
         return {**{k: s.get(k) for k in ('id', 'title', 'worker_name', 'cwd',
@@ -749,9 +924,15 @@ class WorkWeb:
                     if s.get('external_handle'):
                         raise ValueError('This session is already running on its host.')
                     result = await rpc(s, s['agent'] + '-history.resume', {'session_id': s['source_id']}, timeout=40)
-                    self.external_output[sid] = ''
-                    s.update(external_handle=result['handle'], external_cursor=0,
-                             review_status=None, error='', resume_note=result.get('note', ''))
+                    if result.get('terminal'):
+                        # Newer workers resume into a Rook terminal (work.stream).
+                        s.update(harness=s.get('agent') or 'claude', term_id=result['terminal'],
+                                 term_running=True, term_exit=None, term_note='', term_started=time.time(),
+                                 review_status=None, error='', resume_note=result.get('note', ''))
+                    else:
+                        self.external_output[sid] = ''
+                        s.update(external_handle=result['handle'], external_cursor=0,
+                                 review_status=None, error='', resume_note=result.get('note', ''))
                 elif s.get('imported') and op in ('terminal_input', 'message'):
                     text = str(data.get('text', ''))
                     if not text.strip() or len(text) > 24000:

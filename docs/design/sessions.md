@@ -57,9 +57,9 @@ Every surface (web, mod, MCP, CLI) reads the same record:
 ```jsonc
 {
   "key": "w_3f2a…/claude/634b5e51-…",   // worker_id/agent/native_id
-  "worker_id": "…", "worker": "cachyrig",
+  "worker_id": "…", "worker": "workstation",
   "agent": "claude", "native_id": "634b5e51-…",
-  "title": "Voice replies", "cwd": "/home/bake/rook",
+  "title": "Voice replies", "cwd": "/srv/rook",
   "state": "live" | "idle" | "closed",   // live: a process holds it; idle: live, waiting for input; closed: no process
   "origin": "rook" | "external",        // started by Rook (a Rook terminal) or anywhere else
   "updated": 1791400000, "messages": 412,
@@ -69,7 +69,7 @@ Every surface (web, mod, MCP, CLI) reads the same record:
     "transcript": true                   // transcript tail (always, for claude/codex)
   },
   "input": "pty" | "inbox" | "none",     // how send() reaches it; inbox notes hold/accept below
-  "inbox_policy": "accept" | "hold" | "unknown",
+  "inbox_policy": "accept" | "hold" | "refuse" | "unknown",
   "links": {"task": "t_…", "claim": "…", "work_session": "…", "console_room": "…", "chat_room": "…"},
   "resumable": true                      // closed and the agent supports resume
 }
@@ -79,6 +79,43 @@ The **worker** is the source of truth for its own sessions (it sees the
 processes, transcripts and terminals). The **hub** keeps a cache of the
 latest catalog per worker plus the links only it knows (task, chat room,
 work session), and serves the merged list.
+
+How the worker fills the record (as built, `rook/worker/plugins/sessions.py`):
+
+- **state**: `live` while a process holds the session (Claude PID marker,
+  exact resume argument, open transcript, or a running Rook terminal);
+  `idle` when Claude's marker says `status: idle`, or, without a marker, the
+  transcript's last turn ended (`activity: ready`) and no Rook terminal runs
+  it; `closed` otherwise. Activity detection: Linux `/proc`; macOS `ps` plus
+  `lsof` for open transcripts; Windows the process snapshot (no command
+  lines there, so only Claude's markers count, checked against the process
+  start time). Codex sessions on Windows are not detected as live yet.
+- **origin**: `rook` while the worker still has the Rook terminal (running,
+  or up to 15 minutes after it ended); `external` otherwise, including a
+  closed session that once ran in a Rook terminal.
+- **native_id** of a Rook terminal: the `resume` id, else the session the
+  terminal's process (or its child) holds once the agent reports it, else
+  the terminal id. The key changes when the native id appears.
+- **input**: `inbox` when the session has a reachable inbox and the policy
+  is `accept` or `unknown`; else `pty` when a Rook terminal runs it; else
+  `inbox` when the policy is `hold` (the message will wait for approval);
+  else `none`. `refuse` never routes to the inbox.
+- **inbox_policy** (Claude): the mod's live `inbound` from the mirror
+  spool's `session.start`, else `crossSessionInbound` from managed settings,
+  else the user's `~/.claude/settings.json`. Its `default` holds while
+  permissions are bypassed: `--dangerously-skip-permissions` or
+  `--permission-mode bypassPermissions` on the process command line, or
+  `permissions.defaultMode: bypassPermissions` in managed, project local,
+  project or user settings (first that sets it). Without a command line
+  (Windows) a default the settings do not decide is `unknown`. Codex:
+  `accept` when it has an inbox, else `unknown`; shells and Hermes
+  `unknown`.
+- **view.mirror**: a spool file exists at the §3.4 path (or its rotated
+  `.1.jsonl`). **view.transcript**: claude/codex with a known native id.
+- **links**: the worker only knows `work_session` (the hub session a Rook
+  terminal was launched for); the hub adds the rest.
+- Extra fields that may appear: `activity` (`working`/`ready`/`pending`),
+  `pid` (live only), `model`.
 
 ### 3.2 One set of verbs
 
@@ -156,27 +193,103 @@ Worker cap: `sessions.mirror(agent, native_id, cursor=0, wait=0)` returns
 `{ok, events: [...], cursor, done}`, long-polling like `work.stream.read`
 (wait up to 25 s).
 
-### 3.5 Worker caps (target)
+### 3.5 Worker caps
 
-All on the existing `terminals` plugin unless noted; old caps stay as thin
-aliases for at least one release.
+`sessions.list/follow/send/stop` live in their own plugin,
+`rook/worker/plugins/sessions.py` (namespace `sessions`), because they work
+on every OS (history, inboxes, process evidence) while the `terminals`
+plugin needs a PTY. `sessions.mirror` is in `session_mirror.py` (same
+namespace). Old caps stay as thin aliases for at least one release.
 
-- `sessions.list(limit, offset, query, live_only)` → `{ok, harnesses, items: [record…], total, next_offset}`; supersedes `work.sessions` (kept as alias).
-- `sessions.mirror(agent, native_id, cursor, wait)` (above).
-- `sessions.follow(agent, native_id, offset, version)` → transcript tail for either agent (wraps `claude-history.follow`, adds Codex).
-- `sessions.send(agent, native_id, text, command_id)` → routes to inbox or PTY; returns `{ok, delivery: "turn"|"held"|"keys", note}`.
-- `sessions.stop(agent, native_id)`.
-- `work.stream.*` unchanged; `work.stream.open(resume=…)` becomes the only resume path (`*-history.resume` delegates to it where `work.stream` exists).
+- `sessions.list(limit=20, offset=0, query="", live_only=false)` →
+  `{ok, harnesses, items: [record…], total, next_offset}`. Live and idle
+  first, then closed, newest first within each. `query` matches title, cwd
+  and native id (scans the newest 500 transcripts per agent); `live_only`
+  drops closed ones. `limit` up to 200. Supersedes `work.sessions`, which
+  keeps its old shape for the worklog page and older hubs. Risk read.
+- `sessions.mirror(agent, native_id, cursor, wait)` (above; workstream B).
+- `sessions.follow(agent, native_id, offset=0, version="")` → the
+  `claude-history.follow` / `codex-history.follow` reply (`unchanged`, or
+  `messages`, `version`, `replace_from`, …) plus `agent`, `native_id`.
+  Shells and Hermes have no transcript (error). Risk read, sensitive.
+- `sessions.send(agent, native_id, text, command_id="")` → `{ok, delivery,
+  note, native_id}`, routed by the record's `input` (§3.1): `inbox` calls
+  `<agent>-history.send` (session_messages / codex_input; `command_id`
+  makes a retry safe, default a fresh id) and returns `delivery: "turn"`,
+  or `"held"` when the policy is `hold` (plus `detail`, the inbox's own
+  delivery word); `pty` writes `text` + `\r` to the Rook terminal
+  (`work.stream.write`; multi-line text to an agent is wrapped in bracketed
+  paste) and returns `delivery: "keys"` with `terminal`. Errors (`ok:
+  false`): empty or over 24,000 characters, policy `refuse`, live with no
+  reachable input, closed. Risk exec.
+- `sessions.stop(agent, native_id)` → closes the Rook terminal
+  (`{stopped: "terminal", terminal, exit_code}`), or the `proc.*` process an
+  older resume started (`{stopped: "process", handle}`). A live session
+  started outside Rook is refused (end it on its host, or `/rook-move`); a
+  closed one returns `{ok: true, stopped: null}`. Risk exec, destructive.
+- `work.stream.*` unchanged except `work.stream.open(remote_control=label)`
+  (claude only) and a `session` field in terminal info. `*-history.resume`
+  delegates to `work.stream.open(harness=agent, resume=id, cwd=…)` where
+  the worker has `work.stream.open`, and returns `terminal` (the terminal
+  id) instead of `handle`; `*-history.resumed` entries carry `terminal` or
+  `handle`. Workers without `work.stream` keep the `proc.*` path.
+- Heartbeat: `hb.sessions = {live, idle}`, recounted every 2 minutes from
+  process evidence and terminals only (no transcript reads) and after every
+  `sessions.list`. It sits under `sessions`, not `work`, so Windows workers
+  (no `terminals` plugin) report it too.
 
 ### 3.6 Hub
 
-- `sessions` store: latest catalog per worker (refreshed when a viewer has
-  the page open, and from the heartbeat summary `hb.work.sessions` =
-  `{live, idle}` counts), plus links.
+- **Merged list** (built): `GET /account/work/sessions` in
+  `rook/remote/work_web.py`, operator auth like the other `/account/work/*`
+  routes (401 signed out, 403 for non-admins), `Cache-Control: no-store`.
+
+  | Param | Default | Meaning |
+  |---|---|---|
+  | `query` | `""` | passed to each worker (title, cwd, native id), max 200 chars |
+  | `live_only` | off | `1`/`true`/`yes`/`on`: only `live` and `idle` |
+  | `limit` | 50 | sessions asked of each worker, 1-200 (400 if not a number) |
+  | `worker` | all | one worker, by id or name |
+
+  ```jsonc
+  {
+    "sessions": [record…],      // §3.1, sorted live/idle first then closed, newest first;
+                                // each stamped with worker_id, worker (name) and
+                                // key = "<worker_id>/<agent>/<native_id>";
+                                // links.work_session = the operator's Work session id
+                                // for it when the hub has one (the id the worklog
+                                // view, its ws ops and /account/work/term/<id> use)
+    "workers": [{
+      "worker_id": "…", "name": "…", "band": "…",
+      "source": "sessions.list" | "work.sessions" | "history",  // how it was read
+      "count": 12, "total": 159,   // returned / the worker's total
+      "stale": false,              // true: served from the cache, the worker did not answer
+      "fetched": 1791400000.0,     // when that catalog was read (null if never)
+      "harnesses": ["shell", "claude"],  // what New session may offer there
+      "counts": {"live": 1, "idle": 2}   // hb.sessions, or null
+    }],
+    "errors": [{"worker_id": "…", "worker": "…", "error": "…"}],
+    "generated": 1791400000.0
+  }
+  ```
+
+  The hub fans out to every connected worker in parallel (15 s each). Older
+  workers are read through `work.sessions`, else `claude-history.pull` /
+  `codex-history.pull`, and turned into records on the hub (no mirror,
+  `inbox_policy: "unknown"`); the hub applies `query`/`live_only` to those.
+  Workers with none of these caps are left out. The latest unfiltered
+  catalog per worker is cached in memory and served, filtered and marked
+  `stale`, when that worker fails.
+- Heartbeat summary `hb.sessions` = `{live, idle}` counts (§3.5), shown as
+  `workers[].counts`.
 - One viewer socket per session: `/account/work/session/<key>` speaks the
   worklog terminal protocol for tier 1 and a JSON event protocol for tiers 2
   and 3 (`{type: "event", event}` frames, `{type: "send", text}` from the
-  browser).
+  browser). Not built yet (workstream C); until then a record with
+  `view.terminal` and `links.work_session` opens through the existing
+  `/account/work/term/<work_session>` socket.
+- The classic Work view's non-PTY **Resume on host** accepts a `terminal`
+  result from `*-history.resume` and attaches the session's terminal.
 - MCP: no new tools. Agents use `rook_call` on these caps; `rook_console_*`
   keeps working.
 

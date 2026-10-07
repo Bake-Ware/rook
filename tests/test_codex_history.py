@@ -63,6 +63,7 @@ def test_event_only_and_ambiguous_prefix(tmp_path):
 
 
 def test_resume_uses_argv_and_serializes_duplicate_requests(tmp_path, monkeypatch):
+    # A worker without live terminals (no work.stream.*) resumes through proc.*.
     rollout(tmp_path)
     monkeypatch.setattr(codex.shutil, 'which', lambda _: '/usr/bin/codex')
     async def call(cap, **args):
@@ -72,7 +73,7 @@ def test_resume_uses_argv_and_serializes_duplicate_requests(tmp_path, monkeypatc
         assert args['cwd'] == str(tmp_path) and args['pty'] is True
         await asyncio.sleep(.01)
         return {'ok': True, 'handle': 'h1', 'pid': 1}
-    registry = SimpleNamespace(has=lambda _: True, call=AsyncMock(side_effect=call))
+    registry = SimpleNamespace(has=lambda cap: cap.startswith('proc.'), call=AsyncMock(side_effect=call))
     p = codex.CodexHistoryPlugin()
     p.bind_worker(SimpleNamespace(registry=registry))
     async def run():

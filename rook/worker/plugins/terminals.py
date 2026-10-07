@@ -16,7 +16,8 @@ child gets the PTY as its controlling terminal, so Ctrl-C and job control work
 as they would locally.
 
 ``work.sessions`` lists live terminals plus the host's Claude/Codex history as
-one resumable catalog; ``work.export`` returns a historical transcript in the
+one resumable catalog (the richer ``sessions.list`` in sessions.py supersedes
+it); ``work.export`` returns a historical transcript in the
 stable ``rook.transcript/1`` format (docs/web/worklog.md) for memory ingestion.
 
 Build-167 workers lack these caps; the hub falls back to ``proc.*`` resume.
@@ -96,7 +97,8 @@ def persona_args(harness: str, persona: str) -> list[str]:
 
 
 def build_argv(harness: str, binary: str, *, model: str = "", resume: str = "",
-               mcp_url: str = "", mcp_config: str = "", persona: str = "") -> list[str]:
+               mcp_url: str = "", mcp_config: str = "", persona: str = "",
+               remote_control: str = "") -> list[str]:
     """The launch template for one harness. Pure, so it is unit-testable."""
     if harness == "shell":
         return [binary, "-l"] if os.path.basename(binary) in ("bash", "zsh", "fish", "sh") else [binary]
@@ -108,6 +110,8 @@ def build_argv(harness: str, binary: str, *, model: str = "", resume: str = "",
             argv += ["--model", model]
         if mcp_config:
             argv += ["--mcp-config", mcp_config]
+        if remote_control:
+            argv += ["--remote-control", remote_control[:80]]
     elif harness == "codex":
         if resume:
             argv += ["resume", resume]
@@ -133,6 +137,7 @@ class _Term:
         self.cwd = cwd
         self.resume = ""
         self.model = ""
+        self.session = ""               # the hub's Work session, if any
         self.started = time.time()
         self.ended: float | None = None
         self.exit_code: int | None = None
@@ -193,6 +198,7 @@ class _Term:
     def info(self) -> dict:
         return {"id": self.id, "harness": self.harness, "title": self.title,
                 "cwd": self.cwd, "resume": self.resume or None, "model": self.model or None,
+                "session": self.session or None,
                 "pid": self.pid, "running": self.running, "exit_code": self.exit_code,
                 "started": self.started, "ended": self.ended, "cols": self.cols,
                 "rows": self.rows, "total": self.total, "first": self.buf_start,
@@ -288,14 +294,16 @@ class TerminalsPlugin(Plugin):
     async def open(self, harness: str = "shell", cwd: str = "", title: str = "",
                    model: str = "", resume: str = "", persona: str = "",
                    mcp_url: str = "", mcp_token: str = "", session: str = "",
-                   cols: int = 120, rows: int = 32,
+                   remote_control: str = "", cols: int = 120, rows: int = 32,
                    buffer_bytes: int = DEFAULT_RING) -> dict:
         """Start a harness (shell|claude|codex|hermes) under a PTY and return
         its terminal ``id`` immediately. ``resume`` is a Claude/Codex session id
         to continue. ``mcp_url``/``mcp_token`` inject a Rook MCP connection
         (env ROOK_MCP_URL/ROOK_MCP_TOKEN; claude also gets --mcp-config, codex
         -c mcp_servers.rook.*). ``session`` is the hub's Work session id,
-        exported as ROOK_WORK_SESSION. Follow output with work.stream.read."""
+        exported as ROOK_WORK_SESSION. ``remote_control`` (claude only) is a
+        Remote Control label, so the session also shows in claude.ai. Follow
+        output with work.stream.read."""
         self._reap()
         if harness not in HARNESSES:
             raise ValueError(f"harness must be one of {', '.join(HARNESSES)}")
@@ -330,6 +338,7 @@ class TerminalsPlugin(Plugin):
         tid = uuid.uuid4().hex[:12]
         t = _Term(tid, harness, (title or f"{harness} in {os.path.basename(cwd) or cwd}")[:160], cwd, ring)
         t.resume, t.model, t.cols, t.rows = resume, model[:100], cols, rows
+        t.session = session
 
         env = {k: v for k, v in os.environ.items() if k not in _STRIP_ENV}
         env.update(TERM="xterm-256color", COLORTERM="truecolor", ROOK_WORK_TERMINAL=tid)
@@ -358,7 +367,8 @@ class TerminalsPlugin(Plugin):
                 t.files.append(mcp_config)
         argv = build_argv(harness, binary, model=model, resume=resume,
                           mcp_url=mcp_url if mcp_token else "", mcp_config=mcp_config,
-                          persona=persona_text)
+                          persona=persona_text,
+                          remote_control=str(remote_control or "") if harness == "claude" else "")
         try:
             await self._spawn(t, argv, cwd, env)
         except Exception:
@@ -576,7 +586,9 @@ class TerminalsPlugin(Plugin):
         """One catalog of this host's work: live terminals plus Claude/Codex
         history, newest first. Every history entry is resumable with
         work.stream.open(harness=agent, resume=session_id, cwd=cwd) unless
-        ``active``. Page with ``limit``/``offset``; ``query`` filters titles/cwd."""
+        ``active``. Page with ``limit``/``offset``; ``query`` filters titles/cwd.
+        Superseded by sessions.list (docs/design/sessions.md); this shape stays
+        for the worklog page and older hubs."""
         self._reap()
         limit = max(1, min(int(limit), 100))
         offset = max(0, int(offset))

@@ -13,10 +13,13 @@ cross-host routing is the orchestrator's responsibility.
 ``resume`` is the write half: it relaunches a stored session on this machine
 with Remote Control enabled, so a conversation that was closed on the PC
 becomes reachable again from claude.ai without anyone being at the keyboard.
-It runs the session through ``proc.*`` (pty-backed — Remote Control needs an
-interactive session, which needs a tty), so the relaunched session is a normal
-worker process: visible in ``proc.list``, signalable, and pumped into a console
-room the band can watch.
+Where the worker has live terminals (``work.stream.*``) the session reopens
+in a Rook terminal, so it streams to the Sessions page like any other
+(docs/design/sessions.md §3.2); the result names the terminal. Older or
+pty-less workers run it through ``proc.*`` (pty-backed — Remote Control needs
+an interactive session, which needs a tty), so the relaunched session is a
+normal worker process: visible in ``proc.list``, signalable, and pumped into a
+console room the band can watch.
 """
 
 from __future__ import annotations
@@ -262,6 +265,8 @@ class ClaudeHistoryPlugin(Plugin):
         # two `claude --resume` processes on one session id would both write
         # the same transcript.
         self._resumed_handles: dict[str, str] = {}
+        # session_id -> Rook terminal id, for resumes through work.stream.open.
+        self._resumed_terminals: dict[str, str] = {}
 
     def bind_worker(self, worker) -> None:
         """Grab a handle to the Worker so resume can drive the proc.* caps
@@ -271,6 +276,28 @@ class ClaudeHistoryPlugin(Plugin):
     def available(self) -> bool:
         # Only where Claude Code history actually lives on this host.
         return self._default_root().is_dir()
+
+    async def _resume_in_terminal(self, sid: str, workdir: str | None, label: str,
+                                  remote_control: bool = False) -> dict | None:
+        """Reopen ``sid`` in a Rook terminal (work.stream.open) so it streams
+        like any other; None when this worker has no live terminals."""
+        if self._worker is None or not self._worker.registry.has("work.stream.open"):
+            return None
+        agent = self.NAMESPACE.split("-")[0]
+        args = dict(harness=agent, resume=sid, cwd=workdir or "", title=f"{agent}: {label}"[:160])
+        if remote_control and agent == "claude":
+            args["remote_control"] = label[:80]
+        try:
+            opened = await self._worker.registry.call("work.stream.open", **args)
+        except ValueError as error:
+            return {"ok": False, "error": str(error), "session_id": sid}
+        self._resumed_terminals[sid] = opened["id"]
+        return {"ok": True, "session_id": sid, "short_id": _short_id(sid), "name": label,
+                "cwd": opened.get("cwd") or workdir, "terminal": opened["id"], "pid": opened.get("pid"),
+                "remote_control": bool(args.get("remote_control")),
+                "note": (f"{agent} is starting in Rook terminal {opened['id']}: follow it with "
+                         "work.stream.read, type with work.stream.write, stop it with "
+                         "work.stream.close (or sessions.stop).")}
 
     def _is_active(self, path, processes=None):
         paths, ids = processes if processes is not None else active_sessions(self.NAMESPACE.split('-')[0])
@@ -306,7 +333,8 @@ class ClaudeHistoryPlugin(Plugin):
         up and stop it with ``proc.signal``/``proc.close``.
         """
         async with self._resume_lock:
-            if self._worker is None or not self._worker.registry.has("proc.start"):
+            if self._worker is None or not (self._worker.registry.has("proc.start")
+                                            or self._worker.registry.has("work.stream.open")):
                 return {"ok": False, "error": "proc.* capability unavailable on this "
                                               "worker; update it to resume sessions"}
             root = self._expand(path)
@@ -342,8 +370,12 @@ class ClaudeHistoryPlugin(Plugin):
                         "session_id": full_id,
                         "hint": "pass cwd= to resume it somewhere else"}
 
-            argv = [binary, "--resume", full_id]
             label = name or meta.get("title") or _short_id(full_id)
+            opened = await self._resume_in_terminal(full_id, workdir, label, remote_control)
+            if opened is not None:
+                return dict(opened, title=meta.get("title")) if opened.get("ok") else opened
+
+            argv = [binary, "--resume", full_id]
             if remote_control:
                 argv += ["--remote-control", label[:80]]
 
@@ -366,12 +398,25 @@ class ClaudeHistoryPlugin(Plugin):
 
     @capability("resumed")
     async def _resumed_list(self) -> dict:
-        """Sessions this worker relaunched and whether they're still up."""
+        """Sessions this worker relaunched and whether they're still up.
+        Entries carry ``terminal`` (a Rook terminal) or ``handle`` (proc.*)."""
+        out = []
+        if self._worker is not None and self._resumed_terminals and self._worker.registry.has("work.stream.list"):
+            terms = await self._worker.registry.call("work.stream.list")
+            by_id = {t.get("id"): t for t in terms.get("terminals", [])}
+            for sid, tid in list(self._resumed_terminals.items()):
+                t = by_id.get(tid)
+                if t is None:
+                    self._resumed_terminals.pop(sid, None)
+                    continue
+                out.append({"session_id": sid, "short_id": _short_id(sid), "terminal": tid,
+                            "running": t.get("running"), "exit_code": t.get("exit_code"),
+                            "label": t.get("title"),
+                            "age_secs": round(time.time() - (t.get("started") or time.time()))})
         if self._worker is None or not self._worker.registry.has("proc.list"):
-            return {"ok": True, "sessions": []}
+            return {"ok": True, "sessions": out}
         live = await self._worker.registry.call("proc.list")
         by_handle = {s.get("handle"): s for s in live.get("sessions", [])}
-        out = []
         for sid, handle in list(self._resumed_handles.items()):
             s = by_handle.get(handle)
             if s is None:
