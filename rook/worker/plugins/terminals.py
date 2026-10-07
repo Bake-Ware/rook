@@ -57,6 +57,7 @@ MAX_READ = 32 * 1024
 MAX_WAIT = 25.0                     # long-poll ceiling, seconds
 COALESCE_SECS = 0.012               # gather a burst before answering a long-poll
 MAX_WRITE = 16 * 1024
+HANDOFF_SECS = 120.0                # how long a handoff waits for the old process to exit
 _ID = re.compile(r"[A-Za-z0-9_-]{1,100}")
 # Never hand the worker's own band secret to an agent's environment.
 _STRIP_ENV = ("ROOK_BAND_PSK", "ROOK_PSK", "ROOK_MCP_STATIC_TOKEN")
@@ -65,6 +66,11 @@ _IS_WIN = sys.platform == "win32"
 _CMD_META = re.compile(r'[\r\n"%^&|<>!()]')
 # The target of an npm cmd-shim: "%dp0%\node_modules\pkg\bin\cli.js" %*
 _NPM_SHIM = re.compile(r'"%~?dp0%?\\([^"%*\r\n]+?\.(?:js|cjs|mjs|exe))"', re.I)
+
+
+def _pid_alive(pid: int) -> bool | None:
+    from ..session_mirror import pid_alive
+    return pid_alive(pid)
 
 
 def _check_id(value: str, what: str = "id") -> str:
@@ -217,6 +223,7 @@ class _Term:
         self.waiters: set[asyncio.Future] = set()
         self.files: list[str] = []      # per-session files to remove at close
         self.waiter_task: asyncio.Task | None = None
+        self.handoff_task: asyncio.Task | None = None   # waiting for the old process (handoff_pid)
 
     @property
     def running(self) -> bool:
@@ -356,13 +363,17 @@ class TerminalsPlugin(Plugin):
                    model: str = "", resume: str = "", persona: str = "",
                    mcp_url: str = "", mcp_token: str = "", session: str = "",
                    cols: int = 120, rows: int = 32,
-                   buffer_bytes: int = DEFAULT_RING) -> dict:
+                   buffer_bytes: int = DEFAULT_RING, handoff_pid: int = 0) -> dict:
         """Start a harness (shell|claude|codex|hermes) under a PTY and return
         its terminal ``id`` immediately. ``resume`` is a Claude/Codex session id
         to continue. ``mcp_url``/``mcp_token`` inject a Rook MCP connection
         (env ROOK_MCP_URL/ROOK_MCP_TOKEN; claude also gets --mcp-config, codex
         -c mcp_servers.rook.*). ``session`` is the hub's Work session id,
-        exported as ROOK_WORK_SESSION. Follow output with work.stream.read."""
+        exported as ROOK_WORK_SESSION. ``handoff_pid`` (with ``resume``) is the
+        process that holds the session now, such as a Claude Code moving itself
+        here with /rook-move: the terminal is returned at once and the harness
+        starts once that process has exited (up to 2 minutes). Follow output
+        with work.stream.read."""
         self._reap()
         if harness not in HARNESSES:
             raise ValueError(f"harness must be one of {', '.join(HARNESSES)}")
@@ -371,10 +382,16 @@ class TerminalsPlugin(Plugin):
         cwd = cwd or os.path.expanduser("~")
         if not os.path.isabs(cwd) or not os.path.isdir(cwd):
             raise ValueError(f"working directory does not exist: {cwd}")
+        handoff_pid = int(handoff_pid or 0)
+        if handoff_pid and not resume:
+            raise ValueError("handoff_pid needs resume: it hands over a running session")
+        if handoff_pid and _pid_alive(handoff_pid) is not True:
+            handoff_pid = 0     # already gone: resume now, with the usual checks
         if resume:
             _check_id(resume, "resume session id")
             if harness not in ("claude", "codex"):
                 raise ValueError("resume is only supported for claude and codex")
+        if resume and not handoff_pid:
             from ..agent_activity import active_sessions
             try:
                 _paths, ids = active_sessions(harness)
@@ -423,6 +440,12 @@ class TerminalsPlugin(Plugin):
         argv = build_argv(harness, binary, model=model, resume=resume,
                           mcp_url=mcp_url if mcp_token else "", mcp_config=mcp_config,
                           persona=persona_text)
+        if handoff_pid:
+            self.terms[tid] = t
+            t.append(b"[rook] waiting for the session's current process to exit...\r\n")
+            t.handoff_task = asyncio.create_task(self._handoff(t, handoff_pid, argv, cwd, env))
+            log.info("terminal %s waiting for pid %s to hand over %s", tid, handoff_pid, resume)
+            return {"ok": True, **t.info(), "waiting": True}
         try:
             await self._spawn(t, argv, cwd, env)
         except Exception:
@@ -431,6 +454,38 @@ class TerminalsPlugin(Plugin):
         self.terms[tid] = t
         log.info("terminal %s started: %s (pid %s)", tid, harness, t.pid)
         return {"ok": True, **t.info()}
+
+    async def _handoff(self, t: _Term, pid: int, argv: list[str], cwd: str, env: dict) -> None:
+        """Starts the harness once ``pid`` has exited; gives up after HANDOFF_SECS."""
+        loop = asyncio.get_running_loop()
+        end = loop.time() + HANDOFF_SECS
+        why = ""
+        try:
+            while _pid_alive(pid) is True:
+                if loop.time() >= end:
+                    why = "the session's current process did not exit within 2 minutes; nothing was resumed"
+                    break
+                await asyncio.sleep(0.25)
+            if not why:
+                from ..agent_activity import active_sessions
+                try:
+                    _paths, ids = active_sessions(t.harness)
+                except Exception:
+                    ids = set()
+                if t.resume.lower() in ids:
+                    why = "another process still holds that session; nothing was resumed"
+            if not why:
+                await self._spawn(t, argv, cwd, env)
+                log.info("terminal %s took over session %s (pid %s)", t.id, t.resume, t.pid)
+                return
+        except asyncio.CancelledError:
+            why = "closed before the handover"
+        except Exception as e:
+            why = f"could not start {t.harness}: {e}"
+        t.append(f"[rook] {why}\r\n".encode())
+        t.exit_code, t.ended = None, time.time()
+        self._cleanup_files(t)
+        t.wake()
 
     async def _persona_text(self, harness: str, persona: str) -> str:
         """The rendered persona for this launch from the hub
@@ -574,6 +629,14 @@ class TerminalsPlugin(Plugin):
         t.master = None
 
     async def _terminate(self, t: _Term) -> None:
+        if t.handoff_task is not None and not t.handoff_task.done():
+            t.handoff_task.cancel()
+            try:
+                await t.handoff_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            if t.proc is None and t.conpty is None and t.ended is None:  # cancelled before it ran
+                t.exit_code, t.ended = None, time.time()
         if t.conpty is not None:
             return await self._terminate_conpty(t)
         if t.running and t.proc is not None:

@@ -558,6 +558,12 @@
     "sensitive"
    ]
   },
+  "sessions.mirror": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
   "settings.describe": {
    "tier": "read"
   },

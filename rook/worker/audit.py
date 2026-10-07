@@ -41,8 +41,9 @@ _lock = threading.Lock()
 # Arg names whose values are credentials (e.g. the scoped MCP token handed to
 # work.stream.open). Recorded as present, never by value.
 # Successful calls to these high-frequency read caps are not recorded: a live
-# terminal long-polls work.stream.read continuously and would flush the ring.
-_QUIET = frozenset({"work.stream.read"})
+# terminal long-polls work.stream.read (and a live session view sessions.mirror)
+# continuously and would flush the ring.
+_QUIET = frozenset({"work.stream.read", "sessions.mirror"})
 _SECRET_ARG = re.compile(r"(?i)(^|_)(password|secret|api_key)$|_token$")
 
 

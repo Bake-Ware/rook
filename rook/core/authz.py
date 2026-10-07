@@ -131,6 +131,7 @@ _TABLE_SPEC = {
     "work.stream.close": "X", "work.stream.resize": "W",
     "work.stream.read": "R", "work.stream.list": "R", "work.sessions": "R",
     "work.export": "R s",
+    "sessions.mirror": "R s",
     # A.2 hub caps (worker `rook`)
     "identity.whoami": "R", "band.workers": "R", "band.caps": "R",
     "secret.list": "R", "secret.log": "R s", "secret.get": "A s", "secret.set": "A d",

@@ -118,7 +118,13 @@ is waiting for approval on that machine.
 
 **Take over.** The mod adds `/rook-move` to Claude Code: it resumes the same
 conversation in a Rook terminal on the same host and exits the local Claude
-Code, so from then on the session is tier 1. The Sessions page cannot move a
+Code, so from then on the session is tier 1. Two processes must never hold
+one session, so the mod calls `work.stream.open(harness="claude",
+resume=<id>, cwd=<cwd>, handoff_pid=<its own pid>)`: the worker returns the
+terminal at once and starts the harness only after that pid has exited (it
+gives up after 2 minutes), then the mod runs `/exit`. The pid comes from
+Claude Code's own PID marker (`~/.claude/sessions/<pid>.json`); without one
+the mod does not move and says to `/exit` and resume from the Sessions page. The Sessions page cannot move a
 live external session by itself (only the person at that terminal can end
 it); it shows the hint "run /rook-move there" on such sessions, and offers
 **Resume in a Rook terminal** once the session is closed.
@@ -135,26 +141,62 @@ overridable by `ROOK_WORKER_HOME`. One JSON object per line:
 
 | `type` | Fields |
 |---|---|
-| `session.start` | `cwd`, `title?`, `model?`, `pid`, `version` (Claude Code), `inbound` (accept/hold/refuse/default) |
-| `prompt` | `text`, `from` (`person` or `peer`) |
-| `assistant.delta` | `text` (streamed) |
+| `session.start` | `cwd`, `title?`, `model?`, `pid` (null when Claude Code recorded none), `version` (Claude Code), `inbound` (accept/hold/refuse/default) |
+| `prompt` | `text`, `from` (`person` or `peer`), `origin` (Claude Code's own word for where it came from: `composer`, `bridge`, `peer`, …) |
+| `assistant.delta` | `text` (streamed; the pieces of one flush, about 250 ms, arrive as one event) |
 | `assistant.done` | `text` (the full message, so a late viewer needs no deltas) |
 | `tool.call` | `id`, `name`, `input` (clipped to 2,000 chars) |
 | `tool.result` | `id`, `ok`, `text` (clipped to 4,000 chars) |
-| `turn.end` | `stop_reason?` |
+| `turn.end` | `stop_reason?` (`answer`, `aborted`, `refusal`, `error`) |
 | `state` | `state` (`working`, `idle`, `waiting` (on a permission prompt)) |
 | `session.end` | `reason?` |
 
-Rules: append-only; `seq` increases by one per line; the mod rotates to
-`<native_id>.1.jsonl` past 4 MB and the worker reads across the rotation;
-the worker deletes spools of closed sessions after 7 days. The spool is
-written with mode 0600 (owner-only ACL on Windows). Secrets: the mod runs
-text through the same masking the band uses where available; tool inputs
-and results are clipped, never expanded.
+Only the main conversation is mirrored; a subagent's work shows in its
+tool result. Readers ignore fields they do not know.
 
-Worker cap: `sessions.mirror(agent, native_id, cursor=0, wait=0)` returns
-`{ok, events: [...], cursor, done}`, long-polling like `work.stream.read`
-(wait up to 25 s).
+**Chunks.** The mod API has no append, so the spool is cut into chunks and
+the mod rewrites the newest chunk whole on each flush (at most one write per
+250 ms, never awaited by a hook): `<native_id>.jsonl`, then
+`<native_id>.1.jsonl`, `<native_id>.2.jsonl`, … each up to 256 KiB. A chunk
+is never written again once the next exists. Past 64 chunks (16 MiB) the mod
+empties the oldest (it cannot delete); readers skip empty chunks. A reader
+counts only whole lines (ending in a newline) and skips a line that does not
+parse, so a read that catches a rewrite half done just returns fewer events.
+
+Rules: `seq` increases by one per line across the chunks (a reload of the
+mod, or a `/resume` of the same session in a new process, reads the last
+`seq` and carries on); the worker deletes spools of closed sessions after 7
+days (a spool with no `session.end` whose process may still run is kept).
+The mod writes only where the worker's state dir already exists, and only
+while its `mirror` option ("Mirror this session to Rook", default on) is on;
+off, it writes nothing and creates no folder. The spool folder is owner-only:
+0700 with 0600 chunks on POSIX. On Windows, `icacls <state>\mirror
+/inheritance:r /grant:r *<user SID>:(OI)(CI)F *S-1-5-18:(OI)(CI)F`: the
+person's own SID (from `whoami /user`, so a domain account is never
+ambiguous; `DOMAIN\user` if that fails) plus SYSTEM. The band worker
+installs as a logon scheduled task running as the person (elevated), and the
+older `rook/remote/worker.py` installer can run it as an NSSM service under
+LocalSystem, so both must be able to read the spool. If the person cannot be
+named, the folder keeps its inherited ACL. Secrets: the mod has no access to the
+vault, so it masks nothing itself; the hub masks known vault values in every
+reply that crosses it, `sessions.mirror` included. Tool inputs and results are
+clipped, never expanded.
+
+Worker cap: `sessions.mirror(agent, native_id, cursor=0, wait=0, max_events=500)`
+returns `{ok, events: [...], cursor, done, exists}`, long-polling like
+`work.stream.read` (wait up to 25 s). `cursor` is the last `seq` the caller
+has (0 for everything); pass the returned `cursor` back. `done` is true when
+the last event is `session.end`, or when the process of the last
+`session.start` is gone (POSIX only). `exists` is false when there is no
+spool. `rook.worker.session_mirror.spools()` lists the spools on the host,
+for the catalog's `view.mirror`.
+
+The mirror plugin (`rook/worker/plugins/session_mirror.py`) shares the
+`sessions` namespace with the catalog plugin. The loader registers caps by
+their full name and refuses only a duplicate cap, so both load side by side.
+Two things key on the namespace and would collide: `host.plugin("sessions")`
+(a `DEPENDS` lookup) finds the first one loaded, and a heartbeat or settings
+schema is filed under the namespace. The mirror plugin has neither.
 
 ### 3.5 Worker caps (target)
 
@@ -162,11 +204,11 @@ All on the existing `terminals` plugin unless noted; old caps stay as thin
 aliases for at least one release.
 
 - `sessions.list(limit, offset, query, live_only)` → `{ok, harnesses, items: [record…], total, next_offset}`; supersedes `work.sessions` (kept as alias).
-- `sessions.mirror(agent, native_id, cursor, wait)` (above).
+- `sessions.mirror(agent, native_id, cursor, wait)` (above; its own plugin, `session_mirror`).
 - `sessions.follow(agent, native_id, offset, version)` → transcript tail for either agent (wraps `claude-history.follow`, adds Codex).
 - `sessions.send(agent, native_id, text, command_id)` → routes to inbox or PTY; returns `{ok, delivery: "turn"|"held"|"keys", note}`.
 - `sessions.stop(agent, native_id)`.
-- `work.stream.*` unchanged; `work.stream.open(resume=…)` becomes the only resume path (`*-history.resume` delegates to it where `work.stream` exists).
+- `work.stream.*` unchanged except `work.stream.open(handoff_pid=…)` (§3.3, Take over); `work.stream.open(resume=…)` becomes the only resume path (`*-history.resume` delegates to it where `work.stream` exists).
 
 ### 3.6 Hub
 

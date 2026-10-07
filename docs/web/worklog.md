@@ -186,7 +186,7 @@ and callable with `rook_call`. No new MCP tools were added.
 
 | Cap | Risk | Purpose |
 |---|---|---|
-| `work.stream.open` | exec | start a harness under a PTY; returns `id` |
+| `work.stream.open` | exec | start a harness under a PTY; returns `id`. With `resume` and `handoff_pid` it waits for that process (a Claude Code running `/rook-move`) to exit before resuming |
 | `work.stream.read` | read | long-poll output from `cursor` (`wait` up to 25 s) |
 | `work.stream.write` | exec | raw input (`\r` for Enter, `\x03` for Ctrl-C) |
 | `work.stream.resize` | write | set cols/rows |
@@ -196,6 +196,7 @@ and callable with `rook_call`. No new MCP tools were added.
 | `work.sessions` | read | live terminals plus Claude/Codex history as one resumable catalog (`limit`, `offset`, `query`) |
 | `work.export` | read | one page of a historical transcript in `rook.transcript/1` |
 | `claude-history.transcript`, `codex-history.transcript` | read | the same export, per agent |
+| `sessions.mirror` | read | live events of a Claude Code session the Rook mod mirrors on this host (`cursor`, `wait` up to 25 s); see `docs/design/sessions.md` §3.4 |
 
 Successful `work.stream.read` calls are not written to the worker audit log,
 because a live terminal long-polls continuously. Failures still are.
