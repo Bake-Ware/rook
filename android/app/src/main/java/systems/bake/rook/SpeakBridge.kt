@@ -91,9 +91,14 @@ object SpeakBridge {
         main.post { pump() }
         val out = JSONObject().put("ok", true).put("id", job.id).put("state", job.state)
             .put("engine", init).put("reply_playing", replyPlaying())
-        mediaVolume(ctx)?.let { (v, max) ->
-            out.put("volume", "$v/$max")
-            if (v == 0) out.put("warning", "media volume is 0: speech will be inaudible")
+        speechVolume(ctx)?.let { (stream, level) ->
+            val (v, max) = level
+            out.put("volume", "$v/$max").put("volume_stream", stream)
+            when {
+                v == 0 -> out.put("warning", "$stream volume is 0: speech will be inaudible")
+                v * 5 <= max -> out.put("warning", "$stream volume is low ($v/$max): speech may be hard to hear")
+            }
+            Unit
         }
         return out.toString()
     }
@@ -404,8 +409,26 @@ object SpeakBridge {
         focusRequest = null
     }
 
-    private fun mediaVolume(ctx: Context): Pair<Int, Int>? = try {
+    /**
+     * The volume speech actually plays at: the stream that controls [attrs]
+     * (USAGE_ASSISTANT). On some phones that is not the media volume; Samsung's
+     * separate assistant slider once left speech near-silent while media read 9/15.
+     */
+    private fun speechVolume(ctx: Context): Pair<String, Pair<Int, Int>>? = try {
         val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        am.getStreamVolume(AudioManager.STREAM_MUSIC) to am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        val stream = attrs.volumeControlStream.takeIf { it != AudioManager.USE_DEFAULT_STREAM_TYPE }
+            ?: AudioManager.STREAM_MUSIC
+        streamName(stream) to (am.getStreamVolume(stream) to am.getStreamMaxVolume(stream))
     } catch (_: Exception) { null }
+
+    private fun streamName(stream: Int) = when (stream) {
+        AudioManager.STREAM_MUSIC -> "media"
+        AudioManager.STREAM_ALARM -> "alarm"
+        AudioManager.STREAM_NOTIFICATION -> "notification"
+        AudioManager.STREAM_RING -> "ring"
+        AudioManager.STREAM_SYSTEM -> "system"
+        AudioManager.STREAM_VOICE_CALL -> "call"
+        AudioManager.STREAM_ACCESSIBILITY -> "accessibility"
+        else -> "stream $stream"
+    }
 }

@@ -149,7 +149,7 @@ class AndroidSpeakPlugin(Plugin):
         out = {"ok": True, "id": ids[-1], "chunks": len(ids), "chat": chat}
         if len(ids) > 1:
             out["ids"] = ids
-        for k in ("volume", "warning"):
+        for k in ("volume", "volume_stream", "warning"):
             if k in first:
                 out[k] = first[k]
         if first.get("reply_playing") and not interrupt:
