@@ -44,11 +44,11 @@ export async function mountSessions(root, boot, toClassic) {
           <label>Model<input name="model" placeholder="Host default" maxlength="100"></label>
           <label>Persona<input name="persona" placeholder="Harness default" maxlength="100"></label>
           <label>Title<input name="title" placeholder="What is this session for?" maxlength="160"></label>
-          <label>Task<input name="task" placeholder="Optional: t_… or slug" maxlength="120"></label>
+          <label>Task<input name="task" placeholder="Optional: t_… or slug" maxlength="120" title="The task this session is for: it is claimed for you, and gets a note when the session ends"></label>
           <label class="sx-check sx-full"><input type="checkbox" name="mcp" checked> Give it a Rook MCP token scoped to this session</label>
         </div>
         <datalist id="sx-folders"></datalist>
-        <p class="sx-muted">It runs in a real terminal on the host, with that host's own login for the harness. The token expires after a day and is revoked when the session ends.</p>
+        <p class="sx-muted">It runs in a real terminal on the host, with that host's own login for the harness. The token expires after a day and is revoked when the session ends. A task you name is claimed for you; when the session ends the task gets a note asking for a handoff.</p>
         <p class="sx-error" id="sx-form-error" role="alert"></p>
         <div class="sx-row"><button type="submit" class="sx-primary">Start</button><button type="button" id="sx-form-cancel">Cancel</button></div>
       </form>
@@ -133,6 +133,7 @@ export async function mountSessions(root, boot, toClassic) {
     const out = [];
     if (r.view?.terminal) out.push('terminal'); else if (r.view?.mirror) out.push('mirror');
     if (r.origin === 'rook') out.push('rook');
+    if (r.links?.console_room) out.push('console room');
     if (r.links?.task) out.push('task ' + r.links.task);
     return out.map(b => `<span class="sx-chip">${esc(b)}</span>`).join('');
   }
@@ -262,9 +263,11 @@ export async function mountSessions(root, boot, toClassic) {
     resume.disabled = !canTerm; resume.title = canTerm ? '' : 'This host cannot run Rook terminals for ' + rec.agent;
     el.querySelector('[data-act=stop]').hidden = !(live && rec.origin === 'rook');
     const hint = el.querySelector('.sx-hint');
-    hint.hidden = !(live && rec.origin === 'external' && !rec.view?.terminal);
-    hint.textContent = rec.agent === 'claude' ? 'Started outside Rook. To take it over here, run /rook-move in that Claude Code; Rook cannot stop it from this page.'
-      : 'Started outside Rook. End it on its host; once closed, resume it here in a Rook terminal.';
+    const external = live && rec.origin === 'external' && !rec.view?.terminal;
+    hint.hidden = !(external || (!live && rec.links?.task));
+    hint.textContent = external ? (rec.agent === 'claude' ? 'Started outside Rook. To take it over here, run /rook-move in that Claude Code; Rook cannot stop it from this page.'
+      : 'Started outside Rook. End it on its host; once closed, resume it here in a Rook terminal.')
+      : `This session worked on task ${rec.links?.task}. It has ended: leave a handoff on the task (Work page) or set its state.`;
     el.querySelector('.sx-send').hidden = !(live && rec.input && rec.input !== 'none');
     const mode = modeOf(rec);
     if (mode !== open.mode) {

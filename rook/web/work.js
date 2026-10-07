@@ -29,7 +29,7 @@ async function mountClassic(root, boot, toSessions) {
   root.innerHTML=`
     <div class="work-layout">
       <aside class="work-sidebar">
-        <div class="work-list-heading"><strong>Work sessions</strong><button id="work-new" type="button">+ New</button>${toSessions?'<button id="work-sessions" type="button" title="Every session on every host">Sessions view</button>':''}</div>
+        <div class="work-list-heading"><strong>Sessions (classic)</strong><button id="work-new" type="button">+ New</button>${toSessions?'<button id="work-sessions" type="button" title="Every session on every host">Sessions view</button>':''}</div>
         <input id="work-search" type="search" placeholder="Search sessions…" aria-label="Search by title, host, agent, or status">
         <div id="work-list"><p class="work-muted">Connecting…</p></div>
       </aside>

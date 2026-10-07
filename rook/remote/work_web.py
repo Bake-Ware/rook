@@ -29,7 +29,8 @@ METADATA_KEYS = frozenset(('id', 'owner', 'title', 'cwd', 'model', 'worker_id',
     'external_handle', 'external_cursor', 'resume_note', 'remote_runtime',
     'worker_revision', 'running', 'needs_input', 'legacy_runtime', 'active', 'messageable', 'message_note',
     'created_by', 'harness', 'term_id', 'term_running', 'term_exit', 'term_note',
-    'term_started', 'mcp_token_id', 'mcp_token_revoke', 'persona', 'task'))
+    'term_started', 'mcp_token_id', 'mcp_token_revoke', 'persona', 'task',
+    'task_claim', 'task_end_pending'))
 
 HARNESSES = ('shell', 'claude', 'codex', 'hermes')
 TERM_CAPS = ('work.stream.open', 'work.stream.read', 'work.stream.write')
@@ -120,7 +121,8 @@ def legacy_records(items, live):
                     'updated': t.get('last_output') or t.get('started'), 'messages': None,
                     'view': {'terminal': t['id'], 'mirror': False, 'transcript': transcript},
                     'input': 'pty' if running else 'none', 'inbox_policy': 'unknown',
-                    'links': {'work_session': t['session']} if t.get('session') else {},
+                    'links': {k: t[f] for k, f in (('work_session', 'session'), ('task', 'task'),
+                                                   ('console_room', 'room')) if t.get(f)},
                     'resumable': not running and transcript})
     return out
 
@@ -281,6 +283,8 @@ class WorkWeb:
         self.v2 = os.environ.get('ROOK_WORK_V2', '1') != '0'
         self.terms = TermHub(lambda: self.server._band, on_end=self.term_ended)
         self.token_url = os.environ.get('ROOK_TOKEN_ADMIN_URL', 'http://127.0.0.1:8765/tokens/account-api')
+        self.knowledge_url = os.environ.get('ROOK_KNOWLEDGE_ADMIN_URL', 'http://127.0.0.1:8765/knowledge/account-api')
+        self._task_flush = {}         # owner -> when its ended-session notes were last sent
         self.mcp_url = os.environ.get('ROOK_WORK_MCP_URL', '')
         self._ticks = 0
         # worker_id -> the latest unfiltered catalog fetched from it, served
@@ -445,6 +449,80 @@ class WorkWeb:
     def mcp_endpoint(self):
         return self.mcp_url or (self.account.origin + '/mcp')
 
+    # -- task links (docs/design/sessions.md §4.F) -----------------------------
+
+    async def knowledge_call(self, request, user, payload):
+        """A task write through the knowledge service, as the signed-in
+        operator (the same account API the Work page uses)."""
+        token = request.cookies.get(COOKIE, '')
+        if request.headers.get('Authorization', '').startswith('Bearer '):
+            token = request.headers['Authorization'][7:]
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
+                async with session.post(self.knowledge_url, json={**payload, 'csrf': user['csrf']},
+                                        cookies={COOKIE: token}, allow_redirects=False) as upstream:
+                    result = await upstream.json()
+                    if upstream.status != 200:
+                        raise ValueError(result.get('error') or 'Task service refused the request.')
+                    return result.get('result') or {}
+        except (aiohttp.ClientError, TimeoutError) as error:
+            raise ValueError('Task service is unavailable.') from error
+
+    @staticmethod
+    def session_ref(s):
+        """How a task's link names a Work session's terminal: its catalog key
+        when the terminal started (``<worker_id>/<harness>/<terminal id>``)."""
+        return f"{s.get('worker_id')}/{s.get('harness') or 'shell'}/{s.get('term_id')}"
+
+    async def claim_task(self, request, user, s):
+        """A session started for a task: claim the task for the operator who
+        started it (the session's identity on the dashboard) and link the
+        session to it. Returns ``claimed`` or why not, which the caller
+        records as ``task_claim``; a failure never fails the launch."""
+        sid = s['id']
+        ref = self.session_ref(s)
+        try:
+            got = await self.knowledge_call(request, user, {
+                'action': 'claim', 'kind': 'task', 'id': s['task'], 'request_id': f'session-claim:{sid}:{s["term_id"]}',
+                'data': {'provider_session': sid}})
+            await self.knowledge_call(request, user, {
+                'action': 'link', 'id': got.get('task') or s['task'], 'request_id': f'session-link:{sid}:{s["term_id"]}',
+                'data': {'kind': 'session', 'ref': ref, 'relation': 'touched',
+                         'note': f"Rook terminal on {s.get('worker_name') or 'a host'}: {s.get('title') or ''}"[:200]}})
+            outcome = 'claimed'
+        except ValueError as error:
+            outcome = str(error)[:300] or 'claim failed'
+            log.warning('Task claim for session %s failed: %s', sid, outcome)
+        return outcome
+
+    async def flush_task_ends(self, request, user, force=False):
+        """Post the note for linked sessions that ended (a terminal's end is
+        seen without a signed-in request, so the note waits for the next
+        one). The note asks the claimants for a handoff; nothing is closed."""
+        if not force and time.monotonic() - self._task_flush.get(user['id'], -1e9) < 30:
+            return
+        self._task_flush[user['id']] = time.monotonic()
+        for s in self.store.all(user['id'], details=False):
+            if not s.get('task_end_pending') or not s.get('task'):
+                continue
+            ref = self.session_ref(s)
+            code = s.get('term_exit')
+            text = (f"Session ended: {s.get('title') or 'a Rook terminal'} on {s.get('worker_name') or 'its host'} "
+                    f"({'exit code ' + str(code) if code is not None else s.get('term_note') or 'closed'}). "
+                    f"Leave a handoff or set the task's state.")
+            try:
+                await self.knowledge_call(request, user, {
+                    'action': 'note', 'id': s['task'], 'request_id': f'session-end:{s["id"]}:{s.get("term_id")}',
+                    'data': {'text': text, 'session_end': ref}})
+            except ValueError as error:
+                if 'unavailable' in str(error):
+                    return  # try again on a later request
+                log.warning('Task note for session %s dropped: %s', s['id'], error)
+            async with self.lock(s['id']):
+                latest = self.store.get(s['id'])
+                latest['task_end_pending'] = False
+                self.store.save(latest)
+
     # -- live terminals ------------------------------------------------------
 
     def term_ended(self, stream):
@@ -463,6 +541,8 @@ class WorkWeb:
             s['status'] = 'closed'
         if s.get('mcp_token_id'):
             s['mcp_token_revoke'] = True
+        if s.get('task'):
+            s['task_end_pending'] = True   # the task's note goes out on the next operator request
         self.store.save(s)
 
     async def term_socket(self, request):
@@ -559,6 +639,8 @@ class WorkWeb:
                     args['resume'] = s['source_id']
                 if s.get('persona'):
                     args['persona'] = s['persona']
+                if s.get('task') and int(((self.worker(s).get('hb') or {}).get('work') or {}).get('commands') or 0) >= 1:
+                    args['task'] = s['task']   # older workers refuse arguments they do not know
                 if data.get('mcp'):
                     token_id, secret = await self.mint_session_token(request, user, sid, s['harness'])
                     args.update(mcp_url=self.mcp_endpoint(), mcp_token=secret)
@@ -571,6 +653,9 @@ class WorkWeb:
                     s['status'] = 'working'
                 self.store.save(s)
                 self.store.result(sid, cid, {'status': 'submitted'})
+                if s.get('task'):
+                    s['task_claim'] = await self.claim_task(request, user, s)
+                    self.store.save(s)
             except Exception as error:
                 s = self.store.get(sid)
                 s['error'] = str(error) or type(error).__name__
@@ -709,6 +794,7 @@ class WorkWeb:
                    if not only or only in (w['worker_id'], w.get('name'))]
         fetched = await asyncio.gather(*(self.fetch_catalog(w, query, live_only, limit, actor(user))
                                          for w in targets))
+        await self.flush_task_ends(request, user)
         links = self.session_links(user['id'])
         tasks = (self.store.tasks(user['id']),
                  {s['id']: s['task'] for s in self.store.all(user['id'], details=False) if s.get('task')})
@@ -956,6 +1042,7 @@ class WorkWeb:
                         stream.finish(out.get('exit_code'))
                     async with self.lock(s['id']):
                         self.mark_term_done(s['id'], out.get('exit_code'))
+            await self.flush_task_ends(request, user, force=True)
         return {k: out[k] for k in ('stopped', 'terminal', 'handle', 'exit_code', 'note') if k in out}
 
     async def started(self, sid, cid, job):
@@ -1064,7 +1151,18 @@ class WorkWeb:
                 s = self.store.get(sid, user['id'])
                 s['task'] = task or None
                 self.store.save(s)
-        return {'links': {'task': task or None}}
+        out = {'links': {'task': task or None}}
+        if task:
+            # The task lists the session too (a link, not a claim: linking an
+            # old session does not mean anyone is working on the task now).
+            try:
+                await self.knowledge_call(request, user, {
+                    'action': 'link', 'id': task, 'request_id': f'session-link:{wid}/{agent}/{native}:{task}',
+                    'data': {'kind': 'session', 'ref': f'{wid}/{agent}/{native}', 'relation': 'touched',
+                             'note': 'linked from the Sessions page'}})
+            except ValueError as error:
+                out['note'] = f'Linked here; the task was not updated: {error}'
+        return out
 
     @staticmethod
     def summary(s):
@@ -1113,6 +1211,7 @@ class WorkWeb:
                 if any(s.get('revoke') for s in sessions) and time.monotonic() - last_revoke > 30:
                     last_revoke = time.monotonic()  # bounded retries if the token service is down
                     await self.revoke_session_tokens(request, user)
+                await self.flush_task_ends(request, user)   # at most every 30 s
                 for cid, sid in list(pending_receipts.items()):
                     result = self.store.result(sid, cid)
                     if not result or result.get('status') != 'accepted':
@@ -1156,7 +1255,7 @@ class WorkWeb:
                         cwd = str(data.get('cwd', '')).strip()
                         if not cwd.startswith('/') or len(cwd) > 2000:
                             raise ValueError('Enter an absolute working directory.')
-                        s = dict(id=sid, owner=user['id'], title=str(data.get('title') or 'New work')[:160],
+                        s = dict(id=sid, owner=user['id'], title=str(data.get('title') or 'New session')[:160],
                                  worker_id=w['worker_id'], worker_name=w.get('name'), band=w.get('band'),
                                  cwd=cwd, model=str(data.get('model') or '')[:100],
                                  agent='codex', status='starting', remote_runtime=True, worker_revision=0,

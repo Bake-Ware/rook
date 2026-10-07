@@ -44,6 +44,14 @@ class Band:
 @pytest.fixture
 def page(portal):  # noqa: F811
     portal.server._band = Band()
+    # Task writes go to the knowledge service's account API: recorded here,
+    # never sent anywhere.
+    portal.knowledge = []
+
+    async def knowledge_call(request, user, payload):
+        portal.knowledge.append(payload)
+        return {"task": payload.get("id"), "claim": "cl_1"} if payload.get("action") == "claim" else {}
+    portal.account.work_web.knowledge_call = knowledge_call
     return portal
 
 
@@ -208,6 +216,73 @@ async def test_new_session_launches_a_terminal_with_task_and_token(page, monkeyp
             links={}, resumable=False)]}
         listed = await (await client.get("/account/work/sessions?worker=w1", headers=p.headers)).json()
         assert listed["sessions"][0]["links"] == {"work_session": out["session"], "task": "t_0123abcd"}
+
+
+@pytest.mark.asyncio
+async def test_a_session_for_a_task_claims_it_and_notes_its_end(page):
+    """docs/design/sessions.md §4.F: New session with a task claims the task
+    for the operator and links the terminal; Stop leaves a note asking for a
+    handoff. Nothing closes the task."""
+    p = page
+    band = p.server._band
+    work = p.account.work_web
+    band.replies["work.stream.open"] = {"ok": True, "id": "t21"}
+    band.replies["sessions.stop"] = {"ok": True, "stopped": "terminal", "terminal": "t21", "exit_code": 0}
+    req = dict(csrf=p.csrf, id="task-session-0001", worker="w1", harness="shell", cwd="/srv/app", task="fix-login")
+    async with TestClient(TestServer(p.app)) as client:
+        out = await (await client.post("/account/work/session/new", json=req, headers=p.headers)).json()
+        claim, link = p.knowledge[:2]
+        assert claim["action"] == "claim" and claim["id"] == "fix-login" and claim["kind"] == "task"
+        assert claim["data"] == {"provider_session": out["session"]}
+        assert link["action"] == "link" and link["data"]["kind"] == "session"
+        assert link["data"]["ref"] == "w1/shell/t21"
+        s = work.store.get(out["session"], p.uid)
+        assert s["task_claim"] == "claimed"
+        # This host's terminals predate commands: the task is not sent to it.
+        assert "task" not in next(c[2] for c in band.calls if c[1] == "work.stream.open")
+        await client.post("/account/work/session/stop", json=body(p, agent="shell", native_id="t21"),
+                          headers=p.headers)
+        note = p.knowledge[-1]
+        assert note["action"] == "note" and note["id"] == "fix-login"
+        assert note["data"]["session_end"] == "w1/shell/t21" and "handoff" in note["data"]["text"]
+        assert not work.store.get(out["session"], p.uid).get("task_end_pending")
+        assert not any(k["action"] in ("update", "release") for k in p.knowledge)
+        # A host whose terminals take commands records the task on the terminal.
+        band.workers["w1"]["hb"]["work"]["commands"] = 1
+        band.replies["work.stream.open"] = {"ok": True, "id": "t22"}
+        await client.post("/account/work/session/new", json={**req, "id": "task-session-0002"}, headers=p.headers)
+        assert [c[2].get("task") for c in band.calls if c[1] == "work.stream.open"][-1] == "fix-login"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_claim_does_not_fail_the_launch_and_ends_are_retried(page):
+    p = page
+    work = p.account.work_web
+    p.server._band.replies["work.stream.open"] = {"ok": True, "id": "t31"}
+    calls = []
+
+    async def down(request, user, payload):
+        calls.append(payload)
+        raise ValueError("Task service is unavailable.")
+    work.knowledge_call = down
+    req = dict(csrf=p.csrf, id="task-session-0003", worker="w1", harness="shell", cwd="/srv/app", task="t_9")
+    async with TestClient(TestServer(p.app)) as client:
+        out = await (await client.post("/account/work/session/new", json=req, headers=p.headers)).json()
+        assert out["ok"] and work.store.get(out["session"], p.uid)["task_claim"] == "Task service is unavailable."
+        async with work.lock(out["session"]):
+            work.mark_term_done(out["session"], 1)
+        user = {"id": p.uid, "csrf": p.csrf}
+        await work.flush_task_ends(None, user, force=True)
+        assert work.store.get(out["session"], p.uid)["task_end_pending"]   # kept for a later request
+        sent = []
+
+        async def up(request, user, payload):
+            sent.append(payload)
+            return {}
+        work.knowledge_call = up
+        await work.flush_task_ends(None, user, force=True)
+        assert sent[0]["action"] == "note" and "exit code 1" in sent[0]["data"]["text"]
+        assert not work.store.get(out["session"], p.uid)["task_end_pending"]
 
 
 @pytest.mark.asyncio

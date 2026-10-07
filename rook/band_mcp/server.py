@@ -625,6 +625,38 @@ def build_server(client: "BandClient | MultiBandClient",
             log.exception("hygiene trigger %s failed", name)
             return None
 
+    async def _claim_for_session(task: str, kind: str, ref: str, note: str) -> tuple[str | None, str | None]:
+        """A session started for ``task`` (docs/design/sessions.md §4.F):
+        claim it for the caller and link the session to it. Returns
+        ``(task id, None)`` or ``(None, error)``."""
+        k = getattr(mcp, "_rook_knowledge", None)
+        if k is None:
+            return None, "tasks are not enabled on this hub (knowledge plugin off)"
+        try:
+            got = await k.dispatch("claim", None, "task", str(task), "", {},
+                                   "session-claim:" + os.urandom(8).hex(), lean=True)
+        except Exception as e:
+            return None, f"could not claim task {task!r}: {e}"
+        tid = (got or {}).get("task") if isinstance(got, dict) else None
+        if not tid:
+            return None, f"could not claim task {task!r}"
+        _auto_link(kind, ref, note, task=tid)
+        return tid, None
+
+    def _linked_session_ended(kind: str, ref: str, what: str, exit_code=None) -> None:
+        """The pump saw a linked session end (a console room's process, or a
+        watched Rook terminal): note it on its tasks and ask for a handoff."""
+        k = getattr(mcp, "_rook_knowledge", None)
+        engine = getattr(k, "hygiene", None) if k is not None else None
+        if engine is None:
+            return
+        try:
+            engine.on_linked_session_end(kind, ref, what)
+        except Exception:
+            log.exception("linked session end (%s %s) failed", kind, ref)
+
+    mcp._rook_session_end = _linked_session_ended  # _amain hands it to the console pump
+
     def _knowledge_band(worker: dict | None):
         """The knowledge band of a worker (its band label/id), or None when
         it can't be resolved (then hygiene links are not band-limited)."""
@@ -881,6 +913,21 @@ def build_server(client: "BandClient | MultiBandClient",
                              args=args, reply=journal_reply, audit=_caller_audit(),
                              authz=_decision_row())
         linked = _auto_link("journal", cid, f"{cap} on {worker_name}")
+        task_error = None
+        if (cap == "work.stream.open" and isinstance(args, dict) and args.get("task")
+                and isinstance(reply, dict) and reply.get("ok")
+                and isinstance(reply.get("result"), dict) and reply["result"].get("id")):
+            # A terminal started for a task: claim it for the caller, link the
+            # session, and have the pump note on the task when it ends.
+            term_id = str(reply["result"]["id"])
+            ref = f"{target}/{args.get('harness') or 'shell'}/{term_id}"
+            claimed, task_error = await _claim_for_session(
+                str(args["task"]), "session", ref,
+                f"Rook terminal on {worker_name}: {reply['result'].get('title') or ''}"[:200])
+            if claimed:
+                linked = claimed
+                console.watch(target, term_id, ref=ref, task=claimed,
+                              title=str(reply["result"].get("title") or ""))
         # Commits / PRs in the output, linked within the worker's band.
         _hygiene("on_call", cap, args, reply, worker_name, band=_knowledge_band(roster.get(target)))
         chat.touch(identity)
@@ -893,6 +940,8 @@ def build_server(client: "BandClient | MultiBandClient",
         notices: dict = {}
         if linked and _notices.fresh(session, "task", linked):
             notices["_task"] = linked
+        if task_error:
+            notices["_task_error"] = task_error
         unread = chat.unread_summary(identity)
         if unread and _notices.fresh(session, "chat", unread):
             notices["_unread_chat"] = unread
@@ -1237,10 +1286,39 @@ def build_server(client: "BandClient | MultiBandClient",
                                  target=room["worker"], timeout=timeout,
                                  identity=_caller_identity())
 
+    # A room's process is a Rook terminal (work.stream.*) where the worker's
+    # terminals take commands (heartbeat work.commands), else a proc.* session.
+    _TERM_CAPS = ("work.stream.open", "work.stream.read", "work.stream.write")
+
+    def _term_capable(w: dict) -> bool:
+        caps = w.get("caps", [])
+        hb = ((w.get("hb") or {}).get("work") or {})
+        return all(c in caps for c in _TERM_CAPS) and int(hb.get("commands") or 0) >= 1
+
+    async def _room_call(room: dict, op: str, args: dict, timeout: float = 15.0):
+        """write / signal / close on a room's process, through the transport
+        it runs on. Replies keep the proc.* shape (``handle`` included)."""
+        if room.get("transport") != "term":
+            return await _proc_call(room, "proc." + op, args, timeout)
+        if op == "write":
+            data = str(args.get("data") or "")
+            # A terminal's Enter is CR (canonical mode turns it into NL).
+            args = {"data": data + ("\r" if args.get("newline", True) else "")}
+        reply = await client.call(cap="work.stream." + op, args={**args, "id": room["handle"]},
+                                  target=room["worker"], timeout=timeout,
+                                  identity=_caller_identity())
+        if isinstance(reply.get("result"), dict):
+            reply = {**reply, "result": {**reply["result"], "handle": room["handle"]}}
+        elif not reply.get("ok"):
+            reply = {**reply, "result": {"ok": False, "error": reply.get("error"),
+                                         "handle": room["handle"]}}
+        return reply
+
     @mcp.tool()
     async def rook_console_open(worker: str, task: str, cmd: str | None = None,
                                 argv: list | None = None, cwd: str | None = None,
-                                env: dict | None = None, pty: bool = False) -> str:
+                                env: dict | None = None, pty: bool = False,
+                                task_id: str | None = None) -> str:
         """Start a long-running command on a worker as a **console room** — a
         named, band-visible, permanently searchable terminal session.
 
@@ -1257,7 +1335,10 @@ def build_server(client: "BandClient | MultiBandClient",
 
         Pass ``argv`` (a list, no shell, no quoting) or ``cmd`` (a string via
         ``/bin/sh -c``). Set ``pty=True`` for password prompts, REPLs, or
-        anything that needs a real tty.
+        anything that needs a real tty. On workers with Rook terminals it runs
+        in one (a tty, ``terminal`` in the reply, on the Sessions page).
+
+        ``task_id``: claim that task and link the room (default: your claim).
 
         Then: ``rook_console_read`` for output, ``rook_console_write`` to answer
         a prompt, ``rook_console_close`` with a summary when you're done.
@@ -1272,31 +1353,64 @@ def build_server(client: "BandClient | MultiBandClient",
         if err:
             return _fail(err)
         w = client.workers.get(target, {})
-        if "proc.start" not in w.get("caps", []):
+        use_term = _term_capable(w)
+        if not use_term and "proc.start" not in w.get("caps", []):
             return _fail(f"worker {w.get('name')!r} has no proc.* capability — "
                          f"it predates console rooms. Update it, or fall back "
                          f"to rook_call('shell.exec').")
         ident = _caller_identity()
         chat.touch(ident)
-        args = {k: v for k, v in
-                {"cmd": cmd, "argv": argv, "cwd": cwd, "env": env,
-                 "pty": pty, "label": task}.items() if v is not None}
-        try:
-            reply = await client.call(cap="proc.start", args=args, target=target,
-                                      timeout=20.0, identity=ident)
-        except asyncio.TimeoutError:
-            return _fail(f"no reply from {worker!r} starting the session")
-        result = reply.get("result") or {}
-        if not reply.get("ok") or not result.get("ok"):
-            return json.dumps({"ok": False, "stage": "start",
-                               "error": result.get("error") or reply.get("error"),
-                               "reply": reply}, indent=2)
+        rid = console.new_id()
+        linked_task = None
+        if task_id:
+            linked_task, err = await _claim_for_session(task_id, "console", rid, task[:200])
+            if err:
+                return _fail(err)
+        result, transport = None, "proc"
+        if use_term:
+            targs = {k: v for k, v in
+                     {"harness": "shell", "cmd": cmd, "argv": argv, "cwd": cwd or "",
+                      "env": env, "title": task[:160], "room": rid,
+                      "task": linked_task or _claimed_task() or None}.items() if v is not None}
+            try:
+                reply = await client.call(cap="work.stream.open", args=targs, target=target,
+                                          timeout=20.0, identity=ident)
+            except asyncio.TimeoutError:
+                return _fail(f"no reply from {worker!r} starting the session")
+            result = reply.get("result") or {}
+            if reply.get("ok") and result.get("ok"):
+                transport = "term"
+                result = {**result, "handle": result.get("id"), "pty": True}
+            elif ("too many live terminals" in str(reply.get("error") or "")
+                  and "proc.start" in w.get("caps", [])):
+                result = None   # this worker's terminals are full: a proc session instead
+            else:
+                return json.dumps({"ok": False, "stage": "start",
+                                   "error": result.get("error") or reply.get("error"),
+                                   "reply": reply}, indent=2)
+        if result is None:
+            args = {k: v for k, v in
+                    {"cmd": cmd, "argv": argv, "cwd": cwd, "env": env,
+                     "pty": pty, "label": task}.items() if v is not None}
+            try:
+                reply = await client.call(cap="proc.start", args=args, target=target,
+                                          timeout=20.0, identity=ident)
+            except asyncio.TimeoutError:
+                return _fail(f"no reply from {worker!r} starting the session")
+            result = reply.get("result") or {}
+            if not reply.get("ok") or not result.get("ok"):
+                return json.dumps({"ok": False, "stage": "start",
+                                   "error": result.get("error") or reply.get("error"),
+                                   "reply": reply}, indent=2)
         opened = console.open(title=task, worker=target,
                               worker_name=w.get("name") or target,
                               handle=result["handle"], cmd=result.get("cmd", ""),
-                              pty=bool(result.get("pty")), opened_by=ident)
+                              pty=bool(result.get("pty")), opened_by=ident,
+                              transport=transport, rid=rid)
         opened["pid"] = result.get("pid")
-        task_id = _auto_link("console", opened.get("room") or opened.get("id"), task[:200])
+        if transport == "term":
+            opened["terminal"] = result["handle"]
+        task_id = linked_task or _auto_link("console", opened.get("room") or opened.get("id"), task[:200])
         if task_id:
             opened["task"] = task_id
         opened["note"] = ("Session is live. Output is pumped into this room — "
@@ -1357,7 +1471,7 @@ def build_server(client: "BandClient | MultiBandClient",
                 _auto_link("secret", name, f"typed into console {room}")
             console.remember_typed(room, used)
         try:
-            reply = await _proc_call(r, "proc.write",
+            reply = await _room_call(r, "write",
                                      {"data": data, "newline": newline})
         except asyncio.TimeoutError:
             return _fail(f"worker {r['worker_name']!r} did not confirm the write")
@@ -1378,7 +1492,7 @@ def build_server(client: "BandClient | MultiBandClient",
             return _fail(f"room {room} is {r['state']} — process already gone.")
         chat.touch(_caller_identity())
         try:
-            reply = await _proc_call(r, "proc.signal", {"sig": sig})
+            reply = await _room_call(r, "signal", {"sig": sig})
         except asyncio.TimeoutError:
             return _fail(f"worker {r['worker_name']!r} did not confirm the signal")
         return json.dumps(reply.get("result") or reply, indent=2)
@@ -1409,7 +1523,7 @@ def build_server(client: "BandClient | MultiBandClient",
                              f"running). Pass kill=True to stop it and freeze "
                              f"the room, or wait for it to exit.")
             try:
-                await _proc_call(r, "proc.close", {})
+                await _room_call(r, "close", {})
             except Exception:
                 pass
             console.mark_closing(room, None)
@@ -1619,7 +1733,7 @@ async def _amain(args) -> None:
 
     # Console pump — drains live worker proc sessions into their console rooms.
     from .console_pump import ConsolePump
-    pump = ConsolePump(client, mcp._rook_console)
+    pump = ConsolePump(client, mcp._rook_console, on_end=getattr(mcp, "_rook_session_end", None))
     pump.start()
 
     # Wire up WS bridge for remote Telesthete Band workers.

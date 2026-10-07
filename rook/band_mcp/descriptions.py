@@ -44,7 +44,7 @@ TOOLS: dict[str, str] = {
 
     "rook_chat_wake": "Make an agent on worker answer in room now (via hermes.chat or agent.wake); note is passed along.",
 
-    "rook_console_open": "Run a slow, interactive or worth-keeping command as a console room, searchable after it exits. Returns once started. task (required) is the title: the goal (\"install cuda on worker-a\"), not the command. argv (list, no shell) or cmd (/bin/sh -c); pty=true for prompts/REPLs. Then rook_console_read/_write, and _close with a summary.",
+    "rook_console_open": "Run a slow, interactive or worth-keeping command as a console room, searchable after it exits. Returns once started. task (required) is the title: the goal (\"install cuda on worker-a\"), not the command. argv (list, no shell) or cmd (/bin/sh -c); pty=true for prompts/REPLs. task_id: claim that task. Then rook_console_read/_write, and _close with a summary.",
 
     "rook_console_read": "Console output after since_seq (page with last_seq), or tail=true for the last limit lines. state says live or frozen.",
 

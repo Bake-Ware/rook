@@ -113,7 +113,7 @@ Then ask it to "list my Rook workers and run `uptime` on my-worker". It will use
 bearer header works the same way.
 
 In Claude Code you can also install the Rook mod, a pane showing your bands,
-sessions across the band and the work deck. See
+sessions across the band and its open tasks (the Deck). See
 [integrations/claude-code](integrations/claude-code/README.md).
 
 **In the terminal UI:** run `rook` (or `rook band`). It connects to `http://127.0.0.1:7005`

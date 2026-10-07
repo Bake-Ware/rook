@@ -2,12 +2,17 @@
 
 The dashboard's **Sessions** tab lists every agent session on every connected
 worker: Claude Code, Codex, Hermes and shells, whether Rook started them or
-someone started them in their own terminal. From here you start new ones,
-watch and steer running ones, resume closed ones and stop the ones Rook
-started. The contract behind it is docs/design/sessions.md (§3.1 record,
-§3.3 view tiers, §3.6 hub routes).
+someone started them in their own terminal, plus the console rooms agents
+open (`rook_console_open`), which run in Rook terminals on workers that have
+them. From here you start new ones, watch and steer running ones, resume
+closed ones and stop the ones Rook started. The contract behind it is
+docs/design/sessions.md (§3.1 record, §3.3 view tiers, §3.6 hub routes).
 
-The older **Classic view** (the Codex app-server Work view, [work.md](work.md))
+Words: **Sessions** are agent and terminal sessions (this page); **Work** is
+tasks (the Work page, `rook_task`). A session can be linked to the task it
+works on.
+
+The older **Classic view** (the Codex app-server sessions view, [work.md](work.md))
 is one link away in the page header until the Sessions page covers its
 features. Each browser remembers which of the two it was on
 (`localStorage` key `rook.work.view`). `ROOK_WORK_V2=0` on the dashboard serves
@@ -20,7 +25,9 @@ sessions come first, then idle ones (live, waiting for input), then closed
 ones, newest first; hosts and projects with live sessions sort first. Each row
 shows the title, agent, state, age and message count, plus chips:
 `terminal` (it runs in a Rook terminal), `mirror` (the Rook Claude Code mod
-streams it), `rook` (Rook started it) and `task …` (linked to a task).
+streams it), `rook` (Rook started it), `console room` (an agent's console
+room: its output is also archived and searchable with `rook_console_search`)
+and `task …` (linked to a task).
 
 - **Search** matches title, folder and session id. It filters at once and asks
   every worker again (each searches its newest 500 transcripts per agent).
@@ -76,14 +83,37 @@ On a phone the open session replaces the list; **← All sessions** goes back.
   the session's MCP token. A live session started outside Rook cannot be
   stopped from here: the page says to run `/rook-move` in that Claude Code to
   hand it to Rook, or to end it on its host.
-- **Link to task**: a task id (`t_…`) or slug, stored on the hub. Empty
-  unlinks.
+- **Link to task**: a task id (`t_…`) or slug, stored on the hub and added to
+  the task's links (kind `session`). Empty unlinks. Linking does not claim
+  the task.
 - **New session**: host, harness (only those the host reports installed),
   folder (absolute; recent folders on that host are suggested), model,
-  persona, title, an optional task to link, and **Give it a Rook MCP token
+  persona, title, an optional task, and **Give it a Rook MCP token
   scoped to this session** (see [worklog.md](worklog.md) for the token's
   scope and lifetime). The session opens in its terminal as soon as the host
   has started it.
+
+## Sessions and tasks
+
+A session started for a task (the **Task** field of New session) claims that
+task for you, the way `rook_task(action="claim")` would, and links the
+session to it (the task's links show `session <host id>/<harness>/<terminal>`).
+A claim that fails (an unknown task, tasks turned off on the hub) does not
+stop the session; it starts unlinked from the task's side.
+
+When a linked session ends (Stop, or its process exits), the task gets a note
+saying so and asking for a handoff, and its claimants get a `session_ended`
+hygiene finding (on the deck, and on an agent's next reply). Nothing closes
+the task or releases the claim: whoever did the work leaves the handoff or
+sets the state. The page shows the same reminder on a closed session that is
+linked to a task. The note is sent with your next request to the dashboard
+(the hub notices an ended terminal without one), so it may lag by up to half
+a minute.
+
+Agents get the same: `rook_console_open(task_id=…)` and
+`rook_call("work.stream.open", args={…, "task": …})` claim the task for the
+calling agent and link the room or terminal, and the hub notes the end on the
+task when the process exits.
 
 ## Hub routes
 
@@ -102,7 +132,10 @@ masked for known vault values before it reaches the browser.
 
 - `pytest tests/test_sessions_page.py`: the hub routes (auth, Origin, CSRF,
   relays and their fallbacks for older workers, the long-poll cap, launch,
-  resume, attach, stop, task links).
+  resume, attach, stop, task links, the claim on launch and the note on end).
+- `pytest tests/test_sessions_consistency.py`: console rooms on Rook
+  terminals and the `proc.*` fallback, command terminals on the worker, and
+  task claims, links and end notes from the MCP side.
 - `python tests/browser_sessions.py [--screenshots DIR]`: the page in
   Chromium against a real terminals plugin and scripted `sessions.*` caps:
   list, filters, stale host, live view with tool output, transcript, send

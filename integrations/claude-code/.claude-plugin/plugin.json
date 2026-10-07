@@ -1,7 +1,7 @@
 {
   "name": "rook",
-  "version": "0.3.2",
-  "description": "Rook band views inside Claude Code: a live pane of bands and their workers, sessions across the fleet, and the work deck",
+  "version": "0.3.3",
+  "description": "Rook band views inside Claude Code: a live pane of bands and their workers, sessions across the fleet, and the Deck of open tasks (Work)",
   "author": {
     "name": "Bake-Ware",
     "url": "https://github.com/Bake-Ware"

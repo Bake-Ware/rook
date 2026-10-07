@@ -65,7 +65,7 @@ const PANE_TOOL = 'mcp__rook__pane'
 const PANE_TOOL_SPEC = {
   name: 'pane',
   description:
-    'The rook pane the person sees beside this chat (bands and workers, sessions across the fleet, the work deck, settings). ' +
+    'The rook pane the person sees beside this chat (bands and workers, sessions across the fleet, the Deck of open tasks and handoffs, settings). ' +
     'action "read" (default) returns what it shows now as text, rows numbered where they open. ' +
     'The other actions drive it, then return the new text: "tab" {tab: bands|sessions|deck|settings}; ' +
     '"worker" {worker: name} opens a worker\'s detail (what it hosts); ' +
@@ -595,7 +595,7 @@ async function groomDeck($: EngineInterface): Promise<void> {
       ((await read($, roster)).bands ?? []).map(band => [band.id, band.name]),
     )
     const text = groomText(unwrap(deck), handoffs, names, await $.clock.now())
-    await appendRow($, text, 'work deck')
+    await appendRow($, text, 'task deck')
     void $.prompt.submit({ text: GROOM_PROMPT })
     await set($, {
       busy: undefined,
@@ -898,7 +898,7 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'rook-bands',
-      description: 'Show rook in a pane: bands and workers, sessions across the fleet, the work deck',
+      description: 'Show rook in a pane: bands and workers, sessions across the fleet, the Deck of open tasks',
     })
     await $.command.register({
       name: 'rook-move',
@@ -1438,7 +1438,7 @@ export const register: Register = (on, options) => {
         <Box flexDirection="column">
           {tabs}
           <Box flexDirection="row" justifyContent="space-between">
-            <Text bold>Open work across all bands</Text>
+            <Text bold>Open tasks across all bands (Work)</Text>
             <Button
               key="groom"
               variant="primary"
@@ -1449,7 +1449,7 @@ export const register: Register = (on, options) => {
           </Box>
           {status}
           {at.busy !== true && deck.length === 0 && handoffs.length === 0 && (
-            <Text dimColor>Nothing on deck.</Text>
+            <Text dimColor>No open tasks or handoffs.</Text>
           )}
           {deck.map(project => (
             <Box flexDirection="column">
@@ -1490,7 +1490,7 @@ export const register: Register = (on, options) => {
               </Text>
             </Box>
           ))}
-          {keys(`g sends the deck to the chat; Claude verifies each item, fixes what it can prove, then asks · ${MOVE}`)}
+          {keys(`g sends the open tasks and handoffs to the chat; Claude verifies each item, fixes what it can prove, then asks · ${MOVE}`)}
         </Box>
       )
     }

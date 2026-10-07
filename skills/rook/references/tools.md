@@ -31,7 +31,7 @@ The tables are generated from the code by `tools/gen_skill_reference.py`; don't 
 | `rook_config_get` | worker | A worker's config overrides and pending/confirm state. |
 | `rook_console_close` | room, summary?, kill? | Freeze a console room. |
 | `rook_console_list` | worker?, state?, limit=50 | Console rooms, newest first; filter by worker or state (live\|closing\|frozen). |
-| `rook_console_open` | worker, task, cmd?, argv?, cwd?, env?, pty? | Run a slow, interactive or worth-keeping command as a console room, searchable after it exits. |
+| `rook_console_open` | worker, task, cmd?, argv?, cwd?, env?, pty?, task_id? | Run a slow, interactive or worth-keeping command as a console room, searchable after it exits. |
 | `rook_console_read` | room, since_seq?, tail?, limit=300 | Console output after since_seq (page with last_seq), or tail=true for the last limit lines. state says live o… |
 | `rook_console_search` | query, worker?, limit=20 | Full-text search of all console sessions; titles and summaries rank highest (search for the task, not the com… |
 | `rook_console_signal` | room, sig='TERM' | Signal a live console's process group: TERM, KILL, INT (ctrl-C) or HUP. |
@@ -428,7 +428,7 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 | `work.sessions` | limit=20, offset=0, history=true, query='' | One catalog of this host's work: live terminals plus Claude/Codex history, newest first. |
 | `work.stream.close` | id | Stop the terminal's process (SIGHUP, then SIGKILL) and drop it. |
 | `work.stream.list` | — | Live and recently finished terminals on this worker. |
-| `work.stream.open` | harness='shell', cwd='', title='', model='', resume='', persona='', mcp_url='', mcp_token='', session='', remote_control='', cols=120, rows=32, buffer_bytes=262144, handoff_pid=0 | Start a harness (shell\|claude\|codex\|hermes) under a PTY and return its terminal `id` immediately. |
+| `work.stream.open` | harness='shell', cwd='', title='', model='', resume='', persona='', mcp_url='', mcp_token='', session='', remote_control='', cols=120, rows=32, buffer_bytes=262144, handoff_pid=0, argv?, cmd='', env?, task='', room='' | Start a harness (shell\|claude\|codex\|hermes) under a PTY and return its terminal `id` immediately. |
 | `work.stream.read` | id, cursor=0, max_bytes=16384, wait=0, accept='tbz' | Output from byte `cursor` on. |
 | `work.stream.resize` | id, cols, rows | Set the terminal size in character cells (sends SIGWINCH). |
 | `work.stream.signal` | id, sig='INT' | Signal the terminal's process group: INT, TERM, HUP, KILL. |
