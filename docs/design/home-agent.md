@@ -81,7 +81,45 @@ plugin reads its settings on every use.
   event loop with a total timeout; chat replies run as background tasks. The
   only synchronous work is the chat store's small sqlite reads.
 
-### 1.3 Identity and the journal
+### 1.3 Chat on the page
+
+Manage > Home agent has a chat panel under the agent table (`homeChat` in
+`rook/web/home.js`). It adds no endpoint: it uses the dashboard's own chat
+API (`/api/chat/rooms`, `read`, `start`, `send`), the same calls and the same
+admin login as the Chat view, so it chats as the dashboard's chat identity
+`user:operator`.
+
+- **One room, shared with Chat.** The conversation is the newest two-person
+  room between `user:operator` and `agent:<name>`, which is also the room
+  the Chat view opens when you click the agent in Presence. Visiting the page
+  creates nothing; the first message creates the room (titled with the
+  agent's name). Renaming the agent switches the panel to the new identity's
+  room.
+- **Sending.** Enter sends (Shift+Enter for a newline). The message mentions
+  the agent explicitly, so it is still answered if someone later joins the
+  room.
+- **Working state.** "<name> is thinking · N s" from the send until a reply
+  from the agent lands. Reopening the page while the last message is still
+  the operator's (and recent) shows it again. Replies are posted whole, so
+  the panel polls the room: every 1.5 s while waiting, every 4 s otherwise,
+  and not at all while another view is open.
+- **Errors.** Off or missing a base URL/model: the panel says so, disables
+  the box and offers **Go to the form** (on a phone the form is below). A
+  failed reply ends the wait with an error and the status summary
+  (`last_error`): from the room's generic "unavailable" line, or, since that
+  line is posted at most once per room per 10 minutes, from a failed `chat`
+  row for `user:operator` in the agent's activity (checked every third poll
+  while waiting). No reply after `2 × timeout_s + 30` seconds says so and
+  points at Recent activity. Chat API failures (no chat store, signed out)
+  are shown in the panel.
+- Status lines the agent posts (busy, unavailable) are shown dimmed; the
+  busy note does not end the wait.
+
+Tests: `tests/browser_home_chat.py` (real plugin, fake model endpoint, real
+chat store; desktop and phone width) and `test_the_home_page_chat_contract`
+in `tests/test_home_agent.py`.
+
+### 1.4 Identity and the journal
 
 The home agent is its own principal, not a borrowed token:
 
@@ -98,7 +136,7 @@ The home agent is its own principal, not a borrowed token:
 A `home.ask` from an MCP agent is journaled by `rook_call` under that agent
 as usual; what the home agent then does is journaled under the home agent.
 
-### 1.4 Tools
+### 1.5 Tools
 
 None by default. With `home.tools` on, the model gets one OpenAI function,
 `knowledge_search(query)`, which calls `knowledge.read` (action `search`) in
@@ -202,7 +240,7 @@ stream) is a prerequisite for the first.
 
 ## 3. Not in the groundwork
 
-- Streaming replies (replies are posted whole).
+- Streaming replies (replies are posted whole; the page's chat panel polls the room).
 - Providers other than OpenAI-compatible (an Anthropic adapter would sit
   beside `llm.ChatClient`).
 - More than one home agent per hub, or per-band home agents (the settings are

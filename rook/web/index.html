@@ -1146,6 +1146,7 @@ function showView(v,updateHistory=true){
  if(activeView==='sessions')sessionsUI?.deactivate();
  if(activeView==='work')tasksUI?.deactivate();
  if(activeView==='knowledge')knowledgeUI?.deactivate();
+ if(activeView==='home')homeUI?.deactivate();
  activeView=v;document.body.dataset.view=v;
  for(const n of Object.keys(viewInfo)){
   $('#view-'+n).hidden=v!==n; const tab=$('#tab-'+n);tab.classList.toggle('active',v===n);
