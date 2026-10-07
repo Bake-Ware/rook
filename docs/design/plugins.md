@@ -140,7 +140,7 @@ Every node describes itself with two kinds of fact (permissions.md 4.8):
   | `arch` | `x86_64`, `aarch64`, ... | `platform.machine()` |
   | `py` | `"3.12"` | interpreter |
   | `cpus`, `mem_gb` | numbers | `os.cpu_count()`, `/proc/meminfo` |
-  | `pty` | bool | POSIX |
+  | `pty` | bool | POSIX, or Windows with ConPTY (10 1809+) |
   | `display` | bool | `DISPLAY`/`WAYLAND_DISPLAY` (Linux); true on Windows/macOS |
   | `camera` | bool | `/dev/video*` (Linux) |
   | `gpu` | `[{vendor, name, vram_gb}]` | `nvidia-smi` (one bounded call) |

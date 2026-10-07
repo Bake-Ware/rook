@@ -1,7 +1,17 @@
-"""Local delivery to existing agent sessions. Never launch a duplicate session.
+r"""Local delivery to existing agent sessions. Never launch a duplicate session.
 
 Receipts live on the worker and contain no message bodies. A claimed command
 is never automatically replayed after an uncertain outcome or worker restart.
+
+Claude Code's peer inbox: each live interactive session writes
+``~/.claude/sessions/<pid>.json`` (``sessionId``, ``procStart``,
+``messagingSocketPath``, ``peerProtocol``) and a token file
+``<pid>.<sha256(path)>.key`` (``peerToken``). On Linux/macOS the inbox is a
+Unix socket and ``procStart`` is field 22 of /proc/<pid>/stat. On Windows it
+is a local named pipe (``\\.\pipe\LOCAL\cc-msg-<hex>``), ``procStart`` is the
+process creation time as a FILETIME, the key file names the lower-cased pipe
+path and carries ``procStartFt`` and ``pidDomain``; "private" means owned by
+this user with no access for anyone but SYSTEM and Administrators.
 """
 import asyncio
 import hashlib
@@ -11,17 +21,24 @@ import re
 import socket
 import sqlite3
 import stat
+import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
 from weakref import WeakValueDictionary
 
-from . import codex_input
+from . import codex_input, winsec
+
+_IS_WIN = sys.platform == 'win32'
+# A local pipe, one name segment (no '..': \\.\ paths are normalized).
+_LOCAL_PIPE = re.compile(r'\\\\\.\\pipe\\(?:LOCAL\\)?[A-Za-z0-9][A-Za-z0-9_-]{0,200}', re.I)
 
 
 def claude_endpoint(session_id, home=None, proc_root=Path('/proc')):
     """Match a live process, exact session, private socket and its peer key."""
     home = home or Path.home() / '.claude'
+    if _IS_WIN:
+        return _claude_endpoint_windows(session_id, home)
     matches = []
     for marker in (home / 'sessions').glob('*.json'):
         try:
@@ -53,6 +70,72 @@ def claude_endpoint(session_id, home=None, proc_root=Path('/proc')):
     return matches[0] if len(matches) == 1 else None
 
 
+def _private_regular(path, me):
+    info = path.lstat()
+    reparse = getattr(info, 'st_file_attributes', 0) & getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0x400)
+    return stat.S_ISREG(info.st_mode) and not reparse and winsec.is_private(path, me)
+
+
+def _claude_endpoint_windows(session_id, home):
+    """The Windows twin of the checks above: a live claude.exe of this user
+    whose creation time matches the marker, a local named pipe, and a
+    private token file for exactly that pipe and process start."""
+    me = winsec.current_user_sid()
+    matches = []
+    for marker in (home / 'sessions').glob('*.json'):
+        try:
+            if not _private_regular(marker, me):
+                continue
+            data = json.loads(marker.read_text(encoding='utf-8'))
+            if data.get('sessionId') != session_id or data.get('peerProtocol') != 1:
+                continue
+            pid = int(data['pid'])
+            proc = winsec.process_info(pid)
+            if not proc or not proc['alive'] or proc['image'] != 'claude.exe' or proc['sid'] != me:
+                continue
+            if not data.get('procStart') or str(data['procStart']) != str(proc['created']):
+                continue
+            path = str(data['messagingSocketPath'])
+            if not _LOCAL_PIPE.fullmatch(path):
+                continue
+            for name in dict.fromkeys((path.lower(), path)):
+                key = home / 'sessions' / f'{pid}.{hashlib.sha256(name.encode()).hexdigest()}.key'
+                if key.exists():
+                    break
+            if not _private_regular(key, me):
+                continue
+            auth = json.loads(key.read_text(encoding='utf-8'))
+            if str(auth.get('procStartFt', auth.get('procStart'))) != str(data['procStart']):
+                continue
+            if auth.get('pidDomain', data.get('pidDomain')) != data.get('pidDomain'):
+                continue
+            if not re.fullmatch('[0-9a-f]{32}', auth.get('peerToken', '')):
+                continue
+            matches.append((path, auth['peerToken'], pid))
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            continue
+    return matches[0] if len(matches) == 1 else None
+
+
+def _pipe_send(path, pid, payload):
+    """Blocking: connect to a Claude inbox pipe, confirm the server is the
+    expected process, write the frames."""
+    handle = winsec.open_pipe(path)
+    try:
+        if winsec.pipe_server_pid(handle) != pid:
+            raise ValueError('Claude inbox owner changed. Refresh the session before sending.')
+        winsec.write_all(handle, payload)
+    finally:
+        winsec.close_handle(handle)
+
+
+def _claude_frames(session_id, command_id, text, token):
+    frames = [{'type': 'auth', 'token': token}, {'type': 'user', 'session_id': session_id,
+        'message': {'role': 'user', 'content': text}, 'priority': 'next', 'from': 'Rook Work',
+        'uuid': command_id}]
+    return ('\n'.join(json.dumps(frame) for frame in frames) + '\n').encode()
+
+
 def messageable(agent, session_id):
     return codex_input.available(session_id) if agent == 'codex' else claude_endpoint(session_id) is not None
 
@@ -71,6 +154,22 @@ def _receipt_db():
 
 
 _delivery_locks = WeakValueDictionary()
+
+
+async def _socket_send(path, pid, payload):
+    reader, writer = await asyncio.wait_for(asyncio.open_unix_connection(str(path)), 5)
+    try:
+        peer = writer.get_extra_info('socket')
+        if hasattr(socket, 'SO_PEERCRED'):
+            import struct
+            actual_pid, uid, _ = struct.unpack('3i', peer.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+            if actual_pid != pid or uid != os.getuid():
+                raise ValueError('Claude inbox owner changed. Refresh the session before sending.')
+        writer.write(payload)
+        await asyncio.wait_for(writer.drain(), 5)
+    finally:
+        writer.close()
+        await writer.wait_closed()
 
 
 async def deliver(agent, session_id, command_id, text):
@@ -103,25 +202,14 @@ async def _deliver(agent, session_id, command_id, text):
             if endpoint is None:
                 raise ValueError('This Claude session has no available local messaging inbox. Resume it on the host first.')
             path, token, pid = endpoint
-            reader, writer = await asyncio.wait_for(asyncio.open_unix_connection(str(path)), 5)
-            try:
-                peer = writer.get_extra_info('socket')
-                if hasattr(socket, 'SO_PEERCRED'):
-                    import struct
-                    actual_pid, uid, _ = struct.unpack('3i', peer.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
-                    if actual_pid != pid or uid != os.getuid():
-                        raise ValueError('Claude inbox owner changed. Refresh the session before sending.')
-                frames = [{'type': 'auth', 'token': token}, {'type': 'user', 'session_id': session_id,
-                    'message': {'role': 'user', 'content': text}, 'priority': 'next', 'from': 'Rook Work',
-                    'uuid': command_id}]
-                writer.write(('\n'.join(json.dumps(frame) for frame in frames) + '\n').encode())
-                await asyncio.wait_for(writer.drain(), 5)
-                # This protocol has no in-band acceptance acknowledgment. Report
-                # transport submission, never claim the agent accepted the prompt.
-                result = {'ok': True, 'delivery': 'forwarded', 'note': 'Message sent to the Claude inbox. Refresh the conversation to confirm it was accepted.'}
-            finally:
-                writer.close()
-                await writer.wait_closed()
+            payload = _claude_frames(session_id, command_id, text, token)
+            if _IS_WIN:
+                await asyncio.wait_for(asyncio.to_thread(_pipe_send, str(path), pid, payload), 10)
+            else:
+                await _socket_send(path, pid, payload)
+            # This protocol has no in-band acceptance acknowledgment. Report
+            # transport submission, never claim the agent accepted the prompt.
+            result = {'ok': True, 'delivery': 'forwarded', 'note': 'Message sent to the Claude inbox. Refresh the conversation to confirm it was accepted.'}
     except asyncio.TimeoutError:
         pass
     except (OSError, ValueError) as error:
