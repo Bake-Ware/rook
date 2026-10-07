@@ -5,6 +5,7 @@ import android.content.Intent
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.media.MediaPlayer
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -13,14 +14,26 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.speech.tts.Voice
 import android.util.Log
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.util.Locale
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
- * On-device text-to-speech for the `voice.speak` worker cap (rook_android/plugins/speak_android.py).
+ * Speech for the `voice.speak` worker cap (rook_android/plugins/speak_android.py).
  *
- * One [TextToSpeech] engine per process, created lazily on the main thread and kept
+ * When the app has a voice server configured, each line is synthesized there
+ * (POST /api/voice) in the app's selected voice, so agents sound like the
+ * assistant, and played here one at a time. If the server can't be reached or
+ * refuses, that line falls back to the device voice and the job notes why.
+ *
+ * On-device speech: one [TextToSpeech] engine per process, created lazily on the main thread and kept
  * alive (its init is asynchronous: jobs queue until it reports ready). Speech plays as
  * USAGE_ASSISTANT with transient, may-duck audio focus, so other audio dips rather than
  * stops; the worker's foreground service keeps the process alive with the screen off.
@@ -44,6 +57,13 @@ object SpeakBridge {
     private var speechHold = false
     private var pumpScheduled = false
     private var counter = 0L
+
+    // Voice-server route: one utterance at a time (fetching or playing).
+    private val fetcher = Executors.newSingleThreadExecutor()
+    private var current: SpeakQueue.Job? = null
+    private var player: MediaPlayer? = null
+    private var playerFile: File? = null
+    private val deviceWaiting = ArrayDeque<SpeakQueue.Job>()   // fell back while the engine was starting
 
     private val attrs: AudioAttributes by lazy {
         AudioAttributes.Builder()
@@ -83,6 +103,7 @@ object SpeakBridge {
         val out = JSONObject().put("ok", true).put("id", j.id).put("state", j.state).put("done", j.done)
         j.error?.let { out.put("error", it) }
         j.note?.let { out.put("note", it) }
+        j.via?.let { out.put("via", it) }
         if (j.state == SpeakQueue.QUEUED) {
             out.put("ahead", queue.ahead(id)).put("engine", init)
             if (replyPlaying()) out.put("waiting_for", "voice reply")
@@ -93,7 +114,11 @@ object SpeakBridge {
 
     @JvmStatic fun stop(): String {
         val n = queue.stopAll()
-        main.post { try { tts?.stop() } catch (_: Exception) {}; abandonFocus() }
+        main.post {
+            try { tts?.stop() } catch (_: Exception) {}
+            stopPlayer(); current = null; deviceWaiting.clear()
+            abandonFocus()
+        }
         return JSONObject().put("ok", true).put("stopped", n).toString()
     }
 
@@ -151,6 +176,7 @@ object SpeakBridge {
         engine.setOnUtteranceProgressListener(progress)
         init = "ready"
         Log.i(TAG, "tts ready engine=${engine.defaultEngine} in ${(System.nanoTime() - started) / 1_000_000}ms")
+        while (deviceWaiting.isNotEmpty()) deviceSpeak(deviceWaiting.removeFirst())
         pump()
     }
 
@@ -159,6 +185,7 @@ object SpeakBridge {
         init = "failed"; initError = error
         if (tts === engine) tts = null
         try { engine.shutdown() } catch (_: Exception) {}
+        deviceWaiting.clear(); current = null
         queue.failAll(error)
         abandonFocus()
     }
@@ -166,6 +193,8 @@ object SpeakBridge {
     private fun pump() {
         pumpScheduled = false
         if (queue.idle()) return
+        val srv = server()
+        if (srv != null) { pumpServer(srv); return }
         if (init != "ready") { if (queue.hasPending()) ensureInit(); return }
         val engine = tts ?: return
         while (true) {
@@ -217,8 +246,124 @@ object SpeakBridge {
         override fun onError(id: String, code: Int) = end(id, SpeakQueue.ERROR, "tts error $code")
         override fun onStop(id: String, interrupted: Boolean) = end(id, SpeakQueue.STOPPED, null)
         private fun end(id: String, state: String, error: String?) {
-            main.post { if (queue.finished(id, state, error)) abandonFocus() }
+            main.post {
+                if (queue.finished(id, state, error)) abandonFocus()
+                if (current?.id == id) { current = null; pump() }
+            }
         }
+    }
+
+    // ---- voice server (main thread unless noted) ------------------------------
+
+    private class Server(val url: String, val token: String, val insecure: Boolean, val voice: String)
+
+    /** The app's voice server, or null when none is configured. */
+    private fun server(): Server? {
+        val ctx = app ?: return null
+        val p = ctx.getSharedPreferences("rook", Context.MODE_PRIVATE)
+        val base = p.getString("voice_url", BuildConfig.DEFAULT_VOICE_URL) ?: ""
+        if (base.isBlank()) return null
+        val url = try { VoiceCatalog.speechEndpoint(base) } catch (_: Exception) { return null }
+        return Server(url, p.getString("voice_token", "") ?: "", p.getBoolean("voice_insecure", false),
+                      p.getString("voice_choice", "") ?: "")
+    }
+
+    private fun pumpServer(srv: Server) {
+        val playingReply = replyPlaying()
+        if (current != null) {
+            if (!queue.hasPendingInterrupt()) return          // one at a time; finishing pumps again
+            stopPlayer(); try { tts?.stop() } catch (_: Exception) {}
+            current = null                                    // queue.next marks it superseded
+        }
+        val job = queue.next(playingReply)
+        if (job == null) {
+            if (queue.hasPending() && !pumpScheduled) { pumpScheduled = true; main.postDelayed({ pump() }, DEFER_POLL_MS) }
+            return
+        }
+        if (job.interrupt && playingReply) try { app?.let { VoiceService.interrupt(it) } } catch (e: Exception) {
+            Log.w(TAG, "voice interrupt failed: $e")
+        }
+        current = job; job.via = "server"
+        requestFocus()
+        val cache = app?.cacheDir
+        fetcher.execute {
+            val result = try { fetch(srv, job, cache) } catch (e: Exception) { Result.failure<File>(e) }
+            main.post { onFetched(job, result) }
+        }
+    }
+
+    /** Worker thread: synthesize one line on the voice server into a temp WAV file. */
+    private fun fetch(srv: Server, job: SpeakQueue.Job, cache: File?): Result<File> {
+        val b = OkHttpClient.Builder().callTimeout(30, TimeUnit.SECONDS).followRedirects(false)
+        if (srv.insecure) VoiceTls.trustAll(b)
+        val http = b.build()
+        try {
+            val body = JSONObject().put("text", job.text)
+            // A voice named by the caller wins; otherwise the voice picked in the app.
+            val voice = job.voice.ifEmpty { srv.voice }
+            if (voice.isNotEmpty()) body.put("voice", voice)
+            val req = Request.Builder().url(srv.url).header("User-Agent", "rook-worker")
+                .post(body.toString().toRequestBody("application/json".toMediaType()))
+                .apply { if (srv.token.isNotEmpty()) header("Authorization", "Bearer ${srv.token}") }.build()
+            http.newCall(req).execute().use { r ->
+                if (!r.isSuccessful) return Result.failure(RuntimeException("voice server ${r.code}"))
+                val file = File(cache ?: return Result.failure(RuntimeException("no cache dir")), "speak-${job.id}.wav")
+                file.outputStream().use { out -> r.body?.byteStream()?.copyTo(out) }
+                return Result.success(file)
+            }
+        } finally { http.dispatcher.executorService.shutdown(); http.connectionPool.evictAll() }
+    }
+
+    private fun onFetched(job: SpeakQueue.Job, result: Result<File>) {
+        val file = result.getOrNull()
+        if (current !== job || job.done) { file?.delete(); return }   // stopped or superseded meanwhile
+        if (file == null) { fallBack(job, result.exceptionOrNull()?.message ?: "failed"); return }
+        try {
+            val mp = MediaPlayer()
+            player = mp; playerFile = file
+            mp.setAudioAttributes(attrs)
+            mp.setDataSource(file.path)
+            mp.setOnCompletionListener { finishServer(job, SpeakQueue.DONE, null) }
+            mp.setOnErrorListener { _, what, extra -> finishServer(job, SpeakQueue.ERROR, "playback error $what/$extra"); true }
+            mp.prepare(); mp.start()
+            queue.started(job.id)
+        } catch (e: Exception) { stopPlayer(); fallBack(job, "playback: $e") }
+    }
+
+    private fun finishServer(job: SpeakQueue.Job, state: String, error: String?) {
+        stopPlayer()
+        if (current === job) current = null
+        if (queue.finished(job.id, state, error)) abandonFocus()
+        pump()
+    }
+
+    /** The server route failed for this line: say it with the device voice instead. */
+    private fun fallBack(job: SpeakQueue.Job, reason: String) {
+        Log.w(TAG, "voice server: $reason; using the device voice")
+        job.via = "device"; job.note = "voice server unavailable ($reason); used the device voice"
+        // Device TTS reads job.voice as a device voice name or locale; a server voice id
+        // (e.g. "sojourn") is not one, so leave it out and use the device default.
+        deviceSpeak(job)
+    }
+
+    private fun deviceSpeak(job: SpeakQueue.Job) {
+        val engine = tts
+        if (init != "ready" || engine == null) { deviceWaiting.addLast(job); ensureInit(); return }
+        engine.setSpeechRate(job.rate); engine.setPitch(job.pitch)
+        engine.defaultVoice?.let { try { engine.voice = it } catch (_: Exception) {} }
+        requestFocus()
+        val params = Bundle().apply { putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1f) }
+        if (engine.speak(job.text, TextToSpeech.QUEUE_ADD, params, job.id) != TextToSpeech.SUCCESS) {
+            if (current === job) current = null
+            if (queue.finished(job.id, SpeakQueue.ERROR, "voice server and device voice both failed")) abandonFocus()
+            pump()
+        }
+    }
+
+    private fun stopPlayer() {
+        player?.let { try { it.stop() } catch (_: Exception) {}; try { it.release() } catch (_: Exception) {} }
+        player = null
+        playerFile?.delete(); playerFile = null
     }
 
     // ---- audio focus -------------------------------------------------------

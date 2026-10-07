@@ -45,5 +45,6 @@ class VoiceCatalogTest {
     @Test fun endpointUsesHttpsAndDropsSocketPathAndQuery() {
         assertEquals("https://voice.example:8443/voices", VoiceCatalog.endpoint("wss://voice.example:8443/ws?token=secret#part"))
         assertEquals("https://voice.example/voices", VoiceCatalog.endpoint("ws://voice.example/ws"))
+        assertEquals("https://voice.example:8443/api/voice", VoiceCatalog.speechEndpoint("wss://voice.example:8443/ws?token=secret"))
     }
 }

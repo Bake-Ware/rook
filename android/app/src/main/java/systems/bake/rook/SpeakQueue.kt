@@ -18,6 +18,7 @@ class SpeakQueue(private val keep: Int = 64) {
         @Volatile var state: String = QUEUED
         @Volatile var error: String? = null
         @Volatile var note: String? = null
+        @Volatile var via: String? = null        // "server" (voice server) or "device" (on-device TTS)
         val done get() = state in FINAL
     }
 
@@ -92,6 +93,7 @@ class SpeakQueue(private val keep: Int = 64) {
 
     @Synchronized fun idle() = pending.isEmpty() && inFlight.isEmpty()
     @Synchronized fun hasPending() = pending.isNotEmpty()
+    @Synchronized fun hasPendingInterrupt() = pending.any { it.interrupt }
     @Synchronized fun get(id: String): Job? = jobs[id]
     @Synchronized fun ahead(id: String): Int {
         val i = pending.indexOfFirst { it.id == id }
