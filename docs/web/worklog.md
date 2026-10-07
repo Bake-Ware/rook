@@ -1,18 +1,14 @@
-# Worklog: live terminals in Work
+# Live terminals
 
-The worklog is the default Work view (dashboard **Sessions** tab). Each room
-groups the sessions of one project directory on one host. Live sessions render
-as real terminals (xterm.js). Finished sessions collapse into a log entry
-showing title, agent, host, message count, age and status. Every historical
-Claude/Codex session found on a host is listed and can be resumed with one click.
-**Live now** collects every running terminal across rooms.
+Rook terminals: a harness (Claude Code, Codex, Hermes or a shell) running
+under a PTY on a worker, streamed to every browser that opens it. The
+dashboard's **Sessions** page ([sessions.md](sessions.md)) is where they are
+started, opened, resumed and stopped; this page covers the terminal itself,
+its launch templates and its caps. (The earlier "worklog" rooms view was
+replaced by the Sessions page.)
 
-The classic view ([work.md](work.md)) remains available during rollout:
-
-- **Classic view** / **Worklog view** buttons switch per browser (stored in
-  `localStorage` as `rook.work.view`).
-- `ROOK_WORK_V2=0` on the dashboard disables the worklog entirely. Only the
-  classic view is served, and `launch` is refused.
+`ROOK_WORK_V2=0` on the dashboard disables live terminals entirely. Only the
+classic view ([work.md](work.md)) is served, and launches are refused.
 
 ## Data path
 
@@ -101,7 +97,7 @@ minutes. Memory is bounded for a hub host with about 1 GB of RAM:
 Worst case is about 8 MB of rings plus viewer queues. `TermHub.memory()`
 reports the current total.
 
-**Browser** (`rook/web/worklog.js`, vendored xterm.js 6.0.0 in
+**Browser** (`TermView` in `rook/web/worklog.js`, used by `sessions.js`; vendored xterm.js 6.0.0 in
 `rook/web/vendor/xterm/`, served same-origin at `/account/work/assets/vendor/`).
 The socket requires an operator login, the dashboard Origin, and the CSRF
 token on every control message. Frames:
@@ -124,7 +120,7 @@ at the hub, with one `work.stream.write` in flight at a time, so they stay in
 order. Only the holder's size reaches the PTY. Other viewers render the PTY's
 grid at its size.
 
-**Teardown.** **End session** calls `work.stream.close` (SIGHUP, then SIGKILL
+**Teardown.** **Stop** on the Sessions page calls `sessions.stop`, which calls `work.stream.close` (SIGHUP, then SIGKILL
 to the process group), marks the session closed, and revokes its MCP token.
 The dashboard's collector also calls `work.stream.list` every ~6 s for
 sessions marked running that nobody is watching. This catches exits and hosts
@@ -132,8 +128,8 @@ that restarted ("Terminal is gone from its host").
 
 ## Launch templates
 
-**+ Launch** (or **Launch again** on a finished entry) starts a harness on a
-chosen host and directory:
+**New session** on the Sessions page starts a harness on a chosen host and
+directory (an absolute POSIX path, or a Windows drive path such as `C:\src`):
 
 | Harness | Command | Model | Rook MCP connection |
 |---|---|---|---|
@@ -253,6 +249,9 @@ be published as `rook.transcript/2`.
 - No wire format changed. The new caps, the `hb.work` heartbeat key and the
   new token-route `scopes` field are all optional additions.
 - The classic view keeps working against the same session records.
+- The Sessions page reads every host through the newest caps it has and falls
+  back for older workers (`work.sessions`, `*-history.pull`, `*-history.follow`,
+  `*-history.send`); a worker without `sessions.mirror` simply has no live view.
 
 ## Verification
 

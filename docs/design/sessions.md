@@ -30,7 +30,7 @@ changes this document in the same PR.
 | Processes | `proc.*` | Pipe or PTY processes with a handle; no ring, no hub fan-out. |
 | Console rooms | `rook/band_mcp/console_rooms.py` | Named, archived, searchable "terminal as chat room", pumped from `proc.read`, ANSI stripped. |
 | Codex app-server work | `work.*` (`rook/worker/plugins/work.py`, `work_runtime.py`) | Web-initiated Codex sessions driven through the app-server protocol (the classic Work view). |
-| Web | Dashboard **Sessions** tab (`work.js`: worklog or classic), **Work** tab (tasks) | Two views of sessions, a separate task board. |
+| Web | Dashboard **Sessions** tab (`sessions.js`, the Sessions page; `work.js` keeps the classic view behind a link), **Work** tab (tasks) | One list of sessions, a separate task board. Docs: `docs/web/sessions.md`. |
 | Claude Code mod | `integrations/claude-code/` | Pane with Bands, Sessions (calls `claude-history` directly), Deck, Settings. |
 | Tasks and handoffs | `rook_task`, `rook_handoff_*`, journal | Work tracking; `ROOK_WORK_SESSION` env links a Rook-launched terminal to its hub session. |
 | Home agent | `rook/hub/plugins/home/`, Manage > Home agent (`home.js`) | Hub LLM reachable as `@home` in chat rooms and `home.ask`. Config page with a chat panel (workstream E, polls the shared 1:1 room). |
@@ -331,12 +331,29 @@ namespace). Old caps stay as thin aliases for at least one release.
   `stale`, when that worker fails.
 - Heartbeat summary `hb.sessions` = `{live, idle}` counts (§3.5), shown as
   `workers[].counts`.
-- One viewer socket per session: `/account/work/session/<key>` speaks the
-  worklog terminal protocol for tier 1 and a JSON event protocol for tiers 2
-  and 3 (`{type: "event", event}` frames, `{type: "send", text}` from the
-  browser). Not built yet (workstream C); until then a record with
-  `view.terminal` and `links.work_session` opens through the existing
-  `/account/work/term/<work_session>` socket.
+- **Per-session routes** (built, workstream C): `POST
+  /account/work/session/<op>` in `rook/remote/work_web.py`. Operator auth
+  (401/403), the dashboard `Origin` (403 otherwise) and the CSRF token in the
+  JSON body (403), like the terminal socket; `Cache-Control: no-store`. Every
+  request names the session as `worker` (worker id), `agent` and `native_id`.
+  Replies are `{ok: true, …}` or `{ok: false, error}` with 400 (bad request,
+  unknown host, a cap the worker lacks), 404 (unknown op), 429 (too many live
+  views) or 502 (the worker failed or refused; its message). Tier 1 needs no
+  new socket: a record with `view.terminal` opens through the existing
+  `/account/work/term/<work_session>` socket (`attach` makes the Work session
+  when there is none). Tiers 2 and 3 are JSON long-polls rather than a socket,
+  so a lost reply costs one request and the cursor stays with the browser.
+
+  | `op` | Body (besides `csrf`, `worker`, `agent`, `native_id`) | Reply |
+  |---|---|---|
+  | `mirror` | `cursor` (0), `wait` (0-20 s), `max_events` (≤500) | `{events, cursor, done, exists}` from `sessions.mirror`, masked. At most 32 waiting calls hub-wide (429 beyond) |
+  | `follow` | `offset`, `version` | `sessions.follow` page (`unchanged`, `version`, `replace_from`, `messages`, `truncated`, `next_offset`, `next_content_offset`, `total_messages`, `activity`, `active`), masked; older workers through `<agent>-history.follow`. claude/codex only |
+  | `send` | `text` (1-24,000), `command_id?` | `{delivery: turn/held/keys, note, detail?, terminal?, native_id?}` from `sessions.send`; older workers through `<agent>-history.send` (`delivery: turn`) |
+  | `stop` | | `{stopped, terminal?, handle?, exit_code?, note?}` from `sessions.stop`; a hub Work session on that terminal is marked ended and its MCP token revoked |
+  | `resume` | `id` (command id, 8-100 chars), `cwd?`, `title?`, `mcp?`, `cols?`, `rows?` | `{session, terminal, title}`: a Work session (the same id history discovery uses for that conversation) resumed with `work.stream.open(resume=native_id)`. claude/codex, hosts with `work.stream.*` only; idempotent per `id`, and a session already running returns its terminal |
+  | `new` | `id`, `harness`, `cwd`, `model?`, `title?`, `persona?`, `task?`, `mcp?`, `cols?`, `rows?` (no `agent`/`native_id`) | `{session, terminal, title}`: the Work socket's `launch` (same validation, token minting and Work session), awaited. `harness` must be one the host reports; `cwd` absolute (POSIX or `X:\`) |
+  | `attach` | `terminal` | `{session}`: a Work session for a running Rook terminal the hub had none for (checked with `work.stream.list`) |
+  | `link` | `task` (`t_…` or slug; `""` unlinks), `work_session?` | `{links: {task}}`. Stored on the hub by catalog key (and on the Work session when given); the merged list returns it as `links.task` |
 - The classic Work view's non-PTY **Resume on host** accepts a `terminal`
   result from `*-history.resume` and attaches the session's terminal.
 - MCP: no new tools. Agents use `rook_call` on these caps; `rook_console_*`
@@ -359,7 +376,9 @@ reads `sessions.list` (falls back to `claude-history.pull` on older
 workers). Mod version bump. Tests: mod tests (`claude plugin test`), worker
 unit tests for tailing, rotation and cleanup.
 
-**C. Sessions page.** One list of every session across workers, grouped by
+**C. Sessions page.** *Done:* `rook/web/sessions.js`, the routes of §3.6,
+docs in `docs/web/sessions.md`; the mod's Sessions tab sends through
+`sessions.send` (mod 0.3.2). One list of every session across workers, grouped by
 host and project (live first, then idle, then closed), with: **New session**
 (harness, host, folder, model, persona, optional task), **Open** (terminal,
 or live view rendering mirror/transcript events, read-only xterm for tool

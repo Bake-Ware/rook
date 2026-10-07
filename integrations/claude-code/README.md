@@ -15,7 +15,11 @@ in a pane beside the chat.
   otherwise. You can list them, search across
   the band, read a session's tail and load it into this chat as reference. You
   can also resume a session on its own worker (with Remote Control where
-  available), send it a message and stop it.
+  available), send it a message and stop it. A message goes through the
+  worker's `sessions.send` where it has one: into the session's inbox (shown
+  as "waiting for approval" where that machine holds such messages), or typed
+  into its Rook terminal when that is all it has. Older workers take
+  `claude-history.send`.
 - **Deck**: open tasks and handoffs from the work deck. You can claim a task,
   load a task or handoff into the chat, or send the whole deck to the chat for
   grooming.

@@ -23,7 +23,7 @@ are set only in the environment or on the command line.
 
 | Key | Label | Scope | Type | Default | Env / flag | Apply |
 |---|---|---|---|---|---|---|
-| `core.work.v2` | Worklog view (live terminals) | hub | bool | on | `ROOK_WORK_V2` | restart · bootstrap |
+| `core.work.v2` | Sessions page (live terminals) | hub | bool | on | `ROOK_WORK_V2` | restart · bootstrap |
 | `core.work.import_workers` | Session import allowlist | hub | list |  | `ROOK_WORK_IMPORT_WORKERS` | restart · bootstrap |
 
 ## Core: General

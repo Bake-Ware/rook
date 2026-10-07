@@ -524,13 +524,40 @@ const stopSession = ($: EngineInterface) =>
     }
   })
 
+/**
+ * `sessions.send` routes by the session's input: its inbox (a user turn, or
+ * held for approval there) or keystrokes into its Rook terminal, so a session
+ * that only has a Rook terminal still gets the message. Older workers take
+ * `<agent>-history.send` (tried each time: a worker may update in between).
+ */
 const sendMessage = ($: EngineInterface, text: string) =>
   act($, 'sending…', async (_, session) => {
     if (text.trim() === '') return { note: undefined }
+    const commandId = await requestId($)
+    try {
+      const sent = await rookCall($, session.workerId, 'sessions.send', {
+        agent: session.agent,
+        native_id: session.id,
+        text,
+        command_id: commandId,
+      })
+      const delivery = String(sent.delivery ?? '')
+
+      return {
+        note:
+          delivery === 'held'
+            ? `waiting for approval on ${session.workerName}`
+            : delivery === 'keys'
+              ? `typed into its Rook terminal on ${session.workerName}`
+              : `sent to ${session.workerName}`,
+      }
+    } catch (error) {
+      if (!/no such cap|unknown cap/i.test(reason(error))) throw error
+    }
     await historyCall($, session, 'send', {
       session_id: session.id,
       text,
-      command_id: await requestId($),
+      command_id: commandId,
     })
 
     return { note: `sent to ${session.workerName}` }

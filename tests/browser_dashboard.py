@@ -76,9 +76,9 @@ async def main():
     assert 'stale' in await page.locator('#location-test').inner_text()
     await page.evaluate("document.querySelector('#location-test').remove()")
     await page.evaluate("showView('sessions',false)")
-    await page.locator('#sessagent').select_option('codex-history')
-    await page.get_by_text('Codex test conversation',exact=True).wait_for()
-    assert await page.locator('#sessworker').input_value()=='worker1'
+    await page.locator('.sx #sx-counts').wait_for()
+    await page.get_by_text('No connected hosts report sessions.',exact=True).wait_for()
+    assert await page.locator('#sx-new').is_visible()
     await page.evaluate("showView('workers',false)")
     await page.locator('#worker-sort').select_option('os');await page.screenshot(path='/tmp/rook-new-workers.png')
     await page.locator('.view-toggle [data-layout=grid]').click()
