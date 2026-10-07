@@ -33,7 +33,7 @@ import {
   unwrap,
 } from './sessions'
 import type { Raw, Source } from './sessions'
-import { INBOUND, INBOUND_HELP, INBOUND_MENU, pickSettings, showValue } from './settings'
+import { INBOUND, INBOUND_HELP, INBOUND_MENU, inboundFromFile, pickSettings, showValue } from './settings'
 import { asRecord } from './sessions'
 
 const PANE = 'rook-bands'
@@ -545,10 +545,22 @@ const claimItem = ($: EngineInterface) =>
 
 // ---- settings: Claude Code's /config rows that matter to rook, changed in place
 
+/** The user's settings file, where `/config` writes the inbound setting. */
+async function userSettings($: EngineInterface): Promise<string | undefined> {
+  const dir = (await $.env.get('CLAUDE_CONFIG_DIR')) ?? `${(await $.env.get('HOME')) ?? ''}/.claude`
+  try {
+    return await $.fs.read(`${dir}/settings.json`)
+  } catch {
+    return undefined
+  }
+}
+
 async function loadSettings($: EngineInterface, done: Patch = {}): Promise<void> {
   await set($, { ...CLEAR, tab: 'settings', screen: 'list', busy: true })
   try {
-    await set($, { busy: undefined, settings: pickSettings(await $.config.list()), ...done })
+    const rows = pickSettings(await $.config.list())
+    if (!rows.some(row => row.key === INBOUND)) rows.unshift(inboundFromFile(await userSettings($)))
+    await set($, { busy: undefined, settings: rows, ...done })
   } catch (error) {
     await set($, { busy: undefined, error: reason(error) })
   }
@@ -1012,6 +1024,11 @@ export const register: Register = (on, options) => {
             return (
               <Box flexDirection="column">
                 {heading(row.label, row.locked ? 'locked' : current)}
+                {row.changeIn !== undefined && (
+                  <Text color={C.accent} wrap="wrap">
+                    {`Claude Code keeps this one from plugins: change it in ${row.changeIn}.`}
+                  </Text>
+                )}
                 {row.description !== undefined && (
                   <Text dimColor wrap="wrap">
                     {row.description}
@@ -1020,7 +1037,7 @@ export const register: Register = (on, options) => {
                 {choices.length > 0 && (
                   <Box flexDirection="row" columnGap={1} flexWrap="wrap">
                     {choices.map(choice =>
-                      choice === current || row.locked ? (
+                      choice === current || row.locked || row.changeIn !== undefined ? (
                         <Text
                           key={`set:${row.key}:${choice}`}
                           bold={choice === current}
@@ -1040,7 +1057,7 @@ export const register: Register = (on, options) => {
                   </Box>
                 )}
                 {choices.length === 0 &&
-                  (Input !== undefined && !row.locked ? (
+                  (Input !== undefined && !row.locked && row.changeIn === undefined ? (
                     <Input
                       key={`set:${row.key}`}
                       label={row.label}

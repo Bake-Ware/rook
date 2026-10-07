@@ -58,6 +58,8 @@ export type SettingRow = {
   options?: string[]
   /** A trusted source (managed settings) owns it: shown, not changed. */
   locked: boolean
+  /** Claude Code keeps it from plugins: shown read-only, changed where this says. */
+  changeIn?: string
 }
 
 /** A task or a handoff opened from the deck. */

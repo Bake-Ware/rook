@@ -19,6 +19,37 @@ export const INBOUND_HELP: Readonly<Record<string, string>> = {
 /** Where the person changes the inbound setting when Claude Code refuses a plugin. */
 export const INBOUND_MENU = 'open /config and pick it under "Messages from your other sessions"'
 
+const INBOUND_LABEL = 'Messages from your other sessions'
+const INBOUND_DESCRIPTION = 'How a message from another session arrives here, including a rook poke.'
+const INBOUND_OPTIONS = ['default', 'accept', 'hold', 'refuse']
+
+/**
+ * The inbound row read from the user's settings file, for when Claude Code
+ * leaves it out of `$.config.list()`: it keeps that setting from plugins, so
+ * the tab shows it and says where to change it.
+ */
+export function inboundFromFile(settingsJson: string | undefined): SettingRow {
+  let value = 'default'
+  try {
+    const parsed: unknown = settingsJson === undefined ? undefined : JSON.parse(settingsJson)
+    const set = typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>)[INBOUND] : undefined
+    if (typeof set === 'string' && INBOUND_OPTIONS.includes(set)) value = set
+  } catch {
+    // An unreadable file reads as the default, as Claude Code's own reader treats a missing one.
+  }
+
+  return {
+    key: INBOUND,
+    label: INBOUND_LABEL,
+    description: INBOUND_DESCRIPTION,
+    kind: 'choice',
+    value,
+    options: INBOUND_OPTIONS,
+    locked: false,
+    changeIn: '/config, under "Messages from your other sessions"',
+  }
+}
+
 /** The rows the settings tab shows: the inbound setting first, then rook's own options. */
 export function pickSettings(rows: readonly ConfigRow[]): SettingRow[] {
   const wanted = rows.filter(row => row.key === INBOUND || row.key.startsWith('rook.'))
@@ -29,7 +60,7 @@ export function pickSettings(rows: readonly ConfigRow[]): SettingRow[] {
       key: row.key,
       label: row.label,
       ...(row.key === INBOUND
-        ? { description: 'How a message from another session arrives here, including a rook poke.' }
+        ? { description: INBOUND_DESCRIPTION }
         : row.description !== undefined
           ? { description: row.description }
           : {}),
@@ -60,6 +91,7 @@ export function settingsLines(rows: readonly SettingRow[] | undefined): string[]
     return [
       '',
       `## ${row.label} (${row.key})${row.locked ? ' · locked by policy' : ''}`,
+      ...(row.changeIn !== undefined ? [`read-only here; change it in ${row.changeIn}`] : []),
       ...(row.description !== undefined ? [row.description] : []),
       `value: ${showValue(row.value)}`,
       ...(row.options !== undefined ? [`options: ${row.options.join(', ')}`] : []),
