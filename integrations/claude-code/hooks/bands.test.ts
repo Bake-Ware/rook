@@ -378,3 +378,41 @@ test(
     await ui.unmount()
   },
 )
+
+test('the settings tab shows the inbound row first and saves a pick', async ($, on) => {
+  const rows = [
+    { key: 'theme', label: 'Theme', kind: 'choice', value: 'dark', options: ['dark', 'light'], provider: { plugin: 'engine', tier: 'core' }, isLocked: false },
+    { key: 'rook.hostingSync', label: 'Hosting sync button', kind: 'boolean', value: false, provider: { plugin: 'rook', tier: 'user' }, isLocked: false },
+    { key: 'crossSessionInbound', label: 'Messages from your other sessions', kind: 'choice', value: 'default', options: ['default', 'accept', 'hold', 'refuse'], provider: { plugin: 'engine', tier: 'core' }, isLocked: false },
+  ]
+  const sets: Array<{ key: string; value: unknown }> = []
+  on('config.list', async () => ({ value: rows }) as never)
+  on('config.set', async (_, e) => {
+    sets.push({ key: e.key, value: e.value })
+    const row = rows.find(one => one.key === e.key)
+    if (row !== undefined) row.value = e.value as never
+
+    return { value: e.value }
+  })
+  const { ui } = await fleet($, on)
+  await ui.press({ key: 'tab:settings' })
+  expect(await ui.find({ type: 'Text', text: /MESSAGES FROM YOUR OTHER SESSIONS/ })).toBeDefined()
+  expect(await ui.find({ key: 'set:theme:light' })).toBeUndefined()
+  await ui.press({ key: 'set:crossSessionInbound:accept' })
+  expect(sets).toEqual([{ key: 'crossSessionInbound', value: 'accept' }])
+  expect(await ui.find({ type: 'Text', text: /starts a turn without a click/ })).toBeDefined()
+  await ui.press({ key: 'set:rook.hostingSync:true' })
+  expect(sets[1]).toEqual({ key: 'rook.hostingSync', value: true })
+  expect(await ui.find({ type: 'Text', text: /reload-plugins/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the pane tool reads the settings tab but has no way to change one', async () => {
+  const text = paneText(
+    { tab: 'settings', settings: [{ key: 'crossSessionInbound', label: 'Messages from your other sessions', kind: 'choice', value: 'hold', options: ['default', 'accept', 'hold', 'refuse'], locked: false }] },
+    { workers: [], fetchedAt: 1 },
+    0,
+  )
+  expect(text).toContain('value: hold')
+  expect(text).toContain('Held until you approve each one.')
+})

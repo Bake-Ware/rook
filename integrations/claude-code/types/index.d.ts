@@ -48,11 +48,23 @@ export type Handoff = {
   artifacts: string[]
 }
 
+/** One row of the settings tab: a `/config` row as `$.config.list()` gave it. */
+export type SettingRow = {
+  key: string
+  label: string
+  description?: string
+  kind: 'boolean' | 'choice' | 'text' | 'number'
+  value: boolean | string | number | readonly string[]
+  options?: string[]
+  /** A trusted source (managed settings) owns it: shown, not changed. */
+  locked: boolean
+}
+
 /** A task or a handoff opened from the deck. */
 export type Item = { title: string; meta: string; body: string; claimId?: string }
 
 export type View = {
-  tab?: 'bands' | 'sessions' | 'deck'
+  tab?: 'bands' | 'sessions' | 'deck' | 'settings'
   screen?: string
   scope?: { id: string; name: string }
   query?: string
@@ -68,6 +80,8 @@ export type View = {
   deck?: DeckProject[]
   handoffs?: Handoff[]
   item?: Item
+  /** The settings tab's rows, read when the tab opens. */
+  settings?: SettingRow[]
   busy?: boolean
   error?: string
   note?: string

@@ -17,10 +17,18 @@ in a pane beside the chat.
 - **Deck**: open tasks and handoffs from the work deck. You can claim a task,
   load a task or handoff into the chat, or send the whole deck to the chat for
   grooming.
+- **Settings**: the Claude Code settings that matter to Rook, changed in
+  place. "Messages from your other sessions" (`crossSessionInbound`) decides
+  whether a message another session sends here, such as a Rook poke through
+  `claude-history.send`, starts a turn on its own (`accept`), waits for your
+  OK (`hold`, and the default while permissions are bypassed) or is dropped
+  (`refuse`). The plugin's own options are listed too. A pick is saved to
+  your user settings, as `/config` would save it. If Claude Code refuses a
+  plugin's change, the tab says so and points you to `/config`.
 
 The plugin also gives the model a tool, `mcp__rook__pane`. Claude uses it to
 read what the pane shows and to drive it (switch tabs, open a worker, search
-sessions, open a row). `/rook-bands off` closes the pane.
+sessions, open a row). It can read the settings tab but not change a setting. `/rook-bands off` closes the pane.
 
 The plugin talks to your hub through Claude Code's MCP connection. It uses the
 server named `rook` if you added one with `claude mcp add`, and otherwise the
