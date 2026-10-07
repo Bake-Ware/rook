@@ -1,5 +1,8 @@
 package systems.bake.rook
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
@@ -14,6 +17,8 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.speech.tts.Voice
 import android.util.Log
+import androidx.core.app.NotificationCompat
+import androidx.core.app.RemoteInput
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -24,6 +29,7 @@ import java.io.File
 import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 
 /**
  * Speech for the `voice.speak` worker cap (rook_android/plugins/speak_android.py).
@@ -45,6 +51,8 @@ object SpeakBridge {
     private const val TAG = "SpeakBridge"
     private const val INIT_TIMEOUT_MS = 15_000L
     private const val DEFER_POLL_MS = 250L
+    private const val REPLY_CHANNEL = "replies"
+    private const val TEXT_REPLY_MS = 10 * 60 * 1000L
 
     private val main = Handler(Looper.getMainLooper())
     private val queue = SpeakQueue()
@@ -65,6 +73,11 @@ object SpeakBridge {
     private var playerFile: File? = null
     private val deviceWaiting = ArrayDeque<SpeakQueue.Job>()   // fell back while the engine was starting
 
+    // Reply window (voice.speak reply=true): one at a time; nothing else is spoken meanwhile.
+    private var replying: SpeakQueue.Job? = null
+    @Volatile private var replyCancel = false
+    private val recentReplies = ArrayDeque<JSONObject>()       // newest last, for voice.replies
+
     private val attrs: AudioAttributes by lazy {
         AudioAttributes.Builder()
             .setUsage(if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) AudioAttributes.USAGE_ASSISTANT
@@ -84,10 +97,19 @@ object SpeakBridge {
     @JvmStatic fun warmUp(ctx: Context) { app = ctx.applicationContext; main.post { ensureInit() } }
 
     @JvmStatic fun speak(ctx: Context, text: String, voice: String, rate: Float, pitch: Float,
-                         interrupt: Boolean): String {
+                         interrupt: Boolean): String = enqueue(ctx, text, voice, rate, pitch, interrupt, 0)
+
+    /** Like [speak], then listen up to [replyTimeoutS] (2-30) seconds for a spoken answer. */
+    @JvmStatic fun speakReply(ctx: Context, text: String, voice: String, rate: Float, pitch: Float,
+                              interrupt: Boolean, replyTimeoutS: Int): String =
+        enqueue(ctx, text, voice, rate, pitch, interrupt, replyTimeoutS.coerceIn(2, 30))
+
+    private fun enqueue(ctx: Context, text: String, voice: String, rate: Float, pitch: Float,
+                        interrupt: Boolean, replyTimeoutS: Int): String {
         app = ctx.applicationContext
         val id = synchronized(this) { "say-${System.currentTimeMillis().toString(36)}-${++counter}" }
-        val job = queue.add(SpeakQueue.Job(id, text, voice.trim(), rate, pitch, interrupt))
+        val job = SpeakQueue.Job(id, text, voice.trim(), rate, pitch, interrupt).also { it.replyTimeoutS = replyTimeoutS }
+        queue.add(job)
         main.post { pump() }
         val out = JSONObject().put("ok", true).put("id", job.id).put("state", job.state)
             .put("engine", init).put("reply_playing", replyPlaying())
@@ -109,6 +131,11 @@ object SpeakBridge {
         j.error?.let { out.put("error", it) }
         j.note?.let { out.put("note", it) }
         j.via?.let { out.put("via", it) }
+        if (j.replyTimeoutS > 0) {
+            out.put("reply_state", j.replyState ?: "pending")
+            replyJson(j)?.let { out.put("reply", it) }
+            j.replyError?.let { out.put("reply_error", it) }
+        }
         if (j.state == SpeakQueue.QUEUED) {
             out.put("ahead", queue.ahead(id)).put("engine", init)
             if (replyPlaying()) out.put("waiting_for", "voice reply")
@@ -122,9 +149,29 @@ object SpeakBridge {
         main.post {
             try { tts?.stop() } catch (_: Exception) {}
             stopPlayer(); current = null; deviceWaiting.clear()
+            replyCancel = true
             abandonFocus()
         }
         return JSONObject().put("ok", true).put("stopped", n).toString()
+    }
+
+    /** Recent replies (newest last) received after [sinceMs] (epoch ms). */
+    @JvmStatic fun replies(sinceMs: Long): String {
+        val list = JSONArray()
+        synchronized(recentReplies) { recentReplies.filter { it.optLong("at_ms") > sinceMs }.forEach { list.put(it) } }
+        return JSONObject().put("ok", true).put("count", list.length()).put("replies", list).toString()
+    }
+
+    /** A typed reply from the notification (any thread). */
+    @JvmStatic fun textReply(ctx: Context, id: String, text: String) {
+        app = ctx.applicationContext
+        main.post {
+            val job = queue.get(id) ?: return@post
+            if (job.replyState == "received" || text.isBlank()) return@post
+            if (job.spokenAt > 0 && System.currentTimeMillis() - job.spokenAt > TEXT_REPLY_MS) return@post
+            received(job, text.trim(), "text", 0.0)
+            if (replying === job) replyCancel = true          // the voice window gives way
+        }
     }
 
     /** Installed voices; null when the engine isn't ready yet (the caller retries). */
@@ -197,7 +244,7 @@ object SpeakBridge {
 
     private fun pump() {
         pumpScheduled = false
-        if (queue.idle()) return
+        if (queue.idle() || replying != null) return
         val srv = server()
         if (srv != null) { pumpServer(srv); return }
         if (init != "ready") { if (queue.hasPending()) ensureInit(); return }
@@ -252,15 +299,17 @@ object SpeakBridge {
         override fun onStop(id: String, interrupted: Boolean) = end(id, SpeakQueue.STOPPED, null)
         private fun end(id: String, state: String, error: String?) {
             main.post {
-                if (queue.finished(id, state, error)) abandonFocus()
-                if (current?.id == id) { current = null; pump() }
+                val wasCurrent = current?.id == id
+                if (wasCurrent) current = null
+                afterLine(queue.get(id), id, state, error)
+                if (wasCurrent || replying == null) pump()
             }
         }
     }
 
     // ---- voice server (main thread unless noted) ------------------------------
 
-    private class Server(val url: String, val token: String, val insecure: Boolean, val voice: String)
+    private class Server(val url: String, val transcribeUrl: String, val token: String, val insecure: Boolean, val voice: String)
 
     /** The app's voice server, or null when none is configured. */
     private fun server(): Server? {
@@ -269,7 +318,7 @@ object SpeakBridge {
         val base = p.getString("voice_url", BuildConfig.DEFAULT_VOICE_URL) ?: ""
         if (base.isBlank()) return null
         val url = try { VoiceCatalog.speechEndpoint(base) } catch (_: Exception) { return null }
-        return Server(url, p.getString("voice_token", "") ?: "", p.getBoolean("voice_insecure", false),
+        return Server(url, VoiceCatalog.transcribeEndpoint(base), p.getString("voice_token", "") ?: "", p.getBoolean("voice_insecure", false),
                       p.getString("voice_choice", "") ?: "")
     }
 
@@ -338,8 +387,129 @@ object SpeakBridge {
     private fun finishServer(job: SpeakQueue.Job, state: String, error: String?) {
         stopPlayer()
         if (current === job) current = null
-        if (queue.finished(job.id, state, error)) abandonFocus()
+        afterLine(job, job.id, state, error)
         pump()
+    }
+
+    // ---- reply window (main thread unless noted) ----------------------------
+
+    /** A line ended: open its reply window if it asked for one, else release audio when idle. */
+    private fun afterLine(job: SpeakQueue.Job?, id: String, state: String, error: String?) {
+        val idle = queue.finished(id, state, error)
+        if (job != null && job.replyTimeoutS > 0 && job.replyState == null) {
+            job.spokenAt = System.currentTimeMillis()
+            if (state == SpeakQueue.DONE) { beginReply(job); return }
+            job.replyState = "skipped"; job.replyError = "the line was not spoken ($state)"
+        }
+        if (idle && replying == null) abandonFocus()
+    }
+
+    private fun beginReply(job: SpeakQueue.Job) {
+        val ctx = app ?: return
+        if (VoiceService.inst?.inConversation() == true) {
+            job.replyState = "error"; job.replyError = "a voice conversation is using the microphone"; return
+        }
+        replying = job; replyCancel = false
+        job.replyState = "listening"
+        // Keep wake standby off the mic for the window (speech playback already paused it).
+        if (!speechHold) speechHold = try { VoiceService.inst?.holdForSpeech() == true } catch (_: Exception) { false }
+        notifyReply(ctx, job)
+        val srv = server()
+        thread(name = "voice-reply") {
+            val heard = ReplyCapture.record(ctx, job.replyTimeoutS * 1000) { replyCancel || job.replyState == "received" }
+            var text: String? = null
+            var seconds = 0.0
+            var error: String? = heard.error
+            if (heard.state == "speech" && heard.pcm != null) {
+                main.post { if (job.replyState == "listening") job.replyState = "transcribing" }
+                seconds = heard.pcm.size / (2.0 * ReplyCapture.SR)
+                try { text = transcribe(srv, heard.pcm) } catch (e: Exception) { error = "transcription failed: ${e.message}" }
+            }
+            main.post { finishReply(ctx, job, heard.state, text, seconds, error) }
+        }
+    }
+
+    /** Worker thread: the voice server's Whisper. Null server means none is configured. */
+    private fun transcribe(srv: Server?, pcm: ByteArray): String {
+        srv ?: throw IllegalStateException("no voice server configured")
+        val b = OkHttpClient.Builder().callTimeout(45, TimeUnit.SECONDS).followRedirects(false)
+        if (srv.insecure) VoiceTls.trustAll(b)
+        val http = b.build()
+        try {
+            val req = Request.Builder().url(srv.transcribeUrl).header("User-Agent", "rook-worker")
+                .post(pcm.toRequestBody("audio/L16".toMediaType()))
+                .apply { if (srv.token.isNotEmpty()) header("Authorization", "Bearer ${srv.token}") }.build()
+            http.newCall(req).execute().use { r ->
+                check(r.isSuccessful) { "voice server ${r.code}" }
+                return JSONObject(r.body?.string() ?: "{}").optString("text").trim()
+            }
+        } finally { http.dispatcher.executorService.shutdown(); http.connectionPool.evictAll() }
+    }
+
+    private fun finishReply(ctx: Context, job: SpeakQueue.Job, heard: String, text: String?, seconds: Double, error: String?) {
+        if (job.replyState != "received") when {
+            heard == "speech" && !text.isNullOrBlank() -> received(job, text, "voice", seconds)
+            heard == "speech" && text != null -> job.replyState = "none"          // nothing intelligible
+            heard == "none" -> job.replyState = "none"
+            heard == "cancelled" -> { job.replyState = "skipped"; job.replyError = "stopped" }
+            else -> { job.replyState = "error"; job.replyError = error ?: "reply failed" }
+        }
+        // A typed reply is still welcome until TEXT_REPLY_MS: keep the notification unless done.
+        if (job.replyState == "received" || job.replyState == "skipped") cancelReplyNotification(ctx, job)
+        if (replying === job) replying = null
+        if (queue.idle()) abandonFocus()
+        pump()
+    }
+
+    private fun received(job: SpeakQueue.Job, text: String, via: String, seconds: Double) {
+        job.replyText = text; job.replyVia = via; job.replySeconds = seconds
+        job.replyAt = System.currentTimeMillis(); job.replyState = "received"; job.replyError = null
+        replyJson(job)?.let { r ->
+            synchronized(recentReplies) {
+                recentReplies.addLast(JSONObject(r.toString()).put("id", job.id).put("line", job.text.take(300)))
+                while (recentReplies.size > 20) recentReplies.removeFirst()
+            }
+        }
+        app?.let { cancelReplyNotification(it, job) }
+        VoiceBus.emit { it.onUserText(text) }
+    }
+
+    private fun replyJson(j: SpeakQueue.Job): JSONObject? {
+        val text = j.replyText ?: return null
+        return JSONObject().put("text", text).put("via", j.replyVia).put("at_ms", j.replyAt)
+            .put("seconds", j.replySeconds)
+    }
+
+    // A heads-up notification with a typed Reply, for when talking isn't possible.
+    private fun notifyReply(ctx: Context, job: SpeakQueue.Job) {
+        try {
+            val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && nm.getNotificationChannel(REPLY_CHANNEL) == null)
+                nm.createNotificationChannel(NotificationChannel(REPLY_CHANNEL, "Replies to agents",
+                    NotificationManager.IMPORTANCE_HIGH).apply { description = "Answer a spoken question from an agent" })
+            val input = RemoteInput.Builder(ReplyReceiver.KEY_TEXT).setLabel("Reply").build()
+            val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+                (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0)
+            val pi = PendingIntent.getBroadcast(ctx, job.id.hashCode(),
+                Intent(ctx, ReplyReceiver::class.java).setAction(ReplyReceiver.ACTION).putExtra(ReplyReceiver.EXTRA_ID, job.id), flags)
+            val action = NotificationCompat.Action.Builder(android.R.drawable.ic_menu_send, "Reply", pi)
+                .addRemoteInput(input).setAllowGeneratedReplies(false).build()
+            nm.notify(job.id.hashCode(), NotificationCompat.Builder(ctx, REPLY_CHANNEL)
+                .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+                .setContentTitle("Reply?")
+                .setContentText(job.text)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(job.text))
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+                .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+                .setTimeoutAfter(TEXT_REPLY_MS)
+                .setAutoCancel(true)
+                .addAction(action).build())
+        } catch (e: Exception) { Log.w(TAG, "reply notification: $e") }
+    }
+
+    private fun cancelReplyNotification(ctx: Context, job: SpeakQueue.Job) {
+        try { (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(job.id.hashCode()) } catch (_: Exception) {}
     }
 
     /** The server route failed for this line: say it with the device voice instead. */
@@ -395,6 +565,7 @@ object SpeakBridge {
     }
 
     private fun abandonFocus() {
+        if (replying != null) return                    // the reply window still needs the mic free
         if (speechHold) {
             speechHold = false
             try { VoiceService.inst?.releaseSpeechHold() } catch (e: Exception) { Log.w(TAG, "speech hold release: $e") }

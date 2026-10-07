@@ -40,6 +40,15 @@ class FakeBridge:
         self.spoken.append(dict(id=sid, text=text, voice=voice, rate=rate, pitch=pitch, interrupt=interrupt))
         return json.dumps({"ok": True, "id": sid, "state": "queued", "volume": "7/15"})
 
+    def speakReply(self, ctx, text, voice, rate, pitch, interrupt, reply_timeout):
+        r = json.loads(self.speak(ctx, text, voice, rate, pitch, interrupt))
+        self.spoken[-1]["reply_timeout"] = reply_timeout
+        return json.dumps(r)
+
+    def replies(self, since_ms):
+        self.since_ms = since_ms
+        return json.dumps({"ok": True, "count": 1, "replies": [{"id": "say-0", "text": "yes", "via": "voice"}]})
+
     def status(self, sid):
         n = self.polls[sid] = self.polls.get(sid, 0) + 1
         if self.ticks is not None and n >= self.ticks:
@@ -159,9 +168,55 @@ def test_caps_describe_schema(mod):
     for name, fn in p.caps().items():
         reg.register(name, fn)
     d = reg.describe("voice.")
-    assert set(d) == {"voice.speak", "voice.speak_status", "voice.speak_stop", "voice.speak_voices"}
+    assert set(d) == {"voice.speak", "voice.speak_status", "voice.speak_stop", "voice.speak_voices", "voice.replies"}
     params = {x["name"]: x for x in d["voice.speak"]["params"]}
     assert params["text"]["required"] and params["text"]["type"] == "str"
     assert params["interrupt"]["default"] is False and params["chat"]["default"] is True
     assert params["timeout"]["default"] == 60
+    assert params["reply"]["default"] is False and params["reply_timeout"]["default"] == 8
     assert d["voice.speak"]["risk"] == "write" and d["voice.speak"]["tags"] == ["physical"]
+
+
+class ReplyBridge(FakeBridge):
+    """Speech finishes at once; the reply window closes after `reply_ticks` more polls."""
+
+    def __init__(self, reply_ticks=2, outcome="received", **kw):
+        super().__init__(ticks=1, **kw)
+        self.reply_ticks, self.outcome = reply_ticks, outcome
+
+    def status(self, sid):
+        n = self.polls[sid] = self.polls.get(sid, 0) + 1
+        out = {"ok": True, "id": sid, "state": "done", "done": True}
+        wants = any(s["id"] == sid and "reply_timeout" in s for s in self.spoken)
+        if wants:
+            if self.reply_ticks is not None and n > self.reply_ticks:
+                out["reply_state"] = self.outcome
+                if self.outcome == "received":
+                    out["reply"] = {"text": "Yes, deploy it.", "via": "voice", "at_ms": 1, "seconds": 1.4}
+            else:
+                out["reply_state"] = "listening"
+        return json.dumps(out)
+
+
+def test_reply_waits_for_the_answer_and_only_the_last_chunk_listens(mod, monkeypatch):
+    b = ReplyBridge()
+    monkeypatch.setattr(mod, "MAX_CHUNK", 100)
+    r = asyncio.run(plugin(mod, monkeypatch, b)._speak("Deploy now? " * 20, reply=True, reply_timeout=99))
+    assert r["ok"] and r["reply_requested"] and r["reply_state"] == "received"
+    assert r["reply"]["text"] == "Yes, deploy it."
+    assert [("reply_timeout" in s) for s in b.spoken] == [False] * (len(b.spoken) - 1) + [True]
+    assert b.spoken[-1]["reply_timeout"] == 30                     # clamped
+
+
+def test_reply_silence_and_timeout(mod, monkeypatch):
+    r = asyncio.run(plugin(mod, monkeypatch, ReplyBridge(outcome="none"))._speak("Deploy?", reply=True))
+    assert r["ok"] and r["reply_state"] == "none" and "reply" not in r
+    r = asyncio.run(plugin(mod, monkeypatch, ReplyBridge(reply_ticks=None))._speak("Deploy?", reply=True, timeout=0))
+    assert r["ok"] and r["timed_out"] and r["spoken"] and r["reply_state"] == "listening"
+
+
+def test_replies_cap(mod, monkeypatch):
+    b = ReplyBridge()
+    r = plugin(mod, monkeypatch, b)._replies(since=12.5)
+    assert r["ok"] and r["replies"][0]["text"] == "yes" and b.since_ms == 12500
+    assert plugin(mod, monkeypatch, b)._replies(since="soon")["ok"] is False

@@ -96,3 +96,24 @@ def test_api_voice_follows_the_guest_rule(server,monkeypatch):
     assert bad.status_code==401                                                   # a wrong key is never a guest
     ok=client.post('/api/voice',json=body,headers={'Authorization':'Bearer legacy-owner'})
     assert ok.status_code!=401
+
+
+def test_api_transcribe_follows_the_key_rule_and_returns_text(server,monkeypatch):
+    module,client,headers=server
+    async def transcribe(pcm):
+        return ' Yes, deploy it. ' if len(pcm)==32000 else ''
+    module.app.state.provider.transcribe=transcribe
+    pcm=b'\x01\x00'*16000                                                       # one second
+    kind={'Content-Type':'audio/L16'}
+    assert client.post('/api/transcribe',content=pcm,headers=kind).status_code==401
+    owner={**kind,'Authorization':'Bearer legacy-owner'}
+    r=client.post('/api/transcribe',content=pcm,headers=owner)
+    assert r.status_code==200 and r.json()=={'text':'Yes, deploy it.','seconds':1.0}
+    assert client.post('/api/transcribe',content=b'\x01',headers=owner).status_code==400        # half a sample
+    assert client.post('/api/transcribe',content=pcm,headers={'Authorization':'Bearer legacy-owner',
+                                                             'Content-Type':'audio/wav'}).status_code==415
+    assert client.post('/api/transcribe',content=b'\x00'*(31*32000),headers=owner).status_code==413
+    monkeypatch.setenv('VOICE_ALLOW_ANONYMOUS','1')
+    assert client.post('/api/transcribe',content=pcm,headers=kind).status_code==200           # guests too
+    bad={**kind,'Authorization':'Bearer not-a-key'}
+    assert client.post('/api/transcribe',content=pcm,headers=bad).status_code==401

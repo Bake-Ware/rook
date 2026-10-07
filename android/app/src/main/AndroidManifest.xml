@@ -160,6 +160,7 @@
         </service>
 
         <receiver android:name=".ApkUpdateReceiver" android:exported="false" />
+        <receiver android:name=".ReplyReceiver" android:exported="false" />
         <!-- Voice timers: AlarmManager target that rings and speaks a finished timer. -->
         <receiver android:name=".TimerReceiver" android:exported="false" />
         <activity android:name=".ApkUpdatePermissionActivity" android:exported="false" />

@@ -48,6 +48,8 @@ data class VoiceCatalog(val voices: List<String>, val default: String) {
         fun endpoint(voiceUrl: String): String = path(voiceUrl, "/voices")
         /** The voice server's raw speech endpoint (POST {text, voice} -> WAV). */
         fun speechEndpoint(voiceUrl: String): String = path(voiceUrl, "/api/voice")
+        /** Speech to text (POST 16 kHz PCM as audio/L16 -> {text, seconds}). */
+        fun transcribeEndpoint(voiceUrl: String): String = path(voiceUrl, "/api/transcribe")
         private fun path(voiceUrl: String, path: String): String {
             val https = when {
                 voiceUrl.startsWith("wss://") -> "https://" + voiceUrl.removePrefix("wss://")

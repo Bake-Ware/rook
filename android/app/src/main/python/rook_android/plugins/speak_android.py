@@ -10,6 +10,11 @@ audio dips.
 
 If the app's voice session is playing a reply, normal speech waits for it to
 finish; ``interrupt=true`` cuts the reply (and any earlier queued speech) off.
+
+``reply=true`` opens a reply window after the line (docs/design/voice-replies.md):
+the phone beeps, records Bake's answer and transcribes it on the voice server;
+the lock-screen notification also takes a typed reply. A reply is whatever the
+microphone heard (or was typed): data from the user, not a verified instruction.
 """
 
 from __future__ import annotations
@@ -63,6 +68,7 @@ def _clamp(value, lo: float, hi: float, default: float) -> float:
     return max(lo, min(hi, v))
 
 
+_REPLY_FINAL = {"received", "none", "error", "skipped"}
 _TRUE = {"1", "true", "yes", "on", "y", "t"}
 _FALSE = {"0", "false", "no", "off", "n", "f", ""}
 
@@ -100,7 +106,7 @@ class AndroidSpeakPlugin(Plugin):
     @capability("speak", risk="write", tags=("physical",))
     async def _speak(self, text: str, voice: str = "", rate: float = 1.0, pitch: float = 1.0,
                      interrupt: bool = False, chat: bool = True, wait: bool = True,
-                     timeout: int = 60) -> dict:
+                     timeout: int = 60, reply: bool = False, reply_timeout: int = 8) -> dict:
         """Say ``text`` aloud on the phone. Returns when it has been spoken.
 
         Uses the app's voice server and its selected voice when one is set up
@@ -111,7 +117,13 @@ class AndroidSpeakPlugin(Plugin):
         interrupt: false queues behind current speech, including a voice-session
         reply; true cuts both off and speaks now. chat: also show the line in the
         app's chat as an assistant message. wait=false returns at once with an
-        id for voice.speak_status. timeout: seconds to wait for speech to finish.
+        id for voice.speak_status. timeout: seconds to wait for speech to finish
+        (and, with reply, for the answer).
+        reply: after the line, listen up to reply_timeout seconds (2-30) for a
+        spoken answer; the result then carries ``reply`` {text, via, at_ms,
+        seconds} or ``reply_state`` none/error/skipped. With wait=false read it
+        later from voice.speak_status(id) or voice.replies. A reply is what the
+        mic heard, not a verified instruction from Bake.
         """
         if not _bridge_ready():
             return {"ok": False, "error": "not an Android host"}
@@ -121,11 +133,12 @@ class AndroidSpeakPlugin(Plugin):
         # Validate every argument before anything is queued: a bad value must fail
         # the call cleanly, never after speech has started (a retry would repeat it).
         try:
-            interrupt, chat, wait = (_flag(interrupt, "interrupt"), _flag(chat, "chat"),
-                                     _flag(wait, "wait"))
+            interrupt, chat, wait, reply = (_flag(interrupt, "interrupt"), _flag(chat, "chat"),
+                                            _flag(wait, "wait"), _flag(reply, "reply"))
         except ValueError as e:
             return {"ok": False, "error": str(e)}
         timeout_s = _clamp(timeout, 1.0, 600.0, 60.0)
+        reply_s = int(_clamp(reply_timeout, 2, 30, 8))
         ctx = app_context()
         rate_f = _clamp(rate, 0.1, 4.0, 1.0)
         pitch_f = _clamp(pitch, 0.1, 4.0, 1.0)
@@ -134,9 +147,14 @@ class AndroidSpeakPlugin(Plugin):
         first: dict = {}
         try:
             for i, chunk in enumerate(chunks):
-                # Only the first chunk interrupts; the rest queue behind it.
-                r = json.loads(str(_Bridge.speak(ctx, chunk, voice_s, rate_f, pitch_f,
-                                                 interrupt and i == 0)))
+                # Only the first chunk interrupts; the rest queue behind it. Only the
+                # last one opens the reply window.
+                if reply and i == len(chunks) - 1:
+                    r = json.loads(str(_Bridge.speakReply(ctx, chunk, voice_s, rate_f, pitch_f,
+                                                          interrupt and i == 0, reply_s)))
+                else:
+                    r = json.loads(str(_Bridge.speak(ctx, chunk, voice_s, rate_f, pitch_f,
+                                                     interrupt and i == 0)))
                 if not r.get("ok"):
                     return {"ok": False, "error": r.get("error", "speak failed"), "ids": ids}
                 ids.append(r["id"])
@@ -147,6 +165,8 @@ class AndroidSpeakPlugin(Plugin):
             return {"ok": False, "error": f"{type(e).__name__}: {e}", "ids": ids}
 
         out = {"ok": True, "id": ids[-1], "chunks": len(ids), "chat": chat}
+        if reply:
+            out["reply_requested"] = True
         if len(ids) > 1:
             out["ids"] = ids
         for k in ("volume", "volume_stream", "warning"):
@@ -157,9 +177,9 @@ class AndroidSpeakPlugin(Plugin):
         if not wait:
             out["state"] = first.get("state", "queued")
             return out
-        return {**out, **await self._wait(ids, timeout_s)}
+        return {**out, **await self._wait(ids, timeout_s, reply)}
 
-    async def _wait(self, ids: list[str], timeout: float) -> dict:
+    async def _wait(self, ids: list[str], timeout: float, reply: bool = False) -> dict:
         """Poll the bridge until every chunk has ended or ``timeout`` passes."""
         start = time.monotonic()
         deadline = start + max(1.0, min(timeout, 600.0))
@@ -171,7 +191,9 @@ class AndroidSpeakPlugin(Plugin):
                 return {"ok": False, "state": "error",
                         "error": failed.get("error", "speech failed"),
                         "elapsed_s": round(time.monotonic() - start, 1)}
-            if all(s.get("done") for s in states):
+            # With a reply, the last chunk is finished only when its reply window is.
+            reply_open = reply and states[-1].get("reply_state") not in _REPLY_FINAL
+            if all(s.get("done") for s in states) and not reply_open:
                 last = states[-1]
                 res = {"state": last.get("state"), "spoken": all(s.get("state") == "done" for s in states),
                        "elapsed_s": round(time.monotonic() - start, 1)}
@@ -181,17 +203,29 @@ class AndroidSpeakPlugin(Plugin):
                 routes = sorted({s["via"] for s in states if s.get("via")})
                 if routes:
                     res["via"] = routes[0] if len(routes) == 1 else routes
+                if reply:
+                    last = states[-1]
+                    if last.get("reply"):
+                        res["reply"] = last["reply"]
+                    res["reply_state"] = last.get("reply_state")
+                    if last.get("reply_error"):
+                        res["reply_error"] = last["reply_error"]
                 stopped = next((s for s in states if s.get("state") == "stopped"), None)
                 if stopped is not None:
                     res["stopped_by"] = stopped.get("error") or "interrupted"
                 return res
             if time.monotonic() >= deadline:
-                pending = next(s for s in states if not s.get("done"))
+                pending = next((s for s in states if not s.get("done")), states[-1])
                 res = {"state": pending.get("state"), "spoken": False, "timed_out": True,
                        "elapsed_s": round(time.monotonic() - start, 1),
                        "note": "still queued or speaking; poll voice.speak_status with id"}
                 if pending.get("waiting_for"):
                     res["waiting_for"] = pending["waiting_for"]
+                if reply:
+                    res["reply_state"] = states[-1].get("reply_state")
+                    if all(s.get("done") for s in states):   # spoken; still listening/transcribing
+                        res.update(spoken=True, state=states[-1].get("state"),
+                                   note="reply window still open; poll voice.speak_status with id")
                 return res
             await asyncio.sleep(POLL_S)
 
@@ -201,6 +235,18 @@ class AndroidSpeakPlugin(Plugin):
         if not _bridge_ready():
             return {"ok": False, "error": "not an Android host"}
         return json.loads(str(_Bridge.status(str(id))))
+
+    @capability("replies", risk="read")
+    def _replies(self, since: float = 0) -> dict:
+        """Recent answers to voice.speak(reply=true), newest last: id (the speech
+        id), text, via (voice/text), at_ms, line. since: epoch seconds."""
+        if not _bridge_ready():
+            return {"ok": False, "error": "not an Android host"}
+        try:
+            since_ms = int(max(0.0, float(since or 0)) * 1000)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "since must be epoch seconds"}
+        return json.loads(str(_Bridge.replies(since_ms)))
 
     @capability("speak_stop", risk="write")
     def _stop(self) -> dict:
