@@ -429,6 +429,7 @@ object SpeakBridge {
         AudioManager.STREAM_SYSTEM -> "system"
         AudioManager.STREAM_VOICE_CALL -> "call"
         AudioManager.STREAM_ACCESSIBILITY -> "accessibility"
+        11 -> "assistant"   // AudioSystem.STREAM_ASSISTANT (hidden); Samsung's assistant slider
         else -> "stream $stream"
     }
 }
