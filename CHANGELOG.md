@@ -10,6 +10,14 @@ releases yet: workers identify themselves by build number (for example
 Preparation for public use.
 
 ### Added
+- Sessions catalog (docs/design/sessions.md, workstream A): worker caps
+  `sessions.list`, `sessions.follow`, `sessions.send` and `sessions.stop`
+  give one record per agent session (state live/idle/closed, origin, view,
+  input, inbox policy) on every OS; live-session detection now works on
+  macOS and Windows too; `*-history.resume` opens a Rook terminal where the
+  worker has one; the hub serves the merged list at
+  `GET /account/work/sessions`; workers report `hb.sessions` counts. Claude
+  Code mod 0.3.1 stops a terminal-resumed session by closing its terminal.
 - Dashboard workers page: a **3D view** beside list and grid (the hub as a
   rook, each worker a pawn on a polar board; a quiet worker's pawn tips over,
   a heartbeat sends a spark to the hub, a ring marks a worker that hosts

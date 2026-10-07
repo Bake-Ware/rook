@@ -195,6 +195,25 @@ test('resume starts the session on its worker, a message goes into it, stop clos
   await ui.unmount()
 })
 
+test('a worker that resumes into a Rook terminal is stopped by closing that terminal', async ($, on) => {
+  const before = HISTORY['claude-history.resume']
+  HISTORY['claude-history.resume'] = { ok: true, terminal: 't1', remote_control: true }
+  HISTORY['work.stream.close'] = { ok: true }
+  try {
+    const { ui, calls } = await fleet($, on)
+    await ui.press({ key: 'w:a1' })
+    await ui.press({ key: 's:a1:claude:s001' })
+    await ui.press({ key: 'resume' })
+    await ui.press({ key: 'stop' })
+    expect(calls.find(one => one.cap === 'work.stream.close')?.args.id).toBe('t1')
+    expect(calls.find(one => one.cap === 'proc.close')).toBeUndefined()
+    await ui.unmount()
+  } finally {
+    HISTORY['claude-history.resume'] = before
+    delete HISTORY['work.stream.close']
+  }
+})
+
 test('the deck lists open tasks and handoffs, and a task can be claimed', async ($, on) => {
   const { ui, calls } = await fleet($, on)
   await ui.press({ key: 'tab:deck' })

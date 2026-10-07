@@ -193,7 +193,8 @@ and callable with `rook_call`. No new MCP tools were added.
 | `work.stream.signal` | exec | INT/TERM/HUP/QUIT/KILL to the process group (Windows mapping under Platform support) |
 | `work.stream.close` | exec | stop and drop the terminal |
 | `work.stream.list` | read | live and recently finished terminals, installed harnesses |
-| `work.sessions` | read | live terminals plus Claude/Codex history as one resumable catalog (`limit`, `offset`, `query`) |
+| `work.sessions` | read | live terminals plus Claude/Codex history as one resumable catalog (`limit`, `offset`, `query`); superseded by `sessions.list` |
+| `sessions.list`, `sessions.follow`, `sessions.send`, `sessions.stop` | read / read / exec / exec | one record per session with state, view and input (`rook/worker/plugins/sessions.py`; contract in docs/design/sessions.md §3.1, §3.5) |
 | `work.export` | read | one page of a historical transcript in `rook.transcript/1` |
 | `claude-history.transcript`, `codex-history.transcript` | read | the same export, per agent |
 | `sessions.mirror` | read | live events of a Claude Code session the Rook mod mirrors on this host (`cursor`, `wait` up to 25 s); see `docs/design/sessions.md` §3.4 |
@@ -242,6 +243,13 @@ be published as `rook.transcript/2`.
 - Build-167 workers do not announce `work.stream.*`. Their history still
   appears, and **Resume on host** uses the existing `*-history.resume` +
   `proc.*` path. Follow its output in the classic view.
+- On workers with `work.stream.*`, `claude-history.resume` and
+  `codex-history.resume` now open a Rook terminal (`work.stream.open` with
+  `resume`, plus `remote_control` for Claude) and return `terminal` instead
+  of a `proc.*` `handle`, so every resume streams. The classic view's
+  **Resume on host** attaches that terminal to the session.
+- The hub's merged catalog for the Sessions page is
+  `GET /account/work/sessions` (docs/design/sessions.md §3.6).
 - No wire format changed. The new caps, the `hb.work` heartbeat key and the
   new token-route `scopes` field are all optional additions.
 - The classic view keeps working against the same session records.

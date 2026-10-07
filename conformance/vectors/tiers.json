@@ -558,10 +558,28 @@
     "sensitive"
    ]
   },
+  "sessions.follow": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "sessions.list": {
+   "tier": "read"
+  },
   "sessions.mirror": {
    "tier": "read",
    "tags": [
     "sensitive"
+   ]
+  },
+  "sessions.send": {
+   "tier": "exec"
+  },
+  "sessions.stop": {
+   "tier": "exec",
+   "tags": [
+    "destructive"
    ]
   },
   "settings.describe": {

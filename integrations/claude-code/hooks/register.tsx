@@ -419,7 +419,7 @@ async function openSession($: EngineInterface, picked: SessionMeta): Promise<voi
       busy: undefined,
       session,
       messages,
-      handle: mine === undefined ? undefined : String(mine.handle),
+      handle: mine === undefined ? undefined : runHandle(mine),
     })
   } catch (error) {
     await set($, { busy: undefined, error: reason(error) })
@@ -484,12 +484,22 @@ const loadSession = ($: EngineInterface) =>
     ),
   }))
 
+/**
+ * What stop needs for a session the worker resumed: a Rook terminal id
+ * (newer workers resume through work.stream) as `term:<id>`, else the
+ * proc.* handle.
+ */
+const runHandle = (started: Raw): string =>
+  typeof started.terminal === 'string' && started.terminal !== ''
+    ? `term:${started.terminal}`
+    : String(started.handle ?? '')
+
 const resumeSession = ($: EngineInterface) =>
   act($, 'starting it on the worker…', async (_, session) => {
     const started = await historyCall($, session, 'resume', { session_id: session.id })
 
     return {
-      handle: String(started.handle ?? ''),
+      handle: runHandle(started),
       session: { ...session, active: true },
       note:
         started.remote_control === true
@@ -500,7 +510,12 @@ const resumeSession = ($: EngineInterface) =>
 
 const stopSession = ($: EngineInterface) =>
   act($, 'stopping…', async (at, session) => {
-    await rookCall($, session.workerId, 'proc.close', { handle: at.handle })
+    const handle = at.handle ?? ''
+    if (handle.startsWith('term:')) {
+      await rookCall($, session.workerId, 'work.stream.close', { id: handle.slice('term:'.length) })
+    } else {
+      await rookCall($, session.workerId, 'proc.close', { handle })
+    }
 
     return {
       handle: undefined,

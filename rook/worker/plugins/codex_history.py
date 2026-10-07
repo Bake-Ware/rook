@@ -1,5 +1,8 @@
 """codex-history.* — local Codex rollout history and PTY resume.
 
+Resume opens a Rook terminal (work.stream.open) where the worker has one,
+else a proc.* PTY.
+
 Matches claude-history's operations. Reads JSONL, never auth.json/config.toml.
 Response messages are canonical; event messages are a fallback for event-only
 logs. Reasoning records are not transcript messages. JSON export is normalized.
@@ -122,11 +125,13 @@ class CodexHistoryPlugin(history.ClaudeHistoryPlugin):
                       machine: str | None = None) -> dict:
         """Resume Codex interactively in a Rook PTY without sending a prompt.
 
-        Read/write/stop using proc.read, proc.write, proc.signal and proc.close.
+        Opens a Rook terminal (work.stream.*) where the worker has one; older
+        workers use proc.read, proc.write, proc.signal and proc.close.
         Uses the host's existing Codex login and approval settings unchanged.
         """
         async with self._resume_lock:
-            if self._worker is None or not self._worker.registry.has("proc.start"):
+            if self._worker is None or not (self._worker.registry.has("proc.start")
+                                            or self._worker.registry.has("work.stream.open")):
                 return {"ok": False, "error": "proc.* unavailable on this worker"}
             fp = _resolve(_expand(path), session_id)
             if fp is None:
@@ -138,7 +143,8 @@ class CodexHistoryPlugin(history.ClaudeHistoryPlugin):
             live = await self._resumed_list()
             for item in live["sessions"]:
                 if item["session_id"] == sid and item.get("running"):
-                    return {"ok": False, "error": "session is already running", "handle": item["handle"]}
+                    return {"ok": False, "error": "session is already running",
+                            **{k: item[k] for k in ("handle", "terminal") if k in item}}
             binary = shutil.which("codex") or shutil.which("codex.cmd")
             if binary is None:
                 return {"ok": False, "error": "codex CLI not found on this machine"}
@@ -146,6 +152,9 @@ class CodexHistoryPlugin(history.ClaudeHistoryPlugin):
             if workdir and not Path(workdir).is_dir():
                 return {"ok": False, "error": "session cwd no longer exists", "hint": "pass cwd to choose another directory"}
             label = name or meta.get("title") or sid[:8]
+            opened = await self._resume_in_terminal(sid, workdir, label)
+            if opened is not None:
+                return dict(opened, title=meta.get("title")) if opened.get("ok") else opened
             started = await self._worker.registry.call("proc.start", argv=[binary, "resume", sid, "--no-alt-screen"],
                                                        cwd=workdir, pty=True, label=f"codex: {label}"[:200])
             if not started.get("ok"):
