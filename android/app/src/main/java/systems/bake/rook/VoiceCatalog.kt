@@ -45,14 +45,17 @@ data class VoiceCatalog(val voices: List<String>, val default: String) {
             val name = id.substring(3).split('_').joinToString(" ") { it.replaceFirstChar { c -> c.titlecase(Locale.ROOT) } }
             return "$name ($language $gender)"
         }
-        fun endpoint(voiceUrl: String): String {
+        fun endpoint(voiceUrl: String): String = path(voiceUrl, "/voices")
+        /** The voice server's raw speech endpoint (POST {text, voice} -> WAV). */
+        fun speechEndpoint(voiceUrl: String): String = path(voiceUrl, "/api/voice")
+        private fun path(voiceUrl: String, path: String): String {
             val https = when {
                 voiceUrl.startsWith("wss://") -> "https://" + voiceUrl.removePrefix("wss://")
                 voiceUrl.startsWith("ws://") -> "https://" + voiceUrl.removePrefix("ws://")
                 else -> voiceUrl
             }.toHttpUrl()
             require(https.scheme == "https" && https.username.isEmpty() && https.password.isEmpty()) { "Invalid voice URL" }
-            return https.newBuilder().encodedPath("/voices").query(null).fragment(null).build().toString()
+            return https.newBuilder().encodedPath(path).query(null).fragment(null).build().toString()
         }
         fun fetch(url: String, token: String, insecure: Boolean): VoiceCatalog {
             val builder = OkHttpClient.Builder().callTimeout(15, TimeUnit.SECONDS).followRedirects(false)

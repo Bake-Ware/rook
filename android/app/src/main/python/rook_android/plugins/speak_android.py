@@ -1,9 +1,12 @@
-"""voice.* — speak text aloud on the phone with Android's on-device TTS.
+"""voice.* — speak text aloud on the phone.
 
 Lets any agent or background job on the band talk to the user through their
-phone ("Build finished"). Backed by systems.bake.rook.SpeakBridge (Kotlin): one
-TextToSpeech engine kept alive in the worker process, USAGE_ASSISTANT audio with
-transient may-duck focus, so it works with the screen off and other audio dips.
+phone ("Build finished"). Backed by systems.bake.rook.SpeakBridge (Kotlin). When
+the app has a voice server configured, lines are synthesized there in the app's
+selected voice (the assistant's voice) and played on the phone; otherwise, or if
+the server fails for a line, Android's on-device TTS speaks it. USAGE_ASSISTANT
+audio with transient may-duck focus, so it works with the screen off and other
+audio dips.
 
 If the app's voice session is playing a reply, normal speech waits for it to
 finish; ``interrupt=true`` cuts the reply (and any earlier queued speech) off.
@@ -25,8 +28,9 @@ try:
 except Exception:  # pragma: no cover - only importable on a Chaquopy host
     _Bridge = None
 
-#: TextToSpeech.getMaxSpeechInputLength() is 4000; stay under it.
-MAX_CHUNK = 3900
+#: The voice server's /api/voice takes at most 700 characters per request (device
+#: TTS allows 4000), so lines are cut at sentence boundaries below that.
+MAX_CHUNK = 600
 MAX_TEXT = 20000
 POLL_S = 0.2
 
@@ -97,10 +101,13 @@ class AndroidSpeakPlugin(Plugin):
     async def _speak(self, text: str, voice: str = "", rate: float = 1.0, pitch: float = 1.0,
                      interrupt: bool = False, chat: bool = True, wait: bool = True,
                      timeout: int = 60) -> dict:
-        """Say ``text`` aloud on the phone (on-device TTS). Returns when it has been spoken.
+        """Say ``text`` aloud on the phone. Returns when it has been spoken.
 
-        voice: a voice name from voice.speak_voices or a locale tag ("en-GB");
-        empty = system default. rate/pitch: 1.0 = normal (0.1-4.0).
+        Uses the app's voice server and its selected voice when one is set up
+        (reply ``via``: "server"), else on-device TTS ("device").
+        voice: empty = the app's selected voice; or a voice-server id ("sojourn");
+        device voice names from voice.speak_voices only apply on the device route.
+        rate/pitch: 1.0 = normal (0.1-4.0), device route only.
         interrupt: false queues behind current speech, including a voice-session
         reply; true cuts both off and speaks now. chat: also show the line in the
         app's chat as an assistant message. wait=false returns at once with an
@@ -171,6 +178,9 @@ class AndroidSpeakPlugin(Plugin):
                 notes = [s["note"] for s in states if s.get("note")]
                 if notes:
                     res["voice_note"] = notes[0]
+                routes = sorted({s["via"] for s in states if s.get("via")})
+                if routes:
+                    res["via"] = routes[0] if len(routes) == 1 else routes
                 stopped = next((s for s in states if s.get("state") == "stopped"), None)
                 if stopped is not None:
                     res["stopped_by"] = stopped.get("error") or "interrupted"
