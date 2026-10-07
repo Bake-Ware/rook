@@ -2,6 +2,7 @@ import type { Item, Roster, View, Worker } from '../types'
 import { fleetBuild, groupBands, STALE_SECS } from './bands'
 import { handoffItem, taskItem } from './deck'
 import { ago, fence, home, oneLine } from './sessions'
+import { settingsLines } from './settings'
 
 /** The deck's openable rows in the order the pane lists them: tasks, then handoffs. */
 export function deckItems(at: View): Item[] {
@@ -144,6 +145,7 @@ export function paneText(at: View, roster: Roster, nowMs: number): string {
   else if (tab === 'deck' && screen === 'item' && at.item !== undefined) {
     lines = [at.item.title, at.item.meta, '', at.item.body === '' ? '(nothing more recorded)' : at.item.body]
   } else if (tab === 'deck') lines = deckLines(at)
+  else if (tab === 'settings') lines = settingsLines(at.settings)
   else if (screen === 'worker' && at.worker !== undefined) lines = workerLines(at.worker)
   else lines = bandsLines(roster)
 

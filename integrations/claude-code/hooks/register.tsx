@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, McpToolResult, Register } from 'claude-code'
 
-import type { BandInfo, Item, Roster, SessionMeta, View, Worker } from '../types'
+import type { BandInfo, Item, Roster, SessionMeta, SettingRow, View, Worker } from '../types'
 import { groupBands, fleetBuild, HUB_BAND, parseBands, parseWorkers, STALE_SECS } from './bands'
 import { deckItems, findWorker, hostedCount, hostingConfig, hostingPrompt, paneText } from './pane'
 import type { HostingConfig } from './pane'
@@ -33,6 +33,7 @@ import {
   unwrap,
 } from './sessions'
 import type { Raw, Source } from './sessions'
+import { INBOUND, INBOUND_HELP, INBOUND_MENU, pickSettings, showValue } from './settings'
 import { asRecord } from './sessions'
 
 const PANE = 'rook-bands'
@@ -41,23 +42,24 @@ const POLL_MS = 30_000
 const FOLLOW_MS = 6_000
 const CONNECT_TRIES = 15
 const CONNECT_WAIT_MS = 2_000
-const TABS = ['bands', 'sessions', 'deck'] as const
-const TAB_LABEL = { bands: 'BANDS', sessions: 'SESSIONS', deck: 'DECK' } as const
+const TABS = ['bands', 'sessions', 'deck', 'settings'] as const
+const TAB_LABEL = { bands: 'BANDS', sessions: 'SESSIONS', deck: 'DECK', settings: 'SETTINGS' } as const
 const PANE_TOOL = 'mcp__rook__pane'
 const PANE_TOOL_SPEC = {
   name: 'pane',
   description:
-    'The rook pane the person sees beside this chat (bands and workers, sessions across the fleet, the work deck). ' +
+    'The rook pane the person sees beside this chat (bands and workers, sessions across the fleet, the work deck, settings). ' +
     'action "read" (default) returns what it shows now as text, rows numbered where they open. ' +
-    'The other actions drive it, then return the new text: "tab" {tab: bands|sessions|deck}; ' +
+    'The other actions drive it, then return the new text: "tab" {tab: bands|sessions|deck|settings}; ' +
     '"worker" {worker: name} opens a worker\'s detail (what it hosts); ' +
     '"sessions" {worker?: name, query?: text} lists or searches sessions; ' +
-    '"open" {index: n} opens row [n] of the sessions list or the deck; "back"; "refresh".',
+    '"open" {index: n} opens row [n] of the sessions list or the deck; "back"; "refresh". ' +
+    'The settings tab is read-only here: only the person changes a setting, in the pane.',
   inputSchema: {
     type: 'object',
     properties: {
       action: { type: 'string', enum: ['read', 'tab', 'worker', 'sessions', 'open', 'back', 'refresh'] },
-      tab: { type: 'string', enum: ['bands', 'sessions', 'deck'] },
+      tab: { type: 'string', enum: ['bands', 'sessions', 'deck', 'settings'] },
       worker: { type: 'string', description: 'A worker name, as the bands tab lists it' },
       query: { type: 'string', description: 'Words or a regex to search sessions for' },
       index: { type: 'integer', minimum: 1, description: 'The [n] of a numbered row' },
@@ -541,16 +543,49 @@ const claimItem = ($: EngineInterface) =>
     return 'claimed for this session’s rook identity'
   })
 
+// ---- settings: Claude Code's /config rows that matter to rook, changed in place
+
+async function loadSettings($: EngineInterface, done: Patch = {}): Promise<void> {
+  await set($, { ...CLEAR, tab: 'settings', screen: 'list', busy: true })
+  try {
+    await set($, { busy: undefined, settings: pickSettings(await $.config.list()), ...done })
+  } catch (error) {
+    await set($, { busy: undefined, error: reason(error) })
+  }
+}
+
+/** Only the person's press reaches this: the pane tool cannot change a setting. */
+async function changeSetting($: EngineInterface, row: SettingRow, value: SettingRow['value']): Promise<void> {
+  await set($, { ...CLEAR, busy: true })
+  let done: Patch
+  try {
+    const result = await $.config.set({ key: row.key, value })
+    done =
+      result.deny !== undefined
+        ? { error: row.key === INBOUND ? `${result.deny}: ${INBOUND_MENU}` : result.deny }
+        : {
+            note:
+              `${row.label}: ${showValue(result.value)}` +
+              (row.key.startsWith('rook.') ? ' (run /reload-plugins to apply it)' : ''),
+          }
+  } catch (error) {
+    done = { error: reason(error) }
+  }
+  await loadSettings($, done)
+}
+
 async function showTab($: EngineInterface, tab: (typeof TABS)[number]): Promise<void> {
   const at = await read($, view)
   if (tab === 'sessions' && at.sessions === undefined) return listSessions($, undefined, undefined)
   if (tab === 'deck' && at.deck === undefined) return loadDeck($)
+  if (tab === 'settings') return loadSettings($)
   await set($, { ...CLEAR, tab, screen: 'list' })
 }
 
 async function refreshTab($: EngineInterface): Promise<void> {
   const at = await read($, view)
   if (at.tab === 'deck') return loadDeck($)
+  if (at.tab === 'settings') return loadSettings($)
   if (at.tab !== 'sessions') return void (await refresh($))
   if (at.screen === 'session' && at.session !== undefined) return openSession($, at.session)
 
@@ -573,7 +608,7 @@ async function drive($: EngineInterface, input: Raw): Promise<string> {
 
   if (action === 'tab') {
     const tab = TABS.find(name => name === input.tab)
-    if (tab === undefined) throw new Error('tab is bands, sessions or deck')
+    if (tab === undefined) throw new Error('tab is bands, sessions, deck or settings')
     await showTab($, tab)
   } else if (action === 'worker') {
     if (named === undefined) throw new Error('worker needs a worker name')
@@ -956,6 +991,77 @@ export const register: Register = (on, options) => {
           {rule}
           <Text wrap="wrap">{item.body === '' ? '(nothing more recorded)' : item.body}</Text>
           {keys('l adds this to the chat as reference · b back')}
+        </Box>
+      )
+    }
+
+    if (tab === 'settings') {
+      const rows = at.settings ?? []
+
+      return (
+        <Box flexDirection="column">
+          {tabs}
+          <Text bold>Settings</Text>
+          {status}
+          {at.busy !== true && rows.length === 0 && <Text dimColor>No settings to show.</Text>}
+          {rows.map(row => {
+            const current = showValue(row.value)
+            const choices =
+              row.kind === 'boolean' ? ['true', 'false'] : row.kind === 'choice' ? (row.options ?? []) : []
+
+            return (
+              <Box flexDirection="column">
+                {heading(row.label, row.locked ? 'locked' : current)}
+                {row.description !== undefined && (
+                  <Text dimColor wrap="wrap">
+                    {row.description}
+                  </Text>
+                )}
+                {choices.length > 0 && (
+                  <Box flexDirection="row" columnGap={1} flexWrap="wrap">
+                    {choices.map(choice =>
+                      choice === current || row.locked ? (
+                        <Text
+                          key={`set:${row.key}:${choice}`}
+                          bold={choice === current}
+                          color={choice === current ? C.accent : C.dim}
+                          backgroundColor={choice === current ? C.active : undefined}
+                        >
+                          {` ${choice} `}
+                        </Text>
+                      ) : (
+                        <Button
+                          key={`set:${row.key}:${choice}`}
+                          label={choice}
+                          onPress={() => changeSetting($, row, row.kind === 'boolean' ? choice === 'true' : choice)}
+                        />
+                      ),
+                    )}
+                  </Box>
+                )}
+                {choices.length === 0 &&
+                  (Input !== undefined && !row.locked ? (
+                    <Input
+                      key={`set:${row.key}`}
+                      label={row.label}
+                      placeholder={current}
+                      submitLabel="set"
+                      onSubmit={text =>
+                        changeSetting($, row, row.kind === 'number' ? Number(text) : text.trim())
+                      }
+                    />
+                  ) : (
+                    <Text>{current}</Text>
+                  ))}
+                {row.key === INBOUND && typeof row.value === 'string' && INBOUND_HELP[row.value] !== undefined && (
+                  <Text color={C.green} wrap="wrap">
+                    {INBOUND_HELP[row.value]}
+                  </Text>
+                )}
+              </Box>
+            )
+          })}
+          {keys(`pick a value to save it to your user settings · ${MOVE}`)}
         </Box>
       )
     }
