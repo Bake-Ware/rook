@@ -16,6 +16,7 @@ Rook terminal, Stop, the classic-view link and the phone layout.
 
     python tests/browser_sessions.py [--screenshots DIR]
 """
+import re
 import argparse
 import asyncio
 import os
@@ -201,6 +202,14 @@ class SessionsBand(PtyBand):
         raise AssertionError(cap)
 
 
+async def activity(page, text, timeout=5000):
+    """Opens the Activity panel, checks its newest entries mention ``text``, closes it."""
+    await page.locator('#sx-act').click()
+    await expect(page.locator('#sx-act-list')).to_contain_text(text, timeout=timeout)
+    await page.locator('#sx-act').click()
+    await expect(page.locator('#sx-act-panel')).to_be_hidden()
+
+
 async def main(shots):
     with tempfile.TemporaryDirectory() as temp, MonkeyPatch.context() as patch:
         temp = Path(temp)
@@ -262,7 +271,7 @@ async def main(shots):
             await expect(page.locator('.sx')).to_be_visible()
             item = lambda text: page.locator('.sx-item', has_text=text)
             await expect(item('Fix the nginx upstream timeouts')).to_be_visible()
-            await expect(page.locator('#sx-status')).to_have_text('Asking laptop…')
+            await expect(page.locator('#sx-status')).to_have_text('Updating…')
             assert await item('Laptop notes').count() == 0
             if shots:
                 await page.screenshot(path=str(Path(shots) / 'sessions-list-progressive.png'))
@@ -271,7 +280,7 @@ async def main(shots):
             # Reopened: the hub's last copy of every host shows at once (cached=1).
             await page.reload()
             await expect(item('Laptop notes')).to_be_visible(timeout=1500)
-            await expect(page.locator('#sx-status')).to_have_text('Asking laptop…')
+            await expect(page.locator('#sx-status')).to_have_text('Updating…')
             band.host2_delay = 0.0
             await expect(page.locator('#sx-status')).to_contain_text('Updated', timeout=10000)
             hosts = page.locator('.sx-host-head')
@@ -300,7 +309,10 @@ async def main(shots):
             # A host that stops answering stays listed from the hub's cache, with a notice.
             band.host2_down = True
             await page.evaluate("document.querySelector('#sx-live').dispatchEvent(new Event('change'))")
-            await expect(page.locator('.sx-notice')).to_contain_text('laptop did not answer')
+            await expect(page.locator('#sx-act-badge')).to_be_visible()
+            await expect(page.locator('#sx-act-badge')).to_have_class(re.compile('bad|sx-act-badge'))
+            await activity(page, 'laptop did not answer')
+            assert await page.locator('.sx-notice').count() == 0
             await expect(page.locator('.sx-host-head', has_text='laptop')).to_contain_text('stale')
             await expect(item('Laptop notes')).to_be_visible()
             band.host2_down = False
@@ -348,12 +360,12 @@ async def main(shots):
             # Send to a held inbox.
             await detail.locator('#sx-send-text').fill('Also check keepalive.')
             await detail.locator('.sx-send button').click()
-            await expect(detail.locator('.sx-send-note')).to_have_text('Waiting for approval on test-host.')
+            await activity(page, 'Waiting for approval on test-host.')
             assert band.sent[-1]['native_id'] == MIRRORED and band.sent[-1]['text'] == 'Also check keepalive.'
             # Link to task.
             await detail.locator('.sx-d-link [name=task]').fill('t_0123abcd')
             await detail.locator('.sx-d-link button').click()
-            await expect(detail.locator('.sx-link-note')).to_have_text('Linked.')
+            await activity(page, 'linked to t_0123abcd')
             await expect(item('Fix the nginx upstream timeouts')).to_contain_text('task t_0123abcd')
 
             # Tier 3: transcript of a Codex session (a worker without tail=); a message arrives as a turn.
@@ -364,7 +376,7 @@ async def main(shots):
             await expect(rows).to_contain_text('• Done: src/lexer.rs compiles.')
             await detail.locator('#sx-send-text').fill('Next: the parser.')
             await detail.locator('#sx-send-text').press('Enter')
-            await expect(detail.locator('.sx-send-note')).to_have_text('Delivered as a new turn.')
+            await activity(page, 'Delivered as a new turn.')
             if shots:
                 await page.screenshot(path=str(Path(shots) / 'sessions-transcript-codex.png'))
 
@@ -378,7 +390,7 @@ async def main(shots):
             await expect(rows).to_contain_text('● Release notes drafted in NOTES.md.', timeout=10000)
             await expect(rows).to_contain_text(f'● Bash(make check-{TURNS - 1})')
             await expect(rows).to_contain_text(f'⎿  ok check-{TURNS - 1} passed')
-            await expect(detail.locator('.sx-log-note')).to_be_hidden()
+            assert await detail.locator('.sx-log-note').count() == 0
             first = band.follows[0]
             assert first['tail'] == 40 and first['offset'] == 0, band.follows
             assert not any(f.get('offset') and f['offset'] < TURNS * 4 - 40 for f in band.follows), band.follows
@@ -423,7 +435,7 @@ async def main(shots):
             # Send into a Rook terminal types keys.
             await detail.locator('#sx-send-text').fill('echo typed-$((2+3))')
             await detail.locator('.sx-send button').click()
-            await expect(detail.locator('.sx-send-note')).to_have_text('Typed into the Rook terminal.')
+            await activity(page, 'Typed into the Rook terminal.')
             await expect(term.locator('.xterm-rows')).to_contain_text('typed-5', timeout=10000)
             if shots:
                 await page.screenshot(path=str(Path(shots) / 'sessions-terminal.png'))
@@ -447,7 +459,7 @@ async def main(shots):
             # Stop a Rook-started session.
             page.once('dialog', lambda d: asyncio.ensure_future(d.accept()))
             await detail.locator('[data-act=stop]').click()
-            await expect(term.locator('.sx-term-note')).to_contain_text('Process exited', timeout=10000)
+            await activity(page, 'Process exited', timeout=10000)
             assert any(c == 'sessions.stop' for c, _ in band.calls)
 
             # Resume a closed session into a Rook terminal.

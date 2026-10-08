@@ -29,16 +29,15 @@ export async function mountSessions(root, boot, toClassic) {
     <div class="sx">
       <header class="sx-bar">
         <div class="sx-title"><h2>Sessions</h2><span id="sx-counts" class="sx-muted"></span></div>
-        <div class="sx-bar-actions"><button type="button" id="sx-new" class="sx-primary">+ New session</button>${toClassic ? '<button type="button" id="sx-classic" class="sx-link" title="The Codex app-server view">Classic view</button>' : ''}</div>
+        <div class="sx-bar-actions"><span class="sx-act-wrap"><button type="button" id="sx-act" aria-expanded="false" aria-controls="sx-act-panel" title="Host warnings and the results of what you did here">Activity<span id="sx-act-badge" class="sx-act-badge" hidden></span></button><div id="sx-act-panel" class="sx-act-panel" role="log" aria-label="Activity" hidden><div class="sx-act-head"><span>Activity</span><button type="button" id="sx-act-clear" class="sx-link">Clear</button></div><ol id="sx-act-list"><li class="sx-muted">Nothing yet.</li></ol></div></span><button type="button" id="sx-new" class="sx-primary">+ New session</button>${toClassic ? '<button type="button" id="sx-classic" class="sx-link" title="The Codex app-server view">Classic view</button>' : ''}</div>
       </header>
       <div class="sx-filters">
         <input id="sx-search" type="search" placeholder="Search title, folder or id…" aria-label="Search sessions" maxlength="200">
         <select id="sx-agent" aria-label="Agent"><option value="">All agents</option>${AGENTS.map(a => `<option>${a}</option>`).join('')}</select>
         <select id="sx-host" aria-label="Host"><option value="">All hosts</option></select>
         <label class="sx-check"><input type="checkbox" id="sx-live"> Live only</label>
-        <span id="sx-status" class="sx-muted" role="status">Loading…</span>
+        <span id="sx-status" class="sx-muted">Loading…</span>
       </div>
-      <div id="sx-notices"></div>
       <form id="sx-form" class="sx-form" hidden>
         <h3>New session</h3>
         <div class="sx-grid">
@@ -62,6 +61,37 @@ export async function mountSessions(root, boot, toClassic) {
       </div>
     </div>`;
   const $ = s => root.querySelector(s);
+  // Activity: host warnings and the results of actions, kept out of the page
+  // (they made it jump) in a panel opened from the header. A repeat of the
+  // newest entry bumps its count instead of adding a row.
+  const acts = [], ACT_KEEP = 200;
+  let unseen = 0, unseenBad = false;
+  function act(text, level = 'info') {
+    if (!$('#sx-act-panel')) return;   // the page was swapped out (classic view)
+    const last = acts[0];
+    if (last && last.text === text && last.level === level) { last.n++; last.ts = Date.now(); }
+    else { acts.unshift({text, level, ts: Date.now(), n: 1}); acts.length = Math.min(acts.length, ACT_KEEP); }
+    if ($('#sx-act-panel').hidden) { unseen++; unseenBad ||= level !== 'info'; }
+    drawActs();
+  }
+  function drawActs() {
+    const badge = $('#sx-act-badge'); if (!badge) return;
+    badge.hidden = !unseen; badge.textContent = unseen > 99 ? '99+' : String(unseen);
+    badge.classList.toggle('bad', unseenBad);
+    if ($('#sx-act-panel').hidden) return;
+    $('#sx-act-list').innerHTML = acts.length ? acts.map(a => `<li class="sx-act-${a.level}"><time>${new Date(a.ts).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'})}</time><span>${esc(a.text)}${a.n > 1 ? ` <b>×${a.n}</b>` : ''}</span></li>`).join('')
+      : '<li class="sx-muted">Nothing yet.</li>';
+  }
+  function toggleActs(show = $('#sx-act-panel').hidden) {
+    $('#sx-act-panel').hidden = !show; $('#sx-act').setAttribute('aria-expanded', String(show));
+    if (show) { unseen = 0; unseenBad = false; }
+    drawActs();
+  }
+  $('#sx-act').addEventListener('click', e => { e.stopPropagation(); toggleActs(); });
+  $('#sx-act-clear').addEventListener('click', e => { e.stopPropagation(); acts.length = 0; drawActs(); });
+  $('#sx-act-panel').addEventListener('click', e => e.stopPropagation());
+  document.addEventListener('click', () => { if ($('#sx-act-panel') && !$('#sx-act-panel').hidden) toggleActs(false); });
+  root.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sx-act-panel').hidden) toggleActs(false); });
   let active = true, data = {sessions: [], workers: [], errors: []}, timer = null, loading = null, stale = false, typing = null;
   let open = null;   // {rec, mode, view, el}
 
@@ -104,8 +134,9 @@ export async function mountSessions(root, boot, toClassic) {
   }
   function showStatus() {
     const waiting = data.workers.filter(w => asking.get(w.worker_id) === dataKey).map(w => w.name || w.worker_id);
-    $('#sx-status').textContent = waiting.length ? 'Asking ' + waiting.join(', ') + '…'
-      : 'Updated ' + new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+    const st = $('#sx-status');
+    st.textContent = waiting.length ? 'Updating…' : 'Updated ' + new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+    st.title = waiting.length ? 'Asking ' + waiting.join(', ') : '';
   }
   async function askHost(id, q, key) {
     if (asking.get(id) === key) return;   // still waiting for it
@@ -142,7 +173,7 @@ export async function mountSessions(root, boot, toClassic) {
         render();
         for (const w of data.workers) askHost(w.worker_id, q, key);
         showStatus();
-      } catch (e) { $('#sx-status').textContent = e.message; }
+      } catch (e) { $('#sx-status').textContent = 'Not updated'; act(e.message, 'bad'); }
       finally { loading = null; if (stale) { stale = false; refresh(); } }
     })();
     return loading;
@@ -175,14 +206,17 @@ export async function mountSessions(root, boot, toClassic) {
     if (data.workers.some(w => w.worker_id === chosen)) pick.value = chosen;
     renderNotices(); renderList(); renderForm(); syncOpen();
   }
+  const hostProblems = new Map();   // worker_id -> the last problem reported to Activity
   function renderNotices() {
-    const notes = [];
+    const now = new Map();
     for (const e of data.errors || []) {
-      const w = data.workers.find(x => x.worker_id === e.worker_id);
-      notes.push(w?.stale && w.fetched ? `${esc(e.worker || e.worker_id)} did not answer (${esc(e.error)}); showing its list from ${esc(ago(w.fetched))}.`
-        : `${esc(e.worker || e.worker_id)}: ${esc(e.error)}`);
+      const w = data.workers.find(x => x.worker_id === e.worker_id), name = e.worker || e.worker_id;
+      now.set(e.worker_id, e.error);
+      if (hostProblems.get(e.worker_id) === e.error) continue;
+      act(w?.stale && w.fetched ? `${name} did not answer (${e.error}); showing its list from ${ago(w.fetched)}.` : `${name}: ${e.error}`, 'warn');
     }
-    $('#sx-notices').innerHTML = notes.map(n => `<p class="sx-notice">${n}</p>`).join('');
+    for (const [id] of hostProblems) if (!now.has(id)) act(`${workerOf({worker_id: id})?.name || id} is answering again.`);
+    hostProblems.clear(); for (const [id, err] of now) hostProblems.set(id, err);
   }
   function badge(r) {
     const out = [];
@@ -290,12 +324,12 @@ export async function mountSessions(root, boot, toClassic) {
         </div>
       </header>
       <p class="sx-hint" hidden></p>
-      <form class="sx-d-link"><label class="sx-muted">Task <input name="task" placeholder="t_… or slug" maxlength="120"></label><button type="submit">Link</button><span class="sx-muted sx-link-note" role="status"></span></form>
+      <form class="sx-d-link"><label class="sx-muted">Task <input name="task" placeholder="t_… or slug" maxlength="120"></label><button type="submit">Link</button></form>
       <div class="sx-view"></div>
       <form class="sx-send" hidden>
         <label class="sx-muted" for="sx-send-text">Send to this session</label>
         <textarea id="sx-send-text" rows="2" maxlength="24000" placeholder="A message, as if typed by you…"></textarea>
-        <div class="sx-row"><span class="sx-muted sx-send-note" role="status"></span><button type="submit" class="sx-primary">Send</button></div>
+        <div class="sx-row"><button type="submit" class="sx-primary">Send</button></div>
       </form>`;
     open = {rec, mode: null, view: null, el};
     el.querySelector('.sx-d-link [name=task]').value = rec.links?.task || '';
@@ -361,25 +395,23 @@ export async function mountSessions(root, boot, toClassic) {
     }
   });
   function note(text, bad) {
-    const n = open?.el.querySelector('.sx-send-note'); if (!n) return;
-    n.textContent = text; n.classList.toggle('sx-error', !!bad);
-    if (open.el.querySelector('.sx-send').hidden) { const h = open.el.querySelector('.sx-hint'); h.hidden = false; h.textContent = text; }
+    act((open?.rec.title ? open.rec.title + ': ' : '') + text, bad ? 'bad' : 'info');
   }
   $('#sx-detail').addEventListener('submit', async e => {
     e.preventDefault(); if (!open) return;
     const form = e.target, rec = open.rec;
     if (form.matches('.sx-d-link')) {
-      const task = form.elements.task.value.trim(), out = form.querySelector('.sx-link-note');
+      const task = form.elements.task.value.trim();
       try {
         await post('link', {...who(rec), task, work_session: rec.links?.work_session || ''});
-        out.textContent = task ? 'Linked.' : 'Unlinked.'; open.rec = {...rec, links: {...rec.links, task: task || undefined}}; refresh();
-      } catch (err) { out.textContent = err.message; }
+        note(task ? 'linked to ' + task + '.' : 'unlinked.'); open.rec = {...rec, links: {...rec.links, task: task || undefined}}; refresh();
+      } catch (err) { note(err.message, true); }
       return;
     }
     if (form.matches('.sx-send')) {
       const box = form.querySelector('textarea'), text = box.value, button = form.querySelector('button');
       if (!text.trim()) return;
-      button.disabled = true; note('Sending…');
+      button.disabled = true;
       try {
         const res = await post('send', {...who(rec), text, command_id: crypto.randomUUID()});
         box.value = '';
@@ -397,7 +429,7 @@ export async function mountSessions(root, boot, toClassic) {
   class TermCard {
     constructor(host, rec) {
       this.rec = rec; this.disposed = false;
-      host.innerHTML = `<article class="sx-term"><header><span class="sx-holder sx-muted"></span><span class="sx-term-actions"><button type="button" data-t="take">Take control</button><button type="button" data-t="release">Release</button><select data-t="handoff" aria-label="Hand off control"></select><button type="button" data-t="int" title="Send Ctrl-C">Ctrl-C</button></span></header><div class="sx-xterm"></div><p class="sx-term-note sx-muted" role="status"></p></article>`;
+      host.innerHTML = `<article class="sx-term"><header><span class="sx-holder sx-muted"></span><span class="sx-term-actions"><button type="button" data-t="take">Take control</button><button type="button" data-t="release">Release</button><select data-t="handoff" aria-label="Hand off control"></select><button type="button" data-t="int" title="Send Ctrl-C">Ctrl-C</button></span></header><div class="sx-xterm"></div></article>`;
       this.card = host.firstElementChild;
       this.card.addEventListener('click', e => {
         const b = e.target.closest('[data-t]'); if (!b || !this.term) return;
@@ -411,11 +443,11 @@ export async function mountSessions(root, boot, toClassic) {
       let sid = rec.links?.work_session;
       try {
         if (!sid) sid = (await post('attach', {...who(rec), terminal: rec.view.terminal})).session;
-      } catch (err) { this.card.querySelector('.sx-term-note').textContent = err.message; return; }
+      } catch (err) { act(err.message, 'bad'); return; }
       if (this.disposed) return;
       this.sid = sid;
       this.term = new TermView(sid, this.card.querySelector('.sx-xterm'), csrf, view => this.paint(view));
-      this.term.mount().catch(err => { this.card.querySelector('.sx-term-note').textContent = 'Terminal failed to load: ' + err.message; });
+      this.term.mount().catch(err => act('Terminal failed to load: ' + err.message, 'bad'));
     }
     paint(view) {
       const st = view.state, me = view.me, holder = st.holder, others = (st.viewers || []).filter(x => x.id !== me);
@@ -426,7 +458,9 @@ export async function mountSessions(root, boot, toClassic) {
       const hand = this.card.querySelector('[data-t=handoff]');
       hand.hidden = holder !== me || !others.length;
       hand.innerHTML = '<option value="">Hand off to…</option>' + others.map(x => `<option value="${esc(x.id)}">${esc(x.label)}</option>`).join('');
-      this.card.querySelector('.sx-term-note').textContent = view.lastNote || (st.running === false ? (st.lost || 'Process exited' + (st.exit_code != null ? ' with code ' + st.exit_code : '') + '.') : '');
+      const said = view.lastNote || (st.running === false ? (st.lost || 'Process exited' + (st.exit_code != null ? ' with code ' + st.exit_code : '') + '.') : '');
+      if (said && said !== this.said) act((this.rec.title ? this.rec.title + ': ' : '') + said, st.running === false && !st.lost ? 'info' : 'warn');
+      this.said = said;
       this.card.classList.toggle('ended', st.running === false);
     }
     dispose() { this.disposed = true; this.term?.dispose(); }
@@ -438,6 +472,11 @@ export async function mountSessions(root, boot, toClassic) {
     const screen = new Screen(host, loadXterm, themeColors, label);
     return {screen, painter: new Painter(screen, rec.agent)};
   }
+  // A view's notes ("No messages yet.", read errors) go to Activity, once per change.
+  function noteTo(rec) {
+    let last = '';
+    return {set textContent(text) { if (text && text !== last) act((rec.title ? rec.title + ': ' : '') + text, /Retrying|fail|error|not /i.test(text) ? 'warn' : 'info'); last = text; }};
+  }
   const stateLine = (state, rec) => state === 'working' ? A_WORKING + '✻ Working…'
     : state === 'waiting' ? A_WAITING + '✻ Waiting for approval on ' + (rec.worker || 'its host')
     : state === 'idle' ? A_IDLE + '· idle, waiting for input' : state === 'ended' ? A_IDLE + '· session ended' : '';
@@ -446,8 +485,8 @@ export async function mountSessions(root, boot, toClassic) {
   class LiveLog {
     constructor(host, rec) {
       this.rec = rec; this.cursor = 0; this.ctrl = new AbortController();
-      host.innerHTML = `<div class="sx-live-head"><span class="sx-chip sx-state">connecting</span><span class="sx-muted">Live view from the Rook mod on ${esc(rec.worker || 'its host')}</span></div><div class="sx-screen-host"></div><p class="sx-muted sx-log-note" role="status"></p>`;
-      this.chip = host.querySelector('.sx-state'); this.noteEl = host.querySelector('.sx-log-note');
+      host.innerHTML = `<div class="sx-live-head"><span class="sx-chip sx-state">connecting</span><span class="sx-muted">Live view from the Rook mod on ${esc(rec.worker || 'its host')}</span></div><div class="sx-screen-host"></div>`;
+      this.chip = host.querySelector('.sx-state'); this.noteEl = noteTo(rec);
       ({screen: this.screen, painter: this.p} = screenFor(host.querySelector('.sx-screen-host'), rec, 'Session events (read-only terminal)'));
       this.loop();
     }
@@ -497,8 +536,8 @@ export async function mountSessions(root, boot, toClassic) {
   class Transcript {
     constructor(host, rec) {
       this.rec = rec; this.ctrl = new AbortController();
-      host.innerHTML = `<div class="sx-live-head"><span class="sx-chip">transcript</span><span class="sx-muted">From the session's log on ${esc(rec.worker || 'its host')}${rec.state === 'closed' ? '' : ', a few seconds behind'}</span></div><div class="sx-screen-host"></div><p class="sx-muted sx-log-note" role="status">Reading…</p>`;
-      this.noteEl = host.querySelector('.sx-log-note');
+      host.innerHTML = `<div class="sx-live-head"><span class="sx-chip">transcript</span><span class="sx-muted">From the session's log on ${esc(rec.worker || 'its host')}${rec.state === 'closed' ? '' : ', a few seconds behind'}</span></div><div class="sx-screen-host"></div>`;
+      this.noteEl = noteTo(rec);
       ({screen: this.screen, painter: this.p} = screenFor(host.querySelector('.sx-screen-host'), rec, 'Transcript (read-only terminal)'));
       this.restart();
       this.loop();

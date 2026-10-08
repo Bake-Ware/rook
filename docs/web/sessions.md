@@ -34,9 +34,15 @@ and `task …` (linked to a task).
 - **Filters**: agent, host, **Live only**.
 - The header counts live, idle and closed sessions; a host heading shows that
   host's live and idle counts from its heartbeat.
-- **Notices**: a host that did not answer stays listed from the hub's last
-  copy of its list, marked **stale**, with a line saying when that copy was
-  read. Other per-host errors are listed the same way.
+- **Activity**: the header's **Activity** button opens a panel over the
+  page (it never pushes the page around) with host warnings and the results
+  of what you did here: a host that did not answer (it stays listed from the
+  hub's last copy, marked **stale**), a host answering again, send results
+  ("Waiting for approval on …", "Delivered as a new turn", "Typed into the
+  Rook terminal"), task links, stop and resume results, a terminal's process
+  exiting, and read errors in live views. A badge counts entries you have not
+  seen, red when one is a warning or error. A repeat of the newest entry
+  bumps its count instead of adding a row; the panel keeps the last 200.
 - **maybe running**: a Claude or Codex session that no process on its host is
   known to hold, but that may still be running there: its transcript changed
   in the last 2 minutes, or a Claude Code in its folder has a PID marker
@@ -45,8 +51,9 @@ and `task …` (linked to a task).
   is never offered for resume (see Actions).
 
 The page shows the hub's last copy of every host's list at once, then asks
-each host on its own and replaces that host's rows as it answers; the status
-line names the hosts it is still waiting for ("Asking laptop…"). A slow host
+each host on its own and replaces that host's rows as it answers; the label at
+the end of the filters says "Updating…" (its tooltip names the hosts it is
+waiting for) and then "Updated <time>". A slow host
 never holds up the others. The list refreshes every 8 seconds while the tab
 is open and visible.
 
