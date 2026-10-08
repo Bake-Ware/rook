@@ -136,8 +136,8 @@ _CORE: list[tuple[Setting, str, dict]] = [
      "dashboard", {}),
     # Features
     (_s("work.v2", bool, True, env="ROOK_WORK_V2", bootstrap=True, apply="restart",
-        label="Worklog view (live terminals)", group="Features",
-        help="Off keeps only the classic Work view."), "dashboard", {}),
+        label="Sessions page (live terminals)", group="Features",
+        help="Off keeps only the classic Work view, without live terminals."), "dashboard", {}),
     (_s("work.import_workers", list, [], env="ROOK_WORK_IMPORT_WORKERS", bootstrap=True,
         apply="restart", label="Session import allowlist", group="Features", advanced=True,
         help="Workers whose sessions the Work view imports; empty = all."), "dashboard", {}),

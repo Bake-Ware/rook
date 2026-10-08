@@ -1,7 +1,7 @@
 {
   "name": "rook",
-  "version": "0.2.1",
-  "description": "Rook band views inside Claude Code: a live pane of bands and their workers, sessions across the fleet, and the work deck",
+  "version": "0.3.3",
+  "description": "Rook band views inside Claude Code: a live pane of bands and their workers, sessions across the fleet, and the Deck of open tasks (Work)",
   "author": {
     "name": "Bake-Ware",
     "url": "https://github.com/Bake-Ware"
@@ -11,6 +11,12 @@
   "license": "Apache-2.0",
   "types": "./types/index.d.ts",
   "userConfig": {
+    "mirror": {
+      "type": "boolean",
+      "title": "Mirror this session to Rook",
+      "description": "Writes this session's prompts, replies and clipped tool calls to the Rook worker on this machine, so the hub's Sessions page can show them live. Off: nothing is written. Has no effect where no Rook worker is installed.",
+      "default": true
+    },
     "hostingSync": {
       "type": "boolean",
       "title": "Hosting sync button",

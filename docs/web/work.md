@@ -1,11 +1,15 @@
-# Work sessions
+# Sessions: the classic view
 
-> The default Work view is now the **worklog**: live terminals grouped by
-> project and host. See [worklog.md](worklog.md). This page describes the
-> classic view, which stays available (**Classic view** button, or
-> `ROOK_WORK_V2=0` on the dashboard) during rollout.
+> The default view of the dashboard's Sessions tab is now the **Sessions
+> page** ([sessions.md](sessions.md)). This page describes the classic view,
+> which stays available (**Classic view** link in the Sessions header, or
+> `ROOK_WORK_V2=0` on the dashboard) until the Sessions page covers it.
 
-Work replaces the old Sessions view; saved `#sessions` links redirect to `#work`.
+This view was once the dashboard's **Work** tab. The Work tab is now the task
+board (tasks and projects); every session, in this view or the Sessions page,
+is under **Sessions**. The hub still calls a session record a "Work session"
+internally (`/account/work/*` routes, `ROOK_WORK_SESSION`).
+
 The server discovers Claude and Codex histories on connected workers every 15
 seconds after each scan. Discovery requests only paginated metadata, including
 source identity, title, directory, modification time, message count, and activity.
@@ -76,7 +80,7 @@ There is no CLI queue fallback. Other terminal applications currently need an
 app-server connection for direct input. Claude uses its local
 authenticated peer inbox, with exact session, process-start, socket-owner, and
 peer-key checks. Claude's peer protocol has no in-band acceptance acknowledgment:
-Work reports **sent to inbox**, not agent acceptance. Subsequent messages appear
+The classic view reports **sent to inbox**, not agent acceptance. Subsequent messages appear
 automatically while the session is open. **Refresh from host** rereads the whole
 conversation. Older CLIs without a usable channel
 explain why messaging is unavailable. Sending never resumes a second process.
@@ -90,7 +94,7 @@ browser waits for the host receipt and queries that receipt after reconnecting
 without replaying the message. Submission notes are visible outside the terminal panel. Claude inbox behavior is version-dependent; the adapter
 currently recognizes peer protocol 1 and respects the session's peer-message policy.
 
-To create a new session, open **Work**, choose a connected Linux host with Codex installed
+To create a new session, open **Sessions**, switch to the **Classic view**, choose a connected Linux host with Codex installed
 and authenticated, and enter an existing absolute working directory. New sessions use Codex. Leave Model blank to use the host's configured model.
 
 Sessions belong to the signed-in operator account. Send a task, follow tool output,

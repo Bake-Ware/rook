@@ -1,0 +1,744 @@
+"""sessions.* — one catalog and one set of verbs for every agent session here.
+
+A **session** is one agent conversation (or one shell) on this host, keyed
+``(agent, native_id)``: Claude's session id, Codex's rollout id, or, for a
+shell or an agent that has not reported its id yet, the Rook terminal id. The
+record shape is the contract in docs/design/sessions.md §3.1.
+
+The worker is the source of truth for its own sessions, so the catalog is
+built from what this host can see:
+
+* Rook terminals (``work.stream.list``): the raw PTY tier, started by Rook.
+* Claude/Codex history (``*-history.pull``): every transcript, live or not.
+* Process evidence (:mod:`rook.worker.agent_activity`): which sessions a live
+  process holds, Claude's busy/idle status from its PID markers, and which
+  terminal runs which native session.
+* The Claude Code mod's mirror spool (§3.4), when one exists.
+
+``sessions.send`` puts text in front of the agent as the user: the session's
+inbox when it has one (Claude peer messaging, Codex control socket), else
+keystrokes into the Rook terminal. ``sessions.stop`` ends only what Rook
+started; a session someone started in their own terminal is theirs to end.
+
+``sessions.mirror`` (the live event tier) lives in ``session_mirror.py``.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+import re
+import sys
+import time
+import uuid
+from pathlib import Path
+
+from ..plugin import Plugin, capability
+from .. import agent_activity, session_mirror
+
+log = logging.getLogger("rook.worker.plugins.sessions")
+
+AGENTS = ("claude", "codex", "hermes", "shell")
+TRANSCRIPT_AGENTS = ("claude", "codex")
+MAX_TEXT = 24000
+MAX_KEYS = 16 * 1024                # work.stream.write's input limit
+SEARCH_WINDOW = 500                 # history scanned for a query (as work.sessions did)
+LIVE_WINDOW = 50                    # history scanned for live_only; live ones outside it come from process evidence
+COUNT_EVERY = 120.0                 # seconds between heartbeat recounts
+RECENT_SECS = 120                   # a log written this recently may still have a process (§3.1)
+WARM_PULL = 50                      # history read once at start, so the first list is quick
+_ID = re.compile(r"[A-Za-z0-9_.-]{1,100}")
+_INBOUND = ("accept", "hold", "refuse")
+
+
+# -- mirror spool (§3.4) ------------------------------------------------------------
+
+# The spool layout and readers are rook.worker.session_mirror's; the catalog
+# only asks which spools exist and what inbound setting the mod saw.
+
+def mirror_spool_exists(agent: str, native_id: str) -> bool:
+    """A mirror spool exists for this session (``view.mirror``)."""
+    try:
+        return bool(session_mirror.chunks(agent, native_id))
+    except ValueError:      # not a name a spool can have
+        return False
+
+
+def mirror_spool_keys() -> set[tuple[str, str]]:
+    """``(agent, native_id)`` of every spool on this host, in one listing."""
+    try:
+        return {(row["agent"], row["native_id"]) for row in session_mirror.spools()}
+    except OSError:
+        return set()
+
+
+def mirror_inbound(agent: str, native_id: str) -> str | None:
+    """The ``inbound`` setting the mod reported at the latest
+    ``session.start`` in the spool (a later process that resumes the session
+    reports again), or None. Reads chunks newest first and stops at the
+    first ``session.start``."""
+    try:
+        found = session_mirror.chunks(agent, native_id)
+    except ValueError:
+        return None
+    for _n, path in reversed(found):
+        try:
+            events = session_mirror.parse_lines(path.read_bytes())
+        except OSError:
+            continue
+        for ev in reversed(events):
+            if ev.get("type") == "session.start":
+                value = ev.get("inbound")
+                return value if isinstance(value, str) else None
+    return None
+
+
+# -- Claude's inbox policy --------------------------------------------------------
+
+def _claude_home() -> Path:
+    if sys.platform == "win32":
+        return Path(os.environ.get("USERPROFILE", str(Path.home()))) / ".claude"
+    return Path.home() / ".claude"
+
+
+def managed_settings_path() -> Path:
+    if sys.platform == "win32":
+        return Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "ClaudeCode" / "managed-settings.json"
+    if sys.platform == "darwin":
+        return Path("/Library/Application Support/ClaudeCode/managed-settings.json")
+    return Path("/etc/claude-code/managed-settings.json")
+
+
+def _json(path: Path, cache: dict | None = None) -> dict:
+    key = str(path)
+    if cache is not None and key in cache:
+        return cache[key]
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data = data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        data = {}
+    if cache is not None:
+        cache[key] = data
+    return data
+
+
+def _bypass_flag(argv: list[str]) -> bool:
+    for i, arg in enumerate(argv):
+        if arg == "--dangerously-skip-permissions":
+            return True
+        if arg == "--permission-mode" and i + 1 < len(argv) and argv[i + 1] == "bypassPermissions":
+            return True
+        if arg == "--permission-mode=bypassPermissions":
+            return True
+    return False
+
+
+def inbox_policy(cwd: str | None = None, argv: list[str] | None = None,
+                 inbound: str | None = None, home: Path | None = None,
+                 cache: dict | None = None) -> str:
+    """What Claude Code does with a message another session (Rook) sends:
+    ``accept`` (starts a turn), ``hold`` (waits for the person's OK),
+    ``refuse`` (dropped) or ``unknown``.
+
+    ``crossSessionInbound`` comes from managed settings, else the user's
+    settings (it is a user setting; the mod's mirror reports the live value
+    as ``inbound``). Its ``default`` holds messages while permissions are
+    bypassed: by ``--dangerously-skip-permissions`` / ``--permission-mode
+    bypassPermissions`` on the command line, or ``permissions.defaultMode``
+    in the settings layers (managed, project local, project, user). Without
+    the command line (Windows) a default that settings don't decide is
+    ``unknown``."""
+    home = home or _claude_home()
+    managed = _json(managed_settings_path(), cache)
+    user = _json(home / "settings.json", cache)
+    value = inbound if inbound in _INBOUND else None
+    if value is None:
+        for layer in (managed, user):
+            if layer.get("crossSessionInbound") in _INBOUND:
+                value = layer["crossSessionInbound"]
+                break
+    if value:
+        return value
+    if argv and _bypass_flag(argv):
+        return "hold"
+    layers = [managed]
+    if cwd:
+        layers += [_json(Path(cwd) / ".claude" / "settings.local.json", cache),
+                   _json(Path(cwd) / ".claude" / "settings.json", cache)]
+    layers.append(user)
+    for layer in layers:
+        mode = (layer.get("permissions") or {}).get("defaultMode") if isinstance(layer.get("permissions"), dict) else None
+        if mode:
+            return "hold" if mode == "bypassPermissions" else ("accept" if argv else "unknown")
+    return "accept" if argv else "unknown"
+
+
+# -- the record --------------------------------------------------------------------
+
+def record(agent: str, native_id: str, *, worker=None, meta: dict | None = None,
+           term: dict | None = None, marker: dict | None = None, live: bool = False,
+           activity: str | None = None, messageable: bool = False,
+           policy: str = "unknown", mirror: bool = False, maybe: str | None = None) -> dict:
+    """One §3.1 session record from what the worker knows about it.
+
+    ``maybe`` says why a session without process evidence may still be
+    running (``recent_write``, ``unreadable_marker``): it is then reported
+    live (or idle), with ``possibly_live`` set and no way to resume it."""
+    meta = meta or {}
+    running = bool(term and term.get("running"))
+    maybe = None if (live or running) else maybe
+    live = live or running or bool(maybe)
+    if not live:
+        state = "closed"
+    elif marker and marker.get("status"):
+        state = "idle" if marker["status"] == "idle" else "live"
+    elif activity == "ready" and not running:
+        state = "idle"
+    else:
+        state = "live"
+    inbox = live and messageable and policy != "refuse"
+    if inbox and policy != "hold":
+        how = "inbox"
+    elif running:
+        how = "pty"
+    elif inbox:
+        how = "inbox"
+    else:
+        how = "none"
+    transcript = agent in TRANSCRIPT_AGENTS and not (term and native_id == term.get("id"))
+    updated = meta.get("last_modified") or (term or {}).get("last_output") \
+        or ((marker or {}).get("updatedAt") or 0) / 1000 or None
+    out = {
+        "key": f"{getattr(worker, 'worker_id', '') or ''}/{agent}/{native_id}",
+        "worker_id": getattr(worker, "worker_id", None), "worker": getattr(worker, "name", None),
+        "agent": agent, "native_id": native_id,
+        "title": meta.get("title") or (term or {}).get("title") or (marker or {}).get("name") or native_id,
+        "cwd": meta.get("cwd") or (term or {}).get("cwd") or (marker or {}).get("cwd"),
+        "state": state,
+        "origin": "rook" if term else "external",
+        "updated": updated, "messages": meta.get("message_count"),
+        "view": {"terminal": term["id"] if term else None, "mirror": bool(mirror),
+                 "transcript": transcript},
+        "input": how,
+        "inbox_policy": policy,
+        "links": {k: term[f] for k, f in (("work_session", "session"), ("task", "task"),
+                                           ("console_room", "room")) if term and term.get(f)},
+        "resumable": state == "closed" and transcript,
+    }
+    if activity:
+        out["activity"] = activity
+    if maybe:
+        out["possibly_live"] = maybe
+        out["resumable"] = False
+    pid =(marker or {}).get("pid") or (term or {}).get("pid")
+    if pid and live:
+        out["pid"] = pid
+    if term and term.get("model"):
+        out["model"] = term["model"]
+    return out
+
+
+def _norm(path) -> str | None:
+    try:
+        return os.path.normcase(os.path.realpath(str(path)))
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def recently_written(meta: dict, now: float | None = None) -> bool:
+    """The session's log changed within RECENT_SECS: an agent may still be
+    writing it, whatever the process evidence says."""
+    mtime = (meta or {}).get("last_modified")
+    return isinstance(mtime, (int, float)) and (now or time.time()) - mtime < RECENT_SECS
+
+
+def _project_dir(root: Path, cwd: str) -> Path:
+    # Claude Code files a folder's sessions under the folder's path with
+    # every character other than a letter or digit turned into "-".
+    return root / re.sub(r"[^A-Za-z0-9]", "-", cwd)
+
+
+def orphan_sessions(procs: dict, claude_root: Path | None = None) -> set[str]:
+    """Claude sessions a live process with an unreadable PID marker probably
+    holds: for each such process, the newest log in its folder's project
+    directory that no other process evidence accounts for."""
+    orphans = procs.get("orphans") or []
+    if not orphans:
+        return set()
+    if claude_root is None:
+        from .claude_history import _default_root
+        claude_root = _default_root()
+    held = set(procs.get("markers") or {}) | set((procs.get("owners") or {}).get("claude", {}).values())
+    per_cwd: dict[str, int] = {}
+    for o in orphans:
+        if o.get("cwd"):
+            per_cwd[o["cwd"]] = per_cwd.get(o["cwd"], 0) + 1
+    out: set[str] = set()
+    for cwd, count in per_cwd.items():
+        folder = _project_dir(claude_root, cwd)
+        logs = []
+        try:
+            for p in folder.glob("*.jsonl"):
+                if p.stem.lower() not in held:
+                    logs.append((p.stat().st_mtime, p.stem.lower()))
+        except OSError:
+            continue
+        out.update(sid for _m, sid in sorted(logs, reverse=True)[:count])
+    return out
+
+
+def _transcript_path(agent: str, native_id: str) -> Path | None:
+    try:
+        if agent == "claude":
+            from .claude_history import _default_root, _resolve_session
+            path = _resolve_session(_default_root(), native_id)
+            return path if path is not None and path.stem.lower() == native_id.lower() else None
+        from .codex_history import _resolve, _root
+        return _resolve(_root(), native_id)
+    except Exception:
+        return None
+
+
+def resume_guard(agent: str, native_id: str, procs: dict | None = None) -> str | None:
+    """Why resuming this session now might start a second agent on a
+    conversation that is still running (None when nothing suggests so).
+    ``work.stream.open(resume=…)`` refuses on it unless forced."""
+    if agent not in TRANSCRIPT_AGENTS:
+        return None
+    path = _transcript_path(agent, native_id)
+    if path is None:
+        return None
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return None
+    if time.time() - mtime < RECENT_SECS:
+        return "its transcript changed in the last 2 minutes"
+    if agent == "claude":
+        if procs is None:
+            table = agent_activity.process_table()
+            procs = {"table": table, "markers": agent_activity.claude_markers(table=table),
+                     "owners": {"claude": agent_activity.session_owners("claude", table=table)},
+                     "orphans": agent_activity.claude_unreadable_markers(table=table)}
+        if native_id.lower() in orphan_sessions(procs, path.parent.parent):
+            return ("a Claude Code process in its folder has an unreadable session marker, and this "
+                    "is that folder's newest session")
+    return None
+
+
+def _rank(rec: dict) -> tuple:
+    return (rec["state"] == "closed", -(rec.get("updated") or 0))
+
+
+# -- plugin ------------------------------------------------------------------------
+
+class SessionsPlugin(Plugin):
+    NAMESPACE = "sessions"
+    NAME = "sessions"
+    SKILL = ("Sessions: `sessions.list(query, live_only)` is this host's catalog of agent "
+             "sessions (Claude, Codex, Hermes, shells), live ones first, each with state "
+             "live/idle/closed, how to view it (terminal id, mirror, transcript) and how input "
+             "reaches it. `sessions.follow(agent, native_id, offset, version)` tails a "
+             "transcript; `sessions.send(agent, native_id, text)` puts text in front of the "
+             "agent as the user (delivery turn, held or keys); `sessions.stop` ends a session "
+             "Rook started. Resume a closed one with work.stream.open(harness=agent, resume=id).")
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._worker = None
+        self._counts: dict | None = None
+        self._counter: asyncio.Task | None = None
+
+    def available(self) -> bool:
+        from .claude_history import _default_root
+        from .codex_history import _root as codex_root
+        if _default_root().is_dir() or codex_root().is_dir():
+            return True
+        # Shells in Rook terminals: a PTY, or ConPTY on Windows.
+        if sys.platform == "win32":
+            from .. import conpty
+            return conpty.available()
+        return os.name == "posix"
+
+    def bind_worker(self, worker) -> None:
+        self._worker = worker
+
+    async def start(self) -> None:
+        self._counter = asyncio.create_task(self._count_loop())
+
+    async def stop(self) -> None:
+        if self._counter is not None:
+            self._counter.cancel()
+            await asyncio.gather(self._counter, return_exceptions=True)
+            self._counter = None
+
+    def heartbeat(self) -> dict | None:
+        # hb.sessions = {live, idle}: what the hub shows before anyone opens
+        # the Sessions page. Recounted in the background, never here.
+        return dict(self._counts) if self._counts is not None else None
+
+    # -- sources ---------------------------------------------------------------
+
+    @property
+    def _reg(self):
+        return self._worker.registry if self._worker is not None else None
+
+    def _has(self, cap: str) -> bool:
+        return self._reg is not None and self._reg.has(cap)
+
+    async def _call(self, cap: str, **args):
+        result = await self._reg.call(cap, **args)
+        return result if isinstance(result, dict) else {}
+
+    async def _terminals(self) -> list[dict]:
+        if not self._has("work.stream.list"):
+            return []
+        try:
+            return list((await self._call("work.stream.list")).get("terminals") or [])
+        except Exception:
+            log.debug("work.stream.list failed", exc_info=True)
+            return []
+
+    @staticmethod
+    def _processes() -> dict:
+        """One process scan: Claude markers and the holders of each agent's
+        live sessions (blocking; run in a thread)."""
+        table = agent_activity.process_table()
+        markers = agent_activity.claude_markers(table=table)
+        owners = {a: agent_activity.session_owners(a, table=table) for a in TRANSCRIPT_AGENTS}
+        orphans = agent_activity.claude_unreadable_markers(table=table)
+        return {"table": table, "markers": markers, "owners": owners, "orphans": orphans}
+
+    @staticmethod
+    def _term_native(term: dict, procs: dict) -> str:
+        agent = term.get("harness")
+        if agent in TRANSCRIPT_AGENTS:
+            if term.get("resume"):
+                return str(term["resume"]).lower()
+            if term.get("running") and term.get("pid"):
+                sid = agent_activity.session_under(term["pid"], procs["owners"][agent], procs["table"])
+                if sid:
+                    return sid
+        return term["id"]
+
+    @staticmethod
+    def _meta(agent: str, native_id: str) -> dict:
+        """Transcript metadata for one session by exact id ({} if none)."""
+        try:
+            from .claude_history import scan_session
+            path = _transcript_path(agent, native_id)
+            if path is None:
+                return {}
+            if agent == "claude":
+                return scan_session(path)[0]
+            from .codex_history import CodexHistoryPlugin
+            return scan_session(path, codex=True, meta=CodexHistoryPlugin._session_meta)[0]
+        except Exception:
+            return {}
+
+    def _live_ids(self, agent: str, procs: dict) -> set[str]:
+        ids = set(procs["owners"].get(agent, {}).values())
+        if agent == "claude":
+            ids |= set(procs["markers"])
+        return ids
+
+    def _policy(self, agent: str, native_id: str, cwd, marker, messageable, cache) -> str:
+        if agent == "claude":
+            return inbox_policy(cwd, (marker or {}).get("argv"), mirror_inbound(agent, native_id),
+                                cache=cache)
+        if agent == "codex":
+            return "accept" if messageable else "unknown"
+        return "unknown"
+
+    async def _pull(self, agent: str, pull: int, offset: int) -> dict:
+        if not (self._has(f"{agent}-history.pull") and pull > 0):
+            return {}
+        try:
+            res = await self._call(f"{agent}-history.pull", limit=pull, offset=offset)
+        except Exception:
+            log.debug("%s history pull failed", agent, exc_info=True)
+            return {}
+        return res if res.get("ok") else {}
+
+    async def _catalog(self, pull: int, offset: int = 0) -> tuple[list[dict], int]:
+        """Every record this host knows of (history up to ``pull`` entries per
+        agent), plus the summed history total."""
+        terms, procs, *pulled = await asyncio.gather(
+            self._terminals(), asyncio.to_thread(self._processes),
+            *(self._pull(a, pull, offset) for a in TRANSCRIPT_AGENTS))
+        by_key: dict[tuple, dict] = {}
+        term_of: dict[tuple, dict] = {}
+        for t in terms:
+            agent = t.get("harness") if t.get("harness") in AGENTS else "shell"
+            key = (agent, self._term_native(t, procs))
+            # A running terminal wins over a finished one for the same session.
+            if key not in term_of or t.get("running"):
+                term_of[key] = t
+        total = 0
+        cache: dict = {}
+        live_ids = {a: self._live_ids(a, procs) for a in TRANSCRIPT_AGENTS}
+        # Held by a live Claude whose PID marker cannot be read (§3.1).
+        orphaned = await asyncio.to_thread(orphan_sessions, procs)
+        from ..session_messages import messageable
+        for agent, res in zip(TRANSCRIPT_AGENTS, pulled):
+            seen = set()
+            total += int(res.get("total") or 0)
+            for s in res.get("sessions") or []:
+                sid = s.get("session_id")
+                if not sid or s.get("error"):
+                    continue
+                seen.add(sid.lower())
+                by_key[(agent, sid.lower())] = dict(meta=s, live=bool(s.get("active")),
+                                                    activity=s.get("activity"),
+                                                    messageable=bool(s.get("messageable")))
+            # Live sessions outside the history window, or with no transcript yet.
+            for sid in live_ids[agent] - seen:
+                meta = await asyncio.to_thread(self._meta, agent, sid)
+                if meta:
+                    total += 1
+                by_key[(agent, sid)] = dict(meta=meta, live=True, activity=None,
+                                            messageable=await asyncio.to_thread(messageable, agent, sid))
+            if agent == "claude":
+                for sid in orphaned - seen - live_ids[agent]:
+                    meta = await asyncio.to_thread(self._meta, agent, sid)
+                    if meta:
+                        total += 1
+                        by_key[(agent, sid)] = dict(meta=meta, live=False, activity=None, messageable=False)
+        for key in term_of:
+            if key not in by_key:
+                by_key[key] = dict(meta={}, live=False, activity=None, messageable=False)
+                if key[0] not in TRANSCRIPT_AGENTS or key[1] == term_of[key]["id"]:
+                    total += 1
+        out = []
+        spooled = await asyncio.to_thread(mirror_spool_keys)
+        now = time.time()
+        for (agent, sid), info in by_key.items():
+            term = term_of.get((agent, sid))
+            marker = procs["markers"].get(sid) if agent == "claude" else None
+            live = info["live"] or sid in live_ids.get(agent, ())
+            maybe = None
+            if agent in TRANSCRIPT_AGENTS:
+                maybe = ("unreadable_marker" if agent == "claude" and sid in orphaned
+                         else "recent_write" if recently_written(info["meta"], now) else None)
+            cwd = info["meta"].get("cwd") or (term or {}).get("cwd") or (marker or {}).get("cwd")
+            policy = self._policy(agent, sid, cwd, marker, info["messageable"], cache)
+            out.append(record(agent, sid, worker=self._worker, meta=info["meta"], term=term,
+                              marker=marker, live=live, activity=info["activity"],
+                              messageable=info["messageable"], policy=policy,
+                              mirror=(agent, sid) in spooled, maybe=maybe))
+        out.sort(key=_rank)
+        return out, total
+
+    async def _find(self, agent: str, native_id: str) -> dict:
+        """One session's live facts, fresh: its terminal, whether a process
+        holds it, its inbox and policy."""
+        if agent not in AGENTS:
+            raise ValueError(f"agent must be one of {', '.join(AGENTS)}")
+        if not isinstance(native_id, str) or not _ID.fullmatch(native_id):
+            raise ValueError("invalid native_id")
+        terms = await self._terminals()
+        procs = await asyncio.to_thread(self._processes)
+        sid = native_id.lower() if agent in TRANSCRIPT_AGENTS else native_id
+        term = None
+        for t in terms:
+            if (t.get("harness") or "shell") != agent:
+                continue
+            if t.get("id") == native_id or self._term_native(t, procs) == sid:
+                if term is None or t.get("running"):
+                    term = t
+        if term is not None and term.get("id") == native_id:
+            sid = self._term_native(term, procs)
+        live = sid in self._live_ids(agent, procs) if agent in TRANSCRIPT_AGENTS else False
+        messageable = False
+        if live:
+            from ..session_messages import messageable as can_message
+            messageable = await asyncio.to_thread(can_message, agent, sid)
+        marker = procs["markers"].get(sid) if agent == "claude" else None
+        cwd = (term or {}).get("cwd") or (marker or {}).get("cwd")
+        policy = self._policy(agent, sid, cwd, marker, messageable, {})
+        rec = record(agent, sid, worker=self._worker, term=term, marker=marker, live=live,
+                     messageable=messageable, policy=policy, mirror=mirror_spool_exists(agent, sid))
+        return {"record": rec, "term": term, "native_id": sid, "procs": procs,
+                "live": live or bool(term and term.get("running"))}
+
+    # -- caps --------------------------------------------------------------------
+
+    @capability("list", risk="read", limit=20)
+    async def list(self, limit: int = 20, offset: int = 0, query: str = "",
+                   live_only: bool = False) -> dict:
+        """This host's agent sessions, live and idle first, then closed,
+        newest first within each (record shape: docs/design/sessions.md). ``query`` matches title, cwd and id;
+        ``live_only`` drops closed ones. Page with ``limit``/``offset``.
+        Resume a closed one with work.stream.open(harness=agent,
+        resume=native_id, cwd=cwd)."""
+        limit = max(1, min(int(limit), 200))
+        offset = max(0, int(offset))
+        live_only = live_only in (True, 1, "1", "true", "yes")
+        query = str(query or "").strip().lower()
+        pull = SEARCH_WINDOW if query else LIVE_WINDOW if live_only else offset + limit
+        items, total = await self._catalog(pull)
+        self._counts = self._tally(items)
+        if live_only:
+            items = [i for i in items if i["state"] != "closed"]
+        if query:
+            items = [i for i in items
+                     if query in f"{i.get('title')} {i.get('cwd')} {i['native_id']}".lower()]
+        if live_only or query:
+            total = len(items)
+        total = max(total, len(items))
+        from .terminals import available_harnesses
+        return {"ok": True, "harnesses": await asyncio.to_thread(available_harnesses)
+                if self._has("work.stream.open") else [],
+                "items": items[offset:offset + limit], "total": total,
+                "next_offset": offset + limit if offset + limit < total else None}
+
+    @capability("follow", risk="read")
+    async def follow(self, agent: str, native_id: str, offset: int = 0, version: str = "",
+                     tail: int = 0) -> dict:
+        """The transcript tail of a Claude or Codex session: pages from
+        ``offset`` when the log changed since ``version`` (else
+        ``unchanged``), as claude-history.follow returns them. ``tail`` (up
+        to 200) starts at the last ``tail`` messages instead, in one page
+        (``tail_from`` = its first index; long messages clipped)."""
+        if agent not in TRANSCRIPT_AGENTS:
+            raise ValueError("only claude and codex sessions have a transcript; view the terminal")
+        cap = f"{agent}-history.follow"
+        if not self._has(cap):
+            return {"ok": False, "error": f"{agent} history is not available on this host"}
+        args = dict(session_id=native_id, offset=int(offset), version=str(version or ""))
+        if int(tail or 0) > 0:
+            args["tail"] = min(int(tail), 200)
+        out = await self._call(cap, **args)
+        return {**out, "agent": agent, "native_id": native_id}
+
+    @capability("send", risk="exec")
+    async def send(self, agent: str, native_id: str, text: str, command_id: str = "") -> dict:
+        """Put ``text`` in front of the agent as the user. Through the
+        session's inbox when it has one (Claude peer messaging, Codex control
+        socket), else as keystrokes into its Rook terminal (text, then Enter).
+        Returns ``{ok, delivery, note}``: ``turn`` (arrives as a user turn),
+        ``held`` (waits for approval on this host) or ``keys`` (typed into
+        the terminal). ``command_id`` makes an inbox retry safe."""
+        if not isinstance(text, str) or not text.strip() or len(text) > MAX_TEXT:
+            return {"ok": False, "error": f"Enter a message of 1–{MAX_TEXT} characters."}
+        found = await self._find(agent, native_id)
+        rec, term, sid = found["record"], found["term"], found["native_id"]
+        route = rec["input"]
+        if route == "inbox":
+            cap = f"{agent}-history.send"
+            if not self._has(cap):
+                return {"ok": False, "error": f"{agent} history is not available on this host"}
+            command_id = str(command_id or uuid.uuid4().hex)
+            res = await self._call(cap, session_id=sid, text=text, command_id=command_id)
+            if not res.get("ok"):
+                return res
+            held = rec["inbox_policy"] == "hold"
+            note = ("Waiting for approval on this host: Claude Code holds messages from other "
+                    "sessions here (crossSessionInbound).") if held else res.get("note") or "Delivered."
+            return {"ok": True, "delivery": "held" if held else "turn", "note": note,
+                    "detail": res.get("delivery"), "native_id": sid}
+        if route == "pty":
+            body = text.rstrip("\r\n")
+            if "\n" in body and agent != "shell":
+                # Bracketed paste keeps newlines as text instead of Enter.
+                body = "\x1b[200~" + body + "\x1b[201~"
+            payload = body + "\r"
+            if len(payload.encode()) > MAX_KEYS:
+                return {"ok": False, "error": f"Terminal input is limited to {MAX_KEYS} bytes."}
+            await self._call("work.stream.write", id=term["id"], data=payload)
+            return {"ok": True, "delivery": "keys", "note": "Typed into the Rook terminal.",
+                    "terminal": term["id"], "native_id": sid}
+        if rec["inbox_policy"] == "refuse" and found["live"]:
+            return {"ok": False, "error": "Claude Code on this host refuses messages from other "
+                                          "sessions (crossSessionInbound = refuse)."}
+        if found["live"]:
+            return {"ok": False, "error": "This session has no inbox Rook can reach and no Rook "
+                                          "terminal. Type on its host, or run /rook-move there."}
+        why = await asyncio.to_thread(resume_guard, agent, sid, found["procs"])
+        if why:
+            return {"ok": False, "error": f"Rook sees no process holding this session, but it may "
+                                          f"still be running on its host ({why}). Type there."}
+        return {"ok": False, "error": "This session is closed. Resume it first."}
+
+    @capability("stop", risk="exec")
+    async def stop_session(self, agent: str, native_id: str) -> dict:
+        """End a session Rook started: close its Rook terminal (or the
+        ``proc.*`` process an older resume started). A session started in
+        someone's own terminal is refused: end it there."""
+        found = await self._find(agent, native_id)
+        term, sid = found["term"], found["native_id"]
+        if term is not None and term.get("running"):
+            res = await self._call("work.stream.close", id=term["id"])
+            return {"ok": True, "stopped": "terminal", "terminal": term["id"],
+                    "exit_code": res.get("exit_code"), "native_id": sid}
+        if agent in TRANSCRIPT_AGENTS and self._has(f"{agent}-history.resumed"):
+            resumed = await self._call(f"{agent}-history.resumed")
+            for s in resumed.get("sessions") or []:
+                if s.get("session_id") == sid and s.get("running") and s.get("handle") \
+                        and self._has("proc.close"):
+                    await self._call("proc.close", handle=s["handle"])
+                    return {"ok": True, "stopped": "process", "handle": s["handle"], "native_id": sid}
+        if found["live"]:
+            return {"ok": False, "error": "This session was started outside Rook. End it on its "
+                                          "host, or run /rook-move there to hand it to Rook."}
+        return {"ok": True, "stopped": None, "note": "Already closed.", "native_id": sid}
+
+    # -- heartbeat counts ------------------------------------------------------------
+
+    @staticmethod
+    def _tally(items: list[dict]) -> dict:
+        return {"live": sum(1 for i in items if i["state"] == "live"),
+                "idle": sum(1 for i in items if i["state"] == "idle")}
+
+    async def _quick_counts(self) -> dict:
+        """Live/idle counts from process evidence and terminals only (no
+        transcript reads)."""
+        terms = await self._terminals()
+        procs = await asyncio.to_thread(self._processes)
+        live = idle = 0
+        claimed = set()
+        for sid, marker in procs["markers"].items():
+            claimed.add(("claude", sid))
+            if marker.get("status") == "idle":
+                idle += 1
+            else:
+                live += 1
+        for agent in TRANSCRIPT_AGENTS:
+            for sid in set(procs["owners"][agent].values()):
+                if (agent, sid) not in claimed:
+                    claimed.add((agent, sid))
+                    live += 1
+        for t in terms:
+            if t.get("running") and (t.get("harness") or "shell", self._term_native(t, procs)) not in claimed:
+                live += 1
+        # A live Claude with an unreadable PID marker still holds a session.
+        live += len(procs.get("orphans") or [])
+        return {"live": live, "idle": idle}
+
+    async def _warm(self) -> None:
+        """Read the newest history once at start: later lists only read what
+        changed (claude_history.scan_session), so the hub's first request
+        after a restart does not time out on a host with long sessions."""
+        await asyncio.gather(*(self._pull(a, WARM_PULL, 0) for a in TRANSCRIPT_AGENTS))
+
+    async def _count_loop(self) -> None:
+        try:
+            await self._warm()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.debug("history warm-up failed", exc_info=True)
+        while True:
+            try:
+                self._counts = await self._quick_counts()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.debug("session count failed", exc_info=True)
+            await asyncio.sleep(COUNT_EVERY)
+
+
+PLUGIN = SessionsPlugin

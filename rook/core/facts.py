@@ -173,6 +173,15 @@ def _gpus() -> list[dict]:
     return gpus[:8]
 
 
+def _has_conpty() -> bool:
+    """Windows 10 1809+ pseudoconsoles (what ``work.stream`` needs there)."""
+    try:
+        import ctypes
+        return hasattr(ctypes.WinDLL("kernel32"), "CreatePseudoConsole")
+    except (ImportError, OSError, AttributeError):
+        return False
+
+
 def detect_facts() -> dict:
     """Detect this machine's platform/hardware facts. Cheap and bounded; call
     once at start-up. Every probe is best-effort: a failure leaves the fact out
@@ -188,7 +197,7 @@ def detect_facts() -> dict:
         mem = _mem_gb()
         if mem is not None:
             facts["mem_gb"] = mem
-        facts["pty"] = os.name == "posix"
+        facts["pty"] = os.name == "posix" or (system == "windows" and _has_conpty())
         if system == "linux" and not android:
             facts["display"] = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
             facts["camera"] = bool(glob.glob("/dev/video*"))

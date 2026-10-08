@@ -1,14 +1,16 @@
 """Console rooms — named, searchable, band-visible terminal sessions.
 
 A console room is a chat room whose main speaker is a process. The site pumps
-``proc.read`` from the worker and appends the output here; every agent on the
+the process's output from the worker (``work.stream.read`` when it runs in a
+Rook terminal, ``proc.read`` otherwise: the room's ``transport``, see
+console_pump.py) and appends it here; every agent on the
 band, plus the dashboard, reads it by ``seq`` at its own pace. Writing to the
 room feeds the process's stdin. One reliable puller on the request/reply path,
 fan-out at the site — nothing streams over the band's broadcast relay.
 
 Two things make this an archive rather than a scrollback:
 
-  * **Rooms are named for the task, not the command.** ``proc.start`` demands a
+  * **Rooms are named for the task, not the command.** ``rook_console_open`` demands a
     label ("set up the model on gpu-01"), and that title carries most of the
     retrieval weight — raw console output is terrible search corpus.
   * **A frozen room is permanent.** When the process exits, the room takes a
@@ -146,7 +148,21 @@ class ConsoleStore:
                 CREATE VIRTUAL TABLE IF NOT EXISTS search USING fts5(
                     text, room_id UNINDEXED, seq UNINDEXED, tokenize='porter'
                 );
+                -- Rook terminals an agent started for a task (work.stream.open
+                -- task=...) that the pump watches, so the task hears when
+                -- they end. Console rooms track their own end.
+                CREATE TABLE IF NOT EXISTS term_watch (
+                    worker TEXT, term TEXT, ref TEXT, task TEXT, title TEXT,
+                    created REAL, PRIMARY KEY (worker, term)
+                );
             """)
+            # transport: how the pump reaches the room's process. 'proc'
+            # (proc.read by handle) for rooms opened before work.stream
+            # carried them, and on workers without it; 'term' (a Rook
+            # terminal, work.stream.read; handle is the terminal id).
+            cols = {r[1] for r in self._db.execute("PRAGMA table_info(rooms)")}
+            if "transport" not in cols:
+                self._db.execute("ALTER TABLE rooms ADD COLUMN transport TEXT DEFAULT 'proc'")
             self._db.commit()
         except Exception:
             log.exception("console store init failed; console rooms disabled")
@@ -158,12 +174,23 @@ class ConsoleStore:
 
     # -- lifecycle ---------------------------------------------------------
 
+    @staticmethod
+    def new_id() -> str:
+        """A room id, for a caller that must name the room before opening it
+        (the terminal records the room it feeds)."""
+        return uuid.uuid4().hex[:16]
+
     def open(self, *, title: str, worker: str, worker_name: str, handle: str,
-             cmd: str, pty: bool, opened_by: str) -> dict:
-        """Register a live console room for a just-started process."""
+             cmd: str, pty: bool, opened_by: str, transport: str = "proc",
+             rid: str | None = None) -> dict:
+        """Register a live console room for a just-started process.
+        ``transport`` is ``proc`` (``handle`` is a proc.* handle) or ``term``
+        (``handle`` is a Rook terminal id, read with work.stream.read)."""
         if self._db is None:
             return {"ok": False, "error": "console store not available"}
-        rid = uuid.uuid4().hex[:16]
+        if transport not in ("proc", "term"):
+            raise ValueError("transport must be proc or term")
+        rid = rid or self.new_id()
         now = time.time()
         title = scrub(str(title or "console"))[:200]
         cmd = scrub(cmd or "")
@@ -171,10 +198,11 @@ class ConsoleStore:
             self._db.execute(
                 "INSERT INTO rooms (id,title,worker,worker_name,handle,cmd,pty,"
                 "state,opened_by,participants,created,last_activity,ended,"
-                "exit_code,bytes,cursor,summary) "
-                "VALUES (?,?,?,?,?,?,?,'live',?,?,?,?,NULL,NULL,0,0,NULL)",
+                "exit_code,bytes,cursor,summary,transport) "
+                "VALUES (?,?,?,?,?,?,?,'live',?,?,?,?,NULL,NULL,0,0,NULL,?)",
                 (rid, title, worker, worker_name, handle, cmd[:2000],
-                 1 if pty else 0, opened_by, json.dumps([opened_by]), now, now))
+                 1 if pty else 0, opened_by, json.dumps([opened_by]), now, now,
+                 transport))
             # The title and command are the highest-signal thing in the room —
             # index them as its first searchable row.
             self._db.execute(
@@ -338,15 +366,18 @@ class ConsoleStore:
             r = self._db.execute(
                 "SELECT id,title,worker,worker_name,handle,cmd,pty,state,"
                 "opened_by,participants,created,last_activity,ended,exit_code,"
-                "bytes,cursor,summary FROM rooms WHERE id=?", (rid,)).fetchone()
+                "bytes,cursor,summary,transport FROM rooms WHERE id=?", (rid,)).fetchone()
         if not r:
             return None
-        return {"room": r[0], "title": r[1], "worker": r[2], "worker_name": r[3],
-                "handle": r[4], "cmd": r[5], "pty": bool(r[6]), "state": r[7],
-                "opened_by": r[8], "participants": json.loads(r[9] or "[]"),
-                "created": r[10], "last_activity": r[11], "ended": r[12],
-                "exit_code": r[13], "bytes": r[14], "cursor": r[15],
-                "summary": r[16]}
+        out = {"room": r[0], "title": r[1], "worker": r[2], "worker_name": r[3],
+               "handle": r[4], "cmd": r[5], "pty": bool(r[6]), "state": r[7],
+               "opened_by": r[8], "participants": json.loads(r[9] or "[]"),
+               "created": r[10], "last_activity": r[11], "ended": r[12],
+               "exit_code": r[13], "bytes": r[14], "cursor": r[15],
+               "summary": r[16], "transport": r[17] or "proc"}
+        if out["transport"] == "term":
+            out["terminal"] = out["handle"]   # its Rook terminal (Sessions page)
+        return out
 
     def read(self, rid: str, since_seq: int = 0, limit: int = 300,
              tail: bool = False) -> dict:
@@ -411,9 +442,40 @@ class ConsoleStore:
             return []
         with self._lock:
             rows = self._db.execute(
-                "SELECT id,worker,handle,cursor FROM rooms WHERE state='live'").fetchall()
-        return [{"room": r[0], "worker": r[1], "handle": r[2], "cursor": r[3]}
-                for r in rows]
+                "SELECT id,worker,handle,cursor,transport FROM rooms "
+                "WHERE state='live'").fetchall()
+        return [{"room": r[0], "worker": r[1], "handle": r[2], "cursor": r[3],
+                 "transport": r[4] or "proc"} for r in rows]
+
+    # -- watched terminals ---------------------------------------------------
+
+    def watch(self, worker: str, term: str, *, ref: str, task: str,
+              title: str = "") -> None:
+        """Have the pump report when this Rook terminal ends (it was started
+        for ``task``; ``ref`` is how the task's link names it)."""
+        if self._db is None:
+            return
+        with self._lock:
+            self._db.execute(
+                "INSERT OR REPLACE INTO term_watch (worker,term,ref,task,title,created) "
+                "VALUES (?,?,?,?,?,?)", (worker, term, ref, task, scrub(title)[:200], time.time()))
+            self._db.commit()
+
+    def watched(self) -> list[dict]:
+        if self._db is None:
+            return []
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT worker,term,ref,task,title,created FROM term_watch").fetchall()
+        return [{"worker": r[0], "term": r[1], "ref": r[2], "task": r[3],
+                 "title": r[4], "created": r[5]} for r in rows]
+
+    def unwatch(self, worker: str, term: str) -> None:
+        if self._db is None:
+            return
+        with self._lock:
+            self._db.execute("DELETE FROM term_watch WHERE worker=? AND term=?", (worker, term))
+            self._db.commit()
 
     # -- search ------------------------------------------------------------
 

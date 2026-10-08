@@ -106,6 +106,7 @@ links(id, band, record, kind, ref, relation, note, actor, ts)
 | `agent` | actor id |
 | `record` | another record id/slug |
 | `url` | URL |
+| `session` | agent or terminal session, by catalog key `<worker_id>/<agent>/<native id>` (docs/design/sessions.md) |
 
 Relations: `produced`, `evidence`, `touched`, `discussed_in`, `blocked_by`,
 `duplicates`, `supersedes`.

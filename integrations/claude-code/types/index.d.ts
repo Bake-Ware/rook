@@ -62,6 +62,18 @@ export type SettingRow = {
   changeIn?: string
 }
 
+/** What `/rook-move` will do: resume this conversation in a Rook terminal on this host. */
+export type MovePlan = {
+  workerId: string
+  workerName: string
+  sessionId: string
+  cwd: string
+  /** Claude Code's process for this session: the terminal starts once it has exited. */
+  pid: number
+  /** The Rook terminal, once the worker has opened it. */
+  terminal?: string
+}
+
 /** A task or a handoff opened from the deck. */
 export type Item = { title: string; meta: string; body: string; claimId?: string }
 
@@ -87,8 +99,10 @@ export type View = {
   busy?: boolean
   error?: string
   note?: string
-  /** A pane action waiting for the person's yes: `hosting` is the hosting sync. */
-  confirm?: 'hosting'
+  /** A pane action waiting for the person's yes: `hosting` is the hosting sync, `move` is /rook-move. */
+  confirm?: 'hosting' | 'move'
+  /** The /rook-move plan the confirmation shows. */
+  move?: MovePlan
 }
 
 export type BandInfo = { id: string; label: string; name: string; primary: boolean }

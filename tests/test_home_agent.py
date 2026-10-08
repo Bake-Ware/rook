@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -301,6 +302,39 @@ async def test_renamed_agent(env):
     env.chat.send(room, OP, "@ada hello", ["agent:ada"], True)
     assert len(await _drain(env)) == 1
     assert env.chat.read(room, None)["messages"][-1]["sender"] == "agent:ada"
+
+
+@pytest.mark.asyncio
+async def test_the_home_page_chat_contract(env):
+    """What the chat panel on Manage > Home agent relies on: the room it makes
+    (``/api/chat/start`` as user:operator, inviting agent:<name>) is the
+    Chat view's 1:1 room, a message sent like the panel sends it is answered
+    once and without an @mention, and a failed reply leaves an activity row
+    the panel can match (via chat, sender, ts) plus a status summary."""
+    configure(env)
+    await _drain(env)
+    started = env.chat.start("home", OP, ["agent:home"])
+    room = started["room"]
+    assert started["participants"] == [OP, "agent:home"]
+    rooms = env.chat.rooms_for(OP, include_all=True)["rooms"]
+    assert [r["room"] for r in rooms if len(r["participants"]) == 2
+            and {OP, "agent:home"} <= set(r["participants"])] == [room]
+    sent = env.chat.send(room, OP, "hello", ["agent:home"], True)
+    assert sent["addressed"] == ["agent:home"] and sent["participants"] == [OP, "agent:home"]
+    env.llm.script = ["Hi there."]
+    assert len(await _drain(env)) == 1
+    msgs = env.chat.read(room, OP)["messages"]
+    assert [(m["sender"], m["text"], m["mentions"]) for m in msgs[1:]] == [
+        ("agent:home", "Hi there.", [])]
+    env.home._http = FakeLLM(status=500)
+    t0 = time.time()
+    env.chat.send(room, OP, "again", ["agent:home"], True)
+    await _drain(env)
+    row = env.home.page(env.svc)["activity"][0]
+    assert row["via"] == "chat" and not row["ok"] and row["sender"] == OP and row["ts"] >= t0
+    assert env.home.page(env.svc)["status"]["last_error"] == \
+        "the model endpoint returned HTTP 500"
+    assert env.chat.read(room, OP)["messages"][-1]["text"] == HOME_UNAVAILABLE
 
 
 @pytest.mark.asyncio

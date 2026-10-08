@@ -5,18 +5,28 @@ in a pane beside the chat.
 
 ## What it does
 
-`/rook-bands` opens the **Rook** pane. It has three tabs:
+`/rook-bands` opens the **Rook** pane. It has four tabs:
 
 - **Bands**: every band and its workers, with build, battery, last seen and
   what each worker hosts. Behind-the-fleet builds are flagged.
 - **Sessions**: Claude Code and Codex sessions from every worker that runs a
-  `claude-history` or `codex-history` plugin. You can list them, search across
+  `claude-history` or `codex-history` plugin, read from the worker's session
+  catalog (`sessions.list`) where it has one and from its history plugins
+  otherwise. You can list them, search across
   the band, read a session's tail and load it into this chat as reference. You
   can also resume a session on its own worker (with Remote Control where
-  available), send it a message and stop it.
-- **Deck**: open tasks and handoffs from the work deck. You can claim a task,
-  load a task or handoff into the chat, or send the whole deck to the chat for
-  grooming.
+  available), send it a message and stop it. A message goes through the
+  worker's `sessions.send` where it has one: into the session's inbox (shown
+  as "waiting for approval" where that machine holds such messages), or typed
+  into its Rook terminal when that is all it has. Older workers take
+  `claude-history.send`.
+- **Deck**: open tasks and handoffs, the same work the dashboard's **Work**
+  page tracks (`rook_task(action="deck")`). You can claim a task, load a task
+  or handoff into the chat, or send them all to the chat for grooming.
+
+Words, as everywhere in Rook: a **session** is an agent or terminal session
+(the Sessions tab here, the dashboard's Sessions page); **work** is tasks (the
+Deck here, the dashboard's Work page).
 - **Settings**: the Claude Code settings that matter to Rook, changed in
   place. "Messages from your other sessions" (`crossSessionInbound`) decides
   whether a message another session sends here, such as a Rook poke through
@@ -25,6 +35,36 @@ in a pane beside the chat.
   (`refuse`). The plugin's own options are listed too. A pick is saved to
   your user settings, as `/config` would save it. If Claude Code refuses a
   plugin's change, the tab says so and points you to `/config`.
+
+## Live sessions on the Sessions page
+
+**Mirroring is on by default. To turn it off on a machine, set "Mirror this
+session to Rook" to false** (`/config`, the plugin's Settings tab, or
+`pluginConfigs.rook.mirror` in settings). Off, the plugin writes nothing and
+creates no folder; the session still shows on the Sessions page from its
+transcript, a second or two behind, as any session without the plugin does.
+
+When a Rook worker runs on the same machine and mirroring is on, the plugin
+mirrors this session for the hub's **Sessions** page: the prompts, the assistant's text as it
+streams, tool calls and their results (clipped), turn ends and whether the
+session is working, idle or waiting on a permission prompt. Start Claude Code
+however you like (any terminal, any OS); nothing wraps it. The events go to a
+spool file in the worker's state folder (`~/.rook-band-worker/mirror/claude/`,
+or under `ROOK_WORKER_HOME`), readable by your user only (on Windows: your
+account, by SID, and SYSTEM), and the worker serves
+it as `sessions.mirror`. Writes are batched and never hold up a turn. Without
+a worker on the machine nothing is written. The worker deletes the spools of
+sessions that ended a week ago. The plugin has no access to the vault, so it
+cannot mask secrets itself: text that crosses the hub is masked there, as
+every band reply is.
+
+`/rook-move` moves this conversation into a Rook terminal on the same
+machine, so you can watch it, type into it and stop it from any browser. It
+asks in the pane first. On yes, the worker opens a terminal that waits for
+this Claude Code to end, Claude Code closes itself, and the terminal resumes
+the conversation (`claude --resume`). If Claude Code cannot close itself, the
+pane says so: type `/exit` within two minutes. It needs a worker with Rook
+terminals (Linux or macOS).
 
 The plugin also gives the model a tool, `mcp__rook__pane`. Claude uses it to
 read what the pane shows and to drive it (switch tabs, open a worker, search
@@ -41,7 +81,12 @@ own, but asks before any `rook_call` or other write.
 
 ## Options
 
-These are set in `/config` (or under `pluginConfigs` in settings).
+These are set in `/config` (or under `pluginConfigs` in settings), and show on
+the pane's Settings tab.
+
+- **Mirror this session to Rook** (`mirror`, on by default): writes this
+  session's prompts, replies and clipped tool calls to the local Rook worker so
+  the Sessions page can show it live (see above). Off: nothing is written.
 
 - **Hosting sync button** (`hostingSync`, off by default): adds `h · sync
   hosting` to the bands tab. It is for a band that runs a Cloudflare tunnel

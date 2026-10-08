@@ -179,7 +179,8 @@ async def test_open_validates_inputs(plugin, tmp_path):
 def test_heartbeat_advertises_harnesses(monkeypatch):
     p = TerminalsPlugin()
     monkeypatch.setattr(terminals, "available_harnesses", lambda: ["shell", "codex"])
-    assert p.heartbeat() == {"harnesses": ["shell", "codex"]}
+    # commands: work.stream.open takes argv/cmd (console rooms run on it).
+    assert p.heartbeat() == {"harnesses": ["shell", "codex"], "commands": 1}
 
 
 def test_transcript_export_format(tmp_path):

@@ -132,7 +132,7 @@ const fleet = async ($: TestEngine, on: On) => {
       : cap === 'rook_knowledge' ? BANDS
       : cap === 'rook_handoff_list' ? HANDOFFS
       : cap === 'rook_task' ? (e.args.action === 'deck' ? DECK : JSON.stringify({ ok: true }))
-      : reply(HISTORY[cap] ?? { ok: false, error: `no ${cap}` })
+      : reply(HISTORY[cap] ?? { ok: false, error: `unknown capability: ${cap}` })
 
     return { value: { content: [{ type: 'text', text }], isError: false } }
   })
@@ -193,6 +193,43 @@ test('resume starts the session on its worker, a message goes into it, stop clos
   expect(calls.find(one => one.cap === 'proc.close')?.args.handle).toBe('h1')
   expect(await ui.find({ key: 'resume' })).toBeDefined()
   await ui.unmount()
+})
+
+test('a worker with sessions.send gets the message there, and a held inbox says so', async ($, on) => {
+  HISTORY['sessions.send'] = { ok: true, delivery: 'held', note: 'Waiting for approval on this host.' }
+  try {
+    const { ui, calls } = await fleet($, on)
+    await ui.press({ key: 'w:a1' })
+    await ui.press({ key: 's:a1:claude:s001' })
+    await ui.press({ key: 'resume' })
+    await ui.input({ key: 'message', text: 'carry on' })
+    const sent = calls.find(one => one.cap === 'sessions.send')
+    expect(sent?.args).toMatchObject({ agent: 'claude', native_id: 's001', text: 'carry on' })
+    expect(calls.find(one => one.cap === 'claude-history.send')).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /waiting for approval on nova/ })).toBeDefined()
+    await ui.unmount()
+  } finally {
+    delete HISTORY['sessions.send']
+  }
+})
+
+test('a worker that resumes into a Rook terminal is stopped by closing that terminal', async ($, on) => {
+  const before = HISTORY['claude-history.resume']
+  HISTORY['claude-history.resume'] = { ok: true, terminal: 't1', remote_control: true }
+  HISTORY['work.stream.close'] = { ok: true }
+  try {
+    const { ui, calls } = await fleet($, on)
+    await ui.press({ key: 'w:a1' })
+    await ui.press({ key: 's:a1:claude:s001' })
+    await ui.press({ key: 'resume' })
+    await ui.press({ key: 'stop' })
+    expect(calls.find(one => one.cap === 'work.stream.close')?.args.id).toBe('t1')
+    expect(calls.find(one => one.cap === 'proc.close')).toBeUndefined()
+    await ui.unmount()
+  } finally {
+    HISTORY['claude-history.resume'] = before
+    delete HISTORY['work.stream.close']
+  }
 })
 
 test('the deck lists open tasks and handoffs, and a task can be claimed', async ($, on) => {
@@ -309,7 +346,7 @@ test('a hosting worker opens its detail, and the pane tool reads and drives the 
       : cap === 'rook_knowledge' ? BANDS
       : cap === 'rook_handoff_list' ? HANDOFFS
       : cap === 'rook_task' ? DECK
-      : reply(HISTORY[cap] ?? { ok: false, error: `no ${cap}` })
+      : reply(HISTORY[cap] ?? { ok: false, error: `unknown capability: ${cap}` })
 
     return { value: { content: [{ type: 'text', text }], isError: false } }
   })

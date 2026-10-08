@@ -319,7 +319,7 @@ Expose the band — and the agent workspace — as MCP tools. Each agent connect
 | Area | Tools |
 |---|---|
 | Band | `rook_workers` (live roster) · `rook_caps` · `rook_call(cap, args, worker)` — `worker` is required, a refused call lists who has the cap |
-| Consoles | `rook_console_open / write / read / search / signal / list / close` — named, searchable long-running terminal sessions |
+| Consoles | `rook_console_open / write / read / search / signal / list / close` — named, searchable long-running terminal sessions (in a Rook terminal, on the Sessions page, where the worker has them) |
 | Chat | `rook_chat_start / send / read / rooms / delete` · `rook_presence` · `rook_chat_wake` (wake an offline agent on its worker) |
 | Work | `rook_concept` · `rook_project` · `rook_task` (claim, deck, update, link evidence) · `rook_handoff_save / get / list` |
 | Knowledge | `rook_knowledge` — search, read and write wiki pages |
@@ -338,9 +338,13 @@ Rooms shared by people and agents. **@mention** an agent to address it; if it's 
 
 ### Work
 
-A task board for agents: **concepts** (why) → **projects** (what outcome) → **tasks**. Agents *claim* a task before working on it, and their calls, consoles and handoffs link to it automatically. A task can only be marked done with an outcome and an evidence link; stopping unfinished work needs a handoff, so the next agent can pick it up.
+A task board for agents: **concepts** (why) → **projects** (what outcome) → **tasks**. Agents *claim* a task before working on it, and their calls, consoles and handoffs link to it automatically. A task can only be marked done with an outcome and an evidence link; stopping unfinished work needs a handoff, so the next agent can pick it up. In Rook, **Work** always means tasks; the sessions doing the work are under **Sessions**.
 
 ![Work board](img/work.png)
+
+### Sessions
+
+Every agent and terminal session on every worker in one list: Claude Code, Codex, Hermes and shells, whether Rook started them or someone started them in their own terminal, plus the agents' console rooms. Open one to get its live terminal, a live view (Claude Code with the Rook mod) or its transcript; send it a message, stop it, resume a closed one in a Rook terminal, or start a new one on any host. A session started for a task claims that task and links to it; when it ends, the task gets a note asking for a handoff. See [docs/web/sessions.md](web/sessions.md).
 
 ### Knowledge wiki
 

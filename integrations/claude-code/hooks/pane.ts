@@ -120,7 +120,7 @@ function deckLines(at: View): string[] {
   const projects = (at.deck ?? []).filter(project => project.tasks.length > 0)
 
   return [
-    'Open work across all bands',
+    'Open tasks across all bands (Work)',
     ...projects.flatMap(project => [
       '',
       `## ${project.title} (${project.tasks.length} open · ${project.done} done)`,
@@ -131,7 +131,7 @@ function deckLines(at: View): string[] {
       handoff =>
         `[${++row}] ${handoff.goal} · ${handoff.asOf} · ${handoff.author} · thread ${handoff.threadId}`,
     ),
-    ...(row === 0 && at.busy !== true ? ['Nothing on deck.'] : []),
+    ...(row === 0 && at.busy !== true ? ['No open tasks or handoffs.'] : []),
   ]
 }
 

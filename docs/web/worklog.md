@@ -1,18 +1,14 @@
-# Worklog: live terminals in Work
+# Live terminals
 
-The worklog is the default Work view (dashboard **Sessions** tab). Each room
-groups the sessions of one project directory on one host. Live sessions render
-as real terminals (xterm.js). Finished sessions collapse into a log entry
-showing title, agent, host, message count, age and status. Every historical
-Claude/Codex session found on a host is listed and can be resumed with one click.
-**Live now** collects every running terminal across rooms.
+Rook terminals: a harness (Claude Code, Codex, Hermes or a shell) running
+under a PTY on a worker, streamed to every browser that opens it. The
+dashboard's **Sessions** page ([sessions.md](sessions.md)) is where they are
+started, opened, resumed and stopped; this page covers the terminal itself,
+its launch templates and its caps. (The earlier "worklog" rooms view was
+replaced by the Sessions page.)
 
-The classic view ([work.md](work.md)) remains available during rollout:
-
-- **Classic view** / **Worklog view** buttons switch per browser (stored in
-  `localStorage` as `rook.work.view`).
-- `ROOK_WORK_V2=0` on the dashboard disables the worklog entirely. Only the
-  classic view is served, and `launch` is refused.
+`ROOK_WORK_V2=0` on the dashboard disables live terminals entirely. Only the
+classic view ([work.md](work.md)) is served, and launches are refused.
 
 ## Data path
 
@@ -25,13 +21,59 @@ worker PTY ──ring──▶ work.stream.read (long-poll, compressed) ──ba
 **Worker** (`rook/worker/plugins/terminals.py`, caps `work.stream.*`,
 placement `not is_hub and has('pty')`). A harness runs under a PTY, with that
 PTY as its controlling terminal, so Ctrl-C and job control behave as they do
-locally. Output lands in a ring (256 KB default, 1 MB max) addressed by
+locally (Windows: see Platform support below). Output lands in a ring (256 KB default, 1 MB max) addressed by
 absolute byte offset. `work.stream.read(id, cursor, wait)` returns as soon as
 bytes exist past `cursor`, or after `wait` seconds (maximum 25). It first waits
 12 ms to coalesce a burst. A live terminal therefore costs one outstanding
 request, not a polling loop. A lost reply costs one round trip and never data,
 because the cursor advances only on a reply that arrived. At most 8 live
 terminals run per worker. Finished terminals stay readable for 15 minutes.
+
+### Platform support
+
+| Platform | Terminal backend | `shell` harness | Inbox for sessions started outside Rook |
+|---|---|---|---|
+| Linux, macOS | POSIX PTY (`pty`, controlling tty) | `$SHELL -l` | Claude: Unix socket. Codex: app-server control socket, or Konsole over D-Bus |
+| Windows 10 1809+ / 11 | ConPTY (`rook/worker/conpty.py`, pure ctypes, no extra package in the worker bundle) | `powershell.exe -NoLogo` (`pwsh.exe`, then `cmd.exe`, if PowerShell 5 is missing) | Claude: local named pipe. Codex: none (use a Rook terminal) |
+| Windows before 1809 | none: the worker does not advertise `pty`, so `work.stream.*` is absent | | |
+
+On Windows the worker advertises the `pty` fact only when `kernel32` has
+`CreatePseudoConsole`. Each terminal's child is created suspended, placed in
+a Job Object with kill-on-close, then resumed, so everything it starts ends
+with the terminal. Signals map as follows: `INT` writes Ctrl-C (`0x03`) to the
+console, which delivers CTRL_C_EVENT to the foreground program the way a
+keyboard does. `HUP` closes the pseudoconsole (CTRL_CLOSE_EVENT to every
+attached program). `TERM`, `QUIT` and `KILL` terminate the job.
+`work.stream.close` sends `HUP`, waits 1.5 s, then terminates the job. Resize
+is `ResizePseudoConsole`.
+
+Harness launch on Windows uses the same environment (`TERM=xterm-256color`,
+`ROOK_MCP_URL`/`ROOK_MCP_TOKEN`, `ROOK_WORK_SESSION`, persona) and the same
+per-session files. The terminal folder and the Claude `--mcp-config` file get
+an owner-only ACL, the Windows equivalent of modes 0700 and 0600. The ACL is
+applied before the token is written. npm installs CLIs such as `codex` as
+`.cmd` shims. The worker runs the shim's target (`node <script>` or the
+`.exe`) directly, so cmd.exe never re-parses arguments such as persona text.
+A `.cmd`/`.bat` launcher it cannot resolve runs through `cmd.exe /d /s /c`
+only when no argument contains a cmd.exe metacharacter. Otherwise the launch
+is refused.
+
+Claude Code on Windows exposes its peer inbox as a local named pipe
+(`\\.\pipe\LOCAL\cc-msg-<hex>`). Its marker
+`%USERPROFILE%\.claude\sessions\<pid>.json` records `procStart` as the
+process creation FILETIME, and the token file is named after the lower-cased
+pipe path. Before sending, the worker checks all of the following:
+
+- the marker and token files are owned by the worker's user and grant access
+  to no one but that user, SYSTEM and Administrators,
+- the process is a live `claude.exe` of the same user with the recorded
+  creation time,
+- the pipe path is a single local pipe name,
+- the token file matches that process start (`procStartFt`, `pidDomain`),
+- after connecting, `GetNamedPipeServerProcessId` is that process.
+
+The pipe is opened at SECURITY_IDENTIFICATION level, so the server cannot act
+as the worker's user.
 
 **Framing** (`rook/worker/termwire.py`). Band messages are JSON, and every
 packet is fragmented at about 1 KB with no retransmit. Each chunk travels in
@@ -55,7 +97,7 @@ minutes. Memory is bounded for a hub host with about 1 GB of RAM:
 Worst case is about 8 MB of rings plus viewer queues. `TermHub.memory()`
 reports the current total.
 
-**Browser** (`rook/web/worklog.js`, vendored xterm.js 6.0.0 in
+**Browser** (`TermView` in `rook/web/worklog.js`, used by `sessions.js`; vendored xterm.js 6.0.0 in
 `rook/web/vendor/xterm/`, served same-origin at `/account/work/assets/vendor/`).
 The socket requires an operator login, the dashboard Origin, and the CSRF
 token on every control message. Frames:
@@ -78,7 +120,7 @@ at the hub, with one `work.stream.write` in flight at a time, so they stay in
 order. Only the holder's size reaches the PTY. Other viewers render the PTY's
 grid at its size.
 
-**Teardown.** **End session** calls `work.stream.close` (SIGHUP, then SIGKILL
+**Teardown.** **Stop** on the Sessions page calls `sessions.stop`, which calls `work.stream.close` (SIGHUP, then SIGKILL
 to the process group), marks the session closed, and revokes its MCP token.
 The dashboard's collector also calls `work.stream.list` every ~6 s for
 sessions marked running that nobody is watching. This catches exits and hosts
@@ -86,8 +128,8 @@ that restarted ("Terminal is gone from its host").
 
 ## Launch templates
 
-**+ Launch** (or **Launch again** on a finished entry) starts a harness on a
-chosen host and directory:
+**New session** on the Sessions page starts a harness on a chosen host and
+directory (an absolute POSIX path, or a Windows drive path such as `C:\src`):
 
 | Harness | Command | Model | Rook MCP connection |
 |---|---|---|---|
@@ -98,7 +140,7 @@ chosen host and directory:
 
 Every harness also gets `TERM=xterm-256color`, `ROOK_MCP_URL`,
 `ROOK_MCP_TOKEN` (when requested), `ROOK_WORK_SESSION` (hub session id),
-`ROOK_WORK_TERMINAL`, `ROOK_PERSONA` and, when a persona applies,
+`ROOK_WORK_TERMINAL`, `ROOK_TASK` (when started for a task), `ROOK_PERSONA` and, when a persona applies,
 `ROOK_PERSONA_FILE`. The worker strips its own band secret
 from the environment. Workers advertise installed harnesses in their heartbeat
 (`hb.work.harnesses`), and the form offers only those.
@@ -140,16 +182,18 @@ and callable with `rook_call`. No new MCP tools were added.
 
 | Cap | Risk | Purpose |
 |---|---|---|
-| `work.stream.open` | exec | start a harness under a PTY; returns `id` |
+| `work.stream.open` | exec | start a harness under a PTY; returns `id`. With `resume` and `handoff_pid` it waits for that process (a Claude Code running `/rook-move`) to exit before resuming. With `argv` (a list, no shell) or `cmd` (`/bin/sh -c`, `cmd.exe /d /s /c` on Windows), harness `shell` only, it runs that command instead of the login shell, with `env` added and `PAGER`/`GIT_PAGER` set to `cat`. `task` (task id or slug, also exported as `ROOK_TASK`) and `room` (console room id) are recorded on the terminal (`work.stream.list`) and its `sessions.list` record (`links.task`, `links.console_room`) |
 | `work.stream.read` | read | long-poll output from `cursor` (`wait` up to 25 s) |
 | `work.stream.write` | exec | raw input (`\r` for Enter, `\x03` for Ctrl-C) |
 | `work.stream.resize` | write | set cols/rows |
-| `work.stream.signal` | exec | INT/TERM/HUP/QUIT/KILL to the process group |
+| `work.stream.signal` | exec | INT/TERM/HUP/QUIT/KILL to the process group (Windows mapping under Platform support) |
 | `work.stream.close` | exec | stop and drop the terminal |
 | `work.stream.list` | read | live and recently finished terminals, installed harnesses |
-| `work.sessions` | read | live terminals plus Claude/Codex history as one resumable catalog (`limit`, `offset`, `query`) |
+| `work.sessions` | read | live terminals plus Claude/Codex history as one resumable catalog (`limit`, `offset`, `query`); superseded by `sessions.list` |
+| `sessions.list`, `sessions.follow`, `sessions.send`, `sessions.stop` | read / read / exec / exec | one record per session with state, view and input (`rook/worker/plugins/sessions.py`; contract in docs/design/sessions.md §3.1, §3.5) |
 | `work.export` | read | one page of a historical transcript in `rook.transcript/1` |
 | `claude-history.transcript`, `codex-history.transcript` | read | the same export, per agent |
+| `sessions.mirror` | read | live events of a Claude Code session the Rook mod mirrors on this host (`cursor`, `wait` up to 25 s); see `docs/design/sessions.md` §3.4 |
 
 Successful `work.stream.read` calls are not written to the worker audit log,
 because a live terminal long-polls continuously. Failures still are.
@@ -195,9 +239,25 @@ be published as `rook.transcript/2`.
 - Build-167 workers do not announce `work.stream.*`. Their history still
   appears, and **Resume on host** uses the existing `*-history.resume` +
   `proc.*` path. Follow its output in the classic view.
+- On workers with `work.stream.*`, `claude-history.resume` and
+  `codex-history.resume` now open a Rook terminal (`work.stream.open` with
+  `resume`, plus `remote_control` for Claude) and return `terminal` instead
+  of a `proc.*` `handle`, so every resume streams. The classic view's
+  **Resume on host** attaches that terminal to the session.
+- The hub's merged catalog for the Sessions page is
+  `GET /account/work/sessions` (docs/design/sessions.md §3.6).
+- Workers whose `work.stream.open` takes commands announce
+  `hb.work.commands = 1`. Only those get `argv`/`cmd`/`env`/`task`/`room` from
+  the hub: console rooms (`rook_console_open`) run in a Rook terminal there,
+  and a Sessions-page launch for a task records the task on the terminal.
+  Older workers keep console rooms on `proc.*` and get no `task` argument
+  (they refuse arguments they do not know).
 - No wire format changed. The new caps, the `hb.work` heartbeat key and the
   new token-route `scopes` field are all optional additions.
 - The classic view keeps working against the same session records.
+- The Sessions page reads every host through the newest caps it has and falls
+  back for older workers (`work.sessions`, `*-history.pull`, `*-history.follow`,
+  `*-history.send`); a worker without `sessions.mirror` simply has no live view.
 
 ## Verification
 
@@ -206,6 +266,15 @@ be published as `rook.transcript/2`.
   injection and cleanup, transcript export, hub fan-out (holder rules, replay,
   slow-viewer resync, lost worker), and web launch, stream, close and revoke,
   PTY vs `proc.*` resume, the flag, and the token-scope validation.
+- `pytest tests/test_windows_terminals.py`: the ConPTY backend and the
+  Windows Claude inbox on Linux, with kernel32 faked at the ctypes boundary.
+  It covers the call sequence, suspended start and job, handle cleanup,
+  streaming, resize, signal mapping, exit drain, owner-only files, npm shim
+  resolution, and the inbox's match and refusal rules.
+- `py tests\integration\windows_conpty_check.py [--claude] [--inbox]` on a
+  Windows machine (manual): real ConPTY output, input, resize, Ctrl-C, exit
+  codes, job teardown of grandchildren, PowerShell through the plugin, ACLs,
+  and, optionally, Claude Code in a terminal and one inbox message (`--send`).
 - `ROOK_IT=1 pytest tests/integration/test_work_stream.py`: 20,000 lines
   through a real band, over MCP long-polls and through `TermHub` with two
   viewers, checked byte for byte.
