@@ -257,6 +257,58 @@ def claude_markers(claude_home=None, table=None, proc_root=Path('/proc')):
     return out
 
 
+def process_cwd(pid, proc_root=Path('/proc'), run=subprocess.run):
+    """A process's working directory, or None where the platform does not
+    say (Windows) or the process is gone."""
+    if proc_root.is_dir():
+        try:
+            return os.readlink(proc_root / str(pid) / 'cwd')
+        except OSError:
+            return None
+    if proc_root != Path('/proc') or sys.platform != 'darwin':
+        return None
+    lsof = shutil.which('lsof')
+    if not lsof:
+        return None
+    try:
+        out = run([lsof, '-a', '-p', str(pid), '-d', 'cwd', '-Fn'], capture_output=True, text=True,
+                  timeout=5).stdout
+    except Exception:
+        return None
+    return next((line[1:] for line in out.splitlines() if line.startswith('n')), None)
+
+
+def claude_unreadable_markers(claude_home=None, table=None, proc_root=Path('/proc')):
+    """Live Claude processes whose PID marker cannot be read: ``[{pid, cwd}]``.
+
+    A marker can be empty or cut short (Claude Code rewrites it in place, and
+    a full disk leaves it at 0 bytes). Its process still holds some session,
+    most likely the newest one in its working directory, so the catalog must
+    not call that session closed and offer to resume it. ``cwd`` is None
+    where the platform hides it."""
+    home = claude_home or Path.home() / '.claude'
+    table = process_table(proc_root) if table is None else table
+    out = []
+    for marker in (home / 'sessions').glob('*.json'):
+        if not marker.stem.isdigit():
+            continue
+        pid = int(marker.stem)
+        info = table.get(pid)
+        if not info or info['zombie'] or not _is_agent(info, 'claude'):
+            continue
+        try:
+            data = json.loads(marker.read_text())
+            sid = data.get('sessionId') or data.get('session_id') if isinstance(data, dict) else None
+            if isinstance(sid, str) and _UUID.fullmatch(sid):
+                continue        # readable: claude_markers decides about it
+        except OSError:
+            continue
+        except ValueError:
+            pass
+        out.append({'pid': pid, 'cwd': process_cwd(pid, proc_root)})
+    return out
+
+
 def _session_from_path(agent, path):
     if agent == 'claude':
         stem = Path(path).stem

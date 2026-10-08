@@ -51,6 +51,7 @@ SESSION_OPS = ('mirror', 'follow', 'send', 'stop', 'resume', 'new', 'attach', 'l
 MIRROR_WAIT_MAX = 20                # seconds a mirror long-poll may hold
 MIRROR_WATCHERS = 32                # long-polls held at once, hub-wide (bounded memory)
 MIRROR_EVENTS_MAX = 500
+FOLLOW_TAIL_MAX = 200               # follow(tail=N): start at the last N messages
 TEXT_MAX = 24000
 TASK_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.:-]{0,119}$')
 
@@ -290,6 +291,7 @@ class WorkWeb:
         # worker_id -> the latest unfiltered catalog fetched from it, served
         # (marked stale) when the worker does not answer.
         self.catalogs = {}
+        self.catalog_failures = {}      # worker id -> why its last catalog read failed
         self.watching = 0             # mirror long-polls held right now
 
     def lock(self, sid):
@@ -360,7 +362,7 @@ class WorkWeb:
 
     async def asset(self, request):
         name = request.match_info['name']
-        if name not in ('work.js', 'work.css', 'worklog.js', 'sessions.js', 'sessions.css'):
+        if name not in ('work.js', 'work.css', 'worklog.js', 'sessions.js', 'sessions.css', 'session_screen.js'):
             raise web.HTTPNotFound()
         return web.Response(text=(Path(__file__).parents[1] / 'web' / name).read_text(),
                             content_type='text/css' if name.endswith('css') else 'application/javascript',
@@ -790,10 +792,14 @@ class WorkWeb:
         except ValueError:
             return web.json_response({'error': 'limit must be a number'}, status=400, headers=NO_STORE)
         only = request.query.get('worker', '')
+        cached = request.query.get('cached', '').lower() in ('1', 'true', 'yes', 'on')
         targets = [w for w in self.workers(history=True)
                    if not only or only in (w['worker_id'], w.get('name'))]
-        fetched = await asyncio.gather(*(self.fetch_catalog(w, query, live_only, limit, actor(user))
-                                         for w in targets))
+        if cached:
+            fetched = [self.cached_catalog(w, query, live_only) for w in targets]
+        else:
+            fetched = await asyncio.gather(*(self.fetch_catalog(w, query, live_only, limit, actor(user))
+                                             for w in targets))
         await self.flush_task_ends(request, user)
         links = self.session_links(user['id'])
         tasks = (self.store.tasks(user['id']),
@@ -806,6 +812,7 @@ class WorkWeb:
             workers.append({'worker_id': w['worker_id'], 'name': w.get('name', ''), 'band': w.get('band'),
                             'source': got['source'], 'count': len(got['items']), 'total': got['total'],
                             'stale': got['stale'], 'fetched': got['fetched'],
+                            'cached': bool(got.get('cached')),
                             'harnesses': got.get('harnesses') or [],
                             'counts': {k: hb[k] for k in ('live', 'idle') if isinstance(hb.get(k), int)} or None})
             if got.get('error'):
@@ -813,7 +820,38 @@ class WorkWeb:
             sessions += [self.place_record(item, w, links, tasks) for item in got['items']]
         sessions.sort(key=lambda r: (r.get('state') == 'closed', -(r.get('updated') or 0)))
         return web.json_response({'sessions': sessions, 'workers': workers, 'errors': errors,
-                                  'generated': time.time()}, headers=NO_STORE)
+                                  'generated': time.time(), 'cached': cached}, headers=NO_STORE)
+
+    @staticmethod
+    def catalog_source(worker):
+        caps = worker.get('caps', [])
+        if 'sessions.list' in caps:
+            return 'sessions.list'
+        if 'work.sessions' in caps:
+            return 'work.sessions'
+        if any(a + '-history.pull' in caps for a in ('claude', 'codex')):
+            return 'history'
+        return None
+
+    def cached_catalog(self, worker, query, live_only):
+        """One worker's catalog from the hub's last read of it, at once and
+        without asking the worker (``cached=1``; the page then asks each
+        worker with ``worker=``). ``stale`` keeps its meaning: the last read
+        failed. A worker never read yet has no items and ``fetched`` null."""
+        source = self.catalog_source(worker)
+        if source is None:
+            return None
+        got = self.catalogs.get(worker['worker_id'])
+        failed = self.catalog_failures.get(worker['worker_id'])
+        if got is None:
+            return dict(source=source, items=[], total=0, fetched=None, cached=True,
+                        stale=bool(failed), **({'error': failed} if failed else {}))
+        items = filter_records(got['items'], query, live_only)
+        out = dict(got, items=items, total=len(items) if query or live_only else got['total'],
+                   cached=True, stale=bool(failed))
+        if failed:
+            out['error'] = failed
+        return out
 
     async def fetch_catalog(self, worker, query, live_only, limit, identity):
         """One worker's catalog through the newest cap it has: sessions.list,
@@ -821,13 +859,8 @@ class WorkWeb:
         for a worker with no sessions at all."""
         caps = worker.get('caps', [])
         target = dict(worker_id=worker['worker_id'], band=worker.get('band'))
-        if 'sessions.list' in caps:
-            source = 'sessions.list'
-        elif 'work.sessions' in caps:
-            source = 'work.sessions'
-        elif any(a + '-history.pull' in caps for a in ('claude', 'codex')):
-            source = 'history'
-        else:
+        source = self.catalog_source(worker)
+        if source is None:
             return None
         try:
             if source == 'sessions.list':
@@ -860,9 +893,11 @@ class WorkWeb:
                        harnesses=harnesses, fetched=time.time(), stale=False)
             if not query and not live_only:
                 self.catalogs[worker['worker_id']] = got
+            self.catalog_failures.pop(worker['worker_id'], None)
             return got
         except Exception as error:  # one bad host must not sink the whole list
             message = str(error) or ('Host request timed out.' if isinstance(error, TimeoutError) else type(error).__name__)
+            self.catalog_failures[worker['worker_id']] = message
             cached = self.catalogs.get(worker['worker_id'])
             if cached is None:
                 return dict(source=source, items=[], total=0, fetched=None, stale=True, error=message)
@@ -997,16 +1032,23 @@ class WorkWeb:
         w = self.session_target(data)
         offset = max(0, int(data.get('offset') or 0))
         version = str(data.get('version') or '')[:200]
+        tail = max(0, min(int(data.get('tail') or 0), FOLLOW_TAIL_MAX))
         if 'sessions.follow' in w.get('caps', []):
-            out = await self.host_call(w, 'sessions.follow', dict(agent=agent, native_id=native,
-                                                                  offset=offset, version=version), user)
+            args = dict(agent=agent, native_id=native, offset=offset, version=version)
+            try:
+                out = await self.host_call(w, 'sessions.follow', dict(args, tail=tail) if tail else args, user)
+            except HostError as error:
+                # Workers before tail= refuse the argument: start at offset instead.
+                if not (tail and 'tail' in str(error) and 'bad args' in str(error)):
+                    raise
+                out = await self.host_call(w, 'sessions.follow', args, user)
         elif agent + '-history.follow' in w.get('caps', []):
             out = await self.host_call(w, agent + '-history.follow', dict(session_id=native, offset=offset,
                                                                           version=version), user)
         else:
             raise ValueError('This host cannot show transcripts; update its worker.')
         keep = ('unchanged', 'version', 'replace_from', 'messages', 'truncated', 'next_offset',
-                'next_content_offset', 'total_messages', 'activity', 'active')
+                'next_content_offset', 'total_messages', 'activity', 'active', 'tail_from')
         return await self.masked({k: out[k] for k in keep if k in out})
 
     async def op_send(self, request, user, data):

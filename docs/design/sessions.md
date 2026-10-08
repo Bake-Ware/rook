@@ -79,7 +79,8 @@ Every surface (web, mod, MCP, CLI) reads the same record:
   "input": "pty" | "inbox" | "none",     // how send() reaches it; inbox notes hold/accept below
   "inbox_policy": "accept" | "hold" | "refuse" | "unknown",
   "links": {"task": "t_…", "claim": "…", "work_session": "…", "console_room": "…", "chat_room": "…"},
-  "resumable": true                      // closed and the agent supports resume
+  "resumable": true,                     // closed and the agent supports resume
+  "possibly_live": "recent_write" | "unreadable_marker"  // only when the state is a guess (below)
 }
 ```
 
@@ -94,7 +95,17 @@ How the worker fills the record (as built, `rook/worker/plugins/sessions.py`):
   exact resume argument, open transcript, or a running Rook terminal);
   `idle` when Claude's marker says `status: idle`, or, without a marker, the
   transcript's last turn ended (`activity: ready`) and no Rook terminal runs
-  it; `closed` otherwise. Activity detection: Linux `/proc`; macOS `ps` plus
+  it; `closed` otherwise. Two guesses keep a session that may still run from
+  looking closed (and resumable): a Claude or Codex transcript modified in
+  the last 120 s (`possibly_live: "recent_write"`), and, for each live
+  `claude` process whose PID marker is empty or unparsable (a full disk
+  leaves it at 0 bytes; a `claude -c` has no id on its command line either),
+  the newest transcript in that process's folder (its cwd, from `/proc` or
+  `lsof`; the project directory is the cwd with every non-alphanumeric
+  character turned into `-`) that no other evidence accounts for
+  (`possibly_live: "unreadable_marker"`). Such a record is `live` (or
+  `idle` when its last turn ended), `input: "none"`, `resumable: false`,
+  and `sessions.send` refuses it with the reason. Activity detection: Linux `/proc`; macOS `ps` plus
   `lsof` for open transcripts; Windows the process snapshot (no command
   lines there, so only Claude's markers count, checked against the process
   creation FILETIME Claude records as `procStart`). Codex sessions on
@@ -263,11 +274,25 @@ namespace). Old caps stay as thin aliases for at least one release.
   and native id (scans the newest 500 transcripts per agent); `live_only`
   drops closed ones. `limit` up to 200. Supersedes `work.sessions`, which
   keeps its old shape for the worklog page and older hubs. Risk read.
+  Speed: the history caps cache each transcript's metadata and activity by
+  file version (inode, size, mtime) and read an append-only Claude log on
+  from where the last scan stopped (`claude_history.scan_session`), so a
+  list reads only what changed; the Claude and Codex pulls run in parallel,
+  and the plugin reads the newest 50 of each once at start. (Before this, every
+  list re-read each of the newest 50 transcripts per agent whole, twice,
+  and a host with about 340 long sessions took longer than the hub's 15 s.)
 - `sessions.mirror(agent, native_id, cursor, wait, max_events)` (above; its own plugin, `session_mirror`).
-- `sessions.follow(agent, native_id, offset=0, version="")` → the
+- `sessions.follow(agent, native_id, offset=0, version="", tail=0)` → the
   `claude-history.follow` / `codex-history.follow` reply (`unchanged`, or
   `messages`, `version`, `replace_from`, …) plus `agent`, `native_id`.
-  Shells and Hermes have no transcript (error). Risk read, sensitive.
+  `tail=N` (1-200) starts at the last N messages instead of `offset`: one
+  page of up to 64,000 characters with each message clipped to 4,000
+  (`clipped` = characters left out), and `tail_from` = its first index;
+  follow on with `offset`/`version` as usual. Messages may carry `kind:
+  "tool_result"` (a user record that only returns tool output; `error` when
+  one failed). Workers before `tail` refuse the argument ("bad args"); the
+  hub then asks again without it. Shells and Hermes have no transcript
+  (error). Risk read, sensitive.
 - `sessions.send(agent, native_id, text, command_id="")` → `{ok, delivery,
   note, native_id}`, routed by the record's `input` (§3.1): `inbox` calls
   `<agent>-history.send` (session_messages / codex_input; `command_id`
@@ -284,7 +309,11 @@ namespace). Old caps stay as thin aliases for at least one release.
   started outside Rook is refused (end it on its host, or `/rook-move`); a
   closed one returns `{ok: true, stopped: null}`. Risk exec, destructive.
 - `work.stream.*` unchanged except `work.stream.open(remote_control=label)`
-  (claude only), `work.stream.open(handoff_pid=…)` (§3.3, Take over), a
+  (claude only), `work.stream.open(handoff_pid=…)` (§3.3, Take over),
+  `work.stream.open(resume=…)` refusing a session that may still run (its
+  transcript changed in the last 120 s, or a `claude` with an unreadable
+  marker probably holds it, §3.1) unless `force=true` (the handoff path is
+  unchanged, and `force` never overrides process evidence), a
   `session` field in terminal info, and ConPTY on Windows (workstream D:
   the same caps, so resume and `sessions.send` keys work there too). `*-history.resume`
   delegates to `work.stream.open(harness=agent, resume=id, cwd=…)` where
@@ -315,6 +344,7 @@ namespace). Old caps stay as thin aliases for at least one release.
   | `live_only` | off | `1`/`true`/`yes`/`on`: only `live` and `idle` |
   | `limit` | 50 | sessions asked of each worker, 1-200 (400 if not a number) |
   | `worker` | all | one worker, by id or name |
+  | `cached` | off | `1`: answer at once from the hub's last catalog of each worker, asking none |
 
   ```jsonc
   {
@@ -328,8 +358,9 @@ namespace). Old caps stay as thin aliases for at least one release.
       "worker_id": "…", "name": "…", "band": "…",
       "source": "sessions.list" | "work.sessions" | "history",  // how it was read
       "count": 12, "total": 159,   // returned / the worker's total
-      "stale": false,              // true: served from the cache, the worker did not answer
+      "stale": false,              // true: the last read of this worker failed (served from the cache)
       "fetched": 1791400000.0,     // when that catalog was read (null if never)
+      "cached": false,             // true in a cached=1 reply
       "harnesses": ["shell", "claude"],  // what New session may offer there
       "counts": {"live": 1, "idle": 2}   // hb.sessions, or null
     }],
@@ -344,7 +375,11 @@ namespace). Old caps stay as thin aliases for at least one release.
   `inbox_policy: "unknown"`); the hub applies `query`/`live_only` to those.
   Workers with none of these caps are left out. The latest unfiltered
   catalog per worker is cached in memory and served, filtered and marked
-  `stale`, when that worker fails.
+  `stale`, when that worker fails. The Sessions page first asks with
+  `cached=1` (at once, no worker asked; a worker never read yet has no rows
+  and `fetched: null`), renders that, then asks each worker with `worker=`
+  in parallel and replaces that worker's rows as it answers, so one slow
+  worker never holds up the page.
 - Heartbeat summary `hb.sessions` = `{live, idle}` counts (§3.5), shown as
   `workers[].counts`.
 - **Per-session routes** (built, workstream C): `POST
@@ -363,7 +398,7 @@ namespace). Old caps stay as thin aliases for at least one release.
   | `op` | Body (besides `csrf`, `worker`, `agent`, `native_id`) | Reply |
   |---|---|---|
   | `mirror` | `cursor` (0), `wait` (0-20 s), `max_events` (≤500) | `{events, cursor, done, exists}` from `sessions.mirror`, masked. At most 32 waiting calls hub-wide (429 beyond) |
-  | `follow` | `offset`, `version` | `sessions.follow` page (`unchanged`, `version`, `replace_from`, `messages`, `truncated`, `next_offset`, `next_content_offset`, `total_messages`, `activity`, `active`), masked; older workers through `<agent>-history.follow`. claude/codex only |
+  | `follow` | `offset`, `version`, `tail?` (0-200) | `sessions.follow` page (`unchanged`, `version`, `replace_from`, `messages`, `truncated`, `next_offset`, `next_content_offset`, `total_messages`, `activity`, `active`, `tail_from`), masked; `tail` retried without it for workers that refuse it; older workers through `<agent>-history.follow` (no `tail`). claude/codex only |
   | `send` | `text` (1-24,000), `command_id?` | `{delivery: turn/held/keys, note, detail?, terminal?, native_id?}` from `sessions.send`; older workers through `<agent>-history.send` (`delivery: turn`) |
   | `stop` | | `{stopped, terminal?, handle?, exit_code?, note?}` from `sessions.stop`; a hub Work session on that terminal is marked ended and its MCP token revoked |
   | `resume` | `id` (command id, 8-100 chars), `cwd?`, `title?`, `mcp?`, `cols?`, `rows?` | `{session, terminal, title}`: a Work session (the same id history discovery uses for that conversation) resumed with `work.stream.open(resume=native_id)`. claude/codex, hosts with `work.stream.*` only; idempotent per `id`, and a session already running returns its terminal |
@@ -453,8 +488,9 @@ docs in `docs/web/sessions.md`; the mod's Sessions tab sends through
 `sessions.send` (mod 0.3.2). One list of every session across workers, grouped by
 host and project (live first, then idle, then closed), with: **New session**
 (harness, host, folder, model, persona, optional task), **Open** (terminal,
-or live view rendering mirror/transcript events, read-only xterm for tool
-output like the AI Workbench's output panes), **Send** box (shows "waiting
+or live view rendering mirror/transcript events as ANSI in one read-only
+xterm.js per open session, styled like the agent's TUI:
+`rook/web/session_screen.js`), **Send** box (shows "waiting
 for approval on <host>" for held inboxes), **Resume** for closed ones,
 **Stop**, **Link to task**. Replaces the classic/worklog toggle with one
 view; the classic Codex app-server view stays reachable until its features

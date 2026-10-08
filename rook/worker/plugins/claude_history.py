@@ -194,52 +194,239 @@ def _title_candidate(text):
     return text.splitlines()[0][:120] if text else None
 
 
+class _MetaAcc:
+    """What a session's metadata is built from, record by record, so an
+    append-only log can be read on from where the last scan stopped."""
+    __slots__ = ("first_ts", "last_ts", "msg_count", "title", "ai_title", "cwd", "git_branch")
+
+    def __init__(self) -> None:
+        self.first_ts = self.last_ts = self.title = self.ai_title = self.cwd = self.git_branch = None
+        self.msg_count = 0
+
+    def copy(self) -> "_MetaAcc":
+        out = _MetaAcc()
+        for name in self.__slots__:
+            setattr(out, name, getattr(self, name))
+        return out
+
+    def add(self, rec: dict) -> None:
+        ts = rec.get("timestamp")
+        if isinstance(ts, str):
+            if self.first_ts is None:
+                self.first_ts = ts
+            self.last_ts = ts
+        rtype = rec.get("type")
+        if rtype == "ai-title" and isinstance(rec.get("aiTitle"), str):
+            self.ai_title = _title_candidate(rec["aiTitle"])
+        elif rtype in ("user", "assistant"):
+            self.msg_count += 1
+            if self.title is None and rtype == "user":
+                self.title = _title_candidate(_message_text(rec))
+        if self.cwd is None and isinstance(rec.get("cwd"), str):
+            self.cwd = rec["cwd"]
+        if self.git_branch is None and isinstance(rec.get("gitBranch"), str):
+            self.git_branch = rec["gitBranch"]
+
+    def result(self, p: Path, sid: str, st) -> dict:
+        return {
+            "session_id": sid,
+            "short_id": _short_id(sid),
+            "path": str(p),
+            "title": self.ai_title or self.title or "(empty)",
+            "first_timestamp": self.first_ts,
+            "last_timestamp": self.last_ts,
+            "last_modified": st.st_mtime,
+            "message_count": self.msg_count,
+            "project": p.parent.name,
+            "cwd": self.cwd,
+            "git_branch": self.git_branch,
+            "size_bytes": st.st_size,
+        }
+
+
 def _session_meta(p: Path, reader=_read_lines, sid: str | None = None) -> dict:
     sid = sid or p.stem
     try:
         st = p.stat()
     except OSError as e:
         return {"session_id": sid, "path": str(p), "error": str(e)}
-    first_ts: str | None = None
-    last_ts: str | None = None
-    msg_count = 0
-    title: str | None = None
-    ai_title: str | None = None
-    cwd: str | None = None
-    git_branch: str | None = None
+    acc = _MetaAcc()
     for rec in reader(p):
-        if not isinstance(rec, dict):
-            continue
-        ts = rec.get("timestamp")
-        if isinstance(ts, str):
-            if first_ts is None:
-                first_ts = ts
-            last_ts = ts
-        rtype = rec.get("type")
-        if rtype == "ai-title" and isinstance(rec.get("aiTitle"), str):
-            ai_title = _title_candidate(rec["aiTitle"])
-        elif rtype in ("user", "assistant"):
-            msg_count += 1
-            if title is None and rtype == "user":
-                title = _title_candidate(_message_text(rec))
-        if cwd is None and isinstance(rec.get("cwd"), str):
-            cwd = rec["cwd"]
-        if git_branch is None and isinstance(rec.get("gitBranch"), str):
-            git_branch = rec["gitBranch"]
-    return {
-        "session_id": sid,
-        "short_id": _short_id(sid),
-        "path": str(p),
-        "title": ai_title or title or "(empty)",
-        "first_timestamp": first_ts,
-        "last_timestamp": last_ts,
-        "last_modified": st.st_mtime,
-        "message_count": msg_count,
-        "project": p.parent.name,
-        "cwd": cwd,
-        "git_branch": git_branch,
-        "size_bytes": st.st_size,
-    }
+        if isinstance(rec, dict):
+            acc.add(rec)
+    return acc.result(p, sid, st)
+
+
+# A log written to within this many seconds may belong to a running agent
+# even when no process evidence names it (docs/design/sessions.md §3.1).
+RECENT_SECS = 120
+# follow(tail=N): at most this many messages, in one page of TAIL_CHARS with
+# each message clipped to TAIL_CLIP characters.
+TAIL_MAX = 200
+TAIL_CHARS = 64000
+TAIL_CLIP = 4000
+
+
+def _activity_step(codex: bool, rec: dict, activity: str) -> str:
+    """One record's effect on a session's activity (working/ready/pending)."""
+    if codex:
+        payload = rec.get('payload') or {}
+        if not isinstance(payload, dict):
+            return activity
+        if rec.get('type') == 'event_msg':
+            kind = payload.get('type')
+            if kind in ('task_started', 'user_message'):
+                return 'working'
+            if kind in ('task_complete', 'task_completed', 'turn_aborted'):
+                return 'ready'
+        elif rec.get('type') == 'response_item':
+            if payload.get('phase') == 'final' or (
+                payload.get('type') == 'function_call' and
+                str(payload.get('name', '')).split('.')[-1] in ('request_user_input', 'request_user_input_async')
+            ):
+                return 'ready'
+            if payload.get('type') in ('function_call', 'function_call_output', 'custom_tool_call', 'custom_tool_call_output'):
+                return 'working'
+        return activity
+    msg = rec.get('message') or {}
+    if rec.get('type') == 'user':
+        return 'working'
+    if rec.get('type') == 'assistant' and isinstance(msg, dict):
+        if msg.get('stop_reason') in ('end_turn', 'stop_sequence'):
+            return 'ready'
+        if msg.get('stop_reason') == 'tool_use':
+            blocks = msg.get('content')
+            needs_input = isinstance(blocks, list) and any(
+                isinstance(b, dict) and b.get('name') == 'AskUserQuestion' for b in blocks)
+            return 'ready' if needs_input else 'working'
+    return activity
+
+
+def _activity_now(activity: str, mtime) -> str:
+    """A log still 'working' that has been quiet for two minutes is pending."""
+    if activity == 'working' and mtime is not None and time.time() - mtime > RECENT_SECS:
+        return 'pending'
+    return activity
+
+
+def _parse_line(raw: bytes):
+    line = raw.decode("utf-8", errors="replace").strip()
+    if not line:
+        return None
+    try:
+        return json.loads(line)
+    except json.JSONDecodeError:
+        return None
+
+
+def _complete_lines(p: Path, pos: int):
+    """``(record, end offset)`` for each whole line from byte ``pos``, then
+    ``(record, None)`` for a last line with no newline yet (a write in
+    progress, or a file that simply does not end in one)."""
+    with open(p, "rb") as f:
+        f.seek(pos)
+        for raw in f:
+            if not raw.endswith(b"\n"):
+                yield _parse_line(raw), None
+                return
+            pos += len(raw)
+            yield _parse_line(raw), pos
+
+
+def _read_on(p: Path, pos: int, add) -> tuple[int, object]:
+    """Feed every whole line from ``pos`` to ``add``; returns the new
+    position and the parsed last line without a newline (or None)."""
+    partial = None
+    try:
+        for rec, end in _complete_lines(p, pos):
+            if end is None:
+                partial = rec
+                break
+            add(rec)
+            pos = end
+    except OSError:
+        pass
+    return pos, partial
+
+
+# (path, codex) -> what the last scan of that log found (see scan_session)
+_SCANS: dict = {}
+_SCAN_LOCK = threading.Lock()
+SCAN_CACHE_MAX = 4096
+
+
+def scan_session(p: Path, codex: bool = False, meta=None) -> tuple[dict, str]:
+    """``(metadata, activity)`` of one transcript, cached by file version.
+
+    The catalog asks for the same few dozen logs every few seconds, and
+    reading each whole log again (twice: once for the metadata, once for the
+    activity) is what made ``sessions.list`` slow on a host with hundreds of
+    long sessions. Claude logs are append-only, so a log that grew is read
+    on from where the last scan stopped; Codex logs (whose reader looks at
+    the whole file) are read again only when they change. The activity is
+    the raw one: callers apply :func:`_activity_now`."""
+    try:
+        st = p.stat()
+    except OSError as e:
+        return {"session_id": p.stem, "path": str(p), "error": str(e)}, "pending"
+    key = (str(p), codex)
+    ver = (st.st_ino, st.st_size, st.st_mtime_ns)
+    with _SCAN_LOCK:
+        prior = _SCANS.get(key)
+    if prior and prior["ver"] == ver:
+        return dict(prior["meta"]), prior["activity"]
+    if codex:
+        found = (meta or _session_meta)(p)
+        activity = "pending"
+        for rec in _read_lines(p):
+            if isinstance(rec, dict):
+                activity = _activity_step(True, rec, activity)
+        state = dict(ver=ver, meta=found, activity=activity)
+    else:
+        resume = bool(prior) and prior.get("ino") == st.st_ino and st.st_size >= prior["pos"]
+        acc = prior["acc"].copy() if resume else _MetaAcc()
+        done = [prior["activity_done"] if resume else "pending"]
+
+        def add(rec):
+            if isinstance(rec, dict):
+                acc.add(rec)
+                done[0] = _activity_step(False, rec, done[0])
+        pos, partial = _read_on(p, prior["pos"] if resume else 0, add)
+        shown, activity = acc, done[0]
+        if isinstance(partial, dict):
+            # Counted now, and read again next time (it may still grow).
+            shown = acc.copy()
+            shown.add(partial)
+            activity = _activity_step(False, partial, activity)
+        found = shown.result(p, p.stem, st)
+        state = dict(ver=ver, ino=st.st_ino, pos=pos, acc=acc, activity_done=done[0],
+                     meta=found, activity=activity)
+    with _SCAN_LOCK:
+        _SCANS.pop(key, None)
+        while len(_SCANS) >= SCAN_CACHE_MAX:
+            _SCANS.pop(next(iter(_SCANS)))
+        _SCANS[key] = state
+    return dict(state["meta"]), state["activity"]
+
+
+def _tool_result_only(rec: dict) -> bool:
+    msg = rec.get("message")
+    content = msg.get("content") if isinstance(msg, dict) else None
+    return isinstance(content, list) and bool(content) and all(
+        isinstance(b, dict) and b.get("type") == "tool_result" for b in content)
+
+
+def _row(rec: dict) -> dict:
+    """One transcript message as follow/snapshot pages carry it. ``kind``
+    marks a user record that only carries tool results (``tool_result``,
+    plus ``error`` when one failed), so a viewer need not show it as a
+    prompt."""
+    row = {"role": _record_role(rec), "content": _message_text(rec)}
+    if row["role"] == "user" and _tool_result_only(rec):
+        row["kind"] = "tool_result"
+        if any(b.get("is_error") for b in rec["message"]["content"]):
+            row["error"] = True
+    return row
 
 
 class ClaudeHistoryPlugin(Plugin):
@@ -260,6 +447,7 @@ class ClaudeHistoryPlugin(Plugin):
         self._resume_lock = asyncio.Lock()
         self._history_snapshots = {}
         self._history_lock = threading.RLock()
+        self._row_cache: dict = {}      # path -> messages of the last read (see _rows)
         # session_id -> proc handle, for sessions this plugin relaunched. Used
         # to refuse a second resume of a conversation that is already live —
         # two `claude --resume` processes on one session id would both write
@@ -298,6 +486,42 @@ class ClaudeHistoryPlugin(Plugin):
                 "note": (f"{agent} is starting in Rook terminal {opened['id']}: follow it with "
                          "work.stream.read, type with work.stream.write, stop it with "
                          "work.stream.close (or sessions.stop).")}
+
+    def _scan(self, path):
+        """``(metadata, raw activity)`` of one log, cached (scan_session)."""
+        return scan_session(path, codex=self.NAMESPACE == "codex-history", meta=self._session_meta)
+
+    def _rows(self, sp):
+        """The conversation's messages (user/assistant rows), cached per log;
+        a Claude log that grew is read on from where the last read stopped."""
+        st = sp.stat()
+        key, ver = str(sp), (st.st_ino, st.st_size, st.st_mtime_ns)
+        cache = self._row_cache
+        prior = cache.get(key)
+        if prior and prior["ver"] == ver:
+            return prior["rows"]
+        claude = self.NAMESPACE == "claude-history"
+        if claude:
+            resume = bool(prior) and prior["ino"] == st.st_ino and st.st_size >= prior["pos"]
+            rows = list(prior["rows_done"]) if resume else []
+
+            def add(rec):
+                if isinstance(rec, dict) and rec.get("type") in ("user", "assistant"):
+                    rows.append(_row(rec))
+            pos, partial = _read_on(sp, prior["pos"] if resume else 0, add)
+            done = list(rows)
+            if isinstance(partial, dict) and partial.get("type") in ("user", "assistant"):
+                rows.append(_row(partial))
+            entry = dict(ver=ver, ino=st.st_ino, pos=pos, rows_done=done, rows=rows)
+        else:
+            rows = [_row(rec) for rec in self._read_lines(sp)
+                    if isinstance(rec, dict) and rec.get("type") in ("user", "assistant")]
+            entry = dict(ver=ver, rows=rows)
+        cache.pop(key, None)
+        while len(cache) >= 8:
+            cache.pop(next(iter(cache)))
+        cache[key] = entry
+        return rows
 
     def _is_active(self, path, processes=None):
         paths, ids = processes if processes is not None else active_sessions(self.NAMESPACE.split('-')[0])
@@ -448,7 +672,11 @@ class ClaudeHistoryPlugin(Plugin):
         total = len(files)
         files = files[max(int(offset), 0):max(int(offset), 0) + max(int(limit), 0)]
         processes = active_sessions(self.NAMESPACE.split("-")[0])
-        sessions = [dict(self._session_meta(p), activity=self._activity(p), active=self._is_active(p, processes)) for p in files]
+        sessions = []
+        for p in files:
+            meta, activity = self._scan(p)
+            sessions.append(dict(meta, activity=_activity_now(activity, meta.get("last_modified")),
+                                 active=self._is_active(p, processes)))
         for entry in sessions:
             entry['messageable'] = bool(entry['active'] and messageable(self.NAMESPACE.split('-')[0], entry['session_id']))
         return {"ok": True, "root": str(root), "sessions": sessions,
@@ -599,8 +827,14 @@ class ClaudeHistoryPlugin(Plugin):
         return self._snapshot_page(session_id, path, offset, content_offset, 6000, snapshot)
 
     @capability("follow")
-    def _follow(self, session_id: str, offset: int = 0, version: str = "") -> dict:
-        """Check the selected log and return only its changed tail, in stable pages."""
+    def _follow(self, session_id: str, offset: int = 0, version: str = "", tail: int = 0) -> dict:
+        """Check the selected log and return only its changed tail, in stable pages.
+
+        ``tail`` (1-200) starts at the last ``tail`` messages instead of
+        ``offset``, in one page of up to 64,000 characters with each message
+        clipped to 4,000 (``clipped`` = characters left out); the reply's
+        ``tail_from`` is the first index it holds. Follow on from there with
+        ``offset`` and ``version`` as usual."""
         with self._history_lock:
             sp = self._resolve_session(self._default_root(), session_id)
             if sp is None:
@@ -612,18 +846,30 @@ class ClaudeHistoryPlugin(Plugin):
             first = self._snapshot_page(session_id, None, 0, 0, 6000, '')
             if not first.get('ok'):
                 return first
+            total = first['total_messages']
+            tail = max(0, min(int(tail or 0), TAIL_MAX))
+            if tail:
+                start = max(0, total - tail)
+                page = self._snapshot_page(session_id, None, start, 0, TAIL_CHARS, first['snapshot'],
+                                           clip=TAIL_CLIP, max_messages=tail)
+                return dict(page, version=current, replace_from=start, tail_from=start)
             # If the source was truncated or rewritten, replace the whole view.
             offset = max(0, int(offset))
             previous = version.split(':')
             replaced = (len(previous) == 3 and (previous[0] != str(stat.st_ino) or
                         stat.st_size <= int(previous[1])))
-            if replaced or offset > first['total_messages']:
+            if replaced or offset > total:
                 offset = 0
             page = self._snapshot_page(session_id, None, offset, 0, 6000, first['snapshot'])
             return dict(page, version=current, replace_from=offset)
 
-    def _snapshot_page(self, session_id, path, offset, content_offset, max_chars, token):
-        """Freeze the conversation once on its owner; page it without rereading logs."""
+    def _snapshot_page(self, session_id, path, offset, content_offset, max_chars, token,
+                       clip=0, max_messages=20):
+        """Freeze the conversation once on its owner; page it without rereading logs.
+
+        ``clip`` > 0 cuts each message to that many characters (the page
+        moves on to the next message; ``clipped`` says how many were left
+        out) and allows pages of up to 64,000 characters."""
         with self._history_lock:
             now = time.monotonic()
             self._history_snapshots = {k: v for k, v in self._history_snapshots.items() if now - v['used'] < 180}
@@ -635,9 +881,7 @@ class ClaudeHistoryPlugin(Plugin):
                     return {'ok': False, 'error': 'session not found'}
                 stat = sp.stat()
                 version = f'{stat.st_ino}:{stat.st_size}:{stat.st_mtime_ns}'
-                messages = [{'role': _record_role(rec), 'content': _message_text(rec)}
-                            for rec in self._read_lines(sp)
-                            if isinstance(rec, dict) and rec.get('type') in ('user', 'assistant')]
+                messages = self._rows(sp)
                 while len(self._history_snapshots) >= 4:
                     oldest = min(self._history_snapshots, key=lambda k: self._history_snapshots[k]['used'])
                     del self._history_snapshots[oldest]
@@ -651,19 +895,29 @@ class ClaudeHistoryPlugin(Plugin):
             rows = saved['messages']
             if offset < 0 or offset > len(rows) or content_offset < 0:
                 return {'ok': False, 'error': 'Invalid history cursor.'}
-            budget = max(1, min(int(max_chars), 6000))
+            clip = max(0, int(clip or 0))
+            budget = max(1, min(int(max_chars), TAIL_CHARS if clip else 6000))
+            limit = max(1, min(int(max_messages or 20), TAIL_MAX))
             messages = []
             index, start = offset, content_offset
-            while index < len(rows) and budget > 0 and len(messages) < 20:
+            while index < len(rows) and budget > 0 and len(messages) < limit:
                 row = rows[index]
                 if start > len(row['content']):
                     return {'ok': False, 'error': 'Invalid content cursor.'}
-                chunk = row['content'][start:start + budget]
-                messages.append(dict(index=index, content_offset=start, role=row['role'], content=chunk))
+                if clip and messages and min(len(row['content']) - start, clip) > budget:
+                    break       # whole messages only: this one starts the next page
+                chunk = row['content'][start:start + (min(budget, clip) if clip else budget)]
+                message = dict(index=index, content_offset=start, role=row['role'], content=chunk)
+                for extra in ('kind', 'error'):
+                    if row.get(extra):
+                        message[extra] = row[extra]
+                messages.append(message)
                 budget -= len(chunk)
                 start += len(chunk)
                 if start < len(row['content']):
-                    break
+                    if not clip:
+                        break
+                    message['clipped'] = len(row['content']) - start
                 index, start = index + 1, 0
             return dict(ok=True, snapshot=token, messages=messages, truncated=index < len(rows),
                         next_offset=index, next_content_offset=start, activity=saved['activity'],
@@ -671,43 +925,12 @@ class ClaudeHistoryPlugin(Plugin):
 
     def _activity(self, path):
         """Use explicit completion markers; stale/incomplete logs stay pending."""
-        activity = 'pending'
-        for rec in _read_lines(path):
-            if not isinstance(rec, dict):
-                continue
-            if self.NAMESPACE == 'codex-history':
-                payload = rec.get('payload') or {}
-                if not isinstance(payload, dict):
-                    continue
-                if rec.get('type') == 'event_msg':
-                    kind = payload.get('type')
-                    if kind in ('task_started', 'user_message'):
-                        activity = 'working'
-                    elif kind in ('task_complete', 'task_completed', 'turn_aborted'):
-                        activity = 'ready'
-                elif rec.get('type') == 'response_item':
-                    if payload.get('phase') == 'final' or (
-                        payload.get('type') == 'function_call' and
-                        str(payload.get('name', '')).split('.')[-1] in ('request_user_input', 'request_user_input_async')
-                    ):
-                        activity = 'ready'
-                    elif payload.get('type') in ('function_call', 'function_call_output', 'custom_tool_call', 'custom_tool_call_output'):
-                        activity = 'working'
-            else:
-                msg = rec.get('message') or {}
-                if rec.get('type') == 'user':
-                    activity = 'working'
-                elif rec.get('type') == 'assistant' and isinstance(msg, dict):
-                    if msg.get('stop_reason') in ('end_turn', 'stop_sequence'):
-                        activity = 'ready'
-                    elif msg.get('stop_reason') == 'tool_use':
-                        blocks = msg.get('content')
-                        needs_input = isinstance(blocks, list) and any(
-                            isinstance(b, dict) and b.get('name') == 'AskUserQuestion' for b in blocks)
-                        activity = 'ready' if needs_input else 'working'
-        if activity == 'working' and time.time() - path.stat().st_mtime > 120:
-            return 'pending'
-        return activity
+        _meta, activity = self._scan(path)
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            mtime = None
+        return _activity_now(activity, mtime)
 
     @capability("search")
     def _search(self, query: str, path: str | None = None,

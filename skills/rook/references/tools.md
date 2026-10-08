@@ -202,7 +202,7 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 |---|---|---|
 | `claude-history.analyze` | pattern='tool_usage', path?, machine?, limit=20 | Extract a knowledge pattern across all sessions. |
 | `claude-history.export` | session_id, format='markdown', path?, machine? | Export a session as `markdown`, `json`, or `html`. |
-| `claude-history.follow` | session_id, offset=0, version='' | Check the selected log and return only its changed tail, in stable pages. |
+| `claude-history.follow` | session_id, offset=0, version='', tail=0 | Check the selected log and return only its changed tail, in stable pages. |
 | `claude-history.pull` | machine?, path?, limit=50, offset=0 | List session metadata under `path` (default `~/.claude/projects`). |
 | `claude-history.read` | session_id, path?, machine?, max_messages=1000, offset=0 | Read a session transcript. |
 | `claude-history.read_page` | session_id, path?, offset=0, content_offset=0, max_chars=6000, snapshot? | Read a bounded transcript page, including partial large messages. |
@@ -219,7 +219,7 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 |---|---|---|
 | `codex-history.analyze` | pattern='tool_usage', path?, machine?, limit=20 | Extract a knowledge pattern across all sessions. |
 | `codex-history.export` | session_id, format='markdown', path?, machine? | Export a session as `markdown`, `json`, or `html`. |
-| `codex-history.follow` | session_id, offset=0, version='' | Check the selected log and return only its changed tail, in stable pages. |
+| `codex-history.follow` | session_id, offset=0, version='', tail=0 | Check the selected log and return only its changed tail, in stable pages. |
 | `codex-history.pull` | machine?, path?, limit=50, offset=0 | List session metadata under `path` (default `~/.claude/projects`). |
 | `codex-history.read` | session_id, path?, machine?, max_messages=1000, offset=0 | Read a session transcript. |
 | `codex-history.read_page` | session_id, path?, offset=0, content_offset=0, max_chars=6000, snapshot? | Read a bounded transcript page, including partial large messages. |
@@ -406,7 +406,7 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 
 | Cap | Args | Does |
 |---|---|---|
-| `sessions.follow` | agent, native_id, offset=0, version='' | The transcript tail of a Claude or Codex session: pages from `offset` when the log changed since `version` (e… |
+| `sessions.follow` | agent, native_id, offset=0, version='', tail=0 | The transcript tail of a Claude or Codex session: pages from `offset` when the log changed since `version` (e… |
 | `sessions.list` | limit=20, offset=0, query='', live_only=false | This host's agent sessions, live and idle first, then closed, newest first within each (record shape: docs/de… |
 | `sessions.send` | agent, native_id, text, command_id='' | Put `text` in front of the agent as the user. |
 | `sessions.stop` | agent, native_id | End a session Rook started: close its Rook terminal (or the `proc.*` process an older resume started). |
@@ -428,7 +428,7 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 | `work.sessions` | limit=20, offset=0, history=true, query='' | One catalog of this host's work: live terminals plus Claude/Codex history, newest first. |
 | `work.stream.close` | id | Stop the terminal's process (SIGHUP, then SIGKILL) and drop it. |
 | `work.stream.list` | — | Live and recently finished terminals on this worker. |
-| `work.stream.open` | harness='shell', cwd='', title='', model='', resume='', persona='', mcp_url='', mcp_token='', session='', remote_control='', cols=120, rows=32, buffer_bytes=262144, handoff_pid=0, argv?, cmd='', env?, task='', room='' | Start a harness (shell\|claude\|codex\|hermes) under a PTY and return its terminal `id` immediately. |
+| `work.stream.open` | harness='shell', cwd='', title='', model='', resume='', persona='', mcp_url='', mcp_token='', session='', remote_control='', cols=120, rows=32, buffer_bytes=262144, handoff_pid=0, argv?, cmd='', env?, task='', room='', force=false | Start a harness (shell\|claude\|codex\|hermes) under a PTY and return its terminal `id` immediately. |
 | `work.stream.read` | id, cursor=0, max_bytes=16384, wait=0, accept='tbz' | Output from byte `cursor` on. |
 | `work.stream.resize` | id, cols, rows | Set the terminal size in character cells (sends SIGWINCH). |
 | `work.stream.signal` | id, sig='INT' | Signal the terminal's process group: INT, TERM, HUP, KILL. |

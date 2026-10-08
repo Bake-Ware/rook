@@ -76,25 +76,9 @@
 .sx-live-head{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px}
 .sx-state[data-state=working]{color:var(--green);border-color:var(--green)}
 .sx-state[data-state=waiting]{color:var(--accent);border-color:var(--accent)}
-.sx-log{height:56vh;min-height:240px;overflow:auto;border:1px solid var(--line);padding:6px 12px;overscroll-behavior:contain}
+.sx-screen-host{border:1px solid var(--line)}
+.sx-xterm.sx-screen{height:58vh;min-height:260px;padding:8px 10px;resize:vertical}
 .sx-log-note:empty{display:none}
-.sx-msg{padding:10px 0;border-bottom:1px solid var(--line)}
-.sx-msg b,.sx-tool b{font:10px var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--accent)}
-.sx-msg.sx-user b{color:var(--green)}
-.sx-msg.streaming b::after{content:' …'}
-.sx-text{white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px;line-height:1.6;margin-top:4px}
-.sx-user .sx-text{background:var(--panel2);padding:8px 10px}
-.sx-tool{margin:8px 0;border:1px solid var(--line);font-size:12px}
-.sx-tool>b{display:block;padding:6px 8px}
-.sx-tool summary{cursor:pointer;padding:6px 8px;display:flex;gap:8px;align-items:baseline;min-width:0}
-.sx-tool-name{font:11px var(--mono);color:var(--accent);flex-shrink:0}
-.sx-tool-arg{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sx-tool-ok{font:10px var(--mono);color:var(--green)}
-.sx-tool-input{margin:0;padding:6px 8px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:200px;overflow:auto;font-size:12px;border-top:1px solid var(--line)}
-.sx-pane{background:var(--term-bg,#0d0f12);padding:4px 6px;overflow:hidden}
-.sx-tool-out:empty{display:none}
-.sx-turn{margin:6px 0 12px;font:10px var(--mono);color:var(--dim);text-align:center;border-bottom:1px dashed var(--line2);padding-bottom:6px}
-.sx-sys{margin:6px 0;font:11px var(--mono);color:var(--dim)}
 .sx-send{margin-top:10px}
 .sx-send textarea{display:block;width:100%;resize:vertical;min-height:60px;padding:10px;margin-top:4px}
 .sx-send .sx-row{justify-content:space-between;margin-top:6px}
@@ -110,6 +94,6 @@
   .sx-filters select{flex:1 1 40%;max-width:none}
   #sx-status{margin-left:0;flex-basis:100%}
   .sx-xterm{height:360px}
-  .sx-log{height:60vh}
+  .sx-xterm.sx-screen{height:62vh;padding:6px}
   .sx-project{margin-left:10px}
 }
