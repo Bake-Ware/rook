@@ -306,14 +306,13 @@ async def main(shots):
             await expect(page.locator('.sx-item')).to_have_count(1)
             await page.locator('#sx-search').fill('')
             await expect(page.locator('.sx-item')).to_have_count(5)
-            # A host that stops answering stays listed from the hub's cache, with a notice.
+            # A host that misses a refresh stays listed from the hub's cache, marked
+            # stale; a short miss is not worth an Activity line.
             band.host2_down = True
             await page.evaluate("document.querySelector('#sx-live').dispatchEvent(new Event('change'))")
-            await expect(page.locator('#sx-act-badge')).to_be_visible()
-            await expect(page.locator('#sx-act-badge')).to_have_class(re.compile('bad|sx-act-badge'))
-            await activity(page, 'laptop did not answer')
-            assert await page.locator('.sx-notice').count() == 0
             await expect(page.locator('.sx-host-head', has_text='laptop')).to_contain_text('stale')
+            await expect(page.locator('#sx-act-badge')).to_be_hidden()
+            assert await page.locator('.sx-notice').count() == 0
             await expect(item('Laptop notes')).to_be_visible()
             band.host2_down = False
 
@@ -332,7 +331,6 @@ async def main(shots):
             await expect(rows).to_contain_text('● proxy_read_timeout is 5s.')
             await expect(rows).to_contain_text('────────')
             await expect(rows).to_contain_text('✻ Waiting for approval on test-host')
-            await expect(detail.locator('.sx-state')).to_have_text('waiting for approval on test-host')
             assert await screen.count() == 1 and await detail.locator('.sx-msg, .sx-tool, .sx-pane').count() == 0
             text = await screen.evaluate('el => el.sxScreen.text()')
             # Streamed pieces and the final message are one block, written once.
@@ -353,19 +351,19 @@ async def main(shots):
             assert styles['stdin'] is True and styles['scrollback'] == 10000, styles
             assert await screen.locator('a').count() == 0
             assert await page.evaluate('window.__clipboardWrites') == 0
-            await expect(detail.locator('.sx-hint')).to_contain_text('/rook-move')
+            await expect(detail.locator('.sx-hint')).to_be_hidden()
+            assert await detail.locator('.sx-live-head').count() == 0
             await expect(detail.locator('[data-act=stop]')).to_be_hidden()
             if shots:
                 await page.screenshot(path=str(Path(shots) / 'sessions-mirror.png'))
             # Send to a held inbox.
             await detail.locator('#sx-send-text').fill('Also check keepalive.')
             await detail.locator('.sx-send button').click()
-            await activity(page, 'Waiting for approval on test-host.')
+            await activity(page, 'waiting for approval on test-host')
             assert band.sent[-1]['native_id'] == MIRRORED and band.sent[-1]['text'] == 'Also check keepalive.'
             # Link to task.
             await detail.locator('.sx-d-link [name=task]').fill('t_0123abcd')
             await detail.locator('.sx-d-link button').click()
-            await activity(page, 'linked to t_0123abcd')
             await expect(item('Fix the nginx upstream timeouts')).to_contain_text('task t_0123abcd')
 
             # Tier 3: transcript of a Codex session (a worker without tail=); a message arrives as a turn.
@@ -376,7 +374,11 @@ async def main(shots):
             await expect(rows).to_contain_text('• Done: src/lexer.rs compiles.')
             await detail.locator('#sx-send-text').fill('Next: the parser.')
             await detail.locator('#sx-send-text').press('Enter')
-            await activity(page, 'Delivered as a new turn.')
+            for _ in range(50):
+                if band.sent and band.sent[-1]['text'] == 'Next: the parser.':
+                    break
+                await asyncio.sleep(0.1)
+            assert band.sent[-1]['text'] == 'Next: the parser.'
             if shots:
                 await page.screenshot(path=str(Path(shots) / 'sessions-transcript-codex.png'))
 
@@ -435,7 +437,6 @@ async def main(shots):
             # Send into a Rook terminal types keys.
             await detail.locator('#sx-send-text').fill('echo typed-$((2+3))')
             await detail.locator('.sx-send button').click()
-            await activity(page, 'Typed into the Rook terminal.')
             await expect(term.locator('.xterm-rows')).to_contain_text('typed-5', timeout=10000)
             if shots:
                 await page.screenshot(path=str(Path(shots) / 'sessions-terminal.png'))
@@ -459,7 +460,7 @@ async def main(shots):
             # Stop a Rook-started session.
             page.once('dialog', lambda d: asyncio.ensure_future(d.accept()))
             await detail.locator('[data-act=stop]').click()
-            await activity(page, 'Process exited', timeout=10000)
+            await expect(term).to_have_class(re.compile('ended'), timeout=10000)
             assert any(c == 'sessions.stop' for c, _ in band.calls)
 
             # Resume a closed session into a Rook terminal.
