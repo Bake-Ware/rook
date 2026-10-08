@@ -61,9 +61,10 @@ export async function mountSessions(root, boot, toClassic) {
       </div>
     </div>`;
   const $ = s => root.querySelector(s);
-  // Activity: host warnings and the results of actions, kept out of the page
-  // (they made it jump) in a panel opened from the header. A repeat of the
-  // newest entry bumps its count instead of adding a row.
+  // Activity: only what needs the person: an action of theirs that failed, a
+  // message waiting for approval on another host, a host down for a while.
+  // Successes and passing hiccups are not logged. A panel over the page (it
+  // never moves the page); a repeat of the newest entry bumps its count.
   const acts = [], ACT_KEEP = 200;
   let unseen = 0, unseenBad = false;
   function act(text, level = 'info') {
@@ -206,17 +207,21 @@ export async function mountSessions(root, boot, toClassic) {
     if (data.workers.some(w => w.worker_id === chosen)) pick.value = chosen;
     renderNotices(); renderList(); renderForm(); syncOpen();
   }
-  const hostProblems = new Map();   // worker_id -> the last problem reported to Activity
+  // A host that misses one refresh is normal (a slow first list); only one
+  // that has not answered for HOST_DOWN_MS is worth a line, once.
+  const HOST_DOWN_MS = 120000, failingSince = new Map(), reported = new Set();
   function renderNotices() {
-    const now = new Map();
+    const now = Date.now(), failing = new Set();
     for (const e of data.errors || []) {
-      const w = data.workers.find(x => x.worker_id === e.worker_id), name = e.worker || e.worker_id;
-      now.set(e.worker_id, e.error);
-      if (hostProblems.get(e.worker_id) === e.error) continue;
-      act(w?.stale && w.fetched ? `${name} did not answer (${e.error}); showing its list from ${ago(w.fetched)}.` : `${name}: ${e.error}`, 'warn');
+      failing.add(e.worker_id);
+      if (!failingSince.has(e.worker_id)) failingSince.set(e.worker_id, now);
+      if (now - failingSince.get(e.worker_id) < HOST_DOWN_MS || reported.has(e.worker_id)) continue;
+      reported.add(e.worker_id);
+      const w = data.workers.find(x => x.worker_id === e.worker_id);
+      act(`${e.worker || e.worker_id} has not answered for ${Math.round((now - failingSince.get(e.worker_id)) / 60000)} min (${e.error})` +
+        (w?.fetched ? `; its list is from ${ago(w.fetched)}.` : '.'), 'warn');
     }
-    for (const [id] of hostProblems) if (!now.has(id)) act(`${workerOf({worker_id: id})?.name || id} is answering again.`);
-    hostProblems.clear(); for (const [id, err] of now) hostProblems.set(id, err);
+    for (const id of [...failingSince.keys()]) if (!failing.has(id)) { failingSince.delete(id); reported.delete(id); }
   }
   function badge(r) {
     const out = [];
@@ -318,18 +323,17 @@ export async function mountSessions(root, boot, toClassic) {
         <button type="button" class="sx-back" data-act="back">← All sessions</button>
         <div class="sx-d-title"><h3></h3><div class="sx-muted sx-d-meta"></div></div>
         <div class="sx-d-actions">
+          <form class="sx-d-link"><input name="task" placeholder="Task: t_… or slug" maxlength="120" aria-label="Task"><button type="submit">Link</button></form>
           <button type="button" data-act="resume" hidden>Resume in a Rook terminal</button>
           <button type="button" data-act="stop" hidden>Stop</button>
           <button type="button" data-act="close" class="sx-link" aria-label="Close this session's view">Close</button>
         </div>
       </header>
       <p class="sx-hint" hidden></p>
-      <form class="sx-d-link"><label class="sx-muted">Task <input name="task" placeholder="t_… or slug" maxlength="120"></label><button type="submit">Link</button></form>
       <div class="sx-view"></div>
       <form class="sx-send" hidden>
-        <label class="sx-muted" for="sx-send-text">Send to this session</label>
-        <textarea id="sx-send-text" rows="2" maxlength="24000" placeholder="A message, as if typed by you…"></textarea>
-        <div class="sx-row"><button type="submit" class="sx-primary">Send</button></div>
+        <textarea id="sx-send-text" rows="1" maxlength="24000" placeholder="Send to this session…" aria-label="Send to this session"></textarea>
+        <button type="submit" class="sx-primary">Send</button>
       </form>`;
     open = {rec, mode: null, view: null, el};
     el.querySelector('.sx-d-link [name=task]').value = rec.links?.task || '';
@@ -355,14 +359,11 @@ export async function mountSessions(root, boot, toClassic) {
     resume.disabled = !canTerm; resume.title = canTerm ? '' : 'This host cannot run Rook terminals for ' + rec.agent;
     el.querySelector('[data-act=stop]').hidden = !(live && rec.origin === 'rook');
     const hint = el.querySelector('.sx-hint');
-    const external = live && rec.origin === 'external' && !rec.view?.terminal;
     const host = rec.worker || 'its host';
-    hint.hidden = !(external || (!live && rec.links?.task));
+    hint.hidden = !(rec.possibly_live || (!live && rec.links?.task));
     hint.textContent = rec.possibly_live === 'recent_write'
       ? `Rook sees no process holding this session, but its transcript changed in the last 2 minutes, so it may still be running on ${host}. Resume is offered once it has been quiet for 2 minutes.`
       : rec.possibly_live ? `A Claude Code on ${host} is running in this folder, but its session marker could not be read. This is the folder's newest session, so Rook treats it as running and does not offer Resume. End it on ${host} first.`
-      : external ? (rec.agent === 'claude' ? 'Started outside Rook. To take it over here, run /rook-move in that Claude Code; Rook cannot stop it from this page.'
-      : 'Started outside Rook. End it on its host; once closed, resume it here in a Rook terminal.')
       : `This session worked on task ${rec.links?.task}. It has ended: leave a handoff on the task (Work page) or set its state.`;
     el.querySelector('.sx-send').hidden = !(live && rec.input && rec.input !== 'none');
     const mode = modeOf(rec);
@@ -394,8 +395,9 @@ export async function mountSessions(root, boot, toClassic) {
       } catch (err) { note(err.message, true); b.disabled = false; b.textContent = 'Resume in a Rook terminal'; }
     }
   });
+  // Only failures (and held messages, below) reach Activity; successes are silent.
   function note(text, bad) {
-    act((open?.rec.title ? open.rec.title + ': ' : '') + text, bad ? 'bad' : 'info');
+    if (bad) act((open?.rec.title ? open.rec.title + ': ' : '') + text, 'bad');
   }
   $('#sx-detail').addEventListener('submit', async e => {
     e.preventDefault(); if (!open) return;
@@ -415,8 +417,7 @@ export async function mountSessions(root, boot, toClassic) {
       try {
         const res = await post('send', {...who(rec), text, command_id: crypto.randomUUID()});
         box.value = '';
-        note(res.delivery === 'held' ? `Waiting for approval on ${rec.worker || 'its host'}.`
-          : res.delivery === 'keys' ? 'Typed into the Rook terminal.' : 'Delivered as a new turn.');
+        if (res.delivery === 'held') act(`${rec.title || 'Message'}: waiting for approval on ${rec.worker || 'its host'}.`, 'warn');
       } catch (err) { note(err.message, true); }
       finally { button.disabled = false; }
     }
@@ -458,9 +459,9 @@ export async function mountSessions(root, boot, toClassic) {
       const hand = this.card.querySelector('[data-t=handoff]');
       hand.hidden = holder !== me || !others.length;
       hand.innerHTML = '<option value="">Hand off to…</option>' + others.map(x => `<option value="${esc(x.id)}">${esc(x.label)}</option>`).join('');
-      const said = view.lastNote || (st.running === false ? (st.lost || 'Process exited' + (st.exit_code != null ? ' with code ' + st.exit_code : '') + '.') : '');
-      if (said && said !== this.said) act((this.rec.title ? this.rec.title + ': ' : '') + said, st.running === false && !st.lost ? 'info' : 'warn');
-      this.said = said;
+      // A lost terminal is worth a line; a normal exit shows in the terminal itself.
+      if (st.lost && st.lost !== this.said) act((this.rec.title ? this.rec.title + ': ' : '') + st.lost, 'warn');
+      this.said = st.lost || '';
       this.card.classList.toggle('ended', st.running === false);
     }
     dispose() { this.disposed = true; this.term?.dispose(); }
@@ -472,10 +473,16 @@ export async function mountSessions(root, boot, toClassic) {
     const screen = new Screen(host, loadXterm, themeColors, label);
     return {screen, painter: new Painter(screen, rec.agent)};
   }
-  // A view's notes ("No messages yet.", read errors) go to Activity, once per change.
+  // A view's read errors go to Activity once they repeat (one retry is
+  // normal); informational notes ("No messages yet.") are dropped.
   function noteTo(rec) {
-    let last = '';
-    return {set textContent(text) { if (text && text !== last) act((rec.title ? rec.title + ': ' : '') + text, /Retrying|fail|error|not /i.test(text) ? 'warn' : 'info'); last = text; }};
+    let last = '', seen = 0;
+    return {set textContent(text) {
+      const bad = /Retrying|fail|error|denied|refused|timed out/i.test(text || '');
+      if (!bad) { last = ''; seen = 0; return; }
+      seen = text === last ? seen + 1 : 1; last = text;
+      if (seen === 2) act((rec.title ? rec.title + ': ' : '') + text, 'warn');
+    }};
   }
   const stateLine = (state, rec) => state === 'working' ? A_WORKING + '✻ Working…'
     : state === 'waiting' ? A_WAITING + '✻ Waiting for approval on ' + (rec.worker || 'its host')
@@ -485,8 +492,8 @@ export async function mountSessions(root, boot, toClassic) {
   class LiveLog {
     constructor(host, rec) {
       this.rec = rec; this.cursor = 0; this.ctrl = new AbortController();
-      host.innerHTML = `<div class="sx-live-head"><span class="sx-chip sx-state">connecting</span><span class="sx-muted">Live view from the Rook mod on ${esc(rec.worker || 'its host')}</span></div><div class="sx-screen-host"></div>`;
-      this.chip = host.querySelector('.sx-state'); this.noteEl = noteTo(rec);
+      host.innerHTML = `<div class="sx-screen-host"></div>`;
+      this.state = undefined; this.noteEl = noteTo(rec);
       ({screen: this.screen, painter: this.p} = screenFor(host.querySelector('.sx-screen-host'), rec, 'Session events (read-only terminal)'));
       this.loop();
     }
@@ -509,8 +516,7 @@ export async function mountSessions(root, boot, toClassic) {
       }
     }
     setState(state) {
-      this.chip.textContent = state === 'waiting' ? `waiting for approval on ${this.rec.worker || 'its host'}` : state;
-      this.chip.dataset.state = state;
+      this.state = state;
       this.p.status(stateLine(state, this.rec));
     }
     apply(ev) {
@@ -525,7 +531,7 @@ export async function mountSessions(root, boot, toClassic) {
       else if (t === 'turn.end') p.turnEnd(ev.stop_reason);
       else if (t === 'state') this.setState(ev.state || 'idle');
       else if (t === 'session.end') { p.note('Session ended' + (ev.reason ? ' (' + ev.reason + ')' : '')); this.setState('ended'); }
-      if (this.chip.dataset.state === undefined && t !== 'state') this.setState(this.rec.state === 'idle' ? 'idle' : 'live');
+      if (this.state === undefined && t !== 'state') this.setState(this.rec.state === 'idle' ? 'idle' : 'live');
     }
     update(rec) { this.rec = rec; }
     dispose() { this.ctrl.abort(); this.screen.dispose(); }
@@ -536,7 +542,7 @@ export async function mountSessions(root, boot, toClassic) {
   class Transcript {
     constructor(host, rec) {
       this.rec = rec; this.ctrl = new AbortController();
-      host.innerHTML = `<div class="sx-live-head"><span class="sx-chip">transcript</span><span class="sx-muted">From the session's log on ${esc(rec.worker || 'its host')}${rec.state === 'closed' ? '' : ', a few seconds behind'}</span></div><div class="sx-screen-host"></div>`;
+      host.innerHTML = `<div class="sx-screen-host"></div>`;
       this.noteEl = noteTo(rec);
       ({screen: this.screen, painter: this.p} = screenFor(host.querySelector('.sx-screen-host'), rec, 'Transcript (read-only terminal)'));
       this.restart();

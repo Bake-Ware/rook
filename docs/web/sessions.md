@@ -35,14 +35,12 @@ and `task …` (linked to a task).
 - The header counts live, idle and closed sessions; a host heading shows that
   host's live and idle counts from its heartbeat.
 - **Activity**: the header's **Activity** button opens a panel over the
-  page (it never pushes the page around) with host warnings and the results
-  of what you did here: a host that did not answer (it stays listed from the
-  hub's last copy, marked **stale**), a host answering again, send results
-  ("Waiting for approval on …", "Delivered as a new turn", "Typed into the
-  Rook terminal"), task links, stop and resume results, a terminal's process
-  exiting, and read errors in live views. A badge counts entries you have not
-  seen, red when one is a warning or error. A repeat of the newest entry
-  bumps its count instead of adding a row; the panel keeps the last 200.
+  page (it never moves the page) with only what needs you: an action of yours
+  that failed, a message waiting for approval on another host, a host that has
+  not answered for 2 minutes (once), and read errors that keep repeating.
+  Successes and passing hiccups are not logged; a host that misses a refresh
+  is just marked **stale** on its heading. A badge counts unseen entries, red
+  for warnings.
 - **maybe running**: a Claude or Codex session that no process on its host is
   known to hold, but that may still be running there: its transcript changed
   in the last 2 minutes, or a Claude Code in its folder has a PID marker
