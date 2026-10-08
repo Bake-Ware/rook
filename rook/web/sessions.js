@@ -11,15 +11,19 @@ const ago = t => { if (!t) return ''; const s = Math.max(0, Date.now() / 1000 - 
 const STATES = {live: 0, idle: 1, closed: 2};
 const rank = r => STATES[r.state] ?? 2;
 const AGENTS = ['claude', 'codex', 'hermes', 'shell'];
-const POLL_MS = 8000, FOLLOW_MS = 3000, TAIL = 40, MAX_NODES = 400;
+const POLL_MS = 8000, FOLLOW_MS = 3000, TAIL = 40;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+// Status line colours in the read-only terminal (Claude Code's own: orange
+// while working, yellow while a permission prompt waits).
+const A_WORKING = '\x1b[38;5;173m', A_WAITING = '\x1b[33m', A_IDLE = '\x1b[2m';
 
 export async function mountSessions(root, boot, toClassic) {
   const search = new URL(import.meta.url).search;
   if (!document.querySelector('link[data-sessions-style]')) {
     const link = document.createElement('link'); link.rel = 'stylesheet'; link.href = '/account/work/assets/sessions.css' + search; link.dataset.sessionsStyle = '1'; document.head.append(link);
   }
-  const {TermView, loadXterm, themeColors} = await import('/account/work/assets/worklog.js' + search);
+  const [{TermView, loadXterm, themeColors}, {Screen, Painter, paintMessage}] = await Promise.all([
+    import('/account/work/assets/worklog.js' + search), import('/account/work/assets/session_screen.js' + search)]);
   const {csrf} = boot;
   root.innerHTML = `
     <div class="sx">
@@ -73,20 +77,71 @@ export async function mountSessions(root, boot, toClassic) {
 
   // -- the list -----------------------------------------------------------------
 
-  async function refresh() {
-    // A change while a request is out is fetched right after it.
-    if (loading) { stale = true; return loading; }
+  // The hub's last copy of every host's list comes back at once (cached=1);
+  // then each host is asked on its own (worker=) and its rows replaced as it
+  // answers, so one slow host never holds up the others.
+  let dataKey = null;
+  const asking = new Map();   // worker id -> the filter key it is being asked with
+  function listParams() {
     const q = new URLSearchParams({limit: '50'});
     const query = $('#sx-search').value.trim(); if (query) q.set('query', query);
     if ($('#sx-live').checked) q.set('live_only', '1');
+    return q;
+  }
+  async function getList(q) {
+    const r = await fetch('/account/work/sessions?' + q, {cache: 'no-store'});
+    if (r.status === 401 || r.status === 403) throw Error('Sign in with your operator account to see sessions.');
+    if (!r.ok) throw Error('Could not load sessions (' + r.status + ').');
+    return r.json();
+  }
+  function merge(got, only) {
+    // Rows from `got` replace those of the hosts in `only` (every host it lists when null).
+    const ids = new Set(only ? [only] : got.workers.map(w => w.worker_id));
+    const keep = x => !ids.has(x.worker_id);
+    data = {sessions: data.sessions.filter(keep).concat(got.sessions || []),
+            workers: data.workers.filter(keep).concat(got.workers || []),
+            errors: (data.errors || []).filter(keep).concat(got.errors || [])};
+  }
+  function showStatus() {
+    const waiting = data.workers.filter(w => asking.get(w.worker_id) === dataKey).map(w => w.name || w.worker_id);
+    $('#sx-status').textContent = waiting.length ? 'Asking ' + waiting.join(', ') + '…'
+      : 'Updated ' + new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+  }
+  async function askHost(id, q, key) {
+    if (asking.get(id) === key) return;   // still waiting for it
+    asking.set(id, key); showStatus();
+    try {
+      const one = new URLSearchParams(q); one.set('worker', id);
+      const got = await getList(one);
+      if (key !== dataKey) return;
+      merge(got, id); render();
+    } catch (e) {
+      if (key === dataKey) data.errors = (data.errors || []).filter(x => x.worker_id !== id).concat([{worker_id: id, worker: workerOf({worker_id: id})?.name, error: e.message}]);
+      renderNotices();
+    } finally { if (asking.get(id) === key) asking.delete(id); if (key === dataKey) showStatus(); }
+  }
+  async function refresh() {
+    // A change while a request is out is fetched right after it.
+    if (loading) { stale = true; return loading; }
+    const q = listParams(), key = q.toString();
     loading = (async () => {
       try {
-        const r = await fetch('/account/work/sessions?' + q, {cache: 'no-store'});
-        if (r.status === 401 || r.status === 403) throw Error('Sign in with your operator account to see sessions.');
-        if (!r.ok) throw Error('Could not load sessions (' + r.status + ').');
-        data = await r.json();
-        $('#sx-status').textContent = 'Updated ' + new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+        const cached = new URLSearchParams(q); cached.set('cached', '1');
+        const got = await getList(cached);
+        if (key !== dataKey) { data = {sessions: [], workers: [], errors: []}; dataKey = key; merge(got); }
+        else {
+          // Keep what each host last said; add hosts that joined, drop those gone.
+          const now = new Set(got.workers.map(w => w.worker_id)), known = new Set(data.workers.map(w => w.worker_id));
+          const gone = x => !now.has(x.worker_id);
+          data = {sessions: data.sessions.filter(x => !gone(x)), workers: data.workers.filter(x => !gone(x)),
+                  errors: (data.errors || []).filter(x => !gone(x))};
+          for (const w of got.workers) if (!known.has(w.worker_id))
+            merge({sessions: got.sessions.filter(s => s.worker_id === w.worker_id), workers: [w],
+                   errors: (got.errors || []).filter(e => e.worker_id === w.worker_id)}, w.worker_id);
+        }
         render();
+        for (const w of data.workers) askHost(w.worker_id, q, key);
+        showStatus();
       } catch (e) { $('#sx-status').textContent = e.message; }
       finally { loading = null; if (stale) { stale = false; refresh(); } }
     })();
@@ -138,6 +193,7 @@ export async function mountSessions(root, boot, toClassic) {
     return out.map(b => `<span class="sx-chip">${esc(b)}</span>`).join('');
   }
   function stateWord(r) {
+    if (r.possibly_live) return 'maybe running';
     if (r.state === 'live') return r.activity === 'ready' ? 'live' : 'working';
     return r.state || 'closed';
   }
@@ -259,13 +315,19 @@ export async function mountSessions(root, boot, toClassic) {
     const live = rec.state !== 'closed';
     const canTerm = (w?.harnesses || []).includes(rec.agent);
     const resume = el.querySelector('[data-act=resume]');
-    resume.hidden = live || !rec.resumable || !['claude', 'codex'].includes(rec.agent);
+    // A session Rook only suspects is running is never offered for resume:
+    // a second agent on one transcript would corrupt it.
+    resume.hidden = live || !rec.resumable || !!rec.possibly_live || !['claude', 'codex'].includes(rec.agent);
     resume.disabled = !canTerm; resume.title = canTerm ? '' : 'This host cannot run Rook terminals for ' + rec.agent;
     el.querySelector('[data-act=stop]').hidden = !(live && rec.origin === 'rook');
     const hint = el.querySelector('.sx-hint');
     const external = live && rec.origin === 'external' && !rec.view?.terminal;
+    const host = rec.worker || 'its host';
     hint.hidden = !(external || (!live && rec.links?.task));
-    hint.textContent = external ? (rec.agent === 'claude' ? 'Started outside Rook. To take it over here, run /rook-move in that Claude Code; Rook cannot stop it from this page.'
+    hint.textContent = rec.possibly_live === 'recent_write'
+      ? `Rook sees no process holding this session, but its transcript changed in the last 2 minutes, so it may still be running on ${host}. Resume is offered once it has been quiet for 2 minutes.`
+      : rec.possibly_live ? `A Claude Code on ${host} is running in this folder, but its session marker could not be read. This is the folder's newest session, so Rook treats it as running and does not offer Resume. End it on ${host} first.`
+      : external ? (rec.agent === 'claude' ? 'Started outside Rook. To take it over here, run /rook-move in that Claude Code; Rook cannot stop it from this page.'
       : 'Started outside Rook. End it on its host; once closed, resume it here in a Rook terminal.')
       : `This session worked on task ${rec.links?.task}. It has ended: leave a handoff on the task (Work page) or set its state.`;
     el.querySelector('.sx-send').hidden = !(live && rec.input && rec.input !== 'none');
@@ -370,51 +432,23 @@ export async function mountSessions(root, boot, toClassic) {
     dispose() { this.disposed = true; this.term?.dispose(); }
   }
 
-  // Read-only emulators for untrusted tool output: no input, no clipboard
-  // (OSC 52) and no links (OSC 8); mounted only near the viewport.
-  class Panes {
-    constructor(scroller) {
-      this.mounted = new Map();
-      this.io = new IntersectionObserver(entries => {
-        for (const e of entries) e.isIntersecting ? this.mount(e.target) : this.unmount(e.target);
-      }, {root: scroller, rootMargin: '600px 0px'});
-    }
-    add(el, text) {
-      const lines = String(text).split('\n').length;
-      el._text = String(text); el.classList.add('sx-pane');
-      el.style.height = Math.min(18, Math.max(2, lines)) * 17 + 10 + 'px';
-      this.io.observe(el);
-    }
-    async mount(el) {
-      if (this.mounted.has(el) || this.disposed) return;
-      this.mounted.set(el, null);
-      const {Terminal, FitAddon} = await loadXterm();
-      if (this.disposed || !this.mounted.has(el)) return;
-      const t = new Terminal({disableStdin: true, convertEol: true, cursorBlink: false, scrollback: 2000, fontSize: 12,
-        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', theme: themeColors(), allowProposedApi: false});
-      t.parser.registerOscHandler(52, () => true);
-      t.parser.registerOscHandler(8, () => true);
-      const fit = new FitAddon(); t.loadAddon(fit); t.open(el);
-      try { fit.fit(); } catch {}
-      t.write('\x1b[?25l' + el._text);
-      this.mounted.set(el, t);
-    }
-    unmount(el) { const t = this.mounted.get(el); this.mounted.delete(el); t?.dispose(); }
-    forget(el) { this.io.unobserve(el); this.unmount(el); }
-    dispose() { this.disposed = true; this.io.disconnect(); for (const t of this.mounted.values()) t?.dispose(); this.mounted.clear(); }
+  // Tiers 2 and 3 share one read-only terminal (session_screen.js): the
+  // events are written as ANSI that looks like the agent's own TUI.
+  function screenFor(host, rec, label) {
+    const screen = new Screen(host, loadXterm, themeColors, label);
+    return {screen, painter: new Painter(screen, rec.agent)};
   }
-  function trim(log, panes) {
-    while (log.childElementCount > MAX_NODES) { const n = log.firstElementChild; n.querySelectorAll('.sx-pane').forEach(p => panes.forget(p)); n.remove(); }
-  }
-  function stick(log) { return log.scrollHeight - log.scrollTop - log.clientHeight < 80; }
+  const stateLine = (state, rec) => state === 'working' ? A_WORKING + '✻ Working…'
+    : state === 'waiting' ? A_WAITING + '✻ Waiting for approval on ' + (rec.worker || 'its host')
+    : state === 'idle' ? A_IDLE + '· idle, waiting for input' : state === 'ended' ? A_IDLE + '· session ended' : '';
 
   // Tier 2: live events from the Claude Code mod's mirror (sessions.mirror).
   class LiveLog {
     constructor(host, rec) {
-      this.rec = rec; this.cursor = 0; this.tools = new Map(); this.streaming = null; this.ctrl = new AbortController();
-      host.innerHTML = `<div class="sx-live-head"><span class="sx-chip sx-state">connecting</span><span class="sx-muted">Live view from the Rook mod on ${esc(rec.worker || 'its host')}</span></div><div class="sx-log" tabindex="0" aria-label="Session events"></div><p class="sx-muted sx-log-note" role="status"></p>`;
-      this.log = host.querySelector('.sx-log'); this.chip = host.querySelector('.sx-state'); this.noteEl = host.querySelector('.sx-log-note');
-      this.panes = new Panes(this.log);
+      this.rec = rec; this.cursor = 0; this.ctrl = new AbortController();
+      host.innerHTML = `<div class="sx-live-head"><span class="sx-chip sx-state">connecting</span><span class="sx-muted">Live view from the Rook mod on ${esc(rec.worker || 'its host')}</span></div><div class="sx-screen-host"></div><p class="sx-muted sx-log-note" role="status"></p>`;
+      this.chip = host.querySelector('.sx-state'); this.noteEl = host.querySelector('.sx-log-note');
+      ({screen: this.screen, painter: this.p} = screenFor(host.querySelector('.sx-screen-host'), rec, 'Session events (read-only terminal)'));
       this.loop();
     }
     async loop() {
@@ -425,10 +459,7 @@ export async function mountSessions(root, boot, toClassic) {
           const res = await post('mirror', {...who(this.rec), cursor: this.cursor, wait}, this.ctrl.signal);
           if (this.ctrl.signal.aborted) return;
           this.noteEl.textContent = res.exists === false && !res.events.length ? 'No mirror yet for this session.' : '';
-          const end = stick(this.log);
           for (const ev of res.events) this.apply(ev);
-          trim(this.log, this.panes);
-          if (end) this.log.scrollTop = this.log.scrollHeight;
           this.cursor = res.cursor; backoff = 1000; wait = 20;
           if (res.done) { this.setState('ended'); return; }
         } catch (err) {
@@ -441,52 +472,42 @@ export async function mountSessions(root, boot, toClassic) {
     setState(state) {
       this.chip.textContent = state === 'waiting' ? `waiting for approval on ${this.rec.worker || 'its host'}` : state;
       this.chip.dataset.state = state;
+      this.p.status(stateLine(state, this.rec));
     }
-    node(cls, html) { const n = document.createElement('div'); n.className = cls; n.innerHTML = html; this.log.append(n); return n; }
     apply(ev) {
-      const t = ev.type;
-      if (t !== 'assistant.delta' && t !== 'assistant.done') this.streaming = null;
-      if (t === 'session.start') this.node('sx-sys', esc(['Session started', ev.model, ev.version ? 'Claude Code ' + ev.version : '', ev.inbound ? 'inbox: ' + ev.inbound : ''].filter(Boolean).join(' · ')));
-      else if (t === 'prompt') this.node('sx-msg sx-user', `<b>${ev.from === 'peer' ? 'Message from another session' : 'Prompt'}</b><div class="sx-text"></div>`).querySelector('.sx-text').textContent = ev.text || '';
-      else if (t === 'assistant.delta') {
-        if (!this.streaming) { this.streaming = this.unfinished = this.node('sx-msg sx-assistant streaming', '<b>Assistant</b><div class="sx-text"></div>').querySelector('.sx-text'); }
-        this.streaming.textContent += ev.text || '';
-      } else if (t === 'assistant.done') {
-        // The full message: it replaces the streamed pieces, even when other events came in between.
-        const prior = this.unfinished?.isConnected && (ev.text || '').startsWith(this.unfinished.textContent) ? this.unfinished : null;
-        const text = this.streaming || prior || this.node('sx-msg sx-assistant', '<b>Assistant</b><div class="sx-text"></div>').querySelector('.sx-text');
-        text.textContent = ev.text || text.textContent; text.parentElement.classList.remove('streaming'); this.streaming = this.unfinished = null;
-      } else if (t === 'tool.call') {
-        const n = this.node('sx-tool', `<details open><summary><span class="sx-tool-name"></span><span class="sx-muted sx-tool-arg"></span><span class="sx-tool-ok"></span></summary><pre class="sx-tool-input"></pre><div class="sx-tool-out"></div></details>`);
-        n.querySelector('.sx-tool-name').textContent = ev.name || 'tool';
-        const input = typeof ev.input === 'string' ? ev.input : JSON.stringify(ev.input ?? '', null, 2);
-        n.querySelector('.sx-tool-arg').textContent = input.replace(/\s+/g, ' ').slice(0, 120);
-        n.querySelector('.sx-tool-input').textContent = input;
-        if (ev.id) { this.tools.set(ev.id, n); if (this.tools.size > 200) this.tools.delete(this.tools.keys().next().value); }
-      } else if (t === 'tool.result') {
-        const n = this.tools.get(ev.id) || this.node('sx-tool', `<details open><summary><span class="sx-tool-name">result</span><span class="sx-tool-ok"></span></summary><div class="sx-tool-out"></div></details>`);
-        this.tools.delete(ev.id);
-        const ok = n.querySelector('.sx-tool-ok'); ok.textContent = ev.ok === false ? 'error' : 'ok'; ok.classList.toggle('sx-error', ev.ok === false);
-        const out = n.querySelector('.sx-tool-out'); out.replaceChildren();
-        if (ev.text) { const pane = document.createElement('div'); out.append(pane); this.panes.add(pane, ev.text); }
-        n.querySelector('details').open = ev.ok === false;
-      } else if (t === 'turn.end') this.node('sx-turn', esc('Turn ended' + (ev.stop_reason && ev.stop_reason !== 'answer' ? ' (' + ev.stop_reason + ')' : '')));
+      const t = ev.type, p = this.p;
+      if (t === 'session.start') p.banner([['Claude Code', ev.version].filter(Boolean).join(' '),
+        ...(ev.cwd ? ['cwd: ' + ev.cwd] : []), [ev.model, ev.inbound ? 'inbox: ' + ev.inbound : ''].filter(Boolean).join(' · ')].filter(Boolean));
+      else if (t === 'prompt') p.prompt(ev.text, ev.from);
+      else if (t === 'assistant.delta') p.delta(ev.text);
+      else if (t === 'assistant.done') p.done(ev.text);
+      else if (t === 'tool.call') p.call(ev.id, ev.name, ev.input);
+      else if (t === 'tool.result') p.result(ev.id, ev.text, ev.ok);
+      else if (t === 'turn.end') p.turnEnd(ev.stop_reason);
       else if (t === 'state') this.setState(ev.state || 'idle');
-      else if (t === 'session.end') { this.node('sx-sys', esc('Session ended' + (ev.reason ? ' (' + ev.reason + ')' : ''))); this.setState('ended'); }
+      else if (t === 'session.end') { p.note('Session ended' + (ev.reason ? ' (' + ev.reason + ')' : '')); this.setState('ended'); }
       if (this.chip.dataset.state === undefined && t !== 'state') this.setState(this.rec.state === 'idle' ? 'idle' : 'live');
     }
     update(rec) { this.rec = rec; }
-    dispose() { this.ctrl.abort(); this.panes.dispose(); }
+    dispose() { this.ctrl.abort(); this.screen.dispose(); }
   }
 
-  // Tier 3: the transcript tail (sessions.follow), polled.
+  // Tier 3: the transcript, tail first (sessions.follow tail=TAIL), then
+  // only what is new.
   class Transcript {
     constructor(host, rec) {
-      this.rec = rec; this.msgs = new Map(); this.nodes = new Map(); this.offset = 0; this.version = ''; this.ctrl = new AbortController();
-      host.innerHTML = `<div class="sx-live-head"><span class="sx-chip">transcript</span><span class="sx-muted">From the session's log on ${esc(rec.worker || 'its host')}${rec.state === 'closed' ? '' : ', a few seconds behind'}</span></div><div class="sx-log" tabindex="0" aria-label="Transcript"></div><p class="sx-muted sx-log-note" role="status">Reading…</p>`;
-      this.log = host.querySelector('.sx-log'); this.noteEl = host.querySelector('.sx-log-note');
-      this.panes = new Panes(this.log);
+      this.rec = rec; this.ctrl = new AbortController();
+      host.innerHTML = `<div class="sx-live-head"><span class="sx-chip">transcript</span><span class="sx-muted">From the session's log on ${esc(rec.worker || 'its host')}${rec.state === 'closed' ? '' : ', a few seconds behind'}</span></div><div class="sx-screen-host"></div><p class="sx-muted sx-log-note" role="status">Reading…</p>`;
+      this.noteEl = host.querySelector('.sx-log-note');
+      ({screen: this.screen, painter: this.p} = screenFor(host.querySelector('.sx-screen-host'), rec, 'Transcript (read-only terminal)'));
+      this.restart();
       this.loop();
+    }
+    restart() {
+      // From the tail again: the first view, or a log that was rewritten.
+      this.msgs = new Map(); this.offset = 0; this.version = ''; this.next = null; this.skipped = 0;
+      this.tail = true; this.legacy = false; this.prevCall = null; this.activity = null;
+      this.screen.reset(); this.p.reset();
     }
     async loop() {
       let backoff = 2000;
@@ -494,10 +515,12 @@ export async function mountSessions(root, boot, toClassic) {
         if (!active || document.hidden) { await sleep(1000); continue; }
         let again = false;
         try {
-          const page = await post('follow', {...who(this.rec), offset: this.offset, version: this.version}, this.ctrl.signal);
+          const body = {...who(this.rec), offset: this.offset, version: this.version};
+          if (this.tail) body.tail = TAIL;
+          const page = await post('follow', body, this.ctrl.signal);
           if (this.ctrl.signal.aborted) return;
           again = this.apply(page); backoff = 2000;
-          this.noteEl.textContent = this.msgs.size ? '' : 'No messages yet.';
+          if (!page.unchanged) this.noteEl.textContent = this.next === 0 ? 'No messages yet.' : '';
         } catch (err) {
           if (this.ctrl.signal.aborted) return;
           this.noteEl.textContent = err.message;
@@ -510,55 +533,43 @@ export async function mountSessions(root, boot, toClassic) {
       }
     }
     async idle() { while (!this.ctrl.signal.aborted && this.rec.state === 'closed') await sleep(1000); }
+    // Returns true when the next page should be asked for at once.
     apply(page) {
       if (page.unchanged) return false;
+      const asked = this.tail; this.tail = false;
       const total = page.total_messages || 0, from = Number.isInteger(page.replace_from) ? page.replace_from : this.offset;
-      if (from === 0 && total > TAIL && (page.messages || []).length && page.messages[0].index === 0 && page.truncated) {
-        // Start (or restart) at the tail instead of paging the whole history.
-        this.clear(); this.offset = total - TAIL; this.version = ''; this.skipped = total - TAIL; return true;
+      if (this.next !== null && from < this.next) { this.restart(); return true; }   // rewritten under us
+      if (asked && !Number.isInteger(page.tail_from)) {
+        // A worker without tail=: jump to the tail with one more request.
+        this.legacy = true;
+        if (from === 0 && total > TAIL && page.truncated) { this.offset = this.skipped = total - TAIL; this.version = ''; return true; }
       }
-      for (const [i, n] of this.nodes) if (i >= from) { n.querySelectorAll('.sx-pane').forEach(p => this.panes.forget(p)); n.remove(); this.nodes.delete(i); this.msgs.delete(i); }
+      if (this.next === null) {
+        this.skipped = Number.isInteger(page.tail_from) ? page.tail_from : this.skipped;
+        this.next = this.skipped;
+        if (this.skipped) this.p.note(`… ${this.skipped} earlier message${this.skipped === 1 ? '' : 's'} not shown`);
+      }
       for (const m of page.messages || []) {
         const prev = this.msgs.get(m.index);
-        this.msgs.set(m.index, {role: m.role, text: prev && m.content_offset > 0 ? prev.text + m.content : m.content});
+        this.msgs.set(m.index, {...m, text: prev && m.content_offset > 0 ? prev.text + m.content : m.content, legacy: this.legacy});
       }
-      if (page.truncated) {
-        if (page.next_offset > from) this.offset = page.next_offset;
-        else { const m = this.msgs.get(from); if (m) m.clipped = true; this.offset = from + 1; }
-        this.version = '';
-      } else {
-        this.version = page.version || '';
-        this.offset = Math.max(0, ...this.msgs.keys());
+      // A message cut by the page budget: what arrived is shown, marked clipped.
+      const cut = page.truncated && page.next_content_offset > 0 && page.next_offset === from ? this.msgs.get(from) : null;
+      if (cut) cut.clipped = true;
+      const complete = page.truncated ? (cut ? from + 1 : page.next_offset) : Infinity;
+      while (this.msgs.has(this.next) && this.next < complete) {
+        const m = this.msgs.get(this.next);
+        this.prevCall = paintMessage(this.p, m, this.prevCall);
+        this.msgs.delete(this.next); this.next++;
       }
-      this.paint();
+      this.activity = page.activity ?? this.activity;
+      this.p.status(this.rec.state !== 'closed' && this.activity === 'working' ? stateLine('working', this.rec) : '');
+      if (page.truncated) { this.offset = cut ? from + 1 : page.next_offset; this.version = ''; }
+      else { this.offset = this.next; this.version = page.version || ''; }
       return !!page.truncated && this.offset < total;
     }
-    clear() { for (const n of this.nodes.values()) { n.querySelectorAll('.sx-pane').forEach(p => this.panes.forget(p)); n.remove(); } this.nodes.clear(); this.msgs.clear(); }
-    paint() {
-      const end = stick(this.log);
-      if (this.skipped && !this.log.querySelector('.sx-skipped')) { const s = document.createElement('div'); s.className = 'sx-sys sx-skipped'; s.textContent = `${this.skipped} earlier messages not shown`; this.log.prepend(s); }
-      for (const i of [...this.msgs.keys()].sort((a, b) => a - b)) {
-        const m = this.msgs.get(i); let n = this.nodes.get(i);
-        if (n && n._text === m.text) continue;
-        const fresh = !n;
-        if (fresh) { n = document.createElement('div'); this.nodes.set(i, n); }
-        else n.querySelectorAll('.sx-pane').forEach(p => this.panes.forget(p));
-        n._text = m.text;
-        const tool = m.role === 'tool';
-        n.className = tool ? 'sx-tool' : 'sx-msg sx-' + (m.role === 'user' ? 'user' : 'assistant');
-        n.innerHTML = `<b>${esc(tool ? 'Tool' : m.role === 'user' ? 'User' : 'Assistant')}${m.clipped ? ' (clipped)' : ''}</b><div class="sx-text"></div>`;
-        if (tool) { const pane = n.querySelector('.sx-text'); pane.classList.remove('sx-text'); this.panes.add(pane, m.text); }
-        else n.querySelector('.sx-text').textContent = m.text;
-        if (fresh) {
-          const after = [...this.nodes.keys()].filter(k => k > i).sort((a, b) => a - b)[0];
-          if (after !== undefined && this.nodes.get(after).isConnected) this.log.insertBefore(n, this.nodes.get(after)); else this.log.append(n);
-        }
-      }
-      trim(this.log, this.panes);
-      if (end) this.log.scrollTop = this.log.scrollHeight;
-    }
     update(rec) { this.rec = rec; }
-    dispose() { this.ctrl.abort(); this.panes.dispose(); }
+    dispose() { this.ctrl.abort(); this.screen.dispose(); }
   }
 
   // -- wiring ----------------------------------------------------------------------

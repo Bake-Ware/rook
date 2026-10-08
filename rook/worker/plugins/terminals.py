@@ -400,7 +400,7 @@ class TerminalsPlugin(Plugin):
                    remote_control: str = "", cols: int = 120, rows: int = 32,
                    buffer_bytes: int = DEFAULT_RING, handoff_pid: int = 0,
                    argv: list | None = None, cmd: str = "", env: dict | None = None,
-                   task: str = "", room: str = "") -> dict:
+                   task: str = "", room: str = "", force: bool = False) -> dict:
         """Start a harness (shell|claude|codex|hermes) under a PTY and return
         its terminal ``id`` immediately. With ``argv`` (a list, no shell) or
         ``cmd`` (a string through /bin/sh -c, cmd.exe /c on Windows) it runs
@@ -417,8 +417,12 @@ class TerminalsPlugin(Plugin):
         ``handoff_pid`` (with ``resume``) is the
         process that holds the session now, such as a Claude Code moving itself
         here with /rook-move: the terminal is returned at once and the harness
-        starts once that process has exited (up to 2 minutes). Follow output
-        with work.stream.read."""
+        starts once that process has exited (up to 2 minutes). Without
+        ``handoff_pid``, a resume is refused while the session's transcript
+        changed in the last 2 minutes or a Claude Code with an unreadable PID
+        marker probably holds it; ``force=true`` overrides that guess (never
+        the process evidence). Follow output with work.stream.read."""
+        force = force in (True, 1, "1", "true", "yes")
         self._reap()
         if harness not in HARNESSES:
             raise ValueError(f"harness must be one of {', '.join(HARNESSES)}")
@@ -447,6 +451,14 @@ class TerminalsPlugin(Plugin):
             for t in self.terms.values():
                 if t.running and t.resume == resume:
                     raise ValueError(f"that session is already running in terminal {t.id}")
+            if not force:
+                # No process is known to hold it, but one may (sessions.md §3.1).
+                from .sessions import resume_guard
+                why = await asyncio.to_thread(resume_guard, harness, resume)
+                if why:
+                    raise ValueError(f"that session may still be running on this host: {why}. "
+                                     "Resume it once it has been quiet for 2 minutes, or pass "
+                                     "force=true if you are sure nothing holds it")
         if session:
             _check_id(session, "session")
         task, room = str(task or ""), str(room or "")
