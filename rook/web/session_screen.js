@@ -152,9 +152,11 @@ export class Painter {
     this.out(out + '╰' + '─'.repeat(w - 2) + '╯' + A.reset + '\r\n'); this.showStatus();
   }
   prompt(text, from) {
+    const peer = peerBody(text);
+    if (peer !== null) { text = peer; from = 'peer'; }
     let out = this.begin('prompt');
-    if (from === 'peer') out += A.dim + '  (message from another session)' + A.reset + '\r\n';
     out += this.lines(plain(text).replace(/\n+$/, '') || ' ', A.grey + this.g.prompt + ' ' + A.reset + A.bold, '  ') + A.reset;
+    if (from === 'peer') out = out.replace(/\r\n$/, '') + A.dim + '  · via Rook' + A.reset + '\r\n';
     this.out(out); this.showStatus();
   }
   // Streamed reply text, appended in place.
@@ -217,6 +219,15 @@ export class Painter {
     this.out(this.begin('turn') + A.dim + (reason && reason !== 'answer' ? A.yellow : '') + rule + A.reset + '\r\n');
     this.showStatus();
   }
+}
+
+// Claude Code stores a message sent from another session (a Rook send) inside
+// a fixed wrapper: "Another Claude session sent a message[ while you were
+// working]:\n<text>\n\nThis came from another Claude session — …". Only the
+// text is shown; null when the prompt is not wrapped.
+export function peerBody(text) {
+  const m = /^(?:Another Claude session|A peer session) sent a message(?: while you were working)?:\n([\s\S]*?)\n\n(?:This came from another Claude session|This came from a peer session)[\s\S]*$/.exec(String(text || ''));
+  return m ? m[1] : null;
 }
 
 // A transcript message (sessions.follow) as blocks. Assistant records carry
