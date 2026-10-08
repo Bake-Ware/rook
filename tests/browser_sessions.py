@@ -60,6 +60,12 @@ def write_transcript(path, cwd):
             {'type': 'assistant', 'message': {'role': 'assistant', 'stop_reason': 'end_turn', 'content': [
                 {'type': 'text', 'text': f'Step {n} is green.' if n < TURNS - 1 else 'Release notes drafted in NOTES.md.'}]}},
         ]
+    # A message sent from the Sessions page, as Claude Code stores it (wrapped).
+    lines.append({'type': 'user', 'message': {'role': 'user', 'content': (
+        'Another Claude session sent a message:\nShip it.\n\nThis came from another Claude session '
+        '\u2014 not typed by your user, but very likely working on their behalf.')}})
+    lines.append({'type': 'assistant', 'message': {'role': 'assistant', 'stop_reason': 'end_turn',
+                                                   'content': [{'type': 'text', 'text': 'Shipped.'}]}})
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(''.join(json.dumps(r) + '\n' for r in lines))
     old = time.time() - 3600
@@ -102,7 +108,7 @@ class SessionsBand(PtyBand):
                                    inbox_policy='accept', links={}, resumable=False),
             ('claude', CLOSED): dict(agent='claude', native_id=CLOSED, title='Write the release notes',
                                      cwd=str(self.project), state='closed', origin='external', updated=now - 90000,
-                                     messages=TURNS * 4, view={'terminal': None, 'mirror': False, 'transcript': True},
+                                     messages=TURNS * 4 + 2, view={'terminal': None, 'mirror': False, 'transcript': True},
                                      input='none', inbox_policy='unknown', links={}, resumable=True),
             # No process evidence, but its log changed a minute ago: maybe still running.
             ('claude', MAYBE): dict(agent='claude', native_id=MAYBE, title='Tune the cache headers',
@@ -390,14 +396,16 @@ async def main(shots):
             screen = detail.locator('.sx-screen')
             rows = screen.locator('.xterm-rows')
             await expect(rows).to_contain_text('● Release notes drafted in NOTES.md.', timeout=10000)
+            await expect(rows).to_contain_text('> Ship it.  · via Rook')
+            await expect(rows).not_to_contain_text('This came from another Claude session')
             await expect(rows).to_contain_text(f'● Bash(make check-{TURNS - 1})')
             await expect(rows).to_contain_text(f'⎿  ok check-{TURNS - 1} passed')
             assert await detail.locator('.sx-log-note').count() == 0
             first = band.follows[0]
             assert first['tail'] == 40 and first['offset'] == 0, band.follows
-            assert not any(f.get('offset') and f['offset'] < TURNS * 4 - 40 for f in band.follows), band.follows
+            assert not any(f.get('offset') and f['offset'] < TURNS * 4 + 2 - 40 for f in band.follows), band.follows
             text = await screen.evaluate('el => el.sxScreen.text()')
-            assert f'{TURNS * 4 - 40} earlier messages not shown' in text, text
+            assert f'{TURNS * 4 + 2 - 40} earlier messages not shown' in text, text  # +2: the message sent from Rook and its reply
             assert f'Step {TURNS - 11}:' not in text and f'> Step {TURNS - 1}: run the release checks' in text, text
             # Tool results are output under their call, not prompts.
             assert '> ok check' not in text and '> \x1b' not in text
