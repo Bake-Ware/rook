@@ -45,9 +45,11 @@ export class TermView {
   layout() {
     // The holder sizes the PTY to its own window; everyone else renders the
     // PTY's grid as-is so output wraps exactly as it does for the holder.
+    // A local terminal (started in someone's own terminal through the session
+    // shim) is sized by that terminal, so every viewer renders its grid.
     if (!this.term || this.disposed) return;
     const {cols, rows} = this.state;
-    if (this.holder()) {
+    if (this.holder() && !this.state.fixed) {
       try { this.fit.fit(); } catch {}
       if (this.term.cols !== cols || this.term.rows !== rows) this.send({op: 'resize', cols: this.term.cols, rows: this.term.rows});
     } else if (cols && rows) {
