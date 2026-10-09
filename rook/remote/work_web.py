@@ -53,6 +53,11 @@ MIRROR_WATCHERS = 32                # long-polls held at once, hub-wide (bounded
 MIRROR_EVENTS_MAX = 500
 FOLLOW_TAIL_MAX = 200               # follow(tail=N): start at the last N messages
 TEXT_MAX = 24000
+# Classic history discovery (discover). A worker's first pull after a restart
+# scans every log on the page cold, which takes well over the default 12 s on
+# a slow host with large logs; a failed pull is retried with back-off.
+HISTORY_PULL_TIMEOUT = 60
+HISTORY_RETRY = (60, 900)           # first and longest wait after a failure
 TASK_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.:-]{0,119}$')
 
 
@@ -292,6 +297,7 @@ class WorkWeb:
         # (marked stale) when the worker does not answer.
         self.catalogs = {}
         self.catalog_failures = {}      # worker id -> why its last catalog read failed
+        self.history_failures = {}      # (worker, band, agent) -> failed history pull, retry time
         self.watching = 0             # mirror long-polls held right now
 
     def lock(self, sid):
@@ -1446,22 +1452,51 @@ class WorkWeb:
             try:
                 with self.account.store.db() as db:
                     owners = [r['id'] for r in db.execute('SELECT id FROM users WHERE admin=1')]
-                allowed = {name.strip() for name in os.environ.get("ROOK_WORK_IMPORT_WORKERS", "").split(",") if name.strip()}
-                for worker in self.workers(history=True):
-                    if allowed and worker.get("name") not in allowed:
-                        continue
-                    for agent in ('claude', 'codex'):
-                        if agent + '-history.pull' not in worker.get('caps', []):
-                            continue
-                        try:
-                            await self.sync_history(worker, agent, owners)
-                        except Exception:
-                            log.exception('Work history sync failed for %s/%s', worker['worker_id'], agent)
+                await self.sync_histories(owners)
             except asyncio.CancelledError:
                 raise
             except Exception:
                 log.exception('Work discovery failed')
             await asyncio.sleep(15)
+
+    async def sync_histories(self, owners):
+        """One discovery pass over the connected workers, side by side so a
+        slow host does not hold up the rest. A failing worker/agent is logged
+        once, retried with back-off, and logged again only when it recovers or
+        fails differently; a worker that leaves is forgotten."""
+        allowed = {name.strip() for name in os.environ.get("ROOK_WORK_IMPORT_WORKERS", "").split(",") if name.strip()}
+        workers = [w for w in self.workers(history=True) if not allowed or w.get("name") in allowed]
+        present = {(w['worker_id'], w.get('band')) for w in workers}
+        for key in [k for k in self.history_failures if k[:2] not in present]:
+            del self.history_failures[key]
+        await asyncio.gather(*(self.sync_worker_history(w, owners) for w in workers))
+
+    async def sync_worker_history(self, worker, owners):
+        for agent in ('claude', 'codex'):
+            if agent + '-history.pull' not in worker.get('caps', []):
+                continue
+            key = (worker['worker_id'], worker.get('band'), agent)
+            failed = self.history_failures.get(key)
+            if failed and time.time() < failed['retry']:
+                continue
+            name = '%s/%s' % (worker.get('name') or worker['worker_id'], agent)
+            try:
+                await self.sync_history(worker, agent, owners)
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                problem = str(error) or ('timed out' if isinstance(error, TimeoutError) else type(error).__name__)
+                delay = min(failed['delay'] * 2, HISTORY_RETRY[1]) if failed else HISTORY_RETRY[0]
+                if not failed or failed['problem'] != problem:
+                    if isinstance(error, (TimeoutError, ValueError, OSError)):
+                        log.warning('Work history sync failed for %s: %s (retrying with back-off)', name, problem)
+                    else:
+                        log.exception('Work history sync failed for %s', name)
+                self.history_failures[key] = dict(problem=problem, delay=delay, retry=time.time() + delay)
+            else:
+                if failed:
+                    log.info('Work history sync recovered for %s', name)
+                    del self.history_failures[key]
 
     async def sync_history(self, worker, agent, owners):
         target = dict(worker_id=worker['worker_id'], band=worker.get('band'))
@@ -1472,7 +1507,16 @@ class WorkWeb:
             and s.get('agent', 'codex') == agent} for owner in owners}
         offset = 0
         while True:
-            result = await self.rpc(target, namespace + '.pull', {'limit': 20, 'offset': offset})
+            try:
+                result = await self.rpc(target, namespace + '.pull', {'limit': 20, 'offset': offset},
+                                        timeout=HISTORY_PULL_TIMEOUT)
+            except ValueError as error:
+                # Workers from before paged pulls take no offset: one page of the newest.
+                if offset or "'offset'" not in str(error):
+                    raise
+                result = await self.rpc(target, namespace + '.pull', {'limit': 50},
+                                        timeout=HISTORY_PULL_TIMEOUT)
+                result['total'] = len(result.get('sessions', []))
             entries = result.get('sessions', [])
             for meta in entries:
                 source = meta.get('session_id')
