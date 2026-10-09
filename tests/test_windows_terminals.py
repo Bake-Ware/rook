@@ -88,6 +88,10 @@ class FakeKernel32:
     def DeleteProcThreadAttributeList(self, buf):
         self.calls.append(("DeleteProcThreadAttributeList",))
 
+    def SetConsoleCtrlHandler(self, handler, add):
+        self.calls.append(("SetConsoleCtrlHandler", handler, add))
+        return 1
+
     def CreateProcessW(self, app, cmd, pa, ta, inherit, flags, env, cwd, si, pi):
         si = si._obj
         block = env[:]
@@ -208,6 +212,9 @@ def test_spawn_wires_pseudoconsole_job_and_suspended_start(k32, tmp_path):
     assert create[6]
     assert ("SetInformationJobObject", conpty.JobObjectExtendedLimitInformation,
             conpty.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE) in k32.calls
+    # Ctrl-C re-enabled for children before they are created.
+    assert ("SetConsoleCtrlHandler", None, False) in k32.calls
+    assert names.index("SetConsoleCtrlHandler") < names.index("CreateProcessW")
     # Into the job before it runs; the console's pipe ends closed right after creation.
     assert names.index("AssignProcessToJobObject") < names.index("ResumeThread")
     first_pc = names.index("CreatePseudoConsole")

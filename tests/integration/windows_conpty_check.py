@@ -61,7 +61,7 @@ async def follow(p: TerminalsPlugin, tid: str, needle: str, cursor: int = 0, tim
 def raw_conpty(tmp: str) -> None:
     """conpty.py alone: output, input, resize, exit code, job teardown."""
     out = bytearray()
-    pty = conpty.ConPty.spawn('cmd.exe /d /c "echo conpty-ok & set /p x= & echo got-%x% & exit /b 7"',
+    pty = conpty.ConPty.spawn('cmd.exe /d /v:on /c "echo conpty-ok & set /p x= & echo got-!x! & exit /b 7"',
                               tmp, dict(os.environ), cols=100, rows=30)
     pty.start_reader(out.extend)
     time.sleep(1.0)
@@ -122,7 +122,7 @@ async def plugin_checks(tmp: str, with_claude: bool) -> None:
 
         r = await p.open(harness="shell", cwd=tmp, mcp_url="https://hub.example.com/mcp", mcp_token="not-a-real-token")
         t = p.terms[r["id"]]
-        owner, aces = winsec.file_security(str(Path(tmp) / "terms"))
+        owner, aces = winsec.file_security(str(p._session_dir()))
         check("terminal dir: owner-only ACL", aces is not None and {sid for _k, sid in aces} == {winsec.current_user_sid()},
               f"{aces}")
         await p.write(r["id"], "Write-Output ('env-' + $env:TERM + '-' + [bool]$env:ROOK_MCP_TOKEN)\r")
