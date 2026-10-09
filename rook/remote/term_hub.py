@@ -113,6 +113,7 @@ class TermStream:
         self.lost = ""            # why we stopped hearing from the worker
         self.cols = 0
         self.rows = 0
+        self.fixed = False        # a local (shim) terminal: its own terminal sets the size
         self.viewers: dict[str, Viewer] = {}
         self.holder: str | None = None
         self.pull: asyncio.Task | None = None
@@ -127,7 +128,7 @@ class TermStream:
 
     def state(self) -> dict:
         return {"type": "state", "holder": self.holder, "cols": self.cols, "rows": self.rows,
-                "running": self.running, "exit_code": self.exit_code, "lost": self.lost,
+                "fixed": self.fixed, "running": self.running, "exit_code": self.exit_code, "lost": self.lost,
                 "viewers": [{"id": v.id, "label": v.label} for v in self.viewers.values()]}
 
     def broadcast_state(self) -> None:
@@ -184,8 +185,8 @@ class TermStream:
                                                     str(data.get("data", "")), limit=INPUT_MAX))
             return
         elif op == "resize":
-            if self.holder != viewer.id:
-                return  # only the holder sizes the PTY
+            if self.holder != viewer.id or self.fixed:
+                return  # only the holder sizes the PTY, and never a local terminal's
             cols, rows = int(data.get("cols", 0)), int(data.get("rows", 0))
             if 20 <= cols <= 500 and 5 <= rows <= 200:
                 self.request_resize(cols, rows)
@@ -310,8 +311,11 @@ class TermStream:
             misses = 0
             raw = termwire.decode(r.get("enc", "t"), r.get("data", ""))
             self._append(int(r.get("cursor", self.end)), raw)
-            if (r.get("cols"), r.get("rows")) != (self.cols, self.rows) and r.get("cols"):
-                self.cols, self.rows = r["cols"], r["rows"]
+            fixed = bool(r.get("fixed"))
+            if ((r.get("cols"), r.get("rows")) != (self.cols, self.rows) and r.get("cols")) \
+                    or fixed != self.fixed:
+                self.cols, self.rows = r.get("cols") or self.cols, r.get("rows") or self.rows
+                self.fixed = fixed
                 self.broadcast_state()
             if r.get("eof"):
                 self.finish(r.get("exit_code"))

@@ -402,6 +402,14 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 |---|---|---|
 | `sessions.mirror` | agent, native_id, cursor=0, wait=0, max_events=500 | Live events of a session the Rook Claude Code mod mirrors on this host, those after `cursor` (the last `seq`… |
 
+**session_shim**
+
+| Cap | Args | Does |
+|---|---|---|
+| `sessions.shim.install` | agents?, shells? | Install the session shim on this host (opt-in; off by default). |
+| `sessions.shim.status` | — | Whether the session shim is installed here, for which agents and shells, where the real binaries are, and how… |
+| `sessions.shim.uninstall` | — | Remove the session shim: its rc blocks, its fish file and its folder. |
+
 **sessions**
 
 | Cap | Args | Does |

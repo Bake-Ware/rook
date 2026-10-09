@@ -4,7 +4,8 @@ Status: master plan, October 2026. Work lands as PRs to the `beta` branch;
 each workstream below is one PR (or a short series). This document is the
 contract between them: if a PR needs to change a shape defined here, it
 changes this document in the same PR. All six workstreams (§4, A-F) have
-landed on `beta`; none is promoted yet.
+landed on `beta`; none is promoted yet. Workstream G (the session shim,
+§4) follows them.
 
 Words (workstream F): **Sessions** means agent and terminal sessions
 everywhere (dashboard Sessions page, the mod's Sessions tab, console rooms,
@@ -139,7 +140,8 @@ How the worker fills the record (as built, `rook/worker/plugins/sessions.py`):
   `work_session` (the hub session it was launched for), `task` and
   `console_room` (§3.7); the hub adds the rest (and its own `task` link wins).
 - Extra fields that may appear: `activity` (`working`/`ready`/`pending`),
-  `pid` (live only), `model`.
+  `pid` (live only), `model`, `local` (true: a Rook terminal the session
+  shim runs in someone's own terminal, §4 G; it is sized by that terminal).
 
 ### 3.2 One set of verbs
 
@@ -162,6 +164,9 @@ best one available:
 
 1. **Terminal** (raw bytes, full control). Sessions started or resumed by
    Rook. Linux/macOS (PTY) and Windows 10 1809+ (ConPTY, workstream D).
+   Where the session shim is installed (§4 G, opt-in per host), also every
+   interactive `claude` or `codex` started the ordinary way in a terminal
+   there (Linux/macOS).
 2. **Mirror** (live events, near real time). A Claude Code session with the
    Rook mod installed writes its own events (prompt, streamed assistant
    text, tool calls and results, turn end, session start/end) to a spool
@@ -282,6 +287,9 @@ namespace). Old caps stay as thin aliases for at least one release.
   list re-read each of the newest 50 transcripts per agent whole, twice,
   and a host with about 340 long sessions took longer than the hub's 15 s.)
 - `sessions.mirror(agent, native_id, cursor, wait, max_events)` (above; its own plugin, `session_mirror`).
+- `sessions.shim.install(agents?, shells?)`, `sessions.shim.uninstall()`,
+  `sessions.shim.status()` (§4 G; their own plugin, `session_shim`, Linux
+  and macOS, no heartbeat).
 - `sessions.follow(agent, native_id, offset=0, version="", tail=0)` → the
   `claude-history.follow` / `codex-history.follow` reply (`unchanged`, or
   `messages`, `version`, `replace_from`, …) plus `agent`, `native_id`.
@@ -523,7 +531,141 @@ and end notes from the page, `rook_console_open(task_id=)` and
 pass (mod 0.3.3: the Deck tab's help and headings say tasks and Work).
 Tests: `tests/test_sessions_consistency.py`, `tests/test_sessions_page.py`.
 
-Order: A first (contract), B, C, D and E in parallel against §3, then F.
+**G. Session shim: tier 1 for sessions started the ordinary way.** Bake: "I
+want them to run in xterm always", with Claude Code and Codex working
+normally on any machine and no special startup. Rook cannot attach to a
+running process (`ptrace_scope=1`), so the program has to start inside a
+terminal Rook can read. A `claude`/`codex` shim on PATH does that without
+anyone typing anything different. *Built* (Linux and macOS):
+
+- **Who owns the program.** The shim does, not the worker. It runs the real
+  binary under a PTY it opens itself (like `script(1)`), relays the
+  person's terminal to it, and streams the output to the worker, which
+  registers it as a **local terminal**: an ordinary entry in the terminals
+  plugin, so `work.stream.read/write/signal/close/list`, `sessions.list`,
+  `sessions.send` (keys) and `sessions.stop` all work on it unchanged, and
+  the Sessions page opens it in the live xterm with input. A worker-owned
+  PTY was the first idea; it was rejected because a worker restart (every
+  OTA update, and systemd stopping the unit's whole cgroup) would kill every
+  session typed into a terminal, and because the person's keystrokes would
+  then cross the worker's event loop. With the shim owning the PTY a worker
+  restart costs nothing: the shim keeps relaying, reconnects every 3 s, and
+  registers again (a new terminal id, with its last 256 KiB of output
+  replayed into the new ring). Local keystrokes never touch the worker.
+- **Files** (`rook/worker/shim.py`, all under `<worker state>/shim/`):
+  `bin/claude`, `bin/codex` (POSIX `sh`, one per agent found on the host, or
+  named), `bin/.rook-shim-dir` (marker), `client.py` (the relay,
+  `rook/worker/shim_client.py`, stdlib only, copied out of the worker bundle
+  at install and refreshed at every worker start), `env.sh` / `env.fish`
+  (put `bin/` first on PATH), `installed.json` (agents, the rc files
+  touched, the Python used), `run/worker.sock`.
+- **Install** (`sessions.shim.install(agents?, shells?)`, risk write,
+  opt-in, **off by default**; nothing installs it implicitly, so a work
+  laptop never gets it unless someone runs the cap there). Shells: those with
+  a config on the host plus the login shell, or `shells=[bash|zsh|fish]`.
+  bash and zsh get one marked block appended to `~/.bashrc` (plus
+  `~/.bash_profile` on macOS when it exists) or `${ZDOTDIR:-~}/.zshrc`:
+  `# >>> rook session shim >>>` … `[ -r …/env.sh ] && . …/env.sh` … `# <<<
+  rook session shim <<<`. At the end of the file, so it comes after the
+  file's own PATH edits; re-installing replaces it; a dotfile manager's
+  symlink is followed, not replaced. fish gets its own file,
+  `~/.config/fish/conf.d/rook-shim.fish`, which also re-asserts the order at
+  the first prompt (conf.d runs before `config.fish`). Agents: those found
+  on the worker's PATH or the usual per-user folders (`~/.local/bin`, npm,
+  bun, volta, Homebrew); a shim for a program that is not installed would
+  make `command -v` lie, so it is only written when found or named.
+- **Uninstall** (`sessions.shim.uninstall`): removes exactly the marked
+  blocks (and the blank line install put before one), the fish file and the
+  folder; the rc files are byte-for-byte what they were (a file install
+  found without a final newline keeps the one it gained). Running sessions
+  keep running. Open shells keep their PATH until restarted (`hash -r` /
+  `rehash`). `sessions.shim.status` reports agents, shims, real binaries,
+  rc blocks present, whether the socket listens and how many local
+  terminals run.
+- **Fall-through rules.** The script finds the real binary by walking PATH
+  and skipping its own folder and any folder with a `.rook-shim-dir` marker
+  (so it can never run itself; the worker's own `_binary`/`_claude_bin` use
+  the same rule, `shim.which_real`). It `exec`s the real binary unchanged,
+  without starting Python, when: `ROOK_SHIM` is `0`/`off`/`no`/`false`;
+  `ROOK_WORK_TERMINAL` is set (already in a Rook terminal); stdin, stdout or
+  stderr is not a terminal (pipes, redirects, scripts, agents' tool calls);
+  the socket does not exist (no worker, or uninstalled); or the worker's
+  Python or the client is missing. The client then also falls through for
+  non-interactive invocations (claude: `-p`/`--print`, `--output-format`,
+  `--input-format`, `--bg`, `-v`, `-h` and the subcommands `auth`, `doctor`,
+  `install`, `mcp`, `plugin(s)`, `update`/`upgrade`, `setup-token`, `logs`,
+  `rm`, `stop`/`kill`, …; codex: `-V`, `-h` and `exec`/`e`, `review`,
+  `login`, `logout`, `mcp`, `app-server`, `completion`, `apply`, …), when
+  the connect takes over 80 ms or the answer over 300 ms, when the worker
+  refuses, or when the PTY cannot be set up: in every case before the
+  person's terminal is touched. Sessions with no real binary print
+  `<name>: command not found` and exit 127. A shim not at the front of PATH
+  is simply never run.
+- **Local link.** An `AF_UNIX` stream socket at `<state>/shim/run/
+  worker.sock`, folder 0700, socket 0600, listening only while the shim is
+  installed; each connection's peer uid must be the worker's (`SO_PEERCRED`
+  on Linux, `LOCAL_PEERCRED` on macOS). No network exposure. Frames are 1
+  byte kind + 4 bytes length + payload: `J` JSON control, `O` output (shim
+  to worker), `I` input (worker to shim), 1 MiB at most. Shim to worker:
+  `hello {v, agent, argv, cwd, cols, rows, shim_pid, term, pid?, reattach?}`,
+  `started {pid}`, `size {cols, rows}`, `exit {code, signal}`. Worker to
+  shim: `welcome {ok, id | error}`, `signal {sig}`, `hangup`, `kill`. The
+  shim drops the link (and reconnects later) if more than 2 MiB of output
+  waits for the worker, so a stuck worker never slows the person's terminal.
+- **Terminal behaviour.** The program gets the person's termios and window
+  size, their whole environment plus `ROOK_WORK_TERMINAL=<terminal id>`
+  (so `/rook-move` knows it is already a Rook terminal, and a nested `claude`
+  falls through), SIGPIPE/SIGXFSZ back at their defaults, and argv[0] the
+  real binary's path (as `exec` of a resolved path gives; a shell would pass
+  the bare name). The person's terminal is raw while it runs and restored
+  after. SIGWINCH resizes the PTY; the person's window owns the size, so
+  `work.stream.resize` on a local terminal answers its size with `fixed:
+  true`, the hub drops viewers' resizes and tells viewers `fixed`, and
+  `TermView` renders that grid for every viewer, the holder too. Ctrl-C and
+  friends are bytes to the program as before. Ctrl-Z: when the program stops
+  itself, the shim restores the terminal and stops too, so the shell's job
+  control works; on `fg` it re-enters raw mode and continues the program.
+  A closed window (SIGHUP, or EOF/EIO on the terminal) hangs up the program,
+  as before. Exit: the shim exits with the program's status, and when a
+  signal (INT, TERM, HUP, KILL, PIPE, ALRM, USR1/2) killed it, the shim
+  kills itself with the same signal. From the page, `work.stream.signal`
+  signals the PTY's foreground process group, and `work.stream.close` /
+  `sessions.stop` send `hangup` then `kill` (1.5 s, 3 s); the person's
+  terminal then says "[rook] This session was stopped from the Sessions
+  page." A worker stopping does **not** end local terminals.
+- **Catalog.** A local terminal has the agent as its harness, the program's
+  pid (so `agent_activity.session_under` links it to the Claude or Codex
+  session id once the agent reports one, as for any Rook terminal), `resume`
+  from `--resume`/`-r` (claude) or `resume <id>` (codex), and `local: true`
+  in `work.stream.list` and in its §3.1 record (`origin: "rook"`, `view.
+  terminal` set, `input: "pty"` unless the inbox is preferred). Local
+  terminals do not count toward the 8 live Rook terminals; at most 32 run at
+  once (the 33rd falls through).
+- **Latency.** Falling through costs one `sh` start and a PATH walk with
+  shell built-ins (about 1 ms). Attaching starts the worker's Python with
+  `-I -S` (about 30 ms) and one local round trip; after that the relay is a
+  `select` loop in the shim, and keystrokes go straight to the PTY.
+- **Windows** (follow-up, not built): the same split works with a `.cmd`
+  shim earlier on PATH than npm's, a named pipe with an owner-only DACL
+  (`\\.\pipe\rook-shim-<sid>`) instead of the socket, and the shim running
+  the program on a ConPTY of its own (`rook/worker/conpty.py` already has
+  spawn, read, write, resize and the kill-on-close job). The relay loop needs
+  threads instead of `select`, and console raw mode through
+  `SetConsoleMode` (`ENABLE_VIRTUAL_TERMINAL_INPUT`). PowerShell profiles
+  would get the marked block. Until then the plugin does not load on
+  Windows and nothing changes there.
+- Tests: `tests/test_session_shim.py` (scratch `HOME` and
+  `ROOK_WORKER_HOME`): which invocations attach, install/uninstall
+  round-trip of bash/zsh (symlinked)/fish config, PATH order, `which_real`,
+  the script's fall-through without a terminal and with no real binary, peer
+  uid, and end to end under a PTY with a fake `claude`: passthrough both
+  ways (person and page), resize (SIGWINCH reaches the program, the worker
+  learns the size, viewers' resizes are refused), exit code, signal and stop
+  from the page, fall-through with no worker, with a stale socket, with
+  `ROOK_SHIM=0`, on refusal and for another uid, and a session surviving a
+  worker restart.
+
+Order: A first (contract), B, C, D and E in parallel against §3, then F, then G.
 
 ## 5. Rules for every PR
 

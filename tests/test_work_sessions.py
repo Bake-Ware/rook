@@ -10,7 +10,7 @@ import pytest_asyncio
 from aiohttp.test_utils import TestClient, TestServer
 
 from test_band_management import portal
-from rook.remote.work_web import WorkStore, WorkWeb, project
+from rook.remote.work_web import HISTORY_PULL_TIMEOUT, HISTORY_RETRY, WorkStore, WorkWeb, project
 from rook.worker.work_runtime import RuntimeStore, WorkRuntime
 from rook.worker.plugins.work import WorkPlugin
 
@@ -486,6 +486,103 @@ async def test_active_state_changes_without_transcript_modification(portal):
     band.active = False
     await work.sync_history(band.workers['host1'], 'codex', [p.uid])
     assert not work.store.get(before['id'])['active']
+
+
+class FlakyHistoryBand(HistoryBand):
+    """host1 pulls fine; host2's pull fails with ``self.fail`` while set."""
+    def __init__(self):
+        super().__init__()
+        self.workers['host2'] = dict(self.workers['host1'], worker_id='host2', name='slow-host',
+                                     caps=['claude-history.pull'])
+        self.fail = TimeoutError()
+
+    async def call(self, cap, args, target, timeout, identity=None):
+        if target == 'host2' and self.fail:
+            self.calls.append((cap, args))
+            raise self.fail
+        return await super().call(cap, args, target, timeout, identity)
+
+
+@pytest.mark.asyncio
+async def test_history_sync_backs_off_and_logs_once_per_state_change(portal, caplog):
+    p = portal
+    p.server._band = band = FlakyHistoryBand()
+    work = p.account.work_web
+    caplog.set_level('INFO', logger='rook.remote.work_web')
+
+    def failures():
+        return [r for r in caplog.records if 'history sync' in r.getMessage()]
+
+    await work.sync_histories([p.uid])
+    # The healthy host synced both agents; the slow one failed once, quietly.
+    assert len(work.store.all()) == 202
+    logged = failures()
+    assert len(logged) == 1 and logged[0].levelname == 'WARNING' and not logged[0].exc_info
+    assert 'slow-host/claude' in logged[0].getMessage() and 'timed out' in logged[0].getMessage()
+    before = len(band.calls)
+    # Backing off: the next passes don't call the slow host at all.
+    await work.sync_histories([p.uid])
+    host1_pass = len(band.calls) - before
+    await work.sync_histories([p.uid])
+    assert len(band.calls) - before == 2 * host1_pass
+    # Due again and still failing the same way: retried, not logged again.
+    key = ('host2', 'test', 'claude')
+    work.history_failures[key]['retry'] = 0
+    await work.sync_histories([p.uid])
+    assert len(failures()) == 1
+    assert work.history_failures[key]['delay'] == HISTORY_RETRY[0] * 2
+    # A different failure is a state change: logged once.
+    band.fail = ValueError('bad args')
+    work.history_failures[key]['retry'] = 0
+    await work.sync_histories([p.uid])
+    assert len(failures()) == 2 and 'bad args' in failures()[-1].getMessage()
+    # Recovery is logged once and clears the back-off.
+    band.fail = None
+    work.history_failures[key]['retry'] = 0
+    await work.sync_histories([p.uid])
+    assert key not in work.history_failures
+    assert len(failures()) == 3 and failures()[-1].levelname == 'INFO'
+    assert len(work.store.all()) == 303
+    await work.sync_histories([p.uid])
+    assert len(failures()) == 3
+
+
+@pytest.mark.asyncio
+async def test_history_sync_forgets_workers_that_leave_and_uses_long_timeout(portal):
+    p = portal
+    p.server._band = band = FlakyHistoryBand()
+    work = p.account.work_web
+    timeouts = []
+    call = band.call
+
+    async def spy(cap, args, target, timeout, identity=None):
+        timeouts.append(timeout)
+        return await call(cap, args, target, timeout, identity)
+    band.call = spy
+    await work.sync_histories([p.uid])
+    assert ('host2', 'test', 'claude') in work.history_failures
+    assert set(timeouts) == {HISTORY_PULL_TIMEOUT}
+    band.workers['host2']['last_seen'] = time.time() - 600   # offline
+    await work.sync_histories([p.uid])
+    assert not work.history_failures
+
+
+@pytest.mark.asyncio
+async def test_history_sync_falls_back_for_workers_without_paged_pull(portal):
+    p = portal
+    p.server._band = band = HistoryBand()
+    call = band.call
+
+    async def old_worker(cap, args, target, timeout, identity=None):
+        if 'offset' in args:
+            return {'ok': False, 'error': "bad args: ClaudeHistoryPlugin._pull() got an unexpected keyword argument 'offset'"}
+        result = (await call(cap, args, target, timeout, identity))['result']
+        result.pop('total')
+        return {'ok': True, 'from': target, 'result': result}
+    band.call = old_worker
+    work = p.account.work_web
+    await work.sync_history(band.workers['host1'], 'claude', [p.uid])
+    assert len(work.store.all()) == 50
 
 
 def test_web_restart_finishes_uncertain_receipt_without_replaying(tmp_path):

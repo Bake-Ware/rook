@@ -50,6 +50,8 @@ log = logging.getLogger("rook.worker.plugins.terminals")
 
 HARNESSES = ("shell", "claude", "codex", "hermes")
 MAX_LIVE = 8                        # concurrent live terminals per worker
+MAX_LOCAL = 32                      # shim terminals (sessions started in someone's own terminal)
+LOCAL_AGENTS = ("claude", "codex")
 DEFAULT_RING = 256 * 1024           # scrollback bytes kept per terminal
 MAX_RING = 1024 * 1024
 DONE_TTL_SECS = 900.0               # finished terminals stay readable this long
@@ -97,7 +99,8 @@ def _binary(harness: str) -> str | None:
     if harness == "claude":
         from .claude_history import _claude_bin
         return _claude_bin()
-    return shutil.which(harness)
+    from ..shim import which_real     # never the session shim itself
+    return which_real(harness)
 
 
 def available_harnesses() -> list[str]:
@@ -234,6 +237,10 @@ class _Term:
         self.files: list[str] = []      # per-session files to remove at close
         self.waiter_task: asyncio.Task | None = None
         self.handoff_task: asyncio.Task | None = None   # waiting for the old process (handoff_pid)
+        # A local terminal: the session shim (rook.worker.shim) runs the program
+        # under its own PTY in someone's terminal and streams it here; input,
+        # signals and close go back over this link, and that terminal owns the size.
+        self.link = None
 
     @property
     def running(self) -> bool:
@@ -282,7 +289,7 @@ class _Term:
                 "pid": self.pid, "running": self.running, "exit_code": self.exit_code,
                 "started": self.started, "ended": self.ended, "cols": self.cols,
                 "rows": self.rows, "total": self.total, "first": self.buf_start,
-                "last_output": self.last_output}
+                "last_output": self.last_output, **({"local": True} if self.link else {})}
 
 
 class TerminalsPlugin(Plugin):
@@ -319,6 +326,11 @@ class TerminalsPlugin(Plugin):
 
     async def stop(self) -> None:
         for t in list(self.terms.values()):
+            if t.link is not None:
+                # Not ours to end: the shim keeps the program running and
+                # registers again with the next worker.
+                t.link.close()
+                continue
             await self._terminate(t)
             self._cleanup_files(t)
         self.terms.clear()
@@ -426,7 +438,7 @@ class TerminalsPlugin(Plugin):
         self._reap()
         if harness not in HARNESSES:
             raise ValueError(f"harness must be one of {', '.join(HARNESSES)}")
-        if sum(1 for t in self.terms.values() if t.running) >= MAX_LIVE:
+        if sum(1 for t in self.terms.values() if t.running and not t.link) >= MAX_LIVE:
             raise ValueError(f"too many live terminals (max {MAX_LIVE}); close one first")
         cwd = cwd or os.path.expanduser("~")
         if not os.path.isabs(cwd) or not os.path.isdir(cwd):
@@ -715,6 +727,8 @@ class TerminalsPlugin(Plugin):
         t.master = None
 
     async def _terminate(self, t: _Term) -> None:
+        if t.link is not None:
+            return await self._terminate_local(t)
         if t.handoff_task is not None and not t.handoff_task.done():
             t.handoff_task.cancel()
             try:
@@ -749,6 +763,72 @@ class TerminalsPlugin(Plugin):
             t.exit_code, t.ended = t.proc.returncode, time.time()
         t.wake()
 
+    # -- local terminals (the session shim) ----------------------------------
+
+    def attach_local(self, agent: str, argv, cwd: str, cols: int, rows: int, link,
+                     pid: int = 0) -> _Term:
+        """Register a terminal the session shim runs in someone's own terminal
+        (rook.worker.shim): ``agent`` (claude or codex) with ``argv`` in
+        ``cwd``. Its output arrives through :meth:`_Term.append`; input,
+        signals and close go back through ``link``. Raises ValueError to
+        refuse (the shim then runs the program directly)."""
+        self._reap()
+        if agent not in LOCAL_AGENTS:
+            raise ValueError(f"agent must be one of {', '.join(LOCAL_AGENTS)}")
+        if sum(1 for t in self.terms.values() if t.running and t.link) >= MAX_LOCAL:
+            raise ValueError(f"too many local terminals (max {MAX_LOCAL})")
+        if not isinstance(argv, list) or not all(isinstance(a, str) for a in argv):
+            raise ValueError("argv must be a list of strings")
+        if not cwd or not os.path.isabs(cwd):
+            raise ValueError("cwd must be an absolute path")
+        tid = uuid.uuid4().hex[:12]
+        name = os.path.basename(cwd.rstrip("/")) or cwd
+        t = _Term(tid, agent, f"{agent} in {name}"[:160], cwd, DEFAULT_RING)
+        t.link = link
+        t.cols = max(20, min(int(cols or 120), 500))
+        t.rows = max(5, min(int(rows or 32), 200))
+        t.pid = int(pid or 0) or None
+        for i, arg in enumerate(argv[:-1]):
+            if (agent == "claude" and arg in ("--resume", "-r")) or \
+                    (agent == "codex" and i == 0 and arg == "resume"):
+                if _ID.fullmatch(argv[i + 1]):
+                    t.resume = argv[i + 1]
+                break
+        self.terms[tid] = t
+        log.info("local terminal %s registered: %s in %s", tid, agent, cwd)
+        return t
+
+    def local_size(self, t: _Term, cols: int, rows: int) -> None:
+        if cols > 0 and rows > 0:
+            t.cols, t.rows = max(20, min(cols, 500)), max(5, min(rows, 200))
+            t.wake()            # long-polls return, so viewers learn the size
+
+    def local_exit(self, t: _Term, code: int | None) -> None:
+        if t.running:
+            t.exit_code, t.ended = code, time.time()
+            t.wake()
+            log.info("local terminal %s exited (%s)", t.id, code)
+
+    def local_lost(self, t: _Term) -> None:
+        """The shim went away without an exit: it may still run (it registers
+        again, with a new id) or it was killed."""
+        if t.running:
+            t.append(b"\r\n[rook] The local terminal disconnected.\r\n")
+            t.exit_code, t.ended = None, time.time()
+            t.wake()
+
+    async def _terminate_local(self, t: _Term) -> None:
+        for op, grace in (("hangup", 1.5), ("kill", 3.0)):
+            if not t.running:
+                break
+            t.link.control({"op": op})
+            end = time.monotonic() + grace
+            while t.running and time.monotonic() < end:
+                await t.wait(0.1)
+        if t.running:
+            self.local_lost(t)
+        t.link.close()
+
     # -- io ----------------------------------------------------------------
 
     @capability("stream.read", risk="read")
@@ -769,22 +849,29 @@ class TerminalsPlugin(Plugin):
         n = max(1, min(int(max_bytes), MAX_READ))
         raw, nxt, dropped = t.slice(cursor, n)
         enc, data = termwire.encode(raw, tuple(accept or "b"))
-        return {"ok": True, "id": t.id, "enc": enc, "data": data,
-                "cursor": nxt - len(raw), "next": nxt, "dropped": dropped,
-                "total": t.total, "running": t.running, "exit_code": t.exit_code,
-                "eof": (not t.running) and nxt >= t.total,
-                "cols": t.cols, "rows": t.rows}
+        out = {"ok": True, "id": t.id, "enc": enc, "data": data,
+               "cursor": nxt - len(raw), "next": nxt, "dropped": dropped,
+               "total": t.total, "running": t.running, "exit_code": t.exit_code,
+               "eof": (not t.running) and nxt >= t.total,
+               "cols": t.cols, "rows": t.rows}
+        if t.link is not None:
+            out["fixed"] = True     # the local terminal owns the size
+        return out
 
     @capability("stream.write", risk="exec")
     async def write(self, id: str, data: str, enc: str = "t") -> dict:
         """Write raw input to the terminal (keystrokes, pastes; send "\\r" for
         Enter, "\\x03" for Ctrl-C). ``enc`` is t (text) or b (base64)."""
         t = self._get(id)
-        if not t.running or (t.master is None and t.conpty is None):
+        if not t.running or (t.master is None and t.conpty is None and t.link is None):
             raise ValueError("terminal has exited")
         payload = termwire.decode(enc, data, limit=MAX_WRITE)
         if len(payload) > MAX_WRITE:
             raise ValueError(f"input larger than {MAX_WRITE} bytes; split it")
+        if t.link is not None:
+            await t.link.input(payload)
+            t.last_input = time.time()
+            return {"ok": True, "id": t.id, "written": len(payload)}
         if t.conpty is not None:
             async with t.wlock:  # keep pastes whole and in order
                 try:
@@ -810,8 +897,12 @@ class TerminalsPlugin(Plugin):
 
     @capability("stream.resize", risk="write")
     def resize(self, id: str, cols: int, rows: int) -> dict:
-        """Set the terminal size in character cells (sends SIGWINCH)."""
+        """Set the terminal size in character cells (sends SIGWINCH). A local
+        terminal (the session shim) keeps the size of the terminal it runs
+        in: the reply has that size and ``fixed: true``."""
         t = self._get(id)
+        if t.link is not None:
+            return {"ok": True, "id": t.id, "cols": t.cols, "rows": t.rows, "fixed": True}
         cols = max(20, min(int(cols), 500))
         rows = max(5, min(int(rows), 200))
         if (cols, rows) != (t.cols, t.rows):
@@ -831,6 +922,10 @@ class TerminalsPlugin(Plugin):
         name = str(sig).upper().removeprefix("SIG")
         if name not in ("INT", "TERM", "HUP", "KILL", "QUIT"):
             raise ValueError("signal must be INT, TERM, HUP, QUIT or KILL")
+        if t.link is not None:
+            if t.running:
+                t.link.control({"op": "signal", "sig": name})
+            return {"ok": True, "id": t.id, "sent": "SIG" + name}
         if t.conpty is not None:
             if t.running:
                 try:
