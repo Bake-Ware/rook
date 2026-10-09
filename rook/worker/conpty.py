@@ -16,7 +16,8 @@ Shape (one object per terminal):
 * a daemon thread reads the output pipe and hands chunks to a callback.
 
 Signals: Ctrl-C is the byte 0x03 on the input pipe (the console turns it
-into CTRL_C_EVENT for the foreground program, as a terminal would); hang-up
+into CTRL_C_EVENT for the foreground program, as a terminal would; the
+worker clears its own inherited "ignore Ctrl-C" flag first); hang-up
 is ``ClosePseudoConsole`` (CTRL_CLOSE_EVENT to every attached program);
 kill is ``TerminateJobObject``.
 
@@ -100,6 +101,7 @@ _PROTOTYPES = {
     "CreatePseudoConsole": (HRESULT, [COORD, HANDLE, HANDLE, DWORD, POINTER(HANDLE)]),
     "ResizePseudoConsole": (HRESULT, [HANDLE, COORD]),
     "ClosePseudoConsole": (None, [HANDLE]),
+    "SetConsoleCtrlHandler": (BOOL, [c_void_p, BOOL]),
     "InitializeProcThreadAttributeList": (BOOL, [c_void_p, DWORD, DWORD, POINTER(c_size_t)]),
     "UpdateProcThreadAttribute": (BOOL, [c_void_p, DWORD, c_size_t, c_void_p, c_size_t, c_void_p, c_void_p]),
     "DeleteProcThreadAttributeList": (None, [c_void_p]),
@@ -236,6 +238,9 @@ class ConPty:
             envbuf = ctypes.create_unicode_buffer(len(block) + 1)
             envbuf[:len(block)] = block
             flags = EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT | CREATE_SUSPENDED
+            # Children inherit "ignore Ctrl-C" from us, and a worker started by
+            # sshd or a scheduled task has it set, so 0x03 would stop nothing.
+            k.SetConsoleCtrlHandler(None, False)
             if not k.CreateProcessW(None, cmd, None, None, False, flags, envbuf, cwd,
                                     byref(si), byref(pi)):
                 raise _error("CreateProcessW")
