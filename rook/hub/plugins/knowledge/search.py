@@ -11,10 +11,15 @@ Pages are embedded per block (:mod:`.chunk`: heading sections), so a long
 page that covers a topic in one section ranks on that section, and a result's
 ``excerpt`` is the block that matched (``section`` names it), not the head of
 the page.
+
+The same block vectors give a ``get`` its ``related`` pages (:meth:`Search.related`):
+the page itself stands in for the query, so no embedding call is made.
 """
+from array import array
 import asyncio
 import json
 import math
+from operator import mul
 import os
 import aiohttp
 
@@ -32,6 +37,21 @@ SECTION = 80
 # Per-block weight of query terms present (fraction of terms) when picking
 # the excerpt block; cosine is the rest.
 TERM_BONUS = .15
+# ``get``'s ``related`` pages: at most RELATED_MAX, each at least RELATED_MIN
+# and within RELATED_MARGIN of the closest one, so a page with one clear
+# neighbour lists just that one instead of padding the list with weaker
+# ones. Tuned with the default model (MiniLM) on this repo's docs/ as a wiki
+# (256 pages): page pairs median .37, p90 .56; cross-document pairs below
+# .5 were mostly unrelated, .55+ mostly on the same subject.
+RELATED_MIN = .5
+RELATED_MARGIN = .15
+RELATED_MAX = 5
+# Parsed block vectors kept in memory, by content digest: parsing the JSON is
+# most of a scan's cost, and a scan now runs on every get (``related``) as
+# well as every search. A digest's vector never changes for a model, so the
+# cache cannot go stale. Bounded (float32, ~1.5 KB a vector at 384 dims):
+# emptied when full.
+VECTOR_CACHE = 20000
 
 
 def _block(row):
@@ -53,6 +73,7 @@ class Search:
         self.semantic = semantic
         self.last_error = None
         self._lock = asyncio.Lock()
+        self._vectors = {}
 
     @property
     def configured(self):
@@ -136,26 +157,69 @@ class Search:
                     for b in chunk.chunk(r['body'])])
             db.execute('DELETE FROM block_vectors WHERE hash NOT IN (SELECT hash FROM blocks)')
 
-    def _semantic(self, band, vector):
-        """Cosine per block, streamed: memory stays bounded as the corpus
-        grows. Returns {record: {ord: cosine}}; records with no block
-        vectors yet fall back to their whole-page embedding (ord None)."""
+    def _semantic(self, band, vector, kind=None):
+        """Cosine per block, streamed; parsed vectors are cached up to
+        VECTOR_CACHE, so memory stays bounded as the corpus grows. Returns
+        {record: {ord: cosine}}; records with no block vectors yet fall back
+        to their whole-page embedding (ord None). ``kind`` limits records."""
         norm = math.sqrt(sum(x*x for x in vector)) or 1
         vector = [x / norm for x in vector]
         found = {}
+        only = ' AND r.kind=?' if kind else ''
+        extra = (kind,) if kind else ()
         with self.store.db(False) as db:
             for row in db.execute(
-                    'SELECT b.record,b.ord,v.vector FROM blocks b JOIN records r ON r.id=b.record AND r.revision=b.revision '
+                    'SELECT b.record,b.ord,b.hash,v.vector FROM blocks b JOIN records r ON r.id=b.record AND r.revision=b.revision '
                     'JOIN block_vectors v ON v.hash=b.hash AND v.model=? '
-                    "WHERE r.band=? AND r.state NOT IN ('archived','superseded')", (self.model, band)):
-                found.setdefault(row['record'], {})[row['ord']] = sum(a*b for a, b in zip(vector, json.loads(row['vector'])))
+                    "WHERE r.band=? AND r.state NOT IN ('archived','superseded')" + only, (self.model, band, *extra)):
+                found.setdefault(row['record'], {})[row['ord']] = sum(map(mul, vector, self._vector(row['hash'], row['vector'])))
             for row in db.execute(
                     'SELECT r.id,e.vector FROM records r JOIN embeddings e ON r.id=e.record AND r.revision=e.revision '
-                    "WHERE r.band=? AND e.model=? AND r.state NOT IN ('archived','superseded')", (band, self.model)):
+                    "WHERE r.band=? AND e.model=? AND r.state NOT IN ('archived','superseded')" + only,
+                    (band, self.model, *extra)):
                 if row['id'] not in found:
                     v = json.loads(row['vector'])
                     found[row['id']] = {None: sum(a*b for a, b in zip(vector, v)) / (math.sqrt(sum(x*x for x in v)) or 1)}
         return found
+
+    def _vector(self, digest, text):
+        vector = self._vectors.get(digest)
+        if vector is None:
+            if len(self._vectors) >= VECTOR_CACHE:
+                self._vectors.clear()
+            vector = self._vectors[digest] = array('f', json.loads(text))
+        return vector
+
+    def related(self, band, rid, exclude=(), limit=RELATED_MAX):
+        """[(record id, cosine)] of the live wiki pages (kind ``knowledge``)
+        nearest record ``rid``, closest first, leaving out ``rid`` and
+        ``exclude``. The query is the mean of the record's own block vectors
+        (its whole-page embedding before its blocks are indexed) and each
+        page scores its best block, as in search: a long page that covers
+        this subject in one section still ranks on that section. Stored
+        vectors only, no embedding call, so it works while the embedder is
+        down; [] when semantic search is off or the record has no vectors
+        (keyword-only install, not indexed yet)."""
+        if not self.configured or limit <= 0:
+            return []
+        with self.store.db(False) as db:
+            own = [json.loads(row['vector']) for row in db.execute(
+                'SELECT v.vector FROM blocks b JOIN records r ON r.id=b.record AND r.revision=b.revision '
+                'JOIN block_vectors v ON v.hash=b.hash AND v.model=? WHERE b.record=?', (self.model, rid))]
+            if not own:
+                own = [json.loads(row['vector']) for row in db.execute(
+                    'SELECT e.vector FROM embeddings e JOIN records r ON r.id=e.record AND r.revision=e.revision '
+                    'WHERE e.record=? AND e.model=?', (rid, self.model))]
+        if not own or len({len(v) for v in own}) != 1:
+            return []
+        mean = [sum(column) / len(own) for column in zip(*own)]
+        skip = set(exclude) | {rid}
+        ranked = sorted(((max(c.values()), r) for r, c in self._semantic(band, mean, 'knowledge').items()
+                         if r not in skip), reverse=True)
+        if not ranked:
+            return []
+        floor = max(RELATED_MIN, ranked[0][0] - RELATED_MARGIN)
+        return [(r, score) for score, r in ranked[:limit] if score >= floor]
 
     async def query(self, band, query, kind=None, worker=None, limit=20):
         lexical = self.store.lexical(band, query, 100)
