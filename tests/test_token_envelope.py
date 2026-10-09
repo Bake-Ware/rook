@@ -335,6 +335,29 @@ async def test_knowledge_search_is_lean_over_mcp_but_not_for_the_web(tmp_path, m
         assert len(web["results"]) == 8 and "body" in web["results"][0]
 
 
+@pytest.mark.asyncio
+async def test_knowledge_get_lists_neighbours_as_small_stubs_over_mcp(tmp_path, monkeypatch):
+    async with hub(tmp_path, monkeypatch, knowledge=True) as env:
+        k = env.mcp._rook_knowledge
+        human = {"id": "human:u1", "kind": "human", "label": "op"}
+        await k.dispatch("create", kind="knowledge", data={"title": "Runbook", "slug": "runbook",
+                         "body": "See [[ports]]. " + "step " * 300}, request_id="r", actor=human)
+        for i in range(15):
+            await k.dispatch("create", kind="knowledge", data={"title": f"Host {i}",
+                             "body": "Uses the [[runbook]]. " + "detail " * 300}, request_id=f"h{i}", actor=human)
+        await k.dispatch("create", kind="knowledge", data={"title": "Ports", "slug": "ports",
+                         "body": "Ports in use. " + "port " * 300}, request_id="p", actor=human)
+        _, tool = await env.connect()
+        got = json.loads((await tool("rook_knowledge", action="get", id="runbook"))[0])["result"]
+        assert [s["slug"] for s in got["links_out"]] == ["ports"] and "mentions" not in got
+        assert len(got["backlinks"]) == 10 and got["backlinks_more"] == 5
+        assert all(set(s) == {"slug", "title", "gist"} for s in got["backlinks"])
+        # A stub is a few dozen tokens, not a page excerpt.
+        assert max(len(json.dumps(s)) for s in got["backlinks"]) < 200
+        web = await k.dispatch("get", rid="runbook", actor=human)
+        assert len(web["backlinks"]) == 15 and web["mentions"] == ["ports"]
+
+
 # -- existing clients ------------------------------------------------------------
 
 @pytest.mark.asyncio

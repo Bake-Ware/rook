@@ -124,6 +124,17 @@ def digest(title, body, block):
     return hashlib.sha256(embed_text(title, body, block).encode()).hexdigest()[:32]
 
 
+def gist(body, limit=100):
+    """A page in a line, for the stubs a ``get`` lists: its first block
+    with text (the intro, or the first section when a page opens with a
+    heading), whitespace collapsed, cut at a word."""
+    for b in chunk(body):
+        text = block_text(body, b)
+        if text:
+            return excerpt(text, (), limit)
+    return ''
+
+
 def terms(query):
     return list(dict.fromkeys(t.lower() for t in TERMS.findall(query or '') if len(t) > 1))[:20]
 
