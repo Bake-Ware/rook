@@ -238,6 +238,10 @@ def record(agent: str, native_id: str, *, worker=None, meta: dict | None = None,
         out["pid"] = pid
     if term and term.get("model"):
         out["model"] = term["model"]
+    if term and term.get("local"):
+        # Started in someone's own terminal through the session shim: a Rook
+        # terminal whose size that terminal owns (docs/design/sessions.md §4 G).
+        out["local"] = True
     return out
 
 

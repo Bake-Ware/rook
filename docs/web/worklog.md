@@ -105,7 +105,7 @@ token on every control message. Frames:
 - server → browser **binary**: an 8-byte big-endian stream offset, then raw
   bytes. The browser tracks its cursor and drops any overlap.
 - server → browser **JSON**: `hello` (the viewer's id plus state), `state`
-  (`holder`, `viewers`, `cols`, `rows`, `running`, `exit_code`, `lost`),
+  (`holder`, `viewers`, `cols`, `rows`, `fixed`, `running`, `exit_code`, `lost`),
   `reset` (clear the terminal; a ring replay follows), and `error`.
 - browser → server **JSON**: `input {data, enc: t|b}`, `resize {cols, rows}`,
   `take`, `release`, `handoff {to}`, `signal {sig}`.
@@ -118,7 +118,11 @@ while nobody holds takes control. **Take control** steals it, **Release** gives
 it up, and **Hand off** passes it to another viewer. Keystrokes are coalesced
 at the hub, with one `work.stream.write` in flight at a time, so they stay in
 order. Only the holder's size reaches the PTY. Other viewers render the PTY's
-grid at its size.
+grid at its size. A **local** terminal (a `claude` or `codex` started in
+someone's own terminal through the session shim, docs/design/sessions.md §4 G)
+is sized by that terminal: `work.stream.read` and `work.stream.resize` reply
+`fixed: true`, the hub drops every viewer's `resize` and says `fixed` in
+`state`, and all viewers, the holder too, render its grid.
 
 **Teardown.** **Stop** on the Sessions page calls `sessions.stop`, which calls `work.stream.close` (SIGHUP, then SIGKILL
 to the process group), marks the session closed, and revokes its MCP token.

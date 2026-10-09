@@ -64,7 +64,12 @@ Opening a session shows the best view it has:
    viewer holds input (**Take control**, **Release**, **Hand off to…**,
    **Ctrl-C**), and only the holder's window size reaches the terminal. A
    Rook terminal the hub has no Work session for yet (one an agent opened, or
-   one `/rook-move` created) is attached on first open.
+   one `/rook-move` created) is attached on first open. On hosts with the
+   session shim installed (`sessions.shim.install`, docs/design/sessions.md
+   §4 G), a `claude` or `codex` someone typed in their own terminal is a Rook
+   terminal too, so it opens here live and takes input; its size follows
+   that person's window (yours shows the same grid), and **Stop** ends it in
+   their terminal as well.
 2. **Live view**: the session was started elsewhere and the Rook mod mirrors
    it (Claude Code only). It long-polls the mirror, so new events appear
    within a second; a state chip above it says working, idle or "waiting for

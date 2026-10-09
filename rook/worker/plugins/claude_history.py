@@ -94,7 +94,8 @@ def _claude_bin() -> str | None:
             if os.path.exists(c):
                 return c
         return None
-    return shutil.which("claude")
+    from ..shim import which_real     # never the session shim itself
+    return which_real("claude")
 
 
 def _short_id(sid: str) -> str:
