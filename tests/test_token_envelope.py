@@ -15,6 +15,7 @@ import pytest
 
 from rook.band_mcp import envelope, roster
 from rook.band_mcp.server import build_server
+from rook.hub.plugins.knowledge.search import PASSAGE
 
 STATIC = "static-token-0123456789abcdef"
 HEX = "0123456789abcdef0123456789abcdef"
@@ -323,7 +324,7 @@ async def test_knowledge_search_is_lean_over_mcp_but_not_for_the_web(tmp_path, m
         res = json.loads((await tool("rook_knowledge", action="search", query="deploy"))[0])["result"]
         assert len(res["results"]) == 5
         assert set(res["results"][0]) == {"id", "slug", "kind", "title", "state", "score", "excerpt"}
-        assert len(res["results"][0]["excerpt"]) <= 240
+        assert len(res["results"][0]["excerpt"]) <= PASSAGE  # the matching block; "section" when it has one
         picked = json.loads((await tool("rook_knowledge", action="search", query="deploy",
                                         data={"limit": 2, "fields": "slug,title"}))[0])["result"]
         assert [set(r) for r in picked["results"]] == [{"slug", "title"}] * 2

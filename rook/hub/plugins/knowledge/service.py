@@ -29,7 +29,7 @@ CLOSED_TASK = ('done', 'closed', 'cancelled', 'archived')
 # every character. ``data.limit`` and ``data.fields`` override them.
 MCP_SEARCH_LIMIT = 5
 MCP_LIST_LIMIT = 20
-MCP_SEARCH_FIELDS = ('id', 'slug', 'kind', 'title', 'state', 'score', 'excerpt')
+MCP_SEARCH_FIELDS = ('id', 'slug', 'kind', 'title', 'state', 'score', 'section', 'excerpt')
 MCP_LIST_FIELDS = ('id', 'slug', 'kind', 'title', 'state', 'parent', 'excerpt')
 EXCERPT = 240
 MCP_GET_EVENTS = 10
