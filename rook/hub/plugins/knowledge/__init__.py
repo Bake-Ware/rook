@@ -138,7 +138,8 @@ class Knowledge(Plugin):
     }
     SKILL = ("### knowledge\n"
              "The shared wiki. Use the `rook_knowledge` tool: `search` before starting "
-             "(5 excerpts; `data.limit`/`data.fields` for more), `get` a page by id or slug, "
+             "(5 hits, each with the passage that matched and its `section`; `data.limit`/`data.fields` "
+             "for more), `get` a page by id or slug, "
              "`create` a page with a unique `request_id`. Over the band the same actions are "
              "`knowledge.read` (search/get/list/context/status/bands) and `knowledge.write` "
              "(create/update/link/retract) on worker `rook`; band callers reach only the read cap "
