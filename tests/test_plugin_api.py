@@ -362,13 +362,10 @@ def test_package_and_entry_point_discovery(tmp_path, monkeypatch):
         PLUGIN = Clock
     """))
     monkeypatch.syspath_prepend(str(tmp_path))
-    ep = SimpleNamespace(name="ext", load=lambda: HubOnly)
-
-    class EPs(list):
-        def select(self, group):
-            return self if group == "rook.plugins" else EPs()
-
-    monkeypatch.setattr("importlib.metadata.entry_points", lambda: EPs([ep]))
+    ep = SimpleNamespace(name="ext", group="rook.plugins", load=lambda: HubOnly)
+    other = SimpleNamespace(name="x", group="console_scripts", load=lambda: None)
+    dist = SimpleNamespace(metadata={"Name": "ext-dist"}, entry_points=[ep, other])
+    monkeypatch.setattr("importlib.metadata.distributions", lambda path=None: [dist])
     cands = PluginHost.discover(pkg)
     assert [c.module for c in cands] == ["clock", "ext"]
     host = PluginHost(facts=HUB, elect_one=lambda p: True)
@@ -593,11 +590,9 @@ class Notes(Plugin):
 
 
 def _entry_points(monkeypatch, *plugins):
-    class EPs(list):
-        def select(self, group):
-            return self if group == "rook.plugins" else EPs()
-    eps = EPs(SimpleNamespace(name=p.NAMESPACE, load=lambda p=p: p) for p in plugins)
-    monkeypatch.setattr("importlib.metadata.entry_points", lambda: eps)
+    dists = [SimpleNamespace(metadata={"Name": "dist-" + p.NAMESPACE}, entry_points=[
+        SimpleNamespace(name=p.NAMESPACE, group="rook.plugins", load=lambda p=p: p)]) for p in plugins]
+    monkeypatch.setattr("importlib.metadata.distributions", lambda path=None: dists)
 
 
 async def _tools(mcp):

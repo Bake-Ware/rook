@@ -517,6 +517,29 @@ write action, so the band ceiling (section 10.4) can't be bypassed through
 reply shape (`{"ok": true, "result": ...}` or `{"ok": false, "error", "code"}`).
 `rook/knowledge/*` remains as import aliases of the moved modules.
 
+**Lean `get` and neighbour stubs.** Over MCP (and the caps), `get` lists a
+page's neighbours as stubs (`{slug, title, gist}`, plus `kind`/`state` when
+they are not `knowledge`/`active`; a gist is the page's first ~100 chars of
+text) so an agent can open the next page by slug without another search:
+
+- *Structural* (curated): `links_out`, the page's `[[slug]]` links in body
+  order, and `backlinks`, the pages linking to it. At most 10 each, with
+  `links_out_more` / `backlinks_more` counting the rest; `links_missing`
+  names `[[slugs]]` no record has. A backlink already listed in `links_out`
+  is given by slug only. These replace `mentions` and the full backlink
+  briefs (the operator's Knowledge page still gets those).
+- *Semantic* (fuzzy): `related`, up to 5 live wiki pages nearest this one,
+  each with a cosine `score`. The query is the mean of the page's own block
+  vectors and each candidate scores its best block (as in search), with no
+  embedding call. A page must score at least .5 and within .15 of the
+  closest one. Pages already a hop away (links either way, parent, children)
+  are left out. `data.related` = 0..10 sets the count (0 skips the scan).
+  `related` is absent when semantic search is off, the page has no vectors
+  yet, or nothing is close enough. A failure here never fails the `get`.
+
+Stubs are built from the live rows at read time; nothing about them is
+stored.
+
 **Settings** (`knowledge` plugin; the tasks plugin loads with it):
 
 | Setting | Type | Default | Env (legacy alias) |

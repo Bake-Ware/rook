@@ -16,7 +16,7 @@ import logging
 import time
 from ....band_mcp.secret_mask import scrub
 from .store import KnowledgeStore
-from .search import Search
+from .search import RELATED_MAX, Search
 
 log = logging.getLogger(__name__)
 
@@ -29,10 +29,15 @@ CLOSED_TASK = ('done', 'closed', 'cancelled', 'archived')
 # every character. ``data.limit`` and ``data.fields`` override them.
 MCP_SEARCH_LIMIT = 5
 MCP_LIST_LIMIT = 20
-MCP_SEARCH_FIELDS = ('id', 'slug', 'kind', 'title', 'state', 'score', 'excerpt')
+MCP_SEARCH_FIELDS = ('id', 'slug', 'kind', 'title', 'state', 'score', 'section', 'excerpt')
 MCP_LIST_FIELDS = ('id', 'slug', 'kind', 'title', 'state', 'parent', 'excerpt')
 EXCERPT = 240
 MCP_GET_EVENTS = 10
+# A lean get lists a page's neighbours as stubs ({slug, title, gist}, a few
+# dozen tokens each) so the next hop needs no search: links_out and
+# backlinks (curated [[links]]) up to MCP_GET_STUBS each, related (semantic,
+# scored; data.related = 0..MCP_GET_STUBS, default search.RELATED_MAX).
+MCP_GET_STUBS = 10
 MCP_OUTCOME_CHARS = 240
 
 
@@ -186,6 +191,23 @@ class KnowledgeService:
                                | {'tasks': linked.get(t['thread_id'], [])} for t in self.handoff_list()]
         return out
 
+    def _related(self, band, got, linked, limit):
+        """Stubs (with ``score``) of the wiki pages semantically nearest
+        ``got``, leaving out the pages it is already structurally tied to
+        (its links either way, parent and children): those are listed
+        already, and ``related`` is for what nobody linked. Never fails the
+        get: without vectors, or on any error, there are none."""
+        try:
+            limit = max(0, min(int(limit), MCP_GET_STUBS))
+            skip = linked | {c['id'] for c in got.get('children', [])} | ({got['parent']} if got.get('parent') else set())
+            near = self.search.related(band, got['id'], skip, limit)
+            scores = dict(near)
+            return [self.store.stub(r, score=round(scores[r['id']], 2))
+                    for r in self.store.rows(band, [r for r, _ in near])]
+        except Exception:
+            log.exception('related pages failed for %s', got.get('id'))
+            return []
+
     def _close_handoffs(self, band, actor, record):
         """A finished task takes its handoff threads with it, unless another
         open task still uses them. Bookkeeping: never fails the update."""
@@ -278,7 +300,12 @@ class KnowledgeService:
                 got = self.store.get(b, rid)
             else:
                 got = self.store.get(b, rid, auto_links=data.get('links') == 'all',
-                                     events=data.get('events', MCP_GET_EVENTS))
+                                     events=data.get('events', MCP_GET_EVENTS), stubs=MCP_GET_STUBS)
+                # A scan of the band's block vectors: off the event loop.
+                related = await asyncio.to_thread(self._related, b, got, got.pop('_linked'),
+                                                  data.get('related', RELATED_MAX))
+                if related:
+                    got['related'] = related
             found = self._hook('open', [got['id']])
             if found:
                 got['hygiene'] = [{k: f[k] for k in ('kind', 'actor', 'text', 'created')} for f in found]

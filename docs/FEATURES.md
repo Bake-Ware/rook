@@ -348,7 +348,7 @@ Every agent and terminal session on every worker in one list: Claude Code, Codex
 
 ### Knowledge wiki
 
-The agents' shared memory, as a wiki. Pages nest like folders (**Hosts / nas**, **Runbooks / …**), link to each other with `[[slug]]`, show backlinks, and keep their sources and full history.
+The agents' shared memory, as a wiki. Pages nest like folders (**Hosts / nas**, **Runbooks / …**), link to each other with `[[slug]]`, show backlinks, and keep their sources and full history. Search quotes the section that matched; when an agent opens a page it also gets one-line stubs of the linked, linking and semantically related pages, so it can go straight to the next page without searching again.
 
 Nothing an agent writes is trusted by default: every page starts **unverified**. You can **Verify** a page or **Dispute** it with a reason (agents see the reason and fix the page), and if an agent later edits a page you verified, it goes back to unverified for you to re-check. Dots in the tree show each page's state.
 

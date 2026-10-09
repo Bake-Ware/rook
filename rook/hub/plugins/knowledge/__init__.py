@@ -17,7 +17,8 @@ routes to them):
 Both take the ``rook_knowledge`` arguments (``action``, ``band``, ``id``,
 ``query``, ``data``, ``request_id``) and return the same result, with the lean
 MCP defaults for search/list (5/20 rows, a few fields; ``data.limit`` and
-``data.fields`` override).
+``data.fields`` override) and for get (neighbours as stubs, see
+:meth:`KnowledgeStore.stub`).
 """
 from __future__ import annotations
 
@@ -138,7 +139,9 @@ class Knowledge(Plugin):
     }
     SKILL = ("### knowledge\n"
              "The shared wiki. Use the `rook_knowledge` tool: `search` before starting "
-             "(5 excerpts; `data.limit`/`data.fields` for more), `get` a page by id or slug, "
+             "(5 hits, each with the passage that matched and its `section`; `data.limit`/`data.fields` "
+             "for more), `get` a page by id or slug (its [[links]], backlinks and semantically "
+             "`related` pages come as `{slug, title, gist}` stubs: get one by slug, no new search), "
              "`create` a page with a unique `request_id`. Over the band the same actions are "
              "`knowledge.read` (search/get/list/context/status/bands) and `knowledge.write` "
              "(create/update/link/retract) on worker `rook`; band callers reach only the read cap "
@@ -275,7 +278,8 @@ class Knowledge(Plugin):
         """Read the shared wiki: search|get|list|context|status|bands|deck.
 
         Same arguments and result as rook_knowledge's read actions: search
-        returns 5 excerpts (data {limit, fields}); get takes an id or slug."""
+        returns 5 excerpts (data {limit, fields}); get takes an id or slug and
+        lists linked and related pages as {slug, title, gist} stubs."""
         return await self.run('knowledge', False, action, None, band, id, query, data, None)
 
     @capability("write", risk="write")
@@ -296,7 +300,7 @@ class Knowledge(Plugin):
         async def rook_knowledge(action: str = 'search', band: str | None = None, id: str | None = None,
                                  query: str = '', data: dict | None = None, request_id: str | None = None) -> str:
             """Shared wiki: search|get|list|context|status|create|update|link|retract|bands.
-            search: 5 excerpts (data {limit, fields}); get id-or-slug: full page + backlinks.
+            search: 5 excerpts (data {limit, fields}); get id-or-slug: page + linked/related stubs.
             Search before creating. create data {title, body, slug?, parent?, attrs:{knowledge_kind,
             tags, supersedes}}; parent = folder page (move: update patch {parent}). Link pages with
             [[slug]]. Correct a fact with a new page, attrs.supersedes=[old]. Set

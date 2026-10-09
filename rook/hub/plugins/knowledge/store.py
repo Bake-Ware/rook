@@ -30,6 +30,7 @@ import uuid
 
 from ....band_mcp.secret_mask import scrub
 from ....core import migrations
+from . import chunk
 
 KINDS = ('concept', 'project', 'task', 'knowledge')
 STATES = {
@@ -54,6 +55,8 @@ TRACEABLE = tuple(k for k in LINK_KINDS if k != 'url')
 SLUG = re.compile(r'^[a-z0-9][a-z0-9-]{0,79}$')
 WIKI = re.compile(r'\[\[([a-z0-9][a-z0-9-]{0,79})\]\]')
 SCHEMA = 2
+# A stub's gist (see KnowledgeStore.stub): about a line of text.
+GIST = 100
 #: Plugin migrations (rook.core.migrations), recorded under namespace 'knowledge'.
 MIGRATIONS = Path(__file__).resolve().parent / 'migrations'
 NAMESPACE = 'knowledge'
@@ -647,9 +650,12 @@ class KnowledgeStore:
             deps.append(dict(d) if d else {'id': dep, 'slug': None, 'state': 'missing'})
         return deps, all(d['state'] == 'done' for d in deps)
 
-    def get(self, band, rid, auto_links=True, events=100):
+    def get(self, band, rid, auto_links=True, events=100, stubs=0):
         """``auto_links=False`` returns only the links someone made by hand,
-        with ``auto_links`` = a count of the automatic ones per kind."""
+        with ``auto_links`` = a count of the automatic ones per kind.
+        ``stubs`` (the lean MCP get): outbound [[links]] and backlinks as at
+        most that many stubs each (:meth:`stub`), instead of ``mentions``
+        slugs and every backlink's brief."""
         with self.db(False) as db:
             r = self._get(db, band, rid)
             rid = r['id']
@@ -669,16 +675,71 @@ class KnowledgeStore:
             if r['kind'] == 'task' and r['attrs'].get('dependencies'):
                 r['dependencies'], r['unblocked'] = self._dependencies(db, band, r['attrs'])
             r['claims'] = [dict(c) for c in db.execute('SELECT * FROM claims WHERE task=? ORDER BY started DESC LIMIT 20', (rid,))]
-            r['mentions'] = sorted(set(WIKI.findall(r['body'])))
             back = db.execute('SELECT * FROM records WHERE band=? AND id<>? AND (body LIKE ? OR id IN '
-                              "(SELECT record FROM links WHERE kind='record' AND ref=? AND retracts IS NULL))",
+                              "(SELECT record FROM links WHERE kind='record' AND ref=? AND retracts IS NULL)) "
+                              "ORDER BY state IN ('archived','superseded'), updated DESC",
                               (band, rid, '%[[' + r['slug'] + ']]%', rid)).fetchall()
-            r['backlinks'] = [self.brief(self.record(b)) for b in back]
+            if stubs:
+                self._structural(db, band, r, back, stubs)
+            else:
+                r['mentions'] = sorted(set(WIKI.findall(r['body'])))
+                r['backlinks'] = [self.brief(self.record(b)) for b in back]
             if r['state'] == 'superseded':
                 sup = db.execute("SELECT r.id,r.slug,r.title FROM links l JOIN records r ON r.id=l.record "
                                  "WHERE l.kind='record' AND l.relation='supersedes' AND l.ref=?", (rid,)).fetchone()
                 r['superseded_by'] = dict(sup) if sup else None
             return r
+
+    @staticmethod
+    def stub(r, **extra):
+        """A page in a few dozen tokens, enough to decide whether to get it:
+        slug, title, a one-line gist; kind and state only when they are not
+        the plain wiki-page defaults. Built from the live row at read time,
+        so nothing stored can drift from the page."""
+        out = {'slug': r['slug'], 'title': r['title'], 'gist': chunk.gist(r['body'], GIST)}
+        if r['kind'] != 'knowledge':
+            out['kind'] = r['kind']
+        if r['state'] != 'active':
+            out['state'] = r['state']
+        return out | extra
+
+    def rows(self, band, ids):
+        """Record rows for ``ids``, in the order given (ids not found drop out)."""
+        if not ids:
+            return []
+        with self.db(False) as db:
+            rows = {r['id']: r for r in db.execute(
+                'SELECT * FROM records WHERE band=? AND id IN (%s)' % ','.join('?' * len(ids)), (band, *ids))}
+        return [rows[i] for i in ids if i in rows]
+
+    def _structural(self, db, band, r, back, cap):
+        """The curated neighbours of ``r`` as stubs: ``links_out`` (its
+        [[slug]] links, in body order) and ``backlinks`` (pages linking to
+        it, live ones first, newest first), at most ``cap`` each with
+        ``*_more`` counting the rest; ``links_missing`` names links to slugs
+        no record has (yet)."""
+        slugs = list(dict.fromkeys(WIKI.findall(r['body'])))
+        found = {}
+        for n in range(0, len(slugs), 500):  # under SQLite's parameter limit
+            part = slugs[n:n + 500]
+            found |= {row['slug']: row for row in db.execute(
+                'SELECT * FROM records WHERE band=? AND slug IN (%s)' % ','.join('?' * len(part)), (band, *part))}
+        out = [found[s] for s in slugs if s in found and found[s]['id'] != r['id']]
+        missing = [s for s in slugs if s not in found]
+        r['links_out'] = [self.stub(row) for row in out[:cap]]
+        if len(out) > cap:
+            r['links_out_more'] = len(out) - cap
+        if missing:
+            r['links_missing'] = missing[:cap]
+        # A page that links back and is already a stub in links_out (mutual
+        # links are common) is named by slug only: no need to repeat it.
+        listed = {row['id'] for row in out[:cap]}
+        r['backlinks'] = [{'slug': row['slug']} if row['id'] in listed else self.stub(row) for row in back[:cap]]
+        if len(back) > cap:
+            r['backlinks_more'] = len(back) - cap
+        # Ids of every structural neighbour (not just the listed ones), so
+        # ``related`` can leave them out: they are already a hop away.
+        r['_linked'] = {row['id'] for row in out} | {row['id'] for row in back}
 
     @staticmethod
     def brief(r):
