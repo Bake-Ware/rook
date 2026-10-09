@@ -670,10 +670,21 @@ def iter_entry_points(group: str = ENTRY_POINT_GROUP) -> list[Candidate]:
     """Third-party discovery: installed distributions declaring
     ``[project.entry-points."rook.plugins"] name = "pkg.module:PLUGIN"``
     (or just ``"pkg.module"``, whose ``PLUGIN`` export is used)."""
+    import os
+    import sys
     try:
-        from importlib.metadata import entry_points
-        eps = entry_points()
-        selected = eps.select(group=group) if hasattr(eps, "select") else eps.get(group, [])
+        from importlib.metadata import distributions
+        # Only directories: scanning a zip on sys.path (the worker's own
+        # band-worker.pyz) leaves it open for the life of the process, and
+        # Windows then cannot swap in an update.
+        path = [p for p in sys.path if not os.path.isfile(p or ".")]
+        selected, seen = [], set()
+        for dist in distributions(path=path):
+            name = (dist.metadata["Name"] or "").lower().replace("_", "-")
+            if name in seen:
+                continue
+            seen.add(name)
+            selected += [ep for ep in dist.entry_points if ep.group == group]
     except Exception:
         return []
     out = []
