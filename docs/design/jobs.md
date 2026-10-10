@@ -64,7 +64,7 @@ each one can be changed on the dashboard.
     {"kind": "after", "every": "15m", "on": "success|finish|failure"},
     {"kind": "manual"}
   ],
-  "overlap": {"mode": "queue|skip|parallel", "max_queue": 1},
+  "overlap": {"mode": "queue|skip|parallel", "max_queue": null},
   "missed": {"mode": "run_once|skip|all", "grace": "10m"},
   "retention_days": 30,
   "access": {"read": "*", "edit": "*", "run": "*"},
@@ -83,8 +83,9 @@ each one can be changed on the dashboard.
   - `after` re-runs a set interval after the last run finished, filtered by
     its outcome. This is "retrigger X after success".
   - `manual` means the job only runs from `job.run`.
-- **Overlap.** The default is `queue` with `max_queue: 1`. A trigger that
-  overflows the queue is recorded as a run with state `dropped`.
+- **Overlap.** The default is `queue` with no limit (`max_queue: null`). A
+  job may set a limit; a trigger that overflows a set limit is recorded as a
+  run with state `dropped`.
 - **Missed runs**, for example after the hub was down: `run_once` within
   `grace` is the default. A missed run is recorded with `missed: true`, and
   the graph can branch on it, since `run.missed` is a variable.
