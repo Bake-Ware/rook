@@ -36,8 +36,11 @@ def portal(tmp_path, monkeypatch):
 async def test_band_crud_membership_and_csrf(portal):
     p=portal
     async with TestClient(TestServer(p.app)) as client:
+        # A fetch without a session gets JSON 401; a page load goes to the login form.
         r=await client.get('/account/bands/api',allow_redirects=False)
-        assert r.status==302
+        assert r.status==401 and (await r.json())['error']
+        r=await client.get('/account/bands/api',headers={'Sec-Fetch-Mode':'navigate'},allow_redirects=False)
+        assert r.status==302 and r.headers['Location']=='/account/login'
         r=await client.get('/account/bands',headers=p.headers,allow_redirects=False)
         assert r.status==302 and r.headers['Location']=='/#bands'
         r=await client.get('/account/bands/component',headers=p.headers)
@@ -177,7 +180,7 @@ async def test_band_component_auth_assets_and_member_page(portal):
     p=portal
     async with TestClient(TestServer(p.app)) as client:
         r=await client.get('/account/bands/component',allow_redirects=False)
-        assert r.status==302
+        assert r.status==401
         for name in ('bands.js','bands.css','shell.css','rook-art.css','rook-scene.js','rook-scene.js.LEGAL.txt','rook-illustration.png'):
             r=await client.get('/account/bands/assets/'+name)
             assert r.status==200
