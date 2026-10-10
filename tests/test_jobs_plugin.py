@@ -145,9 +145,10 @@ async def test_actions_and_errors(tmp_path):
     jobs = tool_for(node(tmp_path))
     schema = (await jobs(action="describe_schema"))["result"]
     assert schema["title"] == "Rook job" and "cap" in schema["$defs"]["kinds"]
-    for action in ("guardrails_preview", "set_guardrails"):
-        out = await jobs(action=action)
-        assert not out["ok"] and "not available yet" in out["error"]
+    out = await jobs(action="guardrails_preview")
+    assert not out["ok"] and "data.defaults is required" in out["error"]
+    out = await jobs(action="set_guardrails", data={"defaults": {"deny": []}})
+    assert not out["ok"] and out["code"] == "PermissionError"   # defaults are the operator's
     out = await jobs(action="explode")
     assert not out["ok"] and out["error"].startswith("Actions: list, get")
     assert (await jobs(action="get"))["error"] == "id is required (a job id or name)"

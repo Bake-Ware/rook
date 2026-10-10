@@ -163,9 +163,8 @@ async def test_guardrails_not_available_is_a_clear_501(tmp_path):
     async with _client(lambda: n) as c:
         r = await c.post(jobs_web.PATH, headers=ADMIN, json={"csrf": "k", "action": "guardrails_preview",
                                                             "data": {"deny": [], "allow": []}})
-        # Until the guardrails workstream lands the action answers NotAvailable.
-        if r.status_code != 200:
-            assert r.status_code == 501 and r.json()["code"] == "NotAvailable"
+        assert r.status_code == 200 and r.json()["result"]["scope"] == "defaults"
+        assert r.json()["result"]["newly_blocked"] == [] and "jobs_newly_blocked" in r.json()["result"]
 
 
 @pytest.mark.asyncio

@@ -429,6 +429,13 @@ def build_server(client: "BandClient | MultiBandClient",
     from ..hub.node import HUB_WORKER_NAME, attach_hub_node
     mcp._rook_hub = attach_hub_node(client, _store_dir, vault=vault, journal=journal,
                                     enrollment=enrollment, chat=chat)
+    if mcp._rook_hub is not None:
+        # Job identities (hub plugin jobs) check API keys and accounts for
+        # revocation; the account store opens on first use.
+        mcp._rook_hub.tokens = store
+        if enrollment is not None:
+            from ..remote.accounts import AccountStore as _Accounts
+            mcp._rook_hub.accounts = lambda: _Accounts(enrollment)
 
     # Shared knowledge and work records: the hub plugins "knowledge" and
     # "task" (rook/hub/plugins; opt-in with their "enabled" setting, env

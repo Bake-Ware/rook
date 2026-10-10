@@ -35,9 +35,12 @@ from pathlib import Path
 from ....core.plugin import Plugin, capability, place, setting
 from .cron import DEFAULT_TZ
 from .executor import DEFAULT_MAX_EXECUTIONS, Executor
+from .guardrails import DEFAULT_GUARDRAILS, Guardrails
+from .identity import resolve_identity
+from .principals import Directory
 from .runtime import Runtime
 from .scheduler import Scheduler
-from .service import ERRORS, READS, WRITES, JobService, error_reply, reply, route
+from .service import DEFAULT_ACCESS, ERRORS, READS, WRITES, JobService, error_reply, reply, route
 from .store import JobStore
 
 log = logging.getLogger("rook.hub.plugins.jobs")
@@ -68,6 +71,17 @@ class Jobs(Plugin):
                 label="Scheduler tick (seconds)"),
         setting("db_path", "path", default="", env="ROOK_JOBS_DB", apply="restart", group="General",
                 advanced=True, label="Database file", help="Empty: jobs.db in the plugin's data directory."),
+        setting("guardrails", dict, default=DEFAULT_GUARDRAILS, group="Guardrails",
+                label="Default guardrails",
+                help="{deny: [...], allow: [...]} cap selectors (exact, glob, tier:admin, tag:destructive, "
+                     "<cap>:<action>) every job step is checked against. Jobs with guardrails.inherit "
+                     "(the default) follow changes. Preview with job.read guardrails_preview."),
+        setting("default_access", dict, default=dict(DEFAULT_ACCESS), group="Access",
+                label="Default access for new jobs",
+                help="{read, edit, run} principal patterns; * = any authenticated principal."),
+        setting("default_fallback", str, default="", group="Access", label="Default fallback identity",
+                help="Identity a job falls back to when its own is revoked and it names none: "
+                     "creator, a key (token:<agent_id>) or {{secret:name}}. Empty: pause the job."),
     )
     GUIDANCE = {
         "tool:rook_jobs": "",
@@ -81,7 +95,10 @@ class Jobs(Plugin):
              "noop) wired by `on: {success, failure, hang}` from `entry`, fired by `triggers` (cron in "
              "the hub zone unless `tz`, at, after, manual). `run` starts one now; `runs` / `run_get` "
              "show masked step output; `next` lists fire times. Over the band: `job.read` / "
-             "`job.write` on worker `rook`. Use `{{secret:name}}` in step args, never values.\n")
+             "`job.write` on worker `rook`. Use `{{secret:name}}` in step args, never values. "
+             "Guardrails block admin-tier, update, deauth, policy and delete caps in job steps "
+             "(`blocked_by_guardrail` on a job; `guardrails_preview` shows what a change would block); "
+             "editing someone else's job makes it yours and resets its identity.\n")
 
     def __init__(self) -> None:
         super().__init__()
@@ -89,6 +106,7 @@ class Jobs(Plugin):
         self.runtime: Runtime | None = None
         self.scheduler: Scheduler | None = None
         self.service: JobService | None = None
+        self.guardrails: Guardrails | None = None
         self._node = None
         self._loop: asyncio.Task | None = None
 
@@ -124,11 +142,26 @@ class Jobs(Plugin):
         executor = Executor(runtime, settings=self._setting)
         kw = {"clock": clock} if clock is not None else {}
         self.scheduler = Scheduler(self.store, executor, owner=owner, settings=self._setting, **kw)
+        self.guardrails = Guardrails(self._setting, hub_policy=self._hub_policy, roster=runtime.roster,
+                                     hub_id=lambda: runtime.hub_id, hub_tier=self._hub_tier)
+        directory = lambda: Directory.for_node(self._node)  # noqa: E731 - re-read: the bridge sets tokens later
+        self.scheduler.resolve = lambda job, owner_info: resolve_identity(
+            job, owner_info, directory=directory(), settings=self._setting, guardrails=self.guardrails)
         self.service = JobService(self.store, self.scheduler, settings=self._setting,
                                   node=self._node, setting_names=tuple(s.name for s in self.SETTINGS
                                                                        if s.name not in ("enabled", "db_path")),
-                                  **kw)
+                                  guardrails=self.guardrails, directory=directory, **kw)
         self.scheduler.alerts = self.service.alerts
+
+    def _hub_policy(self):
+        """The hub's permission policy (operator rules naming ``job:*``)."""
+        authz = getattr(getattr(self._node, "client", None), "authz", None)
+        store = getattr(authz, "store", None)
+        return store.current() if store is not None else None
+
+    def _hub_tier(self, cap: str):
+        meta = self._node.host.registry.meta(cap) if self._node is not None else None
+        return getattr(meta, "risk", None)
 
     def bind_host(self, node) -> None:
         self._node = node
@@ -188,9 +221,10 @@ class Jobs(Plugin):
             except ERRORS as error:
                 return error_reply(error)
         rook_jobs.__doc__ = (
-            "Scheduled jobs on the hub. Reads: list|get|runs|run_get|next|validate|describe_schema. "
-            "Writes: create|update|delete|enable|disable|run|cancel. Call describe_schema before writing "
-            "a job. id: job id or name (run id for run_get/cancel). data: the job (create/validate), "
+            "Scheduled hub jobs. Reads: list|get|runs|run_get|next|validate|guardrails_preview|"
+            "describe_schema. Writes: create|update|delete|enable|disable|run|cancel|set_guardrails. "
+            "describe_schema before writing "
+            "a job. id: job id/name (run id: run_get, cancel). data: the job (create/validate), "
             "fields to change (update) or options (runs {states, steps:true}, run {vars}).")
         return [rook_jobs]
 

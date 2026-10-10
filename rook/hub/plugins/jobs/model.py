@@ -17,7 +17,8 @@ from typing import Any
 from .kinds import WORKER_SCHEMA  # importing kinds registers the built-in step kinds
 from .cron import Cron, parse_duration, parse_instant, valid_zone
 from .expr import compile_expr, step_refs
-from .identity import MODES, SUPPORTED_MODES
+from .guardrails import check_job_block as check_guardrails
+from .identity import MODES, check_block as check_identity
 from .steps import CONTRACT_KINDS, OUTCOMES, step_kind, step_kinds
 
 STEP_ID = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]{0,63}$")
@@ -58,8 +59,15 @@ def normalize(doc: dict) -> dict:
         ms.setdefault("mode", "run_once")
         ms.setdefault("grace", "10m")
     job.setdefault("retention_days", None)
-    job.setdefault("access", {"read": "*", "edit": "*", "run": "*"})
-    job.setdefault("guardrails", {"inherit": True, "allow": [], "deny": []})
+    acc = job.setdefault("access", {})
+    if isinstance(acc, dict):
+        for op in ("read", "edit", "run"):
+            acc.setdefault(op, "*")
+    gr = job.setdefault("guardrails", {})
+    if isinstance(gr, dict):
+        gr.setdefault("inherit", True)
+        gr.setdefault("allow", [])
+        gr.setdefault("deny", [])
     job.setdefault("alerts", {"on_failure": [], "on_success": []})
     job.setdefault("vars", {})
     steps = job.get("steps")
@@ -126,6 +134,30 @@ def _triggers(job: dict, errs: list, warns: list, now: float | None) -> None:
                 errs.append(f"{p}.on: one of {', '.join(AFTER_ON)}")
 
 
+ACCESS_OPS = ("read", "edit", "run")
+
+
+def access_patterns(value: Any) -> list[str]:
+    """An access entry (``"*"``, ``"token:*, human:abc"`` or a list) as a
+    list of principal patterns."""
+    if value is None:
+        return ["*"]
+    if isinstance(value, str):
+        return [p for p in re.split(r"[\s,]+", value) if p]
+    return [str(p).strip() for p in value if str(p).strip()]
+
+
+def check_access(access: Any) -> list[str]:
+    if not isinstance(access, dict):
+        return ["access: must be an object {read, edit, run}"]
+    errs = [f"access.{k}: unknown field (use {', '.join(ACCESS_OPS)})" for k in access if k not in ACCESS_OPS]
+    for op in ACCESS_OPS:
+        v = access.get(op, "*")
+        if not (isinstance(v, str) or (isinstance(v, list) and all(isinstance(x, str) for x in v))):
+            errs.append(f"access.{op}: a principal pattern string or a list of them")
+    return errs
+
+
 def _policy_blocks(job: dict, errs: list) -> None:
     ov = job.get("overlap")
     if not isinstance(ov, dict) or ov.get("mode") not in OVERLAP_MODES:
@@ -142,12 +174,10 @@ def _policy_blocks(job: dict, errs: list) -> None:
     rd = job.get("retention_days")
     if rd is not None and (not isinstance(rd, int) or isinstance(rd, bool) or not 1 <= rd <= 3650):
         errs.append("retention_days: null (the hub setting) or 1-3650")
-    ident = job.get("identity")
-    if not isinstance(ident, dict) or ident.get("mode", "creator") not in MODES:
-        errs.append(f"identity.mode: one of {', '.join(MODES)}")
-    elif ident.get("mode", "creator") not in SUPPORTED_MODES:
-        errs.append(f"identity.mode: {ident['mode']!r} is not available on this hub yet (creator only)")
-    for key in ("access", "guardrails", "alerts", "vars"):
+    errs.extend(check_identity(job.get("identity")))
+    errs.extend(check_access(job.get("access")))
+    errs.extend(check_guardrails(job.get("guardrails")))
+    for key in ("alerts", "vars"):
         if not isinstance(job.get(key), dict):
             errs.append(f"{key}: must be an object")
     alerts = job.get("alerts") if isinstance(job.get("alerts"), dict) else {}
@@ -348,8 +378,15 @@ def schema() -> dict:
             "name": {"type": "string", "pattern": NAME.pattern},
             "description": {"type": "string"},
             "enabled": {"type": "boolean", "default": True},
-            "identity": {"type": "object", "properties": {"mode": {"enum": list(SUPPORTED_MODES)}},
-                         "default": {"mode": "creator"}},
+            "identity": {"type": "object", "default": {"mode": "creator"}, "properties": {
+                "mode": {"enum": list(MODES), "default": "creator",
+                         "description": "creator: who created the job; key: an API key or user (ref); "
+                                        "vault: an API key held in a vault secret (ref); fallback: always "
+                                        "the fallback identity"},
+                "ref": {"type": "string", "description": "key: token:<agent_id>, human:<id>, a key id or "
+                                                         "name; vault: a secret name or {{secret:name}}"},
+                "fallback": {"description": "used when the primary identity is revoked: \"creator\", a key "
+                                            "reference, \"{{secret:name}}\" or {mode, ref}"}}},
             "triggers": {"type": "array", "default": [{"kind": "manual"}], "items": {"oneOf": [
                 {"type": "object", "required": ["kind", "expr"], "properties": {
                     "kind": {"const": "cron"},
@@ -370,8 +407,17 @@ def schema() -> dict:
                 "grace": {"$ref": "#/$defs/duration", "default": "10m"}}},
             "retention_days": {"type": ["integer", "null"], "minimum": 1, "maximum": 3650,
                                "description": "null = the hub setting job.retention_days (30)"},
-            "access": {"type": "object"},
-            "guardrails": {"type": "object"},
+            "access": {"type": "object", "description": "principal patterns; * = any authenticated principal; "
+                                                        "the owner and the operator always have full access",
+                       "properties": {op: {"oneOf": [{"type": "string"},
+                                                     {"type": "array", "items": {"type": "string"}}],
+                                           "default": "*"} for op in ACCESS_OPS}},
+            "guardrails": {"type": "object", "properties": {
+                "inherit": {"type": "boolean", "default": True,
+                            "description": "follow later changes to the hub defaults (job.guardrails)"},
+                "deny": {"type": "array", "items": {"$ref": "#/$defs/guardrail"}, "default": []},
+                "allow": {"type": "array", "items": {"$ref": "#/$defs/guardrail"}, "default": [],
+                          "description": "operator only: allowed even over a default deny"}}},
             "alerts": {"type": "object", "properties": {
                 "on_failure": {"type": "array", "items": {"$ref": "#/$defs/notify"}},
                 "on_success": {"type": "array", "items": {"$ref": "#/$defs/notify"}}}},
@@ -390,6 +436,12 @@ def schema() -> dict:
                 "names": {"type": "array", "items": {"type": "string"}},
                 "tags": {"type": "array", "items": {"type": "string"}}}},
             "worker": WORKER_SCHEMA,
+            "guardrail": {"oneOf": [
+                {"type": "string", "description": "cap selector: shell.exec, selfupdate.*, tier:admin, "
+                                                  "tag:destructive, job.write:delete"},
+                {"type": "object", "required": ["cap"], "properties": {
+                    "cap": {"type": "string"}, "on": {"description": "target selector (policy syntax)"},
+                    "note": {"type": "string"}}}]},
             "notify": {"type": "object", "required": ["text"], "properties": {
                 "via": {"enum": ["voice", "notify", "telegram"], "default": "notify"},
                 "text": {"type": "string"}, "title": {"type": "string"}}},

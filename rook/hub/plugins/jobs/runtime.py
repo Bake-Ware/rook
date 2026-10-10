@@ -77,7 +77,16 @@ class Runtime:
             raise LookupError("no hub node")
         from ...authz import current_principal
 
+        from .guardrails import Blocked
+        guard = getattr(identity, "guard", None)
+        refused: list = []
+
         async def invoke(cap: str, cargs: dict) -> Any:
+            if guard is not None:  # every cap the tool calls passes the job's guardrails
+                verdict = guard.call(cap, self.hub_id, self.roster().get(self.hub_id), cargs)
+                if not verdict.allow:
+                    refused.append(verdict)
+                    raise Blocked(verdict)
             tok = current_principal.set(identity.principal)
             try:
                 return await node.invoke(cap, cargs, identity.display)
@@ -90,7 +99,17 @@ class Runtime:
                 continue
             for fn in hook(invoke) or []:
                 if getattr(fn, "__name__", "") == name:
-                    return await fn(**args)
+                    try:
+                        out = await fn(**args)
+                    except Blocked:
+                        raise
+                    except Exception:
+                        if refused:
+                            raise Blocked(refused[0]) from None
+                        raise
+                    if refused:  # the tool caught the refusal and answered ok: false
+                        raise Blocked(refused[0])
+                    return out
         raise LookupError(f"no hub tool named {name!r}")
 
     # -- secrets and the journal -----------------------------------------
