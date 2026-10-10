@@ -208,7 +208,7 @@ async def test_mcp_tools_keep_their_names_arguments_and_replies(tmp_path, monkey
     async def invoke(cap, args):
         return await n.invoke(cap, args, "agent:test")
     tools = {t.__name__: t for p in n.host.plugins if hasattr(p, "mcp_tools") for t in p.mcp_tools(invoke)}
-    assert set(tools) == {"rook_knowledge", "rook_concept", "rook_project", "rook_task"}
+    assert set(tools) - {"rook_jobs"} == {"rook_knowledge", "rook_concept", "rook_project", "rook_task"}
     no_req = json.loads(await tools["rook_knowledge"](action="create", data={"title": "x"}))
     assert no_req == {"ok": False, "error": "request_id is required for writes", "code": "ValueError"}
     bogus = json.loads(await tools["rook_task"](action="bogus"))

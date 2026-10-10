@@ -1132,6 +1132,8 @@ rename them. The tiers stand either way.
 | `rook_knowledge` create/update/link/retract | `knowledge.write` | W | |
 | `rook_task` / `rook_project` / `rook_concept` deck/get/list/search | `task.read` | R | |
 | `rook_task` / `rook_project` / `rook_concept` create/update/claim/release/link/retract/review | `task.write` | W | |
+| `rook_jobs` list/get/runs/run_get/next/validate/guardrails_preview/describe_schema | `job.read` | R | |
+| `rook_jobs` create/update/delete/enable/disable/run/cancel/set_guardrails/settings | `job.write` | W | steps run as the job's identity ([jobs.md](jobs.md) 7) |
 | `grants.revocations` (new) | `grants.revocations` | R | |
 | `policy.explain` (new) | `policy.explain` | R | |
 | `policy.get` (new) | `policy.get` | R | s |
