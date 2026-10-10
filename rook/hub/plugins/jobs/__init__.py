@@ -1,7 +1,7 @@
 """``job.*``: scheduled, branching work owned by the hub (worker ``rook``).
 
 docs/design/jobs.md is the contract. A job is a graph of steps (cap, fanout,
-tool, wait, notify, join, noop; agent and ask come later) fired by cron, at,
+tool, wait, notify, ask, agent, join, noop) fired by cron, at,
 after or manual triggers. The hub owns the schedule, the run state and the
 history in its own SQLite store (``jobs.db`` in the plugin's data dir).
 
@@ -33,6 +33,7 @@ import logging
 from pathlib import Path
 
 from ....core.plugin import Plugin, capability, place, setting
+from . import agent_kinds  # registers the agent and ask step kinds
 from .cron import DEFAULT_TZ
 from .executor import DEFAULT_MAX_EXECUTIONS, Executor
 from .guardrails import DEFAULT_GUARDRAILS, Guardrails
@@ -67,6 +68,9 @@ class Jobs(Plugin):
         setting("notify_worker", str, default="", group="Runs", label="Notify worker",
                 help="Worker that notify/voice steps go to when a step names none. Empty: the first "
                      "live worker with the cap."),
+        setting("default_agent", str, default="home", group="Runs", label="Default agent",
+                help="Agent steps without their own agent go to this one: \"home\" (the house "
+                     "agent) or a session spec as JSON, {\"session\": {\"worker\": ..., ...}}."),
         setting("tick_seconds", int, default=5, min=1, max=300, group="Runs", advanced=True,
                 label="Scheduler tick (seconds)"),
         setting("db_path", "path", default="", env="ROOK_JOBS_DB", apply="restart", group="General",
@@ -91,8 +95,8 @@ class Jobs(Plugin):
     SKILL = ("### jobs\n"
              "Scheduled, branching work the hub runs. `rook_jobs(action=\"describe_schema\")` gives the "
              "job JSON schema; `validate` checks a draft (`data` = the job); `create` saves it (you are "
-             "its owner and runs act as you). A job is `steps` (cap, fanout, tool, wait, notify, join, "
-             "noop) wired by `on: {success, failure, hang}` from `entry`, fired by `triggers` (cron in "
+             "its owner and runs act as you). A job is `steps` (cap, fanout, tool, wait, notify, ask, "
+             "agent, join, noop) wired by `on: {success, failure, hang}` from `entry`, fired by `triggers` (cron in "
              "the hub zone unless `tz`, at, after, manual). `run` starts one now; `runs` / `run_get` "
              "show masked step output; `next` lists fire times. Over the band: `job.read` / "
              "`job.write` on worker `rook`. Use `{{secret:name}}` in step args, never values. "
@@ -179,6 +183,7 @@ class Jobs(Plugin):
             self._loop = None
         if self.scheduler is not None:
             await self.scheduler.stop()
+        await agent_kinds.cancel_background()
 
     # -- caps ------------------------------------------------------------------------
     async def run(self, write: bool, action: str, rid, query, data):

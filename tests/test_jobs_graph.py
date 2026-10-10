@@ -45,8 +45,8 @@ def test_on_accepts_a_single_id():
     (job_doc({"a": cap(on={"success": ["nope"]})}), "no step 'nope'"),
     (job_doc({"a": cap(), "b": {"kind": "noop"}}), "steps.b: not reachable"),
     (job_doc({"a": {"kind": "bogus"}}), "unknown kind 'bogus'"),
-    (job_doc({"a": {"kind": "agent"}}), "not available on this hub yet"),
-    (job_doc({"a": {"kind": "ask"}}), "not available on this hub yet"),
+    (job_doc({"a": {"kind": "agent"}}), "prompt is required"),
+    (job_doc({"a": {"kind": "ask"}}), "text is required"),
     (job_doc({"a": cap(timeout="0s")}), "must be more than zero"),
     (job_doc({"a": cap(timeout="soon")}), "not a duration"),
     (job_doc({"a": cap(on={"done": ["a"]})}), "outcome keys are"),
@@ -405,19 +405,26 @@ async def test_wait_notify_and_tool_steps(tmp_path):
 
 @pytest.mark.asyncio
 async def test_registered_kind_is_usable(tmp_path):
-    """The registry is the seam for the agent/ask kinds."""
-    async def run_ask(ctx, step):
+    """The registry is the seam later kinds (agent, ask) register through."""
+    async def run_probe(ctx, step):
         return StepResult("success", output={"reply": "yes"}, extra={"reply": "yes"})
-    register_step_kind("ask", run_ask, validate=lambda s: [] if s.get("question") else ["question is required"])
+    register_step_kind("probe", run_probe, validate=lambda s: [] if s.get("question") else ["question is required"])
     try:
-        assert any("question is required" in e for e in errors(job_doc({"a": {"kind": "ask"}})))
-        res = await execute(FakeRuntime(tmp_path), {"a": {"kind": "ask", "question": "go?"}})
-        assert res["steps"]["a"]["reply"] == "yes" and "ask" in schema()["$defs"]["kinds"]
+        assert any("question is required" in e for e in errors(job_doc({"a": {"kind": "probe"}})))
+        res = await execute(FakeRuntime(tmp_path), {"a": {"kind": "probe", "question": "go?"}})
+        assert res["steps"]["a"]["reply"] == "yes" and "probe" in schema()["$defs"]["kinds"]
         with pytest.raises(ValueError):
-            register_step_kind("ask", run_ask)
+            register_step_kind("probe", run_probe)
     finally:
-        unregister_step_kind("ask")
-    assert any("not available" in e for e in errors(job_doc({"a": {"kind": "ask", "question": "go?"}})))
+        unregister_step_kind("probe")
+    assert any("unknown kind" in e for e in errors(job_doc({"a": {"kind": "probe", "question": "go?"}})))
+    # A contract kind that is not registered is "not available", not unknown.
+    from rook.hub.plugins.jobs import agent_kinds
+    unregister_step_kind("ask")
+    try:
+        assert any("not available" in e for e in errors(job_doc({"a": {"kind": "ask", "text": "go?"}})))
+    finally:
+        agent_kinds.register()
 
 
 @pytest.mark.asyncio

@@ -58,7 +58,8 @@ def view(records: dict, steps: dict) -> dict:
     for sid in steps:
         r = records.get(sid) or {}
         out[sid] = {"ok": r.get("state") == "success", "state": r.get("state"),
-                    "exit_code": r.get("exit_code"), "attempts": r.get("attempts", 0)}
+                    "exit_code": r.get("exit_code"), "attempts": r.get("attempts", 0),
+                    "reply": r.get("reply"), "verdict": r.get("verdict")}
     return out
 
 
