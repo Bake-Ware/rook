@@ -198,6 +198,18 @@ are set only in the environment or on the command line.
 |---|---|---|---|---|---|---|
 | `hub.motd` | Message of the day | hub | str |  | `ROOK_HUB_MOTD` | live |
 
+## Jobs (hub plugin, runs in mcp)
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `job.enabled` | Jobs | hub | bool | on | `ROOK_JOBS`, `ROOK_JOB_ENABLED` | restart |
+| `job.timezone` | Time zone | hub | str | `America/Toronto` | `ROOK_JOB_TIMEZONE` | live |
+| `job.retention_days` | Keep run history (days) | hub | int | `30` | `ROOK_JOB_RETENTION_DAYS` | live |
+| `job.max_step_executions` | Step executions per run | hub | int | `100` | `ROOK_JOB_MAX_STEP_EXECUTIONS` | live |
+| `job.notify_worker` | Notify worker | hub | str |  | `ROOK_JOB_NOTIFY_WORKER` | live |
+| `job.tick_seconds` | Scheduler tick (seconds) | hub | int | `5` | `ROOK_JOB_TICK_SECONDS` | live |
+| `job.db_path` | Database file | hub | path |  | `ROOK_JOBS_DB`, `ROOK_JOB_DB_PATH` | restart |
+
 ## Knowledge (hub plugin, runs in mcp)
 
 | Key | Label | Scope | Type | Default | Env / flag | Apply |

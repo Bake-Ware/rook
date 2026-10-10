@@ -6,7 +6,7 @@ architecture.
 
 - [The band](#the-band) · [Capabilities](#capabilities) · [Integrations](#integrations) · [Hardware integrations](#hardware-integrations)
 - [Control planes](#control-planes) — dashboard · `rook band` TUI · chat · MCP
-- [Agent workspace](#agent-workspace) — chat rooms · work · knowledge wiki · secrets · agent instructions
+- [Agent workspace](#agent-workspace) — chat rooms · work · knowledge wiki · jobs · secrets · agent instructions
 - [Reliability](#reliability) · [OTA self-update](#ota-self-update) · [Security](#security) · [Installers served by the hub](#installers-served-by-the-hub)
 
 ## The band
@@ -323,6 +323,7 @@ Expose the band — and the agent workspace — as MCP tools. Each agent connect
 | Chat | `rook_chat_start / send / read / rooms / delete` · `rook_presence` · `rook_chat_wake` (wake an offline agent on its worker) |
 | Work | `rook_concept` · `rook_project` · `rook_task` (claim, deck, update, link evidence) · `rook_handoff_save / get / list` |
 | Knowledge | `rook_knowledge` — search, read and write wiki pages |
+| Jobs | `rook_jobs` — create, schedule and run jobs; read their runs (masked output) |
 | Credentials | `rook_secret` — list the vault, or use `{{secret:name}}` inside `rook_call` args |
 | Audit | `rook_journal` (every call, with its reply) · `rook_whoami` · `rook_config_get / apply` |
 
@@ -357,6 +358,14 @@ Nothing an agent writes is trusted by default: every page starts **unverified**.
 **Review mode** walks you through every unverified page in turn — *Verify & next*, *Dispute…*, *Skip*.
 
 ![Review mode](img/knowledge-review.png)
+
+### Jobs
+
+Scheduled work the hub runs for you or your agents: back up a box every night, check a service every 15 minutes and tell you when it breaks, re-run something an hour after it last succeeded. A job is a small graph of **steps**: call a cap on a worker (or the hub), run the same cap on every worker that matches a filter, use a hub tool such as `rook_task`, wait, or send you a phone notification, a voice message or a Telegram message. Each step has a timeout and retries, and branches on **success**, **failure** or **hang** (timed out); branches can run in parallel and meet again at a **join** with a condition such as `steps.backup.ok and not steps.check.ok`.
+
+Jobs fire on a **cron** schedule (`0 3 * * *`, `@hourly`), **at** a set time, **after** the previous run finished, or only when you start them. Schedules use the hub's time zone (setting `job.timezone`, America/Toronto by default) unless a job names its own, and they behave sensibly around daylight saving: a 02:30 run on the spring-forward night runs once at 03:00, and a 01:30 run on the fall-back night runs once, the first time 01:30 comes round. If the hub was down, a missed run is made up once if it is within the job's grace period (10 minutes by default) and marked **missed**. A trigger that fires while the job is still running waits in a queue (no limit unless the job sets `max_queue`), or is skipped, or runs alongside, as the job chooses.
+
+Every run is kept for 30 days (setting `job.retention_days`; a job can keep its own longer or shorter): who it ran as, each step's state, exit code and output. Output is masked: credentials go in step args as `{{secret:name}}`, resolve only at the moment of the call, and never appear in the run log or the call journal. A job runs as the person or agent that created it. Agents work with jobs through `rook_jobs` — `describe_schema` gives them the exact job format, `validate` checks a draft, `run` starts one now, `runs` and `run_get` show what happened. Over the band the same actions are `job.read` and `job.write` on worker `rook`. See [docs/design/jobs.md](design/jobs.md).
 
 ### Secrets
 

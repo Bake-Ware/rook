@@ -274,6 +274,9 @@ def hub_cap_for_tool(name: str, arguments: Any) -> str | None:
     if name in ("rook_task", "rook_project", "rook_concept"):
         default = "deck" if name == "rook_task" else "list"
         return "task.read" if (action or default) in _READ_ACTIONS else "task.write"
+    if name == "rook_jobs":
+        from .plugins.jobs.service import route
+        return route(action or "list")
     return None
 
 
