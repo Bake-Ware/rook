@@ -419,9 +419,17 @@ class JobAgentBackend:
             return await self.rt.tool(name, args, self.identity)
         from ...authz import current_principal
 
+        guard = guardrails.guard_of(self.identity, self.ctx.job)
+
+        def per_call(cap: str, cargs: dict) -> str:
+            hub = self.rt.hub_id
+            v = guard.call(cap, hub, (self.rt.roster() or {}).get(hub), cargs)
+            return "" if v.allow else (v.reason or "blocked by a guardrail") + (f" (rule {v.rule})" if v.rule else "")
+
         async def invoke(cap: str, cargs: dict) -> Any:
             why = (self.scope_refusal(cap) or self.guard(
-                {"kind": "cap", "worker": "rook", "cap": cap, "args": cargs}) or self._policy(cap))
+                {"kind": "cap", "worker": "rook", "cap": cap, "args": cargs})
+                or per_call(cap, cargs) or self._policy(cap))
             if why:
                 self._refuse(cap, "rook", cargs, why)
                 raise PermissionError(why)

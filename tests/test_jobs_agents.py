@@ -279,6 +279,38 @@ async def test_guardrail_refuses_an_agent_tool_call(env, monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("bypass_static", [False, True])
+async def test_default_denied_cap_is_refused_for_the_agent(env, monkeypatch, bypass_static):
+    """The default guardrails (worker.deauth, tier:admin) hold for house-agent
+    calls, both in the pre-call check and per call through the guarded
+    runtime (with the pre-call check bypassed)."""
+    if bypass_static:
+        monkeypatch.setattr(guardrails, "check_step", lambda job, step, ident: Verdict(True))
+    rt = runtime(env, caps={"worker.deauth": lambda a, w: ok({"deauthed": True}),
+                            "secret.get": lambda a, w: ok({"value": "x"})})
+    rt.workers["w1"]["caps"] += ["worker.deauth", "secret.get"]
+    env.llm.script = [call("rook_call", 1, worker="alpha", cap="worker.deauth", args={"name": "beta"}),
+                      call("rook_call", 2, worker="alpha", cap="secret.get", args={"name": "k"}),
+                      finish("failed", "not allowed")]
+    res = await execute(rt, {"a": agent_step()})
+    assert not rt.calls                                   # nothing reached a worker
+    out = tool_results(env.llm)
+    assert [o["state"] for o in out] == ["blocked", "blocked"]
+    assert res["steps"]["a"]["state"] == "failure"
+
+
+@pytest.mark.asyncio
+async def test_ask_step_call_is_guarded_per_call(env, monkeypatch):
+    """An ask step's voice call goes through the guarded runtime."""
+    from rook.hub.plugins.jobs import guardrails as g
+    monkeypatch.setattr(g.JobGuard, "call", lambda self, cap, tid, entry, args=None:
+                        Verdict(cap != "voice.speak", "voice is off for jobs", "deny-voice"))
+    rt = runtime(env, caps={"voice.speak": lambda a, w: ok({"reply": {"text": "yes"}})})
+    res = await execute(rt, {"q": {"kind": "ask", "text": "Go?"}})
+    assert res["steps"]["q"]["state"] == "blocked" and not rt.calls
+
+
+@pytest.mark.asyncio
 async def test_guardrails_cover_tools_notify_and_ask(env, monkeypatch):
     monkeypatch.setattr(guardrails, "check_step",
                         lambda job, step, ident: Verdict(step.get("kind") not in ("tool", "notify", "ask"), "no"))

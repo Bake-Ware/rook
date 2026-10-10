@@ -291,8 +291,12 @@ step's `timeout` (wait) or `budget` (delegate), and `call_timeout` per call.
 1. the step's `tools` scope (the house agent's own limit);
 2. `guardrails.check_step(job, pseudo_step, identity)` for each call, with
    a pseudo step of kind `cap`, `tool`, `notify` or `ask` (a hub tool's own
-   cap calls are each checked as `cap` steps on `rook`). A refusal goes back
-   to the model as `{state: "blocked", error}` and is journaled;
+   cap calls are each checked as `cap` steps on `rook`), and then the
+   job's guardrails again per call with the worker it resolved to: band
+   calls go through the step's `GuardedRuntime`, hub-tool caps through the
+   run's `JobGuard`. A refusal goes back to the model as
+   `{state: "blocked", error}` and is journaled. The default deny list
+   (`worker.deauth`, `tier:admin`, …) therefore holds for the agent too;
 3. the band's permission policy, evaluated for the run's principal as for
    every job call (in-process hub caps are checked against the policy
    explicitly). The principal is the job identity with `via =
