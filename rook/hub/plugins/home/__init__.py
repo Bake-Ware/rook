@@ -19,7 +19,10 @@ on the dashboard's Manage > Home agent page. The agent is then:
   person or agent who asked.
 
 Tools are off by default. With ``home.tools`` on it may search the shared
-knowledge wiki (read-only). See docs/design/home-agent.md.
+knowledge wiki (read-only). Job ``agent`` steps get a separate, opt-in tool
+set that acts on behalf of the job (:mod:`.job_agent`,
+:meth:`HomeAgent.work_job_step`); chat never sees it. See
+docs/design/home-agent.md and docs/design/jobs.md 6.
 """
 
 from __future__ import annotations
@@ -36,6 +39,7 @@ from typing import Any
 from ....core import context
 from ....core.plugin import Plugin, capability, place, setting
 from ....core.settings import SECRET_REF
+from . import job_agent
 from .llm import PROVIDERS, ChatClient, LLMError, aiohttp_request, base_url
 
 log = logging.getLogger("rook.hub.plugins.home")
@@ -140,6 +144,13 @@ class HomeAgent(Plugin):
                 label="Read-only tools (knowledge search)",
                 help="Lets the model search the knowledge wiki. Each search is journaled "
                      "as the home agent."),
+        setting("job_steps", bool, True, group="Jobs", order=1, label="Work job agent steps",
+                help="Job steps with agent \"home\" may run the home agent with a tool set that "
+                     "acts on behalf of the job (never more than the job may do). Chat never "
+                     "gets these tools."),
+        setting("job_max_tool_calls", int, job_agent.DEFAULT_MAX_CALLS, min=1,
+                max=job_agent.MAX_CALLS, group="Jobs", order=2, label="Tool calls per job step",
+                help="A job step's max_tool_calls overrides it (up to the same limit)."),
     )
     GUIDANCE = {"home.ask": "The home agent is a local model: give it the context it needs "
                             "in the question; it cannot see your conversation."}
@@ -160,6 +171,7 @@ class HomeAgent(Plugin):
         self._busy: set[str] = set()
         self._sem = asyncio.Semaphore(2)
         self._ask_sem = asyncio.Semaphore(2)
+        self._job_sem = asyncio.Semaphore(2)
         self._cursor: dict[str, int] = {}
         self._baseline = False
         self._rate: dict[str, collections.deque] = {}
@@ -620,6 +632,54 @@ class HomeAgent(Plugin):
                          {"ok": False, "error": err[:300]}, rid)
         finally:
             self._busy.discard(rid)
+
+    # -- job steps (docs/design/jobs.md 6) ------------------------------------
+    def job_unready(self) -> str:
+        """Why a job agent step cannot use the home agent now ("" when it can)."""
+        if not self.enabled():
+            return "the home agent is off (Manage > Home agent)"
+        if not self.settings.get("job_steps", True):
+            return "the home agent does not work job steps (setting home.job_steps)"
+        missing = self.missing()
+        if missing:
+            return f"the home agent is not configured ({', '.join(missing)})"
+        return ""
+
+    async def work_job_step(self, prompt: str, context: Any, backend: "job_agent.JobBackend", *,
+                            model: str | None = None, max_calls: int | None = None,
+                            job: str = "", run: str = "", step: str = "") -> dict:
+        """Work one job step with the job tool set. ``backend`` (from the jobs
+        plugin) carries out every tool call on behalf of the job. Returns
+        ``{verdict, text, calls, tools_used, model, rounds}``; raises
+        HomeError/LLMError when the model cannot be used. The caller bounds the
+        time; tool calls are bounded by ``max_calls`` (default the setting)."""
+        why = self.job_unready()
+        if why:
+            raise HomeError(why)
+        cfg = self.config({"model": model} if model else None)
+        cfg["tools"] = False                      # chat's knowledge tool stays out of it
+        limit = int(max_calls or self.settings.get("job_max_tool_calls")
+                    or job_agent.DEFAULT_MAX_CALLS)
+        msgs = [{"role": "system", "content": self.system_prompt(cfg, job_agent.WHERE)},
+                {"role": "user", "content": job_agent.first_message(prompt, context)[:40000]}]
+        args = {"job": job, "run": run, "step": step}
+        try:
+            async with self._job_sem:
+                cli = self.client(cfg)
+                out = await job_agent.run_loop(cli, msgs, backend, max_calls=limit,
+                                               max_tokens=cfg.get("max_tokens"),
+                                               temperature=cfg.get("temperature"))
+        except (LLMError, HomeError) as e:
+            self._note("job", False, sender=f"job:{job}", error=str(e)[:300])
+            self.journal("home.job_step", args, {"ok": False, "error": str(e)[:300]}, run or None)
+            raise
+        self._note("job", True, sender=f"job:{job}", model=out["model"], verdict=out["verdict"],
+                   tools=out["tools_used"])
+        self.journal("home.job_step", args,
+                     {"ok": True, "result": {"verdict": out["verdict"], "calls": out["calls"],
+                                             "tools": out["tools_used"], "model": out["model"]}},
+                     run or None)
+        return out
 
     # -- caps ----------------------------------------------------------------
     @capability("ask", risk="write")

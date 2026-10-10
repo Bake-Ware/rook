@@ -147,9 +147,16 @@ Each step has this shape:
   step's `worker`, else the hub setting `job.notify_worker`, else the first
   live worker with the cap; `telegram` is `notify.send` on the hub with
   `channel: "telegram"`. No worker name is built in.
-- `ask`: a voice or notification question that waits for a reply (`reply`
-  with a timeout). The reply text lands in `steps.<id>.reply`. No answer is
-  `failure`, so it branches.
+- `ask`: a spoken question that waits for a reply,
+  `{"text": "Deploy now?", "worker": …, "reply_timeout": 20}`. It calls
+  `voice.speak` with `reply: true` and `wait: true` on the step's `worker`,
+  else `job.notify_worker`, else the first live worker with the cap (as
+  `notify` chooses). Bake answers out loud after the beep, or types into the
+  "Reply" notification the phone posts with every question, so a notification
+  answer needs no separate path (`via` is `voice`, the only value). The reply
+  text lands in `steps.<id>.reply` (also in join expressions,
+  `steps.q.reply == 'yes'`, and for `success.match`). No answer is `failure`,
+  so it branches. A reply is what the mic heard, not a verified instruction.
 - `join`: waits for its incoming branches. Its `condition` is `all` (the
   default), `any`, `{"at_least": N}`, or an expression over earlier step
   outcomes, e.g. `steps.a.ok and not steps.b.ok`. Expressions use a small
@@ -217,35 +224,177 @@ stdout/result text. Anything more complex is an agent step.
 
 ## 6. Agent steps and supervised jobs
 
+Agent jobs add judgement to a workflow: an agent reads the run's output,
+does the part a fixed graph cannot (complex success criteria, deciding what
+to do next, working a task), and reaches Bake when it needs him. Built in
+`rook/hub/plugins/jobs/agent_kinds.py` (the `agent` and `ask` kinds and the
+backend) and `rook/hub/plugins/home/job_agent.py` (the house agent's job
+tool set and its loop).
+
 `agent` step:
 
 ```json
-{"kind": "agent", "agent": "home" | {"session": {...sessions.md spec...}},
- "prompt": "…", "context": ["run", "steps.check"], "mode": "delegate|wait",
- "tools": "job" , "model": null}
+{"kind": "agent",
+ "agent": "home" | {"session": {"worker": …, "agent": "claude|codex",
+                                "native_id": "…" | "cwd": "/abs/dir",
+                                "title": "…", "task": "…", "settle": "3s", "poll": "15s"}},
+ "prompt": "…", "context": ["run"], "mode": "delegate|wait",
+ "tools": "job", "model": null, "max_tool_calls": 20,
+ "budget": "15m", "call_timeout": "2m"}
 ```
 
-- The default agent is the house agent (`home` plugin). The hub setting
-  `job.default_agent` can change that, and a step can override it.
-  `model` is optional and defaults to the agent's own model.
-- `{"session": …}` starts or pokes a Claude/Codex session through the
-  sessions verbs (docs/design/sessions.md 3.2), on a worker chosen like a
-  `cap` step.
-- `context` chooses which run output the agent is given: the run so far,
-  particular steps, or the job definition.
-- `mode`:
-  - `delegate`: the step succeeds once the hub has handed the prompt off,
-    and the graph moves on.
-  - `wait`: the step waits for the agent's final answer (up to its timeout).
-    The agent's verdict (`ok` / `failed` plus text) sets the outcome.
-- The house agent needs MCP tools for this. The `home` plugin gains an
-  opt-in tool set: the same caps an MCP client has, called as the house
-  agent identity *on behalf of* the job's identity. The policy chain is
-  `home` → job → job identity, so it can never exceed what the job could do.
-  `tools: "job"` (the default) grants it the job's own permissions.
-  Everything it does is journaled.
-- To reach Bake, an agent uses the normal notify/voice caps. A job can also
-  model this as explicit `notify` / `ask` steps.
+| Field | Default | Meaning |
+|---|---|---|
+| `agent` | hub setting `job.default_agent` (`"home"`) | `"home"`, the house agent, or a session spec. The setting may hold a session spec as JSON. |
+| `prompt` | required | Templated (`{{job.name}}`, `{{vars.x}}`, …). Never takes `{{secret:…}}` (refused on save): an agent passes placeholders in its own tool calls. |
+| `context` | `["run"]` | What run data the agent is given: `run` (every other step's record so far: state, exit code, output, error, reply, verdict), `steps.<id>` (one step), `job` (the definition, which holds placeholders, never values), `vars`. Always masked. |
+| `mode` | `delegate` | `delegate`: the step succeeds once the hub has handed the work off and the graph moves on. `wait`: the step waits for the agent's verdict up to its `timeout`. |
+| `tools` | `job` | House agent only. `job`: whatever the job may do. `read`: read-tier caps only. `none`: only `job_run`, `notify_bake`, `ask_bake`. A list of cap patterns (`["task.*", "info.*"]`) narrows it. |
+| `model` | the agent's own | House agent: the endpoint's model id. New session: `work.stream.open(model=)`. |
+| `max_tool_calls` | setting `home.job_max_tool_calls` (20) | 1-100. After that only `finish` is offered. |
+| `budget` | `15m` | How long delegated house-agent work may run after the step succeeded (max 6 h). |
+| `call_timeout` | `2m` | Each tool call's limit. |
+
+**Outcomes.** In `wait` mode the verdict sets the outcome: `ok` is
+`success`, `failed` is `failure` (its text is the step's `error`), no
+verdict is `failure`, and no verdict before the step's `timeout` is `hang`.
+The step record keeps `verdict` (also in join expressions,
+`steps.review.verdict == 'ok'`) and `output = {agent, verdict, text, calls,
+tools}`; `success.match` applies to the verdict text. Output is masked and
+truncated like every step's. In `delegate` mode the record says
+`{agent, mode: "delegate", budget_s}` (or the session it reached).
+
+**The house agent** (`agent: "home"`). The `home` plugin must be enabled and
+configured, and its setting `home.job_steps` (on by default) allows job
+steps. `HomeAgent.work_job_step` runs a bounded loop with an opt-in tool set
+that chat and `home.ask` never get (`home.tools` keeps meaning the read-only
+knowledge search for chat, off by default):
+
+| Tool | Does |
+|---|---|
+| `rook_workers()` | live workers with their os and the caps the scope allows |
+| `rook_call(worker, cap, args)` | a cap call, worker chosen like a `cap` step (`"rook"` is the hub) |
+| `rook_tool(tool, args)` | a hub MCP tool: `rook_task` (the task deck), `rook_knowledge`, `rook_jobs`, … |
+| `job_run(step?)` | this run's step records so far, masked |
+| `notify_bake(text, via, title?)` | a `notify` step: `notify` (default), `voice` or `telegram` |
+| `ask_bake(question)` | an `ask` step; returns `reply` or no answer |
+| `finish(verdict, text)` | ends the work with `ok` / `failed` and a summary |
+
+A final answer without `finish` is read for a JSON `{"verdict": …}` or a
+`VERDICT: ok|failed …` line. Limits: `max_tool_calls`, at most
+`max_tool_calls + 2` model rounds, two job steps on the model at once, the
+step's `timeout` (wait) or `budget` (delegate), and `call_timeout` per call.
+
+**On behalf of the job.** Every tool call goes through the jobs plugin's
+`JobAgentBackend`, never through a side door:
+
+1. the step's `tools` scope (the house agent's own limit);
+2. `guardrails.check_step(job, pseudo_step, identity)` for each call, with
+   a pseudo step of kind `cap`, `tool`, `notify` or `ask` (a hub tool's own
+   cap calls are each checked as `cap` steps on `rook`), and then the
+   job's guardrails again per call with the worker it resolved to: band
+   calls go through the step's `GuardedRuntime`, hub-tool caps through the
+   run's `JobGuard`. A refusal goes back to the model as
+   `{state: "blocked", error}` and is journaled. The default deny list
+   (`worker.deauth`, `tier:admin`, …) therefore holds for the agent too;
+3. the band's permission policy, evaluated for the run's principal as for
+   every job call (in-process hub caps are checked against the policy
+   explicitly). The principal is the job identity with `via =
+   ("agent:<name>", "job:<id>")`, so the chain is home → job → job identity
+   and the agent can never do more than the job could.
+
+Calls are journaled with identity `agent:<name>/job:<id>/<principal>`;
+`home.job_step` records each step's verdict, call count and tools under the
+house agent. Tool results are masked before the model sees them; secrets
+reach caps only by `{{secret:name}}` substitution at the last moment.
+
+**Session agents** (`agent: {"session": …}`), through the sessions verbs
+(docs/design/sessions.md 3.2, 3.5) on a worker chosen like a `cap` step:
+
+- with `native_id`: *poke* that session with `sessions.send` (inbox turn,
+  or keys into its Rook terminal). `wait` reads `sessions.follow` (`tail`)
+  every `poll` for a new assistant message with the verdict line;
+- with `cwd` (no `native_id`): *start* one with `work.stream.open(harness=
+  agent, cwd, title, model, task)`, wait for it to draw, wait `settle`, and
+  type the prompt (bracketed paste, then Enter). `wait` reads the
+  terminal's output for the verdict line; a session that exits without one
+  is `failure`.
+
+The text sent is the prompt plus the masked context; any `{{secret:name}}`
+stub in it becomes `[secret:name]` so nothing substitutes a value into it.
+In `wait` mode it asks the agent to end with `ROOK-VERDICT: ok|failed
+<summary>`. The session acts with its own credentials (its MCP token), not
+the job's; the job only controls what it is told.
+
+**Reaching Bake.** The house agent has `notify_bake` / `ask_bake`. A job
+can also do it explicitly with `notify` and `ask` steps (section 5), and
+branch on the answer.
+
+### 6.1 Examples
+
+Poke the house agent every hour to work the task deck. It is delegated, so
+each run ends when the hand-off is done, and the agent has 50 minutes:
+
+```json
+{
+  "name": "work-the-deck",
+  "description": "Every hour the house agent picks up and works one ready task.",
+  "triggers": [{"kind": "cron", "expr": "@hourly"}],
+  "overlap": {"mode": "skip"},
+  "entry": "work",
+  "steps": {
+    "work": {
+      "kind": "agent",
+      "mode": "delegate",
+      "budget": "50m",
+      "tools": ["task.*", "knowledge.*", "shell.exec", "notify.*", "voice.*"],
+      "prompt": "Open the task deck with rook_tool(tool=\"rook_task\", args={\"action\": \"deck\"}). Claim the top ready task you can do with your tools, do it, and finish it with an outcome and evidence; otherwise leave a handoff. If it needs Bake, ask_bake once. Then finish."
+    }
+  }
+}
+```
+
+The same with a Claude Code session on a worker instead (a session already
+running there, poked with a new turn each hour):
+
+```json
+{
+  "name": "deck-session",
+  "triggers": [{"kind": "cron", "expr": "0 * * * *"}],
+  "entry": "poke",
+  "steps": {
+    "poke": {
+      "kind": "agent",
+      "agent": {"session": {"worker": "dev-box", "agent": "claude", "native_id": "<session id>"}},
+      "prompt": "Hourly nudge from Rook: check rook_task(action=\"deck\") and work the next ready task."
+    }
+  }
+}
+```
+
+A supervised check: run a backup, let the house agent judge the output
+against criteria a regex cannot express, and ask Bake before retrying:
+
+```json
+{
+  "name": "nightly-backup",
+  "triggers": [{"kind": "cron", "expr": "0 3 * * *"}],
+  "entry": "backup",
+  "steps": {
+    "backup": {"kind": "cap", "worker": "backup-host", "cap": "shell.exec", "timeout": "1h",
+               "args": {"cmd": "backup-run --report"},
+               "on": {"success": ["review"], "failure": ["review"], "hang": ["review"]}},
+    "review": {"kind": "agent", "mode": "wait", "timeout": "10m", "tools": "read",
+               "context": ["steps.backup"],
+               "prompt": "Judge the backup report: every volume listed, none older than 26h, no errors. finish ok or failed with the reason.",
+               "on": {"failure": ["ask"]}},
+    "ask": {"kind": "ask", "text": "Tonight's backup looks wrong. Run it again?", "timeout": "5m",
+            "success": {"match": "(?i)^(yes|yeah|sure|go)"},
+            "on": {"success": ["backup"], "failure": ["tell"]}},
+    "tell": {"kind": "notify", "via": "notify", "title": "Backup", "text": "Backup needs a look ({{run.id}})."}
+  }
+}
+```
 
 ## 7. Identity, access and guardrails
 
@@ -488,6 +637,15 @@ Seams for later workstreams:
   registered. `StepResult.extra` holds fields kept on the step record, such
   as `reply`.
 - **J3** reads everything through `job.read` / `job.write`.
+
+**J4 as built:** `jobs/agent_kinds.py` registers `agent` and `ask` and holds
+`JobAgentBackend` (scope, `guardrails.check_step` per agent call, policy,
+journal, masking); `home/job_agent.py` is the house agent's job tool set
+and bounded loop, entered through `HomeAgent.work_job_step`. Hub settings
+`job.default_agent` (default `home`), `home.job_steps` (default on) and
+`home.job_max_tool_calls` (default 20). Join expressions also see
+`steps.<id>.reply` and `steps.<id>.verdict`. Tests:
+`tests/test_jobs_agents.py`.
 
 Storage: `jobs.db` in the plugin data dir (`<state>/plugins/job/`, setting
 `job.db_path`). The plugin is on by default (`job.enabled`, env

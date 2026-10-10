@@ -191,6 +191,8 @@ are set only in the environment or on the command line.
 | `home.system_prompt` | System prompt addition | hub | str |  | `ROOK_HOME_SYSTEM_PROMPT` | live |
 | `home.context_messages` | Room messages sent as context | hub | int | `20` | `ROOK_HOME_CONTEXT_MESSAGES` | live |
 | `home.tools` | Read-only tools (knowledge search) | hub | bool | off | `ROOK_HOME_TOOLS` | live |
+| `home.job_steps` | Work job agent steps | hub | bool | on | `ROOK_HOME_JOB_STEPS` | live |
+| `home.job_max_tool_calls` | Tool calls per job step | hub | int | `20` | `ROOK_HOME_JOB_MAX_TOOL_CALLS` | live |
 
 ## Hub info (hub plugin, runs in mcp)
 
@@ -207,6 +209,7 @@ are set only in the environment or on the command line.
 | `job.retention_days` | Keep run history (days) | hub | int | `30` | `ROOK_JOB_RETENTION_DAYS` | live |
 | `job.max_step_executions` | Step executions per run | hub | int | `100` | `ROOK_JOB_MAX_STEP_EXECUTIONS` | live |
 | `job.notify_worker` | Notify worker | hub | str |  | `ROOK_JOB_NOTIFY_WORKER` | live |
+| `job.default_agent` | Default agent | hub | str | `home` | `ROOK_JOB_DEFAULT_AGENT` | live |
 | `job.tick_seconds` | Scheduler tick (seconds) | hub | int | `5` | `ROOK_JOB_TICK_SECONDS` | live |
 | `job.db_path` | Database file | hub | path |  | `ROOK_JOBS_DB`, `ROOK_JOB_DB_PATH` | restart |
 | `job.guardrails` | Default guardrails | hub | dict | `{'deny': ['tier:admin', 'worker.deauth', 'ba…` | `ROOK_JOB_GUARDRAILS` | live |

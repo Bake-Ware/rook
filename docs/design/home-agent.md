@@ -146,7 +146,17 @@ on the hub under the policy (`deny` and `would_deny` both count as no; a chat
 sender is evaluated with the policy's defaults for its kind, since chat
 identities are not credentials). Every tool call is journaled as described
 above. Nothing that writes or
-reaches a worker is exposed yet.
+reaches a worker is exposed to chat or `home.ask`.
+
+**Job steps.** A job's `agent` step (docs/design/jobs.md 6) is the one place
+the home agent gets a wider tool set (`rook/hub/plugins/home/job_agent.py`):
+`rook_workers`, `rook_call`, `rook_tool`, `job_run`, `notify_bake`,
+`ask_bake` and `finish`. Each call is carried out by the jobs plugin on
+behalf of the job's identity (the step's tool scope, the job's guardrails
+and the policy all apply, so it never exceeds what the job may do) and is
+journaled as `agent:<name>/job:<id>/<principal>`; `home.job_step` records
+each step's verdict. Settings: `home.job_steps` (on; off refuses job
+steps) and `home.job_max_tool_calls` (20).
 
 ## 2. Path to replacing Hermes
 
