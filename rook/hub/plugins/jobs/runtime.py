@@ -53,18 +53,20 @@ class Runtime:
     async def call(self, cap: str, args: dict, target: str, timeout: float, identity) -> dict:
         """One cap call; returns the reply dict (``ok`` + ``result``/``error``),
         raises ``asyncio.TimeoutError`` on no reply."""
+        from ...authz import current_principal
         node = self.node
         client = getattr(node, "client", None)
-        if client is not None:
-            return await client.call(cap=cap, args=args, target=target, timeout=timeout,
-                                     identity=identity.display, principal=identity.principal)
-        if node is not None and target == self.hub_id:
-            from ...authz import current_principal
-            tok = current_principal.set(identity.principal)
-            try:
+        # A call to the hub itself runs in process: the cap reads the run's
+        # principal from context (caller(), require_hub_admin), not the loop's.
+        tok = current_principal.set(identity.principal)
+        try:
+            if client is not None:
+                return await client.call(cap=cap, args=args, target=target, timeout=timeout,
+                                         identity=identity.display, principal=identity.principal)
+            if node is not None and target == self.hub_id:
                 return await asyncio.wait_for(node.dispatch(cap, args, identity.display), timeout)
-            finally:
-                current_principal.reset(tok)
+        finally:
+            current_principal.reset(tok)
         raise ConnectionError("the hub has no band client")
 
     async def tool(self, name: str, args: dict, identity) -> Any:
