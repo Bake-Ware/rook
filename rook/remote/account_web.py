@@ -128,7 +128,12 @@ class AccountWeb:
     def require(self,request,fresh=False):
         user=self.current(request)
         if not user:
-            raise web.HTTPFound('/account/login',headers=NO_STORE)
+            # Only a page load goes to the login form. A fetch would follow
+            # the redirect and get HTML where it expects JSON.
+            if request.headers.get('Sec-Fetch-Mode')=='navigate' or 'text/html' in request.headers.get('Accept',''):
+                raise web.HTTPFound('/account/login',headers=NO_STORE)
+            raise web.HTTPUnauthorized(text='{"error":"Sign in with your operator account."}',
+                                       content_type='application/json',headers=NO_STORE)
         if fresh and time.time()-user['authenticated']>600:
             raise ValueError('Sign in again before changing connected logins.')
         return user
