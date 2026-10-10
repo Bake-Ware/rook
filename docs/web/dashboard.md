@@ -52,8 +52,12 @@ dashboard human, owner or member) to the bridge with the bridge's internal
 
 The editor's schedule helper calls `job.read` `next` with
 `data.trigger` (an unsaved trigger) for the next fire times. The Guardrails
-tab uses `guardrails_preview` and `set_guardrails`; on a hub where they answer
-`NotAvailable` it shows a one-line note instead.
+tab sends the draft `{deny, allow}` to `guardrails_preview` and lists
+`jobs_newly_blocked` (with the rules from `newly_blocked`) before saving with
+`set_guardrails` (operator only). The overview's Blocked card counts jobs
+with `blocked_by_guardrail`, a `paused_reason`, or a blocked last run. On a
+hub where the guardrail actions answer `NotAvailable` the tab shows a
+one-line note instead.
 
 ## Worker inventory
 

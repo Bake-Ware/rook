@@ -21,7 +21,7 @@ from typing import Any, Callable
 
 from .cron import Cron, parse_duration
 from .executor import Executor
-from .identity import resolve_identity
+from .identity import PAUSE_REASON, IdentityRevoked, resolve_identity
 from .store import AFTER_STATES, JobStore, grace_seconds
 
 log = logging.getLogger("rook.hub.plugins.jobs.scheduler")
@@ -45,6 +45,9 @@ class Scheduler:
         self.clock = clock
         self.lease = lease
         self.alerts = alerts
+        #: ``(job, owner_info) -> RunIdentity``; the plugin binds the hub's
+        #: directory, settings and guardrails (identity.resolve_identity).
+        self.resolve: Callable[[dict, dict | None], Any] = resolve_identity
         self.active: dict[str, asyncio.Task] = {}
         self._last_prune = 0.0
         self._stopping = False
@@ -191,11 +194,13 @@ class Scheduler:
             return {"state": "cancelled"}
         job = row["definition"]
         try:
-            identity = resolve_identity(job, row["owner_info"])
+            identity = self.resolve(job, row["owner_info"])
         except PermissionError as e:
             self.store.finish(rid, self.owner, "blocked", self.clock(), error=str(e))
+            if isinstance(e, IdentityRevoked):
+                self.pause_revoked(row, str(e))
             return {"state": "blocked"}
-        self.store.set_identity(rid, identity.id)
+        self.store.set_identity(rid, identity.id + (" (fallback)" if identity.mode == "fallback" else ""))
         ctx_run = {"id": rid, "started": run.get("started"), "missed": bool(run.get("missed")),
                    "trigger": run.get("trigger"), "vars": run.get("vars") or {}}
 
@@ -237,6 +242,16 @@ class Scheduler:
             if cancel or not held:
                 work.cancel()
                 return
+
+    def pause_revoked(self, row: dict, reason: str) -> None:
+        """No usable identity is left: pause the job (``identity_revoked``)
+        until someone with edit access re-enables it (and so takes it over)."""
+        try:
+            self.store.set_enabled(row["id"], False, "system:jobs", self.clock(), self.tz(),
+                                   reason=PAUSE_REASON, detail={"error": reason[:300]})
+            log.warning("jobs: paused %s: %s", row["name"], reason)
+        except Exception:
+            log.exception("jobs: pausing %s failed", row.get("id"))
 
     def cancel_local(self, rid: str) -> bool:
         task = self.active.get(rid)

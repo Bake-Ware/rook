@@ -139,7 +139,7 @@ export async function mountJobs(root){
     const tz=api.tz;
     const done=week.runs.filter(r=>FINAL.includes(r.state)&&r.state!=='cancelled'&&r.state!=='dropped');
     const ok=done.filter(r=>r.state==='success').length;
-    const blocked=list.jobs.filter(j=>j.paused_reason||(j.last_run&&j.last_run.state==='blocked'));
+    const blocked=list.jobs.filter(j=>j.paused_reason||j.blocked_by_guardrail||(j.last_run&&j.last_run.state==='blocked'));
     const upcoming=next.upcoming.slice().sort((a,b)=>secs(a.at)-secs(b.at)).slice(0,6);
     const item=(main,sub,cls,onclick)=>h(onclick?'button':'div',{type:onclick?'button':null,class:'jb-item'+(onclick?' link':''),onclick},h('span',{text:main,class:cls||''}),h('small',{text:sub}));
     const card=(label,big,cls,items,empty)=>h('section',{class:'mg-box jb-card'},
@@ -152,7 +152,7 @@ export async function mountJobs(root){
       card('Recent failures',bad.runs.length,bad.runs.length?'mg-bad':'',
         bad.runs.slice(0,6).map(r=>item(r.job,r.state+' · '+fmt(r.finished||r.created,tz),'mg-bad',()=>openRuns(r.job_id,r.id))),'No failures.'),
       card('Blocked',blocked.length,blocked.length?'mg-bad':'',
-        blocked.map(j=>item(j.name,j.paused_reason?'paused: '+j.paused_reason:'last run blocked by a guardrail','mg-bad',()=>openJob(j.id))),'No blocked jobs.'),
+        blocked.map(j=>item(j.name,j.paused_reason?'paused: '+j.paused_reason:j.blocked_by_guardrail?'blocked by a guardrail: '+(j.guardrail_blocks||[]).map(b=>b.step).join(', '):'last run blocked by a guardrail','mg-bad',()=>openJob(j.id))),'No blocked jobs.'),
       card('Success, 7 days',done.length?Math.round(100*ok/done.length)+'%':'—',done.length&&ok<done.length?'mg-warn':'mg-good',
         [item(ok+' of '+done.length+' finished runs','since '+fmt(weekAgo,tz))],''),
       card('Queue',queued.runs.length,'',
@@ -397,12 +397,14 @@ const SETTING_LABELS={
   default_access:['Default access','read / edit / run patterns for new jobs.'],
   default_identity_fallback:['Default identity fallback','Used when a job\'s identity is revoked and it names no fallback.'],
   identity_fallback:['Default identity fallback','Used when a job\'s identity is revoked and it names no fallback.'],
+  default_fallback:['Default identity fallback','Used when a job\'s identity is revoked and it names no fallback: creator, token:<agent_id> or {{secret:name}}. Empty: pause the job.'],
 };
 
 // ---- guardrails (isolated: the guardrails workstream owns these shapes) ----
 // settings job.guardrails = {deny:[patterns], allow:[patterns]};
-// job.read guardrails_preview data {deny, allow} -> {blocked:[{job_id,name,steps,rule}]};
-// job.write set_guardrails data {deny, allow}.
+// job.read guardrails_preview data {deny, allow} -> {newly_blocked:[{job_id,job,step,cap,target,rule,reason}],
+//   jobs_newly_blocked:[{id,name,enabled,steps}], unblocked:[...], blocked:[...], checked};
+// job.write set_guardrails data {deny, allow} -> {defaults, preview} (operator only).
 export async function mountGuardrails(body,api,openJob){
   const lines=t=>t.split('\n').map(x=>x.trim()).filter(Boolean);
   let current={deny:[],allow:[]};
@@ -415,13 +417,15 @@ export async function mountGuardrails(body,api,openJob){
   const out=h('div',{class:'jb-blocked'}),err=h('p',{class:'mg-error',role:'alert'});
   let shown=null;
   const draft=()=>({deny:lines(deny.value),allow:lines(allow.value)});
-  const showBlocked=p=>{const b=(p&&p.blocked)||[];out.replaceChildren(h('span',{class:'mg-label',text:b.length?'Would block '+b.length+' job'+(b.length===1?'':'s'):'Blocks no jobs'}),
+  const newly=p=>((p&&p.jobs_newly_blocked)||[]).map(j=>({job_id:j.id,name:j.name,steps:j.steps,
+    rule:[...new Set(((p.newly_blocked)||[]).filter(x=>x.job_id===j.id).map(x=>x.rule))].join(', ')}));
+  const showBlocked=p=>{const b=newly(p);out.replaceChildren(h('span',{class:'mg-label',text:b.length?'Would block '+b.length+' job'+(b.length===1?'':'s'):'Blocks no jobs'}),
     ...b.map(x=>h('button',{type:'button',class:'jb-item link',onclick:()=>openJob(x.job_id).catch(e=>{err.textContent=e.message;})},h('span',{class:'mg-bad',text:x.name}),h('small',{text:(x.steps||[]).join(', ')+(x.rule?' · '+x.rule:'')}))));};
   const run=async()=>{err.textContent='';const g=draft();const p=await preview(g);shown=JSON.stringify(g);showBlocked(p);return p;};
   const save=btn('Save','primary',async()=>{
     try{
       const g=draft();
-      if(shown!==JSON.stringify(g)){const p=await run();if((p&&p.blocked||[]).length){save.textContent='Save anyway';return;}}
+      if(shown!==JSON.stringify(g)){const p=await run();if(newly(p).length){save.textContent='Save anyway';return;}}
       await api.call('set_guardrails',{data:g});save.textContent='Save';current=g;shown=JSON.stringify(g);await run();
     }catch(e){err.textContent=e.message;}
   });

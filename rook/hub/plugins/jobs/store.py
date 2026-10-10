@@ -35,7 +35,7 @@ FINAL = ("success", "failure", "hang", "interrupted", "dropped", "blocked", "can
 AFTER_STATES = {"success": ("success",),
                 "failure": ("failure", "hang", "interrupted", "blocked"),
                 "finish": ("success", "failure", "hang", "interrupted", "blocked")}
-_JSON_COLS = ("owner_info", "definition", "vars", "steps", "alerts")
+_JSON_COLS = ("owner_info", "definition", "vars", "steps", "alerts", "detail")
 
 
 def _new_id(prefix: str) -> str:
@@ -126,10 +126,14 @@ class JobStore:
                        (jid, job["name"], owner_info["id"], _dumps(owner_info), int(bool(job.get("enabled", True))),
                         _dumps(job), now, now, owner_info["id"]))
             self._rebuild_triggers(db, job, now, tz)
+            self._history(db, jid, 1, now, owner_info["id"], "create", {})
         return self.get_job(jid)
 
     def update_job(self, jid: str, job: dict, actor: str, now: float, tz: str,
-                   expect_revision: int | None = None) -> dict:
+                   expect_revision: int | None = None, *, owner_info: dict | None = None,
+                   action: str = "update", detail: dict | None = None) -> dict:
+        """Replace a job's definition. ``owner_info`` hands the job (and the
+        identity its runs use) to a new owner. Each call adds a history row."""
         with self._tx() as db:
             cur = db.execute("SELECT revision, owner FROM jobs WHERE id=?", (jid,)).fetchone()
             if cur is None:
@@ -139,27 +143,57 @@ class JobStore:
             clash = db.execute("SELECT id FROM jobs WHERE name=? AND id<>?", (job["name"], jid)).fetchone()
             if clash:
                 raise ValueError(f"a job named {job['name']!r} already exists")
-            job = {**job, "id": jid, "owner": cur["owner"]}
+            owner = owner_info["id"] if owner_info else cur["owner"]
+            job = {**job, "id": jid, "owner": owner}
             db.execute("UPDATE jobs SET name=?, enabled=?, paused_reason=CASE WHEN ? THEN NULL ELSE paused_reason END,"
                        " definition=?, revision=revision+1, updated=?, updated_by=? WHERE id=?",
                        (job["name"], int(bool(job.get("enabled", True))), int(bool(job.get("enabled", True))),
                         _dumps(job), now, actor, jid))
+            if owner_info:
+                db.execute("UPDATE jobs SET owner=?, owner_info=? WHERE id=?", (owner, _dumps(owner_info), jid))
             self._rebuild_triggers(db, job, now, tz)
+            self._history(db, jid, cur["revision"] + 1, now, actor, action, detail or {})
         return self.get_job(jid)
 
     def set_enabled(self, jid: str, enabled: bool, actor: str, now: float, tz: str,
-                    reason: str | None = None) -> dict:
+                    reason: str | None = None, *, definition: dict | None = None,
+                    owner_info: dict | None = None, detail: dict | None = None) -> dict:
+        """Enable or pause a job. ``definition`` / ``owner_info`` replace the
+        job and its owner in the same write (an identity reset)."""
         row = self.get_job(jid)
         if row is None:
             raise KeyError(f"no job {jid!r}")
-        job = {**row["definition"], "enabled": bool(enabled)}
+        owner = owner_info["id"] if owner_info else row["owner"]
+        job = {**(definition or row["definition"]), "id": row["id"], "owner": owner, "enabled": bool(enabled)}
         with self._tx() as db:
             db.execute("UPDATE jobs SET enabled=?, paused_reason=?, definition=?, revision=revision+1,"
                        " updated=?, updated_by=? WHERE id=?",
                        (int(bool(enabled)), None if enabled else reason, _dumps(job), now, actor, row["id"]))
+            if owner_info:
+                db.execute("UPDATE jobs SET owner=?, owner_info=? WHERE id=?", (owner, _dumps(owner_info), row["id"]))
             if enabled:  # schedules restart from now: nothing "missed" while it was off
                 self._rebuild_triggers(db, job, now, tz)
+            rev = db.execute("SELECT revision FROM jobs WHERE id=?", (row["id"],)).fetchone()["revision"]
+            self._history(db, row["id"], rev, now, actor, "enable" if enabled else "disable",
+                          {**({"reason": reason} if reason and not enabled else {}), **(detail or {})})
         return self.get_job(row["id"])
+
+    # -- history -------------------------------------------------------------------
+    @staticmethod
+    def _history(db: sqlite3.Connection, jid: str, revision: int | None, now: float, actor: str | None,
+                 action: str, detail: dict) -> None:
+        db.execute("INSERT INTO history(job_id, revision, at, actor, action, detail) VALUES (?,?,?,?,?,?)",
+                   (jid, revision, now, actor, action, _dumps(detail or {})))
+
+    def add_history(self, jid: str, now: float, actor: str | None, action: str, detail: dict | None = None) -> None:
+        with self._tx() as db:
+            cur = db.execute("SELECT revision FROM jobs WHERE id=?", (jid,)).fetchone()
+            self._history(db, jid, cur["revision"] if cur else None, now, actor, action, detail or {})
+
+    def history(self, jid: str, limit: int = 20) -> list[dict]:
+        """A job's changes, newest first."""
+        return self._all("SELECT revision, at, actor, action, detail FROM history WHERE job_id=?"
+                         " ORDER BY id DESC LIMIT ?", (jid, max(1, min(int(limit), 500))))
 
     def delete_job(self, jid: str) -> dict:
         """Removes the job, its triggers and its finished or waiting runs;
@@ -169,6 +203,7 @@ class JobStore:
                 raise KeyError(f"no job {jid!r}")
             db.execute("DELETE FROM jobs WHERE id=?", (jid,))
             db.execute("DELETE FROM triggers WHERE job_id=?", (jid,))
+            db.execute("DELETE FROM history WHERE job_id=?", (jid,))
             running = db.execute("UPDATE runs SET cancel=1 WHERE job_id=? AND state='running'", (jid,)).rowcount
             gone = db.execute("DELETE FROM runs WHERE job_id=? AND state<>'running'", (jid,)).rowcount
         return {"deleted": jid, "runs_deleted": gone, "runs_cancelling": running}

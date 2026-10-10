@@ -26,7 +26,7 @@ from typing import Any, Callable
 
 from .cron import parse_duration
 from .expr import compile_expr, evaluate
-from .guardrails import check_step
+from .guardrails import Blocked, GuardedRuntime, check_step
 from .model import incoming
 from .steps import StepContext, StepResult, apply_success_rules, step_kind
 
@@ -101,9 +101,10 @@ class Executor:
         tries = 1 + int(retry.get("max", 0) or 0)
         delay = parse_duration(retry.get("delay") or 0)
         res = StepResult("failure", error="not run")
+        guarded = GuardedRuntime(rt, job, identity)  # each call checked with its resolved worker
         for attempt in range(1, tries + 1):
             rec["attempts"] = attempt
-            ctx = StepContext(job=job, run=run, step_id=sid, identity=identity, runtime=rt,
+            ctx = StepContext(job=job, run=run, step_id=sid, identity=identity, runtime=guarded,
                               settings=self.settings, timeout=timeout, attempt=attempt,
                               records=records, used=used)
             try:
@@ -114,6 +115,8 @@ class Executor:
                 res = StepResult("hang", error=f"no result within {timeout:g}s")
             except asyncio.CancelledError:
                 raise
+            except Blocked as e:  # a hub tool's inner call was refused by a guardrail
+                res = StepResult("blocked", error=str(e), extra={"rule": e.verdict.rule})
             except Exception as e:  # noqa: BLE001 - a handler error is the step's failure
                 res = StepResult("failure", error=f"{type(e).__name__}: {e}")
             res = apply_success_rules(step, res)

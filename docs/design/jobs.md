@@ -249,45 +249,134 @@ stdout/result text. Anything more complex is an agent step.
 
 ## 7. Identity, access and guardrails
 
-**Identity**, i.e. who a run acts as:
-- `creator` (the default): the principal that created the job.
-- `key`: a named API key or user.
-- `vault`: a credential held in the vault (`{{secret:name}}`, such as a
-  Rook API key), resolved at run time.
-- `fallback`: a second identity used when the first is revoked or disabled.
-  With no fallback, the job is paused (`enabled: false`, reason
-  `identity_revoked`).
-- Editing a job someone else owns resets `identity` to the editor's, unless
-  the editor is the owner or the operator. This rule is fixed, not
-  configurable: it stops anyone borrowing another identity through the open
-  edit default.
+Built in J2 (`identity.py`, `principals.py`, `guardrails.py`, `service.py`).
+
+**Identity**, i.e. who a run acts as. A job's `identity` block is
+`{"mode": …, "ref": …, "fallback": …}`:
+- `creator` (the default): the job's owner (`owner_info`): the principal
+  that created it, or the last non-owner who edited it (below).
+- `key`: a named API key or user. `ref` is `token:<agent_id>`,
+  `human:<id>`, a key id, an agent id or a key's unique name.
+- `vault`: a Rook API key held in the vault. `ref` is a secret name or
+  `{{secret:name}}`. The key is read at run time (the vault logs the read as
+  `job:<id>`) only to find its principal; it is never stored or shown.
+- `fallback`: the run always acts as the fallback identity.
+- `fallback` (field): used when the primary identity is revoked, expired or
+  deleted. It is `"creator"`, a key reference, `"{{secret:name}}"` or a
+  `{mode, ref}` object. A job that names none uses the hub setting
+  `job.default_fallback` (empty by default).
+- Revocation is checked at every run against the hub's live stores: the MCP
+  token store (revoked or expired keys) and the dashboard accounts (deleted
+  users). If the primary is unusable and a fallback works, the run uses it
+  (`identity_used` ends in ` (fallback)`). If nothing usable is left, the run
+  is recorded `blocked` and the job is paused (`enabled: false`,
+  `paused_reason: identity_revoked`, with a history row). A hub that cannot
+  check a key at all (no token store, no vault) blocks the run without
+  pausing the job.
+- Who may give a job a `key` or `vault` identity (or fallback): the
+  operator, or the principal that key *is* (or owns). Creating a job with
+  someone else's key needs the operator. An identity that is unchanged by an
+  edit is not re-checked.
+- Editing a job someone else owns (`update`, `enable`) hands it to the
+  editor: the owner becomes the editor, `identity` resets to
+  `{"mode": "creator"}` (unless the edit sets an identity the editor may
+  use), and `guardrails.allow` is cleared. The owner and the operator keep
+  everything as it is. The history row (`history` on `get`) records
+  `identity_reset: {from, to}`, and the reply carries it too. This rule is
+  fixed, not configurable: it stops anyone borrowing another identity
+  through the open edit default. `disable` does not hand a job over.
+- The operator is what `require_hub_admin` accepts: band owners
+  (`human:owner`, dashboard admins), operator-role tokens, the static token
+  and in-process hub code.
 
 **Access:**
-- `access.read/edit/run` hold principal patterns. The default `"*"` means
-  any authenticated Rook principal.
-- The hub setting `job.default_access` applies to new jobs.
+- `access.read/edit/run` hold principal patterns, as a string (comma or
+  space separated) or a list: `*` (any authenticated principal), an exact
+  id (`token:agent_…`, `human:<id>`), a glob (`token:*`), `role:<role>` or a
+  group (`human:owner`, `human:member`). The default is `*` for all three.
+- The hub setting `job.default_access` applies to new jobs that do not set
+  `access`.
+- The owner and the operator always have full access. `list` and `next`
+  leave out jobs the caller cannot read; `get`, `runs`, `run_get` and
+  previews need read; `update`, `delete`, `enable`, `disable` and per-job
+  `set_guardrails` need edit (so changing `access` does too); `run` and
+  `cancel` need run. Job views carry `can: {edit, run}` for the caller.
 
 **Guardrails:**
-- These are policy rules evaluated at each step's execution, through
-  `rook/hub/policy.py`, with the job as a principal kind (`job:<id>`) in the
-  on-behalf-of chain.
-- The default deny list is a hub setting (`job.guardrails`). It starts with:
-  - every `admin`-risk cap;
-  - deauth, re-band and enrollment changes;
-  - `selfupdate.*` and worker updates;
-  - hub service restart or deploy caps;
-  - policy and guardrail edits;
-  - permanent deletes.
-- `exec` (including `shell.exec`) and vault writes are **allowed** by
-  default.
-- Jobs with `guardrails.inherit: true` (the default) follow later changes
-  to the defaults. Per-job `allow` / `deny` lists layer on top, and `allow`
-  can only be set by the operator.
-- Before a change to the defaults is saved, `job.guardrails_preview` lists
-  the jobs whose steps it would now block. The dashboard shows this before
-  saving.
-- A blocked step ends with state `blocked` (not `failure`), and the job is
-  flagged on the overview.
+- Policy rules evaluated through `rook/hub/policy.py`, with the job as a
+  principal (`job:<id>`, its run identity in the on-behalf-of chain). Three
+  layers, in order:
+  1. the job's `guardrails.deny`: a match blocks;
+  2. the job's `guardrails.allow` (operator only): a match allows, even over
+     a default deny;
+  3. the defaults: `job.guardrails` for jobs with `inherit: true` (the
+     default), else the copy saved as `guardrails.base` when the job stopped
+     inheriting (only the operator can choose a different base). Within the
+     defaults the most specific rule wins, so `allow: ["secret.set"]` beats
+     `deny: ["tier:admin"]`.
+  Then the hub's own policy: an operator rule whose `who` is `job:*` or
+  `job:<id>` and that denies the call in `enforce` mode blocks it too (tier
+  defaults of the hub policy do not count).
+- An entry is a cap selector as in a policy rule: exact (`worker.update`),
+  glob (`selfupdate.*`), `tier:admin`, `tag:destructive`, or
+  `<cap>:<action>` for action-style caps (`job.write:delete`). An object
+  `{"cap": …, "on": <target selector>, "note": …}` limits it to some
+  workers. A call whose args carry `action` is checked as the cap and as
+  `<cap>:<action>`; either blocked blocks it. A cap's tier comes from the
+  built-in table, the worker's announced tiers or the hub cap's risk.
+- Where it is checked: before each step, statically, as far as the step
+  names its cap and worker (`cap`, `fanout`, `tool` via the tool's hub cap,
+  `notify`); and at every call with the worker it actually resolved to (a
+  fan-out checks each worker, and a refused worker counts as `blocked` in
+  the join; a `tool` step checks every cap the tool calls). A refused call
+  is journaled with `denied.guardrail`, never sent, and the step ends
+  `blocked` without retries.
+- The default deny list (setting `job.guardrails`, `{"deny": [...],
+  "allow": [...]}`):
+  - every admin-risk cap: `tier:admin`;
+  - deauth, re-band and enrollment: `worker.deauth`, `band.deauth`,
+    `band.admin`, `member.admin`, `token.admin`, `worker.reconfigure`,
+    `worker.config_apply`, `worker.config_revert`, `worker.config_confirm`,
+    `worker.enrollment_prepare`, `worker.enrollment_move_prepare`,
+    `worker.enrollment_finish`, `worker.enrollment_prove`, `enrollment.*`;
+  - self-update and worker updates: `selfupdate.*`, `worker.update`,
+    `worker.apply`, `worker.check`, `worker.ota_begin`, `worker.hold`,
+    `worker.restart`, `worker.plugin.enable`, `worker.plugin.disable`,
+    `customcap.add`, `customcap.remove`, `settings.apply_worker`;
+  - hub service restart or deploy: `hub.restart`, `hub.restart_*`,
+    `hub.deploy`, `hub.deploy_*`, `hub.update`, `service.restart*`,
+    `*.deploy`;
+  - policy and guardrail edits: `policy.set`, `settings.set`,
+    `settings.reset`, `guidance.write`, `job.write:set_guardrails`,
+    `job.write:settings`;
+  - permanent deletes: `secret.delete`, `persona.delete`, `chat.delete`,
+    `msg.clear`, `deluge.remove`, `job.write:delete`, `*.delete`,
+    `*.purge`, `*:delete`, `*:purge`.
+  - `allow: ["secret.set"]`: vault writes are allowed. `exec` caps
+    (`shell.exec`, `proc.*`, `cmd.*`, `file.write`) are not denied.
+  A missing or invalid setting means the built-in list: guardrails never
+  fail open.
+- `job.read guardrails_preview`:
+  - without `id`: `data` = `{deny, allow}` (or `{defaults: {deny, allow}}`,
+    or `{reset: true}` for the built-in list), the proposed defaults;
+  - with `id`: `data.guardrails` = the job's proposed `guardrails` block.
+  - Reply: `{scope: "defaults"|"job", proposed, newly_blocked, unblocked,
+    blocked, jobs_newly_blocked, checked}`. `newly_blocked`, `unblocked` and
+    `blocked` (everything blocked under the proposal) are lists of
+    `{job_id, job, step, cap, target, rule, reason}`; `jobs_newly_blocked`
+    is `[{id, name, enabled, steps}]`. Only jobs the caller can read are
+    checked; jobs that do not inherit are unaffected by a default change.
+- `job.write set_guardrails`: without `id`, saves the defaults (operator
+  only; same `data` as the preview) and returns `{defaults, preview}`; each
+  newly blocked job gets a `guardrail_blocked` history row. With `id`,
+  `data.guardrails` replaces that job's block (edit access; `allow` is
+  operator only) and returns the job view.
+- Every job view carries `blocked_by_guardrail` (true when a step would be
+  blocked now) and, when true, `guardrail_blocks` (`[{step, cap, target,
+  rule, reason}]`). `list` takes `data.blocked: true|false`. The dashboard
+  overview counts these jobs as blocked.
+- Saving or validating a job whose step would be blocked now is a
+  warning (`warnings`), not an error.
 
 ## 8. Interfaces
 
@@ -379,7 +468,8 @@ J2, J3 and J4 start after J1 is merged, and they touch separate modules.
 | `executor.py` | walks one run's graph |
 | `scheduler.py` | the loop: leases, triggers, missed runs, queue, retention |
 | `runtime.py` | band calls, hub tools, vault substitution, the journal |
-| `identity.py`, `guardrails.py` | the J2 seams |
+| `identity.py`, `principals.py` | run identities, revocation, who may set them (J2) |
+| `guardrails.py` | guardrail evaluation, the default deny list, preview scans (J2) |
 | `service.py` | the `job.read` / `job.write` actions |
 
 Seams for later workstreams:
@@ -387,9 +477,10 @@ Seams for later workstreams:
   (J1: `creator` only; other modes fail validation) and
   `guardrails.check_step(job, step, identity) -> Verdict(allow, reason, rule)`
   (J1: always allows). The executor calls `check_step` before every step. J2
-  also fills in `guardrails_preview` and `set_guardrails`, which answer "not
-  available yet" until then. `access` and `guardrails` are stored but not
-  enforced in J1.
+  also fills in `guardrails_preview` and `set_guardrails`. Done: section 7
+  describes what was built. Step kinds that call caps should go through
+  `ctx.runtime` (the executor hands each step a guarded runtime) or the hub
+  tool `invoke`, so the per-call guardrail check applies.
 - **J4** registers its kinds with
   `steps.register_step_kind(name, handler, validate=..., schema=...)`. A
   handler is `async (ctx: StepContext, step) -> StepResult`. `agent` and

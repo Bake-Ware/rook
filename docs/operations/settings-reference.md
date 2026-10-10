@@ -209,6 +209,9 @@ are set only in the environment or on the command line.
 | `job.notify_worker` | Notify worker | hub | str |  | `ROOK_JOB_NOTIFY_WORKER` | live |
 | `job.tick_seconds` | Scheduler tick (seconds) | hub | int | `5` | `ROOK_JOB_TICK_SECONDS` | live |
 | `job.db_path` | Database file | hub | path |  | `ROOK_JOBS_DB`, `ROOK_JOB_DB_PATH` | restart |
+| `job.guardrails` | Default guardrails | hub | dict | `{'deny': ['tier:admin', 'worker.deauth', 'ba…` | `ROOK_JOB_GUARDRAILS` | live |
+| `job.default_access` | Default access for new jobs | hub | dict | `{'read': '*', 'edit': '*', 'run': '*'}` | `ROOK_JOB_DEFAULT_ACCESS` | live |
+| `job.default_fallback` | Default fallback identity | hub | str |  | `ROOK_JOB_DEFAULT_FALLBACK` | live |
 
 ## Knowledge (hub plugin, runs in mcp)
 
