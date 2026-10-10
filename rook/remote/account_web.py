@@ -97,6 +97,8 @@ class AccountWeb:
         GuidanceWeb(self).install(app)
         VaultWeb(self).install(app)
         SettingsWeb(self).install(app)
+        from .jobs_web import JobsWeb
+        JobsWeb(self).install(app)
         app.router.add_get('/account/component', self.component)
         app.router.add_route('*','/account',self.page)
         app.router.add_get('/account/login',self.login_page)

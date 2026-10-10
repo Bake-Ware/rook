@@ -1,0 +1,41 @@
+/* Jobs page: the manage kit (manage.css) plus cards, the JSON editor and run
+   details. Dense, no decoration beyond state colour. */
+.jb{max-width:none;gap:14px}
+.jb .jb-tabs{padding:0}
+.jb-body{display:flex;flex-direction:column;gap:14px;min-width:0}
+.jb-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.jb-card{display:flex;flex-direction:column;min-width:0}
+.jb-card-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:12px 14px 6px}
+.jb-big{font:500 24px var(--mono)}
+.jb-items{display:flex;flex-direction:column;padding:0 14px 12px;gap:2px;min-width:0}
+.jb .jb-item{all:unset;display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-top:1px solid #20261d;font-size:13px;min-width:0}
+.jb .jb-item span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.jb .jb-item small{color:var(--dim);font-size:12px;white-space:nowrap}
+.jb .jb-item.link{cursor:pointer}
+.jb .jb-item.link:hover span,.jb .jb-item.link:focus-visible span{color:var(--accent)}
+.jb .jb-plain{all:unset;cursor:pointer;min-width:0}
+.jb .jb-plain:focus-visible{outline:1px solid var(--accent)}
+.jb-ellipsis{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.jb-state{font:500 11px var(--mono);color:var(--dim)}
+.jb-state.success{color:var(--green)}
+.jb-state.failure,.jb-state.hang,.jb-state.interrupted,.jb-state.blocked{color:var(--bad)}
+.jb-state.running,.jb-state.due,.jb-state.queued{color:var(--accent)}
+.jb-editor{align-items:stretch}
+.jb .jb-json{min-height:62vh;font:12.5px/1.55 var(--mono);white-space:pre;tab-size:2;padding:12px 14px}
+.jb-problems{display:flex;flex-direction:column;gap:4px;font-size:12px}
+.jb-problems .mg-error,.jb-problems .mg-warn,.jb-problems .mg-good{font:12px var(--mono)}
+.jb-helper{flex:1 1 340px}
+.jb-reads{margin:0;font-size:13px;color:var(--fg)}
+.jb .jb-num{width:76px}
+.jb-day{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--dim)}
+.jb .jb-tight{min-height:34px}
+.jb-link{font:500 11px var(--mono);color:var(--dim)}
+.jb-link:hover{color:var(--accent)}
+.jb-detail{grid-column:1/-1;padding:10px 18px 14px 15px;border-bottom:1px solid #20261d;border-left:3px solid var(--accent);background:#151a12;display:flex;flex-direction:column;gap:8px;cursor:default}
+.jb-step{display:flex;flex-direction:column;gap:6px;padding:6px 0;border-top:1px solid #20261d}
+.jb-step-row{display:grid;grid-template-columns:minmax(0,1fr) 100px 80px minmax(0,1fr);gap:12px;align-items:baseline;font-size:13px}
+.jb details summary{cursor:pointer;font:500 11px var(--mono);color:var(--dim)}
+.jb-blocked{display:flex;flex-direction:column;gap:2px}
+.jb-settings{max-width:720px}
+.mg-dialog .jb-schema{max-height:70vh;min-width:min(760px,80vw)}
+@media (max-width:640px){.jb-step-row{grid-template-columns:1fr 1fr}.jb .jb-json{min-height:50vh}}

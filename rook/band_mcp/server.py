@@ -1728,6 +1728,16 @@ async def _amain(args) -> None:
         from ..hub.plugins.knowledge.web import routes as knowledge_routes
         for route in reversed(knowledge_routes(mcp._rook_knowledge, AccountStore(enrollment))):
             app.router.routes.insert(0, route)
+    # Jobs page API (proxied by the dashboard; the rook band panel comes in
+    # with the internal mask token, see rook/remote/jobs_web.py).
+    from ..hub.plugins.jobs.web import routes as job_routes
+    try:
+        from .mask_web import ensure_token as _jobs_token
+        _jt = _jobs_token(mcp._rook_store_dir)
+    except Exception:
+        _jt = None
+    for route in job_routes(lambda: mcp._rook_hub, AccountStore(enrollment), _jt):
+        app.router.routes.insert(0, route)
     hygiene_task = (asyncio.create_task(mcp._rook_hygiene.run())
                     if mcp._rook_hygiene is not None else None)
 

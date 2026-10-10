@@ -302,7 +302,10 @@ stdout/result text. Anything more complex is an agent step.
     someone changed the job since.
   - `runs`: `data {states, limit, since, missed, steps: true}`. `next`
     without `id` lists upcoming fires across jobs; with `id`, each trigger's
-    next `count` fires in its own zone and the hub zone.
+    next `count` fires in its own zone and the hub zone. Without `id` but
+    with `data.trigger` (an unsaved `cron` or `at` trigger), it previews
+    that trigger the same way: `{trigger, reads, zone, timezone, next:
+    [{local, hub}]}` (the editor's cron helper).
   - `run`: `data {vars}`. A disabled job does not run. `disable`:
     `data {reason}`.
   - `settings`: no `data` reads the `job.*` settings; `data {name: value}`

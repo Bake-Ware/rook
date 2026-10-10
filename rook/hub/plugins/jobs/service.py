@@ -196,6 +196,8 @@ class JobService:
         tz = self.tz()
         count = max(1, min(int(data.get("count") or 5), 20))
         now = self.clock()
+        if not rid and isinstance(data.get("trigger"), dict):
+            return self._next_draft(data["trigger"], count, now, tz)
         if not rid:
             rows = [t for t in self.store.triggers() if t["next_at"] is not None and not t["done"]]
             names = {}
@@ -232,6 +234,27 @@ class JobService:
             out.append(item)
         return {"id": row["id"], "name": row["name"], "enabled": row["enabled"], "triggers": out,
                 "timezone": tz}
+
+    def _next_draft(self, spec: dict, count: int, now: float, tz: str) -> dict:
+        """``next`` for an unsaved trigger (``data.trigger``): the editor's
+        cron helper previews fire times before the job is saved."""
+        ttz = spec.get("tz") or tz
+        if not valid_zone(ttz):
+            raise ValueError(f"unknown time zone {ttz!r}")
+        item: dict = {"trigger": self._trigger_label(spec), "zone": ttz, "timezone": tz}
+        times: list = []
+        if spec.get("kind") == "cron":
+            c = Cron(str(spec.get("expr") or ""))
+            item["reads"] = describe(c.expr)
+            t = now
+            while len(times) < count and (t := c.next_fire(t, ttz)) is not None:
+                times.append(t)
+        elif spec.get("kind") == "at":
+            from .cron import parse_instant
+            when = parse_instant(spec.get("when"))
+            times = [when] if when > now else []
+        item["next"] = [{"local": iso(t, ttz), "hub": iso(t, tz)} for t in times]
+        return item
 
     def a_validate(self, rid, query, data) -> dict:
         doc = data.get("job") if isinstance(data.get("job"), dict) else data
