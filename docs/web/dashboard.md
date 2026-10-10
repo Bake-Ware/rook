@@ -32,6 +32,29 @@ Agent/identity pictures are managed under Tokens; pairing, invitations, device
 certificates, and immediate credential recovery are under Account → Band access.
 Staged PSK migration and worker moves remain under Bands.
 
+## Jobs page
+
+`#jobs` mounts `rook/web/jobs.js` (with `jobs.css` and the shared manage kit).
+The web service proxies `/account/jobs/api` to the MCP process's
+`/jobs/account-api` (`ROOK_JOBS_ADMIN_URL`, default
+`http://127.0.0.1:8765/jobs/account-api`; `rook/hub/plugins/jobs/web.py`).
+Any signed-in account may open it: the operator acts as an owner, others as
+members, and the `job.read` / `job.write` caps decide what each may change
+(job settings are for owners). POSTs carry the session CSRF. A signed-out
+fetch gets JSON 401 and the page shows a sign-in link; it never parses a
+non-JSON reply.
+
+The `rook band` panel (`J`) uses `POST /api/band/jobs` on the dashboard,
+behind the dashboard login like `/api/band/call`, because job writes are not
+callable over the band. The dashboard forwards the admitted caller (a
+dashboard human, owner or member) to the bridge with the bridge's internal
+`mask.token`.
+
+The editor's schedule helper calls `job.read` `next` with
+`data.trigger` (an unsaved trigger) for the next fire times. The Guardrails
+tab uses `guardrails_preview` and `set_guardrails`; on a hub where they answer
+`NotAvailable` it shows a one-line note instead.
+
 ## Worker inventory
 
 Workers expose one keyboard-accessible ellipsis menu. OS grouping is the default;

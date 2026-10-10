@@ -236,7 +236,7 @@ Drive the same band three ways — they all read from the same roster and invoke
 
 <img src="img/dashboard-workers-mobile.png" align="right" width="220" alt="Rook dashboard on mobile">
 
-A band-first control panel with a sidebar split into **Workspace** (Workers, Bands, Chat, Work, Knowledge, Sessions) and **Manage** (Install a worker, Account & access, API tokens, Agent instructions, Secrets).
+A band-first control panel with a sidebar split into **Workspace** (Workers, Bands, Chat, Work, Knowledge, Jobs, Sessions) and **Manage** (Install a worker, Account & access, API tokens, Agent instructions, Secrets).
 
 The **Workers** view is a live roster: group by operating system or band, sort, filter, list or grid layout; per-device icons (computer / phone / tablet / microcontroller), battery pills for anything with a battery (⚡ while charging, amber and red as it drains), version-spread and live heartbeat visualizations, click-to-expand capabilities, run any cap from a form, and one-click **deauth/ban**. Fully responsive.
 
@@ -272,7 +272,7 @@ key changes; a compromised mesh requires independent device re-enrollment.
 
 ### `rook band` — terminal control panel
 
-A btop-inspired, zero-dependency curses TUI (pure stdlib). Framed panels: a worker list on the left, a live **detail pane** for the selected worker on the right — arrow into it to browse capabilities as a tree and call one — and a **chats** panel. Run caps, toggle plugins, define custom caps, message workers, deauth/ban.
+A btop-inspired, zero-dependency curses TUI (pure stdlib). Framed panels: a worker list on the left, a live **detail pane** for the selected worker on the right — arrow into it to browse capabilities as a tree and call one — and a **chats** panel. Run caps, toggle plugins, define custom caps, message workers, deauth/ban, and press `J` for the hub's **jobs**: list them, see a job's runs with each step's state and masked output, run one now, enable or disable it, or view its JSON.
 
 ![rook band TUI](img/tui.png)
 
@@ -366,6 +366,8 @@ Scheduled work the hub runs for you or your agents: back up a box every night, c
 Jobs fire on a **cron** schedule (`0 3 * * *`, `@hourly`), **at** a set time, **after** the previous run finished, or only when you start them. Schedules use the hub's time zone (setting `job.timezone`, America/Toronto by default) unless a job names its own, and they behave sensibly around daylight saving: a 02:30 run on the spring-forward night runs once at 03:00, and a 01:30 run on the fall-back night runs once, the first time 01:30 comes round. If the hub was down, a missed run is made up once if it is within the job's grace period (10 minutes by default) and marked **missed**. A trigger that fires while the job is still running waits in a queue (no limit unless the job sets `max_queue`), or is skipped, or runs alongside, as the job chooses.
 
 Every run is kept for 30 days (setting `job.retention_days`; a job can keep its own longer or shorter): who it ran as, each step's state, exit code and output. Output is masked: credentials go in step args as `{{secret:name}}`, resolve only at the moment of the call, and never appear in the run log or the call journal. A job runs as the person or agent that created it. Agents work with jobs through `rook_jobs` — `describe_schema` gives them the exact job format, `validate` checks a draft, `run` starts one now, `runs` and `run_get` show what happened. Over the band the same actions are `job.read` and `job.write` on worker `rook`. See [docs/design/jobs.md](design/jobs.md).
+
+The dashboard's **Jobs** page (Workspace → Jobs) has six tabs. **Overview** shows what is running now, the next runs, recent failures, blocked jobs (a guardrail stopped a step, or the job was paused because its identity was revoked), the success rate over the last 7 days and how many runs are waiting. **Jobs** lists every job with its triggers, next run and last result; switch a job on or off, run it now, open it in the editor, or delete it. **Editor** is the job's JSON: **Validate** shows problems under the text, **Save** creates or updates it (Ctrl+S works too), and the *schema* link shows the full job format. Beside it, the schedule helper reads a cron trigger in plain English, lists its next 5 times in the trigger's own zone and in the hub's, and builds common schedules for you (every N minutes or hours, daily, weekly on chosen days, monthly). **Runs** filters the run log by job, state and dates; open a run to see each step's state, duration, attempts and output. **Guardrails** edits the default deny and allow lists, and shows which jobs a change would block before you save it. **Settings** holds the jobs time zone, how long run history is kept, the notify worker and the other `job.*` defaults; only the operator account can change them. Times always show their zone.
 
 ### Secrets
 

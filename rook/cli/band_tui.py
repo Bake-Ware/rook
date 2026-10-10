@@ -10,7 +10,8 @@ policy for your login, signs the call ticket enforcing workers require, and
 journals the call. So it sees the full roster regardless of how each worker is
 connected, and keeps working when workers enforce permissions. Shows a
 live view and lets you run capabilities, enable/disable plugins, define custom
-command-caps, message chat-capable workers, and deauth/ban — the terminal
+command-caps, message chat-capable workers, deauth/ban, and work the hub's
+scheduled jobs (``J``: list, runs, run now, enable/disable, view JSON) — the terminal
 counterpart to the web dashboard. Curses only — no third-party deps.
 
 Connection: ``--url`` (default http://127.0.0.1:7005) + ``--user``/``--pass``
@@ -192,6 +193,30 @@ class BandHTTP:
                              {"worker_id": worker_id, "name": name}, timeout=15)
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    def jobs(self, action: str, id: str | None = None, data: dict | None = None,
+             query: str = "") -> dict:
+        """The hub's jobs (job.read / job.write) through the dashboard's
+        /api/band/jobs: job writes are not callable over the band, so they
+        go through the dashboard as this login. Replies are
+        ``{"ok": true, "result": ...}`` or ``{"ok": false, "error": ...}``."""
+        body = {"action": action, "id": id, "query": query, "data": data}
+        try:
+            reply = self._req("/api/band/jobs", "POST", body, timeout=30)
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return {"ok": False, "error": "this hub has no jobs API (update the hub)"}
+            try:
+                reply = json.loads(e.read())
+            except Exception:
+                reply = {"ok": False, "error": f"HTTP {e.code}: {e.reason}"}
+        except Exception as e:
+            reply = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        if not isinstance(reply, dict):
+            return {"ok": False, "error": "invalid reply from the hub"}
+        if reply.get("error") and reply.get("ok") is not True:
+            reply["ok"] = False
+        return reply
 
 
 # -----------------------------------------------------------------------------
@@ -415,7 +440,7 @@ class UI:
                 self._panel_chats(scr, top + box_h - chats_h, rx, chats_h, rw)
 
         keys = ("↑↓ select · → caps · c call · e plugins · n cap · "
-                "t notify · m chat · x deauth · / filter · q quit")
+                "t notify · m chat · x deauth · J jobs · / filter · q quit")
         foot = f" filter: {self.filter}▏  {keys}" if self.filter else " " + keys
         self._put(scr, h - 1, 0, foot, curses.A_DIM)
         scr.refresh()
@@ -875,6 +900,78 @@ class UI:
         self.popup(scr, "deauth / ban", _fmt(r))
         self.status = "connected"
 
+    # -- jobs panel ----------------------------------------------------------
+
+    def _jobs(self, scr, title: str, action: str, id=None, data=None):
+        """One jobs call; on a refusal, show it and return None."""
+        r = self.band.jobs(action, id, data)
+        if not r.get("ok"):
+            self.popup(scr, title, str(r.get("error") or _fmt(r)) +
+                       ("\n\n" + "\n".join(r["errors"]) if r.get("errors") else ""))
+            return None
+        return r.get("result")
+
+    def act_jobs(self, scr) -> None:
+        """The hub's scheduled jobs: list, then per job its runs, run now,
+        enable/disable and its JSON."""
+        while True:
+            self.status = "loading jobs…"
+            self.draw(scr)
+            res = self._jobs(scr, "jobs", "list", data={"limit": 500})
+            self.status = "connected"
+            if res is None:
+                return
+            jobs = res.get("jobs") or []
+            if not jobs:
+                self.popup(scr, "jobs", "No jobs on this hub yet. Create one on the dashboard's "
+                                        "Jobs page or with rook_jobs.")
+                return
+            tz = res.get("timezone") or ""
+            idx = self.picker(scr, f"jobs ({len(jobs)}) · times in {tz}", [_job_line(j) for j in jobs])
+            if idx is None:
+                return
+            self.job_menu(scr, jobs[idx])
+
+    def job_menu(self, scr, job: dict) -> None:
+        while True:
+            toggle = "disable" if job.get("enabled") else "enable"
+            items = ["runs", "run now", toggle, "view JSON"]
+            idx = self.picker(scr, job.get("name") or job.get("id"), items)
+            if idx is None:
+                return
+            choice = items[idx]
+            if choice == "runs":
+                self.job_runs(scr, job)
+            elif choice == "run now":
+                run = self._jobs(scr, "run now", "run", job["id"])
+                if run is not None:
+                    self.popup(scr, "run now", f"queued run {run.get('id')} ({run.get('state')})")
+            elif choice in ("enable", "disable"):
+                if choice == "disable" and self.picker(scr, f"disable {job.get('name')}?", ["no", "yes"]) != 1:
+                    continue
+                out = self._jobs(scr, choice, choice, job["id"])
+                if out is not None:
+                    job = out
+            elif choice == "view JSON":
+                full = self._jobs(scr, "job", "get", job["id"])
+                if full is not None:
+                    self.popup(scr, f"{job.get('name')} · revision {full.get('revision')}",
+                               json.dumps(full.get("definition"), indent=2))
+
+    def job_runs(self, scr, job: dict) -> None:
+        res = self._jobs(scr, "runs", "runs", job["id"], {"limit": 50, "steps": True})
+        if res is None:
+            return
+        runs = res.get("runs") or []
+        if not runs:
+            self.popup(scr, "runs", f"{job.get('name')} has not run yet.")
+            return
+        while True:
+            idx = self.picker(scr, f"runs of {job.get('name')}", [_run_line(r) for r in runs])
+            if idx is None:
+                return
+            self.popup(scr, f"run {runs[idx].get('id')}", _run_text(runs[idx]))
+
     # -- main loop -----------------------------------------------------------
 
     def loop(self, scr) -> None:
@@ -928,6 +1025,8 @@ class UI:
                 self.act_call(scr, w)
             elif k == ord("r"):
                 self.refresh()
+            elif k == ord("J"):
+                self.act_jobs(scr)
             elif k == ord("/"):
                 v = self.prompt(scr, "filter name (blank clears)")
                 self.filter = v or ""
@@ -944,6 +1043,63 @@ class UI:
                 self.act_chat(scr, w)
             elif w and k == ord("x"):
                 self.act_deauth(scr, w)
+
+
+def _short_time(value) -> str:
+    """'2026-10-11T03:00:00-04:00' -> '10-11 03:00-04:00' (zone kept)."""
+    s = str(value or "")
+    if len(s) < 16 or "T" not in s:
+        return s or "—"
+    return s[5:10] + " " + s[11:16] + s[19:]
+
+
+def _job_line(j: dict) -> str:
+    last = (j.get("last_run") or {}).get("state") or "never run"
+    trig = " · ".join(j.get("triggers") or []) or "manual"
+    flag = "x" if j.get("enabled") else " "
+    paused = f"  paused: {j['paused_reason']}" if j.get("paused_reason") else ""
+    return (f"[{flag}] {j.get('name', '')[:28]:<28} next {_short_time(j.get('next')):<17} "
+            f"{last:<11} {trig}{paused}")
+
+
+def _duration(a, b) -> str:
+    from datetime import datetime
+    try:
+        s = int((datetime.fromisoformat(b) - datetime.fromisoformat(a)).total_seconds())
+    except (TypeError, ValueError):
+        return "—"
+    return f"{s}s" if s < 60 else f"{s // 60}m{s % 60:02d}s" if s < 3600 else f"{s // 3600}h{s % 3600 // 60:02d}m"
+
+
+def _run_line(r: dict) -> str:
+    missed = " missed" if r.get("missed") else ""
+    return (f"{_short_time(r.get('started') or r.get('created')):<17} {r.get('state', ''):<11} "
+            f"{_duration(r.get('started'), r.get('finished')):>7}  {r.get('trigger', '')}{missed}")
+
+
+def _run_text(r: dict) -> str:
+    """A run with its step table and (masked) output, for the popup."""
+    out = [f"job      {r.get('job')}", f"state    {r.get('state')}",
+           f"trigger  {r.get('trigger')}{' (missed)' if r.get('missed') else ''}"]
+    for k in ("scheduled", "started", "finished", "identity_used", "error"):
+        if r.get(k):
+            out.append(f"{k:<8} {r[k]}")
+    steps = r.get("steps") or {}
+    if steps:
+        out += ["", f"{'step':<20} {'state':<11} {'took':>7} attempts"]
+        for sid, s in steps.items():
+            out.append(f"{sid[:20]:<20} {str(s.get('state')):<11} "
+                       f"{_duration(s.get('started'), s.get('finished')):>7} {s.get('attempts', 0)}"
+                       + (f"  exit {s['exit_code']}" if s.get("exit_code") is not None else ""))
+        for sid, s in steps.items():
+            text = s.get("output")
+            if s.get("error") or text:
+                out += ["", f"--- {sid} ---"]
+                if s.get("error"):
+                    out.append(f"error: {s['error']}")
+                if text:
+                    out.append(text if isinstance(text, str) else json.dumps(text, indent=2))
+    return "\n".join(out)
 
 
 def _fmt(r) -> str:

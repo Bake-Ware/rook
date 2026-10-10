@@ -327,6 +327,7 @@
       <a id="tab-chat" href="#chat" onclick="showView('chat');return false">Chat</a>
       <a id="tab-work" href="#work" onclick="showView('work');return false">Work</a>
       <a id="tab-knowledge" href="#knowledge" onclick="showView('knowledge');return false">Knowledge</a>
+      <a id="tab-jobs" href="#jobs" onclick="showView('jobs');return false">Jobs</a>
       <a id="tab-sessions" href="#sessions" onclick="showView('sessions');return false">Sessions</a>
     </nav>
     <span class="nav-label">MANAGE</span>
@@ -398,6 +399,7 @@
     </div>
 
     <div id="view-knowledge" hidden></div>
+    <div id="view-jobs" hidden></div>
     <div id="view-guidance" hidden></div>
     <div id="view-vault" hidden></div>
     <div id="view-home" hidden></div>
@@ -1056,6 +1058,7 @@ const viewInfo={
  bands:['Bands','Organize your fleet, manage keys, and move workers.'],
  chat:['Chat','Conversations with the people and agents on your network.'],
  knowledge:['Knowledge','The agents\' shared wiki: what the team knows, with sources.'],
+ jobs:['Jobs','Scheduled work the hub runs: schedules, runs and guardrails.'],
  vault:['Secrets','Credentials your agents can use, with every access logged.'],
  guidance:['Agent instructions','What Rook tells agents when they connect, list tools, and call capabilities.'],
  home:['Home agent','The hub\'s own LLM: who it is, which model it runs, and what it has been asked.'],
@@ -1069,6 +1072,12 @@ async function ensureVault(){
  if(vaultUI)return vaultUI;
  if(!vaultLoading)vaultLoading=import('/account/vault/assets/vault.js').then(m=>m.mountVault($('#view-vault'))).then(ui=>vaultUI=ui).finally(()=>{vaultLoading=null;});
  return vaultLoading;
+}
+let jobsUI=null, jobsLoading=null;
+async function ensureJobs(){
+ if(jobsUI)return jobsUI;
+ if(!jobsLoading)jobsLoading=import('/account/jobs/assets/jobs.js').then(m=>m.mountJobs($('#view-jobs'))).then(ui=>jobsUI=ui).finally(()=>{jobsLoading=null;});
+ return jobsLoading;
 }
 let homeUI=null, homeLoading=null;
 async function ensureHome(){
@@ -1146,6 +1155,7 @@ function showView(v,updateHistory=true){
  if(activeView==='sessions')sessionsUI?.deactivate();
  if(activeView==='work')tasksUI?.deactivate();
  if(activeView==='knowledge')knowledgeUI?.deactivate();
+ if(activeView==='jobs')jobsUI?.deactivate();
  if(activeView==='home')homeUI?.deactivate();
  activeView=v;document.body.dataset.view=v;
  for(const n of Object.keys(viewInfo)){
@@ -1159,6 +1169,7 @@ function showView(v,updateHistory=true){
  if(v==='vault')ensureVault().then(ui=>{if(activeView==='vault')ui.activate();}).catch(e=>{$('#view-vault').textContent=e.message;});
  if(v==='home')ensureHome().then(ui=>{if(activeView==='home')ui.activate();}).catch(e=>{$('#view-home').textContent=e.message;});
  if(v==='guidance')ensureGuidance().then(ui=>{if(activeView==='guidance')ui.activate();}).catch(e=>{$('#view-guidance').textContent=e.message;});
+ if(v==='jobs')ensureJobs().then(ui=>{if(activeView==='jobs')return ui.activate();}).catch(e=>{$('#view-jobs').textContent=e.message;});
  if(v==='knowledge')ensureKnowledge().then(ui=>{if(activeView==='knowledge')ui.activate();}).catch(e=>{$('#view-knowledge').textContent=e.message;});
  if(v==='sessions')ensureSessions().then(ui=>{if(activeView==='sessions')ui.activate();else ui.deactivate();}).catch(()=>{});
  if(v==='work')ensureTasks().then(ui=>{if(activeView==='work')ui.activate();}).catch(e=>{$('#view-work').textContent=e.message;});
