@@ -149,12 +149,10 @@ def run_plain():
     for m in load(room):
         who = "you" if m.get("sender") == me else str(m.get("sender"))
         print("%s: %s" % (who, m.get("text", "")))
-    seen = {id(x): None for x in []}
     last_ts = [max([m.get("ts", 0) for m in load(room)] or [0])]
     stop = threading.Event()
     def watcher():
-        while not stop.is_set():
-            time.sleep(1.0)
+        while not stop.wait(1.0):
             newest = last_ts[0]
             for m in load(room):
                 if m.get("ts", 0) > last_ts[0] and m.get("sender") != me:
@@ -171,7 +169,11 @@ def run_plain():
                 send(room, line)
                 last_ts[0] = int(time.time())
     except (EOFError, KeyboardInterrupt):
+        pass
+    finally:
+        # Stop the watcher on any exit so it never prints over a closing console.
         stop.set()
+        t.join(2.0)
 
 try:
     import curses
