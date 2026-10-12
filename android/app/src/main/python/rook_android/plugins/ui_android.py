@@ -6,7 +6,7 @@ type / back / home) so an agent can read the screen, then act on it.
 
 from __future__ import annotations
 
-from rook.worker.plugin import Plugin, capability
+from rook.worker.plugin import ANDROID_APP, Plugin, capability, place
 
 try:
     from java import jclass
@@ -17,8 +17,9 @@ except Exception:  # pragma: no cover
 
 class AndroidUiPlugin(Plugin):
     NAMESPACE = "ui"
+    PLACEMENT = place(ANDROID_APP)
 
-    @capability("text")
+    @capability("text", risk="read", tags=("sensitive",))
     def _text(self) -> dict:
         """All visible text on the current screen (top-to-bottom)."""
         if _Hid is None:

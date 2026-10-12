@@ -16,7 +16,7 @@ import shutil
 import sys
 from typing import Any
 
-from ..plugin import Plugin, capability
+from ..plugin import ANDROID_APP_REPLACED, Plugin, capability, place
 
 
 def _is_termux() -> bool:
@@ -212,6 +212,7 @@ def _win_send_input_sync(keys: list[tuple[int, bool]] | None = None,
 
 class HidPlugin(Plugin):
     NAMESPACE = "hid"
+    PLACEMENT = place(ANDROID_APP_REPLACED)  # the APK has native replacements
 
     def available(self) -> bool:
         if _detect_backend() == "none":

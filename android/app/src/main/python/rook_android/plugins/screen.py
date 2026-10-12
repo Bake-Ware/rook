@@ -11,7 +11,7 @@ from __future__ import annotations
 import base64
 from typing import Any
 
-from rook.worker.plugin import Plugin, capability
+from rook.worker.plugin import ANDROID_APP, Plugin, capability, place
 
 try:
     from java import jclass  # provided by Chaquopy at runtime
@@ -35,13 +35,14 @@ def _capture(quality: int) -> dict[str, Any]:
 
 class AndroidScreenPlugin(Plugin):
     NAMESPACE = "screenshot"
+    PLACEMENT = place(ANDROID_APP)
 
-    @capability("capture")
+    @capability("capture", risk="read", tags=("sensitive",))
     def _capture(self, quality: int = 85) -> dict:
         """Capture the full screen as a JPEG via MediaProjection."""
         return _capture(int(quality))
 
-    @capability("capture_preview")
+    @capability("capture_preview", risk="read", tags=("sensitive",))
     def _preview(self) -> dict:
         """Low-quality grab for quick visual checks."""
         return _capture(40)

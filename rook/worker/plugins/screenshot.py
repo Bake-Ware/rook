@@ -17,7 +17,7 @@ import sys
 import tempfile
 from typing import Any
 
-from ..plugin import Plugin, capability
+from ..plugin import ANDROID_APP_REPLACED, Plugin, capability, place
 
 
 def _is_termux() -> bool:
@@ -226,6 +226,7 @@ async def _dispatch(quality: int, region: tuple[int, int, int, int] | None) -> d
 
 class ScreenshotPlugin(Plugin):
     NAMESPACE = "screenshot"
+    PLACEMENT = place(ANDROID_APP_REPLACED)  # the APK has native replacements
 
     def available(self) -> bool:
         if _is_termux():

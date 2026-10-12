@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import time
 
-from rook.worker.plugin import Plugin, capability
+from rook.worker.plugin import ANDROID_APP, Plugin, capability, place
 from rook_android.androidctx import app_context, jclass
 
 try:
@@ -31,8 +31,9 @@ def _packages(value) -> set[str]:
 
 class AndroidNotifyPlugin(Plugin):
     NAMESPACE = "notify"
+    PLACEMENT = place(ANDROID_APP)
 
-    @capability("list")
+    @capability("list", risk="read", tags=("sensitive",))
     def _list(self, limit: int = 40, packages: str | list | None = None) -> dict:
         """Recent notifications, newest first.
 
@@ -65,7 +66,7 @@ class AndroidNotifyPlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("dismiss")
+    @capability("dismiss", risk="write")
     def _dismiss(self, key: str) -> dict:
         """Dismiss a notification by its ``key`` (from notify.list)."""
         if _Listener is None:
@@ -76,7 +77,7 @@ class AndroidNotifyPlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("post")
+    @capability("post", risk="write")
     def _post(self, title: str = "rook", text: str = "") -> dict:
         """Post a local notification on the phone (needs POST_NOTIFICATIONS)."""
         ctx = app_context()

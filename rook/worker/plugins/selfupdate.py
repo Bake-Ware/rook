@@ -30,7 +30,7 @@ import sys
 import time
 from pathlib import Path
 
-from ..plugin import Plugin, capability
+from ..plugin import ANDROID_APP_REPLACED, Plugin, capability, place
 
 log = logging.getLogger("rook.worker.plugins.selfupdate")
 
@@ -95,6 +95,7 @@ def ban_info() -> dict:
 
 class SelfUpdatePlugin(Plugin):
     NAMESPACE = "worker"
+    PLACEMENT = place(ANDROID_APP_REPLACED)  # the APK has native replacements
 
     def __init__(self) -> None:
         super().__init__()

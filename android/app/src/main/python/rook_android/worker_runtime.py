@@ -22,7 +22,8 @@ def start(hub,psk,name):
     from rook.worker.transports.telesthete_hub import TelestheteHubTransport
     from rook.worker import enroll,wconfig
     from rook_android.androidctx import app_context
-    from worker_entry import _attach_native_plugins,_builtin_enabled
+    from worker_entry import worker_kwargs
+    from rook.core.plugin import CapMeta
     context=app_context()
     prefs=context.getSharedPreferences('rook',0) if context else None
     fallback=(hub,psk,name)
@@ -77,22 +78,23 @@ def start(hub,psk,name):
                 address,key,worker_name=current
                 host,port=address.rsplit(':',1)
                 transport=TelestheteHubTransport(psk=key,hub_host=host,hub_port=int(port),use_ws=port in ('443','8443'))
-                worker=Worker(transport=transport,enabled=_builtin_enabled(),name=worker_name)
+                worker=Worker(transport=transport,name=worker_name,**worker_kwargs())
                 package=context.getPackageManager().getPackageInfo(context.getPackageName(),0) if context else None
                 worker.app_release = {'platform':'android', 'version':str(package.versionName),
                                       'code':int(package.versionCode)} if package else {}
-                _attach_native_plugins(worker)
                 # The app's Workers tab: band announces this worker already receives.
                 roster.attach(worker)
                 cycle=asyncio.Event()
 
                 async def restart():
+                    """Restart the embedded worker (the Android service reconnects it)."""
                     async def later(event=cycle):
                         await asyncio.sleep(.5);event.set()
                     asyncio.create_task(later())
                     return {'ok':True,'supervisor':'android-service','restarting':True}
 
                 def status():
+                    """Build, app version and supervisor of this embedded worker."""
                     from rook.worker._build_info import as_dict
                     package=context.getPackageManager().getPackageInfo(context.getPackageName(),0) if context else None
                     return {**as_dict(),'supervisor':'android-service','pyz_exists':False,
@@ -100,8 +102,12 @@ def start(hub,psk,name):
                             'app_version_code':int(package.versionCode) if package else 0,
                             'app_release':worker.app_release}
 
-                worker.registry.register('worker.restart',restart)
-                worker.registry.register('worker.status',status)
+                # The service supervises the worker here (selfupdate is the
+                # desktop's and is placed away from the APK): same names and
+                # tiers as its caps.
+                worker.registry.register('worker.restart',restart,
+                                         meta=CapMeta(risk='admin',tags=('destructive',)))
+                worker.registry.register('worker.status',status,meta=CapMeta(risk='read'))
                 task=asyncio.create_task(worker.run())
                 began=loop.time()
                 try:

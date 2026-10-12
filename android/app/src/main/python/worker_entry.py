@@ -5,78 +5,33 @@ WorkerService (Kotlin) calls:
     worker_entry.stop()                  # from another thread, to shut down
 
 We reuse the unmodified ``rook.worker`` package (staged in by stage_worker.py)
-but swap two plugins for native Android backends:
-  - screenshot.*  -> rook_android.plugins.screen      (MediaProjection)
-  - hid.*         -> rook_android.plugins.hid_a11y     (AccessibilityService)
-
-The stock ``screenshot``/``hid`` modules target Termux/X11/Win32 and would only
-error on a Chaquopy host, so we exclude them from the loader and register the
-native ones in their place.
+and add the native Android plugins (``rook_android.plugins``) to the same
+plugin host. Placement picks one of each pair: the worker reports the fact
+``app="android"``, the native plugins are placed there (``ANDROID_APP``) and
+the stock ``screenshot``/``hid``/``battery``/``selfupdate`` modules, which
+target Termux/X11/Win32, are placed everywhere else. So every plugin gets the
+host's status, settings, data directory and cap-collision safety.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import pkgutil
-import threading
 
 log = logging.getLogger("rook.android.entry")
 
-_stop_event: "asyncio.Event | None" = None
-_loop: "asyncio.AbstractEventLoop | None" = None
-
-# Builtin plugin module stems we replace with native bridges.
-_NATIVE_OVERRIDES = {"screenshot", "hid", "battery", "selfupdate"}
-
-
-def _builtin_enabled() -> list[str]:
-    """All stock plugin modules except the ones we override natively."""
-    import rook.worker.plugins as pkg
-    names = [m.name for m in pkgutil.iter_modules(pkg.__path__)
-             if not m.name.startswith("_")]
-    return [n for n in names if n not in _NATIVE_OVERRIDES]
+#: Plugin packages the embedded worker's host discovers, in order.
+PLUGIN_PACKAGES = ["rook.worker.plugins", "rook_android.plugins"]
+#: Extra node facts: what the native plugins' placement matches.
+FACTS = {"app": "android"}
 
 
-def _attach_native_plugins(worker) -> None:
-    from rook_android.plugins.screen import AndroidScreenPlugin
-    from rook_android.plugins.hid_a11y import AndroidHidPlugin
-    from rook_android.plugins.battery_android import AndroidBatteryPlugin
-    from rook_android.plugins.notify_android import AndroidNotifyPlugin
-    from rook_android.plugins.ui_android import AndroidUiPlugin
-    from rook_android.plugins.sms_android import AndroidSmsPlugin
-    from rook_android.plugins.contacts_android import AndroidContactsPlugin
-    from rook_android.plugins.calllog_android import AndroidCallLogPlugin
-    from rook_android.plugins.location_android import AndroidLocationPlugin
-    from rook_android.plugins.device_android import AndroidDevicePlugin
-    from rook_android.plugins.speak_android import AndroidSpeakPlugin
-    from rook_android.plugins.calendar_android import AndroidCalendarPlugin
-    natives = (AndroidScreenPlugin(), AndroidHidPlugin(), AndroidBatteryPlugin(),
-               AndroidNotifyPlugin(), AndroidUiPlugin(), AndroidSmsPlugin(),
-               AndroidContactsPlugin(), AndroidCallLogPlugin(),
-               AndroidLocationPlugin(), AndroidDevicePlugin(), AndroidSpeakPlugin(),
-               AndroidCalendarPlugin())
-    # Native plugins skip the plugin host, so give them the node's plugin state
-    # directory ourselves; the default is relative to the cwd, which on Android
-    # is the read-only root.
-    data_root = getattr(getattr(worker, "host", None), "_data_root", None)
-    for plugin in natives:
-        if data_root:
-            plugin.__dict__.setdefault("_data_root", data_root)
-        # battery gates on a readable battery; screen/hid are always available()
-        # (they report readiness per-call). Never announce a cap we can't back.
-        try:
-            if not plugin.available():
-                log.info("native plugin ns=%s not available here, skipping", plugin.NAMESPACE)
-                continue
-        except Exception:
-            log.warning("native plugin ns=%s available() raised, skipping", plugin.NAMESPACE)
-            continue
-        for dotpath, fn in plugin.caps().items():
-            worker.registry.register(dotpath, fn)
-        worker.plugins.append(plugin)
-        log.info("attached native plugin ns=%s caps=%d",
-                 plugin.NAMESPACE, len(plugin.caps()))
+def worker_kwargs() -> dict:
+    """Keyword arguments for :class:`rook.worker.core.Worker` on the phone."""
+    # The native plugins' declared tiers join this node's tier floor, as the
+    # stock plugins' do.
+    from rook.core import authz
+    authz.add_floor_package("rook_android.plugins")
+    return {"plugins_pkg": list(PLUGIN_PACKAGES), "facts": dict(FACTS)}
 
 
 def _setup_logging() -> None:
