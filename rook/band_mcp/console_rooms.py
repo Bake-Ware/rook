@@ -40,6 +40,7 @@ import threading
 import time
 import uuid
 
+from ..core.db import add_columns, open_db
 from .secret_mask import STUB as _STUB, scrub, stream as _secret_stream
 
 log = logging.getLogger("rook.band_mcp.console_rooms")
@@ -125,8 +126,7 @@ class ConsoleStore:
         self._typed: dict[str, dict[str, str]] = {}
         try:
             os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-            self._db = sqlite3.connect(path, check_same_thread=False)
-            self._db.execute("PRAGMA journal_mode=WAL")
+            self._db = open_db(path, row_factory=False, mkdir=False)
             self._db.executescript("""
                 CREATE TABLE IF NOT EXISTS rooms (
                     id TEXT PRIMARY KEY,
@@ -160,9 +160,7 @@ class ConsoleStore:
             # (proc.read by handle) for rooms opened before work.stream
             # carried them, and on workers without it; 'term' (a Rook
             # terminal, work.stream.read; handle is the terminal id).
-            cols = {r[1] for r in self._db.execute("PRAGMA table_info(rooms)")}
-            if "transport" not in cols:
-                self._db.execute("ALTER TABLE rooms ADD COLUMN transport TEXT DEFAULT 'proc'")
+            add_columns(self._db, "rooms", {"transport": "TEXT DEFAULT 'proc'"})
             self._db.commit()
         except Exception:
             log.exception("console store init failed; console rooms disabled")

@@ -31,10 +31,10 @@ import hashlib
 import logging
 import os
 import re
-import tempfile
 import time
 from pathlib import Path
 
+from ...core.db import atomic_write_text
 from ..plugin import Plugin, capability
 
 log = logging.getLogger("rook.worker.plugins.persona")
@@ -149,18 +149,7 @@ def _write(path: Path, text: str) -> None:
     real = Path(os.path.realpath(path))
     real.parent.mkdir(parents=True, exist_ok=True)
     mode = real.stat().st_mode & 0o777 if real.exists() else 0o644
-    fd, tmp = tempfile.mkstemp(prefix=".rook-persona-", dir=str(real.parent))
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
-            f.write(text)
-        os.chmod(tmp, mode)
-        os.replace(tmp, real)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+    atomic_write_text(real, text, mode, fsync=False)
 
 
 def _diff(old: str, new: str, path: Path) -> str:

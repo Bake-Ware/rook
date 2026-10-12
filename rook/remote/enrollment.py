@@ -6,7 +6,6 @@ attempt limits across processes. A pairing code grants ONE band's config;
 it is never a dashboard login, MCP token, or the permanent PSK.
 """
 
-from contextlib import contextmanager
 import hashlib
 import os
 from pathlib import Path
@@ -15,6 +14,7 @@ import secrets
 import sqlite3
 import time
 
+from ..core.db import add_columns, secure_file, transaction
 from . import setup_store
 from .psk import generate_psk
 
@@ -41,9 +41,7 @@ class EnrollmentStore:
         self.path = Path(path or os.environ.get("ROOK_ENROLLMENT_DB")
                          or setup_store.setup_path().with_name("enrollment.db")).expanduser()
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(self.path, os.O_CREAT | os.O_RDWR, 0o600)
-        os.close(fd)
-        self.path.chmod(0o600)
+        secure_file(self.path)  # holds band PSKs: 0600 before SQLite creates it
         with self._db() as db:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS bands (
@@ -66,22 +64,10 @@ class EnrollmentStore:
             from .migration import SCHEMA, upgrade_schema
             db.executescript(SCHEMA)
             upgrade_schema(db)
-            if "deleted" not in {r[1] for r in db.execute("PRAGMA table_info(bands)")}:
-                db.execute("ALTER TABLE bands ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0")
+            add_columns(db, "bands", {"deleted": "INTEGER NOT NULL DEFAULT 0"})
 
-    @contextmanager
     def _db(self):
-        db = sqlite3.connect(self.path, timeout=5)
-        db.row_factory = sqlite3.Row
-        try:
-            db.execute("BEGIN IMMEDIATE")
-            yield db
-            db.commit()
-        except BaseException:
-            db.rollback()
-            raise
-        finally:
-            db.close()
+        return transaction(self.path, timeout=5)
 
     def register(self, name: str, psk: str, hub: str = "", *, primary=False) -> dict:
         if not isinstance(psk, str) or not psk or len(psk) > 1024:

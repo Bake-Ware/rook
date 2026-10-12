@@ -24,9 +24,10 @@ import os
 import sqlite3
 import threading
 import time
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
+
+from ..core.db import secure_file, transaction
 
 SCOPES = ("hub", "band", "worker", "user")
 
@@ -82,37 +83,16 @@ class SettingsStore:
         if self._ready:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(self.path, os.O_CREAT | os.O_RDWR, 0o600)
-        os.close(fd)
-        try:
-            self.path.chmod(0o600)
-        except OSError:
-            pass
-        db = sqlite3.connect(self.path, timeout=5)
-        try:
+        secure_file(self.path)
+        with transaction(self.path, begin=None, timeout=5) as db:
             db.executescript(_SCHEMA)
-            db.commit()
-        finally:
-            db.close()
         self._ready = True
 
-    @contextmanager
     def _db(self, write: bool = False):
         self._init()
-        db = sqlite3.connect(self.path, timeout=5)
-        db.row_factory = sqlite3.Row
-        try:
-            if write:
-                db.execute("BEGIN IMMEDIATE")
-            yield db
-            if write:
-                db.commit()
-        except BaseException:
-            if write:
-                db.rollback()
-            raise
-        finally:
-            db.close()
+        # Reads open no explicit transaction (each statement autocommits as
+        # before); writes take the lock up front.
+        return transaction(self.path, begin="IMMEDIATE" if write else None, timeout=5)
 
     @staticmethod
     def _row(r: sqlite3.Row) -> dict:
