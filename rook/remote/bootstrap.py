@@ -36,6 +36,17 @@ def _versioned_assets(html: str, web_dir) -> str:
     return _re.sub(r"(/account/[a-z]+/assets/[\w.-]+\.(?:js|css))(?=['\"])", rf"\1?v={ver}", html)
 
 
+def public_ws_url() -> str:
+    """``ROOK_HUB_PUBLIC_WS_URL`` if it is a plain ws(s):// URL, else "" (it
+    is interpolated into shell and PowerShell command lines)."""
+    url = os.environ.get("ROOK_HUB_PUBLIC_WS_URL", "").strip()
+    if url and _re.fullmatch(r"wss?://[A-Za-z0-9.\[\]:-]+(?:/[A-Za-z0-9._~/-]*)?", url):
+        return url
+    if url:
+        log.warning("ignoring ROOK_HUB_PUBLIC_WS_URL=%r (expected ws[s]://host[:port][/path])", url)
+    return ""
+
+
 class InstallerAccessLogger(web.AbstractAccessLogger):
     """Keep short-lived join codes out of application HTTP access logs."""
     def log(self, request, response, elapsed):
@@ -1567,6 +1578,11 @@ class CombinedServer:
         script = script.replace(f'https://{self.domain}/band-worker.pyz',
                                 f'https://{self.domain}/band-worker-enrollment.pyz')
         script = script.replace(f'--hub {kw["hub_public"]} --ws --psk {kw["band_psk"]}', '--enrolled --ws')
+        # ROOK_HUB_PUBLIC_WS_URL: point new workers at the relay's native WS
+        # listener instead of this process's /band bridge (core spec 2.6).
+        ws_url = public_ws_url()
+        if ws_url:
+            script = script.replace('--enrolled --ws', f'--enrolled --ws --ws-url {ws_url}')
         script = script.replace(f' --update-url https://{self.domain}/band-worker.json', '')
         enroll_args = f'--enroll https://{self.domain}' + (f' --pair-code {code}' if code else '')
         if want_ps:
