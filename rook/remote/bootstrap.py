@@ -1,4 +1,4 @@
-"""Combined HTTP + WebSocket server for remote workers on a single port."""
+"""Hub dashboard: web UI, worker installers, setup wizard and band controller."""
 
 from __future__ import annotations
 
@@ -10,14 +10,9 @@ import os
 import secrets
 import sys
 import time
-import uuid
 from pathlib import Path
-from typing import Any
 
-import aiohttp
 from aiohttp import web
-
-from .server import RemoteWorker
 
 log = logging.getLogger(__name__)
 
@@ -91,8 +86,6 @@ def _clean_hermes_stdout(text: str) -> str:
     kept = [ln for ln in lines
             if not ln.lower().startswith(("query:", "initializing agent") + _HERMES_FOOTER)]
     return " ".join(kept).strip()
-
-WORKER_SCRIPT = (Path(__file__).parent / "worker.py").read_text(encoding="utf-8")
 
 PS_BOOTSTRAP = '''
 # R00K Band Worker Bootstrap (Windows)
@@ -978,9 +971,9 @@ say "done. Point workers at this host:  --hub <this-host>:${HUB_BIND##*:}"
 
 
 class CombinedServer:
-    """Single-port server: HTTP for bootstrap + WebSocket for worker connections."""
+    """Single-port HTTP server: dashboard, installers and band control."""
 
-    def __init__(self, port: int = 7005, auth_token: str = "", domain: str = "hub.example.com",
+    def __init__(self, port: int = 7005, domain: str = "hub.example.com",
                  web_user: str = "", web_pass: str = "",
                  band_psk: str = "",
                  hub_host: str = "127.0.0.1", hub_port: int = 7474,
@@ -989,7 +982,6 @@ class CombinedServer:
                  argv: list | None = None):
         self.port = port
         self.bind = bind
-        self.auth_token = auth_token
         self.domain = domain
         self.web_user = web_user
         self.web_pass = web_pass
@@ -1081,16 +1073,11 @@ class CombinedServer:
                 self._primary_label = _primary["label"]
         except Exception:
             log.warning("could not derive band labels; selector names may be blank")
-        self._workers: dict[str, RemoteWorker] = {}
-        self._on_worker_connect = None
-        self._on_worker_disconnect = None
-        self._on_worker_chat = None  # async callback(worker_name, content, worker_id) -> response
         self._app = web.Application(middlewares=[self._basic_auth_middleware,
                                                  self._principal_middleware])
         self._app.router.add_get("/", self._index)
         self._app.router.add_get("/worker", self._worker_bootstrap)
         self._app.router.add_post("/enroll", self._enroll_config)
-        self._app.router.add_get("/worker.py", self._worker_script)
         self._app.router.add_get("/band-worker.pyz", self._band_worker_pyz)
         self._app.router.add_get("/band-worker-enrollment.pyz", self._band_worker_pyz)
         self._app.router.add_get("/band-worker.json", self._band_worker_manifest)
@@ -1124,7 +1111,6 @@ class CombinedServer:
         self._app.router.add_get("/api/avatars", self._api_avatars)
         self._app.router.add_get("/api/avatar", self._api_avatar)
         self._app.router.add_get("/api/presence", self._api_presence)
-        self._app.router.add_get("/ws", self._websocket_handler)
         # Auth routes (handled by middleware, these are just route stubs)
         async def _noop(r): return web.Response(text="")
         self._app.router.add_get("/login", _noop)
@@ -1160,7 +1146,7 @@ class CombinedServer:
             return user == self.web_user and passwd == self.web_pass
         return passwd == self.web_pass
 
-    _AUTH_EXEMPT = ("/ws", "/health", "/worker", "/worker.py", "/band-worker.pyz",
+    _AUTH_EXEMPT = ("/health", "/worker", "/band-worker.pyz",
                     "/band-worker-enrollment.pyz", "/band-worker.json", "/enroll", "/install",
                     "/rook", "/rook.py", "/hub", "/telesthete-hub")
 
@@ -1404,7 +1390,7 @@ button:hover{{background:#22b88f}}
         await self._runner.setup()
         site = web.TCPSite(self._runner, self.bind, self.port)
         await site.start()
-        log.info("Remote server on %s:%d (HTTP + WebSocket)", self.bind, self.port)
+        log.info("Remote server on %s:%d (HTTP)", self.bind, self.port)
         if not self.web_pass:
             log.warning("dashboard password not set: anyone who can reach port %d "
                         "can control every worker", self.port)
@@ -1545,7 +1531,6 @@ button:hover{{background:#22b88f}}
 
     async def _index(self, request: web.Request) -> web.Response:
         ua = request.headers.get("User-Agent", "").lower()
-        kw = {"token": self.auth_token, "domain": self.domain}
 
         # Only auto-serve bootstrap at /worker, not /
         # / always shows the help page
@@ -1590,8 +1575,6 @@ button:hover{{background:#22b88f}}
     /telesthete-hub   prebuilt hub binary (?arch=x86_64), else built from source
     /worker           bootstrap script (auto-detects OS; ?os=windows|unix to force)
     /band-worker.pyz  self-contained band-worker zipapp
-    /worker.py        legacy exec-worker script
-    /ws               legacy websocket endpoint
     /health           server status
 """
         return web.Response(text=text, content_type="text/plain")
@@ -1672,9 +1655,6 @@ button:hover{{background:#22b88f}}
         return web.json_response({"band_id": band["id"], "name": band["name"],
                                   "psk": band["psk"], "hub": band["hub"] or self.hub_public,
                                   "epoch": band["epoch"]}, headers=headers)
-
-    async def _worker_script(self, request: web.Request) -> web.Response:
-        return web.Response(text=WORKER_SCRIPT, content_type="text/plain")
 
     async def _band_worker_pyz(self, request: web.Request) -> web.Response:
         filename = "band-worker-enrollment.pyz" if request.path == "/band-worker-enrollment.pyz" else "band-worker.pyz"
@@ -2440,201 +2420,8 @@ button:hover{{background:#22b88f}}
     async def _health(self, request: web.Request) -> web.Response:
         return web.Response(text=json.dumps({
             "status": "ok",
-            "workers": len(self._workers),
             "band_workers": len(self._band.workers) if self._band else 0,
         }), content_type="application/json")
-
-    # -- WebSocket endpoint --
-
-    async def _websocket_handler(self, request: web.Request) -> web.WebSocketResponse:
-        ws = web.WebSocketResponse(heartbeat=30, receive_timeout=300)
-        await ws.prepare(request)
-
-        worker = None
-        try:
-            # First message must be registration
-            msg = await asyncio.wait_for(ws.receive_json(), timeout=10)
-
-            if msg.get("type") != "register":
-                await ws.close(message=b"Expected registration")
-                return ws
-
-            if self.auth_token and msg.get("token") != self.auth_token:
-                await ws.close(message=b"Invalid token")
-                log.warning("Worker rejected: bad token from %s", request.remote)
-                return ws
-
-            worker_id = str(uuid.uuid4())[:8]
-            # Create a wrapper that adapts aiohttp WS to our RemoteWorker interface
-            worker = AioHttpWorker(
-                id=worker_id,
-                ws=ws,
-                name=msg.get("name", "unnamed"),
-                platform=msg.get("platform", "unknown"),
-                hostname=msg.get("hostname", "unknown"),
-            )
-            self._workers[worker_id] = worker
-            log.info("Worker connected: [%s] %s (%s/%s)", worker_id, worker.name, worker.platform, worker.hostname)
-
-            await ws.send_json({"type": "registered", "id": worker_id})
-
-            # Register as communication channel
-            if self._on_worker_connect:
-                try:
-                    self._on_worker_connect(worker.name, worker.platform, worker.hostname, worker_id)
-                except Exception as e:
-                    log.error("Worker connect callback failed: %s", e)
-
-            # Listen for responses
-            async for raw_msg in ws:
-                if raw_msg.type == aiohttp.WSMsgType.TEXT:
-                    try:
-                        data = json.loads(raw_msg.data)
-                        if data.get("type") == "result":
-                            worker.handle_response(data)
-                        elif data.get("type") == "heartbeat":
-                            worker.last_active = time.time()
-                        elif data.get("type") == "chat":
-                            content = data.get("content", "")
-                            if content and self._on_worker_chat:
-                                async def _handle_chat(ws_ref, w_name, msg, w_id):
-                                    try:
-                                        response = await self._on_worker_chat(w_name, msg, w_id)
-                                        await ws_ref.send_json({
-                                            "type": "chat_response",
-                                            "content": response,
-                                        })
-                                    except Exception as e:
-                                        await ws_ref.send_json({
-                                            "type": "chat_response",
-                                            "content": f"Error: {e}",
-                                        })
-                                asyncio.create_task(_handle_chat(ws, worker.name, content, worker.id))
-                    except json.JSONDecodeError:
-                        pass
-                elif raw_msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSE):
-                    break
-
-        except (asyncio.TimeoutError, Exception) as e:
-            log.info("Worker disconnected: %s (%s)", worker.name if worker else "unknown", e)
-        finally:
-            if worker:
-                for future in worker._pending.values():
-                    if not future.done():
-                        future.set_result({"stdout": "", "stderr": "Worker disconnected", "returncode": -1})
-                self._workers.pop(worker.id, None)
-                log.info("Worker removed: [%s] %s", worker.id, worker.name)
-                if self._on_worker_disconnect:
-                    try:
-                        self._on_worker_disconnect(worker.name, worker.id)
-                    except Exception as e:
-                        log.error("Worker disconnect callback failed: %s", e)
-
-        return ws
-
-    # -- Public API (used by tools) --
-
-    def get_worker(self, name: str) -> AioHttpWorker | None:
-        """Find worker by name or ID. Prefers alive connections."""
-        matches = []
-        for w in self._workers.values():
-            if w.name == name or w.id == name:
-                matches.append(w)
-        if not matches:
-            return None
-        # Prefer alive workers
-        alive = [w for w in matches if not w.ws.closed]
-        return alive[0] if alive else matches[0]
-
-    def list_workers(self) -> list[dict[str, Any]]:
-        return [
-            {
-                "id": w.id,
-                "name": w.name,
-                "platform": w.platform,
-                "hostname": w.hostname,
-                "alive": not w.ws.closed,
-                "connected": f"{time.time() - w.connected_at:.0f}s ago",
-                "last_active": f"{time.time() - w.last_active:.0f}s ago",
-            }
-            for w in self._workers.values()
-        ]
-
-
-class AioHttpWorker:
-    """Worker wrapper using aiohttp WebSocket."""
-
-    def __init__(self, id: str, ws: web.WebSocketResponse, name: str, platform: str, hostname: str):
-        self.id = id
-        self.ws = ws
-        self.name = name
-        self.platform = platform
-        self.hostname = hostname
-        self.connected_at = time.time()
-        self.last_active = time.time()
-        self._pending: dict[str, asyncio.Future] = {}
-
-    async def execute(self, command: str, timeout: float = 60) -> dict[str, Any]:
-        req_id = str(uuid.uuid4())[:8]
-        future: asyncio.Future = asyncio.get_event_loop().create_future()
-        self._pending[req_id] = future
-
-        await self.ws.send_json({
-            "type": "exec",
-            "id": req_id,
-            "command": command,
-        })
-        self.last_active = time.time()
-
-        try:
-            result = await asyncio.wait_for(future, timeout=timeout)
-            return result
-        except asyncio.TimeoutError:
-            self._pending.pop(req_id, None)
-            return {"stdout": "", "stderr": "Command timed out", "returncode": -1}
-
-    def handle_response(self, data: dict) -> None:
-        req_id = data.get("id", "")
-        future = self._pending.pop(req_id, None)
-        if future and not future.done():
-            future.set_result(data)
-
-    async def update(self, new_script: str, timeout: float = 30) -> dict[str, Any]:
-        """Send updated worker script to the worker."""
-        req_id = str(uuid.uuid4())[:8]
-        future: asyncio.Future = asyncio.get_event_loop().create_future()
-        self._pending[req_id] = future
-
-        await self.ws.send_json({
-            "type": "update",
-            "id": req_id,
-            "script": new_script,
-        })
-
-        try:
-            result = await asyncio.wait_for(future, timeout=timeout)
-            return result
-        except asyncio.TimeoutError:
-            self._pending.pop(req_id, None)
-            return {"stdout": "", "stderr": "Update timed out", "returncode": -1}
-
-    async def uninstall(self, timeout: float = 30) -> dict[str, Any]:
-        """Send uninstall command to the worker."""
-        req_id = str(uuid.uuid4())[:8]
-        future: asyncio.Future = asyncio.get_event_loop().create_future()
-        self._pending[req_id] = future
-
-        await self.ws.send_json({
-            "type": "uninstall",
-            "id": req_id,
-        })
-
-        try:
-            result = await asyncio.wait_for(future, timeout=timeout)
-            return result
-        except asyncio.TimeoutError:
-            self._pending.pop(req_id, None)
-            return {"stdout": "", "stderr": "Uninstall timed out", "returncode": -1}
 
 
 def _cli_main() -> None:
@@ -2658,7 +2445,9 @@ def _cli_main() -> None:
                     help="host:port workers call back to, templated into installers (ROOK_HUB_PUBLIC)")
     ap.add_argument("--band-name", default=env("ROOK_BAND_NAME", "rook-band"),
                     help="cosmetic band label (ROOK_BAND_NAME)")
-    ap.add_argument("--token", default="", help="Legacy exec-worker auth token")
+    # The legacy exec worker and its /ws endpoint are gone; the flag is still
+    # accepted so an old service unit that passes it keeps starting.
+    ap.add_argument("--token", default="", help=argparse.SUPPRESS)
     ap.add_argument("--web-user", default=env("ROOK_WEB_USER", ""),
                     help="dashboard username (ROOK_WEB_USER; blank = password only)")
     ap.add_argument("--web-pass", default=env("ROOK_WEB_PASS", ""),
@@ -2707,7 +2496,6 @@ def _cli_main() -> None:
         port=args.port,
         domain=args.domain,
         band_psk=args.band_psk,
-        auth_token=args.token,
         web_user=args.web_user,
         web_pass=args.web_pass,
         hub_host=args.hub_host,

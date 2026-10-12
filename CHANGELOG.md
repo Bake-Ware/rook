@@ -9,6 +9,12 @@ releases yet: workers identify themselves by build number (for example
 
 Preparation for public use.
 
+### Dashboard
+- Removed the legacy exec worker (`rook/remote/worker.py`, served as
+  `/worker.py`) and the dashboard's `/ws` endpoint it connected to. Every
+  installer has deployed `band-worker.pyz` (which joins over `/band`) for a
+  long time; `--token` is still accepted and ignored so old units start.
+
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps
   `sessions.list`, `sessions.follow`, `sessions.send` and `sessions.stop`
