@@ -5,11 +5,9 @@ import json
 import logging
 import os
 import re
-import sqlite3
 import time
 import uuid
 from pathlib import Path
-from contextlib import contextmanager
 
 import aiohttp
 from aiohttp import web, WSMsgType
@@ -19,8 +17,9 @@ from .term_hub import TermHub, Viewer, frame
 log = logging.getLogger(__name__)
 
 
-# Kept as an import for callers of the former web projection helper.
-from ..worker.work_runtime import project
+# project: kept as an import for callers of the former web projection helper.
+from ..core.db import add_columns
+from ..worker.work_runtime import WorkStoreBase, project, run_command, set_review_status  # noqa: F401
 
 METADATA_KEYS = frozenset(('id', 'owner', 'title', 'cwd', 'model', 'worker_id',
     'worker_name', 'band', 'agent', 'imported', 'source_id', 'source_version',
@@ -140,69 +139,39 @@ def filter_records(items, query, live_only):
             and (not q or q in f"{i.get('title')} {i.get('cwd')} {i.get('native_id')}".lower())]
 
 
-class WorkStore:
-    def __init__(self, path):
-        self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.db() as db:
-            db.executescript("""
-                PRAGMA journal_mode=WAL;
-                CREATE TABLE IF NOT EXISTS work_sessions(
-                    id TEXT PRIMARY KEY, owner TEXT NOT NULL, updated REAL NOT NULL,
-                    state TEXT NOT NULL);
-                CREATE TABLE IF NOT EXISTS work_index(
-                    id TEXT PRIMARY KEY, owner TEXT NOT NULL, updated REAL NOT NULL,
-                    state TEXT NOT NULL);
-                CREATE INDEX IF NOT EXISTS work_index_owner ON work_index(owner, updated);
-                INSERT OR IGNORE INTO work_index
-                    SELECT id, owner, updated, json_remove(state, '$.items', '$.order',
-                        '$.terminal', '$.diff', '$.rpc', '$.pending', '$.partial') FROM work_sessions
-                    WHERE NOT EXISTS (SELECT 1 FROM work_index WHERE work_index.id=work_sessions.id);
-                CREATE TABLE IF NOT EXISTS work_events(
-                    seq INTEGER PRIMARY KEY AUTOINCREMENT, session TEXT NOT NULL,
-                    created REAL NOT NULL, event TEXT NOT NULL);
-                CREATE INDEX IF NOT EXISTS work_events_session ON work_events(session,seq);
-                CREATE TABLE IF NOT EXISTS work_commands(
-                    session TEXT NOT NULL, id TEXT NOT NULL, result TEXT NOT NULL,
-                    PRIMARY KEY(session,id));
-                CREATE TABLE IF NOT EXISTS session_links(
-                    owner TEXT NOT NULL, key TEXT NOT NULL, task TEXT NOT NULL,
-                    updated REAL NOT NULL, PRIMARY KEY(owner,key));
-            """)
-            # Audit attribution: which account submitted each command.
-            if 'actor' not in {r[1] for r in db.execute('PRAGMA table_info(work_commands)')}:
-                db.execute('ALTER TABLE work_commands ADD COLUMN actor TEXT')
-            # A restarted web process cannot know whether the host received an
-            # unfinished command. Keep its ID claimed and require human review.
-            db.execute("UPDATE work_commands SET result=? WHERE json_extract(result, '$.status')='accepted'",
-                       (json.dumps({'status': 'error', 'error': 'Submission was interrupted by a server restart. Check the host before retrying.'}),))
-            # Retain legacy native state until the host acknowledges its archive.
-            db.execute("UPDATE work_sessions SET state=json_set(state, '$.legacy_runtime', 1) WHERE COALESCE(json_extract(state, '$.imported'),0)=0 AND COALESCE(json_extract(state, '$.remote_runtime'),0)=0 AND json_type(state, '$.items') IS NOT NULL")
-            # Remove copies written by the earlier import implementation.
-            for table in ('work_sessions', 'work_index'):
-                db.execute("UPDATE " + table + " SET state=json_remove(state, '$.items', '$.order', '$.terminal', '$.history_loading') WHERE json_extract(state, '$.imported')=1 AND (json_type(state, '$.items') IS NOT NULL OR json_type(state, '$.terminal') IS NOT NULL OR json_type(state, '$.history_loading') IS NOT NULL)")
-            for row in db.execute('SELECT id,owner,updated,state FROM work_sessions').fetchall():
-                metadata = self.metadata(json.loads(row['state']))
-                db.execute('INSERT OR REPLACE INTO work_index VALUES(?,?,?,?)',
-                           (row['id'], row['owner'], row['updated'], json.dumps(metadata)))
-        self.path.chmod(0o600)
+class WorkStore(WorkStoreBase):
+    """The hub's copy: metadata only (work_index), plus session-task links and
+    the account behind each command. Native state lives on the host."""
 
-    @contextmanager
-    def db(self):
-        db = sqlite3.connect(self.path, timeout=10)
-        db.row_factory = sqlite3.Row
-        try:
-            with db:
-                yield db
-        finally:
-            db.close()
+    DETAILED = False
+    EXTRA_SCHEMA = """
+        CREATE TABLE IF NOT EXISTS session_links(
+            owner TEXT NOT NULL, key TEXT NOT NULL, task TEXT NOT NULL,
+            updated REAL NOT NULL, PRIMARY KEY(owner,key));
+    """
 
-    def get(self, sid, owner=None):
-        with self.db() as db:
-            row = db.execute('SELECT * FROM work_index WHERE id=?', (sid,)).fetchone()
-        if row is None or (owner is not None and row['owner'] != owner):
-            raise web.HTTPNotFound()
-        return self.metadata(json.loads(row['state']))
+    def migrate(self, db):
+        # Audit attribution: which account submitted each command.
+        add_columns(db, 'work_commands', {'actor': 'TEXT'})
+        # A restarted web process cannot know whether the host received an
+        # unfinished command. Keep its ID claimed and require human review.
+        db.execute("UPDATE work_commands SET result=? WHERE json_extract(result, '$.status')='accepted'",
+                   (json.dumps({'status': 'error', 'error': 'Submission was interrupted by a server restart. Check the host before retrying.'}),))
+        # Retain legacy native state until the host acknowledges its archive.
+        db.execute("UPDATE work_sessions SET state=json_set(state, '$.legacy_runtime', 1) WHERE COALESCE(json_extract(state, '$.imported'),0)=0 AND COALESCE(json_extract(state, '$.remote_runtime'),0)=0 AND json_type(state, '$.items') IS NOT NULL")
+        # Remove copies written by the earlier import implementation.
+        for table in ('work_sessions', 'work_index'):
+            db.execute("UPDATE " + table + " SET state=json_remove(state, '$.items', '$.order', '$.terminal', '$.history_loading') WHERE json_extract(state, '$.imported')=1 AND (json_type(state, '$.items') IS NOT NULL OR json_type(state, '$.terminal') IS NOT NULL OR json_type(state, '$.history_loading') IS NOT NULL)")
+        for row in db.execute('SELECT id,owner,updated,state FROM work_sessions').fetchall():
+            metadata = self.metadata(json.loads(row['state']))
+            db.execute('INSERT OR REPLACE INTO work_index VALUES(?,?,?,?)',
+                       (row['id'], row['owner'], row['updated'], json.dumps(metadata)))
+
+    def missing(self):
+        raise web.HTTPNotFound()
+
+    def view(self, state):
+        return self.metadata(state)
 
     @staticmethod
     def metadata(state):
@@ -215,21 +184,6 @@ class WorkStore:
             commands = [dict(r) for r in db.execute('SELECT id,result,actor FROM work_commands WHERE session=?', (sid,))]
         return dict(state=state, events=events, commands=commands)
 
-    def all(self, owner=None, *, details=True):
-        with self.db() as db:
-            table = 'work_index'
-            rows = db.execute('SELECT state FROM ' + table + ' ' +
-                              ('WHERE owner=? ' if owner else '') + 'ORDER BY updated DESC',
-                              (owner,) if owner else ()).fetchall()
-        return [self.metadata(json.loads(r['state'])) for r in rows]
-
-    def revision(self, sid, owner):
-        with self.db() as db:
-            row = db.execute('SELECT state FROM work_index WHERE id=? AND owner=?', (sid, owner)).fetchone()
-        if row is None:
-            raise web.HTTPNotFound()
-        return json.loads(row['state'])['revision']
-
     def save(self, state, event=None):
         state['updated'] = time.time()
         state['revision'] = state.get('revision', 0) + 1
@@ -239,11 +193,9 @@ class WorkStore:
                 db.execute('UPDATE work_sessions SET updated=?,state=json_patch(state,?) WHERE id=?',
                            (state['updated'], json.dumps(state), state['id']))
             else:
-                db.execute('INSERT OR REPLACE INTO work_sessions VALUES(?,?,?,?)',
-                           (state['id'], state['owner'], state['updated'], json.dumps(state)))
+                self._write(db, 'work_sessions', state)
                 db.execute('DELETE FROM work_events WHERE session=?', (state['id'],))
-            db.execute('INSERT OR REPLACE INTO work_index VALUES(?,?,?,?)',
-                       (state['id'], state['owner'], state['updated'], json.dumps(state)))
+            self._write(db, 'work_index', state)
 
     def set_task(self, owner, key, task):
         """Link a host session (by its catalog key) to a task; '' unlinks."""
@@ -260,19 +212,7 @@ class WorkStore:
                     db.execute('SELECT key,task FROM session_links WHERE owner=?', (owner,))}
 
     def claim(self, sid, cid, actor=None):
-        with self.db() as db:
-            cur = db.execute('INSERT OR IGNORE INTO work_commands(session,id,result,actor) VALUES(?,?,?,?)',
-                             (sid, cid, json.dumps({'status': 'accepted'}), actor))
-            return cur.rowcount == 1
-
-    def result(self, sid, cid, value=None):
-        with self.db() as db:
-            if value is not None:
-                db.execute('UPDATE work_commands SET result=? WHERE session=? AND id=?',
-                           (json.dumps(value), sid, cid))
-            row = db.execute('SELECT result FROM work_commands WHERE session=? AND id=?',
-                             (sid, cid)).fetchone()
-        return json.loads(row['result']) if row else None
+        return super().claim(sid, cid, actor=actor)
 
 
 class WorkWeb:
@@ -1350,101 +1290,89 @@ class WorkWeb:
         job.add_done_callback(self.jobs.discard)
 
     async def command(self, sid, data, identity='system:work'):
+        async def apply(s, op, data):
+            await self._apply(s, op, data, identity)
+        await run_command(self.store, self.lock(sid), sid, data, apply)
+
+    async def _apply(self, s, op, data, identity):
         async def rpc(*args, **kwargs):
             return await self.rpc(*args, identity=identity, **kwargs)
-        async with self.lock(sid):
-            s = self.store.get(sid)
-            try:
-                op = data['op']
-                if op == 'status' and data.get('status') == 'closed':
-                    op = 'close'
-                launched = bool(s.get('harness')) and not s.get('imported')
-                if op in ('close', 'term_close') and s.get('term_running'):
-                    await self.close_terminal(s)
-                    s = self.store.get(sid)
-                if op == 'term_close':
-                    s['error'] = ''
-                elif launched:
-                    # A launched terminal: interaction happens in the terminal.
-                    if op == 'status':
-                        value = data.get('status')
-                        if value not in ('auto', 'closed', 'blocked', 'pending'):
-                            raise ValueError('Choose Auto, Closed, Blocked, or Pending.')
-                        s['review_status'] = None if value == 'auto' else value
-                    elif op == 'close':
-                        s['review_status'] = 'closed'
-                    else:
-                        raise ValueError('Use the terminal to interact with this session.')
-                elif op == 'status':
-                    value = data.get('status')
-                    if value not in ('auto', 'closed', 'blocked', 'pending'):
-                        raise ValueError('Choose Auto, Closed, Blocked, or Pending.')
-                    s['review_status'] = None if value == 'auto' else value
-                    s['error'] = ''
-                elif s.get('imported') and op == 'close':
-                    if s.get('external_handle'):
-                        await rpc(s, 'proc.signal', {'handle': s['external_handle'], 'sig': 'TERM'})
-                        s['external_handle'] = None
-                    s['review_status'] = 'closed'
-                elif s.get('imported') and op == 'resume':
-                    if s.get('external_handle'):
-                        raise ValueError('This session is already running on its host.')
-                    result = await rpc(s, s['agent'] + '-history.resume', {'session_id': s['source_id']}, timeout=40)
-                    if result.get('terminal'):
-                        # Newer workers resume into a Rook terminal (work.stream).
-                        s.update(harness=s.get('agent') or 'claude', term_id=result['terminal'],
-                                 term_running=True, term_exit=None, term_note='', term_started=time.time(),
-                                 review_status=None, error='', resume_note=result.get('note', ''))
-                    else:
-                        self.external_output[sid] = ''
-                        s.update(external_handle=result['handle'], external_cursor=0,
-                                 review_status=None, error='', resume_note=result.get('note', ''))
-                elif s.get('imported') and op in ('terminal_input', 'message'):
-                    text = str(data.get('text', ''))
-                    if not text.strip() or len(text) > 24000:
-                        raise ValueError('Enter a message of 1–24000 characters.')
-                    s['message_note'] = ''
-                    if s.get('external_handle'):
-                        await rpc(s, 'proc.write', {'handle': s['external_handle'], 'data': text, 'newline': True})
-                        s['message_note'] = 'Input sent to the host terminal.'
-                    else:
-                        result = await rpc(s, s['agent'] + '-history.send',
-                            {'session_id': s['source_id'], 'text': text, 'command_id': data['id']}, timeout=30)
-                        s['message_note'] = result.get('note', 'Message submitted on host.')
-                    s['error'] = ''
-                elif s.get('imported') and op == 'interrupt':
-                    if not s.get('external_handle'):
-                        raise ValueError('No running session to interrupt.')
-                    await rpc(s, 'proc.signal', {'handle': s['external_handle'], 'sig': 'INT'})
-                elif s.get('imported'):
-                    raise ValueError('This session is running outside the web app. Continue it on its host.')
-                elif s.get('legacy_runtime'):
-                    raise ValueError('Waiting for the host to adopt this session. Update and connect its worker.')
-                else:
-                    if op == 'open':
-                        result = await rpc(s, 'work.create', dict(session_id=sid,
-                            command_id=data['id'], cwd=s['cwd'], title=s['title'], model=s['model']), timeout=40)
-                    else:
-                        result = await rpc(s, 'work.command', dict(session_id=sid,
-                            command={k: v for k, v in data.items() if k not in ('csrf', 'session')}), timeout=40)
-                    self.apply_metadata(s, result['session'])
-                    if op == 'close':
-                        s['review_status'] = 'closed'
-                    elif op == 'resume':
-                        s['review_status'] = None
-                    if result.get('result', {}).get('status') != 'submitted':
-                        raise ValueError('Command outcome is uncertain or failed. Check the host session before retrying.')
-                if op in ('message', 'terminal_input'):
-                    s['last_activity'] = time.time()
-                self.store.save(s, {'op': op, 'command': data.get('id')})
-                self.store.result(sid, data['id'], {'status': 'submitted'})
-            except Exception as e:
-                s['error'] = str(e) or type(e).__name__
-                if s['status'] in ('starting', 'sending'):
-                    s['status'] = 'uncertain'
-                self.store.save(s, {'error': s['error']})
-                self.store.result(sid, data['id'], {'status': 'error', 'error': s['error']})
-                log.warning('Work command %s: %s', sid, e)
+        sid = s['id']
+        launched = bool(s.get('harness')) and not s.get('imported')
+        if op in ('close', 'term_close') and s.get('term_running'):
+            await self.close_terminal(s)
+            # Reload in place: run_command saves the object it passed in.
+            fresh = self.store.get(sid)
+            s.clear()
+            s.update(fresh)
+        if op == 'term_close':
+            s['error'] = ''
+        elif launched:
+            # A launched terminal: interaction happens in the terminal.
+            if op == 'status':
+                set_review_status(s, data.get('status'))
+            elif op == 'close':
+                s['review_status'] = 'closed'
+            else:
+                raise ValueError('Use the terminal to interact with this session.')
+        elif op == 'status':
+            set_review_status(s, data.get('status'))
+            s['error'] = ''
+        elif s.get('imported') and op == 'close':
+            if s.get('external_handle'):
+                await rpc(s, 'proc.signal', {'handle': s['external_handle'], 'sig': 'TERM'})
+                s['external_handle'] = None
+            s['review_status'] = 'closed'
+        elif s.get('imported') and op == 'resume':
+            if s.get('external_handle'):
+                raise ValueError('This session is already running on its host.')
+            result = await rpc(s, s['agent'] + '-history.resume', {'session_id': s['source_id']}, timeout=40)
+            if result.get('terminal'):
+                # Newer workers resume into a Rook terminal (work.stream).
+                s.update(harness=s.get('agent') or 'claude', term_id=result['terminal'],
+                         term_running=True, term_exit=None, term_note='', term_started=time.time(),
+                         review_status=None, error='', resume_note=result.get('note', ''))
+            else:
+                self.external_output[sid] = ''
+                s.update(external_handle=result['handle'], external_cursor=0,
+                         review_status=None, error='', resume_note=result.get('note', ''))
+        elif s.get('imported') and op in ('terminal_input', 'message'):
+            text = str(data.get('text', ''))
+            if not text.strip() or len(text) > 24000:
+                raise ValueError('Enter a message of 1–24000 characters.')
+            s['message_note'] = ''
+            if s.get('external_handle'):
+                await rpc(s, 'proc.write', {'handle': s['external_handle'], 'data': text, 'newline': True})
+                s['message_note'] = 'Input sent to the host terminal.'
+            else:
+                result = await rpc(s, s['agent'] + '-history.send',
+                    {'session_id': s['source_id'], 'text': text, 'command_id': data['id']}, timeout=30)
+                s['message_note'] = result.get('note', 'Message submitted on host.')
+            s['error'] = ''
+        elif s.get('imported') and op == 'interrupt':
+            if not s.get('external_handle'):
+                raise ValueError('No running session to interrupt.')
+            await rpc(s, 'proc.signal', {'handle': s['external_handle'], 'sig': 'INT'})
+        elif s.get('imported'):
+            raise ValueError('This session is running outside the web app. Continue it on its host.')
+        elif s.get('legacy_runtime'):
+            raise ValueError('Waiting for the host to adopt this session. Update and connect its worker.')
+        else:
+            if op == 'open':
+                result = await rpc(s, 'work.create', dict(session_id=sid,
+                    command_id=data['id'], cwd=s['cwd'], title=s['title'], model=s['model']), timeout=40)
+            else:
+                result = await rpc(s, 'work.command', dict(session_id=sid,
+                    command={k: v for k, v in data.items() if k not in ('csrf', 'session')}), timeout=40)
+            self.apply_metadata(s, result['session'])
+            if op == 'close':
+                s['review_status'] = 'closed'
+            elif op == 'resume':
+                s['review_status'] = None
+            if result.get('result', {}).get('status') != 'submitted':
+                raise ValueError('Command outcome is uncertain or failed. Check the host session before retrying.')
+        if op in ('message', 'terminal_input'):
+            s['last_activity'] = time.time()
 
     async def discover(self):
         """Keep each administrator's worker history durable without a browser open."""
