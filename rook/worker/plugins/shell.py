@@ -11,7 +11,7 @@ from ..plugin import Plugin, capability
 class ShellPlugin(Plugin):
     NAMESPACE = "shell"
 
-    @capability("exec")
+    @capability("exec", risk="exec")
     async def _exec(self, cmd: str | None = None, argv: list | None = None,
                     stdin: str | None = None, timeout: float = 30.0,
                     cwd: str | None = None, env: dict | None = None) -> dict:
@@ -69,8 +69,9 @@ class ShellPlugin(Plugin):
             "stderr": err.decode(errors="replace"),
         }
 
-    @capability("which")
+    @capability("which", risk="read")
     def _which(self, name: str) -> str | None:
+        """Full path of an executable on this worker's PATH, or null if it is not found."""
         import shutil
         return shutil.which(name)
 
@@ -88,14 +89,14 @@ class ShellPlugin(Plugin):
     def bind_worker(self, worker) -> None:
         self._worker = worker
 
-    @capability("env.get")
+    @capability("env.get", risk="read", tags=("sensitive",))
     def _env_get(self, name: str, default: str | None = None) -> str | None:
         """One environment variable (values pushed as secrets read ``***``)."""
         if name in os.environ and name in self._masked():
             return "***"
         return os.environ.get(name, default)
 
-    @capability("env.list")
+    @capability("env.list", risk="read", tags=("sensitive",))
     def _env_list(self, prefix: str = "") -> dict[str, str]:
         """The environment (values pushed as secrets or credentials read ``***``)."""
         masked = self._masked()

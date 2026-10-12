@@ -205,7 +205,7 @@ class BatteryPlugin(Plugin):
         except Exception:
             return False
 
-    @capability("status")
+    @capability("status", risk="read")
     async def _status(self) -> dict:
         """Current battery: ``{percent, charging, plugged, status, ...}``.
 

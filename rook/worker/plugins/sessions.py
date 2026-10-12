@@ -599,7 +599,7 @@ class SessionsPlugin(Plugin):
                 "items": items[offset:offset + limit], "total": total,
                 "next_offset": offset + limit if offset + limit < total else None}
 
-    @capability("follow", risk="read")
+    @capability("follow", risk="read", tags=("sensitive",))
     async def follow(self, agent: str, native_id: str, offset: int = 0, version: str = "",
                      tail: int = 0) -> dict:
         """The transcript tail of a Claude or Codex session: pages from
@@ -667,7 +667,7 @@ class SessionsPlugin(Plugin):
                                           f"still be running on its host ({why}). Type there."}
         return {"ok": False, "error": "This session is closed. Resume it first."}
 
-    @capability("stop", risk="exec")
+    @capability("stop", risk="exec", tags=("destructive",))
     async def stop_session(self, agent: str, native_id: str) -> dict:
         """End a session Rook started: close its Rook terminal (or the
         ``proc.*`` process an older resume started). A session started in

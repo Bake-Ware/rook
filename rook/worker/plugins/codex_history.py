@@ -119,7 +119,7 @@ class CodexHistoryPlugin(history.ClaudeHistoryPlugin):
         super().__init__()
         self._resume_lock = asyncio.Lock()
 
-    @capability("resume")
+    @capability("resume", risk="exec")
     async def _resume(self, session_id: str, path: str | None = None,
                       name: str | None = None, cwd: str | None = None,
                       machine: str | None = None) -> dict:

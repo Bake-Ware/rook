@@ -942,6 +942,13 @@ Letters: **R** read, **W** write, **X** exec, **A** admin. Tags: *s*
 sensitive, *d* destructive, *p* physical. This is the built-in table (§2.2).
 Workers may declare higher tiers, never lower.
 
+In the reference implementation this table is not hand-maintained twice:
+each built-in plugin cap declares its tier and tags in its own
+`@capability(risk=…, tags=…)`, and `rook.core.authz.builtin_table()` reads
+them from the plugin source shipped with the node, plus `authz.CORE` for the
+caps the worker and hub cores register themselves. `conformance/vectors/tiers.json`
+carries the resulting table.
+
 ### A.1 Worker caps
 
 **Core (registered by `Worker` / `WorkerAdmin`)**

@@ -247,18 +247,18 @@ class ScreenshotPlugin(Plugin):
                        ("grim", "spectacle", "gnome-screenshot", "scrot", "import"))
         return False
 
-    @capability("capture")
+    @capability("capture", risk="read", tags=("sensitive",))
     async def _capture(self, quality: int = 85) -> dict:
         """Capture the full primary display as a JPEG."""
         return await _dispatch(int(quality), None)
 
-    @capability("capture_region")
+    @capability("capture_region", risk="read", tags=("sensitive",))
     async def _capture_region(self, x: int, y: int, w: int, h: int,
                               quality: int = 85) -> dict:
         """Capture a rectangular region of the screen."""
         return await _dispatch(int(quality), (int(x), int(y), int(w), int(h)))
 
-    @capability("capture_preview")
+    @capability("capture_preview", risk="read", tags=("sensitive",))
     async def _capture_preview(self) -> dict:
         """Low-quality full-screen grab for quick visual checks."""
         return await _dispatch(40, None)

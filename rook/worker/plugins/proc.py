@@ -142,7 +142,7 @@ class ProcPlugin(Plugin):
 
     # -- lifecycle ---------------------------------------------------------
 
-    @capability("start")
+    @capability("start", risk="exec")
     async def _start(self, cmd: str | None = None, argv: list | None = None,
                      label: str | None = None, cwd: str | None = None,
                      env: dict | None = None, pty: bool = False,
@@ -307,7 +307,7 @@ class ProcPlugin(Plugin):
 
     # -- io ----------------------------------------------------------------
 
-    @capability("read")
+    @capability("read", risk="read", tags=("sensitive",))
     async def _read(self, handle: str, cursor: int = 0,
                     max_bytes: int = DEFAULT_READ_BYTES) -> dict:
         """Read output from ``cursor`` onward (0 = from the beginning).
@@ -339,7 +339,7 @@ class ProcPlugin(Plugin):
                 "exit_code": sess.exit_code, "total": sess.total,
                 "eof": (not sess.running) and next_cursor >= sess.total}
 
-    @capability("write")
+    @capability("write", risk="exec")
     async def _write(self, handle: str, data: str, newline: bool = True) -> dict:
         """Write to the process's stdin. ``newline`` appends "\\n" (what you
         want when answering a prompt). Sent verbatim — no shell involved."""
@@ -360,7 +360,7 @@ class ProcPlugin(Plugin):
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
         return {"ok": True, "handle": handle, "written": len(payload)}
 
-    @capability("signal")
+    @capability("signal", risk="exec", tags=("destructive",))
     async def _signal(self, handle: str, sig: str = "TERM") -> dict:
         """Send a signal to the process group: TERM (polite), KILL (hard),
         INT (ctrl-C), HUP. The session and its output stay readable."""
@@ -392,7 +392,7 @@ class ProcPlugin(Plugin):
         except (ProcessLookupError, PermissionError, OSError):
             sess.proc.send_signal(signum)
 
-    @capability("close")
+    @capability("close", risk="exec", tags=("destructive",))
     async def _close(self, handle: str) -> dict:
         """Kill the process if it's still running and drop the session. Its
         output is gone from the worker afterwards — read anything you still
@@ -412,7 +412,7 @@ class ProcPlugin(Plugin):
         return {"ok": True, "handle": handle, "exit_code": sess.exit_code,
                 "bytes": sess.total}
 
-    @capability("list")
+    @capability("list", risk="read")
     async def _list(self) -> dict:
         """Every session on this worker — live and recently finished."""
         self._reap()

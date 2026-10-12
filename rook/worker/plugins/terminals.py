@@ -1011,7 +1011,7 @@ class TerminalsPlugin(Plugin):
                 "items": items[offset:offset + limit], "total": total,
                 "next_offset": offset + limit if offset + limit < total else None}
 
-    @capability("export", risk="read")
+    @capability("export", risk="read", tags=("sensitive",))
     async def export(self, agent: str, session_id: str, offset: int = 0,
                      max_chars: int = 6000) -> dict:
         """A page of a historical Claude/Codex transcript in the stable

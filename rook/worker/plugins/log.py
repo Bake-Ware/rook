@@ -16,7 +16,7 @@ from .. import audit
 class LogPlugin(Plugin):
     NAMESPACE = "log"
 
-    @capability("audit")
+    @capability("audit", risk="read", tags=("sensitive",))
     def _audit(self, limit: int = 50, cap_prefix: str | None = None,
                identity: str | None = None, since: float | None = None) -> dict:
         """Return recent audit entries for this worker (newest last).
@@ -31,7 +31,7 @@ class LogPlugin(Plugin):
                              identity=identity, since=since)
         return {"count": len(entries), "entries": entries}
 
-    @capability("tail")
+    @capability("tail", risk="read", tags=("sensitive",))
     def _tail(self, limit: int = 20) -> dict:
         """The last ``limit`` audit entries, unfiltered (newest last)."""
         entries = audit.tail(limit=limit)

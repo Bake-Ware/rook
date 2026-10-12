@@ -79,39 +79,43 @@ class DonglePlugin(Plugin):
         except (OSError, ValueError, RuntimeError) as exc:
             return {"ok": False, "error": str(exc)}
 
-    @capability("status")
+    @capability("status", risk="read", tags=("physical",))
     async def status(self, **_):
+        """Identity and state of the attached Rook RP2040 dongle (device, protocol, firmware)."""
         return await self._call({"cmd": "status"})
 
-    @capability("display")
+    @capability("display", risk="read", tags=("sensitive", "physical"))
     async def display(self, text: str, **_):
+        """Show up to 80 UTF-8 bytes of text on the dongle's display."""
         if not isinstance(text, str) or len(text.encode()) > 80:
             return {"ok": False, "error": "text must be at most 80 UTF-8 bytes"}
         return await self._call({"cmd": "display", "text": text})
 
-    @capability("display_probe")
+    @capability("display_probe", risk="read", tags=("physical",))
     async def display_probe(self, **_):
+        """Probe whether the dongle has a working display attached."""
         return await self._call({"cmd": "display_probe"})
 
-    @capability("keyboard")
+    @capability("keyboard", risk="exec", tags=("physical",))
     async def keyboard(self, keys: list[int], mods: int = 0, **_):
         """Tap up to six USB HID usage codes with modifier bitmask (US layout)."""
         return await self._call({"cmd": "keyboard", "keys": keys, "mods": mods})
 
-    @capability("mouse")
+    @capability("mouse", risk="exec", tags=("physical",))
     async def mouse(self, x: int = 0, y: int = 0, buttons: int = 0,
                     wheel: int = 0, pan: int = 0, **_):
         """Relative move (-127..127) and/or button tap (bitmask 0..31)."""
         return await self._call({"cmd": "mouse", "x": x, "y": y,
                                  "buttons": buttons, "wheel": wheel, "pan": pan})
 
-    @capability("consumer")
+    @capability("consumer", risk="write", tags=("physical",))
     async def consumer(self, usage: int, **_):
         """Tap a USB consumer usage, e.g. 0xE9 volume up or 0xCD play/pause."""
         return await self._call({"cmd": "consumer", "usage": usage})
 
-    @capability("release")
+    @capability("release", risk="write", tags=("physical",))
     async def release(self, **_):
+        """Release every key and button the dongle holds on the USB host."""
         return await self._call({"cmd": "release"})
 
 

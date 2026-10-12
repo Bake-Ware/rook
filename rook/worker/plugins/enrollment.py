@@ -23,8 +23,9 @@ class EnrollmentPlugin(Plugin):
     def bind_worker(self,worker):
         self.worker=worker
 
-    @capability('enrollment_prepare')
+    @capability('enrollment_prepare', risk='admin')
     def prepare(self,server):
+        """Start device enrollment with the HTTPS enrollment ``server``: make a device key and CSR."""
         parsed=urlsplit(server)
         if parsed.scheme!='https' or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in ('','/'):
             raise ValueError('Use the HTTPS origin of the enrollment server.')
@@ -43,13 +44,14 @@ class EnrollmentPlugin(Plugin):
         return {'worker_id':self.worker.worker_id,'name':self.worker.name,'csr':pending['csr'],
                 'csr_hash':hashlib.sha256(pending['csr'].encode()).hexdigest(),'enrolled':False}
 
-    @capability('enrollment_move_prepare')
+    @capability('enrollment_move_prepare', risk='admin')
     def move_prepare(self,server):
         """Advertise support for authenticated cross-band configuration changes."""
         return self.prepare(server)
 
-    @capability('enrollment_finish')
+    @capability('enrollment_finish', risk='admin')
     async def finish(self,grant):
+        """Finish enrollment with the server's one-time ``grant``: store the device certificate and bands."""
         return await asyncio.to_thread(self._finish,grant)
 
     def _finish(self,grant):
@@ -68,8 +70,9 @@ class EnrollmentPlugin(Plugin):
         path.unlink()
         return self.status()
 
-    @capability('enrollment_status')
+    @capability('enrollment_status', risk='read')
     def status(self):
+        """Whether this worker is enrolled, with its device id, active band and migration state."""
         saved=enroll.load()
         if not saved.get('device'):return {'enrolled':False,'worker_id':self.worker.worker_id}
         from telesthete.protocol.crypto import derive_band_id
@@ -80,8 +83,9 @@ class EnrollmentPlugin(Plugin):
                 'migration_phase':migration.get('phase'),
                 'on_saved_band':derive_band_id(band['psk'])==self.worker.transport.band_id}
 
-    @capability('enrollment_prove')
+    @capability('enrollment_prove', risk='admin')
     def prove(self,migration_id,epoch,nonce):
+        """Sign a band-migration proof (``migration_id``, ``epoch``, ``nonce``) with the device key."""
         if not isinstance(nonce,str) or not 32<=len(nonce)<=128:raise ValueError('Invalid nonce.')
         saved=enroll.load();status=self.status()
         if not status.get('on_saved_band') or status['epoch']!=epoch or status['migration_id']!=migration_id or status['migration_phase']!='active':
