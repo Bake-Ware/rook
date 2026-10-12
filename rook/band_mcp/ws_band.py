@@ -3,6 +3,14 @@
 The hub excludes a datagram's sender from its fanout. Sharing one UDP socket
 between WebSockets therefore prevents those peers from talking to each other.
 Packets remain encrypted end to end; this bridge never needs the band PSK.
+
+This duplicates the relay's own WebSocket listener (telesthitium
+``HUB_WS_BIND``), which registers each connection as a first-class peer (no
+extra UDP hop, no TTL eviction). It stays the default because deployed
+remote workers dial ``wss://<hub_public>/band`` here; workers move to the
+native endpoint with ``--ws-url`` / ``ROOK_HUB_WS_URL`` (see
+docs/spec/core-v1.md 2.6 for the migration). Addressed routing works through
+either: a ROUTE declaration rides the peer's own UDP socket here.
 """
 from __future__ import annotations
 
@@ -10,11 +18,19 @@ import asyncio
 import logging
 import socket
 
+from ..worker.transports.telesthete_hub import set_socket_buffers
+
 from starlette.applications import Starlette
 from starlette.routing import WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 log = logging.getLogger("rook.band_mcp.ws_band")
+
+# Per-peer UDP socket buffers. The kernel default (~200 KB) drops a burst of
+# relayed frames (a large reply fanned out, paced at ~2 MB/s) while the WS side
+# is momentarily slow; this absorbs about half a second of it. Best effort
+# (clamped by net.core.rmem_max/wmem_max).
+BRIDGE_SOCKET_BUFFER = 1024 * 1024
 
 
 class WSBandBridge:
@@ -53,6 +69,7 @@ class WSBandBridge:
         peer_id = id(websocket)
         self._ws_peers[peer_id] = (websocket, asyncio.current_task())
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        set_socket_buffers(sock, BRIDGE_SOCKET_BUFFER)
         sock.setblocking(False)
         tasks = []
         loop = asyncio.get_running_loop()

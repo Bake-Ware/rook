@@ -22,6 +22,24 @@ Layers (bottom up):
 :class:`TelestheteHubTransport` is the public facade (``TRANSPORT``) with the
 :mod:`rook.worker.transports.base` contract.
 
+**Addressed routing** (telesthete SPEC §10.1). Once :meth:`set_route` names
+this peer (the worker sets its ``worker_id``, a band client its node id), the
+transport declares ``route_id_for(name)`` with a ROUTE frame at start, after
+every WS (re)connect, and once per keepalive interval while up. A routing hub
+then delivers CHANNEL frames sent with ``channel_id = route_id`` to us only;
+an old hub relays the 43-byte declaration to everyone, where it fails the
+empty-AAD tag check (old receivers) or is dropped by type (this codec).
+
+The declaration is soft state on the hub's peer entry. The hub forgets it
+when it evicts us (``HUB_PEER_TTL_SECS``, 15 s by default in telesthitium,
+60 s in the shipped deployment) or restarts; the next frame we send
+re-registers us WITHOUT a route until the next declaration. So we re-declare
+every ``keepalive_secs`` (20 s) whether or not other traffic flowed — the
+idle-keepalive skip never suppresses it — and a declaration, being a frame,
+also refreshes our registration, so on a routing transport it doubles as the
+keepalive. With a 15 s TTL an idle peer is still evicted for up to 5 s per
+cycle (as before); keep the TTL at 60 s.
+
 This intentionally bypasses the LAN-broadcast discovery in
 ``telesthete.transport.udp.UDPTransport`` — discovery is the hub's job.
 """
@@ -37,7 +55,7 @@ from typing import Awaitable, Callable, Optional
 
 from ...core.backoff import Backoff
 from ..wire import HEADER_SIZE as FRAG_HEADER
-from ..wire.codec import KEEPALIVE_PAYLOAD, BandCodec
+from ..wire.codec import KEEPALIVE_PAYLOAD, BandCodec, route_id_for
 from .base import OnConnect, OnMessage
 from .dispatch import DEFAULT_BACKLOG, DEFAULT_CONCURRENCY, Dispatcher
 from .writer import FrameWriter, TokenBucket
@@ -86,6 +104,11 @@ def udp_pacer_from_env() -> Optional[TokenBucket]:
     if rate <= 0:
         return None
     return TokenBucket(rate, burst)
+
+
+def set_socket_buffers(sock: socket.socket, size: int = UDP_SOCKET_BUFFER) -> None:
+    """Best-effort SO_SNDBUF/SO_RCVBUF (also used by the hub's WS bridge)."""
+    _set_buffers(sock, size)
 
 
 def _set_buffers(sock: socket.socket, size: int = UDP_SOCKET_BUFFER) -> None:
@@ -293,6 +316,7 @@ class TelestheteHubTransport:
         keepalive_secs: float = 20.0,
         bind_port: int = 0,
         use_ws: bool = False,
+        ws_url: str | None = None,
     ) -> None:
         self.codec = BandCodec(psk)
         self.band_id = self.codec.band_id
@@ -304,7 +328,17 @@ class TelestheteHubTransport:
         self._use_ws = use_ws
         # Port 443 (or 8443) is TLS at the edge — must use wss://, not ws://.
         _scheme = "wss" if hub_port in (443, 8443) else "ws"
-        self._ws_url: str = f"{_scheme}://{hub_host}:{hub_port}/band"
+        # ``ws_url`` (worker --ws-url / ROOK_HUB_WS_URL) points at any WS
+        # endpoint instead of the derived bridge URL — e.g. telesthitium's
+        # native listener (HUB_WS_BIND, path HUB_WS_PATH) — and implies WS.
+        self._ws_url: str = ws_url or f"{_scheme}://{hub_host}:{hub_port}/band"
+        if ws_url:
+            self._use_ws = True
+        # Addressed routing: our declared route id (None = never declare).
+        self._route_id: Optional[int] = None
+        self._route_name: Optional[str] = None
+        self._last_declared = float("-inf")
+        self.declarations_sent = 0
 
         self.link: UdpLink | WsLink | None = None
         self.writer: Optional[FrameWriter] = None
@@ -317,6 +351,47 @@ class TelestheteHubTransport:
     @property
     def hub(self) -> tuple[str, int]:
         return self._hub
+
+    # -- addressed routing ---------------------------------------------------
+
+    @property
+    def route_id(self) -> Optional[int]:
+        return self._route_id
+
+    def set_route(self, name: Optional[str]) -> Optional[int]:
+        """Declare ``route_id_for(name)`` from now on (``None`` stops
+        declaring). Re-declares at once when the link is up. Returns the id."""
+        self._route_name = name
+        self._route_id = route_id_for(name) if name else None
+        self._last_declared = float("-inf")
+        if self._route_id is not None and self._link_up():
+            try:
+                asyncio.get_running_loop().create_task(self._declare_quietly())
+            except RuntimeError:
+                pass  # no loop yet: start() declares
+        return self._route_id
+
+    def _link_up(self) -> bool:
+        return (self.link is not None and self.link.connected
+                and self.writer is not None and not self._stopping)
+
+    async def declare_route(self) -> bool:
+        """Send our ROUTE declaration now. False when there is nothing to
+        declare. Raises like :meth:`send` when the link is down."""
+        rid = self._route_id
+        if rid is None:
+            return False
+        self._check_link()
+        self._last_declared = time.monotonic()
+        await self.writer.submit_frame(b"", lambda _pt, _rid=rid: self.codec.route_frame(_rid))
+        self.declarations_sent += 1
+        return True
+
+    async def _declare_quietly(self) -> None:
+        try:
+            await self.declare_route()
+        except Exception as e:
+            log.debug("route declaration skipped: %s", e)
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -354,8 +429,11 @@ class TelestheteHubTransport:
                      "frag_overhead=%dB", self._hub[0], self._hub[1],
                      self.band_id.hex()[:16], link.sock.getsockname(), FRAG_HEADER)
             # Implicit registration: the hub learns our (NAT'd) address from
-            # this frame before any real traffic.
+            # this frame before any real traffic. The declaration right after
+            # is also our second frame, which a validating hub
+            # (HUB_UDP_VALIDATION_PACKETS=2) needs before it delivers to us.
             await self.send(KEEPALIVE_PAYLOAD)
+            await self.declare_route()
             link.start_recv(self._on_frame)
 
         self._tasks.append(loop.create_task(self._keepalive_loop()))
@@ -388,6 +466,22 @@ class TelestheteHubTransport:
         writer (see :mod:`.writer`). ``peer_id`` is ignored (the hub
         broadcasts to the band); ``channel_id`` stamps the cleartext frame
         header (0 = the default band channel)."""
+        self._check_link()
+        await self.writer.submit(payload, channel_id)
+
+    async def send_native(self, channel_type: int, channel_id: int, plaintext: bytes,
+                          *, bulk: bool = False) -> None:
+        """Send ``plaintext`` as ONE unfragmented frame of ``channel_type``
+        sealed with the spec AAD (native DROP frames, see
+        :mod:`rook.worker.ota_drop`). Sealed at emission time by the writer,
+        so its sequence comes from the same source as every other frame."""
+        self._check_link()
+        await self.writer.submit_frame(
+            plaintext,
+            lambda pt: self.codec.seal_spec(pt, channel_type, channel_id),
+            bulk=bulk)
+
+    def _check_link(self) -> None:
         if self._use_ws:
             if self.link is None or not self.link.connected:
                 # Mid-reconnect (or not up yet). Caller loops catch + log;
@@ -395,7 +489,6 @@ class TelestheteHubTransport:
                 raise RuntimeError("WS not connected")
         elif self.link is None or not self.link.connected:
             raise RuntimeError("transport not started")
-        await self.writer.submit(payload, channel_id)
 
     def _on_frame(self, data: bytes) -> None:
         msg = self.codec.ingest(data)
@@ -403,9 +496,11 @@ class TelestheteHubTransport:
             self.dispatcher.submit(msg.payload, (msg.channel_id,))
 
     async def _ws_up(self) -> None:
-        # Implicit registration (the hub learns us), then let the worker
-        # re-announce its capabilities onto the band.
+        # Implicit registration (the hub learns us), our route (a fresh hub
+        # connection has none), then let the worker re-announce its
+        # capabilities onto the band.
         await self.send(KEEPALIVE_PAYLOAD)
+        await self._declare_quietly()   # never block the re-announce below
         if self._on_connect is not None:
             await self._on_connect()
 
@@ -416,19 +511,33 @@ class TelestheteHubTransport:
             self.writer.fail_all(RuntimeError("WS not connected"))
 
     async def _keepalive_loop(self) -> None:
-        """Keep our relay registration alive on an otherwise idle link.
+        """Keep our relay registration (and route) alive.
 
         Any frame refreshes the relay's view of us, so a keepalive is only
         sent when nothing else went out for a whole interval. This applies on
         WS too: telesthitium's native WS endpoint doesn't TTL-prune
         connections, but the hub's ``/band`` bridge (rook-mcp) relays each
-        WebSocket through its own UDP socket, which the relay does prune."""
+        WebSocket through its own UDP socket, which the relay does prune.
+
+        The route declaration is NOT skipped on a busy link: busy traffic
+        keeps us registered but cannot restore a route the hub lost when it
+        restarted, so it goes out every interval regardless (see the module
+        docstring). Being a frame itself, it also counts as link activity."""
         while not self._stopping:
             try:
+                now = time.monotonic()
+                if self._route_id is not None and now - self._last_declared >= self._keepalive:
+                    await self.declare_route()
+                    continue
                 writer = self.writer
-                idle_for = time.monotonic() - (writer.last_tx if writer else 0.0)
+                # A declaration counts as activity from when it was queued.
+                last = max(writer.last_tx if writer else 0.0, self._last_declared)
+                idle_for = now - last
                 if idle_for < self._keepalive:
-                    await asyncio.sleep(self._keepalive - idle_for)
+                    wait = self._keepalive - idle_for
+                    if self._route_id is not None:
+                        wait = min(wait, self._keepalive - (now - self._last_declared))
+                    await asyncio.sleep(max(wait, 0.01))
                     continue
                 if not self._stopping:
                     await self.send(KEEPALIVE_PAYLOAD)
@@ -441,6 +550,5 @@ class TelestheteHubTransport:
                     await asyncio.sleep(self._keepalive)
                 except asyncio.CancelledError:
                     break
-
 
 TRANSPORT = TelestheteHubTransport

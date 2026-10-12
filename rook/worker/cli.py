@@ -77,6 +77,11 @@ def main() -> None:
                          "ROOK_BAND_DISPATCH_CONCURRENCY/_BACKLOG (inbound bound)")
     ap.add_argument("--ws", action="store_true",
                     help="use WebSocket instead of UDP for hub connection (for cloudflare tunnel)")
+    ap.add_argument("--ws-url", default=None,
+                    help="full ws:// or wss:// URL of the band endpoint, e.g. the relay's "
+                         "native WebSocket listener; implies --ws (or env ROOK_HUB_WS_URL, "
+                         "which a pushed config may set). Default: the hub's /band bridge "
+                         "derived from --hub")
     ap.add_argument("--update-url", default=os.environ.get("ROOK_UPDATE_URL", ""),
                     help="signed manifest URL for OTA self-update "
                          "(e.g. https://rook.example.com/band-worker.json). "
@@ -215,11 +220,17 @@ def main() -> None:
     if not port:
         ap.error("--hub must be host:port")
 
-    if args.ws:
+    # Read after the pushed config's env is applied, so the hub can move
+    # workers to another WS endpoint with worker.config_apply.
+    ws_url = (args.ws_url or os.environ.get("ROOK_HUB_WS_URL", "")).strip() or None
+    if ws_url and not ws_url.startswith(("ws://", "wss://")):
+        ap.error("--ws-url / ROOK_HUB_WS_URL must start with ws:// or wss://")
+    if args.ws or ws_url:
         from .transports.telesthete_hub import TelestheteHubTransport
         transport = TelestheteHubTransport(
             psk=args.psk, hub_host=host, hub_port=int(port),
             keepalive_secs=args.keepalive, bind_port=args.bind_port, use_ws=True,
+            ws_url=ws_url,
         )
     else:
         from .transports.telesthete_hub import TelestheteHubTransport

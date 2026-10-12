@@ -31,6 +31,23 @@ if not TELESTHETE_ROOT.is_dir():
         TELESTHETE_ROOT = Path(_spec.origin).parent
 OUTPUT = HERE / "band-worker.pyz"
 
+# telesthete.protocol modules the worker imports. route.py (addressed hub
+# routing, telesthete 0.3.0) is the newest: a stale sibling checkout without it
+# still runs (the codec has a byte-identical fallback) but means the bundle
+# carries a telesthete older than pyproject.toml pins, so refuse to build.
+REQUIRED_TELESTHETE = ("crypto.py", "fragment.py", "framing.py", "sequence.py",
+                       "drop.py", "route.py")
+
+
+def check_telesthete(root: Path) -> None:
+    """Raise if ``root`` (a ``telesthete`` package dir) lacks a protocol
+    module the worker needs; shared with android/stage_worker.py."""
+    missing = [m for m in REQUIRED_TELESTHETE if not (root / "protocol" / m).is_file()]
+    if missing:
+        raise FileNotFoundError(
+            f"telesthete at {root} is too old (missing protocol/{', protocol/'.join(missing)}); "
+            "update it to the commit pinned in pyproject.toml")
+
 _MAIN = """\
 from rook.worker.cli import main
 main()
@@ -224,6 +241,8 @@ def build() -> Path:
             f"Telesthete source not found: {TELESTHETE_ROOT}\n"
             "Clone https://github.com/Bake-Ware/telesthete next to this repo or pip install it."
         )
+
+    check_telesthete(TELESTHETE_ROOT)
 
     build_num, commit, version = compute_build()
     built_at = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")

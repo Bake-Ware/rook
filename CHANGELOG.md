@@ -9,6 +9,29 @@ releases yet: workers identify themselves by build number (for example
 
 Preparation for public use.
 
+### Protocol features
+- Addressed routing (telesthete SPEC §10.1, needs telesthete 0.3.0): workers
+  and band clients declare a route id; targeted calls and replies (request
+  `rr`) go only to their addressee on a routing relay. Old relays and peers
+  see the same traffic as before. `ROOK_BAND_ROUTE=0` turns it off.
+- Large replies (> 32 KB, `ROOK_BAND_DROP_THRESHOLD`) ride telesthete Drop
+  with receiver-driven retransmit when the caller accepts it; `BandClient.call`
+  returns the normal reply. A 1 MB reply now completes under 1% fragment loss.
+  Worker replies are capped (`ROOK_BAND_MAX_REPLY_BYTES`, 32 MiB) with a clear
+  error.
+- Negotiated zlib compression of whole requests/replies (feature `z`), which
+  also carries base64 attachments (screenshots, camera, files) compactly.
+- In-band OTA uses one native DROP frame per Drop packet toward workers that
+  announce `drop-native` (half the frames); `ROOK_BAND_DROP_NATIVE=0` opts out.
+- Announces carry `features` and `caps_hash`; clients keep known caps across
+  hash-only announces (opt-in on workers with `ROOK_ANNOUNCE_CAPS_HASH=1`
+  after every client is upgraded).
+- Workers can dial the relay's native WebSocket listener (`--ws-url`,
+  `ROOK_HUB_WS_URL`; installers pass it when `ROOK_HUB_PUBLIC_WS_URL` is set).
+  The `/band` bridge stays the default and gets 1 MiB socket buffers.
+- telesthete pin (and the hub image's relay) moved to 0.3.0 (ad2865b); bundle
+  builders refuse a vendored telesthete without `protocol/route.py`.
+
 ### Transport
 - Band transport split into a shared frame codec (`rook.worker.wire.codec.
   BandCodec`) and thin UDP/WS links behind the unchanged

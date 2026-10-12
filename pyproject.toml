@@ -9,7 +9,9 @@ license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "Bake-Ware" }]
 dependencies = [
     # Encrypted transport. Not on PyPI yet, so it installs from GitHub.
-    "telesthete @ git+https://github.com/Bake-Ware/telesthete@b6290c7afabe14c0e81d4e9adfd5bcf498a251e5",
+    # 0.3.0 (audit/hub): Route channel type + route_id_for for addressed hub
+    # routing (SPEC §10.1), bounded Reassembler.
+    "telesthete @ git+https://github.com/Bake-Ware/telesthete@ad2865bd3035783e10bdf44c13112dfd80dded9b",
     "pynacl>=1.5",
     "cryptography>=42",
     "aiohttp>=3.9",
