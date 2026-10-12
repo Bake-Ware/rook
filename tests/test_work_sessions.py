@@ -279,10 +279,12 @@ async def test_imported_resume_input_close_and_host_isolation(portal):
     p = portal
     band = HistoryBand()
     original = band.call
+    band.workers['host1']['caps'] += ['work.stream.open', 'work.stream.read', 'work.stream.write']
+
     async def call(cap, args, target, timeout, identity=None):
-        if cap.endswith('.resume'):
+        if cap == 'work.stream.open':
             band.calls.append((cap, args))
-            result = {'ok': True, 'handle': 'external', 'note': 'Resume started'}
+            result = {'ok': True, 'id': 'term1'}
         elif cap == 'proc.read':
             result = {'ok': True, 'chunk': 'terminal prompt', 'next_cursor': 15, 'eof': False}
         elif cap in ('proc.signal', 'proc.write'):
@@ -298,6 +300,15 @@ async def test_imported_resume_input_close_and_host_isolation(portal):
     await work.sync_history(host, 'claude', [p.uid])
     sid = work.store.all()[0]['id']
     await work.command(sid, dict(op='resume', id='resume-imported'))
+    # Resume opens a Rook terminal on the session's own id (sessions.*/work.stream only).
+    opened = next(a for c, a in band.calls if c == 'work.stream.open')
+    assert opened['resume'] == work.store.get(sid)['source_id'] and opened['harness'] == 'claude'
+    assert opened['session'] == sid and opened['remote_control']
+    assert work.store.get(sid)['term_id'] == 'term1' and work.store.get(sid)['term_running']
+    # A proc.* session resumed by an older hub keeps working until it ends.
+    s = work.store.get(sid)
+    s.update(term_id=None, term_running=False, external_handle='external', external_cursor=0)
+    work.store.save(s)
     assert work.snapshot(work.store.get(sid))['external_running']
     assert 'external_handle' not in work.snapshot(work.store.get(sid))
     await work.drain_external(sid)

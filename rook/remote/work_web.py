@@ -88,7 +88,7 @@ def actor(user):
 
 def legacy_records(items, live):
     """§3.1 records from an older worker's ``work.sessions`` shape (history
-    ``items`` plus ``live`` terminals) or its ``*-history.pull`` entries.
+    ``items`` plus ``live`` terminals).
     What it cannot know stays conservative: no mirror, unknown inbox policy."""
     terms = {}
     for t in live:
@@ -682,11 +682,10 @@ class WorkWeb:
                 raise ValueError('Invalid history cursor.')
             caps = self.worker(s).get('caps', [])
             if request.query.get('follow') == '1':
-                cap = s['agent'] + '-history.follow'
-                if cap not in caps:
+                if 'sessions.follow' not in caps:
                     return web.json_response({'unchanged': True, 'live': False}, headers=NO_STORE)
-                page = await self.rpc(s, cap, dict(session_id=s['source_id'], offset=offset,
-                    version=request.query.get('version', '')), identity=actor(user))
+                page = await self.rpc(s, 'sessions.follow', dict(agent=s['agent'], native_id=s['source_id'],
+                    offset=offset, version=request.query.get('version', '')), identity=actor(user))
                 version = str(page.get('version', '')).split(':')
                 if len(version) == 3 and version[2].isdigit():
                     activity = int(version[2]) / 1_000_000_000
@@ -775,8 +774,6 @@ class WorkWeb:
             return 'sessions.list'
         if 'work.sessions' in caps:
             return 'work.sessions'
-        if any(a + '-history.pull' in caps for a in ('claude', 'codex')):
-            return 'history'
         return None
 
     def cached_catalog(self, worker, query, live_only):
@@ -801,9 +798,8 @@ class WorkWeb:
 
     async def fetch_catalog(self, worker, query, live_only, limit, identity):
         """One worker's catalog through the newest cap it has: sessions.list,
-        else work.sessions, else *-history.pull (records built here). None
-        for a worker with no sessions at all."""
-        caps = worker.get('caps', [])
+        else work.sessions (records built here). None for a worker with
+        neither."""
         target = dict(worker_id=worker['worker_id'], band=worker.get('band'))
         source = self.catalog_source(worker)
         if source is None:
@@ -814,22 +810,11 @@ class WorkWeb:
                                         timeout=CATALOG_TIMEOUT, identity=identity)
                 items, total = result.get('items') or [], result.get('total') or 0
                 harnesses = result.get('harnesses')
-            elif source == 'work.sessions':
+            else:
                 result = await self.rpc(target, 'work.sessions', dict(limit=limit, query=query),
                                         timeout=CATALOG_TIMEOUT, identity=identity)
                 items = legacy_records(result.get('items') or [], result.get('live') or [])
                 total, harnesses = result.get('total') or 0, result.get('harnesses')
-            else:
-                items, total, harnesses = [], 0, []
-                for agent in ('claude', 'codex'):
-                    if agent + '-history.pull' not in caps:
-                        continue
-                    result = await self.rpc(target, agent + '-history.pull', dict(limit=limit),
-                                            timeout=CATALOG_TIMEOUT, identity=identity)
-                    items += legacy_records([dict(s, agent=agent, updated=s.get('last_modified'),
-                                                  messages=s.get('message_count'))
-                                             for s in result.get('sessions') or []], [])
-                    total += result.get('total') or 0
             items = [i for i in items if isinstance(i, dict) and i.get('agent') and i.get('native_id')]
             if source != 'sessions.list':
                 items = filter_records(items, query, live_only)
@@ -973,26 +958,20 @@ class WorkWeb:
                                   'done': bool(out.get('done')), 'exists': out.get('exists', bool(events))})
 
     async def op_follow(self, request, user, data):
-        """Relay ``sessions.follow`` (older workers: ``<agent>-history.follow``)."""
+        """Relay ``sessions.follow``."""
         agent, native = self.session_ident(data, ('claude', 'codex'))
-        w = self.session_target(data)
+        w = self.session_target(data, 'sessions.follow')
         offset = max(0, int(data.get('offset') or 0))
         version = str(data.get('version') or '')[:200]
         tail = max(0, min(int(data.get('tail') or 0), FOLLOW_TAIL_MAX))
-        if 'sessions.follow' in w.get('caps', []):
-            args = dict(agent=agent, native_id=native, offset=offset, version=version)
-            try:
-                out = await self.host_call(w, 'sessions.follow', dict(args, tail=tail) if tail else args, user)
-            except HostError as error:
-                # Workers before tail= refuse the argument: start at offset instead.
-                if not (tail and 'tail' in str(error) and 'bad args' in str(error)):
-                    raise
-                out = await self.host_call(w, 'sessions.follow', args, user)
-        elif agent + '-history.follow' in w.get('caps', []):
-            out = await self.host_call(w, agent + '-history.follow', dict(session_id=native, offset=offset,
-                                                                          version=version), user)
-        else:
-            raise ValueError('This host cannot show transcripts; update its worker.')
+        args = dict(agent=agent, native_id=native, offset=offset, version=version)
+        try:
+            out = await self.host_call(w, 'sessions.follow', dict(args, tail=tail) if tail else args, user)
+        except HostError as error:
+            # Workers before tail= refuse the argument: start at offset instead.
+            if not (tail and 'tail' in str(error) and 'bad args' in str(error)):
+                raise
+            out = await self.host_call(w, 'sessions.follow', args, user)
         keep = ('unchanged', 'version', 'replace_from', 'messages', 'truncated', 'next_offset',
                 'next_content_offset', 'total_messages', 'activity', 'active', 'tail_from')
         return await self.masked({k: out[k] for k in keep if k in out})
@@ -1004,16 +983,9 @@ class WorkWeb:
         if not isinstance(text, str) or not text.strip() or len(text) > TEXT_MAX:
             raise ValueError(f'Enter a message of 1–{TEXT_MAX} characters.')
         command_id = str(data.get('command_id') or uuid.uuid4().hex)[:100]
-        w = self.session_target(data)
-        if 'sessions.send' in w.get('caps', []):
-            out = await self.host_call(w, 'sessions.send', dict(agent=agent, native_id=native, text=text,
-                                                                command_id=command_id), user, timeout=40)
-        elif agent + '-history.send' in w.get('caps', []):
-            out = await self.host_call(w, agent + '-history.send', dict(session_id=native, text=text,
-                                                                        command_id=command_id), user, timeout=40)
-            out = dict(out, delivery='turn', detail=out.get('delivery'))
-        else:
-            raise ValueError('This host cannot take messages for its sessions; update its worker.')
+        w = self.session_target(data, 'sessions.send')
+        out = await self.host_call(w, 'sessions.send', dict(agent=agent, native_id=native, text=text,
+                                                            command_id=command_id), user, timeout=40)
         return {k: out[k] for k in ('delivery', 'note', 'detail', 'terminal', 'native_id') if k in out}
 
     async def op_stop(self, request, user, data):
@@ -1326,16 +1298,19 @@ class WorkWeb:
         elif s.get('imported') and op == 'resume':
             if s.get('external_handle'):
                 raise ValueError('This session is already running on its host.')
-            result = await rpc(s, s['agent'] + '-history.resume', {'session_id': s['source_id']}, timeout=40)
-            if result.get('terminal'):
-                # Newer workers resume into a Rook terminal (work.stream).
-                s.update(harness=s.get('agent') or 'claude', term_id=result['terminal'],
-                         term_running=True, term_exit=None, term_note='', term_started=time.time(),
-                         review_status=None, error='', resume_note=result.get('note', ''))
-            else:
-                self.external_output[sid] = ''
-                s.update(external_handle=result['handle'], external_cursor=0,
-                         review_status=None, error='', resume_note=result.get('note', ''))
+            if not self.term_capable(s):
+                raise ValueError('This host cannot run Rook terminals; update its worker to resume here.')
+            # What <agent>-history.resume does on such a worker, asked directly:
+            # the session reopens in a Rook terminal (Claude with Remote Control).
+            agent = s.get('agent') or 'claude'
+            args = dict(harness=agent, resume=s['source_id'], cwd=s.get('cwd') or '',
+                        title=f"{agent}: {s.get('title') or s['source_id']}"[:160], session=sid)
+            if agent == 'claude':
+                args['remote_control'] = str(s.get('title') or s['source_id'])[:80]
+            result = await rpc(s, 'work.stream.open', args, timeout=40)
+            s.update(harness=agent, term_id=result['id'], term_running=True, term_exit=None, term_note='',
+                     term_started=time.time(), review_status=None, error='',
+                     resume_note=f"{agent} is starting in Rook terminal {result['id']}.")
         elif s.get('imported') and op in ('terminal_input', 'message'):
             text = str(data.get('text', ''))
             if not text.strip() or len(text) > 24000:
@@ -1345,8 +1320,8 @@ class WorkWeb:
                 await rpc(s, 'proc.write', {'handle': s['external_handle'], 'data': text, 'newline': True})
                 s['message_note'] = 'Input sent to the host terminal.'
             else:
-                result = await rpc(s, s['agent'] + '-history.send',
-                    {'session_id': s['source_id'], 'text': text, 'command_id': data['id']}, timeout=30)
+                result = await rpc(s, 'sessions.send', {'agent': s['agent'], 'native_id': s['source_id'],
+                                                        'text': text, 'command_id': data['id']}, timeout=30)
                 s['message_note'] = result.get('note', 'Message submitted on host.')
             s['error'] = ''
         elif s.get('imported') and op == 'interrupt':
