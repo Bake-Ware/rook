@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import base64
 import datetime
-import hashlib
 import json
 import os
 import re
@@ -29,6 +28,11 @@ import subprocess
 import urllib.parse
 import urllib.request
 from pathlib import Path
+
+# One definition of the canonical bytes and the file digest, shared with the
+# worker's update verifier; hub releases only add their domain PREFIX.
+from rook.worker._update_verify import canonical_payload as canonical
+from rook.worker._update_verify import sha256_file
 
 TYP = "rook-hub-release"
 PREFIX = b"rook-hub-release-v1\n"
@@ -39,11 +43,6 @@ REQUIRED = ("schema", "typ", "build", "version", "commit", "filename", "sha256",
 
 class ManifestError(Exception):
     pass
-
-
-def canonical(manifest: dict) -> bytes:
-    body = {k: v for k, v in manifest.items() if k != "sig"}
-    return json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
 def signed_bytes(manifest: dict) -> bytes:
@@ -107,14 +106,6 @@ def verify(manifest: dict, pubkey_b64: str | None = None) -> dict:
     except Exception:
         raise ManifestError("bad signature (not signed by the trusted update key)") from None
     return manifest
-
-
-def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 # -- fetching -----------------------------------------------------------------

@@ -2,11 +2,11 @@
 import asyncio
 import json
 import logging
-import sqlite3
 import time
 import uuid
 from pathlib import Path
-from contextlib import contextmanager
+
+from ..core.db import transaction
 
 log = logging.getLogger(__name__)
 
@@ -58,65 +58,115 @@ def project(state, message):
             state['status'] = 'working'
 
 
-class RuntimeStore:
+# Heavy per-session state kept out of work_index (the cheap listing table).
+HEAVY_KEYS = ('items', 'order', 'terminal', 'diff', 'rpc', 'pending', 'partial', '_view_versions')
+REVIEW_STATUSES = ('auto', 'closed', 'blocked', 'pending')
+
+# Shared by the worker's RuntimeStore and the hub's WorkStore (rook.remote.
+# work_web), which ship separately: every statement is additive and
+# idempotent, so either side's code opens a file the other last wrote.
+WORK_SCHEMA = """
+    CREATE TABLE IF NOT EXISTS work_sessions(
+        id TEXT PRIMARY KEY, owner TEXT NOT NULL, updated REAL NOT NULL,
+        state TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS work_index(
+        id TEXT PRIMARY KEY, owner TEXT NOT NULL, updated REAL NOT NULL,
+        state TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS work_index_owner ON work_index(owner, updated);
+    INSERT OR IGNORE INTO work_index
+        SELECT id, owner, updated, json_remove(state, '$.items', '$.order',
+            '$.terminal', '$.diff', '$.rpc', '$.pending', '$.partial') FROM work_sessions
+        WHERE NOT EXISTS (SELECT 1 FROM work_index WHERE work_index.id=work_sessions.id);
+    CREATE TABLE IF NOT EXISTS work_events(
+        seq INTEGER PRIMARY KEY AUTOINCREMENT, session TEXT NOT NULL,
+        created REAL NOT NULL, event TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS work_events_session ON work_events(session,seq);
+    CREATE TABLE IF NOT EXISTS work_commands(
+        session TEXT NOT NULL, id TEXT NOT NULL, result TEXT NOT NULL,
+        PRIMARY KEY(session,id));
+"""
+
+
+class WorkStoreBase:
+    """Schema and CRUD for work sessions, their event log and the idempotent
+    command receipts. Subclasses choose which table ``get``/``all`` read
+    (``DETAILED``), what a read returns (``view``), how ``save`` writes, and
+    what a missing session raises (``missing``)."""
+
+    #: Read full state from work_sessions (worker) rather than work_index (hub).
+    DETAILED = True
+    EXTRA_SCHEMA = ''
+
     def __init__(self, path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.db() as db:
-            db.executescript("""
-                PRAGMA journal_mode=WAL;
-                CREATE TABLE IF NOT EXISTS work_sessions(
-                    id TEXT PRIMARY KEY, owner TEXT NOT NULL, updated REAL NOT NULL,
-                    state TEXT NOT NULL);
-                CREATE TABLE IF NOT EXISTS work_index(
-                    id TEXT PRIMARY KEY, owner TEXT NOT NULL, updated REAL NOT NULL,
-                    state TEXT NOT NULL);
-                CREATE INDEX IF NOT EXISTS work_index_owner ON work_index(owner, updated);
-                INSERT OR IGNORE INTO work_index
-                    SELECT id, owner, updated, json_remove(state, '$.items', '$.order',
-                        '$.terminal', '$.diff', '$.rpc', '$.pending', '$.partial') FROM work_sessions
-                    WHERE NOT EXISTS (SELECT 1 FROM work_index WHERE work_index.id=work_sessions.id);
-                CREATE TABLE IF NOT EXISTS work_events(
-                    seq INTEGER PRIMARY KEY AUTOINCREMENT, session TEXT NOT NULL,
-                    created REAL NOT NULL, event TEXT NOT NULL);
-                CREATE INDEX IF NOT EXISTS work_events_session ON work_events(session,seq);
-                CREATE TABLE IF NOT EXISTS work_commands(
-                    session TEXT NOT NULL, id TEXT NOT NULL, result TEXT NOT NULL,
-                    PRIMARY KEY(session,id));
-            """)
+            db.execute('PRAGMA journal_mode=WAL')
+            db.executescript(WORK_SCHEMA + self.EXTRA_SCHEMA)
+            self.migrate(db)
         self.path.chmod(0o600)
 
-    @contextmanager
+    def migrate(self, db):
+        """Additive, idempotent upgrades run on every open."""
+
     def db(self):
-        db = sqlite3.connect(self.path, timeout=10)
-        db.row_factory = sqlite3.Row
-        try:
-            with db:
-                yield db
-        finally:
-            db.close()
+        return transaction(self.path, begin=None)
+
+    def missing(self):
+        raise ValueError('Session not found on host.')
+
+    def view(self, state):
+        return state
 
     def get(self, sid, owner=None):
+        table = 'work_sessions' if self.DETAILED else 'work_index'
         with self.db() as db:
-            row = db.execute('SELECT * FROM work_sessions WHERE id=?', (sid,)).fetchone()
+            row = db.execute('SELECT * FROM ' + table + ' WHERE id=?', (sid,)).fetchone()
         if row is None or (owner is not None and row['owner'] != owner):
-            raise ValueError('Session not found on host.')
-        return json.loads(row['state'])
+            self.missing()
+        return self.view(json.loads(row['state']))
 
     def all(self, owner=None, *, details=True):
+        table = 'work_sessions' if details and self.DETAILED else 'work_index'
         with self.db() as db:
-            table = 'work_sessions' if details else 'work_index'
             rows = db.execute('SELECT state FROM ' + table + ' ' +
                               ('WHERE owner=? ' if owner else '') + 'ORDER BY updated DESC',
                               (owner,) if owner else ()).fetchall()
-        return [json.loads(r['state']) for r in rows]
+        return [self.view(json.loads(r['state'])) for r in rows]
 
     def revision(self, sid, owner):
         with self.db() as db:
             row = db.execute('SELECT state FROM work_index WHERE id=? AND owner=?', (sid, owner)).fetchone()
         if row is None:
-            raise ValueError('Session not found on host.')
+            self.missing()
         return json.loads(row['state'])['revision']
+
+    @staticmethod
+    def _write(db, table, state):
+        db.execute('INSERT OR REPLACE INTO ' + table + '(id,owner,updated,state) VALUES(?,?,?,?)',
+                   (state['id'], state['owner'], state['updated'], json.dumps(state)))
+
+    def claim(self, sid, cid, **columns):
+        """Record command ``cid`` as accepted; False if it was already seen."""
+        cols = ['session', 'id', 'result', *columns]
+        with self.db() as db:
+            cur = db.execute('INSERT OR IGNORE INTO work_commands(' + ','.join(cols) + ') VALUES(' +
+                             ','.join('?' * len(cols)) + ')',
+                             (sid, cid, json.dumps({'status': 'accepted'}), *columns.values()))
+            return cur.rowcount == 1
+
+    def result(self, sid, cid, value=None):
+        with self.db() as db:
+            if value is not None:
+                db.execute('UPDATE work_commands SET result=? WHERE session=? AND id=?',
+                           (json.dumps(value), sid, cid))
+            row = db.execute('SELECT result FROM work_commands WHERE session=? AND id=?',
+                             (sid, cid)).fetchone()
+        return json.loads(row['result']) if row else None
+
+
+class RuntimeStore(WorkStoreBase):
+    """The worker's copy: full native state plus the raw event log."""
 
     def save(self, state, event=None):
         state['updated'] = time.time()
@@ -139,30 +189,40 @@ class RuntimeStore:
         state['needs_input'] = bool(state.get('pending'))
         state['has_error'] = bool(state.get('error'))
         with self.db() as db:
-            db.execute('INSERT OR REPLACE INTO work_sessions VALUES(?,?,?,?)',
-                       (state['id'], state['owner'], state['updated'], json.dumps(state)))
-            index = {k: v for k, v in state.items()
-                     if k not in ('items', 'order', 'terminal', 'diff', 'rpc', 'pending', 'partial', '_view_versions')}
-            db.execute('INSERT OR REPLACE INTO work_index VALUES(?,?,?,?)',
-                       (state['id'], state['owner'], state['updated'], json.dumps(index)))
+            self._write(db, 'work_sessions', state)
+            self._write(db, 'work_index', {k: v for k, v in state.items() if k not in HEAVY_KEYS})
             if event is not None:
                 db.execute('INSERT INTO work_events(session,created,event) VALUES(?,?,?)',
                            (state['id'], time.time(), json.dumps(event)))
 
-    def claim(self, sid, cid):
-        with self.db() as db:
-            cur = db.execute('INSERT OR IGNORE INTO work_commands VALUES(?,?,?)',
-                             (sid, cid, json.dumps({'status': 'accepted'})))
-            return cur.rowcount == 1
 
-    def result(self, sid, cid, value=None):
-        with self.db() as db:
-            if value is not None:
-                db.execute('UPDATE work_commands SET result=? WHERE session=? AND id=?',
-                           (json.dumps(value), sid, cid))
-            row = db.execute('SELECT result FROM work_commands WHERE session=? AND id=?',
-                             (sid, cid)).fetchone()
-        return json.loads(row['result']) if row else None
+def set_review_status(s, value):
+    if value not in REVIEW_STATUSES:
+        raise ValueError('Choose Auto, Closed, Blocked, or Pending.')
+    s['review_status'] = None if value == 'auto' else value
+
+
+async def run_command(store, lock, sid, data, apply):
+    """The command path shared by the worker runtime and the hub's WorkWeb:
+    under the session lock, ``await apply(s, op, data)`` mutates the state in
+    place, then the state and the command receipt are saved together. Any
+    failure is recorded on the session and as the receipt, never raised."""
+    async with lock:
+        s = store.get(sid)
+        try:
+            op = data['op']
+            if op == 'status' and data.get('status') == 'closed':
+                op = 'close'
+            await apply(s, op, data)
+            store.save(s, {'op': op, 'command': data.get('id')})
+            store.result(sid, data['id'], {'status': 'submitted'})
+        except Exception as e:
+            s['error'] = str(e) or type(e).__name__
+            if s.get('status') in ('starting', 'sending'):
+                s['status'] = 'uncertain'
+            store.save(s, {'error': s['error']})
+            store.result(sid, data['id'], {'status': 'error', 'error': s['error']})
+            log.warning('Work command %s: %s', sid, e)
 
 
 class WorkRuntime:
@@ -213,100 +273,86 @@ class WorkRuntime:
         await self.rpc(s, 'proc.write', {'handle': s['handle'], 'data': json.dumps(payload), 'newline': True})
 
     async def command(self, sid, data):
-        async with self.lock(sid):
-            s = self.store.get(sid)
-            try:
-                op = data['op']
-                if op == 'status' and data.get('status') == 'closed':
-                    op = 'close'
-                if op == 'status':
-                    value = data.get('status')
-                    if value not in ('auto', 'closed', 'blocked', 'pending'):
-                        raise ValueError('Choose Auto, Closed, Blocked, or Pending.')
-                    s['review_status'] = None if value == 'auto' else value
-                    s['error'] = ''
-                elif op == 'open':
-                    if s.get('handle') or s.get('thread_id'):
-                        raise ValueError('Session already exists; use resume after closing it.')
-                    result = await self.rpc(s, 'proc.start', {
-                        'argv': ['codex', 'app-server', '--listen', 'stdio://'],
-                        'cwd': s['cwd'], 'label': 'Rook Work ' + sid, 'buffer_bytes': 4194304})
-                    s['handle'] = result['handle']
-                    self.store.save(s)
-                    await self.send(s, 'initialize', {'clientInfo': {'name': 'rook_work', 'version': '0.1.0'},
-                                    'capabilities': {'experimentalApi': True}})
-                elif op == 'message':
-                    text = str(data.get('text', '')).strip()
-                    if not text or len(text) > 24000:
-                        raise ValueError('Enter a message of 1–24000 characters.')
-                    if s['pending'] or s['status'] not in ('ready', 'working') or not s['thread_id']:
-                        raise ValueError('Wait for the agent to be ready or answer its pending request.')
-                    params = {'threadId': s['thread_id'], 'input': [{'type': 'text', 'text': text}]}
-                    method = 'turn/start'
-                    if s['turn_id']:
-                        method = 'turn/steer'
-                        params['expectedTurnId'] = s['turn_id']
-                    else:
-                        s['status'] = 'sending'
-                    s['error'] = ''
-                    await self.send(s, method, params)
-                elif op == 'interrupt':
-                    if not s['turn_id']:
-                        raise ValueError('No active turn.')
-                    await self.send(s, 'turn/interrupt', {'threadId': s['thread_id'], 'turnId': s['turn_id']})
-                elif op == 'answer':
-                    key = str(data.get('request'))
-                    pending = s['pending'].get(key)
-                    if not pending:
-                        raise ValueError('That request has already been answered.')
-                    method = pending['method']
-                    if method in ('item/commandExecution/requestApproval', 'item/fileChange/requestApproval',
-                                  'item/fileRead/requestApproval'):
-                        decision = data.get('decision')
-                        if decision not in ('accept', 'decline', 'cancel'):
-                            raise ValueError('Invalid approval decision.')
-                        answer = {'decision': decision}
-                    elif method == 'item/tool/requestUserInput':
-                        answers = data.get('answers')
-                        if not isinstance(answers, dict):
-                            raise ValueError('Answers are required.')
-                        answer = {'answers': {str(k): {'answers': [str(v)]} for k, v in answers.items()}}
-                    else:
-                        raise ValueError('Unsupported request type. Stop this turn to cancel it.')
-                    # Consume before delivery so multiple browsers cannot answer twice.
-                    del s['pending'][key]
-                    s['status'] = 'working' if not s['pending'] else 'ready'
-                    await self.send(s, response={'id': pending['id'], 'result': answer})
-                elif op == 'close':
-                    if s['handle']:
-                        await self.rpc(s, 'proc.signal', {'handle': s['handle'], 'sig': 'TERM'})
-                    s['status'] = 'closed'
-                    s['review_status'] = 'closed'
-                    s['pending'] = {}
-                    s['handle'] = None
-                elif op == 'resume':
-                    if s['handle']:
-                        raise ValueError('The agent process is still attached; stop it before reopening.')
-                    if not s['thread_id']:
-                        raise ValueError('No saved agent thread is available; start a new session.')
-                    s.update(status='starting', review_status=None, cursor=0, partial='', rpc={}, pending={}, error='')
-                    result = await self.rpc(s, 'proc.start', {
-                        'argv': ['codex', 'app-server', '--listen', 'stdio://'],
-                        'cwd': s['cwd'], 'label': 'Rook Work ' + sid, 'buffer_bytes': 4194304})
-                    s['handle'] = result['handle']
-                    await self.send(s, 'initialize', {'clientInfo': {'name': 'rook_work', 'version': '0.1.0'},
-                                    'capabilities': {'experimentalApi': True}})
-                else:
-                    raise ValueError('Unknown action.')
-                self.store.save(s, {'op': op, 'command': data.get('id')})
-                self.store.result(sid, data['id'], {'status': 'submitted'})
-            except Exception as e:
-                s['error'] = str(e) or type(e).__name__
-                if s['status'] in ('starting', 'sending'):
-                    s['status'] = 'uncertain'
-                self.store.save(s, {'error': s['error']})
-                self.store.result(sid, data['id'], {'status': 'error', 'error': s['error']})
-                log.warning('Work command %s: %s', sid, e)
+        await run_command(self.store, self.lock(sid), sid, data, self._apply)
+
+    async def _apply(self, s, op, data):
+        sid = s['id']
+        if op == 'status':
+            set_review_status(s, data.get('status'))
+            s['error'] = ''
+        elif op == 'open':
+            if s.get('handle') or s.get('thread_id'):
+                raise ValueError('Session already exists; use resume after closing it.')
+            result = await self.rpc(s, 'proc.start', {
+                'argv': ['codex', 'app-server', '--listen', 'stdio://'],
+                'cwd': s['cwd'], 'label': 'Rook Work ' + sid, 'buffer_bytes': 4194304})
+            s['handle'] = result['handle']
+            self.store.save(s)
+            await self.send(s, 'initialize', {'clientInfo': {'name': 'rook_work', 'version': '0.1.0'},
+                            'capabilities': {'experimentalApi': True}})
+        elif op == 'message':
+            text = str(data.get('text', '')).strip()
+            if not text or len(text) > 24000:
+                raise ValueError('Enter a message of 1–24000 characters.')
+            if s['pending'] or s['status'] not in ('ready', 'working') or not s['thread_id']:
+                raise ValueError('Wait for the agent to be ready or answer its pending request.')
+            params = {'threadId': s['thread_id'], 'input': [{'type': 'text', 'text': text}]}
+            method = 'turn/start'
+            if s['turn_id']:
+                method = 'turn/steer'
+                params['expectedTurnId'] = s['turn_id']
+            else:
+                s['status'] = 'sending'
+            s['error'] = ''
+            await self.send(s, method, params)
+        elif op == 'interrupt':
+            if not s['turn_id']:
+                raise ValueError('No active turn.')
+            await self.send(s, 'turn/interrupt', {'threadId': s['thread_id'], 'turnId': s['turn_id']})
+        elif op == 'answer':
+            key = str(data.get('request'))
+            pending = s['pending'].get(key)
+            if not pending:
+                raise ValueError('That request has already been answered.')
+            method = pending['method']
+            if method in ('item/commandExecution/requestApproval', 'item/fileChange/requestApproval',
+                          'item/fileRead/requestApproval'):
+                decision = data.get('decision')
+                if decision not in ('accept', 'decline', 'cancel'):
+                    raise ValueError('Invalid approval decision.')
+                answer = {'decision': decision}
+            elif method == 'item/tool/requestUserInput':
+                answers = data.get('answers')
+                if not isinstance(answers, dict):
+                    raise ValueError('Answers are required.')
+                answer = {'answers': {str(k): {'answers': [str(v)]} for k, v in answers.items()}}
+            else:
+                raise ValueError('Unsupported request type. Stop this turn to cancel it.')
+            # Consume before delivery so multiple browsers cannot answer twice.
+            del s['pending'][key]
+            s['status'] = 'working' if not s['pending'] else 'ready'
+            await self.send(s, response={'id': pending['id'], 'result': answer})
+        elif op == 'close':
+            if s['handle']:
+                await self.rpc(s, 'proc.signal', {'handle': s['handle'], 'sig': 'TERM'})
+            s['status'] = 'closed'
+            s['review_status'] = 'closed'
+            s['pending'] = {}
+            s['handle'] = None
+        elif op == 'resume':
+            if s['handle']:
+                raise ValueError('The agent process is still attached; stop it before reopening.')
+            if not s['thread_id']:
+                raise ValueError('No saved agent thread is available; start a new session.')
+            s.update(status='starting', review_status=None, cursor=0, partial='', rpc={}, pending={}, error='')
+            result = await self.rpc(s, 'proc.start', {
+                'argv': ['codex', 'app-server', '--listen', 'stdio://'],
+                'cwd': s['cwd'], 'label': 'Rook Work ' + sid, 'buffer_bytes': 4194304})
+            s['handle'] = result['handle']
+            await self.send(s, 'initialize', {'clientInfo': {'name': 'rook_work', 'version': '0.1.0'},
+                            'capabilities': {'experimentalApi': True}})
+        else:
+            raise ValueError('Unknown action.')
 
     async def drain(self, sid):
         async with self.lock(sid):

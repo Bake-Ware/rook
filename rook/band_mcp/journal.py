@@ -22,11 +22,11 @@ from __future__ import annotations
 import json
 import logging
 import os
-import sqlite3
 import threading
 import time
 import uuid
 
+from ..core.db import add_columns, open_db
 from .secret_mask import Matcher, forms_for, scrub
 
 log = logging.getLogger("rook.band_mcp.journal")
@@ -52,9 +52,7 @@ class Journal:
             self._db = None
             return
         try:
-            self._db = sqlite3.connect(path, check_same_thread=False)
-            self._db.execute("PRAGMA journal_mode=WAL")
-            self._db.execute("PRAGMA synchronous=NORMAL")
+            self._db = open_db(path, row_factory=False, synchronous="NORMAL", mkdir=False)
             self._db.execute("""
                 CREATE TABLE IF NOT EXISTS calls (
                     seq        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -71,17 +69,12 @@ class Journal:
             """)
             # Audit attribution (added 2026-09): stable agent/key IDs behind the
             # display identity, and whether attribution was verified.
-            cols = {r[1] for r in self._db.execute("PRAGMA table_info(calls)")}
-            for col in ("agent_id", "key_id", "auth", "actor"):
-                if col not in cols:
-                    self._db.execute(f"ALTER TABLE calls ADD COLUMN {col} TEXT")
+            add_columns(self._db, "calls", {c: "TEXT" for c in ("agent_id", "key_id", "auth", "actor")})
             # Permissions (docs/design/permissions.md 3.7): the authenticated
             # principal, the policy decision (allow|deny|would_deny|...), the
             # winning rule, the policy revision and the cap's tier.
-            for col, typ in (("principal", "TEXT"), ("decision", "TEXT"), ("rule", "TEXT"),
-                             ("policy_rev", "INTEGER"), ("tier", "TEXT")):
-                if col not in cols:
-                    self._db.execute(f"ALTER TABLE calls ADD COLUMN {col} {typ}")
+            add_columns(self._db, "calls", {"principal": "TEXT", "decision": "TEXT", "rule": "TEXT",
+                                            "policy_rev": "INTEGER", "tier": "TEXT"})
             self._db.execute("CREATE INDEX IF NOT EXISTS idx_calls_decision ON calls(decision)")
             self._db.execute("CREATE INDEX IF NOT EXISTS idx_calls_ts ON calls(ts)")
             self._db.execute("CREATE INDEX IF NOT EXISTS idx_calls_worker ON calls(worker)")

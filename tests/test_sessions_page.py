@@ -137,7 +137,7 @@ async def test_mirror_relay_is_masked_bounded_and_long_polls(page, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_follow_and_send_with_fallbacks_for_older_workers(page):
+async def test_follow_and_send_use_sessions_caps_only(page):
     p = page
     band = p.server._band
     band.replies["sessions.follow"] = {"ok": True, "version": "v1", "replace_from": 0, "messages": [
@@ -152,20 +152,20 @@ async def test_follow_and_send_with_fallbacks_for_older_workers(page):
                                         headers=p.headers)).json()
         assert out["messages"][0]["content"] == "hi" and out["version"] == "v1" and "snapshot" not in out
         assert band.calls[-1][1:3] == ("sessions.follow", {"agent": "claude", "native_id": C1, "offset": 0, "version": ""})
-        out = await (await client.post("/account/work/session/follow", json=body(p, worker="w2", offset=3, version="v2"),
-                                        headers=p.headers)).json()
-        assert out == {"ok": True, "unchanged": True, "version": "v2"}
-        assert band.calls[-1][1:3] == ("claude-history.follow", {"session_id": C1, "offset": 3, "version": "v2"})
+        # A worker with only <agent>-history.* is told to update: no fallback.
+        n = len(band.calls)
+        r = await client.post("/account/work/session/follow", json=body(p, worker="w2", offset=3, version="v2"),
+                              headers=p.headers)
+        assert r.status == 400 and "update its worker" in (await r.json())["error"] and len(band.calls) == n
         r = await client.post("/account/work/session/follow", json=body(p, agent="shell"), headers=p.headers)
         assert r.status == 400
         out = await (await client.post("/account/work/session/send", json=body(p, text="go on", command_id="cmd-1"),
                                         headers=p.headers)).json()
         assert out == {"ok": True, "delivery": "held", "note": "Waiting", "detail": "queued", "native_id": C1}
         assert band.calls[-1][2] == {"agent": "claude", "native_id": C1, "text": "go on", "command_id": "cmd-1"}
-        out = await (await client.post("/account/work/session/send", json=body(p, worker="w2", text="go on"),
-                                        headers=p.headers)).json()
-        assert out["delivery"] == "turn" and out["detail"] == "accepted"
-        assert band.calls[-1][1] == "claude-history.send" and band.calls[-1][2]["command_id"]
+        r = await client.post("/account/work/session/send", json=body(p, worker="w2", text="go on"),
+                              headers=p.headers)
+        assert r.status == 400 and "update its worker" in (await r.json())["error"] and len(band.calls) == n + 1
         band.replies["sessions.send"] = {"ok": False, "error": "This session is closed. Resume it first."}
         r = await client.post("/account/work/session/send", json=body(p, text="x"), headers=p.headers)
         assert r.status == 502 and "Resume it first" in (await r.json())["error"]

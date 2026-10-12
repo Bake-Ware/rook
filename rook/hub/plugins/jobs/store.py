@@ -23,7 +23,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
-from ....core import migrations
+from ....core.db import open_db
 from .cron import Cron, parse_duration, parse_instant
 
 NAMESPACE = "job"
@@ -68,16 +68,9 @@ class JobStore:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
-        self._db = sqlite3.connect(str(self.path), check_same_thread=False, isolation_level=None,
-                                   timeout=10.0)
-        self._db.row_factory = sqlite3.Row
-        self._db.execute("PRAGMA busy_timeout=10000")
-        try:
-            self._db.execute("PRAGMA journal_mode=WAL")
-        except sqlite3.OperationalError:
-            pass
-        with self._lock:
-            migrations.apply(self._db, MIGRATIONS, NAMESPACE)
+        # Autocommit: _tx issues BEGIN IMMEDIATE/COMMIT itself.
+        self._db = open_db(self.path, isolation_level=None, timeout=10.0,
+                           migrations=MIGRATIONS, ns=NAMESPACE)
 
     def close(self) -> None:
         with self._lock:

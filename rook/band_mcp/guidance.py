@@ -20,10 +20,11 @@ from __future__ import annotations
 
 import logging
 import re
-import sqlite3
 import threading
 import time
 from collections import OrderedDict
+
+from ..core.db import open_db
 
 log = logging.getLogger("rook.band_mcp.guidance")
 
@@ -86,7 +87,8 @@ class Guidance:
         self._db = None
         if path:
             try:
-                self._db = sqlite3.connect(path, check_same_thread=False)
+                # Rollback journal, as before: edits are rare and one process owns it.
+                self._db = open_db(path, wal=False, row_factory=False, mkdir=False)
                 self._db.executescript("""
                     CREATE TABLE IF NOT EXISTS overrides(key TEXT PRIMARY KEY, text TEXT NOT NULL,
                         updated REAL NOT NULL, actor TEXT NOT NULL);

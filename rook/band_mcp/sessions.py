@@ -23,11 +23,11 @@ from __future__ import annotations
 import json
 import logging
 import os
-import sqlite3
 import threading
 import time
 import uuid
 
+from ..core.db import open_db
 from .secret_mask import scrub
 
 log = logging.getLogger("rook.band_mcp.sessions")
@@ -40,8 +40,7 @@ class SessionStore:
         d = os.path.dirname(path) or "."
         try:
             os.makedirs(d, exist_ok=True)
-            self._db = sqlite3.connect(path, check_same_thread=False)
-            self._db.execute("PRAGMA journal_mode=WAL")
+            self._db = open_db(path, row_factory=False, mkdir=False)
             self._db.execute("""
                 CREATE TABLE IF NOT EXISTS handoffs (
                     seq        INTEGER PRIMARY KEY AUTOINCREMENT,

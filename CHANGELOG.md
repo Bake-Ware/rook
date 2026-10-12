@@ -370,6 +370,27 @@ Preparation for public use.
   `--hub`/`--psk` it was started with.
 - The worker bundle builder can use a pip-installed `telesthete`.
 
+### Data layer and session history
+- `rook tmux` is removed: it ran a second Claude Code session manager (its
+  own `~/.rook/sessions.db`) beside Rook terminals. It now prints where its
+  jobs went: the Sessions page, `rook band`, and `sessions.shim.install`.
+- `rook sessions` reads transcripts with the worker's `claude-history`
+  parsers, so titles, tool calls and counts match the dashboard.
+- The dashboard (Sessions page and classic Work view) uses `sessions.follow`,
+  `sessions.send` and `sessions.list` only; a worker that has just the older
+  `<agent>-history.*` caps is asked to update instead of being driven through
+  them. Classic "Resume on host" opens a Rook terminal (`work.stream.open`).
+  `claude-history.send`/`resume` and `codex-history.resume` stay on workers
+  and are documented as deprecated for direct use.
+- `codex-history.resume` finds the real `codex` binary (never the session
+  shim) and the Windows npm `codex.cmd`, like Claude's lookup.
+- Internal: `rook.core.db` (SQLite open/transaction helpers, additive column
+  backfill, atomic file writes) used by the hub and worker stores; one shared
+  work-session store and command path for hub and worker; one manifest
+  canonical form and file digest (`rook.worker._update_verify`) for worker
+  bundles and hub releases; `rook.worker.agents` and `rook.worker.ring`.
+  Database schemas, paths and file modes are unchanged.
+
 ## Development history (June to September 2026)
 
 Unversioned work on `master` before public preparation, in broad strokes:

@@ -35,12 +35,12 @@ from __future__ import annotations
 import json
 import os
 import re
-import sqlite3
 import threading
 import time
 import uuid
 from pathlib import Path
 
+from ...core.db import open_db
 from ..plugin import Plugin, capability, setting
 from ..context import current_identity
 from ...core.pluginkit import fail, opt_int, require_choice, require_str
@@ -106,8 +106,7 @@ class MemoryPlugin(Plugin):
         for sub in ("shared", "entities"):
             (self._vault / sub).mkdir(parents=True, exist_ok=True)
         db_path = self._vault / ".rook-postits.db"
-        self._db = sqlite3.connect(str(db_path), check_same_thread=False)
-        self._db.execute("PRAGMA journal_mode=WAL")
+        self._db = open_db(db_path, row_factory=False, mkdir=False)
         self._db.execute("""
             CREATE TABLE IF NOT EXISTS postits (
                 id         TEXT PRIMARY KEY,
