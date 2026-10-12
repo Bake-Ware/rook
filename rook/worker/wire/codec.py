@@ -13,6 +13,19 @@ fragmenter and the reassembler:
 * inbound: :meth:`BandCodec.ingest` takes one raw frame and returns the
   completed message it finishes (an :class:`Inbound`), or ``None``.
 
+Rook's own CHANNEL frames are sealed with EMPTY AAD (core spec 2.2: every
+deployed peer, the ESP32/RP2040 firmware included, opens them that way). Two
+frame kinds added for addressed routing and in-band file transfer use the
+telesthete spec AAD ``[channel_type, id_hi, id_lo]`` instead:
+
+* ROUTE (0x05) declarations (:meth:`BandCodec.route_frame`, SPEC §10.1). A
+  routing hub consumes them; an old hub relays them, and every rook receiver
+  drops them unopened here (old receivers fail the empty-AAD tag check).
+* native DROP (0x04) frames (:meth:`BandCodec.seal_spec`, SPEC §8), sent only
+  to peers that announce ``drop-native``. :meth:`ingest` opens them and hands
+  them on re-wrapped in the pass-through shape :mod:`rook.worker.ota_drop`
+  already understands, so OTA handlers accept both forms unchanged.
+
 No I/O happens here, so the codec is unit-testable without sockets.
 """
 
@@ -22,10 +35,14 @@ import inspect
 import logging
 from typing import NamedTuple, Optional
 
+import hashlib
+
 from telesthete.protocol.crypto import BandCrypto
 from telesthete.protocol.fragment import Fragmenter, Reassembler
 from telesthete.protocol.framing import ChannelType, pack_packet, unpack_packet
 from telesthete.protocol.sequence import SequenceSource
+
+from . import envelope
 
 try:
     from telesthete.protocol.framing import MIN_PACKET_SIZE
@@ -33,6 +50,44 @@ except ImportError:  # older vendored telesthete: header 27 + Poly1305/GCM tag 1
     MIN_PACKET_SIZE = 27 + 16
 
 log = logging.getLogger("rook.worker.wire.codec")
+
+# Spec channel types by value: ROUTE (0x05) is newer than some vendored
+# telesthete builds, so it is not looked up on the enum.
+CHANNEL = int(ChannelType.CHANNEL)
+DROP = int(ChannelType.DROP)
+ROUTE = 0x05
+
+# What a pass-through Drop packet (rook.worker.ota_drop) carries in place of an
+# AEAD tag. A native DROP frame is delivered re-wrapped with it (see ingest).
+PASSTHROUGH_TAG = b"\x00" * 16
+
+# -- route ids (SPEC §10.1) --------------------------------------------------
+# The library owns these (telesthete.protocol.route, 0.3.0+). The fallback is
+# byte-identical (pinned by tests/test_band_protocol.py) and only exists so a
+# bundle vendoring an older telesthete still builds valid declarations.
+try:
+    from telesthete.protocol.route import route_id_for as _lib_route_id_for
+except ImportError:  # pragma: no cover - exercised only with old telesthete
+    _lib_route_id_for = None
+
+ROUTE_ID_DOMAIN = b"telesthete-route-v1:"
+
+
+def route_id_for(name: str) -> int:
+    """Stable nonzero 16-bit route id for a peer name (SPEC §10.1)."""
+    if _lib_route_id_for is not None:
+        return _lib_route_id_for(name)
+    digest = hashlib.sha256(ROUTE_ID_DOMAIN + name.encode("utf-8")).digest()
+    for i in range(0, len(digest), 2):
+        word = int.from_bytes(digest[i:i + 2], "big")
+        if word:
+            return word
+    return 1
+
+
+def spec_aad(channel_type: int, channel_id: int) -> bytes:
+    """SPEC §3.2 AAD: ``[channel_type, channel_id_hi, channel_id_lo]``."""
+    return bytes([channel_type & 0xFF, (channel_id >> 8) & 0xFF, channel_id & 0xFF])
 
 # A bare 1-byte payload still goes through the fragmenter (single fragment) so
 # the wire shape is uniform. Receivers detect keepalives on the assembled
@@ -66,6 +121,10 @@ def _reassembler() -> Reassembler:
         kw["timeout"] = REASSEMBLY_TIMEOUT
     if "buffer_limit" in params:
         kw["buffer_limit"] = REASSEMBLY_BUFFERS
+    if "max_fragments" in params:
+        # telesthete 0.3.0 caps a message at 16,384 fragments (~16 MB) by
+        # default, below the 32 MiB a worker may send inline.
+        kw["max_fragments"] = -(-REASSEMBLY_MAX_MESSAGE_BYTES // 1003)
     for name in _PER_MESSAGE_KW:
         if name in params:
             kw[name] = REASSEMBLY_MAX_MESSAGE_BYTES
@@ -101,7 +160,8 @@ class BandCodec:
         self.fragmenter = Fragmenter()
         self.reassembler = _reassembler()
         # Why frames were dropped on ingest (cheap counters for debugging).
-        self.drops = {"short": 0, "malformed": 0, "band": 0, "decrypt": 0}
+        self.drops = {"short": 0, "malformed": 0, "band": 0, "decrypt": 0,
+                      "route": 0, "inflate": 0}
 
     # -- outbound ------------------------------------------------------------
 
@@ -125,6 +185,27 @@ class BandCodec:
         """``split`` + ``seal`` every chunk: the whole message as frames."""
         return [self.seal(c, channel_id) for c in self.split(payload)]
 
+    def seal_spec(self, plaintext: bytes, channel_type: int, channel_id: int) -> bytes:
+        """Seal one unfragmented frame with the SPEC §3.2 AAD (native DROP,
+        ROUTE). Never used for rook's CHANNEL traffic (empty AAD there)."""
+        seq = self.seq.next()
+        return pack_packet(
+            band_id=self.band_id,
+            channel_type=channel_type,
+            channel_id=channel_id,
+            sequence=seq,
+            ciphertext=self.crypto.encrypt(seq, plaintext,
+                                           associated_data=spec_aad(channel_type, channel_id)),
+        )
+
+    def route_frame(self, route_id: int) -> bytes:
+        """A ROUTE declaration for ``route_id`` (SPEC §10.1): 43 bytes, empty
+        payload, spec AAD, sequence from the one shared source. Same bytes as
+        ``telesthete.protocol.route.pack_route_declaration``."""
+        if not 0 <= route_id <= 0xFFFF:
+            raise ValueError(f"route_id must be 0-65535, got {route_id}")
+        return self.seal_spec(b"", ROUTE, route_id)
+
     # -- inbound -------------------------------------------------------------
 
     def ingest(self, data: bytes) -> Optional[Inbound]:
@@ -145,6 +226,12 @@ class BandCodec:
         if pkt.band_id != self.band_id:
             self.drops["band"] += 1
             return None
+        if pkt.channel_type == ROUTE:
+            # A declaration an old hub relayed: hub-consumed, never ours (§2).
+            self.drops["route"] += 1
+            return None
+        if pkt.channel_type == DROP:
+            return self._ingest_drop(pkt)
         try:
             cleartext = self.crypto.decrypt(pkt.sequence, pkt.ciphertext)
         except Exception as e:
@@ -154,4 +241,29 @@ class BandCodec:
         assembled = self.reassembler.feed(cleartext)
         if assembled is None or assembled == KEEPALIVE_PAYLOAD:
             return None
+        if envelope.is_compressed(assembled) and assembled[:16] != self.band_id:
+            # Negotiated compression (envelope "z"): only sent to peers that
+            # asked for it, so inflating here is invisible to everyone else.
+            inflated = envelope.decompress(assembled)
+            if inflated is None:
+                self.drops["inflate"] += 1
+                return None
+            assembled = inflated
         return Inbound(assembled, pkt.channel_id, pkt.channel_type)
+
+    def _ingest_drop(self, pkt) -> Optional[Inbound]:
+        """Open a native DROP frame (spec AAD) and re-wrap it as the
+        pass-through packet the Drop bridge feeds on (same header, the
+        plaintext, :data:`PASSTHROUGH_TAG`). Handlers can't tell the two
+        forms apart, so an OTA receiver accepts both."""
+        try:
+            plaintext = self.crypto.decrypt(
+                pkt.sequence, pkt.ciphertext,
+                associated_data=spec_aad(pkt.channel_type, pkt.channel_id))
+        except Exception as e:
+            self.drops["decrypt"] += 1
+            log.debug("drop frame decrypt failed seq=%d: %s", pkt.sequence, e)
+            return None
+        wrapped = pack_packet(self.band_id, pkt.channel_type, pkt.channel_id,
+                              pkt.sequence, plaintext + PASSTHROUGH_TAG)
+        return Inbound(wrapped, pkt.channel_id, pkt.channel_type)

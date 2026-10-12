@@ -17,6 +17,11 @@ arrival order, and sequences are assigned at emission time so they stay
 monotonic per sender. A single writer also means ``ws.send_bytes`` is never
 called concurrently.
 
+:meth:`FrameWriter.submit_frame` queues one frame that is NOT a fragmented
+CHANNEL message (a ROUTE declaration, a native DROP frame): the caller gives
+the plaintext and a sealer, and the writer seals it at emission time like
+everything else, so its sequence comes from the same source in wire order.
+
 ``submit()`` still waits until its message is fully written (or raises), so
 callers keep the old ``await transport.send(...)`` semantics. A caller that
 is cancelled (``asyncio.timeout`` around a call) before its message started
@@ -94,15 +99,17 @@ class TokenBucket:
 class _Out:
     """One queued message."""
 
-    __slots__ = ("chunks", "channel_id", "index", "future", "cancelled")
+    __slots__ = ("chunks", "channel_id", "index", "future", "cancelled", "sealer")
 
     def __init__(self, chunks: list[bytes], channel_id: int,
-                 future: asyncio.Future) -> None:
+                 future: asyncio.Future,
+                 sealer: Optional[Callable[[bytes], bytes]] = None) -> None:
         self.chunks = chunks
         self.channel_id = channel_id
         self.index = 0          # next chunk to emit; > 0 means "started"
         self.future = future
         self.cancelled = False
+        self.sealer = sealer    # set for submit_frame(): seals instead of seal()
 
     @property
     def started(self) -> bool:
@@ -187,10 +194,26 @@ class FrameWriter:
         if self._closed or self._task is None:
             raise RuntimeError("transport not started")
         chunks = self._split(payload)
+        await self._enqueue(_Out(chunks, channel_id, self._future()), len(chunks) > 1)
+
+    async def submit_frame(self, plaintext: bytes, sealer: Callable[[bytes], bytes],
+                           bulk: bool = False) -> None:
+        """Queue one frame built by ``sealer(plaintext)`` at emission time and
+        wait until it is written. ``bulk`` puts it in the paced, round-robin
+        class (native DROP chunks); otherwise it goes with control traffic."""
+        if self._closed or self._task is None:
+            raise RuntimeError("transport not started")
+        await self._enqueue(_Out([plaintext], 0, self._future(), sealer), bulk)
+
+    @staticmethod
+    def _future() -> asyncio.Future:
         fut = asyncio.get_running_loop().create_future()
         fut.add_done_callback(_consume)
-        msg = _Out(chunks, channel_id, fut)
-        (self._control if len(chunks) == 1 else self._waiting).append(msg)
+        return fut
+
+    async def _enqueue(self, msg: _Out, bulk: bool) -> None:
+        fut = msg.future
+        (self._waiting if bulk else self._control).append(msg)
         self._wake.set()
         try:
             # shield: our cancellation must not cancel the shared future; the
@@ -228,7 +251,9 @@ class FrameWriter:
         return None, False
 
     async def _emit(self, msg: _Out) -> None:
-        frame = self._seal(msg.chunks[msg.index], msg.channel_id)
+        chunk = msg.chunks[msg.index]
+        frame = (msg.sealer(chunk) if msg.sealer is not None
+                 else self._seal(chunk, msg.channel_id))
         msg.index += 1
         self._current = msg
         try:
