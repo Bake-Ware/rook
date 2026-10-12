@@ -33,6 +33,7 @@ from .facts import NodeFacts, evaluate_placement
 from .plugin import (CORE_API_VERSION, DEFAULT_PLACEMENT, Candidate, Plugin,
                      SettingsView, _UNSET, core_api_compatible, iter_entry_points,
                      iter_package, valid_version)
+from .pluginkit import CapError
 from .registry import CapabilityRegistry, CapTimeout
 
 log = logging.getLogger("rook.core.host")
@@ -505,8 +506,12 @@ class PluginHost:
             return {"ok": True, "result": await self.registry.call(cap, **args)}
         except CapTimeout as e:
             return {"ok": False, "error": f"timeout: {e}"}
-        except TypeError as e:
+        except TypeError as e:  # includes ArgError
             return {"ok": False, "error": f"bad args: {e}"}
+        except CapError as e:
+            # An expected, cap-authored failure: the message is the whole
+            # error -- no exception type prefix, no traceback in the log.
+            return {"ok": False, "error": str(e)}
         except Exception as e:
             log.exception("capability %s raised", cap)
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}

@@ -137,9 +137,12 @@ class Hygiene:
         text = self._text(c, idle_min)
         family = FAMILY.get(c.get("client") or "")
         try:
-            if c.get("provider_session") and family and f"{family}-history.send" in caps:
-                reply = await self._call(f"{family}-history.send", {
-                    "session_id": c["provider_session"], "text": text,
+            # sessions.send picks the session's own route (inbox turn, or
+            # keys into its Rook terminal); a worker without it falls
+            # through to agent.wake.
+            if c.get("provider_session") and family and "sessions.send" in caps:
+                reply = await self._call("sessions.send", {
+                    "agent": family, "native_id": c["provider_session"], "text": text,
                     "command_id": "hygiene-" + uuid.uuid4().hex[:12]}, wid, timeout=40)
                 if reply.get("ok") and (reply.get("result") or {}).get("ok", True):
                     return {"action": "sent_to_session", "worker": w.get("name")}

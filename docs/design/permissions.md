@@ -34,9 +34,9 @@ call `rook.hub.authz.require_hub_admin("settings.set")` the same way.
 **Current-code gaps (6.3), fixed.**
 
 1. `worker.deauth` accepts only a deauth v2 order (`rook-deauth-v2` domain,
-   `worker_id` and `issued_at` required). The hub sends the v2 order nested
-   under `v2` inside a legacy v1 body signed the old way, so build-167 workers
-   still park and new workers verify only the v2 part.
+   `worker_id` and `issued_at` required). The hub sends the bare v2 order
+   (it used to nest it under `v2` in a v1 body for build-167 workers, which
+   are now below the supported floor); workers still unwrap a nested one.
 2. `worker.update(url=…)` requires a signed OTA `manifest` (same verification
    as `worker.apply`, sha256 match, `--selftest`, no downgrades). The optional
    `manifest` argument is new; old workers never receive it.
@@ -785,6 +785,11 @@ without new concepts:
 ## 5. Compatibility and rollout
 
 ### 5.1 Build-167 workers
+
+> Historical: build-167 pyz workers are below the supported floor
+> (`rook/core/compat.py`, `MIN_WORKER_BUILD`). The hub no longer filters
+> `caps.describe(prefix=)` for them or wraps deauth orders in a v1 body. The
+> table still describes the ESP32/RP2040 firmware, which never changes.
 
 | Aspect | Build-167 behaviour | Effect |
 |---|---|---|

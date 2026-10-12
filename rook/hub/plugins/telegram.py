@@ -17,6 +17,7 @@ import json
 import logging
 from typing import Any
 
+from ...core.db import atomic_write_json
 from ...core.plugin import capability
 from ..integrations import ChatIntegration, FatalAuth, Inbound, RateLimited, integration_settings
 
@@ -110,8 +111,7 @@ class Telegram(ChatIntegration):
 
     def _save_offset(self) -> None:
         try:
-            (self.data_dir / "offset.json").write_text(json.dumps({"offset": self._offset}),
-                                                       encoding="utf-8")
+            atomic_write_json(self.data_dir / "offset.json", {"offset": self._offset}, 0o644)
         except OSError:
             log.debug("telegram: could not persist the update offset", exc_info=True)
 

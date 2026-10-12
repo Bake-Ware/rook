@@ -40,7 +40,6 @@ if [ ! -f "$SECRETS" ]; then
       echo "ROOK_BAND_PSK=$("$PYTHON" -m rook.remote.psk)"
       echo "ROOK_WEB_PASS=$("$PYTHON" -c 'import secrets; print(secrets.token_urlsafe(12))')"
       echo "ROOK_MCP_STATIC_TOKEN=$("$PYTHON" -c 'import secrets; print(secrets.token_urlsafe(32))')"
-      echo "ROOK_MCP_AUTH_PASSWORD=$("$PYTHON" -c 'import secrets; print(secrets.token_urlsafe(12))')"
     } > "$SECRETS"
   )
   echo "Generated band key, dashboard password and MCP token in $SECRETS"

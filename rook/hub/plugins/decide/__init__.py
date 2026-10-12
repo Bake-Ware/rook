@@ -26,10 +26,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sqlite3
 from typing import Any
 
 from ....core.context import current_identity
+from ....core.db import open_db
 from ....core.plugin import Plugin, Resource, capability, place, resource, setting
 from .client import ADAPTERS, DecisionClient, DecisionError, _aiohttp_request
 from .drive import (DESTRUCTIVE_WORDS, DriveConfig, DriveRun, Frame, Thresholds,
@@ -156,7 +156,8 @@ class Decide(Plugin):
 
     def _open_journal(self) -> DriveJournal:
         if self.journal is None:
-            conn = sqlite3.connect(self.data_dir / "drive.db", check_same_thread=False)
+            # DriveJournal sets its own row factory and serializes access.
+            conn = open_db(self.data_dir / "drive.db", wal=False, row_factory=False)
             self.migrate(conn)
             self.journal = DriveJournal(conn)
             n = self.journal.mark_interrupted()

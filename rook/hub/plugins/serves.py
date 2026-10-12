@@ -12,12 +12,12 @@ update.
 from __future__ import annotations
 
 import json
-import os
 import threading
 import time
 from typing import Any
 
 from ...core.plugin import Plugin, capability, place
+from ...core.db import atomic_write_json
 
 KINDS = ("sites", "services")
 MAX_ITEMS = 60
@@ -88,10 +88,7 @@ class Serves(Plugin):
         return self._data
 
     def _save(self) -> None:
-        path = self._path()
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self._data, indent=1, sort_keys=True), encoding="utf-8")
-        os.replace(tmp, path)
+        atomic_write_json(self._path(), self._data, 0o644, indent=1, sort_keys=True)
 
     @staticmethod
     def _key(worker: str) -> str:

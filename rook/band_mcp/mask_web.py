@@ -17,6 +17,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from . import secret_mask
+from ..core.db import atomic_write_text
 
 log = logging.getLogger("rook.band_mcp.mask_web")
 
@@ -35,11 +36,7 @@ def ensure_token(store_dir: str) -> str:
     except FileNotFoundError:
         pass
     tok = secrets.token_hex(32)
-    tmp = path + ".tmp"
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="ascii") as f:
-        f.write(tok)
-    os.replace(tmp, path)
+    atomic_write_text(path, tok, 0o600)
     return tok
 
 

@@ -127,10 +127,10 @@ class CodexHistoryPlugin(history.ClaudeHistoryPlugin):
     async def _resume(self, session_id: str, path: str | None = None,
                       name: str | None = None, cwd: str | None = None,
                       machine: str | None = None) -> dict:
-        """Resume Codex interactively in a Rook PTY without sending a prompt.
+        """Resume Codex in a Rook PTY without a prompt (deprecated: use `work.stream.open` with resume=).
 
-        Deprecated: use ``work.stream.open(harness="codex", resume=<id>)``,
-        which is what this does on a worker with Rook terminals.
+        ``work.stream.open(harness="codex", resume=<id>)`` is what this does
+        on a worker with Rook terminals.
 
         Opens a Rook terminal (work.stream.*) where the worker has one; older
         workers use proc.read, proc.write, proc.signal and proc.close.

@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..core import authz
+from ..core.db import atomic_write_json
 from ..core.facts import NodeFacts, compile_placement, evaluate_placement
 
 log = logging.getLogger("rook.hub.policy")
@@ -659,11 +660,7 @@ class PolicyStore:
             new = Policy(doc)
             if not has_admin_holder(new):
                 raise PolicyError("refused: no principal would hold admin on rook")
-            tmp = self.path + ".tmp"
-            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(new.doc, f, indent=2, sort_keys=True)
-            os.replace(tmp, self.path)
+            atomic_write_json(self.path, new.doc, 0o600, indent=2, sort_keys=True)
             self.policy, self.source, self.error = new, self.path, None
             try:
                 self._mtime = os.stat(self.path).st_mtime

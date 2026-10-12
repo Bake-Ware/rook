@@ -51,12 +51,12 @@ async def test_description_validation_and_failed_announcements(worker, monkeypat
     assert result['ok'] and result['announced'] is False
     assert WorkerMetadata(worker.metadata.path).description == 'New role'
     def fail(*args):raise OSError('disk full')
-    monkeypatch.setattr('rook.worker.metadata.os.replace', fail)
+    monkeypatch.setattr('rook.core.db.os.replace', fail)
     with pytest.raises(OSError):
         await worker.registry.call('worker.description_set', description='Not saved')
     assert worker.metadata.description == 'New role'
     assert WorkerMetadata(worker.metadata.path).description == 'New role'
-    assert not list(worker.metadata.path.parent.glob('.metadata-*'))
+    assert not [p for p in worker.metadata.path.parent.iterdir() if p.name.endswith('.tmp')]
 
 
 @pytest.mark.asyncio

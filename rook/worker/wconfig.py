@@ -31,6 +31,7 @@ import time
 from pathlib import Path
 
 from ..core.paths import worker_state_dir
+from ..core.db import atomic_write_json
 
 log = logging.getLogger("rook.worker.wconfig")
 
@@ -53,10 +54,8 @@ def _read(p: Path) -> dict:
 
 
 def _write(p: Path, data: dict) -> None:
-    _DIR.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(p.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    os.replace(tmp, p)
+    # 0600: ``env`` overrides can carry plugin credentials.
+    atomic_write_json(p, data, 0o600, indent=2)
 
 
 def load() -> dict:

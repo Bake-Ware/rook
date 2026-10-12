@@ -209,13 +209,8 @@ class HubSigner:
 
 def deauth_payload(root_sk, worker_id: str, name: str, reason: str,
                    now: float | None = None) -> dict:
-    """A deauth order both generations of worker accept: the v2 order (own
-    signature domain, required worker_id/issued_at) nested under ``v2``,
-    wrapped in a legacy v1 body signed the old way for workers that predate
-    v2. New workers verify only the v2 order (permissions 6.3)."""
-    from ..remote.update_keys import _canonical_payload
-    v2 = authz.make_deauth(root_sk, worker_id, name, reason, now=now)
-    body = {"worker_id": worker_id, "name": name, "issued_at": v2["issued_at"],
-            "reason": v2["reason"], "v2": v2}
-    sig = root_sk.sign(_canonical_payload(body)).signature
-    return {**body, "sig": base64.b64encode(sig).decode("ascii")}
+    """A signed deauth v2 order (own signature domain, required
+    worker_id/issued_at; permissions 6.3). Every supported worker verifies it
+    as is (rook.core.compat); the v1 wrapper for workers from before v2 is
+    no longer sent. Workers still unwrap a ``v2`` key, which older hubs send."""
+    return authz.make_deauth(root_sk, worker_id, name, reason, now=now)

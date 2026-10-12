@@ -37,6 +37,7 @@ import time
 from typing import Any
 
 from ....core import context
+from ....core.db import atomic_write_json
 from ....core.plugin import Plugin, capability, place, setting
 from ....core.settings import SECRET_REF
 from . import job_agent
@@ -453,8 +454,8 @@ class HomeAgent(Plugin):
 
     def _save_cursor(self) -> None:
         try:
-            self._cursor_path().write_text(json.dumps({"baseline": self._baseline,
-                                                       "rooms": self._cursor}), encoding="utf-8")
+            atomic_write_json(self._cursor_path(), {"baseline": self._baseline,
+                                                    "rooms": self._cursor}, 0o644)
         except OSError:
             log.debug("home agent: cursor not saved", exc_info=True)
 

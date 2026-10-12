@@ -18,6 +18,7 @@ from . import audit, context
 from .authz_guard import Guard
 from .plugin import Plugin
 from .registry import CapabilityRegistry
+from ..core.pluginkit import CapError
 from ..core.registry import CapTimeout
 from .transports.base import Transport
 from .wire import envelope
@@ -419,6 +420,13 @@ class Worker:
                          target=target, error=f"bad args: {e}", ticket=ticket,
                          decision="allow")
             await self._reply(msg_id, {"ok": False, "error": f"bad args: {e}"})
+        except CapError as e:
+            # A cap-authored failure (pluginkit.fail and friends): the message
+            # is the error as-is, no type-name prefix and no traceback.
+            audit.record(cap, identity, args, ok=False, msg_id=msg_id,
+                         target=target, error=str(e), ticket=ticket,
+                         decision="allow")
+            await self._reply(msg_id, {"ok": False, "error": str(e)})
         except Exception as e:
             log.exception("capability %s raised", cap)
             audit.record(cap, identity, args, ok=False, msg_id=msg_id,

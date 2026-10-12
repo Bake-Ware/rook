@@ -23,6 +23,8 @@ from typing import Any
 
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 
+from ..core.db import atomic_write_json
+
 log = logging.getLogger("rook.band_mcp.tokens")
 
 #: Token roles (permissions.md 1). Tokens minted before roles existed are
@@ -102,25 +104,12 @@ class TokenStore:
     def _save(self) -> None:
         if not self._persist_path:
             return
-        import os, json as _json, tempfile
-        tmp = None
         try:
-            data = {"api_tokens": list(self._api_tokens.values())}
-            d = os.path.dirname(self._persist_path) or "."
-            os.makedirs(d, exist_ok=True)
-            fd, tmp = tempfile.mkstemp(dir=d, prefix=".tokens-", suffix=".json")
-            with os.fdopen(fd, "w") as f:
-                _json.dump(data, f, indent=2)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp, self._persist_path)
-            os.chmod(self._persist_path, 0o600)
+            atomic_write_json(self._persist_path,
+                              {"api_tokens": list(self._api_tokens.values())}, 0o600, indent=2)
         except Exception:
             log.exception("token store persist failed")
             raise
-        finally:
-            if tmp and os.path.exists(tmp):
-                os.unlink(tmp)
 
     def _replace_tokens(self, updated: dict[str, dict[str, Any]]) -> None:
         """Publish a credential change only when its persistence succeeds."""
@@ -160,29 +149,13 @@ class TokenStore:
             resource=None,
         )
 
-    def identity_for(self, token: str) -> str | None:
-        """Legacy display attribution behind a bearer token, for stamping band calls
-        so workers can audit who called. Returns the token's name for a minted
-        API token, ``"static"`` for the fixed static token, or ``None`` if the
-        token is unknown. Kept separate from :meth:`verify_bearer` (and keyed
-        off the raw token) so it works regardless of which ``AccessToken``
-        fields the installed ``mcp`` version happens to carry."""
-        if not token:
-            return None
-        if self._static_token and secrets.compare_digest(self._static_token, token):
-            return "static"
-        api = self._api_tokens.get(token)
-        if api is None:
-            return None
-        return api.get("name") or api.get("id") or "api"
-
     def principal_for(self, token: str) -> dict[str, Any] | None:
         """Resolve a valid credential to a secret-free audit principal, or
         ``None`` when the token is missing, unknown, revoked or expired.
 
         ``agent_id`` is stable across key rotation and label edits; ``key_id``
-        names the specific credential; ``label`` is the same display name
-        :meth:`identity_for` returns. The shared static credential is valid
+        names the specific credential; ``label`` is the token's display name
+        (``"static"`` for the shared static token). The shared static credential is valid
         but identifies no individual agent (``kind="shared"``). Attribution
         only — nothing here grants or restricts what a caller may do.
         """

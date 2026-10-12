@@ -152,7 +152,7 @@ Sessions, Install. The account pages are served at `/account*`
 | Band PSK rotate / revoke, pairing codes, invites, member roles | UI:Account, UI:API tokens (`/tokens/bands/rotate`, `/tokens/pairing`) | pairing code TTL 300 s (hardcoded) | band | enrollment DB, `EnrollmentStore` | **yes** | live |
 | Profile name, avatar source, local password, linked Google login, devices | UI:Account | from Google or username | user | accounts DB (`users`, `devices`) | password **yes** | live |
 | Operator account, admin flag | `ROOK_WEB_USER`/`ROOK_WEB_PASS` bootstrap an operator account (admin, owner of every band); changing them updates its credentials and ends its sessions | none | user | accounts DB `users.admin`, `account_settings.bootstrap_user` (`AccountStore.bootstrap`) | password **yes** | proc |
-| API tokens (mint, revoke, label, avatar) | UI:API tokens, and `/tokens` on the MCP port (admin password) | none | user / hub | `oauth.json` (`TokenStore`) | **yes** | live |
+| API tokens (mint, revoke, label, avatar) | UI:API tokens (`/tokens` on the MCP port redirects there) | none | user / hub | `oauth.json` (`TokenStore`) | **yes** | live |
 | Vault secrets | UI:Secrets | none | hub | `vault.db` | **yes** | live |
 | Agent instructions (`server`, `hygiene`, `tool:<name>`, `cap:<prefix>`) | UI:Agent instructions | `guidance.DEFAULTS` | hub | `guidance.db` (overrides + attributed history) | no | live |
 | Knowledge pages, tasks, projects | UI:Knowledge, UI:Work, MCP tools | none | band | `knowledge.db` | no | live (content, not configuration) |
@@ -349,7 +349,7 @@ Out of scope (dev tools or separate products): `tools/diagnostics/*`
 - `Dockerfile`: sets `ROOK_DATA_DIR=/data`.
 - `scripts/local-hub.sh`: reads `ROOK_DATA_DIR`, `BIND`, `RELAY_PORT`,
   `DASHBOARD_PORT`, `MCP_PORT`, `PYTHON`; generates `ROOK_BAND_PSK`,
-  `ROOK_WEB_PASS`, `ROOK_MCP_STATIC_TOKEN`, `ROOK_MCP_AUTH_PASSWORD` into
+  `ROOK_WEB_PASS`, `ROOK_MCP_STATIC_TOKEN` into
   `$ROOK_DATA_DIR/quickstart.env` (mode 600).
 - `pikvm/rook-worker.env.example` + `pikvm/rook-worker.service`:
   `ROOK_HUB`, `ROOK_BAND_PSK`, `ROOK_WORKER_NAME`, `PIKVM_*`, expanded into

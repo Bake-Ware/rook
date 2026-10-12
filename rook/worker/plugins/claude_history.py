@@ -510,10 +510,10 @@ class ClaudeHistoryPlugin(Plugin):
 
     @capability("send", risk="exec")
     async def _send(self, session_id: str, text: str, command_id: str) -> dict:
-        """Send to this exact existing session; transcripts stay on this host.
+        """Send to this exact existing session (deprecated: use `sessions.send`).
 
-        Deprecated for callers: use ``sessions.send`` (which routes through
-        this cap for a session with an inbox). Kept because it backs it."""
+        ``sessions.send`` routes through this cap for a session with an
+        inbox, so it stays; transcripts stay on this host."""
         path = self._resolve_session(self._default_root(), session_id)
         if path is None or self._session_id(path) != session_id:
             return {"ok": False, "error": "Exact session ID not found on this host."}
@@ -527,11 +527,11 @@ class ClaudeHistoryPlugin(Plugin):
                       name: str | None = None, cwd: str | None = None,
                       remote_control: bool = True,
                       machine: str | None = None) -> dict:
-        """Relaunch a stored Claude Code session on this machine.
+        """Relaunch a stored Claude Code session here (deprecated: use `work.stream.open` with resume=).
 
-        Deprecated: use ``work.stream.open(harness="claude", resume=<id>)``,
-        which is what this does on a worker with Rook terminals. The hub no
-        longer calls it; the proc.* path below remains for direct callers.
+        ``work.stream.open(harness="claude", resume=<id>)`` is what this does
+        on a worker with Rook terminals. The hub no longer calls it; the
+        proc.* path below remains for direct callers.
 
         For picking a conversation back up when it was closed on the PC and you
         are somewhere else: the session restarts here with Remote Control on, so

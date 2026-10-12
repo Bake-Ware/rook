@@ -2,13 +2,13 @@
 import json
 import os
 from pathlib import Path
-import tempfile
 import time
 from urllib.parse import urlsplit
 from urllib.request import Request
 import webbrowser
 
 from ..core.paths import worker_state_path
+from ..core.db import atomic_write_text
 
 
 def storage_path():
@@ -33,13 +33,7 @@ def post(server,path,data):
 def save(data,path=None):
     path=Path(path or storage_path())
     path.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
-    fd,temp=tempfile.mkstemp(dir=path.parent,prefix='.enrollment-')
-    try:
-        with os.fdopen(fd,'w') as output:
-            json.dump(data,output,indent=2);output.write('\n');output.flush();os.fsync(output.fileno())
-        os.replace(temp,path)
-    finally:
-        if os.path.exists(temp):os.unlink(temp)
+    atomic_write_text(path,json.dumps(data,indent=2)+'\n',0o600)
 
 
 def load():
