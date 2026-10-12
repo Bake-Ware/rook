@@ -327,22 +327,35 @@ PLUGIN_TITLES.update({"knowledge": "Knowledge", "task": "Tasks", "job": "Jobs", 
                       "pikvm": "PiKVM", "cec": "HDMI-CEC", "agent": "Wake (agent.wake)"})
 
 
-def _plugin_classes(package: str = "rook.worker.plugins") -> list[tuple[str, type]]:
+def _plugin_classes(package: str = "rook.worker.plugins",
+                    errors: list | None = None) -> list[tuple[str, type]]:
     """Every Plugin class with a settings schema defined under ``package``
-    (loaded or not: a plugin that is off must still be switchable on)."""
+    (loaded or not: a plugin that is off must still be switchable on).
+
+    A module that fails to import is logged at warning and, when ``errors`` is
+    given, appended to it as ``"<module>: <error>"``: its settings vanish from
+    the schema, so the reference generators refuse to run on such a host
+    instead of silently writing an environment-dependent file."""
     out = []
     try:
         pkg = importlib.import_module(package)
-    except Exception:
+    except Exception as e:
         log.exception("cannot import %s for its settings schema", package)
+        if errors is not None:
+            errors.append(f"{package}: {type(e).__name__}: {e}")
         return out
     for info in pkgutil.iter_modules(pkg.__path__):
         if info.name.startswith("_"):
             continue
         try:
             mod = importlib.import_module(f"{package}.{info.name}")
-        except Exception:
-            log.debug("worker plugin %s does not import on the hub", info.name, exc_info=True)
+        except Exception as e:
+            # Plugin modules keep optional dependencies inside the functions
+            # that use them; one that still fails here is a bug to see.
+            log.warning("plugin module %s.%s does not import here (%s: %s); its settings "
+                        "are missing from the schema", package, info.name, type(e).__name__, e)
+            if errors is not None:
+                errors.append(f"{package}.{info.name}: {type(e).__name__}: {e}")
             continue
         seen: set[int] = set()
         for _, obj in inspect.getmembers(mod, inspect.isclass):
@@ -361,6 +374,9 @@ class Schema:
     def __init__(self, hub_plugins: list | None = None, worker_package: str | None =
                  "rook.worker.plugins", hub_package: str | None = "rook.hub.plugins") -> None:
         self.entries: dict[str, Entry] = {}
+        #: Plugin modules that failed to import while building the schema
+        #: (``"<module>: <error>"``); their settings are missing.
+        self.import_errors: list[str] = []
         for s, owner, extra in _CORE:
             self._add(Entry(f"core.{s.name}", "core", s, owner, "core", **extra))
         for ns, owner, _title, settings in _SERVICES:
@@ -368,7 +384,7 @@ class Schema:
                 self._add(Entry(f"{ns}.{s.name}", ns, s, owner, "service", plugin=ns))
         hub = [(getattr(p, "_module", "") or p.NAMESPACE, type(p)) for p in hub_plugins or []]
         if hub_package:
-            hub += _plugin_classes(hub_package)
+            hub += _plugin_classes(hub_package, self.import_errors)
         for module, cls in hub:
             for s in getattr(cls, "SETTINGS", ()):
                 key = f"{cls.NAMESPACE}.{s.name}"
@@ -376,7 +392,7 @@ class Schema:
                     self._add(Entry(key, cls.NAMESPACE, s, "mcp", "hub-plugin",
                                     plugin=cls.NAMESPACE))
         if worker_package:
-            for module, cls in _plugin_classes(worker_package):
+            for module, cls in _plugin_classes(worker_package, self.import_errors):
                 for s in cls.SETTINGS:
                     self._add(Entry(f"{cls.NAMESPACE}.{s.name}", cls.NAMESPACE, s, "worker",
                                     "worker-plugin", plugin=module))

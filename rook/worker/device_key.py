@@ -5,7 +5,9 @@ The cryptographic operations are provided by libsodium, not this encoder.
 This lets native Android enroll without another platform-specific crypto wheel.
 """
 import base64
-from nacl.signing import SigningKey
+
+# PyNaCl is imported where a key is made or loaded, so the enrollment plugin
+# (and the settings schema that scans it) loads on a host without it.
 
 _ALGORITHM = bytes.fromhex('300506032b6570')
 _PRIVATE_PREFIX = bytes.fromhex('302e020100300506032b657004220420')
@@ -32,10 +34,12 @@ def load_private(pem):
     raw = base64.b64decode(''.join(line for line in pem.splitlines() if not line.startswith('---')), validate=True)
     if len(raw) != len(_PRIVATE_PREFIX)+32 or not raw.startswith(_PRIVATE_PREFIX):
         raise ValueError('Not a Rook Ed25519 private key.')
+    from nacl.signing import SigningKey
     return SigningKey(raw[len(_PRIVATE_PREFIX):])
 
 
 def certificate_request():
+    from nacl.signing import SigningKey
     key = SigningKey.generate()
     subject = _der(0x30, _der(0x31, _der(0x30, bytes.fromhex('0603550403') + _der(0x0c,b'rook worker'))))
     spki = _der(0x30, _ALGORITHM + _der(0x03,b'\x00'+bytes(key.verify_key)))

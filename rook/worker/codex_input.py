@@ -7,7 +7,9 @@ import stat
 import sys
 from pathlib import Path
 
-import aiohttp
+# aiohttp is imported where it is used: this module loads with the
+# claude_history/codex_history plugins, which must still load (and declare
+# their settings) on a host without it.
 
 
 def control_socket():
@@ -141,6 +143,7 @@ async def _terminal_send(session_id, text, endpoint):
 
 
 async def _app_send(path, session_id, text):
+    import aiohttp
     async with aiohttp.ClientSession(connector=aiohttp.UnixConnector(path=str(path)),
                                     timeout=aiohttp.ClientTimeout(total=12)) as client:
         async with client.ws_connect('http://localhost/', max_msg_size=2**20) as ws:
@@ -199,6 +202,7 @@ async def send(session_id, text):
     path = control_socket()
     if path:
         # Errors after a possible write never fall back to another transport.
+        import aiohttp
         try:
             result = await _app_send(path, session_id, text)
         except aiohttp.ClientError:

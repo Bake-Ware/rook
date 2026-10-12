@@ -21,13 +21,24 @@ import json
 import math
 from operator import mul
 import os
-import aiohttp
 
 from . import chunk
 
 DEFAULT_MODEL = 'sentence-transformers/all-MiniLM-L6-v2'
 # What a failing embedding service may raise; search then falls back to keywords.
-EMBED_ERRORS = (aiohttp.ClientError, TimeoutError, ValueError, RuntimeError, KeyError, LookupError, TypeError)
+# aiohttp is imported lazily (only the http:// embedder needs it), so the
+# knowledge plugin and its settings load on a hub without it; a missing aiohttp
+# is then just another embedding failure (ImportError).
+EMBED_ERRORS = (TimeoutError, ValueError, RuntimeError, KeyError, LookupError, TypeError, ImportError)
+
+
+def embed_errors() -> tuple:
+    """:data:`EMBED_ERRORS` plus ``aiohttp.ClientError`` when aiohttp is installed."""
+    try:
+        import aiohttp
+    except ImportError:
+        return EMBED_ERRORS
+    return (aiohttp.ClientError,) + EMBED_ERRORS
 
 # A page counts as a semantic hit when its best block reaches this cosine.
 THRESHOLD = .25
@@ -94,6 +105,7 @@ class Search:
             if isinstance(data, list):
                 data = {'model': self.model, 'vectors': data}
         else:
+            import aiohttp
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8)) as http:
                 async with http.post(self.url, json={'texts': texts}) as response:
                     response.raise_for_status()
@@ -130,7 +142,7 @@ class Search:
                     return
                 try:
                     vectors = await self.embed([chunk.embed_text(r['title'], r['body'], _block(r)) for r in rows])
-                except EMBED_ERRORS as error:
+                except embed_errors() as error:
                     self.last_error = type(error).__name__
                     return
                 with self.store.db() as db:
@@ -240,7 +252,7 @@ class Search:
                 for n, (_, rid) in enumerate(ranked):
                     scores[rid] = scores.get(rid, 0) + 1/(30+n)
                 semantic = True
-            except EMBED_ERRORS as error:
+            except embed_errors() as error:
                 self.last_error = type(error).__name__
         result = [records[rid] | {'score': round(score, 5)} for rid, score in sorted(scores.items(), key=lambda x: -x[1])
                   if (not kind or records[rid]['kind'] == kind) and (not worker or worker in records[rid]['attrs'].get('workers', []))]
