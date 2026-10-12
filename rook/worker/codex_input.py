@@ -7,6 +7,8 @@ import stat
 import sys
 from pathlib import Path
 
+from .agents import codex_home
+
 # aiohttp is imported where it is used: this module loads with the
 # claude_history/codex_history plugins, which must still load (and declare
 # their settings) on a host without it.
@@ -19,8 +21,8 @@ def control_socket():
         # none there today. Codex on Windows takes input through a Rook
         # terminal (work.stream.write) instead.
         return None
-    home =Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex')))
-    path = Path(os.environ.get('ROOK_CODEX_CONTROL_SOCKET', str(home / 'app-server-control/app-server-control.sock')))
+    path = Path(os.environ.get('ROOK_CODEX_CONTROL_SOCKET',
+                               str(codex_home() / 'app-server-control/app-server-control.sock')))
     try:
         info = path.lstat()
         if path.is_absolute() and stat.S_ISSOCK(info.st_mode) and info.st_uid == os.getuid():

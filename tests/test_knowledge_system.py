@@ -526,14 +526,15 @@ async def test_hygiene_sends_into_the_agents_session_once_per_idle_period(work):
     w = work
     w.s.mutate('default', AGENT, rid(), 'claim', {'id': w.task['id'], 'provider_session': 'sess-1'})
     w.s.auto_link(AGENT, 'journal', 'j1')
-    workers = Workers({'wk': {'worker_id': 'wk', 'name': 'gpubox', 'caps': ['codex-history.send', 'agent.wake']}})
+    workers = Workers({'wk': {'worker_id': 'wk', 'name': 'gpubox', 'caps': ['sessions.send', 'agent.wake']}})
     h = hygiene_for(w, workers)
     assert await h.tick() == []  # not idle yet
     idle(w, w.task['id'])
     out = await h.tick()
     assert out[0]['action'] == 'sent_to_session'
     cap, target, args, identity = workers.calls[0]
-    assert (cap, target, args['session_id'], identity) == ('codex-history.send', 'wk', 'sess-1', 'system:hygiene')
+    assert (cap, target, args['agent'], args['native_id'], identity) == (
+        'sessions.send', 'wk', 'codex', 'sess-1', 'system:hygiene')
     assert args['text'].startswith('Idle 4') and '[[restart-test-service]]' in args['text']
     assert await h.tick() == []  # once per idle period
     events = [e['action'] for e in w.s.get('default', w.task['id'])['events']]
