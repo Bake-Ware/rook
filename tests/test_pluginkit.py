@@ -141,7 +141,8 @@ def test_failures_reach_the_caller_as_a_top_level_error():
     host = PluginHost(CapabilityRegistry(), check_placement=False)
     host.load([Candidate("kit", "test", lambda: P)])
     boom = asyncio.run(host.dispatch("kit.boom", {}))
-    assert boom["ok"] is False and "disk is on fire" in boom["error"]
+    # The message is the whole error: no "CapError: " type-name prefix.
+    assert boom == {"ok": False, "error": "disk is on fire"}
     arg = asyncio.run(host.dispatch("kit.arg", {"n": "x"}))
     assert arg == {"ok": False, "error": "bad args: n must be an integer"}
 

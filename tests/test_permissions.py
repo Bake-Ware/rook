@@ -654,3 +654,27 @@ def test_policy_set_is_owner_or_operator_only(tmp_path):
     explained = plugin.explain("role:agent", "worker.restart", "worker-x")
     assert explained["decision"] == "would_deny" and explained["tier"] == "admin"
     assert plugin.get()["mode"] == "enforce"
+
+
+@pytest.mark.asyncio
+async def test_worker_reports_cap_errors_without_a_type_prefix(worker):
+    """pluginkit.fail()/CapError reach the caller as the bare message; an
+    unexpected exception keeps the type name so it reads as a bug."""
+    from rook.core import pluginkit as kit
+
+    def boom():
+        kit.fail("file not found: /nope")
+
+    def oops():
+        raise RuntimeError("bad")
+
+    worker.registry.register("t.boom", boom)
+    worker.registry.register("t.oops", oops)
+    worker.registry.register("t.arg", lambda: kit.require_int("x", "n"))
+    for mid, cap in (("b", "t.boom"), ("o", "t.oops"), ("a", "t.arg")):
+        await worker._on_message(json.dumps({"id": mid, "cap": cap, "args": {},
+                                             "target": worker.worker_id}).encode(), ())
+    by_id = {m["id"]: m for m in worker.transport.sent if "id" in m}
+    assert by_id["b"]["error"] == "file not found: /nope"
+    assert by_id["o"]["error"] == "RuntimeError: bad"
+    assert by_id["a"]["error"] == "bad args: n must be an integer"
