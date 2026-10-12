@@ -1,49 +1,52 @@
-"""Claude Code session history browser.
+"""Claude Code session history browser (``rook sessions``).
 
-Discovers all CC conversations across every project directory on this machine,
-indexes them, and provides browsing/search capabilities.
+Discovers every Claude Code conversation on this machine, indexes them, and
+provides browsing and search. Transcripts are read with the worker's
+``claude-history`` parsers (one reading of the format for the CLI, the
+worker caps and the dashboard), so this is a local, offline view of what
+``claude-history.pull``/``read`` serve to the band.
 
 Data lives in:
-  ~/.claude/history.jsonl          — user prompts with session IDs and project paths
-  ~/.claude/projects/<proj>/<sid>.jsonl — full conversation (user + assistant + tool calls)
+  ~/.claude/history.jsonl                — user prompts with session IDs and project paths
+  ~/.claude/projects/<proj>/<sid>.jsonl  — full conversation (user + assistant + tool calls)
 """
 
 from __future__ import annotations
 
 import json
-import os
 import sys
-import time
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
-# Force UTF-8 on Windows
-if sys.platform == "win32":
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+from ..worker import agents
+from ..worker.plugins import claude_history as ch
 
-CLAUDE_DIR = Path.home() / ".claude"
-HISTORY_FILE = CLAUDE_DIR / "history.jsonl"
-PROJECTS_DIR = CLAUDE_DIR / "projects"
+
+def _projects_dir() -> Path:
+    return agents.claude_projects()
+
+
+def _history_file() -> Path:
+    return agents.claude_home() / "history.jsonl"
 
 
 def _decode_project_dir(dirname: str) -> str:
-    """Convert Claude's project dir name back to a real path.
-
-    Claude encodes paths like C:\\Users\\you\\rook -> C--Users-you-rook
+    """Best-effort path from Claude's project dir name, for a session whose
+    transcript records no cwd. Claude replaces every non-alphanumeric
+    character with "-", so this cannot be exact: C--Users-you-rook -> C:\\Users\\you\\rook
     """
-    # Handle lowercase drive letter variants
-    parts = dirname.split("-")
-    if not parts:
-        return dirname
+    return dirname.replace("--", ":\\", 1).replace("-", "\\")
 
-    # Reconstruct: first part is drive letter, rest are path segments
-    # C--Users-user-rook -> C:\Users\user\rook
-    # But dashes in actual folder names get collapsed, so this is best-effort
-    result = dirname.replace("--", ":\\", 1).replace("-", "\\")
-    return result
+
+def _iso_ms(value) -> float:
+    """An ISO-8601 transcript timestamp as epoch milliseconds (0 if unreadable)."""
+    if not isinstance(value, str):
+        return 0
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp() * 1000
+    except ValueError:
+        return 0
 
 
 def _ts_to_str(ts: float | int) -> str:
@@ -56,26 +59,8 @@ def _ts_to_str(ts: float | int) -> str:
         return "?"
 
 
-def _extract_text(content: Any) -> str:
-    """Extract text from a CC message content field."""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for block in content:
-            if isinstance(block, dict):
-                if block.get("type") == "text":
-                    parts.append(block.get("text", ""))
-                elif block.get("type") == "tool_use":
-                    parts.append(f"[tool: {block.get('name', '?')}]")
-                elif block.get("type") == "tool_result":
-                    parts.append(f"[result: {str(block.get('content', ''))[:60]}]")
-        return " ".join(parts)
-    return str(content)[:200] if content else ""
-
-
 class SessionInfo:
-    """Metadata about a single CC session."""
+    """Metadata about a single CC session. Timestamps are epoch milliseconds."""
 
     def __init__(self, session_id: str, project: str):
         self.session_id = session_id
@@ -92,7 +77,7 @@ class SessionInfo:
     def duration_str(self) -> str:
         if not self.first_ts or not self.last_ts:
             return "?"
-        delta = (self.last_ts - self.first_ts) / 1000 if self.first_ts > 1e12 else self.last_ts - self.first_ts
+        delta = (self.last_ts - self.first_ts) / 1000
         if delta < 60:
             return f"{delta:.0f}s"
         if delta < 3600:
@@ -104,182 +89,111 @@ class SessionInfo:
 
 
 def scan_history() -> dict[str, list[SessionInfo]]:
-    """Scan history.jsonl and project dirs to build session index.
-
-    Returns: {project_path: [SessionInfo, ...]} sorted by last activity.
-    """
+    """Index history.jsonl prompts and every transcript under the projects
+    directory. Returns ``{project_path: [SessionInfo, ...]}``, each list
+    newest first."""
     sessions: dict[str, SessionInfo] = {}
 
-    # Phase 1: Read history.jsonl for user prompts and session metadata
-    if HISTORY_FILE.exists():
-        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-            for line in f:
-                try:
-                    d = json.loads(line.strip())
-                    sid = d.get("sessionId", "")
-                    proj = d.get("project", "")
-                    ts = d.get("timestamp", 0)
-                    display = d.get("display", "")
-
-                    if not sid:
-                        continue
-
-                    if sid not in sessions:
-                        sessions[sid] = SessionInfo(sid, proj)
-
-                    s = sessions[sid]
-                    if not s.first_ts or ts < s.first_ts:
-                        s.first_ts = ts
-                    if ts > s.last_ts:
-                        s.last_ts = ts
-                    s.message_count += 1
-                    if display and not s.first_prompt:
-                        s.first_prompt = display
-                    if display:
-                        s.prompts.append(display)
-                except (json.JSONDecodeError, KeyError):
-                    continue
-
-    # Phase 2: Scan project dirs for session JSONLs (catches sessions not in history)
-    if PROJECTS_DIR.exists():
-        for proj_dir in PROJECTS_DIR.iterdir():
-            if not proj_dir.is_dir():
+    # Phase 1: history.jsonl — the prompts typed into each session.
+    hist = _history_file()
+    if hist.exists():
+        for d in ch._read_lines(hist):
+            if not isinstance(d, dict) or not d.get("sessionId"):
                 continue
+            sid = d["sessionId"]
+            s = sessions.setdefault(sid, SessionInfo(sid, d.get("project", "")))
+            ts = d.get("timestamp") or 0
+            if isinstance(ts, (int, float)):
+                if not s.first_ts or ts < s.first_ts:
+                    s.first_ts = ts
+                s.last_ts = max(s.last_ts, ts)
+            s.message_count += 1
+            display = d.get("display") or ""
+            if display:
+                s.first_prompt = s.first_prompt or display
+                s.prompts.append(display)
 
-            project_path = _decode_project_dir(proj_dir.name)
+    # Phase 2: transcripts (catches sessions history.jsonl never saw).
+    root = _projects_dir()
+    for jsonl in ch._iter_session_files(root):
+        # Top-level transcripts only: <project>/<sid>/subagents/*.jsonl are
+        # counted against their parent below.
+        if jsonl.parent.parent != root:
+            continue
+        meta, _activity = ch.scan_session(jsonl)
+        if meta.get("error"):
+            continue
+        sid = meta["session_id"]
+        s = sessions.setdefault(sid, SessionInfo(sid, ""))
+        s.jsonl_path = jsonl
+        s.project = s.project or meta.get("cwd") or _decode_project_dir(jsonl.parent.name)
+        if meta.get("message_count"):
+            s.message_count = max(s.message_count, meta["message_count"])
+        if not s.first_prompt and meta.get("title") not in (None, "(empty)"):
+            s.first_prompt = meta["title"]
+        first = _iso_ms(meta.get("first_timestamp")) or (meta.get("last_modified") or 0) * 1000
+        last = _iso_ms(meta.get("last_timestamp")) or (meta.get("last_modified") or 0) * 1000
+        if first and (not s.first_ts or first < s.first_ts):
+            s.first_ts = first
+        s.last_ts = max(s.last_ts, last)
+        subagents = jsonl.parent / sid / "subagents"
+        if subagents.is_dir():
+            s.subagent_count = len(list(subagents.glob("*.jsonl")))
 
-            for jsonl_file in proj_dir.glob("*.jsonl"):
-                sid = jsonl_file.stem
-                if sid not in sessions:
-                    sessions[sid] = SessionInfo(sid, project_path)
-
-                s = sessions[sid]
-                s.jsonl_path = jsonl_file
-                if not s.project:
-                    s.project = project_path
-
-                # Check for subagents
-                subagent_dir = proj_dir / sid / "subagents"
-                if subagent_dir.exists():
-                    s.subagent_count = len(list(subagent_dir.glob("*.jsonl")))
-
-                # Get timestamps from file if not from history
-                if not s.first_ts:
-                    try:
-                        stat = jsonl_file.stat()
-                        s.first_ts = stat.st_ctime * 1000
-                        s.last_ts = stat.st_mtime * 1000
-                    except OSError:
-                        pass
-
-    # Group by project
     by_project: dict[str, list[SessionInfo]] = defaultdict(list)
     for s in sessions.values():
         by_project[s.project].append(s)
-
-    # Sort each project's sessions by last activity (newest first)
     for proj in by_project:
         by_project[proj].sort(key=lambda s: s.last_ts, reverse=True)
-
     return dict(by_project)
 
 
 def read_session(session: SessionInfo, max_messages: int = 0) -> list[dict]:
-    """Read full conversation from a session's JSONL file.
-
-    Returns list of {role, content, timestamp, type} dicts.
-    """
+    """The user and assistant messages of a session's transcript, as
+    ``{role, content, timestamp}``. Records that only carry tool results and
+    the "System context:" preamble some launchers inject are left out."""
     if not session.jsonl_path or not session.jsonl_path.exists():
         return []
-
     messages = []
-    with open(session.jsonl_path, "r", encoding="utf-8") as f:
-        for line in f:
-            try:
-                d = json.loads(line.strip())
-                msg_type = d.get("type", "")
-
-                # Skip non-message entries
-                if msg_type in ("queue-operation", "last-prompt"):
-                    continue
-
-                msg = d.get("message", {})
-                if not isinstance(msg, dict):
-                    continue
-
-                role = msg.get("role", "")
-                if role not in ("user", "assistant"):
-                    continue
-
-                content = _extract_text(msg.get("content", ""))
-                if not content or len(content.strip()) < 2:
-                    continue
-
-                # Skip system prompts injected as user messages
-                if role == "user" and content.startswith("System context:"):
-                    continue
-
-                messages.append({
-                    "role": role,
-                    "content": content,
-                    "timestamp": d.get("timestamp", ""),
-                })
-
-                if max_messages and len(messages) >= max_messages:
-                    break
-
-            except (json.JSONDecodeError, KeyError):
-                continue
-
+    for rec in ch._read_lines(session.jsonl_path):
+        if not isinstance(rec, dict):
+            continue
+        role = ch._record_role(rec)
+        if role not in ("user", "assistant") or not isinstance(rec.get("message"), dict):
+            continue
+        if role == "user" and ch._tool_result_only(rec):
+            continue
+        content = ch._message_text(rec)
+        if len(content.strip()) < 2:
+            continue
+        if role == "user" and content.startswith("System context:"):
+            continue
+        messages.append({"role": role, "content": content, "timestamp": rec.get("timestamp", "")})
+        if max_messages and len(messages) >= max_messages:
+            break
     return messages
 
 
 def search_sessions(query: str, by_project: dict[str, list[SessionInfo]]) -> list[tuple[SessionInfo, list[str]]]:
-    """Search across all sessions for a query string.
-
-    Returns [(session, [matching_lines]), ...] sorted by relevance.
-    """
-    query_lower = query.lower()
+    """Sessions whose prompts or messages contain ``query`` (case-insensitive),
+    with up to six matching lines each, most matches first."""
+    q = query.lower()
     results = []
-
-    for project, sessions_list in by_project.items():
+    for sessions_list in by_project.values():
         for session in sessions_list:
-            matches = []
-
-            # Search prompts first (fast)
-            for p in session.prompts:
-                if query_lower in p.lower():
-                    matches.append(p[:120])
-
-            # Search full conversation if we have the file
-            if session.jsonl_path and session.jsonl_path.exists():
-                try:
-                    with open(session.jsonl_path, "r", encoding="utf-8") as f:
-                        for line in f:
-                            if query_lower in line.lower():
-                                try:
-                                    d = json.loads(line)
-                                    msg = d.get("message", {})
-                                    if isinstance(msg, dict):
-                                        content = _extract_text(msg.get("content", ""))
-                                        if content and query_lower in content.lower():
-                                            # Extract the matching line
-                                            for text_line in content.split("\n"):
-                                                if query_lower in text_line.lower():
-                                                    matches.append(text_line.strip()[:120])
-                                                    if len(matches) > 5:
-                                                        break
-                                except json.JSONDecodeError:
-                                    pass
-                            if len(matches) > 5:
-                                break
-                except OSError:
-                    pass
-
+            matches = [p[:120] for p in session.prompts if q in p.lower()]
+            for msg in read_session(session):
+                if len(matches) > 5:
+                    break
+                if q not in msg["content"].lower():
+                    continue
+                for line in msg["content"].split("\n"):
+                    if q in line.lower():
+                        matches.append(line.strip()[:120])
+                        if len(matches) > 5:
+                            break
             if matches:
                 results.append((session, matches))
-
-    # Sort by number of matches (most relevant first)
     results.sort(key=lambda x: len(x[1]), reverse=True)
     return results
 
@@ -457,6 +371,9 @@ def interactive(args=None):
 def main():
     """Entry point for `rook sessions` command."""
     import argparse
+    if sys.platform == "win32":
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description="Browse Claude Code session history")
     parser.add_argument("query", nargs="?", help="Search query (optional)")
     parser.add_argument("--json", action="store_true", help="Output as JSON")

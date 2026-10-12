@@ -12,10 +12,19 @@ SUBCOMMANDS = {
     "mcp":       "Run the hub MCP server and WebSocket bridge (python -m rook.band_mcp)",
     "sessions":  "Browse Claude Code session history",
     "history":   "Browse Claude Code session history",
-    "tmux":      "Manage Claude Code sessions (spawn, attach, kill)",
     "skill":     "Install or package the Rook agent skill (Claude Code, Codex)",
     "hub":       "Build, deploy, inspect and roll back signed hub releases",
 }
+
+
+TMUX_RETIRED = """\
+`rook tmux` was removed. Agent sessions now live in Rook terminals on each worker:
+  - Start, watch, type into and stop them on the dashboard's Sessions page.
+  - From a terminal: `rook band` (run sessions.list / work.stream.open / sessions.send /
+    sessions.stop on a worker), or the MCP tools rook_console_open / rook_console_write.
+  - Browse local Claude Code history offline with `rook sessions`.
+  - Run sessions.shim.install on a worker so `claude`/`codex` typed in your own
+    terminal run in a Rook terminal too."""
 
 
 def main() -> None:
@@ -66,10 +75,10 @@ def main() -> None:
         return
 
     if sys.argv[1] == "tmux":
-        from .cli.cc_tmux import main as tmux_main
-        sys.argv = [sys.argv[0]] + sys.argv[2:]
-        tmux_main()
-        return
+        # Retired: it ran a second session manager (its own ~/.rook/sessions.db)
+        # beside the worker's Rook terminals. Say where its jobs went.
+        print(TMUX_RETIRED, file=sys.stderr)
+        sys.exit(2)
 
     if sys.argv[1] == "hub":
         from .hubdeploy.cli import main as hub_main
