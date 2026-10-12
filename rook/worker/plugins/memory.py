@@ -1,6 +1,7 @@
 """memory.* — a shared, band-wide memory vault ("go ask the assistant", as a cap).
 
-One host on the band runs this (whichever worker has ``ROOK_MEMORY_VAULT`` set —
+One host on the band runs this (whichever worker has ``memory.notes_dir`` set,
+env ``ROOK_MEMORY_VAULT`` —
 intended to be the always-on hub box). Every agent on the band, Claude or
 hermes, reaches the *same* memories through it: read-open across the band,
 write-owned to your own namespace, with a shared/ space anyone can write.
@@ -42,19 +43,14 @@ from pathlib import Path
 
 from ..plugin import Plugin, capability, setting
 from ..context import current_identity
+from ...core.pluginkit import fail, opt_int, require_choice, require_str
 
-_VAULT_ENV = "ROOK_MEMORY_VAULT"
 _WIKILINK = re.compile(r"\[\[([^\]]+)\]\]")
 _KINDS = ("decision", "fact", "change", "question", "capstone")
 # A pile that spans this long with no supersede chain connecting its notes is
 # flagged "currency unverified" — the cheap graph heuristic that marks possible
 # stale/contradicting facts without any inference (design §5, read path).
 _STALE_GAP_SECS = 14 * 86400
-
-
-def _vault_dir() -> Path | None:
-    v = os.environ.get(_VAULT_ENV)
-    return Path(os.path.expanduser(v)) if v else None
 
 
 def _identity_namespace() -> str:
@@ -94,13 +90,17 @@ class MemoryPlugin(Plugin):
         self._db = None
         self._vault: Path | None = None
 
+    def _vault_dir(self) -> Path | None:
+        v = str(self.settings.get("notes_dir", "") or "").strip()
+        return Path(os.path.expanduser(v)) if v else None
+
     def available(self) -> bool:
         """Load only where a vault is configured — so this runs on the one hub
         box with ROOK_MEMORY_VAULT set, not on every worker in the fleet."""
-        return _vault_dir() is not None
+        return self._vault_dir() is not None
 
     async def start(self) -> None:
-        self._vault = _vault_dir()
+        self._vault = self._vault_dir()
         if self._vault is None:
             return
         for sub in ("shared", "entities"):
@@ -148,16 +148,16 @@ class MemoryPlugin(Plugin):
 
     # -- markdown notes ------------------------------------------------------
 
-    def _resolve(self, path: str, for_write: bool = False) -> tuple[Path | None, str | None]:
+    def _resolve(self, path: str, for_write: bool = False) -> Path:
         """Resolve a vault-relative note path, sandboxed to the vault. On write,
         force the path into the caller's own namespace (or shared/) unless it
         already targets an allowed namespace."""
         if self._vault is None:
-            return None, "memory vault not configured on this worker"
+            fail("memory vault not configured on this worker")
         parts = [p for p in str(path).replace("\\", "/").split("/") if p not in ("", ".")]
         parts = [_safe_seg(p) for p in parts if p != ".."]
         if not parts:
-            return None, "empty path"
+            fail("empty path")
         if not parts[-1].endswith(".md"):
             parts[-1] = parts[-1] + ".md"
         ns = parts[0]
@@ -170,24 +170,19 @@ class MemoryPlugin(Plugin):
         try:
             full.relative_to(self._vault.resolve())
         except ValueError:
-            return None, "path escapes vault"
-        return full, None
+            fail("path escapes vault")
+        return full
 
     @capability("get")
     def _get(self, path: str) -> dict:
         """Read a markdown note from the vault (read-open across the band).
         ``path`` is vault-relative, e.g. ``entities/calendar`` or
         ``hosts/nas-notes`` (``.md`` optional)."""
-        full, err = self._resolve(path, for_write=False)
-        if err:
-            return {"ok": False, "error": err}
+        full = self._resolve(path, for_write=False)
         if not full.exists():
-            return {"ok": False, "error": f"no such note: {path}"}
-        try:
-            return {"ok": True, "path": str(full.relative_to(self._vault)),
-                    "text": full.read_text(encoding="utf-8", errors="replace")}
-        except Exception as e:
-            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+            fail(f"no such note: {path}")
+        return {"ok": True, "path": str(full.relative_to(self._vault)),
+                "text": full.read_text(encoding="utf-8", errors="replace")}
 
     @capability("put")
     def _put(self, path: str, text: str, append: bool = False) -> dict:
@@ -196,19 +191,14 @@ class MemoryPlugin(Plugin):
         redirected under your namespace, never another agent's. Use
         ``entities/<thing>`` for current-state notes (amended in place) and your
         own namespace for working notes. ``[[wikilinks]]`` are preserved."""
-        full, err = self._resolve(path, for_write=True)
-        if err:
-            return {"ok": False, "error": err}
-        try:
-            full.parent.mkdir(parents=True, exist_ok=True)
-            if append and full.exists():
-                prev = full.read_text(encoding="utf-8", errors="replace")
-                text = prev + ("\n" if not prev.endswith("\n") else "") + str(text)
-            full.write_text(str(text), encoding="utf-8")
-            return {"ok": True, "path": str(full.relative_to(self._vault)),
-                    "namespace": _identity_namespace()}
-        except Exception as e:
-            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        full = self._resolve(path, for_write=True)
+        full.parent.mkdir(parents=True, exist_ok=True)
+        if append and full.exists():
+            prev = full.read_text(encoding="utf-8", errors="replace")
+            text = prev + ("\n" if not prev.endswith("\n") else "") + str(text)
+        full.write_text(str(text), encoding="utf-8")
+        return {"ok": True, "path": str(full.relative_to(self._vault)),
+                "namespace": _identity_namespace()}
 
     # -- post-its ------------------------------------------------------------
 
@@ -225,26 +215,20 @@ class MemoryPlugin(Plugin):
         conflicting notes. Post-its are immutable; correct by superseding, never
         editing."""
         if self._db is None:
-            return {"ok": False, "error": "memory vault not configured"}
-        claim = str(claim or "").strip()
-        if not claim:
-            return {"ok": False, "error": "empty claim"}
-        if kind not in _KINDS:
-            return {"ok": False, "error": f"kind must be one of {_KINDS}"}
+            fail("memory vault not configured")
+        claim = require_str(claim, "claim")
+        kind = require_choice(kind, "kind", _KINDS)
         subj = self._norm_list(subjects)
         subj += [s for s in _WIKILINK.findall(claim) if s not in subj]
         sup = self._norm_list(supersedes)
         pid = uuid.uuid4().hex[:16]
         row = (pid, round(time.time(), 3), _identity_namespace(), kind, claim,
                json.dumps(subj), json.dumps(sup), thread_id, provenance)
-        try:
-            with self._lock:
-                self._db.execute(
-                    "INSERT INTO postits (id, ts, author, kind, claim, subjects, "
-                    "supersedes, thread_id, provenance) VALUES (?,?,?,?,?,?,?,?,?)", row)
-                self._db.commit()
-        except Exception as e:
-            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        with self._lock:
+            self._db.execute(
+                "INSERT INTO postits (id, ts, author, kind, claim, subjects, "
+                "supersedes, thread_id, provenance) VALUES (?,?,?,?,?,?,?,?,?)", row)
+            self._db.commit()
         return {"ok": True, "id": pid, "kind": kind, "author": row[2],
                 "subjects": subj, "supersedes": sup}
 
@@ -261,34 +245,32 @@ class MemoryPlugin(Plugin):
         them, ``flags`` includes ``currency_unverified`` — treat the newest as
         provisional and consider asking the user which is current."""
         if self._db is None:
-            return {"ok": False, "error": "memory vault not configured"}
+            fail("memory vault not configured")
         q = str(query or "").strip()
+        limit = opt_int(limit, "limit", 20, min=1, max=200)
         pile: list[dict] = []
-        try:
-            with self._lock:
-                if q:
-                    fts = q.replace('"', '""')
-                    rows = self._db.execute(
-                        "SELECT p.id,p.ts,p.author,p.kind,p.claim,p.subjects,"
-                        "p.supersedes,p.thread_id,p.provenance FROM postits p "
-                        "JOIN postits_fts f ON p.rowid=f.rowid "
-                        "WHERE postits_fts MATCH ? ORDER BY p.ts LIMIT ?",
-                        (f'"{fts}"' if fts else fts, max(1, min(limit, 200)))).fetchall()
-                else:
-                    rows = self._db.execute(
-                        "SELECT id,ts,author,kind,claim,subjects,supersedes,"
-                        "thread_id,provenance FROM postits ORDER BY ts DESC LIMIT ?",
-                        (max(1, min(limit, 200)),)).fetchall()
-                    rows = list(reversed(rows))
-                # Build supersede reverse-map over the whole table (cheap) so we
-                # can mark which pile members are overridden.
-                superseded_by: dict[str, list[str]] = {}
-                for (sid, sup_json) in self._db.execute(
-                        "SELECT id, supersedes FROM postits WHERE supersedes != '[]'"):
-                    for victim in json.loads(sup_json or "[]"):
-                        superseded_by.setdefault(victim, []).append(sid)
-        except Exception as e:
-            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        with self._lock:
+            if q:
+                fts = q.replace('"', '""')
+                rows = self._db.execute(
+                    "SELECT p.id,p.ts,p.author,p.kind,p.claim,p.subjects,"
+                    "p.supersedes,p.thread_id,p.provenance FROM postits p "
+                    "JOIN postits_fts f ON p.rowid=f.rowid "
+                    "WHERE postits_fts MATCH ? ORDER BY p.ts LIMIT ?",
+                    (f'"{fts}"' if fts else fts, limit)).fetchall()
+            else:
+                rows = self._db.execute(
+                    "SELECT id,ts,author,kind,claim,subjects,supersedes,"
+                    "thread_id,provenance FROM postits ORDER BY ts DESC LIMIT ?",
+                    (limit,)).fetchall()
+                rows = list(reversed(rows))
+            # Build supersede reverse-map over the whole table (cheap) so we
+            # can mark which pile members are overridden.
+            superseded_by: dict[str, list[str]] = {}
+            for (sid, sup_json) in self._db.execute(
+                    "SELECT id, supersedes FROM postits WHERE supersedes != '[]'"):
+                for victim in json.loads(sup_json or "[]"):
+                    superseded_by.setdefault(victim, []).append(sid)
 
         for (pid, ts, author, kind, claim, subj, sup, thread, prov) in rows:
             e = {"id": pid, "ts": ts, "when": _ago(ts), "author": author,
@@ -311,7 +293,7 @@ class MemoryPlugin(Plugin):
         name. Entity notes are the durable 'state of the world'; sessions and
         post-its are the history behind them."""
         if self._vault is None:
-            return {"ok": False, "error": "memory vault not configured"}
+            fail("memory vault not configured")
         edir = self._vault / "entities"
         if name:
             return self._get(f"entities/{_safe_seg(name)}")
