@@ -113,3 +113,35 @@ def test_rook_tmux_is_retired():
     out = subprocess.run([sys.executable, "-m", "rook", "tmux", "list"], capture_output=True, text=True,
                          env={**os.environ, "PYTHONPATH": os.getcwd()})
     assert out.returncode == 2 and "Sessions page" in out.stderr
+
+
+def test_byte_ring_pages_by_absolute_cursor():
+    from rook.worker.ring import ByteRing
+    r = ByteRing(8)
+    r.append(b"abcdef")
+    assert r.slice(0, 4) == (b"abcd", 4, 0)
+    assert r.slice(4, 100) == (b"ef", 6, 0)
+    assert r.slice(6, 10) == (b"", 6, 0)
+    r.append(b"ghijkl")                     # 12 written, ring keeps the last 8
+    assert (r.start, r.total, len(r)) == (4, 12, 8)
+    assert r.slice(1, 3) == (b"efg", 7, 3)  # reader that fell behind
+    assert r.slice(99, 3) == (b"", 99, 0)
+    assert r.slice(-5, 2) == (b"ef", 6, 4)
+
+
+@pytest.mark.asyncio
+async def test_proc_read_reports_ring_overflow():
+    import asyncio
+    from rook.worker.plugins.proc import PLUGIN
+    p = PLUGIN()
+    started = await p._start(argv=[sys.executable, "-c", "print('x' * 20000)"], buffer_bytes=4096)
+    assert started["ok"]
+    h = started["handle"]
+    for _ in range(100):
+        r = await p._read(h, 0)
+        if r["eof"]:
+            break
+        await asyncio.sleep(0.05)
+    assert r["eof"] and r["dropped"] == r["total"] - 4096 and r["next_cursor"] == r["total"]
+    info = {s["handle"]: s for s in (await p._list())["sessions"]}[h]
+    assert info["buffered"] == 4096 and info["first_available_cursor"] == r["dropped"]

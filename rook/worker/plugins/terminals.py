@@ -45,6 +45,7 @@ from pathlib import Path
 
 from ..plugin import Plugin, capability, place
 from .. import conpty, termwire, winsec
+from ..ring import ByteRing
 from ..session_mirror import pid_alive
 
 log = logging.getLogger("rook.worker.plugins.terminals")
@@ -223,10 +224,7 @@ class _Term:
         self.wlock: asyncio.Lock | None = None
         self.cols = 120
         self.rows = 32
-        self.limit = ring
-        self.buf = bytearray()
-        self.buf_start = 0
-        self.total = 0
+        self.ring = ByteRing(ring)
         self.last_output = self.started
         self.last_input = 0.0
         self.waiters: set[asyncio.Future] = set()
@@ -243,14 +241,21 @@ class _Term:
         return self.ended is None
 
     def append(self, data: bytes) -> None:
-        self.buf.extend(data)
-        self.total += len(data)
+        self.ring.append(data)
         self.last_output = time.time()
-        if len(self.buf) > self.limit:
-            drop = len(self.buf) - self.limit
-            del self.buf[:drop]
-            self.buf_start += drop
         self.wake()
+
+    @property
+    def buf(self) -> bytearray:
+        return self.ring.buf
+
+    @property
+    def buf_start(self) -> int:
+        return self.ring.start
+
+    @property
+    def total(self) -> int:
+        return self.ring.total
 
     def wake(self) -> None:
         for fut in list(self.waiters):
@@ -269,13 +274,7 @@ class _Term:
             self.waiters.discard(fut)
 
     def slice(self, cursor: int, n: int) -> tuple[bytes, int, int]:
-        cursor = max(0, int(cursor))
-        dropped = 0
-        if cursor < self.buf_start:
-            dropped, cursor = self.buf_start - cursor, self.buf_start
-        off = cursor - self.buf_start
-        chunk = bytes(self.buf[off:off + n])
-        return chunk, cursor + len(chunk), dropped
+        return self.ring.slice(cursor, n)
 
     def info(self) -> dict:
         return {"id": self.id, "harness": self.harness, "title": self.title,
