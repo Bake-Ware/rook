@@ -38,6 +38,32 @@ def test_token_account_auth_and_live_revocation(portal, tmp_path):
         assert client.post(endpoint, headers=headers, json={'op':'create','name':'test','ttl':-1,'csrf':p.csrf}).status_code == 400
 
 
+
+def test_mcp_tokens_page_redirects_to_the_dashboard(portal, tmp_path):
+    """The MCP port's old server-rendered /tokens page is gone; a bookmark
+    lands on the dashboard's Tokens view instead of a second login."""
+    from rook.remote import setup_store
+    provider = TokenStore(persist_path=str(tmp_path/'tokens.json'))
+    app = Starlette(routes=build_account_token_routes(provider, accounts=portal.store))
+    with ASGIClient(app) as client:
+        response = client.get('/tokens', follow_redirects=False)
+        assert response.status_code == 303 and response.headers['Location'] == '/#tokens'
+        setup_store.save({'band_name': 'b', 'band_psk': 'alpha-bravo-charlie-delta-echo',
+                          'hub_public': 'hub.example.com:443', 'pyz_domain': 'rook.example.com'})
+        response = client.get('/tokens', headers={'Host': 'evil.example'}, follow_redirects=False)
+        assert response.headers['Location'] == 'https://rook.example.com/#tokens'
+        assert response.headers['Cache-Control'] == 'no-store'
+        for path in ('/tokens/auth', '/tokens/create', '/tokens/revoke', '/tokens/pairing'):
+            assert client.post(path, data={'password': 'x'}).status_code in (404, 405)
+
+
+def test_parse_data_url_bounds():
+    from rook.band_mcp.account_tokens import _parse_data_url
+    assert _parse_data_url('data:image/png;base64,aGk=') == ('image/png', b'hi')
+    assert _parse_data_url('data:text/html;base64,aGk=') == ('', None)
+    assert _parse_data_url('data:image/png;base64,***')[1] is None
+    assert _parse_data_url('data:image/png;base64,' + 'A' * 360_004)[1] is None
+
 @pytest.mark.asyncio
 async def test_proxy_checks_origin_and_preserves_account_boundary(portal):
     p = portal

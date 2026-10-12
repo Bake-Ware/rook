@@ -1,12 +1,44 @@
-"""Dashboard token administration against the MCP process's live token store."""
+"""Dashboard token administration against the MCP process's live token store.
+
+The MCP port used to serve its own password-gated ``/tokens`` page. The
+dashboard's Tokens view (``rook/web/tokens.js`` over ``/account/tokens/api``)
+replaced it; ``/tokens`` here now only sends a browser to that view."""
+import base64
 import hmac
 import re
 
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, RedirectResponse
 from starlette.routing import Route
 
 from ..remote.accounts import AccountStore
 from ..remote.account_web import NO_STORE
+
+
+def _parse_data_url(u: str) -> tuple[str, bytes | None]:
+    """``data:image/png;base64,…`` → (mime, bytes); (``""``, None) if malformed
+    or over 256 KB decoded."""
+    if not u.startswith("data:image/") or ";base64," not in u:
+        return "", None
+    head, b64 = u.split(";base64,", 1)
+    mime = head[5:]
+    if len(b64) > 360_000:
+        return mime, None
+    try:
+        return mime, base64.b64decode(b64, validate=True)
+    except Exception:
+        return mime, None
+
+
+def dashboard_tokens_url() -> str:
+    """Where the Tokens view lives. The installer domain is the dashboard's
+    public host (operator configuration, never a request's Host header);
+    without one, a same-origin path suits the documented layout where one
+    domain fronts both services."""
+    from ..remote import setup_store
+    domain = setup_store.load().get("pyz_domain", "")
+    if re.fullmatch(r"[A-Za-z0-9.-]+(?::[0-9]+)?", domain or ""):
+        return f"https://{domain}/#tokens"
+    return "/#tokens"
 
 
 def build_account_token_routes(provider, chat=None, accounts=None):
@@ -77,7 +109,6 @@ def build_account_token_routes(provider, chat=None, accounts=None):
                 if op == 'avatar_clear':
                     chat.clear_avatar(ident)
                 else:
-                    from .api_tokens_ui import _parse_data_url
                     mime, raw = _parse_data_url(str(data.get('data', '')))
                     if raw is None:
                         raise ValueError('Choose a valid image.')
@@ -89,4 +120,8 @@ def build_account_token_routes(provider, chat=None, accounts=None):
         except (ValueError, TypeError) as error:
             return response({'error': str(error)}, 400)
 
-    return [Route('/tokens/account-api', api, methods=['GET', 'POST'])]
+    async def legacy_page(request):
+        return RedirectResponse(dashboard_tokens_url(), status_code=303, headers=NO_STORE)
+
+    return [Route('/tokens/account-api', api, methods=['GET', 'POST']),
+            Route('/tokens', legacy_page, methods=['GET'])]

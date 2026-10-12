@@ -29,7 +29,6 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import AnyHttpUrl
 
-from .api_tokens_ui import build_api_token_routes
 from .client import BandClient, MultiBandClient
 from .tokens import StoreTokenVerifier, TokenStore
 
@@ -48,9 +47,9 @@ def build_server(client: "BandClient | MultiBandClient",
     """Build the FastMCP server. Bearer-token-only auth — no OAuth.
 
     The server validates ``Authorization: Bearer <token>`` against either a
-    fixed ``static_token`` or a token minted through the password-gated
-    ``/tokens`` admin page (``admin_password`` gates that page; tokens
-    persist at ``persist_path``). No OAuth authorization-server routes
+    fixed ``static_token`` or a token minted on the dashboard's Tokens view
+    (tokens persist at ``persist_path``; ``admin_password`` is accepted for
+    old callers and ignored). No OAuth authorization-server routes
     (register/authorize/token) are ever mounted — clients just carry the
     header, no login/registration dance.
     """
@@ -62,7 +61,7 @@ def build_server(client: "BandClient | MultiBandClient",
         ],
     )
 
-    store = TokenStore(admin_password=admin_password, persist_path=persist_path,
+    store = TokenStore(persist_path=persist_path,
                        static_token=static_token or None)
     token_verifier = StoreTokenVerifier(store)
 
@@ -1702,7 +1701,6 @@ async def _amain(args) -> None:
         client,
         allowed_hosts=allowed_hosts,
         public_url=args.public_url,
-        admin_password=args.admin_password,
         persist_path=args.persist_path,
         static_token=args.static_token or None,
         journal_path=args.journal_path or None,
@@ -1782,16 +1780,12 @@ async def _amain(args) -> None:
     for route in reversed(build_account_token_routes(store, getattr(mcp, "_rook_chat", None))):
         app.router.routes.insert(0, route)
 
-    # /tokens admin UI (mint/list/revoke bearer tokens).
-    for r in reversed(build_api_token_routes(store, getattr(mcp, "_rook_chat", None))):
-        app.router.routes.insert(0, r)
-
     # Thin OAuth front-door for claude.ai's web connector (which won't take a
     # bare bearer header). The client secret it asks for IS a rook token, and
     # the access_token it gets back is that same token — no separate OAuth
     # lifecycle, tokens stay the single source of truth. Wraps the whole app so
     # /authorize, /token, and the auth-server metadata are always public;
-    # everything else (/mcp, /tokens) passes straight through. See oauth_shim.
+    # everything else (/mcp, /tokens/account-api) passes straight through. See oauth_shim.
     if args.public_url:
         from .oauth_shim import OAuthShim
         app = OAuthShim(app, store, args.public_url)
@@ -1849,7 +1843,9 @@ def main() -> None:
                          "client secret.")
     ap.add_argument("--admin-password",
                     default=os.environ.get("ROOK_MCP_AUTH_PASSWORD", ""),
-                    help="admin password gating the /tokens mint/revoke UI.")
+                    # The MCP-port /tokens page it gated is gone (tokens are
+                    # minted on the dashboard); accepted so old units start.
+                    help=argparse.SUPPRESS)
     ap.add_argument("--persist-path",
                     default=os.environ.get("ROOK_MCP_PERSIST")
                     or data_path("oauth.json", "/var/lib/rook-band-mcp/oauth.json"),
@@ -1860,8 +1856,8 @@ def main() -> None:
                     default=os.environ.get("ROOK_MCP_STATIC_TOKEN", ""),
                     help="fixed bearer token clients send as "
                          "'Authorization: Bearer <token>' — the simplest "
-                         "single-integration auth path. Tokens minted via "
-                         "/tokens also work at the same time.")
+                         "single-integration auth path. Tokens minted on the "
+                         "dashboard's Tokens page also work at the same time.")
     ap.add_argument("--journal-path",
                     default=os.environ.get("ROOK_MCP_JOURNAL", ""),
                     help="sqlite file for the call journal (default: "
@@ -1885,6 +1881,11 @@ def main() -> None:
     # Zero or more seed PSKs (comma-separated). Without one the MCP serves the
     # bands in the shared enrollment database, like the dashboard (settings P3).
     args.psks = [p.strip() for p in (args.psk or "").split(",") if p.strip()]
+
+    if args.admin_password:
+        print("rook-mcp: ROOK_MCP_AUTH_PASSWORD/--admin-password is ignored: the "
+              "MCP /tokens page was removed; mint tokens on the dashboard's Tokens "
+              "page (operator account).", file=sys.stderr)
 
     level = logging.WARNING - 10 * args.verbose
     logging.basicConfig(level=max(level, logging.DEBUG),

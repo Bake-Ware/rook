@@ -3,10 +3,9 @@
 Two ways to authenticate:
   * a single fixed ``static_token`` (env ``ROOK_MCP_STATIC_TOKEN``) — paste it
     once into a client's Authorization header, done.
-  * long-lived, named, revocable per-agent tokens minted through the
-    password-gated ``/tokens`` admin page (see :mod:`api_tokens_ui`) — for
-    headless agents that want their own bearer instead of sharing the fixed
-    one.
+  * long-lived, named, revocable per-agent tokens minted on the dashboard's
+    Tokens page (operator account; see :mod:`account_tokens`) — for headless
+    agents that want their own bearer instead of sharing the fixed one.
 
 No client registration, no authorize/consent screen, no code exchange —
 FastMCP is handed a plain :class:`mcp.server.auth.provider.TokenVerifier` and
@@ -25,8 +24,6 @@ from typing import Any
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 
 log = logging.getLogger("rook.band_mcp.tokens")
-
-_ADMIN_SESSION_TTL = 1800  # 30 min — UI-only session for /tokens page
 
 #: Token roles (permissions.md 1). Tokens minted before roles existed are
 #: ``agent`` (compatibility: they keep everything, admin moves to audit).
@@ -61,25 +58,17 @@ class StaticTokenVerifier(TokenVerifier):
 
 class TokenStore:
     """Fixed static token + a persisted set of named/revocable API tokens.
+    Minting and revoking happen through the dashboard's operator-account
+    Tokens API (:mod:`account_tokens`); there is no password of its own."""
 
-    ``admin_password`` gates the ``/tokens`` management page (mint/list/
-    revoke). If unset, the page's login can never succeed — no admin
-    password means no way to mint new tokens through the UI, but existing
-    persisted tokens and the static token still verify fine.
-    """
-
-    def __init__(self, admin_password: str | None = None,
-                 persist_path: str | None = None,
+    def __init__(self, persist_path: str | None = None,
                  static_token: str | None = None) -> None:
-        self._password = admin_password or None
         self._persist_path = persist_path
         self._static_token = static_token if (static_token and len(static_token) >= 16) else None
         # API tokens for headless agents. Keyed by full token. Each value:
         #   {token, id, agent_id, name, scopes, created_at, last_used_at, expires_at}
         # expires_at = None means no expiry.
         self._api_tokens: dict[str, dict[str, Any]] = {}
-        # Admin UI sessions for /tokens page. session_id -> expires_at.
-        self._admin_sessions: dict[str, int] = {}
         self._lock = asyncio.Lock()
 
         if persist_path:
@@ -145,11 +134,6 @@ class TokenStore:
 
     def _now(self) -> int:
         return int(time.time())
-
-    def verify_password(self, candidate: str) -> bool:
-        if not self._password:
-            return False
-        return secrets.compare_digest(self._password, candidate or "")
 
     # -- bearer verification --------------------------------------------------
 
@@ -299,35 +283,6 @@ class TokenStore:
                          token_id, entry.get("name"))
                 return True
         return False
-
-    # -- admin UI sessions ---------------------------------------------------
-
-    def admin_login(self, password: str) -> str | None:
-        if not self.verify_password(password):
-            return None
-        now = self._now()
-        for old in [s for s, exp in self._admin_sessions.items() if exp < now]:
-            self._admin_sessions.pop(old, None)
-        if len(self._admin_sessions) >= 256:
-            self._admin_sessions.pop(next(iter(self._admin_sessions)))
-        sid = secrets.token_urlsafe(24)
-        self._admin_sessions[sid] = self._now() + _ADMIN_SESSION_TTL
-        return sid
-
-    def admin_session_ok(self, session_id: str | None) -> bool:
-        if not session_id:
-            return False
-        exp = self._admin_sessions.get(session_id)
-        if exp is None:
-            return False
-        if exp < self._now():
-            self._admin_sessions.pop(session_id, None)
-            return False
-        return True
-
-    def admin_logout(self, session_id: str | None) -> None:
-        if session_id:
-            self._admin_sessions.pop(session_id, None)
 
 
 class StoreTokenVerifier(TokenVerifier):

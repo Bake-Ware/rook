@@ -14,6 +14,11 @@ Preparation for public use.
   `/worker.py`) and the dashboard's `/ws` endpoint it connected to. Every
   installer has deployed `band-worker.pyz` (which joins over `/band`) for a
   long time; `--token` is still accepted and ignored so old units start.
+- Removed the MCP port's password-gated, server-rendered `/tokens` page and
+  its form routes; the dashboard's Tokens view (and Account -> Band access
+  for pairing and PSK rotation) replaced it. `/tokens` on the MCP port now
+  redirects to `https://<installer domain>/#tokens`. `ROOK_MCP_AUTH_PASSWORD`
+  / `--admin-password` are ignored (a notice is printed when set).
 
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps

@@ -11,13 +11,10 @@ from unittest.mock import Mock
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
-from starlette.applications import Starlette
-from starlette.testclient import TestClient as ASGIClient
 
 from rook.remote import enrollment, setup_store
 from rook.remote.enrollment import EnrollmentStore, JoinDenied, JoinLimited
 from rook.remote.bootstrap import CombinedServer, InstallerAccessLogger
-from rook.band_mcp.api_tokens_ui import build_api_token_routes
 from rook.band_mcp.client import MultiBandClient
 
 
@@ -211,38 +208,6 @@ def test_application_access_log_does_not_contain_query_code():
                               path_qs="/worker?band=secret")
     InstallerAccessLogger(logger, "").log(request, SimpleNamespace(status=200), 0.1)
     assert "secret" not in str(logger.mock_calls)
-
-
-class AdminProvider:
-    def admin_session_ok(self, sid):
-        return sid == "admin-session"
-
-    def list_api_tokens(self):
-        return []
-
-
-def test_tokens_page_pairing_controls_require_session_and_same_origin(store):
-    app = Starlette(routes=build_api_token_routes(AdminProvider()))
-    with ASGIClient(app) as client:
-        uid = primary(store)["id"]
-        request = {"band_id": uid}
-        headers = {"X-Rook-Request": "tokens"}
-        assert client.post("/tokens/pairing", json=request, headers=headers).status_code == 401
-        client.cookies.set("rook_admin", "admin-session")
-        assert client.post("/tokens/pairing", json=request).status_code == 403
-        assert client.post("/tokens/pairing", json=request, headers={**headers, "Origin": "https://evil.example"}).status_code == 403
-        page = client.get("/tokens")
-        assert 'id="pair-code"' in page.text and 'id="pair-rotate"' in page.text
-        assert page.headers["Cache-Control"] == "no-store"
-        response = client.post("/tokens/pairing", json=request, headers=headers)
-        assert response.status_code == 200
-        grant = response.json()
-        assert "https://rook.example.com/worker?band=" in grant["command"]
-        assert primary(store)["psk"] not in response.text
-        response = client.post("/tokens/bands/rotate", json=request, headers=headers)
-        assert response.status_code == 200
-        with pytest.raises(JoinDenied):
-            store.redeem(grant["code"], "peer")
 
 
 @pytest.mark.asyncio

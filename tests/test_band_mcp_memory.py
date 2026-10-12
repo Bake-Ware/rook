@@ -173,17 +173,6 @@ async def test_oauth_codes_bounded_and_expired_collected(monkeypatch):
         assert len(shim._codes)==1
 
 
-def test_admin_sessions_bounded_and_expired_collected():
-    from rook.band_mcp.tokens import TokenStore
-    password=secrets.token_hex(32)
-    store=TokenStore(admin_password=password)
-    for _ in range(300): store.admin_login(password)
-    assert len(store._admin_sessions)==256
-    for sid in store._admin_sessions: store._admin_sessions[sid]=0
-    store.admin_login(password)
-    assert len(store._admin_sessions)==1
-
-
 def test_console_unterminated_output_is_bounded_and_preserved(tmp_path):
     from rook.band_mcp.console_rooms import ConsoleStore, MAX_LINE
     store=ConsoleStore(str(tmp_path/'console.db'))

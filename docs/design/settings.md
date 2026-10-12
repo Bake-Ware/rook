@@ -87,9 +87,9 @@ Entry point: `rook/band_mcp/server.py:main`.
 | `--bind` / `ROOK_MCP_BIND` | flag, env | `127.0.0.1:8765` | hub | uvicorn | no | proc |
 | `--allowed-hosts` / `ROOK_ALLOWED_HOSTS` | flag, env | empty (loopback only) | hub | transport security | no | proc |
 | `--public-url` / `ROOK_MCP_PUBLIC_URL` | flag, env | empty (OAuth shim off) | hub | resource metadata, `oauth_shim` | no | proc |
-| `--admin-password` / `ROOK_MCP_AUTH_PASSWORD` | flag, env | empty | hub | `TokenStore` (`/tokens` page on the MCP port) | **yes** | proc |
+| `--admin-password` / `ROOK_MCP_AUTH_PASSWORD` | flag, env | empty | hub | ignored: the MCP-port `/tokens` page was removed (mint on the dashboard); still accepted so old units start | no | proc |
 | `--persist-path` / `ROOK_MCP_PERSIST` | flag, env | `$ROOK_DATA_DIR/oauth.json`, else `/var/lib/rook-band-mcp/oauth.json` | hub | `TokenStore`; its directory also holds the other stores unless `--journal-path` moves them | holds secrets | proc |
-| `--static-token` / `ROOK_MCP_STATIC_TOKEN` | flag, env | empty | hub | `TokenStore`, `api_tokens_ui`, watchdog | **yes** | proc |
+| `--static-token` / `ROOK_MCP_STATIC_TOKEN` | flag, env | empty | hub | `TokenStore`, watchdog | **yes** | proc |
 | `--journal-path` / `ROOK_MCP_JOURNAL` | flag, env | `journal.db` next to `--persist-path` | hub | `Journal`; **its directory decides** where `sessions.db`, `chat.db`, `console.db`, `guidance.db`, `vault.db`, `knowledge.db` go | no | proc |
 | `-v` | flag | warning level | hub | logging | no | proc |
 | `ROOK_KNOWLEDGE` | env | `0` (off) | hub | `server._build` (knowledge wiki, tasks, hygiene) | no | proc |
