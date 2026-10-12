@@ -20,10 +20,16 @@ from .plugin import Plugin
 from .registry import CapabilityRegistry
 from ..core.registry import CapTimeout
 from .transports.base import Transport
+from .wire import envelope
 
 log = logging.getLogger("rook.worker.core")
 
 _WORKER_ID_FILE = worker_state_path("worker_id")
+
+# With ROOK_ANNOUNCE_CAPS_HASH=1, every this-many-th announce still carries the
+# full cap list (~5 minutes at the default 30 s interval), so a client that
+# missed a change or joined late converges even without fetching.
+ANNOUNCE_FULL_EVERY = 10
 
 
 def stable_worker_id() -> str:
@@ -110,6 +116,25 @@ class Worker:
         # plugin registers a handler that claims those before JSON parsing.
         # Each returns True if it consumed the payload.
         self._binary_handlers: list = []
+        # Wire-level extensions (compression, Drop) need a transport that
+        # frames for the band (its codec inflates and re-wraps on the far
+        # side); in-process transports carry plain JSON and never get them.
+        self._wire = getattr(transport, "codec", None) is not None
+        # Large replies served over telesthete Drop (requests that accept
+        # "drop"); needs a real band id to frame Drop packets.
+        self._reply_drops = None
+        if self._wire and isinstance(band_id, (bytes, bytearray)) and len(band_id) == 16:
+            from .ota_drop import DropReplyServer
+            self._reply_drops = DropReplyServer(bytes(band_id), self.send_raw,
+                                                worker_id=self.worker_id)
+        # Addressed routing (telesthete SPEC §10.1): declare our worker_id's
+        # route id so replies and targeted calls can reach us alone.
+        set_route = getattr(transport, "set_route", None)
+        if callable(set_route) and envelope.routing_enabled():
+            set_route(self.worker_id)
+        # Announce trimming state (ROOK_ANNOUNCE_CAPS_HASH, core spec 14.4).
+        self._announces = 0
+        self._full_caps_hash: str | None = None
         # Let plugins that need to send/receive raw band traffic (not just
         # answer capability calls) grab a handle to us. Opt-in via bind_worker;
         # the host also runs it for plugins enabled or reloaded at runtime.
@@ -189,6 +214,9 @@ class Worker:
                      "identity": f"worker:{self.name}"}
         if target:
             msg["target"] = target
+        rid = getattr(self.transport, "route_id", None)
+        if rid:
+            msg["rr"] = rid  # reply addressed to us (old repliers ignore it)
         try:
             await self.transport.send(json.dumps(msg).encode())
             return await asyncio.wait_for(fut, timeout)
@@ -223,7 +251,7 @@ class Worker:
         return done
 
     async def _on_connect(self) -> None:
-        await self.announce()
+        await self.announce(full=True)
         from . import wconfig
         if wconfig.unresolved() and (self._secret_task is None or self._secret_task.done()):
             self._secret_task = asyncio.ensure_future(self._resolve_later())
@@ -244,10 +272,35 @@ class Worker:
         first crack at every inbound payload; returning True consumes it."""
         self._binary_handlers.append(handler)
 
-    async def send_raw(self, packet_bytes: bytes) -> None:
+    async def send_raw(self, packet_bytes: bytes, channel_id: int = 0) -> None:
         """Send an already-framed binary packet onto the band (used by binary
-        sub-protocols like OTA-over-Drop)."""
-        await self.transport.send(packet_bytes)
+        sub-protocols like OTA-over-Drop). ``channel_id`` addresses it to a
+        declared route (0 = broadcast)."""
+        await self._send(packet_bytes, channel_id)
+
+    async def _send(self, payload: bytes, channel_id: int = 0) -> None:
+        # Address only through a transport that routes (it declared a route
+        # id): others — older transports, embedders' and tests' doubles —
+        # take send(payload) alone, and get the broadcast they always did.
+        if channel_id and getattr(self.transport, "route_id", None) is not None:
+            await self.transport.send(payload, channel_id=channel_id)
+        else:
+            await self.transport.send(payload)
+
+    def features(self) -> list[str]:
+        """Envelope extensions this worker speaks (announce ``features``,
+        core spec 14). Callers use one only toward a worker that lists it."""
+        t = self.transport
+        out = []
+        if getattr(t, "route_id", None) is not None:
+            out.append(envelope.F_ROUTE)
+        if self._reply_drops is not None:
+            out.append(envelope.F_DROP)
+        if self._wire:
+            out.append(envelope.F_Z)            # its codec inflates requests
+        if callable(getattr(t, "send_native", None)):
+            out.append(envelope.F_DROP_NATIVE)  # its codec opens native DROP
+        return sorted(out)
 
     async def _on_message(self, payload: bytes, peer_id: tuple) -> None:
         """Top-level dispatch. Capability requests look like:
@@ -266,6 +319,9 @@ class Worker:
         """
         # Binary sub-protocols (OTA-over-Drop, …) get first crack — they ride
         # non-JSON telesthete packets that json.loads would just reject.
+        # Pulls of our own large replies (Drop REQUEST/DONE) come first.
+        if self._reply_drops is not None and self._reply_drops.feed(payload):
+            return
         for handler in self._binary_handlers:
             try:
                 if handler(payload, peer_id):
@@ -298,6 +354,10 @@ class Worker:
         target = msg.get("target")
         if target and target != self.worker_id:
             return  # addressed to another worker
+        # How the caller wants its reply (rr / accept, core spec 14); read by
+        # _reply and by caps that answer over a side channel. Set for every
+        # request so nothing carries over from a previous one.
+        envelope.current_reply_opts.set(envelope.reply_opts(msg))
 
         msg_id = msg.get("id")
         # Caller identity carried in the envelope (band client stamps it from
@@ -374,10 +434,42 @@ class Worker:
         body = {"from": self.worker_id, **body}
         if msg_id is not None:
             body = {"id": msg_id, **body}
+        opts = envelope.current_reply_opts.get()
         try:
-            await self.transport.send(json.dumps(body).encode())
+            payload = self._encode_reply(msg_id, body, opts)
+            await self._send(payload, opts.route)
         except Exception:
             log.exception("reply send failed")
+
+    def _encode_reply(self, msg_id: str | None, body: dict,
+                      opts: "envelope.ReplyOpts") -> bytes:
+        """Serialize a reply, applying only what the request negotiated: the
+        size cap (always), Drop for a large reply (``accept: drop``), and
+        compression (``accept: z``). A request without ``accept`` gets the
+        plain JSON reply it always got."""
+        payload = json.dumps(body).encode()
+        limit = envelope.max_reply_bytes()
+        if len(payload) > limit:
+            log.warning("reply to %s is %d bytes, over the %d-byte cap; sending an error",
+                        msg_id, len(payload), limit)
+            err = {k: body[k] for k in ("id", "from") if k in body}
+            err.update(ok=False, error=(f"reply too large: {len(payload)} bytes exceeds "
+                                        f"ROOK_BAND_MAX_REPLY_BYTES ({limit})"))
+            payload = json.dumps(err).encode()
+        else:
+            threshold = envelope.drop_threshold()
+            if (opts.drop and msg_id is not None and self._reply_drops is not None
+                    and threshold and len(payload) > threshold):
+                blob = envelope.compress(payload) if opts.z else payload  # _wire implied
+                # Routed pass-through when the caller has a route (only it gets
+                # the chunks); native DROP frames when it can't be addressed.
+                native = (getattr(self.transport, "send_native", None)
+                          if opts.drop_native and not opts.route else None)
+                desc = self._reply_drops.serve(msg_id, blob, route=opts.route, native=native)
+                if desc is not None:
+                    payload = json.dumps({"id": msg_id, "from": self.worker_id,
+                                          "ok": body.get("ok"), "drop": desc}).encode()
+        return envelope.compress(payload) if opts.z and self._wire else payload
 
     async def call(self, cap: str, target: str | None = None, **kwargs) -> str:
         """Send an outbound capability call to the band."""
@@ -396,14 +488,19 @@ class Worker:
         sending it."""
         return self.registry.describe(prefix)
 
-    async def announce(self) -> None:
+    async def announce(self, full: bool = False) -> None:
         from ._build_info import BUILD, VERSION
+        caps = self.registry.list()
+        chash = envelope.caps_hash(caps)
         msg = {
             "kind": "announce",
             "worker_id": self.worker_id,
             "name": self.name,
             "description": self.metadata.description,
-            "caps": self.registry.list(),
+            "caps": caps,
+            # Additive keys (core spec 14): older receivers ignore them.
+            "caps_hash": chash,
+            "features": self.features(),
             "plugins": [p.NAMESPACE for p in self.plugins],
             "version": VERSION,
             "build": BUILD,
@@ -421,6 +518,15 @@ class Worker:
         hb = self.host.heartbeats()
         if hb:
             msg["hb"] = hb
+        # Hash-only announces (opt-in): full caps on the first announce, on a
+        # change, after a reconnect and every ANNOUNCE_FULL_EVERY-th one.
+        if (envelope.caps_hash_announces() and not full
+                and chash == self._full_caps_hash
+                and self._announces % ANNOUNCE_FULL_EVERY != 0):
+            del msg["caps"]
+        else:
+            self._full_caps_hash = chash
+        self._announces += 1
         await self.transport.send(json.dumps(msg).encode())
 
     async def _announce_loop(self) -> None:

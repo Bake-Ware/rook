@@ -116,7 +116,9 @@ class SelfUpdatePlugin(Plugin):
 
     def _ota_binary(self, payload: bytes, peer_id: tuple) -> bool:
         """Feed inbound telesthete DROP packets to the active receiver. Returns
-        True (consumed) for any DROP-channel packet on our band."""
+        True (consumed) for any DROP-channel packet on our band. Native DROP
+        frames arrive here already re-wrapped by the codec, so both forms
+        look the same."""
         if self._worker is None or self._ota_rx is None:
             return False
         from ..ota_drop import is_drop_packet
@@ -151,10 +153,14 @@ class SelfUpdatePlugin(Plugin):
             return {"ok": False, "error": "an in-band update is already in progress"}
 
         self._ota_manifest = dict(manifest)
+        # The controller's route (its request's ``rr``): our REQUEST/DONE go
+        # to it alone on a routing hub. 0 = broadcast, as before.
+        from ..wire.envelope import current_reply_opts
         rx = OtaDropReceiver(
             band_id=self._worker.transport.band_id,
             drop_id=int(drop_id),
             send_coro=self._worker.send_raw,
+            route=current_reply_opts.get().route,
         )
         rx.on_complete(self._on_ota_complete)
         rx.start()
