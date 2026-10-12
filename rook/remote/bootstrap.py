@@ -652,7 +652,7 @@ echo "[rook] done."
 
 
 # `iex (irm https://<host>/install?os=windows)` — install the `rook` band CLI
-# (the terminal control panel) on Windows. The Linux path is `.../rook | bash`;
+# (the terminal control panel) on Windows. The Linux path is `.../install | bash`;
 # this is its PowerShell equivalent. Uses .replace("__DOMAIN__", …) rather than
 # str.format so the PowerShell braces don't need doubling.
 PS_CLI_BOOTSTRAP = r'''# R00K Band CLI (rook) installer - Windows
@@ -1084,7 +1084,9 @@ class CombinedServer:
         self._app.router.add_get("/apk", self._worker_apk)
         self._app.router.add_get("/apk.json", self._worker_apk_manifest)
         self._app.router.add_get("/install", self._installer)    # unified installer (worker | cli | both)
-        self._app.router.add_get("/rook", self._installer)       # alias (back-compat)
+        # Pre-/install URL, still in users' saved one-liners: not a peer, so
+        # the rook.core.compat floor doesn't retire it.
+        self._app.router.add_get("/rook", self._installer)
         self._app.router.add_get("/rook.py", self._band_cli)     # the standalone CLI script itself
         self._app.router.add_get("/hub", self._hub_installer)    # stand up a telesthete-hub (band relay)
         self._app.router.add_get("/telesthete-hub", self._hub_binary)  # prebuilt hub binary (arch-gated)
@@ -2281,7 +2283,7 @@ class CombinedServer:
 
     async def _band_cli(self, request: web.Request) -> web.Response:
         """Serve the `rook band` terminal control panel as a standalone script
-        (the payload the /rook installer downloads)."""
+        (the payload the /install installer downloads)."""
         p = Path(__file__).resolve().parents[1] / "cli" / "band_tui.py"
         try:
             text = p.read_text()

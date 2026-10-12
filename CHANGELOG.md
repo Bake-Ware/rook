@@ -105,6 +105,33 @@ Preparation for public use.
   escapes `'` too. Relative times read the same everywhere ("5 min ago";
   Knowledge and Settings used to say "5m ago").
 
+### Compatibility cleanup
+- Cap errors raised through the plugin kit (`fail()`, `CapError`) reach the
+  caller as the bare message (`file not found: /x`), not
+  `CapError: file not found: /x`, and no longer log a traceback on the
+  worker or hub. `bad args:` replies and unexpected exceptions are unchanged.
+- `rook/core/compat.py` sets the supported-peer floor: pyz workers from
+  build 230, the Android app from 0.4.7, hubs from build 230. Removed with
+  it: the hub's own `caps.describe(prefix=)` filtering (the worker filters),
+  the v1 wrapper around deauth orders (the hub sends the bare v2 order;
+  workers still accept a wrapped one), the `rook band` CLI's fallbacks for
+  hubs without `/api/band/whoami` and `/api/band/overview`, and the classic
+  Work view's `read_page` fallback. Firmware, Android-lagging caps and
+  stored-state migrations are kept.
+- `claude-history.send`, `claude-history.resume` and `codex-history.resume`
+  say they are deprecated in their own descriptions (use `sessions.send` and
+  `work.stream.open(resume=)`). Task hygiene nudges go through
+  `sessions.send`.
+- The quickstart, test-hub and hub-deploy e2e scripts and `compose.yaml` no
+  longer generate or pass `ROOK_MCP_AUTH_PASSWORD`.
+- State files are written atomically everywhere: `setup.json` (band PSK),
+  the Telegram offset and the home-agent cursor were written in place, and
+  `setup.json` was briefly world-readable before its chmod. Modes are kept
+  (secrets and worker config 0600).
+- Remove next release: the hidden, ignored `rook-remote --token` and
+  `rook-mcp --admin-password` / `ROOK_MCP_AUTH_PASSWORD` (and its
+  `core.mcp.admin_password` settings entry).
+
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps
   `sessions.list`, `sessions.follow`, `sessions.send` and `sessions.stop`
