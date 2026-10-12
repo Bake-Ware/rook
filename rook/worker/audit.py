@@ -19,12 +19,12 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 import threading
 import time
 
 from ..core.paths import worker_state_dir
+from ..core.db import atomic_write_text
 
 log = logging.getLogger("rook.worker.audit")
 
@@ -124,10 +124,8 @@ def _maybe_compact() -> None:
         if len(lines) <= _KEEP_LINES:
             return
         kept = lines[-_KEEP_LINES:]
-        tmp = _AUDIT_PATH.with_suffix(".jsonl.tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
-            f.writelines(kept)
-        os.replace(tmp, _AUDIT_PATH)
+        mode = _AUDIT_PATH.stat().st_mode & 0o777  # keep whatever the appends created
+        atomic_write_text(_AUDIT_PATH, "".join(kept), mode, fsync=False)
         log.info("audit compacted: %d -> %d lines", len(lines), len(kept))
     except Exception:
         log.debug("audit compact failed", exc_info=True)

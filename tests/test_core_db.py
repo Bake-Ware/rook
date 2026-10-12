@@ -173,3 +173,54 @@ def test_work_stores_share_one_file_both_ways(tmp_path):
     rt2 = RuntimeStore(path)                    # worker code on the hub's file
     assert rt2.claim("s1", "c3") and rt2.result("s1", "c3") == {"status": "accepted"}
     assert _mode(path) == 0o600
+
+
+# -- stores that now write through atomic_write_* ------------------------------
+
+def _no_temp(d):
+    return not [p.name for p in d.iterdir() if p.name.endswith(".tmp")]
+
+
+def test_setup_store_writes_are_atomic_and_private(tmp_path, monkeypatch):
+    """setup.json holds the band PSK: every writer goes through one atomic,
+    0600 write and keeps the keys the others own."""
+    from rook.remote import setup_store
+    p = tmp_path / "setup.json"
+    monkeypatch.setenv("ROOK_SETUP_PATH", str(p))
+    setup_store.save({"band_name": "home", "band_psk": "psk-one"})
+    assert _mode(p) == 0o600
+    setup_store.save_bands([{"name": "lab", "psk": "psk-two"}])
+    setup_store.save_bans([{"name": "old-box", "reason": "lost"}])
+    data = json.loads(p.read_text(encoding="utf-8"))
+    assert data["band_psk"] == "psk-one" and data["bands"][0]["psk"] == "psk-two"
+    assert data["bans"][0]["name"] == "old-box"
+    assert _mode(p) == 0o600 and _no_temp(tmp_path)
+
+
+def test_policy_mask_token_and_wconfig_keep_their_modes(tmp_path, monkeypatch):
+    from rook.band_mcp.mask_web import ensure_token
+    from rook.hub.policy import DEFAULT_POLICY, PolicyStore
+    from rook.worker import wconfig
+
+    store = PolicyStore(str(tmp_path / "policy.json"))
+    store.save(DEFAULT_POLICY)
+    assert _mode(tmp_path / "policy.json") == 0o600
+
+    tok = ensure_token(str(tmp_path))
+    assert len(tok) == 64 and _mode(tmp_path / "mask.token") == 0o600
+
+    monkeypatch.setattr(wconfig, "_DIR", tmp_path)
+    wconfig._write(tmp_path / "config.json", {"env": {"ROOK_X": "secret"}})
+    assert _mode(tmp_path / "config.json") == 0o600
+    assert _no_temp(tmp_path)
+
+
+def test_hubdeploy_dropins_stay_world_readable(tmp_path):
+    """systemd drop-ins must stay readable (0644) after the switch to the
+    shared helper, whose default mode is 0600."""
+    from types import SimpleNamespace
+    from rook.hubdeploy.selector import Selector
+    p = tmp_path / "svc.d" / "rook.conf"
+    sel = Selector(SimpleNamespace(mode="systemd"))
+    sel.restore([{"kind": "file", "path": str(p), "content": "[Service]\n"}])
+    assert p.read_text() == "[Service]\n" and _mode(p) == 0o644

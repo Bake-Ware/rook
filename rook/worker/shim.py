@@ -46,6 +46,7 @@ import sys
 import time
 from pathlib import Path
 
+from ..core.db import atomic_write_text
 from .session_mirror import state_dir
 
 log = logging.getLogger("rook.worker.shim")
@@ -234,20 +235,10 @@ def rc_targets(shells=None, home: Path | None = None, platform: str | None = Non
 
 
 def _write_atomic(path: Path, text: str, mode: int = 0o644) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.rook-{os.getpid()}")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(text)
-        os.chmod(tmp, mode)
-        os.replace(tmp, path)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+    # Shell rc files and the shim scripts: readers see the old or the new
+    # file, never a torn one. (Only shim_client.py must stay rook-free; this
+    # module runs inside the worker.)
+    atomic_write_text(path, text, mode, fsync=False)
 
 
 def _strip_block(text: str) -> tuple[str, bool]:

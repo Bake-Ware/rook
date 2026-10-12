@@ -23,6 +23,7 @@ import shlex
 import subprocess
 from pathlib import Path
 
+from ..core.db import atomic_write_text
 from .config import DROPIN_NAME, Config, Service
 
 _STRAY_RE = re.compile(
@@ -58,13 +59,6 @@ def _read(p: Path) -> str | None:
         return p.read_text(encoding="utf-8")
     except FileNotFoundError:
         return None
-
-
-def _atomic_write(p: Path, text: str) -> None:
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_name(f".{p.name}.tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, p)
 
 
 def _atomic_symlink(p: Path, target: str) -> None:
@@ -138,7 +132,7 @@ class Selector:
                 if e["content"] is None:
                     p.unlink(missing_ok=True)
                 else:
-                    _atomic_write(p, e["content"])
+                    atomic_write_text(p, e["content"], 0o644)
             else:
                 if e["target"] is None:
                     if p.is_symlink():
@@ -149,7 +143,7 @@ class Selector:
     # -- switching -------------------------------------------------------
     def select(self, svc: Service, version: str) -> None:
         if self.cfg.mode == "systemd":
-            _atomic_write(self.cfg.dropin_path(svc), dropin_text(self.cfg, version))
+            atomic_write_text(self.cfg.dropin_path(svc), dropin_text(self.cfg, version), 0o644)
         else:
             _atomic_symlink(self.cfg.link_path(svc), str(self.cfg.release_dir(version)))
 

@@ -6,23 +6,15 @@ import os
 from pathlib import Path
 import shlex
 import sys
-import tempfile
 
+from ..core.db import atomic_write_text
 from ..core.paths import worker_install_dir
 
 MARKER = "# rook managed worker CLI"
 
 
 def _write(path: Path, text: str, mode: int = 0o755) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, name = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as out:
-            os.chmod(name, mode)
-            out.write(text)
-        os.replace(name, path)
-    finally:
-        Path(name).unlink(missing_ok=True)
+    atomic_write_text(path, text, mode, fsync=False)
 
 
 def _posix_path(home: Path, dest: Path) -> None:

@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from pathlib import Path
-import tempfile
+
+from ..core.db import atomic_write_text
 
 log = logging.getLogger(__name__)
 MAX_DESCRIPTION = 280
@@ -35,16 +35,6 @@ class WorkerMetadata:
 
     def set_description(self, value: str) -> str:
         value = validate_description(value)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        fd, temporary = tempfile.mkstemp(prefix='.metadata-', dir=self.path.parent)
-        try:
-            with os.fdopen(fd, 'w', encoding='utf-8') as stream:
-                json.dump({'description': value}, stream, ensure_ascii=False)
-                stream.write('\n')
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(temporary, self.path)
-        finally:
-            Path(temporary).unlink(missing_ok=True)
+        atomic_write_text(self.path, json.dumps({'description': value}, ensure_ascii=False) + '\n', 0o600)
         self.description = value
         return value

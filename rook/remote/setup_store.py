@@ -16,6 +16,8 @@ import json
 import os
 from pathlib import Path
 
+from ..core.db import atomic_write_text
+
 # repo-root/data/setup.json  (rook/remote/setup_store.py -> parents[2] == repo root)
 _DEFAULT_PATH = Path(__file__).resolve().parents[2] / "data" / "setup.json"
 
@@ -41,6 +43,13 @@ def load() -> dict[str, str]:
         return {}
 
 
+def _write(p: Path, data: dict) -> None:
+    # setup.json holds the band PSK: written atomically and 0600 from the
+    # start (the old write-then-chmod left a world-readable window, and a
+    # crash mid-write lost every band, ban and the PSK at once).
+    atomic_write_text(p, json.dumps(data, indent=2) + "\n", 0o600)
+
+
 def save(data: dict) -> dict[str, str]:
     p = setup_path()
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -54,11 +63,7 @@ def save(data: dict) -> dict[str, str]:
             existing = {}
     clean = {k: str(data.get(k, "")).strip() for k in FIELDS}
     existing.update(clean)
-    p.write_text(json.dumps(existing, indent=2) + "\n")
-    try:
-        p.chmod(0o600)
-    except OSError:
-        pass
+    _write(p, existing)
     return clean
 
 
@@ -108,11 +113,7 @@ def save_bands(bands: list[dict]) -> None:
             seen.add(psk)
             clean.append({"name": str((b or {}).get("name") or "band").strip(), "psk": psk})
     existing["bands"] = clean
-    p.write_text(json.dumps(existing, indent=2) + "\n")
-    try:
-        p.chmod(0o600)
-    except OSError:
-        pass
+    _write(p, existing)
 
 
 def load_bans() -> list[dict]:
@@ -157,11 +158,7 @@ def save_bans(bans: list[dict]) -> None:
             "reason": str(b.get("reason") or "")[:500],
         })
     existing["bans"] = clean
-    p.write_text(json.dumps(existing, indent=2) + "\n")
-    try:
-        p.chmod(0o600)
-    except OSError:
-        pass
+    _write(p, existing)
 
 
 def is_configured() -> bool:

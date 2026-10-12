@@ -31,6 +31,7 @@ import time
 from pathlib import Path
 
 from ...core.paths import worker_install_dir, worker_state_dir
+from ...core.db import atomic_write_json, atomic_write_text
 from ...core.pluginkit import RunTimeout, is_termux, is_windows, run
 from ..plugin import ANDROID_APP_REPLACED, Plugin, capability, place
 
@@ -279,11 +280,10 @@ class SelfUpdatePlugin(Plugin):
             return {"ok": False, "error": why}
         if isinstance(payload.get("v2"), dict):
             payload = payload["v2"]
-        _BANNED.parent.mkdir(parents=True, exist_ok=True)
-        _BANNED.write_text(json.dumps({
+        atomic_write_text(_BANNED, json.dumps({
             "at": int(time.time()),
             "reason": str(payload.get("reason", ""))[:500],
-        }) + "\n", encoding="utf-8")
+        }) + "\n")
         log.warning("deauthed from band (reason=%r); restarting into dormant mode",
                     payload.get("reason", ""))
         # Ack first, then restart INTO the boot gate — the fresh process sees the
@@ -406,8 +406,10 @@ class SelfUpdatePlugin(Plugin):
                 import shutil
                 if _PYZ.exists():
                     shutil.copy2(_PYZ, _PREV)
+                # chmod before the swap: the new bundle is never in place
+                # without its execute bit.
+                os.chmod(tmp, 0o755)
                 os.replace(tmp, _PYZ)
-                os.chmod(_PYZ, 0o755)
             except Exception as e:
                 tmp.unlink(missing_ok=True)
                 return {"ok": False, "error": f"swap failed: {type(e).__name__}: {e}"}
@@ -512,8 +514,8 @@ class SelfUpdatePlugin(Plugin):
             import shutil
             if _PYZ.exists():
                 shutil.copy2(_PYZ, _PREV)   # keep the old bundle for rollback
+            os.chmod(tmp, 0o755)
             os.replace(tmp, _PYZ)
-            os.chmod(_PYZ, 0o755)
         except Exception as e:
             tmp.unlink(missing_ok=True)
             return {"ok": False, "error": f"swap failed: {type(e).__name__}: {e}"}
@@ -551,8 +553,7 @@ class SelfUpdatePlugin(Plugin):
             return None
 
     def _write_state(self, d: dict) -> None:
-        _STATE.parent.mkdir(parents=True, exist_ok=True)
-        _STATE.write_text(json.dumps(d), encoding="utf-8")
+        atomic_write_json(_STATE, d)
 
     def _clear_state(self) -> None:
         _STATE.unlink(missing_ok=True)
@@ -663,7 +664,9 @@ class SelfUpdatePlugin(Plugin):
                     out.append(line)
             if not replaced:
                 return False
-            _UNIT.write_text("\n".join(out) + "\n", encoding="utf-8")
+            # A torn unit file would leave systemd unable to start the worker.
+            unit = _UNIT.resolve()  # replace a symlinked unit's target, not the link
+            atomic_write_text(unit, "\n".join(out) + "\n", unit.stat().st_mode & 0o777)
             return True
         except Exception:
             log.exception("failed to persist unit")

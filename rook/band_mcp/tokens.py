@@ -23,6 +23,8 @@ from typing import Any
 
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 
+from ..core.db import atomic_write_json
+
 log = logging.getLogger("rook.band_mcp.tokens")
 
 #: Token roles (permissions.md 1). Tokens minted before roles existed are
@@ -102,25 +104,12 @@ class TokenStore:
     def _save(self) -> None:
         if not self._persist_path:
             return
-        import os, json as _json, tempfile
-        tmp = None
         try:
-            data = {"api_tokens": list(self._api_tokens.values())}
-            d = os.path.dirname(self._persist_path) or "."
-            os.makedirs(d, exist_ok=True)
-            fd, tmp = tempfile.mkstemp(dir=d, prefix=".tokens-", suffix=".json")
-            with os.fdopen(fd, "w") as f:
-                _json.dump(data, f, indent=2)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp, self._persist_path)
-            os.chmod(self._persist_path, 0o600)
+            atomic_write_json(self._persist_path,
+                              {"api_tokens": list(self._api_tokens.values())}, 0o600, indent=2)
         except Exception:
             log.exception("token store persist failed")
             raise
-        finally:
-            if tmp and os.path.exists(tmp):
-                os.unlink(tmp)
 
     def _replace_tokens(self, updated: dict[str, dict[str, Any]]) -> None:
         """Publish a credential change only when its persistence succeeds."""

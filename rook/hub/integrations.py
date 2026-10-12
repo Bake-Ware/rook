@@ -44,6 +44,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..core.plugin import Plugin, place, setting
+from ..core.db import atomic_write_json
 
 log = logging.getLogger("rook.hub.integrations")
 
@@ -381,9 +382,7 @@ class ChatIntegration(Plugin):
 
     def _save_watermarks(self) -> None:
         try:
-            tmp = self._watermark_path().with_suffix(".tmp")
-            tmp.write_text(json.dumps({"rooms": self._watermarks}), encoding="utf-8")
-            tmp.replace(self._watermark_path())
+            atomic_write_json(self._watermark_path(), {"rooms": self._watermarks}, 0o644)
         except OSError:
             log.debug("%s: could not save bridge watermarks", self.PLATFORM, exc_info=True)
 
