@@ -9,6 +9,29 @@ releases yet: workers identify themselves by build number (for example
 
 Preparation for public use.
 
+### Transport
+- Band transport split into a shared frame codec (`rook.worker.wire.codec.
+  BandCodec`) and thin UDP/WS links behind the unchanged
+  `TelestheteHubTransport` facade. Frames shorter than header + AEAD tag
+  (43 B) are now dropped before decryption (was `< 27`).
+- One writer task per transport replaces the send lock that held the link for
+  every fragment of a message: single-fragment messages (keepalives,
+  announces, most replies) go first, multi-fragment messages are interleaved
+  fragment by fragment, so a multi-MB reply no longer delays everything else
+  for seconds. A call that times out before its message starts sends nothing;
+  one that started is finished. Wire format unchanged.
+- UDP bulk frames are paced (`ROOK_BAND_UDP_PACE_RATE`, default 2000
+  frames/s, `ROOK_BAND_UDP_PACE_BURST` 64) and UDP sockets ask for 4 MB
+  buffers, so a large reply no longer overflows the relay's shared queue.
+- Keepalives are skipped while other frames flow.
+- Inbound dispatch is bounded (`ROOK_BAND_DISPATCH_CONCURRENCY`, default 64,
+  plus `ROOK_BAND_DISPATCH_BACKLOG` 1024); overflow is dropped with a
+  rate-limited warning.
+- `rook.core.backoff.Backoff` (jittered exponential) is used by the WS band
+  reconnect, the terminal follower, the Android worker runtime and the KVM
+  bridge serial stream, which now reconnects after the dongle reboots.
+- Removed the unused `rook.worker.wire.channel` compatibility shim.
+
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps
   `sessions.list`, `sessions.follow`, `sessions.send` and `sessions.stop`
