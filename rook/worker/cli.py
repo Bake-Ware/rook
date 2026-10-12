@@ -62,7 +62,10 @@ def main() -> None:
     ap.add_argument("--bind-port", type=int, default=0,
                     help="local UDP bind port (0 = ephemeral)")
     ap.add_argument("--keepalive", type=float, default=20.0,
-                    help="seconds between transport keepalives")
+                    help="seconds of link silence before a transport keepalive "
+                         "(skipped while other frames flow). Tuning env: "
+                         "ROOK_BAND_UDP_PACE_RATE/_BURST (UDP bulk pacing), "
+                         "ROOK_BAND_DISPATCH_CONCURRENCY/_BACKLOG (inbound bound)")
     ap.add_argument("--ws", action="store_true",
                     help="use WebSocket instead of UDP for hub connection (for cloudflare tunnel)")
     ap.add_argument("--update-url", default=os.environ.get("ROOK_UPDATE_URL", ""),

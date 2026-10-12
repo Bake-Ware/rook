@@ -189,7 +189,7 @@ class BandClient:
         self._start_local_announcer()
         log.info("band-mcp client up (band_id=%s, hub=%s:%d)",
                  self.transport.band_id.hex()[:16],
-                 self.transport._hub[0], self.transport._hub[1])
+                 self.transport.hub[0], self.transport.hub[1])
 
     async def stop(self) -> None:
         self._stopping = True
