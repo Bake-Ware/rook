@@ -11,7 +11,8 @@ _stop=None
 _runners=set()
 REFRESH_SECONDS=30
 #: A connection that dies sooner than this counts as a failed start: the next
-#: attempt waits (doubling up to BACKOFF_MAX) instead of reconnecting at once.
+#: attempt waits (jittered, doubling up to BACKOFF_MAX) instead of reconnecting
+#: at once.
 STABLE_SECONDS=10
 BACKOFF_MIN=2
 BACKOFF_MAX=60
@@ -21,6 +22,7 @@ def start(hub,psk,name):
     from rook.worker.core import Worker
     from rook.worker.transports.telesthete_hub import TelestheteHubTransport
     from rook.worker import enroll,wconfig
+    from rook.core.backoff import Backoff
     from rook_android.androidctx import app_context
     from worker_entry import _attach_native_plugins,_builtin_enabled
     context=app_context()
@@ -66,7 +68,9 @@ def start(hub,psk,name):
         loop=asyncio.get_running_loop();stopping=asyncio.Event()
         _loop,_stop=loop,stopping
         me=(loop,stopping);_runners.add(me)
-        backoff=0
+        # Jitter keeps a fleet of phones that lost the hub together from
+        # reconnecting in lockstep (rook.core.backoff, shared with the worker).
+        retry=Backoff(base=BACKOFF_MIN,cap=BACKOFF_MAX)
         try:
             while not stopping.is_set():
                 wconfig.boot_reconcile()
@@ -125,15 +129,13 @@ def start(hub,psk,name):
                     # The worker died on its own. Without this pause a worker
                     # that fails at start reconnects (and, before the refresh
                     # cache, re-authenticated) about once a second.
-                    if loop.time()-began<STABLE_SECONDS:
-                        backoff=min(BACKOFF_MAX,max(BACKOFF_MIN,backoff*2))
-                    else:
-                        backoff=BACKOFF_MIN
-                    log.warning('Band worker exited; reconnecting in %ss.',backoff)
+                    if loop.time()-began>=STABLE_SECONDS:retry.reset()
+                    backoff=retry.next()
+                    log.warning('Band worker exited; reconnecting in %.1fs.',backoff)
                     try:await asyncio.wait_for(stopping.wait(),backoff)
                     except asyncio.TimeoutError:pass
                 else:
-                    backoff=0
+                    retry.reset()
         finally:
             _runners.discard(me)
             if _stop is stopping:
