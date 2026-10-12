@@ -552,7 +552,9 @@ def test_session_shim_plugin_caps(home, monkeypatch):
     assert p.available()
 
     async def go():
-        assert (await p.install())["ok"] is False      # no terminals plugin
+        from rook.core.pluginkit import CapError
+        with pytest.raises(CapError):                  # no terminals plugin
+            await p.install()
         term = TerminalsPlugin()
 
         class W:

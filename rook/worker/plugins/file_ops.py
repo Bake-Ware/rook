@@ -2,7 +2,7 @@
 
 Pure stdlib, no platform branching. Capabilities are intentionally permissive
 about path — the worker is expected to be sandboxed at deployment time, not by
-this plugin.
+this plugin. Failures raise; the reply's ``error`` names the path.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ import re
 import stat
 from pathlib import Path
 
+from ...core.pluginkit import fail, require_int, require_str
 from ..plugin import Plugin, capability
 
 
@@ -43,11 +44,13 @@ class FilePlugin(Plugin):
 
         Reads up to ``max_bytes`` (default 8 MiB) to avoid runaway responses.
         """
+        path = require_str(path, "path", strip=False)
+        max_bytes = require_int(max_bytes, "max_bytes", min=0)
         try:
             p = Path(path)
             size = p.stat().st_size
             with open(p, "rb") as f:
-                raw = f.read(int(max_bytes) + 1)
+                raw = f.read(max_bytes + 1)
             truncated = len(raw) > max_bytes
             if truncated:
                 raw = raw[:max_bytes]
@@ -66,16 +69,18 @@ class FilePlugin(Plugin):
                 out["returned_bytes"] = max_bytes
             return out
         except FileNotFoundError:
-            return {"ok": False, "error": "file not found", "path": path}
+            fail(f"file not found: {path}")
         except PermissionError as e:
-            return {"ok": False, "error": f"permission denied: {e}", "path": path}
-        except Exception as e:
-            return {"ok": False, "error": f"{type(e).__name__}: {e}", "path": path}
+            fail(f"permission denied: {e}")
+        except IsADirectoryError:
+            fail(f"is a directory: {path}")
 
     @capability("write")
     def _write(self, path: str, content: str, encoding: str = "utf-8",
                append: bool = False, create_parents: bool = False) -> dict:
         """Write ``content`` to ``path``. ``encoding`` ``"base64"`` decodes first."""
+        path = require_str(path, "path", strip=False)
+        content = require_str(content, "content", strip=False, empty=True)
         try:
             p = Path(path)
             if create_parents:
@@ -89,23 +94,22 @@ class FilePlugin(Plugin):
                 n = f.write(raw)
             return {"ok": True, "written_bytes": n, "path": str(p)}
         except FileNotFoundError as e:
-            return {"ok": False, "error": f"parent directory missing: {e}",
-                    "path": path}
+            fail(f"parent directory missing: {e}")
         except PermissionError as e:
-            return {"ok": False, "error": f"permission denied: {e}", "path": path}
-        except Exception as e:
-            return {"ok": False, "error": f"{type(e).__name__}: {e}", "path": path}
+            fail(f"permission denied: {e}")
 
     @capability("list")
     def _list(self, path: str, recursive: bool = False,
               include_hidden: bool = True, max_entries: int = 5000) -> dict:
         """List a directory. ``recursive`` walks subdirs; ``max_entries`` caps results."""
+        path = require_str(path, "path", strip=False)
+        max_entries = require_int(max_entries, "max_entries", min=1)
         try:
             p = Path(path)
             if not p.exists():
-                return {"ok": False, "error": "not found", "path": path}
+                fail(f"not found: {path}")
             if not p.is_dir():
-                return {"ok": False, "error": "not a directory", "path": path}
+                fail(f"not a directory: {path}")
             entries: list[dict] = []
             iterator = p.rglob("*") if recursive else p.iterdir()
             for child in iterator:
@@ -125,23 +129,23 @@ class FilePlugin(Plugin):
                 entries.append(meta)
             return {"ok": True, "entries": entries}
         except PermissionError as e:
-            return {"ok": False, "error": f"permission denied: {e}", "path": path}
-        except Exception as e:
-            return {"ok": False, "error": f"{type(e).__name__}: {e}", "path": path}
+            fail(f"permission denied: {e}")
 
     @capability("search")
     def _search(self, pattern: str, path: str = ".", recursive: bool = True,
                 max_results: int = 100, ignore_case: bool = False,
                 glob: str = "*") -> dict:
         """Grep ``pattern`` (regex) across files under ``path``. Skips binary files."""
+        pattern = require_str(pattern, "pattern", strip=False)
+        max_results = require_int(max_results, "max_results", min=1)
         try:
             flags = re.IGNORECASE if ignore_case else 0
             rx = re.compile(pattern, flags)
         except re.error as e:
-            return {"ok": False, "error": f"invalid regex: {e}"}
+            fail(f"invalid regex: {e}")
         root = Path(path)
         if not root.exists():
-            return {"ok": False, "error": "not found", "path": path}
+            fail(f"not found: {path}")
 
         results: list[dict] = []
         files: list[Path]
@@ -189,7 +193,7 @@ class FilePlugin(Plugin):
         try:
             st = p.lstat()
         except OSError as e:
-            return {"ok": False, "error": str(e), "path": path}
+            fail(str(e))
         return {"ok": True, "exists": True, **_stat_to_meta(p, st)}
 
 

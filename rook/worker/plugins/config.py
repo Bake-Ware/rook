@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from ...core.pluginkit import ArgError, fail
 from ..plugin import Plugin, capability
 from .. import wconfig
 from ...core.settings import mask_worker_config
@@ -117,12 +118,12 @@ class ConfigPlugin(Plugin):
         Setting ``hub`` or ``psk`` needs a hub-signed order: the call must carry
         a valid ticket from the hub (permissions 6.3)."""
         if not isinstance(settings, dict) or not settings:
-            return {"ok": False, "error": "settings must be a non-empty object"}
+            raise ArgError("settings must be a non-empty object")
         if settings.get("hub") is not None or settings.get("psk") is not None:
             from ..authz_guard import require_hub_order
             refused = require_hub_order("changing hub/psk")
             if refused:
-                return {"ok": False, "error": refused}
+                fail(refused)
         merged = wconfig.stage_apply(settings, epoch, confirm_within)
         result = {"ok": True, "staged_epoch": int(epoch),
                   "confirm_within": confirm_within, "restarting": bool(restart),

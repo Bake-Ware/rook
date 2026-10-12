@@ -9,6 +9,31 @@ releases yet: workers identify themselves by build number (for example
 
 Preparation for public use.
 
+### Plugin kit
+- `ROOK_WORKER_HOME` now moves all worker state (identity, enrollment, pushed
+  config, audit log, plugin data, chat/inbox, deauth flag, work DB, trust
+  anchors), not only the session mirror; the installed bundle stays in
+  `~/.rook-band-worker`. Unset, nothing moves.
+- New `rook.core.pluginkit` (ships in the worker bundle): `run()` (kills on
+  timeout, decodes with `errors="replace"`), `which()`, `is_termux()`/
+  `is_windows()`/`is_android()`/`has_display()`, `state_path()`, `fail()` and
+  `require_str`/`require_int`/`opt_int`/`require_choice`. Worker plugins use it
+  instead of their own copies. New node fact `termux`.
+- `cec`, `pikvm`, `agent` (wake), `memory` and `dongle` read their settings
+  through the settings view, so values set in the Settings UI are used (env
+  vars still win). `cec` and `hermes` always export their plugin and gate in
+  `available()`, so their settings show up while they are off.
+- Worker caps report failures as the reply's own `ok: false` + `error` instead
+  of `ok: true` wrapping `{ok: false}` (file, memory, msg, chat, camera,
+  screenshot, battery, wake, deluge, dongle, cec, hermes memory.read,
+  sessions.shim.install, worker.config_apply refusals, shell.exec argument
+  errors). Every in-tree consumer already handled both shapes.
+- `deluge.*` refuses torrent ids that are not hex hashes (or `*`), so an id
+  can no longer smuggle a second console command; `deluge.add/pause/resume/
+  remove` fail instead of returning `ok: false` with the console output.
+- Worker chat client: its watcher thread now stops on every exit path.
+  `hermes` logs through `logging` instead of printing.
+
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps
   `sessions.list`, `sessions.follow`, `sessions.send` and `sessions.stop`

@@ -30,18 +30,24 @@ import sys
 import time
 from pathlib import Path
 
+from ...core.paths import worker_install_dir, worker_state_dir
+from ...core.pluginkit import RunTimeout, is_termux, is_windows, run
 from ..plugin import Plugin, capability
 
 log = logging.getLogger("rook.worker.plugins.selfupdate")
 
 _HOME = Path(os.path.expanduser("~"))
-_WORKER_DIR = _HOME / ".rook-band-worker"
+# The bundle lives where the installer and the service manager put it, which
+# is always under the home dir; flags and identity live in the state dir
+# (ROOK_WORKER_HOME, else the same directory).
+_WORKER_DIR = worker_install_dir()
+_STATE_DIR = worker_state_dir()
 _PYZ = _WORKER_DIR / "band-worker.pyz"
 _PREV = _WORKER_DIR / "band-worker.pyz.prev"     # previous bundle, for rollback
-_STATE = _WORKER_DIR / "update_state.json"       # in-flight update tracking
-_HOLD = _WORKER_DIR / "hold"                      # presence pins this node (no auto-update)
-_BANNED = _WORKER_DIR / "banned"                  # presence = deauthed; refuse to rejoin
-_WORKER_ID_FILE = _WORKER_DIR / "worker_id"       # stable identity (see core.stable_worker_id)
+_STATE = _STATE_DIR / "update_state.json"        # in-flight update tracking
+_HOLD = _STATE_DIR / "hold"                       # presence pins this node (no auto-update)
+_BANNED = _STATE_DIR / "banned"                   # presence = deauthed; refuse to rejoin
+_WORKER_ID_FILE = _STATE_DIR / "worker_id"        # stable identity (see core.stable_worker_id)
 _UNIT = _HOME / ".config" / "systemd" / "user" / "rook-band-worker.service"
 _SVC = "rook-band-worker"
 _WIN_TASK = "RookBandWorker"      # matches PS_BOOTSTRAP's Register-ScheduledTask name
@@ -53,20 +59,12 @@ _MAX_BOOT_ATTEMPTS = 3     # boots into a new build without health before rollin
 _UA = "rook-worker"        # Cloudflare blocks the default urllib User-Agent
 
 
-def _is_termux() -> bool:
-    return "com.termux" in os.environ.get("PREFIX", "") or bool(os.environ.get("TERMUX_VERSION"))
-
-
-def _is_windows() -> bool:
-    return sys.platform == "win32"
-
-
 def _supervisor() -> str:
     if _UNIT.exists():
         return "systemd-user"
-    if _is_termux():
+    if is_termux():
         return "runit"
-    if _is_windows():
+    if is_windows():
         return "windows-task"     # informational only — live restart still uses os.execv
     return "exec"
 
@@ -236,7 +234,7 @@ class SelfUpdatePlugin(Plugin):
         """Pin this node so it won't auto-update (survives restarts). Use to
         freeze critical hosts / the dongle box. ``worker.check(force=true)``
         still updates it on explicit demand."""
-        _WORKER_DIR.mkdir(parents=True, exist_ok=True)
+        _HOLD.parent.mkdir(parents=True, exist_ok=True)
         if enable:
             _HOLD.write_text(f"held at {int(time.time())}\n", encoding="utf-8")
         else:
@@ -280,7 +278,7 @@ class SelfUpdatePlugin(Plugin):
             return {"ok": False, "error": why}
         if isinstance(payload.get("v2"), dict):
             payload = payload["v2"]
-        _WORKER_DIR.mkdir(parents=True, exist_ok=True)
+        _BANNED.parent.mkdir(parents=True, exist_ok=True)
         _BANNED.write_text(json.dumps({
             "at": int(time.time()),
             "reason": str(payload.get("reason", ""))[:500],
@@ -551,7 +549,7 @@ class SelfUpdatePlugin(Plugin):
             return None
 
     def _write_state(self, d: dict) -> None:
-        _WORKER_DIR.mkdir(parents=True, exist_ok=True)
+        _STATE.parent.mkdir(parents=True, exist_ok=True)
         _STATE.write_text(json.dumps(d), encoding="utf-8")
 
     def _clear_state(self) -> None:
@@ -647,7 +645,7 @@ class SelfUpdatePlugin(Plugin):
         """Write the new launch command into the systemd --user unit (or the
         Windows Scheduled Task) so it survives restarts/reboots/logons.
         No-op (returns False) when neither applies."""
-        if _is_windows():
+        if is_windows():
             return self._persist_windows(argv)
         if not _UNIT.exists():
             return False
@@ -727,12 +725,10 @@ class SelfUpdatePlugin(Plugin):
                 log.exception("re-exec failed")
 
     async def _run(self, *cmd: str) -> None:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
         try:
-            await asyncio.wait_for(proc.wait(), timeout=10)
-        except asyncio.TimeoutError:
-            pass
+            await run(cmd, 10)
+        except RunTimeout:
+            pass   # killed; the restart below re-execs us either way
 
 
 PLUGIN = SelfUpdatePlugin

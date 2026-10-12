@@ -3,12 +3,12 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import time
 import threading
 import uuid
 from pathlib import Path
 
+from ...core.pluginkit import state_path, which
 from ..plugin import Plugin, capability
 from ..work_runtime import WorkRuntime
 
@@ -23,13 +23,15 @@ class WorkPlugin(Plugin):
         self.view_lock = threading.RLock()
         self.adopt_lock = threading.RLock()
 
+    @staticmethod
+    def db_path():
+        return Path(os.environ.get('ROOK_WORK_DB', '') or state_path('work.sqlite3')).expanduser()
+
     def available(self):
-        path = Path(os.environ.get('ROOK_WORK_DB', '~/.rook-band-worker/work.sqlite3')).expanduser()
-        return bool(shutil.which('codex')) or path.exists()
+        return bool(which('codex')) or self.db_path().exists()
 
     def bind_worker(self, worker):
-        path = Path(os.environ.get('ROOK_WORK_DB', '~/.rook-band-worker/work.sqlite3')).expanduser()
-        self.runtime = WorkRuntime(path, worker.registry)
+        self.runtime = WorkRuntime(self.db_path(), worker.registry)
 
     async def start(self):
         await self.runtime.start()
