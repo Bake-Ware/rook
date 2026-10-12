@@ -217,10 +217,10 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 | `claude-history.read` | session_id, path?, machine?, max_messages=1000, offset=0 | Read a session transcript. |
 | `claude-history.read_page` | session_id, path?, offset=0, content_offset=0, max_chars=6000, snapshot? | Read a bounded transcript page, including partial large messages. |
 | `claude-history.read_snapshot` | session_id, path?, offset=0, content_offset=0, snapshot='' | Read a bounded page of a stable, worker-owned conversation snapshot. |
-| `claude-history.resume` | session_id, path?, name?, cwd?, remote_control=true, machine? | Relaunch a stored Claude Code session on this machine. |
+| `claude-history.resume` | session_id, path?, name?, cwd?, remote_control=true, machine? | Relaunch a stored Claude Code session here (deprecated: use `work.stream.open` with resume=). |
 | `claude-history.resumed` | — | Sessions this worker relaunched and whether they're still up. |
 | `claude-history.search` | query, path?, machine?, limit=20, ignore_case=true | Regex-search across all session messages. |
-| `claude-history.send` | session_id, text, command_id | Send to this exact existing session; transcripts stay on this host. |
+| `claude-history.send` | session_id, text, command_id | Send to this exact existing session (deprecated: use `sessions.send`). |
 | `claude-history.transcript` | session_id, offset=0, max_chars=6000, path? | A transcript page in the stable `rook.transcript/1` export format. |
 
 **codex_history**
@@ -234,10 +234,10 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 | `codex-history.read` | session_id, path?, machine?, max_messages=1000, offset=0 | Read a session transcript. |
 | `codex-history.read_page` | session_id, path?, offset=0, content_offset=0, max_chars=6000, snapshot? | Read a bounded transcript page, including partial large messages. |
 | `codex-history.read_snapshot` | session_id, path?, offset=0, content_offset=0, snapshot='' | Read a bounded page of a stable, worker-owned conversation snapshot. |
-| `codex-history.resume` | session_id, path?, name?, cwd?, machine? | Resume Codex interactively in a Rook PTY without sending a prompt. |
+| `codex-history.resume` | session_id, path?, name?, cwd?, machine? | Resume Codex in a Rook PTY without a prompt (deprecated: use `work.stream.open` with resume=). |
 | `codex-history.resumed` | — | Sessions this worker relaunched and whether they're still up. |
 | `codex-history.search` | query, path?, machine?, limit=20, ignore_case=true | Regex-search across all session messages. |
-| `codex-history.send` | session_id, text, command_id | Send to this exact existing session; transcripts stay on this host. |
+| `codex-history.send` | session_id, text, command_id | Send to this exact existing session (deprecated: use `sessions.send`). |
 | `codex-history.transcript` | session_id, offset=0, max_chars=6000, path? | A transcript page in the stable `rook.transcript/1` export format. |
 
 **config**
