@@ -25,17 +25,16 @@ import importlib
 import inspect
 import json
 import logging
-import os
 import pkgutil
 import shlex
-from pathlib import Path
 from typing import Any
 
+from ..core.paths import worker_state_dir
 from .plugin import Plugin
 
 log = logging.getLogger("rook.worker.admin")
 
-_WORKER_DIR = Path(os.path.expanduser("~")) / ".rook-band-worker"
+_WORKER_DIR = worker_state_dir()
 _PLUGIN_STATE = _WORKER_DIR / "plugins.json"        # {"disabled": [...], "enabled": [...]}
 _CUSTOM_STATE = _WORKER_DIR / "custom_caps.json"    # {name: {command, args, ...}}
 

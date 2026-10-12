@@ -391,7 +391,8 @@ class TerminalsPlugin(Plugin):
         return ["/bin/sh", "-c", cmd]
 
     def _session_dir(self) -> Path:
-        base = Path(os.environ.get("ROOK_WORK_TERM_DIR", "~/.rook-band-worker/terminals")).expanduser()
+        from ...core.paths import worker_state_path  # ROOK_WORKER_HOME
+        base = Path(os.environ.get("ROOK_WORK_TERM_DIR", "") or worker_state_path("terminals")).expanduser()
         winsec.make_private_dir(base)
         return base
 

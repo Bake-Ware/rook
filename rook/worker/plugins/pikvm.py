@@ -2,9 +2,10 @@
 
 Designed to run on the PiKVM itself so the worker hits ``https://localhost``,
 but works just as well over LAN if you point it at another host. Creds and
-endpoint come from env:
+endpoint come from the ``pikvm.*`` settings (the settings UI pushes them as
+these env vars, which also work set by hand):
 
-    PIKVM_URL       default ``https://localhost``
+    PIKVM_URL       default ``https://localhost``; pikvm.* loads only where set
     PIKVM_USER      default ``admin``
     PIKVM_PASS      default ``admin``
     PIKVM_INSECURE  default ``1`` (PiKVM ships with a self-signed cert)
@@ -14,21 +15,11 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import os
 import ssl
 import urllib.parse
 import urllib.request
 
 from ..plugin import Plugin, capability, setting
-
-
-def _client_cfg() -> tuple[str, str, str, bool]:
-    return (
-        os.environ.get("PIKVM_URL", "https://localhost").rstrip("/"),
-        os.environ.get("PIKVM_USER", "admin"),
-        os.environ.get("PIKVM_PASS", "admin"),
-        os.environ.get("PIKVM_INSECURE", "1") == "1",
-    )
 
 
 def _ssl_ctx(insecure: bool) -> ssl.SSLContext | None:
@@ -40,12 +31,13 @@ def _ssl_ctx(insecure: bool) -> ssl.SSLContext | None:
     return ctx
 
 
-def _request_sync(method: str, path: str,
+def _request_sync(cfg: tuple[str, str, str, bool], method: str, path: str,
                   query: dict | None = None,
                   body: bytes | None = None,
                   body_type: str | None = None) -> dict:
-    """Blocking HTTP request. Wrapped via asyncio.to_thread for cap calls."""
-    base, user, password, insecure = _client_cfg()
+    """Blocking HTTP request. Wrapped via asyncio.to_thread for cap calls.
+    ``cfg`` is ``(base_url, user, password, insecure)``."""
+    base, user, password, insecure = cfg
     if not path.startswith("/"):
         path = "/" + path
     url = base + path
@@ -72,14 +64,6 @@ def _request_sync(method: str, path: str,
                 "body": e.read() if e.fp else b""}
     except Exception as e:
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
-
-
-async def _request(method: str, path: str,
-                   query: dict | None = None,
-                   body: bytes | None = None,
-                   body_type: str | None = None) -> dict:
-    return await asyncio.to_thread(_request_sync, method, path, query,
-                                    body, body_type)
 
 
 def _decode_body(resp: dict, max_text: int = 64_000) -> dict:
@@ -131,7 +115,20 @@ class PiKvmPlugin(Plugin):
     def available(self) -> bool:
         # Only load where a PiKVM is explicitly configured — otherwise every
         # worker would falsely advertise pikvm.* against https://localhost.
-        return "PIKVM_URL" in os.environ
+        return self.settings.source("url") != "default"
+
+    def _cfg(self) -> tuple[str, str, str, bool]:
+        s = self.settings
+        return (str(s.get("url", "https://localhost")).rstrip("/"),
+                s.get("user", "admin"), s.get("password", "admin"),
+                bool(s.get("insecure", True)))
+
+    async def _request(self, method: str, path: str,
+                       query: dict | None = None,
+                       body: bytes | None = None,
+                       body_type: str | None = None) -> dict:
+        return await asyncio.to_thread(_request_sync, self._cfg(), method, path,
+                                       query, body, body_type)
 
     # ---- screencap ------------------------------------------------------
 
@@ -160,7 +157,7 @@ class PiKvmPlugin(Plugin):
             query["preview"] = "1"
         if quality is not None:
             query["quality"] = str(int(quality))
-        resp = await _request("GET", "/api/streamer/snapshot", query=query)
+        resp = await self._request("GET", "/api/streamer/snapshot", query=query)
         decoded = _decode_body(resp, max_text=0)
         # Catch the "200 OK + JSON error" case and re-shape it as a proper error.
         if decoded.get("content_type", "").startswith("application/json"):
@@ -176,7 +173,7 @@ class PiKvmPlugin(Plugin):
         q = {"limit": "0"}
         if slow:
             q["slow"] = "1"
-        resp = await _request("POST", "/api/hid/print", query=q,
+        resp = await self._request("POST", "/api/hid/print", query=q,
                               body=text.encode("utf-8"),
                               body_type="text/plain; charset=utf-8")
         return _decode_body(resp)
@@ -195,7 +192,7 @@ class PiKvmPlugin(Plugin):
             steps.append((m, False))
         results = []
         for k, state in steps:
-            r = await _request("POST", "/api/hid/events/send_key",
+            r = await self._request("POST", "/api/hid/events/send_key",
                                 query={"key": k, "state": "true" if state else "false"})
             results.append(_decode_body(r))
             if not r.get("ok"):
@@ -209,7 +206,7 @@ class PiKvmPlugin(Plugin):
         (-32768..32767 mapped across the captured frame)."""
         import json
         body = json.dumps({"to": {"x": int(x), "y": int(y)}}).encode()
-        resp = await _request("POST", "/api/hid/events/send_mouse_move",
+        resp = await self._request("POST", "/api/hid/events/send_mouse_move",
                               body=body, body_type="application/json")
         return _decode_body(resp)
 
@@ -219,7 +216,7 @@ class PiKvmPlugin(Plugin):
         import json
         for state in (True, False):
             body = json.dumps({"button": button, "state": state}).encode()
-            r = await _request("POST", "/api/hid/events/send_mouse_button",
+            r = await self._request("POST", "/api/hid/events/send_mouse_button",
                                 body=body, body_type="application/json")
             if not r.get("ok"):
                 return {"ok": False, "error": "mouse button failed",
@@ -234,14 +231,14 @@ class PiKvmPlugin(Plugin):
         valid = {"on", "off", "off_hard", "reset", "reset_hard"}
         if action not in valid:
             return {"ok": False, "error": f"action must be one of {sorted(valid)}"}
-        resp = await _request("POST", "/api/atx/power",
+        resp = await self._request("POST", "/api/atx/power",
                               query={"action": action})
         return _decode_body(resp)
 
     @capability("power.status", risk="read", tags=("physical",))
     async def _power_status(self) -> dict:
         """Read ATX state (powered, online, etc)."""
-        resp = await _request("GET", "/api/atx")
+        resp = await self._request("GET", "/api/atx")
         return _decode_body(resp)
 
     # ---- generic passthrough --------------------------------------------
@@ -249,7 +246,7 @@ class PiKvmPlugin(Plugin):
     @capability("api.get", risk="read", tags=("sensitive", "physical"))
     async def _api_get(self, path: str, query: dict | None = None) -> dict:
         """GET any /api/* endpoint on the PiKVM. Decodes JSON / text bodies."""
-        resp = await _request("GET", path, query=query)
+        resp = await self._request("GET", path, query=query)
         return _decode_body(resp)
 
     @capability("api.post", risk="exec", tags=("destructive", "physical"))
@@ -264,7 +261,7 @@ class PiKvmPlugin(Plugin):
             raw = body.encode("utf-8")
         elif body_b64 is not None:
             raw = base64.b64decode(body_b64)
-        resp = await _request("POST", path, query=query,
+        resp = await self._request("POST", path, query=query,
                               body=raw, body_type=body_type)
         return _decode_body(resp)
 

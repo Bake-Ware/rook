@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 
+from ...core.pluginkit import ArgError, require_str, which
 from ..plugin import Plugin, capability
 
 
@@ -29,9 +30,9 @@ class ShellPlugin(Plugin):
         worker's environment (it does not replace it).
         """
         if argv and cmd:
-            return {"ok": False, "error": "pass argv or cmd, not both"}
+            raise ArgError("pass argv or cmd, not both")
         if not argv and not cmd:
-            return {"ok": False, "error": "argv or cmd required"}
+            raise ArgError("argv or cmd required")
 
         child_env = None
         if env:
@@ -72,8 +73,7 @@ class ShellPlugin(Plugin):
     @capability("which", risk="read")
     def _which(self, name: str) -> str | None:
         """Full path of an executable on this worker's PATH, or null if it is not found."""
-        import shutil
-        return shutil.which(name)
+        return which(require_str(name, "name"))
 
     def _masked(self) -> set:
         """Env keys set by a pushed config (other than declared non-secret

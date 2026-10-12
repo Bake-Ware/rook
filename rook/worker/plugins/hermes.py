@@ -9,11 +9,13 @@ presence of ``~/.hermes/config.yaml`` and the ``hermes`` binary on PATH).
 
 from __future__ import annotations
 
-import asyncio
+import logging
 import os
-import shutil
 
+from ...core.pluginkit import RunTimeout, fail, opt_int, require_choice, require_str, run, which
 from ..plugin import Plugin, capability
+
+log = logging.getLogger("rook.worker.plugins.hermes")
 
 
 def _config_path() -> str | None:
@@ -25,36 +27,23 @@ def _config_path() -> str | None:
 class HermesPlugin(Plugin):
     NAMESPACE = "hermes"
 
+    def available(self) -> bool:
+        # Only where Hermes is installed; otherwise the caps would all fail.
+        return bool(_config_path() and which("hermes"))
+
     async def _cli(self, args: list[str], stdin: str | None = None,
                    timeout: float = 120.0) -> dict:
-        """Invoke the hermes CLI with argv `args`. Returns code/stdout/stderr."""
-        exe = shutil.which("hermes")
+        """Invoke the hermes CLI with argv `args`. Returns code/stdout/stderr
+        like shell.exec: a non-zero exit is the command's verdict, reported
+        in the result (callers read ``stdout``), not raised."""
+        exe = which("hermes")
         if not exe:
-            return {"ok": False,
-                    "error": "hermes binary not on PATH"}
-        proc = await asyncio.create_subprocess_exec(
-            exe, *args,
-            stdin=asyncio.subprocess.PIPE if stdin is not None else None,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+            fail("hermes binary not on PATH")
         try:
-            out, err = await asyncio.wait_for(
-                proc.communicate(stdin.encode() if stdin is not None else None),
-                timeout)
-        except asyncio.TimeoutError:
-            proc.kill()
-            try:
-                await proc.wait()
-            except Exception:
-                pass
+            res = await run([exe, *args], timeout, stdin=stdin)
+        except RunTimeout:
             return {"ok": False, "error": "timeout", "timeout": timeout}
-        return {
-            "ok": proc.returncode == 0,
-            "code": proc.returncode,
-            "stdout": out.decode(errors="replace"),
-            "stderr": err.decode(errors="replace"),
-        }
+        return {"ok": res.ok, "code": res.code, "stdout": res.stdout, "stderr": res.stderr}
 
     # ---- interaction -----------------------------------------------------
 
@@ -70,7 +59,7 @@ class HermesPlugin(Plugin):
 
         Returns {ok, answer, code, stdout, stderr}.
         """
-        args = ["chat", "-q"] + [message]
+        args = ["chat", "-q", require_str(message, "message", strip=False)]
         if session_id:
             args += ["-r", session_id]
         res = await self._cli(args, timeout=timeout)
@@ -89,7 +78,7 @@ class HermesPlugin(Plugin):
 
         Returns {ok, answer, code, stdout, stderr}.
         """
-        args = ["-z", prompt]
+        args = ["-z", require_str(prompt, "prompt", strip=False)]
         if model:
             args += ["--model", model]
         if provider:
@@ -107,21 +96,12 @@ class HermesPlugin(Plugin):
 
         Returns {ok, content, path} or {ok: False, error}.
         """
-        path_map = {
-            "MEMORY.md": os.path.expanduser("~/.hermes/MEMORY.md"),
-            "USER.md": os.path.expanduser("~/.hermes/USER.md"),
-        }
-        path = path_map.get(entry)
-        if not path:
-            return {"ok": False,
-                    "error": f"Unknown entry: {entry}. Use MEMORY.md or USER.md"}
+        entry = require_choice(entry, "entry", ("MEMORY.md", "USER.md"))
+        path = os.path.expanduser(f"~/.hermes/{entry}")
         if not os.path.isfile(path):
-            return {"ok": False, "error": f"{entry} not found on this machine"}
-        try:
-            content = open(path).read()
-            return {"ok": True, "content": content, "path": path}
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
+            fail(f"{entry} not found on this machine")
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return {"ok": True, "content": f.read(), "path": path}
 
     @capability("memory.status", risk="read")
     async def _memory_status(self) -> dict:
@@ -166,7 +146,7 @@ class HermesPlugin(Plugin):
     @capability("skills.search", risk="read")
     async def _skills_search(self, query: str) -> dict:
         """Search skill registries."""
-        return await self._cli(["skills", "search", query], timeout=60.0)
+        return await self._cli(["skills", "search", require_str(query, "query")], timeout=60.0)
 
     # ---- sessions --------------------------------------------------------
 
@@ -183,6 +163,7 @@ class HermesPlugin(Plugin):
         If `session_id` is empty, reads the most recent session. Returns
         {ok, content, total_lines}.
         """
+        limit = opt_int(limit, "limit", 50, min=1)
         args = ["sessions", "export"]
         if session_id:
             args += [f"-r={session_id}"]
@@ -202,7 +183,7 @@ class HermesPlugin(Plugin):
         return {
             "installed": True,
             "config": _config_path(),
-            "binary": shutil.which("hermes"),
+            "binary": which("hermes"),
             "version": ver.get("stdout", "").strip() if ver.get("ok") else None,
             "error": None if ver.get("ok") else (ver.get("stderr") or ver.get("error")),
         }
@@ -216,12 +197,9 @@ class HermesPlugin(Plugin):
 
     async def start(self) -> None:
         """Log that this agent is ready on the Rook network."""
-        if _config_path() and shutil.which("hermes"):
-            print(f"[hermes] plugin loaded — config={_config_path()} "
-                  f"binary={shutil.which('hermes')}")
-        else:
-            print("[hermes] plugin skipped — Hermes not installed on this machine")
+        log.info("hermes plugin loaded: config=%s binary=%s", _config_path(), which("hermes"))
 
 
-# Activate only where Hermes is installed; otherwise opt out entirely.
-PLUGIN = HermesPlugin() if _config_path() and shutil.which("hermes") else None
+# Always exported (so settings and schema tooling see it); available() keeps
+# it off where Hermes isn't installed.
+PLUGIN = HermesPlugin

@@ -8,6 +8,8 @@ import shlex
 import sys
 import tempfile
 
+from ..core.paths import worker_install_dir
+
 MARKER = "# rook managed worker CLI"
 
 
@@ -66,7 +68,7 @@ def install_launcher() -> dict:
     Native APK runtimes and source checkouts are deliberately excluded.
     """
     home = Path.home()
-    bundle = home / ".rook-band-worker/band-worker.pyz"
+    bundle = worker_install_dir() / "band-worker.pyz"
     if os.environ.get("ANDROID_ARGUMENT") or (
         hasattr(sys, "getandroidapilevel") and not os.environ.get("TERMUX_VERSION")
     ):

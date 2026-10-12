@@ -27,6 +27,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from weakref import WeakValueDictionary
 
+from ..core.paths import worker_state_path
 from . import codex_input, winsec
 
 _IS_WIN = sys.platform == 'win32'
@@ -142,7 +143,7 @@ def messageable(agent, session_id):
 
 @contextmanager
 def _receipt_db():
-    path = Path(os.environ.get('ROOK_WORK_DB', str(Path.home() / '.rook-band-worker/work.sqlite3')))
+    path = Path(os.environ.get('ROOK_WORK_DB', str(worker_state_path('work.sqlite3')))).expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(path, timeout=10)
     try:

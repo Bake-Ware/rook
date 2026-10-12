@@ -22,6 +22,7 @@ import logging
 import os
 import sys
 
+from ...core.pluginkit import fail
 from ..plugin import Plugin, capability, place
 from .. import shim
 
@@ -95,7 +96,7 @@ class SessionShimPlugin(Plugin):
         the login shell); each gets one marked block in its rc file (fish: a
         conf.d file) that uninstall removes. Takes effect in new terminals."""
         if self._terminals() is None:
-            return {"ok": False, "error": "this worker has no terminals plugin (needs a PTY)"}
+            fail("this worker has no terminals plugin (needs a PTY)")
         async with self._lock:
             result = await asyncio.to_thread(shim.install, agents, shells)
             await self._listen()

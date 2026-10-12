@@ -13,16 +13,20 @@ import threading
 import time
 import uuid
 
+from ...core.pluginkit import ArgError, fail, require_str
 from ..plugin import Plugin, capability, setting
 
 _LOCK = threading.Lock()
 
 
-def _exchange(command: dict) -> dict:
+def _exchange(command: dict, device: str | None = None) -> dict:
     import serial
 
+    device = device or os.environ.get("ROOK_DONGLE_PORT", "")
+    if not device:
+        fail("dongle.port (ROOK_DONGLE_PORT) is not set")
     with _LOCK:
-        with serial.Serial(os.environ["ROOK_DONGLE_PORT"], 115200,
+        with serial.Serial(device, 115200,
                            timeout=0.2, write_timeout=2, exclusive=True) as port:
             def request(payload):
                 token = uuid.uuid4().hex
@@ -65,7 +69,7 @@ class DonglePlugin(Plugin):
     )
 
     def available(self):
-        if not os.environ.get("ROOK_DONGLE_PORT"):
+        if not self.settings.get("port"):
             return False
         try:
             import serial  # noqa: F401
@@ -75,9 +79,10 @@ class DonglePlugin(Plugin):
 
     async def _call(self, command):
         try:
-            return await asyncio.to_thread(_exchange, command)
+            return await asyncio.to_thread(_exchange, command, self.settings.get("port"))
         except (OSError, ValueError, RuntimeError) as exc:
-            return {"ok": False, "error": str(exc)}
+            # Port gone, wrong device, bad reply: the message is the whole story.
+            fail(str(exc))
 
     @capability("status", risk="read", tags=("physical",))
     async def status(self, **_):
@@ -87,8 +92,9 @@ class DonglePlugin(Plugin):
     @capability("display", risk="read", tags=("sensitive", "physical"))
     async def display(self, text: str, **_):
         """Show up to 80 UTF-8 bytes of text on the dongle's display."""
-        if not isinstance(text, str) or len(text.encode()) > 80:
-            return {"ok": False, "error": "text must be at most 80 UTF-8 bytes"}
+        text = require_str(text, "text", strip=False, empty=True)
+        if len(text.encode()) > 80:
+            raise ArgError("text must be at most 80 UTF-8 bytes")
         return await self._call({"cmd": "display", "text": text})
 
     @capability("display_probe", risk="read", tags=("physical",))

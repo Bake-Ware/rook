@@ -8,7 +8,8 @@ breadcrumb trail behind "who renamed this machine and when": the record lives
 on the machine that was *acted upon*, so it survives even if the caller and
 the site are long gone.
 
-Storage is a size-capped JSONL ring at ``~/.rook-band-worker/audit.jsonl``.
+Storage is a size-capped JSONL ring at ``audit.jsonl`` in the worker state
+directory (``ROOK_WORKER_HOME``, else ``~/.rook-band-worker``).
 Append-only, best-effort — a failure to record must never break a capability
 call, so every write is wrapped and swallowed. The ``log`` plugin reads this
 back over the band via ``log.audit`` / ``log.tail``.
@@ -22,11 +23,12 @@ import os
 import re
 import threading
 import time
-from pathlib import Path
+
+from ..core.paths import worker_state_dir
 
 log = logging.getLogger("rook.worker.audit")
 
-_AUDIT_DIR = Path(os.path.expanduser("~")) / ".rook-band-worker"
+_AUDIT_DIR = worker_state_dir()
 _AUDIT_PATH = _AUDIT_DIR / "audit.jsonl"
 
 # Ring-buffer sizing. We keep the file simple (append-only JSONL) and compact

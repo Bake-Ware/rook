@@ -15,25 +15,22 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
-import shutil
-import sys
 import time
-from pathlib import Path
 
+from ...core.pluginkit import has_display, is_windows, opt_int, require_str, state_path, which
 from ..plugin import Plugin, capability
 
-_INBOX = Path(os.path.expanduser("~")) / ".rook-band-worker" / "messages.jsonl"
+_INBOX = state_path("messages.jsonl")
 _MAX_KEEP = 500      # trim the inbox to the most recent N on write
 
 
 async def _notify(title: str, body: str) -> bool:
     """Best-effort desktop notification; never raises."""
-    if sys.platform == "win32":
+    if is_windows():
         return await _notify_windows(title, body)
-    if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+    if not has_display():
         return False
-    exe = shutil.which("notify-send")
+    exe = which("notify-send")
     if not exe:
         return False
     try:
@@ -50,7 +47,7 @@ async def _notify_windows(title: str, body: str) -> bool:
     """Balloon-tip notification via .NET NotifyIcon (no extra deps — ships
     with every Windows install). The icon has to stay alive for the balloon
     to render, so the script sleeps briefly before disposing it."""
-    ps = shutil.which("powershell") or shutil.which("pwsh")
+    ps = which("powershell", "pwsh")
     if not ps:
         return False
 
@@ -85,9 +82,7 @@ class MsgPlugin(Plugin):
     async def _send(self, text: str, sender: str = "operator") -> dict:
         """Deliver a text message to this worker: store it in the inbox and try a
         desktop notification. ``sender`` labels who it's from."""
-        text = str(text or "")
-        if not text.strip():
-            return {"ok": False, "error": "empty message"}
+        text = require_str(text, "text", strip=False)
         entry = {"ts": int(time.time()), "sender": str(sender or "band")[:64],
                  "text": text[:4000]}
         try:
@@ -107,26 +102,21 @@ class MsgPlugin(Plugin):
     @capability("read", risk="read", tags=("sensitive",))
     def _read(self, limit: int = 20) -> dict:
         """Return the most recent messages from this worker's inbox."""
+        limit = opt_int(limit, "limit", 20, min=1, max=_MAX_KEEP)
         if not _INBOX.exists():
             return {"ok": True, "messages": []}
         out = []
-        try:
-            for ln in _INBOX.read_text(encoding="utf-8", errors="replace").splitlines()[-int(limit):]:
-                try:
-                    out.append(json.loads(ln))
-                except Exception:
-                    continue
-        except Exception as e:
-            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        for ln in _INBOX.read_text(encoding="utf-8", errors="replace").splitlines()[-limit:]:
+            try:
+                out.append(json.loads(ln))
+            except ValueError:
+                continue
         return {"ok": True, "messages": out}
 
     @capability("clear", risk="write", tags=("destructive",))
     def _clear(self) -> dict:
         """Empty this worker's inbox."""
-        try:
-            _INBOX.unlink(missing_ok=True)
-        except Exception as e:
-            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        _INBOX.unlink(missing_ok=True)
         return {"ok": True, "cleared": True}
 
 

@@ -317,7 +317,7 @@ def args_hash(args: Any) -> str:
 
 def default_anchors() -> list[str]:
     """Root public keys this node trusts: ``ROOK_UPDATE_PUBKEY`` (or the key
-    baked into the worker bundle), plus ``~/.rook-band-worker/anchors.json``
+    baked into the worker bundle), plus ``anchors.json`` in the worker state directory
     (a list of base64 keys or ``{"root": key}`` objects)."""
     out: list[str] = []
     env = os.environ.get("ROOK_UPDATE_PUBKEY", "").strip()
@@ -330,7 +330,8 @@ def default_anchors() -> list[str]:
                 out.append(PUBKEY_B64)
         except Exception:
             pass
-    path = os.path.join(os.path.expanduser("~"), ".rook-band-worker", "anchors.json")
+    from .paths import worker_state_path
+    path = str(worker_state_path("anchors.json"))
     try:
         with open(path, encoding="utf-8") as f:
             extra = json.load(f)

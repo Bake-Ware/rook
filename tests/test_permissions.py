@@ -174,9 +174,11 @@ async def test_config_apply_hub_psk_needs_a_verified_ticket(tmp_path, monkeypatc
     monkeypatch.setattr(wconfig, "_ACTIVE", tmp_path / "config.json")
     monkeypatch.setattr(wconfig, "_PREV", tmp_path / "config.json.prev")
     monkeypatch.setattr(wconfig, "_PENDING", tmp_path / "config.json.pending")
+    from rook.core.pluginkit import CapError
     p = ConfigPlugin()
-    res = await p._apply({"psk": "x"}, epoch=1, restart=False)
-    assert not res["ok"] and not (tmp_path / "config.json").exists()
+    with pytest.raises(CapError):
+        await p._apply({"psk": "x"}, epoch=1, restart=False)
+    assert not (tmp_path / "config.json").exists()
     assert (await p._apply({"log_level": "debug"}, epoch=1, restart=False))["ok"]
 
 
