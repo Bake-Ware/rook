@@ -94,7 +94,7 @@ class HermesPlugin(Plugin):
     async def _memory_read(self, entry: str = "MEMORY.md") -> dict:
         """Read a built-in memory file (MEMORY.md or USER.md).
 
-        Returns {ok, content, path}.
+        Returns {ok, content, path} or {ok: False, error}.
         """
         entry = require_choice(entry, "entry", ("MEMORY.md", "USER.md"))
         path = os.path.expanduser(f"~/.hermes/{entry}")
