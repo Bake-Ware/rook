@@ -19,7 +19,6 @@ import glob
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import time

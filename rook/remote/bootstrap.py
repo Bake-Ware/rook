@@ -2038,6 +2038,7 @@ class CombinedServer:
             self._bans.append({"name": name, "worker_id": worker_id,
                                "at": int(time.time()), "reason": reason})
             try:
+                from . import setup_store
                 setup_store.save_bans(self._bans)
             except Exception:
                 log.exception("failed to persist ban list")
@@ -2075,6 +2076,7 @@ class CombinedServer:
                       if not ((worker_id and b.get("worker_id") == worker_id)
                               or (name and b.get("name") == name))]
         try:
+            from . import setup_store
             setup_store.save_bans(self._bans)
         except Exception:
             log.exception("failed to persist ban list")
