@@ -145,6 +145,7 @@ Every node describes itself with two kinds of fact (permissions.md 4.8):
   | `camera` | bool | `/dev/video*` (Linux) |
   | `gpu` | `[{vendor, name, vram_gb}]` | `nvidia-smi` (one bounded call) |
   | `embedded` | bool | Android, a device tree (SBCs), or under 2 GB RAM |
+  | `termux` | bool | Termux on Android (`TERMUX_VERSION`, or a `com.termux` `PREFIX`) |
 
   Operators add or correct facts with `ROOK_NODE_FACTS` (a JSON object merged
   over the detected ones, for example `{"camera": true, "gpu": [{"vendor": "amd", "vram_gb": 16}]}`).
