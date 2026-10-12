@@ -82,10 +82,18 @@ async def test_proxy_checks_origin_and_preserves_account_boundary(portal):
             assert (await client.post('/account/tokens/api', headers={**p.headers,'Origin':'https://evil.example'},json=data)).status == 403
             assert not calls
             member = p.store.create_local('member', 'a long enough test password')
-            assert (await client.get('/account/tokens/api',headers={'Cookie':'rook_account='+p.store.new_session(member)})).status == 403
+            response = await client.get('/account/tokens/api',headers={'Cookie':'rook_account='+p.store.new_session(member)})
+            assert response.status == 403
+            assert (await response.json())['error'] == 'API tokens require an operator account.'
+            assert (await client.get('/account/tokens/api')).status == 401
+            assert (await client.post('/account/tokens/api',headers=p.headers,json=['x'])).status == 400
             response = await client.post('/account/tokens/api',headers=p.headers,json=data)
             assert response.status == 200 and response.headers['Cache-Control'] == 'no-store'
             assert calls == [(p.headers['Cookie'].split('=',1)[1],data)]
+            for path in ('/tokens', '/account/tokens'):
+                response = await client.get(path, headers=p.headers, allow_redirects=False)
+                assert response.status == 302 and response.headers['Location'] == '/#tokens'
+            assert (await client.get('/account/tokens/assets/tokens.js')).status == 404
 
 
 @pytest.mark.asyncio

@@ -29,6 +29,9 @@ Preparation for public use.
   operator 403, JSON object 400, constant-time CSRF 403), and every session
   CSRF compare in the dashboard uses `accounts.csrf_ok`. A POST body that is
   not a JSON object now answers 400 everywhere (some routes said 403).
+- `TokenWeb` is a `KnowledgeWeb` proxy like Guidance, Vault, Settings and
+  Jobs. A non-operator calling an operator-only `/account/*/api` proxy now
+  gets a JSON 403 instead of an HTML one.
 
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps
