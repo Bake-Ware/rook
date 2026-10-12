@@ -37,7 +37,12 @@ def main() -> None:
         from .desktop import main as desktop_main
         desktop_main()
         return
-    ap = argparse.ArgumentParser(prog="rook-worker")
+    ap = argparse.ArgumentParser(
+        prog="rook-worker",
+        epilog="Environment: ROOK_CAP_TIMEOUT = seconds a capability call may run "
+               "before it is abandoned with a timeout error (default 300; 0 = no limit). "
+               "Caps that take a timeout argument get that plus a margin; long-running "
+               "caps (updates) opt out.")
     ap.add_argument("--hub", default=os.environ.get("ROOK_HUB", "127.0.0.1:7474"),
                     help="hub host:port (or env ROOK_HUB; default 127.0.0.1:7474)")
     ap.add_argument("--psk", default=os.environ.get("ROOK_BAND_PSK") or None,
@@ -83,12 +88,14 @@ def main() -> None:
         # Import + construct the plugin registry offline (no transport, no band).
         # A broken/incompatible bundle fails here with a non-zero exit — which is
         # exactly what the OTA self-update checks before swapping a downloaded pyz.
-        from .registry import CapabilityRegistry
-        from .plugin import load_plugins
+        from ..core.host import PluginHost
         from . import desktop
         from rook.cli import band_tui
-        reg = CapabilityRegistry()
-        plugins = load_plugins("rook.worker.plugins", reg, None)
+        # Every built-in plugin, without placement: the check is that each
+        # one imports and constructs, not whether it would run on this host.
+        host = PluginHost(check_placement=False)
+        reg = host.registry
+        plugins = host.load(PluginHost.discover("rook.worker.plugins", entry_points=False))
         print(f"selftest OK v{VERSION}: {len(plugins)} plugins, {len(reg.list())} caps")
         return
 

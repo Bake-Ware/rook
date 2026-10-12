@@ -13,11 +13,18 @@ The worker (:class:`rook.worker.core.Worker`) and the hub
 (:class:`rook.hub.node.HubNode`) each build one host and differ only in the
 facts they pass (the hub holds the ``hub`` role) and in how calls arrive.
 
+Plugins can be switched at runtime through the same path as boot:
+:meth:`PluginHost.enable`, :meth:`PluginHost.disable` and
+:meth:`PluginHost.reload` (stop, re-read settings, start again). The node's
+side hook (``bind_worker`` / ``bind_host``) is attached once with
+:meth:`PluginHost.set_binder` and runs for every plugin activated later too.
+
 This module is stdlib-only: it ships inside the worker bundle.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Callable, Iterable
 
@@ -26,7 +33,7 @@ from .facts import NodeFacts, evaluate_placement
 from .plugin import (CORE_API_VERSION, DEFAULT_PLACEMENT, Candidate, Plugin,
                      SettingsView, _UNSET, core_api_compatible, iter_entry_points,
                      iter_package, valid_version)
-from .registry import CapabilityRegistry
+from .registry import CapabilityRegistry, CapTimeout
 
 log = logging.getLogger("rook.core.host")
 
@@ -54,13 +61,24 @@ class PluginHost:
         self._data_root = data_root
         self.plugins: list[Plugin] = []
         self.status: dict[str, dict] = {}
+        # Every candidate offered to load(), by module name, so enable() can
+        # bring back one that was filtered out, disabled or unavailable.
+        self.candidates: dict[str, Candidate] = {}
+        self._binder: Callable[[Plugin], None] | None = None
+        self._lock: asyncio.Lock | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     # -- discovery -------------------------------------------------------
     @staticmethod
-    def discover(package: str | None = None, entry_points: bool = True) -> list[Candidate]:
+    def discover(package: "str | Iterable[str] | None" = None,
+                 entry_points: bool = True) -> list[Candidate]:
+        """Candidates from one package or several (in order; a later package
+        may hold a module of the same name only if placement keeps the two
+        apart), plus ``rook.plugins`` entry points."""
         out: list[Candidate] = []
-        if package:
-            out.extend(iter_package(package))
+        packages = [package] if isinstance(package, str) else list(package or ())
+        for pkg in packages:
+            out.extend(iter_package(pkg))
         if entry_points:
             out.extend(iter_entry_points())
         return out
@@ -96,6 +114,7 @@ class PluginHost:
         loaded: list[Plugin] = []
         waiting: list[tuple[str, Candidate, Plugin]] = []
         for cand in candidates:
+            self.candidates.setdefault(cand.module, cand)
             got = self._prepare(cand, enabled, disabled)
             if got is None:
                 continue
@@ -122,6 +141,10 @@ class PluginHost:
     def plugin(self, namespace: str) -> Plugin | None:
         """The loaded plugin with this namespace, if any."""
         return next((p for p in self.plugins if p.NAMESPACE == namespace), None)
+
+    def loaded(self, module: str) -> Plugin | None:
+        """The loaded plugin from this module (file stem), if any."""
+        return next((p for p in self.plugins if p._module == module), None)
 
     def _missing_deps(self, plugin: Plugin) -> list[str]:
         return [ns for ns in (plugin.DEPENDS or ()) if self.plugin(ns) is None]
@@ -224,23 +247,189 @@ class PluginHost:
         log.info("loaded plugin %s (ns=%s, caps=%d)", name, plugin.NAMESPACE, len(caps))
         return True
 
-    # -- lifecycle -------------------------------------------------------
-    async def start(self) -> None:
+    # -- node side hook --------------------------------------------------
+    def set_binder(self, binder: Callable[[Plugin], None] | None) -> None:
+        """Attach the node's side hook (the worker's ``bind_worker``, the
+        hub's ``bind_host``): called now for every loaded plugin and, from
+        then on, for each plugin :meth:`enable`/:meth:`reload` activates,
+        before its ``start``. A binder that raises is logged and recorded
+        (``bind_error``); the plugin stays loaded."""
+        self._binder = binder
         for p in list(self.plugins):
-            try:
-                await p.start()
-            except Exception as e:
-                log.exception("plugin %s start failed", p.NAMESPACE)
-                st = self.status.get(p._module)
-                if st is not None:
-                    st["start_error"] = f"{type(e).__name__}: {e}"
+            self._bind(p)
+
+    def _bind(self, plugin: Plugin) -> None:
+        if self._binder is None:
+            return
+        try:
+            self._binder(plugin)
+        except Exception as e:
+            log.exception("plugin %s: binding to the node failed", plugin.NAMESPACE)
+            st = self.status.get(plugin._module)
+            if st is not None:
+                st["bind_error"] = f"{type(e).__name__}: {e}"
+
+    # -- lifecycle -------------------------------------------------------
+    async def _start_one(self, p: Plugin) -> None:
+        try:
+            await p.start()
+        except Exception as e:
+            log.exception("plugin %s start failed", p.NAMESPACE)
+            st = self.status.get(p._module)
+            if st is not None:
+                st["start_error"] = f"{type(e).__name__}: {e}"
+
+    async def _stop_one(self, p: Plugin) -> None:
+        try:
+            await p.stop()
+        except Exception:
+            log.exception("plugin %s stop failed", p.NAMESPACE)
+
+    async def start(self) -> None:
+        self._loop = asyncio.get_running_loop()
+        for p in list(self.plugins):
+            await self._start_one(p)
 
     async def stop(self) -> None:
         for p in list(self.plugins):
-            try:
-                await p.stop()
-            except Exception:
-                log.exception("plugin %s stop failed", p.NAMESPACE)
+            await self._stop_one(p)
+
+    # -- runtime enable / disable / reload ---------------------------------
+    def _mutex(self) -> asyncio.Lock:
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
+
+    def _dependents(self, plugin: Plugin) -> list[str]:
+        return sorted(p._module or p.NAMESPACE for p in self.plugins
+                      if p is not plugin and plugin.NAMESPACE in (p.DEPENDS or ()))
+
+    def _failure(self, module: str) -> str:
+        st = self.status.get(module) or {}
+        return f"{module} did not load: {st.get('state', 'unknown')}" + (
+            f" ({st['reason']})" if st.get("reason") else "")
+
+    async def _activate_now(self, module: str) -> tuple[Plugin | None, str]:
+        """The boot path for one module: prepare, activate, bind, start."""
+        cand = self.candidates.get(module)
+        if cand is None:
+            return None, f"no such plugin module: {module}"
+        got = self._prepare(cand, None, set())
+        if got is None:
+            return None, self._failure(module)
+        plugin = got[2]
+        missing = self._missing_deps(plugin)
+        if missing:
+            self._mark(module, "unavailable", f"depends on {', '.join(missing)} (not loaded)")
+            return None, self._failure(module)
+        if not self._activate(module, cand, plugin):
+            return None, self._failure(module)
+        self._bind(plugin)
+        await self._start_one(plugin)
+        # Plugins that depend on this namespace now see the new instance.
+        for p in self.plugins:
+            if plugin.NAMESPACE in (p.DEPENDS or ()):
+                p.__dict__.setdefault("_deps", {})[plugin.NAMESPACE] = plugin
+        return plugin, ""
+
+    async def _deactivate(self, plugin: Plugin) -> list[str]:
+        removed = [c for c in plugin.caps() if self.registry.unregister(c)]
+        await self._stop_one(plugin)
+        self.plugins[:] = [p for p in self.plugins if p is not plugin]
+        return removed
+
+    async def enable(self, module: str) -> dict:
+        """Load one plugin module now, through the boot path: manifest and
+        placement checks, settings wired before ``available()``, caps
+        registered with collision safety, the node's side hook, ``start``.
+        Returns ``{"ok", "module", "namespace", "caps"}`` or ``{"ok": False,
+        "error"}``; :attr:`status` records the outcome either way. Nothing is
+        persisted here (the node does that)."""
+        async with self._mutex():
+            p = self.loaded(module)
+            if p is not None:
+                return {"ok": True, "module": module, "namespace": p.NAMESPACE,
+                        "already_loaded": True, "caps": sorted(p.caps())}
+            plugin, err = await self._activate_now(module)
+            if plugin is None:
+                return {"ok": False, "module": module, "error": err}
+            log.info("enabled plugin %s at runtime", module)
+            return {"ok": True, "module": module, "namespace": plugin.NAMESPACE,
+                    "caps": sorted(plugin.caps())}
+
+    async def disable(self, module: str, *, reason: str = "disabled by operator") -> dict:
+        """Unregister one loaded plugin's caps and stop it. Refused while
+        another loaded plugin ``DEPENDS`` on it."""
+        async with self._mutex():
+            p = self.loaded(module)
+            if p is None:
+                return {"ok": False, "module": module, "error": f"plugin not loaded: {module}"}
+            needed = self._dependents(p)
+            if needed:
+                return {"ok": False, "module": module,
+                        "error": f"{module} is needed by {', '.join(needed)}; disable those first"}
+            removed = await self._deactivate(p)
+            self._mark(module, "disabled", reason)
+            log.info("disabled plugin %s (%d caps removed)", module, len(removed))
+            return {"ok": True, "module": module, "namespace": p.NAMESPACE,
+                    "caps_removed": removed}
+
+    async def reload(self, module: str) -> dict:
+        """Stop a loaded plugin and load it again with freshly read settings
+        (``apply="reload"`` settings take effect here): a new instance, a new
+        ``available()`` check, the side hook, ``start``. If it no longer
+        loads (an enable setting turned off), it stays unloaded and the reply
+        says why."""
+        async with self._mutex():
+            p = self.loaded(module)
+            if p is None:
+                return {"ok": False, "module": module, "error": f"plugin not loaded: {module}"}
+            await self._deactivate(p)
+            plugin, err = await self._activate_now(module)
+            if plugin is None:
+                log.warning("plugin %s did not come back after a reload: %s", module, err)
+                return {"ok": False, "module": module, "unloaded": True, "error": err}
+            log.info("reloaded plugin %s", module)
+            return {"ok": True, "module": module, "namespace": plugin.NAMESPACE,
+                    "caps": sorted(plugin.caps())}
+
+    def request_reload(self, module: str) -> bool:
+        """Schedule :meth:`reload` from any thread (settings change hooks run
+        in a cap's worker thread). Returns False when the host has not been
+        started on a loop yet; the next start reads the new settings anyway."""
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            return False
+
+        def go() -> None:
+            task = loop.create_task(self.reload(module))
+            task.add_done_callback(lambda t: t.cancelled() or t.exception() is None
+                                   or log.error("reloading %s failed: %s", module, t.exception()))
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is loop:
+            go()
+        else:
+            loop.call_soon_threadsafe(go)
+        return True
+
+    def settings_changed(self, namespaces: Iterable[str] | None = None,
+                         stored: Callable[[str], dict] | None = None) -> dict:
+        """Apply changed settings: re-read stored values into every plugin's
+        view (``apply="live"`` needs nothing more) and reload the plugins in
+        ``namespaces`` that declare an ``apply="reload"`` setting. Returns
+        ``{"refreshed": n, "reloading": [modules]}``."""
+        refreshed = self.refresh_settings(stored)
+        wanted = set(namespaces) if namespaces is not None else None
+        reloading = []
+        for p in list(self.plugins):
+            if wanted is not None and p.NAMESPACE not in wanted:
+                continue
+            if any(s.apply == "reload" for s in p.SETTINGS) and self.request_reload(p._module):
+                reloading.append(p._module)
+        return {"refreshed": refreshed, "reloading": reloading}
 
     def heartbeats(self) -> dict:
         hb: dict = {}
@@ -314,6 +503,8 @@ class PluginHost:
         tok = context.caller_identity.set(identity)
         try:
             return {"ok": True, "result": await self.registry.call(cap, **args)}
+        except CapTimeout as e:
+            return {"ok": False, "error": f"timeout: {e}"}
         except TypeError as e:
             return {"ok": False, "error": f"bad args: {e}"}
         except Exception as e:

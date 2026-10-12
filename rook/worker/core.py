@@ -11,12 +11,13 @@ import uuid
 from pathlib import Path
 
 from ..core import authz
-from ..core.facts import NodeFacts, local_facts, wire_facts
+from ..core.facts import NodeFacts, clean_facts, local_facts, wire_facts
 from ..core.host import PluginHost
 from . import audit, context
 from .authz_guard import Guard
 from .plugin import Plugin
 from .registry import CapabilityRegistry
+from ..core.registry import CapTimeout
 from .transports.base import Transport
 
 log = logging.getLogger("rook.worker.core")
@@ -48,10 +49,11 @@ def stable_worker_id() -> str:
 
 class Worker:
     def __init__(self, transport: Transport,
-                 plugins_pkg: str = "rook.worker.plugins",
+                 plugins_pkg: "str | list[str]" = "rook.worker.plugins",
                  enabled: list[str] | None = None,
                  name: str | None = None,
-                 announce_interval: float = 30.0) -> None:
+                 announce_interval: float = 30.0,
+                 facts: dict | None = None) -> None:
         self.app_release: dict = {}
         self.transport = transport
         self.registry = CapabilityRegistry()
@@ -62,7 +64,10 @@ class Worker:
         # this node's facts, manifest checks, failure isolation. Workers hold no
         # roles, so plugins placed on the hub (is_hub) never load here.
         from ._build_info import VERSION
-        self.facts = NodeFacts(node_id=self.worker_id, name=self.name, hw=local_facts())
+        # ``facts``: extra self-reported facts from the embedding app (the
+        # Android APK adds app="android" so its native plugins place there).
+        hw = {**local_facts(), **clean_facts(facts or {})}
+        self.facts = NodeFacts(node_id=self.worker_id, name=self.name, hw=hw)
         self.host = PluginHost(self.registry, self.facts, build_version=VERSION,
                                data_root=str(_WORKER_ID_FILE.parent / "plugins"))
         # Persisted runtime disables (via worker.plugin.disable) are honoured at
@@ -74,13 +79,13 @@ class Worker:
         if enabled is not None:
             enabled = list(dict.fromkeys(list(enabled) + sorted(load_enabled())))
         self.host.load(self.host.discover(plugins_pkg), enabled, disabled=load_disabled())
-        self.plugins: list[Plugin] = self.host.plugins  # same list; admin mutates it
+        self.plugins: list[Plugin] = self.host.plugins  # same list; the host mutates it
         # Introspection: lets the dashboard build accurate call forms.
         self.registry.register("caps.describe", self._caps_describe)
         # Runtime cap administration: worker.plugin.* + customcap.* + re-hydrate
         # persisted custom command-caps (cmd.*).
         self.admin = WorkerAdmin(self.registry, self.plugins, plugins_pkg,
-                                 enable_arg=self.enable_arg)
+                                 enable_arg=self.enable_arg, host=self.host)
         self.admin.register_caps()
         # Typed settings: what this worker's plugins declare, which env the
         # pushed config set, and secrets fetched from the hub at use. Its
@@ -105,14 +110,30 @@ class Worker:
         # Each returns True if it consumed the payload.
         self._binary_handlers: list = []
         # Let plugins that need to send/receive raw band traffic (not just
-        # answer capability calls) grab a handle to us. Opt-in via bind_worker.
-        for p in self.plugins:
-            bind = getattr(p, "bind_worker", None)
-            if callable(bind):
-                try:
-                    bind(self)
-                except Exception:
-                    log.exception("plugin %s bind_worker failed", p.NAMESPACE)
+        # answer capability calls) grab a handle to us. Opt-in via bind_worker;
+        # the host also runs it for plugins enabled or reloaded at runtime.
+        self.host.set_binder(self._bind_plugin)
+
+    def _bind_plugin(self, p: Plugin) -> None:
+        bind = getattr(p, "bind_worker", None)
+        if callable(bind):
+            bind(self)
+
+    def apply_settings(self, cfg: dict | None = None) -> dict:
+        """Apply a pushed config's ``env`` to this running process and reload
+        the plugins that declare an ``apply="reload"`` setting set by one of
+        the changed variables (``apply="live"`` ones read the environment on
+        next use). Used by ``worker.config_apply(restart=false)``; settings
+        marked ``restart`` still need the restart."""
+        from . import wconfig
+        keys = set(wconfig.apply_env(cfg))
+        reloading = []
+        for p in list(self.plugins):
+            hit = [st for st in getattr(p, "SETTINGS", ())
+                   if keys & set(st.env_names(p.NAMESPACE))]
+            if any(st.apply == "reload" for st in hit) and self.host.request_reload(p._module):
+                reloading.append(p._module)
+        return {"env": sorted(keys), "reloading": reloading}
 
     def _description_get(self) -> dict:
         """Read this worker's persistent, human-written role description."""
@@ -327,6 +348,11 @@ class Worker:
             audit.record(cap, identity, args, ok=True, msg_id=msg_id, target=target,
                          ticket=ticket, decision="allow")
             await self._reply(msg_id, {"ok": True, "result": result})
+        except CapTimeout as e:
+            audit.record(cap, identity, args, ok=False, msg_id=msg_id,
+                         target=target, error=f"timeout: {e}", ticket=ticket,
+                         decision="allow")
+            await self._reply(msg_id, {"ok": False, "error": f"timeout: {e}"})
         except TypeError as e:
             audit.record(cap, identity, args, ok=False, msg_id=msg_id,
                          target=target, error=f"bad args: {e}", ticket=ticket,

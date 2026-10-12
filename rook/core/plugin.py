@@ -48,13 +48,16 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 from urllib.parse import urlparse
 
+from .authz import TIERS
+
 log = logging.getLogger("rook.core.plugin")
 
 #: The plugin API version this core implements. Plugins declare the range they
 #: support in ``CORE_API``; minor bumps are additive, a major bump breaks.
 CORE_API_VERSION = "1.1"  # 1.1: DEPENDS, Plugin.dependency(); settings wired before available()
 
-RISKS = ("read", "write", "exec", "admin")
+#: Risk tiers, lowest first (the one definition is :data:`rook.core.authz.TIERS`).
+RISKS = TIERS
 SCOPES = ("hub", "band", "worker", "user")
 RUN_MODES = ("all", "one")
 VERSION_RE = re.compile(r"^\d+\.[a-z]+\.[a-z]+$")
@@ -64,11 +67,35 @@ _UNSET = object()  # sentinel: distinguishes "no PLUGIN export" from "PLUGIN = N
 
 # -- capabilities ------------------------------------------------------------
 
+#: ``CapMeta.timeout`` value meaning "the host default" (:func:`default_cap_timeout`).
+DEFAULT_TIMEOUT = "default"
+#: Seconds added to a caller's own ``timeout`` argument, so a cap that bounds
+#: its work with it (``shell.exec``) times out itself before core cuts it off.
+TIMEOUT_MARGIN = 15.0
+_FALLBACK_TIMEOUT = 300.0
+
+
+def default_cap_timeout() -> float | None:
+    """How long core lets a cap run when it declares no timeout of its own:
+    ``ROOK_CAP_TIMEOUT`` seconds (``0`` or ``none`` = no limit), else 300."""
+    raw = os.environ.get("ROOK_CAP_TIMEOUT", "").strip().lower()
+    if not raw:
+        return _FALLBACK_TIMEOUT
+    if raw in ("0", "none", "off"):
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        log.warning("ROOK_CAP_TIMEOUT=%r is not a number; using %ss", raw, _FALLBACK_TIMEOUT)
+        return _FALLBACK_TIMEOUT
+    return value if value > 0 else None
+
+
 @dataclass(frozen=True)
 class CapMeta:
     """Declared contract of one capability. Enforced by the core registry
-    (``limit``/``fields``), the permissions layer (``risk``) and the hub MCP
-    bridge (``tool``)."""
+    (``limit``/``fields``/``timeout``), the permissions layer (``risk``) and
+    the hub MCP bridge (``tool``)."""
 
     suffix: str = ""
     risk: str | None = None          # read|write|exec|admin; None = undeclared (treated as exec)
@@ -77,6 +104,7 @@ class CapMeta:
     fields: Any = None               # None = no projection, "*" = all by default, [..] = default keys
     tool: bool = False               # also expose as a dedicated MCP tool (hub-placed plugins)
     description: str | None = None   # overrides the docstring's first paragraph for tools/rosters
+    timeout: Any = DEFAULT_TIMEOUT   # seconds; None = never cut off; "default" = host default
 
     def describe(self) -> dict:
         out: dict[str, Any] = {}
@@ -90,13 +118,18 @@ class CapMeta:
             out["fields"] = self.fields if self.fields == "*" else list(self.fields)
         if self.tool:
             out["tool"] = True
+        if self.timeout != DEFAULT_TIMEOUT:
+            # ``cap_timeout`` (not ``timeout``): clients read a ``timeout``
+            # *parameter* default from ``params``, and this is not one.
+            out["cap_timeout"] = self.timeout
         return out
 
 
 def capability(suffix: str = "", *, risk: str | None = None, limit: int | None = None,
                fields: Any = None, tool: bool = False,
                description: str | None = None, tier: str | None = None,
-               tags: Iterable[str] = ()) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+               tags: Iterable[str] = (),
+               timeout: Any = DEFAULT_TIMEOUT) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Mark a `Plugin` method as a capability.
 
     The full dotpath is ``f"{Plugin.NAMESPACE}.{suffix}"`` or just
@@ -105,7 +138,14 @@ def capability(suffix: str = "", *, risk: str | None = None, limit: int | None =
 
     Keyword metadata is optional and additive (see :class:`CapMeta`); a bare
     ``@capability("x")`` behaves exactly as it always has. ``tier`` is an
-    alias of ``risk`` (the permissions spec's name for it).
+    alias of ``risk`` (the permissions spec's name for it). Every built-in
+    cap declares ``risk`` (tests/test_plugin_contract.py).
+
+    ``timeout`` bounds one call (seconds). Omitted, the host default applies
+    (:func:`default_cap_timeout`, 300 s); ``None`` means never cut off, for
+    caps that legitimately run long and bound themselves (an OTA download, an
+    LLM conversation). A cap that takes a ``timeout`` argument also gets the
+    caller's value plus :data:`TIMEOUT_MARGIN`, whichever is longer.
     """
     if tier is not None:
         if risk is not None and risk != tier:
@@ -119,10 +159,15 @@ def capability(suffix: str = "", *, risk: str | None = None, limit: int | None =
     if fields is not None and fields != "*" and not (
             isinstance(fields, (list, tuple)) and all(isinstance(f, str) for f in fields)):
         raise ValueError('fields must be None, "*" or a list of names')
-    has_meta = any(v not in (None, False, ()) for v in (risk, limit, fields, tool, description, tags))
+    if timeout != DEFAULT_TIMEOUT and timeout is not None and (
+            isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout <= 0):
+        raise ValueError("timeout must be a positive number of seconds or None")
+    has_meta = any(v not in (None, False, ()) for v in (risk, limit, fields, tool, description, tags)) \
+        or timeout != DEFAULT_TIMEOUT
     meta = CapMeta(suffix=suffix, risk=risk, tags=tags, limit=limit,
                    fields=tuple(fields) if isinstance(fields, list) else fields,
-                   tool=tool, description=description)
+                   tool=tool, description=description,
+                   timeout=float(timeout) if isinstance(timeout, (int, float)) else timeout)
 
     def deco(fn: Callable[..., Any]) -> Callable[..., Any]:
         setattr(fn, "_rook_cap_suffix", suffix)
@@ -163,6 +208,15 @@ def place(where: Any = None, run: str = "all") -> Placement:
 #: worker plugins keep loading on every worker; nothing lands on the hub unless
 #: it asks for ``is_hub``.
 DEFAULT_PLACEMENT = Placement(where="not is_hub", run="all")
+
+#: Placement of the native Android plugins (``rook_android.plugins``): the
+#: APK's embedded worker reports the fact ``app="android"``. Not ``os``: a
+#: Termux worker is ``os="android"`` too and keeps the stock plugins' Termux
+#: backends.
+ANDROID_APP = "app == 'android'"
+#: Placement of the stock worker plugins the APK replaces natively: the exact
+#: complement on workers, so one of each pair loads, never both or neither.
+ANDROID_APP_REPLACED = "not is_hub and app != 'android'"
 
 
 # -- settings & resources ----------------------------------------------------
@@ -498,6 +552,22 @@ class Plugin:
             out[full] = attr
         return out
 
+    @classmethod
+    def declared_caps(cls) -> dict[str, Callable[..., Any]]:
+        """``{dotpath: function}`` for every cap the class declares, without
+        constructing it (generators, schema scans, contract tests). Metadata
+        is ``getattr(fn, "_rook_cap_meta", None)``."""
+        out: dict[str, Callable[..., Any]] = {}
+        for name in dir(cls):
+            attr = getattr(cls, name, None)
+            if isinstance(attr, property) or not callable(attr):
+                continue
+            suffix = getattr(attr, "_rook_cap_suffix", None)
+            if suffix is None:
+                continue
+            out[cls.NAMESPACE if not suffix else f"{cls.NAMESPACE}.{suffix}"] = attr
+        return out
+
     # host-provided context ---------------------------------------------
     @property
     def settings(self) -> SettingsView:
@@ -696,22 +766,3 @@ def iter_entry_points(group: str = ENTRY_POINT_GROUP) -> list[Candidate]:
             return getattr(obj, "PLUGIN", _UNSET)  # entry point named a module
         out.append(Candidate(ep.name, f"entry_point:{ep.name}", load))
     return out
-
-
-def load_plugins(package_name: str, registry: Any,
-                 enabled: list[str] | None = None,
-                 disabled: set[str] | None = None) -> list[Plugin]:
-    """Import every module under `package_name`, instantiate any `Plugin` it
-    exports as ``PLUGIN`` (class or instance), register its capabilities, and
-    return the live plugin instances.
-
-    `enabled` filters by plugin module name (the file's stem). `None` = all.
-    `disabled` is a set of module names to skip (persisted runtime disables);
-    it wins over `enabled`.
-
-    Kept for compatibility (worker CLI, runtime enable); it performs no
-    placement check. New code uses :class:`rook.core.host.PluginHost`.
-    """
-    from .host import PluginHost
-    host = PluginHost(registry=registry, check_placement=False)
-    return host.load(iter_package(package_name), enabled=enabled, disabled=disabled)

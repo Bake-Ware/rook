@@ -26,7 +26,8 @@ import pkgutil
 from dataclasses import dataclass
 from typing import Any
 
-from ..core.plugin import RISKS, Plugin, Setting, setting
+from ..core.authz import TIERS
+from ..core.plugin import Plugin, Setting, setting
 
 log = logging.getLogger("rook.hub.settings_schema")
 
@@ -165,7 +166,7 @@ _CORE: list[tuple[Setting, str, dict]] = [
     # Plugins on the hub
     (_s("hub.plugins", bool, True, env="ROOK_HUB_PLUGINS", bootstrap=True, apply="restart",
         label="Hub plugins (worker 'rook')", group="Plugins"), "mcp", {}),
-    (_s("hub.band_max_risk", "str", "read", env="ROOK_HUB_BAND_MAX_RISK", choices=RISKS,
+    (_s("hub.band_max_risk", "str", "read", env="ROOK_HUB_BAND_MAX_RISK", choices=TIERS,
         bootstrap=True, apply="restart", label="Highest risk callable over the band",
         group="Plugins", advanced=True), "mcp", {}),
     (_s("settings.service_readers", dict, {}, label="Services that may fetch settings",

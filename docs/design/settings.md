@@ -175,7 +175,7 @@ Entry point: `rook/worker/cli.py:main`.
 | `--bind-port` | flag | `0` (ephemeral) | worker | transport | no | proc |
 | `--keepalive` | flag | `20` s | worker | transport | no | proc |
 | `--ws` | flag | off (UDP) | worker | transport | no | proc |
-| `--enable` | flag | all built-in plugins | worker | `load_plugins` | no | proc |
+| `--enable` | flag | all built-in plugins | worker | `PluginHost.load` | no | proc |
 | `--update-url` / `ROOK_UPDATE_URL` | flag, env | empty (no OTA) | worker | `plugins/selfupdate` | no | proc |
 | `-v` | flag; raised by pushed `log_level` | warning | worker | logging | no | proc |
 | `--version`, `--selftest`, `--install-cli`, `--cli` | flag | n/a | worker | `cli.main` | no | n/a |

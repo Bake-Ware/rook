@@ -262,7 +262,7 @@ class Decide(Plugin):
             raise ValueError(f"decide.grid sides must be 2..{max_options} for this model")
         return rows, cols
 
-    @capability("drive", risk="exec", tags=("physical",))
+    @capability("drive", risk="exec", tags=("physical",), timeout=None)
     async def drive(self, goal: str, screen_worker: str, input_worker: str = "",
                     dry_run: bool | None = None, max_steps: int | None = None,
                     max_seconds: float | None = None, texts: list | None = None,
