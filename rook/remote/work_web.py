@@ -695,11 +695,12 @@ class WorkWeb:
                             latest['source_updated'] = activity
                             self.store.save(latest)
                 return web.json_response(page, headers=NO_STORE)
-            # read_snapshot is on every supported worker that has history
-            # (rook.core.compat); read_page stays a worker cap for direct use.
             cap = s['agent'] + '-history.read_snapshot'
-            args = dict(session_id=s['source_id'], offset=offset, content_offset=content_offset,
-                        snapshot=request.query.get('snapshot', ''))
+            args = dict(session_id=s['source_id'], offset=offset, content_offset=content_offset)
+            if cap in caps:
+                args['snapshot'] = request.query.get('snapshot', '')
+            else:
+                cap = s['agent'] + '-history.read_page'
             if cap not in caps:
                 raise ValueError('Update this worker to enable transcript reads.')
             page = await self.rpc(s, cap, args, identity=actor(user))

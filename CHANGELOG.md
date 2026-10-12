@@ -133,14 +133,13 @@ Preparation for public use.
   caller as the bare message (`file not found: /x`), not
   `CapError: file not found: /x`, and no longer log a traceback on the
   worker or hub. `bad args:` replies and unexpected exceptions are unchanged.
-- `rook/core/compat.py` sets the supported-peer floor: pyz workers from
-  build 230, the Android app from 0.4.7, hubs from build 230. Removed with
-  it: the hub's own `caps.describe(prefix=)` filtering (the worker filters),
-  the v1 wrapper around deauth orders (the hub sends the bare v2 order;
-  workers still accept a wrapped one), the `rook band` CLI's fallbacks for
-  hubs without `/api/band/whoami` and `/api/band/overview`, and the classic
-  Work view's `read_page` fallback. Firmware, Android-lagging caps and
-  stored-state migrations are kept.
+- `rook/core/compat.py` sets the supported-peer floor: workers from build 142
+  (the worker in the 0.4.1 APK, the oldest still deployed), hubs from build
+  230. Removed with it: the `rook band` CLI's fallbacks for hubs without
+  `/api/band/whoami` and `/api/band/overview`. The hub-side
+  `caps.describe(prefix=)` filtering, the v1 deauth wrapper and the classic
+  Work view's `read_page` fallback stay, because that APK still needs them.
+  Firmware, Android-lagging caps and stored-state migrations are kept.
 - `claude-history.send`, `claude-history.resume` and `codex-history.resume`
   say they are deprecated in their own descriptions (use `sessions.send` and
   `work.stream.open(resume=)`). Task hygiene nudges go through
