@@ -13,6 +13,7 @@ from pathlib import Path
 from ..core import authz
 from ..core.facts import NodeFacts, local_facts, wire_facts
 from ..core.host import PluginHost
+from ..core.paths import worker_state_path
 from . import audit, context
 from .authz_guard import Guard
 from .plugin import Plugin
@@ -21,7 +22,7 @@ from .transports.base import Transport
 
 log = logging.getLogger("rook.worker.core")
 
-_WORKER_ID_FILE = Path(os.path.expanduser("~")) / ".rook-band-worker" / "worker_id"
+_WORKER_ID_FILE = worker_state_path("worker_id")
 
 
 def stable_worker_id() -> str:

@@ -31,6 +31,8 @@ import re
 import time
 from pathlib import Path
 
+from ..core.paths import worker_state_dir
+
 CHUNK_BYTES = 256 * 1024        # the mod starts a new chunk past this
 KEEP_SECS = 7 * 86400           # closed spools are deleted after this
 MAX_EVENTS = 500                # events per answer
@@ -42,10 +44,10 @@ _CHUNK = re.compile(r"^(?P<id>[A-Za-z0-9][A-Za-z0-9_-]{0,127})(?:\.(?P<n>\d{1,6}
 
 
 def state_dir() -> Path:
-    """The worker's state directory: ``ROOK_WORKER_HOME``, else
-    ``~/.rook-band-worker`` (``%USERPROFILE%\\.rook-band-worker`` on Windows)."""
-    env = os.environ.get("ROOK_WORKER_HOME", "").strip()
-    return Path(env).expanduser() if env else Path.home() / ".rook-band-worker"
+    """The worker's state directory (:func:`rook.core.paths.worker_state_dir`):
+    ``ROOK_WORKER_HOME``, else ``~/.rook-band-worker``. Kept as an alias for
+    the callers that import it from here."""
+    return worker_state_dir()
 
 
 def mirror_root() -> Path:

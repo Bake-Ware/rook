@@ -10,6 +10,7 @@ import signal
 import sys
 import time
 
+from ..core.paths import worker_state_dir, worker_state_path
 from .core import Worker
 
 
@@ -37,7 +38,11 @@ def main() -> None:
         from .desktop import main as desktop_main
         desktop_main()
         return
-    ap = argparse.ArgumentParser(prog="rook-worker")
+    ap = argparse.ArgumentParser(
+        prog="rook-worker",
+        epilog="State (identity, enrollment, pushed config, audit log, plugin data) "
+               "lives in ROOK_WORKER_HOME, default ~/.rook-band-worker; the installed "
+               "bundle stays in ~/.rook-band-worker.")
     ap.add_argument("--hub", default=os.environ.get("ROOK_HUB", "127.0.0.1:7474"),
                     help="hub host:port (or env ROOK_HUB; default 127.0.0.1:7474)")
     ap.add_argument("--psk", default=os.environ.get("ROOK_BAND_PSK") or None,
@@ -132,7 +137,7 @@ def main() -> None:
     # OFF the band (no transport, no announce) instead of rejoining. Runs after
     # --version/--selftest (so OTA bundle validation still works on a banned
     # node) but before any band contact. The flag survives reboots; clearing
-    # ~/.rook-band-worker/banned and restarting rejoins.
+    # <state dir>/banned and restarting rejoins.
     from .plugins.selfupdate import is_banned, ban_info
     if is_banned():
         logging.basicConfig(level=logging.WARNING,
@@ -140,8 +145,8 @@ def main() -> None:
         info = ban_info()
         logging.getLogger("rook.worker").warning(
             "DEAUTHED from band (at=%s reason=%r) — staying dormant, NOT joining. "
-            "Clear ~/.rook-band-worker/banned and restart to rejoin.",
-            info.get("at"), info.get("reason", ""))
+            "Clear %s and restart to rejoin.",
+            info.get("at"), info.get("reason", ""), worker_state_path("banned"))
         # Park quietly so we don't busy-loop under a service manager's Restart
         # policy; a stop signal (systemctl stop) wakes us to exit.
         try:
@@ -192,9 +197,10 @@ def main() -> None:
     # enrolled band instead of the one on its command line.
     if (args.hub, args.psk) != requested:
         logging.getLogger("rook.worker").warning(
-            "using hub %s%s from saved state in ~/.rook-band-worker (enrollment or "
+            "using hub %s%s from saved state in %s (enrollment or "
             "pushed config), not the --hub/--psk given", args.hub,
-            " and a different band key" if args.psk != requested[1] else "")
+            " and a different band key" if args.psk != requested[1] else "",
+            worker_state_dir())
 
     host, _, port = args.hub.partition(":")
     if not port:

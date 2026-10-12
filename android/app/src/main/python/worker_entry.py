@@ -84,14 +84,14 @@ def _setup_logging() -> None:
     data, so a worker that stops can be diagnosed over adb (run-as) later."""
     import sys
     from logging.handlers import RotatingFileHandler
-    from pathlib import Path
     root = logging.getLogger()
     if getattr(root, "_rook_android", False):
         return
     fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
     handlers = [logging.StreamHandler(sys.stderr)]
     try:
-        path = Path.home() / ".rook-band-worker" / "android-worker.log"
+        from rook.core.paths import worker_state_path
+        path = worker_state_path("android-worker.log")
         path.parent.mkdir(parents=True, exist_ok=True)
         handlers.append(RotatingFileHandler(path, maxBytes=512 * 1024, backupCount=1))
     except Exception:  # logging must never stop the worker

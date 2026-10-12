@@ -8,9 +8,11 @@ from urllib.parse import urlsplit
 from urllib.request import Request
 import webbrowser
 
+from ..core.paths import worker_state_path
+
 
 def storage_path():
-    return Path(os.environ.get('ROOK_ENROLLMENT_FILE',str(Path.home()/'.rook-band-worker/enrollment.json'))).expanduser()
+    return Path(os.environ.get('ROOK_ENROLLMENT_FILE',str(worker_state_path('enrollment.json')))).expanduser()
 
 
 def post(server,path,data):
