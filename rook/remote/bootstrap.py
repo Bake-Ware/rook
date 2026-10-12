@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import html as _html
 import json
 import logging
 import os
@@ -1274,79 +1275,22 @@ class CombinedServer:
         )
 
     def _login_page(self, error: str = "") -> str:
-        err = f'<div class="err">{error}</div>' if error else ""
-        return f"""<!DOCTYPE html>
-<html><head><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>♖ ROOK</title>
-<style>
-body{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#0b0f14;color:#e6edf3;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0}}
-.box{{background:#11161d;border:1px solid #222c38;padding:32px;border-radius:10px;width:300px;box-shadow:0 8px 40px rgba(0,0,0,.4)}}
-h1{{font-size:1.4rem;margin:0 0 4px;color:#2dd4a7}}
-p{{color:#7d8896;font-size:.8rem;margin:0 0 18px}}
-input{{width:100%;box-sizing:border-box;padding:10px;margin:0 0 12px;background:#0b0f14;color:#e6edf3;border:1px solid #222c38;border-radius:6px;font-family:inherit;font-size:.95rem}}
-button{{width:100%;padding:10px;background:#1a9e7a;color:#fff;border:0;border-radius:6px;cursor:pointer;font-family:inherit;font-size:.95rem}}
-button:hover{{background:#22b88f}}
-.err{{color:#f76a6a;font-size:.8rem;margin-bottom:10px}}
-</style></head>
-<body><div class="box">
-<h1>♖ ROOK</h1>
-<p>Band control panel. Sign in to continue.</p>
-{err}
-<form method="POST" action="/login">
-<input name="user" placeholder="Username" autofocus required autocomplete="username">
-<input name="pass" type="password" placeholder="Password" required autocomplete="current-password">
-<button type="submit">Sign in</button>
-</form>
-<p style="margin-top:18px"><a style="color:#2dd4a7" href="/account/login">Google or personal account login</a></p>
-</div></body></html>"""
+        from .web_pages import render
+        err = f'<p class="error" role="alert">{_html.escape(error)}</p>' if error else ""
+        return render("login.html", error=err)
 
     def _setup_page_html(self, error: str = "") -> str:
         from . import setup_store
-        import html as _html
+        from .web_pages import render
         s = setup_store.load()
-        band_name = _html.escape(s.get("band_name") or self.band_name)
-        hub_public = _html.escape(s.get("hub_public") or "")
-        pyz_domain = _html.escape(s.get("pyz_domain") or "")
         primary = next((b for b in self._enrollment.bands(secrets_visible=True) if b["is_primary"]), None)
         current_key = (primary["psk"] if primary["active"] else "") if primary else s.get("band_psk")
-        band_psk = _html.escape(current_key or setup_store.gen_psk())
-        err = f'<div class="err">{_html.escape(error)}</div>' if error else ""
-        return f"""<!DOCTYPE html>
-<html><head><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>♖ ROOK — setup</title>
-<style>
-body{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#0b0f14;color:#e6edf3;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0}}
-.box{{background:#11161d;border:1px solid #222c38;padding:32px;border-radius:10px;width:420px;max-width:92vw;box-shadow:0 8px 40px rgba(0,0,0,.4)}}
-h1{{font-size:1.4rem;margin:0 0 4px;color:#2dd4a7}}
-p{{color:#7d8896;font-size:.8rem;margin:0 0 18px}}
-label{{display:block;font-size:.75rem;color:#9aa7b4;margin:14px 0 4px}}
-input{{width:100%;box-sizing:border-box;padding:10px;background:#0b0f14;color:#e6edf3;border:1px solid #222c38;border-radius:6px;font-family:inherit;font-size:.95rem}}
-small{{display:block;color:#5d6773;font-size:.68rem;margin-top:4px}}
-button{{width:100%;padding:11px;margin-top:20px;background:#1a9e7a;color:#fff;border:0;border-radius:6px;cursor:pointer;font-family:inherit;font-size:.95rem}}
-button:hover{{background:#22b88f}}
-.err{{color:#f76a6a;font-size:.8rem;margin-bottom:10px}}
-</style></head>
-<body><div class="box">
-<h1>♖ ROOK — first-run setup</h1>
-<p>Configure the band this hub serves. Saved to <code>data/setup.json</code> (never committed).</p>
-{err}
-<form method="POST" action="/setup">
-<input type="hidden" name="csrf" value="{self._setup_csrf}">
-<label>Band name</label>
-<input name="band_name" value="{band_name}" placeholder="my-band" autofocus>
-<small>Cosmetic label for this band, shown in the dashboard + installer.</small>
-<label>Public hub address</label>
-<input name="hub_public" value="{hub_public}" placeholder="hub.mydomain.com:443" required>
-<small>host:port workers connect back to (the band WS endpoint).</small>
-<label>Installer download domain</label>
-<input name="pyz_domain" value="{pyz_domain}" placeholder="hub.mydomain.com" required>
-<small>Domain that serves <code>band-worker.pyz</code> in the one-line installer.</small>
-<label>Band PSK</label>
-<input name="band_psk" value="{band_psk}" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" required>
-<small>New keys use five random words separated by hyphens. Type the key exactly, including hyphens. Use Tokens to replace or revoke an existing band key.</small>
-<button type="submit">Save &amp; activate band</button>
-</form>
-</div></body></html>"""
+        err = f'<p class="error" role="alert">{_html.escape(error)}</p>' if error else ""
+        return render("setup.html", error=err, csrf=self._setup_csrf,
+                      band_name=s.get("band_name") or self.band_name,
+                      hub_public=s.get("hub_public") or "",
+                      pyz_domain=s.get("pyz_domain") or "",
+                      band_psk=current_key or setup_store.gen_psk())
 
     async def _setup_page(self, request: web.Request) -> web.Response:
         return web.Response(text=self._setup_page_html(), content_type="text/html",

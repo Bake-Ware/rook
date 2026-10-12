@@ -15,6 +15,7 @@ from aiohttp import web
 from .accounts import AccountStore, digest
 from .google_auth import GoogleAuth, fetch_avatar, normalize_avatar
 from .psk import generate_psk
+from .web_pages import render
 from .enrollment import JoinDenied, JoinLimited
 
 log=logging.getLogger(__name__)
@@ -57,14 +58,9 @@ def esc(value):
 
 
 def document(title, body):
-    return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
-            '<meta name="viewport" content="width=device-width,initial-scale=1">'
-            '<title>' + esc(title) + ' · Rook</title>'
-            '<link rel="stylesheet" href="/account/bands/assets/settings.css">'
-            '<link rel="stylesheet" href="/account/bands/assets/theme.css">'
-            '</head><body class="standalone-account"><main class="settings-workspace">'
-            '<nav><a href="/account">♖ Rook account</a><a href="/account/bands">Bands</a>'
-            '<a href="/">Dashboard</a></nav><h1>' + esc(title) + '</h1>' + body + '</main></body></html>')
+    """A standalone account page (rook/web/account-page.html). ``body`` is
+    markup this module built, with every stored value already escaped."""
+    return render('account-page.html', title=title, body=body)
 
 
 class AccountWeb:

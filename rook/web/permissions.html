@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Permissions · Rook</title>
+<link rel="stylesheet" href="/account/bands/assets/settings.css">
+<link rel="stylesheet" href="/account/bands/assets/theme.css">
+<style>
+.permissions main{max-width:960px}
+.permissions textarea{width:100%;min-height:420px;font:12px/1.4 var(--mono);background:var(--panel2);color:var(--fg);border:1px solid var(--line2);padding:8px}
+.permissions input{background:var(--panel2);color:var(--fg);border:1px solid var(--line2);padding:6px 8px;max-width:100%;font:12px var(--sans)}
+.permissions button{font:11px var(--mono);padding:8px 12px;cursor:pointer;border:1px solid var(--line2);background:var(--panel2);color:var(--fg)}
+.permissions button:hover{border-color:var(--accent);color:var(--accent)}
+.permissions h2{font-size:17px;font-weight:500;margin:28px 0 10px}
+.permissions p{line-height:1.6}
+.permissions .mut{color:var(--dim)}.permissions .warn{color:var(--warn)}.permissions .bad{color:var(--bad)}
+.permissions pre{white-space:pre-wrap;word-break:break-word;border:1px solid var(--line);background:var(--panel);padding:8px}
+.permissions .pm-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0}
+</style>
+</head><body class="standalone-account permissions"><main>
+<nav><a href="/">♖ Dashboard</a><a href="/account">Account</a></nav>
+<h1>Permissions</h1>
+<p class="mut">Policy <b id="mode">{{mode}}</b> · rev <b id="rev">{{rev}}</b> · <span id="src">{{source}}</span>.
+In <b>audit</b> mode nothing is denied: would-be denials are journaled so you can check them before
+setting <code>"mode": "enforce"</code>. See docs/design/permissions.md.</p>
+<div id="status">{{status|raw}}</div>
+<h2>Explain</h2>
+<div class="pm-row">
+ <input id="xp" placeholder="principal (role:agent, human:owner, token:&lt;agent_id&gt;, integration:telegram)" size="42">
+ <input id="xc" placeholder="cap (shell.exec)" size="16">
+ <input id="xw" placeholder="worker (name or id)" size="16">
+ <button id="xb">Explain</button>
+</div>
+<pre id="xo" class="mut">-</pre>
+<h2>Policy document</h2>
+<textarea id="doc" spellcheck="false">{{doc}}</textarea>
+<div class="pm-row"><input id="note" placeholder="change note" size="40"><button id="save">Save</button>
+<span id="saved" class="mut"></span></div>
+<h2>Recent non-allow decisions</h2>
+<pre id="recent" class="mut">{{recent}}</pre>
+<script>
+const $ = id => document.getElementById(id);
+async function post(url, body){
+  const r = await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  return [r.ok, await r.json()];
+}
+$('xb').onclick = async () => {
+  const [, j] = await post('/api/policy/explain',{principal:$('xp').value,cap:$('xc').value,worker:$('xw').value||null});
+  $('xo').textContent = JSON.stringify(j,null,2);
+};
+$('save').onclick = async () => {
+  const saved = $('saved');
+  let doc; try { doc = JSON.parse($('doc').value); }
+  catch(e){ saved.textContent = 'Not valid JSON: '+e.message; saved.className='bad'; return; }
+  if (!confirm('Save a new policy revision?')) return;
+  const [ok, j] = await post('/api/policy',{policy:doc,note:$('note').value});
+  saved.textContent = ok ? ('Saved rev '+j.rev+(j.lint&&j.lint.length?' - lint: '+j.lint.join('; '):'')) : (j.error||'failed');
+  saved.className = ok ? 'mut' : 'bad';
+  if (ok){ $('rev').textContent=j.rev; $('mode').textContent=j.mode; }
+};
+</script></body></html>

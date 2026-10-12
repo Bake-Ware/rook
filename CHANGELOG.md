@@ -19,6 +19,11 @@ Preparation for public use.
   for pairing and PSK rotation) replaced it. `/tokens` on the MCP port now
   redirects to `https://<installer domain>/#tokens`. `ROOK_MCP_AUTH_PASSWORD`
   / `--admin-password` are ignored (a notice is printed when set).
+- The dashboard login, first-run setup, Permissions and standalone account
+  pages are static files under `rook/web` (`login.html`, `setup.html`,
+  `permissions.html`, `account-page.html`) on the shared `theme.css`, filled
+  by `rook.remote.web_pages.render`; forms, CSRF fields and redirects are
+  unchanged.
 
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps

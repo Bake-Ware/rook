@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sign in · Rook</title>
+<link rel="stylesheet" href="/account/bands/assets/settings.css">
+<link rel="stylesheet" href="/account/bands/assets/theme.css">
+</head><body class="standalone-account"><main class="settings-workspace narrow">
+<h1>♖ Rook</h1>
+<section>
+<p class="muted">Band control panel. Sign in to continue.</p>
+{{error|raw}}
+<form method="POST" action="/login">
+<label>Username <input name="user" autofocus required autocomplete="username"></label>
+<label>Password <input name="pass" type="password" required autocomplete="current-password"></label>
+<button type="submit">Sign in</button>
+</form>
+<p><a href="/account/login">Google or personal account login</a></p>
+</section>
+</main></body></html>
