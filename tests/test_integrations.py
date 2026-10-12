@@ -22,7 +22,7 @@ from rook.band_mcp.chat_rooms import ChatStore
 from rook.core.plugin import SettingsView
 from rook.hub import integrations
 from rook.hub.authz import Authorizer
-from rook.hub.integrations import EXAMPLE_EXEC_RULE, Inbound, RateLimiter, split_message
+from rook.hub.integrations import ChatIntegration, EXAMPLE_EXEC_RULE, Inbound, RateLimiter, split_message
 from rook.hub.plugins.discord import Discord
 from rook.hub.plugins.notify import Notify
 from rook.hub.plugins.policy import PolicyPlugin
@@ -209,6 +209,12 @@ def make_node(tmp_path, rules=()):
                            client=FakeClient(authz, dict(WORKERS)), records=records)
     node.plugins = {}
     node.plugin = lambda ns: node.plugins.get(ns)
+
+    class _Host:   # notify.send discovers integrations from the host's plugins
+        @property
+        def plugins(self):
+            return list(node.plugins.values())
+    node.host = _Host()
     return node
 
 
@@ -543,6 +549,15 @@ async def test_notify_send_fans_out(tmp_path):
             assert (await n.send("x", channel="sms"))["ok"] is False
             assert (await p.send("x", chat="-1001"))["ok"] is False   # only the configured chat
             assert n.channels() == {"channels": ["telegram"]}
+
+            class Matrix(ChatIntegration):   # a third-party integration is a channel too
+                NAMESPACE = PLATFORM = "matrix"
+
+                async def notify(self, text):
+                    return {"ok": True}
+            node.plugins["matrix"] = Matrix()
+            assert n.channels() == {"channels": ["matrix", "telegram"]}
+            assert (await n.send("y", channel="matrix")) == {"ok": True, "sent": ["matrix"]}
         finally:
             await p.disconnect()
 

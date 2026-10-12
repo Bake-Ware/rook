@@ -31,6 +31,28 @@ Preparation for public use.
   reconnect, the terminal follower, the Android worker runtime and the KVM
   bridge serial stream, which now reconnects after the dongle reboots.
 - Removed the unused `rook.worker.wire.channel` compatibility shim.
+### Plugin host
+- Runtime plugin enable now uses the boot path (`PluginHost.enable`/`disable`/
+  `reload`): placement, stored settings, collision safety, status and the
+  worker's `bind_worker`, so re-enabling `work`, `sessions`, `config`, `shell`
+  and others no longer crashes. New caps `worker.plugin.reload`,
+  `hub.plugin.enable`/`disable`/`reload` (admin).
+- Settings marked `apply="reload"` now take effect: a hub plugin reloads when
+  one changes, and a worker push that only touches live/reload settings is
+  applied in place instead of restarting the worker.
+- Capability calls are bounded: `ROOK_CAP_TIMEOUT` (default 300 s, `0` = off),
+  per-cap `@capability(timeout=…)`, a cap's own `timeout` argument plus 15 s.
+  A timed-out call answers `timeout: …` instead of hanging.
+- Every built-in cap (Android's too) declares its risk tier and has a
+  docstring; the hand-written tier table shrank to core caps and the floor is
+  read from the plugins. Android caps that silently resolved to `exec` now
+  carry their real tier (e.g. `ui.text`, `sms.list` read; `device.update` admin).
+- The Android app's native plugins load through the plugin host with
+  placement (`app == 'android'`) instead of being registered by hand; a cap
+  collision no longer crashes the worker. The skill reference lists them.
+- `notify.send` reaches every running chat integration, including third-party
+  ones. Optional `aiohttp`/PyNaCl imports are lazy, so plugins load and
+  `tools/gen_*_reference.py --check` refuse to run with modules missing.
 
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps

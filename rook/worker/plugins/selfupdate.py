@@ -30,7 +30,7 @@ import sys
 import time
 from pathlib import Path
 
-from ..plugin import Plugin, capability
+from ..plugin import ANDROID_APP_REPLACED, Plugin, capability, place
 
 log = logging.getLogger("rook.worker.plugins.selfupdate")
 
@@ -95,6 +95,7 @@ def ban_info() -> dict:
 
 class SelfUpdatePlugin(Plugin):
     NAMESPACE = "worker"
+    PLACEMENT = place(ANDROID_APP_REPLACED)  # the APK has native replacements
 
     def __init__(self) -> None:
         super().__init__()
@@ -126,7 +127,7 @@ class SelfUpdatePlugin(Plugin):
         self._ota_rx.feed(payload)
         return True
 
-    @capability("ota_begin")
+    @capability("ota_begin", risk="admin")
     async def _ota_begin(self, manifest: dict, drop_id: int = 0) -> dict:
         """Arm this worker to receive a bundle pushed **in band** over telesthete
         Drop (§8), for the given ``drop_id``. The ed25519-signed manifest is
@@ -215,14 +216,14 @@ class SelfUpdatePlugin(Plugin):
             if t is not None:
                 t.cancel()
 
-    @capability("check")
+    @capability("check", risk="admin", timeout=None)
     async def _check(self, force: bool = False) -> dict:
         """Check the signed manifest now and update if a newer build is
         published (bypasses the poll interval). ``force=true`` overrides a hold
         pin for this explicit call. Used to drive canary rollouts."""
         return await self._check_and_update(force=force)
 
-    @capability("apply")
+    @capability("apply", risk="admin", timeout=None)
     async def _apply(self, manifest: dict) -> dict:
         """Apply a signed update manifest pushed in-band by the controller.
         The ed25519 signature is verified before anything happens, so being on
@@ -231,7 +232,7 @@ class SelfUpdatePlugin(Plugin):
             return {"ok": False, "error": "manifest must be an object"}
         return await self._apply_manifest(manifest)
 
-    @capability("hold")
+    @capability("hold", risk="admin")
     def _hold(self, enable: bool = True) -> dict:
         """Pin this node so it won't auto-update (survives restarts). Use to
         freeze critical hosts / the dongle box. ``worker.check(force=true)``
@@ -243,7 +244,7 @@ class SelfUpdatePlugin(Plugin):
             _HOLD.unlink(missing_ok=True)
         return {"ok": True, "held": enable}
 
-    @capability("deauth")
+    @capability("deauth", risk="admin", tags=("destructive",))
     async def _deauth(self, payload: dict) -> dict:
         """Remove/ban this worker from the band — but ONLY on an ed25519-signed
         order from the controller. Being on the band (knowing the shared PSK) is
@@ -295,8 +296,9 @@ class SelfUpdatePlugin(Plugin):
 
     # -- introspection -------------------------------------------------------
 
-    @capability("status")
+    @capability("status", risk="read")
     def _status(self) -> dict:
+        """Build, version, supervisor and update state of this worker (band key redacted)."""
         from .._build_info import as_dict as _build
         argv=list(sys.argv)
         for index,value in enumerate(argv):
@@ -316,14 +318,14 @@ class SelfUpdatePlugin(Plugin):
 
     # -- lifecycle -----------------------------------------------------------
 
-    @capability("restart")
+    @capability("restart", risk="admin", tags=("destructive",))
     async def _restart(self) -> dict:
         """Restart this worker with its current config, via the service manager
         (or re-exec). Kill-safe."""
         self._schedule_restart(self._current_argv())
         return {"ok": True, "supervisor": _supervisor(), "restarting": True}
 
-    @capability("reconfigure")
+    @capability("reconfigure", risk="admin", tags=("destructive",))
     async def _reconfigure(self, hub: str | None = None, psk: str | None = None,
                            name: str | None = None, restart: bool = True) -> dict:
         """Repoint this worker at a new band (hub/psk) and/or rename it, then
@@ -353,7 +355,7 @@ class SelfUpdatePlugin(Plugin):
             "changed": [k for k, v in (("hub", hub), ("psk", psk), ("name", name)) if v is not None],
         }
 
-    @capability("update")
+    @capability("update", risk="admin", tags=("destructive",), timeout=None)
     async def _update(self, url: str | None = None, hub: str | None = None,
                       psk: str | None = None, name: str | None = None,
                       manifest: dict | None = None) -> dict:

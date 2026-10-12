@@ -15,7 +15,7 @@ def test_native_reconnects_and_stops_on_revocation(monkeypatch):
     runtime.REFRESH_SECONDS=.01
     monkeypatch.syspath_prepend(str(Path(__file__).parents[1]/'android/app/src/main/python'))
     monkeypatch.setitem(sys.modules,'rook_android.androidctx',SimpleNamespace(app_context=lambda:None))
-    monkeypatch.setitem(sys.modules,'worker_entry',SimpleNamespace(_attach_native_plugins=lambda w:None,_builtin_enabled=lambda:[]))
+    monkeypatch.setitem(sys.modules,'worker_entry',SimpleNamespace(worker_kwargs=lambda:{}))
     saved={'auto_start':True,'device':{'id':'device'},'active_band':'band'}
     monkeypatch.setattr(enroll,'load',lambda:saved)
     calls=[];started=[];stopped=[]
@@ -32,7 +32,7 @@ def test_native_reconnects_and_stops_on_revocation(monkeypatch):
     class FakeWorker:
         def __init__(self,transport,**kwargs):
             self.transport=transport;self.done=asyncio.Event()
-            self.registry=SimpleNamespace(register=lambda *args:None)
+            self.registry=SimpleNamespace(register=lambda *args,**kw:None)
         async def run(self):
             started.append(self.transport.psk)
             await self.done.wait()
@@ -54,7 +54,7 @@ def _runtime(monkeypatch):
     runtime=importlib.util.module_from_spec(spec);spec.loader.exec_module(runtime)
     monkeypatch.syspath_prepend(str(Path(__file__).parents[1]/'android/app/src/main/python'))
     monkeypatch.setitem(sys.modules,'rook_android.androidctx',SimpleNamespace(app_context=lambda:None))
-    monkeypatch.setitem(sys.modules,'worker_entry',SimpleNamespace(_attach_native_plugins=lambda w:None,_builtin_enabled=lambda:[]))
+    monkeypatch.setitem(sys.modules,'worker_entry',SimpleNamespace(worker_kwargs=lambda:{}))
     monkeypatch.setattr(wconfig,'load',lambda:{})
     monkeypatch.setattr(wconfig,'apply_env',lambda _:None)
     monkeypatch.setattr(wconfig,'boot_reconcile',lambda:None)
@@ -78,7 +78,7 @@ def test_failing_worker_neither_storms_the_hub_nor_spins(monkeypatch):
     monkeypatch.setattr(enroll,'refresh',refresh)
     class Crashing:
         def __init__(self,transport,**kwargs):
-            self.registry=SimpleNamespace(register=lambda *args:None)
+            self.registry=SimpleNamespace(register=lambda *args,**kw:None)
         async def run(self):
             starts.append(time.monotonic())
             if len(starts)>=5:runtime.stop()
@@ -101,7 +101,7 @@ def test_stop_reaches_every_live_runner(monkeypatch):
     up=threading.Semaphore(0)
     class Idle:
         def __init__(self,transport,**kwargs):
-            self.registry=SimpleNamespace(register=lambda *args:None);self.done=None
+            self.registry=SimpleNamespace(register=lambda *args,**kw:None);self.done=None
         async def run(self):
             self.done=asyncio.Event();up.release();await self.done.wait()
         async def shutdown(self):

@@ -2,8 +2,9 @@
 
 Plugins, agents and the watchdog call ``notify.send`` on worker ``rook``
 instead of talking to Telegram or Discord themselves; it posts to each
-running integration (``telegram``, ``discord``) or the one named by
-``channel``. With no integration configured it returns ``ok: false`` so a
+running chat integration (every loaded :class:`ChatIntegration` plugin, by
+namespace: ``telegram``, ``discord``, or a third-party one) or the one named
+by ``channel``. With no integration configured it returns ``ok: false`` so a
 caller can fall back to its own channel. See docs/integrations.md.
 """
 
@@ -12,8 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 from ...core.plugin import Plugin, capability, place
-
-CHANNELS = ("telegram", "discord")
+from ..integrations import ChatIntegration
 
 
 class Notify(Plugin):
@@ -34,21 +34,25 @@ class Notify(Plugin):
         self._node = node
 
     def _channels(self) -> dict[str, Any]:
+        """Running chat integrations by namespace, discovered from the host
+        (so one added by an entry point is a channel too)."""
         node = self._node
         if node is None:
             return {}
-        return {c: p for c in CHANNELS if (p := node.plugin(c)) is not None}
+        return {p.NAMESPACE: p for p in node.host.plugins if isinstance(p, ChatIntegration)}
 
     @capability("send", risk="write")
     async def send(self, text: str, channel: str = "all") -> dict:
         """Send a notification to the chat integrations.
 
-        ``channel`` is ``all`` (default: every running integration),
-        ``telegram`` or ``discord``. ``ok`` is true if at least one channel
-        took it; ``sent`` and ``errors`` say which."""
-        if channel != "all" and channel not in CHANNELS:
-            return {"ok": False, "error": f"channel must be all or one of {list(CHANNELS)}"}
+        ``channel`` is ``all`` (default: every running integration) or one
+        integration's name (``telegram``, ``discord``; ``notify.channels``
+        lists them). ``ok`` is true if at least one channel took it; ``sent``
+        and ``errors`` say which."""
         live = self._channels()
+        if channel != "all" and channel not in live:
+            return {"ok": False, "error": (f"no chat integration is running for {channel}"
+                                           if live else "no chat integration is running")}
         targets = live if channel == "all" else {k: v for k, v in live.items() if k == channel}
         if not targets:
             return {"ok": False, "error": ("no chat integration is running"

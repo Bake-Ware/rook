@@ -25,7 +25,7 @@ import subprocess
 import sys
 import time
 
-from ..plugin import Plugin, capability
+from ..plugin import ANDROID_APP_REPLACED, Plugin, capability, place
 
 
 def _is_termux() -> bool:
@@ -198,6 +198,7 @@ def _read_status_sync() -> dict | None:
 
 class BatteryPlugin(Plugin):
     NAMESPACE = "battery"
+    PLACEMENT = place(ANDROID_APP_REPLACED)  # the APK has native replacements
 
     def available(self) -> bool:
         try:
@@ -205,7 +206,7 @@ class BatteryPlugin(Plugin):
         except Exception:
             return False
 
-    @capability("status")
+    @capability("status", risk="read")
     async def _status(self) -> dict:
         """Current battery: ``{percent, charging, plugged, status, ...}``.
 

@@ -10,7 +10,7 @@ The tables are generated from the code by `tools/gen_skill_reference.py`; don't 
 - `rook_console_read`: pass the previous `last_seq` back as `since_seq`; lower `limit`.
 - `rook_task`, `rook_project`, `rook_concept`, `rook_knowledge`: writes need a unique `request_id`. Search returns 5 excerpt rows by default (`data={"limit":N, "fields":[…]}`, `fields:"all"` for whole records); list returns 20 (`data` keys `parent,state,limit,offset,attention,worker,fields`). `get` returns the full record.
 - `shell.exec` has **no output cap**; trim in the command. `file.read` defaults to 8 MiB; set `max_bytes`. `file.list` with `include_hidden=false` and a small `max_entries`.
-- Android workers (the app, not in these tables) add `ui.text` (on-screen text, the cheapest way to "see"), `sms.*`, `calllog.list`, `contacts.search`, `notify.*`, `location.get`, `battery.status`, `device.*`.
+- Android workers (the app) add the caps under *Android app capabilities* below: `ui.text` (on-screen text, the cheapest way to "see"), `sms.*`, `calllog.list`, `contacts.search`, `notify.*`, `location.get`, `device.*`, and native `battery`/`hid`/`screenshot` in place of the desktop ones.
 - Custom caps appear as `cmd.<name>` on the worker that defined them.
 
 ## MCP tools
@@ -75,6 +75,9 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `home.ask` | question, context='' | write | Ask the hub's home agent (its own LLM) a question; returns its answer. |
 | `home.status` | — | read | Whether the home agent is on, its identity, endpoint host and model, and the last error (never the key). |
 | `hub.info` | — | read | What the hub runs: version, core API, roles, facts and plugins. |
+| `hub.plugin.disable` | module | admin | Unload a hub plugin now: its caps go, its stop() runs. |
+| `hub.plugin.enable` | module | admin | Load a hub plugin module now (placement, settings, available(), bind_host, start). |
+| `hub.plugin.reload` | module | admin | Restart one hub plugin with its current settings (stop, load again, start). |
 | `hub.plugins` | limit=50, fields? | read | Full manifests of the hub's loaded plugins (placement, settings schema, guidance slots, source). |
 | `job.read` | action='list', id?, query='', data? | read | Read jobs and runs: list\|get\|runs\|run_get\|next\|validate\|guardrails_preview\|describe_schema. |
 | `job.write` | action, id?, data? | write | Write jobs: create\|update\|delete\|enable\|disable\|run\|cancel\|set_guardrails\|settings. |
@@ -171,6 +174,7 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 | `worker.plugin.disable` | module | Unload a plugin now and keep it unloaded across restarts. |
 | `worker.plugin.enable` | module | Load a plugin now and keep it loaded across restarts. |
 | `worker.plugin.list` | — | List every plugin module and whether it's currently loaded, with the caps each loaded plugin provides. |
+| `worker.plugin.reload` | module | Restart one loaded plugin with its current settings. |
 
 **battery**
 
@@ -189,9 +193,9 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 
 | Cap | Args | Does |
 |---|---|---|
-| `cec.ping` | — |  |
-| `cec.raw` | cmd |  |
-| `cec.send` | addr, opcode, operands? |  |
+| `cec.ping` | — | Check the Pico-CEC bridge answers; returns its reply (logical/physical address). |
+| `cec.raw` | cmd | Send one literal Pico-CEC firmware command line (e.g. `"send 0 36"`) and return its reply. |
+| `cec.send` | addr, opcode, operands? | Transmit a CEC frame: `addr` destination (0-f, 0 = TV), `opcode` byte, optional `operands` (ints or hex strin… |
 
 **chat**
 
@@ -262,22 +266,22 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 | Cap | Args | Does |
 |---|---|---|
 | `dongle.consumer` | usage | Tap a USB consumer usage, e.g. 0xE9 volume up or 0xCD play/pause. |
-| `dongle.display` | text |  |
-| `dongle.display_probe` | — |  |
+| `dongle.display` | text | Show up to 80 UTF-8 bytes of text on the dongle's display. |
+| `dongle.display_probe` | — | Probe whether the dongle has a working display attached. |
 | `dongle.keyboard` | keys, mods=0 | Tap up to six USB HID usage codes with modifier bitmask (US layout). |
 | `dongle.mouse` | x=0, y=0, buttons=0, wheel=0, pan=0 | Relative move (-127..127) and/or button tap (bitmask 0..31). |
-| `dongle.release` | — |  |
-| `dongle.status` | — |  |
+| `dongle.release` | — | Release every key and button the dongle holds on the USB host. |
+| `dongle.status` | — | Identity and state of the attached Rook RP2040 dongle (device, protocol, firmware). |
 
 **enrollment**
 
 | Cap | Args | Does |
 |---|---|---|
-| `worker.enrollment_finish` | grant |  |
+| `worker.enrollment_finish` | grant | Finish enrollment with the server's one-time `grant`: store the device certificate and bands. |
 | `worker.enrollment_move_prepare` | server | Advertise support for authenticated cross-band configuration changes. |
-| `worker.enrollment_prepare` | server |  |
-| `worker.enrollment_prove` | migration_id, epoch, nonce |  |
-| `worker.enrollment_status` | — |  |
+| `worker.enrollment_prepare` | server | Start device enrollment with the HTTPS enrollment `server`: make a device key and CSR. |
+| `worker.enrollment_prove` | migration_id, epoch, nonce | Sign a band-migration proof (`migration_id`, `epoch`, `nonce`) with the device key. |
+| `worker.enrollment_status` | — | Whether this worker is enrolled, with its device id, active band and migration state. |
 
 **file_ops**
 
@@ -319,9 +323,9 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 
 | Cap | Args | Does |
 |---|---|---|
-| `info.host` | — |  |
-| `info.ping` | — |  |
-| `info.uptime` | — |  |
+| `info.host` | — | Hostname, OS, release, machine, Python version and process id of this worker. |
+| `info.ping` | — | Liveness check; returns `"pong"`. |
+| `info.uptime` | — | Seconds since this worker process started. |
 
 **log**
 
@@ -399,7 +403,7 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 | `worker.ota_begin` | manifest, drop_id=0 | Arm this worker to receive a bundle pushed **in band** over telesthete Drop (§8), for the given `drop_id`. |
 | `worker.reconfigure` | hub?, psk?, name?, restart=true | Repoint this worker at a new band (hub/psk) and/or rename it, then restart. |
 | `worker.restart` | — | Restart this worker with its current config, via the service manager (or re-exec). |
-| `worker.status` | — |  |
+| `worker.status` | — | Build, version, supervisor and update state of this worker (band key redacted). |
 | `worker.update` | url?, hub?, psk?, name?, manifest? | Install a worker bundle, optionally repoint at a new band, then restart. |
 
 **session_mirror**
@@ -432,7 +436,7 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 | `shell.env.get` | name, default? | One environment variable (values pushed as secrets read `***`). |
 | `shell.env.list` | prefix='' | The environment (values pushed as secrets or credentials read `***`). |
 | `shell.exec` | cmd?, argv?, stdin?, timeout=30.0, cwd?, env? | Run a command. |
-| `shell.which` | name |  |
+| `shell.which` | name | Full path of an executable on this worker's PATH, or null if it is not found. |
 
 **terminals**
 
@@ -460,8 +464,110 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 | Cap | Args | Does |
 |---|---|---|
 | `work.adopt_page` | session_id, digest, offset, data, final=false | Archive and adopt legacy web state before the web removes its copy. |
-| `work.command` | session_id, command |  |
-| `work.create` | session_id, command_id, cwd, title='', model='' |  |
-| `work.status` | sessions |  |
+| `work.command` | session_id, command | Send one command (`{id, op, ...}`) to a work session; deduplicated by `command.id`. |
+| `work.create` | session_id, command_id, cwd, title='', model='' | Create (or reopen) a host-owned Codex work session in `cwd` (absolute) and open it. |
+| `work.status` | sessions | Metadata (title, status, running, needs_input, has_error) of up to 20 work sessions. |
 | `work.view_page` | session_id, since=0, token='', offset=0 | A stable, bounded page of a view delta; content never enters web storage. |
 <!-- END GENERATED: worker-caps -->
+
+## Android app capabilities
+
+Native plugins of the Android app's embedded worker, in place of (or beside) the worker plugins above. Most need an Android permission or the app's accessibility service; a cap without one returns an error saying which.
+
+<!-- BEGIN GENERATED: android-caps -->
+**battery_android**
+
+| Cap | Args | Risk | Does |
+|---|---|---|---|
+| `battery.status` | — | read | Current battery: `{percent, charging, plugged, status, temp_c?}`. |
+
+**calendar_android**
+
+| Cap | Args | Risk | Does |
+|---|---|---|---|
+| `calendar.list` | start?, end?, limit=20 | read | Calendar events on the phone (Google Calendar, Outlook if it syncs calendars, others). |
+
+**calllog_android**
+
+| Cap | Args | Risk | Does |
+|---|---|---|---|
+| `calllog.list` | limit=30 | read | Recent calls, newest first: number, name, direction, duration_s, ts. |
+
+**contacts_android**
+
+| Cap | Args | Risk | Does |
+|---|---|---|---|
+| `contacts.search` | query='', limit=40 | read | Contacts whose name/number matches `query` (empty = first N). |
+
+**device_android**
+
+| Cap | Args | Risk | Does |
+|---|---|---|---|
+| `device.clipboard_get` | — | read | Read the clipboard. |
+| `device.clipboard_set` | text | write | Put text on the clipboard. |
+| `device.find` | seconds=30 | write | Ring at maximum alarm volume for 1–120 seconds; restores volume after. |
+| `device.find_stop` | — | write | Stop the find-device ring and restore the previous alarm volume. |
+| `device.info` | — | read | Model, Android version, screen, uptime, and battery-independent bits. |
+| `device.launch` | package | exec | Launch an installed app by package name (e.g. com.android.settings). |
+| `device.open_url` | url | exec | Open a URL (or any Uri) in the default handler app. |
+| `device.torch` | on=true | write | Flashlight on/off (no permission needed via CameraManager). |
+| `device.unlock` | pin, hold_ms=9000, pre_swipe=true | exec | Unlock a PIN-secured screen: wake, surface the PIN bouncer, and tap the digits at keypad positions computed f… |
+| `device.update` | — | admin | Queue an APK update from the official Rook feed. |
+| `device.update_status` | — | read | APK updater progress, installed/target versions, and required action. |
+| `device.vibrate` | ms=300 | write | Buzz the phone for `ms` milliseconds. |
+| `device.wake` | dismiss_keyguard=false, hold_ms=1200 | write | Turn the screen ON (and show over the keyguard) so the accessibility service can interact with the lock scree… |
+
+**hid_a11y**
+
+| Cap | Args | Risk | Does |
+|---|---|---|---|
+| `hid.backend` | — | read | Input backend on this phone (Android accessibility service) and whether it is enabled. |
+| `hid.key_combo` | keys | exec | Map a few common combos to global accessibility actions. |
+| `hid.mouse.click` | x, y | exec | Tap the screen at `x`, `y` (pixels). |
+| `hid.mouse.drag` | x1, y1, x2, y2, duration=0.3 | exec | Swipe from `x1`,`y1` to `x2`,`y2` over `duration` seconds. |
+| `hid.type` | text | exec | Type `text` into the focused editable field (accessibility service). |
+
+**location_android**
+
+| Cap | Args | Risk | Does |
+|---|---|---|---|
+| `location.get` | timeout=8.0 | read | Get lat/lon, accuracy, age, stale flag and Maps URL. |
+
+**notify_android**
+
+| Cap | Args | Risk | Does |
+|---|---|---|---|
+| `notify.dismiss` | key | write | Dismiss a notification by its `key` (from notify.list). |
+| `notify.list` | limit=40, packages? | read | Recent notifications, newest first. |
+| `notify.post` | title='rook', text='' | write | Post a local notification on the phone (needs POST_NOTIFICATIONS). |
+
+**screen**
+
+| Cap | Args | Risk | Does |
+|---|---|---|---|
+| `screenshot.capture` | quality=85 | read | Capture the full screen as a JPEG via MediaProjection. |
+| `screenshot.capture_preview` | — | read | Low-quality grab for quick visual checks. |
+
+**sms_android**
+
+| Cap | Args | Risk | Does |
+|---|---|---|---|
+| `sms.list` | box='inbox', limit=30, since_ts=0.0 | read | Recent SMS. |
+| `sms.send` | to, text | exec | Send an SMS to `to`. |
+
+**speak_android**
+
+| Cap | Args | Risk | Does |
+|---|---|---|---|
+| `voice.replies` | since=0 | read | Recent answers to voice.speak(reply=true), newest last: id (the speech id), text, via (voice/text), at_ms, li… |
+| `voice.speak` | text, voice='', rate=1.0, pitch=1.0, interrupt=false, chat=true, wait=true, timeout=60, reply=false, reply_timeout=8 | write | Say `text` aloud on the phone. |
+| `voice.speak_status` | id | read | State of a voice.speak id: queued, submitted, speaking, done, stopped or error. |
+| `voice.speak_stop` | — | write | Stop speaking now and drop everything queued by voice.speak. |
+| `voice.speak_voices` | locale='' | read | On-device TTS voices: name, locale, quality, network, installed. |
+
+**ui_android**
+
+| Cap | Args | Risk | Does |
+|---|---|---|---|
+| `ui.text` | — | read | All visible text on the current screen (top-to-bottom). |
+<!-- END GENERATED: android-caps -->

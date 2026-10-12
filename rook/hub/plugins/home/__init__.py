@@ -682,7 +682,7 @@ class HomeAgent(Plugin):
         return out
 
     # -- caps ----------------------------------------------------------------
-    @capability("ask", risk="write")
+    @capability("ask", risk="write", timeout=None)
     async def ask(self, question: str, context: str = "") -> dict:
         """Ask the hub's home agent (its own LLM) a question; returns its answer.
 

@@ -369,8 +369,9 @@ The **effective tier** (vectors: `tiers.json`) is:
 1. `cmd.*`: `exec`.
 2. otherwise `max(builtin[cap], declared)`, where `builtin` is the table in
    Appendix A of `docs/design/permissions.md` (machine-readable in
-   `tiers.json`) and `declared` is the cap's own risk (or its announce
-   `tiers` entry). A node can raise its tier but never lower it.
+   `tiers.json`; the reference builds it from its plugins' declared tiers)
+   and `declared` is the cap's own risk (or its announce `tiers` entry). A
+   node can raise its tier but never lower it.
 3. A cap in neither: `exec`. Never assume a cap is harmless.
 4. An operator override raises freely and lowers only when explicitly
    allowed.

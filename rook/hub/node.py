@@ -29,21 +29,17 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
+from ..core import authz as core_authz
 from ..core.context import caller_identity
 from ..core.facts import NodeFacts, local_facts, wire_facts
 from ..core.host import PluginHost
-from ..core.plugin import CORE_API_VERSION, RISKS, CapMeta
+from ..core.plugin import CORE_API_VERSION, CapMeta
 
 log = logging.getLogger("rook.hub.node")
 
 #: Reserved band worker name of the hub node.
 HUB_WORKER_NAME = "rook"
 BUILTIN_PACKAGE = "rook.hub.plugins"
-
-
-def _risk_rank(risk: str | None) -> int:
-    # Undeclared risk is treated as exec: never assume a cap is harmless.
-    return RISKS.index(risk) if risk in RISKS else RISKS.index("exec")
 
 
 def _stable_node_id(state_dir: str | None) -> str:
@@ -109,7 +105,7 @@ class HubNode:
         self.settings_store = settings_store
         self.settings = None  # SettingsService, set by the settings hub plugin
         risk = band_max_risk or os.environ.get("ROOK_HUB_BAND_MAX_RISK", "read")
-        self.band_max_risk = risk if risk in RISKS else "read"
+        self.band_max_risk = core_authz.norm_tier(risk) or "read"
         # Local authority: the hub holds the band's signing key, so its own node
         # carries the hub role without a grant.
         self.facts = NodeFacts(node_id=self.worker_id, name=self.name,
@@ -120,22 +116,58 @@ class HubNode:
                                secrets=self._secret, cap_caller=self._cap_caller,
                                data_root=(os.path.join(state_dir, "plugins")
                                           if state_dir else None))
-        self.host.registry.register("caps.describe", self._caps_describe,
-                                    meta=CapMeta(risk="read"))
+        reg = self.host.registry
+        reg.register("caps.describe", self._caps_describe, meta=CapMeta(risk="read"))
+        # Runtime plugin control on the hub, through the host's boot path
+        # (the same as worker.plugin.*). Not persisted: hub plugins turn on
+        # and off through their settings; these are for a live fix or retry.
+        reg.register("hub.plugin.enable", self._plugin_enable, meta=CapMeta(risk="admin"))
+        reg.register("hub.plugin.disable", self._plugin_disable, meta=CapMeta(risk="admin"))
+        reg.register("hub.plugin.reload", self._plugin_reload, meta=CapMeta(risk="admin"))
         self.host.load(self.host.discover(package, entry_points=entry_points))
-        for p in self.host.plugins:
-            bind = getattr(p, "bind_host", None)
-            if callable(bind):
-                try:
-                    bind(self)
-                except Exception:
-                    log.exception("hub plugin %s bind_host failed", p.NAMESPACE)
+        # bind_host runs for these and for any plugin enabled/reloaded later.
+        self.host.set_binder(self._bind_plugin)
+
+    def _bind_plugin(self, p: Any) -> None:
+        bind = getattr(p, "bind_host", None)
+        if callable(bind):
+            bind(self)
 
     def _caps_describe(self, prefix: str = "") -> dict:
         """Arg schema, docstring and declared risk/limit/fields for every hub cap.
 
         ``prefix`` (e.g. ``"hub."``) limits it to matching caps."""
         return self.host.registry.describe(prefix)
+
+    @staticmethod
+    def _admin_gate(what: str) -> None:
+        from .authz import require_hub_admin
+        refusal = require_hub_admin(what)
+        if refusal:
+            raise PermissionError(refusal)
+
+    async def _plugin_enable(self, module: str) -> dict:
+        """Load a hub plugin module now (placement, settings, available(), bind_host, start).
+
+        Not persisted: a plugin gated by an ``enabled`` setting needs that
+        setting on, or it reports unavailable. Band owners and operators only."""
+        self._admin_gate(f"hub.plugin.enable {module}")
+        return await self.host.enable(module)
+
+    async def _plugin_disable(self, module: str) -> dict:
+        """Unload a hub plugin now: its caps go, its stop() runs. Not persisted.
+
+        Refused while another loaded plugin depends on it, and for ``settings``
+        (it carries the switches to turn things back on)."""
+        self._admin_gate(f"hub.plugin.disable {module}")
+        if module == "settings":
+            return {"ok": False, "error": "refusing to disable settings (it re-enables plugins)"}
+        return await self.host.disable(module)
+
+    async def _plugin_reload(self, module: str) -> dict:
+        """Restart one hub plugin with its current settings (stop, load again, start)."""
+        self._admin_gate(f"hub.plugin.reload {module}")
+        return await self.host.reload(module)
 
     # -- settings / secrets / resources ----------------------------------
     def _stored_settings(self, namespace: str) -> dict:
@@ -239,8 +271,12 @@ class HubNode:
 
     # -- dispatch --------------------------------------------------------
     def band_allowed(self, cap: str) -> bool:
+        """Whether an (unauthenticated) band call may reach ``cap``: its
+        effective tier (declared, floored by the built-in table) is at most
+        the band ceiling."""
         meta = self.host.registry.meta(cap)
-        return _risk_rank(getattr(meta, "risk", None)) <= _risk_rank(self.band_max_risk)
+        tier = core_authz.effective_tier(cap, getattr(meta, "risk", None))
+        return core_authz.tier_rank(tier) <= core_authz.tier_rank(self.band_max_risk)
 
     async def dispatch(self, cap: str, args: Any, identity: str | None = None,
                        source: str = "local") -> dict:

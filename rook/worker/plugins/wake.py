@@ -79,7 +79,7 @@ class WakePlugin(Plugin):
     def available(self) -> bool:
         return bool(os.environ.get("ROOK_WAKE_CMD"))
 
-    @capability("wake")
+    @capability("wake", risk="exec")
     def _wake(self, room: str, thread_id: str = "", title: str = "",
               transcript: list | None = None, woken_by: str = "",
               note: str = "") -> dict:
@@ -154,7 +154,7 @@ class WakePlugin(Plugin):
                 "agent": os.environ.get("ROOK_WAKE_AGENT") or None,
                 "room": room, "prompt_file": pf}
 
-    @capability("wake_info")
+    @capability("wake_info", risk="read")
     def _wake_info(self) -> dict:
         """Report whether this host can wake an agent and which one."""
         return {"ok": True, "can_wake": bool(os.environ.get("ROOK_WAKE_CMD")),

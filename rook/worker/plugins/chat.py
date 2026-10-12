@@ -233,7 +233,7 @@ def _spawn_terminal(script: str, chatdir: str, me: str, room: str, title: str) -
 class ChatPlugin(Plugin):
     NAMESPACE = "chat"
 
-    @capability("open")
+    @capability("open", risk="write")
     def _open(self, room: str, me: str | None = None, title: str = "rook chat") -> dict:
         """Pop a chat window on this worker for ``room`` and return whether one
         was spawned. The local human types there; the operator uses chat.send/poll."""
@@ -254,7 +254,7 @@ class ChatPlugin(Plugin):
                                         "messages still arrive via chat.poll/msg"
                                         if via is None else None)}
 
-    @capability("send")
+    @capability("send", risk="write")
     def _send(self, room: str, text: str, sender: str = "operator") -> dict:
         """Append a message to the room transcript (the worker's window shows it)."""
         text = str(text or "")
@@ -272,7 +272,7 @@ class ChatPlugin(Plugin):
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
         return {"ok": True}
 
-    @capability("rooms")
+    @capability("rooms", risk="read")
     def _rooms(self) -> dict:
         """List chat rooms on this worker with a last-message preview — the band
         CLI aggregates these across workers into its chat sidebar."""
@@ -302,7 +302,7 @@ class ChatPlugin(Plugin):
         out.sort(key=lambda r: r.get("last_ts", 0), reverse=True)
         return {"ok": True, "rooms": out}
 
-    @capability("poll")
+    @capability("poll", risk="read", tags=("sensitive",))
     def _poll(self, room: str, since: float = 0.0) -> dict:
         """Return messages in ``room`` newer than ``since`` (unix ts). The
         operator polls this to receive the local human's replies."""

@@ -173,7 +173,7 @@ class MemoryPlugin(Plugin):
             return None, "path escapes vault"
         return full, None
 
-    @capability("get")
+    @capability("get", risk="read")
     def _get(self, path: str) -> dict:
         """Read a markdown note from the vault (read-open across the band).
         ``path`` is vault-relative, e.g. ``entities/calendar`` or
@@ -189,7 +189,7 @@ class MemoryPlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("put")
+    @capability("put", risk="write")
     def _put(self, path: str, text: str, append: bool = False) -> dict:
         """Write (or append to) a markdown note. Writes are forced into your own
         namespace, ``shared/``, or ``entities/`` — a path aimed elsewhere is
@@ -212,7 +212,7 @@ class MemoryPlugin(Plugin):
 
     # -- post-its ------------------------------------------------------------
 
-    @capability("note")
+    @capability("note", risk="write")
     def _note(self, claim: str, subjects: list | str | None = None,
               kind: str = "fact", supersedes: list | str | None = None,
               thread_id: str | None = None, provenance: str | None = None) -> dict:
@@ -248,7 +248,7 @@ class MemoryPlugin(Plugin):
         return {"ok": True, "id": pid, "kind": kind, "author": row[2],
                 "subjects": subj, "supersedes": sup}
 
-    @capability("search")
+    @capability("search", risk="read")
     def _search(self, query: str, limit: int = 20,
                 include_notes: bool = True) -> dict:
         """Search the vault and return a *pile* of relevant post-its in temporal
@@ -305,7 +305,7 @@ class MemoryPlugin(Plugin):
             out["notes"] = self._grep_notes(q, limit=8) if q else []
         return out
 
-    @capability("entities")
+    @capability("entities", risk="read")
     def _entities(self, name: str | None = None) -> dict:
         """List current-state entity notes (``entities/*.md``), or read one by
         name. Entity notes are the durable 'state of the world'; sessions and

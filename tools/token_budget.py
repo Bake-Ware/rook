@@ -37,10 +37,10 @@ STATIC = "static-token-0123456789abcdef"
 
 
 def _real_caps():
-    from rook.worker.plugin import load_plugins
-    from rook.worker.registry import CapabilityRegistry
-    reg = CapabilityRegistry()
-    plugins = load_plugins("rook.worker.plugins", reg, None)
+    from rook.core.host import PluginHost
+    host = PluginHost(check_placement=False)
+    reg = host.registry
+    plugins = host.load(PluginHost.discover("rook.worker.plugins", entry_points=False))
     reg.register("caps.describe", lambda: None)
     return reg, [p.NAMESPACE for p in plugins]
 

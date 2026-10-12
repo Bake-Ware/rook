@@ -177,7 +177,7 @@ Entry point: `rook/worker/cli.py:main`.
 | `ROOK_BAND_UDP_PACE_RATE`, `ROOK_BAND_UDP_PACE_BURST` | env | `2000` frames/s, `64` (rate `0` = unpaced) | worker, hub band clients | transport (UDP bulk pacing) | no | proc |
 | `ROOK_BAND_DISPATCH_CONCURRENCY`, `ROOK_BAND_DISPATCH_BACKLOG` | env | `64`, `1024` | worker, hub band clients | transport (inbound dispatch bound) | no | proc |
 | `--ws` | flag | off (UDP) | worker | transport | no | proc |
-| `--enable` | flag | all built-in plugins | worker | `load_plugins` | no | proc |
+| `--enable` | flag | all built-in plugins | worker | `PluginHost.load` | no | proc |
 | `--update-url` / `ROOK_UPDATE_URL` | flag, env | empty (no OTA) | worker | `plugins/selfupdate` | no | proc |
 | `-v` | flag; raised by pushed `log_level` | warning | worker | logging | no | proc |
 | `--version`, `--selftest`, `--install-cli`, `--cli` | flag | n/a | worker | `cli.main` | no | n/a |

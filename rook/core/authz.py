@@ -3,10 +3,10 @@
 Implements the wire-level parts of ``docs/design/permissions.md`` that both
 the hub and workers need:
 
-* the built-in cap tier table (Appendix A) and tier resolution (2.2): the
-  effective tier is the *maximum* of the built-in table and what the cap
-  declares, so a worker can raise a tier but never lower one; an unknown cap
-  is ``exec``;
+* the tier floor (Appendix A: the core caps' table plus the built-in
+  plugins' own declared tiers) and tier resolution (2.2): the effective tier
+  is the *maximum* of the floor and what the cap declares, so a worker can
+  raise a tier but never lower one; an unknown cap is ``exec``;
 * canonical JSON and domain-separated ed25519 signatures (4.2). Every signed
   object type has its own prefix, so a body signed as one type can never be
   replayed as another (the deauth-as-manifest gap, 6.3);
@@ -29,6 +29,7 @@ import json
 import logging
 import os
 import secrets
+import threading
 import time
 from typing import Any, Iterable
 
@@ -70,104 +71,144 @@ def _t(spec: str) -> tuple[str, tuple[str, ...]]:
     return FROM_LETTER[letter.lower()], tuple(names[t] for t in tags.split(",") if t)
 
 
-# Appendix A.1 (worker caps) and A.2 (hub caps on the reserved worker `rook`).
+# The floor (permissions 2.2, Appendix A) has two parts:
+#
+# * ``CORE``: caps no plugin declares - registered by the worker and hub cores
+#   themselves (caps.describe, worker.plugin.*, customcap.*) and the hub's
+#   own MCP tools authorized as caps on `rook` (secret.*, band.*, token.admin).
+# * every built-in plugin's ``@capability(risk=..., tags=...)``, read from the
+#   plugin source shipped with this node (:func:`builtin_table`). The
+#   decorator is the one place a plugin cap's tier is written; this node's
+#   copy of it is still a floor, so a peer running modified code cannot
+#   announce ``shell.exec`` as ``read``.
+#
 # Letters: R read, W write, X exec, A admin; tags s/d/p.
-_TABLE_SPEC = {
-    # core
+_CORE_SPEC = {
+    # worker core (rook.worker.core, rook.worker.admin)
     "caps.describe": "R", "worker.description_get": "R", "worker.description_set": "W",
+    "worker.settings_report": "R",
     "worker.plugin.list": "R", "worker.plugin.enable": "A", "worker.plugin.disable": "A",
+    "worker.plugin.reload": "A",
     "customcap.list": "R", "customcap.add": "A", "customcap.remove": "A",
-    # self-update
-    "worker.status": "R", "worker.check": "A", "worker.apply": "A", "worker.ota_begin": "A",
-    "worker.hold": "A", "worker.deauth": "A d", "worker.restart": "A d",
-    "worker.reconfigure": "A d", "worker.update": "A d",
-    # config
-    "worker.config_get": "R", "worker.config_apply": "A d", "worker.config_confirm": "A",
-    "worker.config_revert": "A d",
-    # enrollment
-    "worker.enrollment_status": "R", "worker.enrollment_prepare": "A",
-    "worker.enrollment_move_prepare": "A", "worker.enrollment_finish": "A",
-    "worker.enrollment_prove": "A",
-    # plugins
-    "battery.status": "R", "camera.list": "R", "camera.snap": "R s,p",
-    "cec.ping": "R p", "cec.send": "W p", "cec.raw": "W p",
-    "chat.open": "W", "chat.send": "W", "chat.rooms": "R", "chat.poll": "R s",
-    "claude-history.pull": "R s", "claude-history.read": "R s",
-    "claude-history.read_page": "R s", "claude-history.read_snapshot": "R s",
-    "claude-history.follow": "R s", "claude-history.search": "R s",
-    "claude-history.analyze": "R s", "claude-history.export": "R s",
-    "claude-history.resumed": "R", "claude-history.send": "X", "claude-history.resume": "X",
-    "codex-history.resume": "X",
-    "deluge.status": "R", "deluge.list": "R", "deluge.files": "R", "deluge.add": "W",
-    "deluge.pause": "W", "deluge.resume": "W", "deluge.remove": "W d",
-    "dongle.status": "R p", "dongle.display": "R s,p", "dongle.display_probe": "R p",
-    "dongle.keyboard": "X p", "dongle.mouse": "X p", "dongle.consumer": "W p",
-    "dongle.release": "W p",
-    "file.read": "R s", "file.list": "R", "file.search": "R s", "file.exists": "R",
-    "file.write": "X",
-    "hermes.status": "R", "hermes.memory.status": "R", "hermes.memory.read": "R s",
-    "hermes.skills.list": "R", "hermes.skills.search": "R", "hermes.sessions.list": "R",
-    "hermes.sessions.read": "R s", "hermes.mcp.list": "R", "hermes.chat": "X",
-    "hermes.run": "X",
-    "hid.backend": "R", "hid.type": "X p", "hid.key_combo": "X p", "hid.mouse.move": "X p",
-    "hid.mouse.click": "X p", "hid.mouse.drag": "X p",
-    "info.host": "R", "info.uptime": "R", "info.ping": "R",
-    "log.audit": "R s", "log.tail": "R s",
-    "memory.get": "R", "memory.search": "R", "memory.entities": "R", "memory.put": "W",
-    "memory.note": "W",
-    "msg.send": "W", "msg.read": "R s", "msg.clear": "W d",
-    "pikvm.snap": "R s,p", "pikvm.power.status": "R p", "pikvm.api.get": "R s,p",
-    "pikvm.type": "X p", "pikvm.key": "X p", "pikvm.mouse.move": "X p",
-    "pikvm.mouse.click": "X p", "pikvm.power": "X d,p", "pikvm.api.post": "X d,p",
-    "proc.list": "R", "proc.read": "R s", "proc.start": "X", "proc.write": "X",
-    "proc.signal": "X d", "proc.close": "X d",
-    "screenshot.capture": "R s", "screenshot.capture_region": "R s",
-    "screenshot.capture_preview": "R s",
-    "shell.which": "R", "shell.env.list": "R s", "shell.env.get": "R s", "shell.exec": "X",
-    "agent.wake_info": "R", "agent.wake": "X",
-    "work.status": "R", "work.view_page": "R s", "work.adopt_page": "W",
-    "work.create": "X", "work.command": "X",
-    "work.stream.open": "X", "work.stream.write": "X", "work.stream.signal": "X",
-    "work.stream.close": "X", "work.stream.resize": "W",
-    "work.stream.read": "R", "work.stream.list": "R", "work.sessions": "R",
-    "work.export": "R s",
-    "sessions.list": "R", "sessions.follow": "R s", "sessions.send": "X",
-    "sessions.stop": "X d",
-    "sessions.mirror": "R s",
-    # A.2 hub caps (worker `rook`)
+    # A.2: hub tools authorized as caps on the reserved worker `rook`
     "identity.whoami": "R", "band.workers": "R", "band.caps": "R",
     "secret.list": "R", "secret.log": "R s", "secret.get": "A s", "secret.set": "A d",
     "secret.delete": "A d", "secret.use": "W s",
     "journal.read": "R s", "handoff.read": "R", "handoff.write": "W",
-    "chat.read": "R", "chat.write": "W", "chat.delete": "W d", "chat.presence": "R",
-    "console.read": "R", "knowledge.read": "R", "knowledge.write": "W",
-    "task.read": "R", "task.write": "W",
-    "grants.revocations": "R", "policy.explain": "R", "policy.status": "R", "policy.get": "R s", "policy.set": "A",
+    "console.read": "R",
+    "grants.revocations": "R",
     "token.admin": "A", "band.admin": "A d", "band.deauth": "A d", "member.admin": "A",
     "guidance.write": "A",
-    "hub.info": "R", "hub.plugins": "R",
-    # Settings framework caps (settings.md 3.4). Band settings changes are
-    # admin: band owners and operator-role tokens (maintainer decision).
-    "settings.describe": "R", "settings.get": "R", "settings.history": "R",
-    "settings.set": "A", "settings.reset": "A",
+    # hub core (rook.hub.node)
+    "hub.plugin.enable": "A", "hub.plugin.disable": "A", "hub.plugin.reload": "A",
 }
 
-BUILTIN: dict[str, tuple[str, tuple[str, ...]]] = {c: _t(s) for c, s in _TABLE_SPEC.items()}
+CORE: dict[str, tuple[str, tuple[str, ...]]] = {c: _t(s) for c, s in _CORE_SPEC.items()}
 # Prefixes whose every cap has a fixed tier (custom command caps are shell).
 BUILTIN_PREFIX: tuple[tuple[str, str], ...] = (("cmd.", "exec"),)
 
+#: Plugin packages whose declared tiers join the floor, when present on this
+#: node (a worker bundle has no rook.hub; the Android app adds its own).
+FLOOR_PACKAGES = ["rook.worker.plugins", "rook.hub.plugins"]
+
+_floor: dict[str, tuple[str, tuple[str, ...]]] | None = None
+_floor_lock = threading.RLock()
+_floor_loading = False
+
+
+def declared_floor(packages: Iterable[str]) -> dict[str, tuple[str, tuple[str, ...]]]:
+    """``{cap: (tier, tags)}`` from every Plugin class under ``packages``
+    (loaded or not). A cap declared by several classes gets the highest tier
+    and every tag. Packages or modules that do not import are skipped."""
+    import importlib
+    import inspect
+    import pkgutil
+    from .plugin import Plugin
+    out: dict[str, tuple[str, tuple[str, ...]]] = {}
+    for package in packages:
+        try:
+            pkg = importlib.import_module(package)
+        except Exception:
+            continue
+        for info in pkgutil.walk_packages(pkg.__path__, package + "."):
+            try:
+                mod = importlib.import_module(info.name)
+            except Exception:
+                log.warning("tier floor: %s does not import here; its caps fall back to "
+                            "what they announce", info.name)
+                continue
+            for _, cls in inspect.getmembers(mod, inspect.isclass):
+                if not (issubclass(cls, Plugin) and cls is not Plugin
+                        and cls.__module__ == mod.__name__ and cls.NAMESPACE):
+                    continue
+                for cap, fn in cls.declared_caps().items():
+                    meta = getattr(fn, "_rook_cap_meta", None)
+                    tier = norm_tier(getattr(meta, "risk", None))
+                    if tier is None:
+                        continue
+                    tags = tuple(getattr(meta, "tags", ()) or ())
+                    if cap in out:
+                        old_tier, old_tags = out[cap]
+                        tier = max_tier(tier, old_tier)
+                        tags = tuple(dict.fromkeys(old_tags + tags))
+                    out[cap] = (tier, tags)
+    return out
+
+
+def builtin_table() -> dict[str, tuple[str, tuple[str, ...]]]:
+    """The whole floor: :data:`CORE` plus the declared tiers of the built-in
+    plugins (:data:`FLOOR_PACKAGES`). Built once per process, on first use."""
+    global _floor, _floor_loading
+    if _floor is not None:
+        return _floor
+    with _floor_lock:
+        if _floor is not None:
+            return _floor
+        if _floor_loading:
+            return CORE  # a plugin module resolving a tier while it imports
+        _floor_loading = True
+        try:
+            table = declared_floor(FLOOR_PACKAGES)
+        finally:
+            _floor_loading = False
+        for cap, (tier, tags) in CORE.items():
+            if cap in table:
+                tier = max_tier(tier, table[cap][0])
+                tags = tuple(dict.fromkeys(tags + table[cap][1]))
+            table[cap] = (tier, tags)
+        _floor = table
+        return _floor
+
+
+def add_floor_package(package: str) -> None:
+    """Add a plugin package to the floor (the Android app's native plugins).
+    Takes effect immediately, even if the floor was already built."""
+    global _floor
+    with _floor_lock:
+        if package not in FLOOR_PACKAGES:
+            FLOOR_PACKAGES.append(package)
+        _floor = None
+
+
+def __getattr__(name: str) -> Any:
+    # ``BUILTIN`` was the hand-written table; it is now built from the plugins
+    # on first use, so it is served lazily (importing this module stays cheap).
+    if name == "BUILTIN":
+        return builtin_table()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 def builtin_tier(cap: str) -> str | None:
-    """The built-in table's tier for ``cap``, or ``None`` if it has none."""
+    """The floor's tier for ``cap``, or ``None`` if it has none."""
     for prefix, tier in BUILTIN_PREFIX:
         if cap.startswith(prefix):
             return tier
-    hit = BUILTIN.get(cap)
+    hit = builtin_table().get(cap)
     return hit[0] if hit else None
 
 
 def builtin_tags(cap: str) -> tuple[str, ...]:
-    hit = BUILTIN.get(cap)
+    hit = builtin_table().get(cap)
     return hit[1] if hit else ()
 
 

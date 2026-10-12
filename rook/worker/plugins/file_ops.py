@@ -36,7 +36,7 @@ def _stat_to_meta(p: Path, st: os.stat_result) -> dict:
 class FilePlugin(Plugin):
     NAMESPACE = "file"
 
-    @capability("read")
+    @capability("read", risk="read", tags=("sensitive",))
     def _read(self, path: str, encoding: str = "utf-8",
               max_bytes: int = 8 * 1024 * 1024) -> dict:
         """Read a file. ``encoding`` of ``"base64"`` returns raw bytes b64-encoded.
@@ -72,7 +72,7 @@ class FilePlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}", "path": path}
 
-    @capability("write")
+    @capability("write", risk="exec")
     def _write(self, path: str, content: str, encoding: str = "utf-8",
                append: bool = False, create_parents: bool = False) -> dict:
         """Write ``content`` to ``path``. ``encoding`` ``"base64"`` decodes first."""
@@ -96,7 +96,7 @@ class FilePlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}", "path": path}
 
-    @capability("list")
+    @capability("list", risk="read")
     def _list(self, path: str, recursive: bool = False,
               include_hidden: bool = True, max_entries: int = 5000) -> dict:
         """List a directory. ``recursive`` walks subdirs; ``max_entries`` caps results."""
@@ -129,7 +129,7 @@ class FilePlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}", "path": path}
 
-    @capability("search")
+    @capability("search", risk="read", tags=("sensitive",))
     def _search(self, pattern: str, path: str = ".", recursive: bool = True,
                 max_results: int = 100, ignore_case: bool = False,
                 glob: str = "*") -> dict:
@@ -180,7 +180,7 @@ class FilePlugin(Plugin):
             out["truncated"] = True
         return out
 
-    @capability("exists")
+    @capability("exists", risk="read")
     def _exists(self, path: str) -> dict:
         """Check if a path exists; reports the kind if so."""
         p = Path(path)

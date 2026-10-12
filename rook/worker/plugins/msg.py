@@ -81,7 +81,7 @@ async def _notify_windows(title: str, body: str) -> bool:
 class MsgPlugin(Plugin):
     NAMESPACE = "msg"
 
-    @capability("send")
+    @capability("send", risk="write")
     async def _send(self, text: str, sender: str = "operator") -> dict:
         """Deliver a text message to this worker: store it in the inbox and try a
         desktop notification. ``sender`` labels who it's from."""
@@ -104,7 +104,7 @@ class MsgPlugin(Plugin):
         notified = await _notify(f"rook · {entry['sender']}", text[:200])
         return {"ok": True, "stored": stored, "notified": notified}
 
-    @capability("read")
+    @capability("read", risk="read", tags=("sensitive",))
     def _read(self, limit: int = 20) -> dict:
         """Return the most recent messages from this worker's inbox."""
         if not _INBOX.exists():
@@ -120,7 +120,7 @@ class MsgPlugin(Plugin):
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
         return {"ok": True, "messages": out}
 
-    @capability("clear")
+    @capability("clear", risk="write", tags=("destructive",))
     def _clear(self) -> dict:
         """Empty this worker's inbox."""
         try:

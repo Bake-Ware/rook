@@ -48,9 +48,15 @@ def _fmt(v) -> str:
     return ("`" + s.replace("|", "\\|") + "`") if len(s) < 48 else "`" + s[:44] + "…`"
 
 
+class ImportErrors(RuntimeError):
+    """Some plugin modules did not import: the reference would be incomplete."""
+
+
 def render() -> str:
     from rook.hub.settings_schema import PLUGIN_TITLES, Schema
     schema = Schema()
+    if schema.import_errors:
+        raise ImportErrors("; ".join(schema.import_errors))
     sections: dict[str, list] = {}
     for e in schema:
         if e.origin == "core":
@@ -87,7 +93,14 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true")
     args = ap.parse_args()
-    text = render()
+    try:
+        text = render()
+    except ImportErrors as e:
+        # Never compare or write a reference with plugins missing: the result
+        # would depend on what happens to be installed here.
+        print(f"plugin modules failed to import, settings reference not checked: {e}",
+              file=sys.stderr)
+        return 2
     current = TARGET.read_text(encoding="utf-8") if TARGET.exists() else ""
     if args.check:
         if current != text:
