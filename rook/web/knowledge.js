@@ -2,9 +2,9 @@
 // records agents keep. Mostly read-only: agents write; the user observes and
 // directs. All stored text is rendered as text nodes, never as HTML.
 
-const el=(tag,txt,cls)=>{const e=document.createElement(tag);if(txt!==undefined&&txt!==null)e.textContent=txt;if(cls)e.className=cls;return e;};
+import {el, ago as agoOr} from '/account/bands/assets/manage.js';
 const date=t=>t?new Date(t*1000).toLocaleString():'';
-const ago=t=>{if(!t)return '';const m=Math.round((Date.now()/1000-t)/60);return m<1?'just now':m<60?m+'m ago':m<1440?Math.round(m/60)+'h ago':Math.round(m/1440)+'d ago';};
+const ago=t=>agoOr(t,'');
 const STATE_LABEL={in_progress:'In progress',todo:'To do',blocked:'Blocked',paused:'Paused',done:'Done',closed:'Closed',cancelled:'Cancelled',archived:'Archived',active:'Active',superseded:'Superseded'};
 
 function loadCss(){if(document.querySelector('link[data-kn]'))return;const css=document.createElement('link');css.rel='stylesheet';css.href='/account/knowledge/assets/knowledge.css'+new URL(import.meta.url).search;css.dataset.kn='1';document.head.append(css);}

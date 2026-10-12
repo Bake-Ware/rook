@@ -489,7 +489,8 @@ const M=new Map();                        // worker_id -> row state
 let dirty=false;
 const listEl=$('#list'), barsEl=$('#bars'), emptyEl=$('#empty');
 
-function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+// Classic script, so it cannot import manage.js's esc; keep the two identical.
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function col(f){return f>0.5?'#2dd4a7':f>0.22?'#f5b041':'#f76a6a'}
 /* Capabilities as chips by namespace; a chip opens that namespace, a cap runs it.
    One builder for the list, the grid and the 3D card. */

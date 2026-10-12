@@ -32,6 +32,10 @@ Preparation for public use.
 - `TokenWeb` is a `KnowledgeWeb` proxy like Guidance, Vault, Settings and
   Jobs. A non-operator calling an operator-only `/account/*/api` proxy now
   gets a JSON 403 instead of an HTML one.
+- Dashboard scripts share `esc`, `el` and `ago` from `rook/web/manage.js`
+  instead of private copies. The classic-script `esc` in `index.html` now
+  escapes `'` too. Relative times read the same everywhere ("5 min ago";
+  Knowledge and Settings used to say "5m ago").
 
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps

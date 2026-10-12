@@ -2,8 +2,7 @@
 // rendered from the hub's settings schema (settings.* on worker "rook").
 // Every row shows the effective value, where it came from, what it hides and
 // how a change takes effect. Secret values are write-only.
-const el=(tag,txt,cls)=>{const e=document.createElement(tag);if(txt!==undefined&&txt!==null)e.textContent=txt;if(cls)e.className=cls;return e;};
-const ago=t=>{if(!t)return 'never';const m=Math.round((Date.now()/1000-t)/60);return m<1?'just now':m<60?m+'m ago':m<1440?Math.round(m/60)+'h ago':Math.round(m/1440)+'d ago';};
+import {el, ago} from '/account/bands/assets/manage.js';
 const show=v=>v===null||v===undefined||v===''?'—':typeof v==='object'?JSON.stringify(v):String(v);
 const API='/account/settings/api';
 const CSS=`

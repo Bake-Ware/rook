@@ -12,7 +12,13 @@ export function h(tag,attrs,...kids){
   for(const kid of kids.flat()){if(kid===null||kid===undefined||kid===false)continue;e.append(kid);}
   return e;
 }
-export const ago=t=>{if(!t)return 'never';const m=Math.round((Date.now()/1000-t)/60);return m<1?'just now':m<60?m+' min ago':m<1440?Math.round(m/60)+'h ago':m<43200?Math.round(m/1440)+'d ago':day(t);};
+// HTML-escape for the few places that build markup strings (quotes too, so
+// the result is safe inside either kind of attribute quote).
+export const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// A text-only element: el('td','value','cls').
+export const el=(tag,txt,cls)=>{const e=document.createElement(tag);if(txt!==undefined&&txt!==null)e.textContent=txt;if(cls)e.className=cls;return e;};
+// Relative time for a unix timestamp; `none` is shown when there is none.
+export const ago=(t,none='never')=>{if(!t)return none;const m=Math.round((Date.now()/1000-t)/60);return m<1?'just now':m<60?m+' min ago':m<1440?Math.round(m/60)+'h ago':m<43200?Math.round(m/1440)+'d ago':day(t);};
 export const day=t=>t?new Date(t*1000).toLocaleDateString(undefined,{month:'short',day:'numeric',year:new Date(t*1000).getFullYear()===new Date().getFullYear()?undefined:'numeric'}):'—';
 export function useCss(){
   if(document.querySelector('link[href*="manage.css"]'))return;

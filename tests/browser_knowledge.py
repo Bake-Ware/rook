@@ -93,6 +93,7 @@ window.addEventListener('hashchange',show);await show();window.ready=true;
     app = web.Application()
     app.router.add_route('*', '/account/knowledge/api', api)
     app.router.add_get('/account/knowledge/assets/{name}', asset)
+    app.router.add_get('/account/bands/assets/{name}', asset)   # manage.js (shared helpers)
     app.router.add_get('/theme.css', lambda r: web.FileResponse(ROOT / 'rook/web/theme.css'))
     app.router.add_get('/', lambda r: web.Response(text=page_html, content_type='text/html'))
     runner = web.AppRunner(app); await runner.setup()
