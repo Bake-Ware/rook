@@ -24,10 +24,10 @@ import json
 import logging
 from typing import Any, Callable
 
-from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from ....remote.account_web import NO_STORE
+from ....remote.account_api import FORM_EXPIRED, NOT_JSON, json_reply, read_object
+from ....remote.accounts import csrf_ok
 from ...authz import current_principal, principal_for_user
 from ...policy import Principal
 from .service import READS, WRITES, error_reply, route
@@ -39,8 +39,7 @@ SIGN_IN = "Sign in to use Jobs."
 UNAVAILABLE = "Jobs are not running on this hub."
 
 
-def _json(data: Any, status: int = 200) -> JSONResponse:
-    return JSONResponse(data, status, headers=NO_STORE)
+_json = json_reply
 
 
 def _status(error: Exception) -> int:
@@ -96,14 +95,13 @@ def routes(get_node: Callable[[], Any], accounts, internal_token: str | None = N
             return _json({"csrf": user["csrf"] if user else "", "admin": principal.fail_open(),
                           "principal": principal.id, "label": principal.label,
                           "timezone": plugin.service.tz(), "reads": list(READS), "writes": list(WRITES)})
-        try:
-            data = await request.json()
-        except ValueError:
-            return _json({"error": "Expected a JSON object."}, 400)
-        if not isinstance(data, dict):
-            return _json({"error": "Expected a JSON object."}, 400)
-        if user is not None and not hmac.compare_digest(str(data.get("csrf", "")), user["csrf"]):
-            return _json({"error": "Form expired; reload the page."}, 403)
+        # Not account_api: the internal-token caller (the dashboard's band
+        # panel) has no session and so no CSRF token; a session caller does.
+        data = await read_object(request)
+        if data is None:
+            return _json({"error": NOT_JSON}, 400)
+        if user is not None and not csrf_ok(data, user["csrf"]):
+            return _json({"error": FORM_EXPIRED}, 403)
         action = str(data.get("action") or "list")
         cap = route(action)
         args: dict = {"action": action, "id": data.get("id"), "data": data.get("data")}

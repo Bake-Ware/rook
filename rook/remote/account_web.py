@@ -12,7 +12,7 @@ from urllib.parse import urlencode
 
 from aiohttp import web
 
-from .accounts import AccountStore, digest
+from .accounts import AccountStore, csrf_ok, digest
 from .google_auth import GoogleAuth, fetch_avatar, normalize_avatar
 from .psk import generate_psk
 from .web_pages import render
@@ -152,7 +152,7 @@ class AccountWeb:
     def csrf(self,request,data,user):
         if request.headers.get('Origin',self.origin)!=self.origin:
             raise PermissionError('Request origin did not match.')
-        if not hmac.compare_digest(str(data.get('csrf','')),user['csrf']):
+        if not csrf_ok(data,user['csrf']):
             raise PermissionError('Form expired; reload the page.')
 
     def form(self,user,op,body,band_id=''):
@@ -173,7 +173,7 @@ class AccountWeb:
         if request.headers.get('Origin',self.origin)!=self.origin:
             return False
         cookie=request.cookies.get('rook_login_form','')
-        return bool(cookie) and hmac.compare_digest(cookie,str(data.get('form_token','')))
+        return csrf_ok(data,cookie,'form_token')
 
     async def local_login(self,request):
         data=await request.post()

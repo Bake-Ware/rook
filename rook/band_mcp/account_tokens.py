@@ -4,12 +4,12 @@ The MCP port used to serve its own password-gated ``/tokens`` page. The
 dashboard's Tokens view (``rook/web/tokens.js`` over ``/account/tokens/api``)
 replaced it; ``/tokens`` here now only sends a browser to that view."""
 import base64
-import hmac
 import re
 
-from starlette.responses import JSONResponse, RedirectResponse
+from starlette.responses import RedirectResponse
 from starlette.routing import Route
 
+from ..remote.account_api import account_api, json_reply
 from ..remote.accounts import AccountStore
 from ..remote.account_web import NO_STORE
 
@@ -44,26 +44,17 @@ def dashboard_tokens_url() -> str:
 def build_account_token_routes(provider, chat=None, accounts=None):
     accounts = accounts or AccountStore()
 
-    def response(data, status=200):
-        return JSONResponse(data, status_code=status, headers=NO_STORE)
+    response = json_reply
 
-    async def api(request):
-        user = accounts.session(request.cookies.get('rook_account', ''))
-        if not user:
-            return response({'error': 'Sign in to manage API tokens.'}, 401)
-        if not user['admin']:
-            return response({'error': 'API tokens require an operator account.'}, 403)
-        if request.method == 'GET':
+    # The dashboard proxy also verifies Origin. CSRF remains mandatory here
+    # (account_api), including when this endpoint is reached directly on MCP.
+    @account_api(accounts, sign_in='Sign in to manage API tokens.',
+                 operator_only='API tokens require an operator account.')
+    async def api(request, user, data):
+        if data is None:
             return response({'tokens': provider.list_api_tokens(),
                              'avatars': chat.avatar_index() if chat and chat.enabled else {}})
         try:
-            data = await request.json()
-            if not isinstance(data, dict):
-                raise ValueError('Expected an object.')
-            # The dashboard proxy also verifies Origin. CSRF remains mandatory
-            # here, including when this endpoint is reached directly on MCP.
-            if not hmac.compare_digest(str(data.get('csrf', '')), user['csrf']):
-                return response({'error': 'Form expired; reload the page.'}, 403)
             op = data.get('op')
             if op == 'create':
                 name = data.get('name')

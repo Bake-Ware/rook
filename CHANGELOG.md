@@ -24,6 +24,11 @@ Preparation for public use.
   `permissions.html`, `account-page.html`) on the shared `theme.css`, filled
   by `rook.remote.web_pages.render`; forms, CSRF fields and redirects are
   unchanged.
+- The account JSON APIs (guidance, vault, tokens, knowledge, settings, jobs)
+  share one auth gate, `rook.remote.account_api.account_api` (session 401,
+  operator 403, JSON object 400, constant-time CSRF 403), and every session
+  CSRF compare in the dashboard uses `accounts.csrf_ok`. A POST body that is
+  not a JSON object now answers 400 everywhere (some routes said 403).
 
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps

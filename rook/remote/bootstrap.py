@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hmac
 import html as _html
 import json
 import logging
@@ -1298,8 +1297,9 @@ class CombinedServer:
 
     async def _setup_submit(self, request: web.Request) -> web.Response:
         from . import setup_store
+        from .accounts import csrf_ok
         data = await request.post()
-        if not hmac.compare_digest(str(data.get("csrf", "")), self._setup_csrf):
+        if not csrf_ok(data, self._setup_csrf):
             return web.Response(text=self._setup_page_html("The form expired. Check the values and save again."),
                                 status=400, content_type="text/html", headers={"Cache-Control": "no-store"})
         vals = {

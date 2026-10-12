@@ -21,6 +21,16 @@ def digest(value):
     return hashlib.sha256(value.encode()).hexdigest()
 
 
+def csrf_ok(data, expected, field='csrf'):
+    """Constant-time check that a request body's ``field`` matches the
+    expected per-session (or per-form) token. ``data`` is anything with
+    ``.get`` (a JSON object or a posted form); anything else fails. Compared
+    as bytes, so non-ASCII input fails the check instead of raising."""
+    if not expected or not hasattr(data, 'get'):
+        return False
+    return hmac.compare_digest(str(data.get(field, '')).encode(), str(expected).encode())
+
+
 def password_hash(password, salt=None):
     if not isinstance(password, str) or not 12 <= len(password) <= 1024:
         raise ValueError('Use a password between 12 and 1024 characters.')
