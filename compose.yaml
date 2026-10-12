@@ -52,7 +52,6 @@ services:
     environment:
       ROOK_DATA_DIR: /data
       ROOK_BAND_PSK: ${ROOK_BAND_PSK:?set ROOK_BAND_PSK in .env}
-      ROOK_MCP_AUTH_PASSWORD: ${ROOK_MCP_AUTH_PASSWORD:-}
       ROOK_MCP_STATIC_TOKEN: ${ROOK_MCP_STATIC_TOKEN:-}
       ROOK_MCP_PUBLIC_URL: ${ROOK_MCP_PUBLIC_URL:-}
       # Host headers other than localhost that may reach /mcp (e.g. 192.168.1.10:8765).
