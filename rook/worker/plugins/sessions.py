@@ -36,7 +36,7 @@ import uuid
 from pathlib import Path
 
 from ..plugin import Plugin, capability
-from .. import agent_activity, session_mirror
+from .. import agent_activity, agents, session_mirror
 
 log = logging.getLogger("rook.worker.plugins.sessions")
 
@@ -98,9 +98,8 @@ def mirror_inbound(agent: str, native_id: str) -> str | None:
 # -- Claude's inbox policy --------------------------------------------------------
 
 def _claude_home() -> Path:
-    if sys.platform == "win32":
-        return Path(os.environ.get("USERPROFILE", str(Path.home()))) / ".claude"
-    return Path.home() / ".claude"
+    # Kept as a module attribute: tests patch it here.
+    return agents.claude_home()
 
 
 def managed_settings_path() -> Path:

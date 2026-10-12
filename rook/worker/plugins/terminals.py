@@ -45,6 +45,7 @@ from pathlib import Path
 
 from ..plugin import Plugin, capability, place
 from .. import conpty, termwire, winsec
+from ..session_mirror import pid_alive
 
 log = logging.getLogger("rook.worker.plugins.terminals")
 
@@ -71,11 +72,6 @@ _IS_WIN = sys.platform == "win32"
 _CMD_META = re.compile(r'[\r\n"%^&|<>!()]')
 # The target of an npm cmd-shim: "%dp0%\node_modules\pkg\bin\cli.js" %*
 _NPM_SHIM = re.compile(r'"%~?dp0%?\\([^"%*\r\n]+?\.(?:js|cjs|mjs|exe))"', re.I)
-
-
-def _pid_alive(pid: int) -> bool | None:
-    from ..session_mirror import pid_alive
-    return pid_alive(pid)
 
 
 def _check_id(value: str, what: str = "id") -> str:
@@ -446,7 +442,7 @@ class TerminalsPlugin(Plugin):
         handoff_pid = int(handoff_pid or 0)
         if handoff_pid and not resume:
             raise ValueError("handoff_pid needs resume: it hands over a running session")
-        if handoff_pid and _pid_alive(handoff_pid) is not True:
+        if handoff_pid and pid_alive(handoff_pid) is not True:
             handoff_pid = 0     # already gone: resume now, with the usual checks
         if resume:
             _check_id(resume, "resume session id")
@@ -559,7 +555,7 @@ class TerminalsPlugin(Plugin):
         end = loop.time() + HANDOFF_SECS
         why = ""
         try:
-            while _pid_alive(pid) is True:
+            while pid_alive(pid) is True:
                 if loop.time() >= end:
                     why = "the session's current process did not exit within 2 minutes; nothing was resumed"
                     break

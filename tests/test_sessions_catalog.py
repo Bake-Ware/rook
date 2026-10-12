@@ -376,7 +376,7 @@ async def test_history_resume_opens_a_rook_terminal(tmp_path, monkeypatch):
 async def test_codex_resume_opens_a_rook_terminal(tmp_path, monkeypatch):
     path = tmp_path / f"rollout-2026-10-07T10-00-00-{X1}.jsonl"
     path.write_text(json.dumps({"type": "session_meta", "payload": {"id": X1, "cwd": str(tmp_path)}}) + "\n")
-    monkeypatch.setattr("rook.worker.plugins.codex_history.shutil.which", lambda _: "/usr/bin/codex")
+    monkeypatch.setattr("rook.worker.plugins.codex_history._codex_bin", lambda: "/usr/bin/codex")
     calls = []
 
     async def call(cap, **kw):

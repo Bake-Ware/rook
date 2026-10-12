@@ -28,7 +28,6 @@ import asyncio
 import json
 import os
 import re
-import sys
 import time
 import threading
 import uuid
@@ -36,23 +35,18 @@ from collections import Counter
 from pathlib import Path
 from typing import Iterable
 
+from .. import agents
 from ..plugin import Plugin, capability
 from ..agent_activity import active_sessions
 from ..session_messages import deliver, messageable
 
 
 def _default_root() -> Path:
-    if sys.platform == "win32":
-        home = Path(os.environ.get("USERPROFILE", str(Path.home())))
-    else:
-        home = Path.home()
-    return home / ".claude" / "projects"
+    return agents.claude_projects()
 
 
 def _expand(path: str | None) -> Path:
-    if not path:
-        return _default_root()
-    return Path(os.path.expanduser(os.path.expandvars(path)))
+    return agents.expand(path, _default_root)
 
 
 def _iter_session_files(root: Path) -> Iterable[Path]:
@@ -81,25 +75,11 @@ def _read_lines(p: Path) -> Iterable[dict]:
 
 
 def _claude_bin() -> str | None:
-    """Locate the Claude Code CLI. On Windows npm installs it as a .cmd shim,
-    which shutil.which misses unless asked by that name."""
-    import shutil
-    if sys.platform == "win32":
-        found = shutil.which("claude") or shutil.which("claude.cmd")
-        if found:
-            return found
-        for c in (r"C:\nvm4w\nodejs\claude.cmd",
-                  str(Path(os.environ.get("APPDATA", "")) / "npm" / "claude.cmd"),
-                  r"C:\Program Files\nodejs\claude.cmd"):
-            if os.path.exists(c):
-                return c
-        return None
-    from ..shim import which_real     # never the session shim itself
-    return which_real("claude")
+    # Kept as a module attribute: tests and callers patch it here.
+    return agents.claude_bin()
 
 
-def _short_id(sid: str) -> str:
-    return sid.split("-", 1)[0] if sid else ""
+_short_id = agents.short_id
 
 
 def _resolve_session(root: Path, session_id: str) -> Path | None:

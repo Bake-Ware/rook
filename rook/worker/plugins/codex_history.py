@@ -10,11 +10,10 @@ logs. Reasoning records are not transcript messages. JSON export is normalized.
 from __future__ import annotations
 
 import asyncio
-import os
 import re
-import shutil
 from pathlib import Path
 
+from .. import agents
 from ..plugin import capability
 from . import claude_history as history
 
@@ -22,11 +21,16 @@ _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 
 
 def _root():
-    return Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))).expanduser() / "sessions"
+    return agents.codex_sessions()
+
+
+def _codex_bin():
+    # A module attribute so tests (and _claude_bin's twin) can patch it.
+    return agents.codex_bin()
 
 
 def _expand(path):
-    return Path(os.path.expandvars(path)).expanduser() if path else _root()
+    return agents.expand(path, _root)
 
 
 def _sid(path):
@@ -145,7 +149,7 @@ class CodexHistoryPlugin(history.ClaudeHistoryPlugin):
                 if item["session_id"] == sid and item.get("running"):
                     return {"ok": False, "error": "session is already running",
                             **{k: item[k] for k in ("handle", "terminal") if k in item}}
-            binary = shutil.which("codex") or shutil.which("codex.cmd")
+            binary = _codex_bin()
             if binary is None:
                 return {"ok": False, "error": "codex CLI not found on this machine"}
             workdir = cwd or meta.get("cwd")
