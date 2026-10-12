@@ -56,6 +56,11 @@ steps; see [android/README.md](android/README.md) and the PlatformIO project in
 - **Configuration goes through flags and `ROOK_*` environment variables**, documented in
   `--help` and [.env.example](.env.example). Never commit keys, tokens, passwords,
   hostnames or IP addresses of real machines; use `example.com` and placeholders.
+- **Peer compatibility has a floor.** `rook/core/compat.py` names the oldest worker
+  build, Android app and hub this release still talks to. A fallback that serves only
+  peers older than that can go; one the newest Android app or the ESP32/RP2040
+  firmware still needs stays, and so does code that reads files or databases an older
+  release wrote. Raise the floor deliberately, in its own change.
 - Match the surrounding code's style and comment density. Comments explain *why*.
 
 ## Pull requests

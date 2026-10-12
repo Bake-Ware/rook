@@ -149,29 +149,13 @@ class TokenStore:
             resource=None,
         )
 
-    def identity_for(self, token: str) -> str | None:
-        """Legacy display attribution behind a bearer token, for stamping band calls
-        so workers can audit who called. Returns the token's name for a minted
-        API token, ``"static"`` for the fixed static token, or ``None`` if the
-        token is unknown. Kept separate from :meth:`verify_bearer` (and keyed
-        off the raw token) so it works regardless of which ``AccessToken``
-        fields the installed ``mcp`` version happens to carry."""
-        if not token:
-            return None
-        if self._static_token and secrets.compare_digest(self._static_token, token):
-            return "static"
-        api = self._api_tokens.get(token)
-        if api is None:
-            return None
-        return api.get("name") or api.get("id") or "api"
-
     def principal_for(self, token: str) -> dict[str, Any] | None:
         """Resolve a valid credential to a secret-free audit principal, or
         ``None`` when the token is missing, unknown, revoked or expired.
 
         ``agent_id`` is stable across key rotation and label edits; ``key_id``
-        names the specific credential; ``label`` is the same display name
-        :meth:`identity_for` returns. The shared static credential is valid
+        names the specific credential; ``label`` is the token's display name
+        (``"static"`` for the shared static token). The shared static credential is valid
         but identifies no individual agent (``kind="shared"``). Attribution
         only — nothing here grants or restricts what a caller may do.
         """

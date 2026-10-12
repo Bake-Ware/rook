@@ -56,9 +56,9 @@ class BandHTTP:
     def __init__(self, url: str, user: str, password: str) -> None:
         self.url = url.rstrip("/")
         self._auth = base64.b64encode(f"{user}:{password}".encode()).decode()
-        self._has_overview = True
         # What the hub says about this login (GET /api/band/whoami); None until
-        # asked, {"legacy": True} for a hub from before permissions.
+        # asked. Every supported hub serves it and /api/band/overview
+        # (rook.core.compat.MIN_HUB_BUILD).
         self.hub: dict | None = None
 
     def _req(self, path: str, method: str = "GET", body: dict | None = None,
@@ -83,27 +83,12 @@ class BandHTTP:
         except Exception as e:
             return f"{type(e).__name__}: {e}"
 
-    def snapshot(self) -> list[dict]:
-        rows = self._req("/api/band/workers", timeout=8)
-        if not isinstance(rows, list):
-            raise ValueError("Invalid worker roster")
-        for r in rows:
-            r["age"] = r.get("last_seen_age_secs", 999)
-        rows.sort(key=lambda x: (x.get("name") or "").lower())
-        return rows
-
     def whoami(self) -> dict:
         """Ask the hub who this login's band calls run as and whether it signs
-        call tickets. A hub without the endpoint predates permissions: its
-        calls carry no tickets, so enforcing workers refuse exec/admin."""
-        try:
-            value = self._req("/api/band/whoami", timeout=8)
-        except urllib.error.HTTPError as error:
-            if error.code not in (404, 405):
-                raise
-            value = {"legacy": True}
+        call tickets."""
+        value = self._req("/api/band/whoami", timeout=8)
         if not isinstance(value, dict):
-            value = {"legacy": True}
+            raise ValueError("Invalid whoami reply")
         self.hub = value
         return value
 
@@ -111,8 +96,6 @@ class BandHTTP:
         """A one-line warning when this hub can't get calls past enforcing
         workers, else None."""
         hub = self.hub or {}
-        if hub.get("legacy"):
-            return "hub predates permissions: update it (enforcing workers refuse its calls)"
         if hub and not hub.get("tickets"):
             return "hub signs no call tickets: enforcing workers refuse exec/admin"
         return None
@@ -130,10 +113,7 @@ class BandHTTP:
                                      "an owner can change it on the Permissions page")
         elif "hub ticket" in error or "hub-signed order" in error:
             hub = self.hub or {}
-            if hub.get("legacy"):
-                why = ("this hub predates permissions and signs no tickets; "
-                       "update the hub, then retry")
-            elif hub and not hub.get("tickets"):
+            if hub and not hub.get("tickets"):
                 why = ("this hub holds no signing key, so its calls carry no ticket; "
                        "check the hub's update key, then retry")
             else:
@@ -143,21 +123,13 @@ class BandHTTP:
         return reply
 
     def overview(self) -> dict:
-        """One cached server snapshot, with a roster-only legacy fallback."""
-        if self._has_overview:
-            try:
-                value = self._req("/api/band/overview", timeout=8)
-            except urllib.error.HTTPError as error:
-                if error.code != 404:
-                    raise
-                self._has_overview = False
-            else:
-                if not isinstance(value, dict) or not isinstance(value.get("workers"), list) or not isinstance(value.get("chats"), list):
-                    raise ValueError("Invalid band overview")
-                for row in value["workers"]:
-                    row["age"] = row.get("last_seen_age_secs", 999)
-                return value
-        return {"workers": self.snapshot(), "chats": []}
+        """One cached server snapshot: workers and chat rooms."""
+        value = self._req("/api/band/overview", timeout=8)
+        if not isinstance(value, dict) or not isinstance(value.get("workers"), list) or not isinstance(value.get("chats"), list):
+            raise ValueError("Invalid band overview")
+        for row in value["workers"]:
+            row["age"] = row.get("last_seen_age_secs", 999)
+        return value
 
     def call(self, cap: str, worker_id=None, args=None, timeout: float = 15.0) -> dict:
         try:

@@ -843,12 +843,6 @@ def build_server(client: "BandClient | MultiBandClient",
         worker_name = (roster[target].get("name") if target in roster else target)
         # {{secret:name}} placeholders: substituted only in what's sent to the
         # worker; the journal keeps the placeholder and replies are masked.
-        # caps.describe(prefix=) is filtered here, so it works on workers that
-        # predate the worker-side prefix arg (build 167 rejects unknown args).
-        describe_prefix = None
-        if cap == "caps.describe" and isinstance(args, dict) and "prefix" in args:
-            args = dict(args)
-            describe_prefix = str(args.pop("prefix") or "")
         send_args, used = args, {}
         if args and _vault_mod.PLACEHOLDER.search(json.dumps(args)):
             if vault is None:
@@ -974,12 +968,11 @@ def build_server(client: "BandClient | MultiBandClient",
                 except Exception:
                     log.exception("hygiene delivery mark failed")
             return out
-        if cap == "caps.describe" and reply.get("ok") and isinstance(reply.get("result"), dict):
-            if not _env.legacy():
-                reply = {**reply, "result": _env.describe_compact(reply["result"], describe_prefix or "")}
-            elif describe_prefix:
-                reply = {**reply, "result": {k: v for k, v in reply["result"].items()
-                                             if k.startswith(describe_prefix)}}
+        # caps.describe(prefix=) is filtered on the worker (every supported
+        # worker takes it; rook.core.compat), so only the compact form is ours.
+        if (cap == "caps.describe" and reply.get("ok") and isinstance(reply.get("result"), dict)
+                and not _env.legacy()):
+            reply = {**reply, "result": _env.describe_compact(reply["result"])}
         if text:
             plain = _env.call_text(reply, cap, notices)
             if plain is not None:

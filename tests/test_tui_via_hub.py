@@ -163,22 +163,21 @@ async def test_hub_policy_denial_comes_back_with_a_hint(hub, tmp_path):
     assert reply["denied"]["principal"] == "human:dashboard" and "hint" in reply
 
 
-def test_old_hub_without_whoami_gets_a_clear_message(monkeypatch):
-    import urllib.error
+def test_hub_without_a_signer_gets_a_clear_message(monkeypatch):
     band = band_tui.BandHTTP("http://hub.invalid", "owner", PASSWORD)
 
-    def old_hub(path, *a, **k):
+    def hub(path, *a, **k):
         if path == "/api/band/whoami":
-            raise urllib.error.HTTPError(path, 404, "Not Found", {}, None)
+            return {"principal": "human:dashboard", "tickets": False}
         return {"ok": False, "error": "denied by worker: exec requires a hub ticket "
                                       "(mode enforce-exec; no ticket)"}
-    monkeypatch.setattr(band, "_req", old_hub)
-    assert band.whoami() == {"legacy": True}
-    assert "predates permissions" in band.notice()
+    monkeypatch.setattr(band, "_req", hub)
+    assert band.whoami()["tickets"] is False
+    assert "signs no call tickets" in band.notice()
     reply = band.call("shell.exec", "w1", {"cmd": "id"})
-    assert "update the hub" in reply["hint"]
+    assert "holds no signing key" in reply["hint"]
     # The header shows the warning instead of "connected".
-    assert "predates permissions" in band_tui.UI(band, "test").status
+    assert "signs no call tickets" in band_tui.UI(band, "test").status
 
 
 def test_hub_without_signing_key_is_explained(monkeypatch):

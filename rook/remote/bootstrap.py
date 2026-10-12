@@ -1991,9 +1991,8 @@ class CombinedServer:
 
     def _sign_deauth(self, worker_id: str, name: str, reason: str) -> dict | None:
         """A signed worker.deauth payload: a deauth v2 order (own signature
-        domain, bound to ``worker_id`` + ``issued_at``) nested in a legacy v1
-        body so workers from before v2 still park (permissions 6.3). None if
-        this host holds no signing key (then it's denylist-only)."""
+        domain, bound to ``worker_id`` + ``issued_at``; permissions 6.3).
+        None if this host holds no signing key (then it's denylist-only)."""
         from .update_keys import load_signing_key
         from ..hub.keys import deauth_payload
         sk = load_signing_key()

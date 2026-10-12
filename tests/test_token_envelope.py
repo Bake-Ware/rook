@@ -41,13 +41,14 @@ class FakeBand:
     async def call(self, cap, args=None, target=None, timeout=15.0, identity=None):
         self.sent.append((cap, dict(args or {})))
         if cap == "caps.describe":
-            if args:  # a build-167 worker: unknown kwargs are "bad args"
-                return {"id": HEX, "from": target, "ok": False, "error": f"bad args: {sorted(args)}"}
-            return {"id": HEX, "from": target, "ok": True, "result": {
+            described = {
                 "shell.exec": {"doc": "Run a command.", "params": [
                     {"name": "cmd", "required": False, "default": None, "type": "str | None"},
                     {"name": "timeout", "required": False, "default": 30.0, "type": "float"}]},
-                "info.host": {"doc": "Host facts.", "params": []}}}
+                "info.host": {"doc": "Host facts.", "params": []}}
+            prefix = (args or {}).get("prefix") or ""  # worker-side filter
+            return {"id": HEX, "from": target, "ok": True,
+                    "result": {k: v for k, v in described.items() if k.startswith(prefix)}}
         if cap == "shell.exec":
             return {"id": HEX, "from": target, "ok": True,
                     "result": {"ok": True, "code": 0, "stdout": self.stdout, "stderr": ""}}
@@ -185,14 +186,17 @@ async def test_legacy_envelope_restores_the_old_shape(tmp_path, monkeypatch):
 # -- caps.describe --------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_caps_describe_prefix_filters_on_the_hub_for_old_workers(tmp_path, monkeypatch):
+async def test_caps_describe_prefix_is_sent_to_the_worker(tmp_path, monkeypatch):
+    """Every supported worker filters caps.describe(prefix=) itself
+    (rook.core.compat.MIN_WORKER_BUILD), so the hub passes it through and
+    only compacts the reply."""
     async with hub(tmp_path, monkeypatch) as env:
         _, tool = await env.connect()
         text, _ = await tool("rook_call", cap="caps.describe", worker="worker-a", args={"prefix": "shell."})
         reply = json.loads(text)
         assert reply["ok"], reply
         assert reply["result"] == {"shell.exec": "(cmd: str = None, timeout: float = 30.0) — Run a command."}
-        assert all(args == {} for cap, args in env.band.sent if cap == "caps.describe")  # never sent
+        assert ("caps.describe", {"prefix": "shell."}) in env.band.sent
 
 
 def test_worker_side_describe_prefix():

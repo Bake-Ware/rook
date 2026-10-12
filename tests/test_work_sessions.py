@@ -198,7 +198,7 @@ class HistoryBand(FakeBand):
         super().__init__()
         self.workers['host1']['caps'] = ['claude-history.pull', 'claude-history.read',
                                         'codex-history.pull', 'codex-history.read',
-                                        'claude-history.read_page', 'codex-history.read_page',
+                                        'claude-history.read_snapshot', 'codex-history.read_snapshot',
                                         'claude-history.send', 'codex-history.send']
         self.version = 1
 
@@ -223,7 +223,7 @@ class HistoryBand(FakeBand):
                 if self.version > 1:
                     rows.append(dict(index=501, role='assistant', content_offset=0, content='Live update from host'))
                 result = dict(ok=True, messages=rows, truncated=False, replace_from=offset, version=str(self.version))
-        elif cap.endswith('.read_page'):
+        elif cap.endswith('.read_snapshot'):
             rows = [dict(role='assistant', content=f'Message {i}') for i in range(501)]
             offset = args.get('offset', 0)
             batch = [dict(m, index=offset+i, content_offset=0) for i, m in enumerate(rows[offset:offset+20])]
