@@ -54,7 +54,7 @@ through `rook dashboard` (`rook/__main__.py`) and `python -m rook.remote`.
 | `--psk` / `ROOK_BAND_PSK` | flag, env; **overridden by** setup `band_psk` and the enrollment DB primary band | empty (then `/setup`) | band | `CombinedServer`, `setup_store`, `EnrollmentStore.import_config` | **yes** | proc (setup: live) |
 | `--hub-public` / `ROOK_HUB_PUBLIC` | flag, env; **overridden by** setup `hub_public` | `hub.example.com:443` | hub (copied per band into the accounts DB) | `CombinedServer`, installers, `band_web.create_band` | no | proc (setup: live) |
 | `--band-name` / `ROOK_BAND_NAME` | flag, env; **overridden by** setup `band_name` | `rook-band` | band | `CombinedServer` | no | proc (setup: live) |
-| `--token` | flag only | empty | hub | `CombinedServer(auth_token=)` legacy exec-worker auth | **yes** | proc |
+| `--token` | flag only | empty | hub | ignored (the legacy exec worker and `/ws` were removed; still accepted so old units start) | no | proc |
 | `--web-user` / `ROOK_WEB_USER` | flag, env | empty (password only) | hub | `CombinedServer` login | no | proc |
 | `--web-pass` / `ROOK_WEB_PASS` | flag, env | empty (refuses off-loopback) | hub | `CombinedServer` login, first local admin | **yes** | proc |
 | `--insecure-no-auth` | flag only | off | hub | `_cli_main` guard | no | proc |
@@ -87,9 +87,9 @@ Entry point: `rook/band_mcp/server.py:main`.
 | `--bind` / `ROOK_MCP_BIND` | flag, env | `127.0.0.1:8765` | hub | uvicorn | no | proc |
 | `--allowed-hosts` / `ROOK_ALLOWED_HOSTS` | flag, env | empty (loopback only) | hub | transport security | no | proc |
 | `--public-url` / `ROOK_MCP_PUBLIC_URL` | flag, env | empty (OAuth shim off) | hub | resource metadata, `oauth_shim` | no | proc |
-| `--admin-password` / `ROOK_MCP_AUTH_PASSWORD` | flag, env | empty | hub | `TokenStore` (`/tokens` page on the MCP port) | **yes** | proc |
+| `--admin-password` / `ROOK_MCP_AUTH_PASSWORD` | flag, env | empty | hub | ignored: the MCP-port `/tokens` page was removed (mint on the dashboard); still accepted so old units start | no | proc |
 | `--persist-path` / `ROOK_MCP_PERSIST` | flag, env | `$ROOK_DATA_DIR/oauth.json`, else `/var/lib/rook-band-mcp/oauth.json` | hub | `TokenStore`; its directory also holds the other stores unless `--journal-path` moves them | holds secrets | proc |
-| `--static-token` / `ROOK_MCP_STATIC_TOKEN` | flag, env | empty | hub | `TokenStore`, `api_tokens_ui`, watchdog | **yes** | proc |
+| `--static-token` / `ROOK_MCP_STATIC_TOKEN` | flag, env | empty | hub | `TokenStore`, watchdog | **yes** | proc |
 | `--journal-path` / `ROOK_MCP_JOURNAL` | flag, env | `journal.db` next to `--persist-path` | hub | `Journal`; **its directory decides** where `sessions.db`, `chat.db`, `console.db`, `guidance.db`, `vault.db`, `knowledge.db` go | no | proc |
 | `-v` | flag | warning level | hub | logging | no | proc |
 | `ROOK_KNOWLEDGE` | env | `0` (off) | hub | `server._build` (knowledge wiki, tasks, hygiene) | no | proc |
@@ -338,9 +338,7 @@ Out of scope (dev tools or separate products): `tools/diagnostics/*`
 (`ROOK_PROBE_WORKER`, `--seconds`, `--output`, …), `server/rook_kvm/*` and
 `server/validate_dongle.py` (`ROOK_BRIDGE_HOST`, `ROOK_BRIDGE_PORT`,
 `ROOK_ADMIN_USER`, `ROOK_ADMIN_PASS`, `ROOK_FIRMWARE_BIN`; `ROOK_EOF`,
-`ROOK_END__`, `ROOK_FILE` there are protocol markers, not settings),
-`rook/remote/worker.py` (legacy exec worker: `--name --server --token
---no-service --no-banner`).
+`ROOK_END__`, `ROOK_FILE` there are protocol markers, not settings).
 
 ## 1.14 Deployment files
 
@@ -483,8 +481,7 @@ Numbered so the migration plan and follow-up tasks can refer to them.
 - **P17. Secrets on command lines.** The worker installers template
   `--psk {band_psk}` into the systemd `ExecStart` and the Windows scheduled task
   arguments; `pikvm/rook-worker.service` expands `--psk ${ROOK_BAND_PSK}`;
-  `scripts/local-hub.sh` prints a worker command with `--psk`; the legacy
-  `remote/worker.py` unit uses `--token`. The PSK is then visible in `ps` and in
+  `scripts/local-hub.sh` prints a worker command with `--psk`. The PSK is then visible in `ps` and in
   unit files. The README tells operators the opposite ("keep them out of process
   arguments"). Enrolled installs (`--enrolled`) avoid this.
 - **P18. Secrets and personal defaults in plaintext files.** `setup.json` (PSKs,

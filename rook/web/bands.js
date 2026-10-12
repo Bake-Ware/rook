@@ -1,12 +1,11 @@
 // Bands: a table of bands and a panel for the selected one (workers, members, key).
-import {h,ago,day,useCss,btn,table,two,dialog,accountAction,reveal,pairing} from '/account/bands/assets/manage.js';
+import {h,esc,ago,day,useCss,btn,table,two,dialog,accountAction,reveal,pairing} from '/account/bands/assets/manage.js';
 
 const ACTIVE=['prepared','active'];
 
 export async function mountBands(root, {csrf, onChange = () => {}}) {
 useCss();
 const $=id=>root.querySelector("#"+id);
-const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let state={bands:[],migrations:[]},current=null,loading=false,picked='',tab='workers';
 const running=new Set();
 async function api(data){

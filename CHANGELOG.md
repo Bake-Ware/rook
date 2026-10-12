@@ -77,6 +77,33 @@ Preparation for public use.
   remove` fail instead of returning `ok: false` with the console output.
 - Worker chat client: its watcher thread now stops on every exit path.
   `hermes` logs through `logging` instead of printing.
+### Dashboard
+- Removed the legacy exec worker (`rook/remote/worker.py`, served as
+  `/worker.py`) and the dashboard's `/ws` endpoint it connected to. Every
+  installer has deployed `band-worker.pyz` (which joins over `/band`) for a
+  long time; `--token` is still accepted and ignored so old units start.
+- Removed the MCP port's password-gated, server-rendered `/tokens` page and
+  its form routes; the dashboard's Tokens view (and Account -> Band access
+  for pairing and PSK rotation) replaced it. `/tokens` on the MCP port now
+  redirects to `https://<installer domain>/#tokens`. `ROOK_MCP_AUTH_PASSWORD`
+  / `--admin-password` are ignored (a notice is printed when set).
+- The dashboard login, first-run setup, Permissions and standalone account
+  pages are static files under `rook/web` (`login.html`, `setup.html`,
+  `permissions.html`, `account-page.html`) on the shared `theme.css`, filled
+  by `rook.remote.web_pages.render`; forms, CSRF fields and redirects are
+  unchanged.
+- The account JSON APIs (guidance, vault, tokens, knowledge, settings, jobs)
+  share one auth gate, `rook.remote.account_api.account_api` (session 401,
+  operator 403, JSON object 400, constant-time CSRF 403), and every session
+  CSRF compare in the dashboard uses `accounts.csrf_ok`. A POST body that is
+  not a JSON object now answers 400 everywhere (some routes said 403).
+- `TokenWeb` is a `KnowledgeWeb` proxy like Guidance, Vault, Settings and
+  Jobs. A non-operator calling an operator-only `/account/*/api` proxy now
+  gets a JSON 403 instead of an HTML one.
+- Dashboard scripts share `esc`, `el` and `ago` from `rook/web/manage.js`
+  instead of private copies. The classic-script `esc` in `index.html` now
+  escapes `'` too. Relative times read the same everywhere ("5 min ago";
+  Knowledge and Settings used to say "5m ago").
 
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps

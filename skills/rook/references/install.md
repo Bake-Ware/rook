@@ -30,7 +30,7 @@ docker compose up -d --build
 
 ## Hub: public (workers anywhere)
 
-Put it behind HTTPS (Caddy/nginx/Cloudflare Tunnel). Route the domain to the dashboard (7005) and these paths to MCP (8765): `/mcp`, `/band`, `/tokens`, `/authorize`, `/token`, `/.well-known/`, `/skill/`. Set:
+Put it behind HTTPS (Caddy/nginx/Cloudflare Tunnel). Route the domain to the dashboard (7005) and these paths to MCP (8765): `/mcp`, `/band`, `/tokens/account-api`, `/authorize`, `/token`, `/.well-known/`, `/skill/`. Set:
 
 - dashboard: `ROOK_DOMAIN=your.domain`, `ROOK_HUB_PUBLIC=your.domain:443`
 - MCP: `ROOK_MCP_PUBLIC_URL=https://your.domain`, `ROOK_ALLOWED_HOSTS=your.domain` (also enables the OAuth front door the claude.ai web connector needs)
@@ -75,7 +75,7 @@ After install, give it a role description so other agents know what it's for:
 
 ## Connecting an agent (MCP)
 
-Give each agent its **own token** (minted at `https://<host>/tokens`, protected by `ROOK_MCP_AUTH_PASSWORD`) so the journal attributes calls. The static token is a fallback.
+Give each agent its **own token** (minted on the dashboard's Tokens page, `https://<host>/#tokens`, signed in as the operator) so the journal attributes calls. The static token is a fallback.
 
 ```sh
 # Claude Code

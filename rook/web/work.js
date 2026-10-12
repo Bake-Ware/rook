@@ -1,4 +1,4 @@
-const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+import {esc} from '/account/bands/assets/manage.js';
 const VIEW_KEY='rook.work.view';
 // The dashboard's Sessions tab: the Sessions page (sessions.js), with the
 // classic Codex app-server view one link away until the Sessions page covers

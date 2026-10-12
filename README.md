@@ -183,7 +183,7 @@ UDP 7474 through the hub's firewall. To reach MCP by IP, add that `host:port` to
 
 **Workers anywhere.** Put the hub behind HTTPS: a reverse proxy (Caddy, nginx) or a tunnel
 (Cloudflare Tunnel) that forwards your domain to the dashboard (7005) and the paths `/mcp`,
-`/band`, `/tokens`, `/authorize`, `/token` and `/.well-known/` to the MCP server (8765).
+`/band`, `/tokens/account-api`, `/authorize`, `/token` and `/.well-known/` to the MCP server (8765).
 Then remote workers join with `--hub your.domain:443 --ws`. Set:
 
 - `ROOK_DOMAIN=your.domain` and `ROOK_HUB_PUBLIC=your.domain:443` for the dashboard, which
@@ -229,7 +229,6 @@ from the schema). [`.env.example`](.env.example) covers a first deployment. The 
 | `ROOK_WEB_PASS` | dashboard | Dashboard admin password (required off-loopback) |
 | `ROOK_DOMAIN`, `ROOK_HUB_PUBLIC` | dashboard | Public addresses written into installers |
 | `ROOK_MCP_STATIC_TOKEN` | MCP | Fixed bearer token for MCP clients |
-| `ROOK_MCP_AUTH_PASSWORD` | MCP | Password for `/tokens`, where you mint one token per agent |
 | `ROOK_MCP_PUBLIC_URL`, `ROOK_ALLOWED_HOSTS` | MCP | Public URL and accepted Host headers |
 | `ROOK_HUB` | worker, MCP | Relay `host:port` |
 | `ROOK_UPDATE_URL`, `ROOK_UPDATE_PUBKEY` | worker | OTA manifest URL; trusted signing key for workers not installed from a hub bundle |

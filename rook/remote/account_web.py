@@ -12,9 +12,10 @@ from urllib.parse import urlencode
 
 from aiohttp import web
 
-from .accounts import AccountStore, digest
+from .accounts import AccountStore, csrf_ok, digest
 from .google_auth import GoogleAuth, fetch_avatar, normalize_avatar
 from .psk import generate_psk
+from .web_pages import render
 from .enrollment import JoinDenied, JoinLimited
 
 log=logging.getLogger(__name__)
@@ -57,14 +58,9 @@ def esc(value):
 
 
 def document(title, body):
-    return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
-            '<meta name="viewport" content="width=device-width,initial-scale=1">'
-            '<title>' + esc(title) + ' · Rook</title>'
-            '<link rel="stylesheet" href="/account/bands/assets/settings.css">'
-            '<link rel="stylesheet" href="/account/bands/assets/theme.css">'
-            '</head><body class="standalone-account"><main class="settings-workspace">'
-            '<nav><a href="/account">♖ Rook account</a><a href="/account/bands">Bands</a>'
-            '<a href="/">Dashboard</a></nav><h1>' + esc(title) + '</h1>' + body + '</main></body></html>')
+    """A standalone account page (rook/web/account-page.html). ``body`` is
+    markup this module built, with every stored value already escaped."""
+    return render('account-page.html', title=title, body=body)
 
 
 class AccountWeb:
@@ -156,7 +152,7 @@ class AccountWeb:
     def csrf(self,request,data,user):
         if request.headers.get('Origin',self.origin)!=self.origin:
             raise PermissionError('Request origin did not match.')
-        if not hmac.compare_digest(str(data.get('csrf','')),user['csrf']):
+        if not csrf_ok(data,user['csrf']):
             raise PermissionError('Form expired; reload the page.')
 
     def form(self,user,op,body,band_id=''):
@@ -177,7 +173,7 @@ class AccountWeb:
         if request.headers.get('Origin',self.origin)!=self.origin:
             return False
         cookie=request.cookies.get('rook_login_form','')
-        return bool(cookie) and hmac.compare_digest(cookie,str(data.get('form_token','')))
+        return csrf_ok(data,cookie,'form_token')
 
     async def local_login(self,request):
         data=await request.post()

@@ -8,20 +8,17 @@ scope). Secret values are write-only here: this API never returns one.
 
 from __future__ import annotations
 
-import hmac
 import logging
 
-from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from ..remote.account_web import NO_STORE
+from ..remote.account_api import account_api, json_reply
 from .settings_service import SettingsError
 
 log = logging.getLogger("rook.hub.settings_web")
 
 
-def _json(data, status=200):
-    return JSONResponse(data, status, headers=NO_STORE)
+_json = json_reply
 
 
 def _persona(svc):
@@ -45,10 +42,9 @@ def _home(svc):
 def routes(get_service, accounts):
     """``get_service()`` returns the live SettingsService (or None)."""
 
-    async def api(request):
-        user = accounts.session(request.cookies.get("rook_account", ""))
-        if not user:
-            return _json({"error": "Sign in to change settings."}, 401)
+    # Any signed-in account; non-operators are limited to user scope below.
+    @account_api(accounts, admin=False, sign_in="Sign in to change settings.")
+    async def api(request, user, body):
         svc = get_service()
         if svc is None:
             return _json({"error": "Settings are unavailable: hub plugins are off "
@@ -58,7 +54,7 @@ def routes(get_service, accounts):
         label = str(user.get("name") or user.get("username") or uid)
         actor = "human:" + str(user.get("username") or uid)
         try:
-            if request.method == "GET":
+            if body is None:
                 q = request.query_params
                 view = q.get("view") or ("overview" if admin else "user")
                 target = q.get("target") or ""
@@ -92,10 +88,7 @@ def routes(get_service, accounts):
                     return _json({"error": f"unknown view {view!r}"}, 400)
                 return _json({"csrf": user["csrf"], "admin": admin, "user": uid, **data})
 
-            data = await request.json()
-            if not isinstance(data, dict) or not hmac.compare_digest(str(data.get("csrf", "")),
-                                                                     user["csrf"]):
-                return _json({"error": "Form expired; reload the page."}, 403)
+            data = body
             action = data.get("action")
             scope = data.get("scope") or None
             target = data.get("target") or ""

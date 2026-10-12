@@ -433,7 +433,7 @@ curl -fsSL https://<your-host>/install | bash -s -- cli
 curl -fsSL https://<your-host>/install | bash -s -- both
 ```
 
-The **worker** installs as a background service and joins the band. The **CLI** installs the single `rook` command (pulling in `python3` via the system package manager if it's missing) — for a fully unattended CLI install set `ROOK_WEB_PASS` (and optionally `ROOK_WEB_USER`) so it doesn't prompt. Windows (PowerShell) and a native Android worker APK are served from the same host (`/worker.py`, `/apk`).
+The **worker** installs as a background service and joins the band. The **CLI** installs the single `rook` command (pulling in `python3` via the system package manager if it's missing) — for a fully unattended CLI install set `ROOK_WEB_PASS` (and optionally `ROOK_WEB_USER`) so it doesn't prompt. Windows (PowerShell, `/worker?os=windows`) and a native Android worker APK (`/apk`) are served from the same host.
 
 For the `worker` or `both` targets, supply `?band=CODE` on the installer URL or
 enter the current code when prompted. Unattended worker installs require the

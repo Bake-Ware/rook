@@ -12,6 +12,7 @@ class KnowledgeWeb:
     ASSETS = ('knowledge.js', 'knowledge.css')
     UNAVAILABLE = 'Knowledge service is unavailable.'
     ADMIN_ONLY = True
+    FORBIDDEN = 'This requires the operator account.'
     TIMEOUT = 20
 
     def __init__(self, account):
@@ -31,7 +32,8 @@ class KnowledgeWeb:
     async def api(self, request):
         user = self.account.require(request)
         if self.ADMIN_ONLY and not user['admin']:
-            raise web.HTTPForbidden()
+            # JSON, like every other answer here: the pages parse the reply.
+            return web.json_response({'error': self.FORBIDDEN}, status=403, headers=NO_STORE)
         if request.method not in ('GET', 'POST'):
             raise web.HTTPMethodNotAllowed(request.method, ['GET', 'POST'])
         data = None
@@ -39,7 +41,7 @@ class KnowledgeWeb:
             try:
                 data = await request.json()
                 if not isinstance(data, dict):
-                    raise ValueError('Expected an object')
+                    raise ValueError('Expected an object.')
                 self.account.csrf(request, data, user)
             except PermissionError as error:
                 return web.json_response({'error': str(error)}, status=403, headers=NO_STORE)
