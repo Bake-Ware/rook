@@ -54,6 +54,37 @@ def secure_file(path, mode: int = 0o600) -> None:
         pass
 
 
+#: SQLite's sidecar files: the WAL, its shared-memory index, the rollback journal.
+SIDECARS = ("-wal", "-shm", "-journal")
+
+
+def _secure_sidecars(path, mode: int) -> None:
+    """chmod existing sidecars of ``path`` to ``mode``. SQLite normally
+    creates them with the database file's mode, but ones left by an older
+    release (or a build that does not copy the mode) keep the umask."""
+    for suffix in SIDECARS:
+        try:
+            os.chmod(str(path) + suffix, mode)
+        except OSError:
+            pass
+
+
+@contextmanager
+def _umask_for(mode: int | None) -> Iterator[None]:
+    """Tighten the umask to match ``mode`` while SQLite creates files. The
+    umask is per process: another thread creating a file in this window gets
+    a stricter mode than usual (never a looser one); the window is the
+    connect and its first pragma."""
+    if mode is None or os.name != "posix":
+        yield
+        return
+    old = os.umask(0o777 & ~mode)
+    try:
+        yield
+    finally:
+        os.umask(old)
+
+
 def _setup(conn: sqlite3.Connection, *, wal: bool, row_factory: bool,
            foreign_keys: bool, synchronous: str | None) -> None:
     if row_factory:
@@ -83,19 +114,29 @@ def open_db(path, *, wal: bool = True, row_factory: bool = True,
     used from asyncio's executor threads and serializes access itself.
     ``isolation_level`` is passed through when given (``None`` = autocommit);
     the default keeps sqlite3's own. ``mode`` creates/chmods the file first
-    (see :func:`secure_file`). ``migrations``/``ns`` apply plugin migrations
-    (:func:`rook.core.migrations.apply`) before returning."""
+    (see :func:`secure_file`), and its ``-wal``/``-shm``/``-journal``
+    sidecars get it too: they hold the same rows. ``migrations``/``ns`` apply
+    plugin migrations (:func:`rook.core.migrations.apply`) before returning."""
     if mkdir and _is_file(path):
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-    if mode is not None:
+    secure = mode is not None and _is_file(path)
+    if secure:
         secure_file(path, mode)
+        _secure_sidecars(path, mode)
     kw: dict = {"timeout": timeout, "check_same_thread": check_same_thread}
     if isolation_level != "":
         kw["isolation_level"] = isolation_level
-    conn = sqlite3.connect(str(path), **kw)
+    with _umask_for(mode if secure else None):
+        conn = sqlite3.connect(str(path), **kw)
+        try:
+            _setup(conn, wal=wal, row_factory=row_factory, foreign_keys=foreign_keys,
+                   synchronous=synchronous)
+        except BaseException:
+            conn.close()
+            raise
+    if secure:
+        _secure_sidecars(path, mode)
     try:
-        _setup(conn, wal=wal, row_factory=row_factory, foreign_keys=foreign_keys,
-               synchronous=synchronous)
         if migrations is not None:
             if not ns:
                 raise ValueError("migrations need a namespace (ns=)")

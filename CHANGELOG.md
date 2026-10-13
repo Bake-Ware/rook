@@ -202,6 +202,9 @@ Preparation for public use.
   Account/Tokens views and the standalone `/account/bands` page load
   versioned URLs), so a stale edge cache cannot pair a new module with an old
   `manage.js`.
+- A database opened with a mode (the vault, enrollment, and every other 0600
+  store) gets the same mode on its `-wal`/`-shm`/`-journal` files: existing
+  ones are chmodded on open and new ones are created under a matching umask.
 
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps
