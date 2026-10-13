@@ -616,6 +616,37 @@ async def test_large_reply_rides_drop_and_is_transparent(band_factory, monkeypat
 
 
 @pytest.mark.asyncio
+async def test_pass_through_drop_packets_arrive_in_sequence_order(
+        band_factory, monkeypatch, tmp_path):
+    """Pass-through Drop packets are whole band messages; queued together,
+    the writer let a window's short (1-fragment) final CHUNK overtake the
+    2-fragment CHUNKs before it, and Drop's sequence watermark then rejected
+    those as stale (one stalled window per re-request). They now go out one
+    at a time, in order: no CHUNK is ever rejected as stale."""
+    stale = []
+    orig = ota_drop._Receiver._decrypt
+
+    def _decrypt(self, peer, pkt):
+        p = unpack_packet(pkt)
+        wm = self._recv_watermark.get(peer)
+        if wm is not None and p.sequence <= wm:
+            stale.append(p.sequence)
+        return orig(self, peer, pkt)
+
+    monkeypatch.setattr(ota_drop._Receiver, "_decrypt", _decrypt)
+    band = await band_factory(routing=True)
+    w = await band.worker(monkeypatch, tmp_path)
+    c = await band.client()
+    await band.ready(c, w)
+    r = await c.call("big.blob", {"n": 300_000}, target=w.worker_id, timeout=30)
+    assert r["ok"] and len(r["result"]) == 300_000
+    # It rode pass-through Drop (the caller has a route), addressed.
+    assert any(e[1] == 0x06 and e[2] == c.transport.route_id and len(e[3]) == 1
+               for e in band.relay.log)
+    assert stale == []
+
+
+@pytest.mark.asyncio
 async def test_small_replies_stay_inline(band_factory, monkeypatch, tmp_path):
     band = await band_factory(routing=True)
     w = await band.worker(monkeypatch, tmp_path)

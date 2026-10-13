@@ -41,6 +41,7 @@ it with the receiver-driven windows and retransmits.
 from __future__ import annotations
 
 import asyncio
+import collections
 import hashlib
 import json
 import logging
@@ -100,7 +101,17 @@ class _RelayShim:
     the rook hub transport's async send. The dest is ignored (scoping is by
     drop_id). Pass-through packets go out via ``send_coro(packet)``, or
     ``send_coro(packet, route=route)`` (ADDRESSED frames) when the far end
-    has a route; with ``native`` set they go out as native DROP frames."""
+    has a route; with ``native`` set they go out as native DROP frames.
+
+    Pass-through packets are sent strictly one after another, in the order
+    Drop produced them. Each is a whole band message, and the frame writer
+    interleaves messages fragment by fragment (and puts single-fragment ones
+    first), so packets queued together would complete out of order — e.g. a
+    window's short 1-fragment final CHUNK before the 2-fragment CHUNKs ahead
+    of it. Drop's per-peer sequence watermark then rejects every CHUNK that
+    arrives after one with a higher sequence, and each window stalled until
+    a re-request. Native frames need no such care: the transport assigns
+    their (outer) sequence when it writes them."""
 
     def __init__(self, send_coro: Callable[..., Awaitable[None]], route: int = 0,
                  native: Optional[NativeSend] = None) -> None:
@@ -108,13 +119,24 @@ class _RelayShim:
         self.route = route
         self.native = native
         self._inflight: set[asyncio.Task] = set()
+        self._ordered: collections.deque[bytes] = collections.deque()
+        self._pump: Optional[asyncio.Task] = None
         self.sent = 0
 
     def send(self, dest: tuple, packet_bytes: bytes) -> None:
         self.sent += 1
+        if self.native is None:
+            self._ordered.append(packet_bytes)
+            if self._pump is None or self._pump.done():
+                self._pump = asyncio.ensure_future(self._drain())
+            return
         task = asyncio.ensure_future(self._safe_send(packet_bytes))
         self._inflight.add(task)
         task.add_done_callback(self._inflight.discard)
+
+    async def _drain(self) -> None:
+        while self._ordered:
+            await self._safe_send(self._ordered.popleft())
 
     async def _safe_send(self, packet_bytes: bytes) -> None:
         try:
