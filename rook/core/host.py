@@ -66,6 +66,10 @@ class PluginHost:
         # bring back one that was filtered out, disabled or unavailable.
         self.candidates: dict[str, Candidate] = {}
         self._binder: Callable[[Plugin], None] | None = None
+        # (on_bind, on_unbind) pairs from add_bind_hook: other holders of a
+        # plugin instance (the MCP bridge) that must follow a reload.
+        self._hooks: list[tuple[Callable[[Plugin], None],
+                                Callable[[Plugin], None] | None]] = []
         self._lock: asyncio.Lock | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
 
@@ -259,16 +263,38 @@ class PluginHost:
         for p in list(self.plugins):
             self._bind(p)
 
-    def _bind(self, plugin: Plugin) -> None:
-        if self._binder is None:
-            return
+    def add_bind_hook(self, on_bind: Callable[[Plugin], None],
+                      on_unbind: Callable[[Plugin], None] | None = None) -> None:
+        """Wiring that must follow every (re)activation, not just boot: the
+        MCP bridge hands the knowledge plugin its caller and handoff store,
+        and a reload builds a fresh instance without them. ``on_bind`` runs
+        now for every loaded plugin and after the node's binder for each one
+        activated later (before its ``start``); ``on_unbind`` runs when one
+        is disabled or reloaded, before its ``stop``. Errors are logged and
+        recorded like the binder's."""
+        self._hooks.append((on_bind, on_unbind))
+        for p in list(self.plugins):
+            self._call_hook(on_bind, p)
+
+    def _call_hook(self, hook: Callable[[Plugin], None], plugin: Plugin) -> None:
         try:
-            self._binder(plugin)
+            hook(plugin)
         except Exception as e:
             log.exception("plugin %s: binding to the node failed", plugin.NAMESPACE)
             st = self.status.get(plugin._module)
             if st is not None:
                 st["bind_error"] = f"{type(e).__name__}: {e}"
+
+    def _bind(self, plugin: Plugin) -> None:
+        if self._binder is not None:
+            self._call_hook(self._binder, plugin)
+        for on_bind, _ in self._hooks:
+            self._call_hook(on_bind, plugin)
+
+    def _unbind(self, plugin: Plugin) -> None:
+        for _, on_unbind in self._hooks:
+            if on_unbind is not None:
+                self._call_hook(on_unbind, plugin)
 
     # -- lifecycle -------------------------------------------------------
     async def _start_one(self, p: Plugin) -> None:
@@ -335,6 +361,7 @@ class PluginHost:
 
     async def _deactivate(self, plugin: Plugin) -> list[str]:
         removed = [c for c in plugin.caps() if self.registry.unregister(c)]
+        self._unbind(plugin)
         await self._stop_one(plugin)
         self.plugins[:] = [p for p in self.plugins if p is not plugin]
         return removed

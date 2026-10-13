@@ -166,6 +166,12 @@ Preparation for public use.
   `tests/fixtures/master_tier_floor.json` together).
 - `tests/test_tier_snapshot.py` pins every cap's effective tier and tags to
   at least master's table (frozen fixture), Android caps included.
+- Reloading or re-enabling the hub's knowledge plugin keeps the MCP bridge's
+  wiring (attributed caller, handoff store, band list): it is now a plugin
+  host bind hook (`PluginHost.add_bind_hook`) that runs on every activation,
+  and repoints `rook_knowledge`, the hygiene loop and the Knowledge page API
+  at the new instance. Before, a reload left bands collapsed to `default`
+  and inline handoffs failing.
 
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps

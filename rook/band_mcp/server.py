@@ -445,40 +445,63 @@ def build_server(client: "BandClient | MultiBandClient",
     # nothing here touches the band call path.
     mcp._rook_knowledge = None
     mcp._rook_hygiene = None
-    _kplugin = mcp._rook_hub.plugin("knowledge") if mcp._rook_hub is not None else None
-    if _kplugin is not None:
+
+    def _principal():
+        att = _attr.current.get()
+        return att.audit() if att is not None else None
+    def _save_handoff(author, h):
+        res = sessions.save(thread_id=h.get("thread_id"), author=author,
+                            goal=h.get("goal", ""), state=h.get("state", ""),
+                            decisions=h.get("decisions"), next_steps=h.get("next_steps"),
+                            artifacts=h.get("artifacts"))
+        if not res.get("ok"):
+            raise ValueError(res.get("error") or "handoff save failed")
+        return res["thread_id"]
+    def _list_handoffs():
+        return sessions.list_recent(limit=200).get("threads", [])
+    def _close_handoff(thread_id, author, reason):
+        res = sessions.close_thread(thread_id, author, reason)
+        return bool(res.get("ok")) and not res.get("already")
+    def _idle_seconds():
+        k = mcp._rook_knowledge
+        engine = getattr(k, "hygiene", None) if k is not None else None
+        if engine is None:
+            return 30 * 60
+        return engine.cfg("hygiene_idle_minutes") * 60 if engine.enabled else None
+
+    # Runs for the instance loaded at boot and again for every instance a
+    # hub.plugin.reload/enable (or an apply="reload" setting change) builds:
+    # a fresh instance has none of this wiring, and without it bands()
+    # collapses to "default" and handoffs fail. Everything that holds the
+    # service (mcp._rook_knowledge, the Hygiene loop, the Knowledge page API)
+    # reads or is repointed here, so none keeps a stopped instance.
+    def _bind_knowledge(plugin):
+        if plugin.NAMESPACE != "knowledge" or plugin.service is None:
+            return
+        plugin.principal = _principal
+        knowledge = plugin.service
+        knowledge.handoffs = _save_handoff
+        knowledge.handoff_list = _list_handoffs
+        knowledge.handoff_close = _close_handoff
+        knowledge.enrollment = enrollment
+        mcp._rook_knowledge = knowledge
+        if mcp._rook_hygiene is not None:
+            mcp._rook_hygiene.knowledge = knowledge
+
+    def _unbind_knowledge(plugin):
+        if plugin.NAMESPACE == "knowledge" and mcp._rook_knowledge is plugin.service:
+            mcp._rook_knowledge = None
+            if mcp._rook_hygiene is not None:
+                mcp._rook_hygiene.knowledge = None
+
+    if mcp._rook_hub is not None:
         try:
-            def _principal():
-                att = _attr.current.get()
-                return att.audit() if att is not None else None
-            def _save_handoff(author, h):
-                res = sessions.save(thread_id=h.get("thread_id"), author=author,
-                                    goal=h.get("goal", ""), state=h.get("state", ""),
-                                    decisions=h.get("decisions"), next_steps=h.get("next_steps"),
-                                    artifacts=h.get("artifacts"))
-                if not res.get("ok"):
-                    raise ValueError(res.get("error") or "handoff save failed")
-                return res["thread_id"]
-            def _list_handoffs():
-                return sessions.list_recent(limit=200).get("threads", [])
-            def _close_handoff(thread_id, author, reason):
-                res = sessions.close_thread(thread_id, author, reason)
-                return bool(res.get("ok")) and not res.get("already")
-            _kplugin.principal = _principal
-            knowledge = _kplugin.service
-            knowledge.handoffs = _save_handoff
-            knowledge.handoff_list = _list_handoffs
-            knowledge.handoff_close = _close_handoff
-            knowledge.enrollment = enrollment
-            mcp._rook_knowledge = knowledge
-            from .hygiene import Hygiene
-            def _idle_seconds():
-                engine = getattr(knowledge, "hygiene", None)
-                if engine is None:
-                    return 30 * 60
-                return engine.cfg("hygiene_idle_minutes") * 60 if engine.enabled else None
-            mcp._rook_hygiene = Hygiene(knowledge, client, chat,
-                                        lambda: guidance.get("hygiene"), journal, idle=_idle_seconds)
+            mcp._rook_hub.host.add_bind_hook(_bind_knowledge, _unbind_knowledge)
+            if mcp._rook_knowledge is not None:
+                from .hygiene import Hygiene
+                mcp._rook_hygiene = Hygiene(mcp._rook_knowledge, client, chat,
+                                            lambda: guidance.get("hygiene"), journal,
+                                            idle=_idle_seconds)
         except Exception:
             log.exception("wiring the knowledge plugin failed; knowledge tools disabled")
             mcp._rook_knowledge = None
@@ -1731,7 +1754,8 @@ async def _amain(args) -> None:
         # Operator Knowledge page API (proxied by the dashboard). Background
         # embedding indexing runs in the knowledge plugin's start().
         from ..hub.plugins.knowledge.web import routes as knowledge_routes
-        for route in reversed(knowledge_routes(mcp._rook_knowledge, AccountStore(enrollment))):
+        # A getter, not the service: a reload swaps the instance.
+        for route in reversed(knowledge_routes(lambda: mcp._rook_knowledge, AccountStore(enrollment))):
             app.router.routes.insert(0, route)
     # Jobs page API (proxied by the dashboard; the rook band panel comes in
     # with the internal mask token, see rook/remote/jobs_web.py).

@@ -5,10 +5,17 @@ from ....remote.account_api import account_api, json_error, json_reply
 
 
 def routes(service, accounts):
+    """``service`` is the KnowledgeService or a callable returning the current
+    one (the bridge passes a getter so a plugin reload is followed)."""
+    current = service if callable(service) and not hasattr(service, 'dispatch') else (lambda: service)
+
     @account_api(accounts, sign_in='Sign in to use Knowledge.',
                  operator_only='Knowledge administration requires the operator account.')
     async def api(request, user, data):
         actor = {'id': 'human:' + user['id'], 'kind': 'human', 'label': user['name']}
+        service = current()
+        if service is None:
+            return json_error('The knowledge plugin is not loaded', 503)
         if data is None:
             return json_reply({'csrf': user['csrf'], 'bands': service.bands(), 'actor': actor})
         try:
