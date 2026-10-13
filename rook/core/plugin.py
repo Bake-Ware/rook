@@ -467,6 +467,19 @@ class SettingsView:
             return "stored"
         return "default"
 
+    def raw(self, name: str) -> Any:
+        """The configured value before coercion and validation: the env
+        override, else the stored value; ``None`` for a default or a secret.
+        For a plugin that accepts a looser form than the setting's type (a
+        URL without its scheme) instead of falling back to the default."""
+        s = self._schema[name]
+        var = self.env_var(name)
+        if var:
+            return os.environ[var]
+        if not s.secret:
+            return self._stored.get(name)
+        return None
+
     def __getitem__(self, name: str) -> Any:
         s = self._schema.get(name)
         if s is None:

@@ -213,6 +213,9 @@ Preparation for public use.
 - Atomic state writes fall back to an fsync'd in-place write when the file
   cannot be replaced (`EBUSY`/`EXDEV`), so `setup.json` saves again when
   `ROOK_SETUP_PATH` is a single bind-mounted file. Modes are kept.
+- `PIKVM_URL` without a scheme (`kvm.lan`) means `https://kvm.lan`; one that
+  is not an http(s) URL or host keeps `pikvm.*` unloaded with a warning.
+  Before, it loaded and silently talked to `https://localhost`.
 
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps

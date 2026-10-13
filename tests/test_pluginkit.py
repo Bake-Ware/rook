@@ -273,6 +273,31 @@ def test_pikvm_uses_settings_and_loads_only_when_configured(clean_env, monkeypat
     assert pikvm.PiKvmPlugin().available()
 
 
+@pytest.mark.parametrize("raw,want", [
+    ("kvm.lan", "https://kvm.lan"), ("kvm.lan:8443/", "https://kvm.lan:8443"),
+    ("10.0.0.5", "https://10.0.0.5"), ("http://kvm.lan", "http://kvm.lan"),
+    ("ftp://kvm.lan", None), ("https://", None), ("kvm.lan:notaport", None), ("ws://kvm", None),
+])
+def test_pikvm_url_without_a_scheme_is_https_and_garbage_is_refused(clean_env, monkeypatch, caplog,
+                                                                      raw, want):
+    """A scheme-less PIKVM_URL used to load the plugin (source "env") while the
+    url check silently swapped in https://localhost."""
+    import logging
+    from rook.worker.plugins import pikvm
+    monkeypatch.setenv("PIKVM_URL", raw)
+    p = pikvm.PiKvmPlugin()
+    with caplog.at_level(logging.WARNING, logger="rook.worker.plugins.pikvm"):
+        assert p.available() is (want is not None)
+    if want is None:
+        assert any("not an http(s) URL" in r.getMessage() for r in caplog.records)
+        return
+    seen = []
+    monkeypatch.setattr(pikvm, "_request_sync",
+                        lambda cfg, *a: seen.append(cfg) or {"ok": True, "status": 200})
+    asyncio.run(p._power_status())
+    assert seen[0][0] == want
+
+
 def test_wake_command_from_settings(clean_env, tmp_path, monkeypatch):
     from rook.worker.plugins import wake
     monkeypatch.setattr(wake, "_STATE", tmp_path / "wake-last.txt")
