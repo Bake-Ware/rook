@@ -287,6 +287,9 @@ Preparation for public use.
   CSRF-checked pair action as Account & access (`manage.js` `mintPairing`,
   `pairingPanel`, `pairCommands`; the pairing dialog now uses them too and
   gains the Android line and copy buttons).
+- README Quickstart lists the Debian/Ubuntu (and Fedora/Arch) prerequisites and
+  the rustup one-liner; "Workers on your LAN" describes the Install-page flow
+  over plain HTTP.
 
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps

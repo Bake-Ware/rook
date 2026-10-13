@@ -421,7 +421,7 @@ Ship a build → commit → rebuild the signed bundle → the running push loop 
 
 ## Installers served by the hub
 
-Once a hub is reachable over HTTPS (see the [README](../README.md#going-beyond-localhost)), it serves one installer, selectable target — a **worker** (a controlled node), the **`rook band` CLI** (the controller), or **both**:
+A hub serves its installers at its public base: `https://<your-host>` behind TLS (see the [README](../README.md#going-beyond-localhost)), or `http://<hub-ip>:7005` for a LAN hub started with `BIND=0.0.0.0 scripts/local-hub.sh`. The worker bundle they download is built by the dashboard itself on first start unless an operator built one with `rook/remote/build_band_worker.py`. It serves one installer, selectable target — a **worker** (a controlled node), the **`rook band` CLI** (the controller), or **both**:
 
 ```sh
 # interactive — asks what to install
