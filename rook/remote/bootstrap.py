@@ -346,7 +346,7 @@ try {{
         Write-Host "[rook] (5/6) enrollment: registering this machine with the band..."
         & $vpy $pyz {enroll_args}
         $rc = $LASTEXITCODE
-        if ($rc -ne 0) {{ Fail "enrollment failed (exit code $rc) - see the message above." $rc }}
+{enroll_retry}        if ($rc -ne 0) {{ Fail "enrollment failed (exit code $rc) - see the message above." $rc }}
 
         # HID backend: Windows is native - hid.* uses SendInput via user32.dll (no install).
         # The task runs at logon in the interactive session, so input injection works.
@@ -632,7 +632,7 @@ fi
 echo "[rook] (5/6) enrollment: registering this machine with the band..."
 # stdin is the curl pipe, so enrollment (and any prompt) talks to the terminal.
 RC=0; "$VPY" "$PYZ" {enroll_args} </dev/tty || RC=$?
-[ "$RC" -eq 0 ] || {{ echo "[rook] ERROR: enrollment failed (exit code $RC) - see the message above."; exit "$RC"; }}
+{enroll_retry}[ "$RC" -eq 0 ] || {{ echo "[rook] ERROR: enrollment failed (exit code $RC) - see the message above."; exit "$RC"; }}
 
 # band: {band_name}
 WORKER_CMD="$VPY $PYZ --hub {hub_public} --ws --psk {band_psk} --name $WORKER_NAME --update-url {base}/band-worker.json"
@@ -709,6 +709,30 @@ echo "[rook] Done: $WORKER_NAME is installed and joining the band. It will appea
 '''
 
 
+# Enrollment retry for pairing-code installs, spliced into the scripts above
+# (as {enroll_retry}; inserted verbatim, so single braces). The first attempt
+# runs the code from the command the user copied; if that fails (most often
+# because the 5-minute code expired while Python/pip installed), ask for the
+# fresh code the dashboard is showing instead of making them start over.
+_PS_ENROLL_RETRY = r'''        while ($rc -ne 0) {
+            Write-Host "[rook] Enrollment failed. Pairing codes expire after 5 minutes; the dashboard shows a fresh one (Install page)."
+            $fresh = ""
+            try { $fresh = "$(Read-Host '[rook] Type the new 6-character code to retry, or press Enter to stop')".Trim().ToLower() } catch {}
+            if (-not $fresh) { break }
+            & $vpy $pyz --enroll __BASE__ --pair-code $fresh
+            $rc = $LASTEXITCODE
+        }
+'''
+
+_BASH_ENROLL_RETRY = r'''while [ "$RC" -ne 0 ]; do
+    echo "[rook] Enrollment failed. Pairing codes expire after 5 minutes; the dashboard shows a fresh one (Install page)."
+    printf '%s' "[rook] Type the new 6-character code to retry, or press Enter to stop: "
+    FRESH=""; read -r FRESH </dev/tty || FRESH=""
+    FRESH="$(printf '%s' "$FRESH" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+    [ -n "$FRESH" ] || break
+    RC=0; "$VPY" "$PYZ" --enroll __BASE__ --pair-code "$FRESH" </dev/tty || RC=$?
+done
+'''
 # `curl -fsSL https://<host>/install | bash` — one installer, selectable target.
 #   interactive : prompts worker / cli / both
 #   unattended  : `... | bash -s -- worker|cli|both`  (or ROOK_INSTALL=…)
@@ -1824,6 +1848,10 @@ class CombinedServer:
         # Downloading an installer never grants a reusable band PSK. The worker
         # generates its own key and redeems the short code (or browser approval).
         kw["enroll_args"] = f'--enroll {base}' + (f' --pair-code {code}' if code else '')
+        # A pairing code lasts PAIRING_TTL (5 min) and a first install can
+        # outlast it, so code-based installs offer to retry with a fresh code.
+        retry = (_PS_ENROLL_RETRY if want_ps else _BASH_ENROLL_RETRY) if code else ""
+        kw["enroll_retry"] = retry.replace("__BASE__", base)
         script = (PS_BOOTSTRAP if want_ps else BASH_BOOTSTRAP).format(**kw)
         script = script.replace(f'{base}/band-worker.pyz',
                                 f'{base}/band-worker-enrollment.pyz')

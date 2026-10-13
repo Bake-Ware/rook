@@ -129,6 +129,17 @@ async def test_windows_rerun_swaps_the_bundle_after_stopping_the_worker(scripts)
 
 
 @pytest.mark.asyncio
+async def test_expired_pairing_code_can_be_replaced_mid_install(scripts):
+    for name in ("win", "unix"):
+        assert "Type the new 6-character code to retry" in scripts[name]
+        assert f"--enroll http://{LAN}:7005 --pair-code" in scripts[name]
+    # Account-login installs have no code to replace.
+    for name in ("win_login", "unix_login"):
+        assert "--pair-code" not in scripts[name] and "6-character" not in scripts[name]
+        assert f"--enroll http://{LAN}:7005" in scripts[name]
+
+
+@pytest.mark.asyncio
 async def test_unix_script_progress_and_atomic_bundle_swap(scripts):
     text = scripts["unix"]
     assert "Installing the Rook worker. This takes 1-3 minutes" in text

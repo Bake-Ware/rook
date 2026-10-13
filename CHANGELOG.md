@@ -310,6 +310,9 @@ Preparation for public use.
 - Both installers announce how long they take and print numbered progress
   (Python, venv, dependencies, bundle, enrollment, service); the bash one ends
   with the same "Done" line or a "FAILED (exit code N)" line.
+- When enrollment fails on a pairing-code install (typically a code that
+  expired during a slow first install), both installers ask for the fresh
+  code the dashboard shows and retry instead of failing.
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps
   `sessions.list`, `sessions.follow`, `sessions.send` and `sessions.stop`
