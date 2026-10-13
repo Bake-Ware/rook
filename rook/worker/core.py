@@ -139,7 +139,7 @@ class Worker:
         set_route = getattr(transport, "set_route", None)
         if callable(set_route) and envelope.routing_enabled():
             set_route(self.worker_id)
-        # Announce trimming state (ROOK_ANNOUNCE_CAPS_HASH, core spec 14.4).
+        # Announce trimming state (ROOK_ANNOUNCE_CAPS_HASH, core spec 14.5).
         self._announces = 0
         self._full_caps_hash: str | None = None
         # Let plugins that need to send/receive raw band traffic (not just

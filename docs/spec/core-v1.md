@@ -1022,9 +1022,13 @@ result are the cap list). Workers send full announces by default. With
 `ROOK_ANNOUNCE_CAPS_HASH=1` they omit `caps` except on the first announce,
 after a reconnect, when the caps change, and on every 10th announce.
 
-Rollout: (1) upgrade every client of the band (hub dashboard, MCP bridge,
-migration tools, other bands' hubs; Android's roster view only counts
-caps); (2) then enable `ROOK_ANNOUNCE_CAPS_HASH=1` on workers, e.g. with a
-pushed config. A client that predates this keeps a node's cap list empty
-between full announces, so enabling it early hides caps for up to 5
-minutes at a time.
+**Keep `ROOK_ANNOUNCE_CAPS_HASH` off (the default) until every client of
+the band understands `caps_hash`.** Clients that predate it — hubs up to
+and including build 426, and the Android APK through 0.4.1 — read an
+announce without `caps` as an empty cap list, so with it on they show the
+worker with no caps (and refuse or misroute calls to it) for up to 5
+minutes at a time, between full announces. Rollout: (1) upgrade every
+client of the band (every hub — dashboard, MCP bridge, migration tools,
+other bands' hubs — and the APK); (2) only then enable
+`ROOK_ANNOUNCE_CAPS_HASH=1` on workers, e.g. with a pushed config. There is
+no negotiation: a worker can't tell which clients are listening.

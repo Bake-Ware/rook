@@ -173,8 +173,10 @@ def caps_hash(caps) -> str:
 
 def caps_hash_announces() -> bool:
     """``ROOK_ANNOUNCE_CAPS_HASH=1``: announces carry only ``caps_hash`` most
-    of the time (full ``caps`` on change and every Nth). Off by default until
-    every client of the band tolerates it (core spec 14.4)."""
+    of the time (full ``caps`` on change and every Nth). Off by default, and
+    must stay off until every hub and the APK on the band understand
+    caps_hash: build-426 hubs and APK 0.4.1 read missing caps as none (core
+    spec 14.5)."""
     return os.environ.get("ROOK_ANNOUNCE_CAPS_HASH", "").strip() == "1"
 
 

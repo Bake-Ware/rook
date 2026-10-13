@@ -175,7 +175,8 @@ Entry point: `rook/worker/cli.py:main`.
 | `--bind-port` | flag | `0` (ephemeral) | worker | transport | no | proc |
 | `--keepalive` | flag | `20` s | worker | transport | no | proc |
 | `ROOK_BAND_UDP_PACE_RATE`, `ROOK_BAND_UDP_PACE_BURST` | env | `2000` frames/s, `64` (rate `0` = unpaced) | worker, hub band clients | transport (UDP bulk pacing) | no | proc |
-| `ROOK_BAND_DISPATCH_CONCURRENCY`, `ROOK_BAND_DISPATCH_BACKLOG` | env | `64`, `1024` | worker, hub band clients | transport (inbound dispatch bound) | no | proc |
+| `ROOK_BAND_DISPATCH_CONCURRENCY`, `ROOK_BAND_DISPATCH_BACKLOG` | env | `64`, `1024` | worker, hub band clients | transport (inbound request bound; replies/announces/Drop are never shed) | no | proc |
+| `ROOK_ANNOUNCE_CAPS_HASH` | env | `0` — keep off until every hub (> build 426) and APK (> 0.4.1) reads `caps_hash` | worker | `Worker.announce` | no | proc |
 | `--ws` | flag | off (UDP) | worker | transport | no | proc |
 | `--enable` | flag | all built-in plugins | worker | `PluginHost.load` | no | proc |
 | `--update-url` / `ROOK_UPDATE_URL` | flag, env | empty (no OTA) | worker | `plugins/selfupdate` | no | proc |
