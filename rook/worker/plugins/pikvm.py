@@ -5,7 +5,9 @@ but works just as well over LAN if you point it at another host. Creds and
 endpoint come from the ``pikvm.*`` settings (the settings UI pushes them as
 these env vars, which also work set by hand):
 
-    PIKVM_URL       default ``https://localhost``; pikvm.* loads only where set
+    PIKVM_URL       default ``https://localhost``; pikvm.* loads only where set.
+                    ``kvm.lan`` (no scheme) means ``https://kvm.lan``; a value
+                    that is not an http(s) URL keeps the plugin unloaded.
     PIKVM_USER      default ``admin``
     PIKVM_PASS      default ``admin``
     PIKVM_INSECURE  default ``1`` (PiKVM ships with a self-signed cert)
@@ -15,11 +17,33 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 import ssl
 import urllib.parse
 import urllib.request
 
 from ..plugin import Plugin, capability, setting
+
+log = logging.getLogger("rook.worker.plugins.pikvm")
+DEFAULT_URL = "https://localhost"
+
+
+def normalize_url(raw) -> str | None:
+    """``https://`` for a bare ``host[:port][/path]`` (PiKVM serves HTTPS),
+    the URL itself when it is http(s), else ``None``."""
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    if "://" not in text:
+        text = "https://" + text
+    u = urllib.parse.urlparse(text)
+    try:
+        u.port  # raises on a non-numeric port
+    except ValueError:
+        return None
+    if u.scheme.lower() not in ("http", "https") or not u.hostname:
+        return None
+    return text.rstrip("/")
 
 
 def _ssl_ctx(insecure: bool) -> ssl.SSLContext | None:
@@ -115,11 +139,24 @@ class PiKvmPlugin(Plugin):
     def available(self) -> bool:
         # Only load where a PiKVM is explicitly configured — otherwise every
         # worker would falsely advertise pikvm.* against https://localhost.
-        return self.settings.source("url") != "default"
+        if self.settings.source("url") == "default":
+            return False
+        # The url setting's own check would drop a scheme-less PIKVM_URL and
+        # quietly use https://localhost; take it as https, or stay unloaded.
+        if self._url() is None:
+            log.warning("pikvm: PIKVM_URL / pikvm.url %r is not an http(s) URL or host; "
+                        "pikvm.* not loaded", self.settings.raw("url"))
+            return False
+        return True
+
+    def _url(self) -> str | None:
+        if self.settings.source("url") == "default":
+            return DEFAULT_URL
+        return normalize_url(self.settings.raw("url"))
 
     def _cfg(self) -> tuple[str, str, str, bool]:
         s = self.settings
-        return (str(s.get("url", "https://localhost")).rstrip("/"),
+        return (self._url() or DEFAULT_URL,
                 s.get("user", "admin"), s.get("password", "admin"),
                 bool(s.get("insecure", True)))
 

@@ -42,3 +42,48 @@ def test_helpers_behave(tmp_path):
                                     check=True, timeout=30).stdout)
     assert out == ["&lt;a href=&#39;x&#39; t=&quot;y&quot;&gt;&amp;", "", "never", "",
                    "2 min ago", ["td", "v", "c"], ""]
+
+
+# Dashboard modules are versioned (?v=<content hash>) only where the server
+# rewrites a literal URL in index.html (bootstrap._versioned_assets). A module
+# that imports manage.js by bare URL can be paired with a stale cached copy
+# after a deploy, so each one passes its own ?v= on, the way work.js versions
+# sessions.js.
+_STATIC_IMPORT = re.compile(r"""^\s*import\s[^;]*?\bfrom\s*['"](/account/[^'"]+)['"]""", re.M)
+_DYNAMIC_IMPORT = re.compile(r"""\bimport\(\s*(['"])(/account/[^'"]+)\1\s*(\+\s*([^)]*))?\)""")
+
+
+def _js_modules():
+    return sorted(p for p in WEB.glob("*.js") if p.name != "manage.js")
+
+
+@pytest.mark.parametrize("path", _js_modules(), ids=lambda p: p.name)
+def test_every_dashboard_import_is_versioned(path):
+    src = path.read_text(encoding="utf-8")
+    assert not _STATIC_IMPORT.findall(src), \
+        f"{path.name}: static import of an /account/ asset cannot carry ?v=; use await import(url + search)"
+    for m in _DYNAMIC_IMPORT.finditer(src):
+        url, suffix = m.group(2), (m.group(4) or "")
+        if "/vendor/" in url:
+            continue  # third-party files, versioned by their own path
+        assert "import.meta.url" in suffix or re.fullmatch(r"\s*search\s*", suffix), \
+            f"{path.name}: import('{url}') is not versioned"
+
+
+def test_manage_js_is_reached_only_through_versioned_urls():
+    hits = [p.name for p in _js_modules() if "/account/bands/assets/manage.js" in p.read_text(encoding="utf-8")]
+    assert len(hits) >= 10   # every dashboard module still uses the shared helpers
+
+
+def test_index_and_band_page_version_their_module_urls(tmp_path):
+    from rook.remote.bootstrap import WEB_DIR, _versioned_assets
+    html = _versioned_assets((WEB / "index.html").read_text(encoding="utf-8"), WEB_DIR)
+    bare = re.findall(r"import\('(/account/[a-z]+/assets/[\w.-]+\.js)'\)", html)
+    assert bare == [], f"index.html imports left unversioned: {bare}"
+    assert "import('/account/bands/assets/'+view" not in html  # built URLs escape the rewrite
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+@pytest.mark.parametrize("path", sorted(WEB.glob("*.js")), ids=lambda p: p.name)
+def test_dashboard_modules_parse(path):
+    subprocess.run(["node", "--check", str(path)], check=True, capture_output=True, timeout=30)

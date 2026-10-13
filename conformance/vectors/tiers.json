@@ -30,6 +30,18 @@
   "battery.status": {
    "tier": "read"
   },
+  "calendar.list": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "calllog.list": {
+   "tier": "exec",
+   "tags": [
+    "sensitive"
+   ]
+  },
   "camera.list": {
    "tier": "read"
   },
@@ -214,6 +226,12 @@
   "console.read": {
    "tier": "read"
   },
+  "contacts.search": {
+   "tier": "exec",
+   "tags": [
+    "sensitive"
+   ]
+  },
   "customcap.add": {
    "tier": "admin"
   },
@@ -273,6 +291,70 @@
   },
   "deluge.status": {
    "tier": "read"
+  },
+  "device.clipboard_get": {
+   "tier": "exec",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "device.clipboard_set": {
+   "tier": "exec"
+  },
+  "device.find": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "device.find_stop": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "device.info": {
+   "tier": "exec"
+  },
+  "device.launch": {
+   "tier": "exec"
+  },
+  "device.open_url": {
+   "tier": "exec"
+  },
+  "device.torch": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "device.unlock": {
+   "tier": "exec",
+   "tags": [
+    "sensitive",
+    "physical"
+   ]
+  },
+  "device.update": {
+   "tier": "admin",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "device.update_status": {
+   "tier": "exec"
+  },
+  "device.vibrate": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "device.wake": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
   },
   "discord.send": {
    "tier": "write"
@@ -435,13 +517,19 @@
    "tier": "read"
   },
   "hub.plugin.disable": {
-   "tier": "admin"
+   "tier": "admin",
+   "tags": [
+    "destructive"
+   ]
   },
   "hub.plugin.enable": {
    "tier": "admin"
   },
   "hub.plugin.reload": {
-   "tier": "admin"
+   "tier": "admin",
+   "tags": [
+    "destructive"
+   ]
   },
   "hub.plugins": {
    "tier": "read"
@@ -475,6 +563,12 @@
   },
   "knowledge.write": {
    "tier": "write"
+  },
+  "location.get": {
+   "tier": "exec",
+   "tags": [
+    "sensitive"
+   ]
   },
   "log.audit": {
    "tier": "read",
@@ -523,6 +617,18 @@
   },
   "notify.channels": {
    "tier": "read"
+  },
+  "notify.dismiss": {
+   "tier": "exec"
+  },
+  "notify.list": {
+   "tier": "exec",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "notify.post": {
+   "tier": "exec"
   },
   "notify.send": {
    "tier": "write"
@@ -798,6 +904,15 @@
   "shell.which": {
    "tier": "read"
   },
+  "sms.list": {
+   "tier": "exec",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "sms.send": {
+   "tier": "exec"
+  },
   "task.read": {
    "tier": "read"
   },
@@ -812,6 +927,30 @@
   },
   "token.admin": {
    "tier": "admin"
+  },
+  "ui.text": {
+   "tier": "exec",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "voice.replies": {
+   "tier": "read"
+  },
+  "voice.speak": {
+   "tier": "write",
+   "tags": [
+    "physical"
+   ]
+  },
+  "voice.speak_status": {
+   "tier": "read"
+  },
+  "voice.speak_stop": {
+   "tier": "write"
+  },
+  "voice.speak_voices": {
+   "tier": "read"
   },
   "work.adopt_page": {
    "tier": "write"
@@ -919,7 +1058,10 @@
    "tier": "admin"
   },
   "worker.plugin.disable": {
-   "tier": "admin"
+   "tier": "admin",
+   "tags": [
+    "destructive"
+   ]
   },
   "worker.plugin.enable": {
    "tier": "admin"
@@ -928,7 +1070,10 @@
    "tier": "read"
   },
   "worker.plugin.reload": {
-   "tier": "admin"
+   "tier": "admin",
+   "tags": [
+    "destructive"
+   ]
   },
   "worker.reconfigure": {
    "tier": "admin",

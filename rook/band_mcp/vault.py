@@ -50,8 +50,9 @@ class Vault:
         self._lock = threading.Lock()
         self._gen = 0  # bumped on every set/delete; drives the reverse mask
         self._box = nacl.secret.SecretBox(self._load_key())
-        # Created 0600 before SQLite opens it: the rows are encrypted, but the
-        # names, descriptions and access log are not for other local users.
+        # Created 0600 before SQLite opens it, and its -wal/-shm too (open_db):
+        # the rows are encrypted, but the names, descriptions and access log
+        # are not for other local users.
         self._db = open_db(path, row_factory=False, mode=0o600, mkdir=False)
         self._db.executescript("""
             CREATE TABLE IF NOT EXISTS secrets(

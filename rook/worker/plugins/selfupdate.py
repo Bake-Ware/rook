@@ -30,7 +30,7 @@ import sys
 import time
 from pathlib import Path
 
-from ...core.paths import worker_install_dir, worker_state_dir
+from ...core.paths import legacy_state_path, worker_install_dir, worker_state_dir
 from ...core.db import atomic_write_json, atomic_write_text
 from ...core.pluginkit import RunTimeout, is_termux, is_windows, run
 from ..plugin import ANDROID_APP_REPLACED, Plugin, capability, place
@@ -78,18 +78,30 @@ def _my_worker_id() -> str | None:
         return None
 
 
+def _ban_files() -> list[Path]:
+    """This state directory's flag, plus the one in ~/.rook-band-worker when
+    ROOK_WORKER_HOME points elsewhere: a node deauthed before the variable
+    moved its state (or with the copy disabled) must stay off the band."""
+    legacy = legacy_state_path("banned")
+    return [_BANNED] + ([legacy] if legacy is not None else [])
+
+
 def is_banned() -> bool:
     """True if this node has been deauthed (worker.deauth). Checked at boot by
     the CLI so a banned worker parks itself off-band instead of rejoining."""
-    return _BANNED.exists()
+    return any(p.exists() for p in _ban_files())
 
 
 def ban_info() -> dict:
     """Details of the standing ban, or ``{}`` if not banned."""
-    try:
-        return json.loads(_BANNED.read_text(encoding="utf-8"))
-    except Exception:
-        return {"at": 0} if _BANNED.exists() else {}
+    for path in _ban_files():
+        if not path.exists():
+            continue
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return {"at": 0}
+    return {}
 
 
 class SelfUpdatePlugin(Plugin):
@@ -110,8 +122,9 @@ class SelfUpdatePlugin(Plugin):
 
     def bind_worker(self, worker) -> None:
         """Grab a handle to the Worker so we can receive in-band bundle pushes
-        (raw Drop packets) and send REQUEST/DONE back onto the band. Called once
-        at worker start."""
+        (raw Drop packets) and send REQUEST/DONE back onto the band. Called at
+        worker start and again for each instance a reload builds; stop()
+        drops this instance's handler."""
         self._worker = worker
         worker.register_binary_handler(self._ota_binary)
 
@@ -220,6 +233,12 @@ class SelfUpdatePlugin(Plugin):
         for t in (self._converge_task, self._health_task):
             if t is not None:
                 t.cancel()
+        # A reload binds a new instance, which registers its own handler; the
+        # old one would otherwise keep a handler per reload (a second
+        # receiver for the same OTA push).
+        unregister = getattr(self._worker, "unregister_binary_handler", None)
+        if callable(unregister):
+            unregister(self._ota_binary)
 
     @capability("check", risk="admin", timeout=None)
     async def _check(self, force: bool = False) -> dict:

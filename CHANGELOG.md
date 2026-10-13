@@ -154,6 +154,69 @@ Preparation for public use.
   `rook-mcp --admin-password` / `ROOK_MCP_AUTH_PASSWORD` (and its
   `core.mcp.admin_password` settings entry).
 
+### Review fixes
+- Android native caps are back at the tier master gave them (undeclared, so
+  `exec`): `sms.list`, `contacts.search`, `calllog.list`, `location.get`,
+  `notify.list`/`post`/`dismiss`, `ui.text` and `device.info`,
+  `update_status`, `find`, `find_stop`, `wake`, `vibrate`, `torch`,
+  `clipboard_get`/`clipboard_set`. Their new `sensitive`/`physical` tags
+  stay. The hub, which does not ship the app's plugins, now carries them in
+  `authz.CORE` so an Android peer cannot announce them lower. Any of them can
+  be lowered later as a deliberate change (plugin, `authz.CORE` and
+  `tests/fixtures/master_tier_floor.json` together).
+- `tests/test_tier_snapshot.py` pins every cap's effective tier and tags to
+  at least master's table (frozen fixture), Android caps included.
+- Reloading or re-enabling the hub's knowledge plugin keeps the MCP bridge's
+  wiring (attributed caller, handoff store, band list): it is now a plugin
+  host bind hook (`PluginHost.add_bind_hook`) that runs on every activation,
+  and repoints `rook_knowledge`, the hygiene loop and the Knowledge page API
+  at the new instance. Before, a reload left bands collapsed to `default`
+  and inline handoffs failing.
+- Workers keep running on Python 3.10, as master's did: the per-cap timeout
+  (and Codex direct input) use `rook.core.aiocompat.timeout`, a backport of
+  `asyncio.timeout`, instead of the 3.11-only API, and a test keeps 3.11-only
+  APIs out of the worker bundle. Workers are not refused on 3.10, since
+  master's worker never needed 3.11.
+- `deluge.pause`/`resume`/`remove`/`files` take a torrent name again (deluge
+  matches names as well as hashes), passed to `deluge-console` as one quoted
+  argument; only `;`, quotes, backslashes, control characters and a leading
+  `-` are refused. `deluge.add` refuses `;` (it split the console command
+  even inside the old double quotes) and single-quotes its argument.
+- `screenshot.capture_region` accepts negative `x`/`y` again (monitors left
+  of or above the primary one); the ImageMagick backend gets a signed crop
+  offset.
+- Plugin reload: `worker.plugin.reload`/`disable` and `hub.plugin.reload`/
+  `disable` are tagged `destructive`. A reload keeps the plugin's caps
+  registered until the new instance takes them over, so an announce sent
+  mid-reload no longer drops them. A reload that fails leaves dependents with
+  `dependency()` = `None` (status `dependency_unloaded`) instead of the
+  stopped instance. `selfupdate` no longer adds another OTA binary handler
+  on every reload.
+- With `ROOK_WORKER_HOME` set, a worker copies state missing there from
+  `~/.rook-band-worker` once at start (worker_id, enrollment, deauth flag,
+  hold, update state, pushed config, plugin/custom-cap state, anchors, audit,
+  chat, work DB, plugin data), keeping modes; older releases kept it there.
+  The deauth flag in `~/.rook-band-worker` is honoured even when nothing is
+  copied. `ROOK_WORKER_HOME_FRESH=1` starts a separate worker instead.
+- Dashboard modules import `manage.js` with their own `?v=` version (and the
+  Account/Tokens views and the standalone `/account/bands` page load
+  versioned URLs), so a stale edge cache cannot pair a new module with an old
+  `manage.js`.
+- A database opened with a mode (the vault, enrollment, and every other 0600
+  store) gets the same mode on its `-wal`/`-shm`/`-journal` files: existing
+  ones are chmodded on open and new ones are created under a matching umask.
+- `rook/core/compat.py` documents that the Sessions dashboard needs worker
+  build 364+ (`sessions.*`): deployed pyz workers are at 401, and the 0.4.1
+  APK's embedded worker (142) gets the read-only `work.sessions` fallback,
+  which stays until the peer floor passes 364. No deployed worker sits
+  between 143 and 363.
+- Atomic state writes fall back to an fsync'd in-place write when the file
+  cannot be replaced (`EBUSY`/`EXDEV`), so `setup.json` saves again when
+  `ROOK_SETUP_PATH` is a single bind-mounted file. Modes are kept.
+- `PIKVM_URL` without a scheme (`kvm.lan`) means `https://kvm.lan`; one that
+  is not an http(s) URL or host keeps `pikvm.*` unloaded with a warning.
+  Before, it loaded and silently talked to `https://localhost`.
+
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps
   `sessions.list`, `sessions.follow`, `sessions.send` and `sessions.stop`

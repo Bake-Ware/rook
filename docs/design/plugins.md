@@ -374,13 +374,24 @@ The same steps run for one module on a live node:
 |---|---|---|
 | `await host.enable(module)` | steps 2-10 for one discovered module (even one filtered out at boot) | `worker.plugin.enable` (persisted), `hub.plugin.enable` |
 | `await host.disable(module)` | unregister its caps, `stop()`, status `disabled`; refused while a loaded plugin `DEPENDS` on it | `worker.plugin.disable` (persisted), `hub.plugin.disable` |
-| `await host.reload(module)` | `disable` then `enable`: a new instance with freshly read settings | `worker.plugin.reload`, `hub.plugin.reload` |
+| `await host.reload(module)` | stop, then the boot path again: a new instance with freshly read settings. The old caps stay registered until the new instance replaces them (an announce mid-reload still lists them). If it does not come back, its caps go and dependents' `dependency()` returns `None` (status `dependency_unloaded`) until it is enabled again | `worker.plugin.reload`, `hub.plugin.reload` |
 | `host.settings_changed(namespaces)` | re-read stored settings; schedule `reload` for plugins in `namespaces` that declare an `apply="reload"` setting (safe from any thread) | the hub's settings service on every hub-plugin change; `worker.config_apply(restart=false)` on workers |
 
 Each returns `{"ok", "module", ...}` or `{"ok": false, "error"}`. The hub
 refuses to disable `settings`, the worker `selfupdate`. The settings
 service pushes a worker change without a restart when every changed key is
 `apply="live"`/`"reload"` and the worker has `worker.plugin.reload`.
+`*.plugin.disable` and `*.plugin.reload` are tagged `destructive`: they stop
+a running plugin.
+
+Wiring the node's side hook does not cover (another component holding a
+plugin instance, like the MCP bridge's knowledge wiring) goes in
+`host.add_bind_hook(on_bind, on_unbind)`: `on_bind` runs for every loaded
+plugin and every later activation, after the binder and before `start()`;
+`on_unbind` runs before a plugin is stopped by `disable` or `reload`. A
+plugin that registers something on the node in its binder (the worker's
+`register_binary_handler`) undoes it in `stop()`, since a reload binds the
+new instance first.
 
 ## 10. The hub node: worker `rook`
 

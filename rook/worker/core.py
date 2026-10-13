@@ -271,7 +271,16 @@ class Worker:
     def register_binary_handler(self, handler) -> None:
         """Register a callable(payload: bytes, peer_id: tuple) -> bool that gets
         first crack at every inbound payload; returning True consumes it."""
-        self._binary_handlers.append(handler)
+        if handler not in self._binary_handlers:
+            self._binary_handlers.append(handler)
+
+    def unregister_binary_handler(self, handler) -> None:
+        """Drop a handler added by :meth:`register_binary_handler` (a plugin
+        that is stopped or reloaded must not keep receiving packets)."""
+        try:
+            self._binary_handlers.remove(handler)
+        except ValueError:
+            pass
 
     async def send_raw(self, packet_bytes: bytes, channel_id: int = 0) -> None:
         """Send an already-framed binary packet onto the band (used by binary

@@ -687,3 +687,48 @@ def test_after_knowledge_write_runs_only_for_pages_and_links(w):
     asyncio.run(svc.dispatch('link', 'default', 'task', w.task['id'], request_id=rid(), actor=AGENT,
                              data={'kind': 'url', 'ref': 'https://example.com', 'relation': 'touched'}))
     assert calls == [1, 1]
+
+
+@pytest.mark.asyncio
+async def test_reloading_knowledge_keeps_the_bridge_wiring(tmp_path, monkeypatch):
+    """hub.plugin.reload builds a fresh knowledge instance. The bridge's
+    wiring (caller, handoff store, enrollment) used to be set once at boot,
+    so after a reload bands() fell back to 'default', inline handoffs failed
+    and mcp._rook_knowledge / the Hygiene loop kept the stopped service."""
+    async with mcp_session(tmp_path, monkeypatch) as env:
+        hub = env.mcp._rook_hub
+        old = env.mcp._rook_knowledge
+        bands = [{'id': 'b1', 'name': 'Home', 'label': None, 'is_primary': 1}]
+        old.enrollment = SimpleNamespace(bands=lambda active_only=True: bands)
+        old._band_cache = (0, None)
+        assert [b['id'] for b in old.bands()] == ['b1']
+
+        res = await hub.host.reload('knowledge')
+        assert res['ok'], res
+        new = env.mcp._rook_knowledge
+        assert new is not None and new is not old
+        assert new is hub.plugin('knowledge').service
+        assert env.mcp._rook_hygiene.knowledge is new
+        # The bridge's enrollment (None here: the default band) is wired again,
+        # with the handoff store and the attributed caller.
+        assert new.enrollment is None and new.handoffs and new.handoff_list and new.handoff_close
+        assert hub.plugin('knowledge').principal is not None
+
+        c = (await env.tool('rook_concept', action='create', request_id='rc1', data={'title': 'Idea'}))['result']
+        p = (await env.tool('rook_project', action='create', request_id='rp1',
+                            data={'title': 'Proj', 'parent': c['slug']}))['result']
+        t = (await env.tool('rook_task', action='create', request_id='rt1',
+                            data={'title': 'Do it', 'parent': p['slug']}))['result']
+        assert t['creator'].startswith('codex.')  # the attributed caller
+        upd = await env.tool('rook_task', action='update', id=t['slug'], request_id='ru1',
+                             data={'revision': t['revision'], 'patch': {'state': 'paused'},
+                                   'handoff': {'goal': 'g', 'state': 's', 'next_steps': ['n']}})
+        assert 'error' not in upd, upd
+        got = (await env.tool('rook_task', action='get', id=t['id'], data={'links': 'all'}))['result']
+        assert 'handoff' in [l['kind'] for l in got['links']]
+
+        # Disabled: nothing keeps pointing at the stopped service.
+        assert (await hub.host.disable('tasks'))['ok']
+        assert (await hub.host.disable('knowledge'))['ok']
+        assert env.mcp._rook_knowledge is None and env.mcp._rook_hygiene.knowledge is None
+        assert await env.mcp._rook_hygiene.tick() == []

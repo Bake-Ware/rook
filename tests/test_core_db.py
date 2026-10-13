@@ -224,3 +224,98 @@ def test_hubdeploy_dropins_stay_world_readable(tmp_path):
     sel = Selector(SimpleNamespace(mode="systemd"))
     sel.restore([{"kind": "file", "path": str(p), "content": "[Service]\n"}])
     assert p.read_text() == "[Service]\n" and _mode(p) == 0o644
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX modes")
+def test_open_db_mode_covers_the_wal_sidecars(tmp_path):
+    """vault.db was 0600 but its -wal/-shm, which hold the same rows, could
+    keep the umask: ones left from before, or a SQLite that does not copy the
+    database's mode. Every 0600 database gets 0600 sidecars."""
+    path = tmp_path / "secret.db"
+    # Left over from a release that opened the database without a mode.
+    loose = sqlite3.connect(str(path))
+    loose.execute("PRAGMA journal_mode=WAL")
+    loose.execute("CREATE TABLE t(x)")
+    loose.execute("INSERT INTO t VALUES (1)")
+    loose.commit()
+    for suffix in ("", "-wal", "-shm"):
+        os.chmod(str(path) + suffix, 0o644)
+    conn = coredb.open_db(path, mode=0o600)
+    conn.execute("INSERT INTO t VALUES (2)")
+    conn.commit()
+    for suffix in ("", "-wal", "-shm"):
+        assert _mode(str(path) + suffix) == 0o600, suffix
+    conn.close()
+    loose.close()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX modes")
+def test_open_db_creates_sidecars_under_a_tight_umask(tmp_path, monkeypatch):
+    """Even a SQLite that creates sidecars with the process umask (not the
+    database's mode) makes them 0600: the umask is tightened while it opens,
+    and put back afterwards."""
+    real_connect = sqlite3.connect
+    seen = []
+
+    def connect(*a, **k):
+        seen.append(os.umask(0o022))
+        os.umask(seen[-1])
+        return real_connect(*a, **k)
+    monkeypatch.setattr(coredb.sqlite3, "connect", connect)
+    before = os.umask(0o022)
+    try:
+        conn = coredb.open_db(tmp_path / "s.db", mode=0o600)
+        assert seen == [0o177] and os.umask(0o022) == 0o022
+        conn.close()
+        coredb.open_db(tmp_path / "plain.db").close()
+        assert seen[-1] == 0o022   # no mode: umask untouched
+    finally:
+        os.umask(before)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX modes")
+def test_vault_sidecars_are_private(tmp_path):
+    pytest.importorskip("nacl")
+    from rook.band_mcp.vault import Vault
+    path = tmp_path / "vault.db"
+    v = Vault(str(path))
+    v.set("k", "value", "d", "human:op")
+    for suffix in ("", "-wal", "-shm"):
+        if os.path.exists(str(path) + suffix):
+            assert _mode(str(path) + suffix) == 0o600, suffix
+    os.chmod(str(path) + "-wal", 0o644)   # as an older release left it
+    Vault(str(path))
+    assert _mode(str(path) + "-wal") == 0o600
+
+
+@pytest.mark.parametrize("err", ["EBUSY", "EXDEV"])
+def test_atomic_write_falls_back_in_place_when_the_file_cannot_be_replaced(tmp_path, monkeypatch, err):
+    """ROOK_SETUP_PATH bind-mounted as a single file: os.replace onto a mount
+    point raises EBUSY, so setup.json (the band PSK) could not be saved."""
+    import errno as _errno
+    from rook.remote import setup_store
+    p = tmp_path / "setup.json"
+    p.write_text("{}", encoding="utf-8")
+    os.chmod(p, 0o644)
+    inode = os.stat(p).st_ino
+    monkeypatch.setenv("ROOK_SETUP_PATH", str(p))
+
+    def replace(src, dst):
+        raise OSError(getattr(_errno, err), os.strerror(getattr(_errno, err)), str(dst))
+    monkeypatch.setattr(coredb.os, "replace", replace)
+    synced = []
+    real_fsync = os.fsync
+    monkeypatch.setattr(coredb.os, "fsync", lambda fd: (synced.append(fd), real_fsync(fd)))
+    setup_store.save({"band_name": "home", "band_psk": "psk-one"})
+    assert json.loads(p.read_text(encoding="utf-8"))["band_psk"] == "psk-one"
+    assert os.stat(p).st_ino == inode          # the same (mounted) file, rewritten
+    if os.name == "posix":
+        assert _mode(p) == 0o600
+    assert _no_temp(tmp_path) and len(synced) >= 2   # temp file and the in-place write
+
+    # Other errors still surface.
+    monkeypatch.setattr(coredb.os, "replace",
+                        lambda s, d: (_ for _ in ()).throw(PermissionError(13, "denied")))
+    with pytest.raises(PermissionError):
+        coredb.atomic_write_text(p, "x")
+    assert json.loads(p.read_text(encoding="utf-8"))["band_psk"] == "psk-one" and _no_temp(tmp_path)

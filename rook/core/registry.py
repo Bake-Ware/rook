@@ -36,6 +36,8 @@ import inspect
 import logging
 from typing import Any, Callable
 
+from .aiocompat import timeout as aio_timeout
+
 log = logging.getLogger("rook.core.registry")
 
 Handler = Callable[..., Any]
@@ -244,11 +246,12 @@ class CapabilityRegistry:
         if limit is None:
             result = await pending
         else:
-            # asyncio.timeout (not wait_for): the handler stays in the caller's
-            # task, so context variables behave as before, and its own
-            # TimeoutError is told apart from ours by expired().
+            # asyncio.timeout (not wait_for; aiocompat backports it to 3.10):
+            # the handler stays in the caller's task, so context variables
+            # behave as before, and its own TimeoutError is told apart from
+            # ours by expired().
             try:
-                async with asyncio.timeout(limit) as window:
+                async with aio_timeout(limit) as window:
                     result = await pending
             except TimeoutError:
                 if window.expired():

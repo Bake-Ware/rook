@@ -8,7 +8,7 @@ class AndroidLocationPlugin(Plugin):
     NAMESPACE = "location"
     PLACEMENT = place(ANDROID_APP)
 
-    @capability("get", risk="read", tags=("sensitive",))
+    @capability("get", risk="exec", tags=("sensitive",))
     def _get(self, timeout: float = 8.0) -> dict:
         """Get lat/lon, accuracy, age, stale flag and Maps URL. Timeout: 1–25s.
 

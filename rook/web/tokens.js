@@ -1,5 +1,7 @@
 // API tokens: one row per token, with the picture its identity shows in chat.
-import {h,ago,day,useCss,btn,chips,table,two,dialog,menu,copy} from '/account/bands/assets/manage.js';
+// Versioned like this module (?v=...), so a stale edge cache cannot pair it
+// with an old manage.js.
+const {h, ago, day, useCss, btn, chips, table, two, dialog, menu, copy} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
 
 const SOON=14*86400, IDLE=30*86400;
 

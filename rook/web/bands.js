@@ -1,5 +1,7 @@
 // Bands: a table of bands and a panel for the selected one (workers, members, key).
-import {h,esc,ago,day,useCss,btn,table,two,dialog,accountAction,reveal,pairing} from '/account/bands/assets/manage.js';
+// Versioned like this module (?v=...), so a stale edge cache cannot pair it
+// with an old manage.js.
+const {h, esc, ago, day, useCss, btn, table, two, dialog, accountAction, reveal, pairing} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
 
 const ACTIVE=['prepared','active'];
 

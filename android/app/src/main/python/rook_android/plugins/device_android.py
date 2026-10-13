@@ -29,13 +29,13 @@ class AndroidDevicePlugin(Plugin):
         import json
         return json.loads(str(jclass("systems.bake.rook.ApkUpdater").request(app_context(), False)))
 
-    @capability("update_status", risk="read")
+    @capability("update_status", risk="exec")
     def _update_status(self) -> dict:
         """APK updater progress, installed/target versions, and required action."""
         import json
         return json.loads(str(jclass("systems.bake.rook.ApkUpdater").status(app_context())))
 
-    @capability("find", risk="write", tags=("physical",))
+    @capability("find", risk="exec", tags=("physical",))
     def _find(self, seconds: int = 30) -> dict:
         """Ring at maximum alarm volume for 1–120 seconds; restores volume after.
 
@@ -47,13 +47,13 @@ class AndroidDevicePlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
-    @capability("find_stop", risk="write", tags=("physical",))
+    @capability("find_stop", risk="exec", tags=("physical",))
     def _find_stop(self) -> dict:
         """Stop the find-device ring and restore the previous alarm volume."""
         import json
         return json.loads(str(jclass("systems.bake.rook.FindDeviceBridge").stop()))
 
-    @capability("info", risk="read")
+    @capability("info", risk="exec")
     def _info(self) -> dict:
         """Model, Android version, screen, uptime, and battery-independent bits."""
         ctx = app_context()
@@ -86,7 +86,7 @@ class AndroidDevicePlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("wake", risk="write", tags=("physical",))
+    @capability("wake", risk="exec", tags=("physical",))
     def _wake(self, dismiss_keyguard: bool = False, hold_ms: int = 1200) -> dict:
         """Turn the screen ON (and show over the keyguard) so the accessibility
         service can interact with the lock screen. Needs 'Display over other
@@ -186,7 +186,7 @@ class AndroidDevicePlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("vibrate", risk="write", tags=("physical",))
+    @capability("vibrate", risk="exec", tags=("physical",))
     def _vibrate(self, ms: int = 300) -> dict:
         """Buzz the phone for ``ms`` milliseconds."""
         ctx = app_context()
@@ -214,7 +214,7 @@ class AndroidDevicePlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("torch", risk="write", tags=("physical",))
+    @capability("torch", risk="exec", tags=("physical",))
     def _torch(self, on: bool = True) -> dict:
         """Flashlight on/off (no permission needed via CameraManager)."""
         ctx = app_context()
@@ -239,7 +239,7 @@ class AndroidDevicePlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("clipboard_set", risk="write")
+    @capability("clipboard_set", risk="exec")
     def _clip_set(self, text: str) -> dict:
         """Put text on the clipboard."""
         ctx = app_context()
@@ -255,7 +255,7 @@ class AndroidDevicePlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("clipboard_get", risk="read", tags=("sensitive",))
+    @capability("clipboard_get", risk="exec", tags=("sensitive",))
     def _clip_get(self) -> dict:
         """Read the clipboard. Android 10+ blocks background reads → may be empty."""
         ctx = app_context()

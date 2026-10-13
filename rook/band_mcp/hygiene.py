@@ -97,7 +97,7 @@ class Hygiene:
         now = now or time.time()
         done = []
         idle = self.idle() if callable(self.idle) else self.idle
-        if not idle:
+        if not idle or self.knowledge is None:  # None: knowledge plugin unloaded
             return done
         store = self.knowledge.store
         for c in store.active_claims():

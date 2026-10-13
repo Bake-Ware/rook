@@ -66,6 +66,10 @@ class PluginHost:
         # bring back one that was filtered out, disabled or unavailable.
         self.candidates: dict[str, Candidate] = {}
         self._binder: Callable[[Plugin], None] | None = None
+        # (on_bind, on_unbind) pairs from add_bind_hook: other holders of a
+        # plugin instance (the MCP bridge) that must follow a reload.
+        self._hooks: list[tuple[Callable[[Plugin], None],
+                                Callable[[Plugin], None] | None]] = []
         self._lock: asyncio.Lock | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
 
@@ -213,8 +217,11 @@ class PluginHost:
         plugin.__dict__["_data_root"] = self._data_root
         plugin.__dict__["_deps"] = {ns: self.plugin(ns) for ns in (plugin.DEPENDS or ())}
 
-    def _activate(self, name: str, cand: Candidate, plugin: Plugin) -> bool:
-        """Wire settings/resources/deps, check available(), register caps."""
+    def _activate(self, name: str, cand: Candidate, plugin: Plugin,
+                  replacing: frozenset[str] = frozenset()) -> bool:
+        """Wire settings/resources/deps, check available(), register caps.
+        ``replacing``: caps of the instance being reloaded, which this one
+        takes over in place instead of colliding with."""
         # Wired before available() (core_api 1.1) so an enable flag or a
         # configured resource in the settings schema can gate loading.
         self._wire(plugin)
@@ -235,7 +242,7 @@ class PluginHost:
         done: list[str] = []
         try:
             for dotpath, fn in caps.items():
-                self.registry.register(dotpath, fn)
+                self.registry.register(dotpath, fn, replace=dotpath in replacing)
                 done.append(dotpath)
         except ValueError as e:
             for d in done:
@@ -259,16 +266,38 @@ class PluginHost:
         for p in list(self.plugins):
             self._bind(p)
 
-    def _bind(self, plugin: Plugin) -> None:
-        if self._binder is None:
-            return
+    def add_bind_hook(self, on_bind: Callable[[Plugin], None],
+                      on_unbind: Callable[[Plugin], None] | None = None) -> None:
+        """Wiring that must follow every (re)activation, not just boot: the
+        MCP bridge hands the knowledge plugin its caller and handoff store,
+        and a reload builds a fresh instance without them. ``on_bind`` runs
+        now for every loaded plugin and after the node's binder for each one
+        activated later (before its ``start``); ``on_unbind`` runs when one
+        is disabled or reloaded, before its ``stop``. Errors are logged and
+        recorded like the binder's."""
+        self._hooks.append((on_bind, on_unbind))
+        for p in list(self.plugins):
+            self._call_hook(on_bind, p)
+
+    def _call_hook(self, hook: Callable[[Plugin], None], plugin: Plugin) -> None:
         try:
-            self._binder(plugin)
+            hook(plugin)
         except Exception as e:
             log.exception("plugin %s: binding to the node failed", plugin.NAMESPACE)
             st = self.status.get(plugin._module)
             if st is not None:
                 st["bind_error"] = f"{type(e).__name__}: {e}"
+
+    def _bind(self, plugin: Plugin) -> None:
+        if self._binder is not None:
+            self._call_hook(self._binder, plugin)
+        for on_bind, _ in self._hooks:
+            self._call_hook(on_bind, plugin)
+
+    def _unbind(self, plugin: Plugin) -> None:
+        for _, on_unbind in self._hooks:
+            if on_unbind is not None:
+                self._call_hook(on_unbind, plugin)
 
     # -- lifecycle -------------------------------------------------------
     async def _start_one(self, p: Plugin) -> None:
@@ -310,7 +339,8 @@ class PluginHost:
         return f"{module} did not load: {st.get('state', 'unknown')}" + (
             f" ({st['reason']})" if st.get("reason") else "")
 
-    async def _activate_now(self, module: str) -> tuple[Plugin | None, str]:
+    async def _activate_now(self, module: str, replacing: frozenset[str] = frozenset()
+                            ) -> tuple[Plugin | None, str]:
         """The boot path for one module: prepare, activate, bind, start."""
         cand = self.candidates.get(module)
         if cand is None:
@@ -323,7 +353,7 @@ class PluginHost:
         if missing:
             self._mark(module, "unavailable", f"depends on {', '.join(missing)} (not loaded)")
             return None, self._failure(module)
-        if not self._activate(module, cand, plugin):
+        if not self._activate(module, cand, plugin, replacing):
             return None, self._failure(module)
         self._bind(plugin)
         await self._start_one(plugin)
@@ -331,10 +361,14 @@ class PluginHost:
         for p in self.plugins:
             if plugin.NAMESPACE in (p.DEPENDS or ()):
                 p.__dict__.setdefault("_deps", {})[plugin.NAMESPACE] = plugin
+                st = self.status.get(p._module)
+                if st is not None and st.get("dependency_unloaded") == plugin.NAMESPACE:
+                    del st["dependency_unloaded"]
         return plugin, ""
 
     async def _deactivate(self, plugin: Plugin) -> list[str]:
         removed = [c for c in plugin.caps() if self.registry.unregister(c)]
+        self._unbind(plugin)
         await self._stop_one(plugin)
         self.plugins[:] = [p for p in self.plugins if p is not plugin]
         return removed
@@ -378,21 +412,55 @@ class PluginHost:
     async def reload(self, module: str) -> dict:
         """Stop a loaded plugin and load it again with freshly read settings
         (``apply="reload"`` settings take effect here): a new instance, a new
-        ``available()`` check, the side hook, ``start``. If it no longer
-        loads (an enable setting turned off), it stays unloaded and the reply
-        says why."""
+        ``available()`` check, the side hook, ``start``.
+
+        The old instance's caps stay registered until the new instance
+        replaces them, so an announce sent mid-reload still lists them (a
+        call in that short window reaches the stopping instance). Caps the
+        new instance no longer has are dropped once it is up.
+
+        If it no longer loads (an enable setting turned off, ``available()``
+        false, a failed import), it stays unloaded, its caps go, and the reply
+        says why. Plugins that ``DEPENDS`` on it stay loaded but their
+        ``dependency()`` returns ``None`` (their status gets
+        ``dependency_unloaded``), so they refuse calls instead of using the
+        stopped instance; enabling or reloading the plugin rebinds them."""
         async with self._mutex():
             p = self.loaded(module)
             if p is None:
                 return {"ok": False, "module": module, "error": f"plugin not loaded: {module}"}
-            await self._deactivate(p)
-            plugin, err = await self._activate_now(module)
+            old_caps = frozenset(p.caps())
+            self._unbind(p)
+            await self._stop_one(p)
+            self.plugins[:] = [x for x in self.plugins if x is not p]
+            plugin, err = await self._activate_now(module, replacing=old_caps)
             if plugin is None:
-                log.warning("plugin %s did not come back after a reload: %s", module, err)
-                return {"ok": False, "module": module, "unloaded": True, "error": err}
+                for cap in old_caps:
+                    self.registry.unregister(cap)
+                orphaned = self._orphan_dependents(p.NAMESPACE)
+                log.warning("plugin %s did not come back after a reload: %s%s", module, err,
+                            f" (dependents left without it: {', '.join(orphaned)})"
+                            if orphaned else "")
+                return {"ok": False, "module": module, "unloaded": True, "error": err,
+                        **({"dependents_unbound": orphaned} if orphaned else {})}
+            for cap in old_caps - set(plugin.caps()):
+                self.registry.unregister(cap)
             log.info("reloaded plugin %s", module)
             return {"ok": True, "module": module, "namespace": plugin.NAMESPACE,
                     "caps": sorted(plugin.caps())}
+
+    def _orphan_dependents(self, namespace: str) -> list[str]:
+        """Point every loaded dependent's ``dependency(namespace)`` at nothing
+        (the instance it held is stopped). Returns their module names."""
+        out = []
+        for d in self.plugins:
+            if namespace in (d.DEPENDS or ()):
+                d.__dict__.setdefault("_deps", {})[namespace] = None
+                st = self.status.get(d._module)
+                if st is not None:
+                    st["dependency_unloaded"] = namespace
+                out.append(d._module or d.NAMESPACE)
+        return sorted(out)
 
     def request_reload(self, module: str) -> bool:
         """Schedule :meth:`reload` from any thread (settings change hooks run

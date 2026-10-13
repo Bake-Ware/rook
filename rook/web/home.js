@@ -4,7 +4,9 @@
 // The chat panel talks to the agent through the dashboard's chat API
 // (/api/chat/*), in the same two-person room the Chat view uses, so the
 // conversation shows in both places.
-import {h,ago,useCss,btn,table,two} from '/account/bands/assets/manage.js';
+// Versioned like this module (?v=...), so a stale edge cache cannot pair it
+// with an old manage.js.
+const {h, ago, useCss, btn, table, two} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
 
 const API='/account/settings/api';
 const VIA={chat:'Chat',ask:'home.ask',test:'Test'};
