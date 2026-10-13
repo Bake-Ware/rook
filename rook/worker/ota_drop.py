@@ -347,9 +347,11 @@ class OtaDropSender:
 # with an operator-chosen OTA drop_id (0 by default).
 REPLY_DROP_BASE = 0x8000
 # How long a worker keeps serving a reply nobody finished pulling, and how
-# many bytes of such replies it holds at most (oldest dropped first).
+# many bytes of such replies it holds at most (oldest dropped first). 32 MiB
+# is one maximum-size reply (ROOK_BAND_MAX_REPLY_BYTES): enough for the
+# common case, and small enough for a Raspberry Pi or a phone to hold.
 REPLY_DROP_TTL = 120.0
-REPLY_DROP_MAX_BYTES = 128 * 1024 * 1024
+REPLY_DROP_MAX_BYTES = 32 * 1024 * 1024
 # Caller side: re-request after this long without progress, checked this often.
 REPLY_REREQUEST = 0.25
 REPLY_TICK = 0.1
@@ -378,6 +380,10 @@ class DropReplyServer:
         self._clock = clock
         # drop_id -> (sender, expires_at)
         self._serving: Dict[int, tuple[OtaDropSender, float]] = {}
+        # Expiry timer: replies nobody pulls are released at their TTL even
+        # if no further reply is ever served (pruning only in serve() kept
+        # up to max_bytes alive on an idle worker indefinitely).
+        self._timer: Optional[asyncio.TimerHandle] = None
 
     @property
     def active(self) -> int:
@@ -390,6 +396,33 @@ class DropReplyServer:
         now = self._clock()
         for did in [d for d, (_, exp) in self._serving.items() if exp <= now]:
             self._serving.pop(did, None)
+
+    def prune(self) -> None:
+        """Release expired replies now (also runs on a timer, see serve)."""
+        self._prune()
+        self._arm()
+
+    def _arm(self) -> None:
+        """(Re)schedule the expiry timer for the earliest expiry, if any."""
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+        if not self._serving:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return   # no loop (sync callers): serve() still prunes
+        soonest = min(exp for _, exp in self._serving.values())
+        # +50 ms so a timer that fires a hair early still finds it expired.
+        self._timer = loop.call_later(max(soonest - self._clock(), 0.0) + 0.05, self.prune)
+
+    def close(self) -> None:
+        """Stop serving everything (worker shutdown)."""
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+        self._serving.clear()
 
     def serve(self, msg_id: str, blob: bytes, route: int = 0,
               native: Optional[NativeSend] = None) -> Optional[dict]:
@@ -411,6 +444,7 @@ class DropReplyServer:
         # so the caller can pull again until the TTL.
         sender.on_complete(lambda ok, _d=did: ok and self._serving.pop(_d, None))
         self._serving[did] = (sender, self._clock() + self.ttl)
+        self._arm()
         return {"id": did, "size": len(blob), "sha256": sender.sha256}
 
     def feed(self, payload: bytes) -> bool:

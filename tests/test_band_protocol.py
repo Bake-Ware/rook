@@ -700,6 +700,26 @@ async def test_reply_server_expires_and_bounds_memory():
     now[0] = 10
     srv.serve("d", b"w")                        # prunes b (expired)
     assert srv.active == 1
+    srv.close()
+
+
+@pytest.mark.asyncio
+async def test_reply_server_expires_without_further_serves():
+    """An idle worker releases unpulled replies at their TTL; it used to hold
+    them until the next reply was served."""
+    async def send(p, route=0):
+        pass
+
+    srv = ota_drop.DropReplyServer(b"\x01" * 16, send, ttl=0.1)
+    srv.serve("a", b"x" * 5000)
+    srv.serve("b", b"y" * 5000)
+    assert srv.active == 2
+    await _until(lambda: srv.active == 0, timeout=2)
+    assert srv._timer is None
+    srv.serve("c", b"z")
+    srv.close()
+    assert srv.active == 0 and srv._timer is None
+    assert ota_drop.REPLY_DROP_MAX_BYTES == 32 * 1024 * 1024
 
 
 # -- compression ---------------------------------------------------------------------

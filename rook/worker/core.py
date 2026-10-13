@@ -637,6 +637,8 @@ class Worker:
             except Exception:
                 pass
         await self.host.stop()
+        if self._reply_drops is not None:
+            self._reply_drops.close()
         try:
             await self.transport.stop()
         except Exception:
