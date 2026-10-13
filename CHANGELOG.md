@@ -279,6 +279,14 @@ Preparation for public use.
 - Running from a git checkout reports `0.dev+<short commit>` (read from `.git`
   once at import, no subprocess) instead of a bare `0.dev`; build stays 0, so
   dev workers still never auto-update. Stamped bundles are unchanged.
+- Install a worker: a "Get a pairing code" button mints a code for the
+  selected (else primary) band and shows the complete Linux/macOS, Windows
+  PowerShell and Android (Termux) commands with the code filled in and a
+  self-renewing countdown. The Workers view shows an "Add your first worker"
+  card with the same button while only the hub is on the band. Same owner-only,
+  CSRF-checked pair action as Account & access (`manage.js` `mintPairing`,
+  `pairingPanel`, `pairCommands`; the pairing dialog now uses them too and
+  gains the Android line and copy buttons).
 
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps

@@ -106,3 +106,8 @@ dialog.mg-dialog:not([open]){display:none}
 .hc-input{display:flex;gap:8px;align-items:flex-end;padding:12px 18px;border-top:1px solid var(--line)}
 .mg .hc-input textarea{flex:1 1 auto;min-width:0;width:auto;min-height:40px;max-height:160px;resize:none}
 @media(max-width:700px){.hc-note,.hc-log,.hc-input{padding-left:12px;padding-right:12px}.hc-typing{padding-left:12px}.hc-msg{max-width:94%}}
+/* Pairing code panel (dialog, Install page, first-worker card). */
+.pairing-panel{display:flex;flex-direction:column;gap:10px}
+.pairing-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 8px;align-items:start}
+.pairing-row .mg-label{grid-column:1/-1}
+.pairing-row .mg-btn{min-height:32px}
