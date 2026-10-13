@@ -2487,7 +2487,7 @@ def _cli_main() -> None:
     ap.add_argument("--domain", default=env("ROOK_DOMAIN", "hub.example.com"),
                     help="public host[:port] of this dashboard, or a full http(s):// URL, used "
                          "in installer URLs (ROOK_DOMAIN). Without a scheme it is https, except "
-                         "host:<--port> or :80, which this plain-HTTP dashboard serves itself")
+                         "a LAN/local address on --port (this plain-HTTP dashboard) or :80")
     ap.add_argument("--psk", default=env("ROOK_BAND_PSK", ""),
                     dest="band_psk", help="band pre-shared key (ROOK_BAND_PSK; "
                                           "blank = configure via the /setup wizard)")

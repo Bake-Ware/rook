@@ -249,9 +249,10 @@ Preparation for public use.
 - One public base URL (`rook/remote/public_url.py`) for installers, one-liners,
   the account origin and the update manifest. `--domain`/`ROOK_DOMAIN` may now
   carry a scheme (`http://192.0.2.10:7005`); without one it stays `https`
-  except when it names this dashboard's own port (what `scripts/local-hub.sh`
-  passes) or port 80, so a LAN quickstart hub serves `http://` installers and a
-  public hub's scripts are unchanged. Workers accept `--enroll http://` only
+  except for a local address (non-public IP, `localhost`, dotless or
+  `.lan`/`.local`/`.internal` name) on this dashboard's own port, or port 80,
+  so a LAN quickstart hub serves `http://` installers and a public hub's
+  scripts are unchanged. Workers accept `--enroll http://` only
   for a non-public IP literal (LAN, loopback, tailnet).
 - Dashboard and account cookies are set through one helper: `Secure` whenever
   the public base is `https` (as before, even if a proxy omits

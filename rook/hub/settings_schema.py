@@ -74,7 +74,8 @@ _CORE: list[tuple[Setting, str, dict]] = [
     (_s("hub.domain", "str", "hub.example.com", env="ROOK_DOMAIN", flag="--domain",
         label="Public dashboard host", group="General", order=1,
         help="host[:port] of this dashboard, or a full http(s):// URL, used in installer "
-             "and update URLs. Without a scheme: https, except host:<dashboard port>."),
+             "and update URLs. Without a scheme: https, except a LAN address on the "
+             "dashboard port."),
      "dashboard", {"file_key": "pyz_domain"}),
     (_s("hub.public_relay", "hostport", "hub.example.com:443", env="ROOK_HUB_PUBLIC",
         flag="--hub-public", label="Relay address workers dial", group="General", order=2,

@@ -25,6 +25,12 @@ AUTH = "Basic " + base64.b64encode(b"owner:password").decode()
     (f"{LAN}:8443", 7005, {}, f"https://{LAN}:8443"),       # some other port: unchanged
     (f"{LAN}:80", 7005, {}, f"http://{LAN}:80"),
     ("localhost:7005", 7005, {}, "http://localhost:7005"),  # .env.example's value
+    ("rookhub:7005", 7005, {}, "http://rookhub:7005"),
+    ("hub.lan:7005", 7005, {}, "http://hub.lan:7005"),
+    # A public name stays https even on the dashboard's port (a TLS proxy
+    # elsewhere may listen there); write http:// to say otherwise.
+    ("rook.example.com:7005", 7005, {}, "https://rook.example.com:7005"),
+    ("11.0.0.1:7005", 7005, {}, "https://11.0.0.1:7005"),
     ("http://rook.example.com", 7005, {}, "http://rook.example.com"),
     ("https://rook.example.com:7005/", 7005, {}, "https://rook.example.com:7005"),
     ("HTTP://Box:9000/x", 7005, {}, "http://Box:9000"),

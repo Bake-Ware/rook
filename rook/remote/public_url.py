@@ -13,14 +13,17 @@ nothing about what the browser sees. The configured domain does:
   That always wins.
 * Without one, ``ROOK_PUBLIC_BASE`` (the build host's manifest base) supplies
   the scheme when it names the same host[:port].
-* Otherwise the domain is ``https`` unless it points straight at this
-  dashboard's own plain-HTTP port (``<lan-ip>:7005``, what
-  ``scripts/local-hub.sh`` passes) or at port 80. A bare host name, the
-  production shape, stays ``https`` exactly as before.
+* Otherwise the domain is ``https`` unless it is a local address (a
+  non-public IP literal, ``localhost``, a dotless or ``.local``/``.lan``/
+  ``.internal``/``.home.arpa`` name) on this dashboard's own plain-HTTP port
+  (``<lan-ip>:7005``, what older ``scripts/local-hub.sh`` passed), or names
+  port 80. A public host name, the production shape, stays ``https`` exactly
+  as before, whatever port it carries.
 """
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import re
@@ -35,6 +38,18 @@ def _port(hostport: str) -> Optional[int]:
         return None
     tail = hostport.rsplit(":", 1)[1]
     return int(tail) if tail.isdigit() else None
+
+
+_LOCAL_SUFFIXES = (".local", ".lan", ".internal", ".home.arpa", ".localdomain")
+
+
+def _local_host(hostport: str) -> bool:
+    host = hostport.rsplit(":", 1)[0] if hostport.count(":") == 1 else hostport
+    host = host.strip("[]").lower()
+    try:
+        return not ipaddress.ip_address(host).is_global
+    except ValueError:
+        return host == "localhost" or "." not in host or host.endswith(_LOCAL_SUFFIXES)
 
 
 def split_domain(value: str, dashboard_port: Optional[int] = None,
@@ -55,7 +70,8 @@ def split_domain(value: str, dashboard_port: Optional[int] = None,
     if bm and base[bm.end():].split("/", 1)[0].lower() == host.lower():
         return bm.group(1).lower(), host
     port = _port(host)
-    if port == 80 or (port is not None and port != 443 and port == dashboard_port):
+    if port == 80 or (port is not None and port != 443 and port == dashboard_port
+                      and _local_host(host)):
         return "http", host
     return "https", host
 
