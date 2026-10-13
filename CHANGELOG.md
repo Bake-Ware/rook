@@ -172,6 +172,11 @@ Preparation for public use.
   and repoints `rook_knowledge`, the hygiene loop and the Knowledge page API
   at the new instance. Before, a reload left bands collapsed to `default`
   and inline handoffs failing.
+- Workers keep running on Python 3.10, as master's did: the per-cap timeout
+  (and Codex direct input) use `rook.core.aiocompat.timeout`, a backport of
+  `asyncio.timeout`, instead of the 3.11-only API, and a test keeps 3.11-only
+  APIs out of the worker bundle. Workers are not refused on 3.10, since
+  master's worker never needed 3.11.
 
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps

@@ -7,6 +7,7 @@ import stat
 import sys
 from pathlib import Path
 
+from ..core.aiocompat import timeout as aio_timeout
 from .agents import codex_home
 
 # aiohttp is imported where it is used: this module loads with the
@@ -154,7 +155,7 @@ async def _app_send(path, session_id, text):
                 nonlocal seq
                 seq += 1
                 await ws.send_json(dict(id=seq, method=method, params=params))
-                async with asyncio.timeout(5):
+                async with aio_timeout(5):
                     async for frame in ws:
                         if frame.type != aiohttp.WSMsgType.TEXT:
                             raise ValueError('Codex disconnected. Check the host before retrying.')
