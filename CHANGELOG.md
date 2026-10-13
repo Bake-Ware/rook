@@ -54,6 +54,34 @@ Preparation for public use.
   reconnect, the terminal follower, the Android worker runtime and the KVM
   bridge serial stream, which now reconnects after the dongle reboots.
 - Removed the unused `rook.worker.wire.channel` compatibility shim.
+### Transport follow-up
+- Addressed traffic (targeted requests, replies to `rr`, pass-through Drop
+  to a declared route) is sent as telesthete ADDRESSED (0x06) frames, sealed
+  with empty AAD so deployed receivers still open them when an old relay
+  broadcasts them; the routing relay now routes only ADDRESSED frames, and
+  CHANNEL frames are always broadcast. Only peers announcing `route` are
+  addressed. Receivers open only CHANNEL and ADDRESSED frames.
+- Inbound bursts no longer lose replies: receive loops yield every 32
+  frames, only new requests can be shed (a worker answers a shed targeted
+  request `busy`), and replies, announces and Drop packets get backpressure
+  instead. 3,000 queued replies: 1,912 dropped before, 0 now.
+- Large-reply pulls: `BandClient.call`'s timeout now bounds the Drop pull
+  (a pull that can't finish returns `ok: false`, `timeout: large reply ...`);
+  pass-through Drop packets go out in order (no window stalls on the
+  receiver's replay check); the receiver is linear-time (telesthete fix, 32
+  MiB pull ~28 s CPU -> 0.3 s); per-drop-id pull locks are released.
+- Workers release unpulled reply drops at their TTL on a timer and hold at
+  most 32 MiB of them (was 128 MiB, pruned only on the next large reply).
+- In-band OTA refuses `drop_id` 0x8000 and up (large-reply ids).
+- KVM bridge: malformed stream messages are skipped instead of ending the
+  stream, and the old socket is closed before reconnecting.
+- `ROOK_ANNOUNCE_CAPS_HASH` must stay off until every hub (> build 426) and
+  APK (> 0.4.1) reads `caps_hash`; documented in core spec 14.5.
+- telesthete pin and the hub image's relay moved to f3419d2 (audit/hub; move
+  to the merged main commit after the telesthete PR lands). Bundle builders
+  refuse a telesthete git checkout at any other commit
+  (`ROOK_TELESTHETE_ANY_REV=1` to override).
+
 ### Plugin host
 - Runtime plugin enable now uses the boot path (`PluginHost.enable`/`disable`/
   `reload`): placement, stored settings, collision safety, status and the
