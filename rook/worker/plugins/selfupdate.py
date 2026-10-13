@@ -151,10 +151,17 @@ class SelfUpdatePlugin(Plugin):
         is untrusted; only the signature + hash grant the swap."""
         from .._build_info import BUILD
         from .._update_verify import verify_manifest
-        from ..ota_drop import OtaDropReceiver
+        from ..ota_drop import REPLY_DROP_BASE, OtaDropReceiver, valid_ota_drop_id
 
         if self._worker is None:
             return {"ok": False, "error": "worker not bound (no transport)"}
+        try:
+            drop_id = int(drop_id)
+        except (TypeError, ValueError):
+            drop_id = -1
+        if not valid_ota_drop_id(drop_id):
+            return {"ok": False, "error": f"drop_id must be 0-{REPLY_DROP_BASE - 1} "
+                                          "(higher ids carry large replies)"}
         if not isinstance(manifest, dict):
             return {"ok": False, "error": "manifest must be an object"}
         if not verify_manifest(manifest):

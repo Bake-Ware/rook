@@ -961,6 +961,33 @@ async def test_inband_ota_native_drop_on_and_off(native, band_factory, monkeypat
 
 
 @pytest.mark.asyncio
+async def test_ota_drop_ids_in_the_reply_range_are_refused(monkeypatch, tmp_path):
+    """Reply drops use 0x8000|...; an OTA push there would cross-feed with a
+    large-reply transfer of the same id. Both ends refuse it."""
+    assert ota_drop.valid_ota_drop_id(0) and ota_drop.valid_ota_drop_id(0x7FFF)
+    for bad in (0x8000, 0xFFFF, -1, 0x10000, True, "1", None):
+        assert not ota_drop.valid_ota_drop_id(bad)
+    c = BandClient(psk=PSK)
+
+    async def no_call(*a, **k):
+        raise AssertionError("must not reach the worker")
+
+    c.call = no_call
+    r = await c.push_update("w", b"x", {}, drop_id=0x8001)
+    assert r["ok"] is False and "drop_id must be 0-32767" in r["error"]
+
+    from rook.worker import core
+    from rook.worker.plugins.selfupdate import SelfUpdatePlugin
+    monkeypatch.setattr(core, "_WORKER_ID_FILE", tmp_path / "ota-id")
+    su = SelfUpdatePlugin()
+    su._worker = object()
+    for bad in (0x8000, 0xFFFF, "junk"):
+        res = await su._ota_begin({"build": 1}, drop_id=bad)
+        assert res["ok"] is False and "drop_id must be" in res["error"]
+    assert su._ota_rx is None
+
+
+@pytest.mark.asyncio
 async def test_old_worker_gets_pass_through_ota(band_factory, monkeypatch, tmp_path):
     """No drop-native in the worker's announce: the controller keeps the old
     wrapping (and the old worker sees nothing it can't parse)."""

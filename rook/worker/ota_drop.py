@@ -379,6 +379,14 @@ REPLY_REREQUEST = 0.25
 REPLY_TICK = 0.1
 
 
+def valid_ota_drop_id(drop_id) -> bool:
+    """An OTA push's drop_id must be below :data:`REPLY_DROP_BASE`: ids from
+    0x8000 up belong to large replies, and a push on one would feed (and be
+    fed by) a reply transfer of the same id."""
+    return (isinstance(drop_id, int) and not isinstance(drop_id, bool)
+            and 0 <= drop_id < REPLY_DROP_BASE)
+
+
 def reply_drop_id(msg_id: str, worker_id: str = "") -> int:
     """The drop_id ``worker_id`` uses for its reply to request ``msg_id`` (when
     free). Both go in, so two workers answering one open call serve on

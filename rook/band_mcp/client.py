@@ -630,10 +630,16 @@ class BandClient:
         reports its sha-verified DONE (it then swaps + restarts on its own).
 
         ``manifest`` must be the same signed object the worker verifies (build,
-        sha256, …). Returns a status dict.
+        sha256, …). ``drop_id`` must be below 0x8000 (higher ids carry large
+        replies). Returns a status dict.
         """
-        from ..worker.ota_drop import OtaDropSender
+        from ..worker.ota_drop import REPLY_DROP_BASE, OtaDropSender, valid_ota_drop_id
 
+        if not valid_ota_drop_id(drop_id):
+            # 0x8000 and up are large-reply drop ids (core spec 14.2): a push
+            # there would cross-feed with a reply transfer of the same id.
+            return {"ok": False, "stage": "begin",
+                    "error": f"drop_id must be 0-{REPLY_DROP_BASE - 1}, got {drop_id!r}"}
         begin = await self.call("worker.ota_begin",
                                 args={"manifest": manifest, "drop_id": drop_id},
                                 target=worker_id, timeout=begin_timeout)
