@@ -185,6 +185,13 @@ Preparation for public use.
 - `screenshot.capture_region` accepts negative `x`/`y` again (monitors left
   of or above the primary one); the ImageMagick backend gets a signed crop
   offset.
+- Plugin reload: `worker.plugin.reload`/`disable` and `hub.plugin.reload`/
+  `disable` are tagged `destructive`. A reload keeps the plugin's caps
+  registered until the new instance takes them over, so an announce sent
+  mid-reload no longer drops them. A reload that fails leaves dependents with
+  `dependency()` = `None` (status `dependency_unloaded`) instead of the
+  stopped instance. `selfupdate` no longer adds another OTA binary handler
+  on every reload.
 
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps

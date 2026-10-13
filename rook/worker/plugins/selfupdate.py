@@ -110,8 +110,9 @@ class SelfUpdatePlugin(Plugin):
 
     def bind_worker(self, worker) -> None:
         """Grab a handle to the Worker so we can receive in-band bundle pushes
-        (raw Drop packets) and send REQUEST/DONE back onto the band. Called once
-        at worker start."""
+        (raw Drop packets) and send REQUEST/DONE back onto the band. Called at
+        worker start and again for each instance a reload builds; stop()
+        drops this instance's handler."""
         self._worker = worker
         worker.register_binary_handler(self._ota_binary)
 
@@ -220,6 +221,12 @@ class SelfUpdatePlugin(Plugin):
         for t in (self._converge_task, self._health_task):
             if t is not None:
                 t.cancel()
+        # A reload binds a new instance, which registers its own handler; the
+        # old one would otherwise keep a handler per reload (a second
+        # receiver for the same OTA push).
+        unregister = getattr(self._worker, "unregister_binary_handler", None)
+        if callable(unregister):
+            unregister(self._ota_binary)
 
     @capability("check", risk="admin", timeout=None)
     async def _check(self, force: bool = False) -> dict:

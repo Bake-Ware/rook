@@ -505,7 +505,9 @@ async def test_worker_config_apply_without_restart_reloads_reload_plugins(tmp_pa
         assert await w.registry.call("bound.hello") == "pushed"
     finally:
         await w.host.stop()
-        monkeypatch.delenv("ROOK_BOUND_GREETING", raising=False)
+        # Not monkeypatch.delenv: it would record "pushed" and put it back at
+        # teardown, leaking into later tests that load Bound.
+        os.environ.pop("ROOK_BOUND_GREETING", None)
 
 
 def test_settings_push_restarts_only_when_it_must():
@@ -527,3 +529,99 @@ def test_settings_push_restarts_only_when_it_must():
     svc.schema = [live]
     assert not svc._needs_restart({"env": {"ROOK_TEST_LIVE": "1"}}, new)
     assert svc._needs_restart({"env": {"ROOK_TEST_LIVE": "1"}}, old)   # older worker
+
+
+@pytest.mark.asyncio
+async def test_reload_keeps_caps_registered_until_the_new_instance_is_up():
+    """An announce built mid-reload (the old instance stopping, the new one
+    starting) still lists the plugin's caps; nothing collides on the way."""
+    EVENTS.clear()
+    stored = {"bound": {"greeting": "one"}}
+    host, cands = _host(stored)
+    host.load(cands)
+    await host.start()
+    seen_during = []
+    real_stop = Bound.stop
+
+    async def stop(self):
+        seen_during.append(sorted(c for c in host.registry.list() if c.startswith("bound.")))
+        await real_stop(self)
+    Bound.stop = stop
+    try:
+        stored["bound"] = {"greeting": "two"}
+        assert (await host.reload("bound"))["ok"]
+    finally:
+        Bound.stop = real_stop
+    assert seen_during == [["bound.hello"]]
+    assert await host.registry.call("bound.hello") == "two"
+
+
+@pytest.mark.asyncio
+async def test_failed_reload_drops_caps_and_unbinds_dependents():
+    """A dependent must not keep calling a stopped instance: its dependency()
+    goes to None (status says so) until the plugin is back."""
+    stored = {"bound": {"greeting": "one"}}
+    host, cands = _host(stored)
+    host.load(cands)
+    await host.start()
+    old = host.plugin("bound")
+    assert host.plugin("needs").dependency("bound") is old
+    stored["bound"] = {"greeting": "one", "enabled": False}
+    res = await host.reload("bound")
+    assert not res["ok"] and res["unloaded"] and res["dependents_unbound"] == ["needs"]
+    assert not host.registry.has("bound.hello")
+    assert host.plugin("needs").dependency("bound") is None
+    assert host.status["needs"]["dependency_unloaded"] == "bound"
+    with pytest.raises(AttributeError):
+        await host.registry.call("needs.x")   # refuses rather than reading the stopped one
+
+    stored["bound"] = {"greeting": "back"}
+    assert (await host.enable("bound"))["ok"]
+    assert await host.registry.call("needs.x") == "back"
+    assert "dependency_unloaded" not in host.status["needs"]
+
+
+@pytest.mark.asyncio
+async def test_bind_hooks_follow_reload_and_disable():
+    stored = {"bound": {"greeting": "one"}}
+    host, cands = _host(stored)
+    host.load(cands)
+    await host.start()
+    log = []
+    host.add_bind_hook(lambda p: log.append(("bind", p.NAMESPACE, id(p))),
+                       lambda p: log.append(("unbind", p.NAMESPACE, id(p))))
+    first = host.plugin("bound")
+    assert ("bind", "bound", id(first)) in log
+    log.clear()
+    assert (await host.reload("bound"))["ok"]
+    second = host.plugin("bound")
+    assert log == [("unbind", "bound", id(first)), ("bind", "bound", id(second))]
+    log.clear()
+    needs = host.plugin("needs")
+    assert (await host.disable("needs"))["ok"]
+    assert log == [("unbind", "needs", id(needs))]
+
+
+def test_plugin_reload_and_disable_are_destructive():
+    from rook.core import authz
+    for cap in ("worker.plugin.reload", "worker.plugin.disable",
+                "hub.plugin.reload", "hub.plugin.disable"):
+        assert authz.effective_tier(cap) == "admin", cap
+        assert "destructive" in authz.builtin_tags(cap), cap
+
+
+@pytest.mark.asyncio
+async def test_selfupdate_reload_does_not_stack_binary_handlers():
+    from types import SimpleNamespace
+    from rook.worker.plugins.selfupdate import SelfUpdatePlugin
+    handlers = []
+    worker = SimpleNamespace(
+        register_binary_handler=lambda h: handlers.append(h) if h not in handlers else None,
+        unregister_binary_handler=lambda h: handlers.remove(h) if h in handlers else None)
+    for _ in range(3):   # boot, then two reloads: bind new, stop old
+        p = SelfUpdatePlugin()
+        p.bind_worker(worker)
+        await p.stop()
+    p = SelfUpdatePlugin()
+    p.bind_worker(worker)
+    assert len(handlers) == 1 and handlers[0] == p._ota_binary

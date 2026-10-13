@@ -122,8 +122,10 @@ class HubNode:
         # (the same as worker.plugin.*). Not persisted: hub plugins turn on
         # and off through their settings; these are for a live fix or retry.
         reg.register("hub.plugin.enable", self._plugin_enable, meta=CapMeta(risk="admin"))
-        reg.register("hub.plugin.disable", self._plugin_disable, meta=CapMeta(risk="admin"))
-        reg.register("hub.plugin.reload", self._plugin_reload, meta=CapMeta(risk="admin"))
+        reg.register("hub.plugin.disable", self._plugin_disable,
+                     meta=CapMeta(risk="admin", tags=("destructive",)))
+        reg.register("hub.plugin.reload", self._plugin_reload,
+                     meta=CapMeta(risk="admin", tags=("destructive",)))
         self.host.load(self.host.discover(package, entry_points=entry_points))
         # bind_host runs for these and for any plugin enabled/reloaded later.
         self.host.set_binder(self._bind_plugin)

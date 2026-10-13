@@ -88,8 +88,9 @@ _CORE_SPEC = {
     # worker core (rook.worker.core, rook.worker.admin)
     "caps.describe": "R", "worker.description_get": "R", "worker.description_set": "W",
     "worker.settings_report": "R",
-    "worker.plugin.list": "R", "worker.plugin.enable": "A", "worker.plugin.disable": "A",
-    "worker.plugin.reload": "A",
+    # disable/reload stop a running plugin (its jobs, streams, connections).
+    "worker.plugin.list": "R", "worker.plugin.enable": "A", "worker.plugin.disable": "A d",
+    "worker.plugin.reload": "A d",
     "customcap.list": "R", "customcap.add": "A", "customcap.remove": "A",
     # A.2: hub tools authorized as caps on the reserved worker `rook`
     "identity.whoami": "R", "band.workers": "R", "band.caps": "R",
@@ -101,7 +102,7 @@ _CORE_SPEC = {
     "token.admin": "A", "band.admin": "A d", "band.deauth": "A d", "member.admin": "A",
     "guidance.write": "A",
     # hub core (rook.hub.node)
-    "hub.plugin.enable": "A", "hub.plugin.disable": "A", "hub.plugin.reload": "A",
+    "hub.plugin.enable": "A", "hub.plugin.disable": "A d", "hub.plugin.reload": "A d",
     # The Android app's native caps (android/.../rook_android/plugins). The
     # app adds that package to its own floor, but the hub and Python workers
     # do not ship it, so without these rows the hub would take an Android
