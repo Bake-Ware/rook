@@ -21,6 +21,21 @@ for peers at or above them stays. A "build" is the worker/hub build number
 Never covered by these numbers, so always kept: the ESP32 and RP2040
 firmware (frozen; announces without facts, tiers or authz), and code that
 reads files or databases written by an older release.
+
+Feature floors above ``MIN_WORKER_BUILD``. Some dashboard features need a
+newer worker than the peer floor; for those the hub checks the worker's
+announced caps, never its build number:
+
+* The Sessions dashboard (Work > Sessions, ``rook/remote/work_web.py``)
+  reads ``sessions.*`` (``sessions.list``/``follow``/``send``/``stop``),
+  which pyz workers have from build 364. Older workers fall back to
+  ``work.sessions`` (records built on the hub, read-only, no follow/stop).
+  What is deployed decides how much of that fallback matters: the pyz
+  workers are at build 401 (all past 364), and the only worker below it is
+  the 0.4.1 APK's embedded build 142, which does not self-update. Nothing
+  deployed sits between 143 and 363, so no code is kept for workers in that
+  range specifically; the ``work.sessions`` fallback is kept for build 142
+  and goes when ``MIN_WORKER_BUILD`` passes 364.
 """
 
 MIN_WORKER_BUILD = 142

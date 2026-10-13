@@ -205,6 +205,11 @@ Preparation for public use.
 - A database opened with a mode (the vault, enrollment, and every other 0600
   store) gets the same mode on its `-wal`/`-shm`/`-journal` files: existing
   ones are chmodded on open and new ones are created under a matching umask.
+- `rook/core/compat.py` documents that the Sessions dashboard needs worker
+  build 364+ (`sessions.*`): deployed pyz workers are at 401, and the 0.4.1
+  APK's embedded worker (142) gets the read-only `work.sessions` fallback,
+  which stays until the peer floor passes 364. No deployed worker sits
+  between 143 and 363.
 
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps
