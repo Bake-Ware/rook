@@ -1079,7 +1079,9 @@ def test_bundle_builders_require_the_route_module(tmp_path):
     bbw = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(bbw)
     assert "route.py" in bbw.REQUIRED_TELESTHETE
-    bbw.check_telesthete(bbw.TELESTHETE_ROOT)             # the installed one is new enough
+    # The installed one is new enough. (Its revision is checked by builds;
+    # the dev sibling checkout may legitimately be elsewhere.)
+    bbw.check_telesthete(bbw.TELESTHETE_ROOT, verify_rev=False)
     (tmp_path / "protocol").mkdir()
     for m in bbw.REQUIRED_TELESTHETE[:-1]:
         (tmp_path / "protocol" / m).write_text("")
@@ -1090,3 +1092,54 @@ def test_bundle_builders_require_the_route_module(tmp_path):
     docker = (root / "Dockerfile").read_text(encoding="utf-8")
     rev = pin.split("telesthete@")[1].split('"')[0]
     assert len(rev) == 40 and f"TELESTHETE_REV={rev}" in docker
+    assert bbw.pinned_telesthete_rev(root / "pyproject.toml") == rev
+
+
+def _bbw():
+    import importlib.util
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location("bbw3", root / "rook/remote/build_band_worker.py")
+    bbw = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bbw)
+    return bbw
+
+
+def test_bundle_builders_require_the_pinned_telesthete_checkout(tmp_path, monkeypatch):
+    import shutil
+    import subprocess
+    if shutil.which("git") is None:
+        pytest.skip("no git")
+    bbw = _bbw()
+    checkout = tmp_path / "telesthete"
+    pkg = checkout / "telesthete"
+    (pkg / "protocol").mkdir(parents=True)
+    for m in bbw.REQUIRED_TELESTHETE:
+        (pkg / "protocol" / m).write_text("", encoding="utf-8")
+
+    def git(*a):
+        return subprocess.check_output(
+            ["git", "-C", str(checkout), "-c", "user.email=t@example.com",
+             "-c", "user.name=t", *a], text=True).strip()
+
+    git("init", "-q")
+    git("add", "-A")
+    git("commit", "-q", "-m", "one")
+    first = git("rev-parse", "HEAD")
+    (pkg / "x.py").write_text("", encoding="utf-8")
+    git("add", "-A")
+    git("commit", "-q", "-m", "two")
+    head = git("rev-parse", "HEAD")
+    monkeypatch.delenv(bbw.ANY_REV_ENV, raising=False)
+    bbw.check_telesthete(pkg, pin=head)               # at the pin
+    bbw.check_telesthete(pkg, pin=head[:12])          # short pins work too
+    with pytest.raises(RuntimeError, match=f"pins {first[:12]}"):
+        bbw.check_telesthete(pkg, pin=first)
+    bbw.check_telesthete(pkg, pin=first, verify_rev=False)
+    monkeypatch.setenv(bbw.ANY_REV_ENV, "1")
+    bbw.check_telesthete(pkg, pin=first)              # warns only
+    # A pip install (not the top of a git checkout) is checked for modules only.
+    monkeypatch.delenv(bbw.ANY_REV_ENV)
+    plain = tmp_path / "site" / "telesthete"
+    shutil.copytree(pkg, plain)
+    bbw.check_telesthete(plain, pin=first)
