@@ -226,10 +226,6 @@ def test_hubdeploy_dropins_stay_world_readable(tmp_path):
     assert p.read_text() == "[Service]\n" and _mode(p) == 0o644
 
 
-def _mode(path) -> int:
-    return stat.S_IMODE(os.stat(path).st_mode)
-
-
 @pytest.mark.skipif(os.name != "posix", reason="POSIX modes")
 def test_open_db_mode_covers_the_wal_sidecars(tmp_path):
     """vault.db was 0600 but its -wal/-shm, which hold the same rows, could
@@ -290,3 +286,36 @@ def test_vault_sidecars_are_private(tmp_path):
     os.chmod(str(path) + "-wal", 0o644)   # as an older release left it
     Vault(str(path))
     assert _mode(str(path) + "-wal") == 0o600
+
+
+@pytest.mark.parametrize("err", ["EBUSY", "EXDEV"])
+def test_atomic_write_falls_back_in_place_when_the_file_cannot_be_replaced(tmp_path, monkeypatch, err):
+    """ROOK_SETUP_PATH bind-mounted as a single file: os.replace onto a mount
+    point raises EBUSY, so setup.json (the band PSK) could not be saved."""
+    import errno as _errno
+    from rook.remote import setup_store
+    p = tmp_path / "setup.json"
+    p.write_text("{}", encoding="utf-8")
+    os.chmod(p, 0o644)
+    inode = os.stat(p).st_ino
+    monkeypatch.setenv("ROOK_SETUP_PATH", str(p))
+
+    def replace(src, dst):
+        raise OSError(getattr(_errno, err), os.strerror(getattr(_errno, err)), str(dst))
+    monkeypatch.setattr(coredb.os, "replace", replace)
+    synced = []
+    real_fsync = os.fsync
+    monkeypatch.setattr(coredb.os, "fsync", lambda fd: (synced.append(fd), real_fsync(fd)))
+    setup_store.save({"band_name": "home", "band_psk": "psk-one"})
+    assert json.loads(p.read_text(encoding="utf-8"))["band_psk"] == "psk-one"
+    assert os.stat(p).st_ino == inode          # the same (mounted) file, rewritten
+    if os.name == "posix":
+        assert _mode(p) == 0o600
+    assert _no_temp(tmp_path) and len(synced) >= 2   # temp file and the in-place write
+
+    # Other errors still surface.
+    monkeypatch.setattr(coredb.os, "replace",
+                        lambda s, d: (_ for _ in ()).throw(PermissionError(13, "denied")))
+    with pytest.raises(PermissionError):
+        coredb.atomic_write_text(p, "x")
+    assert json.loads(p.read_text(encoding="utf-8"))["band_psk"] == "psk-one" and _no_temp(tmp_path)

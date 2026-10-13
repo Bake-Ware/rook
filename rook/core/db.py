@@ -19,6 +19,7 @@ This module is stdlib-only: it ships inside the worker bundle.
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import sqlite3
@@ -186,7 +187,9 @@ def atomic_write_text(path, text: str, mode: int | None = 0o600, *,
                       encoding: str = "utf-8", fsync: bool = True) -> None:
     """Replace ``path`` with ``text`` so readers see the old or the new file,
     never a torn one: write a temp file beside it, then ``os.replace``.
-    ``mode`` is applied to the new file (``None`` keeps the temp file's 0600)."""
+    ``mode`` is applied to the new file (``None`` keeps the temp file's 0600).
+    Where the path cannot be replaced (a bind-mounted single file: EBUSY or
+    EXDEV) it is rewritten in place and fsync'd instead, keeping ``mode``."""
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=f".{p.name}.", suffix=".tmp", dir=str(p.parent))
@@ -201,13 +204,41 @@ def atomic_write_text(path, text: str, mode: int | None = 0o600, *,
                 os.chmod(tmp, mode)
             except OSError:
                 pass
-        os.replace(tmp, p)
+        try:
+            os.replace(tmp, p)
+        except OSError as e:
+            if e.errno not in _IN_PLACE_ERRNOS:
+                raise
+            # A single file bind-mounted into a container (ROOK_SETUP_PATH
+            # in compose) cannot be replaced (EBUSY), nor can a file across
+            # a mount boundary (EXDEV): write it in place instead. Not atomic,
+            # so fsync'd; the temp file goes.
+            _write_in_place(p, text, mode, encoding)
+            os.unlink(tmp)
     except BaseException:
         try:
             os.unlink(tmp)
         except OSError:
             pass
         raise
+
+
+#: os.replace failures that mean "this path cannot be swapped", not "broken".
+_IN_PLACE_ERRNOS = {errno.EBUSY, errno.EXDEV}
+
+
+def _write_in_place(p: Path, text: str, mode: int | None, encoding: str) -> None:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0)
+    fd = os.open(str(p), flags, mode if mode is not None else 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(text.encode(encoding))
+        f.flush()
+        os.fsync(f.fileno())
+    if mode is not None:
+        try:
+            os.chmod(str(p), mode)
+        except OSError:
+            pass
 
 
 def atomic_write_json(path, obj: Any, mode: int | None = 0o600, **dumps: Any) -> None:

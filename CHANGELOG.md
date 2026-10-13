@@ -210,6 +210,9 @@ Preparation for public use.
   APK's embedded worker (142) gets the read-only `work.sessions` fallback,
   which stays until the peer floor passes 364. No deployed worker sits
   between 143 and 363.
+- Atomic state writes fall back to an fsync'd in-place write when the file
+  cannot be replaced (`EBUSY`/`EXDEV`), so `setup.json` saves again when
+  `ROOK_SETUP_PATH` is a single bind-mounted file. Modes are kept.
 
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps
