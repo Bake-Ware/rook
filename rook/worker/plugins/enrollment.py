@@ -10,7 +10,6 @@ import base64
 import hashlib
 import json
 import time
-from urllib.parse import urlsplit
 
 from ..plugin import Plugin,capability
 from .. import enroll
@@ -26,9 +25,7 @@ class EnrollmentPlugin(Plugin):
     @capability('enrollment_prepare', risk='admin')
     def prepare(self,server):
         """Start device enrollment with the HTTPS enrollment ``server``: make a device key and CSR."""
-        parsed=urlsplit(server)
-        if parsed.scheme!='https' or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in ('','/'):
-            raise ValueError('Use the HTTPS origin of the enrollment server.')
+        enroll.check_origin(server,'Use the HTTPS origin of the enrollment server.')
         saved=enroll.load()
         if saved.get('device'):
             return self.status()

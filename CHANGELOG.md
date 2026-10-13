@@ -245,6 +245,15 @@ Preparation for public use.
   is not an http(s) URL or host keeps `pikvm.*` unloaded with a warning.
   Before, it loaded and silently talked to `https://localhost`.
 
+### First-run onboarding
+- One public base URL (`rook/remote/public_url.py`) for installers, one-liners,
+  the account origin and the update manifest. `--domain`/`ROOK_DOMAIN` may now
+  carry a scheme (`http://192.0.2.10:7005`); without one it stays `https`
+  except when it names this dashboard's own port (what `scripts/local-hub.sh`
+  passes) or port 80, so a LAN quickstart hub serves `http://` installers and a
+  public hub's scripts are unchanged. Workers accept `--enroll http://` only
+  for a non-public IP literal (LAN, loopback, tailnet).
+
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps
   `sessions.list`, `sessions.follow`, `sessions.send` and `sessions.stop`

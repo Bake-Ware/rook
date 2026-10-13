@@ -1,4 +1,9 @@
-"""Interactive, HTTPS-only config enrollment without a PSK on the command line."""
+"""Interactive config enrollment without a PSK on the command line.
+
+HTTPS, except a hub addressed by a non-public (LAN, loopback, tailnet) IP literal
+(a LAN quickstart hub serves its dashboard over plain HTTP; the installer that
+runs this already came over the same connection)."""
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -15,10 +20,27 @@ def storage_path():
     return Path(os.environ.get('ROOK_ENROLLMENT_FILE',str(worker_state_path('enrollment.json')))).expanduser()
 
 
-def post(server,path,data):
+def _lan_host(host):
+    try:
+        ip=ipaddress.ip_address(host)
+    except ValueError:
+        return host=='localhost'
+    # Not globally routable: RFC 1918, loopback, link-local, CGNAT/tailnet.
+    return not ip.is_global and not ip.is_multicast and not ip.is_unspecified
+
+
+def check_origin(server,message='Use the HTTPS origin of your Rook server.'):
+    """Raise unless ``server`` is a bare origin this worker may enroll with:
+    ``https://host[:port]``, or ``http://`` to a non-public IP literal. A
+    public name never gets plain HTTP, so a public hub stays HTTPS-only."""
     url=urlsplit(server)
-    if url.scheme!='https' or not url.hostname or url.username or url.password or url.query or url.fragment or url.path not in ('','/'):
-        raise ValueError('Use the HTTPS origin of your Rook server.')
+    ok_scheme=url.scheme=='https' or (url.scheme=='http' and url.hostname is not None and _lan_host(url.hostname))
+    if not ok_scheme or not url.hostname or url.username or url.password or url.query or url.fragment or url.path not in ('','/'):
+        raise ValueError(message)
+
+
+def post(server,path,data):
+    check_origin(server)
     request=Request(server.rstrip('/')+path,data=json.dumps(data).encode(),headers={'Content-Type':'application/json','User-Agent':'rook-enrollment/1'})
     # Do not forward enrollment grants through HTTP redirects.
     import urllib.request

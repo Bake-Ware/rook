@@ -71,10 +71,28 @@ class AccountWeb:
         self.google=GoogleAuth()
         from .devices import DeviceStore
         self.devices=DeviceStore(self.store)
-        self.origin='https://'+server.domain
-        self.callback=self.origin+'/auth/google/callback'
+        self._origin=None
         self.google_web_login=os.environ.get('ROOK_GOOGLE_WEB_LOGIN','1')=='1'
         self._roster_served={}
+
+    @property
+    def origin(self):
+        """The dashboard's public origin (rook.remote.public_url): what
+        browsers send as Origin, and the base of every link handed out. Read
+        live, so a Settings-page domain change applies without a restart."""
+        if self._origin:
+            return self._origin
+        base=getattr(self.server,'public_base',None)
+        return base if isinstance(base,str) and base else 'https://'+self.server.domain
+
+    @origin.setter
+    def origin(self,value):
+        # Tests and embedders pin it to the test server's own URL.
+        self._origin=value
+
+    @property
+    def callback(self):
+        return self.origin+'/auth/google/callback'
 
     def handles(self,path):
         return path=='/account' or path.startswith('/account/') or path.startswith('/auth/')

@@ -127,7 +127,7 @@ if (-not $isAdmin) {{
     Write-Host "[r00k] not running elevated - relaunching as Administrator (accept the UAC prompt)..."
     try {{
         $tmp = Join-Path $env:TEMP "rook-worker-install.ps1"
-        Invoke-WebRequest -Uri "https://{domain}/worker?os=windows" -OutFile $tmp
+        Invoke-WebRequest -Uri "{base}/worker?os=windows" -OutFile $tmp
         $p = Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $tmp) -Verb RunAs -Wait -PassThru
         Remove-Item $tmp -ErrorAction SilentlyContinue
         exit $p.ExitCode
@@ -194,7 +194,7 @@ if (-not $py) {{
         Write-Host "[r00k] ERROR: Python install did not produce a working interpreter."
         Write-Host "[r00k] If running 'python' opens the Microsoft Store, disable the alias:"
         Write-Host "[r00k]   Settings -> Apps -> Advanced app settings -> App execution aliases -> turn OFF python.exe/python3.exe"
-        Write-Host "[r00k] then re-run: iex (irm `"https://{domain}/worker?os=windows`")"
+        Write-Host "[r00k] then re-run: iex (irm `"{base}/worker?os=windows`")"
         exit 1
     }}
 }}
@@ -229,7 +229,7 @@ if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}
 # Download band-worker bundle
 $pyz = "$env:USERPROFILE\\.rook-band-worker\\band-worker.pyz"
 New-Item -ItemType Directory -Force -Path (Split-Path $pyz) | Out-Null
-Invoke-WebRequest -Uri "https://{domain}/band-worker.pyz" -OutFile $pyz
+Invoke-WebRequest -Uri "{base}/band-worker.pyz" -OutFile $pyz
 & $vpy $pyz --install-cli
 if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}
 
@@ -247,7 +247,7 @@ Start-Sleep -Seconds 1
 Write-Host "[r00k] HID backend: native Windows SendInput (no extra setup needed)."
 
 # Register as Scheduled Task so worker restarts at every logon  (band: {band_name})
-$workerArgs = "`"$pyz`" --hub {hub_public} --ws --psk {band_psk} --name $env:COMPUTERNAME --update-url https://{domain}/band-worker.json"
+$workerArgs = "`"$pyz`" --hub {hub_public} --ws --psk {band_psk} --name $env:COMPUTERNAME --update-url {base}/band-worker.json"
 $action = New-ScheduledTaskAction -Execute $vpyw -Argument $workerArgs
 $trigger = New-ScheduledTaskTrigger -AtLogon
 $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit 0
@@ -455,7 +455,7 @@ echo "[r00k] installing worker dependencies..."
 # Download band-worker bundle
 PYZ="$HOME/.rook-band-worker/band-worker.pyz"
 mkdir -p "$HOME/.rook-band-worker"
-curl -fsSL https://{domain}/band-worker.pyz -o "$PYZ"
+curl -fsSL {base}/band-worker.pyz -o "$PYZ"
 chmod +x "$PYZ"
 "$VPY" "$PYZ" --install-cli
 
@@ -467,7 +467,7 @@ if [ "$IS_TERMUX" = "1" ]; then
     [ -n "$MODEL" ] && WORKER_NAME="$MODEL"
 fi
 # band: {band_name}
-WORKER_CMD="$VPY $PYZ --hub {hub_public} --ws --psk {band_psk} --name $WORKER_NAME --update-url https://{domain}/band-worker.json"
+WORKER_CMD="$VPY $PYZ --hub {hub_public} --ws --psk {band_psk} --name $WORKER_NAME --update-url {base}/band-worker.json"
 
 # Swap in the new worker. CRITICAL: when this installer is launched *by the
 # running worker* (a band-driven update), this script shares the worker's
@@ -664,7 +664,7 @@ echo "[rook] done."
 
 # `iex (irm https://<host>/install?os=windows)` — install the `rook` band CLI
 # (the terminal control panel) on Windows. The Linux path is `.../install | bash`;
-# this is its PowerShell equivalent. Uses .replace("__DOMAIN__", …) rather than
+# this is its PowerShell equivalent. Uses .replace("__BASE__", …) rather than
 # str.format so the PowerShell braces don't need doubling.
 PS_CLI_BOOTSTRAP = r'''# R00K Band CLI (rook) installer - Windows
 $ErrorActionPreference = "Stop"
@@ -733,7 +733,7 @@ Write-Host "[rook] installing dependency: windows-curses ..."
 
 # Download the standalone CLI payload.
 $rookpy = "$root\rook.py"
-Invoke-WebRequest -Uri "https://__DOMAIN__/rook.py" -OutFile $rookpy
+Invoke-WebRequest -Uri "__BASE__/rook.py" -OutFile $rookpy
 
 # Launcher shim on PATH: `rook` -> venv python running the CLI.
 $bin = "$root\bin"
@@ -754,7 +754,7 @@ if (($env:PATH -split ';') -notcontains $bin) { $env:PATH = "$env:PATH;$bin" }
 if ($env:ROOK_WEB_PASS) {
     $cfgdir = "$env:USERPROFILE\.config\rook"
     New-Item -ItemType Directory -Force -Path $cfgdir | Out-Null
-    $u = if ($env:ROOK_WEB_URL) { $env:ROOK_WEB_URL } else { "https://__DOMAIN__" }
+    $u = if ($env:ROOK_WEB_URL) { $env:ROOK_WEB_URL } else { "__BASE__" }
     $usr = if ($env:ROOK_WEB_USER) { $env:ROOK_WEB_USER } else { "__WEB_USER__" }
     "# rook band - dashboard connection`nurl=$u`nuser=$usr`npass=$($env:ROOK_WEB_PASS)" |
         Set-Content -Path "$cfgdir\band.conf" -Encoding UTF8
@@ -1023,6 +1023,7 @@ class CombinedServer:
             self._ctor_settings, explicit, _s, _ds.stored_values(self._settings_store))
         self.domain, self.hub_public, self.band_name = (
             _vals["domain"], _vals["hub_public"], _vals["band_name"])
+        self._apply_domain(self.domain)
         for _c in self._setting_conflicts:
             log.warning("setting %s: %s", _c["key"], _c["note"])
         self._settings_checked = 0.0
@@ -1336,7 +1337,7 @@ class CombinedServer:
         self.band_name = saved["band_name"]
         self.band_psk = saved["band_psk"]
         self.hub_public = saved["hub_public"]
-        self.domain = saved["pyz_domain"]
+        self._apply_domain(saved["pyz_domain"])
         self._enrollment.import_config(hub=self.hub_public)
         await self._sync_enrollment()
         log.info("Setup wizard: band '%s' configured (hub=%s)", self.band_name, self.hub_public)
@@ -1382,13 +1383,29 @@ class CombinedServer:
             setup_store.load(), _ds.stored_values(self._settings_store))
         self.domain, self.hub_public, self.band_name = (
             vals["domain"], vals["hub_public"], vals["band_name"])
+        self._apply_domain(self.domain)
+
+    def _apply_domain(self, value: str) -> None:
+        """Split the configured domain into ``self.domain`` (host[:port], what
+        installers validate and embed) and the scheme behind
+        :attr:`public_base` (rook.remote.public_url)."""
+        from .public_url import split_domain
+        self._domain_setting = value
+        self.public_scheme, self.domain = split_domain(value, self.port)
+
+    @property
+    def public_base(self) -> str:
+        """``http(s)://host[:port]`` browsers and workers use to reach this
+        dashboard: the one base for installers, one-liners, the account
+        origin and the update manifest URL."""
+        return f"{self.public_scheme}://{self.domain}"
 
     def _report_settings(self) -> None:
         from . import dashboard_settings as _ds
         _ds.report(self._settings_store, explicit=self._explicit,
                    sources=self._setting_sources, conflicts=self._setting_conflicts,
                    chat_db=getattr(self, "_chat_db", ""), started_at=self._started_at,
-                   values={"domain": self.domain, "hub_public": self.hub_public,
+                   values={"domain": self._domain_setting, "hub_public": self.hub_public,
                            "band_name": self.band_name}, argv=self._argv)
 
     async def _sync_enrollment(self) -> None:
@@ -1508,23 +1525,24 @@ class CombinedServer:
                 pass
 
         # CLI — show instructions
+        base = self.public_base
         text = f"""
   R ☠ ☠ K  Band Worker Installer
   =================================
 
   Linux / Mac:
-    curl -fsSL https://{self.domain}/worker | bash
+    curl -fsSL {base}/worker | bash
 
   Windows (PowerShell, on Windows only):
-    iex (irm https://{self.domain}/worker)
+    iex (irm {base}/worker)
 
   Force a variant (if auto-detect guesses wrong):
-    curl -fsSL "https://{self.domain}/worker?os=unix" | bash
-    iex (irm "https://{self.domain}/worker?os=windows")
+    curl -fsSL "{base}/worker?os=unix" | bash
+    iex (irm "{base}/worker?os=windows")
 
   Stand up a hub (band relay):
-    curl -fsSL https://{self.domain}/hub | bash            # wizard
-    curl -fsSL https://{self.domain}/hub | bash -s -- --yes # unattended
+    curl -fsSL {base}/hub | bash            # wizard
+    curl -fsSL {base}/hub | bash -s -- --yes # unattended
 
   Endpoints:
     /install          unified installer (worker | cli | both)
@@ -1551,7 +1569,8 @@ class CombinedServer:
             except JoinDenied as e:
                 return web.Response(text=str(e), status=403, headers=headers)
         ua = request.headers.get("User-Agent", "").lower()
-        kw = {"domain": self.domain, "band_psk": band["psk"],
+        base = self.public_base
+        kw = {"domain": self.domain, "base": base, "band_psk": band["psk"],
               "hub_public": band["hub"] or self.hub_public,
               "band_name": band["name"].replace("\r", " ").replace("\n", " ")}
         # These fields enter shell/PowerShell command lines. Reject unsupported
@@ -1577,20 +1596,20 @@ class CombinedServer:
         # Downloading an installer never grants a reusable band PSK. The worker
         # generates its own key and redeems the short code (or browser approval).
         script = (PS_BOOTSTRAP if want_ps else BASH_BOOTSTRAP).format(**kw)
-        script = script.replace(f'https://{self.domain}/band-worker.pyz',
-                                f'https://{self.domain}/band-worker-enrollment.pyz')
+        script = script.replace(f'{base}/band-worker.pyz',
+                                f'{base}/band-worker-enrollment.pyz')
         script = script.replace(f'--hub {kw["hub_public"]} --ws --psk {kw["band_psk"]}', '--enrolled --ws')
         # ROOK_HUB_PUBLIC_WS_URL: point new workers at the relay's native WS
         # listener instead of this process's /band bridge (core spec 2.6).
         ws_url = public_ws_url()
         if ws_url:
             script = script.replace('--enrolled --ws', f'--enrolled --ws --ws-url {ws_url}')
-        script = script.replace(f' --update-url https://{self.domain}/band-worker.json', '')
-        enroll_args = f'--enroll https://{self.domain}' + (f' --pair-code {code}' if code else '')
+        script = script.replace(f' --update-url {base}/band-worker.json', '')
+        enroll_args = f'--enroll {base}' + (f' --pair-code {code}' if code else '')
         if want_ps:
             query = 'login=google' if account_login else f'band={code}'
-            script = script.replace(f'https://{self.domain}/worker?os=windows',
-                                    f'https://{self.domain}/worker?{query}&os=windows')
+            script = script.replace(f'{base}/worker?os=windows',
+                                    f'{base}/worker?{query}&os=windows')
             script = script.replace('# Stop any existing worker FIRST',
                                     f'& $vpy $pyz {enroll_args}\nif ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}\n\n# Stop any existing worker FIRST')
         else:
@@ -2335,12 +2354,12 @@ class CombinedServer:
             on_windows = ("windows" in ua) or ("win32" in ua) or ("win64" in ua)
             want_ps = is_ps and on_windows
         if want_ps:
-            script = (PS_CLI_BOOTSTRAP.replace("__DOMAIN__", self.domain)
+            script = (PS_CLI_BOOTSTRAP.replace("__BASE__", self.public_base)
                       .replace("__WEB_USER__", self._installer_web_user()))
             return web.Response(text=script, content_type="text/plain",
                                 headers={"Content-Disposition": 'inline; filename="rook-cli-install.ps1"',
                                          "Cache-Control": "no-store"})
-        base = f"https://{self.domain}"
+        base = self.public_base
         code = request.query.get("band", "")
         if code and not _re.fullmatch(r"[a-z0-9]{6}", code):
             return web.Response(text="invalid pairing code", status=400)
@@ -2354,7 +2373,7 @@ class CombinedServer:
         """`curl -fsSL https://<host>/hub | bash` — stand up a telesthete-hub
         (the band relay) with a short wizard, hardened systemd unit, and auto
         dependency install. `bash -s -- --yes` (or env vars) for unattended."""
-        base = f"https://{self.domain}"
+        base = self.public_base
         script = _HUB_INSTALL_SCRIPT.replace("__BASE__", base)
         return web.Response(text=script, content_type="text/x-shellscript",
                             headers={"Content-Disposition": 'inline; filename="hub-install.sh"',
@@ -2401,7 +2420,9 @@ def _cli_main() -> None:
     ap.add_argument("--port", type=int, default=int(env("ROOK_PORT", "7005")),
                     help="HTTP listen port (ROOK_PORT, default 7005)")
     ap.add_argument("--domain", default=env("ROOK_DOMAIN", "hub.example.com"),
-                    help="public host[:port] of this dashboard, used in installer URLs (ROOK_DOMAIN)")
+                    help="public host[:port] of this dashboard, or a full http(s):// URL, used "
+                         "in installer URLs (ROOK_DOMAIN). Without a scheme it is https, except "
+                         "host:<--port> or :80, which this plain-HTTP dashboard serves itself")
     ap.add_argument("--psk", default=env("ROOK_BAND_PSK", ""),
                     dest="band_psk", help="band pre-shared key (ROOK_BAND_PSK; "
                                           "blank = configure via the /setup wizard)")
