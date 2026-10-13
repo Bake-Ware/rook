@@ -715,6 +715,41 @@ async def test_bad_drop_descriptor_is_an_error():
 
 
 @pytest.mark.asyncio
+async def test_caller_timeout_bounds_a_large_reply_pull(band_factory, monkeypatch, tmp_path):
+    """The call's timeout covers the Drop pull too (it used to be stretched
+    to 15 s + size/256 KB). A pull that can't finish in what is left fails
+    with a clear timeout error, promptly, and leaves no state behind."""
+    band = await band_factory(routing=True)
+    w = await band.worker(monkeypatch, tmp_path)
+    c = await band.client()
+    await band.ready(c, w)
+    # Lose every Drop CHUNK the worker sends: the pull can never complete.
+    w._reply_drops._send = lambda *a, **k: asyncio.sleep(0)
+    loop = asyncio.get_running_loop()
+    t0 = loop.time()
+    r = await c.call("big.blob", {"n": 200_000}, target=w.worker_id, timeout=1.5)
+    took = loop.time() - t0
+    assert took < 3.0, took
+    assert r["ok"] is False and r["error"].startswith("timeout: large reply")
+    assert c._drop_rx == {} and c._drop_locks == {}
+
+
+@pytest.mark.asyncio
+async def test_pull_with_no_time_left_fails_at_once_and_prunes_its_lock():
+    c = BandClient(psk=PSK)
+    desc = {"id": 0x8123, "size": 5000, "sha256": "0" * 64}
+    r = await c._pull_reply({"id": "x", "from": "w", "ok": True, "drop": desc}, 0.0)
+    assert r["ok"] is False and r["error"].startswith("timeout:")
+    assert c._drop_locks == {} and c._drop_rx == {}
+    # A pull waiting behind another of the same drop_id times out cleanly too.
+    lock = asyncio.Lock()
+    await lock.acquire()
+    c._drop_locks[0x8123] = [lock, 1]
+    r = await c._pull_reply({"id": "y", "from": "w", "ok": True, "drop": desc}, 0.05)
+    assert r["error"].startswith("timeout:") and c._drop_locks[0x8123][1] == 1
+
+
+@pytest.mark.asyncio
 async def test_reply_server_expires_and_bounds_memory():
     now = [0.0]
     sent = []
