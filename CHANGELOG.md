@@ -273,6 +273,9 @@ Preparation for public use.
   beside the script still wins and is never rebuilt automatically.
   `/band-worker-enrollment.pyz` serves the same bundle unless an operator drops
   a separate one.
+- `scripts/local-hub.sh` finds a `cargo install`ed relay in `~/.cargo/bin`
+  (`$CARGO_HOME/bin`) when it is not on PATH yet, passes an explicit
+  `http://` dashboard domain, and prints the Install-a-worker URL.
 
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps

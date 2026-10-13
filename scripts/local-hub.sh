@@ -6,7 +6,7 @@
 # $ROOK_DATA_DIR/quickstart.env (mode 600) and reuses them afterwards.
 #
 # Needs: `pip install` of this repo (rook-dashboard / rook-mcp on PATH) and
-# telesthete-hub on PATH (see README). Environment knobs:
+# telesthete-hub on PATH or in ~/.cargo/bin (see README). Environment knobs:
 #   ROOK_DATA_DIR  state directory             (default ./rook-data)
 #   BIND           address all three listen on (default 127.0.0.1; 0.0.0.0 for LAN workers)
 #   RELAY_PORT     UDP relay                   (default 7474)
@@ -21,14 +21,24 @@ DASHBOARD_PORT="${DASHBOARD_PORT:-7005}"
 MCP_PORT="${MCP_PORT:-8765}"
 PYTHON="${PYTHON:-python3}"
 
-for cmd in telesthete-hub rook-dashboard rook-mcp; do
-  if ! command -v "$cmd" >/dev/null 2>&1; then
-    echo "missing $cmd on PATH." >&2
-    echo "  relay: cargo install --locked --git https://github.com/Bake-Ware/telesthete telesthitium" >&2
-    echo "  rook:  pip install -e .   (from this repo, inside a virtualenv)" >&2
-    exit 1
-  fi
+# rustup adds ~/.cargo/bin to PATH only for new login shells, so a relay
+# just installed with `cargo install` is often not on PATH yet.
+HUB_BIN="$(command -v telesthete-hub 2>/dev/null || true)"
+if [ -z "$HUB_BIN" ] && [ -x "${CARGO_HOME:-$HOME/.cargo}/bin/telesthete-hub" ]; then
+  HUB_BIN="${CARGO_HOME:-$HOME/.cargo}/bin/telesthete-hub"
+fi
+
+missing=""
+[ -n "$HUB_BIN" ] || missing=" telesthete-hub"
+for cmd in rook-dashboard rook-mcp; do
+  command -v "$cmd" >/dev/null 2>&1 || missing="$missing $cmd"
 done
+if [ -n "$missing" ]; then
+  echo "missing on PATH:$missing" >&2
+  echo "  relay: cargo install --locked --git https://github.com/Bake-Ware/telesthete telesthitium" >&2
+  echo "  rook:  pip install -e .   (from this repo, inside a virtualenv)" >&2
+  exit 1
+fi
 
 mkdir -p "$DATA"
 chmod 700 "$DATA"
@@ -59,11 +69,15 @@ trap 'trap - EXIT INT TERM; kill 0 2>/dev/null; wait 2>/dev/null' EXIT INT TERM
 
 # Rook peers keep alive every 20s, so the relay must hold idle peers longer.
 HUB_BIND="$BIND:$RELAY_PORT" HUB_PEER_TTL_SECS=60 HUB_PRUNE_SECS=10 RUST_LOG="${RUST_LOG:-warn}" \
-  telesthete-hub &
+  "$HUB_BIN" &
 sleep 1
+# The dashboard serves plain HTTP here, so its installer links say http://.
+# Workers reach the relay through the MCP server's WebSocket bridge
+# (--hub-public, ws:// on a non-443 port): one TCP port to allow, and the
+# same path a public hub uses behind its TLS proxy.
 rook-dashboard --bind "$BIND" --port "$DASHBOARD_PORT" \
   --hub-host 127.0.0.1 --hub-port "$RELAY_PORT" \
-  --domain "$PUBLIC_HOST:$DASHBOARD_PORT" --hub-public "$PUBLIC_HOST:$MCP_PORT" &
+  --domain "http://$PUBLIC_HOST:$DASHBOARD_PORT" --hub-public "$PUBLIC_HOST:$MCP_PORT" &
 rook-mcp --hub "127.0.0.1:$RELAY_PORT" --bind "$BIND:$MCP_PORT" \
   --allowed-hosts "$PUBLIC_HOST:$MCP_PORT" &
 
@@ -75,7 +89,12 @@ Rook hub running (Ctrl-C to stop). State: $DATA
   MCP         http://$PUBLIC_HOST:$MCP_PORT/mcp      bearer token in $SECRETS
   Relay       udp://$PUBLIC_HOST:$RELAY_PORT
 
-Join a worker (same machine or LAN), in another terminal:
+Install a worker:  http://$PUBLIC_HOST:$DASHBOARD_PORT/#install
+  sign in with the password above, click "Get a pairing code" and run the
+  command it shows on the new machine. (The first worker bundle builds in the
+  background; give it a minute.)
+
+Or join one directly (same machine or LAN), in another terminal:
 
   rook worker --hub $PUBLIC_HOST:$RELAY_PORT --psk "\$(grep ^ROOK_BAND_PSK= $SECRETS | cut -d= -f2-)" --name my-worker
 
