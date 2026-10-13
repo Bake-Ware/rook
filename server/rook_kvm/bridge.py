@@ -79,8 +79,12 @@ class RookBridge:
         loop = asyncio.get_running_loop()
         while not self._closing:
             began = loop.time()
+            ws = self._ws
             await self._ws_reader()
             self._ws = None
+            # The reader also returns on errors that leave the socket open;
+            # close it so a reconnect never leaks the old connection.
+            await self._close_quietly(ws)
             if self._closing:
                 return
             if loop.time() - began >= WS_STABLE_SECS:
@@ -99,6 +103,35 @@ class RookBridge:
                 except Exception as e:
                     log.debug("bridge stream reconnect failed: %s", e)
 
+    @staticmethod
+    async def _close_quietly(ws) -> None:
+        if ws is None:
+            return
+        try:
+            await ws.close()
+        except Exception:
+            pass
+
+    def _on_ws_message(self, message) -> None:
+        """Buffer one stream message. Anything malformed (not a JSON object,
+        ``data`` without a string ``payload``, ``file_ready`` without a
+        string ``path``) is skipped: one bad message from the dongle must not
+        end the stream."""
+        try:
+            data = json.loads(message)
+        except (TypeError, ValueError):
+            return
+        if not isinstance(data, dict):
+            return
+        kind = data.get("type")
+        if kind == "data":
+            payload = data.get("payload")
+            if isinstance(payload, str):
+                self._serial_buffer.append(payload)
+        elif kind == "file_ready":
+            if isinstance(data.get("path", ""), str):
+                self._file_ready_events.append(data)
+
     async def _ws_reader(self):
         """Read WS messages into the buffers until the stream closes."""
         ws = self._ws
@@ -106,18 +139,12 @@ class RookBridge:
             return
         try:
             async for message in ws:
-                try:
-                    data = json.loads(message)
-                except (TypeError, ValueError):
-                    continue
-                if data.get("type") == "data":
-                    self._serial_buffer.append(data["payload"])
-                elif data.get("type") == "file_ready":
-                    self._file_ready_events.append(data)
+                self._on_ws_message(message)
         except asyncio.CancelledError:
             raise
-        except Exception:
-            pass  # connection closed; _ws_run reconnects
+        except Exception as e:
+            # Connection closed or broke; _ws_run closes it and reconnects.
+            log.debug("bridge stream ended: %s", e)
 
     async def write_serial_ws(self, data: str):
         """Write to serial via WebSocket (HTTP while the stream is down)."""
