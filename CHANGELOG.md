@@ -291,7 +291,25 @@ Preparation for public use.
 - README Quickstart lists the Debian/Ubuntu (and Fedora/Arch) prerequisites and
   the rustup one-liner; "Workers on your LAN" describes the Install-page flow
   over plain HTTP.
-
+- Windows worker one-liner (`iex (irm ".../worker?band=CODE&os=windows")`):
+  the script runs inside one script block and never `exit`s under `iex`, so
+  the user's window stays open (no more "[process exited with code 1]") and
+  its preferences are untouched. From a non-admin prompt it waits for the
+  elevated run and reports the outcome there: "Done: <name> is installed and
+  joining the band...", or the error, the exit code (`$LASTEXITCODE`) and the
+  log path; a declined UAC prompt says so. The elevated run logs to
+  `%USERPROFILE%\.rook-band-worker\install.log` and stays open on failure
+  ("Press Enter to close"); it closes itself on success.
+- Re-running an installer (upgrade, re-pairing to another hub) no longer fails
+  on Windows with "band-worker.pyz ... being used by another process": the
+  bundle downloads to `band-worker.pyz.download`, then the running worker and
+  the `RookBandWorker` task are stopped and the file is moved into place; a
+  failure after that restarts the previous worker. The Linux/macOS installer
+  downloads beside the live bundle and renames it over (atomic), so a running
+  worker never reads a half-written file.
+- Both installers announce how long they take and print numbered progress
+  (Python, venv, dependencies, bundle, enrollment, service); the bash one ends
+  with the same "Done" line or a "FAILED (exit code N)" line.
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps
   `sessions.list`, `sessions.follow`, `sessions.send` and `sessions.stop`
