@@ -1054,6 +1054,9 @@ class CombinedServer:
             if getattr(self, "_chat_db", None) else None,
             data_path("mask.token", "/var/lib/rook-band-mcp/mask.token")]).mask
         self._push_task = None  # background: push signed manifest to behind workers
+        # The bundle installers download: operator-built, else built here.
+        from .worker_bundle import WorkerBundle
+        self._bundle = WorkerBundle(lambda: self.public_base)
         from .band_overview import BandOverview
         self._overview = BandOverview(self._band_worker_rows, self._overview_call)
         # Known bands for the dashboard selector. PSKs stay server-side; the UI
@@ -1403,6 +1406,12 @@ class CombinedServer:
             log.warning("dashboard password not set: anyone who can reach port %d "
                         "can control every worker", self.port)
         self._report_settings()
+        # A fresh hub has no worker bundle: build it in the background so the
+        # Install page works without a manual build step.
+        try:
+            self._bundle.ensure()
+        except Exception:
+            log.warning("could not start the worker bundle build", exc_info=True)
 
         # Join the band so the dashboard can list workers + invoke caps.
         # Best-effort: a missing/unreachable hub must not take down the
@@ -1486,7 +1495,6 @@ class CombinedServer:
         """Auto-converge: push the current signed manifest to apply-capable
         workers reporting an older build. Fail-closed — no-op until a *signed*
         manifest exists, and it only targets workers advertising worker.apply."""
-        manifest_path = Path(__file__).parent / "band-worker.json"
         pushed: dict[str, tuple] = {}      # worker_id -> (target_build, ts)
         REPUSH_SECS = 180.0                # don't re-push the same build too soon
         while True:
@@ -1495,7 +1503,7 @@ class CombinedServer:
                 if self._band is None:
                     continue
                 try:
-                    manifest = json.loads(manifest_path.read_text())
+                    manifest = json.loads(self._bundle.path("band-worker.json").read_text())
                 except Exception:
                     continue
                 if not manifest.get("sig"):
@@ -1687,15 +1695,25 @@ class CombinedServer:
                                   "psk": band["psk"], "hub": band["hub"] or self.hub_public,
                                   "epoch": band["epoch"]}, headers=headers)
 
+    def _bundle_missing(self, name: str) -> web.Response:
+        """No bundle to serve: 503 while the background build runs (or was
+        just started), 404 with the reason when it cannot be built."""
+        if not self._bundle.error:
+            self._bundle.ensure()
+        if self._bundle.building:
+            return web.Response(status=503, headers={"Retry-After": "60", "Cache-Control": "no-store"},
+                                text=f"{name} is building on this hub, retry in a minute.\n")
+        why = f" ({self._bundle.error})" if self._bundle.error else ""
+        return web.Response(status=404, headers={"Cache-Control": "no-store"},
+                            text=f"{name} is not built yet{why}. "
+                                 "Run: python3 rook/remote/build_band_worker.py\n")
+
     async def _band_worker_pyz(self, request: web.Request) -> web.Response:
         filename = "band-worker-enrollment.pyz" if request.path == "/band-worker-enrollment.pyz" else "band-worker.pyz"
-        pyz_path = Path(__file__).parent / filename
-        if not pyz_path.exists():
-            return web.Response(
-                status=404,
-                text="band-worker.pyz not built yet. Run: python3 rook/remote/build_band_worker.py",
-            )
-        data = pyz_path.read_bytes()
+        pyz_path = self._bundle.path(filename)
+        if pyz_path is None:
+            return self._bundle_missing("band-worker.pyz")
+        data = await asyncio.to_thread(pyz_path.read_bytes)
         return web.Response(
             body=data,
             content_type="application/octet-stream",
@@ -1705,12 +1723,9 @@ class CombinedServer:
     async def _band_worker_manifest(self, request: web.Request) -> web.Response:
         """Serve the signed OTA manifest (band-worker.json) next to the pyz.
         Public + no-cache so converging workers always see the current build."""
-        manifest_path = Path(__file__).parent / "band-worker.json"
-        if not manifest_path.exists():
-            return web.Response(
-                status=404,
-                text="band-worker.json not built yet. Run: python3 rook/remote/build_band_worker.py",
-            )
+        manifest_path = self._bundle.path("band-worker.json")
+        if manifest_path is None:
+            return self._bundle_missing("band-worker.json")
         return web.Response(
             body=manifest_path.read_bytes(),
             content_type="application/json",

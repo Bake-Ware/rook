@@ -264,6 +264,15 @@ Preparation for public use.
   `rook_bridge` marker: a second miss answers 400 with what to fix) and also
   covers `/account/bands/api` and the Settings, Knowledge, Guidance, Vault and
   Jobs APIs. It only bridges GET/HEAD.
+- A hub without a worker bundle builds one itself at start, in the background
+  (`build_band_worker.py --output-dir`, signed with the hub's update key, the
+  manifest `url` on the public base), into `$ROOK_DATA_DIR/worker-bundle`
+  (else `~/.local/share/rook/worker-bundle`), and rebuilds it when the worker
+  code is newer or the public URL changed. `/band-worker.pyz` and `.json`
+  answer 503 "building, retry in a minute" meanwhile. An operator-built bundle
+  beside the script still wins and is never rebuilt automatically.
+  `/band-worker-enrollment.pyz` serves the same bundle unless an operator drops
+  a separate one.
 
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps
