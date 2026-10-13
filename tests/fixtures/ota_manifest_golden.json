@@ -1,0 +1,31 @@
+{
+ "_about": "Golden vectors for OTA manifest signing. The key is a public test key (seed = sha256 of the label); never trust it. Frozen: a change here means deployed workers would reject (or accept) different bytes.",
+ "seed_label": "rook golden vector: OTA manifest signing (test key, public)",
+ "pubkey": "e5D8OCLHgg9neLHae/3JRH30WpRvX05sSMGdHyzD+NM=",
+ "worker_manifest": {
+  "schema": 1,
+  "build": 401,
+  "version": "401.steady.iguana",
+  "commit": "0123456789abcdef0123456789abcdef01234567",
+  "built_at": "2026-10-01T12:00:00+00:00",
+  "filename": "band-worker.pyz",
+  "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+  "size": 179575,
+  "notes": "caf\u00e9 \u2713 </script>"
+ },
+ "worker_canonical": "{\"build\":401,\"built_at\":\"2026-10-01T12:00:00+00:00\",\"commit\":\"0123456789abcdef0123456789abcdef01234567\",\"filename\":\"band-worker.pyz\",\"notes\":\"caf\\u00e9 \\u2713 </script>\",\"schema\":1,\"sha256\":\"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08\",\"size\":179575,\"version\":\"401.steady.iguana\"}",
+ "worker_sig": "KNHrtXJzp3iCOjDgah6giEil5fiLpmiydNu1dRPlrFeOSvfIUD6F2h4Svi4n5S+1GJ7Eeof1uJ2wQME6NwtCAQ==",
+ "hub_release": {
+  "schema": 1,
+  "typ": "rook-hub-release",
+  "build": 426,
+  "version": "426.salty.otter",
+  "commit": "fedcba9876543210fedcba9876543210fedcba98",
+  "built_at": "2026-10-02T08:30:00+00:00",
+  "filename": "rook-hub-426.salty.otter.tar.gz",
+  "sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+  "size": 1234567
+ },
+ "hub_signed_bytes_b64": "cm9vay1odWItcmVsZWFzZS12MQp7ImJ1aWxkIjo0MjYsImJ1aWx0X2F0IjoiMjAyNi0xMC0wMlQwODozMDowMCswMDowMCIsImNvbW1pdCI6ImZlZGNiYTk4NzY1NDMyMTBmZWRjYmE5ODc2NTQzMjEwZmVkY2JhOTgiLCJmaWxlbmFtZSI6InJvb2staHViLTQyNi5zYWx0eS5vdHRlci50YXIuZ3oiLCJzY2hlbWEiOjEsInNoYTI1NiI6IjJjMjZiNDZiNjhmZmM2OGZmOTliNDUzYzFkMzA0MTM0MTM0MjJkNzA2NDgzYmZhMGY5OGE1ZTg4NjI2NmU3YWUiLCJzaXplIjoxMjM0NTY3LCJ0eXAiOiJyb29rLWh1Yi1yZWxlYXNlIiwidmVyc2lvbiI6IjQyNi5zYWx0eS5vdHRlciJ9",
+ "hub_sig": "73b3rCtHL+RrhaJs9lpz4id9Q9op4G/N2joZgjnWpfSTrpXroe1Rbrn8hoks/ajPf88CQ2fEY1a0eYHARyyADQ=="
+}
