@@ -12,11 +12,14 @@ from __future__ import annotations
 import datetime
 import hashlib
 import os
+import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import zipapp
 from pathlib import Path
+from typing import Optional
 
 HERE = Path(__file__).resolve().parent        # rook/remote/
 REPO_ROOT = HERE.parent.parent               # /root/repos/rook
@@ -39,14 +42,64 @@ REQUIRED_TELESTHETE = ("crypto.py", "fragment.py", "framing.py", "sequence.py",
                        "drop.py", "route.py")
 
 
-def check_telesthete(root: Path) -> None:
-    """Raise if ``root`` (a ``telesthete`` package dir) lacks a protocol
-    module the worker needs; shared with android/stage_worker.py."""
+# Set to 1 to build from a telesthete git checkout at another revision than
+# the pin (e.g. while changing both repos at once): a warning, not an error.
+ANY_REV_ENV = "ROOK_TELESTHETE_ANY_REV"
+
+
+def pinned_telesthete_rev(pyproject: Path = REPO_ROOT / "pyproject.toml") -> Optional[str]:
+    """The telesthete commit pyproject.toml pins (``telesthete @ git+...@<sha>``)."""
+    try:
+        text = pyproject.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    m = re.search(r'"telesthete\s*@\s*git\+[^"@]+@([0-9a-fA-F]{7,40})"', text)
+    return m.group(1).lower() if m else None
+
+
+def _checkout_rev(root: Path) -> Optional[str]:
+    """HEAD of the git checkout whose top level holds the ``telesthete``
+    package dir ``root``, or None when ``root`` isn't one (a pip install)."""
+    checkout = root.resolve().parent
+    try:
+        top = subprocess.check_output(
+            ["git", "-C", str(checkout), "rev-parse", "--show-toplevel"],
+            text=True, stderr=subprocess.DEVNULL).strip()
+        if Path(top).resolve() != checkout:
+            return None   # e.g. site-packages inside some unrelated repo
+        return subprocess.check_output(
+            ["git", "-C", str(checkout), "rev-parse", "HEAD"],
+            text=True, stderr=subprocess.DEVNULL).strip().lower()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
+def check_telesthete(root: Path, *, verify_rev: bool = True,
+                     pin: Optional[str] = None) -> None:
+    """Raise if ``root`` (a ``telesthete`` package dir) can't go in a bundle:
+    it lacks a protocol module the worker needs, or (``verify_rev``) it is a
+    git checkout at another commit than pyproject.toml pins. A pip-installed
+    telesthete is checked for modules only. Shared with
+    android/stage_worker.py."""
     missing = [m for m in REQUIRED_TELESTHETE if not (root / "protocol" / m).is_file()]
     if missing:
         raise FileNotFoundError(
             f"telesthete at {root} is too old (missing protocol/{', protocol/'.join(missing)}); "
             "update it to the commit pinned in pyproject.toml")
+    if not verify_rev:
+        return
+    pin = pin or pinned_telesthete_rev()
+    head = _checkout_rev(root)
+    if pin is None or head is None or head.startswith(pin) or pin.startswith(head):
+        return
+    msg = (f"telesthete checkout {root.parent} is at {head[:12]}, but pyproject.toml pins "
+           f"{pin[:12]}: the bundle would ship a different transport than the hub "
+           f"installs. Check out the pinned commit (git -C {root.parent} checkout {pin}), "
+           f"or set {ANY_REV_ENV}=1 to build anyway.")
+    if os.environ.get(ANY_REV_ENV, "").strip() == "1":
+        print(f"WARNING: {msg}", file=sys.stderr)
+        return
+    raise RuntimeError(msg)
 
 _MAIN = """\
 from rook.worker.cli import main

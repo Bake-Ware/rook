@@ -5,8 +5,8 @@ Everything here is opt-in per message, so old peers never see it:
 * ``features`` (announce): what a node understands. Callers only use an
   extension toward a target whose announce lists it.
 * ``rr`` (request): the caller's own route id (SPEC §10.1 of telesthete). A
-  worker sends its reply with ``channel_id = rr`` so a routing hub delivers it
-  to the caller only. Absent = broadcast reply on channel 0, as always.
+  worker sends its reply as ADDRESSED frames to ``rr`` so a routing hub
+  delivers it to the caller only. Absent = broadcast CHANNEL reply on 0.
 * ``accept`` (request): reply encodings the caller can take — ``"z"``
   (compressed payload), ``"drop"`` (a large reply pulled over telesthete
   Drop) and ``"drop-native"`` (Drop frames as native DROP outer frames).
@@ -138,7 +138,7 @@ def decode(payload: bytes) -> bytes:
 
 class ReplyOpts(NamedTuple):
     """How to send the reply to one request (from its ``rr`` and ``accept``)."""
-    route: int = 0            # channel_id for the reply; 0 = broadcast
+    route: int = 0            # route id to ADDRESS the reply to; 0 = broadcast
     z: bool = False
     drop: bool = False
     drop_native: bool = False
@@ -173,8 +173,10 @@ def caps_hash(caps) -> str:
 
 def caps_hash_announces() -> bool:
     """``ROOK_ANNOUNCE_CAPS_HASH=1``: announces carry only ``caps_hash`` most
-    of the time (full ``caps`` on change and every Nth). Off by default until
-    every client of the band tolerates it (core spec 14.4)."""
+    of the time (full ``caps`` on change and every Nth). Off by default, and
+    must stay off until every hub and the APK on the band understand
+    caps_hash: build-426 hubs and APK 0.4.1 read missing caps as none (core
+    spec 14.5)."""
     return os.environ.get("ROOK_ANNOUNCE_CAPS_HASH", "").strip() == "1"
 
 

@@ -99,7 +99,7 @@ Each UDP datagram carries exactly one frame:
 | Offset | Size | Field | Value |
 |---|---|---|---|
 | 0 | 16 | `band_id` | from 2.1 |
-| 16 | 1 | `channel_type` | `0x02` (CHANNEL) |
+| 16 | 1 | `channel_type` | `0x02` (CHANNEL); `0x06` (ADDRESSED) per section 14.1 |
 | 17 | 2 | `channel_id` | `0`, big-endian |
 | 19 | 8 | `sequence` | big-endian u64, see 2.3 |
 | 27 | n+16 | sealed chunk | ChaCha20-Poly1305 ciphertext of one fragment chunk (2.4), then the 16-byte tag |
@@ -111,13 +111,15 @@ Each UDP datagram carries exactly one frame:
   peer (build 167 onwards) seals and opens with empty AAD. Implementations
   MUST use empty AAD to interoperate.
 - A sender MUST send `channel_type = 0x02` and `channel_id = 0`, except as
-  section 14 allows (a nonzero `channel_id` addresses a CHANNEL frame to a
-  declared route; ROUTE and DROP frames are sent with the spec AAD). A
-  receiver SHOULD drop frames with another channel type, MUST NOT drop a
-  CHANNEL frame because of its `channel_id`, and MUST drop frames shorter
-  than 43 bytes, with a foreign `band_id`, or that fail authentication,
-  silently. (A receiver that ignores the channel type still interoperates:
-  ROUTE and DROP frames fail its empty-AAD tag check.)
+  section 14 allows (an ADDRESSED frame, `0x06`, carries a message chunk to
+  a declared route id in `channel_id`, sealed with empty AAD like CHANNEL;
+  ROUTE and DROP frames are sent with the spec AAD). A receiver SHOULD drop
+  frames with any other channel type, MUST NOT drop a CHANNEL or ADDRESSED
+  frame because of its `channel_id`, and MUST drop frames shorter than 43
+  bytes, with a foreign `band_id`, or that fail authentication, silently. A
+  receiver that ignores the channel type still interoperates: it opens
+  ADDRESSED frames like CHANNEL ones, and ROUTE and DROP frames fail its
+  empty-AAD tag check.
 
 ### 2.3 Sequence numbers
 
@@ -171,9 +173,10 @@ carries many bands at once.
   than the keepalive, so deployments MUST raise it). A ROUTE declaration
   (14.1) also counts as a frame that keeps a peer registered.
 - A routing relay (telesthete SPEC §10.1, telesthete 0.3.0 and later)
-  delivers a CHANNEL frame whose nonzero `channel_id` another peer declared
-  only to the declarers, and consumes ROUTE frames. Everything else is
-  relayed as above.
+  delivers an ADDRESSED (`0x06`) frame whose nonzero `channel_id` another
+  eligible peer declared only to the declarers, and consumes ROUTE frames.
+  Everything else, CHANNEL frames of any `channel_id` included, is relayed
+  as above.
 - Receivers MUST discard a reassembled message equal to the single byte
   `0x00`.
 - Messages that are not JSON objects (binary sub-protocols such as the
@@ -816,8 +819,8 @@ and stops the run; released files are never edited.
   `risk/tags/limit/fields/tool` keys.
 - Relay and transport changes follow the telesthete protocol's own
   versioning; the Rook profile (empty AAD, CHANNEL, fragmentation v1) is
-  frozen for spec 1.x. Section 14's frames (nonzero `channel_id`, ROUTE,
-  native DROP) are negotiated or harmless to peers that ignore them.
+  frozen for spec 1.x. Section 14's frames (ADDRESSED, ROUTE, native DROP)
+  are negotiated or harmless to peers that ignore them.
 
 ## 11. Conformance
 
@@ -850,8 +853,9 @@ harness. Both example ports pass every vector and the full live run.
   they cover. Don't expose a relay to untrusted networks without that.
 - **Header not authenticated.** With empty AAD the `channel_type`,
   `channel_id` and `band_id` bytes are not covered by the tag. Changing
-  them only misroutes or drops frames (`channel_id` is a delivery hint for
-  the relay, never read by a receiver, and the key is per band), but
+  them only misroutes or drops frames (`channel_type` 0x02/0x06 and
+  `channel_id` are delivery hints for the relay, never otherwise read by a
+  receiver, and the key is per band), but
   implementations MUST NOT give those bytes any other meaning. ROUTE and
   native DROP frames are sealed with the spec AAD, so their header is
   authenticated to receivers (not to the relay, which holds no key).
@@ -934,14 +938,30 @@ the id, empty payload sealed under the band key with AAD
   least once per keepalive interval while connected, even when other
   traffic flows: the relay keeps the route as soft state, losing it on
   eviction or restart, and only a declaration restores it.
-- A targeted request to a node that announced `route` is sent with
-  `channel_id = route_id_for(target)`, and carries `rr`. A reply to a
-  request with `rr` is sent with `channel_id = rr`; without `rr`, on 0.
-  Announces, open calls and everything else stay on 0.
-- Receivers MUST drop ROUTE frames (an old relay forwards them; a receiver
-  that opens every frame with empty AAD drops them on the tag check).
-  Receivers keep matching replies by `id` and requests by `target`, since
-  16-bit ids collide and an old relay broadcasts everything.
+- Addressed messages are sent as ADDRESSED frames: every chunk (2.4) of
+  the message in its own frame with `channel_type = 0x06` and `channel_id`
+  = the destination's route id, sealed exactly like a CHANNEL frame (empty
+  AAD, sequence from 2.3); telesthete `route.pack_addressed(crypto, seq,
+  route_id, chunk, associated_data=b"")`. Empty AAD is what lets a
+  deployed receiver (every Rook worker and client since build 167, the
+  ESP32 firmware) open one that an old relay broadcasts to it.
+- A targeted request to a node that announced `route` is sent ADDRESSED to
+  `route_id_for(target)`, and carries `rr`. A reply to a request with `rr`
+  is sent ADDRESSED to `rr`; without `rr`, as CHANNEL on 0. Announces, open
+  calls, requests to nodes without `route` and everything else are CHANNEL
+  frames on `channel_id = 0`. Never address a node that did not announce
+  `route`: the example ports accept only `0x02`, and a routing relay
+  delivers an ADDRESSED frame to a non-declaring peer only by broadcast
+  fallback.
+- Receivers that announce `route` MUST accept ADDRESSED frames exactly like
+  CHANNEL frames. Receivers MUST drop ROUTE frames (an old relay forwards
+  them; a receiver that opens every frame with empty AAD drops them on the
+  tag check). Receivers keep matching replies by `id` and requests by
+  `target`, since 16-bit ids collide and an old relay broadcasts
+  everything.
+- A relay that routed CHANNEL frames by `channel_id` (the telesthete
+  branch before ADDRESSED existed) was never released; this profile does
+  not use nonzero CHANNEL ids.
 
 ### 14.2 Large replies over Drop
 
@@ -954,7 +974,7 @@ threshold (reference: 32 KB, `ROOK_BAND_DROP_THRESHOLD`), the worker sends
 
 and serves the serialized reply (the bytes it would have sent, compressed
 per 14.3 if the request accepted `z`) as a telesthete Drop (SPEC §8) with
-that `drop_id`, sending its Drop packets on `channel_id = rr` when the
+that `drop_id`, sending its Drop packets ADDRESSED to `rr` when the
 request had one. The caller pulls it receiver-driven: it requests 64-chunk
 windows and re-requests missing chunks (reference: after 250 ms without
 progress), verifies the SHA-256, decodes it and uses the reply it contains
@@ -988,7 +1008,7 @@ or a large reply when the caller has no route), Drop packets are sent as
 ONE outer frame each: `channel_type = 0x04`, `channel_id` = the drop id,
 the Drop frame sealed under the band key with AAD `[0x04, id_hi, id_lo]`
 and a sequence from the shared source. Native frames are not addressable
-(a routing relay routes only CHANNEL frames) and are broadcast. Receivers
+(a routing relay routes only ADDRESSED frames) and are broadcast. Receivers
 that announced `drop-native` accept both forms; everyone else drops native
 frames on the tag check.
 
@@ -1002,9 +1022,13 @@ result are the cap list). Workers send full announces by default. With
 `ROOK_ANNOUNCE_CAPS_HASH=1` they omit `caps` except on the first announce,
 after a reconnect, when the caps change, and on every 10th announce.
 
-Rollout: (1) upgrade every client of the band (hub dashboard, MCP bridge,
-migration tools, other bands' hubs; Android's roster view only counts
-caps); (2) then enable `ROOK_ANNOUNCE_CAPS_HASH=1` on workers, e.g. with a
-pushed config. A client that predates this keeps a node's cap list empty
-between full announces, so enabling it early hides caps for up to 5
-minutes at a time.
+**Keep `ROOK_ANNOUNCE_CAPS_HASH` off (the default) until every client of
+the band understands `caps_hash`.** Clients that predate it — hubs up to
+and including build 426, and the Android APK through 0.4.1 — read an
+announce without `caps` as an empty cap list, so with it on they show the
+worker with no caps (and refuse or misroute calls to it) for up to 5
+minutes at a time, between full announces. Rollout: (1) upgrade every
+client of the band (every hub — dashboard, MCP bridge, migration tools,
+other bands' hubs — and the APK); (2) only then enable
+`ROOK_ANNOUNCE_CAPS_HASH=1` on workers, e.g. with a pushed config. There is
+no negotiation: a worker can't tell which clients are listening.

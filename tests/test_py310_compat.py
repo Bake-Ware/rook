@@ -24,8 +24,11 @@ import pytest
 from rook.core import aiocompat
 
 ROOT = Path(__file__).resolve().parent.parent
-# What build_band_worker.py and android/stage_worker.py ship.
-SHIPPED = [ROOT / "rook" / "core", ROOT / "rook" / "worker", ROOT / "rook" / "cli" / "band_tui.py"]
+# What build_band_worker.py and android/stage_worker.py ship, plus the band
+# client, which shares the worker's transport code and must not be the one
+# piece of the wire path that needs 3.11.
+SHIPPED = [ROOT / "rook" / "core", ROOT / "rook" / "worker", ROOT / "rook" / "cli" / "band_tui.py",
+           ROOT / "rook" / "band_mcp" / "client.py"]
 
 # Attribute or name -> what to use instead.
 FORBIDDEN_ATTRS = {
@@ -74,6 +77,15 @@ def _violations(path: Path) -> list[str]:
         elif type(node).__name__ == "TryStar":
             out.append(f"{where}: except* (3.11+)")
     return out
+
+
+def test_scan_covers_the_band_transport_and_wire_code():
+    files = {p.relative_to(ROOT).as_posix() for p in _shipped_files()}
+    for must in ("rook/worker/transports/telesthete_hub.py",
+                 "rook/worker/transports/dispatch.py", "rook/worker/transports/writer.py",
+                 "rook/worker/wire/codec.py", "rook/worker/wire/envelope.py",
+                 "rook/worker/ota_drop.py", "rook/band_mcp/client.py"):
+        assert must in files
 
 
 def test_worker_bundle_uses_no_python_311_only_api():

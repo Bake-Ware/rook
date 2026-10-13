@@ -53,8 +53,9 @@ def main() -> int:
     sys.path.insert(0, str(REPO_ROOT))
     from rook.remote.build_band_worker import check_telesthete
     try:
-        check_telesthete(TELESTHETE_ROOT)  # e.g. route.py (addressed routing)
-    except FileNotFoundError as error:
+        # Modules (e.g. route.py) and, for a git checkout, the pinned commit.
+        check_telesthete(TELESTHETE_ROOT)
+    except (FileNotFoundError, RuntimeError) as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1
 

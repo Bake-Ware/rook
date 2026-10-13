@@ -41,9 +41,10 @@ PSK = "band-protocol-test-psk"
 
 class Relay(asyncio.DatagramProtocol):
     """A minimal telesthitium. ``routing=True`` implements SPEC §10.1 (ROUTE
-    consumed; a CHANNEL frame whose nonzero id another peer declared goes only
-    to the declarers); ``routing=False`` is the old hub (relays everything,
-    ROUTE included, to every other peer). ``loss`` drops that fraction of
+    consumed; an ADDRESSED (0x06) frame whose nonzero id another peer declared
+    goes only to the declarers; every other type, CHANNEL included, is
+    broadcast whatever its id); ``routing=False`` is the old hub (relays
+    everything, ROUTE included, to every other peer). ``loss`` drops that fraction of
     multi-fragment CHANNEL frames and DROP CHUNKs (seeded, reproducible)."""
 
     def __init__(self, routing: bool = True, loss: float = 0.0, seed: int = 7):
@@ -78,7 +79,7 @@ class Relay(asyncio.DatagramProtocol):
             self.log.append((addr, ctype, cid, []))
             return
         dests = [p for p in peers if p != addr]
-        if self.routing and ctype == 0x02 and cid:
+        if self.routing and ctype == 0x06 and cid:
             declared = [p for p in dests if peers[p] == cid]
             if declared:
                 dests = declared
@@ -128,8 +129,8 @@ class OldTransport(TelestheteHubTransport):
     def set_route(self, name):
         return None
 
-    async def send(self, payload, peer_id=None, *, channel_id=0):
-        await super().send(payload, peer_id, channel_id=0)
+    async def send(self, payload, peer_id=None, *, route=0):
+        await super().send(payload, peer_id, route=0)
 
 
 def _old_transport(port: int) -> TelestheteHubTransport:
@@ -253,6 +254,46 @@ def test_route_frame_is_the_library_declaration():
     assert len(frame) == 43 and frame[16] == 0x05
 
 
+def test_addressed_frames_are_the_library_addressed_frames_with_empty_aad():
+    """Addressed sends are ADDRESSED (0x06) frames to the destination's route
+    id, sealed with empty AAD: byte-identical to the library's
+    pack_addressed(..., associated_data=b"") for one §6.6 chunk."""
+    from telesthete.protocol.route import pack_addressed
+    from telesthete.protocol.sequence import SequenceSource
+    c = BandCodec(PSK)
+    c.seq = SequenceSource(start=900)
+    chunk = c.split(b'{"id":"1","ok":true}')[0]
+    rid = route_id_for("kaiju")
+    frame = c.seal(chunk, rid)
+    assert frame == pack_addressed(BandCrypto(PSK), 900, rid, chunk, associated_data=b"")
+    assert frame[16] == 0x06 and int.from_bytes(frame[17:19], "big") == rid
+    # Unaddressed traffic stays CHANNEL on channel_id 0.
+    plain = c.seal(chunk)
+    assert plain[16] == 0x02 and plain[17:19] == b"\0\0"
+    with pytest.raises(ValueError):
+        c.seal(chunk, 0x10000)
+
+
+def test_old_receivers_open_addressed_frames_an_old_hub_relays():
+    """An old hub broadcasts ADDRESSED frames. Deployed rook receivers (empty
+    AAD, channel_type ignored) and this codec both open them; the spec-AAD
+    seal would have failed the old receiver's tag check."""
+    tx = BandCodec(PSK)
+    frames = tx.frames(os.urandom(3000), route=4321)
+    assert len(frames) > 1 and {f[16] for f in frames} == {0x06}
+    old = BandCrypto(PSK)
+    asm = Reassembler()
+    out = None
+    for f in frames:
+        pkt = unpack_packet(f)
+        out = asm.feed(old.decrypt(pkt.sequence, pkt.ciphertext)) or out
+    assert out is not None and len(out) == 3000
+    rx = BandCodec(PSK)
+    got = [rx.ingest(f) for f in frames][-1]
+    assert got.payload == out and got.channel_type == 0x06 and got.channel_id == 4321
+    assert rx.drops["decrypt"] == 0
+
+
 def test_old_receiver_cannot_open_a_route_frame_and_new_receiver_drops_it():
     """An old hub relays declarations to everyone. Deployed receivers (and
     the ESP32 firmware) decrypt with empty AAD: the tag fails. Our codec
@@ -277,7 +318,7 @@ async def test_route_frames_never_reach_dispatch():
     from rook.worker.transports.dispatch import Dispatcher
     t.dispatcher = Dispatcher(on_message)
     t._on_frame(BandCodec(PSK).route_frame(77))
-    for f in BandCodec(PSK).frames(b'{"a":1}', channel_id=77):
+    for f in BandCodec(PSK).frames(b'{"a":1}', route=77):
         t._on_frame(f)
     await _until(lambda: got)
     await asyncio.sleep(0.02)
@@ -471,8 +512,9 @@ async def test_targeted_call_and_reply_are_addressed_on_a_routing_hub(
     r = await c.call("big.echo", {"value": "hi"}, target=w1.worker_id)
     assert r["ok"] and r["result"] == "hi"
     w1_rid, c_rid = route_id_for(w1.worker_id), c.transport.route_id
-    data = [e for e in band.relay.log if e[1] == 0x02 and e[2]]
+    data = [e for e in band.relay.log if e[1] == 0x06]
     assert {e[2] for e in data} == {w1_rid, c_rid}
+    assert all(e[2] == 0 for e in band.relay.log if e[1] == 0x02)
     for _src, _t, cid, dests in data:
         assert len(dests) == 1                         # nobody else got it
     assert not any(b"big.echo" in p for p in seen_by_w2)
@@ -505,6 +547,7 @@ async def test_new_client_old_worker(band_factory, monkeypatch, tmp_path):
     assert r["ok"] and len(r["result"]) == 100_000          # inline, as always
     # Unaddressed request (the worker never declared); its reply on channel 0.
     assert all(e[2] == 0 for e in band.relay.log if e[1] == 0x02)
+    assert not any(e[1] == 0x06 for e in band.relay.log)
 
 
 @pytest.mark.asyncio
@@ -519,7 +562,7 @@ async def test_old_client_new_worker(band_factory, monkeypatch, tmp_path):
     # No rr / accept: a plain inline, uncompressed broadcast reply.
     assert r["ok"] and len(r["result"]) == 60_000 and "drop" not in r
     assert all(e[2] == 0 for e in band.relay.log if e[1] == 0x02)
-    assert not any(e[1] == 0x04 for e in band.relay.log)
+    assert not any(e[1] in (0x04, 0x06) for e in band.relay.log)
 
 
 @pytest.mark.asyncio
@@ -553,7 +596,7 @@ async def test_hub_node_answers_band_calls_addressed(band_factory, monkeypatch, 
     band.relay.log.clear()
     r = await w.request("x.y", target="hubnode1", timeout=5)
     assert r["result"] == "pong"
-    replies = [e for e in band.relay.log if e[1] == 0x02 and e[2] == w.transport.route_id]
+    replies = [e for e in band.relay.log if e[1] == 0x06 and e[2] == w.transport.route_id]
     assert replies and all(len(e[3]) == 1 for e in replies)
 
 
@@ -568,8 +611,39 @@ async def test_large_reply_rides_drop_and_is_transparent(band_factory, monkeypat
     r = await c.call("big.blob", {"n": 200_000}, target=w.worker_id, timeout=30)
     assert r["ok"] and len(r["result"]) == 200_000 and "drop" not in r
     assert set(r) == {"id", "from", "ok", "result"}
-    assert any(e[1] == 0x02 and e[2] and len(e[3]) == 1 for e in band.relay.log)
+    assert any(e[1] == 0x06 and e[2] and len(e[3]) == 1 for e in band.relay.log)
     await _until(lambda: w._reply_drops.active == 0)      # released on the DONE
+
+
+@pytest.mark.asyncio
+async def test_pass_through_drop_packets_arrive_in_sequence_order(
+        band_factory, monkeypatch, tmp_path):
+    """Pass-through Drop packets are whole band messages; queued together,
+    the writer let a window's short (1-fragment) final CHUNK overtake the
+    2-fragment CHUNKs before it, and Drop's sequence watermark then rejected
+    those as stale (one stalled window per re-request). They now go out one
+    at a time, in order: no CHUNK is ever rejected as stale."""
+    stale = []
+    orig = ota_drop._Receiver._decrypt
+
+    def _decrypt(self, peer, pkt):
+        p = unpack_packet(pkt)
+        wm = self._recv_watermark.get(peer)
+        if wm is not None and p.sequence <= wm:
+            stale.append(p.sequence)
+        return orig(self, peer, pkt)
+
+    monkeypatch.setattr(ota_drop._Receiver, "_decrypt", _decrypt)
+    band = await band_factory(routing=True)
+    w = await band.worker(monkeypatch, tmp_path)
+    c = await band.client()
+    await band.ready(c, w)
+    r = await c.call("big.blob", {"n": 300_000}, target=w.worker_id, timeout=30)
+    assert r["ok"] and len(r["result"]) == 300_000
+    # It rode pass-through Drop (the caller has a route), addressed.
+    assert any(e[1] == 0x06 and e[2] == c.transport.route_id and len(e[3]) == 1
+               for e in band.relay.log)
+    assert stale == []
 
 
 @pytest.mark.asyncio
@@ -641,11 +715,46 @@ async def test_bad_drop_descriptor_is_an_error():
 
 
 @pytest.mark.asyncio
+async def test_caller_timeout_bounds_a_large_reply_pull(band_factory, monkeypatch, tmp_path):
+    """The call's timeout covers the Drop pull too (it used to be stretched
+    to 15 s + size/256 KB). A pull that can't finish in what is left fails
+    with a clear timeout error, promptly, and leaves no state behind."""
+    band = await band_factory(routing=True)
+    w = await band.worker(monkeypatch, tmp_path)
+    c = await band.client()
+    await band.ready(c, w)
+    # Lose every Drop CHUNK the worker sends: the pull can never complete.
+    w._reply_drops._send = lambda *a, **k: asyncio.sleep(0)
+    loop = asyncio.get_running_loop()
+    t0 = loop.time()
+    r = await c.call("big.blob", {"n": 200_000}, target=w.worker_id, timeout=1.5)
+    took = loop.time() - t0
+    assert took < 3.0, took
+    assert r["ok"] is False and r["error"].startswith("timeout: large reply")
+    assert c._drop_rx == {} and c._drop_locks == {}
+
+
+@pytest.mark.asyncio
+async def test_pull_with_no_time_left_fails_at_once_and_prunes_its_lock():
+    c = BandClient(psk=PSK)
+    desc = {"id": 0x8123, "size": 5000, "sha256": "0" * 64}
+    r = await c._pull_reply({"id": "x", "from": "w", "ok": True, "drop": desc}, 0.0)
+    assert r["ok"] is False and r["error"].startswith("timeout:")
+    assert c._drop_locks == {} and c._drop_rx == {}
+    # A pull waiting behind another of the same drop_id times out cleanly too.
+    lock = asyncio.Lock()
+    await lock.acquire()
+    c._drop_locks[0x8123] = [lock, 1]
+    r = await c._pull_reply({"id": "y", "from": "w", "ok": True, "drop": desc}, 0.05)
+    assert r["error"].startswith("timeout:") and c._drop_locks[0x8123][1] == 1
+
+
+@pytest.mark.asyncio
 async def test_reply_server_expires_and_bounds_memory():
     now = [0.0]
     sent = []
 
-    async def send(p, channel_id=0):
+    async def send(p, route=0):
         sent.append(p)
 
     srv = ota_drop.DropReplyServer(b"\x01" * 16, send, ttl=5, max_bytes=3000,
@@ -657,6 +766,26 @@ async def test_reply_server_expires_and_bounds_memory():
     now[0] = 10
     srv.serve("d", b"w")                        # prunes b (expired)
     assert srv.active == 1
+    srv.close()
+
+
+@pytest.mark.asyncio
+async def test_reply_server_expires_without_further_serves():
+    """An idle worker releases unpulled replies at their TTL; it used to hold
+    them until the next reply was served."""
+    async def send(p, route=0):
+        pass
+
+    srv = ota_drop.DropReplyServer(b"\x01" * 16, send, ttl=0.1)
+    srv.serve("a", b"x" * 5000)
+    srv.serve("b", b"y" * 5000)
+    assert srv.active == 2
+    await _until(lambda: srv.active == 0, timeout=2)
+    assert srv._timer is None
+    srv.serve("c", b"z")
+    srv.close()
+    assert srv.active == 0 and srv._timer is None
+    assert ota_drop.REPLY_DROP_MAX_BYTES == 32 * 1024 * 1024
 
 
 # -- compression ---------------------------------------------------------------------
@@ -676,7 +805,7 @@ async def test_compression_negotiated_both_ways(band_factory, monkeypatch, tmp_p
     # The worker saw plain JSON (its codec inflated the request) ...
     assert any(big_arg.encode() in p for p in seen)
     # ... while the wire carried far fewer frames than 2 x 20 KB uncompressed.
-    data = [e for e in band.relay.log if e[1] == 0x02 and e[2]]
+    data = [e for e in band.relay.log if e[1] == 0x06]
     assert len(data) <= 4
 
 
@@ -820,15 +949,42 @@ async def test_inband_ota_native_drop_on_and_off(native, band_factory, monkeypat
     await _until(lambda: "bytes" in swapped)
     assert swapped["bytes"] == bundle
     drop_frames = [e for e in band.relay.log if e[1] == 0x04]
-    chan_frames = [e for e in band.relay.log if e[1] == 0x02]
+    chan_frames = [e for e in band.relay.log if e[1] == 0x06]
     chunks = -(-len(bundle) // 1024)
     if native:
         # One outer frame per Drop packet: ~chunks + a few control frames.
         assert chunks <= len(drop_frames) <= chunks + 10
     else:
         assert not drop_frames
-        # Pass-through: every CHUNK costs two CHANNEL frames, addressed.
+        # Pass-through: every CHUNK costs two ADDRESSED frames.
         assert len([e for e in chan_frames if e[2] == route_id_for(w.worker_id)]) >= 2 * chunks
+
+
+@pytest.mark.asyncio
+async def test_ota_drop_ids_in_the_reply_range_are_refused(monkeypatch, tmp_path):
+    """Reply drops use 0x8000|...; an OTA push there would cross-feed with a
+    large-reply transfer of the same id. Both ends refuse it."""
+    assert ota_drop.valid_ota_drop_id(0) and ota_drop.valid_ota_drop_id(0x7FFF)
+    for bad in (0x8000, 0xFFFF, -1, 0x10000, True, "1", None):
+        assert not ota_drop.valid_ota_drop_id(bad)
+    c = BandClient(psk=PSK)
+
+    async def no_call(*a, **k):
+        raise AssertionError("must not reach the worker")
+
+    c.call = no_call
+    r = await c.push_update("w", b"x", {}, drop_id=0x8001)
+    assert r["ok"] is False and "drop_id must be 0-32767" in r["error"]
+
+    from rook.worker import core
+    from rook.worker.plugins.selfupdate import SelfUpdatePlugin
+    monkeypatch.setattr(core, "_WORKER_ID_FILE", tmp_path / "ota-id")
+    su = SelfUpdatePlugin()
+    su._worker = object()
+    for bad in (0x8000, 0xFFFF, "junk"):
+        res = await su._ota_begin({"build": 1}, drop_id=bad)
+        assert res["ok"] is False and "drop_id must be" in res["error"]
+    assert su._ota_rx is None
 
 
 @pytest.mark.asyncio
@@ -841,8 +997,8 @@ async def test_old_worker_gets_pass_through_ota(band_factory, monkeypatch, tmp_p
     await band.ready(c, w)
     sent = []
 
-    async def send(p, channel_id=0):
-        sent.append((p, channel_id))
+    async def send(p, route=0):
+        sent.append((p, route))
 
     c._send = send
     feats = envelope.features_of(c.workers[w.worker_id])
@@ -852,6 +1008,34 @@ async def test_old_worker_gets_pass_through_ota(band_factory, monkeypatch, tmp_p
     s.offer()
     await asyncio.sleep(0.01)
     assert sent and sent[0][0][16] == 0x04 and sent[0][1] == 0
+
+
+# -- dispatch under bursts ---------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_shed_targeted_request_gets_busy_reply(band_factory, monkeypatch, tmp_path):
+    """A request the dispatcher sheds is answered "busy" (addressed to the
+    caller's rr) when it targeted this worker; open calls stay silent."""
+    band = await band_factory(routing=True)
+    w = await band.worker(monkeypatch, tmp_path)
+    c = await band.client()
+    await band.ready(c, w)
+    assert w.transport.dispatcher.on_shed == w._on_shed
+    sent = []
+
+    async def send(p, route=0):
+        sent.append((json.loads(p), route))
+
+    w._send = send
+    w._on_shed(json.dumps({"id": "q1", "cap": "big.echo", "target": w.worker_id,
+                           "rr": 4242}).encode(), ())
+    w._on_shed(json.dumps({"id": "q2", "cap": "big.echo"}).encode(), ())          # open
+    w._on_shed(json.dumps({"id": "q3", "cap": "big.echo", "target": "other"}).encode(), ())
+    await _until(lambda: not w._busy_tasks)
+    assert len(sent) == 1
+    body, route = sent[0]
+    assert route == 4242 and body["id"] == "q1" and body["ok"] is False
+    assert body["error"].startswith("busy")
 
 
 # -- native WS endpoint option ---------------------------------------------------------
@@ -895,7 +1079,9 @@ def test_bundle_builders_require_the_route_module(tmp_path):
     bbw = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(bbw)
     assert "route.py" in bbw.REQUIRED_TELESTHETE
-    bbw.check_telesthete(bbw.TELESTHETE_ROOT)             # the installed one is new enough
+    # The installed one is new enough. (Its revision is checked by builds;
+    # the dev sibling checkout may legitimately be elsewhere.)
+    bbw.check_telesthete(bbw.TELESTHETE_ROOT, verify_rev=False)
     (tmp_path / "protocol").mkdir()
     for m in bbw.REQUIRED_TELESTHETE[:-1]:
         (tmp_path / "protocol" / m).write_text("")
@@ -906,3 +1092,54 @@ def test_bundle_builders_require_the_route_module(tmp_path):
     docker = (root / "Dockerfile").read_text(encoding="utf-8")
     rev = pin.split("telesthete@")[1].split('"')[0]
     assert len(rev) == 40 and f"TELESTHETE_REV={rev}" in docker
+    assert bbw.pinned_telesthete_rev(root / "pyproject.toml") == rev
+
+
+def _bbw():
+    import importlib.util
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location("bbw3", root / "rook/remote/build_band_worker.py")
+    bbw = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bbw)
+    return bbw
+
+
+def test_bundle_builders_require_the_pinned_telesthete_checkout(tmp_path, monkeypatch):
+    import shutil
+    import subprocess
+    if shutil.which("git") is None:
+        pytest.skip("no git")
+    bbw = _bbw()
+    checkout = tmp_path / "telesthete"
+    pkg = checkout / "telesthete"
+    (pkg / "protocol").mkdir(parents=True)
+    for m in bbw.REQUIRED_TELESTHETE:
+        (pkg / "protocol" / m).write_text("", encoding="utf-8")
+
+    def git(*a):
+        return subprocess.check_output(
+            ["git", "-C", str(checkout), "-c", "user.email=t@example.com",
+             "-c", "user.name=t", *a], text=True).strip()
+
+    git("init", "-q")
+    git("add", "-A")
+    git("commit", "-q", "-m", "one")
+    first = git("rev-parse", "HEAD")
+    (pkg / "x.py").write_text("", encoding="utf-8")
+    git("add", "-A")
+    git("commit", "-q", "-m", "two")
+    head = git("rev-parse", "HEAD")
+    monkeypatch.delenv(bbw.ANY_REV_ENV, raising=False)
+    bbw.check_telesthete(pkg, pin=head)               # at the pin
+    bbw.check_telesthete(pkg, pin=head[:12])          # short pins work too
+    with pytest.raises(RuntimeError, match=f"pins {first[:12]}"):
+        bbw.check_telesthete(pkg, pin=first)
+    bbw.check_telesthete(pkg, pin=first, verify_rev=False)
+    monkeypatch.setenv(bbw.ANY_REV_ENV, "1")
+    bbw.check_telesthete(pkg, pin=first)              # warns only
+    # A pip install (not the top of a git checkout) is checked for modules only.
+    monkeypatch.delenv(bbw.ANY_REV_ENV)
+    plain = tmp_path / "site" / "telesthete"
+    shutil.copytree(pkg, plain)
+    bbw.check_telesthete(plain, pin=first)

@@ -20,15 +20,15 @@ Design notes:
     are scoped by ``drop_id``: only the target worker (told the id via a signed
     handshake) arms a receiver for it; other workers drop unknown-id packets.
     When the far end declares a route (telesthete SPEC §10.1) the shim sends
-    with ``channel_id`` = its route id, so a routing hub delivers the transfer
-    to that peer only instead of to the whole band.
+    each packet as ADDRESSED frames to its route id, so a routing hub delivers
+    the transfer to that peer only instead of to the whole band.
   * **Native DROP frames.** A pass-through Drop packet (27 B header + 1029 B
     CHUNK + 16 B stand-in tag) is bigger than one 1003 B fragment, so every
     chunk costs two CHANNEL frames. A peer that announces ``drop-native``
     takes Drop as ONE native ``ChannelType.DROP`` outer frame per packet,
     really sealed (spec AAD) by the transport with its shared sequence source
     (:meth:`TelestheteHubTransport.send_native`). Native frames are never
-    addressed (the hub routes only CHANNEL frames) and are broadcast; old
+    addressed (the hub routes only ADDRESSED frames) and are broadcast; old
     receivers fail their tag check and drop them. The receiving codec re-wraps
     them into the pass-through shape, so receivers accept both forms.
 
@@ -41,6 +41,7 @@ it with the receiver-driven windows and retransmits.
 from __future__ import annotations
 
 import asyncio
+import collections
 import hashlib
 import json
 import logging
@@ -99,8 +100,18 @@ class _RelayShim:
     """Adapts telesthete Drop's synchronous ``transport.send(dest, packet)`` to
     the rook hub transport's async send. The dest is ignored (scoping is by
     drop_id). Pass-through packets go out via ``send_coro(packet)``, or
-    ``send_coro(packet, channel_id=route)`` when the far end has a route;
-    with ``native`` set they go out as native DROP frames instead."""
+    ``send_coro(packet, route=route)`` (ADDRESSED frames) when the far end
+    has a route; with ``native`` set they go out as native DROP frames.
+
+    Pass-through packets are sent strictly one after another, in the order
+    Drop produced them. Each is a whole band message, and the frame writer
+    interleaves messages fragment by fragment (and puts single-fragment ones
+    first), so packets queued together would complete out of order — e.g. a
+    window's short 1-fragment final CHUNK before the 2-fragment CHUNKs ahead
+    of it. Drop's per-peer sequence watermark then rejects every CHUNK that
+    arrives after one with a higher sequence, and each window stalled until
+    a re-request. Native frames need no such care: the transport assigns
+    their (outer) sequence when it writes them."""
 
     def __init__(self, send_coro: Callable[..., Awaitable[None]], route: int = 0,
                  native: Optional[NativeSend] = None) -> None:
@@ -108,13 +119,24 @@ class _RelayShim:
         self.route = route
         self.native = native
         self._inflight: set[asyncio.Task] = set()
+        self._ordered: collections.deque[bytes] = collections.deque()
+        self._pump: Optional[asyncio.Task] = None
         self.sent = 0
 
     def send(self, dest: tuple, packet_bytes: bytes) -> None:
         self.sent += 1
+        if self.native is None:
+            self._ordered.append(packet_bytes)
+            if self._pump is None or self._pump.done():
+                self._pump = asyncio.ensure_future(self._drain())
+            return
         task = asyncio.ensure_future(self._safe_send(packet_bytes))
         self._inflight.add(task)
         task.add_done_callback(self._inflight.discard)
+
+    async def _drain(self) -> None:
+        while self._ordered:
+            await self._safe_send(self._ordered.popleft())
 
     async def _safe_send(self, packet_bytes: bytes) -> None:
         try:
@@ -126,7 +148,7 @@ class _RelayShim:
                 bulk = bool(plaintext) and plaintext[0] == DropFrameType.CHUNK
                 await self.native(int(ChannelType.DROP), pkt.channel_id, plaintext, bulk=bulk)
             elif self.route:
-                await self._send_coro(packet_bytes, channel_id=self.route)
+                await self._send_coro(packet_bytes, route=self.route)
             else:
                 await self._send_coro(packet_bytes)
         except Exception:
@@ -347,12 +369,22 @@ class OtaDropSender:
 # with an operator-chosen OTA drop_id (0 by default).
 REPLY_DROP_BASE = 0x8000
 # How long a worker keeps serving a reply nobody finished pulling, and how
-# many bytes of such replies it holds at most (oldest dropped first).
+# many bytes of such replies it holds at most (oldest dropped first). 32 MiB
+# is one maximum-size reply (ROOK_BAND_MAX_REPLY_BYTES): enough for the
+# common case, and small enough for a Raspberry Pi or a phone to hold.
 REPLY_DROP_TTL = 120.0
-REPLY_DROP_MAX_BYTES = 128 * 1024 * 1024
+REPLY_DROP_MAX_BYTES = 32 * 1024 * 1024
 # Caller side: re-request after this long without progress, checked this often.
 REPLY_REREQUEST = 0.25
 REPLY_TICK = 0.1
+
+
+def valid_ota_drop_id(drop_id) -> bool:
+    """An OTA push's drop_id must be below :data:`REPLY_DROP_BASE`: ids from
+    0x8000 up belong to large replies, and a push on one would feed (and be
+    fed by) a reply transfer of the same id."""
+    return (isinstance(drop_id, int) and not isinstance(drop_id, bool)
+            and 0 <= drop_id < REPLY_DROP_BASE)
 
 
 def reply_drop_id(msg_id: str, worker_id: str = "") -> int:
@@ -378,6 +410,10 @@ class DropReplyServer:
         self._clock = clock
         # drop_id -> (sender, expires_at)
         self._serving: Dict[int, tuple[OtaDropSender, float]] = {}
+        # Expiry timer: replies nobody pulls are released at their TTL even
+        # if no further reply is ever served (pruning only in serve() kept
+        # up to max_bytes alive on an idle worker indefinitely).
+        self._timer: Optional[asyncio.TimerHandle] = None
 
     @property
     def active(self) -> int:
@@ -390,6 +426,33 @@ class DropReplyServer:
         now = self._clock()
         for did in [d for d, (_, exp) in self._serving.items() if exp <= now]:
             self._serving.pop(did, None)
+
+    def prune(self) -> None:
+        """Release expired replies now (also runs on a timer, see serve)."""
+        self._prune()
+        self._arm()
+
+    def _arm(self) -> None:
+        """(Re)schedule the expiry timer for the earliest expiry, if any."""
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+        if not self._serving:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return   # no loop (sync callers): serve() still prunes
+        soonest = min(exp for _, exp in self._serving.values())
+        # +50 ms so a timer that fires a hair early still finds it expired.
+        self._timer = loop.call_later(max(soonest - self._clock(), 0.0) + 0.05, self.prune)
+
+    def close(self) -> None:
+        """Stop serving everything (worker shutdown)."""
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+        self._serving.clear()
 
     def serve(self, msg_id: str, blob: bytes, route: int = 0,
               native: Optional[NativeSend] = None) -> Optional[dict]:
@@ -411,6 +474,7 @@ class DropReplyServer:
         # so the caller can pull again until the TTL.
         sender.on_complete(lambda ok, _d=did: ok and self._serving.pop(_d, None))
         self._serving[did] = (sender, self._clock() + self.ttl)
+        self._arm()
         return {"id": did, "size": len(blob), "sha256": sender.sha256}
 
     def feed(self, payload: bytes) -> bool:

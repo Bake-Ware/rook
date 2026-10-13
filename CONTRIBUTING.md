@@ -24,6 +24,16 @@ pip install -e '.[dev]'
 exists at `../telesthete`, the tests and the worker-bundle builder use it instead, so
 you can work on both at once.
 
+The pin is one commit, in two places that must agree: `pyproject.toml` (the
+`telesthete @ git+...@<sha>` dependency) and the `Dockerfile`'s `TELESTHETE_REV`
+(the relay the hub image builds); a test checks they match. The bundle builders
+(`rook/remote/build_band_worker.py`, `android/stage_worker.py`) refuse to build
+from a telesthete git checkout at any other commit, so a bundle never ships a
+different transport than the hub installs; set `ROOK_TELESTHETE_ANY_REV=1` to
+build anyway (a warning) while changing both repos. The pin may point at a
+telesthete PR branch while a change is in review; when that PR merges, move both
+to the merged commit on telesthete `main`.
+
 To run a hub locally, build the relay once
 (`cargo install --locked --git https://github.com/Bake-Ware/telesthete telesthitium`) and
 use `scripts/local-hub.sh`; see the [README quickstart](README.md#quickstart).
