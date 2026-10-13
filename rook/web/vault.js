@@ -1,6 +1,8 @@
 // Secrets: the hub's vault. Values are write-only here — the page can set,
 // replace and delete them but never displays one.
-import {h,ago,day,useCss,btn,chips,table,two,dialog,copy} from '/account/bands/assets/manage.js';
+// Versioned like this module (?v=...), so a stale edge cache cannot pair it
+// with an old manage.js.
+const {h, ago, day, useCss, btn, chips, table, two, dialog, copy} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
 
 export async function mountVault(root){
   useCss();

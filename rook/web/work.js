@@ -1,4 +1,6 @@
-import {esc} from '/account/bands/assets/manage.js';
+// Versioned like this module (?v=...), so a stale edge cache cannot pair it
+// with an old manage.js.
+const {esc} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
 const VIEW_KEY='rook.work.view';
 // The dashboard's Sessions tab: the Sessions page (sessions.js), with the
 // classic Codex app-server view one link away until the Sessions page covers

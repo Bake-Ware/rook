@@ -2,7 +2,9 @@
 // records agents keep. Mostly read-only: agents write; the user observes and
 // directs. All stored text is rendered as text nodes, never as HTML.
 
-import {el, ago as agoOr} from '/account/bands/assets/manage.js';
+// Versioned like this module (?v=...), so a stale edge cache cannot pair it
+// with an old manage.js.
+const {el, ago: agoOr} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
 const date=t=>t?new Date(t*1000).toLocaleString():'';
 const ago=t=>agoOr(t,'');
 const STATE_LABEL={in_progress:'In progress',todo:'To do',blocked:'Blocked',paused:'Paused',done:'Done',closed:'Closed',cancelled:'Cancelled',archived:'Archived',active:'Active',superseded:'Superseded'};

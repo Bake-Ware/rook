@@ -198,6 +198,10 @@ Preparation for public use.
   chat, work DB, plugin data), keeping modes; older releases kept it there.
   The deauth flag in `~/.rook-band-worker` is honoured even when nothing is
   copied. `ROOK_WORKER_HOME_FRESH=1` starts a separate worker instead.
+- Dashboard modules import `manage.js` with their own `?v=` version (and the
+  Account/Tokens views and the standalone `/account/bands` page load
+  versioned URLs), so a stale edge cache cannot pair a new module with an old
+  `manage.js`.
 
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps

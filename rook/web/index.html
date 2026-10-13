@@ -1141,7 +1141,8 @@ async function ensureSettings(view){
  if(settingsLoading[view])return settingsLoading[view];
  const host=$('#view-'+view);host.innerHTML='<p class="empty">Loading…</p>';
  settingsLoading[view]=(async()=>{
-  const module=await import('/account/bands/assets/'+view+'.js');
+  // Literal URLs, so the server's ?v= rewrite versions them (and manage.js with them).
+  const module=await (view==='account'?import('/account/bands/assets/account.js'):import('/account/bands/assets/tokens.js'));
   const mount=view==='account'?module.mountAccount:module.mountTokens;
   return settingsUI[view]=await mount(host,{onChange:()=>loadBands()});
  })();

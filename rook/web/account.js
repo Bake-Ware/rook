@@ -1,6 +1,8 @@
 // Account & access: who you are and how you sign in on the left; your bands
 // and the devices enrolled in them on the right.
-import {h,ago,day,useCss,btn,table,two,dialog,menu,accountAction,reveal,pairing} from '/account/bands/assets/manage.js';
+// Versioned like this module (?v=...), so a stale edge cache cannot pair it
+// with an old manage.js.
+const {h, ago, day, useCss, btn, table, two, dialog, menu, accountAction, reveal, pairing} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
 
 export async function mountAccount(root, {onChange = () => {}} = {}) {
   useCss();

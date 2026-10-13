@@ -1,5 +1,7 @@
 // Agent instructions editor. All stored text is rendered as text, never HTML.
-import {h,ago,useCss,btn} from '/account/bands/assets/manage.js';
+// Versioned like this module (?v=...), so a stale edge cache cannot pair it
+// with an old manage.js.
+const {h, ago, useCss, btn} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
 
 const KINDS=[
  ['server','On connect','Sent once, when an agent connects. Keep it to what every agent needs.',6000],

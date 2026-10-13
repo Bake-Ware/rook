@@ -49,7 +49,9 @@ class BandWeb:
         body += '<div id="bands-root">'+Path(__file__).with_name('bands.html').read_text()+'</div>'
         csrf=json.dumps(user['csrf']).replace('<','\\u003c')
         body += '<script type="module">import {mountBands} from "/account/bands/assets/bands.js";const ui=await mountBands(document.getElementById("bands-root"),{csrf:'+csrf+'});const wid=new URLSearchParams(location.search).get("worker");if(wid)ui.openWorker(wid);</script>'
-        return self.account.response('Bands', body)
+        # ?v= on bands.js (and through it manage.js), as on the dashboard.
+        from .bootstrap import WEB_DIR, _versioned_assets
+        return self.account.response('Bands', _versioned_assets(body, WEB_DIR))
 
     def roster(self, label):
         if self.server._band is None:

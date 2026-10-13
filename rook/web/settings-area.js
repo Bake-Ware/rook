@@ -2,7 +2,9 @@
 // rendered from the hub's settings schema (settings.* on worker "rook").
 // Every row shows the effective value, where it came from, what it hides and
 // how a change takes effect. Secret values are write-only.
-import {el, ago} from '/account/bands/assets/manage.js';
+// Versioned like this module (?v=...), so a stale edge cache cannot pair it
+// with an old manage.js.
+const {el, ago} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
 const show=v=>v===null||v===undefined||v===''?'—':typeof v==='object'?JSON.stringify(v):String(v);
 const API='/account/settings/api';
 const CSS=`
