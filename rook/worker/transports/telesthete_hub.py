@@ -82,6 +82,13 @@ UDP_SOCKET_BUFFER = 4 * 1024 * 1024
 # one that dies sooner keeps backing off (a hub that accepts then drops).
 WS_STABLE_SECS = 10.0
 
+# Receive loops yield to the event loop after this many frames in a row.
+# sock_recvfrom / ws.receive return without suspending while data is
+# buffered, so without it a backlog (e.g. 3,000 queued replies) is all
+# ingested before a single handler runs — and the dispatcher, seeing every
+# slot taken, used to drop most of it.
+RECV_YIELD_EVERY = 32
+
 
 def _env_num(name: str, default: float, cast=float, minimum: float = 0) -> float:
     raw = os.environ.get(name, "").strip()
@@ -122,6 +129,19 @@ def _set_buffers(sock: socket.socket, size: int = UDP_SOCKET_BUFFER) -> None:
 
 
 OnFrame = Callable[[bytes], None]
+# Awaited by a receive loop between frames when it returns an awaitable:
+# the dispatcher's backpressure (see Dispatcher.room).
+Hold = Callable[[], Optional[Awaitable[None]]]
+
+
+async def _pace(count: int, hold: Optional[Hold]) -> None:
+    """Between two received frames: wait for dispatch room if the
+    dispatcher is saturated, else yield every RECV_YIELD_EVERY frames."""
+    waiter = hold() if hold is not None else None
+    if waiter is not None:
+        await waiter
+    elif count % RECV_YIELD_EVERY == 0:
+        await asyncio.sleep(0)
 
 
 class UdpLink:
@@ -151,17 +171,18 @@ class UdpLink:
             raise
         self.sock = sock
 
-    def start_recv(self, on_frame: OnFrame) -> None:
-        self._task = asyncio.get_running_loop().create_task(self._recv_loop(on_frame))
+    def start_recv(self, on_frame: OnFrame, hold: Optional[Hold] = None) -> None:
+        self._task = asyncio.get_running_loop().create_task(self._recv_loop(on_frame, hold))
 
     async def write(self, frame: bytes) -> None:
         if self.sock is None:
             raise RuntimeError("transport not started")
         await asyncio.get_running_loop().sock_sendto(self.sock, frame, self.hub)
 
-    async def _recv_loop(self, on_frame: OnFrame) -> None:
+    async def _recv_loop(self, on_frame: OnFrame, hold: Optional[Hold] = None) -> None:
         assert self.sock is not None
         loop = asyncio.get_running_loop()
+        count = 0
         while not self._stopping:
             try:
                 data, _src = await loop.sock_recvfrom(self.sock, 65535)
@@ -172,6 +193,11 @@ class UdpLink:
                 await asyncio.sleep(0.1)
                 continue
             on_frame(data)
+            count += 1
+            try:
+                await _pace(count, hold)
+            except asyncio.CancelledError:
+                break
 
     async def close(self) -> None:
         self._stopping = True
@@ -233,7 +259,8 @@ class WsLink:
 
     async def run(self, on_frame: OnFrame,
                   on_up: Callable[[], Awaitable[None]],
-                  on_down: Callable[[], None]) -> None:
+                  on_down: Callable[[], None],
+                  hold: Optional[Hold] = None) -> None:
         while not self._stopping:
             began = None
             try:
@@ -245,7 +272,7 @@ class WsLink:
                     await on_up()
                 except Exception:
                     log.exception("post-connect (re)announce failed")
-                await self._recv_loop(ws, on_frame)  # returns when the link drops
+                await self._recv_loop(ws, on_frame, hold)  # returns when the link drops
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -265,13 +292,15 @@ class WsLink:
             except asyncio.CancelledError:
                 break
 
-    async def _recv_loop(self, ws, on_frame: OnFrame) -> None:
+    async def _recv_loop(self, ws, on_frame: OnFrame, hold: Optional[Hold] = None) -> None:
         """Feed binary frames to ``on_frame``. Returns (rather than looping)
         as soon as the connection closes or errors, so :meth:`run` can
         reconnect. ``on_frame`` never awaits handlers (see Dispatcher), so a
         slow capability can't stall this loop — that stall used to stop pong
-        replies and get the connection killed."""
+        replies and get the connection killed. ``hold`` only waits (bounded)
+        while the dispatcher drains a burst."""
         import aiohttp
+        count = 0
         while not self._stopping:
             try:
                 msg = await ws.receive()
@@ -282,6 +311,8 @@ class WsLink:
                 return
             if msg.type == aiohttp.WSMsgType.BINARY:
                 on_frame(msg.data)
+                count += 1
+                await _pace(count, hold)
             elif msg.type in (aiohttp.WSMsgType.CLOSED,
                               aiohttp.WSMsgType.CLOSING,
                               aiohttp.WSMsgType.ERROR):
@@ -336,6 +367,9 @@ class TelestheteHubTransport:
         self._ws_url: str = ws_url or f"{_scheme}://{hub_host}:{hub_port}/band"
         if ws_url:
             self._use_ws = True
+        # Called with each inbound request the dispatcher sheds under a
+        # burst (Worker sets it to answer targeted ones "busy"). Read at start.
+        self.on_shed = None
         # Addressed routing: our declared route id (None = never declare).
         self._route_id: Optional[int] = None
         self._route_name: Optional[str] = None
@@ -407,7 +441,8 @@ class TelestheteHubTransport:
             on_message,
             concurrency=int(_env_num("ROOK_BAND_DISPATCH_CONCURRENCY",
                                      DEFAULT_CONCURRENCY, int, 1)),
-            backlog=int(_env_num("ROOK_BAND_DISPATCH_BACKLOG", DEFAULT_BACKLOG, int, 0)))
+            backlog=int(_env_num("ROOK_BAND_DISPATCH_BACKLOG", DEFAULT_BACKLOG, int, 0)),
+            on_shed=self.on_shed)
 
         if self._use_ws:
             link = WsLink(self._ws_url)
@@ -419,7 +454,7 @@ class TelestheteHubTransport:
                      self._hub[0], self._hub[1], self.band_id.hex()[:16])
             # Registration happens in _ws_up (we can't send before connecting).
             self._tasks.append(loop.create_task(
-                link.run(self._on_frame, self._ws_up, self._ws_down)))
+                link.run(self._on_frame, self._ws_up, self._ws_down, self._hold)))
         else:
             link = UdpLink(self._hub, self._bind_port)
             link.open()
@@ -436,7 +471,7 @@ class TelestheteHubTransport:
             # (HUB_UDP_VALIDATION_PACKETS=2) needs before it delivers to us.
             await self.send(KEEPALIVE_PAYLOAD)
             await self.declare_route()
-            link.start_recv(self._on_frame)
+            link.start_recv(self._on_frame, self._hold)
 
         self._tasks.append(loop.create_task(self._keepalive_loop()))
 
@@ -492,6 +527,12 @@ class TelestheteHubTransport:
                 raise RuntimeError("WS not connected")
         elif self.link is None or not self.link.connected:
             raise RuntimeError("transport not started")
+
+    def _hold(self) -> Optional[Awaitable[None]]:
+        """Backpressure for the receive loops: an awaitable while the
+        dispatcher has too many handlers in flight, else None."""
+        d = self.dispatcher
+        return d.room() if d is not None and d.saturated else None
 
     def _on_frame(self, data: bytes) -> None:
         msg = self.codec.ingest(data)

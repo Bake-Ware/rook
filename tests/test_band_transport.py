@@ -465,17 +465,137 @@ async def test_dispatch_is_bounded_and_drains_backlog():
         running -= 1
         done.append(p)
 
-    d = Dispatcher(handler, concurrency=3, backlog=4)
-    accepted = [d.submit(b"%d" % i, ()) for i in range(10)]
+    shed = []
+    d = Dispatcher(handler, concurrency=3, backlog=4, on_shed=lambda p, peer: shed.append(p))
+    reqs = [b'{"id":"%d","cap":"x.y"}' % i for i in range(10)]
+    accepted = [d.submit(r, ()) for r in reqs]
     assert accepted == [True] * 7 + [False] * 3
-    assert d.dropped == 3 and d.queued == 4
+    assert d.dropped == 3 and d.queued == 4 and shed == reqs[7:]
     await asyncio.sleep(0.01)
     assert d.running == 3
     release.set()
     await _until(lambda: len(done) == 7)
     assert peak == 3
-    assert sorted(done) == sorted(b"%d" % i for i in range(7))
+    assert sorted(done) == sorted(reqs[:7])
     await d.stop()
+
+
+def test_only_requests_are_sheddable():
+    from rook.worker.transports.dispatch import is_request
+    assert is_request(b'{"id":"1","cap":"a.b","args":{}}')
+    assert not is_request(b'{"id":"1","from":"w","ok":true,"result":1}')     # reply
+    assert not is_request(b'{"id":"1","cap":"a.b","ok":false}')              # reply echoing cap
+    assert not is_request(b'{"kind":"announce","worker_id":"w","caps":["a.b"],"cap":"x"}')
+    assert not is_request(b"\x01" * 16 + b"\x04" + b"\0" * 40)             # Drop packet
+    assert not is_request(b"\0rz" + b"junk")                                # compressed (not inflated)
+    assert not is_request(b"[1,2]") and not is_request(b"{bad json")
+    big_reply = b'{"id":"1","from":"w","ok":true,"result":"' + b"x" * 100_000 + b'"}'
+    big_req = b'{"id":"1","cap":"a.b","args":{"v":"' + b"x" * 100_000 + b'"}}'
+    assert not is_request(big_reply) and is_request(big_req)
+
+
+@pytest.mark.asyncio
+async def test_replies_announces_and_drop_packets_are_never_shed():
+    """With every request slot and the backlog full, everything that isn't a
+    new request still runs, at once."""
+    block = asyncio.Event()
+    seen = []
+
+    async def handler(p, peer):
+        if b'"cap"' in p and b'"ok"' not in p:
+            await block.wait()
+        seen.append(p)
+
+    d = Dispatcher(handler, concurrency=1, backlog=1)
+    assert d.submit(b'{"id":"a","cap":"x.y"}', ())
+    assert d.submit(b'{"id":"b","cap":"x.y"}', ())
+    assert not d.submit(b'{"id":"c","cap":"x.y"}', ())          # shed
+    others = [b'{"id":"r%d","from":"w","ok":true}' % i for i in range(500)]
+    others += [b'{"kind":"announce","worker_id":"w"}', b"\x07" * 16 + b"\x04" + b"\0" * 30]
+    assert all(d.submit(p, ()) for p in others)
+    await _until(lambda: len(seen) == len(others))
+    assert d.dropped == 1
+    block.set()
+    await d.stop()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_backpressure_instead_of_dropping(monkeypatch):
+    monkeypatch.setattr(dispatch_mod, "URGENT_HIGH", 4)
+    monkeypatch.setattr(dispatch_mod, "URGENT_LOW", 1)
+    gate = asyncio.Event()
+
+    async def handler(p, peer):
+        await gate.wait()
+
+    d = Dispatcher(handler)
+    for i in range(4):
+        d.submit(b'{"id":"%d","from":"w","ok":true}' % i, ())
+    assert d.saturated
+    waiter = asyncio.create_task(d.room())
+    await asyncio.sleep(0.01)
+    assert not waiter.done()
+    gate.set()
+    await asyncio.wait_for(waiter, 1)
+    assert not d.saturated and d.dropped == 0
+    await d.stop()
+
+
+async def _burst(n, payload_for, *, handler_delay=0.0):
+    """Queue ``n`` single-fragment messages in a transport's UDP socket
+    while the loop is blocked, then let it run (the probe from the audit:
+    3,000 queued replies used to lose 1,912)."""
+    import time as _time
+    hub = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    hub.bind(("127.0.0.1", 0))
+    got = []
+
+    async def on_msg(p, peer):
+        if handler_delay:
+            await asyncio.sleep(handler_delay)
+        got.append(p)
+
+    t = TelestheteHubTransport(PSK, "127.0.0.1", hub.getsockname()[1])
+    await t.start(on_msg)
+    try:
+        me = t.link.sock.getsockname()
+        tx = BandCodec(PSK)
+        frames = [f for i in range(n) for f in tx.frames(payload_for(i))]
+        for f in frames:          # the loop is blocked: all of it queues
+            hub.sendto(f, ("127.0.0.1", me[1]))
+        _time.sleep(0.2)
+        deadline = asyncio.get_running_loop().time() + 10
+        while len(got) < n and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(0.05)
+            if t.dispatcher.dropped and not t.dispatcher.running and not t.dispatcher.queued:
+                break
+        return got, t.dispatcher.dropped
+    finally:
+        await t.stop()
+        hub.close()
+
+
+@pytest.mark.asyncio
+async def test_burst_of_queued_replies_is_delivered_in_full():
+    got, dropped = await _burst(3000, lambda i: b'{"id":"%d","ok":true,"from":"w"}' % i)
+    assert dropped == 0 and len(got) == 3000
+
+
+@pytest.mark.asyncio
+async def test_burst_of_fast_requests_is_served_not_shed():
+    # The receive loop yields every RECV_YIELD_EVERY frames, so handlers run
+    # while a backlog is being read and the dispatch backlog never fills.
+    got, dropped = await _burst(3000, lambda i: b'{"id":"%d","cap":"x.y"}' % i)
+    assert dropped == 0 and len(got) == 3000
+
+
+@pytest.mark.asyncio
+async def test_burst_of_slow_requests_sheds_only_requests(monkeypatch):
+    monkeypatch.setenv("ROOK_BAND_DISPATCH_CONCURRENCY", "4")
+    monkeypatch.setenv("ROOK_BAND_DISPATCH_BACKLOG", "16")
+    got, dropped = await _burst(200, lambda i: b'{"id":"%d","cap":"x.y"}' % i,
+                                handler_delay=0.5)
+    assert dropped > 0 and len(got) + dropped == 200
 
 
 @pytest.mark.asyncio
@@ -487,12 +607,13 @@ async def test_dispatch_drop_warning_is_rate_limited(caplog):
         await block.wait()
 
     d = Dispatcher(handler, concurrency=1, backlog=0, clock=lambda: now[0])
-    d.submit(b"a", ())
+    req = b'{"id":"1","cap":"x.y"}'
+    d.submit(req, ())
     with caplog.at_level("WARNING", logger=dispatch_mod.log.name):
         for _ in range(50):
-            d.submit(b"b", ())
+            d.submit(req, ())
         now[0] += dispatch_mod.WARN_EVERY + 1
-        d.submit(b"c", ())
+        d.submit(req, ())
     warnings = [r for r in caplog.records if "backlog full" in r.message]
     assert len(warnings) == 2 and d.dropped == 51
     block.set()

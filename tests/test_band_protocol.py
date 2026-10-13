@@ -897,6 +897,34 @@ async def test_old_worker_gets_pass_through_ota(band_factory, monkeypatch, tmp_p
     assert sent and sent[0][0][16] == 0x04 and sent[0][1] == 0
 
 
+# -- dispatch under bursts ---------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_shed_targeted_request_gets_busy_reply(band_factory, monkeypatch, tmp_path):
+    """A request the dispatcher sheds is answered "busy" (addressed to the
+    caller's rr) when it targeted this worker; open calls stay silent."""
+    band = await band_factory(routing=True)
+    w = await band.worker(monkeypatch, tmp_path)
+    c = await band.client()
+    await band.ready(c, w)
+    assert w.transport.dispatcher.on_shed == w._on_shed
+    sent = []
+
+    async def send(p, route=0):
+        sent.append((json.loads(p), route))
+
+    w._send = send
+    w._on_shed(json.dumps({"id": "q1", "cap": "big.echo", "target": w.worker_id,
+                           "rr": 4242}).encode(), ())
+    w._on_shed(json.dumps({"id": "q2", "cap": "big.echo"}).encode(), ())          # open
+    w._on_shed(json.dumps({"id": "q3", "cap": "big.echo", "target": "other"}).encode(), ())
+    await _until(lambda: not w._busy_tasks)
+    assert len(sent) == 1
+    body, route = sent[0]
+    assert route == 4242 and body["id"] == "q1" and body["ok"] is False
+    assert body["error"].startswith("busy")
+
+
 # -- native WS endpoint option ---------------------------------------------------------
 
 def test_ws_url_overrides_the_bridge_url():

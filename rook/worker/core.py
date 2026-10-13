@@ -128,6 +128,12 @@ class Worker:
             from .ota_drop import DropReplyServer
             self._reply_drops = DropReplyServer(bytes(band_id), self.send_raw,
                                                 worker_id=self.worker_id)
+        # A request the transport's dispatcher sheds under a burst gets a
+        # "busy" error reply when it was aimed at us, instead of a silent
+        # caller timeout.
+        if hasattr(transport, "on_shed"):
+            transport.on_shed = self._on_shed
+        self._busy_tasks: set[asyncio.Task] = set()
         # Addressed routing (telesthete SPEC §10.1): declare our worker_id's
         # route id so replies and targeted calls can reach us alone.
         set_route = getattr(transport, "set_route", None)
@@ -296,6 +302,40 @@ class Worker:
             await self.transport.send(payload, route=route)
         else:
             await self.transport.send(payload)
+
+    # At most this many "busy" replies in flight; beyond it shed requests
+    # time out at their caller as before (the link is saturated anyway).
+    BUSY_REPLIES_MAX = 64
+
+    def _on_shed(self, payload: bytes, peer_id: tuple) -> None:
+        """The dispatcher shed a request (its backlog was full). Answer it
+        ``busy`` if it was a targeted call to us, so the caller learns now
+        rather than at its timeout. Open calls stay silent: another worker
+        may answer them."""
+        if len(self._busy_tasks) >= self.BUSY_REPLIES_MAX:
+            return
+        try:
+            msg = json.loads(payload)
+        except ValueError:
+            return
+        if not isinstance(msg, dict) or msg.get("target") != self.worker_id:
+            return
+        msg_id = msg.get("id")
+        if msg_id is None:
+            return
+        body = {"id": msg_id, "from": self.worker_id, "ok": False,
+                "error": "busy: worker dispatch backlog full; retry later"}
+        route = envelope.reply_opts(msg).route
+        task = asyncio.get_running_loop().create_task(
+            self._send_quietly(json.dumps(body).encode(), route))
+        self._busy_tasks.add(task)
+        task.add_done_callback(self._busy_tasks.discard)
+
+    async def _send_quietly(self, payload: bytes, route: int) -> None:
+        try:
+            await self._send(payload, route)
+        except Exception as e:
+            log.debug("busy reply not sent: %s", e)
 
     def features(self) -> list[str]:
         """Envelope extensions this worker speaks (announce ``features``,
