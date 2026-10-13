@@ -6,7 +6,8 @@ pipeline). It owns the band crypto, the per-sender sequence source, the §6.6
 fragmenter and the reassembler:
 
 * outbound: :meth:`BandCodec.split` cuts a payload into fragment chunks, and
-  :meth:`BandCodec.seal` turns ONE chunk into one AEAD-sealed CHANNEL frame.
+  :meth:`BandCodec.seal` turns ONE chunk into one AEAD-sealed CHANNEL frame
+  (or, addressed to a route id, one ADDRESSED frame).
   Sealing is per chunk (not per message) so a writer can assign sequences at
   emission time and interleave the fragments of different messages — the
   receiver reassembles by ``fragment_id``, never by arrival order.
@@ -14,8 +15,12 @@ fragmenter and the reassembler:
   completed message it finishes (an :class:`Inbound`), or ``None``.
 
 Rook's own CHANNEL frames are sealed with EMPTY AAD (core spec 2.2: every
-deployed peer, the ESP32/RP2040 firmware included, opens them that way). Two
-frame kinds added for addressed routing and in-band file transfer use the
+deployed peer, the ESP32/RP2040 firmware included, opens them that way).
+ADDRESSED (0x06) frames — a message's chunks sent to one peer's declared
+route id (SPEC §10.1, core spec 14.1) — are sealed the same way, so a
+deployed receiver that ignores ``channel_type`` still opens one an old,
+broadcasting hub relays to it; ``channel_id`` is the destination route id.
+Two frame kinds added for addressed routing and in-band file transfer use the
 telesthete spec AAD ``[channel_type, id_hi, id_lo]`` instead:
 
 * ROUTE (0x05) declarations (:meth:`BandCodec.route_frame`, SPEC §10.1). A
@@ -51,11 +56,12 @@ except ImportError:  # older vendored telesthete: header 27 + Poly1305/GCM tag 1
 
 log = logging.getLogger("rook.worker.wire.codec")
 
-# Spec channel types by value: ROUTE (0x05) is newer than some vendored
-# telesthete builds, so it is not looked up on the enum.
+# Spec channel types by value: ROUTE (0x05) and ADDRESSED (0x06) are newer
+# than some vendored telesthete builds, so they are not looked up on the enum.
 CHANNEL = int(ChannelType.CHANNEL)
 DROP = int(ChannelType.DROP)
 ROUTE = 0x05
+ADDRESSED = 0x06
 
 # What a pass-through Drop packet (rook.worker.ota_drop) carries in place of an
 # AEAD tag. A native DROP frame is delivered re-wrapped with it (see ingest).
@@ -169,25 +175,33 @@ class BandCodec:
         """Fragment ``payload`` into §6.6 chunks (always at least one)."""
         return self.fragmenter.split(payload)
 
-    def seal(self, chunk: bytes, channel_id: int = 0,
-             channel_type: int = ChannelType.CHANNEL) -> bytes:
-        """Encrypt one chunk under a fresh sequence and frame it."""
+    def seal(self, chunk: bytes, route: int = 0) -> bytes:
+        """Encrypt one chunk under a fresh sequence and frame it, empty AAD.
+
+        ``route`` 0 makes a CHANNEL frame on ``channel_id`` 0 (broadcast);
+        a nonzero ``route`` makes an ADDRESSED frame to that route id, which a
+        routing hub delivers only to the peer(s) that declared it. Same bytes
+        as ``telesthete.protocol.route.pack_addressed(..., associated_data=b"")``.
+        """
+        if not 0 <= route <= 0xFFFF:
+            raise ValueError(f"route must be 0-65535, got {route}")
         seq = self.seq.next()
         return pack_packet(
             band_id=self.band_id,
-            channel_type=channel_type,
-            channel_id=channel_id,
+            channel_type=ADDRESSED if route else CHANNEL,
+            channel_id=route,
             sequence=seq,
             ciphertext=self.crypto.encrypt(seq, chunk),
         )
 
-    def frames(self, payload: bytes, channel_id: int = 0) -> list[bytes]:
+    def frames(self, payload: bytes, route: int = 0) -> list[bytes]:
         """``split`` + ``seal`` every chunk: the whole message as frames."""
-        return [self.seal(c, channel_id) for c in self.split(payload)]
+        return [self.seal(c, route) for c in self.split(payload)]
 
     def seal_spec(self, plaintext: bytes, channel_type: int, channel_id: int) -> bytes:
         """Seal one unfragmented frame with the SPEC §3.2 AAD (native DROP,
-        ROUTE). Never used for rook's CHANNEL traffic (empty AAD there)."""
+        ROUTE). Never used for rook's CHANNEL or ADDRESSED traffic (empty
+        AAD there)."""
         seq = self.seq.next()
         return pack_packet(
             band_id=self.band_id,
@@ -232,6 +246,10 @@ class BandCodec:
             return None
         if pkt.channel_type == DROP:
             return self._ingest_drop(pkt)
+        # CHANNEL (0x02) and ADDRESSED (0x06) are both empty-AAD rook
+        # messages; an ADDRESSED frame reaches us because we declared its
+        # route id, or as a broadcast from an old hub (then it may be someone
+        # else's: callers still match replies by id and requests by target).
         try:
             cleartext = self.crypto.decrypt(pkt.sequence, pkt.ciphertext)
         except Exception as e:

@@ -221,10 +221,10 @@ class BandClient:
         except Exception:
             log.exception("hub node reply send failed")
 
-    async def _send(self, payload: bytes, channel_id: int = 0) -> None:
+    async def _send(self, payload: bytes, route: int = 0) -> None:
         # Same rule as Worker._send: address only through a routing transport.
-        if channel_id and getattr(self.transport, "route_id", None) is not None:
-            await self.transport.send(payload, channel_id=channel_id)
+        if route and getattr(self.transport, "route_id", None) is not None:
+            await self.transport.send(payload, route=route)
         else:
             await self.transport.send(payload)
 
@@ -468,9 +468,9 @@ class BandClient:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
         try:
-            payload, channel = self._encode_request(msg, target, feats)
+            payload, route = self._encode_request(msg, target, feats)
             async with asyncio.timeout(timeout):
-                await self._send(payload, channel)
+                await self._send(payload, route)
                 reply = await fut
         finally:
             self._pending.pop(mid, None)
@@ -499,7 +499,8 @@ class BandClient:
         """Serialize a request with the extensions the target can use:
         ``rr``/``accept`` (ignored by older workers), addressed delivery to a
         target that declares a route, compression to one that announced
-        ``z``. Returns ``(payload, channel_id)``."""
+        ``z``. Returns ``(payload, route)``: the target's route id when
+        the request is to be ADDRESSED to it, else 0 (broadcast)."""
         base = json.dumps(msg).encode()
         rid = self.transport.route_id
         ext = dict(msg)
@@ -512,9 +513,10 @@ class BandClient:
         if envelope.F_Z in feats:
             payload = envelope.compress(payload)
         # Address only a target that declared its route: a target that never
-        # declared would miss a frame whose id another peer's name collides on.
-        channel = route_id_for(target) if target and envelope.F_ROUTE in feats and rid else 0
-        return payload, channel
+        # declared would miss a frame whose id another peer's name collides on
+        # (and the TS/Rust example ports drop ADDRESSED frames outright).
+        route = route_id_for(target) if target and envelope.F_ROUTE in feats and rid else 0
+        return payload, route
 
     async def _pull_reply(self, reply: dict, remaining: float) -> dict:
         """Fetch a large reply served over Drop (``{"drop": {id, size,

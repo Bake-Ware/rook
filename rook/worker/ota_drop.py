@@ -20,15 +20,15 @@ Design notes:
     are scoped by ``drop_id``: only the target worker (told the id via a signed
     handshake) arms a receiver for it; other workers drop unknown-id packets.
     When the far end declares a route (telesthete SPEC §10.1) the shim sends
-    with ``channel_id`` = its route id, so a routing hub delivers the transfer
-    to that peer only instead of to the whole band.
+    each packet as ADDRESSED frames to its route id, so a routing hub delivers
+    the transfer to that peer only instead of to the whole band.
   * **Native DROP frames.** A pass-through Drop packet (27 B header + 1029 B
     CHUNK + 16 B stand-in tag) is bigger than one 1003 B fragment, so every
     chunk costs two CHANNEL frames. A peer that announces ``drop-native``
     takes Drop as ONE native ``ChannelType.DROP`` outer frame per packet,
     really sealed (spec AAD) by the transport with its shared sequence source
     (:meth:`TelestheteHubTransport.send_native`). Native frames are never
-    addressed (the hub routes only CHANNEL frames) and are broadcast; old
+    addressed (the hub routes only ADDRESSED frames) and are broadcast; old
     receivers fail their tag check and drop them. The receiving codec re-wraps
     them into the pass-through shape, so receivers accept both forms.
 
@@ -99,8 +99,8 @@ class _RelayShim:
     """Adapts telesthete Drop's synchronous ``transport.send(dest, packet)`` to
     the rook hub transport's async send. The dest is ignored (scoping is by
     drop_id). Pass-through packets go out via ``send_coro(packet)``, or
-    ``send_coro(packet, channel_id=route)`` when the far end has a route;
-    with ``native`` set they go out as native DROP frames instead."""
+    ``send_coro(packet, route=route)`` (ADDRESSED frames) when the far end
+    has a route; with ``native`` set they go out as native DROP frames."""
 
     def __init__(self, send_coro: Callable[..., Awaitable[None]], route: int = 0,
                  native: Optional[NativeSend] = None) -> None:
@@ -126,7 +126,7 @@ class _RelayShim:
                 bulk = bool(plaintext) and plaintext[0] == DropFrameType.CHUNK
                 await self.native(int(ChannelType.DROP), pkt.channel_id, plaintext, bulk=bulk)
             elif self.route:
-                await self._send_coro(packet_bytes, channel_id=self.route)
+                await self._send_coro(packet_bytes, route=self.route)
             else:
                 await self._send_coro(packet_bytes)
         except Exception:

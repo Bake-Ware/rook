@@ -26,9 +26,11 @@ Layers (bottom up):
 this peer (the worker sets its ``worker_id``, a band client its node id), the
 transport declares ``route_id_for(name)`` with a ROUTE frame at start, after
 every WS (re)connect, and once per keepalive interval while up. A routing hub
-then delivers CHANNEL frames sent with ``channel_id = route_id`` to us only;
-an old hub relays the 43-byte declaration to everyone, where it fails the
-empty-AAD tag check (old receivers) or is dropped by type (this codec).
+then delivers ADDRESSED (0x06) frames whose ``channel_id`` is our route id to
+us only (``send(payload, route=...)`` sends them; CHANNEL frames are always
+broadcast); an old hub relays the 43-byte declaration to everyone, where it
+fails the empty-AAD tag check (old receivers) or is dropped by type (this
+codec), and broadcasts ADDRESSED frames, which every rook receiver opens.
 
 The declaration is soft state on the hub's peer entry. The hub forgets it
 when it evicts us (``HUB_PEER_TTL_SECS``, 15 s by default in telesthitium,
@@ -459,15 +461,16 @@ class TelestheteHubTransport:
     # -- send/recv -----------------------------------------------------------
 
     async def send(self, payload: bytes, peer_id: tuple | None = None, *,
-                   channel_id: int = 0) -> None:
+                   route: int = 0) -> None:
         """Fragment + encrypt + send ``payload``; returns once every frame of
-        it is on the link. Big payloads are split across several CHANNEL
-        frames (SPEC §6.4/§6.6) and interleaved with other traffic by the
-        writer (see :mod:`.writer`). ``peer_id`` is ignored (the hub
-        broadcasts to the band); ``channel_id`` stamps the cleartext frame
-        header (0 = the default band channel)."""
+        it is on the link. Big payloads are split across several frames
+        (SPEC §6.4/§6.6) and interleaved with other traffic by the writer
+        (see :mod:`.writer`). ``peer_id`` is ignored. ``route`` 0 sends
+        CHANNEL frames the hub broadcasts to the band; a nonzero ``route`` (a
+        peer's declared route id, core spec 14.1) sends every fragment as an
+        ADDRESSED frame a routing hub delivers to that peer only."""
         self._check_link()
-        await self.writer.submit(payload, channel_id)
+        await self.writer.submit(payload, route)
 
     async def send_native(self, channel_type: int, channel_id: int, plaintext: bytes,
                           *, bulk: bool = False) -> None:

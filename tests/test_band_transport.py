@@ -27,7 +27,8 @@ PSK = "band-transport-test-psk"
 def test_codec_round_trip_single_and_multi_fragment():
     tx, rx = BandCodec(PSK), BandCodec(PSK)
     for payload in (b"hi", os.urandom(MAX_CHUNK_PAYLOAD * 3 + 7)):
-        frames = tx.frames(payload, channel_id=5)
+        frames = tx.frames(payload, route=5)
+        assert all(f[16] == 0x06 for f in frames)   # ADDRESSED to route 5
         out = [rx.ingest(f) for f in frames]
         assert all(o is None for o in out[:-1])
         assert out[-1].payload == payload

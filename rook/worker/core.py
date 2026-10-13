@@ -282,18 +282,18 @@ class Worker:
         except ValueError:
             pass
 
-    async def send_raw(self, packet_bytes: bytes, channel_id: int = 0) -> None:
+    async def send_raw(self, packet_bytes: bytes, route: int = 0) -> None:
         """Send an already-framed binary packet onto the band (used by binary
-        sub-protocols like OTA-over-Drop). ``channel_id`` addresses it to a
-        declared route (0 = broadcast)."""
-        await self._send(packet_bytes, channel_id)
+        sub-protocols like OTA-over-Drop). ``route`` addresses it to a peer's
+        declared route id (0 = broadcast)."""
+        await self._send(packet_bytes, route)
 
-    async def _send(self, payload: bytes, channel_id: int = 0) -> None:
+    async def _send(self, payload: bytes, route: int = 0) -> None:
         # Address only through a transport that routes (it declared a route
         # id): others — older transports, embedders' and tests' doubles —
         # take send(payload) alone, and get the broadcast they always did.
-        if channel_id and getattr(self.transport, "route_id", None) is not None:
-            await self.transport.send(payload, channel_id=channel_id)
+        if route and getattr(self.transport, "route_id", None) is not None:
+            await self.transport.send(payload, route=route)
         else:
             await self.transport.send(payload)
 

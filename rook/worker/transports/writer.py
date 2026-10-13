@@ -99,13 +99,13 @@ class TokenBucket:
 class _Out:
     """One queued message."""
 
-    __slots__ = ("chunks", "channel_id", "index", "future", "cancelled", "sealer")
+    __slots__ = ("chunks", "route", "index", "future", "cancelled", "sealer")
 
-    def __init__(self, chunks: list[bytes], channel_id: int,
+    def __init__(self, chunks: list[bytes], route: int,
                  future: asyncio.Future,
                  sealer: Optional[Callable[[bytes], bytes]] = None) -> None:
         self.chunks = chunks
-        self.channel_id = channel_id
+        self.route = route      # destination route id (0 = broadcast)
         self.index = 0          # next chunk to emit; > 0 means "started"
         self.future = future
         self.cancelled = False
@@ -126,7 +126,7 @@ def _consume(fut: asyncio.Future) -> None:
 class FrameWriter:
     """Single-writer frame scheduler for one link.
 
-    ``split(payload)`` fragments a message; ``seal(chunk, channel_id)``
+    ``split(payload)`` fragments a message; ``seal(chunk, route)``
     encrypts one chunk into a wire frame (assigning its sequence);
     ``write(frame)`` puts it on the link. :class:`BandCodec` provides the
     first two. ``pacer`` (optional) throttles bulk frames only.
@@ -189,12 +189,13 @@ class FrameWriter:
 
     # -- submit --------------------------------------------------------------
 
-    async def submit(self, payload: bytes, channel_id: int = 0) -> None:
-        """Queue ``payload`` and wait until all its frames are written."""
+    async def submit(self, payload: bytes, route: int = 0) -> None:
+        """Queue ``payload`` (addressed to ``route``, 0 = broadcast) and wait
+        until all its frames are written."""
         if self._closed or self._task is None:
             raise RuntimeError("transport not started")
         chunks = self._split(payload)
-        await self._enqueue(_Out(chunks, channel_id, self._future()), len(chunks) > 1)
+        await self._enqueue(_Out(chunks, route, self._future()), len(chunks) > 1)
 
     async def submit_frame(self, plaintext: bytes, sealer: Callable[[bytes], bytes],
                            bulk: bool = False) -> None:
@@ -253,7 +254,7 @@ class FrameWriter:
     async def _emit(self, msg: _Out) -> None:
         chunk = msg.chunks[msg.index]
         frame = (msg.sealer(chunk) if msg.sealer is not None
-                 else self._seal(chunk, msg.channel_id))
+                 else self._seal(chunk, msg.route))
         msg.index += 1
         self._current = msg
         try:
