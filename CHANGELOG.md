@@ -182,6 +182,9 @@ Preparation for public use.
   argument; only `;`, quotes, backslashes, control characters and a leading
   `-` are refused. `deluge.add` refuses `;` (it split the console command
   even inside the old double quotes) and single-quotes its argument.
+- `screenshot.capture_region` accepts negative `x`/`y` again (monitors left
+  of or above the primary one); the ImageMagick backend gets a signed crop
+  offset.
 
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps

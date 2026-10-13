@@ -85,7 +85,7 @@ async def _linux_capture(quality: int, region: tuple[int, int, int, int] | None)
         i = ["import", "-window", "root", "-quality", str(quality)]
         if region:
             x, y, w, h = region
-            i += ["-crop", f"{w}x{h}+{x}+{y}"]
+            i += ["-crop", f"{w}x{h}{x:+d}{y:+d}"]  # signed: WxH-10+0, not WxH+-10+0
         backends.append(("import", i + [path]))
 
     if not backends:
@@ -232,8 +232,10 @@ class ScreenshotPlugin(Plugin):
     @capability("capture_region", risk="read", tags=("sensitive",))
     async def _capture_region(self, x: int, y: int, w: int, h: int,
                               quality: int = 85) -> dict:
-        """Capture a rectangular region of the screen."""
-        region = (require_int(x, "x", min=0), require_int(y, "y", min=0),
+        """Capture a rectangular region of the screen (x/y may be negative on multi-monitor desktops)."""
+        # x/y are virtual-desktop coordinates: a monitor left of or above
+        # the primary one has negative ones.
+        region = (require_int(x, "x"), require_int(y, "y"),
                   require_int(w, "w", min=1), require_int(h, "h", min=1))
         return await _dispatch(require_int(quality, "quality", min=1, max=100), region)
 

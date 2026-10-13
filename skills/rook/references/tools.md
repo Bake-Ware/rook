@@ -256,9 +256,9 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 | `deluge.add` | torrent | Add a torrent by magnet link, .torrent URL, or local path. |
 | `deluge.files` | torrent_id | A torrent's save path + files — pull them over the band with file.read. |
 | `deluge.list` | — | Current torrents: name, state, progress, size, ratio (+ raw output). |
-| `deluge.pause` | torrent_id='*' | Pause a torrent by id, or all with `*`. |
-| `deluge.remove` | torrent_id, data=false | Remove a torrent. |
-| `deluge.resume` | torrent_id='*' | Resume a torrent by id, or all with `*`. |
+| `deluge.pause` | torrent_id='*' | Pause a torrent by id or name, or all with `*`. |
+| `deluge.remove` | torrent_id, data=false | Remove a torrent by id or name. |
+| `deluge.resume` | torrent_id='*' | Resume a torrent by id or name, or all with `*`. |
 | `deluge.status` | — | Whether the daemon is running, plus a session summary if reachable. |
 
 **dongle**
@@ -390,7 +390,7 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 |---|---|---|
 | `screenshot.capture` | quality=85 | Capture the full primary display as a JPEG. |
 | `screenshot.capture_preview` | — | Low-quality full-screen grab for quick visual checks. |
-| `screenshot.capture_region` | x, y, w, h, quality=85 | Capture a rectangular region of the screen. |
+| `screenshot.capture_region` | x, y, w, h, quality=85 | Capture a rectangular region of the screen (x/y may be negative on multi-monitor desktops). |
 
 **selfupdate**
 
