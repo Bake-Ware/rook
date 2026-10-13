@@ -167,7 +167,7 @@ class BandCodec:
         self.reassembler = _reassembler()
         # Why frames were dropped on ingest (cheap counters for debugging).
         self.drops = {"short": 0, "malformed": 0, "band": 0, "decrypt": 0,
-                      "route": 0, "inflate": 0}
+                      "route": 0, "type": 0, "inflate": 0}
 
     # -- outbound ------------------------------------------------------------
 
@@ -250,6 +250,11 @@ class BandCodec:
         # messages; an ADDRESSED frame reaches us because we declared its
         # route id, or as a broadcast from an old hub (then it may be someone
         # else's: callers still match replies by id and requests by target).
+        # Any other type (a library peer's Stream/Board/Channel traffic on a
+        # shared band) can't be ours: drop it without spending a decrypt.
+        if pkt.channel_type not in (CHANNEL, ADDRESSED):
+            self.drops["type"] += 1
+            return None
         try:
             cleartext = self.crypto.decrypt(pkt.sequence, pkt.ciphertext)
         except Exception as e:

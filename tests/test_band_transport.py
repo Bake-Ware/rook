@@ -53,6 +53,17 @@ def test_codec_filters_short_foreign_tampered_and_keepalive():
     assert rx.ingest(good).payload == b"x"
 
 
+def test_codec_accepts_channel_and_addressed_only():
+    tx, rx = BandCodec(PSK), BandCodec(PSK)
+    assert rx.ingest(tx.frames(b"c")[0]).channel_type == 0x02
+    assert rx.ingest(tx.frames(b"a", route=9)[0]).channel_type == 0x06
+    for ctype in (0x00, 0x01, 0x03, 0x07, 0xFF):
+        f = bytearray(tx.frames(b"x")[0])
+        f[16] = ctype   # empty AAD: the header isn't authenticated
+        assert rx.ingest(bytes(f)) is None
+    assert rx.drops["type"] == 5 and rx.drops["decrypt"] == 0
+
+
 def test_codec_sequences_are_unique_and_monotonic_across_messages():
     c = BandCodec(PSK)
     seqs = [unpack_packet(f).sequence for p in (b"a", os.urandom(5000), b"b")
