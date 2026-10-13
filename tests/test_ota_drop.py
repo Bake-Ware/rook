@@ -141,3 +141,42 @@ def test_is_drop_packet_discriminates_json_from_drop():
     from telesthete.protocol.framing import pack_packet, ChannelType
     pkt = pack_packet(band_id, ChannelType.DROP, 9, 1, b"x" * 20)
     assert is_drop_packet(pkt, band_id)
+
+
+def test_reply_receiver_handles_chunks_in_linear_time():
+    """rook's _Receiver inherits the library's handle_packet, which used to
+    rescan every chunk index per CHUNK (32 MiB pull: ~28 s of CPU on the
+    band client's loop). Count membership checks on a 4,096-chunk pull."""
+    import json
+    from telesthete.protocol.drop import CHUNK_SIZE, DropFrameType
+    from telesthete.protocol.framing import ChannelType, pack_packet
+    from rook.worker.ota_drop import _BAND_PEER, _FAKE_TAG, _PassthroughCrypto, _Receiver
+
+    class Counting(dict):
+        n = 0
+
+        def __contains__(self, k):
+            Counting.n += 1
+            return super().__contains__(k)
+
+    class T:
+        def send(self, d, p):
+            pass
+
+    band = b"\x05" * 16
+    total = 4096
+    rx = _Receiver(band, 0x8001, crypto=_PassthroughCrypto(band), transport=T(),
+                   rerequest=0.25)
+    offer = {"name": "r", "size": total * CHUNK_SIZE, "chunk_size": CHUNK_SIZE,
+             "total_chunks": total, "sha256": "0" * 64}
+    rx.handle_packet(_BAND_PEER, pack_packet(
+        band, ChannelType.DROP, 0x8001, 0,
+        bytes([DropFrameType.OFFER]) + json.dumps(offer).encode() + _FAKE_TAG))
+    rx.have = Counting(rx.have)
+    chunk = b"x" * CHUNK_SIZE
+    for i in range(total):
+        rx.handle_packet(_BAND_PEER, pack_packet(
+            band, ChannelType.DROP, 0x8001, i + 1,
+            bytes([DropFrameType.CHUNK]) + i.to_bytes(4, "big") + chunk + _FAKE_TAG))
+    assert rx.verified is False          # fake sha: complete, mismatched
+    assert Counting.n < total * 80, Counting.n
