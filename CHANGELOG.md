@@ -276,6 +276,9 @@ Preparation for public use.
 - `scripts/local-hub.sh` finds a `cargo install`ed relay in `~/.cargo/bin`
   (`$CARGO_HOME/bin`) when it is not on PATH yet, passes an explicit
   `http://` dashboard domain, and prints the Install-a-worker URL.
+- Running from a git checkout reports `0.dev+<short commit>` (read from `.git`
+  once at import, no subprocess) instead of a bare `0.dev`; build stays 0, so
+  dev workers still never auto-update. Stamped bundles are unchanged.
 
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps
