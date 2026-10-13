@@ -164,6 +164,8 @@ Preparation for public use.
   `authz.CORE` so an Android peer cannot announce them lower. Any of them can
   be lowered later as a deliberate change (plugin, `authz.CORE` and
   `tests/fixtures/master_tier_floor.json` together).
+- `tests/test_tier_snapshot.py` pins every cap's effective tier and tags to
+  at least master's table (frozen fixture), Android caps included.
 
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps
