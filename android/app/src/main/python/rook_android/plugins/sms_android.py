@@ -63,7 +63,7 @@ class AndroidSmsPlugin(Plugin):
     NAMESPACE = "sms"
     PLACEMENT = place(ANDROID_APP)
 
-    @capability("list", risk="read", tags=("sensitive",))
+    @capability("list", risk="exec", tags=("sensitive",))
     def _list(self, box: str = "inbox", limit: int = 30, since_ts: float = 0.0) -> dict:
         """Recent SMS. ``box`` = inbox|sent|all; newest first."""
         return _list(str(box), int(limit), float(since_ts or 0))

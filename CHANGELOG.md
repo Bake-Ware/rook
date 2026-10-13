@@ -154,6 +154,17 @@ Preparation for public use.
   `rook-mcp --admin-password` / `ROOK_MCP_AUTH_PASSWORD` (and its
   `core.mcp.admin_password` settings entry).
 
+### Review fixes
+- Android native caps are back at the tier master gave them (undeclared, so
+  `exec`): `sms.list`, `contacts.search`, `calllog.list`, `location.get`,
+  `notify.list`/`post`/`dismiss`, `ui.text` and `device.info`,
+  `update_status`, `find`, `find_stop`, `wake`, `vibrate`, `torch`,
+  `clipboard_get`/`clipboard_set`. Their new `sensitive`/`physical` tags
+  stay. The hub, which does not ship the app's plugins, now carries them in
+  `authz.CORE` so an Android peer cannot announce them lower. Any of them can
+  be lowered later as a deliberate change (plugin, `authz.CORE` and
+  `tests/fixtures/master_tier_floor.json` together).
+
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps
   `sessions.list`, `sessions.follow`, `sessions.send` and `sessions.stop`

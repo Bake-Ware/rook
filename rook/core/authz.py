@@ -75,7 +75,8 @@ def _t(spec: str) -> tuple[str, tuple[str, ...]]:
 #
 # * ``CORE``: caps no plugin declares - registered by the worker and hub cores
 #   themselves (caps.describe, worker.plugin.*, customcap.*) and the hub's
-#   own MCP tools authorized as caps on `rook` (secret.*, band.*, token.admin).
+#   own MCP tools authorized as caps on `rook` (secret.*, band.*, token.admin),
+#   plus the Android app's native caps, whose plugin source only the app has.
 # * every built-in plugin's ``@capability(risk=..., tags=...)``, read from the
 #   plugin source shipped with this node (:func:`builtin_table`). The
 #   decorator is the one place a plugin cap's tier is written; this node's
@@ -101,6 +102,26 @@ _CORE_SPEC = {
     "guidance.write": "A",
     # hub core (rook.hub.node)
     "hub.plugin.enable": "A", "hub.plugin.disable": "A", "hub.plugin.reload": "A",
+    # The Android app's native caps (android/.../rook_android/plugins). The
+    # app adds that package to its own floor, but the hub and Python workers
+    # do not ship it, so without these rows the hub would take an Android
+    # peer's announced tier at face value. Kept at the tier they resolved to
+    # on master (undeclared -> exec) so none is lower than before; lowering
+    # one is a deliberate decision made here and in the plugin together.
+    # tests/test_tier_snapshot.py pins both against master and each other.
+    # (battery.*, hid.*, screenshot.* share their names with Python worker
+    # plugins, whose declared tiers already cover them.)
+    "calendar.list": "R s",
+    "calllog.list": "X s", "contacts.search": "X s", "location.get": "X s",
+    "sms.list": "X s", "sms.send": "X", "ui.text": "X s",
+    "notify.list": "X s", "notify.dismiss": "X", "notify.post": "X",
+    "device.update": "A d", "device.update_status": "X", "device.info": "X",
+    "device.find": "X p", "device.find_stop": "X p", "device.wake": "X p",
+    "device.vibrate": "X p", "device.torch": "X p", "device.unlock": "X s,p",
+    "device.clipboard_set": "X", "device.clipboard_get": "X s",
+    "device.open_url": "X", "device.launch": "X",
+    "voice.speak": "W p", "voice.speak_status": "R", "voice.replies": "R",
+    "voice.speak_stop": "W", "voice.speak_voices": "R",
 }
 
 CORE: dict[str, tuple[str, tuple[str, ...]]] = {c: _t(s) for c, s in _CORE_SPEC.items()}

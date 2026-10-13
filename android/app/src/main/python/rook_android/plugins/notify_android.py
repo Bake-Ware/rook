@@ -33,7 +33,7 @@ class AndroidNotifyPlugin(Plugin):
     NAMESPACE = "notify"
     PLACEMENT = place(ANDROID_APP)
 
-    @capability("list", risk="read", tags=("sensitive",))
+    @capability("list", risk="exec", tags=("sensitive",))
     def _list(self, limit: int = 40, packages: str | list | None = None) -> dict:
         """Recent notifications, newest first.
 
@@ -66,7 +66,7 @@ class AndroidNotifyPlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("dismiss", risk="write")
+    @capability("dismiss", risk="exec")
     def _dismiss(self, key: str) -> dict:
         """Dismiss a notification by its ``key`` (from notify.list)."""
         if _Listener is None:
@@ -77,7 +77,7 @@ class AndroidNotifyPlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("post", risk="write")
+    @capability("post", risk="exec")
     def _post(self, title: str = "rook", text: str = "") -> dict:
         """Post a local notification on the phone (needs POST_NOTIFICATIONS)."""
         ctx = app_context()

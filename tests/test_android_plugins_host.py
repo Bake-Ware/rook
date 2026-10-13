@@ -27,7 +27,7 @@ def test_android_plugins_load_through_the_host_with_placement(monkeypatch):
     assert not mods & {"hid", "screenshot", "selfupdate"}
     for stock in ("hid", "screenshot", "selfupdate", "battery"):
         assert phone.status[stock]["state"] == "not_placed", stock
-    assert phone.registry.meta("ui.text").risk == "read"
+    assert phone.registry.meta("ui.text").risk == "exec"  # master's tier (undeclared)
 
     # A Termux or desktop worker never loads the native ones.
     desk = PluginHost(facts=NodeFacts(node_id="d", hw={"os": "android"}))

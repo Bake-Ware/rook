@@ -19,7 +19,7 @@ class AndroidUiPlugin(Plugin):
     NAMESPACE = "ui"
     PLACEMENT = place(ANDROID_APP)
 
-    @capability("text", risk="read", tags=("sensitive",))
+    @capability("text", risk="exec", tags=("sensitive",))
     def _text(self) -> dict:
         """All visible text on the current screen (top-to-bottom)."""
         if _Hid is None:

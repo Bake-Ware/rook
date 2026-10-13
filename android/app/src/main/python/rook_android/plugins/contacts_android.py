@@ -12,7 +12,7 @@ class AndroidContactsPlugin(Plugin):
     NAMESPACE = "contacts"
     PLACEMENT = place(ANDROID_APP)
 
-    @capability("search", risk="read", tags=("sensitive",))
+    @capability("search", risk="exec", tags=("sensitive",))
     def _search(self, query: str = "", limit: int = 40) -> dict:
         """Contacts whose name/number matches ``query`` (empty = first N)."""
         ctx = app_context()

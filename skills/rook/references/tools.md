@@ -491,31 +491,31 @@ Native plugins of the Android app's embedded worker, in place of (or beside) the
 
 | Cap | Args | Risk | Does |
 |---|---|---|---|
-| `calllog.list` | limit=30 | read | Recent calls, newest first: number, name, direction, duration_s, ts. |
+| `calllog.list` | limit=30 | exec | Recent calls, newest first: number, name, direction, duration_s, ts. |
 
 **contacts_android**
 
 | Cap | Args | Risk | Does |
 |---|---|---|---|
-| `contacts.search` | query='', limit=40 | read | Contacts whose name/number matches `query` (empty = first N). |
+| `contacts.search` | query='', limit=40 | exec | Contacts whose name/number matches `query` (empty = first N). |
 
 **device_android**
 
 | Cap | Args | Risk | Does |
 |---|---|---|---|
-| `device.clipboard_get` | — | read | Read the clipboard. |
-| `device.clipboard_set` | text | write | Put text on the clipboard. |
-| `device.find` | seconds=30 | write | Ring at maximum alarm volume for 1–120 seconds; restores volume after. |
-| `device.find_stop` | — | write | Stop the find-device ring and restore the previous alarm volume. |
-| `device.info` | — | read | Model, Android version, screen, uptime, and battery-independent bits. |
+| `device.clipboard_get` | — | exec | Read the clipboard. |
+| `device.clipboard_set` | text | exec | Put text on the clipboard. |
+| `device.find` | seconds=30 | exec | Ring at maximum alarm volume for 1–120 seconds; restores volume after. |
+| `device.find_stop` | — | exec | Stop the find-device ring and restore the previous alarm volume. |
+| `device.info` | — | exec | Model, Android version, screen, uptime, and battery-independent bits. |
 | `device.launch` | package | exec | Launch an installed app by package name (e.g. com.android.settings). |
 | `device.open_url` | url | exec | Open a URL (or any Uri) in the default handler app. |
-| `device.torch` | on=true | write | Flashlight on/off (no permission needed via CameraManager). |
+| `device.torch` | on=true | exec | Flashlight on/off (no permission needed via CameraManager). |
 | `device.unlock` | pin, hold_ms=9000, pre_swipe=true | exec | Unlock a PIN-secured screen: wake, surface the PIN bouncer, and tap the digits at keypad positions computed f… |
 | `device.update` | — | admin | Queue an APK update from the official Rook feed. |
-| `device.update_status` | — | read | APK updater progress, installed/target versions, and required action. |
-| `device.vibrate` | ms=300 | write | Buzz the phone for `ms` milliseconds. |
-| `device.wake` | dismiss_keyguard=false, hold_ms=1200 | write | Turn the screen ON (and show over the keyguard) so the accessibility service can interact with the lock scree… |
+| `device.update_status` | — | exec | APK updater progress, installed/target versions, and required action. |
+| `device.vibrate` | ms=300 | exec | Buzz the phone for `ms` milliseconds. |
+| `device.wake` | dismiss_keyguard=false, hold_ms=1200 | exec | Turn the screen ON (and show over the keyguard) so the accessibility service can interact with the lock scree… |
 
 **hid_a11y**
 
@@ -531,15 +531,15 @@ Native plugins of the Android app's embedded worker, in place of (or beside) the
 
 | Cap | Args | Risk | Does |
 |---|---|---|---|
-| `location.get` | timeout=8.0 | read | Get lat/lon, accuracy, age, stale flag and Maps URL. |
+| `location.get` | timeout=8.0 | exec | Get lat/lon, accuracy, age, stale flag and Maps URL. |
 
 **notify_android**
 
 | Cap | Args | Risk | Does |
 |---|---|---|---|
-| `notify.dismiss` | key | write | Dismiss a notification by its `key` (from notify.list). |
-| `notify.list` | limit=40, packages? | read | Recent notifications, newest first. |
-| `notify.post` | title='rook', text='' | write | Post a local notification on the phone (needs POST_NOTIFICATIONS). |
+| `notify.dismiss` | key | exec | Dismiss a notification by its `key` (from notify.list). |
+| `notify.list` | limit=40, packages? | exec | Recent notifications, newest first. |
+| `notify.post` | title='rook', text='' | exec | Post a local notification on the phone (needs POST_NOTIFICATIONS). |
 
 **screen**
 
@@ -552,7 +552,7 @@ Native plugins of the Android app's embedded worker, in place of (or beside) the
 
 | Cap | Args | Risk | Does |
 |---|---|---|---|
-| `sms.list` | box='inbox', limit=30, since_ts=0.0 | read | Recent SMS. |
+| `sms.list` | box='inbox', limit=30, since_ts=0.0 | exec | Recent SMS. |
 | `sms.send` | to, text | exec | Send an SMS to `to`. |
 
 **speak_android**
@@ -569,5 +569,5 @@ Native plugins of the Android app's embedded worker, in place of (or beside) the
 
 | Cap | Args | Risk | Does |
 |---|---|---|---|
-| `ui.text` | — | read | All visible text on the current screen (top-to-bottom). |
+| `ui.text` | — | exec | All visible text on the current screen (top-to-bottom). |
 <!-- END GENERATED: android-caps -->
