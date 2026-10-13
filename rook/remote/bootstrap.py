@@ -1146,12 +1146,47 @@ class CombinedServer:
     def _session_ok(self, request: web.Request) -> bool:
         return self._accounts.store.dashboard_session_ok(request.cookies.get("rook_session", ""))
 
-    def _signed_in(self, location: str) -> web.HTTPFound:
+    def _signed_in(self, location: str, request: web.Request) -> web.HTTPFound:
         """Redirect that starts a new random dashboard session."""
+        from .public_url import set_cookie
         resp = web.HTTPFound(location)
-        resp.set_cookie("rook_session", self._accounts.store.dashboard_session(),
-                        max_age=30 * 86400, httponly=True, samesite="Lax")
+        # No configured floor (base ""): this cookie was never Secure, and
+        # requiring it from the https:// setting would lock operators out of
+        # an https hub they open by its raw http://<ip>:<port>. It is Secure
+        # whenever the request itself came over HTTPS (directly or via a proxy).
+        set_cookie(resp, request, "", "rook_session",
+                   self._accounts.store.dashboard_session(), max_age=30 * 86400)
         return resp
+
+    # GET paths where a dashboard (shared password) login is carried over to
+    # the operator's account session: the account pages and the JSON the
+    # dashboard's account-backed views open with.
+    _BRIDGE_PATHS = ("/account", "/account/bands", "/account/bands/component",
+                     "/account/bands/api", "/account/component", "/account/tokens/api",
+                     "/account/session", "/account/settings/api", "/account/knowledge/api",
+                     "/account/guidance/api", "/account/vault/api", "/account/jobs/api")
+    # Set (never Secure, holds nothing secret) on the bridge's redirect: if it
+    # comes back without the account cookie, the browser dropped that cookie
+    # and redirecting again would loop forever.
+    _BRIDGE_MARK = "rook_bridge"
+
+    def _bridge_failed(self, request: web.Request) -> web.Response:
+        """The account cookie set one hop ago did not come back: explain
+        instead of redirecting again (ERR_TOO_MANY_REDIRECTS before)."""
+        from .account_web import NO_STORE, esc
+        origin = self.public_base
+        message = (f"Your browser did not keep the Rook sign-in cookie. This dashboard is set "
+                   f"up for {origin}; open it at that address. If that address is wrong (for "
+                   f"example a LAN hub reached over plain HTTP), set ROOK_DOMAIN to the "
+                   f"address you use, such as http://<host>:{self.port}, and restart the dashboard.")
+        if (request.headers.get("Sec-Fetch-Mode") == "navigate"
+                or "text/html" in request.headers.get("Accept", "")):
+            response = self._accounts.response("Sign-in cookie refused",
+                                               "<p>" + esc(message) + "</p>", 400)
+        else:
+            response = web.json_response({"error": message}, status=400, headers=NO_STORE)
+        response.del_cookie(self._BRIDGE_MARK)   # a reload tries the bridge once more
+        return response
 
     def _check_creds(self, user: str, passwd: str) -> bool:
         """Validate login. Username is enforced only when one is configured,
@@ -1188,13 +1223,28 @@ class CombinedServer:
         # Account routes enforce their own sessions, CSRF and band ownership.
         # A Google/member login never unlocks the legacy global admin APIs.
         if self._accounts.handles(request.path):
-            if (request.path in ("/account", "/account/bands", "/account/bands/component", "/account/component", "/account/tokens/api", "/account/session") and not self._accounts.current(request)
-                    and self.web_pass and self._accounts.bootstrap_id
+            bridged = request.path in self._BRIDGE_PATHS and request.method in ("GET", "HEAD")
+            signed_in = self._accounts.current(request) is not None
+            if (bridged and not signed_in and self.web_pass and self._accounts.bootstrap_id
                     and self._session_ok(request)):
-                response=self._accounts.signed_in(self._accounts.bootstrap_id)
-                response.headers["Location"]=str(request.rel_url)
-                return response
-            return await handler(request)
+                if request.cookies.get(self._BRIDGE_MARK):
+                    return self._bridge_failed(request)
+                from .account_web import NO_STORE
+                response = web.HTTPFound(str(request.rel_url), headers=NO_STORE)
+                self._accounts.start_session(response, request, self._accounts.bootstrap_id)
+                response.set_cookie(self._BRIDGE_MARK, "1", max_age=60, httponly=True,
+                                    samesite="Lax")
+                raise response
+            clear_mark = signed_in and bool(request.cookies.get(self._BRIDGE_MARK))
+            try:
+                response = await handler(request)
+            except web.HTTPException as exc:   # e.g. /account/bands redirects
+                if clear_mark:
+                    exc.del_cookie(self._BRIDGE_MARK)
+                raise
+            if clear_mark and not response.prepared:
+                response.del_cookie(self._BRIDGE_MARK)
+            return response
 
         # Always public: worker bootstrap/artifacts, health, websockets.
         is_exempt = self._auth_exempt(request.path)
@@ -1239,7 +1289,7 @@ class CombinedServer:
             try:
                 data = await request.post()
                 if self._check_creds(data.get("user", ""), data.get("pass", "")):
-                    raise self._signed_in("/setup" if unconfigured else "/")
+                    raise self._signed_in("/setup" if unconfigured else "/", request)
             except web.HTTPFound:
                 raise
             except Exception:

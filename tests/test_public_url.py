@@ -134,3 +134,90 @@ def test_worker_enrollment_origin(server, ok):
     else:
         with pytest.raises(ValueError):
             enroll.check_origin(server)
+
+
+# -- cookies and the dashboard -> account bridge ------------------------------
+
+def _set_cookies(response):
+    return {c.split("=", 1)[0]: c for c in response.headers.getall("Set-Cookie", [])}
+
+
+async def _dashboard_login(client):
+    response = await client.post("/login", data={"user": "owner", "pass": "password"},
+                                 allow_redirects=False)
+    assert response.status == 302
+    return response
+
+
+@pytest.mark.asyncio
+async def test_http_lan_hub_cookies_are_not_secure_and_bridge_takes_one_hop(hub):
+    server, _store, _band = hub(f"{LAN}:7005", f"{LAN}:8765")
+    async with TestClient(TestServer(server._app)) as client:
+        login = await _dashboard_login(client)
+        assert "Secure" not in _set_cookies(login)["rook_session"]
+        for path in ("/account/tokens/api", "/account/session", "/account/bands/api"):
+            client.session.cookie_jar.clear(lambda c: c.key in ("rook_account", "rook_bridge"))
+            response = await client.get(path, headers={"Accept": "application/json"})
+            # 503: the token service (the MCP process) is not running here;
+            # what matters is that the handler answered, not a sign-in error.
+            assert response.status in (200, 503), (path, await response.text())
+            assert len(response.history) == 1, path
+            hop = _set_cookies(response.history[0])
+            assert "Secure" not in hop["rook_account"] and "HttpOnly" in hop["rook_account"]
+            await response.json()
+        page = await client.get("/account/login")
+        assert "Secure" not in _set_cookies(page)["rook_login_form"]
+
+
+@pytest.mark.asyncio
+async def test_https_hub_over_plain_http_explains_instead_of_looping(hub):
+    server, _store, _band = hub("rook.example.com", "hub.example.com:443")
+    async with TestClient(TestServer(server._app)) as client:
+        await _dashboard_login(client)
+        response = await client.get("/account/tokens/api", headers={"Accept": "application/json"})
+        # One bridge hop: the Secure account cookie is dropped over http (the
+        # client's jar behaves like a browser), so the second visit explains.
+        assert len(response.history) == 1
+        assert "Secure" in _set_cookies(response.history[0])["rook_account"]
+        assert response.status == 400
+        assert "https://rook.example.com" in (await response.json())["error"]
+        page = await client.get("/account", headers={"Accept": "text/html"})
+        assert page.status == 302 or len(page.history) <= 1
+        # The mark is cleared with the error, so a reload tries once more.
+        page = await client.get("/account", headers={"Accept": "text/html"})
+        assert page.status == 400 and "ROOK_DOMAIN" in await page.text()
+        assert len(page.history) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("domain", ["rook.example.com", f"{LAN}:7005"])
+@pytest.mark.parametrize("headers", [{"X-Forwarded-Proto": "https"},
+                                     {"Forwarded": "for=192.0.2.1;proto=https"},
+                                     {"CF-Visitor": '{"scheme":"https"}'}])
+async def test_https_requests_get_secure_cookies(hub, domain, headers):
+    server, _store, _band = hub(domain, "hub.example.com:443")
+    async with TestClient(TestServer(server._app)) as client:
+        login = await client.post("/login", data={"user": "owner", "pass": "password"},
+                                  headers=headers, allow_redirects=False)
+        assert "Secure" in _set_cookies(login)["rook_session"]
+        session = login.cookies["rook_session"].value
+        bridge = await client.get("/account/session", allow_redirects=False,
+                                  headers={**headers, "Cookie": "rook_session=" + session})
+        assert bridge.status == 302 and bridge.headers["Location"] == "/account/session"
+        assert "Secure" in _set_cookies(bridge)["rook_account"]
+        page = await client.get("/account/login", headers=headers)
+        assert "Secure" in _set_cookies(page)["rook_login_form"]
+
+
+@pytest.mark.asyncio
+async def test_https_hub_keeps_secure_account_cookies_without_proxy_headers(hub):
+    # A proxy that forgets X-Forwarded-Proto must not weaken an https hub.
+    server, _store, _band = hub("rook.example.com", "hub.example.com:443")
+    async with TestClient(TestServer(server._app)) as client:
+        page = await client.get("/account/login")
+        assert "Secure" in _set_cookies(page)["rook_login_form"]
+        session = server._accounts.store.dashboard_session()
+        bridge = await client.get("/account/session", allow_redirects=False,
+                                  headers={"Cookie": "rook_session=" + session})
+        assert "Secure" in _set_cookies(bridge)["rook_account"]
+        assert "Secure" not in _set_cookies(bridge)["rook_bridge"]

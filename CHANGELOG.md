@@ -253,6 +253,17 @@ Preparation for public use.
   passes) or port 80, so a LAN quickstart hub serves `http://` installers and a
   public hub's scripts are unchanged. Workers accept `--enroll http://` only
   for a non-public IP literal (LAN, loopback, tailnet).
+- Dashboard and account cookies are set through one helper: `Secure` whenever
+  the public base is `https` (as before, even if a proxy omits
+  `X-Forwarded-Proto`) or the request came over HTTPS (`X-Forwarded-Proto`,
+  `Forwarded`, `CF-Visitor`); only an `http://` hub reached over plain HTTP
+  sends them without it. `rook_session` was never `Secure`; it now is on HTTPS
+  requests. Fixes the endless redirect (ERR_TOO_MANY_REDIRECTS) and "Failed to
+  fetch / Sign in" on Tokens and Account & access over plain HTTP.
+- The dashboard-to-account sign-in bridge is loop-proof (a one-minute
+  `rook_bridge` marker: a second miss answers 400 with what to fix) and also
+  covers `/account/bands/api` and the Settings, Knowledge, Guidance, Vault and
+  Jobs APIs. It only bridges GET/HEAD.
 
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps

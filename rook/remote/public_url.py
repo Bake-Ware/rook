@@ -97,7 +97,9 @@ def cookie_secure(request, base: str) -> bool:
     An ``https`` public base keeps every cookie ``Secure`` no matter how the
     request arrived (what every public deployment had before). Only a hub
     configured as ``http://`` (a LAN quickstart) sends cookies without it, and
-    even then a request that came in over HTTPS still gets ``Secure``."""
+    even then a request that came in over HTTPS still gets ``Secure``. An
+    empty ``base`` means "no configured floor": Secure exactly when the
+    request came over HTTPS."""
     return base.lower().startswith("https://") or request_is_https(request)
 
 
