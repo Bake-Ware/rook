@@ -30,7 +30,7 @@ import sys
 import time
 from pathlib import Path
 
-from ...core.paths import worker_install_dir, worker_state_dir
+from ...core.paths import legacy_state_path, worker_install_dir, worker_state_dir
 from ...core.db import atomic_write_json, atomic_write_text
 from ...core.pluginkit import RunTimeout, is_termux, is_windows, run
 from ..plugin import ANDROID_APP_REPLACED, Plugin, capability, place
@@ -78,18 +78,30 @@ def _my_worker_id() -> str | None:
         return None
 
 
+def _ban_files() -> list[Path]:
+    """This state directory's flag, plus the one in ~/.rook-band-worker when
+    ROOK_WORKER_HOME points elsewhere: a node deauthed before the variable
+    moved its state (or with the copy disabled) must stay off the band."""
+    legacy = legacy_state_path("banned")
+    return [_BANNED] + ([legacy] if legacy is not None else [])
+
+
 def is_banned() -> bool:
     """True if this node has been deauthed (worker.deauth). Checked at boot by
     the CLI so a banned worker parks itself off-band instead of rejoining."""
-    return _BANNED.exists()
+    return any(p.exists() for p in _ban_files())
 
 
 def ban_info() -> dict:
     """Details of the standing ban, or ``{}`` if not banned."""
-    try:
-        return json.loads(_BANNED.read_text(encoding="utf-8"))
-    except Exception:
-        return {"at": 0} if _BANNED.exists() else {}
+    for path in _ban_files():
+        if not path.exists():
+            continue
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return {"at": 0}
+    return {}
 
 
 class SelfUpdatePlugin(Plugin):

@@ -192,6 +192,12 @@ Preparation for public use.
   `dependency()` = `None` (status `dependency_unloaded`) instead of the
   stopped instance. `selfupdate` no longer adds another OTA binary handler
   on every reload.
+- With `ROOK_WORKER_HOME` set, a worker copies state missing there from
+  `~/.rook-band-worker` once at start (worker_id, enrollment, deauth flag,
+  hold, update state, pushed config, plugin/custom-cap state, anchors, audit,
+  chat, work DB, plugin data), keeping modes; older releases kept it there.
+  The deauth flag in `~/.rook-band-worker` is honoured even when nothing is
+  copied. `ROOK_WORKER_HOME_FRESH=1` starts a separate worker instead.
 
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps

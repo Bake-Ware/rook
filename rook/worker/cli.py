@@ -42,7 +42,9 @@ def main() -> None:
         prog="rook-worker",
         epilog="State (identity, enrollment, pushed config, audit log, plugin data) "
                "lives in ROOK_WORKER_HOME, default ~/.rook-band-worker; the installed "
-               "bundle stays in ~/.rook-band-worker. "
+               "bundle stays in ~/.rook-band-worker. With ROOK_WORKER_HOME set, state "
+               "missing there is copied once from ~/.rook-band-worker (older releases "
+               "kept it there); ROOK_WORKER_HOME_FRESH=1 starts a separate worker instead. "
                "ROOK_CAP_TIMEOUT = seconds a capability call may run "
                "before it is abandoned with a timeout error (default 300; 0 = no limit). "
                "Caps that take a timeout argument get that plus a margin; long-running "
@@ -123,6 +125,12 @@ def main() -> None:
     # runs only after offline validation modes, which must have no side effects.
     from .desktop import ensure_launcher
     ensure_launcher()
+
+    # State kept in ~/.rook-band-worker before ROOK_WORKER_HOME moved all of
+    # it (identity, enrollment, deauth flag, pushed config...): copy it over
+    # once, before anything reads it. Offline modes above stay side-effect free.
+    from ..core.paths import migrate_legacy_state
+    migrate_legacy_state()
 
     if args.enroll:
         from .enroll import enroll
