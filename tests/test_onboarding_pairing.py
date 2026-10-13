@@ -69,8 +69,15 @@ def test_mint_pairing_and_panel(tmp_path):
     assert [c[2] for c in out["cmds"]] == [f"curl -fsSL '{url}' | bash",
                                            f'iex (irm "{url}&os=windows")',
                                            f"pkg install -y curl && curl -fsSL '{url}' | bash"]
-    for label, _cls, cmd in out["cmds"]:
-        assert label in out["text"] and cmd in out["text"]
+    for label, _cls, cmd, note in out["cmds"]:
+        assert label in out["text"] and cmd in out["text"] and note in out["text"]
+    # What to expect: UAC and the duration on Windows, the user service on
+    # Linux/macOS (what the bootstrap scripts actually do).
+    notes = {c[0]: c[3] for c in out["cmds"]}
+    assert notes["Windows PowerShell"] == ("Opens an administrator prompt (UAC). Takes 2-5 minutes; "
+                                           "the machine appears under Workers when done.")
+    assert "systemd user service" in notes["Linux / macOS"] and "1-3 minutes" in notes["Linux / macOS"]
+    assert notes["Android (Termux)"] == ""
     assert "abc123" in out["text"] and "seconds remaining" in out["text"]
 
 

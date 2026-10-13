@@ -313,6 +313,10 @@ Preparation for public use.
 - When enrollment fails on a pairing-code install (typically a code that
   expired during a slow first install), both installers ask for the fresh
   code the dashboard shows and retry instead of failing.
+- The Install page's pairing commands carry a short note: UAC and 2-5 minutes
+  on Windows; a per-user service, possible sudo prompt and 1-3 minutes on
+  Linux/macOS.
+
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps
   `sessions.list`, `sessions.follow`, `sessions.send` and `sessions.stop`

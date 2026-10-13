@@ -84,12 +84,17 @@ export function reveal(title,note,text){
   return dialog(title,h('p',{text:note}),h('pre',{text,tabindex:'0'}),h('div',{class:'mg-actions end'},c));
 }
 // Copy-paste commands that join a machine with pairing `code` through the hub
-// at `origin` (the server's public base, http:// on a LAN hub): [label, class, text].
+// at `origin` (the server's public base, http:// on a LAN hub):
+// [label, class, text, note]. The notes describe what the installers in
+// rook/remote/bootstrap.py actually do, so a first-time user knows to accept
+// UAC / sudo and to wait rather than assume it hung.
 export function pairCommands(origin,code){
   const url=origin+'/worker?band='+code;
-  return [['Linux / macOS','pairing-command',`curl -fsSL '${url}' | bash`],
-          ['Windows PowerShell','pairing-windows',`iex (irm "${url}&os=windows")`],
-          ['Android (Termux)','pairing-android',`pkg install -y curl && curl -fsSL '${url}' | bash`]];
+  return [['Linux / macOS','pairing-command',`curl -fsSL '${url}' | bash`,
+           'Runs as your user (a systemd user service on Linux) and may ask for your sudo password for system packages. Takes 1-3 minutes; the machine appears under Workers when done.'],
+          ['Windows PowerShell','pairing-windows',`iex (irm "${url}&os=windows")`,
+           'Opens an administrator prompt (UAC). Takes 2-5 minutes; the machine appears under Workers when done.'],
+          ['Android (Termux)','pairing-android',`pkg install -y curl && curl -fsSL '${url}' | bash`,'']];
 }
 // A live pairing code: the code, its countdown and the three commands. `data`
 // is the account pair action's JSON ({pairing, band_id, origin, csrf}). While
@@ -100,9 +105,10 @@ export function pairingPanel(data){
   let grant=data.pairing,pending=false,stopped=false;
   const show=()=>{
     code.textContent=grant.code;
-    rows.replaceChildren(...pairCommands(data.origin,grant.code).map(([label,cls,text])=>{
+    rows.replaceChildren(...pairCommands(data.origin,grant.code).map(([label,cls,text,note])=>{
       const c=btn('Copy','soft',()=>copy(text,c));
-      return h('div',{class:'pairing-row'},h('span',{class:'mg-label',text:label}),h('pre',{class:cls,text,tabindex:'0'}),c);
+      return h('div',{class:'pairing-row'},h('span',{class:'mg-label',text:label}),h('pre',{class:cls,text,tabindex:'0'}),c,
+        note&&h('p',{class:'mg-sub pairing-note',text:note}));
     }));
   };
   const node=h('div',{class:'pairing-panel'},code,left,rows);

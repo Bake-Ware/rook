@@ -109,5 +109,5 @@ dialog.mg-dialog:not([open]){display:none}
 /* Pairing code panel (dialog, Install page, first-worker card). */
 .pairing-panel{display:flex;flex-direction:column;gap:10px}
 .pairing-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 8px;align-items:start}
-.pairing-row .mg-label{grid-column:1/-1}
+.pairing-row .mg-label,.pairing-row .pairing-note{grid-column:1/-1}
 .pairing-row .mg-btn{min-height:32px}
