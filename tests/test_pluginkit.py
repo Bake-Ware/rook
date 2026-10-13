@@ -340,6 +340,46 @@ def test_deluge_refuses_ids_that_could_inject_console_commands():
     from rook.worker.plugins import deluge
     assert deluge._torrent_id("*") == "*"
     assert deluge._torrent_id("abc123 def456") == "abc123 def456"
-    for bad in ("abc; rm *", "x", '"', ""):
+    for bad in ("abc; rm *", '"', "a'b", "a\\b", "line\nrm *", "--remove_data", ""):
         with pytest.raises(kit.CapError):
             deluge._torrent_id(bad)
+
+
+def _console_split(command: str) -> list[list[str]]:
+    """How deluge-console (2.x ConsoleCommandParser._split_args) reads its
+    one command argument: split on ';' first, then shlex each piece."""
+    import shlex
+    return [shlex.split(part.strip()) for part in command.split(";")]
+
+
+@pytest.mark.parametrize("name", ["Some Linux ISO", "x", "ubuntu-24.04*", "*1080p*",
+                                  "Movie (2024) [1080p]", "a $HOME `id` b"])
+def test_deluge_accepts_torrent_names_as_one_argument(name):
+    """deluge-console matches torrent names as well as ids; a name with spaces
+    reaches it as one argument of one command."""
+    from rook.worker.plugins import deluge
+    command = f"rm --remove_data {deluge._torrent_id(name)}"
+    assert _console_split(command) == [["rm", "--remove_data", name]]
+
+
+@pytest.mark.asyncio
+async def test_deluge_pause_passes_a_name_to_the_console(monkeypatch):
+    from rook.worker.plugins import deluge
+    seen = []
+
+    async def fake_console(command, timeout=30.0):
+        seen.append(command)
+        return 0, "ok", ""
+    monkeypatch.setattr(deluge, "_console", fake_console)
+    p = deluge.DelugePlugin()
+    assert (await p._pause("Some Linux ISO"))["ok"]
+    assert (await p._files("Some Linux ISO"))["torrent_id"] == "Some Linux ISO"
+    assert _console_split(seen[0]) == [["pause", "Some Linux ISO"]]
+    assert _console_split(seen[1]) == [["info", "-v", "Some Linux ISO"]]
+    # add: a ';' inside the double quotes master used still split the command.
+    path = 'C:\\Torrents\\it\'s "here".torrent'
+    assert (await p._add(path))["ok"]
+    assert _console_split(seen[2]) == [["add", path]]
+    for bad in ("magnet:?xt=urn:btih:abc;rm *", "a\nrm *"):
+        with pytest.raises(kit.CapError):
+            await p._add(bad)

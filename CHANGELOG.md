@@ -177,6 +177,11 @@ Preparation for public use.
   `asyncio.timeout`, instead of the 3.11-only API, and a test keeps 3.11-only
   APIs out of the worker bundle. Workers are not refused on 3.10, since
   master's worker never needed 3.11.
+- `deluge.pause`/`resume`/`remove`/`files` take a torrent name again (deluge
+  matches names as well as hashes), passed to `deluge-console` as one quoted
+  argument; only `;`, quotes, backslashes, control characters and a leading
+  `-` are refused. `deluge.add` refuses `;` (it split the console command
+  even inside the old double quotes) and single-quotes its argument.
 
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps

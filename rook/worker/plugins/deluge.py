@@ -17,6 +17,7 @@ live commands, and ``deluge.status`` reports whether it is.
 from __future__ import annotations
 
 import re
+import shlex
 
 from ...core.pluginkit import RunTimeout, fail, require_str, run, which
 from ..plugin import Plugin, capability
@@ -57,17 +58,30 @@ async def _console(command: str, timeout: float = 30.0) -> tuple[int, str, str]:
     return await _run(exe, command, timeout=timeout)
 
 
-# deluge-console splits its one command argument itself, so a torrent id with
-# a ';' or quotes could smuggle in a second console command. Ids are hex (a
-# prefix is enough for deluge); several may be given space-separated.
-_TORRENT_ID = re.compile(r"\*|[0-9a-fA-F]{1,40}(?: [0-9a-fA-F]{1,40})*")
+# deluge-console takes the whole command as one argument and parses it
+# itself: it splits on every ';' first (quotes do not protect one), then
+# shlex-splits each piece. So a ';' or a newline in an identifier could
+# smuggle in a second console command, quotes and backslashes could unbalance
+# the quoting, and a leading '-' would be read as an option (rm --remove_data).
+# deluge matches the identifier against torrent ids and names (prefix/suffix
+# with '*'), so names are allowed: rejected are only those characters, and
+# the rest is shlex-quoted as one word. A space-separated list of hex ids is
+# still several ids, as before.
+_HEX_IDS = re.compile(r"[0-9a-fA-F]{1,40}(?: [0-9a-fA-F]{1,40})*")
+_BREAKOUT = re.compile(r"[;\'\"\\\x00-\x1f\x7f]")
 
 
 def _torrent_id(value) -> str:
-    tid = require_str(value, "torrent_id")
-    if not _TORRENT_ID.fullmatch(tid):
-        fail("torrent_id must be torrent hashes (hex) or *")
-    return tid
+    """The identifier as console command text: ``*``, hex ids, or one
+    quoted name."""
+    tid = require_str(value, "torrent_id").strip()
+    if tid == "*" or _HEX_IDS.fullmatch(tid):
+        return tid
+    if _BREAKOUT.search(tid):
+        fail("torrent_id must not contain ; quotes, backslashes or control characters")
+    if tid.startswith("-"):
+        fail("torrent_id must not start with -")
+    return shlex.quote(tid)
 
 
 async def _simple(command: str) -> dict:
@@ -154,9 +168,11 @@ class DelugePlugin(Plugin):
 
     @capability("files", risk="read")
     async def _files(self, torrent_id: str) -> dict:
-        """A torrent's save path + files — pull them over the band with file.read."""
-        torrent_id = _torrent_id(torrent_id)
-        code, out, err = await _console(f"info -v {torrent_id}")
+        """A torrent's save path + files — pull them over the band with file.read.
+
+        ``torrent_id`` is a hash (or prefix) or the torrent's name."""
+        tid = _torrent_id(torrent_id)
+        code, out, err = await _console(f"info -v {tid}")
         if code != 0:
             fail((err or out).strip()[:300] or f"deluge-console exit {code}")
         save_path = None
@@ -168,7 +184,7 @@ class DelugePlugin(Plugin):
             fm = re.match(r"\s*([^\(]+)\s*\(([\d.]+\s*\w+)\)\s*$", line)
             if "::Files" in line or (fm and save_path):
                 pass  # deluge-console file lines vary; keep raw as the source of truth
-        return {"ok": True, "torrent_id": torrent_id, "save_path": save_path,
+        return {"ok": True, "torrent_id": torrent_id.strip(), "save_path": save_path,
                 "raw": out[:8000],
                 "note": "read files with file.read(save_path + '/' + name, encoding='base64')"}
 
@@ -176,9 +192,11 @@ class DelugePlugin(Plugin):
     async def _add(self, torrent: str) -> dict:
         """Add a torrent by magnet link, .torrent URL, or local path."""
         torrent = require_str(torrent, "torrent (magnet/url/path)")
-        if '"' in torrent:
-            fail("torrent must not contain double quotes")
-        code, out, err = await _console(f'add "{torrent}"', timeout=45)
+        # Quotes do not protect a ';' from the console's own split (see
+        # _torrent_id); single-quoting keeps a Windows path's backslashes.
+        if re.search(r"[;\x00-\x1f\x7f]", torrent):
+            fail("torrent must not contain ; or control characters")
+        code, out, err = await _console(f"add {shlex.quote(torrent)}", timeout=45)
         output = (out or err).strip()[:500]
         if code != 0 or "error" in out.lower():
             fail(output or f"deluge-console exit {code}")
@@ -186,17 +204,17 @@ class DelugePlugin(Plugin):
 
     @capability("pause", risk="write")
     async def _pause(self, torrent_id: str = "*") -> dict:
-        """Pause a torrent by id, or all with ``*``."""
+        """Pause a torrent by id or name, or all with ``*``."""
         return await _simple(f"pause {_torrent_id(torrent_id)}")
 
     @capability("resume", risk="write")
     async def _resume(self, torrent_id: str = "*") -> dict:
-        """Resume a torrent by id, or all with ``*``."""
+        """Resume a torrent by id or name, or all with ``*``."""
         return await _simple(f"resume {_torrent_id(torrent_id)}")
 
     @capability("remove", risk="write", tags=("destructive",))
     async def _remove(self, torrent_id: str, data: bool = False) -> dict:
-        """Remove a torrent. ``data=True`` also deletes the downloaded files."""
+        """Remove a torrent by id or name. ``data=True`` also deletes the downloaded files."""
         torrent_id = _torrent_id(torrent_id)
         cmd = f"rm {'--remove_data ' if data else ''}{torrent_id}"
         return {**await _simple(cmd), "removed_data": bool(data)}
