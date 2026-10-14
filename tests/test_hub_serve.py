@@ -277,3 +277,35 @@ def test_hub_deploy_knows_the_single_hub_service(tmp_path):
     # Without a services block it is still the two-process layout.
     cfg = cfgmod.from_dict({"root": str(tmp_path), "python": "/usr/bin/python3"})
     assert [s.name for s in cfg.ordered()] == ["dashboard", "mcp"]
+
+
+@pytest.mark.asyncio
+async def test_compat_rook_mcp_still_serves_alone(hub_env):
+    """rook-mcp (two-process layout) runs McpService under uvicorn as before."""
+    import argparse
+    from rook.band_mcp import server as mcp_server
+    from rook.paths import data_path
+    args = argparse.Namespace(
+        hub_host="127.0.0.1", hub_port=hub_env.relay, bind_host="127.0.0.1",
+        bind_port=hub_env.mcp_port, psks=[PSK], allowed_hosts="", public_url="",
+        persist_path=data_path("oauth.json", "/nonexistent/oauth.json"),
+        static_token=TOKEN, journal_path="", flag_settings={})
+    task = asyncio.create_task(mcp_server._amain(args))
+    try:
+        async with aiohttp.ClientSession() as http:
+            for _ in range(100):
+                try:
+                    async with http.get(hub_env.mcp_base + "/healthz",
+                                        headers={"Authorization": "Bearer " + TOKEN}) as r:
+                        if r.status == 200:
+                            break
+                except aiohttp.ClientError:
+                    pass
+                await asyncio.sleep(0.1)
+            status, who = await _mcp(http, hub_env.mcp_base)
+            assert status == 200 and who["verified"]
+            async with http.get(hub_env.mcp_base + "/health") as r:
+                assert r.status == 404     # no dashboard in this process
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
