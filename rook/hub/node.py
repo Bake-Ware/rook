@@ -346,7 +346,7 @@ class HubNode:
 
 def attach_hub_node(client: Any, state_dir: str | None, *, vault: Any = None,
                     journal: Any = None, enrollment: Any = None,
-                    chat: Any = None) -> "HubNode | None":
+                    chat: Any = None, settings_store: Any = None) -> "HubNode | None":
     """Build the hub node and put it on ``client``'s bands. Used by the MCP
     bridge's ``build_server``. Never raises: a broken plugin host leaves the
     bridge running without hub caps. ``ROOK_HUB_PLUGINS=0`` disables it.
@@ -371,7 +371,7 @@ def attach_hub_node(client: Any, state_dir: str | None, *, vault: Any = None,
 
     try:
         node = HubNode(state_dir, client=client, vault=vault, on_band_call=journal_band_call,
-                       enrollment=enrollment, chat=chat)
+                       enrollment=enrollment, chat=chat, settings_store=settings_store)
         holder["node"] = node
         # Hub plugins that act as their own identity (the home agent) journal
         # what they do themselves.

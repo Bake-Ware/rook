@@ -35,6 +35,22 @@ from .tokens import StoreTokenVerifier, TokenStore
 log = logging.getLogger("rook.band_mcp.server")
 
 
+def journal_path_for(persist_path: str | None, journal_path: str | None = None) -> str:
+    """The call journal: ``journal_path``, else beside the token persist file
+    (whose directory holds every other MCP store too)."""
+    if journal_path:
+        return journal_path
+    base = os.path.dirname(persist_path) if persist_path else "/var/lib/rook-band-mcp"
+    return os.path.join(base or ".", "journal.db")
+
+
+def chat_path_for(store_dir: str) -> str:
+    # ROOK_CHAT_DB wins, as it does for the dashboard; otherwise beside the
+    # journal. The dashboard follows this choice through the settings store's
+    # runtime report, so both serve the same rooms (settings P4).
+    return os.environ.get("ROOK_CHAT_DB") or os.path.join(store_dir, "chat.db")
+
+
 def build_server(client: "BandClient | MultiBandClient",
                  allowed_hosts: list[str] | None = None,
                  public_url: str | None = None,
@@ -43,6 +59,9 @@ def build_server(client: "BandClient | MultiBandClient",
                  static_token: str | None = None,
                  journal_path: str | None = None,
                  enrollment=None,
+                 banned=None,
+                 settings_store=None,
+                 chat=None,
                  ) -> tuple[FastMCP, TokenStore]:
     """Build the FastMCP server. Bearer-token-only auth — no OAuth.
 
@@ -52,6 +71,11 @@ def build_server(client: "BandClient | MultiBandClient",
     old callers and ignored). No OAuth authorization-server routes
     (register/authorize/token) are ever mounted — clients just carry the
     header, no login/registration dance.
+
+    ``banned`` (``(name, worker_id) -> bool``, the dashboard's deauth list),
+    ``settings_store`` and ``chat`` let ``rook hub serve`` share the
+    dashboard's: one authorizer for the one band client both use, one settings
+    store, one chat store.
     """
     sec = TransportSecuritySettings(
         enable_dns_rebinding_protection=True,
@@ -69,9 +93,7 @@ def build_server(client: "BandClient | MultiBandClient",
     # so long-running / timed-out output doesn't vanish. Defaults next to the
     # token persist file; falls back to a temp path if that dir isn't set.
     from .journal import Journal
-    if journal_path is None:
-        base = os.path.dirname(persist_path) if persist_path else "/var/lib/rook-band-mcp"
-        journal_path = os.path.join(base or ".", "journal.db")
+    journal_path = journal_path_for(persist_path, journal_path)
     journal = Journal(journal_path)
 
     # Handoff / universal-session store — shares the journal's dir + thread ids.
@@ -80,11 +102,9 @@ def build_server(client: "BandClient | MultiBandClient",
     sessions = SessionStore(os.path.join(_store_dir, "sessions.db"))
 
     # Site-hosted chat rooms + presence + voicemail (design §3).
-    from .chat_rooms import ChatStore
-    # ROOK_CHAT_DB wins, as it does for the dashboard; otherwise beside the
-    # journal. The dashboard follows this choice through the settings store's
-    # runtime report, so both serve the same rooms (settings P4).
-    chat = ChatStore(os.environ.get("ROOK_CHAT_DB") or os.path.join(_store_dir, "chat.db"))
+    if chat is None:
+        from .chat_rooms import ChatStore
+        chat = ChatStore(chat_path_for(_store_dir))
 
     # Console rooms — named, searchable terminal sessions pumped off the band.
     from .console_rooms import ConsoleStore
@@ -418,7 +438,8 @@ def build_server(client: "BandClient | MultiBandClient",
     # is covered. Ships in audit mode: nothing is denied until the operator
     # sets mode: enforce in policy.json.
     try:
-        client.authz = _hub_authz.build_authorizer(_store_dir, record=journal.record)
+        client.authz = _hub_authz.build_authorizer(_store_dir, record=journal.record,
+                                                   banned=banned)
     except Exception:
         log.exception("ROOK AUTHZ ALERT: authorizer unavailable; calls are not evaluated")
     mcp._rook_authz = getattr(client, "authz", None)
@@ -427,7 +448,8 @@ def build_server(client: "BandClient | MultiBandClient",
     # reserved worker "rook" and reachable with rook_call(worker="rook").
     from ..hub.node import HUB_WORKER_NAME, attach_hub_node
     mcp._rook_hub = attach_hub_node(client, _store_dir, vault=vault, journal=journal,
-                                    enrollment=enrollment, chat=chat)
+                                    enrollment=enrollment, chat=chat,
+                                    settings_store=settings_store)
     if mcp._rook_hub is not None:
         # Job identities (hub plugin jobs) check API keys and accounts for
         # revocation; the account store opens on first use.
@@ -1682,21 +1704,178 @@ def build_server(client: "BandClient | MultiBandClient",
     return mcp, store
 
 
-async def _amain(args) -> None:
-    from .memory_diagnostics import install
-    uninstall_diagnostics = install()
-    from ..remote.enrollment import EnrollmentStore
-    enrollment = EnrollmentStore()
+class McpService:
+    """Everything ``rook-mcp`` runs besides its HTTP server and band client.
+
+    ``build_server`` plus the routes the dashboard and agents reach next to
+    ``/mcp`` (the ``*/account-api`` endpoints, ``/internal/mask``,
+    ``/healthz``, ``/tokens``, the ``/band`` WebSocket bridge), the OAuth
+    front door, the console pump, the hygiene loop and the hub node. Two
+    hosts use it: :func:`_amain` (``rook-mcp``: its own band client, served
+    by uvicorn) and rook/hub/serve.py (``rook hub serve``: the band client,
+    enrollment and account stores the dashboard also uses, served through the
+    dashboard's aiohttp server). :attr:`app` is the ASGI app either serves;
+    its lifespan (the MCP session manager) is the server's to run.
+    """
+
+    def __init__(self, args, client, enrollment, *, accounts=None,
+                 startup_conflicts=(), banned=None, settings_store=None, chat=None) -> None:
+        self.args = args
+        self.client = client
+        self.enrollment = enrollment
+        if accounts is None:
+            # One account store for every account-api route (it was one each).
+            from ..remote.accounts import AccountStore
+            accounts = AccountStore(enrollment)
+        self.accounts = accounts
+        self.startup_conflicts = list(startup_conflicts)
+        self.banned = banned
+        self.settings_store = settings_store
+        self.chat = chat
+        self.mcp = None
+        self.store = None
+        self.app = None          # the ASGI app (OAuthShim-wrapped with a public URL)
+        self.starlette = None    # the FastMCP Starlette app inside it
+        self.ws_bridge = None
+        self._hygiene_task = None
+        self._pump = None
+
+    async def start(self) -> None:
+        args, client, accounts = self.args, self.client, self.accounts
+        allowed_hosts = [h.strip() for h in (args.allowed_hosts or "").split(",")
+                         if h.strip()]
+        mcp, store = build_server(
+            client,
+            allowed_hosts=allowed_hosts,
+            public_url=args.public_url,
+            persist_path=args.persist_path,
+            static_token=args.static_token or None,
+            journal_path=args.journal_path or None,
+            enrollment=self.enrollment,
+            banned=self.banned,
+            settings_store=self.settings_store,
+            chat=self.chat,
+        )
+        self.mcp, self.store = mcp, store
+        if mcp._rook_hub is not None:
+            mcp._rook_hub.startup_conflicts = self.startup_conflicts
+            mcp._rook_hub.startup_flags = getattr(args, "flag_settings", {})
+            await mcp._rook_hub.start()
+        app = mcp.streamable_http_app()
+        self.starlette = app
+        from .guidance_web import routes as guidance_routes
+        _guidance, _reapply = mcp._rook_guidance
+        for route in guidance_routes(_guidance, _reapply, lambda: list(mcp._tool_manager._tools),
+                                     accounts):
+            app.router.routes.insert(0, route)
+        from .vault_web import routes as vault_routes
+        for route in vault_routes(mcp._rook_vault,
+                                  lambda n, v: mcp._rook_journal.redact_secret(n, v or ""),
+                                  accounts):
+            app.router.routes.insert(0, route)
+        from ..hub.settings_web import routes as settings_routes
+        for route in settings_routes(lambda: getattr(mcp._rook_hub, "settings", None), accounts):
+            app.router.routes.insert(0, route)
+        if mcp._rook_knowledge is not None:
+            # Operator Knowledge page API (proxied by the dashboard). Background
+            # embedding indexing runs in the knowledge plugin's start().
+            from ..hub.plugins.knowledge.web import routes as knowledge_routes
+            # A getter, not the service: a reload swaps the instance.
+            for route in reversed(knowledge_routes(lambda: mcp._rook_knowledge, accounts)):
+                app.router.routes.insert(0, route)
+        # Jobs page API (proxied by the dashboard; the rook band panel comes in
+        # with the internal mask token, see rook/remote/jobs_web.py).
+        from ..hub.plugins.jobs.web import routes as job_routes
+        try:
+            from .mask_web import ensure_token as _jobs_token
+            _jt = _jobs_token(mcp._rook_store_dir)
+        except Exception:
+            _jt = None
+        for route in job_routes(lambda: mcp._rook_hub, accounts, _jt):
+            app.router.routes.insert(0, route)
+        self._hygiene_task = (asyncio.create_task(mcp._rook_hygiene.run())
+                              if mcp._rook_hygiene is not None else None)
+
+        # Console pump — drains live worker proc sessions into their console rooms.
+        from .console_pump import ConsolePump
+        self._pump = ConsolePump(client, mcp._rook_console,
+                                 on_end=getattr(mcp, "_rook_session_end", None))
+        self._pump.start()
+
+        # Wire up WS bridge for remote Telesthete Band workers.
+        try:
+            from .ws_band import WSBandBridge
+            # The WS /band bridge forwards raw encrypted packets and is band-agnostic,
+            # so a single bridge serves every band; the psk arg is unused.
+            self.ws_bridge = WSBandBridge(app, args.hub_host, args.hub_port,
+                                          args.psks[0] if args.psks else "")
+            self.ws_bridge.start()
+        except Exception as e:
+            log.warning("WS band bridge failed to start: %s", e)
+
+        # /healthz for the watchdog: session-table counters and band roster size.
+        # Needs the static token (the public hostname reaches it too).
+        from .healthz import route as healthz_route
+        app.router.routes.insert(0, healthz_route(mcp._session_manager, client,
+                                                  args.static_token or ""))
+
+        # /internal/mask: the dashboard masks vault values through this process
+        # (it holds no vault key itself). Token file beside the stores.
+        try:
+            from .mask_web import ensure_token as _mask_token, route as _mask_route
+            app.router.routes.insert(0, _mask_route(_mask_token(mcp._rook_store_dir)))
+        except Exception:
+            log.exception("secret mask endpoint unavailable; dashboard writes will not be masked")
+
+        from .account_tokens import build_account_token_routes
+        for route in reversed(build_account_token_routes(store, getattr(mcp, "_rook_chat", None),
+                                                         accounts)):
+            app.router.routes.insert(0, route)
+
+        # Thin OAuth front-door for claude.ai's web connector (which won't take a
+        # bare bearer header). The client secret it asks for IS a rook token, and
+        # the access_token it gets back is that same token — no separate OAuth
+        # lifecycle, tokens stay the single source of truth. Wraps the whole app so
+        # /authorize, /token, and the auth-server metadata are always public;
+        # everything else (/mcp, /tokens/account-api) passes straight through. See oauth_shim.
+        if args.public_url:
+            from .oauth_shim import OAuthShim
+            app = OAuthShim(app, store, args.public_url)
+        self.app = app
+
+    async def stop(self) -> None:
+        """Stop what :meth:`start` started (not the band client: its owner
+        stops it). Safe to call more than once."""
+        bg, self._hygiene_task = self._hygiene_task, None
+        if bg is not None:
+            bg.cancel()
+            await asyncio.gather(bg, return_exceptions=True)
+        # Tear down WS bridge before stopping transport.
+        if self.ws_bridge is not None:
+            await self.ws_bridge.stop()
+        pump, self._pump = self._pump, None
+        if pump is not None:
+            await pump.stop()
+        hub = getattr(self.mcp, "_rook_hub", None) if self.mcp is not None else None
+        if hub is not None and not getattr(self, "_hub_stopped", False):
+            self._hub_stopped = True
+            await hub.stop()
+
+
+def seed_enrollment(enrollment, psks) -> list[dict]:
+    """Seed an empty enrollment database from ``--psk``/``ROOK_BAND_PSK``;
+    returns the settings conflicts to report when the environment holds a
+    key the database does not use."""
     # The environment's key only seeds an empty enrollment database; after
     # that the database (rotated from the dashboard) is authoritative.
-    ignored = enrollment.import_config(args.psks, seed_only=True)
-    startup_conflicts = []
+    ignored = enrollment.import_config(psks, seed_only=True)
+    conflicts = []
     if ignored:
         log.warning("ROOK_BAND_PSK/--psk holds %d key(s) the enrollment database does not "
                     "use; ignored (the environment only seeds the first band; rotate keys "
                     "on the dashboard Bands page and remove the variable)", len(ignored))
         from ..core.settings import fingerprint
-        startup_conflicts.append({
+        conflicts.append({
             "key": "core.band.key", "env": "ROOK_BAND_PSK",
             "note": "ROOK_BAND_PSK holds a key the enrollment database does not use "
                     f"(fp {', '.join(fingerprint(k) for k in ignored)}); ignored. "
@@ -1704,6 +1883,15 @@ async def _amain(args) -> None:
     if not enrollment.transport_psks():
         log.warning("no band key yet: waiting for the dashboard /setup page or ROOK_BAND_PSK "
                     "(the MCP joins bands from the shared enrollment database)")
+    return conflicts
+
+
+async def _amain(args) -> None:
+    from .memory_diagnostics import install
+    uninstall_diagnostics = install()
+    from ..remote.enrollment import EnrollmentStore
+    enrollment = EnrollmentStore()
+    startup_conflicts = seed_enrollment(enrollment, args.psks)
     client = MultiBandClient(psks=enrollment.transport_psks(), hub_host=args.hub_host,
                              hub_port=args.hub_port)
     await client.start()
@@ -1717,127 +1905,24 @@ async def _amain(args) -> None:
             await asyncio.sleep(2)
 
     enrollment_task = asyncio.create_task(watch_enrollment())
-
-    allowed_hosts = [h.strip() for h in (args.allowed_hosts or "").split(",")
-                     if h.strip()]
-    mcp, store = build_server(
-        client,
-        allowed_hosts=allowed_hosts,
-        public_url=args.public_url,
-        persist_path=args.persist_path,
-        static_token=args.static_token or None,
-        journal_path=args.journal_path or None,
-        enrollment=enrollment,
-    )
-    if mcp._rook_hub is not None:
-        mcp._rook_hub.startup_conflicts = startup_conflicts
-        mcp._rook_hub.startup_flags = getattr(args, "flag_settings", {})
-        await mcp._rook_hub.start()
-    app = mcp.streamable_http_app()
-    from ..remote.accounts import AccountStore
-    from .guidance_web import routes as guidance_routes
-    _guidance, _reapply = mcp._rook_guidance
-    for route in guidance_routes(_guidance, _reapply, lambda: list(mcp._tool_manager._tools),
-                                 AccountStore(enrollment)):
-        app.router.routes.insert(0, route)
-    from .vault_web import routes as vault_routes
-    from . import vault as _vault_mod
-    for route in vault_routes(mcp._rook_vault,
-                              lambda n, v: mcp._rook_journal.redact_secret(n, v or ""),
-                              AccountStore(enrollment)):
-        app.router.routes.insert(0, route)
-    from ..hub.settings_web import routes as settings_routes
-    for route in settings_routes(lambda: getattr(mcp._rook_hub, "settings", None),
-                                 AccountStore(enrollment)):
-        app.router.routes.insert(0, route)
-    if mcp._rook_knowledge is not None:
-        # Operator Knowledge page API (proxied by the dashboard). Background
-        # embedding indexing runs in the knowledge plugin's start().
-        from ..hub.plugins.knowledge.web import routes as knowledge_routes
-        # A getter, not the service: a reload swaps the instance.
-        for route in reversed(knowledge_routes(lambda: mcp._rook_knowledge, AccountStore(enrollment))):
-            app.router.routes.insert(0, route)
-    # Jobs page API (proxied by the dashboard; the rook band panel comes in
-    # with the internal mask token, see rook/remote/jobs_web.py).
-    from ..hub.plugins.jobs.web import routes as job_routes
+    service = McpService(args, client, enrollment, startup_conflicts=startup_conflicts)
     try:
-        from .mask_web import ensure_token as _jobs_token
-        _jt = _jobs_token(mcp._rook_store_dir)
-    except Exception:
-        _jt = None
-    for route in job_routes(lambda: mcp._rook_hub, AccountStore(enrollment), _jt):
-        app.router.routes.insert(0, route)
-    hygiene_task = (asyncio.create_task(mcp._rook_hygiene.run())
-                    if mcp._rook_hygiene is not None else None)
+        await service.start()
 
-    # Console pump — drains live worker proc sessions into their console rooms.
-    from .console_pump import ConsolePump
-    pump = ConsolePump(client, mcp._rook_console, on_end=getattr(mcp, "_rook_session_end", None))
-    pump.start()
-
-    # Wire up WS bridge for remote Telesthete Band workers.
-    ws_bridge: WSBandBridge | None = None
-    try:
-        from .ws_band import WSBandBridge
-        # The WS /band bridge forwards raw encrypted packets and is band-agnostic,
-        # so a single bridge serves every band; the psk arg is unused.
-        ws_bridge = WSBandBridge(app, args.hub_host, args.hub_port,
-                                 args.psks[0] if args.psks else "")
-        ws_bridge.start()
-    except Exception as e:
-        log.warning("WS band bridge failed to start: %s", e)
-
-    # /healthz for the watchdog: session-table counters and band roster size.
-    # Needs the static token (the public hostname reaches it too).
-    from .healthz import route as healthz_route
-    app.router.routes.insert(0, healthz_route(mcp._session_manager, client, args.static_token or ""))
-
-    # /internal/mask: the dashboard masks vault values through this process
-    # (it holds no vault key itself). Token file beside the stores.
-    try:
-        from .mask_web import ensure_token as _mask_token, route as _mask_route
-        app.router.routes.insert(0, _mask_route(_mask_token(mcp._rook_store_dir)))
-    except Exception:
-        log.exception("secret mask endpoint unavailable; dashboard writes will not be masked")
-
-    from .account_tokens import build_account_token_routes
-    for route in reversed(build_account_token_routes(store, getattr(mcp, "_rook_chat", None))):
-        app.router.routes.insert(0, route)
-
-    # Thin OAuth front-door for claude.ai's web connector (which won't take a
-    # bare bearer header). The client secret it asks for IS a rook token, and
-    # the access_token it gets back is that same token — no separate OAuth
-    # lifecycle, tokens stay the single source of truth. Wraps the whole app so
-    # /authorize, /token, and the auth-server metadata are always public;
-    # everything else (/mcp, /tokens/account-api) passes straight through. See oauth_shim.
-    if args.public_url:
-        from .oauth_shim import OAuthShim
-        app = OAuthShim(app, store, args.public_url)
-
-    import uvicorn
-    config = uvicorn.Config(app, host=args.bind_host, port=args.bind_port,
-                            log_level="info")
-    server = uvicorn.Server(config)
-    log.info("rook-band-mcp serving on http://%s:%d/mcp",
-             args.bind_host, args.bind_port)
-    try:
+        import uvicorn
+        config = uvicorn.Config(service.app, host=args.bind_host, port=args.bind_port,
+                                log_level="info")
+        server = uvicorn.Server(config)
+        log.info("rook-band-mcp serving on http://%s:%d/mcp",
+                 args.bind_host, args.bind_port)
         await server.serve()
     finally:
-        for bg in (hygiene_task,):
-            if bg is not None:
-                bg.cancel()
-                await asyncio.gather(bg, return_exceptions=True)
         enrollment_task.cancel()
         try:
             await enrollment_task
         except asyncio.CancelledError:
             pass
-        # Tear down WS bridge before stopping transport.
-        await pump.stop()
-        if mcp._rook_hub is not None:
-            await mcp._rook_hub.stop()
-        if ws_bridge is not None:
-            await ws_bridge.stop()
+        await service.stop()
         await client.stop()
         uninstall_diagnostics()
 
