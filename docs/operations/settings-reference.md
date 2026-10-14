@@ -111,6 +111,15 @@ are set only in the environment or on the command line.
 | `core.worker.authz_mode` | Worker permission checks | band+worker | str | `audit` | `ROOK_AUTHZ_MODE` | restart |
 | `core.worker.authz_allow_unsigned_repoint` | Allow unsigned hub/PSK changes | band+worker | bool | off | `ROOK_AUTHZ_ALLOW_UNSIGNED_REPOINT` | restart |
 
+## Claude Code rules (hub plugin, runs in mcp)
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `ccmod.cap_allowlist` | Capabilities rules may run | hub | list |  | `ROOK_CCMOD_CAP_ALLOWLIST` | live |
+| `ccmod.allow_exec` | Allow rules to run code | hub | bool | off | `ROOK_CCMOD_ALLOW_EXEC` | live |
+| `ccmod.rate_per_minute` | Actions per minute per rule | hub | int | `6` | `ROOK_CCMOD_RATE_PER_MINUTE` | live |
+| `ccmod.listen` | Listen for events | hub | bool | on | `ROOK_CCMOD_LISTEN` | live |
+
 ## Decide (decision model) (hub plugin, runs in mcp)
 
 | Key | Label | Scope | Type | Default | Env / flag | Apply |
