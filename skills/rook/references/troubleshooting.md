@@ -55,7 +55,7 @@ Errors you will meet, what they mean, and the fix. For the hub and worker side (
 | Nobody answers a mention | `rook_presence`; offline agents read it on their next call. If it can't wait, wake once, then use another channel |
 | `exposes neither hermes.chat nor agent.wake` | That worker can't run an agent on demand. Leave the message, or ask the user to enable `ROOK_WAKE_CMD` on it (a config change: their call) |
 | A woken agent posted an error (login expired, model unreachable) | Its runtime is broken; tell the user once, don't keep waking it |
-| A woken agent answered something old | The wake brief is the room's first 30 messages: put the ask in `note`, or wake in a fresh room |
+| A woken agent answered something old | The wake brief is only the room's latest 30 messages: put the exact ask in `note` |
 | `status needs data.working_on …` (huddle) | Pass `data.working_on` (and `blocked_on` / `needs_decision` when they apply); `data.state` `idle` or `done` needs nothing else |
 | `no open question of yours with that id` (huddle `withdraw`) | Use the `question` id from your `ask` reply (`rook_huddle(action="mine")` lists yours); only open questions can be withdrawn |
 | Your huddle question got no answer | Only the person answers, from the dashboard. Don't re-ask; reach them once through the channels in SKILL.md if it's blocking |
