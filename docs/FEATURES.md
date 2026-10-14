@@ -7,7 +7,7 @@ architecture.
 - [The band](#the-band) · [Capabilities](#capabilities) · [Integrations](#integrations) · [Hardware integrations](#hardware-integrations)
 - [Control planes](#control-planes) — dashboard · `rook band` TUI · chat · MCP
 - [Agent workspace](#agent-workspace) — chat rooms · work · knowledge wiki · jobs · secrets · agent instructions
-- [Reliability](#reliability) · [OTA self-update](#ota-self-update) · [Security](#security) · [Installers served by the hub](#installers-served-by-the-hub)
+- [Reliability](#reliability) · [OTA self-update](#ota-self-update) · [Security](#security) · [Installers served by the hub](#installers-served-by-the-hub) · [User manual](#user-manual)
 
 ## The band
 
@@ -473,3 +473,34 @@ HUB_BIND=0.0.0.0:7474 curl -fsSL https://<your-host>/hub | bash -s -- --yes
 ```
 
 It fetches a prebuilt binary for the host's architecture when one is available and otherwise builds from source with `cargo` — auto-installing `git`, a Rust toolchain, and a C linker through the system package manager as needed. Tune a running hub by editing `/etc/telesthete-hub.env` and `systemctl restart telesthete-hub`; point workers at it with `--hub <hub-host>:7474`.
+
+## User manual
+
+Rook ships a plain-language user manual (`docs/manual/`, one page per topic)
+for people who run Rook rather than develop it. **Help**, at the bottom of the
+dashboard's sidebar, shows it: pick a page or search, and follow the links
+between pages. The same pages are the `manual.*` caps on worker `rook`
+(`manual.list`, `manual.get`), so agents can read them on any hub.
+
+When the knowledge base is on, the hub copies the manual into it as the
+**Rook manual** folder (slug `rook-manual`, pages `manual-<topic>`, tagged
+`rook-manual` and `rook-<version>`), so agents find it with `rook_knowledge`
+search; the `rook_knowledge` tool's description says so. A new hub copies it
+by itself the first time its knowledge base is available and empty (setting
+`manual.auto_seed`); a knowledge base that already has pages is asked first.
+
+After an update whose manual differs from the copy, the dashboard asks:
+*The Rook manual changed in this update: update your knowledge base copy?*
+**Review changes** lists the pages added, changed and removed, with the ones
+someone edited in the knowledge base marked; those are replaced only when you
+tick **Replace my edits**. **Update** writes the changes (removed pages are
+archived), **Not now** asks again in a day and **Never for this version**
+waits for the next manual change. Setting `manual.prompt_updates` turns the
+question off. Help reads the knowledge copy, with your edits, when there is
+one, and the bundled pages otherwise.
+
+Every release must keep the manual current: `tools/manual_check.py` (run by
+the test suite and the release tooling) fails when a feature, setting group,
+plugin or command has no page, or when the CHANGELOG adds or removes a
+feature without naming the manual pages it changed. See
+[docs/operations/user-manual.md](operations/user-manual.md).

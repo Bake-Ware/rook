@@ -1,0 +1,802 @@
+{
+ "format": "rook-manual/1",
+ "manual_sha256": "85412e76ce6de218f3f3a5c690587e62aa1a01e032080997b35873eec8e5dad7",
+ "pages": [
+  {
+   "id": "welcome",
+   "title": "Welcome to Rook",
+   "file": "welcome.md",
+   "order": 1,
+   "features": [
+    "features/the-band",
+    "features/capabilities",
+    "features/control-planes"
+   ],
+   "since": "0.1.0",
+   "deprecated": false,
+   "slug": "manual-welcome",
+   "sha256": "fb99ade7d79ab47ceeab9eb24152e4cf75b85148a3a1c28b137c1f21e192eb59"
+  },
+  {
+   "id": "getting-started",
+   "title": "Getting started",
+   "file": "getting-started.md",
+   "order": 2,
+   "features": [
+    "features/installers-served-by-the-hub",
+    "cli/hub",
+    "cli/hub/serve"
+   ],
+   "since": "0.1.0",
+   "deprecated": false,
+   "slug": "manual-getting-started",
+   "sha256": "1433f622953e3dea5d5294e8e9f458198a5ec28b33125b19edbd783a03f6a875"
+  },
+  {
+   "id": "adding-machines",
+   "title": "Adding machines",
+   "file": "adding-machines.md",
+   "order": 3,
+   "features": [
+    "features/pairing-and-key-management",
+    "features/installers-served-by-the-hub",
+    "plugin/worker/enrollment"
+   ],
+   "since": "0.1.0",
+   "deprecated": false,
+   "slug": "manual-adding-machines",
+   "sha256": "6c8a8a1f11fb46be2ccdd216bd9b07d0d5d018f0a0758139088cc56877ae18cb"
+  },
+  {
+   "id": "bands-and-keys",
+   "title": "Bands and band keys",
+   "file": "bands-and-keys.md",
+   "order": 4,
+   "features": [
+    "features/readable-band-keys",
+    "features/bands-and-worker-moves",
+    "settings/core/keys-access"
+   ],
+   "since": "0.1.0",
+   "deprecated": false,
+   "slug": "manual-bands-and-keys",
+   "sha256": "f68b00ccad540acfbd31779070a8889927923061ecbd648f79fbbf8bb93a4193"
+  },
+  {
+   "id": "accounts-and-access",
+   "title": "Accounts, sign-in and permissions",
+   "file": "accounts-and-access.md",
+   "order": 5,
+   "features": [
+    "features/google-accounts-and-enrolled-workers",
+    "settings/core/sign-in",
+    "settings/core/identity",
+    "plugin/hub/policy"
+   ],
+   "since": "0.1.0",
+   "deprecated": false,
+   "slug": "manual-accounts-and-access",
+   "sha256": "474676e6a77ed9d843c43570db3c039b186a455d7c9a7b65bf9ec119d27ffe02"
+  },
+  {
+   "id": "workers",
+   "title": "The Workers page",
+   "file": "workers.md",
+   "order": 6,
+   "features": [
+    "features/web-dashboard",
+    "plugin/worker/info",
+    "plugin/worker/shell",
+    "plugin/worker/file_ops",
+    "plugin/worker/proc",
+    "plugin/worker/log",
+    "plugin/worker/screenshot",
+    "plugin/worker/camera",
+    "plugin/worker/hid",
+    "plugin/worker/battery",
+    "plugin/worker/config",
+    "plugin/hub/info",
+    "plugin/hub/serves",
+    "settings/hub"
+   ],
+   "since": "0.1.0",
+   "deprecated": false,
+   "slug": "manual-workers",
+   "sha256": "2b95672cbf8c608e1c12ee1e4e4b56a543edc26f78bf42821ac5d43f2fbad9a2"
+  },
+  {
+   "id": "chat",
+   "title": "Chat and messages",
+   "file": "chat.md",
+   "order": 7,
+   "features": [
+    "features/chat-messaging",
+    "features/chat-rooms",
+    "plugin/hub/rooms",
+    "plugin/worker/chat",
+    "plugin/worker/msg",
+    "plugin/hub/notify"
+   ],
+   "since": "0.1.0",
+   "deprecated": false,
+   "slug": "manual-chat",
+   "sha256": "068d17435b617be1c462dbb4e6566f71b71e5f7bf0dc98ba0709c18cffad9db5"
+  },
+  {
+   "id": "work",
+   "title": "Work: tasks and projects",
+   "file": "work.md",
+   "order": 8,
+   "features": [
+    "features/work",
+    "features/agent-workspace",
+    "plugin/hub/tasks",
+    "settings/task"
+   ],
+   "since": "0.1.0",
+   "deprecated": false,
+   "slug": "manual-work",
+   "sha256": "0c7744ab7112e4e82db8f191a2a61c04708a8def18a1a8c150883a3a61b72ba0"
+  },
+  {
+   "id": "sessions",
+   "title": "Sessions: agents and terminals",
+   "file": "sessions.md",
+   "order": 9,
+   "features": [
+    "features/sessions",
+    "plugin/worker/sessions",
+    "plugin/worker/session_mirror",
+    "plugin/worker/session_shim",
+    "plugin/worker/terminals",
+    "plugin/worker/work",
+    "plugin/worker/claude_history",
+    "plugin/worker/codex_history",
+    "plugin/worker/hermes",
+    "plugin/worker/wake",
+    "settings/agent"
+   ],
+   "since": "0.1.0",
+   "deprecated": false,
+   "slug": "manual-sessions",
+   "sha256": "b1db5ecdda6cb6f21664c04397ae07b104911d3e6bc3576c95d292df8389d6ee"
+  },
+  {
+   "id": "knowledge",
+   "title": "The knowledge wiki",
+   "file": "knowledge.md",
+   "order": 10,
+   "features": [
+    "features/knowledge-wiki",
+    "plugin/hub/knowledge",
+    "settings/knowledge",
+    "plugin/worker/memory",
+    "settings/memory"
+   ],
+   "since": "0.1.0",
+   "deprecated": false,
+   "slug": "manual-knowledge",
+   "sha256": "d5ea433cce792b792a3b5fffe65d7515c4f457fddb7eb3ff6d392430993a3572"
+  },
+  {
+   "id": "jobs",
+   "title": "Jobs: scheduled work",
+   "file": "jobs.md",
+   "order": 11,
+   "features": [
+    "features/jobs",
+    "plugin/hub/jobs",
+    "settings/job"
+   ],
+   "since": "0.1.0",
+   "deprecated": false,
+   "slug": "manual-jobs",
+   "sha256": "cb4dadfb36636c04f7218f77ee1645ba9681517af6351a21a7cffe0d5f404c65"
+  },
+  {
+   "id": "secrets",
+   "title": "Secrets",
+   "file": "secrets.md",
+   "order": 12,
+   "features": [
+    "features/secrets"
+   ],
+   "since": "0.1.0",
+   "deprecated": false,
+   "slug": "manual-secrets",
+   "sha256": "cfffecf13f71c200f6d0a14b6ea95f508bf758d7b5bd692ecfb4e6294ac3df12"
+  },
+  {
+   "id": "agents-and-mcp",
+   "title": "Connecting AI agents",
+   "file": "agents-and-mcp.md",
+   "order": 13,
+   "features": [
+    "features/mcp",
+    "features/agent-instructions",
+    "plugin/hub/persona",
+    "plugin/worker/persona",
+    "cli/skill",
+    "cli/mcp"
+   ],
+   "since": "0.1.0",
+   "deprecated": false,
+   "slug": "manual-agents-and-mcp",
+   "sha256": "789b309d316cbd903180fe854cd4e88533eacaf5c1b1dae4484f013f5f18dd98"
+  },
+  {
+   "id": "home-agent",
+   "title": "The home agent",
+   "file": "home-agent.md",
+   "order": 14,
+   "features": [
+    "plugin/hub/home",
+    "settings/home",
+    "plugin/hub/decide",
+    "settings/decide"
+   ],
+   "since": "0.1.0",
+   "deprecated": false,
+   "slug": "manual-home-agent",
+   "sha256": "88802099f8d88a4badbf8d5c9119f0c29d64c45bdbac09110256de40c819c14c"
+  },
+  {
+   "id": "settings",
+   "title": "The Settings page",
+   "file": "settings.md",
+   "order": 15,
+   "features": [
+    "settings/core/general",
+    "settings/core/network",
+    "settings/core/storage",
+    "settings/core/updates",
+    "settings/core/worker-defaults",
+    "settings/core/features",
+    "settings/relay",
+    "plugin/hub/settings"
+   ],
+   "since": "0.1.0",
+   "deprecated": false,
+   "slug": "manual-settings",
+   "sha256": "c50524c3802256cd24aca8ae5b80b7379dfa975f12fc0ed74f1ffc80c61b29b9"
+  },
+  {
+   "id": "plugins",
+   "title": "The Plugins page",
+   "file": "plugins.md",
+   "order": 16,
+   "features": [
+    "settings/core/plugins",
+    "plugin/hub/marketplace"
+   ],
+   "since": "0.1.0",
+   "deprecated": false,
+   "slug": "manual-plugins",
+   "sha256": "b025d865e265c92910ccdc468ca4c5ab5b6274d2f382433449984d20423d9c68"
+  },
+  {
+   "id": "phones-and-tablets",
+   "title": "Phones and tablets",
+   "file": "phones-and-tablets.md",
+   "order": 17,
+   "features": [
+    "features/hardware-integrations",
+    "features/android-phones-and-tablets"
+   ],
+   "since": "0.1.0",
+   "deprecated": false,
+   "slug": "manual-phones-and-tablets",
+   "sha256": "97693fde9087b7a41de0c5e9b780dc3f314ecf6582af5bcded3b663da184e41c"
+  },
+  {
+   "id": "hardware",
+   "title": "USB dongle, PiKVM and HDMI-CEC",
+   "file": "hardware.md",
+   "order": 18,
+   "features": [
+    "features/esp32-s3-usb-dongle",
+    "features/preconfigure-a-dongle-build",
+    "features/pikvm",
+    "features/hdmi-cec-pico-w",
+    "plugin/worker/dongle",
+    "plugin/worker/pikvm",
+    "plugin/worker/cec",
+    "settings/dongle",
+    "settings/pikvm",
+    "settings/cec"
+   ],
+   "since": "0.1.0",
+   "deprecated": false,
+   "slug": "manual-hardware",
+   "sha256": "613df9be5f633e9227be6017500a33bd2095e77fde84bd3bd1996a0868245a6e"
+  },
+  {
+   "id": "integrations",
+   "title": "Telegram, Discord and other apps",
+   "file": "integrations.md",
+   "order": 19,
+   "features": [
+    "features/integrations",
+    "plugin/hub/telegram",
+    "plugin/hub/discord",
+    "settings/telegram",
+    "settings/discord",
+    "plugin/worker/deluge"
+   ],
+   "since": "0.1.0",
+   "deprecated": false,
+   "slug": "manual-integrations",
+   "sha256": "ef7f4949b8e9eb35c44265e6c1157059c0cb21cd36abb7ea985b1df2728a4ce9"
+  },
+  {
+   "id": "voice",
+   "title": "Voice assistant services",
+   "file": "voice.md",
+   "order": 20,
+   "features": [
+    "settings/voice",
+    "settings/decision"
+   ],
+   "since": "0.1.0",
+   "deprecated": false,
+   "slug": "manual-voice",
+   "sha256": "faa255dca0b62edb27624d60b62386cb8a8795d8de3b54cb95d8dbe7bcb5084d"
+  },
+  {
+   "id": "updates",
+   "title": "Updates and keeping Rook healthy",
+   "file": "updates.md",
+   "order": 21,
+   "features": [
+    "features/ota-self-update",
+    "features/post-update-health-gate",
+    "features/reliability",
+    "plugin/worker/selfupdate",
+    "settings/watchdog"
+   ],
+   "since": "0.1.0",
+   "deprecated": false,
+   "slug": "manual-updates",
+   "sha256": "9a77c16f5fa19e0c2f21bbb2cee87b179d8f43f1ea3b148a468a44aea8cf7452"
+  },
+  {
+   "id": "security",
+   "title": "Keeping your machines safe",
+   "file": "security.md",
+   "order": 22,
+   "features": [
+    "features/security"
+   ],
+   "since": "0.1.0",
+   "deprecated": false,
+   "slug": "manual-security",
+   "sha256": "bbe9562919f25b14479f407a1d5ab20caa97866bed860cef6ec1cc4d30dac20c"
+  },
+  {
+   "id": "terminal-and-commands",
+   "title": "The terminal dashboard and commands",
+   "file": "terminal-and-commands.md",
+   "order": 23,
+   "features": [
+    "features/rook-band-terminal-control-panel",
+    "cli/band",
+    "cli/worker",
+    "cli/sessions",
+    "cli/history",
+    "cli/dashboard"
+   ],
+   "since": "0.1.0",
+   "deprecated": false,
+   "slug": "manual-terminal-and-commands",
+   "sha256": "3a12443c80bf7d86953916b95178da047fd81017cabb4290aee788969d928a7e"
+  },
+  {
+   "id": "running-a-hub",
+   "title": "Running a hub (administrators)",
+   "file": "running-a-hub.md",
+   "order": 24,
+   "features": [
+    "features/run-your-own-hub",
+    "cli/hub/release",
+    "cli/hub/deploy",
+    "cli/hub/rollback",
+    "cli/hub/status",
+    "cli/hub/history",
+    "cli/hub/disarm",
+    "cli/hub/prune",
+    "cli/hub/units"
+   ],
+   "since": "0.1.0",
+   "deprecated": false,
+   "slug": "manual-running-a-hub",
+   "sha256": "03a17833d593a9b2450348c5c4067f72057ac60a85cc1d54af45799d0312c2b3"
+  },
+  {
+   "id": "help",
+   "title": "Help and this manual",
+   "file": "help.md",
+   "order": 25,
+   "features": [
+    "features/user-manual",
+    "plugin/hub/manual",
+    "settings/manual"
+   ],
+   "since": "0.1.0",
+   "deprecated": false,
+   "slug": "manual-help",
+   "sha256": "d705f0b4cb1850068c8da07ff0a693e91f63c16b45a3696dc787e2a2bb83eb47"
+  }
+ ],
+ "features": {
+  "cli/band": [
+   "terminal-and-commands"
+  ],
+  "cli/dashboard": [
+   "terminal-and-commands"
+  ],
+  "cli/history": [
+   "terminal-and-commands"
+  ],
+  "cli/hub": [
+   "getting-started"
+  ],
+  "cli/hub/deploy": [
+   "running-a-hub"
+  ],
+  "cli/hub/disarm": [
+   "running-a-hub"
+  ],
+  "cli/hub/history": [
+   "running-a-hub"
+  ],
+  "cli/hub/prune": [
+   "running-a-hub"
+  ],
+  "cli/hub/release": [
+   "running-a-hub"
+  ],
+  "cli/hub/rollback": [
+   "running-a-hub"
+  ],
+  "cli/hub/serve": [
+   "getting-started"
+  ],
+  "cli/hub/status": [
+   "running-a-hub"
+  ],
+  "cli/hub/units": [
+   "running-a-hub"
+  ],
+  "cli/mcp": [
+   "agents-and-mcp"
+  ],
+  "cli/sessions": [
+   "terminal-and-commands"
+  ],
+  "cli/skill": [
+   "agents-and-mcp"
+  ],
+  "cli/worker": [
+   "terminal-and-commands"
+  ],
+  "features/agent-instructions": [
+   "agents-and-mcp"
+  ],
+  "features/agent-workspace": [
+   "work"
+  ],
+  "features/android-phones-and-tablets": [
+   "phones-and-tablets"
+  ],
+  "features/bands-and-worker-moves": [
+   "bands-and-keys"
+  ],
+  "features/capabilities": [
+   "welcome"
+  ],
+  "features/chat-messaging": [
+   "chat"
+  ],
+  "features/chat-rooms": [
+   "chat"
+  ],
+  "features/control-planes": [
+   "welcome"
+  ],
+  "features/esp32-s3-usb-dongle": [
+   "hardware"
+  ],
+  "features/google-accounts-and-enrolled-workers": [
+   "accounts-and-access"
+  ],
+  "features/hardware-integrations": [
+   "phones-and-tablets"
+  ],
+  "features/hdmi-cec-pico-w": [
+   "hardware"
+  ],
+  "features/installers-served-by-the-hub": [
+   "getting-started",
+   "adding-machines"
+  ],
+  "features/integrations": [
+   "integrations"
+  ],
+  "features/jobs": [
+   "jobs"
+  ],
+  "features/knowledge-wiki": [
+   "knowledge"
+  ],
+  "features/mcp": [
+   "agents-and-mcp"
+  ],
+  "features/ota-self-update": [
+   "updates"
+  ],
+  "features/pairing-and-key-management": [
+   "adding-machines"
+  ],
+  "features/pikvm": [
+   "hardware"
+  ],
+  "features/post-update-health-gate": [
+   "updates"
+  ],
+  "features/preconfigure-a-dongle-build": [
+   "hardware"
+  ],
+  "features/readable-band-keys": [
+   "bands-and-keys"
+  ],
+  "features/reliability": [
+   "updates"
+  ],
+  "features/rook-band-terminal-control-panel": [
+   "terminal-and-commands"
+  ],
+  "features/run-your-own-hub": [
+   "running-a-hub"
+  ],
+  "features/secrets": [
+   "secrets"
+  ],
+  "features/security": [
+   "security"
+  ],
+  "features/sessions": [
+   "sessions"
+  ],
+  "features/the-band": [
+   "welcome"
+  ],
+  "features/user-manual": [
+   "help"
+  ],
+  "features/web-dashboard": [
+   "workers"
+  ],
+  "features/work": [
+   "work"
+  ],
+  "plugin/hub/decide": [
+   "home-agent"
+  ],
+  "plugin/hub/discord": [
+   "integrations"
+  ],
+  "plugin/hub/home": [
+   "home-agent"
+  ],
+  "plugin/hub/info": [
+   "workers"
+  ],
+  "plugin/hub/jobs": [
+   "jobs"
+  ],
+  "plugin/hub/knowledge": [
+   "knowledge"
+  ],
+  "plugin/hub/manual": [
+   "help"
+  ],
+  "plugin/hub/marketplace": [
+   "plugins"
+  ],
+  "plugin/hub/notify": [
+   "chat"
+  ],
+  "plugin/hub/persona": [
+   "agents-and-mcp"
+  ],
+  "plugin/hub/policy": [
+   "accounts-and-access"
+  ],
+  "plugin/hub/rooms": [
+   "chat"
+  ],
+  "plugin/hub/serves": [
+   "workers"
+  ],
+  "plugin/hub/settings": [
+   "settings"
+  ],
+  "plugin/hub/tasks": [
+   "work"
+  ],
+  "plugin/hub/telegram": [
+   "integrations"
+  ],
+  "plugin/worker/battery": [
+   "workers"
+  ],
+  "plugin/worker/camera": [
+   "workers"
+  ],
+  "plugin/worker/cec": [
+   "hardware"
+  ],
+  "plugin/worker/chat": [
+   "chat"
+  ],
+  "plugin/worker/claude_history": [
+   "sessions"
+  ],
+  "plugin/worker/codex_history": [
+   "sessions"
+  ],
+  "plugin/worker/config": [
+   "workers"
+  ],
+  "plugin/worker/deluge": [
+   "integrations"
+  ],
+  "plugin/worker/dongle": [
+   "hardware"
+  ],
+  "plugin/worker/enrollment": [
+   "adding-machines"
+  ],
+  "plugin/worker/file_ops": [
+   "workers"
+  ],
+  "plugin/worker/hermes": [
+   "sessions"
+  ],
+  "plugin/worker/hid": [
+   "workers"
+  ],
+  "plugin/worker/info": [
+   "workers"
+  ],
+  "plugin/worker/log": [
+   "workers"
+  ],
+  "plugin/worker/memory": [
+   "knowledge"
+  ],
+  "plugin/worker/msg": [
+   "chat"
+  ],
+  "plugin/worker/persona": [
+   "agents-and-mcp"
+  ],
+  "plugin/worker/pikvm": [
+   "hardware"
+  ],
+  "plugin/worker/proc": [
+   "workers"
+  ],
+  "plugin/worker/screenshot": [
+   "workers"
+  ],
+  "plugin/worker/selfupdate": [
+   "updates"
+  ],
+  "plugin/worker/session_mirror": [
+   "sessions"
+  ],
+  "plugin/worker/session_shim": [
+   "sessions"
+  ],
+  "plugin/worker/sessions": [
+   "sessions"
+  ],
+  "plugin/worker/shell": [
+   "workers"
+  ],
+  "plugin/worker/terminals": [
+   "sessions"
+  ],
+  "plugin/worker/wake": [
+   "sessions"
+  ],
+  "plugin/worker/work": [
+   "sessions"
+  ],
+  "settings/agent": [
+   "sessions"
+  ],
+  "settings/cec": [
+   "hardware"
+  ],
+  "settings/core/features": [
+   "settings"
+  ],
+  "settings/core/general": [
+   "settings"
+  ],
+  "settings/core/identity": [
+   "accounts-and-access"
+  ],
+  "settings/core/keys-access": [
+   "bands-and-keys"
+  ],
+  "settings/core/network": [
+   "settings"
+  ],
+  "settings/core/plugins": [
+   "plugins"
+  ],
+  "settings/core/sign-in": [
+   "accounts-and-access"
+  ],
+  "settings/core/storage": [
+   "settings"
+  ],
+  "settings/core/updates": [
+   "settings"
+  ],
+  "settings/core/worker-defaults": [
+   "settings"
+  ],
+  "settings/decide": [
+   "home-agent"
+  ],
+  "settings/decision": [
+   "voice"
+  ],
+  "settings/discord": [
+   "integrations"
+  ],
+  "settings/dongle": [
+   "hardware"
+  ],
+  "settings/home": [
+   "home-agent"
+  ],
+  "settings/hub": [
+   "workers"
+  ],
+  "settings/job": [
+   "jobs"
+  ],
+  "settings/knowledge": [
+   "knowledge"
+  ],
+  "settings/manual": [
+   "help"
+  ],
+  "settings/memory": [
+   "knowledge"
+  ],
+  "settings/pikvm": [
+   "hardware"
+  ],
+  "settings/relay": [
+   "settings"
+  ],
+  "settings/task": [
+   "work"
+  ],
+  "settings/telegram": [
+   "integrations"
+  ],
+  "settings/voice": [
+   "voice"
+  ],
+  "settings/watchdog": [
+   "updates"
+  ]
+ }
+}
