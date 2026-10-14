@@ -1,4 +1,4 @@
-# Rook hub: relay + dashboard + MCP server.
+# Rook hub: the relay, and the hub (dashboard + MCP server in one process).
 #
 #   cp .env.example .env    # then set ROOK_BAND_PSK and ROOK_WEB_PASS at least
 #   docker compose up -d --build
@@ -27,9 +27,13 @@ services:
     ports:
       - "7474:7474/udp"
 
-  dashboard:
+  # Dashboard + MCP server in one process (rook hub serve). Upgrading from the
+  # two-service layout: `docker compose up -d --remove-orphans` (the old
+  # dashboard and mcp containers held the same ports).
+  hub:
     <<: *rook
-    command: ["rook-dashboard", "--hub-host", "relay", "--hub-port", "7474"]
+    command: ["rook-hub", "--hub-host", "relay", "--hub-port", "7474",
+              "--mcp-bind", "0.0.0.0:8765"]
     depends_on: [relay]
     environment:
       ROOK_DATA_DIR: /data
@@ -42,22 +46,16 @@ services:
       # Public addresses templated into installer scripts.
       ROOK_DOMAIN: ${ROOK_DOMAIN:-localhost:7005}
       ROOK_HUB_PUBLIC: ${ROOK_HUB_PUBLIC:-localhost:8765}
-    ports:
-      - "7005:7005"
-
-  mcp:
-    <<: *rook
-    command: ["rook-mcp", "--hub", "relay:7474", "--bind", "0.0.0.0:8765"]
-    depends_on: [relay]
-    environment:
-      ROOK_DATA_DIR: /data
-      ROOK_BAND_PSK: ${ROOK_BAND_PSK:?set ROOK_BAND_PSK in .env}
       ROOK_MCP_STATIC_TOKEN: ${ROOK_MCP_STATIC_TOKEN:-}
       ROOK_MCP_PUBLIC_URL: ${ROOK_MCP_PUBLIC_URL:-}
-      # Host headers other than localhost that may reach /mcp (e.g. 192.168.1.10:8765).
+      # Host headers other than localhost and ROOK_DOMAIN that may reach /mcp
+      # (e.g. 192.168.1.10:8765).
       ROOK_ALLOWED_HOSTS: ${ROOK_ALLOWED_HOSTS:-}
       ROOK_KNOWLEDGE: ${ROOK_KNOWLEDGE:-0}
     ports:
+      # Dashboard, /mcp and /band.
+      - "7005:7005"
+      # The MCP server alone (/mcp, /band), as the old mcp service published it.
       - "8765:8765"
 
 volumes:

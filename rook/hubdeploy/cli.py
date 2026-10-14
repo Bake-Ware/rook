@@ -153,10 +153,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--keep-deploys", type=int, default=20)
     p.add_argument("--dry-run", action="store_true")
     sub.add_parser("units", help="print generic systemd units for this config")
+    # Listed for --help only: main() hands `serve` to rook.hub.serve untouched.
+    sub.add_parser("serve", add_help=False,
+                   help="run the hub: dashboard + MCP server in one process "
+                        "(rook hub serve --help)")
     return ap
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ["serve"]:
+        from ..hub.serve import main as serve_main
+        serve_main(argv[1:])
+        return 0
     a = build_parser().parse_args(argv)
     try:
         if a.cmd == "release":

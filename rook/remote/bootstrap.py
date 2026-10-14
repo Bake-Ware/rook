@@ -1184,7 +1184,13 @@ class CombinedServer:
                  hub_host: str = "127.0.0.1", hub_port: int = 7474,
                  hub_public: str = "hub.example.com:443", band_name: str = "rook-band",
                  bind: str = "0.0.0.0", explicit: dict | None = None,
-                 argv: list | None = None):
+                 argv: list | None = None, *, enrollment=None, band=None, chat=None,
+                 settings_store=None):
+        """``enrollment``, ``band``, ``chat`` and ``settings_store`` are for
+        ``rook hub serve`` (rook/hub/serve.py), which runs the MCP server in
+        this process: its enrollment store, band client, chat store and
+        settings store, shared instead of opening a second of each. A ``band`` given here is started and stopped by its
+        owner, not by :meth:`start` / :meth:`stop`."""
         self.port = port
         self.bind = bind
         self.domain = domain
@@ -1210,7 +1216,7 @@ class CombinedServer:
             self.band_psk = _s["band_psk"]
         self._explicit = explicit
         self._argv = list(argv or [])   # for the Settings page: which flags lock a key
-        self._settings_store = _ds.open_store()
+        self._settings_store = settings_store if settings_store is not None else _ds.open_store()
         self._ctor_settings = {"domain": self.domain, "hub_public": self.hub_public,
                                "band_name": self.band_name}
         _vals, self._setting_sources, self._setting_conflicts = _ds.resolve(
@@ -1232,8 +1238,10 @@ class CombinedServer:
             from .dashboard_settings import chat_db_path
             chat_db = chat_db_path(self._settings_store,
                                    data_path("chat.db", "/var/lib/rook-band-mcp/chat.db"))
+            if chat is not None:
+                chat_db = chat.path
             self._chat_db = chat_db
-            self._chat = ChatStore(chat_db)
+            self._chat = chat if chat is not None else ChatStore(chat_db)
         except Exception:
             log.warning("chat store unavailable; dashboard chat disabled", exc_info=True)
         # Reverse secret masking for the chat this process writes and shows.
@@ -1256,7 +1264,8 @@ class CombinedServer:
         # Known bands for the dashboard selector. PSKs stay server-side; the UI
         # only ever sees the band_id label (first 8 hex of SHA256(PSK)[:16]).
         from .enrollment import EnrollmentStore
-        self._enrollment = EnrollmentStore()
+        self._enrollment = enrollment if enrollment is not None else EnrollmentStore()
+        self._shared_band = band
         # The environment's key only seeds an empty database (never undoes a
         # rotation made on the Bands page).
         if self._enrollment.import_config([self.band_psk], hub=self.hub_public, seed_only=True):
@@ -1338,6 +1347,9 @@ class CombinedServer:
         from .policy_web import PolicyWeb
         PolicyWeb(self).install(self._app)
         self._runner: web.AppRunner | None = None
+        # Seconds stop() lets open requests (long-polls, terminal sockets)
+        # finish before cancelling them; aiohttp's default.
+        self.shutdown_timeout = 60.0
 
 
     def _session_ok(self, request: web.Request) -> bool:
@@ -1591,7 +1603,8 @@ class CombinedServer:
         raise web.HTTPFound("/")
 
     async def start(self) -> None:
-        self._runner = web.AppRunner(self._app, access_log_class=InstallerAccessLogger)
+        self._runner = web.AppRunner(self._app, access_log_class=InstallerAccessLogger,
+                                     shutdown_timeout=self.shutdown_timeout)
         await self._runner.setup()
         site = web.TCPSite(self._runner, self.bind, self.port)
         await site.start()
@@ -1611,15 +1624,20 @@ class CombinedServer:
         # Best-effort: a missing/unreachable hub must not take down the
         # installer server (the bootstrap endpoints don't need the band).
         try:
-            from ..band_mcp.client import MultiBandClient
             psks = self._enrollment.transport_psks()
-            self._band = MultiBandClient(psks=psks, hub_host=self.hub_host,
-                                         hub_port=self.hub_port)
-            self._band.authz = self._authorizer()
-            await self._band.start()
+            if self._shared_band is not None:
+                # rook hub serve: the MCP side's client (and authorizer), already up.
+                self._band = self._shared_band
+                self._authz = getattr(self._band, "authz", None)
+            else:
+                from ..band_mcp.client import MultiBandClient
+                self._band = MultiBandClient(psks=psks, hub_host=self.hub_host,
+                                             hub_port=self.hub_port)
+                self._band.authz = self._authorizer()
+                await self._band.start()
+                log.info("band client joined hub %s:%d (%d band(s))",
+                         self.hub_host, self.hub_port, len(psks))
             self._enrollment_task = asyncio.create_task(self._watch_enrollment())
-            log.info("band client joined hub %s:%d (%d band(s))",
-                     self.hub_host, self.hub_port, len(psks))
             if os.environ.get("ROOK_PUSH_UPDATES", "1") != "0":
                 self._push_task = asyncio.create_task(self._push_loop())
         except Exception as e:
@@ -1743,13 +1761,14 @@ class CombinedServer:
             self._enrollment_task = None
         if self._push_task is not None:
             self._push_task.cancel()
+            await asyncio.gather(self._push_task, return_exceptions=True)
             self._push_task = None
-        if self._band is not None:
+        if self._band is not None and self._band is not self._shared_band:
             try:
                 await self._band.stop()
             except Exception:
                 log.exception("band client stop failed")
-            self._band = None
+        self._band = None
         if self._runner:
             await self._runner.cleanup()
 
@@ -2666,14 +2685,12 @@ class CombinedServer:
         }), content_type="application/json")
 
 
-def _cli_main() -> None:
-    """Argparse entry point: python -m rook.remote.bootstrap [options]."""
+def add_arguments(ap) -> None:
+    """The dashboard's options (``rook-dashboard``; ``rook hub serve`` adds
+    the MCP server's to the same parser)."""
     import argparse
 
     env = os.environ.get
-    ap = argparse.ArgumentParser(
-        description="Rook hub dashboard: web UI, worker installer and band controller",
-        epilog="Every option can also be set with the ROOK_* variable named in its help.")
     ap.add_argument("--bind", default=env("ROOK_BIND", "0.0.0.0"),
                     help="HTTP listen address (ROOK_BIND, default 0.0.0.0)")
     ap.add_argument("--port", type=int, default=int(env("ROOK_PORT", "7005")),
@@ -2705,8 +2722,11 @@ def _cli_main() -> None:
                     help="telesthete hub host the dashboard joins (ROOK_HUB_HOST)")
     ap.add_argument("--hub-port", type=int, default=int(env("ROOK_HUB_PORT", "7474")),
                     help="telesthete hub UDP port (ROOK_HUB_PORT)")
-    args = ap.parse_args()
 
+
+def prepare(ap, args) -> None:
+    """Checks and one-time setup before the dashboard starts: the password
+    rule, recording a flag/env configuration as setup, the signing key."""
     loopback = args.bind in ("127.0.0.1", "::1", "localhost")
     if not args.web_pass and not loopback and not args.insecure_no_auth:
         ap.error("refusing to serve the dashboard on %s without a password: set "
@@ -2721,11 +2741,6 @@ def _cli_main() -> None:
         setup_store.save({"band_name": args.band_name, "band_psk": args.band_psk,
                           "hub_public": args.hub_public, "pyz_domain": args.domain})
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(name)s %(levelname)s: %(message)s",
-    )
-
     # This hub's own key for signing worker updates and deauth orders; the
     # public half is stamped into the worker bundles it builds.
     from .update_keys import ensure_key, key_path, public_key_b64
@@ -2733,10 +2748,12 @@ def _cli_main() -> None:
     if signing_key:
         log.info("update signing key %s (public %s)", key_path(), public_key_b64(signing_key))
 
+
+def server_from_args(args, argv, **shared) -> "CombinedServer":
     from .dashboard_settings import explicit_sources
-    server = CombinedServer(
-        explicit=explicit_sources(sys.argv[1:]),
-        argv=sys.argv[1:],
+    return CombinedServer(
+        explicit=explicit_sources(argv),
+        argv=argv,
         port=args.port,
         domain=args.domain,
         band_psk=args.band_psk,
@@ -2747,7 +2764,27 @@ def _cli_main() -> None:
         hub_public=args.hub_public,
         band_name=args.band_name,
         bind=args.bind,
+        **shared,
     )
+
+
+def _cli_main() -> None:
+    """Argparse entry point: python -m rook.remote.bootstrap [options]."""
+    import argparse
+
+    ap = argparse.ArgumentParser(
+        description="Rook hub dashboard: web UI, worker installer and band controller",
+        epilog="Every option can also be set with the ROOK_* variable named in its help. "
+               "`rook hub serve` runs this dashboard and the MCP server in one process.")
+    add_arguments(ap)
+    args = ap.parse_args()
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s: %(message)s",
+    )
+    prepare(ap, args)
+    server = server_from_args(args, sys.argv[1:])
 
     async def _run() -> None:
         await server.start()

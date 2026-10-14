@@ -41,6 +41,9 @@ Issues = "https://github.com/Bake-Ware/rook/issues"
 [project.scripts]
 rook = "rook.__main__:main"
 rook-worker = "rook.worker.cli:main"
+# The hub: dashboard + MCP server in one process (`rook hub serve`).
+rook-hub = "rook.hub.serve:main"
+# The same two halves as separate processes (compat; retired in a later release).
 rook-dashboard = "rook.remote.bootstrap:_cli_main"
 rook-mcp = "rook.band_mcp.server:main"
 

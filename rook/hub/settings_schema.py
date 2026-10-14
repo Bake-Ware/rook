@@ -98,10 +98,14 @@ _CORE: list[tuple[Setting, str, dict]] = [
         bootstrap=True, apply="restart", min=1, max=65535, label="Relay port (dashboard)",
         group="Network"), "dashboard", {}),
     (_s("mcp.listen", "hostport", "127.0.0.1:8765", env="ROOK_MCP_BIND", flag="--bind",
-        bootstrap=True, apply="restart", label="MCP listen address", group="Network"),
+        bootstrap=True, apply="restart", label="MCP listen address", group="Network",
+        help="rook-mcp's port. `rook hub serve` serves /mcp on the dashboard port and also "
+             "here (flag --mcp-bind; 'off' drops this port)."),
      "mcp", {}),
     (_s("mcp.relay", "hostport", "127.0.0.1:7474", env="ROOK_HUB", flag="--hub",
-        bootstrap=True, apply="restart", label="Relay address (MCP)", group="Network"),
+        bootstrap=True, apply="restart", label="Relay address (MCP)", group="Network",
+        help="`rook hub serve` uses the dashboard's relay host/port and falls back to this "
+             "when those are unset."),
      "mcp", {}),
     (_s("mcp.public_url", "str", "", env="ROOK_MCP_PUBLIC_URL", flag="--public-url",
         bootstrap=True, apply="restart", label="Public MCP URL", group="Network",
@@ -290,6 +294,10 @@ _WATCHDOG: list[Setting] = [
        group="Probe"),
     _s("name", "str", "hub", env="ROOK_WATCHDOG_NAME", bootstrap=True, label="Watchdog name",
        group="Probe"),
+    _s("services", list, ["rook-band-mcp", "rook-remote", "telesthete-hub", "cloudflared"],
+       env="ROOK_WATCHDOG_SERVICES", bootstrap=True, label="systemd units to check",
+       group="Probe", help="A hub run by `rook hub serve` names its one unit instead of "
+                           "rook-band-mcp and rook-remote."),
     _s("state", "path", "/var/lib/rook-watchdog/state.json", env="ROOK_WATCHDOG_STATE",
        bootstrap=True, label="State file", group="Probe", advanced=True),
     _s("evict_per_min", int, 10, env="ROOK_WATCHDOG_EVICT_PER_MIN", bootstrap=True,

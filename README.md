@@ -61,7 +61,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 cargo install --locked --git https://github.com/Bake-Ware/telesthete telesthitium
 # (installs `telesthete-hub` into ~/.cargo/bin)
 
-# Rook itself: dashboard, MCP server, worker and CLI.
+# Rook itself: the hub (dashboard + MCP server), worker and CLI.
 git clone https://github.com/Bake-Ware/rook
 cd rook
 python3 -m venv .venv
@@ -77,12 +77,12 @@ BIND=0.0.0.0 scripts/local-hub.sh    # reachable from your LAN (see "Workers on 
 ```
 
 On first run it generates a band key, a dashboard password and an MCP token into
-`rook-data/quickstart.env` (mode 600), then starts three processes in the foreground
-(Ctrl-C stops them all):
+`rook-data/quickstart.env` (mode 600), then starts the relay and the hub (dashboard and
+MCP server in one process, `rook-hub`) in the foreground (Ctrl-C stops both):
 
 ```
   Dashboard   http://127.0.0.1:7005    password: …
-  MCP         http://127.0.0.1:8765/mcp      bearer token in rook-data/quickstart.env
+  MCP         http://127.0.0.1:7005/mcp      bearer token in rook-data/quickstart.env
   Relay       udp://127.0.0.1:7474
 
 Install a worker:  http://127.0.0.1:7005/#install
@@ -128,7 +128,7 @@ curl -s -u "admin:$ROOK_WEB_PASS" -H 'Content-Type: application/json' \
 
 ```sh
 . rook-data/quickstart.env
-claude mcp add --transport http rook http://127.0.0.1:8765/mcp \
+claude mcp add --transport http rook http://127.0.0.1:7005/mcp \
   --header "Authorization: Bearer $ROOK_MCP_STATIC_TOKEN"
 ```
 
@@ -154,8 +154,10 @@ $EDITOR .env        # set ROOK_WEB_PASS, ROOK_BAND_PSK and ROOK_MCP_STATIC_TOKEN
 docker compose up -d --build
 ```
 
-This publishes the dashboard on 7005, the MCP server on 8765 and the relay on 7474/udp,
-with state in the `rook-data` volume. Join workers exactly as in step 3, using the Docker
+This publishes the dashboard and MCP server on 7005 (and the MCP server alone on 8765,
+where older setups expect it) and the relay on 7474/udp, with state in the `rook-data`
+volume. Upgrading from the two-service compose file: `docker compose up -d --build
+--remove-orphans`. Join workers exactly as in step 3, using the Docker
 host's address. The image builds the relay from source, so the first build takes a few
 minutes. (The compose setup has not yet been run in CI; please report problems.)
 
@@ -164,10 +166,10 @@ minutes. (The compose setup has not yet been run in CI; please report problems.)
 ```
    you / agents                         hub (you host it)                         workers
  ┌──────────────┐  HTTPS   ┌──────────────────────────────────┐
- │ browser      ├─────────►│ dashboard       :7005  (web UI,  │
- │ rook (TUI)   │          │   installer, band controller)    │◄─┐
- └──────────────┘          │                                  │  │ UDP     ┌─────────────────┐
- ┌──────────────┐  MCP     │ MCP server      :8765  (tools,   │  ├─────────┤ worker (LAN)    │
+ │ browser      ├─────────►│ rook-hub :7005 (one process)     │
+ │ rook (TUI)   │          │  dashboard (web UI, installer,   │◄─┐
+ └──────────────┘          │    band controller)              │  │ UDP     ┌─────────────────┐
+ ┌──────────────┐  MCP     │  MCP server /mcp (tools,         │  ├─────────┤ worker (LAN)    │
  │ Claude Code, ├─────────►│   journal, chat, vault, wiki,    │  │         └─────────────────┘
  │ Codex, …     │          │   /band WebSocket bridge) ◄──────┼──┼── WSS ──┤ worker (remote) │
  └──────────────┘          │                                  │  │         └─────────────────┘
@@ -181,13 +183,13 @@ minutes. (The compose setup has not yet been run in CI; please report problems.)
 | **Worker** | Pure-Python agent on each machine. Loads plugins that register dot-named **capabilities** (`shell.exec`, `file.read`, `screenshot.capture`, `hid.type`, …); a plugin only loads where it can work. Announces its name, version and capabilities every 30s. | `rook worker`, or the `band-worker.pyz` bundle the installers deploy |
 | **Band** | The workers and controllers that share one pre-shared key (PSK). Traffic is encrypted with ChaCha20-Poly1305 using a key derived from the PSK; `band_id = SHA256(PSK)[:16]` is the only cleartext label. | [telesthete](https://github.com/Bake-Ware/telesthete) protocol |
 | **Relay** | A blind forwarder: routes packets by `band_id` and never holds a key, so it can't read or forge traffic. | `telesthete-hub` (Rust) |
-| **Dashboard** | Web UI, worker installers and pairing codes, band and account management, and the controller that pushes signed updates and deauths. Joins the band as a controller. | `rook-dashboard` (`python -m rook.remote.bootstrap`) |
-| **MCP server** | Exposes the band to agents as MCP tools (`rook_workers`, `rook_call`, consoles, chat, tasks, knowledge, secrets), journals every call under the caller's token, and bridges WebSocket workers onto the relay at `/band`. | `rook-mcp` (`python -m rook.band_mcp`) |
+| **Dashboard** | Web UI, worker installers and pairing codes, band and account management, and the controller that pushes signed updates and deauths. Joins the band as a controller. | `rook-hub` (`rook hub serve`), with the MCP server in one process; or alone as `rook-dashboard` |
+| **MCP server** | Exposes the band to agents as MCP tools (`rook_workers`, `rook_call`, consoles, chat, tasks, knowledge, secrets), journals every call under the caller's token, and bridges WebSocket workers onto the relay at `/band`. | `rook-hub`, on the dashboard's port (and alone on :8765, `--mcp-bind`); or alone as `rook-mcp` |
 | **Control planes** | The dashboard, the `rook band` terminal UI (talks to the dashboard API) and MCP all see the same roster and call the same capabilities. | |
 
 A call goes: client → dashboard or MCP server → encrypted band message through the relay →
 the target worker runs the capability → the reply comes back the same way. LAN workers
-talk UDP to the relay directly; remote workers use a WebSocket to the MCP server's `/band`
+talk UDP to the relay directly; remote workers use a WebSocket to the hub's `/band`
 bridge, usually through a TLS reverse proxy or tunnel on port 443.
 
 Hub state (band keys, enrollment database, API tokens, call journal, chat, vault,
@@ -210,23 +212,30 @@ the code, installs the worker as a service, and the machine appears under Worker
 Everything runs over plain HTTP here: `local-hub.sh` passes `--domain http://<hub-ip>:7005`,
 so installer links say `http://`, cookies are not marked `Secure`, and workers accept a
 plain-HTTP enrollment server only at a non-public IP address. Installed workers reach the
-relay through the MCP server's WebSocket bridge (`--hub <hub-ip>:8765 --ws`, the same path a
-public hub uses behind TLS), so allow TCP 7005 and 8765 through the hub's firewall. Workers
+relay through the hub's WebSocket bridge (`--hub <hub-ip>:7005 --ws`, the same path a
+public hub uses behind TLS), so allow TCP 7005 through the hub's firewall (and 8765 for
+workers set up by an older `local-hub.sh`, which pointed them there). Workers
 you start by hand can instead use UDP directly: `rook worker --hub <hub-ip>:7474 --psk … --name …`
 (allow UDP 7474). With Docker, set `ROOK_DOMAIN=http://<hub-ip>:7005` and
-`ROOK_HUB_PUBLIC=<hub-ip>:8765`. To reach MCP by IP, add that `host:port` to
-`ROOK_ALLOWED_HOSTS` (`local-hub.sh` does). Plain HTTP is for a network you trust: anyone on
+`ROOK_HUB_PUBLIC=<hub-ip>:7005`. To reach MCP by IP, add that `host:port` to
+`ROOK_ALLOWED_HOSTS` (`local-hub.sh` does; the `ROOK_DOMAIN` host is always allowed). Plain HTTP is for a network you trust: anyone on
 it can read pairing codes and installer traffic. Use the HTTPS setup below for anything else.
 
 **Workers anywhere.** Put the hub behind HTTPS: a reverse proxy (Caddy, nginx) or a tunnel
-(Cloudflare Tunnel) that forwards your domain to the dashboard (7005) and the paths `/mcp`,
-`/band`, `/tokens/account-api`, `/authorize`, `/token` and `/.well-known/` to the MCP server (8765).
+(Cloudflare Tunnel) that forwards your domain to the hub (7005); `rook-hub` serves the MCP
+paths there too. (With `rook-dashboard` and `rook-mcp` as two processes, forward the paths
+`/mcp`, `/band`, `/tokens/account-api`, `/authorize`, `/token`, `/skill/` and
+`/.well-known/` to the MCP server on 8765, as before; `rook-hub` still serves them on 8765
+as well, so an existing proxy setup keeps working.)
 Then remote workers join with `--hub your.domain:443 --ws`. Set:
 
 - `ROOK_DOMAIN=your.domain` and `ROOK_HUB_PUBLIC=your.domain:443` for the dashboard, which
   writes them into installer scripts;
 - `ROOK_MCP_PUBLIC_URL=https://your.domain` and `ROOK_ALLOWED_HOSTS=your.domain` for the MCP
   server (this also enables the OAuth front door that the claude.ai web connector needs).
+  `rook-hub` takes both sets of settings (see `rook hub serve --help`); moving an existing
+  two-process hub to it is a short runbook in
+  [docs/operations/hub-deploy.md](docs/operations/hub-deploy.md#moving-to-one-hub-process).
 
 Never expose the dashboard without `ROOK_WEB_PASS`; it refuses to start on a non-loopback
 address without one unless you pass `--insecure-no-auth`.

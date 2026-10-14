@@ -1,6 +1,6 @@
 # Installing Rook
 
-Pieces: **relay** (`telesthete-hub`, Rust, UDP 7474, blind forwarder), **dashboard** (`rook-dashboard`, :7005 — web UI, installers, pairing, OTA controller), **MCP server** (`rook-mcp`, :8765 — agent tools, journal, `/band` WebSocket bridge), and **workers** (`rook-worker` / `band-worker.pyz`) on every machine.
+Pieces: **relay** (`telesthete-hub`, Rust, UDP 7474, blind forwarder), **hub** (`rook-hub` / `rook hub serve`, :7005 — one process: the dashboard (web UI, installers, pairing, OTA controller) and the MCP server (`/mcp` agent tools, journal, `/band` WebSocket bridge); also serves MCP alone on :8765 for older setups), and **workers** (`rook-worker` / `band-worker.pyz`) on every machine. `rook-dashboard` + `rook-mcp` still run the two halves as separate processes.
 
 Hub state lives in `ROOK_DATA_DIR` (keys, enrollment DB, tokens, journal, chat, vault, knowledge). Worker state lives in `~/.rook-band-worker/` (`worker_id`, `enrollment.json`, `band-worker.pyz`, `audit.jsonl`, custom caps).
 
@@ -16,7 +16,7 @@ pip install -e .            # '.[desktop]' for screenshots on desktop workers
 scripts/local-hub.sh        # BIND=0.0.0.0 to serve the LAN
 ```
 
-First run writes `rook-data/quickstart.env` (mode 600) with `ROOK_BAND_PSK`, `ROOK_WEB_PASS`, `ROOK_MCP_STATIC_TOKEN`, and starts dashboard :7005, MCP :8765/mcp, relay udp :7474 in the foreground.
+First run writes `rook-data/quickstart.env` (mode 600) with `ROOK_BAND_PSK`, `ROOK_WEB_PASS`, `ROOK_MCP_STATIC_TOKEN`, and starts the hub (dashboard :7005, MCP :7005/mcp) and the relay (udp :7474) in the foreground.
 
 ## Hub: Docker
 
@@ -30,7 +30,7 @@ docker compose up -d --build
 
 ## Hub: public (workers anywhere)
 
-Put it behind HTTPS (Caddy/nginx/Cloudflare Tunnel). Route the domain to the dashboard (7005) and these paths to MCP (8765): `/mcp`, `/band`, `/tokens/account-api`, `/authorize`, `/token`, `/.well-known/`, `/skill/`. Set:
+Put it behind HTTPS (Caddy/nginx/Cloudflare Tunnel). Route the domain to the hub (7005); `rook-hub` serves the MCP paths there. (Two processes: also route `/mcp`, `/band`, `/tokens/account-api`, `/authorize`, `/token`, `/.well-known/`, `/skill/` to MCP on 8765; `rook-hub` serves those on 8765 too.) Set:
 
 - dashboard: `ROOK_DOMAIN=your.domain`, `ROOK_HUB_PUBLIC=your.domain:443`
 - MCP: `ROOK_MCP_PUBLIC_URL=https://your.domain`, `ROOK_ALLOWED_HOSTS=your.domain` (also enables the OAuth front door the claude.ai web connector needs)

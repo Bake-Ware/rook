@@ -33,7 +33,15 @@ import urllib.error
 import urllib.request
 
 UA = 'rook-watchdog/1'
+# systemd units that must be active (hub mode). The default is the
+# two-process layout; a hub moved to `rook hub serve` names its one unit, e.g.
+# ROOK_WATCHDOG_SERVICES=rook-hub,telesthete-hub,cloudflared.
 SERVICES = ('rook-band-mcp', 'rook-remote', 'telesthete-hub', 'cloudflared')
+
+
+def services():
+    raw = env('ROOK_WATCHDOG_SERVICES')
+    return tuple(s.strip() for s in raw.split(',') if s.strip()) if raw else SERVICES
 
 
 def env(name, default=''):
@@ -101,7 +109,7 @@ def check_hub(state):
     host = env('ROOK_WATCHDOG_HOST')                # the MCP's public hostname (allowed-hosts check)
     if not host:
         return {'config': 'ROOK_WATCHDOG_HOST is not set (the MCP public hostname), so the hub cannot be checked'}
-    for svc in SERVICES:
+    for svc in services():
         r = subprocess.run(['systemctl', 'is-active', svc], capture_output=True, text=True)
         if r.stdout.strip() != 'active':
             found[f'svc:{svc}'] = f'{svc} is {r.stdout.strip() or "unknown"}'

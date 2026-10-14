@@ -14,9 +14,9 @@ for secret masking).
 import json
 import os
 
-import aiohttp
 from aiohttp import web
 
+from . import upstream
 from .account_web import NO_STORE
 from .knowledge_web import KnowledgeWeb
 
@@ -68,10 +68,9 @@ class JobsWeb(KnowledgeWeb):
         who = json.dumps({'id': p.id, 'role': 'owner' if p.fail_open() else 'member', 'label': p.label})
         body = {k: data.get(k) for k in ('action', 'id', 'query', 'data')}
         try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self.TIMEOUT)) as http:
-                async with http.post(self.url, json=body, allow_redirects=False,
-                                     headers={'Authorization': 'Bearer ' + token,
-                                              'X-Rook-Principal': who}) as response:
-                    return web.json_response(await response.json(), status=response.status, headers=NO_STORE)
-        except (aiohttp.ClientError, TimeoutError, ValueError):
+            status, reply = await upstream.request_json(
+                'POST', self.url, json=body, timeout=self.TIMEOUT,
+                headers={'Authorization': 'Bearer ' + token, 'X-Rook-Principal': who})
+        except upstream.Unavailable:
             return web.json_response({'error': self.UNAVAILABLE}, status=503, headers=NO_STORE)
+        return web.json_response(reply, status=status, headers=NO_STORE)

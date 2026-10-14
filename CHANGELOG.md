@@ -9,6 +9,36 @@ releases yet: workers identify themselves by build number (for example
 
 Preparation for public use.
 
+### Hub merge
+- One hub process: `rook hub serve` (console script `rook-hub`) runs the
+  dashboard and the MCP server together on the dashboard port (7005): the MCP
+  paths (`/mcp`, `/band`, `/tokens/account-api`, `/authorize`, `/token`,
+  `/.well-known/*`, `/skill/*`, `/healthz`) are served there through an
+  in-process ASGI bridge, and the old MCP port (8765) keeps serving the MCP
+  server alone (`--mcp-bind` / `ROOK_MCP_BIND`, `off` to drop it), so proxy
+  routes, agent configs and workers need no change. Both halves share one band
+  client, authorizer and set of stores, and the account pages reach the MCP
+  side in memory instead of over loopback HTTP: on a local hub with two
+  workers, 96 MB RSS instead of 65 + 92 MB. `rook-dashboard` and `rook-mcp`
+  still work as separate processes (compat; to be removed in a later
+  release). Migration runbook: docs/operations/hub-deploy.md.
+- `scripts/local-hub.sh` starts the relay and one hub process
+  (`ROOK_HUB_SPLIT=1` for the old two); installers and the printed MCP URL use
+  the dashboard port. `compose.yaml` has one `hub` service (upgrade with
+  `docker compose up -d --remove-orphans`).
+- Upgrade note (Docker): the image's default command changed from
+  `rook-dashboard` to `rook-hub`, which runs the MCP server too. A setup that
+  starts the image without a command as its dashboard and also runs a
+  separate `rook-mcp` container on the same data volume must drop that
+  container (or give the dashboard container `command: ["rook-dashboard"]`):
+  two MCP servers on one volume would share the stores and both join the band.
+- The MCP paths refuse request bodies over 16 MiB with 413
+  (`--mcp-max-body` / `ROOK_MCP_MAX_BODY`, 0 = no limit), and answer 503
+  while the hub shuts down.
+- `rook hub` deploy configs can name a single `hub` service
+  (`rook.hub.serve`); the watchdog's unit list is configurable
+  (`ROOK_WATCHDOG_SERVICES`).
+
 ### Protocol features
 - Addressed routing (telesthete SPEC §10.1, needs telesthete 0.3.0): workers
   and band clients declare a route id; targeted calls and replies (request

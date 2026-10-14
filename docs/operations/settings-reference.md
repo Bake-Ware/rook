@@ -326,6 +326,7 @@ are set only in the environment or on the command line.
 | `watchdog.mcp_url` | MCP URL to probe | hub | str | `http://127.0.0.1:8765` | `ROOK_WATCHDOG_MCP_URL` | live · bootstrap |
 | `watchdog.host` | Host name | hub | str |  | `ROOK_WATCHDOG_HOST` | live · bootstrap |
 | `watchdog.name` | Watchdog name | hub | str | `hub` | `ROOK_WATCHDOG_NAME` | live · bootstrap |
+| `watchdog.services` | systemd units to check | hub | list | `['rook-band-mcp', 'rook-remote', 'telesthete…` | `ROOK_WATCHDOG_SERVICES` | live · bootstrap |
 | `watchdog.state` | State file | hub | path | `/var/lib/rook-watchdog/state.json` | `ROOK_WATCHDOG_STATE` | live · bootstrap |
 | `watchdog.evict_per_min` | Session evictions per minute before alerting | hub | int | `10` | `ROOK_WATCHDOG_EVICT_PER_MIN` | live · bootstrap |
 | `watchdog.min_mem_mb` | Minimum free memory (MB) | hub | int | `80` | `ROOK_WATCHDOG_MIN_MEM_MB` | live · bootstrap |
