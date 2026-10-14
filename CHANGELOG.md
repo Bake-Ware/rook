@@ -36,11 +36,17 @@ Preparation for public use.
   prompt.
 - Run as root (cloud-init, `sudo`), the Linux worker installer stops unless
   told whose worker it is: `ROOK_USER=<account>` installs it for that account
-  (it runs as them), `ROOK_ALLOW_ROOT=1` runs it as root. The Windows
+  (it runs as them; a worker installed for root earlier is then stopped and
+  disabled once the new one is in), `ROOK_ALLOW_ROOT=1` runs it as root
+  (updating such a root worker in place). Root writes only to its own home,
+  even under `sudo -E`. The Windows
   installer refuses to run as SYSTEM (the worker must run in the user's
   session). Worker names are limited to letters, digits, `.`, `_` and `-`.
-- `rook login` defaults a bare public host to `https://`, asks before sending
-  a token or password over plain http to a public address, and never follows
+- `rook login` defaults a bare public host to `https://` (names whose
+  addresses are all private, like Tailscale's, keep `http://`; https against a
+  plain-http hub suggests the `http://` command), asks before sending a token
+  or password over plain http to a public address (`ROOK_ALLOW_HTTP=1` without
+  a terminal), and never follows
   a redirect from the MCP endpoint (the token would go along). The control
   link drops connections that don't send their token within 2 seconds, and
   `control.json` and the saved token get an owner-only ACL on Windows.

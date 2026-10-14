@@ -911,16 +911,35 @@ def cmd_pair(args) -> int:
 
 
 def _local_host(host: str) -> bool:
-    """A loopback, private-LAN, link-local or CGNAT/Tailscale address, or a
-    name that only resolves on a home network (no dot, .local, .lan, ...)."""
+    """A loopback, private-LAN, link-local or CGNAT/Tailscale address, a
+    name that only resolves on a home network (no dot, .local, .lan, ...), or
+    a name whose addresses are all of those (hub.tailnet.ts.net, a LAN DNS
+    name for 10.x). A name that doesn't resolve counts as public."""
     import ipaddress
     host = host.strip("[]").lower()
     try:
         return not ipaddress.ip_address(host).is_global
     except ValueError:
         pass
-    return ("." not in host or host == "localhost"
-            or host.endswith((".localhost", ".local", ".lan", ".home", ".internal", ".home.arpa")))
+    if ("." not in host or host == "localhost"
+            or host.endswith((".localhost", ".local", ".lan", ".home", ".internal", ".home.arpa"))):
+        return True
+    import socket
+    try:
+        addrs = {info[4][0].split("%")[0] for info in socket.getaddrinfo(host, None)}
+        return bool(addrs) and all(not ipaddress.ip_address(a).is_global for a in addrs)
+    except (OSError, UnicodeError, ValueError):
+        return False
+
+
+def _tls_hint(url: str, error: object, flag: str = "--url") -> str:
+    """When https:// met a plain-http server (the hub's default :7005)."""
+    if url.startswith("https://") and "WRONG_VERSION_NUMBER" in str(error):
+        return ("\n  That address answers plain http, not https. If the hub really serves "
+                f"http there, use: rook login {flag} " + "http://" + url[len("https://"):]
+                + "\n  (ROOK_ALLOW_HTTP=1 allows it without a terminal; prefer https "
+                "beyond your own network).")
+    return ""
 
 
 def _with_scheme(url: str) -> str:
@@ -943,8 +962,11 @@ def _confirm_cleartext(url: str, what: str) -> None:
         return
     msg = (f"{url} is plain http on a public address: the {what} would cross the "
            "internet unencrypted.")
+    if os.environ.get("ROOK_ALLOW_HTTP", "").strip().lower() in ("1", "true", "yes"):
+        _err(msg + " Sending it anyway (ROOK_ALLOW_HTTP).")
+        return
     if not sys.stdin.isatty():
-        raise CliError(msg + " Use the hub's https:// address.")
+        raise CliError(msg + " Use the hub's https:// address (or set ROOK_ALLOW_HTTP=1).")
     _err(msg)
     if input("Send it anyway? [y/N] ").strip().lower() not in ("y", "yes"):
         raise CliError("Not sent. Use the hub's https:// address.")
@@ -971,7 +993,10 @@ def cmd_login(args) -> int:
         try:
             reply = rook_call(mcp, token, "home.status", {}, timeout=15)
         except (McpError, OSError) as e:
-            raise CliError(f"The hub at {mcp} didn't accept that: {getattr(e, 'reason', e)}") from None
+            reason = getattr(e, "reason", e)
+            hint = (_tls_hint(mcp, reason, "--token --mcp-url") if args.mcp_url
+                    else _tls_hint(url, reason, "--token --url"))
+            raise CliError(f"The hub at {mcp} didn't accept that: {reason}{hint}") from None
         if reply.get("ok") is False and "no live worker" not in str(reply.get("error")):
             raise CliError(f"The hub at {mcp} answered: {reply.get('error')}")
         from ..core.db import atomic_write_text
@@ -994,7 +1019,7 @@ def cmd_login(args) -> int:
         password = getpass.getpass(f"Dashboard password for {url}: ")
     error = BandHTTP(url, user, password).check()
     if error:
-        raise CliError(f"The dashboard at {url} didn't accept that: {error}")
+        raise CliError(f"The dashboard at {url} didn't accept that: {error}{_tls_hint(url, error)}")
     if not _save_conf(url, user, password):
         raise CliError("Could not save the login (check your home folder is writable).")
     _out("Saved. rook tasks, rooms and knowledge now read as you (rook band uses it too).\n"

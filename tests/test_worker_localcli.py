@@ -22,7 +22,7 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setenv("ROOK_WORKER_HOME", str(state))
     monkeypatch.delenv("ROOK_ENROLLMENT_FILE", raising=False)
     for var in ("ROOK_WEB_URL", "ROOK_WEB_USER", "ROOK_WEB_PASS", "ROOK_BAND_PSK", "ROOK_HUB",
-                "ROOK_TOKEN", "ROOK_MCP_URL",
+                "ROOK_TOKEN", "ROOK_MCP_URL", "ROOK_ALLOW_HTTP",
                 "ROOK_SERVER", "ROOK_YES", "ROOK_BAND", "ROOK_INSTALLER"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr(band_tui, "_CONF", tmp_path / "band.conf")
@@ -214,13 +214,49 @@ def test_login_token_is_checked_and_saved_privately(home, capsys, monkeypatch):
     assert code == 1 and "refused the API token" in err
 
 
-def test_login_defaults_a_bare_public_host_to_https():
+@pytest.fixture
+def dns(monkeypatch):
+    """Names resolve only from this table (anything else: no such host)."""
+    import socket
+    table = {"hub.tail1234.ts.net": ["100.101.102.103"], "hub.corp.test": ["10.1.2.3", "fd00::5"],
+             "mixed.example.com": ["10.1.2.3", "8.8.8.8"]}
+
+    def getaddrinfo(host, *a, **k):
+        if host not in table:
+            raise socket.gaierror("no such host")
+        return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", (ip, 0)) for ip in table[host]]
+    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
+    return table
+
+
+def test_login_defaults_a_bare_public_host_to_https(dns):
     assert localcli._with_scheme("hub.example.com") == "https://hub.example.com"
     assert localcli._with_scheme("hub.example.com:7005") == "https://hub.example.com:7005"
     for lan in ("192.168.1.5:7005", "10.0.0.2", "100.100.1.2:7005", "[fd00::1]:7005",
                 "localhost:7005", "rookhub:7005", "rookhub.local", "hub.lan:7005"):
         assert localcli._with_scheme(lan) == "http://" + lan, lan
     assert localcli._with_scheme("http://hub.example.com") == "http://hub.example.com"
+    # Dotted names count as local when every address they resolve to is.
+    assert localcli._with_scheme("hub.tail1234.ts.net:7005") == "http://hub.tail1234.ts.net:7005"
+    assert localcli._with_scheme("hub.corp.test:7005") == "http://hub.corp.test:7005"
+    assert localcli._with_scheme("mixed.example.com") == "https://mixed.example.com"
+
+
+def test_login_suggests_http_when_https_meets_a_plain_http_hub(home, capsys, monkeypatch, dns):
+    import ssl
+    import urllib.error
+    from rook.worker import mcp_client
+    monkeypatch.setenv("ROOK_TOKEN", "t0k")
+    monkeypatch.setattr(mcp_client, "rook_call", lambda *a, **k: (_ for _ in ()).throw(
+        urllib.error.URLError(ssl.SSLError(1, "[SSL: WRONG_VERSION_NUMBER] wrong version number"))))
+    code, _, err = run(["login", "--token", "--url", "hub.example.com:7005"], capsys)
+    assert code == 1 and "WRONG_VERSION_NUMBER" in err
+    assert "rook login --token --url http://hub.example.com:7005" in err and "ROOK_ALLOW_HTTP=1" in err
+    monkeypatch.setattr(band_tui.BandHTTP, "check",
+                        lambda self: "[SSL: WRONG_VERSION_NUMBER] wrong version number")
+    monkeypatch.setenv("ROOK_WEB_PASS", "pw")
+    code, _, err = run(["login", "--url", "hub.example.com:7005"], capsys)
+    assert code == 1 and "rook login --url http://hub.example.com:7005" in err
 
 
 class _Tty:
@@ -234,7 +270,7 @@ class _Tty:
         return self.answer + "\n"
 
 
-def test_login_never_sends_a_secret_over_public_http_unasked(home, capsys, monkeypatch):
+def test_login_never_sends_a_secret_over_public_http_unasked(home, capsys, monkeypatch, dns):
     from rook.worker import mcp_client
     sent = []
     monkeypatch.setattr(mcp_client, "rook_call", lambda url, token, *a, **k: sent.append(url)
@@ -263,6 +299,12 @@ def test_login_never_sends_a_secret_over_public_http_unasked(home, capsys, monke
     assert run(["login", "--token", "--url", "hub.example.com"], capsys)[0] == 0
     assert run(["login", "--token", "--url", "192.168.1.5:7005"], capsys)[0] == 0
     assert sent == ["https://hub.example.com/mcp", "http://192.168.1.5:7005/mcp"]
+    # ROOK_ALLOW_HTTP=1: sent without a terminal, with a warning.
+    monkeypatch.setattr("sys.stdin", __import__("io").StringIO(""))
+    monkeypatch.setenv("ROOK_ALLOW_HTTP", "1")
+    sent.clear()
+    code, _, err = run(["login", "--token", "--url", "http://hub.example.com"], capsys)
+    assert code == 0 and sent == ["http://hub.example.com/mcp"] and "ROOK_ALLOW_HTTP" in err
 
 
 def test_chat_carries_earlier_turns(home, capsys, monkeypatch):
