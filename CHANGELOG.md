@@ -275,20 +275,22 @@ Preparation for public use.
   error; click it to switch the plugin live there. A detail panel lists caps
   with their risk and docstring, links the plugin's settings, switches it on
   every eligible worker at once and reloads it. Core plugins (`selfupdate`,
-  `config`, `enrollment`; hub `settings`, `policy`, `info`) stay on.
+  `config`, `enrollment`, `info`; hub `settings`, `policy`, `info`) stay on.
 - Hub plugin switches persist: `hub.plugin.enable/disable` and the page
   store them in `core.plugins.hub` and the hub applies them at start.
   Turning on a plugin that has an `enabled` setting turns that on too; an
   environment variable for it still wins (docs/design/plugins.md §9.2).
-- Defaults for new workers per band (`core.plugins.worker_defaults`): a
-  pairing code carries them as a plugin profile, enrollment hands it to the
-  worker, and the worker applies it on its first start (persisted like
-  `worker.plugin.*`; older workers ignore it). Installers pass nothing new.
+- Defaults for new workers per band (`core.plugins.worker_defaults`):
+  enrollment hands them to the worker as a plugin profile (a pairing code
+  carries one only when the operator attaches it), and the worker applies its
+  disables on its first start only (persisted like `worker.plugin.disable`;
+  never widens `--enable`; older workers ignore it). Installers pass nothing new.
 - Presets, "What do you want Rook to do?" (remote control, agent sessions,
   knowledge & tasks, home & voice agent, phone & chat alerts, hardware), each
   with its risk tiers and high-risk parts called out: on the Plugins page,
   as step 1 before "Get a pairing code" on the first-worker card and the
-  Install page, and in the /setup wizard.
+  Install page, and in the /setup wizard. Boxes show the stored choices;
+  saving writes only the groups that changed.
 - Marketplace preview: catalog format `rook-plugin-catalog/1`
   (docs/design/plugin-marketplace.md), `core.plugins.catalogs` /
   `ROOK_PLUGIN_CATALOGS`, a Marketplace tab listing entries (a bundled

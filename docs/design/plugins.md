@@ -398,7 +398,7 @@ new instance first.
 
 The dashboard's **Plugins** page shows every plugin on the hub and on each
 online worker (rows: plugins; columns: the hub and the workers, from each
-worker's `worker.plugin.list`, cached 15 s; offline workers are never
+worker's `worker.plugin.list`, cached 45 s; offline workers are never
 called). A cell switches that plugin live through the calls above, so the
 choice persists where it lands:
 
@@ -421,25 +421,34 @@ Hub precedence, highest first:
    stays recorded as on and loads once it can.
 
 **Defaults for new workers** are band settings (`core.plugins.worker_defaults`,
-`{"<module>": true|false}`; unlisted modules keep the built-in behaviour). A
-pairing code carries them as the worker's *plugin profile*
-(`{"enable": [...], "disable": [...]}`), snapshotted when the code is shown;
-enrollment (`/auth/devices/enroll`) returns it as `plugin_profile`, the
-worker saves it in `enrollment.json` and applies it once on its next start,
-merged into `plugins.json` like `worker.plugin.*` would (protected modules
-are never switched off; a later operator switch wins). A device-login
+`{"<module>": true|false}`; unlisted modules keep the built-in behaviour).
+Enrollment (`/auth/devices/enroll`) hands them to the worker as its *plugin
+profile* (`{"enable": [...], "disable": [...]}`), read when the worker
+enrolls, so presets saved while a pairing code is on screen still reach it.
+A code carries a profile of its own only when the operator account attaches
+one explicitly (`profile` on the account `pair` action). A device-login
 enrollment gets the band's defaults; a migration re-enrollment gets none.
-Older workers ignore the key.
+The worker saves the profile in `enrollment.json` and applies it on its
+first start only, while it has no `plugins.json` yet: the `disable` list
+becomes its persisted disables, like `worker.plugin.disable` (selfupdate,
+config, enrollment and info are never switched off). A re-enrollment never
+undoes an operator's per-worker switches, and `enable` changes nothing on a
+worker (everything loads by default; adding to the persisted `enabled` set
+would widen an `--enable` allowlist). Older workers ignore the key.
 
 **Presets** ("What do you want Rook to do?": remote control, agent
 sessions, knowledge & tasks, home & voice agent, phone & chat alerts,
-hardware) choose exactly a set of groups: each chosen group's hub plugins on
-and worker modules on by default; the other groups' modules off (worker
-`info` and hub `notify` are never switched off). They are offered on the
-Plugins page, as the first step before "Get a pairing code" on the
-first-worker card and the Install page, and in the /setup wizard. The list
-lives in `rook.hub.plugin_profiles.PRESETS`; a test keeps its module names
-and risk tiers in step with the plugins.
+hardware) show a box per group, ticked from the stored choices only (the
+group's stored hub switches, band defaults and `enabled` settings: all on,
+all off, or nothing / mixed = the group's built-in default), never from
+what happens to be loaded. Saving writes only the boxes that changed:
+ticking a group turns its hub plugins on and its worker modules on for new
+workers; unticking turns them off (worker `info`, hub `notify` and `tasks`
+are never switched off). Saving the boxes as shown changes nothing. They
+are offered on the Plugins page, as the first step before "Get a pairing
+code" on the first-worker card and the Install page, and in the /setup
+wizard. The list lives in `rook.hub.plugin_profiles.PRESETS`; a test keeps
+its module names and risk tiers in step with the plugins.
 
 The marketplace preview (catalog format, `plugin.marketplace.*`) is in
 [plugin-marketplace.md](plugin-marketplace.md).
