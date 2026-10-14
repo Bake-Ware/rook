@@ -38,6 +38,16 @@ A new release shows two steps: update the hub first, then your workers
   version does not start healthy, `rook hub deploy` puts the old one back.
   The page says when your hub cannot update itself (a system-wide install,
   Docker or a source checkout) and shows the command to run instead.
+- A hub set up with `rook hub deploy` whose services run as system services
+  under their own user cannot restart them itself (on purpose: the hub never
+  gets administrator rights). It shows **Prepare the hub update to …**
+  instead: the hub downloads and checks the release the same way, asks you to
+  acknowledge a breaking update first, and leaves a signed copy ready on the
+  hub machine. The page then shows one `sudo … rook hub … deploy … --yes`
+  command with a **Copy** button. Run it on the hub machine: it checks the
+  signature, backs up the databases, and rolls back by itself if the new
+  release does not come up healthy. History records the update once the hub
+  is back on the new release.
 - The hub restarts, so the page reconnects after a minute. History records
   whether the update landed, and has a **Roll back** button.
 

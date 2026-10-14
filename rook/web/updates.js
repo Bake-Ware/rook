@@ -184,6 +184,16 @@ export async function mountUpdates(root){
         const d=dialog('Update the hub to '+rel.version+'?',h('p',{text:rel.apply_note}),
           h('div',{class:'mg-actions end'},btn('Cancel','',()=>d.close()),btn('Update now','primary',async()=>{d.close();await act({action:'apply_hub',tag:rel.tag},'The hub update has started.');})));
       },{disabled:blocked}),blocked?h('span',{class:'mg-sub',text:'Update or acknowledge the devices above first.'}):null);
+    }else if(inst.kind==='rook-hub'&&inst.can_prepare){
+      // The hub cannot switch its own system units: it prepares the signed
+      // release and the operator runs the deploy on the hub machine.
+      const prep=o.hub.prepared&&o.hub.prepared.tag===rel.tag?o.hub.prepared:null;
+      const prepare=btn((prep?'Prepare again':'Prepare the hub update to '+rel.version),prep?'':'primary',e=>act({action:'prepare_hub',tag:rel.tag},'Prepared. Run the command below on the hub machine.',e.target),{disabled:blocked});
+      action=h('div',{class:'mg',style:'gap:8px'},h('p',{class:'mg-sub',text:inst.why}),
+        prep?h('div',{class:'mg',style:'gap:8px'},
+          h('p',{class:'mg-sub',text:'Ready: '+(prep.target_name||rel.version)+'. Run this on the hub machine. It checks the signature, backs up the databases, and rolls back by itself if the new release does not come up healthy.'}),
+          h('div',{class:'mg-bar'},h('code',{class:'mg-code',style:'white-space:pre-wrap;overflow-wrap:anywhere',text:prep.command}),btn('Copy','',e=>copy(prep.command,e.target)))):null,
+        h('div',{class:'mg-actions'},prepare,blocked?h('span',{class:'mg-sub',text:'Update or acknowledge the devices above first.'}):null));
     }else{
       const cmd=(inst.manual||'').replaceAll('{tag}',rel.tag).replaceAll('{version}',rel.version);
       action=h('div',{class:'mg',style:'gap:8px'},h('p',{class:'mg-sub',text:inst.why}),cmd?h('div',{class:'mg-bar'},h('code',{class:'mg-code',text:cmd}),btn('Copy','',e=>copy(cmd,e.target))):null);
@@ -311,7 +321,7 @@ export async function mountUpdates(root){
   // ---- history ---------------------------------------------------------------
   function historyTab(){
     const ev=o.history||[];
-    const words={started:'Started',finished:'Finished',acknowledged:'Acknowledged',rollback:'Roll back',released:'Released',published:'Published',notified:'Asked to update',announced:'Announced',cancel:'Stop asked','auto-skipped':'Auto: waited'};
+    const words={started:'Started',finished:'Finished',acknowledged:'Acknowledged',rollback:'Roll back',released:'Released',published:'Published',notified:'Asked to update',announced:'Announced',prepared:'Prepared',cancel:'Stop asked','auto-skipped':'Auto: waited'};
     const kinds={hub:'Hub',workers:'Workers',app:'App',notify:'Notice'};
     const out=[];
     const inst=o.hub.install;

@@ -1060,6 +1060,9 @@
   "updates.history": {
    "tier": "read"
   },
+  "updates.prepare_hub": {
+   "tier": "admin"
+  },
   "updates.rollout": {
    "tier": "admin",
    "tags": [
