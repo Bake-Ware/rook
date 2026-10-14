@@ -49,7 +49,8 @@ def test_every_css_variable_the_web_ui_uses_is_defined():
     themes = T.load()
     defined = set(T.TOKENS) | set(T.FONTS) | set(T.ALIASES)
     # Layout variables and per-element ones set inline by the scripts.
-    local = {"sidebar-width", "c", "cols", "min"}
+    local = {"sidebar-width", "c", "cols", "min",
+             "lbl", "row", "tint"}   # Work timeline layout, avatar tint (workviews.js)
     used = set()
     for path in list(WEB.glob("*.css")) + list(WEB.glob("*.js")) + [WEB / "index.html"]:
         if path.name == "rook-scene.js":
@@ -62,7 +63,7 @@ def test_every_css_variable_the_web_ui_uses_is_defined():
 def test_refactored_stylesheets_have_no_colour_literals():
     literal = re.compile(r"#[0-9a-fA-F]{3,8}\b|rgba?\(")
     for name in ("shell.css", "bands.css", "manage.css", "jobs.css", "settings.css", "sessions.css",
-                 "knowledge.css", "work.css", "ui.css"):
+                 "knowledge.css", "work.css", "ui.css", "workviews.css", "huddle.css"):
         text = (WEB / name).read_text(encoding="utf-8")
         assert not literal.search(text), name
     # theme.css: only its generated :root and the dark 3D scene.

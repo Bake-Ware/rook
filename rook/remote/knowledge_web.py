@@ -16,7 +16,7 @@ from .account_web import COOKIE, NO_STORE
 class KnowledgeWeb:
     PATH = '/account/knowledge'
     UPSTREAM = ('ROOK_KNOWLEDGE_ADMIN_URL', 'http://127.0.0.1:8765/knowledge/account-api')
-    ASSETS = ('knowledge.js', 'knowledge.css')
+    ASSETS = ('knowledge.js', 'knowledge.css', 'workviews.js', 'workviews.css')
     UNAVAILABLE = 'Knowledge service is unavailable.'
     ADMIN_ONLY = True
     FORBIDDEN = 'This requires the operator account.'
@@ -101,6 +101,15 @@ class PluginsWeb(KnowledgeWeb):
     ASSETS = ('plugins.js',)
     UNAVAILABLE = 'The plugins service is unavailable (is the MCP server running?).'
     TIMEOUT = 60   # a band-wide switch waits on every worker it touches
+
+
+class HuddleWeb(KnowledgeWeb):
+    """Work > Huddle: agents' status strip, pinned questions and answers.
+    Operator account only, like the upstream (rook/hub/plugins/huddle/web.py)."""
+    PATH = '/account/huddle'
+    UPSTREAM = ('ROOK_HUDDLE_ADMIN_URL', 'http://127.0.0.1:8765/huddle/account-api')
+    ASSETS = ('huddle.js', 'huddle.css')
+    UNAVAILABLE = 'Huddles are unavailable (is the MCP server running?).'
 
 
 class UiWeb(KnowledgeWeb):
