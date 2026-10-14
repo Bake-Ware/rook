@@ -9,8 +9,8 @@ import time
 import uuid
 from pathlib import Path
 
-import aiohttp
 from aiohttp import web, WSMsgType
+from . import upstream
 from .account_web import COOKIE, NO_STORE
 from .term_hub import TermHub, Viewer, frame
 
@@ -361,15 +361,14 @@ class WorkWeb:
         if request.headers.get('Authorization', '').startswith('Bearer '):
             token = request.headers['Authorization'][7:]
         try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
-                async with session.post(self.token_url, json={**payload, 'csrf': user['csrf']},
-                                        cookies={COOKIE: token}, allow_redirects=False) as upstream:
-                    result = await upstream.json()
-                    if upstream.status != 200:
-                        raise ValueError(result.get('error') or 'Token service refused the request.')
-                    return result
-        except (aiohttp.ClientError, TimeoutError) as error:
+            status, result = await upstream.request_json(
+                'POST', self.token_url, json={**payload, 'csrf': user['csrf']},
+                cookies={COOKIE: token}, timeout=15)
+        except upstream.Unavailable as error:
             raise ValueError('Token service is unavailable; launch without a Rook MCP token.') from error
+        if status != 200:
+            raise ValueError(result.get('error') or 'Token service refused the request.')
+        return result
 
     async def mint_session_token(self, request, user, sid, harness):
         result = await self.token_call(request, user, {
@@ -406,15 +405,14 @@ class WorkWeb:
         if request.headers.get('Authorization', '').startswith('Bearer '):
             token = request.headers['Authorization'][7:]
         try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
-                async with session.post(self.knowledge_url, json={**payload, 'csrf': user['csrf']},
-                                        cookies={COOKIE: token}, allow_redirects=False) as upstream:
-                    result = await upstream.json()
-                    if upstream.status != 200:
-                        raise ValueError(result.get('error') or 'Task service refused the request.')
-                    return result.get('result') or {}
-        except (aiohttp.ClientError, TimeoutError) as error:
+            status, result = await upstream.request_json(
+                'POST', self.knowledge_url, json={**payload, 'csrf': user['csrf']},
+                cookies={COOKIE: token}, timeout=15)
+        except upstream.Unavailable as error:
             raise ValueError('Task service is unavailable.') from error
+        if status != 200:
+            raise ValueError(result.get('error') or 'Task service refused the request.')
+        return result.get('result') or {}
 
     @staticmethod
     def session_ref(s):

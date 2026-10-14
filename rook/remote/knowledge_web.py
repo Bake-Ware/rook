@@ -1,8 +1,14 @@
-"""Same-origin human displays and proxy to the authoritative knowledge service."""
+"""Same-origin human displays and proxy to the authoritative knowledge service.
+
+:class:`KnowledgeWeb` is the shared session/CSRF proxy every ``/account/<x>/api``
+uses to reach the MCP side's ``/<x>/account-api``. It goes through
+rook/remote/upstream.py: HTTP when the MCP server is its own process, an
+in-memory call when ``rook hub serve`` runs both in one.
+"""
 import os
 from pathlib import Path
-import aiohttp
 from aiohttp import web
+from . import upstream
 from .account_web import COOKIE, NO_STORE
 
 
@@ -51,12 +57,12 @@ class KnowledgeWeb:
         if request.headers.get('Authorization', '').startswith('Bearer '):
             token = request.headers['Authorization'][7:]
         try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self.TIMEOUT)) as http:
-                async with http.request(request.method, self.url, params=request.query, json=data,
-                                        cookies={COOKIE: token}, allow_redirects=False) as response:
-                    return web.json_response(await response.json(), status=response.status, headers=NO_STORE)
-        except (aiohttp.ClientError, TimeoutError, ValueError):
+            status, body = await upstream.request_json(request.method, self.url, params=request.query,
+                                                       json=data, cookies={COOKIE: token},
+                                                       timeout=self.TIMEOUT)
+        except upstream.Unavailable:
             return web.json_response({'error': self.UNAVAILABLE}, status=503, headers=NO_STORE)
+        return web.json_response(body, status=status, headers=NO_STORE)
 
 
 class GuidanceWeb(KnowledgeWeb):

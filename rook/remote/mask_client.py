@@ -4,14 +4,16 @@ The dashboard never opens the vault (no key, no plaintext in this process).
 What it stores or shows that may carry a vault value (chat messages and
 titles it writes, chat it displays) goes through the bridge's
 ``POST /internal/mask`` (rook/band_mcp/mask_web.py), authenticated with the
-token the bridge keeps in ``mask.token`` beside its stores. When the bridge
-cannot mask, the content passes through unchanged and an error is logged.
+token the bridge keeps in ``mask.token`` beside its stores (over HTTP, or in
+memory when ``rook hub serve`` runs both in one process: rook/remote/upstream.py).
+When the bridge cannot mask, the content passes through unchanged and an error
+is logged.
 """
 import logging
 import os
 import time
 
-import aiohttp
+from . import upstream
 
 log = logging.getLogger("rook.remote.mask_client")
 
@@ -58,19 +60,20 @@ class BridgeMask:
                 self._error("no mask token from the MCP bridge")
                 return obj
             try:
-                async with aiohttp.ClientSession(
-                        timeout=aiohttp.ClientTimeout(total=self.TIMEOUT)) as http:
-                    async with http.post(self.url, json={"obj": obj},
-                                         headers={"Authorization": f"Bearer {self._token}"}) as r:
-                        if r.status == 401 and attempt == 0:
-                            self._token = None   # the bridge made a new one; re-read
-                            continue
-                        if r.status != 200:
-                            self._error(f"bridge answered {r.status}")
-                            return obj
-                        data = await r.json()
-                        return data["obj"]
-            except (aiohttp.ClientError, TimeoutError, ValueError, KeyError, TypeError) as e:
+                status, data = await upstream.request_json(
+                    "POST", self.url, json={"obj": obj}, timeout=self.TIMEOUT,
+                    headers={"Authorization": f"Bearer {self._token}"})
+                if status == 401 and attempt == 0:
+                    self._token = None   # the bridge made a new one; re-read
+                    continue
+                if status != 200:
+                    self._error(f"bridge answered {status}")
+                    return obj
+                return data["obj"]
+            except upstream.Unavailable as e:
+                self._error(str(e) or "unavailable")
+                return obj
+            except (KeyError, TypeError) as e:
                 self._error(type(e).__name__)
                 return obj
         self._error("bridge rejected the mask token")
