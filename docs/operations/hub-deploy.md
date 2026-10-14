@@ -22,7 +22,10 @@ never touched. Moving a two-unit hub to one is described in
 
 Manage > Updates runs this for a GitHub release: it repacks the release's
 source archive as a hub release signed by this hub's update key and runs
-`rook hub deploy` detached (docs/operations/updates.md).
+`rook hub deploy` detached (docs/operations/updates.md). A hub whose system
+units run as an unprivileged user cannot switch them: it prepares the same
+signed release and shows the `sudo ... rook hub deploy <manifest> --yes`
+command to run on the hub machine.
 
 ## Why this exists
 

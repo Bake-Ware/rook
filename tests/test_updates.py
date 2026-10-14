@@ -600,6 +600,236 @@ AT_3AM = datetime.datetime(2026, 10, 14, 3, 0)
 INSTALLER = {"kind": "installer", "can_apply": True, "mode": "user", "systemd": True}
 
 
+# -- preparing a hub release for the operator to deploy ---------------------------------
+
+PY = "/opt/rook hub/venv/bin/python"          # spaces: the command must quote them
+CFG = "/etc/rook/hub deploy.json"
+REL_DIR = "/opt/rook-hub/releases/500.lumpy.moose"
+PREP = {"kind": "rook-hub", "can_apply": False, "can_prepare": True, "config": CFG,
+        "scope": "system", "mode": "systemd", "python": PY,
+        "why": "this hub's services are system units, and the hub does not run as root",
+        "manual": "sudo x -m rook hub --config y deploy <manifest that Prepare writes> --yes"}
+
+
+def _deploy_cfg(tmp_path, **over):
+    cfg = {"root": str(tmp_path / "rook-hub"), "mode": "systemd", "systemd": {"scope": "system"},
+           "python": PY, "services": {"hub": {"unit": "rook-hub.service"}}, **over}
+    path = tmp_path / "hub-deploy.json"
+    path.write_text(json.dumps(cfg), encoding="utf-8")
+    (tmp_path / "rook-hub").mkdir(exist_ok=True)
+    return path
+
+
+def test_detect_needs_rook_release_and_the_deploy_config(tmp_path, monkeypatch):
+    """A `rook hub` install is recognised from ROOK_RELEASE (the release
+    drop-in sets it) plus the deploy config (ROOK_HUB_DEPLOY_CONFIG, else
+    /etc/rook/hub-deploy.json); system units and a hub that is not root can
+    prepare, not apply."""
+    monkeypatch.setattr(hubself, "_install_env", lambda: None)
+    monkeypatch.setattr(hubself, "_in_docker", lambda: False)
+    monkeypatch.setattr(hubself, "_source_checkout", lambda: False)
+    monkeypatch.setattr(hubself, "DEPLOY_CONFIG_DEFAULT", tmp_path / "missing.json")
+    monkeypatch.setattr(hubself.os, "geteuid", lambda: 1000)
+    cfg = _deploy_cfg(tmp_path)
+    monkeypatch.delenv("ROOK_RELEASE", raising=False)
+    monkeypatch.setenv("ROOK_HUB_DEPLOY_CONFIG", str(cfg))
+    assert hubself.detect()["kind"] == "unknown"              # no ROOK_RELEASE
+    monkeypatch.setenv("ROOK_RELEASE", "500.lumpy.moose")
+    monkeypatch.delenv("ROOK_HUB_DEPLOY_CONFIG")
+    assert hubself.detect()["kind"] == "unknown"              # no config where it looks
+    monkeypatch.setattr(hubself, "DEPLOY_CONFIG_DEFAULT", cfg)
+    assert hubself.detect()["kind"] == "rook-hub"             # the default path works too
+    monkeypatch.setattr(hubself, "DEPLOY_CONFIG_DEFAULT", tmp_path / "missing.json")
+    monkeypatch.setenv("ROOK_HUB_DEPLOY_CONFIG", str(cfg))
+    k = hubself.detect()
+    assert k["kind"] == "rook-hub" and not k["can_apply"] and k["can_prepare"]
+    assert k["python"] == PY and k["config"] == str(cfg) and k["scope"] == "system"
+    assert "Prepare the release here" in k["why"]
+    # Root (or user units it can switch): it applies the update itself.
+    monkeypatch.setattr(hubself.os, "geteuid", lambda: 0)
+    assert hubself.detect()["can_apply"] is True
+    # An unreadable config: neither.
+    cfg.write_text("{not json", encoding="utf-8")
+    k = hubself.detect()
+    assert k["kind"] == "rook-hub" and not k["can_apply"] and not k.get("can_prepare")
+
+
+def test_deploy_command_quotes_everything(monkeypatch, tmp_path):
+    import shlex
+    m = tmp_path / "a b" / "rook-hub-530.lumpy.moose.json"
+    monkeypatch.setenv("ROOK_RELEASE_DIR", REL_DIR)
+    cmd = hubself.deploy_command(PREP, m, "S0V5PQ==")
+    assert shlex.split(cmd) == ["sudo", "env", f"PYTHONPATH={REL_DIR}", PY, "-m", "rook", "hub",
+                                "--config", CFG, "deploy", str(m.resolve()),
+                                "--pubkey", "S0V5PQ==", "--yes"]
+    monkeypatch.delenv("ROOK_RELEASE_DIR")
+    user = hubself.deploy_command({**PREP, "scope": "user"}, m)
+    assert shlex.split(user) == [PY, "-m", "rook", "hub", "--config", CFG, "deploy",
+                                 str(m.resolve()), "--yes"]
+
+
+@pytest.mark.asyncio
+async def test_prepare_leaves_a_signed_release_and_the_command(make_svc, gh, keyenv, monkeypatch, tmp_path):
+    import shlex
+
+    from rook.hubdeploy import manifest as mf
+    std_release(gh)
+    s = make_svc()
+    await s.check(force=True)
+    monkeypatch.setattr(hubself, "detect", lambda repo="": dict(PREP))
+    monkeypatch.setenv("ROOK_RELEASE_DIR", REL_DIR)
+    monkeypatch.delenv("ROOK_UPDATE_PUBKEY", raising=False)
+    # The hub cannot apply it: the old path still refuses, with the reason.
+    with pytest.raises(Refused, match="system units"):
+        await s.apply_hub("v0.3.0", "human:owner")
+    prep = await s.prepare_hub("v0.3.0", "human:owner")
+    assert not s.launched and not s.state.get("hub_apply")      # nothing was started
+    d = s.root / "hub" / "0.3.0"
+    mpath = d / "rook-hub-530.lumpy.moose.json"
+    assert prep["manifest"] == str(mpath.resolve()) and mpath.is_file()
+    assert prep["artifact"] == str((d / "rook-hub-530.lumpy.moose.tar.gz").resolve())
+    m = mf.verify(mf.load_manifest(prep["manifest"]), keyenv)
+    assert m["version"] == "530.lumpy.moose" and m["github_tag"] == "v0.3.0"
+    # `rook hub deploy <manifest>` finds the tarball beside it, and it checks.
+    assert mf.artifact_source(m, prep["manifest"]) == prep["artifact"]
+    got = mf.fetch_artifact(m, prep["manifest"], tmp_path / "downloads")
+    with tarfile.open(got) as tf:
+        assert "530.lumpy.moose/rook/__init__.py" in tf.getnames()
+    # The exact command: configured python and config, absolute manifest, and
+    # the hub's key (a sudo shell sees neither ROOK_UPDATE_PUBKEY nor its key file).
+    assert shlex.split(prep["command"]) == [
+        "sudo", "env", f"PYTHONPATH={REL_DIR}", PY, "-m", "rook", "hub", "--config", CFG,
+        "deploy", prep["manifest"], "--pubkey", keyenv, "--yes"]
+    ev = s.history()[0]
+    assert ev["event"] == "prepared" and ev["tag"] == "v0.3.0" and prep["command"] in ev["detail"]
+    assert s.overview()["hub"]["prepared"]["command"] == prep["command"]
+    # Preparing again replaces it; an older prepared release does not linger.
+    (s.root / "hub" / "0.2.9").mkdir()
+    await s.prepare_hub("v0.3.0", "human:owner")
+    assert sorted(p.name for p in (s.root / "hub").iterdir() if p.is_dir()) == ["0.3.0"]
+    # The operator ran it: the hub comes back on the new release.
+    monkeypatch.setattr(hubself, "current_hub", lambda: {**HUB, "version": "0.3.0", "build": 530,
+                                                         "name": "530.lumpy.moose"})
+    s.check_hub_apply()
+    assert s.state["hub_prepared"] is None
+    ev = s.history()[0]
+    assert (ev["event"], ev["result"], ev["tag"]) == ("finished", "ok", "v0.3.0")
+    assert "530.lumpy.moose" in ev["detail"]
+    s.check_hub_apply()
+    assert len([e for e in s.history() if e["event"] == "finished"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_prepare_uses_a_key_pinned_in_the_deploy_config(make_svc, gh, keyenv, monkeypatch):
+    std_release(gh)
+    s = make_svc()
+    await s.check(force=True)
+    monkeypatch.setattr(hubself, "detect", lambda repo="": dict(PREP))
+    monkeypatch.setattr(hubself, "deploy_pinned_pubkey",
+                        lambda cfg: (keyenv, f"the deploy config ({cfg})"))
+    assert "--pubkey" not in (await s.prepare_hub("v0.3.0", "human:owner"))["command"]
+    # Pinned in the hub's environment only: sudo does not pass it on.
+    monkeypatch.setattr(hubself, "deploy_pinned_pubkey", lambda cfg: (keyenv, "ROOK_UPDATE_PUBKEY"))
+    assert f"--pubkey {keyenv}" in (await s.prepare_hub("v0.3.0", "human:owner"))["command"]
+    monkeypatch.setattr(hubself, "deploy_pinned_pubkey",
+                        lambda cfg: ("b3RoZXIta2V5" + "A" * 32, "the deploy config (x)"))
+    with pytest.raises(Refused, match="pinned in the deploy config"):
+        await s.prepare_hub("v0.3.0", "human:owner")
+
+
+@pytest.mark.asyncio
+async def test_prepare_stops_when_verification_fails(make_svc, gh, monkeypatch):
+    gh.add_release(REPO, "v0.3.0", {"release.json": release_json("0.3.0", 530),
+                                    "rook-0.3.0.tar.gz": sdist("0.3.0")},
+                   tamper={"rook-0.3.0.tar.gz": sdist("0.3.0-evil")})
+    s = make_svc()
+    await s.check(force=True)
+    monkeypatch.setattr(hubself, "detect", lambda repo="": dict(PREP))
+    with pytest.raises(ReleaseError, match="does not match SHA256SUMS"):
+        await s.prepare_hub("v0.3.0", "human:owner")
+    assert not s.state.get("hub_prepared") and not (s.root / "hub" / "0.3.0").exists()
+    # Provenance, when required, fails closed too.
+    std_release(gh, "0.3.1", 531)
+    s = make_svc(verify_attestations=True)
+    await s.check(force=True)
+
+    async def no_attestation(path, repo, tag, token="", timeout=120.0):
+        return {"checked": True, "ok": False, "detail": "no matching attestation"}
+    monkeypatch.setattr(svcmod, "verify_attestation", no_attestation)
+    with pytest.raises(Refused, match="provenance could not be verified"):
+        await s.prepare_hub("v0.3.1", "human:owner")
+    assert not s.state.get("hub_prepared") and not (s.root / "hub" / "0.3.1").exists()
+    assert not any(e.get("event") == "prepared" for e in s.history())
+
+
+@pytest.mark.asyncio
+async def test_prepare_needs_the_breaking_ack_and_a_rook_hub_install(make_svc, gh, monkeypatch):
+    std_release(gh, breaking=True, reasons=["new band key format"])
+    s = make_svc()
+    await s.check(force=True)
+    monkeypatch.setattr(hubself, "detect", lambda repo="": dict(INSTALLER, can_apply=False,
+                                                                 why="installed system-wide"))
+    with pytest.raises(Refused, match="only for a hub deployed with `rook hub deploy`"):
+        await s.prepare_hub("v0.3.0", "human:owner")
+    monkeypatch.setattr(hubself, "detect", lambda repo="": dict(PREP))
+    with pytest.raises(Refused, match="new band key format") as e:
+        await s.prepare_hub("v0.3.0", "human:owner")
+    assert e.value.data["needs_ack"] and not (s.root / "hub").exists()
+    s.acknowledge("v0.3.0", "human:owner")
+    assert (await s.prepare_hub("v0.3.0", "human:owner"))["target_build"] == 530
+    s.state["hub_apply"] = {"tag": "v0.3.0"}
+    with pytest.raises(Refused, match="already in progress"):
+        await s.prepare_hub("v0.3.0", "human:owner")
+
+
+@pytest.mark.asyncio
+async def test_prepare_is_for_owners_and_operators(make_svc, gh, band, monkeypatch):
+    from types import SimpleNamespace
+
+    import httpx
+    from starlette.applications import Starlette
+
+    from rook.core.pluginkit import CapError
+    from rook.hub.authz import current_principal
+    from rook.hub.plugins.updates import Updates
+    from rook.hub.plugins.updates.web import routes
+    from rook.hub.policy import Principal
+    std_release(gh)
+    s = make_svc()
+    await s.check(force=True)
+    monkeypatch.setattr(hubself, "detect", lambda repo="": dict(PREP))
+    plugin = Updates()
+    plugin.service = s
+    for who in (Principal("token:agent_1", "token", "agent"), None):
+        tok = current_principal.set(who)
+        try:
+            with pytest.raises(CapError, match="updates.prepare_hub is for band owners"):
+                await plugin.prepare_hub("v0.3.0")
+        finally:
+            current_principal.reset(tok)
+    assert not s.state.get("hub_prepared")
+    tok = current_principal.set(Principal("human:u1", "human", "owner", ("human:owner",)))
+    try:
+        assert (await plugin.prepare_hub("v0.3.0"))["tag"] == "v0.3.0"
+    finally:
+        current_principal.reset(tok)
+    # The dashboard API: operator account only, CSRF-checked.
+    node = SimpleNamespace(host=SimpleNamespace(plugins=[SimpleNamespace(NAMESPACE="updates", service=s)]))
+    accounts = SimpleNamespace(session=lambda c: {"id": c, "username": c, "csrf": "k",
+                                                  "admin": c == "op"} if c else None)
+    app = Starlette(routes=routes(lambda: node, accounts))
+    api = "/updates/account-api"
+    body = {"csrf": "k", "action": "prepare_hub", "tag": "v0.3.0"}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post(api, headers={"Cookie": "rook_account=m1"}, json=body)
+        assert r.status_code == 403
+        r = await c.post(api, headers={"Cookie": "rook_account=op"}, json={**body, "csrf": "x"})
+        assert r.status_code == 403
+        r = await c.post(api, headers={"Cookie": "rook_account=op"}, json=body)
+        assert r.status_code == 200 and r.json()["result"]["by"] == "human:op"
+        assert "deploy" in r.json()["result"]["command"]
+
+
 def _aged(s):
     """Pretend every stable release went stable two days ago."""
     for tag in s.state.get("stable_since", {}):

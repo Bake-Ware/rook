@@ -6,7 +6,11 @@
   hub's update key, and ``rook hub deploy`` runs detached (``systemd-run``,
   outside the hub's own cgroup, since it restarts the hub): preflight, DB
   backups, health checks and the dead-man rollback all apply as for a hand
-  deploy. Rollback is ``rook hub rollback``.
+  deploy. Rollback is ``rook hub rollback``. When the hub cannot do that
+  (system units and the hub not root), it prepares the same signed release
+  under the updates directory and gives the operator the exact
+  ``sudo ... rook hub deploy <manifest> --yes`` command to run; the hub
+  itself never gains root (no sudoers rule, helper unit or polkit).
 * ``installer``: a hub from scripts/install-hub.sh (``install.env`` beside
   its virtualenv). A ``--user`` install re-runs the release's own verified
   install-hub.sh with ``--version <tag> --package <verified wheel>``; it
@@ -105,20 +109,25 @@ def detect(repo: str = "Bake-Ware/rook") -> dict:
         except Exception as e:
             return {"kind": "rook-hub", "can_apply": False, "config": str(cfg_path),
                     "why": f"the deploy config could not be read: {e}", "manual": ""}
-        manual = (f"sudo {shlex.quote(sys.executable)} -m rook hub --config {shlex.quote(str(cfg_path))} "
-                  "deploy <manifest from Manage > Updates> --yes")
+        manual = (f"sudo {shlex.quote(cfg.python)} -m rook hub --config {shlex.quote(str(cfg_path))} "
+                  "deploy <manifest that Prepare writes> --yes")
+        # The hub can always prepare a signed release for the operator to
+        # deploy (prepare_hub); it never gains the rights to deploy it.
+        base = {"kind": "rook-hub", "config": str(cfg_path), "manual": manual,
+                "scope": cfg.scope, "mode": cfg.mode, "python": cfg.python,
+                "can_prepare": True}
         root_ok = os.access(cfg.root, os.W_OK)
         if cfg.mode == "systemd" and cfg.scope == "system" and os.geteuid() != 0:
-            return {"kind": "rook-hub", "can_apply": False, "config": str(cfg_path),
+            return {**base, "can_apply": False,
                     "why": "this hub's services are system units, and the hub does not run "
-                           "as root, so it cannot switch them itself. Run the command shown "
-                           "on the hub machine.", "manual": manual}
+                           "as root, so it cannot switch them itself. Prepare the release "
+                           "here, then run the command it gives you on the hub machine."}
         if not root_ok:
-            return {"kind": "rook-hub", "can_apply": False, "config": str(cfg_path),
-                    "why": f"the hub cannot write its release directory {cfg.root}.",
-                    "manual": manual}
-        return {"kind": "rook-hub", "can_apply": True, "config": str(cfg_path), "why": "",
-                "manual": manual, "scope": cfg.scope, "mode": cfg.mode}
+            return {**base, "can_apply": False,
+                    "why": f"the hub cannot write its release directory {cfg.root}. Prepare "
+                           "the release here, then run the command it gives you on the hub "
+                           "machine."}
+        return {**base, "can_apply": True, "why": ""}
     inst = _install_env()
     if inst is not None:
         path, vals = inst
@@ -297,6 +306,26 @@ def rook_hub_argv(config: str, *args: str) -> tuple[list[str], dict]:
     if rel:
         env["PYTHONPATH"] = rel
     return [sys.executable, "-m", "rook", "hub", "--config", config, *args], env
+
+
+def deploy_command(kind: dict, manifest: Path, pubkey: str = "") -> str:
+    """The shell command an operator runs on the hub machine to deploy a
+    release the hub prepared: the configured interpreter, with the release
+    the hub runs now on ``PYTHONPATH`` (the venv need not have Rook itself),
+    the deploy config, the absolute manifest path, and ``--pubkey`` when the
+    key ``rook hub deploy`` must trust is not pinned in the deploy config (a
+    ``sudo`` shell sees neither the hub's environment nor its key file).
+    ``sudo`` unless the services are ``--user`` units."""
+    argv = [] if (kind.get("mode") == "systemd" and kind.get("scope") == "user") else ["sudo"]
+    rel = os.environ.get("ROOK_RELEASE_DIR", "").strip()
+    if rel:
+        argv += ["env", f"PYTHONPATH={rel}"]
+    argv += [str(kind.get("python") or sys.executable), "-m", "rook", "hub",
+             "--config", str(kind["config"]), "deploy", str(Path(manifest).resolve())]
+    if pubkey:
+        argv += ["--pubkey", pubkey]
+    argv.append("--yes")
+    return shlex.join(argv)
 
 
 def installer_argv(script: Path, info: dict, tag: str, package: Path | None = None) -> list[str]:

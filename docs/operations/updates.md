@@ -70,9 +70,8 @@ updates depends on how it was installed; the page says which applies:
   hub runs as a systemd service and `systemd-run` cannot start the update
   (for example no user bus for a `--user` unit), the update is refused rather
   than run inside the hub's own service, which the restart would stop
-  halfway. A hub whose
-  units are system units and that does not run as root cannot do this
-  itself; the page shows the command to run.
+  halfway. A hub whose units are system units and that does not run as
+  root cannot switch them itself; see "Preparing a hub update" below.
 - **The one-command installer** (`scripts/install-hub.sh --user`): the hub
   downloads the release's own `install-hub.sh` and Rook wheel, checks both,
   and re-runs the installer with `--version <tag> --package <that wheel>`, so
@@ -90,6 +89,71 @@ later, the update is recorded as failed.
 
 **Roll back** (History): `rook hub rollback` for a `rook hub` install, or the
 installer again with the previous version.
+
+### Preparing a hub update (`rook hub` with system units)
+
+The usual production layout runs the hub's system units as an unprivileged
+user. That hub cannot restart its own units, and it is never given a way to
+(no sudoers rule, root helper unit, polkit rule or setuid program). Instead,
+**Prepare the hub update to vX** (`updates.prepare_hub`, operator only) does
+everything up to the switch:
+
+1. the same checks as an update the hub runs itself: every download against
+   the release's `SHA256SUMS`, build provenance when
+   `updates.verify_attestations` is on, and the breaking-update analysis
+   across every release in between (a breaking or unknown update needs your
+   acknowledgement first);
+2. the release's source archive repacked as a `rook hub` release and signed
+   with the hub's update key, left in
+   `$ROOK_UPDATES_DIR/hub/<version>/rook-hub-<build name>.json` with the
+   `.tar.gz` beside it (`rook hub deploy` looks for the tarball next to the
+   manifest). Only the newest prepared release is kept;
+3. a `prepared` event in the history, and the exact command, shown with a
+   **Copy** button:
+
+       sudo env PYTHONPATH=/opt/rook-hub/releases/<running release> \
+         /opt/rook-hub/venv/bin/python -m rook hub --config /etc/rook/hub-deploy.json \
+         deploy /var/lib/rook/updates/hub/0.3.0/rook-hub-530.lumpy.moose.json \
+         --pubkey <the hub's update public key> --yes
+
+   The interpreter is the deploy config's `python` and the config is the one
+   the hub found. `PYTHONPATH` names the release the hub runs now
+   (`ROOK_RELEASE_DIR`), so the deploy tool is the one already in use and the
+   venv does not need Rook installed. `--pubkey` is there because a `sudo`
+   shell sees neither the hub's `ROOK_UPDATE_PUBKEY` nor its key file; it is
+   left out when the deploy config pins a `pubkey` (a pin that is not the
+   hub's key refuses the prepare, as for an update the hub runs). `sudo` is
+   left out for `--user` units.
+
+Run it on the hub machine. `rook hub deploy` checks the signature, copies the
+tarball into its own `state/downloads/`, backs up the databases, switches,
+and rolls back by itself if the new release does not come up healthy. When
+the hub comes back on the new release, the history records the update as
+finished.
+
+The hub prepares this release, so running the command trusts the hub's checks
+(its signature means "this hub verified it"). To check independently, turn on
+`updates.verify_attestations`, or run the `gh attestation verify` command
+under "Release metadata and trust" yourself on the source archive the hub
+downloaded (`$ROOK_UPDATES_DIR/github/Bake-Ware__rook/<tag>/rook-<version>.tar.gz`)
+before you run the command.
+
+### What the hub needs to recognise a `rook hub` install
+
+The page says "cannot tell how this hub was installed" unless the hub's
+environment has both:
+
+- `ROOK_RELEASE` (and `ROOK_RELEASE_DIR`): the release drop-in
+  `rook hub deploy` writes (`<unit>.d/90-release.conf`) sets them, so a unit
+  that has been deployed once has them. In symlink mode the launcher must set
+  them;
+- the deploy config: `/etc/rook/hub-deploy.json`, or `ROOK_HUB_DEPLOY_CONFIG`
+  in the unit's environment (for example `/etc/rook/hub.env`) when it is
+  elsewhere. The hub's user must be able to read it.
+
+The prepared files go in the updates directory (`ROOK_UPDATES_DIR`, else
+`$ROOK_DATA_DIR/updates`), signed with the hub's update key (`ROOK_UPDATE_KEY`,
+else under `ROOK_DATA_DIR`; see docs/design/permissions.md).
 
 ## Updating workers
 
@@ -223,5 +287,6 @@ doubling to a day, or what GitHub's rate limit says).
 All in `$ROOK_DATA_DIR/updates` (`ROOK_UPDATES_DIR` to move it): `state.json`,
 `history.jsonl`, `summary.json`, `github/` (release lists and verified
 downloads), `worker/<build>/` and `feed.json` (the worker feed), `apk/`,
-`hub/` (hub releases made from release archives) and `logs/` (output of hub
+`hub/` (hub releases made from release archives; `hub/<version>/` is a
+prepared release waiting for you to deploy it) and `logs/` (output of hub
 updates).
