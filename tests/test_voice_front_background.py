@@ -14,6 +14,10 @@ import uuid
 import httpx
 import pytest
 
+# services/voice's own deps (services/voice/requirements.txt) are not in
+# rook[dev]: skip, rather than fail collection, in a hub-only venv.
+pytest.importorskip("numpy")
+
 from services.voice import front as front_mod
 from services.voice import providers
 from services.voice import timing as timing_module
@@ -179,6 +183,10 @@ def reload_server(tmp_path, monkeypatch):
     monkeypatch.setenv('VOICE_TOKEN', 'test-token')
     monkeypatch.delenv('VOICE_IDENTITIES_FILE', raising=False)
     monkeypatch.delenv('VOICE_ALLOW_ANONYMOUS', raising=False)
+    # The server module needs the voice host's packages (webrtcvad above all,
+    # see services/voice/requirements.txt); without them, skip instead of erroring.
+    for dep in ('fastapi', 'uvicorn', 'webrtcvad'):
+        pytest.importorskip(dep)
     import services.voice.server as module
     return importlib.reload(module)
 

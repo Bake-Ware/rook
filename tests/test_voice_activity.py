@@ -5,6 +5,10 @@ import time
 import httpx
 import pytest
 
+# services/voice's own deps (services/voice/requirements.txt) are not in
+# rook[dev]: skip, rather than fail collection, in a hub-only venv.
+pytest.importorskip("numpy")
+
 from services.voice.activity import Activity
 from services.voice.decision import DecisionClient
 from services.voice.feedback import FeedbackStore
