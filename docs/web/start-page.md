@@ -58,9 +58,19 @@ address, at most three redirects, and the hub connects only to addresses that
 pass the check (it resolves the name itself and connects to the address it
 checked, so a DNS answer cannot change in between; each redirect is checked
 again). With private addresses off, loopback, private ranges (10/8,
-172.16/12, 192.168/16, fc00::/7), link-local (including 169.254.169.254),
-shared (100.64/10), documentation and reserved ranges are refused. A feed that
-declares XML entities is refused.
+172.16/12, 192.168/16, fc00::/7), shared (100.64/10), documentation and
+reserved ranges are refused. Always refused, even with private addresses on:
+link-local addresses (169.254.0.0/16, including the cloud metadata address
+169.254.169.254, and fe80::/10), `fd00:ec2::254`, and hosts written as
+non-canonical numbers (`2130706433`, `127.1`, `0177.0.0.1`, `0x7f.1`). An
+IPv4 address inside an IPv6 one (mapped, NAT64 `64:ff9b::/96`, 6to4, `::a.b.c.d`)
+is checked as that IPv4 address.
+
+The hub asks for an uncompressed body; a gzip or deflate body is inflated by
+the hub against the size limit (so a small compressed "bomb" stops there) and
+other encodings are refused. A feed with a DOCTYPE or entity declarations is
+refused, whatever its character encoding. One account loads at most two feeds
+at a time, and the hub at most four.
 
 ## Settings and storage
 
@@ -68,7 +78,10 @@ The layout is the user-scope setting `ui.startpage` (also listed under
 **Settings > My preferences**, where it can be reset): `{"version": 1, "columns":
 [[widget, ...], ...]}`, each widget `{"id", "type", "title", "options"}`. The
 hub checks it on save: at most 4 columns and 40 widgets, 8 KB per widget,
-64 KB in all, and the options of the built-in kinds.
+64 KB in all, and the options of the built-in kinds. Saving an unchanged page
+writes nothing, the setting's history keeps the newest 20 versions per
+account, and one account may save its theme and start page at most 30 times
+in 10 minutes.
 
 API: `GET /account/ui/api` returns `startpage`; `POST {action: "startpage",
 layout, csrf}` saves, `{action: "startpage_reset"}` resets, `{action: "feed",

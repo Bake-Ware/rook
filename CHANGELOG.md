@@ -22,8 +22,10 @@ Preparation for public use.
   sessions), arranged by dragging or arrow buttons. Feeds are fetched by the
   hub: public addresses only unless `ui.feeds_allow_private` is on, a size
   cap (`ui.feed_max_kb`), a time cap (`ui.feed_timeout`) and a shared cache
-  (`ui.feed_cache_minutes`). Hub plugins can add widget kinds (`WIDGETS`).
-  docs/web/start-page.md.
+  (`ui.feed_cache_minutes`). Link-local and metadata addresses and
+  non-canonical numeric hosts are always refused; compressed bodies are
+  inflated against the size cap; DOCTYPEs are refused. Hub plugins can add
+  widget kinds (`WIDGETS`). docs/web/start-page.md.
 - **Themes**: every dashboard colour is now a CSS token. Rook (the default,
   unchanged), Paper (light), Graphite and High contrast, picked per account
   under Settings > My preferences (`ui.theme`) and applied before the first

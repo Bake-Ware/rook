@@ -105,10 +105,11 @@ class DashboardUI(Plugin):
         return out
 
     # -- feeds ---------------------------------------------------------------
-    async def feed(self, url: str, limit: int = 8) -> dict:
+    async def feed(self, url: str, limit: int = 8, account: str = "") -> dict:
         s = self.settings
         return await self.feeds.get(
             url.strip(), ttl=60.0 * s.get("feed_cache_minutes", 15), limit=max(1, min(int(limit), 30)),
+            account=account,
             allow_private=bool(s.get("feeds_allow_private", False)),
             max_bytes=1024 * int(s.get("feed_max_kb", 512)), timeout=float(s.get("feed_timeout", 8.0)))
 
