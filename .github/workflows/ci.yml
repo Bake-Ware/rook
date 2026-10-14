@@ -67,3 +67,5 @@ jobs:
         run: python conformance/generate.py --check
       - name: node --check the dashboard's JavaScript
         run: find rook/web -name '*.js' -print0 | xargs -0 -n1 node --check
+      - name: shellcheck the hub installer
+        run: shellcheck scripts/install-hub.sh scripts/local-hub.sh

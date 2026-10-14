@@ -1,0 +1,66 @@
+name: Hub installer
+
+# Runs scripts/install-hub.sh end to end on a clean runner whenever it (or
+# what it installs) changes: install from this checkout, check the hub
+# answers, re-run (an in-place upgrade must keep the secrets), uninstall.
+# --no-systemd because GitHub runners have no user systemd session; the
+# systemd units themselves are covered by the fresh-VM test in
+# docs/operations/install.md.
+
+on:
+  pull_request:
+    paths:
+      - scripts/install-hub.sh
+      - pyproject.toml
+      - .github/workflows/installer.yml
+  push:
+    branches: [master]
+    paths:
+      - scripts/install-hub.sh
+      - pyproject.toml
+      - .github/workflows/installer.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: installer-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATA: ${{ github.workspace }}/../rook-data
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: shellcheck
+        run: shellcheck scripts/install-hub.sh
+      # The relay comes from the latest telesthete release; with none yet the
+      # installer falls back to building it with the runner's cargo.
+      - name: Install from this checkout
+        run: |
+          bash scripts/install-hub.sh --user --no-systemd --yes --package "$GITHUB_WORKSPACE" \
+            --data-dir "$DATA" --bind 127.0.0.1
+      - name: The hub answers
+        run: |
+          curl -fsS http://127.0.0.1:7005/health
+          token="$(sed -n 's/^ROOK_MCP_STATIC_TOKEN=//p' "$DATA/secrets.env")"
+          curl -fsS -H "Authorization: Bearer $token" http://127.0.0.1:8765/healthz
+          test "$(stat -c %a "$DATA/secrets.env")" = 600
+          sed -n 's/^ROOK_WEB_PASS=//p' "$DATA/secrets.env" > "$RUNNER_TEMP/pass1"
+      - name: Re-run upgrades in place and keeps the secrets
+        run: |
+          bash scripts/install-hub.sh --user --no-systemd --yes --package "$GITHUB_WORKSPACE"
+          sed -n 's/^ROOK_WEB_PASS=//p' "$DATA/secrets.env" | cmp - "$RUNNER_TEMP/pass1"
+          curl -fsS http://127.0.0.1:7005/health
+      - name: Logs
+        if: failure()
+        run: tail -n 50 "$DATA"/logs/*.log || true
+      - name: Uninstall and purge
+        if: always()
+        run: |
+          bash scripts/install-hub.sh --uninstall --purge --yes
+          test ! -e "$DATA"
