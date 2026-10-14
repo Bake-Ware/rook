@@ -6,7 +6,9 @@ Manage > Updates (rook/web/updates.js, API in :mod:`.web`) shows what every
 member of the band runs against what is available and applies it:
 
 * **hub**: through ``rook hub deploy`` (dead-man rollback) or by re-running
-  the release's installer, or explains how to do it by hand (:mod:`.hubself`);
+  the release's installer; a ``rook hub`` install the hub cannot switch
+  itself gets the signed release prepared and the command to run; anything
+  else is explained (:mod:`.hubself`);
 * **workers**: a staged rollout of a build kept in the worker feed, canaries
   first, stopping at the first failed health gate (:mod:`.rollout`,
   rook/hub/update_feed.py);
@@ -105,7 +107,8 @@ class Updates(Plugin):
     SKILL = ("### updates\n"
              "`updates.status` on worker `rook`: hub version vs the newest release, workers "
              "behind, the running rollout. Applying updates (`updates.apply_hub`, "
-             "`updates.rollout`) is for operators: ask the person who runs the hub first.\n")
+             "`updates.prepare_hub`, `updates.rollout`) is for operators: ask the person who "
+             "runs the hub first.\n")
 
     def __init__(self) -> None:
         super().__init__()
@@ -206,6 +209,20 @@ class Updates(Plugin):
         who = self._admin("updates.apply_hub")
         try:
             return await self._svc().apply_hub(str(tag), who)
+        except Refused as e:
+            raise CapError(str(e)) from None
+
+    @capability("prepare_hub", risk="admin")
+    async def prepare_hub(self, tag: str) -> dict:
+        """For a `rook hub` install the hub cannot switch itself: download
+        and verify release ``tag``, leave a signed hub release in the updates
+        directory and return the `rook hub deploy` command to run on the hub
+        machine. Starts nothing. Same breaking-update acknowledgement as
+        ``apply_hub``."""
+        from .service import Refused
+        who = self._admin("updates.prepare_hub")
+        try:
+            return await self._svc().prepare_hub(str(tag), who)
         except Refused as e:
             raise CapError(str(e)) from None
 

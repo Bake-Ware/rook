@@ -8,6 +8,23 @@ version was `0.1.0`.
 
 ## Unreleased
 
+### Added
+Manual: updates
+- Manage > Updates can prepare a hub update for a `rook hub` install whose
+  system units run as an unprivileged user (the hub cannot switch those
+  itself). **Prepare the hub update to vX** (`updates.prepare_hub`, operator
+  only) runs the same `SHA256SUMS`, provenance and breaking-update checks as
+  an update the hub runs itself (a breaking update needs the acknowledgement
+  first), leaves a signed `rook hub` release in
+  `$ROOK_UPDATES_DIR/hub/<version>/`, records a `prepared` history event and
+  shows the exact `sudo ... rook hub --config ... deploy <manifest> --yes`
+  command to copy and run on the hub machine. History records the update
+  once the hub runs the new release. The hub gains no new privileges: no
+  sudoers rule, root helper unit or polkit rule. Detecting a `rook hub`
+  install needs `ROOK_RELEASE` (set by the release drop-in) and the deploy
+  config (`/etc/rook/hub-deploy.json` or `ROOK_HUB_DEPLOY_CONFIG`), readable
+  by the hub's user. Docs: docs/operations/updates.md.
+
 ## [0.2.0] - 2026-10-14
 
 The first tagged release. Preparation for public use.

@@ -498,6 +498,7 @@ class UpdateService:
                       "next_at": st.get("next_at"), "relay_repo": self.relay.repo},
             "hub": {"current": hub, "install": kind, "latest": latest["tag"] if latest else None,
                     "update_available": latest is not None,
+                    "prepared": self._prepared_view(),
                     "history": (hubself.deploy_history(kind["config"])
                                 if kind.get("kind") == "rook-hub" else [])},
             "relay": {"pinned": hub.get("relay"),
@@ -513,6 +514,14 @@ class UpdateService:
             "hub_apply": hub_apply,
             "history": self.history(40),
         }
+
+    def _prepared_view(self) -> dict | None:
+        """The prepared hub release, while its files are still there."""
+        prep = self.state.get("hub_prepared")
+        if not prep or not Path(prep.get("manifest", "")).is_file() \
+                or not Path(prep.get("artifact", "")).is_file():
+            return None
+        return prep
 
     def write_summary(self) -> None:
         latest = self.latest()
@@ -557,34 +566,7 @@ class UpdateService:
                 raise Refused("a hub update is already in progress")
             if (self.state.get("rollout") or {}).get("status") == "running":
                 raise Refused("a worker rollout is running; wait for it to finish or cancel it")
-            rel = self._find(tag)
-            crossed, _ = self.span(rel)
-            for r in crossed:
-                await self.rook.meta(r, force=True)
-            if require_provenance or self.s("verify_attestations", False):
-                # breaking, build and name come from release.json: it must
-                # be the release workflow's too (it attests it).
-                for r in crossed:
-                    if r.get("meta"):
-                        rj = await self.rook.fetch(r, "release.json", SMALL_ASSET_BYTES)
-                        await self._attest(rj, r, True)
-            a = self.analyse(rel)
-            ack = (self.state.get("acks") or {}).get(tag)
-            if ack and ack.get("fp") and ack["fp"] != self._meta_fp(rel):
-                ack = None     # acknowledged before the release was re-published
-            if not a["known"] and not ack:
-                raise Refused(f"What this release changes for your devices is unknown ({a['note']}). "
-                              "Read the release notes, then acknowledge it to go ahead.",
-                              needs_ack=True, cut_off=a["cut_off"])
-            if a["breaking"] and not ack:
-                raise Refused("This is a breaking update"
-                              + (f": {'; '.join(a['reasons'])}" if a["reasons"] else "")
-                              + ". Update the devices it affects first, then acknowledge it.",
-                              needs_ack=True, cut_off=a["cut_off"])
-            if a["cut_off"] and not (ack and set(ack.get("cut_off", [])) >= {m["name"] for m in a["cut_off"]}):
-                raise Refused(f"{len(a['cut_off'])} device(s) would stop working after this update. "
-                              "Update them first, or acknowledge it.", needs_ack=True,
-                              cut_off=a["cut_off"])
+            rel = await self._cleared(tag, require_provenance)
             kind = hubself.detect(self.rook.repo)
             if not kind.get("can_apply"):
                 raise Refused(kind.get("why") or "this hub cannot update itself",
@@ -600,35 +582,8 @@ class UpdateService:
                   "log_path": str(self.root / "logs" / f"hub-{tag}.log")}
             log_path = Path(op["log_path"])
             if kind["kind"] == "rook-hub":
-                if not meta.get("name") or not meta.get("build"):
-                    raise Refused("this release has no build name, so `rook hub deploy` cannot "
-                                  "place it; update by hand")
-                key = self._hub_key() if self._hub_key else None
-                if key is None:
-                    from ....remote.update_keys import load_signing_key
-                    key = load_signing_key()
-                if key is None:
-                    raise Refused("this hub has no update signing key, so it cannot sign the "
-                                  "hub release for `rook hub deploy`")
-                from ....remote.update_keys import public_key_b64
-                hub_pub = public_key_b64(key)
-                # A key the operator pinned (deploy config `pubkey`, else
-                # ROOK_UPDATE_PUBKEY) is what `rook hub deploy` trusts; never
-                # override it. Without a pin, name this hub's key explicitly:
-                # the transient unit does not see where the hub keeps it.
-                pinned, where = hubself.deploy_pinned_pubkey(kind["config"])
-                if pinned and pinned != hub_pub:
-                    raise Refused(f"`rook hub deploy` here trusts the update key pinned in {where}, "
-                                  "not this hub's own key, so a hub release this hub signs "
-                                  "would not verify. Update by hand with a release signed by "
-                                  "the pinned key, or change the pin.",
-                                  manual=kind.get("manual", ""))
-                sdist = await self.rook.fetch(rel, f"rook-{meta.get('version') or rel['version']}.tar.gz")
-                op["provenance"] = await self._attest(sdist, rel, require_provenance)
-                tarball = hubself.repack_sdist(sdist, meta["name"], self.root / "hub")
-                manifest = hubself.hub_release_manifest(tarball, meta, key)
-                mpath = self.root / "hub" / f"rook-hub-{meta['name']}.json"
-                hubself.json_dump(mpath, manifest)
+                mpath, pinned, hub_pub, op["provenance"] = await self._hub_release(
+                    rel, kind, self.root / "hub", require_provenance)
                 argv, env = hubself.rook_hub_argv(kind["config"], "deploy", str(mpath),
                                                   *([] if pinned else ["--pubkey", hub_pub]),
                                                   "--yes")
@@ -660,6 +615,158 @@ class UpdateService:
                          "detail": hubself.describe_apply(kind, meta, tag)})
             return op
 
+    async def _cleared(self, tag: str, require_provenance: bool = False) -> dict:
+        """The release ``tag`` once it may go on the hub: its metadata (and
+        that of every release it crosses) read again, ``release.json``'s
+        provenance checked when required, and a breaking or unknown update
+        acknowledged (covering every device it cuts off). Raises
+        :class:`Refused` otherwise."""
+        rel = self._find(tag)
+        crossed, _ = self.span(rel)
+        for r in crossed:
+            await self.rook.meta(r, force=True)
+        if require_provenance or self.s("verify_attestations", False):
+            # breaking, build and name come from release.json: it must
+            # be the release workflow's too (it attests it).
+            for r in crossed:
+                if r.get("meta"):
+                    rj = await self.rook.fetch(r, "release.json", SMALL_ASSET_BYTES)
+                    await self._attest(rj, r, True)
+        a = self.analyse(rel)
+        ack = (self.state.get("acks") or {}).get(tag)
+        if ack and ack.get("fp") and ack["fp"] != self._meta_fp(rel):
+            ack = None     # acknowledged before the release was re-published
+        if not a["known"] and not ack:
+            raise Refused(f"What this release changes for your devices is unknown ({a['note']}). "
+                          "Read the release notes, then acknowledge it to go ahead.",
+                          needs_ack=True, cut_off=a["cut_off"])
+        if a["breaking"] and not ack:
+            raise Refused("This is a breaking update"
+                          + (f": {'; '.join(a['reasons'])}" if a["reasons"] else "")
+                          + ". Update the devices it affects first, then acknowledge it.",
+                          needs_ack=True, cut_off=a["cut_off"])
+        if a["cut_off"] and not (ack and set(ack.get("cut_off", [])) >= {m["name"] for m in a["cut_off"]}):
+            raise Refused(f"{len(a['cut_off'])} device(s) would stop working after this update. "
+                          "Update them first, or acknowledge it.", needs_ack=True,
+                          cut_off=a["cut_off"])
+        return rel
+
+    async def _hub_release(self, rel: dict, kind: dict, out_dir: Path,
+                           require_provenance: bool = False) -> tuple[Path, str, str, str]:
+        """The verified release sdist repacked as a ``rook hub`` release in
+        ``out_dir``, with its manifest, signed with this hub's update key,
+        beside it (``rook hub deploy`` looks for the tarball next to the
+        manifest). Returns ``(manifest path, pinned key or "", this hub's
+        public key, what the provenance check said)``."""
+        meta = rel.get("meta") or {}
+        if not meta.get("name") or not meta.get("build"):
+            raise Refused("this release has no build name, so `rook hub deploy` cannot "
+                          "place it; update by hand")
+        key = self._hub_key() if self._hub_key else None
+        if key is None:
+            from ....remote.update_keys import load_signing_key
+            key = load_signing_key()
+        if key is None:
+            raise Refused("this hub has no update signing key, so it cannot sign the "
+                          "hub release for `rook hub deploy`")
+        from ....remote.update_keys import public_key_b64
+        hub_pub = public_key_b64(key)
+        # A key the operator pinned (deploy config `pubkey`, else
+        # ROOK_UPDATE_PUBKEY) is what `rook hub deploy` trusts; never
+        # override it. Without a pin, name this hub's key explicitly:
+        # the transient unit does not see where the hub keeps it.
+        pinned, where = hubself.deploy_pinned_pubkey(kind["config"])
+        if pinned and pinned != hub_pub:
+            raise Refused(f"`rook hub deploy` here trusts the update key pinned in {where}, "
+                          "not this hub's own key, so a hub release this hub signs "
+                          "would not verify. Update by hand with a release signed by "
+                          "the pinned key, or change the pin.",
+                          manual=kind.get("manual", ""))
+        sdist = await self.rook.fetch(rel, f"rook-{meta.get('version') or rel['version']}.tar.gz")
+        provenance = await self._attest(sdist, rel, require_provenance)
+        tarball = hubself.repack_sdist(sdist, meta["name"], out_dir)
+        manifest = hubself.hub_release_manifest(tarball, meta, key)
+        mpath = out_dir / f"rook-hub-{meta['name']}.json"
+        hubself.json_dump(mpath, manifest)
+        return mpath, pinned, hub_pub, provenance
+
+    async def prepare_hub(self, tag: str, actor: str) -> dict:
+        """For a ``rook hub`` install the hub cannot switch itself (system
+        units and the hub not root): the same download, checks and
+        acknowledgement gate as :meth:`apply_hub`, then the signed hub
+        release is left in ``hub/<version>/`` under the updates directory
+        and the exact ``rook hub deploy`` command for it is returned.
+        Nothing is started and the hub gains no privileges: the operator
+        runs the command on the hub machine."""
+        async with self._lock:
+            if self.state.get("hub_apply"):
+                raise Refused("a hub update is already in progress")
+            kind = hubself.detect(self.rook.repo)
+            if kind.get("kind") != "rook-hub" or not kind.get("can_prepare"):
+                raise Refused("Preparing a release is only for a hub deployed with "
+                              "`rook hub deploy`" + (f": {kind['why']}" if kind.get("why") else "."),
+                              manual=kind.get("manual", ""))
+            rel = await self._cleared(tag)
+            meta = rel.get("meta") or {}
+            hub_dir = self.root / "hub"
+            out = hub_dir / re.sub(r"[^A-Za-z0-9._+-]", "_", rel["version"])
+            # Built beside it and moved into place only once it is complete.
+            tmp = hub_dir / f".{out.name}.new"
+            shutil.rmtree(tmp, ignore_errors=True)
+            try:
+                built, pinned, hub_pub, provenance = await self._hub_release(rel, kind, tmp)
+            except BaseException:
+                shutil.rmtree(tmp, ignore_errors=True)
+                raise
+            # One prepared release at a time: the command never points at an
+            # older one, or at a stale copy of this one.
+            for d in hub_dir.iterdir():
+                if d != tmp and d.is_dir() and not d.is_symlink():
+                    shutil.rmtree(d, ignore_errors=True)
+            os.replace(tmp, out)
+            mpath = (out / built.name).resolve()
+            # A key pinned in the deploy config is what `rook hub deploy`
+            # trusts. Anything else (the hub's ROOK_UPDATE_PUBKEY, or its own
+            # key file) is invisible to a `sudo` shell: name the key.
+            in_config = bool(pinned) and hubself.deploy_pinned_pubkey(
+                kind["config"])[1].startswith("the deploy config")
+            command = hubself.deploy_command(kind, mpath, "" if in_config else hub_pub)
+            manifest = json.loads(mpath.read_text(encoding="utf-8"))
+            hub = hubself.current_hub()
+            prepared = {"tag": tag, "version": rel["version"],
+                        "target_build": meta.get("build") or 0,
+                        "target_name": meta.get("name") or "",
+                        "from_version": hub["version"], "from_build": hub["build"],
+                        "manifest": str(mpath), "artifact": str(mpath.parent / manifest["filename"]),
+                        "sha256": manifest["sha256"], "command": command,
+                        "provenance": provenance, "by": actor, "prepared_at": time.time()}
+            self.state["hub_prepared"] = prepared
+            self.save()
+            self.record({"kind": "hub", "event": "prepared", "tag": tag, "by": actor,
+                         "from": hub["version"] or hub["name"], "to": rel["version"],
+                         "detail": f"{meta.get('name')} is ready; run on the hub machine: {command}"})
+            return prepared
+
+    def _check_prepared(self) -> None:
+        """After the operator ran the prepared ``rook hub deploy``: once the
+        hub runs that release (or a newer one), record it and forget it."""
+        prep = self.state.get("hub_prepared")
+        if not prep:
+            return
+        hub = hubself.current_hub()
+        landed = ((prep.get("target_build") and hub["build"] >= prep["target_build"])
+                  or (hub["version"] and hub["version"] == prep.get("version")))
+        if not landed:
+            return
+        self.state["hub_prepared"] = None
+        self.save()
+        if self.state.get("hub_apply"):
+            return      # the hub's own update records it
+        self.record({"kind": "hub", "event": "finished", "result": "ok", "tag": prep["tag"],
+                     "by": prep.get("by"), "from": prep.get("from_version"), "to": hub["version"],
+                     "detail": f"the hub runs {hub['name'] or hub['version']} (deployed on the "
+                               "hub machine from the prepared release)"})
+
     def _meta_fp(self, rel: dict) -> str:
         """A fingerprint of the metadata an acknowledgement was given for
         (``rel`` and every release it crosses)."""
@@ -689,7 +796,9 @@ class UpdateService:
         return f"verified ({res.get('ref')})"
 
     def check_hub_apply(self) -> None:
-        """After a restart: did the hub update land?"""
+        """After a restart: did the hub update (or a prepared one the
+        operator deployed) land?"""
+        self._check_prepared()
         op = self.state.get("hub_apply")
         if not op:
             return

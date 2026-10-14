@@ -7,7 +7,8 @@ APIs; the dashboard proxies ``/account/updates/api`` here
 GET: the overview (read-only; ``check`` below asks GitHub and the dongles).
 POST ``{"action": ...}``: ``check``, ``settings`` (``mode``, ``channel``,
 ``window``), ``acknowledge`` (``tag``), ``apply_hub`` (``tag``),
-``rollback_hub``, ``rollout`` (``selection``, ``build?``, ``canaries?``),
+``prepare_hub`` (``tag``: the signed release and the command to deploy it,
+for a ``rook hub`` install the hub cannot switch itself), ``rollback_hub``, ``rollout`` (``selection``, ``build?``, ``canaries?``),
 ``cancel``, ``release`` (``build``), ``publish_apk`` (``tag``, ``notify``),
 ``notify_apps`` (``ids?``).
 """
@@ -64,6 +65,8 @@ def routes(get_node: Callable[[], Any], accounts):
                 res = svc.acknowledge(str(body.get("tag") or ""), actor)
             elif action == "apply_hub":
                 res = await svc.apply_hub(str(body.get("tag") or ""), actor)
+            elif action == "prepare_hub":
+                res = await svc.prepare_hub(str(body.get("tag") or ""), actor)
             elif action == "rollback_hub":
                 res = await svc.rollback_hub(actor)
             elif action == "rollout":
