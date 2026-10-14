@@ -50,7 +50,12 @@ def test_slow_job_timing_suppression_completion_and_no_llm(tmp_path, monkeypatch
             conn.last_speech = 0
             conn.play_until = 0
             conn.sleeping = False
-            await asyncio.sleep(.02)
+            # Due about .02s after suppression lifts; poll rather than sleep a
+            # fixed .02s, which a busy CI runner overshoots.
+            deadline = time.monotonic() + 2
+            while (not any(e.get('phase') == 'progress' for e in events)
+                   and time.monotonic() < deadline):
+                await asyncio.sleep(.005)
             progress = [e for e in events if e.get('phase') == 'progress']
             assert len(progress) == 1
             assert progress[0]['label'] == 'Still waiting on gpu-box.'
