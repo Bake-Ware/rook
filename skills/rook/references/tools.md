@@ -75,7 +75,7 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `home.ask` | question, context='' | write | Ask the hub's home agent (its own LLM) a question; returns its answer. |
 | `home.status` | — | read | Whether the home agent is on, its identity, endpoint host and model, and the last error (never the key). |
 | `hub.info` | — | read | What the hub runs: version, core API, roles, facts and plugins. |
-| `hub.plugin.disable` | module | admin | Unload a hub plugin now: its caps go, its stop() runs. |
+| `hub.plugin.disable` | module | admin | Unload a hub plugin now (its caps go, its stop() runs) and keep it off. |
 | `hub.plugin.enable` | module | admin | Load a hub plugin module now (placement, settings, available(), bind_host, start). |
 | `hub.plugin.reload` | module | admin | Restart one hub plugin with its current settings (stop, load again, start). |
 | `hub.plugins` | limit=50, fields? | read | Full manifests of the hub's loaded plugins (placement, settings schema, guidance slots, source). |
@@ -92,6 +92,8 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `persona.list` | — | read | Every profile (id, name, rev) and every scoped assignment. |
 | `persona.render` | harness='', profile='', user='', band='' | read | Just the rendered persona for a harness: `{text, profile, rev, sha}`. |
 | `persona.set` | profile, note='', dry_run=false, expect_rev? | admin | Create or replace a profile (band owners and operator tokens). |
+| `plugin.marketplace.install` | id | admin | Install a catalog plugin: NOT IMPLEMENTED (always refuses). |
+| `plugin.marketplace.list` | refresh=false, limit=50, fields? | read | Plugin catalog entries (preview): id, name, version, author, risk, caps, placement, package and whether this… |
 | `policy.explain` | principal, cap, worker?, role? | read | Would this principal be allowed to call `cap` on `worker`? |
 | `policy.get` | — | read | The current policy document with its revision, source, mode, lint and last load error (if the file on disk is… |
 | `policy.set` | policy, note='' | admin | Replace the policy document (band owners and operator tokens only). |
@@ -139,6 +141,9 @@ The shared wiki. Use the `rook_knowledge` tool: `search` before starting (5 hits
 
 ### persona
 One persona for every harness. `rook_call(cap="persona.get", worker="rook", args={"family": "claude-code"})` returns the persona that applies to you (user > family > band > default) with its rendered `text`. To install it in a harness file on a machine: `rook_call(cap="persona.apply", worker="<name>", args={"harness": "claude-code", "dry_run": true})` (then without `dry_run`; `remove=true` takes it out). It only edits between its own markers. `persona.set` / `persona.assign` are admin: ask the user first.
+
+### plugin marketplace (preview)
+`plugin.marketplace.list` on worker `rook` lists catalog entries (name, risk, caps, package). Installing is not implemented yet: `plugin.marketplace.install` always refuses. Switch installed plugins with `worker.plugin.enable/disable` on a worker or `hub.plugin.enable/disable`.
 
 ### policy
 `rook_call(cap="policy.explain", worker="rook", args={"principal": "role:agent", "cap": "shell.exec", "worker": "<name>"})` shows whether a call would be allowed and which rule decides it. `policy.get` returns the document; changing it (`policy.set`) is for band owners and operator tokens.
