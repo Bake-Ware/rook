@@ -8,7 +8,7 @@
 .settings-workspace input[type=hidden]{display:none}.settings-workspace input[type=checkbox]{display:inline-block;width:auto;margin-right:8px}
 .settings-workspace button{font:11px var(--mono,monospace);padding:10px 14px;cursor:pointer;border:1px solid var(--line2);background:var(--panel2);color:var(--fg);border-radius:0}
 .settings-workspace button:hover{border-color:var(--accent);color:var(--accent)}.settings-workspace button:disabled{opacity:.5;cursor:wait}
-.settings-workspace .danger{color:var(--bad);border-color:#6a463a}.settings-workspace a{color:var(--accent);text-decoration:none}.settings-workspace a:hover{text-decoration:underline}
+.settings-workspace .danger{color:var(--bad);border-color:var(--bad-line)}.settings-workspace a{color:var(--accent);text-decoration:none}.settings-workspace a:hover{text-decoration:underline}
 .settings-workspace .settings-tabs{display:flex;gap:24px;margin-bottom:26px;overflow:auto;border-bottom:1px solid var(--line)}
 .settings-workspace .settings-tabs button{white-space:nowrap;border:0;border-bottom:1px solid transparent;background:none;padding:12px 0;color:var(--dim)}.settings-workspace .settings-tabs button.active{border-color:var(--accent);color:var(--accent)}
 .settings-workspace .settings-status{min-height:24px;color:var(--accent);font-size:12px;margin-bottom:12px}
@@ -21,7 +21,7 @@
 .settings-workspace .identity-row{display:flex;align-items:center;gap:14px;padding:14px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}.settings-workspace .identity-row code{flex:1;min-width:100px}
 .settings-workspace .settings-links a{display:inline-block;margin:8px 20px 0 0;font-size:13px}
 .settings-workspace .settings-dialog{width:min(620px,calc(100vw - 32px));max-height:88dvh;overflow:auto;padding:26px;border:1px solid var(--line2);background:var(--panel);color:var(--fg);box-sizing:border-box}
-.settings-workspace .settings-dialog::backdrop{background:#050a06bf;backdrop-filter:blur(4px)}.settings-workspace .pairing-code{font:32px var(--mono);color:var(--accent)}
+.settings-workspace .settings-dialog::backdrop{background:var(--backdrop);backdrop-filter:blur(4px)}.settings-workspace .pairing-code{font:32px var(--mono);color:var(--accent)}
 .settings-workspace .dialog-error,.settings-workspace .error{color:var(--bad)}
 .settings-workspace :focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .standalone-account{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans,system-ui)}.standalone-account main{max-width:900px;margin:auto;padding:36px 24px}.standalone-account h1{font-size:30px;font-weight:450;margin:32px 0}.standalone-account nav{display:flex;gap:24px;font:11px var(--mono);border-bottom:1px solid var(--line);padding-bottom:22px}

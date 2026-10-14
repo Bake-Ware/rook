@@ -57,7 +57,7 @@ async def main():
     ctx=await browser.new_context(viewport={'width':1440,'height':1100});url=str(server.make_url('/'));p.account.origin=url.rstrip('/')
     await ctx.add_cookies([{'name':'rook_account','value':p.headers['Cookie'].split('=',1)[1],'url':url}])
     page=await ctx.new_page();page.set_default_timeout(10000);errors=[];page.on('pageerror',lambda e:(errors.append(str(e)),print('JS error',str(e),flush=True)))
-    await page.goto(url);await page.wait_for_timeout(1200);await page.screenshot(path='/tmp/rook-new-debug.png');await page.wait_for_function("[...document.querySelectorAll('.worker-group-heading')].some(e=>e.textContent.includes('Android'))")
+    await page.goto(url+'#workers');await page.wait_for_timeout(1200);await page.screenshot(path='/tmp/rook-new-debug.png');await page.wait_for_function("[...document.querySelectorAll('.worker-group-heading')].some(e=>e.textContent.includes('Android'))")
     assert await page.locator('.worker-group-heading').count()==4
     assert await page.locator('.device-icon').count()==4
     await page.locator('[data-id=worker1] .worker-menu-button').click();assert await page.locator('#worker-menu button').count()==5

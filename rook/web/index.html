@@ -5,26 +5,21 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>♖ ROOK</title>
 <style>
-  :root{
-    --bg:#0a0e13; --panel:#111823; --panel2:#0e141d; --line:#1e2a38; --line2:#28384a;
-    --fg:#e6edf3; --dim:#7d8896; --dim2:#5b6672;
-    --accent:#2dd4a7; --accent-dim:#1a9e7a; --warn:#f5b041; --bad:#f76a6a; --blue:#5aa9e6; --chip:#16202c;
-  }
   *{box-sizing:border-box}
   [hidden]{display:none!important}
   html,body{margin:0;height:100%}
   body{font-family:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
-    background:radial-gradient(1400px 700px at 85% -12%, #0f1826 0%, var(--bg) 55%);
+    background:var(--bg);
     color:var(--fg);font-size:14px;line-height:1.4;-webkit-font-smoothing:antialiased}
   a{color:inherit}
 
   .topbar{display:flex;align-items:center;gap:18px;padding:12px 26px;border-bottom:1px solid var(--line);
-    background:rgba(10,14,19,.78);backdrop-filter:blur(8px);position:sticky;top:0;z-index:20;flex-wrap:wrap}
+    background:var(--bg);backdrop-filter:blur(8px);position:sticky;top:0;z-index:20;flex-wrap:wrap}
   .brand{font-size:1.2rem;color:var(--accent);font-weight:600;letter-spacing:.5px;white-space:nowrap}
   nav{display:flex;gap:4px}
   nav a{color:var(--dim);text-decoration:none;font-size:.85rem;padding:7px 13px;border-radius:7px;cursor:pointer}
-  nav a:hover{color:var(--fg);background:#131d2a}
-  nav a.active{color:var(--accent);background:#0f1d19}
+  nav a:hover{color:var(--fg);background:var(--hover)}
+  nav a.active{color:var(--accent);background:var(--accent-bg)}
   .spacer{flex:1}
   select,input{font-family:inherit;font-size:.82rem;color:var(--fg);background:var(--panel2);
     border:1px solid var(--line2);border-radius:7px;padding:7px 10px;outline:none}
@@ -35,15 +30,15 @@
   .live{display:flex;align-items:center;gap:7px;color:var(--dim);font-size:.75rem;white-space:nowrap}
   .dot{width:8px;height:8px;border-radius:50%;background:var(--accent);animation:p 2.4s infinite}
   .dot.off{background:var(--bad);animation:none}
-  @keyframes p{0%{box-shadow:0 0 0 0 rgba(45,212,167,.45)}70%{box-shadow:0 0 0 7px rgba(45,212,167,0)}100%{box-shadow:0 0 0 0 rgba(45,212,167,0)}}
+  @keyframes p{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 45%,transparent)}70%{box-shadow:0 0 0 7px transparent}100%{box-shadow:0 0 0 0 transparent}}
   .signout{color:var(--dim);text-decoration:none;font-size:.82rem;padding:7px 12px;border:1px solid var(--line);border-radius:7px}
-  .signout:hover{color:var(--bad);border-color:#3a2530}
+  .signout:hover{color:var(--bad);border-color:var(--bad-line)}
 
   .wrap{padding:20px 26px 60px}
 
   /* add-band popover */
   .addform{position:absolute;right:26px;top:56px;z-index:30;background:var(--panel);border:1px solid var(--line2);
-    border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;width:280px;box-shadow:0 12px 40px rgba(0,0,0,.5)}
+    border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;width:280px;box-shadow:0 12px 40px var(--shadow)}
   .addform input{width:100%}
   .addform .r{display:flex;gap:8px} .addform .msg{color:var(--dim);font-size:.74rem;min-height:14px}
 
@@ -70,28 +65,28 @@
   .bar{flex:1 1 0;min-width:5px;position:relative;height:100%;cursor:pointer}
   .bar .fill{position:absolute;bottom:0;left:0;right:0;height:60%;border-radius:4px 4px 2px 2px;
     background:linear-gradient(180deg, color-mix(in srgb,var(--c) 55%,white) 0%, var(--c) 42%, color-mix(in srgb,var(--c) 55%,black) 100%);
-    box-shadow:0 0 7px color-mix(in srgb,var(--c) 55%,transparent), inset 0 1px 0 rgba(255,255,255,.25);
+    box-shadow:0 0 7px color-mix(in srgb,var(--c) 55%,transparent), inset 0 1px 0 color-mix(in srgb,var(--fg) 25%,transparent);
     transition:filter .18s ease, box-shadow .18s ease}
   .bar .peak{position:absolute;left:0;right:0;bottom:60%;height:2px;border-radius:2px;
-    background:#eafff8;box-shadow:0 0 7px rgba(150,255,225,.8);opacity:.8}
+    background:var(--fg);box-shadow:0 0 7px color-mix(in srgb,var(--fg) 80%,transparent);opacity:.8}
   .bar.beat .fill{filter:brightness(1.7) saturate(1.15);box-shadow:0 0 16px color-mix(in srgb,var(--c) 80%,transparent)}
-  .bar.hl .fill{outline:1px solid #eafff8}
+  .bar.hl .fill{outline:1px solid var(--fg)}
 
   .listhead{display:flex;align-items:center;gap:14px;padding:2px 16px 8px;color:var(--dim2);
     font-size:.68rem;text-transform:uppercase;letter-spacing:1px}
   .list{background:var(--panel2);border:1px solid var(--line);border-radius:12px;overflow:hidden;min-height:60px}
   .empty{padding:26px 16px;color:var(--dim);text-align:center}
   .item{border-top:1px solid var(--line)} .item:first-child{border-top:0}
-  .item.hl{background:#0e1c17;box-shadow:inset 3px 0 0 var(--accent)}
+  .item.hl{background:var(--accent-bg);box-shadow:inset 3px 0 0 var(--accent)}
   .row{display:flex;align-items:center;gap:14px;padding:11px 16px;cursor:pointer;transition:background .12s}
-  .row:hover{background:#0f1a26} .item.open .row{background:#0f1a26}
+  .row:hover{background:var(--hover)} .item.open .row{background:var(--hover)}
   .st{width:9px;height:9px;border-radius:50%;flex:0 0 auto;transition:background .3s}
   .caret{color:var(--dim2);width:12px;flex:0 0 auto;transition:transform .15s;font-size:.7rem}
   .item.open>.row .caret{transform:rotate(90deg);color:var(--accent)}
   .name{flex:1;min-width:0;display:flex;align-items:center;gap:9px}
   .name .n{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .name .id{color:var(--dim2);font-size:.72rem}
-  .tagfw{font-size:.64rem;color:var(--warn);border:1px solid #3a2f18;background:#1c150a;border-radius:5px;padding:1px 6px}
+  .tagfw{font-size:.64rem;color:var(--warn);border:1px solid var(--warn-line);background:var(--warn-bg);border-radius:5px;padding:1px 6px}
   .ver{font-size:.78rem;color:var(--accent);font-weight:600;width:150px;flex:0 0 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .ver.old{color:var(--warn)} .ver.none{color:var(--dim2)}
   .batt{display:inline-flex;align-items:center;gap:4px;font-size:.7rem;color:var(--dim);flex:0 0 auto;
@@ -102,7 +97,7 @@
   .batt.ok{color:var(--accent)} .batt.warn{color:var(--warn)} .batt.low{color:var(--bad)}
   .batt .bolt{font-size:.72rem;line-height:1}
   .seen{width:150px;flex:0 0 auto;display:flex;align-items:center;gap:9px}
-  .seenbar{flex:1;height:6px;border-radius:4px;background:#0a121b;border:1px solid var(--line);overflow:hidden}
+  .seenbar{flex:1;height:6px;border-radius:4px;background:var(--panel2);border:1px solid var(--line);overflow:hidden}
   .seenbar i{display:block;height:100%;width:60%;background:var(--accent);border-radius:4px}
   .seen .t{width:34px;text-align:right;color:var(--dim);font-size:.72rem}
   .acts{width:210px;flex:0 0 auto;display:flex;gap:6px;justify-content:flex-end;opacity:0;transition:opacity .12s}
@@ -116,15 +111,15 @@
   .meta{color:var(--dim2);font-size:.72rem;margin-bottom:10px}
   .banrow{margin-top:12px}
   button.danger.sm{padding:5px 11px;font-size:.72rem;border-radius:6px;cursor:pointer;
-    background:rgba(247,106,106,.09);border:1px solid rgba(247,106,106,.35);color:#f76a6a}
-  button.danger.sm:hover{background:rgba(247,106,106,.18);border-color:#f76a6a}
-  .banbadge{display:inline-block;margin-right:10px;font-size:.72rem;font-weight:600;color:#f76a6a;
+    background:var(--bad-bg);border:1px solid var(--bad-line);color:var(--bad)}
+  button.danger.sm:hover{background:color-mix(in srgb,var(--bad) 18%,transparent);border-color:var(--bad)}
+  .banbadge{display:inline-block;margin-right:10px;font-size:.72rem;font-weight:600;color:var(--bad);
     letter-spacing:.03em;vertical-align:middle}
-  .item.banned{opacity:.6} .item.banned .row{border-left:2px solid #f76a6a}
+  .item.banned{opacity:.6} .item.banned .row{border-left:2px solid var(--bad)}
   .cggrid{display:flex;flex-wrap:wrap;gap:8px}
-  .cg{border:1px solid var(--line2);background:#0c151f;border-radius:8px;overflow:hidden;align-self:flex-start}
+  .cg{border:1px solid var(--line2);background:var(--panel2);border-radius:8px;overflow:hidden;align-self:flex-start}
   .cg-head{display:flex;align-items:center;gap:8px;padding:6px 11px;cursor:pointer;user-select:none}
-  .cg-head:hover{background:#111e2b}
+  .cg-head:hover{background:var(--hover)}
   .cg-caret{color:var(--dim2);font-size:.62rem;transition:transform .15s}
   .cg.open .cg-caret{transform:rotate(90deg);color:var(--accent)}
   .cg-head b{color:var(--accent);font-weight:600;font-size:.8rem}
@@ -133,7 +128,7 @@
   .cg.open .cg-body{max-height:300px}
   .cg-body-in{display:flex;flex-wrap:wrap;gap:5px;padding:2px 11px 10px}
   .mcap{font-size:.72rem;color:var(--dim);background:var(--chip);border:1px solid var(--line);border-radius:6px;padding:2px 7px;cursor:pointer}
-  .mcap:hover{color:var(--accent);border-color:var(--accent-dim);background:#0f1d19}
+  .mcap:hover{color:var(--accent);border-color:var(--accent-dim);background:var(--accent-bg)}
   .mcap::after{content:" ▸";color:var(--dim2);font-size:.62rem}
   .capform{display:flex;flex-direction:column;gap:11px}
   .cf{display:flex;flex-direction:column;gap:4px}
@@ -144,13 +139,13 @@
   .cf textarea{min-height:62px;resize:vertical}
   .caprun{display:flex;align-items:center;gap:12px}
   .capout{margin-top:4px} .capout img{max-width:100%;border-radius:8px} .capout pre{margin:0}
-  .caphelp{color:var(--dim);font-size:.79rem;line-height:1.5;padding:9px 12px;background:#0c151f;border:1px solid var(--line);border-radius:8px}
+  .caphelp{color:var(--dim);font-size:.79rem;line-height:1.5;padding:9px 12px;background:var(--panel2);border:1px solid var(--line);border-radius:8px}
   .cf .pt{color:var(--dim2);font-size:.66rem;font-weight:400}
   /* terminal */
-  .term{background:#070b10;border:1px solid var(--line);border-radius:8px;padding:12px;height:46vh;overflow:auto;
+  .term{background:var(--term-bg);border:1px solid var(--line);border-radius:8px;padding:12px;height:46vh;overflow:auto;
     font-size:.82rem;white-space:pre-wrap;word-break:break-word;line-height:1.45}
   .term .cl{color:var(--fg)} .term .cl .p{color:var(--accent);font-weight:600}
-  .term pre{margin:1px 0 9px;color:#cdd6df} .term pre.err{color:var(--bad)}
+  .term pre{margin:1px 0 9px;color:var(--term-fg)} .term pre.err{color:var(--bad)}
   .term .hintline{color:var(--dim2);font-size:.72rem;margin-bottom:8px}
   .termin{display:flex;align-items:center;gap:8px;margin-top:9px;background:var(--panel2);border:1px solid var(--line2);border-radius:8px;padding:8px 11px}
   .termin .prompt{color:var(--accent);font-weight:600;white-space:nowrap}
@@ -186,7 +181,7 @@
   .first-worker a{color:var(--dim);font-size:.8rem}
 
   /* modal */
-  .overlay{position:fixed;inset:0;background:rgba(4,8,12,.72);display:none;align-items:center;justify-content:center;z-index:50;padding:20px}
+  .overlay{position:fixed;inset:0;background:var(--backdrop);display:none;align-items:center;justify-content:center;z-index:50;padding:20px}
   .overlay.show{display:flex}
   /* ---- chat ---- */
   .chatwrap{display:flex;gap:14px;height:calc(100vh - 132px)}
@@ -200,31 +195,31 @@
   .presence-card{flex:0 0 auto;max-height:38%}
   .roomrow{display:flex;gap:10px;align-items:center;padding:9px 12px;cursor:pointer;
     border-left:2px solid transparent;transition:background .1s}
-  .roomrow:hover{background:rgba(255,255,255,.025)}
-  .roomrow.sel{background:#0f1d19;border-left-color:var(--accent)}
+  .roomrow:hover{background:var(--hover)}
+  .roomrow.sel{background:var(--accent-bg);border-left-color:var(--accent)}
   .roomrow.other .rt{color:var(--dim)}
   .roomsec{padding:10px 12px 4px;font-size:.62rem;letter-spacing:.08em;text-transform:uppercase;color:var(--dim2);border-top:1px solid var(--line)}
   .avatar{flex:0 0 auto;width:30px;height:30px;border-radius:9px;display:flex;align-items:center;justify-content:center;
-    font-size:.78rem;font-weight:700;color:#08110d;text-transform:uppercase}
+    font-size:.78rem;font-weight:700;color:var(--on-accent);text-transform:uppercase}
   .avatar.sm{width:22px;height:22px;border-radius:7px;font-size:.62rem}
   img.avatar{object-fit:cover;background:var(--chip)}
   .delbtn{margin-left:8px;padding:2px 8px;font-size:.8rem;color:var(--dim2)}
   .delbtn:hover{color:var(--bad);border-color:var(--bad)}
-  .delbtn.armed{color:#fff;background:var(--bad);border-color:var(--bad);font-size:.7rem}
+  .delbtn.armed{color:var(--on-accent);background:var(--bad);border-color:var(--bad);font-size:.7rem}
   .roomrow .meta{flex:1;min-width:0}
   .roomrow .rt{font-size:.82rem;color:var(--fg);display:flex;align-items:center;gap:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .roomrow .rp{font-size:.7rem;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
-  .badge{margin-left:auto;flex-shrink:0;background:var(--accent);color:#04140e;border-radius:20px;
+  .badge{margin-left:auto;flex-shrink:0;background:var(--accent);color:var(--on-accent);border-radius:20px;
     font-size:.64rem;padding:1px 7px;font-weight:700;min-width:18px;text-align:center}
   .presrow{display:flex;gap:9px;align-items:center;padding:6px 12px;cursor:pointer;font-size:.78rem}
-  .presrow:hover{background:rgba(255,255,255,.025)} .presrow .pn{color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .presrow:hover{background:var(--hover)} .presrow .pn{color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .presrow.on .pn{color:var(--fg)}
   .pdot{width:7px;height:7px;border-radius:50%;background:var(--dim2);flex-shrink:0}
-  .pdot.on{background:var(--accent);box-shadow:0 0 6px rgba(45,212,167,.6)}
+  .pdot.on{background:var(--accent);box-shadow:0 0 6px color-mix(in srgb,var(--accent) 60%,transparent)}
   .chatmain{flex:1;display:flex;flex-direction:column;background:linear-gradient(180deg,var(--panel) 0%,var(--panel2) 60%);
     border:1px solid var(--line);border-radius:12px;overflow:hidden;min-width:0}
   .chattop{display:flex;align-items:center;gap:11px;padding:12px 16px;border-bottom:1px solid var(--line);flex-shrink:0;
-    background:rgba(10,14,19,.4)}
+    background:var(--panel2)}
   .chattop .ct-title{font-size:.92rem;font-weight:600;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .chattop .ct-sub{font-size:.68rem;color:var(--dim);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .chattop .parts{margin-left:auto;display:flex;gap:-6px}
@@ -240,13 +235,13 @@
   .msg .ts{font-size:.62rem;color:var(--dim2)}
   .bubble{padding:8px 12px;border-radius:12px;font-size:.85rem;line-height:1.4;word-break:break-word;
     background:var(--panel);border:1px solid var(--line2)}
-  .msg.me .bubble{background:#0f2b22;border-color:var(--accent-dim);border-bottom-right-radius:4px}
+  .msg.me .bubble{background:var(--accent-bg-strong);border-color:var(--accent-dim);border-bottom-right-radius:4px}
   .msg:not(.me) .bubble{border-bottom-left-radius:4px}
   .grouped .wholine{display:none} .grouped{padding-top:1px}
   .grouped .avatar{visibility:hidden}
   .sysline{align-self:center;color:var(--dim);font-size:.7rem;padding:4px 12px;margin:4px 0;border:1px dashed var(--line2);border-radius:20px;max-width:90%;text-align:center}
-  .sysline.warn{color:var(--warn);border-color:#3a2f18}
-  .sysline.bad{color:var(--bad);border-color:#3a1818}
+  .sysline.warn{color:var(--warn);border-color:var(--warn-line)}
+  .sysline.bad{color:var(--bad);border-color:var(--bad-line)}
   .typing{align-self:flex-start;color:var(--dim);font-size:.72rem;padding:6px 12px;font-style:italic}
   .typing::after{content:'';display:inline-block;width:1.2em;text-align:left;animation:dots 1.2s steps(4,end) infinite}
   @keyframes dots{0%{content:''}25%{content:'.'}50%{content:'..'}75%{content:'...'}}
@@ -258,14 +253,14 @@
   .chat-empty .big{font-size:2rem;opacity:.35}
   .chatinput{display:flex;gap:9px;padding:12px 14px;border-top:1px solid var(--line);flex-shrink:0;align-items:center}
   .chatinput input{flex:1;padding:10px 13px;border-radius:9px}
-  .sendbtn{cursor:pointer;color:#08110d;background:var(--accent);border:none;border-radius:9px;
+  .sendbtn{cursor:pointer;color:var(--on-accent);background:var(--accent);border:none;border-radius:9px;
     padding:9px 16px;font-family:inherit;font-size:.82rem;font-weight:600}
-  .sendbtn:hover{background:#3ce3b6} .sendbtn:disabled{background:var(--line2);color:var(--dim2);cursor:default}
+  .sendbtn:hover{background:var(--accent-hi)} .sendbtn:disabled{background:var(--line2);color:var(--dim2);cursor:default}
   .wakechip{cursor:pointer;font-size:.66rem;color:var(--blue);border:1px solid var(--line2);border-radius:20px;padding:2px 9px;background:var(--chip)}
   .wakechip:hover{border-color:var(--blue)}
   .typing{align-self:flex-start;color:var(--dim);font-size:.74rem;padding:4px 8px;font-style:italic}
   .modal{background:var(--panel);border:1px solid var(--line2);border-radius:14px;max-width:900px;width:100%;
-    max-height:88vh;overflow:auto;box-shadow:0 20px 70px rgba(0,0,0,.6)}
+    max-height:88vh;overflow:auto;box-shadow:0 20px 70px var(--shadow)}
   .modal .mh{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel)}
   .modal .mh .x{cursor:pointer;color:var(--dim);font-size:1.2rem} .modal .mh .x:hover{color:var(--fg)}
   .mbody{padding:16px 18px}
@@ -274,7 +269,7 @@
   .mbody pre.err{color:var(--bad)}
   .mbody .row2{display:flex;gap:8px;margin-bottom:10px}
   .mbody .row2 input{flex:1}
-  .mbody button.primary{background:var(--accent-dim);border:0;color:#04120d;font-weight:600;border-radius:7px;padding:8px 14px;cursor:pointer}
+  .mbody button.primary{background:var(--accent-dim);border:0;color:var(--on-accent);font-weight:600;border-radius:7px;padding:8px 14px;cursor:pointer}
   .spin{display:inline-block;width:11px;height:11px;border:2px solid var(--line2);border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;vertical-align:middle}
   @keyframes sp{to{transform:rotate(360deg)}}
   .foot{margin-top:14px;color:var(--dim2);font-size:.72rem;text-align:center}
@@ -311,6 +306,8 @@
 <link rel="stylesheet" href="/account/bands/assets/theme.css">
 <link rel="stylesheet" href="/account/bands/assets/rook-art.css">
 <link rel="stylesheet" href="/account/bands/assets/manage.css">
+<link rel="stylesheet" href="/account/ui/assets/ui.css">
+<script src="/account/ui/assets/theme-boot.js"></script>
 </head>
 <body>
   <!-- decoy fields soak up browser/password-manager autofill so it never lands
@@ -321,22 +318,24 @@
          style="position:absolute;left:-9999px;top:-9999px;opacity:0;height:0;width:0;pointer-events:none">
   <div class="rook-art" id="rook-art" aria-hidden="true" data-mode="sketch">
     <svg class="rook-sketch" viewBox="0 0 600 760" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <defs><pattern id="rook-hatch" width="9" height="9" patternUnits="userSpaceOnUse" patternTransform="rotate(-32)"><path d="M0 0V9" stroke="#aa9870" stroke-width=".6" opacity=".4"/></pattern></defs>
-      <g stroke="#9aa780" stroke-width=".65" opacity=".6"><ellipse cx="310" cy="622" rx="174" ry="62"/><ellipse cx="310" cy="622" rx="205" ry="76" stroke-dasharray="3 5"/><path d="M76 622H543M310 110V716M160 205V635M149 205H173M149 623H173" stroke-dasharray="4 5"/></g>
-      <g stroke="#c2aa7e" stroke-width="1.4"><path d="M209 604L215 579L243 564L254 519L266 333L247 310L232 305V236L251 218V183L280 171V208L306 203V162L339 165V204L367 214V176L392 191V235L404 251V306L386 324L365 344L372 528L385 569L411 590V617L378 639L253 639Z" fill="#303628"/>
+      <defs><pattern id="rook-hatch" width="9" height="9" patternUnits="userSpaceOnUse" patternTransform="rotate(-32)"><path d="M0 0V9" style="stroke:var(--art-hatch)" stroke-width=".6" opacity=".4"/></pattern></defs>
+      <g style="stroke:var(--art-line)" stroke-width=".65" opacity=".6"><ellipse cx="310" cy="622" rx="174" ry="62"/><ellipse cx="310" cy="622" rx="205" ry="76" stroke-dasharray="3 5"/><path d="M76 622H543M310 110V716M160 205V635M149 205H173M149 623H173" stroke-dasharray="4 5"/></g>
+      <g style="stroke:var(--art-ink)" stroke-width="1.4"><path d="M209 604L215 579L243 564L254 519L266 333L247 310L232 305V236L251 218V183L280 171V208L306 203V162L339 165V204L367 214V176L392 191V235L404 251V306L386 324L365 344L372 528L385 569L411 590V617L378 639L253 639Z" style="fill:var(--art-fill)"/>
       <path d="M254 519L266 333L306 348L302 554L269 568L243 564Z" fill="url(#rook-hatch)"/>
       <path d="M232 305L305 328L404 306M247 310L306 348L386 324M215 579L276 603L385 569M209 604L276 627L411 590M276 627V646M280 171L298 183V211M339 165L351 183V210M367 214L391 236M251 218L278 229L306 221L338 230L368 226L392 241M243 564L302 581L385 569M266 333L302 350L365 344"/>
-      </g><g stroke="#c2aa7e" opacity=".22"><path d="M211 608L218 581L247 565L257 520L269 334M233 309L305 333L405 309M247 643L380 642L413 619"/></g>
+      </g><g style="stroke:var(--art-ink)" opacity=".22"><path d="M211 608L218 581L247 565L257 520L269 334M233 309L305 333L405 309M247 643L380 642L413 619"/></g>
     </svg>
     <div class="rook-canvas"></div>
     <span class="plate-number">FIG. 01 / CASTELLUM</span>
     <span class="plate-caption"><b>ROOK / YOUR MACHINES, YOUR MOVE</b><br>ENCRYPTED · AGENT MESH · POWERFUL</span>
   </div>
   <aside class="app-sidebar" aria-label="Application navigation">
-    <a class="brand" href="#workers" onclick="showView('workers');return false">♜ ROOK</a>
+    <a class="brand" href="#overview" onclick="showView('overview');return false">♜ ROOK</a>
     <span class="nav-label">WORKSPACE</span>
     <nav aria-label="Workspace">
-      <a id="tab-workers" href="#workers" class="active" onclick="showView('workers');return false">Workers</a>
+      <a id="tab-overview" href="#overview" onclick="showView('overview');return false">Overview</a>
+      <a id="tab-start" href="#start" onclick="showView('start');return false">Start page</a>
+      <a id="tab-workers" href="#workers" onclick="showView('workers');return false">Workers</a>
       <a id="tab-bands" href="#bands" onclick="showView('bands');return false">Bands</a>
       <a id="tab-chat" href="#chat" onclick="showView('chat');return false">Chat</a>
       <a id="tab-work" href="#work" onclick="showView('work');return false">Work</a>
@@ -401,7 +400,7 @@
 
   <div class="wrap">
     <!-- WORKERS VIEW -->
-    <div id="view-workers">
+    <div id="view-workers" hidden>
       <div class="listhead">
         <span style="width:12px"></span><span style="width:9px"></span>
         <span style="flex:1">worker</span><span class="band-column">band</span><span style="width:150px">version</span>
@@ -421,6 +420,8 @@
       <div class="foot" id="foot"></div>
     </div>
 
+    <div id="view-overview" hidden></div>
+    <div id="view-start" hidden></div>
     <div id="view-knowledge" hidden></div>
     <div id="view-jobs" hidden></div>
     <div id="view-guidance" hidden></div>
@@ -520,7 +521,8 @@ const listEl=$('#list'), barsEl=$('#bars'), emptyEl=$('#empty');
 
 // Classic script, so it cannot import manage.js's esc; keep the two identical.
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-function col(f){return f>0.5?'#2dd4a7':f>0.22?'#f5b041':'#f76a6a'}
+// Theme tokens, so the heartbeat follows the theme.
+function col(f){return f>0.5?'var(--good)':f>0.22?'var(--warn)':'var(--bad)'}
 /* Capabilities as chips by namespace; a chip opens that namespace, a cap runs it.
    One builder for the list, the grid and the 3D card. */
 const openCapSpace=new Map(); // worker id -> open namespace
@@ -1088,6 +1090,8 @@ function renderCapResult(out,cap,reply){
 
 /* ---- views / install ---- */
 const viewInfo={
+ overview:['Overview','What is running, what is waiting on you, and the work in progress.'],
+ start:['Start page','Your own page: links, news and your band at a glance.'],
  workers:['Workers','Your connected machines, across every band.'],
  account:['Account & access','Your profile, connected logins, and band permissions.'],
  tokens:['API tokens','Credentials and identities for your agents and integrations.'],
@@ -1111,6 +1115,17 @@ async function ensureVault(){
  return vaultLoading;
 }
 let jobsUI=null, jobsLoading=null;
+let overviewUI=null, overviewLoading=null, startUI=null, startLoading=null;
+async function ensureOverview(){
+ if(overviewUI)return overviewUI;
+ if(!overviewLoading)overviewLoading=import('/account/ui/assets/overview.js').then(m=>m.mountOverview($('#view-overview'))).then(ui=>overviewUI=ui).finally(()=>{overviewLoading=null;});
+ return overviewLoading;
+}
+async function ensureStart(){
+ if(startUI)return startUI;
+ if(!startLoading)startLoading=import('/account/ui/assets/startpage.js').then(m=>m.mountStartPage($('#view-start'))).then(ui=>startUI=ui).finally(()=>{startLoading=null;});
+ return startLoading;
+}
 async function ensureJobs(){
  if(jobsUI)return jobsUI;
  if(!jobsLoading)jobsLoading=import('/account/jobs/assets/jobs.js').then(m=>m.mountJobs($('#view-jobs'))).then(ui=>jobsUI=ui).finally(()=>{jobsLoading=null;});
@@ -1192,7 +1207,7 @@ async function ensureSettings(view){
  finally{delete settingsLoading[view];}
 }
 function showView(v,updateHistory=true){
- if(!viewInfo[v])v='workers';
+ if(!viewInfo[v])v='overview';
  if(updateHistory&&location.hash.split('?')[0]!=='#'+v)history.pushState(null,'','#'+v);
  if(activeView===v){if(v==='account'&&settingsUI.account)settingsUI.account.refresh().catch(()=>{});if(v==='settings'&&settingsAreaUI&&settingsQuery())settingsAreaUI.activate(settingsQuery()).catch(()=>{});return;}
  settingsUI[activeView]?.deactivate();
@@ -1202,6 +1217,8 @@ function showView(v,updateHistory=true){
  if(activeView==='jobs')jobsUI?.deactivate();
  if(activeView==='home')homeUI?.deactivate();
  if(activeView==='plugins')pluginsUI?.deactivate();
+ if(activeView==='overview')overviewUI?.deactivate();
+ if(activeView==='start')startUI?.deactivate();
  activeView=v;document.body.dataset.view=v;
  for(const n of Object.keys(viewInfo)){
   $('#view-'+n).hidden=v!==n; const tab=$('#tab-'+n);tab.classList.toggle('active',v===n);
@@ -1219,6 +1236,8 @@ function showView(v,updateHistory=true){
  if(v==='knowledge')ensureKnowledge().then(ui=>{if(activeView==='knowledge')ui.activate();}).catch(e=>{$('#view-knowledge').textContent=e.message;});
  if(v==='sessions')ensureSessions().then(ui=>{if(activeView==='sessions')ui.activate();else ui.deactivate();}).catch(()=>{});
  if(v==='work')ensureTasks().then(ui=>{if(activeView==='work')ui.activate();}).catch(e=>{$('#view-work').textContent=e.message;});
+ if(v==='overview')ensureOverview().then(ui=>{if(activeView==='overview')ui.activate();}).catch(e=>{$('#view-overview').textContent=e.message;});
+ if(v==='start')ensureStart().then(ui=>{if(activeView==='start')ui.activate();}).catch(e=>{$('#view-start').textContent=e.message;});
  if(v==='bands')ensureBands().then(ui=>ui.refresh()).catch(()=>{});
  if(v==='account'||v==='tokens')ensureSettings(v).then(ui=>ui.refresh()).catch(()=>{});
 }
@@ -1227,8 +1246,11 @@ async function openWorkerMove(wid){
  try{const ui=await ensureBands();await ui.openWorker(wid);}catch(error){console.warn(error.message);}
 }
 function routeFromHash(){
- const [view,query]=location.hash.slice(1).split('?');showView(view||'workers',false);
- const wid=new URLSearchParams(query||'').get('worker');if(view==='bands'&&wid)openWorkerMove(wid);
+ const [view,query]=location.hash.slice(1).split('?');showView(view||'overview',false);
+ const params=new URLSearchParams(query||'');
+ const wid=params.get('worker');if(view==='bands'&&wid)openWorkerMove(wid);
+ // #chat?room=<id>: the Overview and start page link straight to a room (one that exists).
+ const room=params.get('room');if(view==='chat'&&room){history.replaceState(null,'','#chat');loadRooms().then(()=>{if(roomById(room))openRoom(room);}).catch(()=>{});}
 }
 window.addEventListener('hashchange',routeFromHash);
 window.addEventListener('popstate',routeFromHash);
@@ -1466,6 +1488,8 @@ wireLinks(); routeFromHash(); loadBands(); loadWorkers();
 setInterval(loadWorkers,3000); setInterval(loadBands,20000);
 </script>
 <script type="module">
+// The account's saved theme (theme-boot.js applied this browser's last one).
+import('/account/ui/assets/themes.js').then(m=>m.syncTheme()).catch(()=>{});
 const loadArtwork=()=>import('/account/bands/assets/rook-scene.js').then(({mountRook})=>mountRook(document.getElementById('rook-art'),document.getElementById('art-toggle'))).catch(()=>{});
 if(!navigator.connection?.saveData){
  if('requestIdleCallback' in window)requestIdleCallback(loadArtwork,{timeout:1800});

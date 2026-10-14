@@ -111,6 +111,17 @@ are set only in the environment or on the command line.
 | `core.worker.authz_mode` | Worker permission checks | band+worker | str | `audit` | `ROOK_AUTHZ_MODE` | restart |
 | `core.worker.authz_allow_unsigned_repoint` | Allow unsigned hub/PSK changes | band+worker | bool | off | `ROOK_AUTHZ_ALLOW_UNSIGNED_REPOINT` | restart |
 
+## Dashboard (look, start page, feeds) (hub plugin, runs in mcp)
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `ui.theme` | Theme | user | str | `rook-dark` | `ROOK_UI_THEME` | live |
+| `ui.startpage` | Start page layout | user | dict |  | `ROOK_UI_STARTPAGE` | live |
+| `ui.feeds_allow_private` | Let feeds reach private addresses | hub | bool | off | `ROOK_UI_FEEDS_ALLOW_PRIVATE` | live |
+| `ui.feed_max_kb` | Largest feed (KB) | hub | int | `512` | `ROOK_UI_FEED_MAX_KB` | live |
+| `ui.feed_timeout` | Feed time limit (seconds) | hub | float | `8.0` | `ROOK_UI_FEED_TIMEOUT` | live |
+| `ui.feed_cache_minutes` | Keep a fetched feed for (minutes) | hub | int | `15` | `ROOK_UI_FEED_CACHE_MINUTES` | live |
+
 ## Decide (decision model) (hub plugin, runs in mcp)
 
 | Key | Label | Scope | Type | Default | Env / flag | Apply |

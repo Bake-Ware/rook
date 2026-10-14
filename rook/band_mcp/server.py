@@ -1796,6 +1796,10 @@ class McpService:
             _jt = None
         for route in job_routes(lambda: mcp._rook_hub, accounts, _jt):
             app.router.routes.insert(0, route)
+        # Overview, start page and themes (the ui hub plugin).
+        from ..hub.plugins.ui.web import routes as ui_routes
+        for route in ui_routes(lambda: mcp._rook_hub, accounts):
+            app.router.routes.insert(0, route)
         self._hygiene_task = (asyncio.create_task(mcp._rook_hygiene.run())
                               if mcp._rook_hygiene is not None else None)
 
