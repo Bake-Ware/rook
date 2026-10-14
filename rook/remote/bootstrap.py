@@ -1757,7 +1757,7 @@ class CombinedServer:
                     continue
                 # The update service's released build when it runs the
                 # feed (new builds go out by staged rollout), else the bundle.
-                manifest = self._feed.released_manifest()
+                manifest = self._feed_manifest()
                 if manifest is None:
                     try:
                         manifest = json.loads(self._bundle.path("band-worker.json").read_text())
@@ -1984,7 +1984,7 @@ class CombinedServer:
 
         When the update service runs the worker feed, this is its *released*
         build: a newer bundle reaches workers through a staged rollout first."""
-        released = self._feed.released_manifest()
+        released = self._feed_manifest()
         if released is not None:
             return web.json_response(released, headers={"Cache-Control": "no-store"})
         manifest_path = self._bundle.path("band-worker.json")
@@ -1995,6 +1995,21 @@ class CombinedServer:
             content_type="application/json",
             headers={"Cache-Control": "no-store"},
         )
+
+    def _feed_manifest(self) -> dict | None:
+        """The update service's released worker manifest, or None when the
+        service is off (hub plugins off, or its plugin switched off on the
+        Plugins page): then the bundle is served and pushed as before, and a
+        feed left behind by an earlier run pins nobody."""
+        if os.environ.get("ROOK_HUB_PLUGINS", "1") == "0":
+            return None
+        try:
+            from ..hub.plugin_profiles import hub_disabled
+            if "updates" in hub_disabled(self._settings_store):
+                return None
+        except Exception:
+            log.debug("reading the hub plugin switches failed", exc_info=True)
+        return self._feed.released_manifest()
 
     async def _feed_pyz(self, request: web.Request) -> web.Response:
         """A worker bundle kept in the update feed, by build. Public like

@@ -482,6 +482,12 @@ async def test_dashboard_serves_the_released_build_and_snapshots(tmp_path, keyen
         pyz = await client.get("/updates/worker/510/band-worker.pyz")
         assert pyz.status == 200 and await pyz.read() == old_pyz.read_bytes()
         assert (await client.get("/updates/worker/999/band-worker.pyz")).status == 404
+        # The updates plugin switched off: the feed pins nobody.
+        from rook.hub.plugin_profiles import set_hub_state
+        set_hub_state(server._settings_store, {"updates": False}, actor="test")
+        assert (await (await client.get("/band-worker.json")).json())["build"] == 520
+        set_hub_state(server._settings_store, {"updates": True}, actor="test")
+        assert (await (await client.get("/band-worker.json")).json())["build"] == 510
         # New installs still get the newest bundle.
         assert (await (await client.get("/band-worker.pyz")).read()).startswith(b"bundle 520")
         update_feed.WorkerFeed().root.mkdir(parents=True, exist_ok=True)

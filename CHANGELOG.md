@@ -10,6 +10,35 @@ version was `0.1.0`.
 
 Preparation for public use.
 
+### Autoupdate
+- Manage > Updates (new hub plugin `updates`): the hub checks Rook's GitHub
+  releases (ETag, backoff; prereleases only on the prerelease channel),
+  verifies downloads against `SHA256SUMS` (optionally `gh attestation
+  verify`), and shows the hub, workers, apps and firmware against what is
+  available, with release notes, progress and history.
+- Hub self-update through `rook hub deploy` (the release sdist repacked and
+  signed by the hub; dead-man rollback applies) or by re-running the release's
+  `install-hub.sh` on a `--user` install; other installs get the command to
+  run. Rollback from the History tab.
+- Staged worker rollouts: test worker first, then batches, stopping at the
+  first failed health check (new build announced, answers the hub, stays on
+  it). Behaviour change: with the updates plugin on, a new worker bundle is
+  no longer pushed to every worker at once; `/band-worker.json` and the push
+  loop serve the *released* build (`/updates/worker/<build>/band-worker.pyz`)
+  until a rollout releases the next one. The first run releases the bundle the
+  hub already has. Switching the plugin off restores the old behaviour.
+- Breaking releases: each release publishes `release.json` (compat floors,
+  breaking flag and reasons, relay pin, app and firmware versions) and
+  `install-hub.sh`; the wizard lists the devices a release would cut off and
+  needs them updated or an acknowledgement first; the Workers page tags
+  devices too old for this hub or for a pending breaking update.
+- Settings `updates.mode` (off / notify, the default / auto), `channel`,
+  `window`, `canary`, `batch`, `gate_secs`; auto never applies a breaking
+  release. New releases are announced once through `notify.send`.
+- Android: publish a release's APK through `/apk` and ask phones to update
+  (`device.update`). Desktop: `GET /updates/desktop.json`. Firmware versions
+  are shown (ESP32 announce, RP2040 `dongle.status`); flashing stays manual.
+
 ### Hub merge
 - One hub process: `rook hub serve` (console script `rook-hub`) runs the
   dashboard and the MCP server together on the dashboard port (7005): the MCP

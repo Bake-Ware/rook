@@ -410,7 +410,11 @@ The Python worker fleet updates itself with a **signed-manifest + in-band push**
 - **Band health gate.** A new build is kept only once it proves two-way band contact: a reply to one of its own requests (it probes `caps.describe` on the hub node, or another peer it heard announce). Staying alive is not enough: a build that boots but can't talk on the band would otherwise strand the worker off-band, fixable only over SSH. No round trip within `ROOK_UPDATE_HEALTH_SECS` (180 s) and the worker restores the previous bundle and restarts into it at once. Crashing builds still roll back after three failed boots. Details below.
 - `worker.hold` pins a node; `worker.check(force=true)` drives canary rollouts. The **dongle** (ESP32 firmware) is excluded and has its own signed flash path.
 
-Ship a build → commit → rebuild the signed bundle → the running push loop converges the whole fleet in minutes, no manual per-device steps.
+Ship a build → the hub keeps it in its worker feed → **Manage > Updates** rolls it out: a test worker first, then a few at a time, stopping at the first worker that fails its health check; a rollout to everyone releases the build to workers that check in later. With the updates plugin off, the push loop converges the whole fleet to the hub's bundle as before.
+
+## Hub-owned updates (Manage > Updates)
+
+The hub checks Rook's GitHub releases (and the relay's), verifies every download against the release's `SHA256SUMS`, and shows what the hub, each worker, app and firmware device runs against what is available, with release notes. It updates the hub through `rook hub deploy` (dead-man rollback) or by re-running the release's installer, or says how to do it by hand; rolls worker builds out in stages; publishes a release's Android app through `/apk` and asks phones to update; and keeps a history with hub rollback. A **breaking** release (one that raises the oldest supported worker, app or hub, from `rook/core/compat.py`) lists the devices it would cut off and needs them updated or an explicit acknowledgement first; the Workers page tags them. Modes: off, notify (default) and auto (inside a maintenance window, never a breaking release). Desktop apps poll `/updates/desktop.json`. Guide: [docs/operations/updates.md](operations/updates.md).
 
 ### Post-update health gate
 
