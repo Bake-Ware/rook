@@ -141,6 +141,7 @@ Manual: help, welcome, getting-started, overview-and-start-page, adding-machines
   findings), `examples.md` (worked calls) and `troubleshooting.md` (errors and
   fixes).
 ### Autoupdate
+Manual: updates
 - Manage > Updates (new hub plugin `updates`): the hub checks Rook's GitHub
   releases (ETag, backoff; prereleases only on the prerelease channel),
   verifies downloads against `SHA256SUMS` and, where required, build
