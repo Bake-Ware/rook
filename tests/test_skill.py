@@ -41,7 +41,10 @@ def test_reference_covers_every_tool_and_plugin_cap():
 def test_skill_files_are_complete_and_generic():
     files = skill.base_files()
     assert {"SKILL.md", "references/install.md", "references/admin.md",
-            "references/tools.md", "references/usage.md"} <= set(files)
+            "references/tools.md", "references/usage.md", "references/coordination.md",
+            "references/examples.md", "references/troubleshooting.md"} <= set(files)
+    # SKILL.md is read whole on every activation; depth belongs in references/.
+    assert len(files["SKILL.md"].splitlines()) <= 250
     assert skill.SITE_FILE not in files
     head = files["SKILL.md"].split("---")[1]
     assert re.search(r"^name: rook$", head, re.M) and "description:" in head
