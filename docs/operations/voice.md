@@ -90,6 +90,30 @@ once). If that load is still running after three minutes, the new engine
 waits for it to finish and be cleared away before it starts, and the Voice
 page says so, rather than start on the old settings.
 
+The settings a GPU voice server is usually configured with are there too,
+each under the variable the voice service reads (defaults are the service's
+own; see `services/voice/README.md`):
+
+| Group | Keys (variable) |
+| --- | --- |
+| Speech | `voice.tts_default` (`VOICE_TTS_DEFAULT`: the starting voice from either engine, `kokoro:`/`chatterbox:` names accepted); advanced `voice.tts_target_dbfs` (`VOICE_TTS_TARGET_DBFS`, -20), `voice.tts_threads` (`VOICE_TTS_THREADS`, 8) |
+| Chatterbox | `voice.chatterbox_device` (`VOICE_CHATTERBOX_DEVICE`, e.g. `cuda:0`; blank keeps Chatterbox off), `voice.chatterbox_python` (`VOICE_CHATTERBOX_PYTHON`, a venv python with torch and chatterbox-tts), `voice.chatterbox_voices_dir` (`VOICE_CHATTERBOX_VOICES_DIR`); advanced `voice.chatterbox_start_timeout_s` (`VOICE_CHATTERBOX_START_TIMEOUT_S`, 180) |
+| Agent (advanced) | `voice.tool_reasoning_effort` (`VOICE_TOOL_REASONING_EFFORT`, high), `voice.tool_max_tokens` (`VOICE_TOOL_MAX_TOKENS`, 4096), `voice.tool_max_steps` (`VOICE_TOOL_MAX_STEPS`, 24), `voice.tool_model_timeout_s` (`VOICE_TOOL_MODEL_TIMEOUT_S`, 180) |
+| Models | `voice.front_url`/`voice.front_model` (`VOICE_FRONT_URL`/`VOICE_FRONT_MODEL`), `voice.background_url`/`voice.background_model` (`VOICE_BACKGROUND_URL`/`VOICE_BACKGROUND_MODEL`), blank meaning `VLLM_URL`/`VLLM_MODEL`; `voice.primary_url`, `voice.primary_model`, `voice.primary_api_key` (secret) (`LLM_PRIMARY_URL`, `LLM_PRIMARY_MODEL`, `LLM_PRIMARY_API_KEY`: a hosted model tried first, falling back to `VLLM_*`); advanced: `voice.front_timeout_s`, `voice.front_max_tokens`, `voice.front_turns`, `voice.background_effort`, `voice.background_max_steps`, `voice.background_timeout_s`, `voice.primary_timeout_s` (`VOICE_FRONT_TIMEOUT_S`, `VOICE_FRONT_MAX_TOKENS`, `VOICE_FRONT_TURNS`, `VOICE_BACKGROUND_EFFORT`, `VOICE_BACKGROUND_MAX_STEPS`, `VOICE_BACKGROUND_TIMEOUT_S`, `LLM_PRIMARY_TIMEOUT_S`) |
+| Home | `voice.hass_url`, `voice.hass_token` (secret), `voice.hass_verify_tls` (`VOICE_HASS_URL`, `VOICE_HASS_TOKEN`, `VOICE_HASS_VERIFY_TLS`), `voice.pianobar_worker` (`VOICE_PIANOBAR_WORKER`) |
+| Location | `voice.home_lat`, `voice.home_lon` (`VOICE_HOME_LAT`, `VOICE_HOME_LON`), `voice.timezone` (`VOICE_TZ`), `voice.weather_units` (`VOICE_WEATHER_UNITS`, celsius); advanced `voice.weather_url` (`VOICE_WEATHER_URL`) |
+
+Secrets (`voice.token`, `voice.mcp_token`, `voice.hass_token`,
+`voice.primary_api_key`) go to the vault; the settings database and history
+keep only a reference and a fingerprint. Not settings (set them in the hub's
+environment if you need them): `LLM_PRIMARY_EXTRA`, `VOICE_FOLLOWUP_WAIT_S`,
+`VOICE_PREFETCH_*`, `DECISION_*`, `ONNX_PROVIDER`, the database and TLS paths.
+
+All of this applies to engine `here` only. In `remote` mode none of these
+reach the voice server (the hub only presents `voice.token` for its own
+checks): that server keeps its own environment, so configure Chatterbox, Home
+Assistant and the models there.
+
 `voice.token` is an owner voice key. In `remote` mode the hub also uses it for
 the Voice page's microphone check, so the voice server must accept it.
 

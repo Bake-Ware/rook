@@ -37,6 +37,9 @@ VOICE_ENV = ("VOICE_MODEL_DIR", "WHISPER_MODEL", "VOICE_TOKEN", "ROOK_VOICE_ENGI
 def clean_env(monkeypatch):
     for var in VOICE_ENV:
         monkeypatch.delenv(var, raising=False)
+    for s in voice_mod.SETTINGS:              # every variable a voice setting reads
+        for var in s.env_names("voice"):
+            monkeypatch.delenv(var, raising=False)
     # These tests build hub nodes the way rook hub serve does (it says the
     # site is served before building one); the two-process case sets False.
     monkeypatch.setattr(site_mod, "_SERVED", True)
@@ -684,3 +687,193 @@ async def test_remote_websockets_are_capped_per_client(monkeypatch):
     finally:
         await remote.stop()
         await upstream.close()
+
+
+# -- the GPU voice server's configuration, from Settings > Voice ---------------------------
+
+#: key -> (the variable services/voice reads, a value an operator stores, what the
+#: service then gets in its environment).
+GPU_SETTINGS = {
+    "tts_default": ("VOICE_TTS_DEFAULT", "chatterbox:sojourn", "chatterbox:sojourn"),
+    "tts_target_dbfs": ("VOICE_TTS_TARGET_DBFS", -18.5, "-18.5"),
+    "tts_threads": ("VOICE_TTS_THREADS", 4, "4"),
+    "chatterbox_device": ("VOICE_CHATTERBOX_DEVICE", "cuda:0", "cuda:0"),
+    "chatterbox_python": ("VOICE_CHATTERBOX_PYTHON", "/opt/chatterbox/.venv/bin/python",
+                          "/opt/chatterbox/.venv/bin/python"),
+    "chatterbox_voices_dir": ("VOICE_CHATTERBOX_VOICES_DIR", "/srv/voices", "/srv/voices"),
+    "chatterbox_start_timeout_s": ("VOICE_CHATTERBOX_START_TIMEOUT_S", 240, "240.0"),
+    "tool_reasoning_effort": ("VOICE_TOOL_REASONING_EFFORT", "medium", "medium"),
+    "tool_max_tokens": ("VOICE_TOOL_MAX_TOKENS", 2048, "2048"),
+    "tool_max_steps": ("VOICE_TOOL_MAX_STEPS", 12, "12"),
+    "tool_model_timeout_s": ("VOICE_TOOL_MODEL_TIMEOUT_S", 90, "90.0"),
+    "front_url": ("VOICE_FRONT_URL", "http://127.0.0.1:1235/v1/chat/completions",
+                  "http://127.0.0.1:1235/v1/chat/completions"),
+    "front_model": ("VOICE_FRONT_MODEL", "front-small", "front-small"),
+    "front_timeout_s": ("VOICE_FRONT_TIMEOUT_S", 20, "20.0"),
+    "front_max_tokens": ("VOICE_FRONT_MAX_TOKENS", 150, "150"),
+    "front_turns": ("VOICE_FRONT_TURNS", 4, "4"),
+    "background_url": ("VOICE_BACKGROUND_URL", "http://127.0.0.1:1236/v1/chat/completions",
+                       "http://127.0.0.1:1236/v1/chat/completions"),
+    "background_model": ("VOICE_BACKGROUND_MODEL", "background-big", "background-big"),
+    "background_effort": ("VOICE_BACKGROUND_EFFORT", "high", "high"),
+    "background_max_steps": ("VOICE_BACKGROUND_MAX_STEPS", 6, "6"),
+    "background_timeout_s": ("VOICE_BACKGROUND_TIMEOUT_S", 60, "60.0"),
+    "primary_url": ("LLM_PRIMARY_URL", "https://llm.example.com/v1/chat/completions",
+                    "https://llm.example.com/v1/chat/completions"),
+    "primary_model": ("LLM_PRIMARY_MODEL", "hosted-model", "hosted-model"),
+    "primary_timeout_s": ("LLM_PRIMARY_TIMEOUT_S", 5, "5.0"),
+    "hass_url": ("VOICE_HASS_URL", "https://homeassistant.example.com:8123",
+                 "https://homeassistant.example.com:8123"),
+    "hass_verify_tls": ("VOICE_HASS_VERIFY_TLS", False, "0"),
+    "pianobar_worker": ("VOICE_PIANOBAR_WORKER", "music-box", "music-box"),
+    "home_lat": ("VOICE_HOME_LAT", 51.5, "51.5"),
+    "home_lon": ("VOICE_HOME_LON", -0.12, "-0.12"),
+    "timezone": ("VOICE_TZ", "Europe/London", "Europe/London"),
+    "weather_units": ("VOICE_WEATHER_UNITS", "fahrenheit", "fahrenheit"),
+    "weather_url": ("VOICE_WEATHER_URL", "https://weather.example.com/v1/forecast",
+                    "https://weather.example.com/v1/forecast"),
+}
+#: Secrets: from the vault, never the settings database.
+GPU_SECRETS = {"hass_token": "VOICE_HASS_TOKEN", "primary_api_key": "LLM_PRIMARY_API_KEY"}
+
+
+class DictVault:
+    def __init__(self, data):
+        self.data = dict(data)
+
+    def get(self, name, actor, via="get", task=None):
+        return self.data[name]
+
+
+def gpu_node(tmp_path, vault=None, **stored):
+    store = SettingsStore(tmp_path / "settings.db")
+    for key, value in stored.items():
+        store.set(f"voice.{key}", "hub", "", value=value, actor="test")
+    return HubNode(str(tmp_path), entry_points=False, settings_store=store, vault=vault)
+
+
+def secret_values():
+    return {name: f"{name}-value-for-tests" for name in GPU_SECRETS}
+
+
+def test_gpu_server_settings_are_handed_to_the_voice_service(tmp_path, fake_engine):
+    stored = {key: value for key, (_env, value, _out) in GPU_SETTINGS.items()}
+    vault = DictVault({f"plugin.voice.{k}": v for k, v in secret_values().items()})
+    node = gpu_node(tmp_path, vault, model_dir=str(fake_engine.models), **stored)
+    voice = node.plugin("voice")
+    assert voice is not None, node.host.status["voice"]
+    env = voice.engine_env()
+    for key, (var, _value, out) in GPU_SETTINGS.items():
+        assert env.get(var) == out, key
+    for key, var in GPU_SECRETS.items():
+        assert env.get(var) == secret_values()[key], key
+    # Nothing stored: none of them is set, so the service keeps its own defaults.
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    env = gpu_node(bare, model_dir=str(fake_engine.models)).plugin("voice").engine_env()
+    assert not {v for v, _x, _y in GPU_SETTINGS.values()} & set(env)
+    assert not set(GPU_SECRETS.values()) & set(env)
+
+
+@pytest.mark.asyncio
+async def test_engine_here_exports_them_and_the_hubs_environment_wins(
+        tmp_path, fake_engine, monkeypatch):
+    monkeypatch.setenv("VOICE_TTS_THREADS", "2")
+    vault = DictVault({"plugin.voice.hass_token": "ha-token-for-tests"})
+    node = gpu_node(tmp_path, vault, model_dir=str(fake_engine.models),
+                    hass_url="https://homeassistant.example.com:8123",
+                    chatterbox_device="cuda:0", tts_threads=4, home_lat=51.5)
+    voice = node.plugin("voice")
+    await node.start()
+    try:
+        assert await wait_for(lambda: voice.engine.state == "ready"), voice.engine.error
+        assert os.environ["VOICE_HASS_URL"] == "https://homeassistant.example.com:8123"
+        assert os.environ["VOICE_HASS_TOKEN"] == "ha-token-for-tests"
+        assert os.environ["VOICE_CHATTERBOX_DEVICE"] == "cuda:0"
+        assert os.environ["VOICE_HOME_LAT"] == "51.5"
+        assert os.environ["VOICE_TTS_THREADS"] == "2"       # the hub's own, untouched
+        assert "VOICE_CHATTERBOX_PYTHON" not in os.environ  # not stored: the service default
+    finally:
+        await node.stop()
+    for var in ("VOICE_HASS_URL", "VOICE_HASS_TOKEN", "VOICE_CHATTERBOX_DEVICE", "VOICE_HOME_LAT"):
+        assert var not in os.environ
+    assert os.environ["VOICE_TTS_THREADS"] == "2"
+
+
+@pytest.mark.asyncio
+async def test_engine_remote_never_exports_them(tmp_path, monkeypatch):
+    monkeypatch.setattr(eng, "missing_extras", lambda: ["webrtcvad"])
+    vault = DictVault({"plugin.voice.hass_token": "ha-token-for-tests"})
+    node = gpu_node(tmp_path, vault, engine="remote", remote_url="http://192.0.2.7:8900",
+                    hass_url="https://homeassistant.example.com:8123", chatterbox_device="cuda:0")
+    voice = node.plugin("voice")
+    assert voice is not None, node.host.status["voice"]
+    await node.start()
+    try:
+        assert isinstance(voice.engine, eng.RemoteEngine)
+        for var in ("VOICE_HASS_URL", "VOICE_HASS_TOKEN", "VOICE_CHATTERBOX_DEVICE",
+                    "VOICE_MODEL_DIR"):
+            assert var not in os.environ
+    finally:
+        await node.stop()
+
+
+def test_gpu_secrets_are_masked_and_kept_in_the_vault(tmp_path):
+    import json
+    from tests.test_settings import FakeVault, _svc
+    vault = FakeVault()
+    svc = _svc(tmp_path, vault=vault)
+    for key, var in GPU_SECRETS.items():
+        entry = svc.schema.get(f"voice.{key}")
+        assert entry.setting.secret and var in entry.env_names(), key
+        secret = f"{key}-value-for-tests"
+        res = svc.set(f"voice.{key}", secret, actor="human:op")
+        assert vault.data[f"plugin.voice.{key}"] == secret
+        assert secret not in json.dumps(res)
+        row = svc.store.get(f"voice.{key}", "hub")
+        assert row["value"] is None and row["secret_ref"] == f"plugin.voice.{key}"
+        assert svc.store.history(key=f"voice.{key}")[0]["new"].startswith("fp:")
+        assert secret not in json.dumps(svc.plugin_page("voice"))
+        assert secret not in json.dumps(svc.resolve(f"voice.{key}"))
+        assert secret not in (tmp_path / "settings.db").read_bytes().decode("latin-1")
+
+
+def _service_defaults():
+    """{variable: {defaults}} from every ``<x>.get("NAME", "default")`` in services/voice."""
+    import ast
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent / "services" / "voice"
+    out: dict = {}
+    for path in sorted(root.glob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "get" and node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and isinstance(node.args[0].value, str) and node.args[0].value.isupper()):
+                continue
+            default = node.args[1] if len(node.args) > 1 else None
+            out.setdefault(node.args[0].value, set()).add(
+                default.value if isinstance(default, ast.Constant) else None)
+    return out
+
+
+#: Hub defaults that differ from the service's on purpose: the model folder is
+#: always the hub's (plugin data folder), and the hub has never guessed a model id.
+DEFAULTS_DIFFER = {"VOICE_MODEL_DIR", "VLLM_MODEL"}
+
+
+def test_every_voice_variable_is_read_by_the_service_with_the_same_default():
+    found = _service_defaults()
+    for s in voice_mod.SETTINGS:
+        if not s.env:
+            continue
+        assert s.env in found, f"{s.name}: services/voice never reads {s.env}"
+        if s.env in DEFAULTS_DIFFER:
+            continue
+        for raw in found[s.env] - {None}:
+            # A blank variable is "unset" to the service: no default on the hub.
+            want = None if raw == "" else s.coerce(raw)
+            have = None if s.default == "" else s.default
+            assert have == want, f"{s.name}: hub default {s.default!r}, service default {raw!r}"
+    for key, (var, _v, _o) in GPU_SETTINGS.items():
+        assert next(s for s in voice_mod.SETTINGS if s.name == key).env == var, key

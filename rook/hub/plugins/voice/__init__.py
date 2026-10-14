@@ -45,6 +45,8 @@ OWNER = "plugin:voice"
 HUB_ONLY = frozenset({"engine", "remote_url", "remote_verify_tls", "root_aliases"})
 #: Longest microphone check the Voice page sends (16 kHz mono 16-bit).
 MAX_CHECK_SECONDS = 15
+#: Thinking efforts the voice service accepts (services/voice/thinking.py).
+EFFORTS = ("low", "medium", "high", "xhigh")
 
 
 def _s(name, type_, default=None, **kw):
@@ -72,7 +74,9 @@ SETTINGS = (
        label="Also answer the Android app's root paths",
        help="/api/voice, /api/transcribe and /voices at the site root, as well as under "
             "/voice/. The Android app builds those from the host alone."),
-    # Access (the former voice service settings; same keys and variables).
+    # Access (the former voice service settings; same keys and variables). From here
+    # on, settings with env= reach the voice service as its environment for engine
+    # "here" only (engine_env); a remote voice server keeps its own environment.
     _s("token", "str", secret=True, env="VOICE_TOKEN", apply="reload", group="Access",
        label="Client bearer token",
        help="An owner voice key. In remote mode the hub also uses it for the Voice page's "
@@ -115,6 +119,38 @@ SETTINGS = (
     _s("show_thinking", bool, False, scope="user", label="Show thinking", group="Speech"),
     _s("hotword_enabled", bool, True, scope="user", label="Wake word on this account",
        group="Speech"),
+    _s("tts_default", "str", "", env="VOICE_TTS_DEFAULT", apply="reload",
+       label="Starting voice (any engine)", group="Speech",
+       help="A voice from either engine: a Kokoro voice such as af_heart, or a Chatterbox "
+            "voice such as default or a cloned one (kokoro:af_heart and chatterbox:<name> "
+            "work too). Wins over the voice last picked in an app. Blank: the voice last "
+            "picked, else Voice above."),
+    _s("tts_target_dbfs", float, -20.0, env="VOICE_TTS_TARGET_DBFS", max=0.0, apply="reload",
+       label="Speech loudness (dBFS)", group="Speech", advanced=True,
+       help="Spoken replies are lifted to this level (RMS of the speech), by at most 12 dB "
+            "and never past -1 dBFS peak; louder audio is left alone."),
+    _s("tts_threads", int, 8, env="VOICE_TTS_THREADS", min=1, apply="reload",
+       label="Kokoro CPU threads", group="Speech", advanced=True,
+       help="CPU threads the Kokoro voices use."),
+    # Chatterbox (cloned voices, on a GPU)
+    _s("chatterbox_device", "str", "", env="VOICE_CHATTERBOX_DEVICE", apply="reload",
+       label="Chatterbox device", group="Chatterbox",
+       help="The GPU for Chatterbox voices (cloned voices), e.g. cuda:0. Blank: Chatterbox "
+            "stays off and the Kokoro voices speak."),
+    _s("chatterbox_python", "path", "", env="VOICE_CHATTERBOX_PYTHON", apply="reload",
+       label="Chatterbox Python", group="Chatterbox",
+       help="The python of a separate venv with torch and chatterbox-tts installed, e.g. "
+            "/opt/chatterbox/.venv/bin/python: Chatterbox runs there, in its own process. "
+            "Blank: the hub's own Python, which then needs chatterbox-tts itself."),
+    _s("chatterbox_voices_dir", "path", "", env="VOICE_CHATTERBOX_VOICES_DIR", apply="reload",
+       label="Cloned voices folder", group="Chatterbox",
+       help="Each <name>.wav here (5 to 20 seconds of clean speech) becomes the voice "
+            "<name>. Blank: only Chatterbox's built-in voice, default."),
+    _s("chatterbox_start_timeout_s", float, 180.0, env="VOICE_CHATTERBOX_START_TIMEOUT_S",
+       min=1.0, apply="reload", label="Chatterbox start timeout (s)", group="Chatterbox",
+       advanced=True,
+       help="How long Chatterbox may take to load before voice goes on with the Kokoro "
+            "voices alone."),
     # Agent
     _s("llm_url", "url", "http://127.0.0.1:1234/v1/chat/completions", env="VLLM_URL",
        apply="reload", label="Language model URL", group="Agent"),
@@ -133,6 +169,88 @@ SETTINGS = (
        help="Unattended tool permission for the voice agent."),
     _s("direct_tool_budget", int, 1, env="DIRECT_TOOL_BUDGET", min=0, apply="reload",
        label="Direct tool calls per turn", group="Agent", advanced=True),
+    _s("tool_reasoning_effort", "str", "high", env="VOICE_TOOL_REASONING_EFFORT",
+       choices=EFFORTS, apply="reload", label="Agent thinking effort", group="Agent",
+       advanced=True, help="How hard the voice agent thinks on jobs that use tools."),
+    _s("tool_max_tokens", int, 4096, env="VOICE_TOOL_MAX_TOKENS", min=1, apply="reload",
+       label="Agent tokens per step", group="Agent", advanced=True),
+    _s("tool_max_steps", int, 24, env="VOICE_TOOL_MAX_STEPS", min=1, apply="reload",
+       label="Agent steps per job", group="Agent", advanced=True),
+    _s("tool_model_timeout_s", float, 180.0, env="VOICE_TOOL_MODEL_TIMEOUT_S", min=1.0,
+       apply="reload", label="Agent model timeout (s)", group="Agent", advanced=True),
+    # Models (the Front/Background pipeline, and a hosted model tried first)
+    _s("front_url", "url", "", env="VOICE_FRONT_URL", apply="reload",
+       label="Quick reply model URL", group="Models",
+       help="Front/Background conversations: the model that answers out loud at once, "
+            "without tools. Blank: Language model URL (Agent)."),
+    _s("front_model", "str", "", env="VOICE_FRONT_MODEL", apply="reload",
+       label="Quick reply model id", group="Models", help="Blank: Model id (Agent)."),
+    _s("front_timeout_s", float, 30.0, env="VOICE_FRONT_TIMEOUT_S", min=1.0, apply="reload",
+       label="Quick reply timeout (s)", group="Models", advanced=True),
+    _s("front_max_tokens", int, 200, env="VOICE_FRONT_MAX_TOKENS", min=1, apply="reload",
+       label="Quick reply length (tokens)", group="Models", advanced=True),
+    _s("front_turns", int, 6, env="VOICE_FRONT_TURNS", min=0, apply="reload",
+       label="Quick reply history (exchanges)", group="Models", advanced=True,
+       help="How many earlier exchanges the quick reply model sees."),
+    _s("background_url", "url", "", env="VOICE_BACKGROUND_URL", apply="reload",
+       label="Background model URL", group="Models",
+       help="Front/Background conversations: the model that does the work with tools "
+            "(timers, weather, music, Home Assistant). Blank: Language model URL (Agent). "
+            "Give each side its own model instance so the quick reply never waits."),
+    _s("background_model", "str", "", env="VOICE_BACKGROUND_MODEL", apply="reload",
+       label="Background model id", group="Models", help="Blank: Model id (Agent)."),
+    _s("background_effort", "str", "low", env="VOICE_BACKGROUND_EFFORT", choices=EFFORTS,
+       apply="reload", label="Background thinking effort", group="Models", advanced=True),
+    _s("background_max_steps", int, 8, env="VOICE_BACKGROUND_MAX_STEPS", min=1,
+       apply="reload", label="Background steps per turn", group="Models", advanced=True),
+    _s("background_timeout_s", float, 120.0, env="VOICE_BACKGROUND_TIMEOUT_S", min=1.0,
+       apply="reload", label="Background timeout (s)", group="Models", advanced=True),
+    _s("primary_url", "url", "", env="LLM_PRIMARY_URL", apply="reload",
+       label="Hosted model URL", group="Models",
+       help="Optional: an OpenAI-compatible chat completions URL, tried first. On a network "
+            "error, a timeout, a refused key, a rate limit or a server error, voice falls "
+            "back to Language model URL (Agent). Needs the hosted model id too."),
+    _s("primary_model", "str", "", env="LLM_PRIMARY_MODEL", apply="reload",
+       label="Hosted model id", group="Models",
+       help="The hosted model is used only when this and its URL are both set."),
+    _s("primary_api_key", "str", secret=True, env="LLM_PRIMARY_API_KEY", apply="reload",
+       label="Hosted model API key", group="Models",
+       help="Sent to the hosted model URL as a bearer token."),
+    _s("primary_timeout_s", float, 10.0, env="LLM_PRIMARY_TIMEOUT_S", min=0.1,
+       apply="reload", label="Hosted model timeout (s)", group="Models", advanced=True,
+       help="After this long voice falls back to the local model."),
+    # Home (Home Assistant and music)
+    _s("hass_url", "url", "", env="VOICE_HASS_URL", apply="reload",
+       label="Home Assistant address", group="Home",
+       help="e.g. https://homeassistant.example.com:8123. Voice can switch its lights, "
+            "switches, scenes and media players. Blank: no Home Assistant."),
+    _s("hass_token", "str", secret=True, env="VOICE_HASS_TOKEN", apply="reload",
+       label="Home Assistant token", group="Home",
+       help="A long-lived access token (in Home Assistant: your profile > Security)."),
+    _s("hass_verify_tls", bool, True, env="VOICE_HASS_VERIFY_TLS", apply="reload",
+       label="Check Home Assistant's certificate", group="Home",
+       help="Off only for a self-signed certificate on a private network."),
+    _s("pianobar_worker", "str", "", env="VOICE_PIANOBAR_WORKER", apply="reload",
+       label="Music worker", group="Home",
+       help="The Rook worker that runs pianobar (its cmd.pianobar-* commands). Blank: "
+            "no music."),
+    # Location (weather and timers)
+    _s("home_lat", float, None, env="VOICE_HOME_LAT", min=-90.0, max=90.0, apply="reload",
+       label="Home latitude", group="Location",
+       help="For the weather when the caller's phone location is not available. Blank: "
+            "the weather needs the phone's location."),
+    _s("home_lon", float, None, env="VOICE_HOME_LON", min=-180.0, max=180.0, apply="reload",
+       label="Home longitude", group="Location"),
+    _s("timezone", "str", "", env="VOICE_TZ", pattern=r"^[A-Za-z0-9_+/-]*$", apply="reload",
+       label="Time zone", group="Location",
+       help="An IANA time zone such as Europe/London, for timers like 'at 7pm'. Blank: "
+            "the time zone of the machine speech runs on."),
+    _s("weather_units", "str", "celsius", env="VOICE_WEATHER_UNITS",
+       choices=("celsius", "fahrenheit"), apply="reload", label="Temperature units",
+       group="Location"),
+    _s("weather_url", "url", "https://api.open-meteo.com/v1/forecast", env="VOICE_WEATHER_URL",
+       apply="reload", label="Weather service URL", group="Location", advanced=True,
+       help="An Open-Meteo compatible forecast API."),
 )
 
 

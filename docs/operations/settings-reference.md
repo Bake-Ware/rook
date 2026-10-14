@@ -411,6 +411,13 @@ are set only in the environment or on the command line.
 | `voice.owner` | Whose assistant | hub+user | str |  | `ROOK_VOICE_OWNER` | reload |
 | `voice.show_thinking` | Show thinking | user | bool | off | `ROOK_VOICE_SHOW_THINKING` | live |
 | `voice.hotword_enabled` | Wake word on this account | user | bool | on | `ROOK_VOICE_HOTWORD_ENABLED` | live |
+| `voice.tts_default` | Starting voice (any engine) | hub | str |  | `VOICE_TTS_DEFAULT`, `ROOK_VOICE_TTS_DEFAULT` | reload |
+| `voice.tts_target_dbfs` | Speech loudness (dBFS) | hub | float | `-20.0` | `VOICE_TTS_TARGET_DBFS`, `ROOK_VOICE_TTS_TARGET_DBFS` | reload |
+| `voice.tts_threads` | Kokoro CPU threads | hub | int | `8` | `VOICE_TTS_THREADS`, `ROOK_VOICE_TTS_THREADS` | reload |
+| `voice.chatterbox_device` | Chatterbox device | hub | str |  | `VOICE_CHATTERBOX_DEVICE`, `ROOK_VOICE_CHATTERBOX_DEVICE` | reload |
+| `voice.chatterbox_python` | Chatterbox Python | hub | path |  | `VOICE_CHATTERBOX_PYTHON`, `ROOK_VOICE_CHATTERBOX_PYTHON` | reload |
+| `voice.chatterbox_voices_dir` | Cloned voices folder | hub | path |  | `VOICE_CHATTERBOX_VOICES_DIR`, `ROOK_VOICE_CHATTERBOX_VOICES_DIR` | reload |
+| `voice.chatterbox_start_timeout_s` | Chatterbox start timeout (s) | hub | float | `180.0` | `VOICE_CHATTERBOX_START_TIMEOUT_S`, `ROOK_VOICE_CHATTERBOX_START_TIMEOUT_S` | reload |
 | `voice.llm_url` | Language model URL | hub | url | `http://127.0.0.1:1234/v1/chat/completions` | `VLLM_URL`, `ROOK_VOICE_LLM_URL` | reload |
 | `voice.llm_model` | Model id | hub | str |  | `VLLM_MODEL`, `ROOK_VOICE_LLM_MODEL` | reload |
 | `voice.mcp_url` | Rook MCP URL | hub | url | `http://127.0.0.1:8765/mcp` | `ROOK_MCP_URL`, `ROOK_VOICE_MCP_URL` | reload |
@@ -419,6 +426,33 @@ are set only in the environment or on the command line.
 | `voice.acp_port` | ACP port | hub | int | `9200` | `ACP_PORT`, `ROOK_VOICE_ACP_PORT` | reload |
 | `voice.acp_auto_approve` | Auto-approve ACP prompts | hub | bool | on | `ACP_AUTO_APPROVE`, `ROOK_VOICE_ACP_AUTO_APPROVE` | reload |
 | `voice.direct_tool_budget` | Direct tool calls per turn | hub | int | `1` | `DIRECT_TOOL_BUDGET`, `ROOK_VOICE_DIRECT_TOOL_BUDGET` | reload |
+| `voice.tool_reasoning_effort` | Agent thinking effort | hub | str | `high` | `VOICE_TOOL_REASONING_EFFORT`, `ROOK_VOICE_TOOL_REASONING_EFFORT` | reload |
+| `voice.tool_max_tokens` | Agent tokens per step | hub | int | `4096` | `VOICE_TOOL_MAX_TOKENS`, `ROOK_VOICE_TOOL_MAX_TOKENS` | reload |
+| `voice.tool_max_steps` | Agent steps per job | hub | int | `24` | `VOICE_TOOL_MAX_STEPS`, `ROOK_VOICE_TOOL_MAX_STEPS` | reload |
+| `voice.tool_model_timeout_s` | Agent model timeout (s) | hub | float | `180.0` | `VOICE_TOOL_MODEL_TIMEOUT_S`, `ROOK_VOICE_TOOL_MODEL_TIMEOUT_S` | reload |
+| `voice.front_url` | Quick reply model URL | hub | url |  | `VOICE_FRONT_URL`, `ROOK_VOICE_FRONT_URL` | reload |
+| `voice.front_model` | Quick reply model id | hub | str |  | `VOICE_FRONT_MODEL`, `ROOK_VOICE_FRONT_MODEL` | reload |
+| `voice.front_timeout_s` | Quick reply timeout (s) | hub | float | `30.0` | `VOICE_FRONT_TIMEOUT_S`, `ROOK_VOICE_FRONT_TIMEOUT_S` | reload |
+| `voice.front_max_tokens` | Quick reply length (tokens) | hub | int | `200` | `VOICE_FRONT_MAX_TOKENS`, `ROOK_VOICE_FRONT_MAX_TOKENS` | reload |
+| `voice.front_turns` | Quick reply history (exchanges) | hub | int | `6` | `VOICE_FRONT_TURNS`, `ROOK_VOICE_FRONT_TURNS` | reload |
+| `voice.background_url` | Background model URL | hub | url |  | `VOICE_BACKGROUND_URL`, `ROOK_VOICE_BACKGROUND_URL` | reload |
+| `voice.background_model` | Background model id | hub | str |  | `VOICE_BACKGROUND_MODEL`, `ROOK_VOICE_BACKGROUND_MODEL` | reload |
+| `voice.background_effort` | Background thinking effort | hub | str | `low` | `VOICE_BACKGROUND_EFFORT`, `ROOK_VOICE_BACKGROUND_EFFORT` | reload |
+| `voice.background_max_steps` | Background steps per turn | hub | int | `8` | `VOICE_BACKGROUND_MAX_STEPS`, `ROOK_VOICE_BACKGROUND_MAX_STEPS` | reload |
+| `voice.background_timeout_s` | Background timeout (s) | hub | float | `120.0` | `VOICE_BACKGROUND_TIMEOUT_S`, `ROOK_VOICE_BACKGROUND_TIMEOUT_S` | reload |
+| `voice.primary_url` | Hosted model URL | hub | url |  | `LLM_PRIMARY_URL`, `ROOK_VOICE_PRIMARY_URL` | reload |
+| `voice.primary_model` | Hosted model id | hub | str |  | `LLM_PRIMARY_MODEL`, `ROOK_VOICE_PRIMARY_MODEL` | reload |
+| `voice.primary_api_key` | Hosted model API key (secret) | hub | str |  | `LLM_PRIMARY_API_KEY`, `ROOK_VOICE_PRIMARY_API_KEY` | reload |
+| `voice.primary_timeout_s` | Hosted model timeout (s) | hub | float | `10.0` | `LLM_PRIMARY_TIMEOUT_S`, `ROOK_VOICE_PRIMARY_TIMEOUT_S` | reload |
+| `voice.hass_url` | Home Assistant address | hub | url |  | `VOICE_HASS_URL`, `ROOK_VOICE_HASS_URL` | reload |
+| `voice.hass_token` | Home Assistant token (secret) | hub | str |  | `VOICE_HASS_TOKEN`, `ROOK_VOICE_HASS_TOKEN` | reload |
+| `voice.hass_verify_tls` | Check Home Assistant's certificate | hub | bool | on | `VOICE_HASS_VERIFY_TLS`, `ROOK_VOICE_HASS_VERIFY_TLS` | reload |
+| `voice.pianobar_worker` | Music worker | hub | str |  | `VOICE_PIANOBAR_WORKER`, `ROOK_VOICE_PIANOBAR_WORKER` | reload |
+| `voice.home_lat` | Home latitude | hub | float |  | `VOICE_HOME_LAT`, `ROOK_VOICE_HOME_LAT` | reload |
+| `voice.home_lon` | Home longitude | hub | float |  | `VOICE_HOME_LON`, `ROOK_VOICE_HOME_LON` | reload |
+| `voice.timezone` | Time zone | hub | str |  | `VOICE_TZ`, `ROOK_VOICE_TIMEZONE` | reload |
+| `voice.weather_units` | Temperature units | hub | str | `celsius` | `VOICE_WEATHER_UNITS`, `ROOK_VOICE_WEATHER_UNITS` | reload |
+| `voice.weather_url` | Weather service URL | hub | url | `https://api.open-meteo.com/v1/forecast` | `VOICE_WEATHER_URL`, `ROOK_VOICE_WEATHER_URL` | reload |
 
 ## Wake (agent.wake) (worker plugin, runs in worker)
 

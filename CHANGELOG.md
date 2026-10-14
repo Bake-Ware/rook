@@ -8,6 +8,23 @@ version was `0.1.0`.
 
 ## Unreleased
 
+### Voice settings
+Manual: voice
+- Settings > Voice now covers what a GPU voice server is configured with,
+  under the same variables the voice service reads: Chatterbox cloned voices
+  (`VOICE_CHATTERBOX_DEVICE`, `_PYTHON`, `_VOICES_DIR`, `_START_TIMEOUT_S`),
+  the starting voice and loudness (`VOICE_TTS_DEFAULT`,
+  `VOICE_TTS_TARGET_DBFS`, `VOICE_TTS_THREADS`), Home Assistant
+  (`VOICE_HASS_URL`, `VOICE_HASS_TOKEN`, `VOICE_HASS_VERIFY_TLS`), music
+  (`VOICE_PIANOBAR_WORKER`), location and weather (`VOICE_HOME_LAT`,
+  `VOICE_HOME_LON`, `VOICE_TZ`, `VOICE_WEATHER_UNITS`, `VOICE_WEATHER_URL`),
+  the Front/Background and hosted models (`VOICE_FRONT_*`,
+  `VOICE_BACKGROUND_*`, `LLM_PRIMARY_URL`, `_MODEL`, `_API_KEY`,
+  `_TIMEOUT_S`) and the agent's limits (`VOICE_TOOL_*`). Tokens and keys go
+  to the vault. Defaults are the service's own, and they apply when speech
+  runs on the hub (`voice.engine=here`); a remote voice server keeps its own
+  environment. Docs: docs/operations/voice.md.
+
 ## [0.2.0] - 2026-10-14
 
 The first tagged release. Preparation for public use.

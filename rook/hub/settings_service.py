@@ -212,8 +212,9 @@ class SettingsService:
         return rows
 
     GROUP_ORDER = ("General", "Identity", "Access", "Network", "Sign-in", "Updates", "Features",
-                   "Recognition", "Speech", "Agent", "Search", "Timing", "Data", "Storage",
-                   "Plugins", "Keys & access", "Worker defaults", "Probe", "Thresholds", "Alerts")
+                   "Recognition", "Speech", "Chatterbox", "Agent", "Models", "Search", "Timing",
+                   "Data", "Storage", "Plugins", "Keys & access", "Worker defaults", "Probe",
+                   "Thresholds", "Alerts")
 
     @classmethod
     def _group(cls, rows: list[dict]) -> list[dict]:
