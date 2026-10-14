@@ -8,7 +8,9 @@ version was `0.1.0`.
 
 ## Unreleased
 
-Preparation for public use.
+## [0.2.0] - 2026-10-14
+
+The first tagged release. Preparation for public use.
 
 ### Voice and model provider plugins
 Manual: voice, model-providers, home-agent
