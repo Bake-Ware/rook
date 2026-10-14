@@ -184,6 +184,7 @@ are set only in the environment or on the command line.
 |---|---|---|---|---|---|---|
 | `home.enabled` | Enabled | hub | bool | off | `ROOK_HOME_ENABLED` | live |
 | `home.name` | Name | hub | str | `home` | `ROOK_HOME_NAME` | live |
+| `home.llm_provider` | Model provider | hub | str |  | `ROOK_HOME_LLM_PROVIDER` | live |
 | `home.provider` | Provider | hub | str | `openai` | `ROOK_HOME_PROVIDER` | live |
 | `home.base_url` | Base URL | hub | url |  | `ROOK_HOME_BASE_URL` | live |
 | `home.model` | Model | hub | str |  | `ROOK_HOME_MODEL` | live |
@@ -241,11 +242,29 @@ are set only in the environment or on the command line.
 | `knowledge.hygiene_scan_seconds` | Scan interval (seconds) | hub | int | `300` | `ROOK_KNOWLEDGE_HYGIENE_SCAN_SECONDS` | live |
 | `knowledge.hygiene_notify_people` | Also notify people | hub | bool | off | `ROOK_KNOWLEDGE_HYGIENE_NOTIFY_PEOPLE` | live |
 
+## llmanifold (hub plugin, runs in mcp)
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `llmanifold.base_url` | llmanifold address | hub | url |  | `ROOK_LLMANIFOLD_BASE_URL` | reload |
+| `llmanifold.api_key` | Token (vault reference) | hub | str |  | `ROOK_LLMANIFOLD_API_KEY` | live |
+| `llmanifold.models` | Flows to offer | hub | list |  | `ROOK_LLMANIFOLD_MODELS` | live |
+| `llmanifold.default_model` | Default flow | hub | str |  | `ROOK_LLMANIFOLD_DEFAULT_MODEL` | live |
+| `llmanifold.admin_url` | Admin address | hub | url |  | `ROOK_LLMANIFOLD_ADMIN_URL` | live |
+| `llmanifold.timeout_s` | Status timeout (s) | hub | float | `8.0` | `ROOK_LLMANIFOLD_TIMEOUT_S` | live |
+
 ## Memory (worker plugin, runs in worker)
 
 | Key | Label | Scope | Type | Default | Env / flag | Apply |
 |---|---|---|---|---|---|---|
 | `memory.notes_dir` | Notes directory | worker | path |  | `ROOK_MEMORY_VAULT` | restart |
+
+## Model providers (hub plugin, runs in mcp)
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `llm.providers` | OpenAI-compatible providers | hub | list |  | `ROOK_LLM_PROVIDERS` | live |
+| `llm.check_timeout_s` | Check timeout (s) | hub | float | `10.0` | `ROOK_LLM_CHECK_TIMEOUT_S` | live |
 
 ## PiKVM (worker plugin, runs in worker)
 

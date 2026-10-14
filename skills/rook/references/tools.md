@@ -83,6 +83,9 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `job.write` | action, id?, data? | write | Write jobs: create\|update\|delete\|enable\|disable\|run\|cancel\|set_guardrails\|settings. |
 | `knowledge.read` | action='search', band?, id?, query='', data? | read | Read the shared wiki: search\|get\|list\|context\|status\|bands\|deck. |
 | `knowledge.write` | action, band?, id?, data?, request_id? | write | Write the shared wiki: create\|update\|link\|retract (needs request_id). |
+| `llm.check` | provider='' | read | llm.check — whether a provider (or every one) answers, with latency. |
+| `llm.models` | provider, live=false | read | llm.models — model ids one provider offers (live=true asks its /models). |
+| `llm.providers` | fields? | read | llm.providers — the model providers this hub can use: id, kind, host, offered models, last check. |
 | `notify.channels` | — | read | Which notification channels are running on this hub. |
 | `notify.send` | text, channel='all' | write | Send a notification to the chat integrations. |
 | `persona.assign` | scope, profile='', target='', note='' | admin | Assign a profile at a scope: `default` (everyone), `band` (band id), `family` (claude-code, codex, hermes, vo… |
@@ -135,6 +138,9 @@ Scheduled, branching work the hub runs. `rook_jobs(action="describe_schema")` gi
 
 ### knowledge
 The shared wiki. Use the `rook_knowledge` tool: `search` before starting (5 hits, each with the passage that matched and its `section`; `data.limit`/`data.fields` for more), `get` a page by id or slug (its [[links]], backlinks and semantically `related` pages come as `{slug, title, gist}` stubs: get one by slug, no new search), `create` a page with a unique `request_id`. Over the band the same actions are `knowledge.read` (search/get/list/context/status/bands) and `knowledge.write` (create/update/link/retract) on worker `rook`; band callers reach only the read cap by default. Semantic search needs an embedding service (setting `embedder`).
+
+### model providers
+The language models this hub can reach: `llm.providers` (ids, hosts, models), `llm.models(provider=…)`, `llm.check(provider=…)` on worker `rook`. Read only; the home agent uses one of them.
 
 ### notify
 `rook_call(worker="rook", cap="notify.send", args={"text": "..."})` posts a notification to every configured chat integration (Telegram, Discord); `channel="telegram"` picks one.

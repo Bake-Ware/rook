@@ -117,6 +117,11 @@ class HomeAgent(Plugin):
         setting("name", str, "home", pattern=NAME_RE.pattern, group="Home agent", order=2,
                 label="Name",
                 help="Chat identity agent:<name>; people address it as @<name>."),
+        setting("llm_provider", str, "", pattern=r"^([a-z0-9][a-z0-9_-]{0,31})?$", group="Model",
+                order=0, label="Model provider",
+                help="A provider from Manage > Model providers (llmanifold, or one added there). "
+                     "Set: its address and key are used, and the base URL and API key below "
+                     "are not. Blank: the endpoint below."),
         setting("provider", str, "openai", choices=PROVIDERS, group="Model", order=1,
                 label="Provider", help="openai: any OpenAI-compatible /v1 endpoint."),
         setting("base_url", "url", "", group="Model", order=2, label="Base URL",
@@ -227,10 +232,28 @@ class HomeAgent(Plugin):
         for k, v in (overrides or {}).items():
             if k in cfg:
                 cfg[k] = v
+        # A named model provider (Manage > Model providers) supplies the
+        # endpoint and key, so everything reading base_url/api_key from here
+        # (the chat client, memory's embeddings) follows it.
+        pid = str(cfg.get("llm_provider") or "").strip()
+        if pid:
+            p = self.llm_provider(pid)
+            cfg["_provider"] = pid
+            cfg["base_url"] = p.base_url if p is not None else ""
+            cfg["api_key"] = p.api_key if p is not None else ""
+            if p is not None and not str(cfg.get("model") or "").strip():
+                cfg["model"] = p.default_model or (p.models[0] if len(p.models) == 1 else "")
         return cfg
+
+    def llm_provider(self, provider_id: str):
+        """A provider from the model providers plugin, or None."""
+        llm = self._node.plugin("llm") if self._node is not None else None
+        return llm.get(provider_id) if llm is not None else None
 
     def missing(self, cfg: dict | None = None) -> list[str]:
         cfg = cfg or self.config()
+        if cfg.get("_provider") and not cfg.get("base_url"):
+            return ["llm_provider"] + (["model"] if not str(cfg.get("model") or "").strip() else [])
         return [k for k in ("base_url", "model") if not str(cfg.get(k) or "").strip()]
 
     def _api_key(self, ref: str | None, actor: str | None = None,
@@ -254,6 +277,9 @@ class HomeAgent(Plugin):
         cfg = cfg or self.config()
         if cfg.get("provider", "openai") not in PROVIDERS:
             raise HomeError(f"provider must be one of {list(PROVIDERS)}")
+        if cfg.get("_provider") and not str(cfg.get("base_url") or "").strip():
+            raise HomeError(f"the model provider {cfg['_provider']!r} is not available "
+                            "(Manage > Model providers)")
         if not str(cfg.get("base_url") or "").strip():
             raise HomeError("set the home agent's base URL first")
         if need_model and not str(cfg.get("model") or "").strip():
@@ -728,7 +754,8 @@ class HomeAgent(Plugin):
             from urllib.parse import urlparse
             host = urlparse(str(cfg.get("base_url") or "")).netloc
         return {"enabled": self.enabled(), "identity": self.identity, "name": self.agent_name,
-                "provider": cfg.get("provider"), "endpoint_host": host,
+                "provider": cfg.get("provider"), "llm_provider": cfg.get("_provider") or "",
+                "endpoint_host": host,
                 "model": cfg.get("model") or "", "missing": self.missing(cfg),
                 "tools": bool(cfg.get("tools")), "key_set": bool(cfg.get("api_key")),
                 "chat": self._store() is not None, "last_error": self.last_error}
@@ -768,9 +795,14 @@ class HomeAgent(Plugin):
         if vault is not None:
             with contextlib.suppress(Exception):
                 secrets = [s["name"] for s in vault.list()]
+        llm_providers = []
+        llm = self._node.plugin("llm") if self._node is not None else None
+        if llm is not None:
+            with contextlib.suppress(Exception):
+                llm_providers = [p.describe() for p in llm.providers()]
         return {"view": "home", "settings": rows, "status": self.status(),
                 "personas": personas, "secrets": secrets, "activity": list(self.activity),
-                "providers": list(PROVIDERS),
+                "providers": list(PROVIDERS), "llm_providers": llm_providers,
                 "history": svc.store.history(key="home.", limit=30)}
 
     def _form(self, data: dict) -> dict:
@@ -843,6 +875,10 @@ class HomeAgent(Plugin):
         saved key was used."""
         saved = self.config()
         cfg = self.config(form)
+        if cfg.get("_provider"):
+            # The provider's own key, which only ever goes to the provider's
+            # own address (both set on Model providers, not in this form).
+            return cfg, ""
         saved_ref = str(saved.get("api_key") or "").strip()
         form_ref = str(form.get("api_key", saved_ref) or "").strip()
         same_url = (base_url(str(cfg.get("base_url") or ""))
