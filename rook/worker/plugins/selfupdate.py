@@ -61,6 +61,10 @@ _WIN_TASK = "RookBandWorker"      # matches PS_BOOTSTRAP's Register-ScheduledTas
 _POLL_SECS = float(os.environ.get("ROOK_UPDATE_POLL", "300"))  # manifest check interval
 _HEALTH_SECS = 60.0        # alive-only check, used when the band gate is not enforced
 _MAX_BOOT_ATTEMPTS = 3     # boots into a new build without health before rolling back
+# Boots of any kind (crashes, or restarts by a run that had stayed up, such as
+# a settings restart) before a build still unverified is treated as a crash
+# loop: each boot opens a fresh gate window, so this bounds the total.
+_MAX_BOOTS = 8
 # Band-reachability gate (see _band_gate): a new build that cannot complete a
 # band round trip within ROOK_UPDATE_HEALTH_SECS is rolled back at once.
 _GATE_SECS = 180.0
@@ -75,6 +79,25 @@ _CONTACT_WINDOW = 600.0
 # this long (worker.check(force=true) still installs it). Without it the hub's
 # push loop would re-push the same build every few minutes.
 _RETRY_BAD_SECS = 24 * 3600.0
+# After a rollback the restored build checks the band too. If it can't reach
+# it either, the band (hub outage, sleep, network) was the likely cause, not
+# the new build: the result is "inconclusive" and the retry wait is short.
+_RETRY_INCONCLUSIVE_SECS = 3600.0
+# A gate loop tick that comes back this much later than planned means the
+# host was suspended; the deadline moves out by the gap.
+_SUSPEND_GAP_SECS = 30.0
+
+
+def _now() -> float:
+    """The gate's clock (monotonic; a seam for tests)."""
+    return time.monotonic()
+
+
+def _boot_id() -> str:
+    """This process's id (rook.worker.core.BOOT_ID): a plugin reload keeps
+    it, a restart or re-exec gets a new one."""
+    from ..core import BOOT_ID
+    return BOOT_ID
 _UA = "rook-worker"        # Cloudflare blocks the default urllib User-Agent
 
 
@@ -144,6 +167,7 @@ class SelfUpdatePlugin(Plugin):
         self._stopping = False
         self._converge_task: asyncio.Task | None = None
         self._health_task: asyncio.Task | None = None
+        self._recheck_task: asyncio.Task | None = None
         # In-band OTA (telesthete Drop) state, wired by bind_worker.
         self._worker = None
         self._ota_rx = None          # active OtaDropReceiver, if a push is running
@@ -271,7 +295,7 @@ class SelfUpdatePlugin(Plugin):
 
     async def stop(self) -> None:
         self._stopping = True
-        for t in (self._converge_task, self._health_task):
+        for t in (self._converge_task, self._health_task, self._recheck_task):
             if t is not None:
                 t.cancel()
         # A reload binds a new instance, which registers its own handler; the
@@ -388,7 +412,7 @@ class SelfUpdatePlugin(Plugin):
         hub, dashboard and rook_workers show why this node is behind."""
         from .._build_info import BUILD
         r = self._last_result()
-        if not r or r.get("result") != "rolled_back":
+        if not r or r.get("result") not in ("rolled_back", "inconclusive"):
             return None
         # The restored build, or the bad one in its last seconds before the
         # restart (a stale record never shows on a later build).
@@ -613,7 +637,12 @@ class SelfUpdatePlugin(Plugin):
                            # Seconds since this (old) build last heard the band,
                            # None if never: decides whether the new build's
                            # band gate is enforced (see _gate_enforced).
-                           "band_seen_ago": self._band_seen_ago()})
+                           "band_seen_ago": self._band_seen_ago(),
+                           # Whether this build had someone to probe (a peer
+                           # announced, or a request was answered): on a band
+                           # where nothing announces (a hub without its node)
+                           # the gate could never pass, so it isn't enforced.
+                           "probe_target": self._had_probe_target()})
         log.info("updated bundle build %s -> %s; restarting", from_build, target)
         self._schedule_restart(self._current_argv())
         return {"ok": True, "action": "updated", "from_build": from_build,
@@ -667,10 +696,14 @@ class SelfUpdatePlugin(Plugin):
         """Why ``target`` must not be applied again yet: it was rolled back
         here recently. None when it may be applied."""
         r = self._last_result()
-        if not r or r.get("result") != "rolled_back" or r.get("from_build") != target:
+        if not r or r.get("from_build") != target:
+            return None
+        wait = {"rolled_back": _RETRY_BAD_SECS,
+                "inconclusive": _RETRY_INCONCLUSIVE_SECS}.get(r.get("result"))
+        if wait is None:
             return None
         try:
-            if time.time() - float(r.get("at", 0)) >= _RETRY_BAD_SECS:
+            if time.time() - float(r.get("at", 0)) >= wait:
                 return None
         except (TypeError, ValueError):
             return None
@@ -684,6 +717,18 @@ class SelfUpdatePlugin(Plugin):
             return None
         st = self._read_state() or {}
         return f"still verifying build {st.get('target_build')}"
+
+    def _had_probe_target(self) -> bool | None:
+        """Whether the bound worker has (had) someone to probe; None without
+        a worker that tracks it."""
+        w = self._worker
+        peers = getattr(w, "band_peers", None)
+        if not callable(peers):
+            return None
+        try:
+            return bool(peers()) or getattr(w, "band_rtt_at", None) is not None
+        except Exception:
+            return None
 
     def _band_seen_ago(self) -> int | None:
         """Seconds since the bound worker last received an authenticated band
@@ -706,19 +751,33 @@ class SelfUpdatePlugin(Plugin):
             log.warning("running build %s after rolling back build %s: %s", BUILD,
                         st.get("prev_build"), st.get("reason", "unknown"))
             self._clear_state()
+            if st.get("recheck") and st.get("target_build") == BUILD:
+                self._recheck_task = asyncio.create_task(
+                    self._recheck_band(st.get("prev_build")))
             return
         if st.get("stage") not in ("swapped", "verifying"):
             self._clear_state()
             return
         target = st.get("target_build")
         if BUILD == target:
-            st["attempts"] = int(st.get("attempts", 0)) + 1
+            boot = _boot_id()
+            if st.get("boot") != boot:
+                # A real boot (a plugin reload keeps the boot id and counts
+                # for nothing). It is a crash boot only if the previous run
+                # died before it had stayed up _HEALTH_SECS: a settings
+                # restart in the window is not a crash.
+                prev = st.get("boot")
+                if prev is None or st.get("survived") != prev:
+                    st["attempts"] = int(st.get("attempts", 0)) + 1
+                st["boots"] = int(st.get("boots", 0)) + 1
+                st["boot"] = boot
             st["stage"] = "verifying"
-            if st["attempts"] > _MAX_BOOT_ATTEMPTS:
-                log.error("build %s failed to stay healthy after %d boots; rolling back",
-                          target, st["attempts"] - 1)
-                await self._rollback(st, f"crash loop: {st['attempts'] - 1} boots "
-                                         "without staying up")
+            if st.get("attempts", 0) > _MAX_BOOT_ATTEMPTS or st.get("boots", 0) > _MAX_BOOTS:
+                log.error("build %s failed to stay healthy (%d crash boots, %d boots); "
+                          "rolling back", target, st.get("attempts", 0), st.get("boots", 0))
+                await self._rollback(st, f"crash loop: {st.get('attempts', 0)} crash "
+                                         f"boot(s) of {st.get('boots', 0)} without "
+                                         "being verified")
                 return
             self._write_state(st)
             if self._gate_enforced(st):
@@ -731,21 +790,32 @@ class SelfUpdatePlugin(Plugin):
             self._clear_state()
 
     def _gate_enforced(self, st: dict) -> bool:
-        """Whether this update boot must prove band contact. Not when the
-        gate is off, no worker (transport) is bound, or the old build had not
-        heard the band within _CONTACT_WINDOW before it swapped (including a
-        swap by a build that predates the gate and recorded nothing): then
-        the band is likely down for reasons a rollback can't fix."""
+        """Whether this update boot must prove band contact. Not when the gate
+        is off or no worker (transport) is bound; and not unless the old build
+        swapped recently (_CONTACT_WINDOW), had heard the band within that
+        window, and had a probe target. A swap by a build that predates the
+        gate records none of that. Otherwise the band was likely unreachable
+        (or unprobeable) for reasons a rollback can't fix."""
         secs = _gate_secs()
         if secs <= 0:
             return False
         if self._worker is None or not callable(getattr(self._worker, "request", None)):
             return False
         ago = st.get("band_seen_ago")
+        why = None
         if not isinstance(ago, (int, float)) or ago > _CONTACT_WINDOW:
-            log.info("update to build %s: band gate not enforced (no band contact "
-                     "before the update); using the %ds alive check",
-                     st.get("target_build"), int(_HEALTH_SECS))
+            why = "no band contact before the update"
+        elif st.get("probe_target") is not True:
+            why = "no peer to probe before the update"
+        else:
+            try:
+                if time.time() - float(st.get("at", 0)) >= _CONTACT_WINDOW:
+                    why = "the update was swapped in too long ago"
+            except (TypeError, ValueError):
+                why = "no swap time"
+        if why:
+            log.info("update to build %s: band gate not enforced (%s); using the "
+                     "%ds alive check", st.get("target_build"), why, int(_HEALTH_SECS))
             return False
         return True
 
@@ -755,6 +825,14 @@ class SelfUpdatePlugin(Plugin):
         except asyncio.CancelledError:
             return
         self._confirm(target, "alive")
+
+    def _mark_survived(self) -> None:
+        """Record that this run stayed up _HEALTH_SECS, so its restart (a
+        settings change, worker.restart) isn't counted as a crash boot."""
+        st = self._read_state()
+        if st and st.get("stage") == "verifying" and st.get("boot") == _boot_id():
+            st["survived"] = st["boot"]
+            self._write_state(st)
 
     def _confirm(self, target: int, check: str) -> None:
         st = self._read_state()
@@ -768,52 +846,97 @@ class SelfUpdatePlugin(Plugin):
                                 "from_build": st.get("prev_build"), "check": check})
             log.info("update to build %s verified healthy (%s)", target, check)
 
+    async def _await_round_trip(self, window: float, on_tick=None) -> tuple[bool, int]:
+        """Wait up to ``window`` seconds for the bound worker to complete a
+        band round trip, probing a peer it heard announce every _PROBE_SECS.
+        Returns (proven, probes sent). A tick that comes back much later than
+        planned means the host slept: the deadline moves out by the gap, so a
+        suspend doesn't use up the window. ``on_tick(elapsed)`` runs each
+        tick."""
+        w = self._worker
+        began = _now()
+        deadline = began + window
+        next_probe = began
+        tries = 0
+
+        def resumed(planned: float) -> None:
+            nonlocal deadline, next_probe
+            gap = _now() - planned
+            if gap > _SUSPEND_GAP_SECS:
+                log.info("band gate: %.0fs gap (host suspended?); extending the window", gap)
+                deadline += gap
+                next_probe = _now()
+
+        while getattr(w, "band_rtt_at", None) is None:
+            now = _now()
+            if on_tick is not None:
+                on_tick(now - began)
+            if now >= deadline:
+                break
+            peers = w.band_peers() if callable(getattr(w, "band_peers", None)) else []
+            if peers and now >= next_probe:
+                peer = peers[tries % len(peers)]
+                tries += 1
+                next_probe = now + _PROBE_SECS
+                timeout = max(0.1, min(_PROBE_TIMEOUT, deadline - now))
+                try:
+                    await w.request(_PROBE_CAP, {"prefix": "worker.status"}, target=peer,
+                                    timeout=timeout)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:     # timeout, or the link is down
+                    log.debug("band probe to %s failed: %s", peer, e)
+                resumed(now + timeout)
+                continue
+            # Tick at most 1 s: catch a reply to another request, or the first
+            # announce that gives us someone to probe.
+            wake = min(deadline, now + 1.0, next_probe if peers else now + 1.0)
+            await asyncio.sleep(max(0.05, wake - now))
+            resumed(max(wake, now + 0.05))
+        return getattr(w, "band_rtt_at", None) is not None, tries
+
     async def _band_gate(self, target: int) -> None:
         """Keep the new build only once it has proven two-way band contact: a
         reply to one of its own requests. That covers everything the old build
         relied on — our frames are sealed so peers open them, the relay
         forwards both ways, our route declaration lets the reply find us, and
         we decrypt what comes back — where staying alive proves none of it.
+        It proves *outbound* round trips (our calls answered), not that peers'
+        calls reach our caps; those ride the same path, but the gate does not
+        test them separately.
 
-        Any reply counts (e.g. the hub fetching a pushed secret); otherwise we
-        probe: ``caps.describe`` aimed at a peer we heard announce, the hub
-        node first (it announces every ~30 s, so a healthy band always has
-        one). An error reply proves the round trip just as well. No proof
-        within the window: roll back now instead of waiting for crash boots,
-        since a build that can't reach the band can't be fixed over it."""
+        Any reply counts, even a late one (e.g. the hub answering a pushed
+        secret fetch); otherwise we probe: ``caps.describe`` aimed at a peer
+        we heard announce, the hub node first (it announces every ~30 s). An
+        error reply proves the round trip just as well. No proof within the
+        window: roll back now instead of waiting for crash boots, since a
+        build that can't reach the band can't be fixed over it. If nobody
+        announced at all but the band was heard, there is no one to ask: the
+        alive check decides instead."""
         w = self._worker
-        loop = asyncio.get_running_loop()
-        began = loop.time()
-        deadline = began + _gate_secs()
-        next_probe = began
-        tries = 0
+        marked = False
+
+        def tick(elapsed: float) -> None:
+            nonlocal marked
+            if not marked and elapsed >= _HEALTH_SECS:
+                marked = True
+                self._mark_survived()
+
+        began = _now()
         try:
-            while getattr(w, "band_rtt_at", None) is None:
-                now = loop.time()
-                if now >= deadline:
-                    break
-                peers = w.band_peers() if callable(getattr(w, "band_peers", None)) else []
-                if peers and now >= next_probe:
-                    peer = peers[tries % len(peers)]
-                    tries += 1
-                    next_probe = now + _PROBE_SECS
-                    try:
-                        await w.request(_PROBE_CAP, {"prefix": "worker.status"}, target=peer,
-                                        timeout=max(0.1, min(_PROBE_TIMEOUT, deadline - now)))
-                    except Exception as e:     # timeout, or the link is down
-                        log.debug("band probe to %s failed: %s", peer, e)
-                    continue
-                # Tick at most 1 s: catch a reply to another request, or the
-                # first announce that gives us someone to probe.
-                wake = min(deadline, now + 1.0, next_probe if peers else now + 1.0)
-                await asyncio.sleep(max(0.05, wake - now))
+            proven, tries = await self._await_round_trip(_gate_secs(), tick)
         except asyncio.CancelledError:
             return
-        if getattr(w, "band_rtt_at", None) is not None:
-            log.info("build %s proved band contact after %.0fs", target, loop.time() - began)
+        if proven:
+            log.info("build %s proved band contact after %.0fs", target, _now() - began)
             self._confirm(target, "band")
             return
         heard = getattr(w, "band_rx_at", None) is not None
+        if heard and tries == 0:
+            log.warning("build %s: band heard but no peer announced to probe; keeping it "
+                        "on the alive check", target)
+            self._confirm(target, "alive (no probe target)")
+            return
         reason = ("no band contact: " + (
             f"heard the band but got no reply to {tries} probe(s) in {int(_gate_secs())}s"
             if heard else f"heard nothing from the band in {int(_gate_secs())}s"))
@@ -821,9 +944,32 @@ class SelfUpdatePlugin(Plugin):
         if not st or st.get("target_build") != target:
             return      # resolved elsewhere meanwhile
         log.error("build %s: %s; rolling back", target, reason)
-        await self._rollback(st, reason)
+        await self._rollback(st, reason, recheck=True)
 
-    async def _rollback(self, st: dict, reason: str = "crash loop") -> None:
+    async def _recheck_band(self, bad_build) -> None:
+        """Run by the build a band-gate rollback restored: can *it* reach the
+        band? If so the new build was at fault and the long retry wait stands.
+        If not, the band was the problem (hub outage, network, sleep): record
+        the result as inconclusive, which only holds the build back an hour."""
+        if self._worker is None or not callable(getattr(self._worker, "request", None)):
+            return
+        try:
+            proven, tries = await self._await_round_trip(_gate_secs())
+        except asyncio.CancelledError:
+            return
+        r = self._last_result() or {}
+        if r.get("result") != "rolled_back" or r.get("from_build") != bad_build:
+            return
+        if proven:
+            log.info("restored build reached the band; build %s stays held back", bad_build)
+            return
+        why = f"{r.get('reason', 'no band contact')}; the previous build could not reach " \
+              "the band either (inconclusive)"
+        log.warning("build %s rollback inconclusive: %s", bad_build, why)
+        self._write_result({**r, "result": "inconclusive", "reason": why})
+
+    async def _rollback(self, st: dict, reason: str = "crash loop", *,
+                        recheck: bool = False) -> None:
         if not _PREV.exists():
             log.error("rollback requested (%s) but no .prev bundle; clearing state", reason)
             self._write_result({"result": "unverified", "build": st.get("target_build"),
@@ -834,13 +980,16 @@ class SelfUpdatePlugin(Plugin):
             import shutil
             shutil.copy2(_PREV, _PYZ)
             os.chmod(_PYZ, 0o755)
-        except Exception:
+        except Exception as e:
             log.exception("rollback copy failed")
+            self._write_result({"result": "rollback_failed", "build": st.get("target_build"),
+                                "reason": f"{reason}; restoring the previous bundle "
+                                          f"failed: {type(e).__name__}: {e}"})
             self._clear_state()
             return
         self._write_state({"stage": "rolledback", "target_build": st.get("prev_build"),
                            "prev_build": st.get("target_build"), "attempts": 0,
-                           "reason": reason, "at": int(time.time())})
+                           "reason": reason, "recheck": recheck, "at": int(time.time())})
         self._write_result({"result": "rolled_back", "reason": reason,
                             "from_build": st.get("target_build"),
                             "to_build": st.get("prev_build")})

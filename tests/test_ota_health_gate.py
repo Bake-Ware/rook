@@ -67,9 +67,9 @@ def su(tmp_path, monkeypatch):
     return p
 
 
-def _swapped(seen_ago=5, **extra):
+def _swapped(seen_ago=5, probe_target=True, **extra):
     st = {"stage": "swapped", "target_build": BUILD, "prev_build": BUILD - 1,
-          "attempts": 0, "at": int(time.time()), **extra}
+          "attempts": 0, "at": int(time.time()), "probe_target": probe_target, **extra}
     if seen_ago != "missing":
         st["band_seen_ago"] = seen_ago
     su_mod._STATE.write_text(json.dumps(st), encoding="utf-8")
@@ -120,6 +120,8 @@ async def test_any_reply_counts_without_probing(su):
 @pytest.mark.parametrize("heard", [True, False])
 @pytest.mark.asyncio
 async def test_no_band_contact_rolls_back_at_the_deadline(su, monkeypatch, heard):
+    # heard=False: nothing at all arrives (peers are only learned from
+    # announces, so there is no one to probe either).
     """(b) No round trip within ROOK_UPDATE_HEALTH_SECS: .prev restored and a
     restart scheduled at once (no waiting for three crash boots), the reason
     in update_state.json, the result file, the log and the heartbeat."""
@@ -133,6 +135,7 @@ async def test_no_band_contact_rolls_back_at_the_deadline(su, monkeypatch, heard
     assert len(su.restarts) == 1
     st = json.loads(su_mod._STATE.read_text(encoding="utf-8"))
     assert st["stage"] == "rolledback" and st["reason"].startswith("no band contact")
+    assert st["recheck"] is True
     assert ("no reply to" in st["reason"]) is heard
     assert ("heard nothing" in st["reason"]) is not heard
     if heard:   # probes rotate over the peers heard
@@ -168,15 +171,21 @@ async def test_no_band_contact_rolls_back_at_the_deadline(su, monkeypatch, heard
     assert restored._skip_reason(BUILD) is None
 
 
-@pytest.mark.parametrize("seen_ago", [None, "missing", 3600])
+@pytest.mark.parametrize("case", [
+    {"seen_ago": None}, {"seen_ago": "missing", "probe_target": None},   # pre-gate swap
+    {"seen_ago": 3600},
+    {"probe_target": False},                    # node-less hub: nobody announced
+    {"at": int(time.time()) - 3600},            # swapped long ago (host was off)
+])
 @pytest.mark.asyncio
-async def test_gate_not_enforced_without_recent_contact_before_the_update(su, seen_ago):
+async def test_gate_not_enforced_without_recent_contact_before_the_update(su, case):
     """(c) The old build had not heard the band (never, recorded nothing
-    because it predates the gate, or too long ago): rolling back can't fix an
-    unreachable band, so only the alive check applies."""
+    because it predates the gate, or too long ago), had nobody to probe, or
+    the swap itself is old: rolling back can't fix that, so only the alive
+    check applies."""
     w = FakeWorker(peers=[], answer=False, heard=False)
     su._worker = w
-    _swapped(seen_ago=seen_ago)
+    _swapped(**case)
     await _boot(su)
     assert w.calls == [] and su.restarts == []
     assert not su_mod._STATE.exists() and not su_mod._PREV.exists()
@@ -249,23 +258,26 @@ async def test_swap_records_pre_update_band_contact(su):
 
 # -- over a real relay -------------------------------------------------------
 
-@pytest.mark.parametrize("peer", [True, False])
+@pytest.mark.parametrize("case", ["peer", "nodeless-swap", "nodeless-calls"])
 @pytest.mark.asyncio
-async def test_gate_over_a_real_band(band_factory, su, monkeypatch, tmp_path, peer):  # noqa: F811
-    """A real Worker after an update boot: with a peer on the band its probe
-    gets an (addressed) reply and the build is kept; alone on the band it is
-    rolled back. Also checks the Worker's contact stamps."""
+async def test_gate_over_a_real_band(band_factory, su, monkeypatch, tmp_path, case):  # noqa: F811
+    """A real Worker after an update boot over the test relay.
+
+    peer: another worker announces; the probe gets an (addressed) reply and
+    the build is kept. nodeless-*: a hub without its node (only a band
+    client, which never announces): the old build recorded no probe target,
+    so the gate isn't enforced; and if it was enforced anyway (a peer left)
+    but the hub keeps calling us, the alive check decides, no rollback."""
     from rook.worker import core
     from rook.worker.core import Worker
     from rook.worker.transports.telesthete_hub import TelestheteHubTransport
     monkeypatch.setenv("ROOK_UPDATE_HEALTH_SECS", "3")
-    monkeypatch.setattr(core, "_WORKER_ID_FILE", tmp_path / "gated-id")
     band = await band_factory(routing=True)
     other = None
-    if peer:
+    if case == "peer":
         other = await band.worker(monkeypatch, tmp_path, name="peer")
     monkeypatch.setattr(core, "_WORKER_ID_FILE", tmp_path / "gated-id")
-    _swapped()
+    _swapped(probe_target=case != "nodeless-swap")
     t = TelestheteHubTransport(psk=PSK, hub_host="127.0.0.1", hub_port=band.relay.port)
     w = Worker(t, enabled=["selfupdate"], name="gated")
     gated = next(p for p in w.plugins if p.NAMESPACE == "worker")
@@ -274,26 +286,34 @@ async def test_gate_over_a_real_band(band_factory, su, monkeypatch, tmp_path, pe
     band.workers.append(w)
     band.tasks.append(asyncio.create_task(w.run()))
     await _until(lambda: gated._health_task is not None)
-    if peer:
-        async def poke():
-            while True:        # announces come every 30 s; don't wait for one
-                await asyncio.sleep(0.2)
+    client = await band.client() if case != "peer" else None
+
+    async def poke():
+        while True:        # announces come every 30 s; don't wait for one
+            await asyncio.sleep(0.2)
+            if other is not None:
                 await other.announce()
-        poker = asyncio.create_task(poke())
-        try:
-            await asyncio.wait_for(gated._health_task, 10)
-        finally:
-            poker.cancel()
+            if case == "nodeless-calls":
+                await client.call("caps.describe", target=w.worker_id, timeout=2)
+
+    poker = asyncio.create_task(poke())
+    try:
+        await asyncio.wait_for(gated._health_task, 10)
+    finally:
+        poker.cancel()
+    assert restarts == [] and not su_mod._PREV.exists()
+    assert su_mod._PYZ.read_bytes() == b"new build"
+    check = gated._last_result()["check"]
+    if case == "peer":
+        assert check == "band"
         assert w.band_rx_at is not None and w.band_rtt_at is not None
         assert w.band_peers()[0] == other.worker_id
         assert w.worker_id not in w.band_peers()
-        assert restarts == [] and not su_mod._PREV.exists()
-        assert gated._last_result()["check"] == "band"
+    elif case == "nodeless-swap":
+        assert check == "alive"
     else:
-        await asyncio.wait_for(gated._health_task, 10)
-        assert w.band_rx_at is None and w.band_rtt_at is None
-        assert len(restarts) == 1 and su_mod._PYZ.read_bytes() == b"old build"
-        assert "heard nothing" in gated._last_result()["reason"]
+        assert check == "alive (no probe target)" and w.band_rx_at is not None
+        assert w.band_peers() == []
 
 
 def test_worker_contact_stamps_ignore_our_own_traffic(tmp_path, monkeypatch):
@@ -318,3 +338,181 @@ def test_worker_contact_stamps_ignore_our_own_traffic(tmp_path, monkeypatch):
     for i in range(Worker.BAND_PEERS_MAX + 5):
         asyncio.run(w._on_message(json.dumps({"kind": "announce", "worker_id": f"p{i}"}).encode(), (0,)))
     assert len(w.band_peers()) == Worker.BAND_PEERS_MAX
+
+
+# -- review follow-ups -------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_heard_but_nobody_to_probe_keeps_the_build(su):
+    """Calls arrive (the band works) but no peer announces: nothing to
+    probe, so the alive check decides instead of a rollback."""
+    su._worker = FakeWorker(peers=[], answer=False, heard=True)
+    _swapped()
+    await _boot(su)
+    assert su.restarts == [] and su._worker.calls == []
+    assert su._last_result()["check"] == "alive (no probe target)"
+
+
+@pytest.mark.parametrize("restored_reaches_band", [True, False])
+@pytest.mark.asyncio
+async def test_rollback_is_rechecked_by_the_restored_build(su, monkeypatch,
+                                                         restored_reaches_band):
+    """Hub outage mid-window: the new build is rolled back, then the restored
+    build can't reach the band either, so the result is inconclusive and the
+    build is held back only for about an hour. If the restored build does
+    reach the band, the new build was at fault: the 24 h wait stands."""
+    su._worker = FakeWorker(answer=False)
+    _swapped()
+    await _boot(su)
+    assert su._last_result()["result"] == "rolled_back"
+
+    monkeypatch.setattr("rook.worker._build_info.BUILD", BUILD - 1)
+    restored = SelfUpdatePlugin()
+    restored._worker = FakeWorker(answer=restored_reaches_band)
+    await restored._boot_check()
+    await asyncio.wait_for(restored._recheck_task, 5)
+    res = restored._last_result()
+    assert res["from_build"] == BUILD and res["to_build"] == BUILD - 1
+    assert restored._skip_reason(BUILD)
+    if restored_reaches_band:
+        assert res["result"] == "rolled_back"
+        monkeypatch.setattr(su_mod, "_RETRY_INCONCLUSIVE_SECS", 0.0)
+        assert restored._skip_reason(BUILD)                  # still 24 h
+    else:
+        assert res["result"] == "inconclusive" and "inconclusive" in res["reason"]
+        assert restored.heartbeat()["update"].endswith("(inconclusive)")
+        monkeypatch.setattr(su_mod, "_RETRY_INCONCLUSIVE_SECS", 0.0)
+        assert restored._skip_reason(BUILD) is None          # short wait only
+
+
+@pytest.mark.asyncio
+async def test_crash_loop_rollback_is_not_rechecked(su):
+    su._worker = FakeWorker()
+    _swapped(stage="verifying", attempts=su_mod._MAX_BOOT_ATTEMPTS)
+    await su._boot_check()
+    assert json.loads(su_mod._STATE.read_text(encoding="utf-8"))["recheck"] is False
+
+
+@pytest.mark.asyncio
+async def test_suspend_gap_extends_the_window(su, monkeypatch):
+    """A gate tick that returns far later than planned (the host slept)
+    pushes the deadline out by the gap instead of rolling back at once."""
+    real = time.monotonic
+    jumped = {"by": 0.0}
+
+    def clock():
+        return real() + jumped["by"]
+
+    monkeypatch.setattr(su_mod, "_now", clock)
+    w = FakeWorker(peers=[], heard=True, answer=False)
+    w._peers = ["hub-node"]
+    su._worker = w
+    _swapped()
+
+    async def sleep_then_wake():
+        await asyncio.sleep(0.3)
+        jumped["by"] = 120.0              # "suspended" for two minutes: without
+        await asyncio.sleep(0.3)          # the extension the gate ends right here
+        w.band_rtt_at = real()            # the band is back after resume
+
+    t = asyncio.create_task(sleep_then_wake())
+    await _boot(su)
+    await t
+    assert su.restarts == [] and su._last_result()["check"] == "band"
+
+
+@pytest.mark.asyncio
+async def test_plugin_reload_does_not_count_as_a_boot(su):
+    """A reload of the selfupdate plugin re-runs the boot check in the same
+    process (same boot id): no attempt is counted."""
+    su._worker = FakeWorker()
+    _swapped(stage="verifying", attempts=su_mod._MAX_BOOT_ATTEMPTS,
+             boots=su_mod._MAX_BOOT_ATTEMPTS, boot=su_mod._boot_id())
+    await _boot(su)
+    assert su.restarts == [] and su._last_result()["check"] == "band"
+
+
+@pytest.mark.asyncio
+async def test_restart_after_staying_up_is_not_a_crash_boot(su):
+    """The previous run stayed up _HEALTH_SECS (e.g. restarted for a settings
+    change): its boot doesn't count as a crash. Total boots stay bounded."""
+    su._worker = FakeWorker()
+    _swapped(stage="verifying", attempts=su_mod._MAX_BOOT_ATTEMPTS, boots=3,
+             boot="previous-run", survived="previous-run")
+    await su._boot_check()
+    st = json.loads(su_mod._STATE.read_text(encoding="utf-8"))
+    assert st["attempts"] == su_mod._MAX_BOOT_ATTEMPTS and st["boots"] == 4
+    assert st["boot"] == su_mod._boot_id()
+    await asyncio.wait_for(su._health_task, 5)
+    assert su.restarts == []
+
+    su_mod._PREV.write_bytes(b"old build")      # the confirm above removed it
+    _swapped(stage="verifying", attempts=1, boots=su_mod._MAX_BOOTS,
+             boot="previous-run", survived="previous-run")
+    await su._boot_check()
+    assert len(su.restarts) == 1 and su._last_result()["reason"].startswith("crash loop")
+
+
+@pytest.mark.asyncio
+async def test_gate_marks_the_run_survived(su):
+    su._worker = FakeWorker(peers=["hub-node"], answer=False)
+    _swapped()
+    await su._boot_check()
+    await _until(lambda: json.loads(su_mod._STATE.read_text(encoding="utf-8"))
+                 .get("survived") == su_mod._boot_id(), timeout=3)
+    su._health_task.cancel()
+
+
+@pytest.mark.asyncio
+async def test_failed_rollback_copy_is_recorded(su, monkeypatch):
+    def broken(*a, **k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("shutil.copy2", broken)
+    su._worker = FakeWorker(answer=False)
+    _swapped()
+    await _boot(su)
+    res = su._last_result()
+    assert res["result"] == "rollback_failed" and "disk full" in res["reason"]
+    assert res["reason"].startswith("no band contact") and su.restarts == []
+
+
+@pytest.mark.asyncio
+async def test_swap_records_the_probe_target(su):
+    w = FakeWorker(peers=[])
+    su._worker = w
+
+    async def ok(path):
+        return True
+
+    su._smoke_test = ok
+    tmp = su_mod._WORKER_DIR / "band-worker.pyz.dl"
+    for peers, rtt, want in (([], None, False), (["hub-node"], None, True), ([], 1.0, True)):
+        w._peers, w.band_rtt_at = peers, rtt
+        tmp.write_bytes(b"newer")
+        await su._swap_and_restart(tmp, BUILD + 1, BUILD)
+        assert json.loads(su_mod._STATE.read_text(encoding="utf-8"))["probe_target"] is want
+
+
+@pytest.mark.asyncio
+async def test_late_reply_still_proves_the_round_trip(tmp_path, monkeypatch):
+    from rook.worker import core
+    from rook.worker.core import Worker
+
+    class T:
+        band_id = None
+        sent: list = []
+
+        async def send(self, payload):
+            self.sent.append(json.loads(payload))
+
+    monkeypatch.setattr(core, "_WORKER_ID_FILE", tmp_path / "id")
+    w = Worker(T(), enabled=[], name="me")
+    with pytest.raises(asyncio.TimeoutError):
+        await w.request("caps.describe", {}, target="hub", timeout=0.05)
+    mid = T.sent[-1]["id"]
+    await w._on_message(json.dumps({"id": "someone-else", "from": "hub", "ok": True}).encode(), (0,))
+    assert w.band_rtt_at is None
+    await w._on_message(json.dumps({"id": mid, "from": "hub", "ok": True}).encode(), (0,))
+    assert w.band_rtt_at is not None
+    await w._on_message(json.dumps({"id": ["junk"], "from": "hub", "ok": True}).encode(), (0,))
