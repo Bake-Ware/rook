@@ -19,6 +19,13 @@ Looked up as ``--config``, then ``$ROOK_HUB_DEPLOY_CONFIG``, then
       }
     }
 
+The merged hub (``rook hub serve``, one process) is one service instead::
+
+      "services": {
+        "hub": {"unit": "rook-hub.service",
+                "health": ["http://127.0.0.1:7005/health", "tcp://127.0.0.1:8765"]}
+      }
+
 ``mode`` picks the ONE release selector: ``systemd`` = a single
 ``<unit>.d/90-release.conf`` drop-in per unit; ``symlink`` = one
 ``current-<service>`` symlink per service (for installs not run by systemd, or
@@ -35,7 +42,8 @@ from pathlib import Path
 DEFAULT_PATH = Path("/etc/rook/hub-deploy.json")
 DROPIN_NAME = "90-release.conf"
 
-# The hub's two services. Preflight imports every ``modules`` entry and every
+# The hub's two services when no ``services`` are configured (the
+# two-process layout). Preflight imports every ``modules`` entry and every
 # submodule of each ``packages`` entry (except ``__main__``) with the service's
 # interpreter, from the new release, before anything is switched.
 DEFAULT_SERVICES = {
@@ -44,6 +52,16 @@ DEFAULT_SERVICES = {
     "mcp": {"unit": "rook-hub-mcp.service", "order": 90, "disruptive": True,
             "modules": ["rook.band_mcp.server"],
             "packages": ["rook.band_mcp", "rook.knowledge"]},
+}
+
+# Defaults a configured service of one of these names starts from. ``hub`` is
+# the merged process (``rook hub serve``: dashboard + MCP, one unit), the
+# layout to move to; configure it alone, as {"hub": {"unit": ...}}.
+SERVICE_TEMPLATES = {
+    **DEFAULT_SERVICES,
+    "hub": {"unit": "rook-hub.service", "order": 50, "disruptive": True,
+            "modules": ["rook.hub.serve", "rook.remote.bootstrap", "rook.band_mcp.server"],
+            "packages": ["rook.hub", "rook.remote", "rook.band_mcp", "rook.knowledge"]},
 }
 
 
@@ -158,7 +176,7 @@ def from_dict(raw: dict, path: Path = Path("<memory>")) -> Config:
     known = set(Service.__dataclass_fields__) - {"name"}
     for name, spec in services_raw.items():
         spec = dict(spec or {})
-        base = dict(DEFAULT_SERVICES.get(name, {}))
+        base = dict(SERVICE_TEMPLATES.get(name, {}))
         base.update(spec)
         unknown = set(base) - known
         if unknown:

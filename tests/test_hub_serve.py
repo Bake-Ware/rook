@@ -263,3 +263,17 @@ def test_rook_hub_serve_is_wired(monkeypatch):
     cli.main()
     assert deploy_cli.main(["serve", "--port", "2"]) == 0
     assert got == [["--port", "1"], ["--port", "2"]]
+
+
+def test_hub_deploy_knows_the_single_hub_service(tmp_path):
+    from rook.hubdeploy import config as cfgmod
+    from rook.hubdeploy import deploy as dp
+    cfg = cfgmod.from_dict({"root": str(tmp_path), "python": "/opt/rook-hub/venv/bin/python",
+                            "services": {"hub": {"health": ["http://127.0.0.1:7005/health"]}}})
+    (svc,) = cfg.ordered()
+    assert svc.unit == "rook-hub.service" and svc.disruptive
+    assert svc.modules[0] == "rook.hub.serve" and "rook.band_mcp" in svc.packages
+    assert "-m rook.hub.serve" in dp.units_text(cfg)
+    # Without a services block it is still the two-process layout.
+    cfg = cfgmod.from_dict({"root": str(tmp_path), "python": "/usr/bin/python3"})
+    assert [s.name for s in cfg.ordered()] == ["dashboard", "mcp"]

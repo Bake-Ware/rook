@@ -69,3 +69,15 @@ def test_worker_drop_and_dead_service(monkeypatch):
     # Right after a restart the roster is still refilling: no worker alert.
     hub(monkeypatch, {'workers': 3, 'mcp': {**mcp, 'uptime_secs': 30}})
     assert 'workers' not in watchdog.check_hub(state)
+
+
+def test_service_list_follows_the_hub_layout(monkeypatch):
+    checked = []
+    hub(monkeypatch, {'workers': 1, 'mcp': {'uptime_secs': 9}})
+    monkeypatch.setattr(subprocess, 'run', lambda argv, **k: checked.append(argv[-1]) or SimpleNamespace(stdout='active\n'))
+    watchdog.check_hub({})
+    assert checked == list(watchdog.SERVICES)
+    checked.clear()
+    monkeypatch.setenv('ROOK_WATCHDOG_SERVICES', 'rook-hub, telesthete-hub')
+    watchdog.check_hub({})
+    assert checked == ['rook-hub', 'telesthete-hub']
