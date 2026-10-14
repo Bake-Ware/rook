@@ -359,6 +359,9 @@
       <a id="tab-home" href="#home" onclick="showView('home');return false">Home agent</a>
       <a id="tab-memory" href="#memory" onclick="showView('memory');return false">Memory</a>
     </nav>
+    <nav aria-label="Help" class="nav-help">
+      <a id="tab-help" href="#help" onclick="showView('help');return false">Help</a>
+    </nav>
     <div class="sidebar-footer"><button class="art-toggle" id="art-toggle" type="button" hidden>Pause artwork</button><span class="live"><span class="dot" id="dot"></span><span id="count">Connecting…</span></span><a class="signout" href="/logout">Sign out</a></div>
   </aside>
   <header class="topbar">
@@ -428,6 +431,7 @@
     <div id="view-overview" hidden></div>
     <div id="view-start" hidden></div>
     <div id="view-knowledge" hidden></div>
+    <div id="view-help" hidden></div>
     <div id="view-jobs" hidden></div>
     <div id="view-guidance" hidden></div>
     <div id="view-vault" hidden></div>
@@ -1124,7 +1128,8 @@ const viewInfo={
  updates:['Updates','New Rook releases for the hub, your workers, apps and devices: what each one runs, and updating them safely.'],
  work:['Work','Projects and tasks on a board, a list and a timeline, and the huddle where agents check in with you.'],
  sessions:['Sessions','Start, watch, steer and resume agent and terminal sessions on every worker.'],
- install:['Install a worker','Connect another machine to your workspace.']
+ install:['Install a worker','Connect another machine to your workspace.'],
+ help:['Help','The Rook user manual: how every part of Rook works, in plain language.']
 };
 let knowledgeUI=null, knowledgeLoading=null, guidanceUI=null, guidanceLoading=null, vaultUI=null, vaultLoading=null;
 async function ensureVault(){
@@ -1132,6 +1137,15 @@ async function ensureVault(){
  if(!vaultLoading)vaultLoading=import('/account/vault/assets/vault.js').then(m=>m.mountVault($('#view-vault'))).then(ui=>vaultUI=ui).finally(()=>{vaultLoading=null;});
  return vaultLoading;
 }
+let manualUI=null, manualLoading=null;
+async function ensureManual(){
+ if(manualUI)return manualUI;
+ if(!manualLoading)manualLoading=import('/account/manual/assets/manual.js').then(m=>m.mountManual($('#view-help'))).then(ui=>manualUI=ui).finally(()=>{manualLoading=null;});
+ return manualLoading;
+}
+// After an update whose user manual differs from the knowledge base copy, the
+// operator is asked once (a banner; quiet for everyone else).
+function checkManual(){import('/account/manual/assets/manual.js').then(m=>m.checkManualUpdate(document.querySelector('.wrap'))).catch(()=>{});}
 let jobsUI=null, jobsLoading=null;
 let overviewUI=null, overviewLoading=null, startUI=null, startLoading=null;
 async function ensureOverview(){
@@ -1239,7 +1253,7 @@ async function ensureSettings(view){
 function showView(v,updateHistory=true){
  if(!viewInfo[v])v='overview';
  if(updateHistory&&location.hash.split('?')[0]!=='#'+v)history.pushState(null,'','#'+v);
- if(activeView===v){if(v==='account'&&settingsUI.account)settingsUI.account.refresh().catch(()=>{});if(v==='settings'&&settingsAreaUI&&settingsQuery())settingsAreaUI.activate(settingsQuery()).catch(()=>{});return;}
+ if(activeView===v){if(v==='help'&&manualUI)manualUI.activate().catch(()=>{});if(v==='account'&&settingsUI.account)settingsUI.account.refresh().catch(()=>{});if(v==='settings'&&settingsAreaUI&&settingsQuery())settingsAreaUI.activate(settingsQuery()).catch(()=>{});return;}
  settingsUI[activeView]?.deactivate();
  if(activeView==='sessions')sessionsUI?.deactivate();
  if(activeView==='work')tasksUI?.deactivate();
@@ -1267,6 +1281,7 @@ function showView(v,updateHistory=true){
  if(v==='memory')ensureMemory().then(ui=>{if(activeView==='memory')ui.activate();}).catch(e=>{$('#view-memory').textContent=e.message;});
  if(v==='guidance')ensureGuidance().then(ui=>{if(activeView==='guidance')ui.activate();}).catch(e=>{$('#view-guidance').textContent=e.message;});
  if(v==='jobs')ensureJobs().then(ui=>{if(activeView==='jobs')return ui.activate();}).catch(e=>{$('#view-jobs').textContent=e.message;});
+ if(v==='help')ensureManual().then(ui=>{if(activeView==='help')return ui.activate();}).catch(e=>{$('#view-help').textContent=e.message;});
  if(v==='knowledge')ensureKnowledge().then(ui=>{if(activeView==='knowledge')ui.activate();}).catch(e=>{$('#view-knowledge').textContent=e.message;});
  if(v==='sessions')ensureSessions().then(ui=>{if(activeView==='sessions')ui.activate();else ui.deactivate();}).catch(()=>{});
  if(v==='work')ensureTasks().then(ui=>{if(activeView==='work')ui.activate();}).catch(e=>{$('#view-work').textContent=e.message;});
@@ -1518,7 +1533,7 @@ function wireLinks(){
 }
 
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
-wireLinks(); routeFromHash(); loadBands(); loadWorkers();
+wireLinks(); routeFromHash(); loadBands(); loadWorkers(); checkManual();
 setInterval(loadWorkers,3000); setInterval(loadBands,20000);
 </script>
 <script type="module">

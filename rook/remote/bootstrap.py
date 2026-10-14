@@ -1391,7 +1391,8 @@ class CombinedServer:
                      "/account/bands/api", "/account/component", "/account/tokens/api",
                      "/account/session", "/account/settings/api", "/account/knowledge/api",
                      "/account/guidance/api", "/account/vault/api", "/account/jobs/api",
-                     "/account/plugins/api", "/account/huddle/api", "/account/ui/api")
+                     "/account/plugins/api", "/account/huddle/api", "/account/ui/api",
+                     "/account/manual/api")
     # Set (never Secure, holds nothing secret) on the bridge's redirect: if it
     # comes back without the account cookie, the browser dropped that cookie
     # and redirecting again would loop forever.

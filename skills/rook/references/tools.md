@@ -87,6 +87,10 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `job.write` | action, id?, data? | write | Write jobs: create\|update\|delete\|enable\|disable\|run\|cancel\|set_guardrails\|settings. |
 | `knowledge.read` | action='search', band?, id?, query='', data? | read | Read the shared wiki: search\|get\|list\|context\|status\|bands\|deck. |
 | `knowledge.write` | action, band?, id?, data?, request_id? | write | Write the shared wiki: create\|update\|link\|retract (needs request_id). |
+| `manual.get` | id, source='auto' | read | One manual page by id (`getting-started`; `manual-` prefix optional): title and Markdown body. |
+| `manual.list` | source='auto' | read | The manual's table of contents: id, title, since, deprecated, preview, and whether the page is read from the… |
+| `manual.status` | — | read | The bundled manual and its knowledge copy: version, page count, what an update would add, change and remove (… |
+| `manual.update` | action='update', overwrite? | admin | Update the knowledge copy (`action` update; `overwrite` = page ids whose local edits may be replaced), put th… |
 | `memory.consolidate` | force=false | write | Tidy up now: summarise conversations, roll up old ones, merge, fade, re-embed. |
 | `memory.edit` | id, text?, kind?, pinned?, about?, approved? | write | Change a memory: new text or kind replaces it (history kept). pinned keeps it from fading; approved lets a sk… |
 | `memory.forget` | id, purge=false, reason='' | write | Forget a memory. purge=true also erases its text and every earlier version (kept otherwise, as forgotten). |
@@ -155,6 +159,9 @@ Scheduled, branching work the hub runs. `rook_jobs(action="describe_schema")` gi
 
 ### knowledge
 The shared wiki. Use the `rook_knowledge` tool: `search` before starting (5 hits, each with the passage that matched and its `section`; `data.limit`/`data.fields` for more), `get` a page by id or slug (its [[links]], backlinks and semantically `related` pages come as `{slug, title, gist}` stubs: get one by slug, no new search), `create` a page with a unique `request_id`. Over the band the same actions are `knowledge.read` (search/get/list/context/status/bands) and `knowledge.write` (create/update/link/retract) on worker `rook`; band callers reach only the read cap by default. Semantic search needs an embedding service (setting `embedder`).
+
+### manual
+The Rook user manual (plain-language help for every feature). In the knowledge wiki it is the page `rook-manual` and its children `manual-<topic>`; `manual.list` and `manual.get(id)` on worker `rook` read it even when the wiki is off. Check it before explaining a Rook feature to a person.
 
 ### memory
 What the hub's home agent remembers (people, facts, conversations, skills). `memory.recall(query)` on worker `rook` searches shared memory (and your own); `memory.remember(text, kind)` (kind fact, or profile about yourself) adds one; `memory.forget(id)` removes one. Other people's memory, skills (procedures) and pinning are the operator's. Never store secrets. People browse and edit it on Manage > Memory.

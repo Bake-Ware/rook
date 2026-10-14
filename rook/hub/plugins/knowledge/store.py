@@ -72,6 +72,8 @@ NAMESPACE = 'knowledge'
 # A claim idle longer than this no longer collects auto-links, and another
 # actor may release it (docs/DESIGN-agent-work-system.md, grooming).
 STALE_CLAIM_SECS = 2 * 3600
+# review_note on a source-verified page someone else edited (attrs.verified_from).
+SOURCE_EDITED = 'Edited after it was imported from '
 CASCADE_STATES = ('paused', 'archived')
 
 
@@ -411,6 +413,18 @@ class KnowledgeStore:
         if reverted:
             attrs['verification'] = 'unverified'
             attrs['review_note'] = 'Edited after ' + r['attrs'].get('reviewed_label', r['attrs']['reviewed_by']) + ' verified it; needs another look'
+        # A page verified against a source by an importer (the user manual
+        # sets attrs.verified_from {actor, label}): a change by anyone else
+        # means it no longer says what the source says.
+        src = r['attrs'].get('verified_from') if r['kind'] == 'knowledge' else None
+        if isinstance(src, dict) and src.get('actor'):
+            changed_text = title != r['title'] or body != r['body']
+            if actor_id(actor) != src['actor']:
+                if changed_text and attrs.get('verification') == 'verified':
+                    attrs['verification'] = 'unverified'
+                    attrs['review_note'] = SOURCE_EDITED + str(src.get('label') or src['actor']) + '; it may no longer match it'
+            elif str(attrs.get('review_note', '')).startswith(SOURCE_EDITED):
+                attrs.pop('review_note')     # the source rewrote it: the note no longer applies
         db.execute('UPDATE records SET title=?,body=?,attrs=?,state=?,parent=?,revision=revision+1,updated=? WHERE id=?',
                    (title, body, packed(attrs), state, parent, time.time(), r['id']))
         if r['kind'] == 'task' and state in ('done', 'closed', 'cancelled', 'archived', 'paused', 'blocked', 'todo'):
