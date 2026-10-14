@@ -58,8 +58,8 @@ It is made of **widgets**:
 - **Workers**, **Open tasks**, **Chat rooms**, **Recently changed pages** and
   **Agent sessions**: small views of your band.
 
-A new account starts with the band widgets, a few links around the dashboard
-and a note.
+A new account starts with workers, open tasks, chat rooms and recently
+changed pages, a few links around the dashboard and a note.
 
 To change it, choose **Edit page**:
 
