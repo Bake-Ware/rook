@@ -44,6 +44,7 @@ class SessionShimPlugin(Plugin):
         self._worker = None
         self._server: shim.LocalTermServer | None = None
         self._lock = asyncio.Lock()
+        self._hooks = None
 
     def available(self) -> bool:
         if sys.platform == "win32" or os.name != "posix":
@@ -82,9 +83,23 @@ class SessionShimPlugin(Plugin):
 
     async def _listen(self) -> None:
         if self._server is None:
-            server = shim.LocalTermServer(self._terminals)
+            server = shim.LocalTermServer(self._terminals, hooks=self._hooks)
             await server.start()
             self._server = server
+
+    async def serve_hooks(self, handler) -> str | None:
+        """Listen for Rook's Claude Code hook events (the ccmod plugin), even
+        where the shim itself is not installed. Returns the socket path, or
+        ``None`` when it cannot listen (the hook then uses its outbox)."""
+        self._hooks = handler
+        try:
+            async with self._lock:
+                await self._listen()
+                self._server.hooks = handler
+        except Exception:
+            log.exception("session shim socket could not start for Claude Code hooks")
+            return None
+        return str(self._server.path)
 
     # -- caps --------------------------------------------------------------------
 
@@ -110,6 +125,8 @@ class SessionShimPlugin(Plugin):
         async with self._lock:
             await self.stop()
             result = await asyncio.to_thread(shim.uninstall)
+            if self._hooks is not None:  # the Claude Code hooks still use the socket
+                await self._listen()
         log.info("session shim uninstalled")
         return result
 
