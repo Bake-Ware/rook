@@ -175,6 +175,14 @@ def test_check_against_a_base_and_for_a_release(tmp_path):
     assert manual_check.changed_pages("v0.1.0", repo) == {"b"}
     problems = manual_check.check(d, features={"f/x": "x"}, changelog=log, base="v0.1.0", root=repo)
     assert problems == ["CHANGELOG names manual page 'a', but docs/manual/a.md did not change since v0.1.0"]
+    # A page the base's own CHANGELOG already named was that change's to
+    # update: a branch off it is not asked to touch it again.
+    (repo / "CHANGELOG.md").write_text("## Unreleased\n### Added\nManual: a\n- Merged earlier.\n")
+    git("add", "CHANGELOG.md")
+    git("commit", "-qm", "merged change")
+    git("tag", "base2")
+    both = "## Unreleased\n### Added\nManual: a\n- Merged earlier.\n- Mine. (manual: b)\n"
+    assert manual_check.check(d, features={"f/x": "x"}, changelog=both, base="base2", root=repo) == []
     page(d, "a", "A", "Text.", since="0.3.0")
     git("add", ".")
     git("commit", "-qm", "next")
