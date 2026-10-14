@@ -46,6 +46,9 @@ WS_MAX_MESSAGE = 16 * 1024 * 1024
 # aiohttp pings every ``heartbeat`` seconds and drops a peer whose pong does
 # not come within half of it: 40 gives uvicorn's 20 s pong deadline.
 WS_HEARTBEAT = 40.0
+# Request bodies above this get 413 (the MCP paths face the network; uvicorn
+# had no limit either, but nothing the MCP side takes comes near it).
+MAX_BODY = 16 * 1024 * 1024
 # Hop-by-hop headers are aiohttp's to write, never the app's.
 _HOP_BY_HOP = frozenset({"transfer-encoding", "connection", "keep-alive"})
 
@@ -256,8 +259,12 @@ class AsgiBridge:
     def __init__(self, app: ASGIApp, *, lifespan: Lifespan | None = None,
                  trusted_proxies: Iterable[str] = TRUSTED_PROXIES, root_path: str = "",
                  ws_max_message: int = WS_MAX_MESSAGE, ws_heartbeat: float | None = WS_HEARTBEAT,
-                 disconnect_poll: float = 1.0) -> None:
+                 disconnect_poll: float = 1.0, max_body: int | None = MAX_BODY) -> None:
         self.app = app
+        self.max_body = max_body   # bytes; None = no limit
+        # Set while the host shuts down: new requests get 503 instead of an
+        # app whose lifespan (session manager) is going away.
+        self.stopping = False
         self.lifespan = lifespan
         self.trusted = frozenset(trusted_proxies)
         self.root_path = root_path
@@ -272,6 +279,9 @@ class AsgiBridge:
         return self.lifespan.state if self.lifespan is not None else None
 
     async def handle(self, request: web.Request) -> web.StreamResponse:
+        if self.stopping:
+            return web.Response(status=503, text="Service Unavailable: shutting down",
+                                headers={"Retry-After": "5", "Connection": "close"})
         if _is_websocket(request):
             return await self._websocket(request)
         return await self._http(request)
@@ -282,7 +292,10 @@ class AsgiBridge:
         scope = _scope(request, "http", self.trusted, self._state(), self.root_path)
         done = asyncio.Event()           # response finished, or the client is gone
         st = {"body_done": False, "response": None, "started": False, "complete": False,
-              "gone": False}
+              "gone": False, "received": 0, "too_large": False}
+        limit = self.max_body
+        if limit is not None and (request.content_length or 0) > limit:
+            return self._too_large(limit)
 
         def client_gone() -> bool:
             t = request.transport
@@ -294,6 +307,13 @@ class AsgiBridge:
                     chunk = await request.content.readany()
                 except (ConnectionError, asyncio.IncompleteReadError, OSError):
                     st["body_done"] = st["gone"] = True
+                    done.set()
+                    return {"type": "http.disconnect"}
+                st["received"] += len(chunk)
+                if limit is not None and st["received"] > limit:
+                    # A chunked body past the cap: the app sees the client
+                    # leave, and the client gets 413 (below).
+                    st["body_done"] = st["too_large"] = True
                     done.set()
                     return {"type": "http.disconnect"}
                 more = bool(chunk) and not request.content.at_eof()
@@ -314,6 +334,8 @@ class AsgiBridge:
             return {"type": "http.disconnect"}
 
         async def send(message: dict) -> None:
+            if st["too_large"]:
+                return   # the client gets 413, whatever the app makes of the cut body
             kind = message.get("type")
             if kind == "http.response.start":
                 if st["started"]:
@@ -366,6 +388,8 @@ class AsgiBridge:
         except ClientDisconnected:
             pass
         except Exception:
+            if st["too_large"]:
+                return self._too_large(limit)
             if st["gone"]:
                 # Most apps notice a vanished client as an error of their own.
                 log.debug("ASGI app ended after the client left", exc_info=True)
@@ -378,6 +402,8 @@ class AsgiBridge:
         finally:
             done.set()
         resp = st["response"]
+        if st["too_large"] and (resp is None or not resp.prepared):
+            return self._too_large(limit)
         if resp is None:
             if st["gone"]:
                 # Nothing to answer; aiohttp still wants a response object.
@@ -395,6 +421,12 @@ class AsgiBridge:
             except (ConnectionError, RuntimeError):
                 pass
         return resp
+
+    @staticmethod
+    def _too_large(limit: int) -> web.Response:
+        # Close: the rest of the body is never read.
+        return web.Response(status=413, text=f"Request body larger than {limit} bytes",
+                            headers={"Connection": "close"})
 
     # -- websocket --
 
