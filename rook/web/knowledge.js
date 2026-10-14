@@ -22,7 +22,7 @@ function client(){
 
 function btn(label,fn,cls){const b=el('button',label,cls);b.type='button';b.onclick=e=>{e.preventDefault();Promise.resolve().then(fn).catch(err=>console.warn(err));};return b;}
 
-// Minimal, safe markdown: #/##/### headings, - lists, ``` code blocks, `code`, **bold**, [[slug]] and http(s) links.
+// Minimal, safe markdown: #/##/### headings, - and 1. lists, ``` code blocks, `code`, **bold**, [[slug]] and http(s) links.
 function renderBody(text,onRef){
   const out=el('div',undefined,'kn-md');let list=null,para=[],code=null;
   const inline=(s,into)=>{for(const part of s.split(/(\[\[[a-z0-9][a-z0-9-]{0,79}\]\]|`[^`]+`|\*\*[^*]+\*\*|https?:\/\/[^\s)<>"]+)/)){if(!part)continue;
@@ -36,7 +36,9 @@ function renderBody(text,onRef){
     if(code!==null){if(line.startsWith('```')){out.append(el('pre',code.join('\n')));code=null;}else code.push(line);continue;}
     if(line.startsWith('```')){flush();list=null;code=[];continue;}
     const h=line.match(/^(#{1,3})\s+(.*)$/);if(h){flush();list=null;const e=el('h'+(h[1].length+2));inline(h[2],e);out.append(e);continue;}
-    const li=line.match(/^\s*[-*]\s+(.*)$/);if(li){flush();if(!list){list=el('ul');out.append(list);}const e=el('li');inline(li[1],e);list.append(e);continue;}
+    const li=line.match(/^\s*[-*]\s+(.*)$/)||line.match(/^\s*\d+[.)]\s+(.*)$/);if(li){flush();const tag=/^\s*\d/.test(line)?'OL':'UL';if(!list||list.tagName!==tag){list=el(tag.toLowerCase());out.append(list);}const e=el('li');inline(li[1],e);list.append(e);continue;}
+    // An indented line goes on with the list item above it (the user manual wraps them).
+    if(list&&/^\s{2,}\S/.test(line)){inline(' '+line.trim(),list.lastChild);continue;}
     if(!line.trim()){flush();list=null;continue;}
     list=null;para.push(line.trim());}
   if(code!==null)out.append(el('pre',code.join('\n')));flush();

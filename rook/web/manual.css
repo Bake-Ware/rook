@@ -1,0 +1,61 @@
+/* Help (the user manual) and the manual update banner. Dashboard theme tokens. */
+#view-help{width:100%;max-width:none}
+.mn-layout{display:grid;grid-template-columns:270px minmax(0,1fr);min-height:72vh;border:1px solid var(--line);background:var(--panel)}
+.mn-side{border-right:1px solid var(--line);padding:16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.mn-search{width:100%;box-sizing:border-box;padding:9px;background:var(--panel2);color:var(--fg);border:1px solid var(--line2);font:13px var(--sans)}
+.mn-toc{display:flex;flex-direction:column;gap:1px}
+.mn-toc a{display:block;padding:7px 10px;border:1px solid transparent;color:var(--fg);text-decoration:none;font-size:13px;line-height:1.35}
+.mn-toc a:hover{border-color:var(--line2);background:var(--chip)}
+.mn-toc a.on{border-color:var(--accent-dim);background:#292b20;color:var(--accent)}
+.mn-toc a.old{color:var(--dim);text-decoration:line-through}
+.mn-note{margin-top:auto;font-size:12px;color:var(--dim);border-top:1px solid var(--line);padding-top:10px}
+.mn-note p{margin:0 0 6px}
+.mn-callout{border:1px solid var(--accent-dim);background:#1f1c12;padding:10px;margin-top:6px;display:flex;flex-direction:column;gap:8px;color:var(--fg)}
+.mn-callout p{margin:0}
+.mn-page{min-width:0;padding:24px 34px 40px;overflow-wrap:anywhere}
+.mn-page h1{margin:2px 0 8px;font-size:26px;letter-spacing:-.4px;font-weight:600}
+.mn-meta{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:12px;color:var(--dim);margin:0 0 18px}
+.mn-meta a{color:var(--accent)}
+.mn-badge{display:inline-block;font:10px var(--mono);text-transform:uppercase;letter-spacing:.05em;padding:2px 6px;border:1px solid var(--line2);background:var(--chip);color:var(--fg)}
+.mn-badge.ok{border-color:var(--green);color:var(--green)}
+.mn-badge.warn{border-color:var(--accent);color:var(--accent)}
+.mn-dim{color:var(--dim)}
+.mn-error{color:var(--bad)}
+.mn-md{font-size:15px;line-height:1.7;max-width:76ch}
+.mn-md h2{font-size:20px;margin:6px 0 10px}
+.mn-md h3{font-size:16px;margin:28px 0 8px;border-bottom:1px solid var(--line);padding-bottom:5px;color:var(--accent)}
+.mn-md h4{font-size:14px;margin:20px 0 6px}
+.mn-md p{margin:0 0 12px}
+.mn-md ul,.mn-md ol{margin:0 0 14px;padding-left:24px}
+.mn-md li{margin:3px 0}
+.mn-md li ul{margin:4px 0 0}
+.mn-md code{font-family:var(--mono);font-size:12.5px;background:var(--chip);padding:1px 5px}
+.mn-md pre{font-family:var(--mono);font-size:12.5px;background:var(--panel2);border:1px solid var(--line);padding:12px;white-space:pre-wrap;overflow-wrap:anywhere;margin:0 0 14px}
+.mn-md a{color:var(--accent)}
+.mn-ref{text-decoration:underline dotted;text-transform:none}
+/* Banner above the views, operator only. */
+.mn-banner{display:flex;flex-wrap:wrap;gap:12px 18px;align-items:center;justify-content:space-between;border:1px solid var(--accent-dim);background:#1f1c12;padding:12px 16px;margin:0 0 18px}
+.mn-banner-text{font-size:13.5px;line-height:1.5;flex:1 1 320px}
+.mn-banner-text span{color:var(--dim)}
+.mn-banner-actions{display:flex;gap:8px;flex-wrap:wrap}
+/* Review dialog. */
+dialog.mn-dialog{width:min(640px,calc(100vw - 32px));flex-direction:column}
+.mn-diff-wrap{display:flex;flex-direction:column;gap:12px;max-height:46vh;overflow:auto;border:1px solid var(--line);padding:12px;background:var(--panel2)}
+.mn-diff-group h3{margin:0 0 6px;font:500 11px var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--accent)}
+.mn-diff{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
+.mn-diff li{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;font-size:13px;padding:4px 0;border-bottom:1px solid var(--line)}
+.mn-diff li:last-child{border-bottom:0}
+.mn-diff-title{flex:1 1 200px}
+.mn-keep{display:inline-flex;gap:6px;align-items:center;font-size:12px;color:var(--fg)}
+.mn-msg{min-height:1em;color:var(--accent)}
+.mn-actions{display:flex;gap:8px;flex-wrap:wrap}
+@media (max-width:760px){
+  .mn-layout{grid-template-columns:1fr}
+  .mn-side{border-right:0;border-bottom:1px solid var(--line)}
+  .mn-toc{flex-direction:row;overflow-x:auto;gap:4px;padding-bottom:4px}
+  .mn-toc a{white-space:nowrap;border-color:var(--line)}
+  .mn-note{margin-top:0}
+  .mn-page{padding:18px 16px 30px}
+  .mn-page h1{font-size:22px}
+  .mn-md{font-size:14.5px}
+}
