@@ -45,12 +45,14 @@ def test_public_mcp_paths_match_the_documented_proxy_split():
 
 
 def test_options_merge_both_processes(monkeypatch):
-    for var in ("ROOK_HUB", "ROOK_HUB_HOST", "ROOK_HUB_PORT", "ROOK_MCP_BIND", "ROOK_BAND_PSK"):
+    for var in ("ROOK_HUB", "ROOK_HUB_HOST", "ROOK_HUB_PORT", "ROOK_MCP_BIND", "ROOK_BAND_PSK",
+                "ROOK_MCP_MAX_BODY"):
         monkeypatch.delenv(var, raising=False)
     _, a = parse_args([])
     assert (a.hub_host, a.hub_port) == ("127.0.0.1", 7474)
     assert (a.mcp_bind_host, a.mcp_bind_port) == ("127.0.0.1", 8765)
     assert (a.bind, a.port) == ("0.0.0.0", 7005) and a.flag_settings == {}
+    assert a.mcp_max_body == 16 * 1024 * 1024
     # An MCP unit's environment carried over as is.
     monkeypatch.setenv("ROOK_HUB", "relay:7575")
     monkeypatch.setenv("ROOK_MCP_BIND", "off")
@@ -237,6 +239,12 @@ async def test_without_the_old_mcp_port(hub_env, monkeypatch):
     from rook.remote.bootstrap import prepare
     argv = [a for a in hub_env.argv]
     argv[argv.index("--mcp-bind") + 1] = "off"
+    # Windows: no SIGUSR1 (AttributeError) must not stop the hub from starting.
+    from rook.band_mcp import memory_diagnostics
+
+    def no_sigusr():
+        raise AttributeError("module 'signal' has no attribute 'SIGUSR1'")
+    monkeypatch.setattr(memory_diagnostics, "install", no_sigusr)
     ap, args = parse_args(argv)
     prepare(ap, args)
     hub = Hub(args, argv)
@@ -309,3 +317,47 @@ async def test_compat_rook_mcp_still_serves_alone(hub_env):
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_stop_stops_accepting_first_and_survives_a_failing_step():
+    order = []
+
+    class Site:
+        def __init__(self, name):
+            self.name = name
+
+        async def stop(self):
+            order.append("listen:" + self.name)
+
+    class Runner:
+        def __init__(self, name):
+            self.name, self.sites = name, [Site(name)]
+
+        async def cleanup(self):
+            order.append("cleanup:" + self.name)
+
+    class Rec:
+        def __init__(self, name, fail=False):
+            self.name, self.fail = name, fail
+
+        async def stop(self):
+            order.append(self.name)
+            if self.fail:
+                raise RuntimeError(self.name + " broke")
+
+    hub = Hub(SimpleNamespace(), [])
+    hub._mcp_runner = Runner("mcp-port")
+    hub.server = Rec("dashboard")
+    hub.server._runner = Runner("main-port")
+    hub.bridge = SimpleNamespace(stopping=False)
+    hub.mcp = Rec("mcp-service")
+    hub.mcp.ws_bridge = Rec("ws-peers", fail=True)
+    hub.lifespan = Rec("lifespan", fail=True)
+    hub.client = Rec("band-client")
+    hub._unregister = lambda: order.append("unregister")
+    await hub.stop()
+    assert order[:2] == ["listen:mcp-port", "listen:main-port"]
+    assert hub.bridge.stopping
+    assert order[2:] == ["ws-peers", "lifespan", "cleanup:mcp-port", "dashboard",
+                         "unregister", "mcp-service", "band-client"]

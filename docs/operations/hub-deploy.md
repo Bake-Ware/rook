@@ -108,7 +108,10 @@ launcher sets `PYTHONPATH=<root>/current-<service>`. Each service needs a
 `restart` command (any shell command), or a `unit` to restart with systemctl.
 
 **Docker / compose** installs are out of scope: there the image is the
-release. Build a new image and roll back by tag.
+release. Build a new image and roll back by tag. The image's default command
+is `rook-hub` (dashboard + MCP); a setup that used the default command as its
+dashboard next to a separate `rook-mcp` container must drop that container
+or pin `command: ["rook-dashboard"]`.
 
 ## Configuration
 

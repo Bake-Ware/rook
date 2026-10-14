@@ -15,7 +15,7 @@ from rook.worker.transports import dispatch as dispatch_mod
 from rook.worker.transports import writer as writer_mod
 from rook.worker.transports.dispatch import Dispatcher
 from rook.worker.transports.telesthete_hub import (
-    TelestheteHubTransport, udp_pacer_from_env)
+    TelestheteHubTransport, set_socket_buffers, udp_pacer_from_env)
 from rook.worker.transports.writer import FrameWriter, TokenBucket
 from rook.worker.wire.codec import KEEPALIVE_PAYLOAD, BandCodec
 
@@ -586,18 +586,58 @@ async def _burst(n, payload_for, *, handler_delay=0.0):
         hub.close()
 
 
+def _kernel_fits(n, payload_for):
+    """How many of these ``n`` frames the kernel queues for one unread UDP
+    socket with the transport's buffer size. The requested SO_RCVBUF is capped
+    by net.core.rmem_max, which differs per host (GitHub's runners queue about
+    2,200 of these, a 4 MiB rmem_max all 3,000); datagrams beyond it are
+    dropped by the kernel before the transport could see them, which is not
+    what these tests measure."""
+    rx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        set_socket_buffers(rx)
+        rx.bind(("127.0.0.1", 0))
+        rx.setblocking(False)
+        codec = BandCodec(PSK)
+        for i in range(n):
+            for f in codec.frames(payload_for(i)):
+                tx.sendto(f, rx.getsockname())
+        fits = 0
+        while True:
+            try:
+                rx.recv(65535)
+            except BlockingIOError:
+                return fits
+            fits += 1
+    finally:
+        rx.close()
+        tx.close()
+
+
+def _burst_size(n, payload_for):
+    fits = _kernel_fits(n, payload_for)
+    if fits < 1000:
+        pytest.skip(f"this host's UDP receive buffer queues only {fits} frames (net.core.rmem_max)")
+    return min(n, fits)
+
+
 @pytest.mark.asyncio
 async def test_burst_of_queued_replies_is_delivered_in_full():
-    got, dropped = await _burst(3000, lambda i: b'{"id":"%d","ok":true,"from":"w"}' % i)
-    assert dropped == 0 and len(got) == 3000
+    payload = lambda i: b'{"id":"%d","ok":true,"from":"w"}' % i  # noqa: E731
+    n = _burst_size(3000, payload)
+    got, dropped = await _burst(n, payload)
+    assert dropped == 0 and len(got) == n
 
 
 @pytest.mark.asyncio
 async def test_burst_of_fast_requests_is_served_not_shed():
     # The receive loop yields every RECV_YIELD_EVERY frames, so handlers run
     # while a backlog is being read and the dispatch backlog never fills.
-    got, dropped = await _burst(3000, lambda i: b'{"id":"%d","cap":"x.y"}' % i)
-    assert dropped == 0 and len(got) == 3000
+    payload = lambda i: b'{"id":"%d","cap":"x.y"}' % i  # noqa: E731
+    n = _burst_size(3000, payload)
+    got, dropped = await _burst(n, payload)
+    assert dropped == 0 and len(got) == n
 
 
 @pytest.mark.asyncio

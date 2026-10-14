@@ -1,9 +1,10 @@
 # Changelog
 
 All notable changes to Rook are recorded here. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Rook has no tagged
-releases yet: workers identify themselves by build number (for example
-`111.stinky.goat`), and the Python package version is `0.1.0`.
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Releases are
+tagged `vX.Y.Z` (the Python package version); workers identify themselves by
+build number (for example `111.stinky.goat`). Before the first tag the package
+version was `0.1.0`.
 
 ## Unreleased
 
@@ -47,11 +48,52 @@ Preparation for public use.
 - `scripts/local-hub.sh` starts the relay and one hub process
   (`ROOK_HUB_SPLIT=1` for the old two); installers and the printed MCP URL use
   the dashboard port. `compose.yaml` has one `hub` service (upgrade with
-  `docker compose up -d --remove-orphans`); the image's default command is
-  `rook-hub`.
+  `docker compose up -d --remove-orphans`).
+- Upgrade note (Docker): the image's default command changed from
+  `rook-dashboard` to `rook-hub`, which runs the MCP server too. A setup that
+  starts the image without a command as its dashboard and also runs a
+  separate `rook-mcp` container on the same data volume must drop that
+  container (or give the dashboard container `command: ["rook-dashboard"]`):
+  two MCP servers on one volume would share the stores and both join the band.
+- The MCP paths refuse request bodies over 16 MiB with 413
+  (`--mcp-max-body` / `ROOK_MCP_MAX_BODY`, 0 = no limit), and answer 503
+  while the hub shuts down.
 - `rook hub` deploy configs can name a single `hub` service
   (`rook.hub.serve`); the watchdog's unit list is configurable
   (`ROOK_WATCHDOG_SERVICES`).
+### Release pipeline and hub install
+- One-command hub install: `curl -fsSL https://raw.githubusercontent.com/Bake-Ware/rook/master/scripts/install-hub.sh | bash`
+  sets up Python, Rook from the release wheel, the prebuilt relay, generated
+  secrets (mode 600) and two systemd units, `rook-relay` and `rook-hub` (the
+  single-process hub; `--system` or `--user`), waits for
+  health and prints the dashboard URL and password. Re-runs upgrade in place;
+  `--uninstall [--purge]`; `--no-systemd` for containers and CI. See
+  docs/operations/install.md.
+- Releases: a `vX.Y.Z` tag publishes the sdist and wheel (version from the
+  tag), a GitHub Release, and `ghcr.io/bake-ware/rook` for amd64 and arm64.
+  Build names (`<build>.<adjective>.<noun>`) are unchanged; a hub installed
+  from a wheel now stamps its worker bundles with the release's build number
+  (they were build 0, so their workers never updated).
+- The Docker image uses the prebuilt, sha256-checked relay from a telesthete
+  release (`RELAY_SOURCE=source` compiles it as before), and builds again: the
+  build context lacked a file `pyproject.toml` force-includes. `compose.yaml`
+  runs the published image; `compose.build.yaml` builds from a clone.
+- The release wheel requires telesthete by hash-pinned wheel URL instead of
+  git, so installing it needs no git.
+- CI: pytest on Python 3.11 and 3.12, generated-file checks, `node --check`,
+  shellcheck, and an installer end-to-end run. Voice-service tests skip when
+  that service's packages are missing instead of failing.
+- The relay is pinned (`RELAY`, and each archive's sha256 in `RELAY_SHA256`,
+  in `rook/_release.py`); the installer, `scripts/fetch-relay.py` and the image
+  verify downloads against that pin, and the installer checks the Rook wheel
+  against the release's `SHA256SUMS`. Releases publish as prereleases and are
+  marked latest only after the image and an install test pass; artifacts and
+  images carry build provenance attestations. Base images are pinned by digest.
+- Installer: `--uninstall --purge` asks first (or needs `--yes`) and refuses a
+  directory that isn't a hub data directory; `--user` never uses sudo; it never
+  signals a pid that isn't its own service; it only falls back to building from
+  git when there is no release at all; it warns when the hub would listen on a
+  public address.
 
 ### Protocol features
 - Addressed routing (telesthete SPEC §10.1, needs telesthete 0.3.0): workers
