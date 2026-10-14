@@ -9,6 +9,36 @@ releases yet: workers identify themselves by build number (for example
 
 Preparation for public use.
 
+### User manual
+Manual: help, welcome, getting-started, adding-machines, bands-and-keys, accounts-and-access, workers, chat, work, sessions, knowledge, jobs, secrets, agents-and-mcp, home-agent, settings, plugins, phones-and-tablets, hardware, integrations, voice, updates, security, terminal-and-commands, running-a-hub
+- Added a user manual: 25 plain-language pages in `docs/manual/` covering
+  every current feature, shipped in the wheel (`rook/_manual`) and the image.
+  **Help** in the dashboard sidebar reads it (search, page links), from the
+  knowledge base copy when there is one, else from the bundled files. New
+  hub plugin `manual` with caps `manual.status`, `manual.list`, `manual.get`
+  (read) and `manual.update` (admin), and settings `manual.auto_seed` and
+  `manual.prompt_updates`.
+- A new hub copies the manual into its knowledge base the first time the
+  knowledge plugin is on and empty: folder page `rook-manual`, pages
+  `manual-<id>`, tagged `rook-manual` and `rook-<version>`, verified against
+  the bundled file. A knowledge base that already has pages is asked first.
+- After an update whose manual differs from the copy, the operator sees "The
+  Rook manual changed in this update: update your knowledge base copy?" with
+  the pages added, changed and removed: Update, Not now (24 hours) or Never
+  for this version. Pages edited in the knowledge base are only replaced when
+  ticked; removed pages are archived. The `rook_knowledge` tool's description
+  tells agents where the manual is (an empty plugin guidance default no
+  longer hides another plugin's text for the same slot).
+- `tools/manual_check.py` fails when a FEATURES.md section, settings group,
+  plugin or command has no manual page, when a page maps a feature that no
+  longer exists without being deprecated, when `docs/manual/manifest.json` is
+  stale, or when an Unreleased bullet adds or removes a feature without
+  naming its manual pages (`--base REF`: and those pages did not change;
+  `--release TAG`: the release gate). Run by the test suite; the release
+  pipeline hook is in docs/operations/user-manual.md. CONTRIBUTING has the
+  rule.
+- The Knowledge page renders numbered lists and wrapped list items.
+
 ### Hub merge
 - One hub process: `rook hub serve` (console script `rook-hub`) runs the
   dashboard and the MCP server together on the dashboard port (7005): the MCP
@@ -55,6 +85,7 @@ Preparation for public use.
   builders refuse a vendored telesthete without `protocol/route.py`.
 
 ### Transport
+Manual: n/a
 - Band transport split into a shared frame codec (`rook.worker.wire.codec.
   BandCodec`) and thin UDP/WS links behind the unchanged
   `TelestheteHubTransport` facade. Frames shorter than header + AEAD tag
@@ -163,6 +194,7 @@ Preparation for public use.
   ones. Optional `aiohttp`/PyNaCl imports are lazy, so plugins load and
   `tools/gen_*_reference.py --check` refuse to run with modules missing.
 ### Plugin kit
+Manual: n/a
 - `ROOK_WORKER_HOME` now moves all worker state (identity, enrollment, pushed
   config, audit log, plugin data, chat/inbox, deauth flag, work DB, trust
   anchors), not only the session mirror; the installed bundle stays in
@@ -187,6 +219,7 @@ Preparation for public use.
 - Worker chat client: its watcher thread now stops on every exit path.
   `hermes` logs through `logging` instead of printing.
 ### Dashboard
+Manual: agents-and-mcp, adding-machines
 - Removed the legacy exec worker (`rook/remote/worker.py`, served as
   `/worker.py`) and the dashboard's `/ws` endpoint it connected to. Every
   installer has deployed `band-worker.pyz` (which joins over `/band`) for a
@@ -215,6 +248,7 @@ Preparation for public use.
   Knowledge and Settings used to say "5m ago").
 
 ### Compatibility cleanup
+Manual: n/a
 - Cap errors raised through the plugin kit (`fail()`, `CapError`) reach the
   caller as the bare message (`file not found: /x`), not
   `CapError: file not found: /x`, and no longer log a traceback on the
@@ -407,6 +441,7 @@ Preparation for public use.
   Linux/macOS.
 
 ### Added
+Manual: sessions, workers, work, chat, agents-and-mcp, settings, integrations, accounts-and-access, running-a-hub, getting-started, knowledge, terminal-and-commands
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps
   `sessions.list`, `sessions.follow`, `sessions.send` and `sessions.stop`
   give one record per agent session (state live/idle/closed, origin, view,
@@ -595,6 +630,7 @@ Preparation for public use.
   their readiness under `authz`. Build-167 workers ignore the extra keys.
 
 ### Changed
+Manual: terminal-and-commands
 - Over MCP, `rook_task`/`rook_knowledge` `get` returns only hand-made links
   plus `auto_links` (a count per kind) and the last 10 events; pass
   `data {links: "all", events: N}` for more. Deck outcomes are cut to 240
