@@ -3,6 +3,7 @@
 !README.md
 !rook/
 !skills/
+!docs/manual/
 rook/**/__pycache__
 rook/**/*.pyc
 rook/remote/band-worker*
