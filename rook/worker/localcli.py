@@ -734,13 +734,15 @@ def run_checks(probe: Callable[[str], tuple] = _http_probe,
                tcp: Callable[[str, int], str | None] = _tcp_probe) -> list[Check]:
     checks: list[Check] = []
     from ._build_info import VERSION
+    live = live_status()
     py = sys.version_info
     if py < (3, 11):
         checks.append(Check("Python", "fail", f"Python {py.major}.{py.minor} is too old",
                             "Install Python 3.11 or newer, then re-run the install command."))
     bundle = worker_install_dir() / "band-worker.pyz"
-    checks.append(Check("Worker program", "ok",
-                        f"v{VERSION}, Python {py.major}.{py.minor}.{py.micro}"
+    version = (live or {}).get("version") or VERSION
+    python = (live or {}).get("python") or f"{py.major}.{py.minor}.{py.micro}"
+    checks.append(Check("Worker program", "ok", f"v{version}, Python {python}"
                         + ("" if bundle.is_file() else " (running from source)")))
 
     saved = enrollment()
@@ -788,7 +790,6 @@ def run_checks(probe: Callable[[str], tuple] = _http_probe,
                                 "the pairing wins and they are ignored",
                                 "Remove them from the environment to avoid confusion."))
 
-    live = live_status()
     if live is None:
         checks.append(Check("Worker running", "fail", "the worker isn't running", start_hint()))
     else:
@@ -841,8 +842,11 @@ def run_checks(probe: Callable[[str], tuple] = _http_probe,
         except ValueError:
             err = f"bad hub address {hub}"
         if err:
-            checks.append(Check("Band link", "warn", f"{err} (TCP; a UDP relay can't be tested "
-                                "from here)", "Start the worker and run rook doctor again."))
+            # Without the worker this is only a connection test, and a UDP
+            # relay can't be tested this way at all: a warning, not a failure.
+            checks.append(Check("Band link", "warn", f"the band address: {err}",
+                                "Start the worker and run rook doctor again; it tests the "
+                                "real connection."))
         else:
             checks.append(Check("Band link", "ok", f"{hub} accepts connections"))
 
