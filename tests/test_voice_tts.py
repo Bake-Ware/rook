@@ -7,8 +7,11 @@ import sys
 import threading
 import time
 
-import numpy as np
 import pytest
+
+# services/voice's own deps (services/voice/requirements.txt) are not in
+# rook[dev]: skip, rather than fail collection, in a hub-only venv.
+np = pytest.importorskip("numpy")
 
 from services.voice import tts
 from services.voice.front import fixed_block

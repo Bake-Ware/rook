@@ -302,6 +302,22 @@ def preset_changes(selected: Iterable[str], states: dict[str, bool | None] | Non
     return hub, worker
 
 
+def stored_preset_states(store: Any, band_id: str | None,
+                         hub_enabled_settings: dict[str, str] | None = None
+                         ) -> dict[str, bool | None]:
+    """:func:`preset_states` from the settings store alone (stored values,
+    no environment): what the dashboard process can see without the hub."""
+    store = _store(store)
+    keys = HUB_ENABLED_SETTINGS if hub_enabled_settings is None else hub_enabled_settings
+    enabled = {}
+    for module, key in keys.items():
+        row = store.get(key, "hub", "")
+        if row and isinstance(row.get("value"), bool):
+            enabled[module] = row["value"]
+    return preset_states(hub_state(store), worker_defaults(band_id, store) if band_id else {},
+                         enabled)
+
+
 def apply_presets_to_store(store: Any, selected: Iterable[str], band_id: str | None, *,
                            actor: str, hub_enabled_settings: dict[str, str] | None = None,
                            source: str = "presets") -> dict:
@@ -315,13 +331,7 @@ def apply_presets_to_store(store: Any, selected: Iterable[str], band_id: str | N
     store = _store(store)
     selected = list(dict.fromkeys(selected or ()))
     keys = HUB_ENABLED_SETTINGS if hub_enabled_settings is None else hub_enabled_settings
-    enabled = {}
-    for module, key in keys.items():
-        row = store.get(key, "hub", "")
-        if row and isinstance(row.get("value"), bool):
-            enabled[module] = row["value"]
-    states = preset_states(hub_state(store), worker_defaults(band_id, store) if band_id else {},
-                           enabled)
+    states = stored_preset_states(store, band_id, keys)
     hub, worker = preset_changes(selected, states)
     note = "preset: " + (", ".join(selected) or "none")
     set_hub_state(store, hub, actor=actor, note=note, source=source)
@@ -360,20 +370,23 @@ def enabled_setting_keys() -> dict[str, str]:
     return out
 
 
-def setup_presets_html() -> str:
-    """The preset checkboxes for the first-run /setup wizard (escaped HTML)."""
+def setup_presets_html(states: dict[str, bool | None] | None = None) -> str:
+    """The preset checkboxes for the /setup wizard (escaped HTML), ticked as
+    the stored choices show them (:func:`preset_selected`), so re-running
+    the wizard and saving it as shown reverses nothing chosen elsewhere."""
+    ticked = preset_selected(states or {})
     from html import escape
     rows = ['<fieldset class="presets"><legend>What do you want Rook to do?</legend>',
             '<input type="hidden" name="presets_shown" value="1">',
             '<small>Applies to the hub and to workers you add later; change it any time on '
-            'Manage &gt; Plugins. The ticks show what Rook does by default: only the groups '
-            'you change are saved (unticked ones stay off on new workers).</small>']
+            'Manage &gt; Plugins. The ticks show the current choice (or what Rook does by '
+            'default): only the groups you change are saved.</small>']
     for p in PRESETS:
         risk = ", ".join(p["tiers"])
         high = "".join(f'<span class="risk-high">{escape(h)}</span>' for h in p["high_risk"])
         rows.append(
             f'<label class="preset"><input type="checkbox" name="preset" value="{escape(p["id"])}"'
-            f'{" checked" if p["default"] else ""}> <b>{escape(p["title"])}</b> '
+            f'{" checked" if ticked[p["id"]] else ""}> <b>{escape(p["title"])}</b> '
             f'<small>{escape(p["summary"])} Risk: {escape(risk)}.</small>{high}</label>')
     rows.append("</fieldset>")
     return "\n".join(rows)
