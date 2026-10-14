@@ -9,6 +9,30 @@ releases yet: workers identify themselves by build number (for example
 
 Preparation for public use.
 
+### Home agent memory
+- New hub plugin `memory` (on by default, part of the "Home & voice agent"
+  preset): the home agent remembers people, facts, conversations and skills
+  between conversations, Hermes-agent style. It recalls a budgeted memory
+  section before each chat reply, `home.ask` and job step, and keeps what it
+  learned afterwards ("my name is", "I prefer", "remember that", "forget
+  that"); job steps it finishes with tools become skills. Setting
+  `home.memory` turns it off for the home agent; with `home.tools` on the
+  model also gets `memory_save` / `memory_search`.
+- Write rules: no secrets (vault values become `{{secret:name}}`
+  references; key, password, access-code and card shapes are refused or
+  redacted; `memory.deny_patterns` adds your own), no prompt-injection text,
+  dedupe, and a changed fact supersedes the old one instead of editing it.
+- Recall: keywords (FTS5) always, plus embeddings from `memory.embedder`, the
+  home agent's endpoint (`memory.embed_model`) or any worker's `embed.text`,
+  falling back to keywords when none answers.
+- A consolidation job (every 30 minutes; `memory.consolidate`) summarises
+  finished conversations, rolls old ones up by week, merges duplicates,
+  fades unused memories and enforces budgets.
+- Manage > Memory: browse, search, correct, keep, forget and erase memories,
+  with provenance and history. Caps `memory.recall/show/list/status`
+  (read, sensitive) and `memory.remember/edit/consolidate/forget` (write);
+  MCP tool `rook_memory` only with `memory.agent_tool` on.
+
 ### Hub merge
 - One hub process: `rook hub serve` (console script `rook-hub`) runs the
   dashboard and the MCP server together on the dashboard port (7005): the MCP
