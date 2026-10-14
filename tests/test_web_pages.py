@@ -37,11 +37,30 @@ async def test_login_page_form_and_error(env):  # noqa: F811
         assert 'name="user"' in page and 'name="pass" type="password"' in page
         assert 'href="/account/login"' in page and "error" not in page
         response = await client.post("/login", data={"user": "owner", "pass": "wrong"})
-        assert response.status == 200 and "Invalid credentials" in await response.text()
+        assert response.status == 200 and "username and password are not right" in await response.text()
         # The stylesheet the page links is public, or a signed-out browser
         # would get an unstyled login form.
         css = await client.get("/account/bands/assets/theme.css")
         assert css.status == 200 and "--accent" in await css.text()
+
+
+@pytest.mark.asyncio
+async def test_password_only_hub_asks_for_just_the_password(env):  # noqa: F811
+    """The installers set a password and no username (one operator): the
+    first sign-in is the password alone, the username field hidden."""
+    setup_store.save(SETUP)
+    server = env(web_user="", web_pass="test-password-1")
+    async with TestClient(TestServer(server._app)) as client:
+        page = await (await client.get("/login")).text()
+        assert "Username" not in page
+        assert '<input type="hidden" name="user"' in page
+        assert 'name="pass" type="password" required autocomplete="current-password" autofocus' in page
+        assert "Enter the dashboard password" in page and "{{" not in page
+        response = await client.post("/login", data={"pass": "wrong"})
+        assert "That password is not right." in await response.text()
+        response = await client.post("/login", data={"user": "admin", "pass": "test-password-1"},
+                                     allow_redirects=False)
+        assert response.status == 302
 
 
 @pytest.mark.asyncio

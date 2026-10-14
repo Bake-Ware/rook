@@ -1504,7 +1504,9 @@ class CombinedServer:
                 raise
             except Exception:
                 pass
-            return web.Response(text=self._login_page("Invalid credentials"), content_type="text/html")
+            return web.Response(text=self._login_page(
+                "That password is not right." if not self.web_user
+                else "That username and password are not right."), content_type="text/html")
 
         if request.path == "/login":
             return web.Response(text=self._login_page(), content_type="text/html")
@@ -1548,9 +1550,22 @@ class CombinedServer:
         )
 
     def _login_page(self, error: str = "") -> str:
+        """The dashboard sign-in form. A hub set up with a password only
+        (the installers' default, one operator) asks for just the password:
+        the username field is hidden, since any value would do. A
+        configured username keeps its field."""
         from .web_pages import render
         err = f'<p class="error" role="alert">{_html.escape(error)}</p>' if error else ""
-        return render("login.html", error=err)
+        if self.web_user:
+            field = ('<label>Username <input name="user" autofocus required '
+                     'autocomplete="username"></label>')
+            lead, focus = "Sign in to the dashboard.", ""
+        else:
+            # Hidden but present, so password managers still pair the saved
+            # password with this site.
+            field = '<input type="hidden" name="user" value="admin" autocomplete="username">'
+            lead, focus = "Enter the dashboard password to continue.", " autofocus"
+        return render("login.html", error=err, user_field=field, lead=lead, pass_focus=focus)
 
     def _setup_page_html(self, error: str = "") -> str:
         from . import setup_store
