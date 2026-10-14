@@ -134,3 +134,5 @@ def test_install_page_points_at_the_local_cli_and_unattended_installs():
     view = text[text.index('<div id="view-install"'):text.index('<div class="overlay"')]
     assert "<code>rook status</code>" in view and "<code>rook doctor</code>" in view
     assert "<code>-s -- --yes</code>" in view and "ROOK_YES" in view
+    # cloud-init runs as root: the page says how to give the worker an account.
+    assert "<code>ROOK_USER=&lt;account&gt;</code>" in view and "not SYSTEM" in view

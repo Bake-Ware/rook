@@ -3,6 +3,7 @@ runs under `iex` in the user's own window (so it must never `exit` there),
 reports the elevated run's outcome in the window they started from, keeps a
 log, and both installers swap the bundle safely on a re-run."""
 
+import os
 import re
 import shutil
 import subprocess
@@ -230,8 +231,11 @@ async def test_windows_never_prompts_unattended(scripts):
     # Unattended without admin rights stops with an instruction, no UAC prompt.
     _ordered(text, "if (-not $isAdmin -and -not $interactive) {",
              "an unattended install needs an administrator PowerShell", "-Verb RunAs")
-    # The elevated relaunch carries the choice (its environment is fresh).
-    assert 'if ($unattended) { $relaunch += "yes" }' in text
+    # The elevated relaunch carries the choice, the name and the band (its
+    # environment is fresh).
+    assert 'if ($unattended) { $relaunch += "yes" } else { $relaunch += "no" }' in text
+    assert '$relaunch += "`"name=$workerName`""' in text
+    assert '$relaunch += "`"band=$bandArg`""' in text
     assert 'if (-not $interactive) { $enrollExtra += "--yes" }' in text
     assert "while ($rc -ne 0 -and $interactive) {" in text
     reads = [ln for ln in text.splitlines() if "Read-Host" in ln]
@@ -302,7 +306,12 @@ async def test_windows_python_is_pinned_verified_and_per_user(scripts):
     assert re.search(r'"amd64" = "[0-9A-F]{64}"', text) and re.search(r'"arm64" = "[0-9A-F]{64}"', text)
     install = text[text.index("function Install-Python {"):text.index("# Run a native command")]
     _ordered(install, "Invoke-WebRequest", "Get-FileHash -Path $setup -Algorithm SHA256",
-             "if ($hash -ne $pyHashes[$arch]) {", "Remove-Item $setup", "Fail ", "Start-Process")
+             "if ($hash -ne $pyHashes[$arch]) {",
+             "Remove-Item $setupDir -Recurse -Force -ErrorAction SilentlyContinue\n        Fail ",
+             "Start-Process")
+    # Downloaded into a new folder of its own, not a guessable %TEMP% name.
+    assert '$setupDir = Join-Path $installDir ("python-setup-" + [guid]::NewGuid()' in install
+    assert "$env:TEMP" not in install
     assert '"InstallAllUsers=0"' in install and '"PrependPath=0"' in install
     assert "InstallAllUsers=1" not in text and "choco" not in text
     # winget only as a fallback, and for this user only.
@@ -316,7 +325,7 @@ async def test_windows_python_is_pinned_verified_and_per_user(scripts):
 def _ps_functions(text):
     start = text.index("function Test-Python(")
     end = text.index("# Run a native command")
-    fail = text[text.index("function Fail("):text.index("New-Item -ItemType Directory")]
+    fail = text[text.index("function Fail("):text.index("New-Item -ItemType Directory -Force -Path $installDir")]
     return text[start:end] + fail
 
 
@@ -336,6 +345,7 @@ async def test_windows_python_install_refuses_a_tampered_download(scripts, tmp_p
         'Set-Content -Path $OutFile -Value "not the real installer" }\n'
         f'function Start-Process {{ param($FilePath, [switch]$Wait, [switch]$PassThru, $ArgumentList) '
         f'Set-Content -Path "{started}" -Value ($ArgumentList -join " "); return @{{ ExitCode = 0 }} }}\n'
+        f'$installDir = "{tmp_path / "install"}"\n'
         + funcs +
         'try { Install-Python | Out-Null; Write-Output "INSTALLED" } '
         'catch { Write-Output ("FAILED: " + $_.Exception.Message) }\n'
@@ -355,8 +365,10 @@ async def test_windows_python_install_refuses_a_tampered_download(scripts, tmp_p
     args = started.read_text()
     assert "/quiet" in args and "InstallAllUsers=0" in args and "PrependPath=0" in args
     assert f"TargetDir=\"{tmp_path}" in args
-    # The tampered file was deleted, unused.
+    # The tampered file was deleted, unused, with the fresh folder it was
+    # downloaded into (under the install dir, not a guessable %TEMP% name).
     assert not list(tmp_path.glob("rook-python-*.exe"))
+    assert list((tmp_path / "install").iterdir()) == []
 
 
 def test_unified_and_relay_installers_need_an_openable_terminal(tmp_path):
@@ -382,7 +394,176 @@ async def test_unix_cloud_init_gets_home_and_a_user_service(scripts):
     real service that survives a reboot."""
     text = scripts["unix"]
     _ordered(text, '[ -n "${HOME:-}" ] || export HOME=', 'mkdir -p "$HOME/.rook-band-worker"')
-    assert '[ -n "${USER:-}" ] || export USER="$(id -un)"' in text
+    assert 'export USER="$(id -un)"' in text
     _ordered(text, "(6/6) Starting the worker", 'loginctl enable-linger "$USER"',
              'export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"',
              "elif command -v systemctl &>/dev/null && systemctl --user show-environment")
+
+
+# -- root installs: whose worker is it? ---------------------------------------------
+
+def _root_harness(text, tmp_path):
+    """The installer's root check with id/getent/runuser/curl stubbed."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "calls"
+    stubs = {
+        "id": 'case "$*" in -u) echo "${FAKE_UID:-0}" ;; -un) echo "${FAKE_USER:-root}" ;; '
+              '*) /usr/bin/id "$@" ;; esac',
+        "getent": 'case "$2" in alice) echo "alice:x:1001:1001::/home/alice:/bin/bash" ;; '
+                  '*) exit 2 ;; esac',
+        "runuser": f'echo "runuser $*" >> "{calls}"; exit "${{RUNUSER_RC:-0}}"',
+        "curl": f'echo "curl $*" >> "{calls}"; while [ $# -gt 0 ]; do '
+                '[ "$1" = -o ] && echo "echo child" > "$2"; shift; done; true',
+        "chown": f'echo "chown $*" >> "{calls}"',
+        "loginctl": f'echo "loginctl $*" >> "{calls}"',
+        "apt-get": f'echo "apt-get $*" >> "{calls}"',
+    }
+    for name, body in stubs.items():
+        (bin_dir / name).write_text("#!/bin/bash\n" + body + "\n")
+        (bin_dir / name).chmod(0o755)
+    start = text.index("# ---- run as root")
+    block = text[start:text.index("\ninstall_curl\n", start)]
+    script = ("set -e\nLOG=/dev/null\nsay() { echo \"[rook] $*\"; }\n"
+              "quietly() { \"$@\" >/dev/null 2>&1; }\ninstall_curl() { :; }\n"
+              f"install_python() {{ echo install_python >> \"{calls}\"; }}\nIS_TERMUX=0\n"
+              + block + "\necho CONTINUED\n")
+    env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": str(tmp_path)}
+    return script, env, calls
+
+
+@pytest.mark.asyncio
+async def test_unix_root_install_is_refused_unless_told_whose_it_is(scripts, tmp_path):
+    """cloud-init and `sudo` run the installer as root; a root worker runs
+    every band command as root and, with lingering, comes back at every boot."""
+    script, env, calls = _root_harness(scripts["unix"], tmp_path)
+    run = subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=env)
+    assert run.returncode == 1 and "CONTINUED" not in run.stdout
+    assert "Not installed: this runs as root" in run.stdout
+    assert "ROOK_USER=<account>" in run.stdout and "ROOK_ALLOW_ROOT=1" in run.stdout
+    assert not calls.exists()
+    # ROOK_ALLOW_ROOT=1: carries on, loudly.
+    run = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                         env={**env, "ROOK_ALLOW_ROOT": "1"})
+    assert run.returncode == 0 and "CONTINUED" in run.stdout
+    assert "WARNING: installing as root" in run.stdout
+    # Not root: nothing to decide.
+    run = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                         env={**env, "FAKE_UID": "1000"})
+    assert run.returncode == 0 and "CONTINUED" in run.stdout and "root" not in run.stdout
+    # Bad or unknown accounts are refused before anything runs.
+    for user, words in (("a b", "not an account name"), ("-x", "not an account name"),
+                        ("bob", "no account named bob")):
+        run = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                             env={**env, "ROOK_USER": user})
+        assert run.returncode == 1 and words in run.stdout, (user, run.stdout)
+    assert not calls.exists()
+
+
+@pytest.mark.asyncio
+async def test_unix_root_install_for_rook_user_runs_as_that_account(scripts, tmp_path):
+    script, env, calls = _root_harness(scripts["unix"], tmp_path)
+    run = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                         env={**env, "ROOK_USER": "alice", "ROOK_WORKER_NAME": "box1",
+                              "ROOK_BAND": "home", "https_proxy": "http://192.0.2.9:3128"})
+    assert run.returncode == 0, (run.stdout, run.stderr)
+    assert "CONTINUED" not in run.stdout          # the root run ends here
+    assert "the worker will run as alice, not as root" in run.stdout
+    log = calls.read_text().splitlines()
+    fetch = next(ln for ln in log if ln.startswith("curl "))
+    assert f"/worker?band={scripts['code']}&os=unix" in fetch   # the same pairing code
+    assert "loginctl enable-linger alice" in log
+    assert any(ln.startswith("chown -R alice ") for ln in log)
+    # Fetched before the slow preparation, run last.
+    order = [ln.split()[0] for ln in log]
+    assert order.index("curl") < order.index("loginctl") < order.index("runuser")
+    runuser = next(ln for ln in log if ln.startswith("runuser "))
+    assert runuser.startswith("runuser -u alice -- env -i HOME=/home/alice USER=alice "
+                              "LOGNAME=alice ROOK_YES=1 ")
+    for part in ("XDG_RUNTIME_DIR=/run/user/1001", "ROOK_WORKER_NAME=box1", "ROOK_BAND=home",
+                 "https_proxy=http://192.0.2.9:3128"):
+        assert part in runuser, part
+    assert runuser.endswith("/install.sh --yes")
+    # Its exit code is the install's; the folder is cleaned up.
+    assert not os.path.exists(os.path.dirname(runuser.split()[-2]))
+    run = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                         env={**env, "ROOK_USER": "alice", "RUNUSER_RC": "7"})
+    assert run.returncode == 7
+
+
+@pytest.mark.asyncio
+async def test_unix_self_url_keeps_the_pairing_code(scripts):
+    assert f"SELF_URL='http://{LAN}:7005/worker?band={scripts['code']}&os=unix'" in scripts["unix"]
+    assert f"SELF_URL='http://{LAN}:7005/worker?login=google&os=unix'" in scripts["unix_login"]
+
+
+def _probe(text, tmp_path, env_extra, uid="1000", user="pi"):
+    """The installer's top (arguments, name check, HOME/USER) with a stubbed id."""
+    bin_dir = tmp_path / "pbin"
+    bin_dir.mkdir(exist_ok=True)
+    (bin_dir / "id").write_text(f'#!/bin/sh\ncase "$*" in -u) echo {uid} ;; -un) echo {user} ;; esac\n')
+    (bin_dir / "id").chmod(0o755)
+    body = text[text.index("for arg in"):text.index("# Root needs no sudo")]
+    probe = body + 'echo "HOME=$HOME USER=$USER"\n'
+    return subprocess.run(["setsid", "bash", "-c", probe], stdin=subprocess.DEVNULL,
+                          capture_output=True, text=True,
+                          env={"PATH": f"{bin_dir}:/usr/bin:/bin", **env_extra})
+
+
+@pytest.mark.asyncio
+async def test_unix_home_user_and_worker_name_checks(scripts, tmp_path):
+    text = scripts["unix"]
+    # `su` without `-` leaves USER naming the old account: USER follows id -un.
+    run = _probe(text, tmp_path, {"HOME": "/home/pi", "USER": "someone-else"})
+    assert run.returncode == 0 and "HOME=/home/pi USER=pi" in run.stdout
+    # No HOME and no passwd entry: /root only for root.
+    run = _probe(text, tmp_path, {}, user="nosuchuser-rook")
+    assert run.returncode == 1 and "HOME is not set" in run.stdout
+    run = _probe(text, tmp_path, {}, uid="0", user="nosuchuser-rook")
+    assert run.returncode == 0 and "HOME=/root " in run.stdout
+    # A worker name goes into a command line.
+    run = _probe(text, tmp_path, {"HOME": "/home/pi", "ROOK_WORKER_NAME": "my box; rm -rf ~"})
+    assert run.returncode == 1 and "ROOK_WORKER_NAME may only use" in run.stdout
+    run = _probe(text, tmp_path, {"HOME": "/home/pi", "ROOK_WORKER_NAME": "kitchen-pc_2.lan"})
+    assert run.returncode == 0
+    # A derived name (a phone model, a hostname) is made safe instead.
+    line = next(ln for ln in text.splitlines() if ln.startswith('WORKER_NAME="$(printf'))
+    run = subprocess.run(["bash", "-c", 'WORKER_NAME="Pixel 7 (Pro)"\n' + line + '\necho "$WORKER_NAME"'],
+                         capture_output=True, text=True)
+    assert run.stdout.strip() == "Pixel-7--Pro-"
+
+
+@pytest.mark.asyncio
+async def test_windows_refuses_system_and_odd_names(scripts):
+    text = scripts["win"]
+    assert "as SYSTEM from your management tool" not in text
+    assert "SYSTEM shell" not in text
+    _ordered(text, 'if ($workerName -notmatch \'^[A-Za-z0-9._-]+$\') {',
+             '[Security.Principal.WindowsIdentity]::GetCurrent().User.Value -eq "S-1-5-18"',
+             "Not installed: this is running as SYSTEM",
+             "$isAdmin = ")
+    # A derived name is made safe; the band name step can't fail a good install.
+    assert "$workerName = $env:COMPUTERNAME -replace '[^A-Za-z0-9._-]', '-'" in text
+    band = text[text.index('Start-ScheduledTask -TaskName "RookBandWorker"\n'):]
+    _ordered(band, "try {", '$ErrorActionPreference = "Continue"', "--enrolled-band",
+             '} catch { $bandName = "" } finally { $ErrorActionPreference = "Stop" }')
+
+
+@pytest.mark.asyncio
+async def test_windows_elevated_child_reads_name_and_band_from_its_arguments(scripts, tmp_path):
+    pwsh = shutil.which("pwsh")
+    if not pwsh:
+        pytest.skip("pwsh is not installed")
+    text = scripts["win"]
+    head = text[text.index("$workerName = $env:COMPUTERNAME"):text.index("$installDir = ")]
+    harness = tmp_path / "args.ps1"
+    harness.write_text(
+        '$env:COMPUTERNAME = "PC#1"; $env:ROOK_BAND = ""\n'
+        '& { param([string]$ResultFile = "", [string]$Yes = "")\n' + head +
+        'Write-Output "name=$workerName band=$env:ROOK_BAND yes=$Yes" } @args\n')
+    run = subprocess.run([pwsh, "-NoProfile", "-File", str(harness), "res.txt", "no",
+                          "name=box1", "band=home lab"], capture_output=True, text=True, timeout=120)
+    assert "name=box1 band=home lab yes=no" in run.stdout, (run.stdout, run.stderr)
+    run = subprocess.run([pwsh, "-NoProfile", "-File", str(harness)], capture_output=True,
+                         text=True, timeout=120)
+    assert "name=PC-1 band= yes=" in run.stdout, (run.stdout, run.stderr)

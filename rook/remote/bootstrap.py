@@ -102,11 +102,13 @@ PS_BOOTSTRAP = r'''
 # R00K Band Worker Bootstrap (Windows)
 #
 # Usually run as:  iex (irm "<hub>/worker?band=CODE&os=windows")
-# Unattended (an elevated or SYSTEM shell from a management tool, CI):
+# Unattended (an elevated shell of the person who uses this machine, from a
+# management tool or CI):
 #   $env:ROOK_YES = "1"; iex (irm "<hub>/worker?band=CODE&os=windows")
 # It then never prompts; nor does it without an interactive console. Also
 # read: ROOK_WORKER_NAME (this machine's name on the band), ROOK_BAND (which
-# band, for an account sign-in with several).
+# band, for an account sign-in with several). Not as SYSTEM: the worker runs
+# as, and in the session of, the account that installs it.
 #
 # Everything is inside ONE script block run with `&`. Under `iex` this text
 # executes in the user's own interactive session, so a top-level `exit` would
@@ -129,13 +131,38 @@ $startMsg = "[rook] Installing the Rook worker. This takes 2-5 minutes (longer i
 # environment, so the choice travels as its -Yes argument.
 $unattended = ("$env:ROOK_YES" -match '^(1|true|yes)$') -or ($Yes -eq "yes")
 $interactive = [Environment]::UserInteractive -and -not [Console]::IsInputRedirected -and -not $unattended
-$workerName = $env:COMPUTERNAME
+$workerName = $env:COMPUTERNAME -replace '[^A-Za-z0-9._-]', '-'
 if ($env:ROOK_WORKER_NAME) {{ $workerName = $env:ROOK_WORKER_NAME }}
+$bandChoice = "$env:ROOK_BAND"
+# The elevated relaunch below has a fresh environment: the name and band
+# come as its extra arguments.
+foreach ($extra in $args) {{
+    if ("$extra" -like "name=*") {{ $workerName = "$extra".Substring(5) }}
+    elseif ("$extra" -like "band=*") {{ $bandChoice = "$extra".Substring(5) }}
+}}
+if ($bandChoice) {{ $env:ROOK_BAND = $bandChoice }}
 $installDir = Join-Path $env:USERPROFILE ".rook-band-worker"
 $logPath = Join-Path $installDir "install.log"
 $detailsPath = Join-Path $installDir "install-details.log"
 # Set only when this text runs from a file (-File); empty under iex.
 $fromFile = [bool]$PSCommandPath
+
+# The name goes into the scheduled task's command line.
+if ($workerName -notmatch '^[A-Za-z0-9._-]+$') {{
+    Write-Host "[rook] Not installed: the worker name '$workerName' may only use letters, digits, '.', '_' and '-' (set ROOK_WORKER_NAME)."
+    $global:LASTEXITCODE = 1
+    return
+}}
+# The worker belongs to the person at this machine: its task starts at their
+# sign-in, in their session (keyboard, mouse and screenshots need one), and
+# its files and the `rook` command live in their profile. SYSTEM has none of
+# that (its profile is under C:\Windows\System32 and it runs in session 0).
+if ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -eq "S-1-5-18") {{
+    Write-Host "[rook] Not installed: this is running as SYSTEM, but the worker must run as the person who uses this machine."
+    Write-Host "[rook] Run the same command in their PowerShell (as administrator), or have your management tool run it as the signed-in user."
+    $global:LASTEXITCODE = 1
+    return
+}}
 
 # Self-elevate if not already Administrator - Register-ScheduledTask below
 # needs -RunLevel Highest, which requires it. Relaunching ourselves elevated
@@ -162,7 +189,7 @@ $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIden
 if (-not $isAdmin -and -not $interactive) {{
     # Nobody is here to accept the Windows administrator prompt.
     Write-Host "[rook] Not installed: an unattended install needs an administrator PowerShell."
-    Write-Host "[rook] Run the same command from an elevated PowerShell (or as SYSTEM from your management tool)."
+    Write-Host "[rook] Run the same command from an elevated PowerShell signed in as the person who uses this machine."
     $global:LASTEXITCODE = 1
     return
 }}
@@ -183,7 +210,12 @@ if (-not $isAdmin) {{
     # Quote both paths: Start-Process joins -ArgumentList with spaces, and a
     # profile path like C:\Users\Jane Doe\... would otherwise split in two.
     $relaunch = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$tmp`"", "`"$res`"")
-    if ($unattended) {{ $relaunch += "yes" }}
+    if ($unattended) {{ $relaunch += "yes" }} else {{ $relaunch += "no" }}
+    $relaunch += "`"name=$workerName`""
+    if ($bandChoice) {{
+        $bandArg = $bandChoice -replace '"', ''
+        $relaunch += "`"band=$bandArg`""
+    }}
     try {{
         $p = Start-Process -FilePath "powershell.exe" -ArgumentList $relaunch -Verb RunAs -Wait -PassThru
     }} catch {{
@@ -266,24 +298,29 @@ function Install-Python {{
     $arch = "amd64"
     if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64" -or $env:PROCESSOR_ARCHITEW6432 -eq "ARM64") {{ $arch = "arm64" }}
     $target = Join-Path $env:LOCALAPPDATA "Programs\Python\Python312"
-    $setup = Join-Path $env:TEMP "rook-python-$pyVersion-$arch.exe"
+    # A new folder of our own, not a guessable name in %TEMP% that something
+    # else could swap between the hash check and the run.
+    $setupDir = Join-Path $installDir ("python-setup-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Force -Path $setupDir | Out-Null
+    $setup = Join-Path $setupDir "python-$pyVersion-$arch.exe"
     Write-Host "[rook]       Downloading Python $pyVersion from python.org..."
     try {{
         Invoke-WebRequest -Uri "https://www.python.org/ftp/python/$pyVersion/python-$pyVersion-$arch.exe" -OutFile $setup -UseBasicParsing
     }} catch {{
         Write-Host "[rook]       Could not download it ($($_.Exception.Message))."
+        Remove-Item $setupDir -Recurse -Force -ErrorAction SilentlyContinue
         return $false
     }}
     $hash = (Get-FileHash -Path $setup -Algorithm SHA256).Hash
     if ($hash -ne $pyHashes[$arch]) {{
-        Remove-Item $setup -Force -ErrorAction SilentlyContinue
+        Remove-Item $setupDir -Recurse -Force -ErrorAction SilentlyContinue
         Fail "the downloaded Python installer did not match its known SHA-256 fingerprint, so it was deleted unused. Something between this machine and python.org changed it; install Python 3.12 yourself from https://www.python.org/downloads/windows/ and run this command again."
     }}
     Write-Host "[rook]       Installing Python $pyVersion for this user (about a minute)..."
     $p = Start-Process -FilePath $setup -Wait -PassThru -ArgumentList @(
         "/quiet", "InstallAllUsers=0", "TargetDir=`"$target`"", "PrependPath=0",
         "Include_launcher=0", "Include_test=0", "Include_doc=0", "Shortcuts=0", "AssociateFiles=0")
-    Remove-Item $setup -Force -ErrorAction SilentlyContinue
+    Remove-Item $setupDir -Recurse -Force -ErrorAction SilentlyContinue
     if ($p.ExitCode -ne 0) {{ Write-Host "[rook]       The Python installer exited with code $($p.ExitCode)." }}
     return $true
 }}
@@ -414,7 +451,12 @@ try {{
         $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit 0
         Register-ScheduledTask -TaskName "RookBandWorker" -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest -Force | Out-Null
         Start-ScheduledTask -TaskName "RookBandWorker"
-        $bandName = "$(& $vpy $pyz --enrolled-band 2>$null | Select-Object -First 1)".Trim()
+        # The worker already runs: a stray stderr line here (which "Stop"
+        # makes fatal in Windows PowerShell 5.1) must not mark it FAILED.
+        try {{
+            $ErrorActionPreference = "Continue"
+            $bandName = "$(& $vpy $pyz --enrolled-band 2>$null | Select-Object -First 1)".Trim()
+        }} catch {{ $bandName = "" }} finally {{ $ErrorActionPreference = "Stop" }}
     }} catch {{
         $exitCode = 1
         if ($_.Exception.Data.Contains("RookExitCode")) {{
@@ -477,6 +519,11 @@ set -e
 # ROOK_WORKER_NAME (this machine's name on the band), ROOK_BAND (which band,
 # for an account sign-in with several), ROOK_HID=0|1 (keyboard/mouse control:
 # skip, or set up even with no screen).
+#
+# As root (cloud-init, sudo) it installs nothing unless told whose worker this
+# is: ROOK_USER=<account> installs it for that account (it runs as them), and
+# ROOK_ALLOW_ROOT=1 runs it as root (a container, say). A root worker runs
+# every band command (shell, files, terminals) as root.
 
 for arg in "$@"; do
     case "$arg" in
@@ -484,6 +531,12 @@ for arg in "$@"; do
         --no-hid) ROOK_HID=0 ;;
     esac
 done
+# The name goes into the service's command line: keep it to safe characters.
+case "${{ROOK_WORKER_NAME:-}}" in
+    *[!A-Za-z0-9._-]*)
+        echo "[rook] Not installed: ROOK_WORKER_NAME may only use letters, digits, '.', '_' and '-'."
+        exit 1 ;;
+esac
 # The worker's own enrollment output fits under step 5 when it sees this.
 export ROOK_YES="${{ROOK_YES:-}}" ROOK_INSTALLER=1
 
@@ -493,10 +546,16 @@ case "$ROOK_YES" in
     *) if {{ true </dev/tty; }} 2>/dev/null; then HAVE_TTY=1; fi ;;
 esac
 
-# cloud-init and systemd units may run us without HOME or USER.
-[ -n "${{HOME:-}}" ] || export HOME="$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f6)"
-[ -n "${{HOME:-}}" ] || export HOME=/root
-[ -n "${{USER:-}}" ] || export USER="$(id -un)"
+# cloud-init and systemd units may run us without HOME or USER, and `su`
+# without `-` leaves USER naming the account it came from: USER is always
+# whoever this really runs as (lingering and the input group are for them).
+export USER="$(id -un)"
+[ -n "${{HOME:-}}" ] || export HOME="$(getent passwd "$USER" 2>/dev/null | cut -d: -f6)"
+if [ -z "${{HOME:-}}" ]; then
+    if [ "$(id -u)" = 0 ]; then export HOME=/root
+    else echo "[rook] Not installed: HOME is not set. Set it to your home folder, then run the same command again."; exit 1
+    fi
+fi
 
 # Root needs no sudo (a container, cloud-init); without a terminal sudo must
 # fail at once instead of waiting for a password nobody can type.
@@ -676,6 +735,75 @@ if [ "$IS_TERMUX" = "1" ]; then
     export SODIUM_INSTALL=system
 fi
 
+# ---- run as root: whose worker is this? ------------------------------------
+# A root worker runs every band command as root, and lingering (below) would
+# bring it back at every boot. ROOK_USER=<account>: prepare what that account
+# can't install without sudo, then run this same installer as them.
+SELF_URL='{base}/worker?os=unix'
+install_for_user() {{
+    case "$ROOK_USER" in
+        -*|*[!A-Za-z0-9._-]*) say "ERROR: ROOK_USER is not an account name: $ROOK_USER"; exit 1 ;;
+    esac
+    local entry
+    entry="$(getent passwd "$ROOK_USER" 2>/dev/null || true)"
+    if [ -z "$entry" ]; then
+        say "ERROR: there is no account named $ROOK_USER here. Create it first (useradd -m $ROOK_USER), then run the same command again."
+        exit 1
+    fi
+    if ! command -v runuser &>/dev/null; then
+        say "ERROR: installing for another account needs runuser (util-linux). Run the command as $ROOK_USER instead."
+        exit 1
+    fi
+    local uhome uid tmp
+    uhome="$(echo "$entry" | cut -d: -f6)"
+    uid="$(echo "$entry" | cut -d: -f3)"
+    say "Installing for the account $ROOK_USER: the worker will run as $ROOK_USER, not as root."
+    install_curl
+    # Fetched first, while a pairing code is fresh; a private folder they own.
+    tmp="$(mktemp -d)"
+    if ! curl -fsSL "$SELF_URL" -o "$tmp/install.sh"; then
+        rm -rf "$tmp"
+        say "ERROR: could not download the installer again for $ROOK_USER (an expired pairing code? Get a new one)."
+        exit 1
+    fi
+    chown -R "$ROOK_USER" "$tmp"
+    command -v python3 &>/dev/null || command -v python &>/dev/null || install_python
+    local py
+    py="$(command -v python3 || command -v python)"
+    if ! quietly "$py" -c "import venv, ensurepip" && command -v apt-get &>/dev/null; then
+        quietly apt-get install -y -qq python3-venv || true
+    fi
+    # Their user service runs without a login, now and at every boot.
+    command -v loginctl &>/dev/null && {{ quietly loginctl enable-linger "$ROOK_USER" || true; }}
+    local envs=(HOME="$uhome" USER="$ROOK_USER" LOGNAME="$ROOK_USER" ROOK_YES=1
+                PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+                XDG_RUNTIME_DIR="/run/user/$uid")
+    local v
+    for v in ROOK_WORKER_NAME ROOK_BAND ROOK_HID LANG http_proxy https_proxy no_proxy \\
+             HTTP_PROXY HTTPS_PROXY NO_PROXY; do
+        [ -n "${{!v:-}}" ] && envs+=("$v=${{!v}}")
+    done
+    trap - EXIT
+    local rc=0
+    runuser -u "$ROOK_USER" -- env -i "${{envs[@]}}" bash "$tmp/install.sh" --yes </dev/null || rc=$?
+    rm -rf "$tmp"
+    exit "$rc"
+}}
+if [ "$(id -u)" = 0 ] && [ "$IS_TERMUX" != "1" ]; then
+    if [ -n "${{ROOK_USER:-}}" ] && [ "$ROOK_USER" != root ]; then
+        install_for_user
+    fi
+    case "${{ROOK_ALLOW_ROOT:-}}" in
+        1|true|yes)
+            say "WARNING: installing as root (ROOK_ALLOW_ROOT=1). Every band command (shell, files, terminals) runs as root on this machine, and the worker starts again at every boot." ;;
+        *)
+            say "Not installed: this runs as root, so the worker would run every band command (shell, files, terminals) as root."
+            say "Install it for an everyday account instead: set ROOK_USER=<account> and run the same command (it runs as that account)."
+            say "Or, if root is really what you want (a container, say), set ROOK_ALLOW_ROOT=1."
+            exit 1 ;;
+    esac
+fi
+
 install_curl
 
 say "(1/6) Checking for Python 3..."
@@ -744,6 +872,8 @@ if [ "$IS_TERMUX" = "1" ] && [ -z "${{ROOK_WORKER_NAME:-}}" ]; then
     MODEL=$(getprop ro.product.model 2>/dev/null | tr ' ' '-')
     [ -n "$MODEL" ] && WORKER_NAME="$MODEL"
 fi
+# A derived name too goes into a command line: anything unusual becomes '-'.
+WORKER_NAME="$(printf '%s' "$WORKER_NAME" | tr -c 'A-Za-z0-9._-' '-')"
 say "(5/6) Joining the band as $WORKER_NAME..."
 # With a terminal, enrollment may ask (which band); without one it never does.
 enroll() {{
@@ -2072,11 +2202,15 @@ class CombinedServer:
         if ws_url:
             script = script.replace('--enrolled --ws', f'--enrolled --ws --ws-url {ws_url}')
         script = script.replace(f' --update-url {base}/band-worker.json', '')
+        # The elevated relaunch (Windows) and a root install for ROOK_USER
+        # (Linux) fetch this same script again: keep the code.
+        query = 'login=google' if account_login else f'band={code}'
         if want_ps:
-            # The elevated relaunch fetches this same script again: keep the code.
-            query = 'login=google' if account_login else f'band={code}'
             script = script.replace(f'{base}/worker?os=windows',
                                     f'{base}/worker?{query}&os=windows')
+        else:
+            script = script.replace(f"SELF_URL='{base}/worker?os=unix'",
+                                    f"SELF_URL='{base}/worker?{query}&os=unix'")
         return web.Response(text=script, content_type="text/plain", headers=headers)
 
     async def _enroll_config(self, request: web.Request) -> web.Response:

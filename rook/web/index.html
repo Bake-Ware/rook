@@ -497,7 +497,7 @@
         <div class="cmd"><span class="lbl">Linux / macOS</span><span id="cmd-unix"></span></div>
         <div class="cmd"><span class="lbl">Windows (PowerShell)</span><span id="cmd-win"></span></div>
         <div class="cmd"><span class="lbl">Termux / Android</span><span id="cmd-termux"></span></div>
-        <p class="install-after">Installing without anyone at the keyboard (cloud-init, a script, a management tool)? Add <code>-s -- --yes</code> after <code>bash</code>, or on Windows set <code>$env:ROOK_YES = "1"</code> first in an administrator PowerShell. Nothing will prompt.</p>
+        <p class="install-after">Installing without anyone at the keyboard (cloud-init, a script, a management tool)? Add <code>-s -- --yes</code> after <code>bash</code>, or on Windows set <code>$env:ROOK_YES = "1"</code> first in an administrator PowerShell (the user's own, not SYSTEM). Nothing will prompt. As root (cloud-init), also put <code>ROOK_USER=&lt;account&gt;</code> before <code>bash</code>: the worker then runs as that account instead of as root.</p>
         </details>
         <div class="ilinks">
           <a href="/apk">⬇ Android APK</a>
