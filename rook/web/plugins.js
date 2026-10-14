@@ -121,7 +121,7 @@ export function presetPicker(opts={}){
       const cb=h('input',{type:'checkbox',checked:p.selected,'aria-label':p.title});
       const item=h('label',{class:'pp-item'+(p.selected?' on':'')},cb,h('b',{text:p.title}),
         h('small',{text:p.summary}),riskTags(p.risk||{tiers:p.tiers},p.high_risk),
-        p.state==='default'?h('small',{text:'Not chosen yet: shows what Rook does by default. Saving leaves it as is unless you change the box.'}):null);
+        p.state==='default'?h('small',{text:'Not chosen yet: built-in default.'}):null);
       cb.onchange=()=>item.classList.toggle('on',cb.checked);
       boxes.push([p.id,cb]);list.append(item);
     }
