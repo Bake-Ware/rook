@@ -446,7 +446,11 @@ class HubNode:
             for slot, text in (p.GUIDANCE or {}).items():
                 key = slot if (slot in ("server", "hygiene") or slot.startswith(("tool:", "cap:"))) \
                     else "cap:" + slot
-                out.setdefault(key, text)
+                # An empty default only declares the slot (knowledge declares
+                # tool:rook_knowledge so it is editable): another plugin's
+                # text for the same slot (manual's hint) wins over it.
+                if text or key not in out:
+                    out[key] = text if not out.get(key) else out[key]
         return out
 
     def plugin(self, namespace: str) -> Any:
