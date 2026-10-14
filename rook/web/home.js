@@ -44,12 +44,14 @@ export async function mountHome(root){
     const rows=d.activity.map(a=>h('div',{class:'mg-row',title:a.error||''},
       h('span',{class:'mg-dimtext',text:ago(a.ts)}),h('span',{text:VIA[a.via]||a.via}),
       two(a.sender||'',a.room||'',false),
-      h('span',{class:a.ok?'mg-good':'mg-bad',text:a.ok?(a.latency_ms!=null?(a.latency_ms/1000).toFixed(1)+' s':'ok')+(a.tools&&a.tools.length?' · '+a.tools.length+' tool call'+(a.tools.length>1?'s':''):''):(a.error||'failed').slice(0,80)})));
+      h('span',{class:a.ok?'mg-good':'mg-bad',text:a.ok?(a.latency_ms!=null?(a.latency_ms/1000).toFixed(1)+' s':'ok')+(a.tools&&a.tools.length?' · '+a.tools.length+' tool call'+(a.tools.length>1?'s':''):'')+memo(a.memory):(a.error||'failed').slice(0,80)})));
     top.replaceChildren(table('minmax(0,1fr) minmax(0,1.2fr) 150px 120px',['Agent','Model · endpoint','State','Tools'],[row]));
     acts.replaceChildren(
       h('div',{class:'mg-label',style:'margin-top:6px',text:'Recent activity (since the MCP server started)'}),
       table('90px 80px minmax(0,1fr) minmax(0,1fr)',['When','Via','From · room','Result'],rows.length?rows:[h('div',{class:'mg-empty',text:'Nothing yet. Use Test, or say hello in the chat above.'})]));
   }
+  // What memory did for one answer: "· 3 recalled · 1 remembered".
+  function memo(m){if(!m)return '';return [m.recalled&&m.recalled+' recalled',m.remembered&&m.remembered+' remembered',m.forgotten&&m.forgotten+' forgotten'].filter(Boolean).map(x=>' · '+x).join('');}
   function field(label,ctl,k,note){
     const r=d.settings[k]||{};
     if(r.locked){ctl.disabled=true;}
@@ -69,10 +71,11 @@ export async function mountHome(root){
     const persona=h('select',null,h('option',{value:'',text:'The persona assigned to family "home" (or the default)'}),d.personas.map(p=>h('option',{value:p.id,text:p.name+' ('+p.id+')',selected:p.id===val('persona')})));
     const prompt=h('textarea',{rows:'4',placeholder:'Extra instructions for the home agent',style:'font:13px/1.6 var(--mono)'});prompt.value=val('system_prompt')||'';
     const tools=h('input',{type:'checkbox',checked:!!val('tools')});
+    const memory=h('input',{type:'checkbox',checked:val('memory')!==false});
     const num=(k,step)=>h('input',{type:'number',step:step||'1',value:val(k)??'',style:'font-family:var(--mono)'});
     const timeout=num('timeout_s','1'),maxTok=num('max_tokens'),temp=num('temperature','0.05'),ctx=num('context_messages');
     const values=()=>({enabled:enabled.checked,name:name.value.trim().toLowerCase(),provider:provider.value,base_url:base.value.trim(),model:model.value.trim(),
-      api_key:key.value?'{{secret:'+key.value+'}}':'',persona:persona.value,system_prompt:prompt.value,tools:tools.checked,
+      api_key:key.value?'{{secret:'+key.value+'}}':'',persona:persona.value,system_prompt:prompt.value,tools:tools.checked,memory:memory.checked,
       timeout_s:Number(timeout.value||90),max_tokens:Number(maxTok.value||1024),temperature:temp.value===''?null:Number(temp.value),context_messages:Number(ctx.value||20)});
     const run=async(b,work)=>{if(busy)return;busy=true;b.disabled=true;err.textContent='';try{await work();}catch(e){err.textContent=e.message;}finally{busy=false;b.disabled=false;}};
     const fetchModels=btn('List models','',()=>run(fetchModels,async()=>{
@@ -100,7 +103,8 @@ export async function mountHome(root){
         field('API key',key,'api_key','A secret from Secrets, used as {{secret:name}}. Add the key there first; it is never shown or stored here.'),
         field('Persona',persona,'persona'),
         field('System prompt addition',prompt,'system_prompt'),
-        h('label',{class:'mg-actions'},tools,'Read-only tools: let it search the knowledge wiki (each search is journaled as '+d.status.identity+')'),
+        h('label',{class:'mg-actions',style:'flex-wrap:nowrap;align-items:flex-start'},memory,h('span',null,'Memory: remember people, facts and past conversations (',h('a',{href:'#memory',text:'see what it remembers'}),')')),
+        h('label',{class:'mg-actions',style:'flex-wrap:nowrap;align-items:flex-start'},tools,h('span',null,'Tools: let it search the knowledge wiki, and save and search its memory (each call is journaled as '+d.status.identity+')')),
         h('details',null,h('summary',{text:'Limits'}),h('div',{class:'mg-pad',style:'padding-left:0;padding-right:0'},
           field('Request timeout (s)',timeout,'timeout_s'),field('Longest reply (tokens)',maxTok,'max_tokens'),
           field('Temperature',temp,'temperature','Blank: the endpoint\'s default.'),field('Room messages sent as context',ctx,'context_messages'))),

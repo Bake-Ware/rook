@@ -205,7 +205,8 @@ are set only in the environment or on the command line.
 | `home.persona` | Persona profile | hub | str |  | `ROOK_HOME_PERSONA` | live |
 | `home.system_prompt` | System prompt addition | hub | str |  | `ROOK_HOME_SYSTEM_PROMPT` | live |
 | `home.context_messages` | Room messages sent as context | hub | int | `20` | `ROOK_HOME_CONTEXT_MESSAGES` | live |
-| `home.tools` | Read-only tools (knowledge search) | hub | bool | off | `ROOK_HOME_TOOLS` | live |
+| `home.tools` | Tools (knowledge search; memory save and search) | hub | bool | off | `ROOK_HOME_TOOLS` | live |
+| `home.memory` | Use memory | hub | bool | on | `ROOK_HOME_MEMORY` | live |
 | `home.job_steps` | Work job agent steps | hub | bool | on | `ROOK_HOME_JOB_STEPS` | live |
 | `home.job_max_tool_calls` | Tool calls per job step | hub | int | `20` | `ROOK_HOME_JOB_MAX_TOOL_CALLS` | live |
 
@@ -265,6 +266,32 @@ are set only in the environment or on the command line.
 |---|---|---|---|---|---|---|
 | `manual.auto_seed` | Copy the manual on a new hub | hub | bool | on | `ROOK_MANUAL_AUTO_SEED` | live |
 | `manual.prompt_updates` | Ask after updates | hub | bool | on | `ROOK_MANUAL_PROMPT_UPDATES` | live |
+
+## Memory (hub plugin, runs in mcp)
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `memory.enabled` | Memory on | hub | bool | on | `ROOK_MEMORY_ENABLED` | restart |
+| `memory.auto_remember` | Remember what people tell it | hub | bool | on | `ROOK_MEMORY_AUTO_REMEMBER` | live |
+| `memory.default_person` | Whose memories by default | hub | str | `user:operator` | `ROOK_MEMORY_DEFAULT_PERSON` | live |
+| `memory.context_chars` | Memory in each prompt (characters) | hub | int | `1500` | `ROOK_MEMORY_CONTEXT_CHARS` | live |
+| `memory.agent_tool` | Let connected agents use memory (rook_memory) | hub | bool | off | `ROOK_MEMORY_AGENT_TOOL` | restart |
+| `memory.deny_patterns` | Never remember text matching | hub | list |  | `ROOK_MEMORY_DENY_PATTERNS` | live |
+| `memory.max_chars` | Longest memory (characters) | hub | int | `500` | `ROOK_MEMORY_MAX_CHARS` | live |
+| `memory.embeddings` | Meaning-based search | hub | str | `auto` | `ROOK_MEMORY_EMBEDDINGS` | live |
+| `memory.embedder` | Embedding service | hub | resource |  | `ROOK_MEMORY_EMBEDDER` | live |
+| `memory.embed_model` | Embedding model | hub | str |  | `ROOK_MEMORY_EMBED_MODEL` | live |
+| `memory.dedupe_similarity` | Same memory at similarity | hub | float | `0.92` | `ROOK_MEMORY_DEDUPE_SIMILARITY` | live |
+| `memory.supersede_similarity` | Replaces an older memory at similarity | hub | float | `0.82` | `ROOK_MEMORY_SUPERSEDE_SIMILARITY` | live |
+| `memory.consolidate_minutes` | Tidy up every (minutes) | hub | int | `30` | `ROOK_MEMORY_CONSOLIDATE_MINUTES` | live |
+| `memory.summarise_with_model` | Summarise with the home agent's model | hub | bool | on | `ROOK_MEMORY_SUMMARISE_WITH_MODEL` | live |
+| `memory.episode_idle_minutes` | A conversation is finished after (minutes idle) | hub | int | `20` | `ROOK_MEMORY_EPISODE_IDLE_MINUTES` | live |
+| `memory.rollup_days` | Roll conversations up by week after (days) | hub | int | `14` | `ROOK_MEMORY_ROLLUP_DAYS` | live |
+| `memory.min_confidence` | Keep automatic memories from confidence | hub | float | `0.5` | `ROOK_MEMORY_MIN_CONFIDENCE` | live |
+| `memory.retention_days` | Delete replaced and forgotten memories after (days) | hub | int | `90` | `ROOK_MEMORY_RETENTION_DAYS` | live |
+| `memory.half_life_days` | Fade half-life by kind (days) | hub | dict | `{'episode': 45, 'fact': 180}` | `ROOK_MEMORY_HALF_LIFE_DAYS` | live |
+| `memory.archive_below` | Archive below strength | hub | float | `0.1` | `ROOK_MEMORY_ARCHIVE_BELOW` | live |
+| `memory.budgets` | Budget per person and kind (characters) | hub | dict | `{'profile': 3000, 'fact': 8000, 'procedure':…` | `ROOK_MEMORY_BUDGETS` | live |
 
 ## Memory (worker plugin, runs in worker)
 
