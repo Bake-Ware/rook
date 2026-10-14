@@ -80,7 +80,10 @@ impl Detector {
         }
         Ok(Detector {
             mel: load(&models.features_dir.join("melspectrogram.onnx"), &[1, WINDOW])?,
-            emb: load(&models.features_dir.join("embedding_model.onnx"), &[1, EMB_WIN, MEL_BINS, 1])?,
+            emb: load(
+                &models.features_dir.join("embedding_model.onnx"),
+                &[1, EMB_WIN, MEL_BINS, 1],
+            )?,
             wake: load(&models.classifier, &[1, N_FRAMES, EMB_DIM])?,
             raw: vec![0.0; WINDOW],
             pending: Vec::with_capacity(CHUNK),
@@ -128,7 +131,13 @@ impl Detector {
         if self.mel_frames.len() < EMB_WIN {
             return Ok(false);
         }
-        let win: Vec<f32> = self.mel_frames.iter().skip(self.mel_frames.len() - EMB_WIN).flatten().copied().collect();
+        let win: Vec<f32> = self
+            .mel_frames
+            .iter()
+            .skip(self.mel_frames.len() - EMB_WIN)
+            .flatten()
+            .copied()
+            .collect();
         let mut e = run(&self.emb, &[1, EMB_WIN, MEL_BINS, 1], win)?;
         e.truncate(EMB_DIM);
         self.embs.push_back(e);
@@ -138,9 +147,22 @@ impl Detector {
         if self.embs.len() < N_FRAMES {
             return Ok(false);
         }
-        let x: Vec<f32> = self.embs.iter().skip(self.embs.len() - N_FRAMES).flatten().copied().collect();
-        self.last_score = run(&self.wake, &[1, N_FRAMES, EMB_DIM], x)?.first().copied().unwrap_or(0.0);
-        self.confirmations = if self.last_score >= self.threshold && speech { self.confirmations + 1 } else { 0 };
+        let x: Vec<f32> = self
+            .embs
+            .iter()
+            .skip(self.embs.len() - N_FRAMES)
+            .flatten()
+            .copied()
+            .collect();
+        self.last_score = run(&self.wake, &[1, N_FRAMES, EMB_DIM], x)?
+            .first()
+            .copied()
+            .unwrap_or(0.0);
+        self.confirmations = if self.last_score >= self.threshold && speech {
+            self.confirmations + 1
+        } else {
+            0
+        };
         Ok(self.confirmations >= 2)
     }
 
@@ -223,7 +245,10 @@ impl Listener {
                 on_event(Event::Error(e));
             }
         });
-        Ok(Listener { stop, handle: Some(handle) })
+        Ok(Listener {
+            stop,
+            handle: Some(handle),
+        })
     }
 
     pub fn stop(&mut self) {
@@ -275,7 +300,9 @@ mod tests {
         // The fixture classifier is sigmoid(mean(embeddings)): not a wake
         // word, but it exercises the whole stream and the confirmation rule.
         let mut d = Detector::new(&models(), 0.0).unwrap();
-        let loud: Vec<i16> = (0..16_000 * 3).map(|i| ((i as f32 * 0.07).sin() * 9000.0) as i16).collect();
+        let loud: Vec<i16> = (0..16_000 * 3)
+            .map(|i| ((i as f32 * 0.07).sin() * 9000.0) as i16)
+            .collect();
         let mut fired = false;
         for c in loud.chunks(700) {
             fired |= d.feed(c).unwrap();

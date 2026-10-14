@@ -19,7 +19,10 @@ async fn live_hub_round_trip() {
     let origin = env("ROOK_TEST_HUB");
     let pass = env("ROOK_TEST_PASS");
 
-    assert_eq!(hub::password_sign_in(&origin, "nobody", "wrong-password").await, Err(HubError::BadLogin));
+    assert_eq!(
+        hub::password_sign_in(&origin, "nobody", "wrong-password").await,
+        Err(HubError::BadLogin)
+    );
 
     // The operator's account login (the bootstrap account is "operator" when
     // no ROOK_WEB_USER is set), then the shared dashboard password.
@@ -34,17 +37,26 @@ async fn live_hub_round_trip() {
     assert!(who.principal.is_some());
 
     // A stale cookie reads as "sign in again".
-    assert_eq!(Hub::new(&origin, "rook_session=stale").whoami().await, Err(HubError::NotSignedIn));
+    assert_eq!(
+        Hub::new(&origin, "rook_session=stale").whoami().await,
+        Err(HubError::NotSignedIn)
+    );
 
     let status = h.home_status().await.unwrap();
     assert!(status.enabled, "turn the home agent on for this test");
 
-    let a = h.ask_via_chat("What's on the grocery list?", None, Duration::from_secs(60)).await.unwrap();
+    let a = h
+        .ask_via_chat("What's on the grocery list?", None, Duration::from_secs(60))
+        .await
+        .unwrap();
     assert_eq!(a.via, "chat");
     assert!(!a.text.is_empty());
     let room = a.room.clone().unwrap();
     // The second question reuses the room.
-    let b = h.ask_via_chat("Is the printer back?", Some(&room), Duration::from_secs(60)).await.unwrap();
+    let b = h
+        .ask_via_chat("Is the printer back?", Some(&room), Duration::from_secs(60))
+        .await
+        .unwrap();
     assert_eq!(b.room.as_deref(), Some(room.as_str()));
     assert_ne!(a.text, b.text);
 
@@ -55,7 +67,10 @@ async fn live_hub_round_trip() {
     assert_eq!(h.attention().await.unwrap(), None);
 
     if let Ok(token) = std::env::var("ROOK_TEST_MCP_TOKEN") {
-        let m = h.ask_via_mcp(&token, "Anything on the grocery list?", Duration::from_secs(60)).await.unwrap();
+        let m = h
+            .ask_via_mcp(&token, "Anything on the grocery list?", Duration::from_secs(60))
+            .await
+            .unwrap();
         assert_eq!(m.via, "agent");
         assert!(!m.text.is_empty());
         let bad = h.ask_via_mcp("not-a-token", "hi", Duration::from_secs(20)).await;

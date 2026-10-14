@@ -26,7 +26,10 @@ pub fn downmix(interleaved: &[f32], channels: usize) -> Vec<f32> {
     if channels <= 1 {
         return interleaved.to_vec();
     }
-    interleaved.chunks(channels).map(|f| f.iter().sum::<f32>() / f.len() as f32).collect()
+    interleaved
+        .chunks(channels)
+        .map(|f| f.iter().sum::<f32>() / f.len() as f32)
+        .collect()
 }
 
 /// Streaming linear resampler to 16 kHz. Good enough for speech recognition
@@ -39,7 +42,11 @@ pub struct Resampler {
 
 impl Resampler {
     pub fn new(input_rate: u32) -> Self {
-        Resampler { step: input_rate as f64 / RATE as f64, pos: 0.0, prev: 0.0 }
+        Resampler {
+            step: input_rate as f64 / RATE as f64,
+            pos: 0.0,
+            prev: 0.0,
+        }
     }
 
     pub fn process(&mut self, input: &[f32]) -> Vec<f32> {
@@ -49,7 +56,11 @@ impl Resampler {
             let i = self.pos.floor() as isize;
             let frac = (self.pos - i as f64) as f32;
             let a = if i < 0 { self.prev } else { input[i as usize] };
-            let b = if i + 1 < input.len() as isize { input[(i + 1) as usize] } else { a };
+            let b = if i + 1 < input.len() as isize {
+                input[(i + 1) as usize]
+            } else {
+                a
+            };
             out.push(a + (b - a) * frac);
             self.pos += self.step;
         }
@@ -95,7 +106,16 @@ const FRAME: usize = 480; // 30 ms at 16 kHz
 
 impl Default for Endpointer {
     fn default() -> Self {
-        Endpointer { noise: 300.0, heard_ms: 0, quiet_ms: 0, total_ms: 0, pending: vec![], pause_ms: 900, max_ms: 15_000, wait_ms: 5_000 }
+        Endpointer {
+            noise: 300.0,
+            heard_ms: 0,
+            quiet_ms: 0,
+            total_ms: 0,
+            pending: vec![],
+            pause_ms: 900,
+            max_ms: 15_000,
+            wait_ms: 5_000,
+        }
     }
 }
 
@@ -123,7 +143,11 @@ impl Endpointer {
             if self.heard_ms >= 240 && self.quiet_ms >= self.pause_ms {
                 state = Endpoint::Done;
             } else if self.total_ms >= self.max_ms {
-                state = if self.heard_ms >= 240 { Endpoint::Done } else { Endpoint::Nothing };
+                state = if self.heard_ms >= 240 {
+                    Endpoint::Done
+                } else {
+                    Endpoint::Nothing
+                };
             } else if self.total_ms >= self.wait_ms
                 && (self.heard_ms == 0 || (self.heard_ms < 240 && self.quiet_ms >= self.pause_ms))
             {
@@ -173,19 +197,31 @@ pub async fn transcribe(voice_url: &str, key: &str, pcm: &[i16]) -> Result<Strin
         return Ok(String::new());
     }
     let base = voice_base(voice_url)?;
-    let http = reqwest::Client::builder().timeout(Duration::from_secs(40)).build().map_err(|e| e.to_string())?;
-    let mut req = http.post(format!("{base}/api/transcribe")).header("Content-Type", "audio/L16").body(pcm_bytes(pcm));
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(40))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let mut req = http
+        .post(format!("{base}/api/transcribe"))
+        .header("Content-Type", "audio/L16")
+        .body(pcm_bytes(pcm));
     if !key.is_empty() {
         req = req.bearer_auth(key);
     }
-    let resp = req.send().await.map_err(|e| format!("Can't reach the voice server ({e})."))?;
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| format!("Can't reach the voice server ({e})."))?;
     match resp.status().as_u16() {
         200 => {}
         401 => return Err("The voice server wants a valid voice key (Settings > Voice).".into()),
         503 => return Err("The voice server is busy. Try again.".into()),
         s => return Err(format!("The voice server answered HTTP {s}.")),
     }
-    let v: serde_json::Value = resp.json().await.map_err(|_| "The voice server sent a bad reply.".to_string())?;
+    let v: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|_| "The voice server sent a bad reply.".to_string())?;
     Ok(v.get("text").and_then(|t| t.as_str()).unwrap_or("").trim().to_string())
 }
 
@@ -240,7 +276,10 @@ mod tests {
     fn endpointer_gives_up_on_silence_and_caps_length() {
         let mut e = Endpointer::default();
         assert_eq!(e.feed(&tone(5_100, 40.0)), Endpoint::Nothing);
-        let mut e = Endpointer { max_ms: 2_000, ..Default::default() };
+        let mut e = Endpointer {
+            max_ms: 2_000,
+            ..Default::default()
+        };
         assert_eq!(e.feed(&tone(2_100, 8000.0)), Endpoint::Done);
         // A click is not speech.
         let mut e = Endpointer::default();
@@ -250,10 +289,16 @@ mod tests {
 
     #[test]
     fn voice_base_forms() {
-        assert_eq!(voice_base("wss://voice.example.com/ws").unwrap(), "https://voice.example.com");
+        assert_eq!(
+            voice_base("wss://voice.example.com/ws").unwrap(),
+            "https://voice.example.com"
+        );
         assert_eq!(voice_base("ws://192.0.2.5:8900/ws/").unwrap(), "http://192.0.2.5:8900");
         assert_eq!(voice_base("voice.example.com").unwrap(), "https://voice.example.com");
-        assert_eq!(voice_base("https://example.com/voice/").unwrap(), "https://example.com/voice");
+        assert_eq!(
+            voice_base("https://example.com/voice/").unwrap(),
+            "https://example.com/voice"
+        );
         assert!(voice_base("").is_err());
         assert!(voice_base("ftp://x").is_err());
     }

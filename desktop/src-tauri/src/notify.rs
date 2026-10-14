@@ -51,7 +51,11 @@ impl Watcher {
     /// poll, with the newest message from someone else. `skip` is the
     /// quick-ask room: its replies already show in the quick-ask box.
     pub fn rooms(&mut self, rooms: &[Room], skip: Option<&str>) -> Vec<Notice> {
-        let now: HashMap<String, u64> = rooms.iter().filter(|r| r.member).map(|r| (r.room.clone(), r.unread)).collect();
+        let now: HashMap<String, u64> = rooms
+            .iter()
+            .filter(|r| r.member)
+            .map(|r| (r.room.clone(), r.unread))
+            .collect();
         let Some(prev) = self.unread.replace(now) else {
             return vec![];
         };
@@ -64,9 +68,20 @@ impl Watcher {
             }
             let text = r.last_text.as_deref().unwrap_or("");
             let who = display_name(from);
-            let title = if text.trim_end().ends_with('?') { format!("{who} is asking") } else { format!("New message from {who}") };
-            let room = if r.title.is_empty() { "Chat".to_string() } else { clip(&r.title, 40) };
-            out.push(Notice { title, body: format!("{room}: {}", clip(text, 140)) });
+            let title = if text.trim_end().ends_with('?') {
+                format!("{who} is asking")
+            } else {
+                format!("New message from {who}")
+            };
+            let room = if r.title.is_empty() {
+                "Chat".to_string()
+            } else {
+                clip(&r.title, 40)
+            };
+            out.push(Notice {
+                title,
+                body: format!("{room}: {}", clip(text, 140)),
+            });
         }
         summarize(out, "rooms have new messages")
     }
@@ -80,10 +95,17 @@ impl Watcher {
             return match items.len() {
                 0 => vec![],
                 1 => vec![attention_notice(&items[0])],
-                n => vec![Notice { title: "Rook".into(), body: format!("{n} things need you.") }],
+                n => vec![Notice {
+                    title: "Rook".into(),
+                    body: format!("{n} things need you."),
+                }],
             };
         };
-        let out = items.iter().filter(|i| !prev.contains(&i.id)).map(attention_notice).collect();
+        let out = items
+            .iter()
+            .filter(|i| !prev.contains(&i.id))
+            .map(attention_notice)
+            .collect();
         summarize(out, "things need you")
     }
 }
@@ -106,7 +128,10 @@ fn summarize(mut out: Vec<Notice>, what: &str) -> Vec<Notice> {
     if out.len() > MAX_SEPARATE {
         let n = out.len();
         out.clear();
-        out.push(Notice { title: "Rook".into(), body: format!("{n} {what}.") });
+        out.push(Notice {
+            title: "Rook".into(),
+            body: format!("{n} {what}."),
+        });
     }
     out
 }
@@ -132,7 +157,13 @@ mod tests {
         let mut w = Watcher::new();
         assert!(w.rooms(&[room("a", 5, "agent:x", "old")], None).is_empty());
         let got = w.rooms(&[room("a", 6, "agent:x", "Shall I deploy?")], None);
-        assert_eq!(got, vec![Notice { title: "x is asking".into(), body: "room a: Shall I deploy?".into() }]);
+        assert_eq!(
+            got,
+            vec![Notice {
+                title: "x is asking".into(),
+                body: "room a: Shall I deploy?".into()
+            }]
+        );
         // Same count again: nothing new.
         assert!(w.rooms(&[room("a", 6, "agent:x", "Shall I deploy?")], None).is_empty());
     }
@@ -145,7 +176,15 @@ mod tests {
         mine.unread = 1;
         let mut outsider = room("o", 3, "agent:y", "x");
         outsider.member = false;
-        let got = w.rooms(&[mine, outsider, room("q", 1, "agent:home", "answer"), room("n", 1, "agent:z", "done")], Some("q"));
+        let got = w.rooms(
+            &[
+                mine,
+                outsider,
+                room("q", 1, "agent:home", "answer"),
+                room("n", 1, "agent:z", "done"),
+            ],
+            Some("q"),
+        );
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].title, "New message from z");
     }
@@ -155,7 +194,13 @@ mod tests {
         let mut w = Watcher::new();
         w.rooms(&[], None);
         let rooms: Vec<Room> = (0..5).map(|i| room(&i.to_string(), 1, "agent:a", "hey")).collect();
-        assert_eq!(w.rooms(&rooms, None), vec![Notice { title: "Rook".into(), body: "5 rooms have new messages.".into() }]);
+        assert_eq!(
+            w.rooms(&rooms, None),
+            vec![Notice {
+                title: "Rook".into(),
+                body: "5 rooms have new messages.".into()
+            }]
+        );
         let long = "x".repeat(400);
         let mut w = Watcher::new();
         w.rooms(&[], None);
@@ -165,7 +210,12 @@ mod tests {
     }
 
     fn item(id: &str, kind: &str) -> AttentionItem {
-        AttentionItem { id: id.into(), kind: kind.into(), title: format!("T{id}"), text: "please look".into() }
+        AttentionItem {
+            id: id.into(),
+            kind: kind.into(),
+            title: format!("T{id}"),
+            text: "please look".into(),
+        }
     }
 
     #[test]
@@ -173,10 +223,25 @@ mod tests {
         let mut w = Watcher::new();
         assert!(w.attention(None).is_empty());
         let first = w.attention(Some(&[item("1", "question"), item("2", "task")]));
-        assert_eq!(first, vec![Notice { title: "Rook".into(), body: "2 things need you.".into() }]);
+        assert_eq!(
+            first,
+            vec![Notice {
+                title: "Rook".into(),
+                body: "2 things need you.".into()
+            }]
+        );
         let next = w.attention(Some(&[item("2", "task"), item("3", "task")]));
-        assert_eq!(next, vec![Notice { title: "A task needs you".into(), body: "T3: please look".into() }]);
+        assert_eq!(
+            next,
+            vec![Notice {
+                title: "A task needs you".into(),
+                body: "T3: please look".into()
+            }]
+        );
         let mut fresh = Watcher::new();
-        assert_eq!(fresh.attention(Some(&[item("9", "question")]))[0].title, "A question for you");
+        assert_eq!(
+            fresh.attention(Some(&[item("9", "question")]))[0].title,
+            "A question for you"
+        );
     }
 }

@@ -21,7 +21,11 @@ pub const WINDOWS_TASK: &str = "RookBandWorker";
 pub enum Mode {
     SystemdUser,
     WindowsTask,
-    Bundle { python: PathBuf, pyz: PathBuf, enrolled: bool },
+    Bundle {
+        python: PathBuf,
+        pyz: PathBuf,
+        enrolled: bool,
+    },
     NotInstalled,
 }
 
@@ -63,7 +67,10 @@ impl Layout {
     pub fn python_candidates(&self) -> Vec<PathBuf> {
         let venv = self.install_dir.join("venv");
         if cfg!(windows) {
-            vec![venv.join("Scripts").join("pythonw.exe"), venv.join("Scripts").join("python.exe")]
+            vec![
+                venv.join("Scripts").join("pythonw.exe"),
+                venv.join("Scripts").join("python.exe"),
+            ]
         } else {
             vec![venv.join("bin").join("python")]
         }
@@ -84,14 +91,21 @@ impl Layout {
             return None;
         }
         let python = self.python_candidates().into_iter().find(|p| p.is_file())?;
-        Some(Mode::Bundle { python, pyz, enrolled: self.enrollment().is_file() })
+        Some(Mode::Bundle {
+            python,
+            pyz,
+            enrolled: self.enrollment().is_file(),
+        })
     }
 }
 
 /// The child-process command for an installed bundle: the saved enrollment,
 /// over the hub's WebSocket bridge (what the installers run too).
 pub fn bundle_command(python: &Path, pyz: &Path) -> (PathBuf, Vec<String>) {
-    (python.to_path_buf(), vec![pyz.display().to_string(), "--enrolled".into(), "--ws".into()])
+    (
+        python.to_path_buf(),
+        vec![pyz.display().to_string(), "--enrolled".into(), "--ws".into()],
+    )
 }
 
 /// `systemctl --user is-active` prints "active" (or activating) when up.
@@ -102,7 +116,9 @@ pub fn systemd_active(stdout: &str) -> bool {
 /// `schtasks /Query /TN RookBandWorker /FO CSV /NH` ends each row with the
 /// status column: "Running", "Ready", "Disabled"...
 pub fn task_running(stdout: &str) -> bool {
-    stdout.lines().any(|l| l.trim_end().trim_end_matches('"').ends_with("Running"))
+    stdout
+        .lines()
+        .any(|l| l.trim_end().trim_end_matches('"').ends_with("Running"))
 }
 
 fn quiet(cmd: &mut Command) -> &mut Command {
@@ -168,7 +184,9 @@ impl Controller {
     pub fn info(&mut self) -> Info {
         match detect(&self.layout) {
             Mode::SystemdUser => {
-                let up = run("systemctl", &["--user", "is-active", SERVICE]).map(|(_, o)| systemd_active(&o)).unwrap_or(false);
+                let up = run("systemctl", &["--user", "is-active", SERVICE])
+                    .map(|(_, o)| systemd_active(&o))
+                    .unwrap_or(false);
                 Info {
                     mode: "service",
                     status: if up { "running" } else { "stopped" },
@@ -178,7 +196,9 @@ impl Controller {
                 }
             }
             Mode::WindowsTask => {
-                let up = run("schtasks", &["/Query", "/TN", WINDOWS_TASK, "/FO", "CSV", "/NH"]).map(|(_, o)| task_running(&o)).unwrap_or(false);
+                let up = run("schtasks", &["/Query", "/TN", WINDOWS_TASK, "/FO", "CSV", "/NH"])
+                    .map(|(_, o)| task_running(&o))
+                    .unwrap_or(false);
                 Info {
                     mode: "task",
                     status: if up { "running" } else { "stopped" },
@@ -190,7 +210,9 @@ impl Controller {
             Mode::Bundle { enrolled: false, .. } => Info {
                 mode: "bundle",
                 status: "needs-pairing",
-                detail: "The worker is installed but not paired with a hub. Run the installer from your hub's Install page.".into(),
+                detail:
+                    "The worker is installed but not paired with a hub. Run the installer from your hub's Install page."
+                        .into(),
                 can_start: false,
                 can_stop: false,
             },
@@ -225,7 +247,11 @@ impl Controller {
         match detect(&self.layout) {
             Mode::SystemdUser => checked(run("systemctl", &["--user", "start", SERVICE]), "start the service")?,
             Mode::WindowsTask => checked(run("schtasks", &["/Run", "/TN", WINDOWS_TASK]), "start the task")?,
-            Mode::Bundle { python, pyz, enrolled: true } => {
+            Mode::Bundle {
+                python,
+                pyz,
+                enrolled: true,
+            } => {
                 if !self.child_alive() && !self.running_elsewhere() {
                     let (program, args) = bundle_command(&python, &pyz);
                     let log = std::fs::OpenOptions::new()
@@ -290,7 +316,10 @@ mod tests {
 
     #[test]
     fn layout_paths() {
-        let l = Layout { install_dir: PathBuf::from("/h/.rook-band-worker"), state_dir: PathBuf::from("/s") };
+        let l = Layout {
+            install_dir: PathBuf::from("/h/.rook-band-worker"),
+            state_dir: PathBuf::from("/s"),
+        };
         assert_eq!(l.pyz(), PathBuf::from("/h/.rook-band-worker/band-worker.pyz"));
         assert_eq!(l.enrollment(), PathBuf::from("/s/enrollment.json"));
         assert!(l.python_candidates()[0].starts_with("/h/.rook-band-worker/venv"));
@@ -299,7 +328,10 @@ mod tests {
     #[test]
     fn bundle_detection_and_command() {
         let dir = std::env::temp_dir().join(format!("rook-desktop-worker-{}", std::process::id()));
-        let l = Layout { install_dir: dir.clone(), state_dir: dir.clone() };
+        let l = Layout {
+            install_dir: dir.clone(),
+            state_dir: dir.clone(),
+        };
         assert_eq!(l.bundle(), None);
         std::fs::create_dir_all(l.python_candidates()[0].parent().unwrap()).unwrap();
         std::fs::write(l.pyz(), b"zip").unwrap();
@@ -307,7 +339,14 @@ mod tests {
         std::fs::write(&l.python_candidates()[0], b"").unwrap();
         assert!(matches!(l.bundle(), Some(Mode::Bundle { enrolled: false, .. })));
         std::fs::write(l.enrollment(), b"{}").unwrap();
-        let Some(Mode::Bundle { python, pyz, enrolled: true }) = l.bundle() else { panic!("bundle") };
+        let Some(Mode::Bundle {
+            python,
+            pyz,
+            enrolled: true,
+        }) = l.bundle()
+        else {
+            panic!("bundle")
+        };
         let (prog, args) = bundle_command(&python, &pyz);
         assert_eq!(prog, python);
         assert_eq!(args[1..], ["--enrolled".to_string(), "--ws".to_string()]);

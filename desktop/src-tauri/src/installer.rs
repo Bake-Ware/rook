@@ -143,7 +143,10 @@ mod tests {
     #[test]
     fn installer_args() {
         assert_eq!(args(false, true), ["--user", "--yes"]);
-        assert_eq!(args(true, false), ["--user", "--yes", "--bind", "127.0.0.1", "--no-systemd"]);
+        assert_eq!(
+            args(true, false),
+            ["--user", "--yes", "--bind", "127.0.0.1", "--no-systemd"]
+        );
     }
 
     #[test]
@@ -151,7 +154,10 @@ mod tests {
         let out = "[rook] rook-hub is up\n\n[rook] The Rook hub is running.\n\n  Dashboard   http://192.0.2.10:7005\n  Password    s3cret-Pw      (any username)\n  MCP         http://192.0.2.10:8765/mcp    bearer token: ...\n";
         assert_eq!(
             parse_summary(out.lines()),
-            Some(Summary { dashboard: "http://192.0.2.10:7005".into(), password: "s3cret-Pw".into() })
+            Some(Summary {
+                dashboard: "http://192.0.2.10:7005".into(),
+                password: "s3cret-Pw".into()
+            })
         );
         assert_eq!(parse_summary(["[rook] ERROR: the hub did not start"]), None);
     }

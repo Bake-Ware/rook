@@ -109,7 +109,9 @@ impl Store {
     }
 
     pub fn load_settings(&self) -> Settings {
-        read_json(&self.settings_path()).map(Settings::sanitized).unwrap_or_default()
+        read_json(&self.settings_path())
+            .map(Settings::sanitized)
+            .unwrap_or_default()
     }
 
     pub fn save_settings(&self, s: &Settings) -> std::io::Result<()> {
@@ -169,7 +171,11 @@ pub fn normalize_hub_url(input: &str) -> Result<String, String> {
     if raw.is_empty() {
         return Err("Enter your hub's address.".into());
     }
-    let with_scheme = if raw.contains("://") { raw.to_string() } else { format!("https://{raw}") };
+    let with_scheme = if raw.contains("://") {
+        raw.to_string()
+    } else {
+        format!("https://{raw}")
+    };
     let url = url::Url::parse(&with_scheme).map_err(|_| "That doesn't look like a web address.".to_string())?;
     match url.scheme() {
         "http" | "https" => {}
@@ -192,9 +198,18 @@ mod tests {
 
     #[test]
     fn hub_url_gets_https_and_loses_path() {
-        assert_eq!(normalize_hub_url("rook.example.com").unwrap(), "https://rook.example.com");
-        assert_eq!(normalize_hub_url(" https://rook.example.com/account?x=1 ").unwrap(), "https://rook.example.com");
-        assert_eq!(normalize_hub_url("http://192.0.2.10:7005/").unwrap(), "http://192.0.2.10:7005");
+        assert_eq!(
+            normalize_hub_url("rook.example.com").unwrap(),
+            "https://rook.example.com"
+        );
+        assert_eq!(
+            normalize_hub_url(" https://rook.example.com/account?x=1 ").unwrap(),
+            "https://rook.example.com"
+        );
+        assert_eq!(
+            normalize_hub_url("http://192.0.2.10:7005/").unwrap(),
+            "http://192.0.2.10:7005"
+        );
     }
 
     #[test]
@@ -209,13 +224,22 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("rook-desktop-test-{}", std::process::id()));
         let store = Store::new(dir.clone());
         assert_eq!(store.load_settings(), Settings::default());
-        let s = Settings { poll_seconds: 1, wake_threshold: 7.0, hub_url: " https://a.example ".into(), ..Default::default() };
+        let s = Settings {
+            poll_seconds: 1,
+            wake_threshold: 7.0,
+            hub_url: " https://a.example ".into(),
+            ..Default::default()
+        };
         store.save_settings(&s).unwrap();
         let back = store.load_settings();
         assert_eq!(back.poll_seconds, 10);
         assert_eq!(back.wake_threshold, 0.5);
         assert_eq!(back.hub_url, "https://a.example");
-        let c = Credentials { hub: "https://a.example".into(), cookie: "rook_session=x".into(), ..Default::default() };
+        let c = Credentials {
+            hub: "https://a.example".into(),
+            cookie: "rook_session=x".into(),
+            ..Default::default()
+        };
         store.save_credentials(&c).unwrap();
         assert_eq!(store.load_credentials(), c);
         #[cfg(unix)]

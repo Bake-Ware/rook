@@ -166,7 +166,11 @@ fn toggle_overlay(app: &AppHandle) {
 /// Phases of a quick ask, for the overlay: idle, recording, wake,
 /// transcribing, thinking, answer, error.
 fn overlay_state(app: &AppHandle, phase: &str, text: &str, question: &str) {
-    let _ = app.emit_to("overlay", "overlay-state", json!({"phase": phase, "text": text, "question": question}));
+    let _ = app.emit_to(
+        "overlay",
+        "overlay-state",
+        json!({"phase": phase, "text": text, "question": question}),
+    );
 }
 
 fn session_cookie_for_webview(origin: &str, cookie: &str) -> Option<tauri::webview::Cookie<'static>> {
@@ -185,7 +189,9 @@ fn session_cookie_for_webview(origin: &str, cookie: &str) -> Option<tauri::webvi
 fn open_dashboard(app: &AppHandle, path: &str) -> Result<(), String> {
     let s = settings(app);
     let origin = config::normalize_hub_url(&s.hub_url)?;
-    let target: url::Url = format!("{origin}{path}").parse().map_err(|_| "bad address".to_string())?;
+    let target: url::Url = format!("{origin}{path}")
+        .parse()
+        .map_err(|_| "bad address".to_string())?;
     if let Some(w) = app.get_webview_window("dashboard") {
         let _ = w.navigate(target);
         let _ = w.show();
@@ -247,7 +253,10 @@ fn ui_state(app: &AppHandle) -> UiState {
         agent_token_set: !c.agent_token.is_empty(),
         hub: origin,
         settings: s,
-        features: Features { voice: cfg!(feature = "voice"), wake_word: cfg!(feature = "wake-word") },
+        features: Features {
+            voice: cfg!(feature = "voice"),
+            wake_word: cfg!(feature = "wake-word"),
+        },
         microphone: microphone_name(),
         version: env!("CARGO_PKG_VERSION"),
         os: installer::current_os(),
@@ -274,13 +283,20 @@ fn parse_shortcut(s: &str) -> Result<Option<Shortcut>, String> {
     if s.trim().is_empty() {
         return Ok(None);
     }
-    s.trim().parse::<Shortcut>().map(Some).map_err(|_| format!("\"{s}\" isn't a shortcut the app understands (try Ctrl+Alt+Space)."))
+    s.trim()
+        .parse::<Shortcut>()
+        .map(Some)
+        .map_err(|_| format!("\"{s}\" isn't a shortcut the app understands (try Ctrl+Alt+Space)."))
 }
 
 fn apply_shortcuts(app: &AppHandle) -> Result<(), String> {
     let s = settings(app);
     let ask = parse_shortcut(&s.ask_shortcut)?;
-    let ptt = if cfg!(feature = "voice") { parse_shortcut(&s.ptt_shortcut)? } else { None };
+    let ptt = if cfg!(feature = "voice") {
+        parse_shortcut(&s.ptt_shortcut)?
+    } else {
+        None
+    };
     if ask.is_some() && ask == ptt {
         return Err("Quick ask and push-to-talk need different shortcuts.".into());
     }
@@ -296,7 +312,10 @@ fn apply_shortcuts(app: &AppHandle) -> Result<(), String> {
     if problems.is_empty() {
         Ok(())
     } else {
-        Err(format!("Couldn't claim the shortcut ({}). Another app may be using it.", problems.join("; ")))
+        Err(format!(
+            "Couldn't claim the shortcut ({}). Another app may be using it.",
+            problems.join("; ")
+        ))
     }
 }
 
@@ -333,9 +352,16 @@ async fn ask_impl(app: &AppHandle, question: &str) -> Result<hub::Answer, String
         *state(app).quick_room.lock().unwrap() = Some(room.clone());
     }
     // Answered while the box was closed: say so.
-    let visible = app.get_webview_window("overlay").and_then(|w| w.is_visible().ok()).unwrap_or(false);
+    let visible = app
+        .get_webview_window("overlay")
+        .and_then(|w| w.is_visible().ok())
+        .unwrap_or(false);
     if !visible {
-        notify(app, "The home agent answered", &answer.text.chars().take(200).collect::<String>());
+        notify(
+            app,
+            "The home agent answered",
+            &answer.text.chars().take(200).collect::<String>(),
+        );
     }
     Ok(answer)
 }
@@ -344,7 +370,12 @@ async fn ask_impl(app: &AppHandle, question: &str) -> Result<hub::Answer, String
 #[cfg_attr(not(feature = "voice"), allow(dead_code))]
 async fn voice_question(app: AppHandle, pcm: Vec<i16>) {
     if pcm.len() < (voice::RATE as usize) / 4 {
-        overlay_state(&app, "error", "That was too short. Hold the shortcut while you speak.", "");
+        overlay_state(
+            &app,
+            "error",
+            "That was too short. Hold the shortcut while you speak.",
+            "",
+        );
         return;
     }
     overlay_state(&app, "transcribing", "", "");
@@ -378,11 +409,31 @@ fn ptt_begin(app: &AppHandle) {
     show_overlay(app);
     *rec = Some(voice::capture::Recording::start());
     overlay_state(app, "recording", "", "");
+    // A microphone that can't open fails at once: say so now, not on release.
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        let failed = {
+            let st = state(&app);
+            let mut slot = st.recording.lock().unwrap();
+            match slot.as_ref() {
+                Some(r) if r.ended() => slot.take(),
+                _ => None,
+            }
+        };
+        if let Some(r) = failed {
+            if let Err(e) = r.finish() {
+                overlay_state(&app, "error", &e, "");
+            }
+        }
+    });
 }
 
 #[cfg(feature = "voice")]
 fn ptt_end(app: &AppHandle) {
-    let Some(rec) = state(app).recording.lock().unwrap().take() else { return };
+    let Some(rec) = state(app).recording.lock().unwrap().take() else {
+        return;
+    };
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         match tauri::async_runtime::spawn_blocking(move || rec.finish()).await {
@@ -402,7 +453,9 @@ fn ptt_end(_: &AppHandle) {}
 fn wake_features_dir(app: &AppHandle) -> PathBuf {
     let bundled = app.path().resource_dir().ok().map(|d| d.join("wakeword"));
     let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../android/app/src/main/assets/wakeword");
-    bundled.filter(|d| d.join("melspectrogram.onnx").is_file()).unwrap_or(dev)
+    bundled
+        .filter(|d| d.join("melspectrogram.onnx").is_file())
+        .unwrap_or(dev)
 }
 
 /// Start or stop the wake word listener to match the settings. Returns a
@@ -418,14 +471,19 @@ fn apply_wake(app: &AppHandle) -> Option<String> {
     if !s.wake_word {
         return None;
     }
-    let models = voice::wake::Models { features_dir: wake_features_dir(app), classifier: PathBuf::from(&s.wake_model) };
+    let models = voice::wake::Models {
+        features_dir: wake_features_dir(app),
+        classifier: PathBuf::from(&s.wake_model),
+    };
     let handle = app.clone();
     match voice::wake::Listener::start(models, s.wake_threshold, move |ev| match ev {
         voice::wake::Event::Woke => {
             show_overlay(&handle);
             overlay_state(&handle, "wake", "", "");
         }
-        voice::wake::Event::Utterance(pcm) if pcm.is_empty() => overlay_state(&handle, "error", "I didn't hear a question.", ""),
+        voice::wake::Event::Utterance(pcm) if pcm.is_empty() => {
+            overlay_state(&handle, "error", "I didn't hear a question.", "")
+        }
         voice::wake::Event::Utterance(pcm) => {
             tauri::async_runtime::spawn(voice_question(handle.clone(), pcm));
         }
@@ -522,12 +580,19 @@ fn watch_dashboard_sign_in(app: AppHandle, origin: String) {
             if state(&app).signin_gen.load(Ordering::SeqCst) != gen {
                 return;
             }
-            let Some(w) = app.get_webview_window("dashboard") else { return };
+            let Some(w) = app.get_webview_window("dashboard") else {
+                return;
+            };
             let u = url.clone();
             let cookies = tauri::async_runtime::spawn_blocking(move || w.cookies_for_url(u)).await;
             let Ok(Ok(cookies)) = cookies else { continue };
-            let pairs: Vec<(String, String)> = cookies.iter().map(|c| (c.name().to_string(), c.value().to_string())).collect();
-            let Some(cookie) = hub::session_cookie(&pairs) else { continue };
+            let pairs: Vec<(String, String)> = cookies
+                .iter()
+                .map(|c| (c.name().to_string(), c.value().to_string()))
+                .collect();
+            let Some(cookie) = hub::session_cookie(&pairs) else {
+                continue;
+            };
             if let Ok(who) = hub::Hub::new(&origin, &cookie).whoami().await {
                 save_sign_in(&app, &origin, &cookie, who.principal.unwrap_or_default());
                 notify(&app, "Rook", "Signed in. The hotkey and notifications are ready.");
@@ -582,14 +647,34 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let dashboard = MenuItem::with_id(app, "dashboard", "Open dashboard", true, None::<&str>)?;
     let ask = MenuItem::with_id(app, "ask", ask_label, true, None::<&str>)?;
     let worker = MenuItem::with_id(app, "worker", worker_label(&info), true, None::<&str>)?;
-    let install = MenuItem::with_id(app, "install", "Install a hub on this computer\u{2026}", true, None::<&str>)?;
+    let install = MenuItem::with_id(
+        app,
+        "install",
+        "Install a hub on this computer\u{2026}",
+        true,
+        None::<&str>,
+    )?;
     let settings_item = MenuItem::with_id(app, "settings", "Settings\u{2026}", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Rook", true, None::<&str>)?;
     let sep = || PredefinedMenuItem::separator(app);
-    let menu = Menu::with_items(app, &[&dashboard, &ask, &sep()?, &worker, &install, &sep()?, &settings_item, &quit])?;
+    let menu = Menu::with_items(
+        app,
+        &[
+            &dashboard,
+            &ask,
+            &sep()?,
+            &worker,
+            &install,
+            &sep()?,
+            &settings_item,
+            &quit,
+        ],
+    )?;
     *state(app).worker_item.lock().unwrap() = Some(worker);
-    let mut tray = TrayIconBuilder::with_id("main").tooltip("Rook").menu(&menu).on_menu_event(|app, event| {
-        match event.id.as_ref() {
+    let mut tray = TrayIconBuilder::with_id("main")
+        .tooltip("Rook")
+        .menu(&menu)
+        .on_menu_event(|app, event| match event.id.as_ref() {
             "dashboard" => {
                 if open_dashboard(app, "/").is_err() {
                     show_settings(app, Some("hub"));
@@ -622,8 +707,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             "settings" => show_settings(app, None),
             "quit" => app.exit(0),
             _ => {}
-        }
-    });
+        });
     if let Some(icon) = app.default_window_icon() {
         tray = tray.icon(icon.clone());
     }
@@ -656,7 +740,9 @@ fn save_settings(app: AppHandle, mut settings: Settings) -> Result<UiState, Stri
         let _ = apply_shortcuts(&app);
         return Err(e);
     }
-    st.store.save_settings(&settings).map_err(|e| format!("Couldn't save settings: {e}"))?;
+    st.store
+        .save_settings(&settings)
+        .map_err(|e| format!("Couldn't save settings: {e}"))?;
     let problem = apply_wake(&app);
     changed(&app);
     match problem {
@@ -676,7 +762,9 @@ fn save_secrets(app: AppHandle, voice_key: Option<String>, agent_token: Option<S
         if let Some(t) = agent_token {
             c.agent_token = t.trim().to_string();
         }
-        st.store.save_credentials(&c).map_err(|e| format!("Couldn't save: {e}"))?;
+        st.store
+            .save_credentials(&c)
+            .map_err(|e| format!("Couldn't save: {e}"))?;
     }
     Ok(ui_state(&app))
 }
@@ -687,7 +775,9 @@ fn set_hub(app: &AppHandle, hub: &str) -> Result<String, String> {
     let mut s = st.settings.lock().unwrap();
     if s.hub_url != origin {
         s.hub_url = origin.clone();
-        st.store.save_settings(&s).map_err(|e| format!("Couldn't save settings: {e}"))?;
+        st.store
+            .save_settings(&s)
+            .map_err(|e| format!("Couldn't save settings: {e}"))?;
     }
     Ok(origin)
 }
@@ -695,8 +785,13 @@ fn set_hub(app: &AppHandle, hub: &str) -> Result<String, String> {
 #[tauri::command]
 async fn sign_in_password(app: AppHandle, hub: String, username: String, password: String) -> Result<UiState, String> {
     let origin = set_hub(&app, &hub)?;
-    let cookie = hub::password_sign_in(&origin, &username, &password).await.map_err(|e| e.to_string())?;
-    let who = hub::Hub::new(&origin, &cookie).whoami().await.map_err(|e| e.to_string())?;
+    let cookie = hub::password_sign_in(&origin, &username, &password)
+        .await
+        .map_err(|e| e.to_string())?;
+    let who = hub::Hub::new(&origin, &cookie)
+        .whoami()
+        .await
+        .map_err(|e| e.to_string())?;
     save_sign_in(&app, &origin, &cookie, who.principal.unwrap_or_default());
     Ok(ui_state(&app))
 }
@@ -824,7 +919,8 @@ async fn install_run(app: AppHandle, local_only: bool) -> Result<installer::Summ
 
 async fn install_inner(app: &AppHandle, local_only: bool) -> Result<installer::Summary, String> {
     use tokio::io::{AsyncBufReadExt, BufReader};
-    let script = installer::script_path(app.path().resource_dir().ok().as_deref()).ok_or("The installer script is missing from this app.")?;
+    let script = installer::script_path(app.path().resource_dir().ok().as_deref())
+        .ok_or("The installer script is missing from this app.")?;
     let args = installer::args(local_only, installer::has_systemd_user());
     let mut child = tokio::process::Command::new("bash")
         .arg(&script)
@@ -838,7 +934,9 @@ async fn install_inner(app: &AppHandle, local_only: bool) -> Result<installer::S
     let out = child.stdout.take().unwrap();
     let err = child.stderr.take().unwrap();
     let lines = std::sync::Arc::new(Mutex::new(Vec::<String>::new()));
-    let pump = |r: Box<dyn tokio::io::AsyncRead + Unpin + Send>, app: AppHandle, lines: std::sync::Arc<Mutex<Vec<String>>>| async move {
+    let pump = |r: Box<dyn tokio::io::AsyncRead + Unpin + Send>,
+                app: AppHandle,
+                lines: std::sync::Arc<Mutex<Vec<String>>>| async move {
         let mut br = BufReader::new(r).lines();
         while let Ok(Some(line)) = br.next_line().await {
             let _ = app.emit_to("install", "install-log", &line);
@@ -852,9 +950,12 @@ async fn install_inner(app: &AppHandle, local_only: bool) -> Result<installer::S
     let _ = b.await;
     let all = lines.lock().unwrap().clone();
     if !status.success() {
-        return Err("The installer stopped with an error (see the log above). You can also run it in a terminal.".into());
+        return Err(
+            "The installer stopped with an error (see the log above). You can also run it in a terminal.".into(),
+        );
     }
-    installer::parse_summary(all.iter().map(String::as_str)).ok_or_else(|| "The installer finished but didn't print the hub's address.".into())
+    installer::parse_summary(all.iter().map(String::as_str))
+        .ok_or_else(|| "The installer finished but didn't print the hub's address.".into())
 }
 
 /// Connect to the hub the installer just made, with the password it printed.
@@ -866,7 +967,9 @@ async fn install_connect(app: AppHandle, dashboard: String, password: String) ->
 // ---- entry -----------------------------------------------------------------------------
 
 fn config_dir(app: &AppHandle) -> PathBuf {
-    app.path().app_config_dir().unwrap_or_else(|_| PathBuf::from(".rook-desktop"))
+    app.path()
+        .app_config_dir()
+        .unwrap_or_else(|_| PathBuf::from(".rook-desktop"))
 }
 
 pub fn run() {
@@ -902,10 +1005,9 @@ pub fn run() {
                 #[cfg(feature = "wake-word")]
                 listener: Mutex::new(None),
             });
-            if let Err(e) = build_tray(&handle) {
-                // No tray host (some Linux desktops): the settings window is the way in.
-                log::warn!("no tray icon: {e}");
-            }
+            let no_tray = build_tray(&handle)
+                .map_err(|e| log::warn!("no tray icon: {e}"))
+                .is_err();
             if let Err(e) = build_overlay(&handle) {
                 log::error!("overlay: {e}");
             }
@@ -933,7 +1035,8 @@ pub fn run() {
                     let _ = open_dashboard(&handle, "/");
                 }
                 Some("settings") => show_settings(&handle, None),
-                _ if first_run => show_settings(&handle, None),
+                // Without a tray icon the settings window is the way in.
+                _ if first_run || no_tray => show_settings(&handle, None),
                 _ => {}
             }
             Ok(())

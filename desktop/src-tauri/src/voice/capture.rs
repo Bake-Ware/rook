@@ -15,8 +15,12 @@ pub fn input_name() -> Option<String> {
 /// false. Blocks the calling thread: cpal streams are not `Send` on every
 /// platform, so a stream lives and dies on one thread.
 pub fn run(stop: &AtomicBool, sink: &mut dyn FnMut(&[i16]) -> bool) -> Result<(), String> {
-    let device = cpal::default_host().default_input_device().ok_or("No microphone found.")?;
-    let config = device.default_input_config().map_err(|e| format!("The microphone can't be opened ({e})."))?;
+    let device = cpal::default_host()
+        .default_input_device()
+        .ok_or("No microphone found.")?;
+    let config = device
+        .default_input_config()
+        .map_err(|e| format!("The microphone can't be opened ({e})."))?;
     let channels = config.channels() as usize;
     let rate = config.sample_rate().0;
     let (tx, rx) = mpsc::sync_channel::<Vec<f32>>(64);
@@ -52,7 +56,9 @@ pub fn run(stop: &AtomicBool, sink: &mut dyn FnMut(&[i16]) -> bool) -> Result<()
         other => return Err(format!("Unsupported microphone format {other:?}.")),
     }
     .map_err(|e| format!("The microphone can't be opened ({e})."))?;
-    stream.play().map_err(|e| format!("The microphone can't start ({e})."))?;
+    stream
+        .play()
+        .map_err(|e| format!("The microphone can't start ({e})."))?;
     let mut rs = Resampler::new(rate);
     while !stop.load(Ordering::Relaxed) {
         match rx.recv_timeout(Duration::from_millis(50)) {
@@ -89,6 +95,11 @@ impl Recording {
             Ok(buf)
         });
         Recording { stop, handle }
+    }
+
+    /// The capture thread already ended: the microphone failed to open.
+    pub fn ended(&self) -> bool {
+        self.handle.is_finished()
     }
 
     pub fn finish(self) -> Result<Vec<i16>, String> {

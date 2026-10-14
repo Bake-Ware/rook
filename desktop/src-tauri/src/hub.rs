@@ -48,7 +48,10 @@ impl std::fmt::Display for HubError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             HubError::NotSignedIn => write!(f, "Sign in to your hub first (Settings)."),
-            HubError::NotOperator => write!(f, "This login can't use the dashboard. Sign in with the hub owner's account or the dashboard password."),
+            HubError::NotOperator => write!(
+                f,
+                "This login can't use the dashboard. Sign in with the hub owner's account or the dashboard password."
+            ),
             HubError::BadLogin => write!(f, "That user name or password didn't work."),
             HubError::Unreachable(e) => write!(f, "Can't reach the hub ({e})."),
             HubError::Http(code, msg) if msg.is_empty() => write!(f, "The hub answered HTTP {code}."),
@@ -171,7 +174,11 @@ fn client(timeout: Duration) -> reqwest::Client {
 
 impl Hub {
     pub fn new(origin: &str, cookie: &str) -> Self {
-        Hub { origin: origin.to_string(), cookie: cookie.to_string(), http: client(Duration::from_secs(20)) }
+        Hub {
+            origin: origin.to_string(),
+            cookie: cookie.to_string(),
+            http: client(Duration::from_secs(20)),
+        }
     }
 
     fn url(&self, path: &str) -> String {
@@ -179,7 +186,10 @@ impl Hub {
     }
 
     fn req(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
-        let mut r = self.http.request(method, self.url(path)).header("Accept", "application/json");
+        let mut r = self
+            .http
+            .request(method, self.url(path))
+            .header("Accept", "application/json");
         if !self.cookie.is_empty() {
             r = r.header("Cookie", &self.cookie);
         }
@@ -198,8 +208,16 @@ impl Hub {
             return Err(HubError::NotSignedIn);
         }
         if (300..400).contains(&status) {
-            let to = resp.headers().get("location").and_then(|v| v.to_str().ok()).unwrap_or("");
-            return Err(if to.starts_with("/account") { HubError::NotOperator } else { HubError::NotSignedIn });
+            let to = resp
+                .headers()
+                .get("location")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+            return Err(if to.starts_with("/account") {
+                HubError::NotOperator
+            } else {
+                HubError::NotSignedIn
+            });
         }
         let body = resp.text().await?;
         if !(200..300).contains(&status) {
@@ -220,7 +238,9 @@ impl Hub {
     /// A read-risk band call on the hub's node (allowed over the band).
     async fn hub_call(&self, cap: &str, args: Value, timeout_s: f64) -> Result<Value, HubError> {
         let body = json!({"cap": cap, "worker_id": HUB_WORKER, "args": args, "timeout": timeout_s});
-        let v = self.json(self.req(reqwest::Method::POST, "/api/band/call").json(&body)).await?;
+        let v = self
+            .json(self.req(reqwest::Method::POST, "/api/band/call").json(&body))
+            .await?;
         band_result(v)
     }
 
@@ -231,14 +251,20 @@ impl Hub {
 
     pub async fn chat_rooms(&self) -> Result<Vec<Room>, HubError> {
         let v = self.json(self.req(reqwest::Method::GET, "/api/chat/rooms")).await?;
-        Ok(v.get("rooms").cloned().and_then(|r| serde_json::from_value(r).ok()).unwrap_or_default())
+        Ok(v.get("rooms")
+            .cloned()
+            .and_then(|r| serde_json::from_value(r).ok())
+            .unwrap_or_default())
     }
 
     /// `None` when this hub has no `/api/attention` yet.
     pub async fn attention(&self) -> Result<Option<Vec<AttentionItem>>, HubError> {
         match self.json(self.req(reqwest::Method::GET, "/api/attention")).await {
             Ok(v) => Ok(Some(
-                v.get("items").cloned().and_then(|i| serde_json::from_value(i).ok()).unwrap_or_default(),
+                v.get("items")
+                    .cloned()
+                    .and_then(|i| serde_json::from_value(i).ok())
+                    .unwrap_or_default(),
             )),
             Err(HubError::Http(404, _)) | Err(HubError::Http(405, _)) => Ok(None),
             Err(e) => Err(e),
@@ -249,9 +275,16 @@ impl Hub {
         let path = format!("/api/chat/read?room={}&since={since}", urlencode(room));
         let v = self.json(self.req(reqwest::Method::GET, &path)).await?;
         if v.get("ok").and_then(Value::as_bool) == Some(false) {
-            return Err(HubError::Http(404, v.get("error").and_then(Value::as_str).unwrap_or("").into()));
+            return Err(HubError::Http(
+                404,
+                v.get("error").and_then(Value::as_str).unwrap_or("").into(),
+            ));
         }
-        let msgs: Vec<Message> = v.get("messages").cloned().and_then(|m| serde_json::from_value(m).ok()).unwrap_or_default();
+        let msgs: Vec<Message> = v
+            .get("messages")
+            .cloned()
+            .and_then(|m| serde_json::from_value(m).ok())
+            .unwrap_or_default();
         let last = v.get("last_seq").and_then(Value::as_u64).unwrap_or(since);
         Ok((msgs, last))
     }
@@ -272,15 +305,26 @@ impl Hub {
 
     /// Ask the home agent in a private room with it, and wait for its reply.
     /// `room_hint` is the room used last time (kept by the caller).
-    pub async fn ask_via_chat(&self, question: &str, room_hint: Option<&str>, wait: Duration) -> Result<Answer, HubError> {
+    pub async fn ask_via_chat(
+        &self,
+        question: &str,
+        room_hint: Option<&str>,
+        wait: Duration,
+    ) -> Result<Answer, HubError> {
         let status = self.home_status().await?;
         if !status.enabled {
             return Err(HubError::Agent(agent_off_message(&status)));
         }
         if !status.chat {
-            return Err(HubError::Agent("Chat is off on this hub, so the home agent can't be reached from here.".into()));
+            return Err(HubError::Agent(
+                "Chat is off on this hub, so the home agent can't be reached from here.".into(),
+            ));
         }
-        let agent = if status.identity.is_empty() { "agent:home".to_string() } else { status.identity.clone() };
+        let agent = if status.identity.is_empty() {
+            "agent:home".to_string()
+        } else {
+            status.identity.clone()
+        };
         let rooms = self.chat_rooms().await?;
         let room = match room_hint.filter(|r| rooms.iter().any(|x| x.room == *r && is_quick_room(x, &agent))) {
             Some(r) => r.to_string(),
@@ -288,19 +332,36 @@ impl Hub {
                 Some(r) => r,
                 None => {
                     let body = json!({"title": QUICK_ROOM_TITLE, "invite": [agent]});
-                    let v = self.json(self.req(reqwest::Method::POST, "/api/chat/start").json(&body)).await?;
+                    let v = self
+                        .json(self.req(reqwest::Method::POST, "/api/chat/start").json(&body))
+                        .await?;
                     v.get("room").and_then(Value::as_str).map(String::from).ok_or_else(|| {
-                        HubError::Http(500, v.get("error").and_then(Value::as_str).unwrap_or("could not open a chat room").into())
+                        HubError::Http(
+                            500,
+                            v.get("error")
+                                .and_then(Value::as_str)
+                                .unwrap_or("could not open a chat room")
+                                .into(),
+                        )
                     })?
                 }
             },
         };
         let before = self.chat_tail(&room).await?;
         let sent = self
-            .json(self.req(reqwest::Method::POST, "/api/chat/send").json(&json!({"room": room, "text": question})))
+            .json(
+                self.req(reqwest::Method::POST, "/api/chat/send")
+                    .json(&json!({"room": room, "text": question})),
+            )
             .await?;
         if sent.get("ok").and_then(Value::as_bool) == Some(false) {
-            return Err(HubError::Http(500, sent.get("error").and_then(Value::as_str).unwrap_or("send failed").into()));
+            return Err(HubError::Http(
+                500,
+                sent.get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("send failed")
+                    .into(),
+            ));
         }
         let deadline = tokio::time::Instant::now() + wait;
         let mut since = before;
@@ -310,10 +371,17 @@ impl Hub {
             since = last.max(since);
             match agent_reply(&msgs, &agent) {
                 ReplyState::Answer(text) => {
-                    return Ok(Answer { text, via: "chat", agent, room: Some(room) });
+                    return Ok(Answer {
+                        text,
+                        via: "chat",
+                        agent,
+                        room: Some(room),
+                    });
                 }
                 ReplyState::Unavailable => {
-                    return Err(HubError::Agent("The home agent couldn't answer (its model is unavailable). Check Manage > Home agent.".into()))
+                    return Err(HubError::Agent(
+                        "The home agent couldn't answer (its model is unavailable). Check Manage > Home agent.".into(),
+                    ))
                 }
                 ReplyState::Waiting => {}
             }
@@ -327,7 +395,11 @@ impl Hub {
     /// endpoint with an agent token, as `rook_call(worker="rook", cap="home.ask")`.
     pub async fn ask_via_mcp(&self, token: &str, question: &str, wait: Duration) -> Result<Answer, HubError> {
         let http = client(wait + Duration::from_secs(10));
-        let mcp = Mcp { http: &http, url: self.url("/mcp"), token };
+        let mcp = Mcp {
+            http: &http,
+            url: self.url("/mcp"),
+            token,
+        };
         let session = mcp.initialize().await?;
         let args = json!({"name": "rook_call", "arguments": {
             "worker": HUB_WORKER, "cap": "home.ask", "args": {"question": question},
@@ -336,9 +408,22 @@ impl Hub {
         let text = tool_text(&result).ok_or_else(|| HubError::Http(502, "empty tool result".into()))?;
         let reply: Value = serde_json::from_str(&text).unwrap_or(Value::String(text.clone()));
         let inner = band_result(reply)?;
-        let answer = inner.get("answer").and_then(Value::as_str).unwrap_or_default().to_string();
-        let agent = inner.get("agent").and_then(Value::as_str).unwrap_or("agent:home").to_string();
-        Ok(Answer { text: answer, via: "agent", agent, room: None })
+        let answer = inner
+            .get("answer")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let agent = inner
+            .get("agent")
+            .and_then(Value::as_str)
+            .unwrap_or("agent:home")
+            .to_string();
+        Ok(Answer {
+            text: answer,
+            via: "agent",
+            agent,
+            room: None,
+        })
     }
 }
 
@@ -362,9 +447,15 @@ impl Mcp<'_> {
         let resp = r.send().await?;
         let status = resp.status().as_u16();
         if status == 401 || status == 403 {
-            return Err(HubError::Agent("The hub refused the agent token. Make a new one on the Tokens page.".into()));
+            return Err(HubError::Agent(
+                "The hub refused the agent token. Make a new one on the Tokens page.".into(),
+            ));
         }
-        let sid = resp.headers().get("mcp-session-id").and_then(|v| v.to_str().ok()).map(String::from);
+        let sid = resp
+            .headers()
+            .get("mcp-session-id")
+            .and_then(|v| v.to_str().ok())
+            .map(String::from);
         let text = resp.text().await?;
         if !(200..300).contains(&status) {
             return Err(HubError::Http(status, text.chars().take(160).collect()));
@@ -374,17 +465,29 @@ impl Mcp<'_> {
 
     async fn initialize(&self) -> Result<Option<String>, HubError> {
         let (sid, body) = self
-            .post(None, json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            .post(
+                None,
+                json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
                 "protocolVersion": "2025-03-26", "capabilities": {},
-                "clientInfo": {"name": "rook-desktop", "version": env!("CARGO_PKG_VERSION")}}}))
+                "clientInfo": {"name": "rook-desktop", "version": env!("CARGO_PKG_VERSION")}}}),
+            )
             .await?;
         rpc_result(&body, 1)?;
-        self.post(sid.as_deref(), json!({"jsonrpc": "2.0", "method": "notifications/initialized"})).await?;
+        self.post(
+            sid.as_deref(),
+            json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+        )
+        .await?;
         Ok(sid)
     }
 
     async fn rpc(&self, session: Option<&str>, id: u64, method: &str, params: Value) -> Result<Value, HubError> {
-        let (_, body) = self.post(session, json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params})).await?;
+        let (_, body) = self
+            .post(
+                session,
+                json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}),
+            )
+            .await?;
         rpc_result(&body, id)
     }
 }
@@ -419,7 +522,11 @@ pub fn rpc_result(body: &str, id: u64) -> Result<Value, HubError> {
 
 /// The text of an MCP tool result (`content[0].text`), flagging tool errors.
 pub fn tool_text(result: &Value) -> Option<String> {
-    let text = result.get("content")?.as_array()?.iter().find_map(|c| c.get("text").and_then(Value::as_str))?;
+    let text = result
+        .get("content")?
+        .as_array()?
+        .iter()
+        .find_map(|c| c.get("text").and_then(Value::as_str))?;
     Some(text.to_string())
 }
 
@@ -541,9 +648,14 @@ pub async fn password_sign_in(origin: &str, user: &str, pass: &str) -> Result<St
     // 1. Account login: GET the form for its token (also set as a cookie).
     let page = http.get(format!("{origin}/account/login")).send().await?;
     if page.status().is_success() {
-        let form_cookie = set_cookie_pairs(page.headers().get_all("set-cookie").iter().filter_map(|v| v.to_str().ok()))
-            .into_iter()
-            .find(|(n, _)| n == "rook_login_form");
+        let form_cookie = set_cookie_pairs(
+            page.headers()
+                .get_all("set-cookie")
+                .iter()
+                .filter_map(|v| v.to_str().ok()),
+        )
+        .into_iter()
+        .find(|(n, _)| n == "rook_login_form");
         let html = page.text().await.unwrap_or_default();
         if let (Some((n, v)), Some(token)) = (form_cookie, form_token(&html)) {
             let resp = http
@@ -553,7 +665,12 @@ pub async fn password_sign_in(origin: &str, user: &str, pass: &str) -> Result<St
                 .send()
                 .await?;
             if resp.status().is_redirection() {
-                let pairs = set_cookie_pairs(resp.headers().get_all("set-cookie").iter().filter_map(|v| v.to_str().ok()));
+                let pairs = set_cookie_pairs(
+                    resp.headers()
+                        .get_all("set-cookie")
+                        .iter()
+                        .filter_map(|v| v.to_str().ok()),
+                );
                 if let Some(c) = pairs.iter().find(|(n, _)| n == "rook_account") {
                     return Ok(format!("{}={}", c.0, c.1));
                 }
@@ -563,9 +680,18 @@ pub async fn password_sign_in(origin: &str, user: &str, pass: &str) -> Result<St
         }
     }
     // 2. The dashboard password.
-    let resp = http.post(format!("{origin}/login")).form(&[("user", user), ("pass", pass)]).send().await?;
+    let resp = http
+        .post(format!("{origin}/login"))
+        .form(&[("user", user), ("pass", pass)])
+        .send()
+        .await?;
     if resp.status().is_redirection() {
-        let pairs = set_cookie_pairs(resp.headers().get_all("set-cookie").iter().filter_map(|v| v.to_str().ok()));
+        let pairs = set_cookie_pairs(
+            resp.headers()
+                .get_all("set-cookie")
+                .iter()
+                .filter_map(|v| v.to_str().ok()),
+        );
         if let Some(c) = pairs.iter().find(|(n, _)| n == "rook_session") {
             return Ok(format!("{}={}", c.0, c.1));
         }
@@ -611,7 +737,10 @@ mod tests {
 
     #[test]
     fn band_results_unwrap_and_explain() {
-        assert_eq!(band_result(json!({"ok": true, "result": {"answer": "hi"}})).unwrap()["answer"], "hi");
+        assert_eq!(
+            band_result(json!({"ok": true, "result": {"answer": "hi"}})).unwrap()["answer"],
+            "hi"
+        );
         let off = band_result(json!({"ok": false, "error": "the home agent is off (Manage > Home agent)"}));
         assert!(matches!(off, Err(HubError::Agent(m)) if m.contains("Turn it on")));
         let other = band_result(json!({"ok": false, "error": "worker said no"}));
@@ -619,7 +748,13 @@ mod tests {
     }
 
     fn room(id: &str, title: &str, parts: &[&str], member: bool) -> Room {
-        Room { room: id.into(), title: title.into(), participants: parts.iter().map(|s| s.to_string()).collect(), member, ..Default::default() }
+        Room {
+            room: id.into(),
+            title: title.into(),
+            participants: parts.iter().map(|s| s.to_string()).collect(),
+            member,
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -636,24 +771,43 @@ mod tests {
 
     #[test]
     fn agent_reply_skips_busy_and_others() {
-        let m = |seq, s: &str, t: &str| Message { seq, sender: s.into(), text: t.into() };
+        let m = |seq, s: &str, t: &str| Message {
+            seq,
+            sender: s.into(),
+            text: t.into(),
+        };
         assert_eq!(agent_reply(&[m(1, OPERATOR, "hi")], "agent:home"), ReplyState::Waiting);
         assert_eq!(
             agent_reply(&[m(2, "agent:home", "(Busy: I will answer shortly.)")], "agent:home"),
             ReplyState::Waiting
         );
         assert_eq!(
-            agent_reply(&[m(2, "agent:home", "(Busy: I will answer shortly.)"), m(3, "agent:home", " Hello! ")], "agent:home"),
+            agent_reply(
+                &[
+                    m(2, "agent:home", "(Busy: I will answer shortly.)"),
+                    m(3, "agent:home", " Hello! ")
+                ],
+                "agent:home"
+            ),
             ReplyState::Answer("Hello!".into())
         );
-        assert_eq!(agent_reply(&[m(4, "agent:home", AGENT_UNAVAILABLE)], "agent:home"), ReplyState::Unavailable);
+        assert_eq!(
+            agent_reply(&[m(4, "agent:home", AGENT_UNAVAILABLE)], "agent:home"),
+            ReplyState::Unavailable
+        );
     }
 
     #[test]
     fn errors_read_plainly() {
         assert!(HubError::NotSignedIn.to_string().contains("Sign in"));
-        assert_eq!(HubError::Http(500, String::new()).to_string(), "The hub answered HTTP 500.");
-        let s = HomeStatus { missing: vec!["model".into()], ..Default::default() };
+        assert_eq!(
+            HubError::Http(500, String::new()).to_string(),
+            "The hub answered HTTP 500."
+        );
+        let s = HomeStatus {
+            missing: vec!["model".into()],
+            ..Default::default()
+        };
         assert!(agent_off_message(&s).contains("isn't set up"));
     }
 }
