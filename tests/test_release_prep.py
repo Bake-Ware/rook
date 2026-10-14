@@ -53,12 +53,14 @@ def test_telesthete_requirement_is_validated(url, sha):
 
 
 def test_release_module_round_trips(tmp_path):
-    src = rp.release_module("0.2.0", 523, "abc1234", "523.lumpy.moose")
+    src = rp.release_module("0.2.0", 523, "abc1234", "523.lumpy.moose", "v0.3.0")
     (tmp_path / "rook").mkdir()
     (tmp_path / "rook" / "_release.py").write_text(src, encoding="utf-8")
     info = runpy.run_path(str(tmp_path / "rook" / "_release.py"))
-    assert (info["VERSION"], info["BUILD"], info["COMMIT"], info["NAME"]) == \
-        ("0.2.0", 523, "abc1234", "523.lumpy.moose")
+    assert (info["VERSION"], info["BUILD"], info["COMMIT"], info["NAME"], info["RELAY"]) == \
+        ("0.2.0", 523, "abc1234", "523.lumpy.moose", "v0.3.0")
+    with pytest.raises(ValueError):
+        rp.release_module("0.2.0", 523, "abc1234", "x", "latest")
     # The committed defaults are "not a release".
     assert bbw.release_stamp(ROOT) is None
 

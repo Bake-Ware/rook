@@ -1,0 +1,251 @@
+name: Release
+
+# Tag vX.Y.Z (git tag -a v0.2.0 -m ... && git push origin v0.2.0) and this
+# publishes, in order:
+#   1. dist     sdist + wheel (version from the tag, build name stamped by
+#               tools/release_prep.py) and the telesthete wheel they pin;
+#   2. publish  a GitHub Release with those files and SHA256SUMS;
+#   3. docker   ghcr.io/bake-ware/rook:<version> (+ :latest for a final
+#               release), linux/amd64 + linux/arm64, with the prebuilt relay;
+#   4. e2e      scripts/install-hub.sh --no-systemd against the published
+#               release, the same path a new user's one-command install takes.
+# A tag with a pre-release segment (v0.3.0rc1, v0.3.0-rc1) is a prerelease:
+# no :latest image, and releases/latest (what the installer uses) skips it.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to (re)release, e.g. v0.2.0
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+  IMAGE: ghcr.io/bake-ware/rook
+  # Relay shipped in the image and recorded in rook/_release.py for the
+  # installer: a telesthete tag, or "latest" (resolved to a tag below). Set the
+  # TELESTHETE_RELAY_VERSION repository variable to pin it.
+  TELESTHETE_RELAY_VERSION: ${{ vars.TELESTHETE_RELAY_VERSION || 'latest' }}
+
+jobs:
+  dist:
+    name: Build sdist and wheels
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.prep.outputs.version }}
+      build_name: ${{ steps.prep.outputs.build_name }}
+      prerelease: ${{ steps.prep.outputs.prerelease }}
+      relay: ${{ steps.relay.outputs.relay }}
+      telesthete_url: ${{ steps.telesthete.outputs.url }}
+      telesthete_sha256: ${{ steps.telesthete.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+          fetch-depth: 0     # build number = git rev-list --count
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install build tools
+        run: python -m pip install build
+      - name: Resolve the relay release
+        id: relay
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          relay="$TELESTHETE_RELAY_VERSION"
+          if [ "$relay" = latest ]; then
+            relay="$(gh release view --repo Bake-Ware/telesthete --json tagName --jq .tagName)"
+          fi
+          # Fail now, not halfway through the Docker build, if its assets are missing.
+          gh release view "$relay" --repo Bake-Ware/telesthete --json assets --jq '.assets[].name' \
+            | grep -qx 'telesthete-hub-aarch64-linux.tar.gz'
+          echo "relay=$relay" >> "$GITHUB_OUTPUT"
+          echo "relay: telesthete $relay"
+      # The release wheel must not pin telesthete as git+https (pip would need
+      # git to install it): build the pinned commit into a wheel, ship it as a
+      # release asset, and point the requirement at that asset by URL + sha256.
+      - name: Build the pinned telesthete wheel
+        id: telesthete
+        run: |
+          pin="$(python tools/release_prep.py --print-telesthete-pin)"
+          python -m pip wheel --no-deps -w telesthete-dist \
+            "telesthete @ git+https://github.com/Bake-Ware/telesthete@${pin}"
+          whl="$(ls telesthete-dist/*.whl)"
+          name="$(basename "$whl")"
+          {
+            echo "url=https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${name}"
+            echo "sha256=$(sha256sum "$whl" | cut -d' ' -f1)"
+          } >> "$GITHUB_OUTPUT"
+      - name: Stamp version, build name and telesthete pin
+        id: prep
+        run: |
+          python tools/release_prep.py --tag "$TAG" \
+            --telesthete-wheel-url "${{ steps.telesthete.outputs.url }}" \
+            --telesthete-wheel-sha256 "${{ steps.telesthete.outputs.sha256 }}" \
+            --relay-version "${{ steps.relay.outputs.relay }}"
+          version="$(python -c 'import rook._release as r; print(r.VERSION)')"
+          name="$(python -c 'import rook._release as r; print(r.NAME)')"
+          pre=false
+          case "$version" in *a*|*b*|*rc*|*dev*) pre=true ;; esac
+          {
+            echo "version=$version"
+            echo "build_name=$name"
+            echo "prerelease=$pre"
+          } >> "$GITHUB_OUTPUT"
+      - name: Build sdist and wheel
+        run: |
+          python -m build -o dist
+          cp telesthete-dist/*.whl dist/
+          (cd dist && sha256sum ./* | sed 's#  \./#  #' > SHA256SUMS && cat SHA256SUMS)
+      - name: Check the wheel is self-contained
+        run: |
+          unzip -p dist/rook-*.whl 'rook-*.dist-info/METADATA' | tee /dev/stderr \
+            | grep -q '^Requires-Dist: telesthete @ https://.*#sha256='
+          if unzip -p dist/rook-*.whl 'rook-*.dist-info/METADATA' | grep -q 'git+'; then
+            echo "::error::the wheel still has a git+ requirement"; exit 1
+          fi
+          unzip -l dist/rook-*.whl | grep -q 'rook/_skill/rook/SKILL.md'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: dist
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+      - name: Create or update the release
+        run: |
+          flags=()
+          if [ "${{ needs.dist.outputs.prerelease }}" = true ]; then flags+=(--prerelease); fi
+          notes="Rook ${{ needs.dist.outputs.version }}, build ${{ needs.dist.outputs.build_name }}.
+
+          Install a hub: \`curl -fsSL https://raw.githubusercontent.com/${GH_REPO}/${TAG}/scripts/install-hub.sh | bash\`
+          Docker: \`${IMAGE}:${{ needs.dist.outputs.version }}\` (relay: telesthete ${{ needs.dist.outputs.relay }})."
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* --verify-tag \
+              --title "Rook ${{ needs.dist.outputs.version }} (${{ needs.dist.outputs.build_name }})" \
+              --notes "$notes" --generate-notes "${flags[@]}"
+          fi
+
+  docker:
+    name: Docker image (amd64, arm64)
+    # The image pip-installs the release-stamped tree, whose telesthete
+    # requirement is the wheel URL published above.
+    needs: [dist, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Stamp the tree exactly as the dist job did
+        run: |
+          python tools/release_prep.py --tag "$TAG" \
+            --telesthete-wheel-url "${{ needs.dist.outputs.telesthete_url }}" \
+            --telesthete-wheel-sha256 "${{ needs.dist.outputs.telesthete_sha256 }}" \
+            --relay-version "${{ needs.dist.outputs.relay }}"
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=${{ needs.dist.outputs.version }}
+            type=raw,value=latest,enable=${{ needs.dist.outputs.prerelease != 'true' }}
+          labels: |
+            org.opencontainers.image.version=${{ needs.dist.outputs.version }}
+            io.github.bake-ware.rook.build=${{ needs.dist.outputs.build_name }}
+            io.github.bake-ware.telesthete.relay=${{ needs.dist.outputs.relay }}
+      # Build amd64 into the local daemon first and smoke-test it, so a broken
+      # image is never pushed; the push below reuses its cache.
+      - name: Build (amd64, local)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: rook-smoke:latest
+          build-args: TELESTHETE_RELAY_VERSION=${{ needs.dist.outputs.relay }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Smoke test
+        run: |
+          docker run --rm rook-smoke:latest python -c \
+            'import rook, rook._release as r; assert rook.__version__ == "${{ needs.dist.outputs.version }}", rook.__version__; print(r.NAME, r.RELAY)'
+          docker run --rm rook-smoke:latest rook-dashboard --help >/dev/null
+          docker run --rm rook-smoke:latest rook-mcp --help >/dev/null
+          docker run --rm -e HUB_BIND=127.0.0.1:7474 rook-smoke:latest \
+            timeout --preserve-status -s TERM 2 telesthete-hub
+      - name: Build and push (amd64, arm64)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: TELESTHETE_RELAY_VERSION=${{ needs.dist.outputs.relay }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  e2e:
+    name: One-command install from the release
+    needs: [dist, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+      # --no-systemd: GitHub runners have no usable user systemd instance.
+      - name: Install the published release with scripts/install-hub.sh
+        run: |
+          bash scripts/install-hub.sh --user --no-systemd --yes \
+            --version "$TAG" --data-dir "$RUNNER_TEMP/rook-data" --bind 127.0.0.1
+      - name: The dashboard answers and the relay has the band
+        run: |
+          curl -fsS http://127.0.0.1:7005/health
+          grep -q '^ROOK_WEB_PASS=' "$RUNNER_TEMP/rook-data/secrets.env"
+          test "$(stat -c %a "$RUNNER_TEMP/rook-data/secrets.env")" = 600
+      - name: Uninstall
+        if: always()
+        run: bash scripts/install-hub.sh --user --no-systemd --yes --uninstall --data-dir "$RUNNER_TEMP/rook-data"

@@ -16,6 +16,9 @@ Two version schemes, two jobs:
   these values; without them every such bundle would be build 0 and its workers
   would never update.
 
+``RELAY`` names the telesthete release (``v0.3.0``) whose prebuilt relay the
+release's Docker image ships; scripts/install-hub.sh installs the same one.
+
 Deliberately separate from ``rook/worker/_build_info.py``: stamping that file
 in a wheel would make a pip-installed *worker* accept OTA updates, which only
 bundle installs should do.
@@ -25,3 +28,4 @@ VERSION = ""     # PEP 440 release version; "" in a source checkout
 BUILD = 0        # git rev-list --count of the release commit; 0 = not a release
 COMMIT = ""      # short hash of the release commit
 NAME = ""        # "<build>.<adjective>.<noun>", e.g. 523.lumpy.moose
+RELAY = ""       # telesthete release whose relay this was built and tested with

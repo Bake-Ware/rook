@@ -10,7 +10,8 @@ Before ``python -m build`` and ``docker build``, on a clean checkout of the tag:
    pyproject.toml and ``rook/__init__.py`` (``v0.3.0-rc1`` -> ``0.3.0rc1``).
 2. Writes ``rook/_release.py`` with that version and the commit's build number
    and ``<build>.<adjective>.<noun>`` name, so a hub installed from the wheel
-   stamps the worker bundles it builds (OTA needs a real build number).
+   stamps the worker bundles it builds (OTA needs a real build number), plus
+   ``--relay-version``: the telesthete release whose relay goes with it.
 3. With ``--telesthete-wheel-url``: replaces the ``telesthete @ git+https://…``
    pin with ``telesthete @ <wheel URL>#sha256=<hash>``. A git direct reference
    makes pip clone the repo, so installing the release wheel would need git;
@@ -79,9 +80,12 @@ def set_telesthete_requirement(pyproject: str, url: str, sha256: str) -> str:
     return out
 
 
-def release_module(version: str, build: int, commit: str, name: str) -> str:
+def release_module(version: str, build: int, commit: str, name: str, relay: str = "") -> str:
+    if relay and not re.fullmatch(r"v\d[0-9A-Za-z.\-]*", relay):
+        raise ValueError(f"--relay-version must be a telesthete tag like v0.3.0, not {relay!r}")
     src = (ROOT / "rook" / "_release.py").read_text(encoding="utf-8")
-    values = {"VERSION": repr(version), "BUILD": str(build), "COMMIT": repr(commit), "NAME": repr(name)}
+    values = {"VERSION": repr(version), "BUILD": str(build), "COMMIT": repr(commit),
+              "NAME": repr(name), "RELAY": repr(relay)}
     for key, value in values.items():
         src, n = re.subn(rf"(?m)^{key}(\s*)=\s*[^#\n]*?(\s*#|$)", rf"{key}\g<1>= {value}\g<2>", src, count=1)
         if n != 1:
@@ -102,6 +106,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--tag", help="release tag, e.g. v0.2.0")
     ap.add_argument("--telesthete-wheel-url", default="")
     ap.add_argument("--telesthete-wheel-sha256", default="")
+    ap.add_argument("--relay-version", default="",
+                    help="telesthete release tag of the relay this release ships (v0.3.0)")
     ap.add_argument("--print-telesthete-pin", action="store_true")
     a = ap.parse_args(argv)
 
@@ -127,7 +133,7 @@ def main(argv: list[str] | None = None) -> int:
         text = set_telesthete_requirement(text, a.telesthete_wheel_url, a.telesthete_wheel_sha256)
     init = ROOT / "rook" / "__init__.py"
     init_text = set_init_version(init.read_text(encoding="utf-8"), version)
-    release = release_module(version, build, commit, name)
+    release = release_module(version, build, commit, name, a.relay_version)
 
     pyproject.write_text(text, encoding="utf-8")
     init.write_text(init_text, encoding="utf-8")
