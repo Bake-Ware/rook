@@ -208,9 +208,13 @@ class UpdateService:
                    if meta.get("breaking") else "")
                 + "Open Manage > Updates on the dashboard to review it.")
         try:
-            await self._notify(text)
+            r = await self._notify(text)
+            ok = not isinstance(r, dict) or bool(r.get("ok", True))
             self.record({"kind": "notify", "event": "announced", "tag": latest["tag"],
-                         "result": "ok"})
+                         "result": "ok" if ok else "skipped",
+                         "detail": "posted to chat" if ok else
+                         f"not posted to chat ({(r or {}).get('error') or 'no channel'}); "
+                         "shown on Manage > Updates"})
         except Exception:
             log.debug("could not announce %s", latest["tag"], exc_info=True)
 
@@ -226,6 +230,11 @@ class UpdateService:
         apk = self.app_available()
         fw = self._firmware_latest()
         floors = current_floors()
+        pending, pending_v = None, ""
+        latest = self.latest()
+        if latest and (latest.get("meta") or {}).get("breaking") \
+                and self._newer(latest, hubself.current_hub()):
+            pending, pending_v = floors_of(latest["meta"]), latest["version"]
         out = []
         for wid, w in self.roster().items():
             m = member_kind({**w, "worker_id": wid})
@@ -238,6 +247,8 @@ class UpdateService:
             m["online"] = online(w, now)
             m["can_push"] = m["kind"] == "worker" and "worker.apply" in (w.get("caps") or [])
             m["note"] = below_floor(m, floors)
+            why = below_floor(m, pending) if pending else ""
+            m["pending_note"] = f"stops working with {pending_v}: {why}" if why else ""
             upd = (w.get("hb") or {}).get("worker")
             m["rolled_back"] = upd.get("update") if isinstance(upd, dict) else ""
             if m["kind"] == "worker":

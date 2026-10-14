@@ -492,3 +492,41 @@ async def test_dashboard_serves_the_released_build_and_snapshots(tmp_path, keyen
         d = await (await client.get("/updates/desktop.json?version=0.1.0&platform=linux")).json()
         assert d["update_available"] and [x["name"] for x in d["downloads"]] == [
             "rook-desktop_0.3.0_amd64.AppImage"]
+
+
+# -- the account API ------------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_account_api_is_operator_only_and_reports_refusals(make_svc, gh, band, monkeypatch):
+    from types import SimpleNamespace
+
+    import httpx
+    from starlette.applications import Starlette
+
+    from rook.hub.plugins.updates.web import routes
+    std_release(gh, min_worker_build=505, breaking=True)
+    band.add("w1", "garage", 501)
+    s = make_svc()
+    await s.check(force=True)
+    monkeypatch.setattr(hubself, "detect", lambda repo="": {"kind": "installer", "can_apply": True,
+                                                            "mode": "user", "systemd": True})
+    changed = []
+    settings = SimpleNamespace(set=lambda key, value, **kw: changed.append((key, value)) or {"ok": True})
+    node = SimpleNamespace(host=SimpleNamespace(plugins=[SimpleNamespace(NAMESPACE="updates", service=s)]),
+                           settings=settings)
+    accounts = SimpleNamespace(session=lambda c: {"id": c, "username": c, "csrf": "k",
+                                                  "admin": c == "op"} if c else None)
+    app = Starlette(routes=routes(lambda: node, accounts))
+    api, op = "/updates/account-api", {"Cookie": "rook_account=op"}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        assert (await c.get(api)).status_code == 401
+        assert (await c.get(api, headers={"Cookie": "rook_account=m1"})).status_code == 403
+        page = (await c.get(api, headers=op)).json()
+        assert page["csrf"] == "k" and page["hub"]["latest"] == "v0.3.0"
+        r = await c.post(api, headers=op, json={"csrf": "k", "action": "apply_hub", "tag": "v0.3.0"})
+        assert r.status_code == 409 and r.json()["needs_ack"] and r.json()["cut_off"][0]["name"] == "garage"
+        r = await c.post(api, headers=op, json={"csrf": "k", "action": "settings", "mode": "auto"})
+        assert r.json()["ok"] and changed == [("updates.mode", "auto")]
+        r = await c.post(api, headers=op, json={"csrf": "k", "action": "cancel"})
+        assert r.status_code == 409 and "no rollout" in r.json()["error"]
+        assert (await c.post(api, headers=op, json={"csrf": "k", "action": "nope"})).status_code == 400

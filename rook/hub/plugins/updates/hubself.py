@@ -51,15 +51,19 @@ def current_hub() -> dict:
             build = int(wb or 0)
         except Exception:
             build = 0
-    return {"version": _release.VERSION or getattr(rook, "__version__", ""), "build": build,
-            "name": name or release, "relay": _release.RELAY,
+    # ``version`` is the release version ("" when this is not a release:
+    # a source checkout or a `rook hub release build` tree); ``package`` is
+    # the version pyproject declares, which says nothing about the build.
+    return {"version": _release.VERSION, "build": build, "name": name or release,
+            "package": getattr(rook, "__version__", ""), "relay": _release.RELAY,
             "release": release, "python": sys.executable}
 
 
 def _install_env() -> tuple[Path, dict] | None:
-    """install-hub.sh's ``install.env`` for the venv we run in, if any."""
-    venv = Path(sys.prefix)
-    for cand in (venv.parent / "install.env",):
+    """install-hub.sh's ``install.env`` for the venv we run in, if any
+    (``$ROOK_INSTALL_ENV`` names it for a layout the installer did not make)."""
+    env = os.environ.get("ROOK_INSTALL_ENV", "").strip()
+    for cand in ([Path(env).expanduser()] if env else [Path(sys.prefix).parent / "install.env"]):
         try:
             text = cand.read_text(encoding="utf-8")
         except OSError:

@@ -139,14 +139,15 @@ class Updates(Plugin):
                 log.exception("update service tick failed")
             await asyncio.sleep(TICK_SECS)
 
-    async def _notify(self, text: str) -> None:
+    async def _notify(self, text: str) -> dict:
+        """notify.send (every chat integration); its reply, or why none ran."""
         node = self._node
         if node is None:
-            return
+            return {"ok": False, "error": "no hub node"}
         for p in node.host.plugins:
             if getattr(p, "NAMESPACE", "") == "notify" and hasattr(p, "send"):
-                await p.send(text)
-                return
+                return await p.send(text)
+        return {"ok": False, "error": "the notify plugin is off"}
 
     # -- caps --------------------------------------------------------------------
     def _svc(self):
