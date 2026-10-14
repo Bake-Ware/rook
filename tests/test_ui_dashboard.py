@@ -582,3 +582,52 @@ def test_index_lands_on_the_overview_and_loads_the_theme_early():
     assert head.index("theme.css") < head.index("theme-boot.js")
     for page in ("login.html", "setup.html", "permissions.html", "account-page.html"):
         assert "/account/ui/assets/theme-boot.js" in (WEB / page).read_text(encoding="utf-8"), page
+
+
+def test_sidebar_groups_fold_and_the_nav_scrolls():
+    """The Workspace and Manage labels are toggle buttons for their nav; the groups
+    sit in one scrolling area between the brand and the footer."""
+    from html.parser import HTMLParser
+
+    html = (WEB / "index.html").read_text(encoding="utf-8")
+    aside = html[html.index('<aside class="app-sidebar"'):html.index("</aside>")]
+
+    class Tags(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.stack, self.found = [], []
+
+        def handle_starttag(self, tag, attrs):
+            attrs = dict(attrs)
+            self.found.append((tag, attrs, [a.get("class", "") for _, a in self.stack]))
+            if tag not in ("input", "br", "img"):
+                self.stack.append((tag, attrs))
+
+        def handle_endtag(self, tag):
+            while self.stack and self.stack.pop()[0] != tag:
+                pass
+
+    tags = Tags()
+    tags.feed(aside)
+    buttons = {a["id"]: (a, outer) for t, a, outer in tags.found if t == "button" and "nav-label" in a.get("class", "")}
+    navs = {a.get("id"): (a, outer) for t, a, outer in tags.found if t == "nav"}
+    assert set(buttons) == {"nav-label-workspace", "nav-label-manage"}
+    for name, label in (("workspace", "Workspace"), ("manage", "Management")):
+        button, outer = buttons["nav-label-" + name]
+        assert button["type"] == "button" and button["aria-expanded"] == "true"
+        nav, nav_outer = navs[button["aria-controls"]]
+        assert nav["aria-label"] == label and button["aria-controls"] == "nav-" + name
+        assert outer[-1] == "nav-group" and nav_outer[-1] == "nav-group" and "sidebar-nav" in outer
+    # Help stays a plain nav, still inside the scrolling area; the footer is outside it.
+    help_nav = next(outer for t, a, outer in tags.found if t == "nav" and a.get("aria-label") == "Help")
+    assert help_nav[-1] == "sidebar-nav"
+    footer = next(outer for t, a, outer in tags.found if a.get("class") == "sidebar-footer")
+    assert "sidebar-nav" not in footer
+    # The state is kept per browser, and storage errors are tolerated.
+    assert "localStorage.getItem('rook.nav.collapsed')" in html
+    assert "try{localStorage.setItem('rook.nav.collapsed'" in html
+    shell = (WEB / "shell.css").read_text(encoding="utf-8")
+    rule = re.search(r"\.sidebar-nav\{([^}]*)\}", shell).group(1)
+    assert "overflow-y:auto" in rule and "min-height:0" in rule
+    # A folded group still shows the current view's tab, on desktop only.
+    assert "@media(min-width:801px){.nav-group.collapsed nav a:not(.active){display:none}}" in shell

@@ -336,8 +336,10 @@
   </div>
   <aside class="app-sidebar" aria-label="Application navigation">
     <a class="brand" href="#overview" onclick="showView('overview');return false">♜ ROOK</a>
-    <span class="nav-label">WORKSPACE</span>
-    <nav aria-label="Workspace">
+    <div class="sidebar-nav">
+    <div class="nav-group" data-nav-group="workspace">
+    <button type="button" class="nav-label" id="nav-label-workspace" aria-expanded="true" aria-controls="nav-workspace">WORKSPACE<span class="nav-chevron" aria-hidden="true"></span></button>
+    <nav id="nav-workspace" aria-label="Workspace">
       <a id="tab-overview" href="#overview" onclick="showView('overview');return false">Overview</a>
       <a id="tab-start" href="#start" onclick="showView('start');return false">Start page</a>
       <a id="tab-workers" href="#workers" onclick="showView('workers');return false">Workers</a>
@@ -348,8 +350,10 @@
       <a id="tab-jobs" href="#jobs" onclick="showView('jobs');return false">Jobs</a>
       <a id="tab-sessions" href="#sessions" onclick="showView('sessions');return false">Sessions</a>
     </nav>
-    <span class="nav-label">MANAGE</span>
-    <nav aria-label="Management">
+    </div>
+    <div class="nav-group" data-nav-group="manage">
+    <button type="button" class="nav-label" id="nav-label-manage" aria-expanded="true" aria-controls="nav-manage">MANAGE<span class="nav-chevron" aria-hidden="true"></span></button>
+    <nav id="nav-manage" aria-label="Management">
       <a id="tab-install" href="#install" onclick="showView('install');return false">Install a worker</a>
       <a id="tab-settings" href="#settings" onclick="showView('settings');return false">Settings</a>
       <a id="tab-plugins" href="#plugins" onclick="showView('plugins');return false">Plugins</a>
@@ -364,9 +368,11 @@
       <a id="tab-models" href="#models" onclick="showView('models');return false">Model providers</a>
       <a id="tab-memory" href="#memory" onclick="showView('memory');return false">Memory</a>
     </nav>
+    </div>
     <nav aria-label="Help" class="nav-help">
       <a id="tab-help" href="#help" onclick="showView('help');return false">Help</a>
     </nav>
+    </div>
     <div class="sidebar-footer"><button class="art-toggle" id="art-toggle" type="button" hidden>Pause artwork</button><span class="live"><span class="dot" id="dot"></span><span id="count">Connecting…</span></span><a class="signout" href="/logout">Sign out</a></div>
   </aside>
   <header class="topbar">
@@ -1280,6 +1286,34 @@ async function ensureSettings(view){
  try{return await settingsLoading[view];}catch(error){host.innerHTML='<p class="empty">'+esc(error.message)+' <a href="/account/login">Sign in</a></p>';throw error;}
  finally{delete settingsLoading[view];}
 }
+/* Sidebar groups (Workspace, Manage) fold; each group's state is kept. A folded
+   group still shows the current view's tab (shell.css), so the page is never hidden. */
+function setNavGroup(group,folded){
+  group.classList.toggle('collapsed',folded);
+  group.querySelector('.nav-label').setAttribute('aria-expanded',String(!folded));
+}
+/* On a short window the groups scroll: bring the current tab into view (only the sidebar moves). */
+function revealNavTab(tab){
+  const box=tab?.closest('.sidebar-nav');if(!box||box.scrollHeight<=box.clientHeight)return;
+  const b=box.getBoundingClientRect(),r=tab.getBoundingClientRect();
+  if(r.top<b.top)box.scrollTop-=b.top-r.top;else if(r.bottom>b.bottom)box.scrollTop+=r.bottom-b.bottom;
+}
+(function initNavGroups(){
+  let folded=[];
+  try{folded=JSON.parse(localStorage.getItem('rook.nav.collapsed')||'[]');if(!Array.isArray(folded))folded=[];}catch{folded=[];}
+  for(const group of document.querySelectorAll('.app-sidebar .nav-group')){
+    const name=group.dataset.navGroup;
+    setNavGroup(group,folded.includes(name));
+    group.querySelector('.nav-label').addEventListener('click',()=>{
+      setNavGroup(group,!group.classList.contains('collapsed'));
+      const now=[...document.querySelectorAll('.app-sidebar .nav-group.collapsed')].map(g=>g.dataset.navGroup);
+      try{localStorage.setItem('rook.nav.collapsed',JSON.stringify(now));}catch{}
+    });
+  }
+  // The footer can grow after load (the artwork toggle appears), shrinking the scroll area.
+  const box=document.querySelector('.app-sidebar .sidebar-nav');
+  if(box&&window.ResizeObserver)new ResizeObserver(()=>revealNavTab(box.querySelector('a.active'))).observe(box);
+})();
 function showView(v,updateHistory=true){
  if(!viewInfo[v])v='overview';
  if(updateHistory&&location.hash.split('?')[0]!=='#'+v)history.pushState(null,'','#'+v);
@@ -1302,6 +1336,7 @@ function showView(v,updateHistory=true){
   $('#view-'+n).hidden=v!==n; const tab=$('#tab-'+n);tab.classList.toggle('active',v===n);
   if(v===n)tab.setAttribute('aria-current','page');else tab.removeAttribute('aria-current');
  }
+ revealNavTab($('#tab-'+v));
  $('#view-title').textContent=viewInfo[v][0];$('#view-description').textContent=viewInfo[v][1];
  document.title=viewInfo[v][0]+' · Rook';$('#worker-controls').hidden=v!=='workers';$('#worker-stats').hidden=v!=='workers';$('#addband-form').hidden=true;
  if(v==='chat'){startChat();}else{stopChat();}
