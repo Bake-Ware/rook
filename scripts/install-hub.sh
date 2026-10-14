@@ -712,6 +712,7 @@ ROOK_GUIDANCE_ADMIN_URL=$mcp_local/guidance/account-api
 ROOK_VAULT_ADMIN_URL=$mcp_local/vault/account-api
 ROOK_SETTINGS_ADMIN_URL=$mcp_local/settings/account-api
 ROOK_JOBS_ADMIN_URL=$mcp_local/jobs/account-api
+ROOK_MANUAL_ADMIN_URL=$mcp_local/manual/account-api
 ROOK_MASK_URL=$mcp_local/internal/mask
 ROOK_WATCHDOG_MCP_URL=$mcp_local
 EOF

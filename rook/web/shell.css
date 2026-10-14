@@ -5,6 +5,7 @@ body{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,
 .app-sidebar .brand{text-decoration:none;padding:0 12px 26px;letter-spacing:2px;font-size:21px;color:var(--fg)}
 .nav-label{font-size:10px;font-weight:650;letter-spacing:1.5px;color:var(--dim2);padding:20px 12px 7px}
 .app-sidebar nav{display:flex;flex-direction:column;gap:5px}
+.app-sidebar nav.nav-help{margin-top:16px;padding-top:12px;border-top:1px solid var(--line)}
 .app-sidebar nav a{font-size:14px;padding:11px 13px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;border:1px solid transparent}
 .app-sidebar nav a:hover{background:var(--hover)}.app-sidebar nav a.active{color:var(--accent);background:var(--accent-bg);border-color:var(--accent-line)}
 .sidebar-footer{margin-top:auto;padding:20px 10px 0;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:20px}
@@ -30,7 +31,7 @@ body{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,
  .app-sidebar{position:relative;inset:auto;width:auto;padding:16px 16px 10px;display:block;border-right:0;border-bottom:1px solid var(--line)}
  .app-sidebar .brand{display:block;padding:0 4px 14px;font-size:18px}.nav-label{display:none}
  .app-sidebar nav{flex-direction:row;overflow:auto;white-space:nowrap;gap:4px}.app-sidebar nav a{padding:8px 12px;font-size:13px;flex-shrink:0}
- .app-sidebar nav[aria-label="Management"]{margin-top:8px}.sidebar-footer{position:absolute;top:18px;right:20px;border:0;margin:0;padding:0;flex-direction:row;gap:15px}.sidebar-footer .signout{font-size:11px}
+ .app-sidebar nav[aria-label="Management"],.app-sidebar nav.nav-help{margin-top:8px}.app-sidebar nav.nav-help{padding-top:0;border-top:0}.sidebar-footer{position:absolute;top:18px;right:20px;border:0;margin:0;padding:0;flex-direction:row;gap:15px}.sidebar-footer .signout{font-size:11px}
  .topbar{margin-left:0;position:relative;padding:20px 16px}.wrap{margin-left:0;padding:20px 16px 40px}
  .stats{margin-bottom:20px}.row{flex-wrap:wrap}.listhead{display:none}.name{flex:1 1 60%;}.row .ver{order:3;width:auto;flex:0 0 auto}.band-column{order:2;width:auto;max-width:65%;flex:0 1 auto}.acts{order:5;width:auto;flex:1 1 100%;justify-content:flex-start}.acts button{padding:7px 12px}.row .seen{display:none}
  .addform{top:190px;left:16px;right:16px;width:auto}.tile.mini{min-width:0;flex:1}.tile.ver,.tile.hb{flex:1 1 100%;width:auto}

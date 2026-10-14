@@ -260,6 +260,13 @@ are set only in the environment or on the command line.
 | `knowledge.hygiene_scan_seconds` | Scan interval (seconds) | hub | int | `300` | `ROOK_KNOWLEDGE_HYGIENE_SCAN_SECONDS` | live |
 | `knowledge.hygiene_notify_people` | Also notify people | hub | bool | off | `ROOK_KNOWLEDGE_HYGIENE_NOTIFY_PEOPLE` | live |
 
+## Manual (hub plugin, runs in mcp)
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `manual.auto_seed` | Copy the manual on a new hub | hub | bool | on | `ROOK_MANUAL_AUTO_SEED` | live |
+| `manual.prompt_updates` | Ask after updates | hub | bool | on | `ROOK_MANUAL_PROMPT_UPDATES` | live |
+
 ## Memory (hub plugin, runs in mcp)
 
 | Key | Label | Scope | Type | Default | Env / flag | Apply |
