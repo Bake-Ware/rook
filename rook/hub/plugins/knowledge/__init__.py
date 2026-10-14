@@ -37,7 +37,7 @@ from .store import LINK_KINDS, RELATIONS
 log = logging.getLogger("rook.hub.plugins.knowledge")
 
 #: Read actions (the rest of ``KnowledgeService.dispatch``'s actions are WRITES).
-READS = ('bands', 'deck', 'hygiene', 'list', 'get', 'search', 'context', 'status')
+READS = ('bands', 'deck', 'board', 'hygiene', 'list', 'get', 'search', 'context', 'status')
 ERRORS = (ValueError, KeyError, TypeError, PermissionError)
 
 

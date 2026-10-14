@@ -6,6 +6,7 @@ a real KnowledgeService with seeded data, at desktop and phone widths.
 Fails on JavaScript errors or missing content. Screenshots go to DIR.
 """
 import asyncio
+import os
 import sys
 import tempfile
 import uuid
@@ -94,6 +95,10 @@ window.addEventListener('hashchange',show);await show();window.ready=true;
     app.router.add_route('*', '/account/knowledge/api', api)
     app.router.add_get('/account/knowledge/assets/{name}', asset)
     app.router.add_get('/account/bands/assets/{name}', asset)   # manage.js (shared helpers)
+    app.router.add_get('/account/huddle/assets/{name}', asset)
+    # The Work tab's question badge asks the huddle API; no huddles here.
+    app.router.add_route('*', '/account/huddle/api', lambda r: web.json_response(
+        {'csrf': 'x'} if r.method == 'GET' else {'ok': True, 'result': {'huddles': []}}))
     app.router.add_get('/theme.css', lambda r: web.FileResponse(ROOT / 'rook/web/theme.css'))
     app.router.add_get('/', lambda r: web.Response(text=page_html, content_type='text/html'))
     runner = web.AppRunner(app); await runner.setup()
@@ -102,7 +107,7 @@ window.addEventListener('hashchange',show);await show();window.ready=true;
     base = f'http://127.0.0.1:{port}/'
     errors = []
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch()
+        browser = await pw.chromium.launch(executable_path=os.environ.get('ROOK_CHROMIUM') or None)
         for name, size in (('desktop', {'width': 1280, 'height': 900}), ('phone', {'width': 390, 'height': 844})):
             page = await browser.new_page(viewport=size)
             page.on('pageerror', lambda e, n=name: errors.append(f'{n}: {e}'))
@@ -194,10 +199,33 @@ async def run_checks(page, base, shot):
     await shot('work-overview')
     await page.click('#view-work .kn-index-item:has-text("Agent work system rollout")')
     await page.wait_for_selector('#view-work h1:has-text("Agent work system rollout")')
-    for label in ('In progress', 'Blocked', 'To do', 'Recently done'):
-        assert await page.locator(f'#view-work .kn-section h3:has-text("{label}")').count() == 1, label
+    for label in ('Blocked', 'In progress', 'Up next', 'Recent activity', 'Rooms', 'Knowledge'):
+        assert await page.locator(f'#view-work .wv-psec h2:has-text("{label}")').count() == 1, label
+    assert await page.locator('#view-work .wv-progress-label').inner_text() == '1 of 4 tasks finished · 25%'
     await shot('work-project')
-    await page.click('#view-work .kn-card:has-text("Deploy e6aaa2b")')
+    # Board: drag "Import Claude memory" to Blocked; the dialog asks what it waits on.
+    await page.goto(base + '#work?v=board'); await page.wait_for_selector('#view-work .wv-card')
+    assert await page.locator('#view-work .wv-col-blocked .wv-card').count() == 1
+    if page.viewport_size['width'] > 800:
+        await page.drag_and_drop('.wv-card:has-text("Import Claude memory")', '.wv-col-blocked .wv-col-list')
+    else:   # columns scroll sideways on a phone: the card menu does the same
+        await page.click('.wv-card:has-text("Import Claude memory") .wv-more')
+        await page.click('.wv-menu button:has-text("Blocked")')
+    await page.fill('.wv-dialog textarea[name=reason]', 'Needs the export file')
+    await page.click('.wv-dialog button[type=submit]')
+    await page.wait_for_selector('.wv-col-blocked .wv-card:has-text("Import Claude memory")')
+    await shot('work-board')
+    # ... and back with the card menu (no dialog: nobody is working on it).
+    await page.click('.wv-card:has-text("Import Claude memory") .wv-more')
+    await page.click('.wv-menu button:has-text("To do")')
+    await page.wait_for_selector('.wv-col-todo .wv-card:has-text("Import Claude memory")')
+    await page.goto(base + '#work?v=list&label=security'); await page.wait_for_selector('#view-work .wv-table')
+    assert await page.locator('#view-work .wv-table tbody tr').count() == 1
+    await page.goto(base + '#work?v=timeline'); await page.wait_for_selector('#view-work .wv-timeline')
+    await page.wait_for_selector('#view-work .wv-unscheduled')   # seeded tasks have no dates
+    await page.goto(base + '#work?p=rollout&b=b1'); await page.wait_for_selector('#view-work h1:has-text("Agent work system rollout")')
+    await page.click('#view-work summary:has-text("Finished recently")')
+    await page.click('#view-work .wv-card:has-text("Deploy e6aaa2b") .wv-card-title')
     await page.wait_for_selector('#view-work h1:has-text("Deploy e6aaa2b")')
     assert await page.locator('.kn-callout:has-text("Live; 38/38 tests.")').count() == 1
     assert await page.locator('h2:has-text("Audit trail")').count() == 1

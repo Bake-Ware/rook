@@ -358,7 +358,8 @@ PLUGIN_TITLES = {ns: title for ns, _, title, _ in _SERVICES}
 PLUGIN_TITLES.update({"knowledge": "Knowledge", "task": "Tasks", "job": "Jobs", "hub": "Hub info",
                       "decide": "Decide (decision model)", "home": "Home agent",
                       "pikvm": "PiKVM", "cec": "HDMI-CEC", "agent": "Wake (agent.wake)",
-                      "ccmod": "Claude Code rules"})
+                      "ccmod": "Claude Code rules",
+                      "ui": "Dashboard (look, start page, feeds)"})
 
 
 def _plugin_classes(package: str = "rook.worker.plugins",
