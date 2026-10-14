@@ -350,3 +350,14 @@ def test_both_launchers_route_local_commands(home, monkeypatch, capsys):
     desktop.main()
     out = capsys.readouterr().out
     assert "doctor" in out and "rook worker --help" in out
+
+
+def test_status_reports_the_running_workers_version(home, capsys, monkeypatch):
+    monkeypatch.setattr(localcli, "live_status", lambda: {
+        "name": "den", "version": "512.calm.otter", "build": 512, "uptime_s": 7200,
+        "plugins": ["info"], "plugins_failed": [],
+        "band": {"connected": True, "last_heard_s": 3, "ws": True, "hub": "192.0.2.10:7005"}})
+    enroll_file(home)
+    code, out, _ = run(["status"], capsys)
+    assert "den  v512.calm.otter  (running for 2 h)" in out
+    assert "home via 192.0.2.10:7005 (WebSocket)" in out and "connected, last heard 3 s ago" in out

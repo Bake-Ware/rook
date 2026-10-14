@@ -254,7 +254,10 @@ def gather_status() -> dict:
     expiry = cert_expiry(saved)
     from ._build_info import BUILD, VERSION
     return {
-        "worker": {"name": worker_name(live), "version": VERSION, "build": BUILD,
+        # The running worker's own version: this command may come from a
+        # newer bundle (just updated) or a source checkout.
+        "worker": {"name": worker_name(live), "version": (live or {}).get("version") or VERSION,
+                   "build": (live or {}).get("build") or BUILD,
                    "running": live is not None,
                    "uptime_s": (live or {}).get("uptime_s"),
                    "state_dir": str(worker_state_dir())},
@@ -472,7 +475,7 @@ def cmd_rooms(args) -> int:
         return 0
     rooms = result.get("rooms") or []
     if not rooms:
-        who = "you are" if how == "login" else "this worker is"
+        who = "this worker is" if how == "band" else "you are"
         _out(f"No rooms {who} in yet.")
     for r in rooms:
         unread = f"  {r['unread']} new" if r.get("unread") else ""
