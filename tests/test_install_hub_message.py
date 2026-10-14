@@ -34,6 +34,8 @@ def test_hub_done_message_is_plain_steps_first():
     out = _render()
     assert "[rook] Your Rook hub is running." in out
     assert "Password    correct-horse-7" in out
+    # The desktop app's hub wizard reads these two labels (installer::parse_summary).
+    assert re.search(r"^  Dashboard   http://192\.0\.2\.20:7005$", out, re.M)
     steps = re.findall(r"^  (\d)\. ", out, re.M)
     assert steps == ["1", "2", "3"]
     assert 'Go to "Install a worker" and click "Get a pairing code".' in out

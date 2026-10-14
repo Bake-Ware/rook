@@ -962,7 +962,7 @@ cat <<EOF
 
 [rook] Your Rook hub is running.
 
-  Open        $DOMAIN
+  Dashboard   $DOMAIN
   Password    $WEB_PASS
               (keep it safe; it is also saved in $SECRETS_ENV)
 
