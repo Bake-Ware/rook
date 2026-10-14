@@ -104,6 +104,14 @@ your account and applied at once, on every device you sign in from:
 Terminals and the 3D fleet view stay dark in every theme. The start page
 layout is listed under My preferences too, where you can reset it.
 
+## The sidebar
+
+Click **WORKSPACE** or **MANAGE** in the sidebar to fold that group away or
+open it again; this browser remembers each group's choice. A folded group
+still shows the page you are on. When the window is too short for every
+entry, the sidebar scrolls on its own and **Sign out** stays at the bottom.
+On a phone the groups are always open, as rows you swipe sideways.
+
 ## Behind the scenes
 
 The Overview, the start page and themes come from the hub plugin `ui`

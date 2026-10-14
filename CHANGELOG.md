@@ -8,6 +8,13 @@ version was `0.1.0`.
 
 ## Unreleased
 
+### Dashboard
+Manual: overview-and-start-page
+- The sidebar scrolls when the window is too short for every entry (the
+  footer with Sign out stays at the bottom), and the Workspace and Manage
+  groups fold: their labels are buttons, each group's state is remembered in
+  this browser, and a folded group still shows the current page's tab.
+
 ## [0.2.0] - 2026-10-14
 
 The first tagged release. Preparation for public use.
