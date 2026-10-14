@@ -183,6 +183,12 @@ Manual: updates
 - Android: publish a release's APK through `/apk` and ask phones to update
   (`device.update`). Desktop: `GET /updates/desktop.json`. Firmware versions
   are shown (ESP32 announce, RP2040 `dongle.status`); flashing stays manual.
+- Workers install one update at a time: a second `worker.apply`,
+  `worker.check`, `worker.update` or in-band push while one is downloading,
+  or after one was swapped in and the restart is pending, is refused ("an
+  update is already in progress") instead of interleaving, so the rollback
+  copy (`band-worker.pyz.prev`) is never overwritten by an unverified build.
+  Each download goes to its own temporary file, removed on failure.
 
 ### Hub merge
 - One hub process: `rook hub serve` (console script `rook-hub`) runs the
