@@ -564,6 +564,18 @@
   "knowledge.write": {
    "tier": "write"
   },
+  "llm.check": {
+   "tier": "read"
+  },
+  "llm.models": {
+   "tier": "read"
+  },
+  "llm.providers": {
+   "tier": "read"
+  },
+  "llmanifold.status": {
+   "tier": "read"
+  },
   "location.get": {
    "tier": "exec",
    "tags": [
@@ -959,6 +971,9 @@
    "tier": "write"
   },
   "voice.speak_voices": {
+   "tier": "read"
+  },
+  "voice.status": {
    "tier": "read"
   },
   "work.adopt_page": {
