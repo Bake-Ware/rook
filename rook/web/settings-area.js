@@ -11,7 +11,7 @@ const CSS=`
 .st-page h1{margin:0 8px 0 0;font:500 20px var(--sans);color:var(--accent)}
 .st-page h2{font:500 15px var(--sans);margin:10px 0 0}
 .st-group{border:1px solid var(--line);background:var(--panel);--cols:minmax(0,1.2fr) minmax(0,1.2fr) 130px 84px;min-width:0}
-.st-row{display:grid;grid-template-columns:var(--cols);gap:4px 12px;align-items:center;min-height:56px;padding:6px 18px;border-bottom:1px solid #20261d}
+.st-row{display:grid;grid-template-columns:var(--cols);gap:4px 12px;align-items:center;min-height:56px;padding:6px 18px;border-bottom:1px solid var(--line-soft)}
 .st-row:last-child{border-bottom:0}
 .st-label{display:flex;flex-direction:column;min-width:0;font-size:13px;cursor:pointer}.st-label strong{font-weight:500}
 .st-label small{font:11px var(--mono);color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -26,7 +26,7 @@ const CSS=`
 .st-more:empty{display:none}
 .st-more .st-help{display:none}.st-row:focus-within .st-help,.st-row.dirty .st-help,.st-row.open .st-help{display:block}
 .st-conflict{font-size:12px;color:var(--warn);border-left:2px solid var(--warn);padding-left:8px}
-.st-banner{border:1px solid var(--accent-dim);background:#1f1c12;padding:10px 14px;font-size:13px}
+.st-banner{border:1px solid var(--accent-dim);background:var(--banner-bg);padding:10px 14px;font-size:13px}
 .st-banner li{margin:4px 0}
 .st-page[data-filter=here] .st-row:not([data-here]),.st-page[data-filter=out] .st-row:not([data-out]),.st-page[data-filter=restart] .st-row:not([data-restart]){display:none}
 .st-page[data-filter=here] .st-group:not(:has(.st-row[data-here])),.st-page[data-filter=out] .st-group:not(:has(.st-row[data-out])),.st-page[data-filter=restart] .st-group:not(:has(.st-row[data-restart])){display:none}
