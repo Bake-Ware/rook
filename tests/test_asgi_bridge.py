@@ -293,3 +293,41 @@ async def test_in_memory_call_matches_a_loopback_request():
         await call(asgi, "GET", "/stream", timeout=0.2)   # blocks on the gate
     await life.stop()
     assert events == ["startup", "shutdown"]
+
+
+@pytest.mark.asyncio
+async def test_request_body_cap_answers_413():
+    asgi = make_app()
+    bridge = AsgiBridge(asgi, max_body=1000)
+    app = web.Application()
+    app.router.add_route("*", "/{tail:.*}", bridge.handle)
+    async with TestClient(TestServer(app)) as client:
+        r = await client.post("/echo", data=b"x" * 1000)       # at the cap: fine
+        assert r.status == 200 and len(await r.read()) == 1000
+        r = await client.post("/echo", data=b"x" * 1001)       # Content-Length over it
+        assert r.status == 413
+
+        async def chunks():                                     # chunked, no length
+            for _ in range(5):
+                yield b"y" * 400
+        r = await client.post("/echo", data=chunks())
+        assert r.status == 413
+    unlimited = AsgiBridge(asgi, max_body=None)
+    app = web.Application()
+    app.router.add_route("*", "/{tail:.*}", unlimited.handle)
+    async with TestClient(TestServer(app)) as client:
+        r = await client.post("/echo", data=b"z" * 50_000)
+        assert r.status == 200
+
+
+@pytest.mark.asyncio
+async def test_stopping_bridge_refuses_new_requests():
+    asgi = make_app()
+    bridge = AsgiBridge(asgi)
+    app = web.Application()
+    app.router.add_route("*", "/{tail:.*}", bridge.handle)
+    async with TestClient(TestServer(app)) as client:
+        assert (await client.get("/info")).status == 200
+        bridge.stopping = True
+        r = await client.get("/info")
+        assert r.status == 503 and r.headers["Retry-After"] == "5"

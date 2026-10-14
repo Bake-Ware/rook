@@ -123,14 +123,18 @@ def reload_server(tmp_path, monkeypatch):
     monkeypatch.setenv('VOICE_TOKEN', 'test-token')
     monkeypatch.delenv('VOICE_IDENTITIES_FILE', raising=False)
     monkeypatch.delenv('VOICE_ALLOW_ANONYMOUS', raising=False)
+    # The server module needs the voice host's packages (webrtcvad above all,
+    # see services/voice/requirements.txt); without them, skip instead of erroring.
+    for dep in ('fastapi', 'uvicorn', 'webrtcvad'):
+        pytest.importorskip(dep)
     import services.voice.server as module
     return importlib.reload(module)
 
 @pytest.mark.parametrize('hello_thinking,protocol,expected', [(True, 2, True), (False, 2, False),
                                                            (None, 2, False), ('true', 2, False), (True, 1, False)])
 def test_websocket_protocol_opt_in(tmp_path, monkeypatch, hello_thinking, protocol, expected):
-    from fastapi.testclient import TestClient
     server = reload_server(tmp_path, monkeypatch)
+    from fastapi.testclient import TestClient
 
     requests = []
     async def handler(request):
@@ -344,9 +348,9 @@ def test_shadow_starts_after_reply_dispatch_and_writes_after_completion(tmp_path
 
 
 def test_lifespan_does_no_decision_io_until_first_opt_in(tmp_path, monkeypatch):
+    server = reload_server(tmp_path, monkeypatch)
     from fastapi.testclient import TestClient
     from services.voice import providers, workers
-    server = reload_server(tmp_path, monkeypatch)
     requests = []
     async def handler(request):
         requests.append(request.url.path)

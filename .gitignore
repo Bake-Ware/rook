@@ -54,3 +54,4 @@ docs/promo/soundtrack.wav
 .agents/
 .codex/
 .pytest_cache/
+pytest-results.xml
