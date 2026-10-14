@@ -25,6 +25,19 @@ class McpError(Exception):
     """The MCP endpoint refused or failed the request."""
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Never follow a redirect: urllib would resend the request, bearer token
+    included, to wherever the hub (or something in between) points, another
+    host too, and turn the POST into a GET. The redirect surfaces as an
+    HTTPError and the user is told the address to use instead."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def _messages(body: bytes, content_type: str) -> list[dict]:
     if "text/event-stream" in content_type:
         out, data = [], []
@@ -63,7 +76,7 @@ class McpClient:
         data = json.dumps(payload).encode() if method == "POST" else None
         req = urllib.request.Request(self.url, data=data, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(req, timeout=timeout or self.timeout) as r:
+            with _OPENER.open(req, timeout=timeout or self.timeout) as r:
                 if r.headers.get("Mcp-Session-Id"):
                     self.session = r.headers["Mcp-Session-Id"]
                 body = r.read(MAX_REPLY + 1)
@@ -72,6 +85,15 @@ class McpClient:
             if e.code in (401, 403):
                 raise McpError("the hub refused the API token (create a new one on the "
                                "dashboard's Tokens page, then run rook login --token)") from None
+            if 300 <= e.code < 400:
+                where = e.headers.get("Location", "") if e.headers else ""
+                raise McpError(f"the hub's MCP endpoint redirected to {where or 'another address'}; "
+                               "the token was not sent there. Use that address: rook login "
+                               "--token --mcp-url <address>") from None
+            if e.code == 404:
+                raise McpError(f"nothing answers MCP at {self.url} (HTTP 404). On a hub whose MCP "
+                               "server runs separately (usually port 8765), give its address: "
+                               "rook login --token --mcp-url http://<hub address>:8765/mcp") from None
             raise McpError(f"the hub's MCP endpoint answered HTTP {e.code}") from None
         if len(body) > MAX_REPLY:
             raise McpError("reply too large")

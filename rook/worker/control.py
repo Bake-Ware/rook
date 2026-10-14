@@ -3,8 +3,8 @@ plugins`` and ``rook logs`` on this machine talk to the running worker here.
 
 Loopback TCP, not a Unix socket, because it must work the same on Windows
 (the worker's Python there has no AF_UNIX). The server binds 127.0.0.1 on an
-ephemeral port and writes ``<state dir>/control.json`` (mode 0600 on POSIX;
-on Windows the profile folder's ACL already keeps other users out) with the
+ephemeral port and writes ``<state dir>/control.json`` (mode 0600 on POSIX,
+an owner-only ACL on Windows: :func:`restrict_to_owner`) with the
 port and a random token. A client proves it can read that file by sending the
 token; anyone who can read it can read the band key in ``enrollment.json``
 beside it, so the link grants nothing the file system does not already.
@@ -49,10 +49,15 @@ CONTROL_FILE = "control.json"
 #: This worker's own caps the local link may run. Everything else is a band call.
 LOCAL_CAPS = frozenset({"worker.plugin.list", "worker.plugin.enable",
                         "worker.plugin.disable", "worker.settings_report"})
-#: Bounds: one request line, concurrent clients, log lines kept.
+#: Bounds: one request line, concurrent (authenticated) requests, log lines kept.
 MAX_LINE = 1 << 20
 MAX_CLIENTS = 8
 LOG_LINES = 500
+#: Seconds a new connection has to send its request line. Our client sends it
+#: at once; anything slower (another local process holding sockets open) is
+#: dropped, and only connections whose token passed count against MAX_CLIENTS,
+#: so idle connections can't lock `rook status` out.
+AUTH_SECS = 2.0
 #: A band message heard within this many seconds counts as "connected".
 CONNECTED_SECS = 90.0
 #: Longest band call a client may ask for (home.ask runs a model).
@@ -61,6 +66,31 @@ MAX_CALL_TIMEOUT = 600.0
 
 def control_path():
     return worker_state_path(CONTROL_FILE)
+
+
+def _is_windows() -> bool:
+    return sys.platform == "win32"
+
+
+def restrict_to_owner(path) -> None:
+    """On Windows, give ``path`` an owner-only ACL. Mode 0600 means nothing
+    there; the file inherits its folder's ACL, which keeps other users out of
+    a profile folder but not of, say, ``ROOK_WORKER_HOME=C:\\ProgramData\\...``.
+    Best-effort: a failure leaves the inherited ACL. No-op elsewhere."""
+    if not _is_windows():
+        return
+    user = os.environ.get("USERNAME", "")
+    if not user:
+        return
+    domain = os.environ.get("USERDOMAIN", "")
+    who = f"{domain}\\{user}" if domain else user
+    import subprocess
+    try:
+        subprocess.run(["icacls", str(path), "/inheritance:r", "/grant:r", f"{who}:F"],
+                       capture_output=True, timeout=15,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception as e:
+        log.debug("could not restrict %s to its owner: %s", path, e)
 
 
 def enabled() -> bool:
@@ -111,6 +141,7 @@ class ControlServer:
         atomic_write_text(control_path(), json.dumps({
             "port": self.port, "token": self.token, "pid": os.getpid(),
             "name": getattr(self.worker, "name", ""), "started": self.started}) + "\n", 0o600)
+        restrict_to_owner(control_path())
         log.debug("local control link on 127.0.0.1:%s", self.port)
         return self.port
 
@@ -132,33 +163,35 @@ class ControlServer:
             pass
 
     async def _client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        if self._clients >= MAX_CLIENTS:
-            writer.close()
-            return
-        self._clients += 1
         try:
             try:
-                line = await asyncio.wait_for(reader.readline(), 10)
+                line = await asyncio.wait_for(reader.readline(), AUTH_SECS)
                 req = json.loads(line)
                 if not isinstance(req, dict):
                     raise ValueError
             except Exception:
                 reply: dict = {"ok": False, "error": "bad request"}
             else:
-                if not hmac.compare_digest(str(req.get("token", "")), self.token):
+                # Bytes, not str: compare_digest raises TypeError on non-ASCII str.
+                given = str(req.get("token", "")).encode("utf-8")
+                if not hmac.compare_digest(given, self.token.encode("utf-8")):
                     reply = {"ok": False, "error": "bad token"}
+                elif self._clients >= MAX_CLIENTS:
+                    reply = {"ok": False, "error": "busy (too many rook commands at once); try again"}
                 else:
+                    self._clients += 1
                     try:
                         reply = await self.handle(req)
                     except Exception as e:
                         log.exception("control request failed")
                         reply = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+                    finally:
+                        self._clients -= 1
             writer.write((json.dumps(reply, default=str) + "\n").encode("utf-8"))
             await writer.drain()
         except Exception:
             pass
         finally:
-            self._clients -= 1
             try:
                 writer.close()
             except Exception:

@@ -198,8 +198,11 @@ def test_login_token_is_checked_and_saved_privately(home, capsys, monkeypatch):
     monkeypatch.setenv("ROOK_TOKEN", "t0k")
     monkeypatch.setattr(mcp_client, "rook_call", lambda url, token, cap, args, worker="rook",
                         timeout=30.0: {"ok": True, "result": {"enabled": False}})
+    restricted = []
+    monkeypatch.setattr(control, "restrict_to_owner", restricted.append)
     code, out, _ = run(["login", "--token"], capsys)
     assert code == 0 and "Saved" in out
+    assert restricted == [home.parent / "cli-token.json"]     # owner-only ACL on Windows
     saved = json.loads((home.parent / "cli-token.json").read_text())
     assert saved == {"url": "http://192.0.2.10:7005", "mcp_url": "http://192.0.2.10:7005/mcp",
                      "token": "t0k"}
@@ -209,6 +212,57 @@ def test_login_token_is_checked_and_saved_privately(home, capsys, monkeypatch):
         mcp_client.McpError("the hub refused the API token")))
     code, _, err = run(["login", "--token"], capsys)
     assert code == 1 and "refused the API token" in err
+
+
+def test_login_defaults_a_bare_public_host_to_https():
+    assert localcli._with_scheme("hub.example.com") == "https://hub.example.com"
+    assert localcli._with_scheme("hub.example.com:7005") == "https://hub.example.com:7005"
+    for lan in ("192.168.1.5:7005", "10.0.0.2", "100.100.1.2:7005", "[fd00::1]:7005",
+                "localhost:7005", "rookhub:7005", "rookhub.local", "hub.lan:7005"):
+        assert localcli._with_scheme(lan) == "http://" + lan, lan
+    assert localcli._with_scheme("http://hub.example.com") == "http://hub.example.com"
+
+
+class _Tty:
+    def __init__(self, answer):
+        self.answer = answer
+
+    def isatty(self):
+        return True
+
+    def readline(self):
+        return self.answer + "\n"
+
+
+def test_login_never_sends_a_secret_over_public_http_unasked(home, capsys, monkeypatch):
+    from rook.worker import mcp_client
+    sent = []
+    monkeypatch.setattr(mcp_client, "rook_call", lambda url, token, *a, **k: sent.append(url)
+                        or {"ok": True, "result": {}})
+    monkeypatch.setattr(band_tui.BandHTTP, "check", lambda self: sent.append(self) or None)
+    monkeypatch.setenv("ROOK_TOKEN", "t0k")
+    monkeypatch.setenv("ROOK_WEB_PASS", "pw")
+    # No terminal: refused before anything is sent.
+    for argv in (["login", "--token", "--url", "http://hub.example.com"],
+                 ["login", "--token", "--url", "192.0.2.10:7005", "--mcp-url",
+                  "http://hub.example.com/mcp"],
+                 ["login", "--url", "http://hub.example.com"]):
+        code, _, err = run(argv, capsys)
+        assert code == 1 and "unencrypted" in err and "https://" in err, argv
+    assert sent == []
+    # At a terminal it asks; no means no.
+    monkeypatch.setattr("sys.stdin", _Tty("n"))
+    code, _, err = run(["login", "--token", "--url", "http://hub.example.com"], capsys)
+    assert code == 1 and "Not sent" in err and sent == []
+    monkeypatch.setattr("sys.stdin", _Tty("y"))
+    code, _, _ = run(["login", "--token", "--url", "http://hub.example.com"], capsys)
+    assert code == 0 and sent == ["http://hub.example.com/mcp"]
+    # https and LAN addresses never ask.
+    monkeypatch.setattr("sys.stdin", _Tty("n"))
+    sent.clear()
+    assert run(["login", "--token", "--url", "hub.example.com"], capsys)[0] == 0
+    assert run(["login", "--token", "--url", "192.168.1.5:7005"], capsys)[0] == 0
+    assert sent == ["https://hub.example.com/mcp", "http://192.168.1.5:7005/mcp"]
 
 
 def test_chat_carries_earlier_turns(home, capsys, monkeypatch):

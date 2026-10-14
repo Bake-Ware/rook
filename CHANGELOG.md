@@ -34,6 +34,16 @@ Preparation for public use.
   pinned SHA-256 (then `winget --scope user`, then one clear instruction).
   The `/install` and `/hub` installers no longer die under cloud-init at a
   prompt.
+- Run as root (cloud-init, `sudo`), the Linux worker installer stops unless
+  told whose worker it is: `ROOK_USER=<account>` installs it for that account
+  (it runs as them), `ROOK_ALLOW_ROOT=1` runs it as root. The Windows
+  installer refuses to run as SYSTEM (the worker must run in the user's
+  session). Worker names are limited to letters, digits, `.`, `_` and `-`.
+- `rook login` defaults a bare public host to `https://`, asks before sending
+  a token or password over plain http to a public address, and never follows
+  a redirect from the MCP endpoint (the token would go along). The control
+  link drops connections that don't send their token within 2 seconds, and
+  `control.json` and the saved token get an owner-only ACL on Windows.
 - A password-only hub's sign-in page asks for the password alone. The setup
   wizard and install-hub.sh's last screen use plain words; the wizard fills
   in its own address.

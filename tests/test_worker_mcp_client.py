@@ -81,3 +81,79 @@ def test_a_refused_token_says_what_to_do(endpoint):
 def test_event_stream_parsing():
     body = b'event: message\ndata: {"id": 1,\ndata:  "result": {}}\n\n: ping\n\ndata: [x\n\n'
     assert mcp_client._messages(body, "text/event-stream") == [{"id": 1, "result": {}}]
+
+
+class Elsewhere(BaseHTTPRequestHandler):
+    """Another host a redirect points at: records whatever reaches it."""
+    seen: list = []
+
+    def log_message(self, *a):
+        pass
+
+    def _any(self):
+        self.seen.append((self.command, self.headers.get("Authorization")))
+        self.send_response(200)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    do_GET = do_POST = _any
+
+
+class Redirecting(BaseHTTPRequestHandler):
+    target = ""
+    code = 302
+
+    def log_message(self, *a):
+        pass
+
+    def do_POST(self):
+        self.send_response(self.code)
+        self.send_header("Location", self.target)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+
+def _serve(handler):
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+@pytest.mark.parametrize("code", [301, 302, 307, 308])
+def test_a_redirect_is_never_followed_with_the_token(code):
+    """A 301/302 on a POST would become a GET that still carries the bearer
+    token, to whatever host the Location names."""
+    other, hub = _serve(Elsewhere), _serve(Redirecting)
+    try:
+        Elsewhere.seen = []
+        Redirecting.code = code
+        Redirecting.target = f"http://localhost:{other.server_address[1]}/mcp"
+        with pytest.raises(mcp_client.McpError, match="redirected to http://localhost:") as e:
+            mcp_client.rook_call(f"http://127.0.0.1:{hub.server_address[1]}/mcp", "good",
+                                 "home.ask", {"question": "x"})
+        assert "--mcp-url" in str(e.value)
+        assert Elsewhere.seen == []
+    finally:
+        other.shutdown()
+        hub.shutdown()
+
+
+class Missing(BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+
+    def do_POST(self):
+        self.send_response(404)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+
+def test_no_mcp_at_the_dashboard_address_names_the_split_hub_port():
+    server = _serve(Missing)
+    try:
+        with pytest.raises(mcp_client.McpError, match="8765") as e:
+            mcp_client.rook_call(f"http://127.0.0.1:{server.server_address[1]}/mcp", "good",
+                                 "home.status", {})
+        assert "--mcp-url" in str(e.value) and "good" not in str(e.value)
+    finally:
+        server.shutdown()

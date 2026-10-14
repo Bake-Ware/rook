@@ -75,7 +75,14 @@ It exits 1 when something failed, so scripts can use it.
    page, then run `rook login --token` and paste it (or set `ROOK_TOKEN`). Calls
    go to the hub's agent endpoint (`/mcp`, the one Claude Code uses) and run as
    that token, with its permissions and its rows in the journal. This is the way
-   to ask the home agent from a terminal.
+   to ask the home agent from a terminal. A bare `--url host` means
+   `https://host` unless the host is on your network (a private or Tailscale
+   address, `localhost`, a name without a dot or ending `.local`/`.lan`), which
+   gets `http://`. A token or password is never sent over plain http to a public
+   address without a yes at the prompt, and a redirect from the endpoint is
+   never followed (the token would go along): the error names the address to
+   use. On a hub whose MCP server runs on its own port, pass
+   `--mcp-url http://<hub address>:8765/mcp`.
 2. **Your dashboard login**, when one is saved: `rook login` (or the file `rook
    band` saves, `~/.config/rook/band.conf`, or `ROOK_WEB_URL`, `ROOK_WEB_USER`,
    `ROOK_WEB_PASS`). Reads run as you, and rooms are your rooms. The dashboard
@@ -151,7 +158,11 @@ key" in Properties.
 
 The running worker listens on `127.0.0.1` (a random port) for these commands and
 writes the port and a random token to `control.json` in its state directory
-(mode 600). Reading that file is the credential; whoever can read it can already
+(mode 600; on Windows an owner-only ACL, as for the saved API token). Reading
+that file is the credential; whoever can read it can already
 read the band key beside it, so the link gives nothing extra. It runs only the
 plugin switches locally; everything else it sends on the band as this worker.
+A connection must send its token within 2 seconds, and only connections whose
+token passed count against its limit of 8 at once, so idle connections from
+another program can't lock the commands out.
 `ROOK_CONTROL=0` turns it off (status then shows only what the files say).

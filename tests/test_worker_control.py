@@ -93,6 +93,96 @@ def test_control_link_status_calls_and_token(home):
     asyncio.run(go())
 
 
+def _raw(port, payload: bytes) -> bytes:
+    import socket
+    with socket.create_connection(("127.0.0.1", port), timeout=5) as s:
+        s.sendall(payload)
+        buf = b""
+        while not buf.endswith(b"\n"):
+            chunk = s.recv(65536)
+            if not chunk:
+                break
+            buf += chunk
+    return buf
+
+
+def test_a_non_ascii_token_is_a_bad_token_not_a_hang_up(home):
+    async def go():
+        server = control.ControlServer(FakeWorker())
+        await server.start()
+        try:
+            reply = await asyncio.to_thread(
+                _raw, server.port, (json.dumps({"token": "töken", "op": "status"},
+                                               ensure_ascii=False) + "\n").encode("utf-8"))
+            assert json.loads(reply) == {"ok": False, "error": "bad token"}
+        finally:
+            await server.stop()
+    asyncio.run(go())
+
+
+def test_idle_connections_cannot_lock_the_link(home, monkeypatch):
+    """Connections that never send a token don't count against the client
+    limit, and are dropped after AUTH_SECS."""
+    import socket
+    monkeypatch.setattr(control, "AUTH_SECS", 0.5)
+
+    async def go():
+        server = control.ControlServer(FakeWorker())
+        await server.start()
+        idle = [socket.create_connection(("127.0.0.1", server.port))
+                for _ in range(control.MAX_CLIENTS * 2)]
+        try:
+            await asyncio.sleep(0.1)
+            status = await asyncio.to_thread(control.request, "status")
+            assert status["ok"] and status["status"]["name"] == "kitchen-pc"
+            # The idle ones were given up on: each got "bad request" and EOF.
+            await asyncio.sleep(0.8)
+            for s in idle:
+                s.settimeout(2)
+                data = s.recv(4096)
+                assert json.loads(data) == {"ok": False, "error": "bad request"}
+                assert s.recv(4096) == b""
+        finally:
+            for s in idle:
+                s.close()
+            await server.stop()
+    asyncio.run(go())
+
+
+def test_busy_link_answers_busy(home, monkeypatch):
+    monkeypatch.setattr(control, "MAX_CLIENTS", 0)
+
+    async def go():
+        server = control.ControlServer(FakeWorker())
+        await server.start()
+        try:
+            reply = await asyncio.to_thread(control.request, "status")
+            assert reply["ok"] is False and "busy" in reply["error"]
+        finally:
+            await server.stop()
+    asyncio.run(go())
+
+
+def test_windows_files_get_an_owner_only_acl(home, monkeypatch):
+    import subprocess
+    ran = []
+    monkeypatch.setattr(subprocess, "run", lambda argv, **kw: ran.append(argv))
+    monkeypatch.setenv("USERNAME", "jane")
+    monkeypatch.setenv("USERDOMAIN", "PC1")
+    monkeypatch.setattr(control, "_is_windows", lambda: False)
+    control.restrict_to_owner(home / "control.json")
+    assert ran == []
+    monkeypatch.setattr(control, "_is_windows", lambda: True)
+
+    async def go():
+        server = control.ControlServer(FakeWorker())
+        await server.start()
+        await server.stop()
+    asyncio.run(go())
+    assert ran == [["icacls", str(home / "control.json"), "/inheritance:r", "/grant:r",
+                    "PC1\\jane:F"]]
+
+
 def test_control_request_without_a_worker(home):
     with pytest.raises(control.NotRunning):
         control.request("status")

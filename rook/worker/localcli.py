@@ -910,6 +910,46 @@ def cmd_pair(args) -> int:
     return 0
 
 
+def _local_host(host: str) -> bool:
+    """A loopback, private-LAN, link-local or CGNAT/Tailscale address, or a
+    name that only resolves on a home network (no dot, .local, .lan, ...)."""
+    import ipaddress
+    host = host.strip("[]").lower()
+    try:
+        return not ipaddress.ip_address(host).is_global
+    except ValueError:
+        pass
+    return ("." not in host or host == "localhost"
+            or host.endswith((".localhost", ".local", ".lan", ".home", ".internal", ".home.arpa")))
+
+
+def _with_scheme(url: str) -> str:
+    """A bare host gets https://, except a LAN address (a hub there usually
+    serves plain http on :7005)."""
+    url = url.strip()
+    if "://" in url:
+        return url
+    from urllib.parse import urlsplit
+    host = urlsplit("//" + url).hostname or ""
+    return ("http://" if _local_host(host) else "https://") + url
+
+
+def _confirm_cleartext(url: str, what: str) -> None:
+    """Sending a secret over plain http beyond the local network needs a yes
+    at a terminal; without one it is refused."""
+    from urllib.parse import urlsplit
+    parts = urlsplit(url)
+    if parts.scheme != "http" or _local_host(parts.hostname or ""):
+        return
+    msg = (f"{url} is plain http on a public address: the {what} would cross the "
+           "internet unencrypted.")
+    if not sys.stdin.isatty():
+        raise CliError(msg + " Use the hub's https:// address.")
+    _err(msg)
+    if input("Send it anyway? [y/N] ").strip().lower() not in ("y", "yes"):
+        raise CliError("Not sent. Use the hub's https:// address.")
+
+
 def cmd_login(args) -> int:
     """Save how this machine reaches the hub as a person: an API token
     (--token; the agent endpoint, which may ask the home agent) or the
@@ -918,15 +958,15 @@ def cmd_login(args) -> int:
     url = (args.url or os.environ.get("ROOK_WEB_URL") or enrollment().get("server") or "").strip()
     if not url:
         raise CliError("Which hub? rook login --url http://<hub address>:7005")
-    if "://" not in url:
-        url = "http://" + url
+    url = _with_scheme(url)
     if args.token:
+        mcp = _with_scheme(args.mcp_url) if args.mcp_url else _mcp_url(url)
+        _confirm_cleartext(mcp, "API token")
         token = os.environ.get("ROOK_TOKEN", "").strip()
         if not token:
             if not sys.stdin.isatty():
                 raise CliError("No terminal to paste the token in: set ROOK_TOKEN.")
             token = getpass.getpass("API token (from the dashboard's Tokens page): ").strip()
-        mcp = args.mcp_url or _mcp_url(url)
         from .mcp_client import McpError, rook_call
         try:
             reply = rook_call(mcp, token, "home.status", {}, timeout=15)
@@ -940,10 +980,13 @@ def cmd_login(args) -> int:
                                                         "token": token}) + "\n", 0o600)
         except OSError as e:
             raise CliError(f"Could not save the token ({e}).") from None
+        from .control import restrict_to_owner
+        restrict_to_owner(token_file())
         _out(f"Saved to {token_file()}. rook ask, chat, tasks, rooms and knowledge now use it.")
         return 0
     from rook.cli.band_tui import BandHTTP, _save_conf
     user = args.user or os.environ.get("ROOK_WEB_USER") or "admin"
+    _confirm_cleartext(url, "password")
     password = os.environ.get("ROOK_WEB_PASS")
     if not password:
         if not sys.stdin.isatty():
