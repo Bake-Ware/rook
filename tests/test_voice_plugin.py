@@ -21,6 +21,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
+from rook.hub import site as site_mod
 from rook.hub.node import HubNode
 from rook.hub.plugins import voice as voice_mod
 from rook.hub.plugins.voice import engine as eng
@@ -36,6 +37,9 @@ VOICE_ENV = ("VOICE_MODEL_DIR", "WHISPER_MODEL", "VOICE_TOKEN", "ROOK_VOICE_ENGI
 def clean_env(monkeypatch):
     for var in VOICE_ENV:
         monkeypatch.delenv(var, raising=False)
+    # These tests build hub nodes the way rook hub serve does (it says the
+    # site is served before building one); the two-process case sets False.
+    monkeypatch.setattr(site_mod, "_SERVED", True)
 
 
 def node_for(tmp_path, **stored):
@@ -310,6 +314,8 @@ async def test_engine_remote_end_to_end_through_the_hub(hub_env, monkeypatch):  
     monkeypatch.setenv("ROOK_VOICE_ENGINE", "remote")
     monkeypatch.setenv("ROOK_VOICE_REMOTE_URL", str(upstream.make_url("")).rstrip("/"))
     monkeypatch.setenv("VOICE_TOKEN", "voice-key-for-tests")
+    # rook hub serve itself says the site is served, before plugins load.
+    monkeypatch.setattr(site_mod, "_SERVED", False)
     loop = asyncio.get_running_loop()
     relay, _ = await loop.create_datagram_endpoint(EchoRelay, local_addr=("127.0.0.1", hub_env.relay))
     ap, args = parse_args(hub_env.argv)
@@ -326,6 +332,15 @@ async def test_engine_remote_end_to_end_through_the_hub(hub_env, monkeypatch):  
             assert seen[-1] == ("health", "/voice")
             async with http.get(base + "/health") as r:     # still the dashboard's
                 assert "band_workers" in await r.json()
+            # Even a mount the reserved list missed never shadows a dashboard route.
+            before = len(seen)
+            node.site._exact["/health"] = ("plugin:voice", node.plugin("voice").serve_alias)
+            try:
+                async with http.get(base + "/health") as r:
+                    assert "band_workers" in await r.json()
+            finally:
+                del node.site._exact["/health"]
+            assert len(seen) == before
             async with http.post(base + "/api/transcribe", data=b"\0\0" * 100,
                                  headers={"Authorization": "Bearer voice-key-for-tests",
                                           "Content-Type": "audio/L16"}) as r:
@@ -395,3 +410,186 @@ async def test_remote_engine_says_when_the_voice_server_is_down(tmp_path):
     no_key = eng.RemoteEngine("http://192.0.2.7:8900", "/voice")
     with pytest.raises(RuntimeError, match="no voice key"):
         await no_key.transcribe(b"\0\0")
+
+
+# -- review fixes ------------------------------------------------------------------------------
+
+def test_without_rook_hub_serve_voice_stays_off_and_says_why(tmp_path, monkeypatch):
+    # The two-process layout (rook-dashboard + rook-mcp): nothing hands /voice/
+    # to the plugin, so it must not load, claim to serve, or load models.
+    monkeypatch.setattr(site_mod, "_SERVED", False)
+    monkeypatch.setattr(eng, "missing_extras", lambda: [])
+    node = node_for(tmp_path, engine="remote", remote_url="http://192.0.2.7:8900")
+    assert node.plugin("voice") is None
+    st = node.host.status["voice"]
+    assert st["state"] == "unavailable" and "rook hub serve" in st["reason"]
+    page = voice_mod.page_data(node.settings, node, None)
+    assert page["status"]["served"] is False
+    assert page["requirements"]["served"] is False
+    assert "rook hub serve" in page["requirements"]["reason"]
+
+
+def test_credentials_in_the_voice_server_address_are_refused(tmp_path):
+    r = voice_mod.requirements("remote", "http://bob:hunter2@192.0.2.7:8900", "", served=True)
+    assert "user name or password" in r["reason"] and "hunter2" not in r["reason"]
+    assert eng.RemoteEngine("http://bob:hunter2@192.0.2.7:8900", "/voice").host == "192.0.2.7:8900"
+
+
+@pytest.mark.asyncio
+async def test_stop_waits_for_a_model_load_in_progress(tmp_path, fake_engine, monkeypatch):
+    gate, loading = asyncio.Event(), asyncio.Event()
+    real = asyncio.to_thread
+
+    async def slow(fn, *a, **k):
+        if getattr(fn, "__name__", "") == "Provider":
+            loading.set()
+            await gate.wait()
+        return await real(fn, *a, **k)
+    monkeypatch.setattr(eng.asyncio, "to_thread", slow)
+    engine = eng.LocalEngine("fakevoice", {"WHISPER_MODEL": "tiny.en"}, "/voice")
+    engine.start()
+    try:
+        await asyncio.wait_for(loading.wait(), 5)
+        stopping = asyncio.ensure_future(engine.stop())
+        await asyncio.sleep(0.1)
+        # The load is still running: stop waits instead of tearing down under it.
+        assert not stopping.done()
+        assert os.environ.get("WHISPER_MODEL") == "tiny.en" and "fakevoice.server" in sys.modules
+        gate.set()
+        await asyncio.wait_for(stopping, 5)
+    finally:
+        gate.set()
+    # The stale load never started its app; only then was it all forgotten.
+    assert engine.app is None and engine._lifespan is None and engine.state == "stopped"
+    assert "WHISPER_MODEL" not in os.environ and "fakevoice.server" not in sys.modules
+
+
+def recording_voice_server(seen):
+    async def anything(request):
+        seen.append({"path": request.raw_path, "headers": dict(request.headers)})
+        resp = web.json_response({"ok": True})
+        resp.headers.add("Set-Cookie", "rook_account=from-voice; Path=/")
+        resp.headers.add("Set-Cookie", "voice_admin=tok123; HttpOnly; Path=/admin; "
+                                       "Domain=voice.example; Secure; SameSite=Strict")
+        return resp
+    app = web.Application()
+    app.router.add_route("*", "/{tail:.*}", anything)
+    return app
+
+
+def proxy_app(remote):
+    app = web.Application()
+
+    async def handler(request):
+        return await remote.handle(request)
+    app.router.add_route("*", "/voice/{tail:.*}", handler)
+    return app
+
+
+@pytest.mark.asyncio
+async def test_remote_keeps_the_dashboards_credentials_and_bad_paths_on_the_hub():
+    from yarl import URL
+    seen: list = []
+    upstream = TestServer(recording_voice_server(seen))
+    await upstream.start_server()
+    remote = eng.RemoteEngine(str(upstream.make_url("")).rstrip("/"), "/voice")
+    try:
+        async with TestClient(TestServer(proxy_app(remote)),
+                              cookie_jar=aiohttp.DummyCookieJar()) as http:
+            r = await http.get("/voice/a%20b?x=1", headers={
+                "Host": "hub.example", "Authorization": "Bearer voice-key",
+                "Cookie": "rook_account=SECRET; voice_admin=abc; other=1",
+                "Cf-Access-Jwt-Assertion": "jwt", "Cf-Access-Authenticated-User-Email": "a@b"})
+            assert r.status == 200
+            got = seen[-1]
+            assert got["path"] == "/a%20b?x=1"                     # as the client encoded it
+            hdr = {k.lower(): v for k, v in got["headers"].items()}
+            assert hdr["cookie"] == "voice_admin=abc"              # never the dashboard session
+            assert not [k for k in hdr if k.startswith("cf-access-")]
+            assert hdr["host"] == "hub.example" and hdr["authorization"] == "Bearer voice-key"
+            assert hdr["x-forwarded-prefix"] == "/voice"
+            # Only the voice admin cookie comes back, under /voice, for this host.
+            cookies = r.headers.getall("Set-Cookie")
+            assert len(cookies) == 1 and cookies[0].startswith("voice_admin=tok123")
+            assert "Path=/voice/admin" in cookies[0] and "Domain" not in cookies[0]
+            assert "HttpOnly" in cookies[0] and "Secure" in cookies[0]
+            # Dot segments, plain or encoded, are refused, never forwarded.
+            n = len(seen)
+            root = str(http.make_url("/")).rstrip("/")
+            for bad in ("/voice/../escape", "/voice/%2e%2e/escape", "/voice/a%2F..%2F..%2Fescape",
+                        "/voice/./health"):
+                async with http.session.get(URL(root + bad, encoded=True)) as r:
+                    assert r.status == 400, bad
+            assert len(seen) == n
+    finally:
+        await remote.stop()
+        await upstream.close()
+
+
+@pytest.mark.asyncio
+async def test_voice_admin_signs_in_through_the_hub(tmp_path):
+    pytest.importorskip("fastapi")
+    from fastapi import FastAPI
+    from rook.hub.asgi_bridge import AsgiBridge
+    from services.voice.admin import AdminStore, router
+    store = AdminStore(tmp_path / "admin.sqlite3")
+    store.bootstrap("admin", "test-password")
+
+    async def invalidate(key):
+        return None
+    api = FastAPI()
+    api.include_router(router(store, {}, invalidate))
+    bridge = AsgiBridge(api)
+    upapp = web.Application()
+    upapp.router.add_route("*", "/{tail:.*}", bridge.handle)
+    upstream = TestServer(upapp)
+    await upstream.start_server()
+    remote = eng.RemoteEngine(str(upstream.make_url("")).rstrip("/"), "/voice")
+    try:
+        async with TestClient(TestServer(proxy_app(remote)),
+                              cookie_jar=aiohttp.DummyCookieJar()) as http:
+            hdr = {"Host": "hub.example", "Origin": "https://hub.example", "X-Voice-Admin": "1",
+                   "Cookie": "rook_account=SECRET"}
+            r = await http.post("/voice/admin/api/login", headers=hdr,
+                                json={"username": "admin", "password": "test-password"})
+            assert r.status == 200, await r.text()
+            set_cookie = r.headers["Set-Cookie"]
+            assert "Path=/voice/admin" in set_cookie
+            token = set_cookie.split(";")[0].split("=", 1)[1]
+            r = await http.get("/voice/admin/api/session", headers={
+                "Host": "hub.example", "Cookie": f"rook_account=SECRET; voice_admin={token}"})
+            assert r.status == 200 and (await r.json())["csrf"]
+            # Another site's page still cannot sign in.
+            r = await http.post("/voice/admin/api/login",
+                                headers={**hdr, "Origin": "https://evil.example"},
+                                json={"username": "admin", "password": "test-password"})
+            assert r.status == 403
+    finally:
+        await remote.stop()
+        await upstream.close()
+
+
+@pytest.mark.asyncio
+async def test_remote_websockets_are_capped_per_client(monkeypatch):
+    monkeypatch.setattr(eng, "WS_PER_CLIENT", 1)
+    seen: list = []
+    upstream = TestServer(fake_voice_server(seen))
+    await upstream.start_server()
+    remote = eng.RemoteEngine(str(upstream.make_url("")).rstrip("/"), "/voice")
+    try:
+        async with TestClient(TestServer(proxy_app(remote))) as http:
+            first = await http.ws_connect("/voice/ws")
+            await first.send_str("hi")
+            assert (await first.receive(timeout=5)).data == "echo:hi"
+            with pytest.raises(aiohttp.WSServerHandshakeError) as refused:
+                await http.ws_connect("/voice/ws")
+            assert refused.value.status == 429
+            # Plain requests still go through while the WebSocket is open.
+            assert (await http.get("/voice/health")).status == 200
+            await first.close()
+            assert await wait_for(lambda: not remote._ws_open)
+            again = await http.ws_connect("/voice/ws")
+            await again.close()
+    finally:
+        await remote.stop()
+        await upstream.close()

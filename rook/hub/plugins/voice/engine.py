@@ -43,6 +43,8 @@ MODEL_FILES = ("kokoro-v1.0.onnx", "voices-v1.0.bin", "smart-turn-v3.2-cpu.onnx"
 #: 16 kHz mono 16-bit PCM, at most 30 s: the voice service's /api/transcribe limit.
 MAX_PCM = 30 * 16000 * 2
 EXTRAS_HINT = "pip install 'rook[voice]'"
+#: Longest stop() waits for a model load in progress to finish.
+BOOT_WAIT = 180
 
 
 def find_engine(packages: tuple = ENGINE_PACKAGES) -> str | None:
@@ -67,6 +69,11 @@ def missing_extras() -> list[str]:
         if not found:
             out.append(pip)
     return out
+
+
+def has_userinfo(url: str) -> bool:
+    from ..home.llm import has_userinfo as check
+    return check(url)
 
 
 def missing_models(model_dir: str | Path) -> list[str]:
@@ -102,10 +109,12 @@ class LocalEngine:
         self._bridges: dict[str, Any] = {}
         self._task: asyncio.Task | None = None
         self._set_env: list[str] = []
+        self._stopping = False
 
     # -- lifecycle -----------------------------------------------------------
     def start(self) -> None:
         self.state, self.error, self.started_at = "starting", "", time.time()
+        self._stopping = False
         self._task = asyncio.get_running_loop().create_task(self._boot())
 
     async def _boot(self) -> None:
@@ -118,10 +127,16 @@ class LocalEngine:
                     os.environ[name] = value
                     self._set_env.append(name)
             server = await asyncio.to_thread(importlib.import_module, self.package + ".server")
+            if self._stopping:
+                return
             providers = importlib.import_module(self.package + ".providers")
             # Whisper, Kokoro and Smart Turn load here: seconds of CPU work,
             # off the hub's event loop.
             provider = await asyncio.to_thread(providers.Provider)
+            if self._stopping:
+                # Stopped (a setting changed) while the models loaded: never
+                # start this app; stop() tears down once this returns.
+                return
             self.app = server.app
             self.app.state.preloaded_provider = provider
             from ...asgi_bridge import AsgiBridge, Lifespan
@@ -140,10 +155,18 @@ class LocalEngine:
             log.exception("voice: the engine failed to start")
 
     async def stop(self) -> None:
+        self._stopping = True
         task, self._task = self._task, None
         if task is not None and not task.done():
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+            # Cancelling would not stop the import or model load running in
+            # its thread: wait for it, so two loads never run side by side and
+            # the modules and environment are not torn down under it.
+            await asyncio.wait({task}, timeout=BOOT_WAIT)
+            if not task.done():
+                log.error("voice: the engine is still loading after %d s; leaving its "
+                          "modules and environment in place", BOOT_WAIT)
+                self.state = "stopped"
+                return
         for bridge in self._bridges.values():
             bridge.stopping = True
         if self._lifespan is not None:
@@ -187,6 +210,55 @@ _HOP = frozenset({"connection", "keep-alive", "proxy-authenticate", "proxy-autho
                   "sec-websocket-extensions", "sec-websocket-accept"})
 _MAX_BODY = 16 * 1024 * 1024
 _WS_MAX = 8 * 1024 * 1024      # the voice service's own ws_max_size
+#: The only cookie that goes to the voice server and back: its admin session.
+ADMIN_COOKIE = "voice_admin"
+#: Voice WebSockets one client address may hold open through the hub.
+WS_PER_CLIENT = 16
+
+
+def _voice_cookie(header: str) -> str:
+    """The ``voice_admin`` pairs of a Cookie header, as sent; nothing else
+    (the dashboard's session cookie never leaves the hub)."""
+    keep = [part.strip() for part in (header or "").split(";")
+            if part.strip().partition("=")[0].strip() == ADMIN_COOKIE]
+    return "; ".join(keep)
+
+
+def _set_cookie(value: str, prefix: str) -> str | None:
+    """A voice server Set-Cookie fit for the hub's site: only ``voice_admin``,
+    its Path moved under ``prefix``, no Domain. Anything else is dropped."""
+    parts = [p.strip() for p in (value or "").split(";")]
+    if not parts or parts[0].partition("=")[0].strip() != ADMIN_COOKIE:
+        return None
+    out, path = [parts[0]], prefix + "/admin"
+    for attr in parts[1:]:
+        name, _, val = attr.partition("=")
+        lname = name.strip().lower()
+        if not attr or lname == "domain":
+            continue
+        if lname == "path":
+            val = val.strip().rstrip("/")
+            path = val if val == prefix or val.startswith(prefix + "/") else prefix + val
+            continue
+        out.append(attr)
+    out.append("Path=" + path)
+    return "; ".join(out)
+
+
+def client_address(request: Any) -> str:
+    """The client's address: the tunnel's X-Forwarded-For when a loopback
+    proxy (cloudflared) sent the request, else the peer."""
+    import ipaddress
+    peer = request.remote or ""
+    try:
+        loopback = ipaddress.ip_address(peer).is_loopback
+    except ValueError:
+        loopback = False
+    if loopback:
+        fwd = request.headers.get("X-Forwarded-For", "").split(",")[-1].strip()
+        if fwd:
+            return fwd
+    return peer or "unknown"
 
 
 class RemoteEngine:
@@ -203,6 +275,7 @@ class RemoteEngine:
         self.state = "ready"
         self.error = ""
         self._session: Any = None
+        self._ws_open: dict[str, int] = {}
 
     def start(self) -> None:
         return None
@@ -214,8 +287,8 @@ class RemoteEngine:
 
     @property
     def host(self) -> str:
-        from urllib.parse import urlparse
-        return urlparse(self.base).netloc
+        from ..home.llm import url_host
+        return url_host(self.base)
 
     def _ssl(self) -> Any:
         return bool(self.verify_tls)
@@ -223,7 +296,11 @@ class RemoteEngine:
     def _http(self):
         import aiohttp
         if self._session is None or self._session.closed:
+            # No pool limit (aiohttp's default is 100): long-lived voice
+            # WebSockets must never starve forwarded requests; WS_PER_CLIENT
+            # bounds what one client can hold.
             self._session = aiohttp.ClientSession(
+                connector=aiohttp.TCPConnector(limit=0),
                 timeout=aiohttp.ClientTimeout(total=None, connect=10, sock_connect=10),
                 auto_decompress=False)
         return self._session
@@ -234,8 +311,24 @@ class RemoteEngine:
             base = "ws" + base[4:] if base.startswith("http") else base
         return base + sub_path + (("?" + query) if query else "")
 
+    def forward_url(self, raw_sub: str, query: str = "", ws: bool = False):
+        """The voice server's URL for a client path, exactly as the client
+        encoded it (no re-encoding, no normalisation)."""
+        from yarl import URL
+        return URL(self.url(raw_sub, query, ws=ws), encoded=True)
+
     def _headers(self, request: Any) -> dict:
-        out = {k: v for k, v in request.headers.items() if k.lower() not in _HOP}
+        # Never the dashboard's session or Cloudflare Access identity: only
+        # the voice server's own admin cookie goes.
+        out = {k: v for k, v in request.headers.items()
+               if k.lower() not in _HOP and k.lower() != "cookie"
+               and not k.lower().startswith("cf-access-")}
+        cookie = _voice_cookie(request.headers.get("Cookie", ""))
+        if cookie:
+            out["Cookie"] = cookie
+        # The client's Host: the voice admin's same-origin check compares the
+        # browser's Origin with it.
+        out["Host"] = request.host
         peer = request.remote or ""
         prior = request.headers.get("X-Forwarded-For")
         out["X-Forwarded-For"] = f"{prior}, {peer}" if prior else peer
@@ -244,24 +337,43 @@ class RemoteEngine:
         out["X-Forwarded-Prefix"] = self.prefix
         return out
 
+    def _reply_headers(self, up_headers: Any):
+        from multidict import CIMultiDict
+        out: Any = CIMultiDict()
+        for k, v in up_headers.items():
+            lk = k.lower()
+            if lk in _HOP:
+                continue
+            if lk == "set-cookie":
+                v = _set_cookie(v, self.prefix)
+                if v is None:
+                    continue
+            out.add(k, v)
+        return out
+
     async def handle(self, request: Any, *, alias: bool = False):
         import aiohttp
-        sub = request.path if alias else _strip_prefix(request.path, self.prefix)
+        from aiohttp import web
+        from urllib.parse import unquote
+        raw = request.rel_url.raw_path
+        # /voice/../x must never reach the voice server as /x (encoded or not).
+        if any(seg in (".", "..") for seg in unquote(raw).split("/")):
+            return web.json_response({"error": "Bad path."}, status=400)
+        sub = raw if alias else _strip_prefix(raw, self.prefix)
         if (request.method == "GET" and request.headers.get("Upgrade", "").lower() == "websocket"):
             return await self._websocket(request, sub)
-        from aiohttp import web
         if (request.content_length or 0) > _MAX_BODY:
             return web.json_response({"error": "Request too large."}, status=413)
         body = await request.read() if request.can_read_body else None
         try:
             async with self._http().request(
-                    request.method, self.url(sub, request.rel_url.raw_query_string),
+                    request.method, self.forward_url(sub, request.rel_url.raw_query_string),
                     headers=self._headers(request), data=body, allow_redirects=False,
                     ssl=self._ssl(), timeout=aiohttp.ClientTimeout(total=120, connect=10)) as up:
                 # Bodies pass through as sent (auto_decompress is off), so
                 # Content-Encoding goes with them; Content-Length does not
                 # (the reply is re-chunked).
-                headers = {k: v for k, v in up.headers.items() if k.lower() not in _HOP}
+                headers = self._reply_headers(up.headers)
                 resp = web.StreamResponse(status=up.status, reason=up.reason, headers=headers)
                 await resp.prepare(request)
                 async for chunk in up.content.iter_any():
@@ -273,6 +385,22 @@ class RemoteEngine:
             return _not_ready(f"The voice server at {self.host} did not answer.", 502)
 
     async def _websocket(self, request: Any, sub: str):
+        from aiohttp import web
+        who = client_address(request)
+        if self._ws_open.get(who, 0) >= WS_PER_CLIENT:
+            return web.json_response({"error": "Too many voice connections from this address."},
+                                     status=429)
+        self._ws_open[who] = self._ws_open.get(who, 0) + 1
+        try:
+            return await self._websocket_open(request, sub)
+        finally:
+            left = self._ws_open.get(who, 1) - 1
+            if left > 0:
+                self._ws_open[who] = left
+            else:
+                self._ws_open.pop(who, None)
+
+    async def _websocket_open(self, request: Any, sub: str):
         import aiohttp
         from aiohttp import web
         headers = {}
@@ -282,7 +410,8 @@ class RemoteEngine:
                  if p.strip()]
         try:
             up = await self._http().ws_connect(
-                self.url(sub, request.rel_url.raw_query_string, ws=True), headers=headers,
+                self.forward_url(sub, request.rel_url.raw_query_string, ws=True),
+                headers=headers,
                 protocols=proto, max_msg_size=_WS_MAX, ssl=self._ssl(), heartbeat=30,
                 timeout=aiohttp.ClientWSTimeout(ws_receive=None, ws_close=10))
         except aiohttp.WSServerHandshakeError as e:

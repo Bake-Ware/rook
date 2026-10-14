@@ -32,7 +32,10 @@ API for hub code: `get(id)`, `require(id)`, `client(id, model=None, actor=…)`
 
 Caps on worker `rook`, all `read`: `llm.providers` (ids, hosts, offered
 models, last check; never URLs or key references), `llm.models`,
-`llm.check`.
+`llm.check`. `llm.models` and `llm.check` read the key as the calling
+identity (the vault's audit names the caller), and allow 20 calls a minute
+per caller with at most 4 running at once. A `base_url` with a user name or
+password in it is refused (hosts are shown as `host:port` only).
 
 **`llmanifold` hub plugin** (`rook/hub/plugins/llmanifold.py`). Loads once
 `llmanifold.base_url` is set (until then the Plugins page says to set it; the
@@ -40,7 +43,9 @@ host retries the plugin when one of its settings changes). Contributes the
 provider `llmanifold` (kind `llmanifold`; flows to offer and a default flow
 are its settings) and the cap `llmanifold.status`: the API's flows and, with
 `llmanifold.admin_url`, a summary of the admin `/api/status` (version, reload
-error, per-endpoint name/state/in-flight/lanes, queue length). It only reads:
+error, per-endpoint name/state/in-flight/lanes, queue length), answered from
+the last check for 10 s. Neither address may carry a user name or password.
+It only reads:
 draining, pausing and editing stay with llmanifold's own admin site and its
 worker plugin.
 

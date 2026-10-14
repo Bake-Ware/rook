@@ -17,10 +17,19 @@ Handlers are aiohttp handlers (``async (request) -> StreamResponse``); an
 ASGI app goes through :class:`rook.hub.asgi_bridge.AsgiBridge`. The dashboard
 keeps its own paths: a mount or alias under a reserved root is refused.
 
-Mounts are served by ``rook hub serve`` only. In the older two-process layout
-(``rook-dashboard`` + ``rook-mcp``) the hub node lives in the MCP process,
-whose port a public proxy does not route these paths to; there the plugin's
-own standalone server (``python -m services.voice.server``) keeps serving.
+Mounts are served by ``rook hub serve`` only, which calls
+:func:`enable_serving` before it builds the hub node, so a plugin can tell
+(:func:`serving`) whether anything will hand it requests. In the older
+two-process layout (``rook-dashboard`` + ``rook-mcp``) the hub node lives in
+the MCP process, whose port a public proxy does not route these paths to;
+there nothing serves the mounts, plugins that need them stay off and say
+why, and the plugin's own standalone server (``python -m
+services.voice.server``) keeps serving.
+
+The single-process hub also lets a path the dashboard's router already
+resolves win over a mount (defence in depth on top of :data:`RESERVED`), and
+:meth:`SiteMounts.match` never matches a path with a ``.`` or ``..``
+segment (aiohttp does not normalise them away).
 """
 
 from __future__ import annotations
@@ -36,10 +45,32 @@ Handler = Callable[[Any], Awaitable[Any]]
 #: Roots the dashboard and the MCP side serve; no plugin may claim them or
 #: anything below them.
 RESERVED = ("/account", "/auth", "/api/band", "/api/bands", "/api/chat", "/api/avatar",
-            "/api/avatars", "/api/presence", "/assets", "/login", "/logout", "/register",
-            "/setup", "/install", "/mcp", "/band", "/tokens", "/authorize", "/token",
-            "/.well-known", "/skill", "/healthz", "/internal", "/static", "/web")
+            "/api/avatars", "/api/presence", "/api/policy", "/assets", "/login", "/logout",
+            "/register", "/setup", "/install", "/mcp", "/band", "/tokens", "/authorize",
+            "/token", "/.well-known", "/skill", "/healthz", "/health", "/internal",
+            "/static", "/web", "/apk", "/apk.json", "/band-worker.pyz", "/band-worker.json",
+            "/band-worker-enrollment.pyz", "/rook", "/rook.py", "/worker", "/enroll", "/hub",
+            "/permissions", "/telesthete-hub")
 _PATH = re.compile(r"^(/[A-Za-z0-9._~-]+)+$")
+
+_SERVED = False
+
+
+def enable_serving() -> None:
+    """Say that this process hands requests to the mounts (``rook hub
+    serve`` calls it before it builds the hub node and its plugins)."""
+    global _SERVED
+    _SERVED = True
+
+
+def serving() -> bool:
+    """Whether anything in this process serves the mounts. False in the
+    two-process layout, where the hub node lives in ``rook-mcp``."""
+    return _SERVED
+
+
+def has_dot_segment(path: str) -> bool:
+    return any(part in (".", "..") for part in (path or "").split("/"))
 
 
 class SiteError(ValueError):
@@ -48,7 +79,7 @@ class SiteError(ValueError):
 
 def _check(path: str) -> str:
     path = (path or "").rstrip("/")
-    if not _PATH.match(path) or any(part in (".", "..") for part in path.split("/")):
+    if not _PATH.match(path) or has_dot_segment(path):
         raise SiteError(f"not a mountable path: {path!r} (use /name[/more])")
     for root in RESERVED:
         if path == root or path.startswith(root + "/"):
@@ -89,6 +120,9 @@ class SiteMounts:
         return n
 
     def match(self, path: str) -> Handler | None:
+        if has_dot_segment(path):
+            # /voice/../x is not under /voice: never hand it to a plugin.
+            return None
         hit = self._exact.get(path)
         if hit is not None:
             return hit[1]

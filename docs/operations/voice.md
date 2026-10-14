@@ -16,8 +16,14 @@ the hub's address; nothing else needs to be exposed.
 
 These paths are served by `rook hub serve` (the single-process hub). They
 carry their own authentication (voice keys), like `/mcp`, so the dashboard
-login does not apply to them. In the older two-process layout
-(`rook-dashboard` + `rook-mcp`) keep running the standalone server.
+login does not apply to them. A path the dashboard itself routes always stays
+the dashboard's, and a path with a `.` or `..` segment (`/voice/../x`) is
+never handed to the plugin.
+
+In the older two-process layout (`rook-dashboard` + `rook-mcp`) nothing
+serves these paths, so the plugin does not load (no models are loaded) and
+Manage > Plugins and Manage > Voice say "needs the single-process hub: run it
+with `rook hub serve`". Keep running the standalone server there.
 
 ## Where speech runs: `voice.engine`
 
@@ -42,7 +48,18 @@ voice server on another machine (`voice.remote_url`, for example
 for a bad key, 4409 for a conversation already connected). Keys are the voice
 server's: make them on its `/admin` page (reachable through the hub at
 `/voice/admin`). Turn off `voice.remote_verify_tls` only for a self-signed
-certificate on a private network.
+certificate on a private network. The address must not carry a user name or
+password (`https://user:pass@...` is refused).
+
+What the hub forwards: the request as the client sent it (path encoding
+included) with the client's `Host` (the voice admin's same-origin check needs
+it) and `X-Forwarded-For`, `-Proto`, `-Host` and `-Prefix`. The dashboard's
+session cookie and Cloudflare Access headers (`Cf-Access-*`) never leave the
+hub: the only cookie forwarded is the voice admin's (`voice_admin`), and the
+only cookie passed back is that one, with its path moved under
+`/voice/admin` and no domain. One client address may hold at most 16 voice
+WebSockets through the hub (429 beyond that); behind a local tunnel the
+address is the tunnel's `X-Forwarded-For`.
 
 Without what the chosen engine needs the plugin does not load, and
 Manage > Plugins shows the reason ("Needs the voice extras ...", "Speech model
@@ -60,7 +77,8 @@ environment variables as before (`VOICE_TOKEN`, `WHISPER_MODEL`, `VOICE`,
 secrets set in the vault) are handed to the voice service as its environment
 variables; defaults stay the service's own, and a variable already set in the
 hub's environment always wins. Changing one restarts the plugin (and reloads
-the models).
+the models; a load still in progress is waited for first, so two never run at
+once).
 
 `voice.token` is an owner voice key. In `remote` mode the hub also uses it for
 the Voice page's microphone check, so the voice server must accept it.

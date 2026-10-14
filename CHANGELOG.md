@@ -22,6 +22,17 @@ Preparation for public use.
   settings keep their keys and variables. The standalone server
   (`python -m services.voice.server`) is unchanged. Docs:
   docs/operations/voice.md.
+- Voice on the hub only loads under `rook hub serve`; in the two-process
+  layout the Plugins and Voice pages say so. With `voice.engine=remote` the
+  hub forwards only the voice admin cookie (never the dashboard session or
+  `Cf-Access-*` headers), passes back only that cookie under `/voice/admin`,
+  forwards the client's `Host` so voice admin sign-in works through the hub,
+  refuses paths with `.`/`..` segments and caps voice WebSockets at 16 per
+  client address. Changing a voice setting while the models load waits for
+  that load instead of running two. Dashboard routes always win over plugin
+  paths. Addresses with a user name or password are refused for the voice
+  server, model providers and llmanifold; `llm.models`/`llm.check` are
+  attributed to and rate limited per caller.
 - Manage > Voice: state, the address for the apps, where speech runs, and a
   microphone check that transcribes a few seconds recorded in the browser.
 - Model providers (`llm` hub plugin, Manage > Model providers): name the

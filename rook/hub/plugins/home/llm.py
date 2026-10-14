@@ -50,6 +50,24 @@ def base_url(url: str) -> str:
     return url
 
 
+def has_userinfo(url: str) -> bool:
+    """Whether a URL carries a user name or password (``http://u:p@host``)."""
+    return "@" in urlparse((url or "").strip()).netloc
+
+
+def url_host(url: str) -> str:
+    """``host[:port]`` of a URL for pages, caps and errors: never a user name
+    or password that was put in it."""
+    u = urlparse((url or "").strip())
+    try:
+        host, port = u.hostname or "", u.port
+    except ValueError:
+        return u.netloc.rpartition("@")[2]
+    if ":" in host:
+        host = f"[{host}]"
+    return f"{host}:{port}" if port else host
+
+
 def clean_reply(text: str | None) -> str:
     """Drop ``<think>`` blocks some local models leave in the content."""
     return _THINK.sub("", text or "").strip()
@@ -71,7 +89,7 @@ class ChatClient:
 
     @property
     def host(self) -> str:
-        return urlparse(self.url).netloc
+        return url_host(self.url)
 
     def _scrub(self, text: str) -> str:
         if self.api_key and len(self.api_key) >= 4:

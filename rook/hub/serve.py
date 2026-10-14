@@ -64,6 +64,13 @@ def is_mcp_path(path: str) -> bool:
     return path in PUBLIC_MCP_PATHS or path.startswith(PUBLIC_MCP_PREFIXES)
 
 
+def _unrouted(request) -> bool:
+    """True when the dashboard's router has no route for this path (any
+    method): only then may a hub plugin's site mount answer it."""
+    exc = getattr(request.match_info, "http_exception", None)
+    return exc is not None and getattr(exc, "status", None) == 404
+
+
 # -- the dashboard's view of the shared band client -----------------------------
 
 class DashboardBand:
@@ -298,6 +305,11 @@ class Hub:
                                        chat=chat if same else None,
                                        settings_store=settings_store)
         await self.client.start()
+        # This process hands site paths to hub plugins (the middleware below),
+        # so plugins that serve them (voice) may load; say so before the MCP
+        # side builds the hub node and its plugins.
+        from .site import enable_serving
+        enable_serving()
         self.mcp = McpService(_mcp_args(args, self.server.domain), self.client, enrollment,
                               accounts=self.server._accounts.store,
                               startup_conflicts=conflicts, banned=self.server._ban_match,
@@ -323,7 +335,9 @@ class Hub:
             node = hub_node()
             site = getattr(node, "site", None) if node is not None else None
             served = site.match(request.path) if site is not None else None
-            if served is not None:
+            # A path the dashboard routes stays the dashboard's, whatever a
+            # plugin mounted (the router resolved it before middlewares ran).
+            if served is not None and _unrouted(request):
                 return await served(request)
             return await handler(request)
 

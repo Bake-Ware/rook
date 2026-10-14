@@ -144,17 +144,34 @@ def _env_value(value: Any) -> str:
     return str(value)
 
 
+NOT_SERVED = ("Voice on the hub's address needs the single-process hub: run it with "
+              "`rook hub serve`. This hub runs as two processes (rook-dashboard and "
+              "rook-mcp), where nothing serves /voice/; keep using the standalone voice "
+              "server (python -m services.voice.server) until you switch.")
+
+
 def requirements(engine: str, remote_url: str, model_dir: str,
-                 packages: tuple = eng.ENGINE_PACKAGES) -> dict:
+                 packages: tuple = eng.ENGINE_PACKAGES, *, served: bool | None = None) -> dict:
     """What the chosen engine still needs, for available() and the Voice
     page (also when the plugin is not loaded). ``reason`` is empty when
-    nothing is missing."""
+    nothing is missing. ``served`` is whether this process serves hub site
+    paths (default: :func:`rook.hub.site.serving`)."""
+    from ...site import serving
     out: dict = {"engine": engine, "extras_missing": [], "models_missing": [],
-                 "engine_code": None, "model_dir": model_dir, "reason": ""}
+                 "engine_code": None, "model_dir": model_dir, "reason": "",
+                 "served": serving() if served is None else bool(served)}
+    if not out["served"]:
+        # Checked first: without rook hub serve nothing would reach the
+        # engine, so never load the speech models for nothing.
+        out["reason"] = NOT_SERVED
+        return out
     if engine == "remote":
         if not remote_url:
             out["reason"] = ("Voice is set to run on another machine, but its address is not "
                              "set: Settings > Voice > Voice server address.")
+        elif eng.has_userinfo(remote_url):
+            out["reason"] = ("The voice server address must not carry a user name or "
+                             "password: voice keys go in Client bearer token.")
         return out
     out["engine_code"] = eng.find_engine(packages)
     out["extras_missing"] = eng.missing_extras()

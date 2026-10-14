@@ -213,3 +213,68 @@ async def test_home_agent_uses_a_provider_by_name(env):
 def test_provider_dataclass_is_what_plugins_contribute():
     p = Provider(id="x", base_url="http://192.0.2.1/v1", source="plugin:y")
     assert p.describe()["source"] == "plugin:y" and p.host == "192.0.2.1"
+
+
+# -- review fixes: credentials in addresses, band callers ------------------------------------
+
+def test_credentials_in_an_address_are_refused_and_never_shown():
+    from rook.hub.plugins.home.llm import ChatClient, url_host
+    with pytest.raises(ProviderError, match="user name or password"):
+        provider_from_row({"id": "lab", "base_url": "http://bob:hunter2@192.0.2.5:8080/v1"})
+    # Wherever an address with them still shows up, only host:port is shown.
+    assert url_host("http://bob:hunter2@192.0.2.5:8080/v1") == "192.0.2.5:8080"
+    assert url_host("https://u@[2001:db8::1]:443/v1") == "[2001:db8::1]:443"
+    assert Provider(id="x", base_url="http://u:p@192.0.2.1/v1").host == "192.0.2.1"
+    assert ChatClient("http://u:p@192.0.2.1:9/v1").host == "192.0.2.1:9"
+
+
+@pytest.mark.asyncio
+async def test_llmanifold_refuses_an_address_with_credentials(env):
+    node, svc = env.node, env.svc
+    await node.start()
+    try:
+        svc.set("llmanifold.base_url", "http://bob:hunter2@192.0.2.64:1234/v1", actor="human:op")
+        await asyncio.sleep(0.1)
+        assert node.plugin("llmanifold") is None
+        reason = node.host.status["llmanifold"]["reason"]
+        assert "user name or password" in reason and "hunter2" not in reason
+        svc.set("llmanifold.base_url", "http://192.0.2.64:1234/v1", actor="human:op")
+        assert await wait_for(lambda: node.plugin("llmanifold") is not None)
+        lm = node.plugin("llmanifold")
+        lm._http = env.fake
+        svc.set("llmanifold.admin_url", "http://bob:hunter2@192.0.2.64:1240", actor="human:op")
+        st = await lm.status()
+        assert "user name or password" in st["admin"]["error"] and "hunter2" not in str(st)
+        # Band readers share one answer for a few seconds.
+        n = len(env.fake.requests)
+        assert (await lm.status_cap()) is lm.last_status
+        assert len(env.fake.requests) == n
+    finally:
+        await node.stop()
+
+
+@pytest.mark.asyncio
+async def test_band_checks_are_the_callers_and_rate_limited(env, monkeypatch):
+    from rook.core import context
+    import rook.hub.plugins.llm as llm_mod
+    llm, svc = env.llm, env.svc
+    await llm.page_action(svc, {"action": "llm_save", "provider": {
+        "id": "lab", "base_url": "http://192.0.2.5:8080/v1", "api_key": "{{secret:llm-key}}"}},
+        "human:op")
+    monkeypatch.setattr(llm_mod, "CALLS_PER_MINUTE", 2)
+    tok = context.caller_identity.set("agent:reader")
+    try:
+        assert (await llm.check_cap("lab"))["checks"][0]["ok"]
+        # The vault read is logged as the band caller, not as the hub.
+        assert env.vault.log[-1][:2] == ("llm-key", "agent:reader")
+        assert (await llm.models_cap("lab", live=True))["models"]
+        assert "too many" in (await llm.check_cap("lab"))["error"]
+        assert "too many" in (await llm.models_cap("lab"))["error"]
+    finally:
+        context.caller_identity.reset(tok)
+    # Another caller has its own allowance.
+    tok = context.caller_identity.set("agent:other")
+    try:
+        assert (await llm.check_cap("lab"))["checks"][0]["ok"]
+    finally:
+        context.caller_identity.reset(tok)

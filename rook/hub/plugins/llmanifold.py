@@ -24,15 +24,16 @@ from __future__ import annotations
 import logging
 import time
 from typing import Any
-from urllib.parse import urlparse
 
 from ...core.plugin import Plugin, capability, place, setting
-from .home.llm import LLMError, aiohttp_request, base_url
+from .home.llm import LLMError, aiohttp_request, base_url, has_userinfo, url_host
 
 log = logging.getLogger("rook.hub.plugins.llmanifold")
 
 KEY_REF = r"(\{\{secret:[a-z0-9][a-z0-9._-]{0,63}\}\})?"
 #: Fields of one admin /api/status endpoint row worth showing (others vary by version).
+#: Seconds llmanifold.status answers from its last check.
+STATUS_TTL = 10
 _ENDPOINT_FIELDS = ("name", "state", "healthy", "inflight", "lanes", "model", "paused",
                     "stalled", "metered")
 
@@ -80,9 +81,13 @@ class Llmanifold(Plugin):
         self._node = node
 
     def available(self) -> bool:
-        return bool(self.settings.get("base_url"))
+        url = str(self.settings.get("base_url") or "")
+        return bool(url) and not has_userinfo(url)
 
     def unavailable_reason(self) -> str:
+        if has_userinfo(str(self.settings.get("base_url") or "")):
+            return ("The llmanifold address must not carry a user name or password (band "
+                    "readers see its host): put the token in the vault and set Token.")
         return ("Set the llmanifold address (Settings > llmanifold, e.g. "
                 "http://llm.example.com:1234/v1) to use it as a model provider.")
 
@@ -106,12 +111,15 @@ class Llmanifold(Plugin):
         admin = str(self.settings.get("admin_url") or "").rstrip("/")
         if not admin:
             return None
+        if has_userinfo(admin):
+            return {"ok": False, "error": "the admin address must not carry a user name or "
+                                          "password"}
         timeout = float(self.settings.get("timeout_s") or 8.0)
         try:
             code, data = await self._http("GET", admin + "/api/status", None,
                                           {"Accept": "application/json"}, timeout)
         except Exception as e:  # noqa: BLE001 - one line on the page
-            return {"ok": False, "error": f"cannot reach {urlparse(admin).netloc}: "
+            return {"ok": False, "error": f"cannot reach {url_host(admin)}: "
                                           f"{type(e).__name__}"}
         if code != 200 or not isinstance(data, dict):
             return {"ok": False, "error": f"admin API: HTTP {code}"}
@@ -129,7 +137,7 @@ class Llmanifold(Plugin):
         """API reachability and flows (through the model providers plugin's
         client, so the token is resolved the same way) plus admin state."""
         t0 = time.monotonic()
-        out: dict = {"host": urlparse(str(self.settings.get("base_url") or "")).netloc,
+        out: dict = {"host": url_host(str(self.settings.get("base_url") or "")),
                      "checked_at": time.time()}
         llm = self._node.plugin("llm") if self._node is not None else None
         try:
@@ -157,6 +165,11 @@ class Llmanifold(Plugin):
     @capability("status", risk="read", fields="*")
     async def status_cap(self) -> dict:
         """llmanifold.status — whether the hub's llmanifold answers, its flows, and lanes/queue when the admin address is set."""
+        # Band readers share one answer for a few seconds: each live one is
+        # outbound requests (and a vault read for the token).
+        last = self.last_status
+        if last is not None and time.time() - float(last.get("checked_at") or 0) < STATUS_TTL:
+            return last
         return await self.status()
 
 

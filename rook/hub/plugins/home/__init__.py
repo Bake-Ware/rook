@@ -751,8 +751,8 @@ class HomeAgent(Plugin):
         cfg = self.config()
         host = ""
         with contextlib.suppress(Exception):
-            from urllib.parse import urlparse
-            host = urlparse(str(cfg.get("base_url") or "")).netloc
+            from .llm import url_host
+            host = url_host(str(cfg.get("base_url") or ""))
         return {"enabled": self.enabled(), "identity": self.identity, "name": self.agent_name,
                 "provider": cfg.get("provider"), "llm_provider": cfg.get("_provider") or "",
                 "endpoint_host": host,

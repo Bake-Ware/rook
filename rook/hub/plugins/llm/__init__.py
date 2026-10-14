@@ -23,6 +23,8 @@ See docs/design/model-providers.md.
 
 from __future__ import annotations
 
+import asyncio
+import collections
 import contextlib
 import logging
 import re
@@ -31,9 +33,10 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse
 
+from ....core import context
 from ....core.plugin import Plugin, capability, place, setting
 from ....core.settings import SECRET_REF
-from ..home.llm import ChatClient, LLMError, aiohttp_request, base_url
+from ..home.llm import ChatClient, LLMError, aiohttp_request, base_url, has_userinfo, url_host
 
 log = logging.getLogger("rook.hub.plugins.llm")
 
@@ -41,6 +44,11 @@ ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 KEY_REF = re.compile(r"^(\{\{secret:[a-z0-9][a-z0-9._-]{0,63}\}\})?$")
 MAX_PROVIDERS = 32
 MAX_MODELS = 200
+#: llm.models / llm.check calls one band caller may make a minute, and how
+#: many may run at once across all callers (each can be an outbound request
+#: and a vault read).
+CALLS_PER_MINUTE = 20
+CALLS_AT_ONCE = 4
 
 
 class ProviderError(ValueError):
@@ -63,7 +71,7 @@ class Provider:
 
     @property
     def host(self) -> str:
-        return urlparse(self.base_url).netloc
+        return url_host(self.base_url)
 
     def describe(self, *, full: bool = False) -> dict:
         """For pages and caps: never the key, and the URL only for ``full``
@@ -89,6 +97,10 @@ def provider_from_row(row: Any) -> Provider:
     u = urlparse(url)
     if u.scheme not in ("http", "https") or not u.netloc:
         raise ProviderError(f"{pid}: base_url must be http(s)://host[:port]/v1")
+    if has_userinfo(url):
+        # Band readers see the host (llm.providers): keep credentials out of it.
+        raise ProviderError(f"{pid}: base_url must not carry a user name or password; "
+                            "put the key in the vault and name it as the API key")
     key = str(row.get("api_key") or "").strip()
     if not KEY_REF.match(key):
         raise ProviderError(f"{pid}: the API key must be a vault reference, {{{{secret:name}}}}")
@@ -129,6 +141,8 @@ class ModelProviders(Plugin):
         self._node: Any = None
         self.checks: dict[str, dict] = {}
         self._http = aiohttp_request            # tests swap in a fake endpoint
+        self._calls: dict[str, collections.deque] = {}
+        self._running: asyncio.Semaphore | None = None
 
     def bind_host(self, node) -> None:
         self._node = node
@@ -236,6 +250,29 @@ class ModelProviders(Plugin):
         return out
 
     # -- caps (read only) ------------------------------------------------------------
+    @staticmethod
+    def _caller() -> str:
+        ident = context.caller_identity.get()
+        return str(ident) if ident else "system:rook-hub"
+
+    def _admit(self, who: str) -> None:
+        """Count one cap call for ``who``; refuse past CALLS_PER_MINUTE."""
+        now = time.monotonic()
+        for key in [k for k, q in self._calls.items() if not q or q[-1] < now - 60]:
+            del self._calls[key]
+        q = self._calls.setdefault(who, collections.deque())
+        while q and q[0] < now - 60:
+            q.popleft()
+        if len(q) >= CALLS_PER_MINUTE:
+            raise ProviderError(f"too many model provider calls (at most {CALLS_PER_MINUTE} "
+                                "a minute); try again shortly")
+        q.append(now)
+
+    def _slot(self) -> asyncio.Semaphore:
+        if self._running is None:
+            self._running = asyncio.Semaphore(CALLS_AT_ONCE)
+        return self._running
+
     @capability("providers", risk="read", fields="*")
     def providers_cap(self) -> dict:
         """llm.providers — the model providers this hub can use: id, kind, host, offered models, last check."""
@@ -252,16 +289,29 @@ class ModelProviders(Plugin):
     @capability("models", risk="read")
     async def models_cap(self, provider: str, live: bool = False) -> dict:
         """llm.models — model ids one provider offers (live=true asks its /models)."""
+        who = self._caller()
         try:
-            return {"provider": provider, "models": await self.models(provider, live=live)}
+            self._admit(who)
+            async with self._slot():
+                return {"provider": provider,
+                        "models": await self.models(provider, actor=who, live=live)}
         except (LLMError, ProviderError) as e:
             return {"provider": provider, "error": str(e)[:300]}
 
     @capability("check", risk="read")
     async def check_cap(self, provider: str = "") -> dict:
         """llm.check — whether a provider (or every one) answers, with latency."""
+        who = self._caller()
+        try:
+            self._admit(who)
+        except ProviderError as e:
+            return {"checks": [], "error": str(e)}
         ids = [provider] if provider else [p.id for p in self.providers()]
-        return {"checks": [await self.check(pid) for pid in ids]}
+        out = []
+        for pid in ids:
+            async with self._slot():
+                out.append(await self.check(pid, actor=who))
+        return {"checks": out}
 
     # -- Manage > Model providers ------------------------------------------------------
     async def page(self, svc) -> dict:
