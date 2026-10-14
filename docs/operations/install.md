@@ -8,9 +8,9 @@ Three ways to run a hub, from least to most hands-on:
 3. **From source**: a clone, a virtualenv and `scripts/local-hub.sh` in the foreground.
    For development; see the [README](../../README.md#c-from-source).
 
-All three run the same three processes: the relay (`telesthete-hub`, UDP 7474), the
-dashboard (`rook-dashboard`, TCP 7005) and the MCP server (`rook-mcp`, TCP 8765), with all
-state in one data directory (`ROOK_DATA_DIR`).
+All three run the same two processes: the relay (`telesthete-hub`, UDP 7474) and the hub
+(`rook-hub`: the dashboard, `/mcp` and the `/band` worker bridge in one process, TCP 7005),
+with all state in one data directory (`ROOK_DATA_DIR`).
 
 *Roadmap:* a desktop app, a single binary that is a worker and can also install a hub on
 the machine it runs on, using this installer's steps.
@@ -37,7 +37,9 @@ curl -fsSL https://raw.githubusercontent.com/Bake-Ware/rook/master/scripts/insta
 | `--data-dir DIR` | see above | Hub state: keys, databases, logs |
 | `--bind ADDR` | `0.0.0.0` | Address all three listen on. `127.0.0.1` keeps the hub to this machine |
 | `--public-host HOST` | this machine's LAN IP | The address browsers and workers use; written into installer links |
-| `--dashboard-port`, `--mcp-port`, `--relay-port` | 7005, 8765, 7474 | |
+| `--dashboard-port N` | 7005 | The hub's port: dashboard, `/mcp` and `/band` |
+| `--mcp-port N` | off | Also serve the MCP server alone on this port, as the two-process hub did on 8765 (for proxy routes or agent configs that point there) |
+| `--relay-port N` | 7474 | The UDP relay |
 | `--yes`, `-y` | | Don't ask for confirmation (it never asks without a terminal) |
 | `--uninstall` | | Stop and remove the services and the program; keep the data |
 | `--purge` | | With `--uninstall`: delete the data directory too (band keys, history) |
@@ -92,7 +94,7 @@ fork or a mirror.
 | Install record | `/opt/rook/install.env` | `~/.local/share/rook-hub/install.env` |
 
 Change a setting by editing `hub.env` and restarting the services
-(`sudo systemctl restart rook-dashboard rook-mcp`, or `systemctl --user …`). Every
+(`sudo systemctl restart rook-hub`, or `systemctl --user restart rook-hub`). Every
 variable is listed in [settings-reference.md](settings-reference.md). For a public hub
 behind HTTPS set `ROOK_DOMAIN`, `ROOK_HUB_PUBLIC`, `ROOK_MCP_PUBLIC_URL` and
 `ROOK_ALLOWED_HOSTS` there as the [README](../../README.md#going-beyond-localhost)
@@ -100,11 +102,15 @@ describes.
 
 ### Service layout
 
-Today the hub is three units: `rook-relay`, `rook-dashboard` (After/Wants the relay) and
-`rook-mcp`. When the dashboard and MCP server merge into one process (`rook hub serve`),
-the installer finds that entry point in the installed Rook and writes `rook-relay` and
-`rook-hub` instead, removing the old two; nothing else changes. The layout in use is in
-the install record (`LAYOUT=`).
+Two units: `rook-relay` and `rook-hub` (After/Wants the relay), which runs `rook-hub`
+(`rook hub serve`): the dashboard and the MCP server in one process on one port. Its health
+check is the dashboard's `/health` and the MCP side's `/healthz` on that port.
+
+For a `--version` from before the single-process hub (no `rook-hub` entry point) it writes
+the old layout instead, `rook-relay`, `rook-dashboard` and `rook-mcp`; re-running with a
+newer release replaces those with `rook-hub`. The layout in use is in the install record
+(`LAYOUT=merged` or `split`). A hub installed with the old layout keeps its `hub.env` on
+upgrade, including MCP on port 8765, which `rook-hub` still serves (`ROOK_MCP_BIND`).
 
 System units run as `rook` with `NoNewPrivileges`, `PrivateTmp` and `ProtectSystem=full`;
 the relay, which holds no keys, is sandboxed further (`ProtectSystem=strict`, no
@@ -149,12 +155,12 @@ they run as the `rook` user. CI uses this mode (`.github/workflows/installer.yml
 - **User services stop when you log out**: run `sudo loginctl enable-linger $USER` once
   (the installer reminds you).
 - **A service "did not become healthy"**: the installer prints its last log lines. More:
-  `sudo journalctl -u rook-dashboard -n 100` (or `journalctl --user -u …`). A port already
+  `sudo journalctl -u rook-hub -n 100` (or `journalctl --user -u …`). A port already
   in use is the usual cause: pick others with `--dashboard-port` / `--mcp-port` /
   `--relay-port`.
-- **Other machines can't open the dashboard**: allow TCP 7005 and 8765 (and UDP 7474 for
-  workers started by hand with `--hub <ip>:7474`) through the firewall, e.g.
-  `sudo ufw allow 7005,8765/tcp`. Check the printed URL uses an address they can reach;
+- **Other machines can't open the dashboard**: allow TCP 7005 (and UDP 7474 for workers
+  started by hand with `--hub <ip>:7474`) through the firewall, e.g.
+  `sudo ufw allow 7005/tcp`. Check the printed URL uses an address they can reach;
   fix it with `--public-host`.
 - **"this machine has a public address"**: with the default `--bind 0.0.0.0` on a
   machine with a non-private IP (a VPS), the dashboard and MCP server are reachable from
@@ -170,10 +176,11 @@ they run as the `rook` user. CI uses this mode (`.github/workflows/installer.yml
 ## Docker
 
 `compose.yaml` runs `ghcr.io/bake-ware/rook:${ROOK_VERSION:-latest}` (linux/amd64 and
-linux/arm64) as three services sharing the `rook-data` volume; see the
-[README](../../README.md#b-docker) for the `.env` it needs. The dashboard reaches the
-MCP server's account APIs at `http://mcp:8765` (the `ROOK_*_ADMIN_URL` variables in
-`compose.yaml`). The image contains the prebuilt relay pinned in `rook/_release.py`,
+linux/arm64) as two services, `relay` and `hub` (`rook-hub`; the image's default command),
+sharing the `rook-data` volume; see the [README](../../README.md#b-docker) for the `.env`
+it needs. The hub publishes 7005 (dashboard, `/mcp`, `/band`) and, for setups made before
+the single-process hub, the MCP server alone on 8765. Upgrading from the three-service
+compose file: `docker compose up -d --remove-orphans`. The image contains the prebuilt relay pinned in `rook/_release.py`,
 checked against its pinned sha256, and records the version in the image label
 `io.github.bake-ware.telesthete.relay`. Base images are pinned by digest
 (`PYTHON_IMAGE`, `RUST_IMAGE` build args).

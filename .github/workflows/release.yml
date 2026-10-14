@@ -239,8 +239,7 @@ jobs:
         run: |
           docker run --rm -e WANT="$VERSION" rook-smoke:latest python -c \
             'import os, rook, rook._release as r; assert rook.__version__ == os.environ["WANT"], rook.__version__; print(r.NAME, r.RELAY)'
-          docker run --rm rook-smoke:latest rook-dashboard --help >/dev/null
-          docker run --rm rook-smoke:latest rook-mcp --help >/dev/null
+          docker run --rm rook-smoke:latest rook-hub --help >/dev/null
           docker run --rm -e HUB_BIND=127.0.0.1:7474 rook-smoke:latest \
             timeout --preserve-status -s TERM 2 telesthete-hub
       - name: Build and push (amd64, arm64)

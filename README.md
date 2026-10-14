@@ -30,8 +30,8 @@ You install a small background **worker** on each machine you want to reach (a h
 
 ## Quickstart
 
-A hub is three small programs on one Linux machine: the relay, the dashboard and the MCP
-server. Pick one way to run it:
+A hub is two small programs on one Linux machine: the relay and the hub itself
+(`rook-hub`: the dashboard and the MCP server in one process). Pick one way to run it:
 
 | | Best for | Needs |
 |---|---|---|
@@ -54,13 +54,13 @@ It asks once before changing anything, then: installs Python and `curl` if they 
 (apt, dnf, pacman or zypper); installs the latest Rook release into `/opt/rook` and the
 prebuilt relay (checksum verified); generates a band key, a dashboard password and an MCP
 token into `/var/lib/rook/secrets.env` (mode 600, owned by a dedicated `rook` user); starts
-`rook-relay`, `rook-dashboard` and `rook-mcp` as systemd services; waits until they answer;
-and prints:
+`rook-relay` and `rook-hub` (the dashboard and MCP server in one process) as systemd
+services; waits until they answer; and prints:
 
 ```
   Dashboard   http://192.0.2.20:7005
   Password    …      (any username)
-  MCP         http://192.0.2.20:8765/mcp    bearer token: ROOK_MCP_STATIC_TOKEN in /var/lib/rook/secrets.env
+  MCP         http://192.0.2.20:7005/mcp    bearer token: ROOK_MCP_STATIC_TOKEN in /var/lib/rook/secrets.env
 ```
 
 Open the URL from any machine on your network and continue with **Get a pairing code**.
@@ -82,13 +82,14 @@ curl -fsSL -o .env https://raw.githubusercontent.com/Bake-Ware/rook/master/.env.
 docker run --rm ghcr.io/bake-ware/rook python -m rook.remote.psk                # a band key
 python3 -c "import secrets; print(secrets.token_urlsafe(16))"                   # a password
 $EDITOR .env        # set ROOK_BAND_PSK, ROOK_WEB_PASS, ROOK_MCP_STATIC_TOKEN, and
-                    # ROOK_DOMAIN=http://<this-machine's-ip>:7005, ROOK_HUB_PUBLIC=<ip>:8765
+                    # ROOK_DOMAIN=http://<this-machine's-ip>:7005, ROOK_HUB_PUBLIC=<ip>:7005
 docker compose up -d
 ```
 
 This runs `ghcr.io/bake-ware/rook` (amd64 and arm64; `ROOK_VERSION=0.2.0` in `.env` pins a
-release) as three containers: the dashboard on 7005, the MCP server on 8765 and the relay on
-7474/udp, with state in the `rook-data` volume. From a clone, build the image yourself with
+release) as two containers: the hub (dashboard, `/mcp` and `/band`) on 7005, also serving
+the MCP server alone on 8765 for older setups, and the relay on 7474/udp, with state in the
+`rook-data` volume. From a clone, build the image yourself with
 `docker compose -f compose.yaml -f compose.build.yaml up -d --build`. (The image is
 published by the release workflow; before the first release, build it from a clone.
 Maintainers: GitHub creates the GHCR package private on its first push; make it public
@@ -116,7 +117,7 @@ python3 scripts/fetch-relay.py --dest .venv/bin
 # cargo install --locked --git https://github.com/Bake-Ware/telesthete telesthitium
 ```
 
-Start the hub in the foreground (Ctrl-C stops all three processes):
+Start the hub in the foreground (Ctrl-C stops the relay and the hub):
 
 ```sh
 scripts/local-hub.sh                 # this machine only

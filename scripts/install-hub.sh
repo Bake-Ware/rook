@@ -23,7 +23,10 @@
 #   --bind ADDR         address the hub listens on (default 0.0.0.0: your LAN)
 #   --public-host HOST  address workers and browsers use (default: this
 #                       machine's LAN IP, or ADDR when it is a specific IP)
-#   --dashboard-port N / --mcp-port N / --relay-port N   (7005 / 8765 / 7474)
+#   --dashboard-port N  the hub: dashboard, /mcp and /band (7005)
+#   --mcp-port N        also serve the MCP server alone on its old port (off;
+#                       8765 for a release from before the single-process hub)
+#   --relay-port N      the UDP relay (7474)
 #   --yes, -y           don't ask for confirmation
 #   --uninstall         stop and remove the services and the program; keeps
 #                       the data directory unless --purge is given too
@@ -95,7 +98,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 [ -z "$PURGE" ] || [ -n "$UNINSTALL" ] || die "--purge only goes with --uninstall"
-for p in "$DASHBOARD_PORT" "$MCP_PORT" "$RELAY_PORT"; do
+for p in "$DASHBOARD_PORT" "${MCP_PORT/#off/}" "$RELAY_PORT"; do
   [ -z "$p" ] || [[ "$p" =~ ^[0-9]+$ ]] || die "ports are numbers, not '$p'"
 done
 if [ -n "$RELAY_BIN" ]; then
@@ -168,14 +171,15 @@ elif [ -n "$UNINSTALL" ] && [ "$PREV_SYSTEMD" = 0 ]; then USE_SYSTEMD=0; fi
 if [ "$MODE" = system ]; then SYSTEMCTL=(as_root systemctl); else SYSTEMCTL=(systemctl --user); fi
 
 # ---- the service layout ----------------------------------------------------------
-# "current": relay + dashboard + MCP server (two Python processes).
-# "merged":  relay + one hub process (`rook hub serve`, the hub-merge branch).
-# Chosen by asking the installed rook, so this script works before and after
-# the merge lands. To retarget: edit service_cmd/service_desc/health_checks.
-ALL_SERVICES="relay dashboard mcp hub"
+# "merged": the relay + the hub (`rook-hub`: dashboard and MCP server in one
+#           process, one port). What every current Rook installs.
+# "split":  the relay + rook-dashboard + rook-mcp, for a --version from before
+#           the merge (no rook-hub entry point). A re-run removes whichever
+#           layout's units are not in use.
+ALL_SERVICES="relay hub dashboard mcp"
 
 detect_layout() {
-  if "$VENV/bin/rook" hub serve --help >/dev/null 2>&1; then echo merged; else echo current; fi
+  if [ -x "$VENV/bin/rook-hub" ]; then echo merged; else echo split; fi
 }
 layout_services() {
   case "$1" in
@@ -197,7 +201,7 @@ service_cmd() {
     relay) echo "$APP_DIR/bin/telesthete-hub" ;;
     dashboard) echo "$VENV/bin/rook-dashboard" ;;
     mcp) echo "$VENV/bin/rook-mcp" ;;
-    hub) echo "$VENV/bin/rook hub serve" ;;
+    hub) echo "$VENV/bin/rook-hub" ;;
   esac
 }
 # The relay needs only its HUB_* settings; the Python services get the secrets.
@@ -296,14 +300,14 @@ fi
 existing() { if as_app test -f "$HUB_ENV"; then as_app sed -n "s/^$1=//p" "$HUB_ENV" | head -n1; fi; }
 [ -n "$BIND_SET" ] || BIND="$(existing ROOK_BIND)"
 [ -n "$DPORT_SET" ] || DASHBOARD_PORT="$(existing ROOK_PORT)"
-[ -n "$MPORT_SET" ] || { MCP_PORT="$(existing ROOK_MCP_BIND)"; MCP_PORT="${MCP_PORT##*:}"; }
+[ -n "$MPORT_SET" ] || { MCP_PORT="$(existing ROOK_MCP_BIND)"; MCP_PORT="${MCP_PORT##*:}"; }   # may be "off"
 [ -n "$RPORT_SET" ] || { RELAY_PORT="$(existing HUB_BIND)"; RELAY_PORT="${RELAY_PORT##*:}"; }
 if [ -z "$PUBLIC_SET" ] && [ -z "$BIND_SET" ]; then
   PUBLIC_HOST="$(existing ROOK_DOMAIN | sed -E 's#^[a-z]+://##; s#:[0-9]+/?$##')"
 fi
 BIND="${BIND:-0.0.0.0}"
 DASHBOARD_PORT="${DASHBOARD_PORT:-7005}"
-MCP_PORT="${MCP_PORT:-8765}"
+# MCP_PORT's default depends on the layout (set once Rook is installed).
 RELAY_PORT="${RELAY_PORT:-7474}"
 # Docker bridges and VPN overlays (tailscale's 100.64.0.0/10) are not where
 # other machines on the LAN reach this one.
@@ -666,21 +670,39 @@ set_kv() {   # set_kv FILE KEY VALUE
 }
 
 hub_settings() {
-  local mcp_local="http://$LOCAL_HOST:$MCP_PORT"
+  local mcp_bind="off" hosts="$PUBLIC_HOST:$DASHBOARD_PORT"
+  if [ "$MCP_PORT" != off ]; then mcp_bind="$BIND:$MCP_PORT"; hosts="$hosts,$PUBLIC_HOST:$MCP_PORT"; fi
   cat <<EOF
 # Rook hub settings, written by scripts/install-hub.sh. Edit, then restart the
 # services (see docs/operations/install.md). Secrets are in secrets.env.
 ROOK_DATA_DIR=$DATA_DIR
-# Dashboard
+EOF
+  if [ "$LAYOUT" = merged ]; then
+    cat <<EOF
+# The hub (rook-hub): dashboard, /mcp and the /band worker bridge, one port.
+ROOK_BIND=$BIND
+ROOK_PORT=$DASHBOARD_PORT
+ROOK_DOMAIN=http://$PUBLIC_HOST:$DASHBOARD_PORT
+ROOK_HUB_PUBLIC=$PUBLIC_HOST:$DASHBOARD_PORT
+ROOK_HUB_HOST=127.0.0.1
+ROOK_HUB_PORT=$RELAY_PORT
+# Also serve the MCP server alone on its old port (host:port, or off).
+ROOK_MCP_BIND=$mcp_bind
+ROOK_ALLOWED_HOSTS=$hosts
+EOF
+  else
+    local mcp_local="http://$LOCAL_HOST:$MCP_PORT"
+    cat <<EOF
+# Dashboard (rook-dashboard)
 ROOK_BIND=$BIND
 ROOK_PORT=$DASHBOARD_PORT
 ROOK_DOMAIN=http://$PUBLIC_HOST:$DASHBOARD_PORT
 ROOK_HUB_PUBLIC=$PUBLIC_HOST:$MCP_PORT
 ROOK_HUB_HOST=127.0.0.1
 ROOK_HUB_PORT=$RELAY_PORT
-# MCP server
+# MCP server (rook-mcp)
 ROOK_HUB=127.0.0.1:$RELAY_PORT
-ROOK_MCP_BIND=$BIND:$MCP_PORT
+ROOK_MCP_BIND=$mcp_bind
 ROOK_ALLOWED_HOSTS=$PUBLIC_HOST:$MCP_PORT
 # Where the dashboard reaches the MCP server's account APIs (it assumes
 # 127.0.0.1:8765 otherwise, which a specific --bind or --mcp-port moves).
@@ -692,6 +714,9 @@ ROOK_SETTINGS_ADMIN_URL=$mcp_local/settings/account-api
 ROOK_JOBS_ADMIN_URL=$mcp_local/jobs/account-api
 ROOK_MASK_URL=$mcp_local/internal/mask
 ROOK_WATCHDOG_MCP_URL=$mcp_local
+EOF
+  fi
+  cat <<EOF
 # Relay (telesthete-hub). Rook peers keep alive every 20s; the relay's default
 # idle TTL is 15s.
 HUB_BIND=$BIND:$RELAY_PORT
@@ -700,6 +725,15 @@ HUB_PRUNE_SECS=10
 RUST_LOG=warn
 EOF
 }
+
+# The layout decides the settings, so it comes first.
+LAYOUT="$(detect_layout)"
+SERVICES="$(layout_services "$LAYOUT")"
+if [ -z "$MCP_PORT" ]; then
+  # One port for a merged hub; the old MCP port only when asked (--mcp-port).
+  if [ "$LAYOUT" = merged ]; then MCP_PORT=off; else MCP_PORT=8765; fi
+fi
+[ "$LAYOUT" = merged ] || [ "$MCP_PORT" != off ] || MCP_PORT=8765
 
 if ! as_app test -f "$HUB_ENV"; then
   hub_settings | write_private "$HUB_ENV"
@@ -749,8 +783,6 @@ gen_secret ROOK_WEB_PASS
 gen_secret ROOK_MCP_STATIC_TOKEN
 
 # ---- services ----------------------------------------------------------------------------------
-LAYOUT="$(detect_layout)"
-SERVICES="$(layout_services "$LAYOUT")"
 say "service layout: $LAYOUT ($SERVICES)"
 
 unit_text() {   # unit_text svc
@@ -884,7 +916,10 @@ http_ok() { curl -fsS --noproxy '*' -m 5 "$@" >/dev/null 2>&1; }
 healthy() {   # healthy svc
   case "$1" in
     relay) service_running relay ;;
-    dashboard|hub) http_ok "http://$LOCAL_HOST:$DASHBOARD_PORT/health" ;;
+    dashboard) http_ok "http://$LOCAL_HOST:$DASHBOARD_PORT/health" ;;
+    # rook-hub serves the dashboard and /healthz (the MCP side) on one port.
+    hub) http_ok "http://$LOCAL_HOST:$DASHBOARD_PORT/health" \
+           && http_ok -H "@$TMP/mcp-auth" "http://$LOCAL_HOST:$DASHBOARD_PORT/healthz" ;;
     mcp) http_ok -H "@$TMP/mcp-auth" "http://$LOCAL_HOST:$MCP_PORT/healthz" ;;
   esac
 }
@@ -907,6 +942,10 @@ done
 
 # ---- done -------------------------------------------------------------------------------------------
 WEB_PASS="$(read_kv "$SECRETS_ENV" ROOK_WEB_PASS)"
+if [ "$LAYOUT" = merged ]; then MCP_URL="http://$PUBLIC_HOST:$DASHBOARD_PORT/mcp"
+else MCP_URL="http://$PUBLIC_HOST:$MCP_PORT/mcp"; fi
+TCP_PORTS="$DASHBOARD_PORT"
+[ "$MCP_PORT" = off ] || TCP_PORTS="$DASHBOARD_PORT and $MCP_PORT"
 if [ "$USE_SYSTEMD" = 1 ]; then
   if [ "$MODE" = system ]; then
     MANAGE="sudo systemctl status 'rook-*'    logs: sudo journalctl -u 'rook-*' -f"
@@ -922,13 +961,13 @@ cat <<EOF
 
   Dashboard   $DOMAIN
   Password    $WEB_PASS      (any username)
-  MCP         http://$PUBLIC_HOST:$MCP_PORT/mcp    bearer token: ROOK_MCP_STATIC_TOKEN in $SECRETS_ENV
+  MCP         $MCP_URL    bearer token: ROOK_MCP_STATIC_TOKEN in $SECRETS_ENV
 
 Next: open $DOMAIN, sign in with the password above, go to
 "Install a worker" and click "Get a pairing code". Run the command it shows on
 each machine you want to add. For other machines to reach this one, allow TCP
-$DASHBOARD_PORT and $MCP_PORT through its firewall (and UDP $RELAY_PORT for workers
-that join the relay directly with --hub <this-ip>:$RELAY_PORT).
+$TCP_PORTS through its firewall (and UDP $RELAY_PORT for workers that join the
+relay directly with --hub <this-ip>:$RELAY_PORT).
 
   Manage      $MANAGE
   Settings    $HUB_ENV    (secrets: $SECRETS_ENV)

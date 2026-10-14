@@ -13,13 +13,13 @@ curl -fsSL https://raw.githubusercontent.com/Bake-Ware/rook/master/scripts/insta
 # options after `bash -s --`: --user (no root) --version vX.Y.Z --bind 127.0.0.1 --yes --uninstall [--purge]
 ```
 
-Installs python3/venv/curl if missing, Rook from the release wheel into `/opt/rook/venv`, the prebuilt relay (sha256-checked), generates `ROOK_BAND_PSK`, `ROOK_WEB_PASS`, `ROOK_MCP_STATIC_TOKEN` into `/var/lib/rook/secrets.env` (mode 600; settings in `hub.env` beside it), starts systemd units `rook-relay`, `rook-dashboard`, `rook-mcp` as user `rook`, waits for health, and prints the dashboard URL + password. Next step for the user: open the URL, sign in (any username), **Install a worker** → **Get a pairing code**. Re-run = upgrade (secrets kept). `--user` puts everything in `~/.local/share/rook-hub` with `systemctl --user` units (`sudo loginctl enable-linger $USER` to survive logout); `--no-systemd` runs background processes (containers/CI). Logs: `sudo journalctl -u rook-dashboard -n 50 --no-pager`. Details and troubleshooting: `docs/operations/install.md`.
+Installs python3/venv/curl if missing, Rook from the release wheel into `/opt/rook/venv`, the prebuilt relay (sha256-checked), generates `ROOK_BAND_PSK`, `ROOK_WEB_PASS`, `ROOK_MCP_STATIC_TOKEN` into `/var/lib/rook/secrets.env` (mode 600; settings in `hub.env` beside it), starts systemd units `rook-relay` and `rook-hub` (dashboard + MCP in one process, :7005) as user `rook`, waits for health, and prints the dashboard URL + password. Next step for the user: open the URL, sign in (any username), **Install a worker** → **Get a pairing code**. Re-run = upgrade (secrets kept). `--user` puts everything in `~/.local/share/rook-hub` with `systemctl --user` units (`sudo loginctl enable-linger $USER` to survive logout); `--no-systemd` runs background processes (containers/CI). Logs: `sudo journalctl -u rook-hub -n 50 --no-pager`. A `--version` from before the single-process hub gets `rook-dashboard` + `rook-mcp` units instead. Details and troubleshooting: `docs/operations/install.md`.
 
 ## Hub: Docker
 
 ```sh
 # compose.yaml + .env.example from the repo; set ROOK_WEB_PASS, ROOK_BAND_PSK, ROOK_MCP_STATIC_TOKEN,
-# ROOK_DOMAIN=http://<ip>:7005, ROOK_HUB_PUBLIC=<ip>:8765 in .env
+# ROOK_DOMAIN=http://<ip>:7005, ROOK_HUB_PUBLIC=<ip>:7005 in .env
 docker run --rm ghcr.io/bake-ware/rook python -m rook.remote.psk   # a band key
 docker compose up -d                                               # ghcr.io/bake-ware/rook:${ROOK_VERSION:-latest}, amd64/arm64
 docker compose -f compose.yaml -f compose.build.yaml up -d --build # build from a clone instead

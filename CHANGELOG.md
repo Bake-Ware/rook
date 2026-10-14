@@ -34,7 +34,8 @@ Preparation for public use.
 ### Release pipeline and hub install
 - One-command hub install: `curl -fsSL https://raw.githubusercontent.com/Bake-Ware/rook/master/scripts/install-hub.sh | bash`
   sets up Python, Rook from the release wheel, the prebuilt relay, generated
-  secrets (mode 600) and systemd units (`--system` or `--user`), waits for
+  secrets (mode 600) and two systemd units, `rook-relay` and `rook-hub` (the
+  single-process hub; `--system` or `--user`), waits for
   health and prints the dashboard URL and password. Re-runs upgrade in place;
   `--uninstall [--purge]`; `--no-systemd` for containers and CI. See
   docs/operations/install.md.
