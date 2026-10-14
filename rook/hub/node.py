@@ -119,14 +119,18 @@ class HubNode:
         reg = self.host.registry
         reg.register("caps.describe", self._caps_describe, meta=CapMeta(risk="read"))
         # Runtime plugin control on the hub, through the host's boot path
-        # (the same as worker.plugin.*). Not persisted: hub plugins turn on
-        # and off through their settings; these are for a live fix or retry.
+        # (the same as worker.plugin.*). Enable/disable persist in the
+        # settings store (core.plugins.hub), like worker.plugin.* do on a
+        # worker; the Plugins page uses the same path (set_plugin_enabled).
         reg.register("hub.plugin.enable", self._plugin_enable, meta=CapMeta(risk="admin"))
         reg.register("hub.plugin.disable", self._plugin_disable,
                      meta=CapMeta(risk="admin", tags=("destructive",)))
         reg.register("hub.plugin.reload", self._plugin_reload,
                      meta=CapMeta(risk="admin", tags=("destructive",)))
-        self.host.load(self.host.discover(package, entry_points=entry_points))
+        # Hub plugins an operator switched off stay off across restarts.
+        self._plugin_state = self._stored_plugin_state()
+        self.host.load(self.host.discover(package, entry_points=entry_points),
+                       disabled={m for m, on in self._plugin_state.items() if not on})
         # bind_host runs for these and for any plugin enabled/reloaded later.
         self.host.set_binder(self._bind_plugin)
 
@@ -148,23 +152,136 @@ class HubNode:
         if refusal:
             raise PermissionError(refusal)
 
+    @staticmethod
+    def _caller() -> str:
+        return str(caller_identity.get() or "system:rook-hub")
+
     async def _plugin_enable(self, module: str) -> dict:
         """Load a hub plugin module now (placement, settings, available(), bind_host, start).
 
-        Not persisted: a plugin gated by an ``enabled`` setting needs that
-        setting on, or it reports unavailable. Band owners and operators only."""
+        Kept on across restarts. A plugin with an ``enabled`` setting has it
+        turned on too (refused when the environment locks it off). Band
+        owners and operators only."""
         self._admin_gate(f"hub.plugin.enable {module}")
-        return await self.host.enable(module)
+        return await self.set_plugin_enabled(module, True, self._caller())
 
     async def _plugin_disable(self, module: str) -> dict:
-        """Unload a hub plugin now: its caps go, its stop() runs. Not persisted.
+        """Unload a hub plugin now (its caps go, its stop() runs) and keep it off.
 
         Refused while another loaded plugin depends on it, and for ``settings``
         (it carries the switches to turn things back on)."""
         self._admin_gate(f"hub.plugin.disable {module}")
-        if module == "settings":
-            return {"ok": False, "error": "refusing to disable settings (it re-enables plugins)"}
-        return await self.host.disable(module)
+        return await self.set_plugin_enabled(module, False, self._caller())
+
+    # -- persisted plugin switches ---------------------------------------
+    def _stored_plugin_state(self) -> dict[str, bool]:
+        from .plugin_profiles import hub_state
+        try:
+            return hub_state(self.settings_store)
+        except Exception:
+            log.exception("reading the hub plugin switches failed; loading every plugin")
+            return {}
+
+    def _enabled_setting(self, module: str) -> str | None:
+        """``<namespace>.enabled`` when the module's plugin declares that switch."""
+        p = self.host.loaded(module)
+        cls = type(p) if p is not None else None
+        if cls is None:
+            cand = self.host.candidates.get(module)
+            try:
+                obj = cand.load() if cand is not None else None
+            except Exception:
+                return None
+            cls = obj if isinstance(obj, type) else (type(obj) if obj is not None else None)
+        if cls is None or not getattr(cls, "NAMESPACE", ""):
+            return None
+        if any(getattr(s, "name", "") == "enabled" for s in getattr(cls, "SETTINGS", ())):
+            return f"{cls.NAMESPACE}.enabled"
+        return None
+
+    def _turn_on_setting(self, module: str, actor: str) -> str | None:
+        """Turn on the plugin's own ``enabled`` setting, if it has one and it
+        is off. Returns a refusal when the environment locks it off."""
+        key = self._enabled_setting(module)
+        if key is None:
+            return None
+        svc = self.settings
+        if svc is not None:
+            try:
+                eff = svc.resolve(key)
+            except Exception:
+                eff = None
+            if eff is not None:
+                if eff.get("value"):
+                    return None
+                if eff.get("locked"):
+                    return (f"{eff.get('env') or 'the environment'} keeps {key} off in the MCP "
+                            "environment; remove it there to turn this plugin on")
+                svc.set(key, True, scope="hub", actor=actor, source="plugins",
+                        note="turned on with the plugin")
+                return None
+        row = self.settings_store.get(key, "hub", "")
+        if not row or row.get("value") is not True:
+            self.settings_store.set(key, "hub", "", value=True, actor=actor, source="plugins",
+                                    note="turned on with the plugin")
+        return None
+
+    async def set_plugin_enabled(self, module: str, enable: bool, actor: str,
+                                 *, persist: bool = True) -> dict:
+        """Switch one hub plugin now and keep the choice (``core.plugins.hub``).
+
+        On: its ``enabled`` setting (if any) is turned on, then it loads through
+        the boot path; a plugin that still cannot load (a missing token) stays
+        recorded as on and loads once it can. Off: it unloads and stays off at
+        start, whatever its settings say. Precedence: rook.hub.plugin_profiles."""
+        from .plugin_profiles import PROTECTED_HUB, set_hub_state
+        module = str(module or "").strip()
+        if module not in self.host.candidates:
+            return {"ok": False, "module": module, "error": f"no such hub plugin module: {module}"}
+        if not enable and module in PROTECTED_HUB:
+            return {"ok": False, "module": module,
+                    "error": f"refusing to disable {module} (it re-enables plugins)"}
+        if enable:
+            refusal = self._turn_on_setting(module, actor)
+            if refusal:
+                return {"ok": False, "module": module, "error": refusal}
+            res = await self.host.enable(module)
+        else:
+            if self.host.loaded(module) is None:
+                res = {"ok": True, "module": module, "note": "was not loaded"}
+                self.host._mark(module, "disabled", "disabled by operator")
+            else:
+                res = await self.host.disable(module)
+                if not res.get("ok"):
+                    return res   # a dependent still needs it: nothing changes
+        if persist:
+            try:
+                self._plugin_state = set_hub_state(
+                    self.settings_store, {module: bool(enable)}, actor=actor,
+                    note="" if res.get("ok") else f"did not load: {res.get('error')}")
+            except Exception as err:
+                log.exception("persisting the hub plugin switch for %s failed", module)
+                res = {**res, "persist_error": f"{type(err).__name__}: {err}"}
+            res = {**res, "persisted": True}
+        return res
+
+    async def sync_plugin_state(self, actor: str = "system:rook-hub") -> list[dict]:
+        """Apply stored switches changed by another process (the dashboard's
+        setup wizard, an edit on the Settings page) since this node last
+        applied them. Returns what it did."""
+        stored = self._stored_plugin_state()
+        done = []
+        for module in sorted(set(stored) | set(self._plugin_state)):
+            want, had = stored.get(module), self._plugin_state.get(module)
+            if want is None or want == had or module not in self.host.candidates:
+                continue
+            loaded = self.host.loaded(module) is not None
+            if want and not loaded:
+                done.append(await self.set_plugin_enabled(module, True, actor, persist=False))
+            elif not want and loaded:
+                done.append(await self.set_plugin_enabled(module, False, actor, persist=False))
+        self._plugin_state = stored
+        return done
 
     async def _plugin_reload(self, module: str) -> dict:
         """Restart one hub plugin with its current settings (stop, load again, start)."""

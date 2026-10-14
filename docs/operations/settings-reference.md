@@ -66,6 +66,9 @@ are set only in the environment or on the command line.
 | `core.hub.plugins` | Hub plugins (worker 'rook') | hub | bool | on | `ROOK_HUB_PLUGINS` | restart · bootstrap |
 | `core.hub.band_max_risk` | Highest risk callable over the band | hub | str | `read` | `ROOK_HUB_BAND_MAX_RISK` | restart · bootstrap |
 | `core.settings.service_readers` | Services that may fetch settings | hub | dict |  |  | live |
+| `core.plugins.hub` | Hub plugins switched on or off | hub | dict |  |  | restart |
+| `core.plugins.worker_defaults` | Plugins for new workers | band | dict |  |  | live |
+| `core.plugins.catalogs` | Plugin catalog URLs | hub | list |  | `ROOK_PLUGIN_CATALOGS` | live |
 
 ## Core: Sign-in
 
