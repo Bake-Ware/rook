@@ -2,9 +2,11 @@
 """Build band-worker.pyz — self-contained zipapp bundling rook.worker + telesthete.protocol.
 
 Run from anywhere:
-    python3 rook/remote/build_band_worker.py
+    python3 rook/remote/build_band_worker.py [--output-dir DIR]
 
-Output: rook/remote/band-worker.pyz
+Output: rook/remote/band-worker.pyz (+ the signed band-worker.json beside it).
+The dashboard runs this itself, into its data directory, when a hub has no
+bundle (rook/remote/worker_bundle.py).
 """
 
 from __future__ import annotations
@@ -12,11 +14,14 @@ from __future__ import annotations
 import datetime
 import hashlib
 import os
+import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import zipapp
 from pathlib import Path
+from typing import Optional
 
 HERE = Path(__file__).resolve().parent        # rook/remote/
 REPO_ROOT = HERE.parent.parent               # /root/repos/rook
@@ -30,6 +35,74 @@ if not TELESTHETE_ROOT.is_dir():
     if _spec and _spec.origin:
         TELESTHETE_ROOT = Path(_spec.origin).parent
 OUTPUT = HERE / "band-worker.pyz"
+
+# telesthete.protocol modules the worker imports. route.py (addressed hub
+# routing, telesthete 0.3.0) is the newest: a stale sibling checkout without it
+# still runs (the codec has a byte-identical fallback) but means the bundle
+# carries a telesthete older than pyproject.toml pins, so refuse to build.
+REQUIRED_TELESTHETE = ("crypto.py", "fragment.py", "framing.py", "sequence.py",
+                       "drop.py", "route.py")
+
+
+# Set to 1 to build from a telesthete git checkout at another revision than
+# the pin (e.g. while changing both repos at once): a warning, not an error.
+ANY_REV_ENV = "ROOK_TELESTHETE_ANY_REV"
+
+
+def pinned_telesthete_rev(pyproject: Path = REPO_ROOT / "pyproject.toml") -> Optional[str]:
+    """The telesthete commit pyproject.toml pins (``telesthete @ git+...@<sha>``)."""
+    try:
+        text = pyproject.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    m = re.search(r'"telesthete\s*@\s*git\+[^"@]+@([0-9a-fA-F]{7,40})"', text)
+    return m.group(1).lower() if m else None
+
+
+def _checkout_rev(root: Path) -> Optional[str]:
+    """HEAD of the git checkout whose top level holds the ``telesthete``
+    package dir ``root``, or None when ``root`` isn't one (a pip install)."""
+    checkout = root.resolve().parent
+    try:
+        top = subprocess.check_output(
+            ["git", "-C", str(checkout), "rev-parse", "--show-toplevel"],
+            text=True, stderr=subprocess.DEVNULL).strip()
+        if Path(top).resolve() != checkout:
+            return None   # e.g. site-packages inside some unrelated repo
+        return subprocess.check_output(
+            ["git", "-C", str(checkout), "rev-parse", "HEAD"],
+            text=True, stderr=subprocess.DEVNULL).strip().lower()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
+def check_telesthete(root: Path, *, verify_rev: bool = True,
+                     pin: Optional[str] = None) -> None:
+    """Raise if ``root`` (a ``telesthete`` package dir) can't go in a bundle:
+    it lacks a protocol module the worker needs, or (``verify_rev``) it is a
+    git checkout at another commit than pyproject.toml pins. A pip-installed
+    telesthete (from the pin, or any non-checkout install) is checked for
+    modules only: it is the transport this hub itself runs, so it needs no
+    ``ROOK_TELESTHETE_ANY_REV``. Shared with android/stage_worker.py."""
+    missing = [m for m in REQUIRED_TELESTHETE if not (root / "protocol" / m).is_file()]
+    if missing:
+        raise FileNotFoundError(
+            f"telesthete at {root} is too old (missing protocol/{', protocol/'.join(missing)}); "
+            "update it to the commit pinned in pyproject.toml")
+    if not verify_rev:
+        return
+    pin = pin or pinned_telesthete_rev()
+    head = _checkout_rev(root)
+    if pin is None or head is None or head.startswith(pin) or pin.startswith(head):
+        return
+    msg = (f"telesthete checkout {root.parent} is at {head[:12]}, but pyproject.toml pins "
+           f"{pin[:12]}: the bundle would ship a different transport than the hub "
+           f"installs. Check out the pinned commit (git -C {root.parent} checkout {pin}), "
+           f"or set {ANY_REV_ENV}=1 to build anyway.")
+    if os.environ.get(ANY_REV_ENV, "").strip() == "1":
+        print(f"WARNING: {msg}", file=sys.stderr)
+        return
+    raise RuntimeError(msg)
 
 _MAIN = """\
 from rook.worker.cli import main
@@ -180,11 +253,12 @@ def _stamp_pubkey(worker_dst: Path) -> None:
     )
 
 
-def _write_manifest(build: int, commit: str, version: str, built_at: str) -> Path:
+def _write_manifest(build: int, commit: str, version: str, built_at: str,
+                    output: Path = OUTPUT) -> Path:
     """Compute the pyz hash and write a signed manifest next to it."""
     import hashlib
     h = hashlib.sha256()
-    with open(OUTPUT, "rb") as f:
+    with open(output, "rb") as f:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
     manifest = {
@@ -193,9 +267,9 @@ def _write_manifest(build: int, commit: str, version: str, built_at: str) -> Pat
         "version": version,
         "commit": commit,
         "built_at": built_at,
-        "filename": OUTPUT.name,
+        "filename": output.name,
         "sha256": h.hexdigest(),
-        "size": OUTPUT.stat().st_size,
+        "size": output.stat().st_size,
     }
     # Optional self-contained download URL (signed) so an in-band push doesn't
     # depend on the target worker having ROOK_UPDATE_URL configured. The build
@@ -203,20 +277,27 @@ def _write_manifest(build: int, commit: str, version: str, built_at: str) -> Pat
     import os as _os
     base = _os.environ.get("ROOK_PUBLIC_BASE", "").strip().rstrip("/")
     if base:
-        manifest["url"] = f"{base}/{OUTPUT.name}"
+        manifest["url"] = f"{base}/{output.name}"
     import sys as _sys
     _sys.path.insert(0, str(REPO_ROOT))
     from rook.remote.update_keys import sign_manifest
     manifest = sign_manifest(manifest)
     import json
-    manifest_path = OUTPUT.with_suffix(".json")
-    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    manifest_path = output.with_suffix(".json")
+    # Atomic: the dashboard may be serving the previous manifest right now.
+    tmp = manifest_path.with_name(manifest_path.name + ".tmp")
+    tmp.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, manifest_path)
     signed = "signed" if manifest.get("sig") else "UNSIGNED"
     print(f"Manifest: {manifest_path}  ({signed})")
     return manifest_path
 
 
-def build() -> Path:
+def build(output_dir: Optional[Path] = None) -> Path:
+    """Build the bundle and its signed manifest into ``output_dir`` (default:
+    next to this file) and return the bundle's path."""
+    output = (Path(output_dir) / OUTPUT.name) if output_dir else OUTPUT
+    output.parent.mkdir(parents=True, exist_ok=True)
     if not WORKER_SRC.is_dir():
         raise FileNotFoundError(f"Worker source not found: {WORKER_SRC}")
     if not TELESTHETE_ROOT.is_dir():
@@ -224,6 +305,8 @@ def build() -> Path:
             f"Telesthete source not found: {TELESTHETE_ROOT}\n"
             "Clone https://github.com/Bake-Ware/telesthete next to this repo or pip install it."
         )
+
+    check_telesthete(TELESTHETE_ROOT)
 
     build_num, commit, version = compute_build()
     built_at = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
@@ -255,17 +338,25 @@ def build() -> Path:
         (tel_dst / "__init__.py").write_text("", encoding="utf-8")
         _copy_pkg(TELESTHETE_ROOT / "protocol", tel_dst / "protocol")
 
+        # Build beside the target, then swap it in: a download in progress
+        # never sees a half-written bundle.
+        partial = output.with_name(output.name + ".partial")
         zipapp.create_archive(
             str(t),
-            target=str(OUTPUT),
+            target=str(partial),
             interpreter="/usr/bin/env python3",
         )
+        os.replace(partial, output)
 
-    size = OUTPUT.stat().st_size
-    print(f"Built: {OUTPUT}  v{version}  ({size:,} bytes)")
-    _write_manifest(build_num, commit, version, built_at)
-    return OUTPUT
+    size = output.stat().st_size
+    print(f"Built: {output}  v{version}  ({size:,} bytes)")
+    _write_manifest(build_num, commit, version, built_at, output)
+    return output
 
 
 if __name__ == "__main__":
-    build()
+    import argparse
+    _ap = argparse.ArgumentParser(description="Build band-worker.pyz and its signed manifest.")
+    _ap.add_argument("--output-dir", type=Path, default=None,
+                     help=f"where to write band-worker.pyz/.json (default {HERE})")
+    build(_ap.parse_args().output_dir)

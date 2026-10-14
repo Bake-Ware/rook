@@ -12,7 +12,7 @@ import re
 import time
 from datetime import date, datetime, timedelta, timezone
 
-from rook.worker.plugin import Plugin, capability
+from rook.worker.plugin import ANDROID_APP, Plugin, capability, place
 from rook_android.androidctx import app_context, jclass, has_permission
 
 _READ_CALENDAR = "android.permission.READ_CALENDAR"
@@ -146,12 +146,13 @@ def event_row(row: dict, offset=_offset_ms) -> dict:
 
 class AndroidCalendarPlugin(Plugin):
     NAMESPACE = "calendar"
+    PLACEMENT = place(ANDROID_APP)
 
     def available(self) -> bool:
         # Registered on every phone so a missing grant is a clear error, not a missing cap.
         return app_context() is not None
 
-    @capability("list", risk="read", tags=("personal",))
+    @capability("list", risk="read", tags=("personal", "sensitive"))
     def _list(self, start: str | int | None = None, end: str | int | None = None,
               limit: int = 20) -> dict:
         """Calendar events on the phone (Google Calendar, Outlook if it syncs calendars, others).

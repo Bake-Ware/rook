@@ -1,7 +1,9 @@
 // Jobs: scheduled, branching work the hub runs (docs/design/jobs.md).
 // Everything goes through /account/jobs/api, which runs job.read / job.write
 // as the signed-in account. Stored text is rendered as text, never as HTML.
-import {h,ago,useCss,btn,chips,table,two,dialog,menu} from '/account/bands/assets/manage.js';
+// Versioned like this module (?v=...), so a stale edge cache cannot pair it
+// with an old manage.js.
+const {h, ago, useCss, btn, chips, table, two, dialog, menu} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
 
 const API='/account/jobs/api';
 const FINAL=['success','failure','hang','interrupted','dropped','blocked','cancelled'];

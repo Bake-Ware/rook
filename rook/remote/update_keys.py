@@ -16,7 +16,6 @@ and deauth orders against.
 from __future__ import annotations
 
 import base64
-import json
 import os
 import sys
 from pathlib import Path
@@ -34,9 +33,11 @@ def key_path() -> Path:
 
 
 def _canonical_payload(manifest: dict) -> bytes:
-    """MUST match rook.worker._update_verify.canonical_payload byte-for-byte."""
-    body = {k: v for k, v in manifest.items() if k != "sig"}
-    return json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    """The signed bytes. The worker's verifier is the single definition, so a
+    signer can never drift from what workers check. Imported lazily: running
+    this file as a script (generate/pubkey) need not have rook importable."""
+    from rook.worker._update_verify import canonical_payload
+    return canonical_payload(manifest)
 
 
 def load_signing_key():

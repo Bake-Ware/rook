@@ -34,20 +34,27 @@ def masked_reply(reply: Any, public_env: Iterable[str] = ()) -> Any:
 async def apply_confirmed(client: Any, target: str, settings: dict, *, identity: str,
                           confirm_within: float = 120.0, public_env: Iterable[str] = (),
                           sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
-                          poll: float = 4.0) -> dict:
+                          poll: float = 4.0, restart: bool = True) -> dict:
+    """``restart=False`` asks the worker to apply the change in place (a
+    worker with ``worker.plugin.reload`` reloads the affected plugins); the
+    commit-confirm still runs, it just finds the worker never went away."""
     public_env = set(public_env)
     epoch = int(time.time())
+    args = {"settings": settings, "epoch": epoch, "confirm_within": confirm_within}
+    if not restart:
+        args["restart"] = False
     try:
         applied = await client.call(
             cap="worker.config_apply", target=target, timeout=15.0, identity=identity,
-            args={"settings": settings, "epoch": epoch, "confirm_within": confirm_within})
+            args=args)
     except asyncio.TimeoutError:
         return {"ok": False, "stage": "apply", "error": "no reply on config_apply"}
     if not (applied.get("result") or {}).get("ok", applied.get("ok")):
         return {"ok": False, "stage": "apply", "reply": masked_reply(applied, public_env)}
 
     deadline = time.time() + min(confirm_within, 110.0)
-    await sleep(poll)  # let it go down and restart
+    if restart:
+        await sleep(poll)  # let it go down and restart
     last_err = "worker did not return"
     while time.time() < deadline:
         try:

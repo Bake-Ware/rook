@@ -5,9 +5,11 @@
 // session shows the best view it has: its Rook terminal (tier 1), else the
 // live events the Claude Code mod mirrors (tier 2), else the transcript tail
 // (tier 3). See docs/web/sessions.md.
-const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// Versioned like this module (?v=...), so a stale edge cache cannot pair it
+// with an old manage.js.
+const {esc, ago: agoOr} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
 const base = path => { const p = String(path || '').replace(/[\\/]+$/, ''); return p.slice(Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\')) + 1) || p || '(no folder)'; };
-const ago = t => { if (!t) return ''; const s = Math.max(0, Date.now() / 1000 - t); return s < 90 ? 'just now' : s < 5400 ? Math.round(s / 60) + ' min ago' : s < 129600 ? Math.round(s / 3600) + ' h ago' : Math.round(s / 86400) + ' d ago'; };
+const ago = t => agoOr(t, '');
 const STATES = {live: 0, idle: 1, closed: 2};
 const rank = r => STATES[r.state] ?? 2;
 const AGENTS = ['claude', 'codex', 'hermes', 'shell'];

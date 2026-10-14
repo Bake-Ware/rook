@@ -1,22 +1,46 @@
-"""Interactive, HTTPS-only config enrollment without a PSK on the command line."""
+"""Interactive config enrollment without a PSK on the command line.
+
+HTTPS, except a hub addressed by a non-public (LAN, loopback, tailnet) IP literal
+(a LAN quickstart hub serves its dashboard over plain HTTP; the installer that
+runs this already came over the same connection)."""
+import ipaddress
 import json
 import os
 from pathlib import Path
-import tempfile
 import time
 from urllib.parse import urlsplit
 from urllib.request import Request
 import webbrowser
 
+from ..core.paths import worker_state_path
+from ..core.db import atomic_write_text
+
 
 def storage_path():
-    return Path(os.environ.get('ROOK_ENROLLMENT_FILE',str(Path.home()/'.rook-band-worker/enrollment.json'))).expanduser()
+    return Path(os.environ.get('ROOK_ENROLLMENT_FILE',str(worker_state_path('enrollment.json')))).expanduser()
+
+
+def _lan_host(host):
+    try:
+        ip=ipaddress.ip_address(host)
+    except ValueError:
+        return host=='localhost'
+    # Not globally routable: RFC 1918, loopback, link-local, CGNAT/tailnet.
+    return not ip.is_global and not ip.is_multicast and not ip.is_unspecified
+
+
+def check_origin(server,message='Use the HTTPS origin of your Rook server.'):
+    """Raise unless ``server`` is a bare origin this worker may enroll with:
+    ``https://host[:port]``, or ``http://`` to a non-public IP literal. A
+    public name never gets plain HTTP, so a public hub stays HTTPS-only."""
+    url=urlsplit(server)
+    ok_scheme=url.scheme=='https' or (url.scheme=='http' and url.hostname is not None and _lan_host(url.hostname))
+    if not ok_scheme or not url.hostname or url.username or url.password or url.query or url.fragment or url.path not in ('','/'):
+        raise ValueError(message)
 
 
 def post(server,path,data):
-    url=urlsplit(server)
-    if url.scheme!='https' or not url.hostname or url.username or url.password or url.query or url.fragment or url.path not in ('','/'):
-        raise ValueError('Use the HTTPS origin of your Rook server.')
+    check_origin(server)
     request=Request(server.rstrip('/')+path,data=json.dumps(data).encode(),headers={'Content-Type':'application/json','User-Agent':'rook-enrollment/1'})
     # Do not forward enrollment grants through HTTP redirects.
     import urllib.request
@@ -31,13 +55,7 @@ def post(server,path,data):
 def save(data,path=None):
     path=Path(path or storage_path())
     path.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
-    fd,temp=tempfile.mkstemp(dir=path.parent,prefix='.enrollment-')
-    try:
-        with os.fdopen(fd,'w') as output:
-            json.dump(data,output,indent=2);output.write('\n');output.flush();os.fsync(output.fileno())
-        os.replace(temp,path)
-    finally:
-        if os.path.exists(temp):os.unlink(temp)
+    atomic_write_text(path,json.dumps(data,indent=2)+'\n',0o600)
 
 
 def load():

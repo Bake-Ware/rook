@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from rook.worker.plugin import Plugin, capability
+from rook.worker.plugin import ANDROID_APP, Plugin, capability, place
 from rook_android.androidctx import app_context, jclass, has_permission
 
 _READ_CONTACTS = "android.permission.READ_CONTACTS"
@@ -10,8 +10,9 @@ _READ_CONTACTS = "android.permission.READ_CONTACTS"
 
 class AndroidContactsPlugin(Plugin):
     NAMESPACE = "contacts"
+    PLACEMENT = place(ANDROID_APP)
 
-    @capability("search")
+    @capability("search", risk="exec", tags=("sensitive",))
     def _search(self, query: str = "", limit: int = 40) -> dict:
         """Contacts whose name/number matches ``query`` (empty = first N)."""
         ctx = app_context()

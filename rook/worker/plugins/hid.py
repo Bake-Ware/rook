@@ -16,17 +16,14 @@ import shutil
 import sys
 from typing import Any
 
-from ..plugin import Plugin, capability
-
-
-def _is_termux() -> bool:
-    return os.environ.get("PREFIX", "").startswith("/data/data/com.termux")
+from ...core.pluginkit import is_termux, run
+from ..plugin import ANDROID_APP_REPLACED, Plugin, capability, place
 
 
 def _detect_backend() -> str:
     if sys.platform == "win32":
         return "win32"
-    if _is_termux():
+    if is_termux():
         return "android"
     if sys.platform.startswith("linux"):
         if shutil.which("xdotool"):
@@ -43,24 +40,9 @@ def _detect_backend() -> str:
     return "none"
 
 
-async def _run(cmd: list[str], stdin: bytes | None = None,
-               timeout: float = 10.0) -> tuple[int, bytes, bytes]:
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdin=asyncio.subprocess.PIPE if stdin is not None else None,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    try:
-        out, err = await asyncio.wait_for(proc.communicate(stdin), timeout)
-    except asyncio.TimeoutError:
-        proc.kill()
-        try:
-            await proc.wait()
-        except Exception:
-            pass
-        raise
-    return proc.returncode or 0, out, err
+async def _run(cmd: list[str], timeout: float = 10.0):
+    """An input tool call: short, so a wedged one fails fast."""
+    return await run(cmd, timeout)
 
 
 def _xdotool_combo(mods: list[str], key: str) -> str:
@@ -212,6 +194,7 @@ def _win_send_input_sync(keys: list[tuple[int, bool]] | None = None,
 
 class HidPlugin(Plugin):
     NAMESPACE = "hid"
+    PLACEMENT = place(ANDROID_APP_REPLACED)  # the APK has native replacements
 
     def available(self) -> bool:
         if _detect_backend() == "none":
@@ -234,24 +217,24 @@ class HidPlugin(Plugin):
 
     # ---- typing --------------------------------------------------------
 
-    @capability("type")
+    @capability("type", risk="exec", tags=("physical",))
     async def _type(self, text: str) -> dict:
         """Type ``text`` as if on a real keyboard."""
         be = self._be()
         if be == "xdotool":
             code, _, err = await _run(["xdotool", "type", "--clearmodifiers", "--", text])
             if code != 0:
-                return {"ok": False, "error": err.decode(errors="replace").strip()}
+                return {"ok": False, "error": err.strip()}
             return {"ok": True, "typed": len(text)}
         if be == "ydotool":
             code, _, err = await _run(["ydotool", "type", "--", text])
             if code != 0:
-                return {"ok": False, "error": err.decode(errors="replace").strip()}
+                return {"ok": False, "error": err.strip()}
             return {"ok": True, "typed": len(text)}
         if be == "wtype":
             code, _, err = await _run(["wtype", "--", text])
             if code != 0:
-                return {"ok": False, "error": err.decode(errors="replace").strip()}
+                return {"ok": False, "error": err.strip()}
             return {"ok": True, "typed": len(text)}
         if be == "win32":
             res = await asyncio.to_thread(_win_send_input_sync, None, text, None)
@@ -264,13 +247,13 @@ class HidPlugin(Plugin):
             # `input text` doesn't accept arbitrary chars; spaces must be %s.
             code, _, err = await _run(["input", "text", text.replace(" ", "%s")])
             if code != 0:
-                return {"ok": False, "error": err.decode(errors="replace").strip()}
+                return {"ok": False, "error": err.strip()}
             return {"ok": True, "typed": len(text)}
         return {"ok": False, "error": f"no hid backend (detected: {be})"}
 
     # ---- key combos ----------------------------------------------------
 
-    @capability("key_combo")
+    @capability("key_combo", risk="exec", tags=("physical",))
     async def _key_combo(self, key: str, modifiers: list[str] | None = None) -> dict:
         """Press a key with optional modifier list (e.g. ``["ctrl","shift"]``)."""
         mods = list(modifiers or [])
@@ -279,13 +262,13 @@ class HidPlugin(Plugin):
             combo = _xdotool_combo(mods, key)
             code, _, err = await _run(["xdotool", "key", "--clearmodifiers", combo])
             if code != 0:
-                return {"ok": False, "error": err.decode(errors="replace").strip()}
+                return {"ok": False, "error": err.strip()}
             return {"ok": True, "sent": combo}
         if be == "ydotool":
             combo = "+".join([*[m.lower() for m in mods], key])
             code, _, err = await _run(["ydotool", "key", combo])
             if code != 0:
-                return {"ok": False, "error": err.decode(errors="replace").strip()}
+                return {"ok": False, "error": err.strip()}
             return {"ok": True, "sent": combo}
         if be == "wtype":
             # wtype: -M mod ... <key> -m mod ...
@@ -297,7 +280,7 @@ class HidPlugin(Plugin):
                 argv += ["-m", m.lower()]
             code, _, err = await _run(argv)
             if code != 0:
-                return {"ok": False, "error": err.decode(errors="replace").strip()}
+                return {"ok": False, "error": err.strip()}
             return {"ok": True, "sent": "+".join([*mods, key])}
         if be == "win32":
             table = _win_vk_table()
@@ -323,13 +306,13 @@ class HidPlugin(Plugin):
                 return {"ok": False, "error": "android `input` command not available"}
             code, _, err = await _run(["input", "keyevent", key.upper()])
             if code != 0:
-                return {"ok": False, "error": err.decode(errors="replace").strip()}
+                return {"ok": False, "error": err.strip()}
             return {"ok": True, "sent": key, "note": "modifiers ignored on android"}
         return {"ok": False, "error": f"no hid backend (detected: {be})"}
 
     # ---- mouse ---------------------------------------------------------
 
-    @capability("mouse.move")
+    @capability("mouse.move", risk="exec", tags=("physical",))
     async def _mouse_move(self, x: int, y: int) -> dict:
         """Move pointer to absolute pixel (x, y) — top-left origin."""
         x, y = int(x), int(y)
@@ -337,12 +320,12 @@ class HidPlugin(Plugin):
         if be == "xdotool":
             code, _, err = await _run(["xdotool", "mousemove", str(x), str(y)])
             if code != 0:
-                return {"ok": False, "error": err.decode(errors="replace").strip()}
+                return {"ok": False, "error": err.strip()}
             return {"ok": True, "x": x, "y": y}
         if be == "ydotool":
             code, _, err = await _run(["ydotool", "mousemove", "--absolute", "-x", str(x), "-y", str(y)])
             if code != 0:
-                return {"ok": False, "error": err.decode(errors="replace").strip()}
+                return {"ok": False, "error": err.strip()}
             return {"ok": True, "x": x, "y": y}
         if be == "win32":
             res = await asyncio.to_thread(
@@ -355,7 +338,7 @@ class HidPlugin(Plugin):
             return {"ok": False, "error": "android does not support raw pointer-move; use mouse.click"}
         return {"ok": False, "error": f"no hid backend (detected: {be})"}
 
-    @capability("mouse.click")
+    @capability("mouse.click", risk="exec", tags=("physical",))
     async def _mouse_click(self, button: int = 1, x: int | None = None,
                            y: int | None = None) -> dict:
         """Click ``button`` (1=left, 2=middle, 3=right). If x/y given, move first."""
@@ -367,14 +350,14 @@ class HidPlugin(Plugin):
         if be == "xdotool":
             code, _, err = await _run(["xdotool", "click", str(int(button))])
             if code != 0:
-                return {"ok": False, "error": err.decode(errors="replace").strip()}
+                return {"ok": False, "error": err.strip()}
             return {"ok": True, "button": int(button)}
         if be == "ydotool":
             # ydotool click codes: 0xC0=left, 0xC1=right, 0xC2=middle (down+up).
             code_map = {1: "0xC0", 2: "0xC2", 3: "0xC1"}
             code, _, err = await _run(["ydotool", "click", code_map.get(int(button), "0xC0")])
             if code != 0:
-                return {"ok": False, "error": err.decode(errors="replace").strip()}
+                return {"ok": False, "error": err.strip()}
             return {"ok": True, "button": int(button)}
         if be == "win32":
             res = await asyncio.to_thread(
@@ -390,11 +373,11 @@ class HidPlugin(Plugin):
                 return {"ok": False, "error": "android click requires x/y"}
             code, _, err = await _run(["input", "tap", str(int(x)), str(int(y))])
             if code != 0:
-                return {"ok": False, "error": err.decode(errors="replace").strip()}
+                return {"ok": False, "error": err.strip()}
             return {"ok": True, "button": int(button), "x": int(x), "y": int(y)}
         return {"ok": False, "error": f"no hid backend (detected: {be})"}
 
-    @capability("mouse.drag")
+    @capability("mouse.drag", risk="exec", tags=("physical",))
     async def _mouse_drag(self, start_x: int, start_y: int,
                           end_x: int, end_y: int, button: int = 1,
                           duration_ms: int = 200) -> dict:
@@ -407,7 +390,7 @@ class HidPlugin(Plugin):
             code, _, err = await _run(
                 ["input", "swipe", str(sx), str(sy), str(ex), str(ey), str(int(duration_ms))])
             if code != 0:
-                return {"ok": False, "error": err.decode(errors="replace").strip()}
+                return {"ok": False, "error": err.strip()}
             return {"ok": True, "from": [sx, sy], "to": [ex, ey]}
         if be == "xdotool":
             cmds = [
@@ -419,7 +402,7 @@ class HidPlugin(Plugin):
             for c in cmds:
                 code, _, err = await _run(c)
                 if code != 0:
-                    return {"ok": False, "error": err.decode(errors="replace").strip(),
+                    return {"ok": False, "error": err.strip(),
                             "step": c}
             return {"ok": True, "from": [sx, sy], "to": [ex, ey]}
         if be == "win32":
@@ -446,7 +429,7 @@ class HidPlugin(Plugin):
 
     # ---- diagnostics ---------------------------------------------------
 
-    @capability("backend")
+    @capability("backend", risk="read")
     def _backend_info(self) -> dict[str, Any]:
         """Report which input backend was selected."""
         return {"backend": self._be(), "platform": sys.platform}

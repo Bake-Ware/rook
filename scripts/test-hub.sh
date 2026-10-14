@@ -231,7 +231,6 @@ cmd_start() {
       { echo "ROOK_BAND_PSK=$("$PYTHON" -m rook.remote.psk)"
         echo "ROOK_WEB_PASS=$("$PYTHON" -c 'import secrets; print(secrets.token_urlsafe(12))')"
         echo "ROOK_MCP_STATIC_TOKEN=$("$PYTHON" -c 'import secrets; print(secrets.token_urlsafe(32))')"
-        echo "ROOK_MCP_AUTH_PASSWORD=$("$PYTHON" -c 'import secrets; print(secrets.token_urlsafe(12))')"
       } > "$secrets" )
   fi
   # shellcheck disable=SC1090
@@ -253,7 +252,7 @@ cmd_start() {
     2>/dev/null || true)"
 
   SPAWN_ENV=(ROOK_DATA_DIR="$DATA/hub" ROOK_BAND_PSK="$ROOK_BAND_PSK" ROOK_MCP_STATIC_TOKEN="$ROOK_MCP_STATIC_TOKEN"
-             ROOK_MCP_AUTH_PASSWORD="$ROOK_MCP_AUTH_PASSWORD" ROOK_KNOWLEDGE="$KNOWLEDGE"
+             ROOK_KNOWLEDGE="$KNOWLEDGE"
              ROOK_HUB_BAND_MAX_RISK="$BAND_MAX_RISK")
   spawn mcp "$DATA/hub/home" "$PYTHON" -m rook.band_mcp --hub "127.0.0.1:$RELAY_PORT" \
       --bind "$BIND:$MCP_PORT" --allowed-hosts "$public:$MCP_PORT"

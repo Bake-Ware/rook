@@ -25,17 +25,16 @@ import importlib
 import inspect
 import json
 import logging
-import os
 import pkgutil
 import shlex
-from pathlib import Path
 from typing import Any
 
-from .plugin import Plugin, load_plugins
+from ..core.paths import worker_state_dir
+from .plugin import Plugin
 
 log = logging.getLogger("rook.worker.admin")
 
-_WORKER_DIR = Path(os.path.expanduser("~")) / ".rook-band-worker"
+_WORKER_DIR = worker_state_dir()
 _PLUGIN_STATE = _WORKER_DIR / "plugins.json"        # {"disabled": [...], "enabled": [...]}
 _CUSTOM_STATE = _WORKER_DIR / "custom_caps.json"    # {name: {command, args, ...}}
 
@@ -91,17 +90,25 @@ def _save_custom(defs: dict) -> None:
     _CUSTOM_STATE.write_text(json.dumps(defs, indent=2) + "\n", encoding="utf-8")
 
 
-class WorkerAdmin:
-    """Holds live references to the worker's registry + plugin list so runtime
-    changes take effect immediately, and persists them so they survive restart.
-    Constructed and wired by :class:`rook.worker.core.Worker`."""
+#: Plugins that cannot be disabled remotely: they carry worker.restart/apply
+#: and the ability to re-enable anything.
+_PROTECTED = frozenset({"selfupdate"})
 
-    def __init__(self, registry, plugins: list[Plugin], plugins_pkg: str,
-                 enable_arg: list[str] | None = None) -> None:
+
+class WorkerAdmin:
+    """Runtime plugin and custom-cap administration for a live worker.
+    Plugin changes go through the worker's :class:`rook.core.host.PluginHost`
+    (the boot path: placement, settings, collision safety, ``bind_worker``,
+    status) and are persisted so they survive a restart. Constructed and
+    wired by :class:`rook.worker.core.Worker`."""
+
+    def __init__(self, registry, plugins: list[Plugin], plugins_pkg: "str | list[str]",
+                 enable_arg: list[str] | None = None, host: Any = None) -> None:
         self.registry = registry
-        self.plugins = plugins            # the Worker's live list (mutated in place)
-        self.plugins_pkg = plugins_pkg
+        self.plugins = plugins            # the Worker's live list (the host's own)
+        self.plugins_pkg = [plugins_pkg] if isinstance(plugins_pkg, str) else list(plugins_pkg)
         self.enable_arg = enable_arg      # --enable as given (None = all built-ins)
+        self.host = host
         self._custom: dict = _load_custom()
 
     def excluded(self) -> list[str]:
@@ -120,6 +127,8 @@ class WorkerAdmin:
         r.register("worker.plugin.list", self.plugin_list)
         r.register("worker.plugin.enable", self.plugin_enable)
         r.register("worker.plugin.disable", self.plugin_disable)
+        if self.host is not None:
+            r.register("worker.plugin.reload", self.plugin_reload)
         r.register("customcap.list", self.customcap_list)
         r.register("customcap.add", self.customcap_add)
         r.register("customcap.remove", self.customcap_remove)
@@ -133,9 +142,14 @@ class WorkerAdmin:
     # -- plugin enable / disable --------------------------------------------
 
     def _all_modules(self) -> list[str]:
-        pkg = importlib.import_module(self.plugins_pkg)
-        return sorted(m.name for m in pkgutil.iter_modules(pkg.__path__)
-                      if not m.name.startswith("_"))
+        if self.host is not None and self.host.candidates:
+            return sorted(self.host.candidates)
+        out: set[str] = set()
+        for name in self.plugins_pkg:
+            pkg = importlib.import_module(name)
+            out.update(m.name for m in pkgutil.iter_modules(pkg.__path__)
+                       if not m.name.startswith("_"))
+        return sorted(out)
 
     def plugin_list(self) -> dict:
         """List every plugin module and whether it's currently loaded, with the
@@ -153,6 +167,7 @@ class WorkerAdmin:
                 "namespace": p.NAMESPACE if p else None,
                 "caps": sorted(p.caps().keys()) if p else [],
             }
+            st = (self.host.status.get(mod) if self.host is not None else None) or {}
             if p is None:
                 # Why it isn't loaded, so a UI can explain it (settings P14).
                 if mod in disabled:
@@ -160,73 +175,67 @@ class WorkerAdmin:
                 elif mod in excluded:
                     row["excluded"] = True
                     row["reason"] = "left out by --enable on the worker's command line"
+                elif st.get("state") in ("not_placed", "failed", "skipped") and st.get("reason"):
+                    row["reason"] = st["reason"]
                 else:
                     row["reason"] = "not available on this host (backend or setting missing)"
+            if st.get("state"):
+                row["state"] = st["state"]
+            for k in ("start_error", "bind_error"):
+                if st.get(k):
+                    row[k] = st[k]
             out.append(row)
         return {"ok": True, "plugins": out, "enable": self.enable_arg}
 
     async def plugin_disable(self, module: str) -> dict:
         """Unload a plugin now and keep it unloaded across restarts. Its caps are
         unregistered immediately."""
-        p = next((x for x in self.plugins if getattr(x, "_module", "") == module), None)
-        if p is None:
+        if self.host is not None and self.host.loaded(module) is None:
             return {"ok": False, "error": f"plugin not loaded: {module}"}
         # Refuse to disable the admin/self-update machinery — that would strip
         # worker.restart/apply and the ability to re-enable anything remotely.
-        if module == "selfupdate":
-            return {"ok": False, "error": "refusing to disable selfupdate (would strip worker.* control)"}
-        removed = []
-        for dotpath in p.caps():
-            if self.registry.unregister(dotpath):
-                removed.append(dotpath)
-        # best-effort teardown
-        try:
-            res = p.stop()
-            if inspect.isawaitable(res):
-                await res
-        except Exception:
-            log.exception("plugin %s stop() failed", module)
-        self.plugins[:] = [x for x in self.plugins if x is not p]
+        if module in _PROTECTED:
+            return {"ok": False, "error": f"refusing to disable {module} (would strip worker.* control)"}
+        if self.host is None:
+            return {"ok": False, "error": "this worker has no plugin host"}
+        res = await self.host.disable(module)
+        if not res.get("ok"):
+            return {"ok": False, "error": res.get("error")}
         d = load_disabled(); d.add(module)
         e = load_enabled(); e.discard(module)
         _save_state(disabled=d, enabled=e)
-        log.info("disabled plugin %s (%d caps removed)", module, len(removed))
-        return {"ok": True, "module": module, "caps_removed": removed}
+        return {"ok": True, "module": module, "caps_removed": res.get("caps_removed", [])}
 
     async def plugin_enable(self, module: str) -> dict:
-        """Load a plugin now and keep it loaded across restarts. Honours the
-        plugin's own ``available()`` gate (won't load where it can't function)."""
-        if any(getattr(x, "_module", "") == module for x in self.plugins):
-            # Already loaded — just clear any persisted disable.
-            d = load_disabled()
-            if module in d:
-                d.discard(module); _save_disabled(d)
-            return {"ok": True, "module": module, "already_loaded": True}
+        """Load a plugin now and keep it loaded across restarts.
+
+        Loaded the way boot loads it: placement, settings, ``available()``,
+        collision checks and its worker binding. Won't load where it can't
+        function."""
+        if self.host is None:
+            return {"ok": False, "error": "this worker has no plugin host"}
         if module not in self._all_modules():
             return {"ok": False, "error": f"no such plugin module: {module}"}
-        # Reuse the loader for one module so available()/registration match boot.
-        before = {id(p) for p in self.plugins}
-        loaded = load_plugins(self.plugins_pkg, self.registry, enabled=[module])
-        new = [p for p in loaded if id(p) not in before]
-        if not new:
-            return {"ok": False,
-                    "error": f"{module} did not load (available() false or no PLUGIN)"}
-        for p in new:
-            self.plugins.append(p)
-            try:
-                res = p.start()
-                if inspect.isawaitable(res):
-                    await res
-            except Exception:
-                log.exception("plugin %s start() failed", module)
+        res = await self.host.enable(module)
+        if not res.get("ok"):
+            return {"ok": False, "error": res.get("error")}
         d = load_disabled(); d.discard(module)
         e = load_enabled()
         if self.enable_arg is not None and module not in self.enable_arg:
             e.add(module)   # --enable leaves it out: remember, or a restart drops it
         _save_state(disabled=d, enabled=e)
-        caps = sorted(c for p in new for c in p.caps())
-        log.info("enabled plugin %s (%d caps)", module, len(caps))
-        return {"ok": True, "module": module, "caps_added": caps}
+        if res.get("already_loaded"):
+            return {"ok": True, "module": module, "already_loaded": True}
+        return {"ok": True, "module": module, "caps_added": res.get("caps", [])}
+
+    async def plugin_reload(self, module: str) -> dict:
+        """Restart one loaded plugin with its current settings.
+
+        Stops it, loads it again (new instance, settings re-read) and starts
+        it, e.g. after changing a setting marked ``reload``."""
+        res = await self.host.reload(module)
+        return res if res.get("ok") else {"ok": False, "error": res.get("error"),
+                                          **({"unloaded": True} if res.get("unloaded") else {})}
 
     # -- custom command-caps -------------------------------------------------
 
@@ -274,9 +283,13 @@ class WorkerAdmin:
         return {"ok": True, "removed": name}
 
     def _register_custom(self, name: str, spec: dict) -> None:
+        from ..core.plugin import TIMEOUT_MARGIN, CapMeta
         dotpath = f"{_CUSTOM_NS}.{name}"
         handler = self._make_handler(name, spec)
-        self.registry.register(dotpath, handler, replace=True)
+        # The command's own timeout bounds it; core's cut-off sits just past
+        # that, so a long-running custom cap is not killed at the default.
+        meta = CapMeta(risk="exec", timeout=float(spec.get("timeout", 30.0)) + TIMEOUT_MARGIN)
+        self.registry.register(dotpath, handler, replace=True, meta=meta)
 
     def _make_handler(self, name: str, spec: dict):
         argnames: list[str] = list(spec.get("args", []))

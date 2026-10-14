@@ -30,18 +30,25 @@ import sys
 import time
 from pathlib import Path
 
-from ..plugin import Plugin, capability
+from ...core.paths import legacy_state_path, worker_install_dir, worker_state_dir
+from ...core.db import atomic_write_json, atomic_write_text
+from ...core.pluginkit import RunTimeout, is_termux, is_windows, run
+from ..plugin import ANDROID_APP_REPLACED, Plugin, capability, place
 
 log = logging.getLogger("rook.worker.plugins.selfupdate")
 
 _HOME = Path(os.path.expanduser("~"))
-_WORKER_DIR = _HOME / ".rook-band-worker"
+# The bundle lives where the installer and the service manager put it, which
+# is always under the home dir; flags and identity live in the state dir
+# (ROOK_WORKER_HOME, else the same directory).
+_WORKER_DIR = worker_install_dir()
+_STATE_DIR = worker_state_dir()
 _PYZ = _WORKER_DIR / "band-worker.pyz"
 _PREV = _WORKER_DIR / "band-worker.pyz.prev"     # previous bundle, for rollback
-_STATE = _WORKER_DIR / "update_state.json"       # in-flight update tracking
-_HOLD = _WORKER_DIR / "hold"                      # presence pins this node (no auto-update)
-_BANNED = _WORKER_DIR / "banned"                  # presence = deauthed; refuse to rejoin
-_WORKER_ID_FILE = _WORKER_DIR / "worker_id"       # stable identity (see core.stable_worker_id)
+_STATE = _STATE_DIR / "update_state.json"        # in-flight update tracking
+_HOLD = _STATE_DIR / "hold"                       # presence pins this node (no auto-update)
+_BANNED = _STATE_DIR / "banned"                   # presence = deauthed; refuse to rejoin
+_WORKER_ID_FILE = _STATE_DIR / "worker_id"        # stable identity (see core.stable_worker_id)
 _UNIT = _HOME / ".config" / "systemd" / "user" / "rook-band-worker.service"
 _SVC = "rook-band-worker"
 _WIN_TASK = "RookBandWorker"      # matches PS_BOOTSTRAP's Register-ScheduledTask name
@@ -53,20 +60,12 @@ _MAX_BOOT_ATTEMPTS = 3     # boots into a new build without health before rollin
 _UA = "rook-worker"        # Cloudflare blocks the default urllib User-Agent
 
 
-def _is_termux() -> bool:
-    return "com.termux" in os.environ.get("PREFIX", "") or bool(os.environ.get("TERMUX_VERSION"))
-
-
-def _is_windows() -> bool:
-    return sys.platform == "win32"
-
-
 def _supervisor() -> str:
     if _UNIT.exists():
         return "systemd-user"
-    if _is_termux():
+    if is_termux():
         return "runit"
-    if _is_windows():
+    if is_windows():
         return "windows-task"     # informational only — live restart still uses os.execv
     return "exec"
 
@@ -79,22 +78,35 @@ def _my_worker_id() -> str | None:
         return None
 
 
+def _ban_files() -> list[Path]:
+    """This state directory's flag, plus the one in ~/.rook-band-worker when
+    ROOK_WORKER_HOME points elsewhere: a node deauthed before the variable
+    moved its state (or with the copy disabled) must stay off the band."""
+    legacy = legacy_state_path("banned")
+    return [_BANNED] + ([legacy] if legacy is not None else [])
+
+
 def is_banned() -> bool:
     """True if this node has been deauthed (worker.deauth). Checked at boot by
     the CLI so a banned worker parks itself off-band instead of rejoining."""
-    return _BANNED.exists()
+    return any(p.exists() for p in _ban_files())
 
 
 def ban_info() -> dict:
     """Details of the standing ban, or ``{}`` if not banned."""
-    try:
-        return json.loads(_BANNED.read_text(encoding="utf-8"))
-    except Exception:
-        return {"at": 0} if _BANNED.exists() else {}
+    for path in _ban_files():
+        if not path.exists():
+            continue
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return {"at": 0}
+    return {}
 
 
 class SelfUpdatePlugin(Plugin):
     NAMESPACE = "worker"
+    PLACEMENT = place(ANDROID_APP_REPLACED)  # the APK has native replacements
 
     def __init__(self) -> None:
         super().__init__()
@@ -110,14 +122,17 @@ class SelfUpdatePlugin(Plugin):
 
     def bind_worker(self, worker) -> None:
         """Grab a handle to the Worker so we can receive in-band bundle pushes
-        (raw Drop packets) and send REQUEST/DONE back onto the band. Called once
-        at worker start."""
+        (raw Drop packets) and send REQUEST/DONE back onto the band. Called at
+        worker start and again for each instance a reload builds; stop()
+        drops this instance's handler."""
         self._worker = worker
         worker.register_binary_handler(self._ota_binary)
 
     def _ota_binary(self, payload: bytes, peer_id: tuple) -> bool:
         """Feed inbound telesthete DROP packets to the active receiver. Returns
-        True (consumed) for any DROP-channel packet on our band."""
+        True (consumed) for any DROP-channel packet on our band. Native DROP
+        frames arrive here already re-wrapped by the codec, so both forms
+        look the same."""
         if self._worker is None or self._ota_rx is None:
             return False
         from ..ota_drop import is_drop_packet
@@ -126,7 +141,7 @@ class SelfUpdatePlugin(Plugin):
         self._ota_rx.feed(payload)
         return True
 
-    @capability("ota_begin")
+    @capability("ota_begin", risk="admin")
     async def _ota_begin(self, manifest: dict, drop_id: int = 0) -> dict:
         """Arm this worker to receive a bundle pushed **in band** over telesthete
         Drop (§8), for the given ``drop_id``. The ed25519-signed manifest is
@@ -136,10 +151,17 @@ class SelfUpdatePlugin(Plugin):
         is untrusted; only the signature + hash grant the swap."""
         from .._build_info import BUILD
         from .._update_verify import verify_manifest
-        from ..ota_drop import OtaDropReceiver
+        from ..ota_drop import REPLY_DROP_BASE, OtaDropReceiver, valid_ota_drop_id
 
         if self._worker is None:
             return {"ok": False, "error": "worker not bound (no transport)"}
+        try:
+            drop_id = int(drop_id)
+        except (TypeError, ValueError):
+            drop_id = -1
+        if not valid_ota_drop_id(drop_id):
+            return {"ok": False, "error": f"drop_id must be 0-{REPLY_DROP_BASE - 1} "
+                                          "(higher ids carry large replies)"}
         if not isinstance(manifest, dict):
             return {"ok": False, "error": "manifest must be an object"}
         if not verify_manifest(manifest):
@@ -152,10 +174,14 @@ class SelfUpdatePlugin(Plugin):
             return {"ok": False, "error": "an in-band update is already in progress"}
 
         self._ota_manifest = dict(manifest)
+        # The controller's route (its request's ``rr``): our REQUEST/DONE go
+        # to it alone on a routing hub. 0 = broadcast, as before.
+        from ..wire.envelope import current_reply_opts
         rx = OtaDropReceiver(
             band_id=self._worker.transport.band_id,
             drop_id=int(drop_id),
             send_coro=self._worker.send_raw,
+            route=current_reply_opts.get().route,
         )
         rx.on_complete(self._on_ota_complete)
         rx.start()
@@ -214,15 +240,21 @@ class SelfUpdatePlugin(Plugin):
         for t in (self._converge_task, self._health_task):
             if t is not None:
                 t.cancel()
+        # A reload binds a new instance, which registers its own handler; the
+        # old one would otherwise keep a handler per reload (a second
+        # receiver for the same OTA push).
+        unregister = getattr(self._worker, "unregister_binary_handler", None)
+        if callable(unregister):
+            unregister(self._ota_binary)
 
-    @capability("check")
+    @capability("check", risk="admin", timeout=None)
     async def _check(self, force: bool = False) -> dict:
         """Check the signed manifest now and update if a newer build is
         published (bypasses the poll interval). ``force=true`` overrides a hold
         pin for this explicit call. Used to drive canary rollouts."""
         return await self._check_and_update(force=force)
 
-    @capability("apply")
+    @capability("apply", risk="admin", timeout=None)
     async def _apply(self, manifest: dict) -> dict:
         """Apply a signed update manifest pushed in-band by the controller.
         The ed25519 signature is verified before anything happens, so being on
@@ -231,19 +263,19 @@ class SelfUpdatePlugin(Plugin):
             return {"ok": False, "error": "manifest must be an object"}
         return await self._apply_manifest(manifest)
 
-    @capability("hold")
+    @capability("hold", risk="admin")
     def _hold(self, enable: bool = True) -> dict:
         """Pin this node so it won't auto-update (survives restarts). Use to
         freeze critical hosts / the dongle box. ``worker.check(force=true)``
         still updates it on explicit demand."""
-        _WORKER_DIR.mkdir(parents=True, exist_ok=True)
+        _HOLD.parent.mkdir(parents=True, exist_ok=True)
         if enable:
             _HOLD.write_text(f"held at {int(time.time())}\n", encoding="utf-8")
         else:
             _HOLD.unlink(missing_ok=True)
         return {"ok": True, "held": enable}
 
-    @capability("deauth")
+    @capability("deauth", risk="admin", tags=("destructive",))
     async def _deauth(self, payload: dict) -> dict:
         """Remove/ban this worker from the band — but ONLY on an ed25519-signed
         order from the controller. Being on the band (knowing the shared PSK) is
@@ -280,11 +312,10 @@ class SelfUpdatePlugin(Plugin):
             return {"ok": False, "error": why}
         if isinstance(payload.get("v2"), dict):
             payload = payload["v2"]
-        _WORKER_DIR.mkdir(parents=True, exist_ok=True)
-        _BANNED.write_text(json.dumps({
+        atomic_write_text(_BANNED, json.dumps({
             "at": int(time.time()),
             "reason": str(payload.get("reason", ""))[:500],
-        }) + "\n", encoding="utf-8")
+        }) + "\n")
         log.warning("deauthed from band (reason=%r); restarting into dormant mode",
                     payload.get("reason", ""))
         # Ack first, then restart INTO the boot gate — the fresh process sees the
@@ -295,8 +326,9 @@ class SelfUpdatePlugin(Plugin):
 
     # -- introspection -------------------------------------------------------
 
-    @capability("status")
+    @capability("status", risk="read")
     def _status(self) -> dict:
+        """Build, version, supervisor and update state of this worker (band key redacted)."""
         from .._build_info import as_dict as _build
         argv=list(sys.argv)
         for index,value in enumerate(argv):
@@ -316,14 +348,14 @@ class SelfUpdatePlugin(Plugin):
 
     # -- lifecycle -----------------------------------------------------------
 
-    @capability("restart")
+    @capability("restart", risk="admin", tags=("destructive",))
     async def _restart(self) -> dict:
         """Restart this worker with its current config, via the service manager
         (or re-exec). Kill-safe."""
         self._schedule_restart(self._current_argv())
         return {"ok": True, "supervisor": _supervisor(), "restarting": True}
 
-    @capability("reconfigure")
+    @capability("reconfigure", risk="admin", tags=("destructive",))
     async def _reconfigure(self, hub: str | None = None, psk: str | None = None,
                            name: str | None = None, restart: bool = True) -> dict:
         """Repoint this worker at a new band (hub/psk) and/or rename it, then
@@ -353,7 +385,7 @@ class SelfUpdatePlugin(Plugin):
             "changed": [k for k, v in (("hub", hub), ("psk", psk), ("name", name)) if v is not None],
         }
 
-    @capability("update")
+    @capability("update", risk="admin", tags=("destructive",), timeout=None)
     async def _update(self, url: str | None = None, hub: str | None = None,
                       psk: str | None = None, name: str | None = None,
                       manifest: dict | None = None) -> dict:
@@ -406,8 +438,10 @@ class SelfUpdatePlugin(Plugin):
                 import shutil
                 if _PYZ.exists():
                     shutil.copy2(_PYZ, _PREV)
+                # chmod before the swap: the new bundle is never in place
+                # without its execute bit.
+                os.chmod(tmp, 0o755)
                 os.replace(tmp, _PYZ)
-                os.chmod(_PYZ, 0o755)
             except Exception as e:
                 tmp.unlink(missing_ok=True)
                 return {"ok": False, "error": f"swap failed: {type(e).__name__}: {e}"}
@@ -512,8 +546,8 @@ class SelfUpdatePlugin(Plugin):
             import shutil
             if _PYZ.exists():
                 shutil.copy2(_PYZ, _PREV)   # keep the old bundle for rollback
+            os.chmod(tmp, 0o755)
             os.replace(tmp, _PYZ)
-            os.chmod(_PYZ, 0o755)
         except Exception as e:
             tmp.unlink(missing_ok=True)
             return {"ok": False, "error": f"swap failed: {type(e).__name__}: {e}"}
@@ -551,8 +585,7 @@ class SelfUpdatePlugin(Plugin):
             return None
 
     def _write_state(self, d: dict) -> None:
-        _WORKER_DIR.mkdir(parents=True, exist_ok=True)
-        _STATE.write_text(json.dumps(d), encoding="utf-8")
+        atomic_write_json(_STATE, d)
 
     def _clear_state(self) -> None:
         _STATE.unlink(missing_ok=True)
@@ -647,7 +680,7 @@ class SelfUpdatePlugin(Plugin):
         """Write the new launch command into the systemd --user unit (or the
         Windows Scheduled Task) so it survives restarts/reboots/logons.
         No-op (returns False) when neither applies."""
-        if _is_windows():
+        if is_windows():
             return self._persist_windows(argv)
         if not _UNIT.exists():
             return False
@@ -663,7 +696,9 @@ class SelfUpdatePlugin(Plugin):
                     out.append(line)
             if not replaced:
                 return False
-            _UNIT.write_text("\n".join(out) + "\n", encoding="utf-8")
+            # A torn unit file would leave systemd unable to start the worker.
+            unit = _UNIT.resolve()  # replace a symlinked unit's target, not the link
+            atomic_write_text(unit, "\n".join(out) + "\n", unit.stat().st_mode & 0o777)
             return True
         except Exception:
             log.exception("failed to persist unit")
@@ -727,12 +762,10 @@ class SelfUpdatePlugin(Plugin):
                 log.exception("re-exec failed")
 
     async def _run(self, *cmd: str) -> None:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
         try:
-            await asyncio.wait_for(proc.wait(), timeout=10)
-        except asyncio.TimeoutError:
-            pass
+            await run(cmd, 10)
+        except RunTimeout:
+            pass   # killed; the restart below re-execs us either way
 
 
 PLUGIN = SelfUpdatePlugin

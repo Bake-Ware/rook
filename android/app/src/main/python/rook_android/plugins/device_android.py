@@ -10,14 +10,15 @@ from __future__ import annotations
 
 import time
 
-from rook.worker.plugin import Plugin, capability
+from rook.worker.plugin import ANDROID_APP, Plugin, capability, place
 from rook_android.androidctx import app_context, jclass, cast
 
 
 class AndroidDevicePlugin(Plugin):
     NAMESPACE = "device"
+    PLACEMENT = place(ANDROID_APP)
 
-    @capability("update")
+    @capability("update", risk="admin", tags=("destructive",))
     def _update(self) -> dict:
         """Queue an APK update from the official Rook feed. Nonblocking.
 
@@ -28,13 +29,13 @@ class AndroidDevicePlugin(Plugin):
         import json
         return json.loads(str(jclass("systems.bake.rook.ApkUpdater").request(app_context(), False)))
 
-    @capability("update_status")
+    @capability("update_status", risk="exec")
     def _update_status(self) -> dict:
         """APK updater progress, installed/target versions, and required action."""
         import json
         return json.loads(str(jclass("systems.bake.rook.ApkUpdater").status(app_context())))
 
-    @capability("find")
+    @capability("find", risk="exec", tags=("physical",))
     def _find(self, seconds: int = 30) -> dict:
         """Ring at maximum alarm volume for 1–120 seconds; restores volume after.
 
@@ -46,13 +47,13 @@ class AndroidDevicePlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
-    @capability("find_stop")
+    @capability("find_stop", risk="exec", tags=("physical",))
     def _find_stop(self) -> dict:
         """Stop the find-device ring and restore the previous alarm volume."""
         import json
         return json.loads(str(jclass("systems.bake.rook.FindDeviceBridge").stop()))
 
-    @capability("info")
+    @capability("info", risk="exec")
     def _info(self) -> dict:
         """Model, Android version, screen, uptime, and battery-independent bits."""
         ctx = app_context()
@@ -85,7 +86,7 @@ class AndroidDevicePlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("wake")
+    @capability("wake", risk="exec", tags=("physical",))
     def _wake(self, dismiss_keyguard: bool = False, hold_ms: int = 1200) -> dict:
         """Turn the screen ON (and show over the keyguard) so the accessibility
         service can interact with the lock screen. Needs 'Display over other
@@ -112,7 +113,7 @@ class AndroidDevicePlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("unlock")
+    @capability("unlock", risk="exec", tags=("sensitive", "physical"))
     async def _unlock(self, pin: str, hold_ms: int = 9000, pre_swipe: bool = True) -> dict:
         """Unlock a PIN-secured screen: wake, surface the PIN bouncer, and tap
         the digits at keypad positions computed from the live screen size.
@@ -185,7 +186,7 @@ class AndroidDevicePlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("vibrate")
+    @capability("vibrate", risk="exec", tags=("physical",))
     def _vibrate(self, ms: int = 300) -> dict:
         """Buzz the phone for ``ms`` milliseconds."""
         ctx = app_context()
@@ -213,7 +214,7 @@ class AndroidDevicePlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("torch")
+    @capability("torch", risk="exec", tags=("physical",))
     def _torch(self, on: bool = True) -> dict:
         """Flashlight on/off (no permission needed via CameraManager)."""
         ctx = app_context()
@@ -238,7 +239,7 @@ class AndroidDevicePlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("clipboard_set")
+    @capability("clipboard_set", risk="exec")
     def _clip_set(self, text: str) -> dict:
         """Put text on the clipboard."""
         ctx = app_context()
@@ -254,7 +255,7 @@ class AndroidDevicePlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("clipboard_get")
+    @capability("clipboard_get", risk="exec", tags=("sensitive",))
     def _clip_get(self) -> dict:
         """Read the clipboard. Android 10+ blocks background reads → may be empty."""
         ctx = app_context()
@@ -274,7 +275,7 @@ class AndroidDevicePlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("open_url")
+    @capability("open_url", risk="exec")
     def _open_url(self, url: str) -> dict:
         """Open a URL (or any Uri) in the default handler app."""
         return self._start_view(url)
@@ -293,7 +294,7 @@ class AndroidDevicePlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("launch")
+    @capability("launch", risk="exec")
     def _launch(self, package: str) -> dict:
         """Launch an installed app by package name (e.g. com.android.settings)."""
         ctx = app_context()

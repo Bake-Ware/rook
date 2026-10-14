@@ -65,7 +65,7 @@ def test_event_only_and_ambiguous_prefix(tmp_path):
 def test_resume_uses_argv_and_serializes_duplicate_requests(tmp_path, monkeypatch):
     # A worker without live terminals (no work.stream.*) resumes through proc.*.
     rollout(tmp_path)
-    monkeypatch.setattr(codex.shutil, 'which', lambda _: '/usr/bin/codex')
+    monkeypatch.setattr(codex, '_codex_bin', lambda: '/usr/bin/codex')
     async def call(cap, **args):
         if cap == 'proc.list':
             return {'sessions': [{'handle': 'h1', 'running': True}]}

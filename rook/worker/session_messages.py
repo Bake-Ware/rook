@@ -19,7 +19,6 @@ import json
 import os
 import re
 import socket
-import sqlite3
 import stat
 import sys
 import time
@@ -27,6 +26,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from weakref import WeakValueDictionary
 
+from ..core.db import transaction
+from ..core.paths import worker_state_path
 from . import codex_input, winsec
 
 _IS_WIN = sys.platform == 'win32'
@@ -142,15 +143,13 @@ def messageable(agent, session_id):
 
 @contextmanager
 def _receipt_db():
-    path = Path(os.environ.get('ROOK_WORK_DB', str(Path.home() / '.rook-band-worker/work.sqlite3')))
+    path = Path(os.environ.get('ROOK_WORK_DB', str(worker_state_path('work.sqlite3')))).expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
-    db = sqlite3.connect(path, timeout=10)
-    try:
-        with db:
-            db.execute('CREATE TABLE IF NOT EXISTS session_message_receipts (agent TEXT, session TEXT, command TEXT, result TEXT, updated REAL, PRIMARY KEY(agent,session,command))')
-            yield db
-    finally:
-        db.close()
+    # Deferred: the write lock is taken by the first statement (the CREATE or
+    # INSERT), as before; commit on success, roll back on error, always close.
+    with transaction(path, begin=None, row_factory=False) as db:
+        db.execute('CREATE TABLE IF NOT EXISTS session_message_receipts (agent TEXT, session TEXT, command TEXT, result TEXT, updated REAL, PRIMARY KEY(agent,session,command))')
+        yield db
 
 
 _delivery_locks = WeakValueDictionary()

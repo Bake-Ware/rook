@@ -12,9 +12,11 @@ from urllib.parse import urlencode
 
 from aiohttp import web
 
-from .accounts import AccountStore, digest
+from .accounts import AccountStore, csrf_ok, digest
 from .google_auth import GoogleAuth, fetch_avatar, normalize_avatar
 from .psk import generate_psk
+from .public_url import set_cookie
+from .web_pages import render
 from .enrollment import JoinDenied, JoinLimited
 
 log=logging.getLogger(__name__)
@@ -57,14 +59,9 @@ def esc(value):
 
 
 def document(title, body):
-    return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
-            '<meta name="viewport" content="width=device-width,initial-scale=1">'
-            '<title>' + esc(title) + ' · Rook</title>'
-            '<link rel="stylesheet" href="/account/bands/assets/settings.css">'
-            '<link rel="stylesheet" href="/account/bands/assets/theme.css">'
-            '</head><body class="standalone-account"><main class="settings-workspace">'
-            '<nav><a href="/account">♖ Rook account</a><a href="/account/bands">Bands</a>'
-            '<a href="/">Dashboard</a></nav><h1>' + esc(title) + '</h1>' + body + '</main></body></html>')
+    """A standalone account page (rook/web/account-page.html). ``body`` is
+    markup this module built, with every stored value already escaped."""
+    return render('account-page.html', title=title, body=body)
 
 
 class AccountWeb:
@@ -75,10 +72,28 @@ class AccountWeb:
         self.google=GoogleAuth()
         from .devices import DeviceStore
         self.devices=DeviceStore(self.store)
-        self.origin='https://'+server.domain
-        self.callback=self.origin+'/auth/google/callback'
+        self._origin=None
         self.google_web_login=os.environ.get('ROOK_GOOGLE_WEB_LOGIN','1')=='1'
         self._roster_served={}
+
+    @property
+    def origin(self):
+        """The dashboard's public origin (rook.remote.public_url): what
+        browsers send as Origin, and the base of every link handed out. Read
+        live, so a Settings-page domain change applies without a restart."""
+        if self._origin:
+            return self._origin
+        base=getattr(self.server,'public_base',None)
+        return base if isinstance(base,str) and base else 'https://'+self.server.domain
+
+    @origin.setter
+    def origin(self,value):
+        # Tests and embedders pin it to the test server's own URL.
+        self._origin=value
+
+    @property
+    def callback(self):
+        return self.origin+'/auth/google/callback'
 
     def handles(self,path):
         return path=='/account' or path.startswith('/account/') or path.startswith('/auth/')
@@ -148,15 +163,22 @@ class AccountWeb:
     def redirect(self,path='/account'):
         return web.HTTPFound(path,headers=NO_STORE)
 
-    def signed_in(self,uid):
-        response=self.redirect()
-        response.set_cookie(COOKIE,self.store.new_session(uid),max_age=30*86400,secure=True,httponly=True,samesite='Lax')
+    def set_cookie(self,response,request,name,value,**kw):
+        """Every account cookie: ``Secure`` unless this is an http:// hub
+        reached over plain HTTP (rook.remote.public_url.cookie_secure)."""
+        set_cookie(response,request,self.origin,name,value,**kw)
+
+    def start_session(self,response,request,uid):
+        self.set_cookie(response,request,COOKIE,self.store.new_session(uid),max_age=30*86400)
         return response
+
+    def signed_in(self,uid,request):
+        return self.start_session(self.redirect(),request,uid)
 
     def csrf(self,request,data,user):
         if request.headers.get('Origin',self.origin)!=self.origin:
             raise PermissionError('Request origin did not match.')
-        if not hmac.compare_digest(str(data.get('csrf','')),user['csrf']):
+        if not csrf_ok(data,user['csrf']):
             raise PermissionError('Form expired; reload the page.')
 
     def form(self,user,op,body,band_id=''):
@@ -170,14 +192,14 @@ class AccountWeb:
         for action,title in [('login','Sign in locally'),('register','Create local account')]:
             body+='<section><h2>'+title+'</h2><form method="post" action="/account/'+action+'"><input type="hidden" name="form_token" value="'+token+'"><label>Username<input name="username" autocomplete="username" required></label><label>Password<input name="password" type="password" autocomplete="'+('current-password' if action=='login' else 'new-password')+'" required></label><button>'+title+'</button></form></section>'
         response=self.response('Sign in',body)
-        response.set_cookie('rook_login_form',token,secure=True,httponly=True,samesite='Lax',max_age=600)
+        self.set_cookie(response,request,'rook_login_form',token,max_age=600)
         return response
 
     def login_form_ok(self,request,data):
         if request.headers.get('Origin',self.origin)!=self.origin:
             return False
         cookie=request.cookies.get('rook_login_form','')
-        return bool(cookie) and hmac.compare_digest(cookie,str(data.get('form_token','')))
+        return csrf_ok(data,cookie,'form_token')
 
     async def local_login(self,request):
         data=await request.post()
@@ -188,7 +210,7 @@ class AccountWeb:
         uid=await asyncio.to_thread(self.store.login,data.get('username',''),data.get('password',''))
         if not uid:
             return self.response('Sign in','<p>Invalid credentials. <a href="/account/login">Try again</a>.</p>',401)
-        return self.signed_in(uid)
+        return self.signed_in(uid,request)
 
     async def register(self,request):
         data=await request.post()
@@ -198,7 +220,7 @@ class AccountWeb:
             return self.response('Try again shortly','<p>Too many attempts.</p>',429)
         try:
             uid=await asyncio.to_thread(self.store.create_local,data.get('username',''),data.get('password',''))
-            return self.signed_in(uid)
+            return self.signed_in(uid,request)
         except ValueError as error:
             return self.response('Create account','<p>'+esc(error)+'</p><a href="/account/login">Try again</a>',400)
 
@@ -218,7 +240,7 @@ class AccountWeb:
         verifier=secrets.token_urlsafe(48)
         state=self.store.grant('oauth',{'binding':digest(binding),'nonce':nonce,'verifier':verifier,'link_user':link_user})
         response=self.redirect(self.google.authorize_url(state,nonce,verifier,self.callback))
-        response.set_cookie('rook_oauth',binding,max_age=600,secure=True,httponly=True,samesite='Lax')
+        self.set_cookie(response,request,'rook_oauth',binding,max_age=600)
         return response
 
     async def refresh_avatar(self,uid,force=False):
@@ -259,7 +281,7 @@ class AccountWeb:
                 response=self.response('Connect accounts',body)
             else:
                 await self.refresh_avatar(result['user_id'])
-                response=self.signed_in(result['user_id'])
+                response=self.signed_in(result['user_id'],request)
             response.del_cookie('rook_oauth')
             return response
         except (ValueError,PermissionError) as error:
@@ -549,7 +571,7 @@ class AccountWeb:
                 if await asyncio.to_thread(self.store.login,user['username'],data.get('current_password',''))!=uid:
                     raise ValueError('Current password did not match.')
                 await asyncio.to_thread(self.store.set_password,uid,data.get('password',''))
-                return self.signed_in(uid)
+                return self.signed_in(uid,request)
             elif op=='unlink':
                 self.store.unlink_google(uid)
             elif op=='merge':
@@ -558,7 +580,7 @@ class AccountWeb:
                     raise PermissionError('Account merge mismatch.')
                 self.store.merge(grant['merge_from'],uid)
                 await self.refresh_avatar(uid,force=True)
-                return self.signed_in(uid)
+                return self.signed_in(uid,request)
             elif op=='device_approve':
                 self.store.device_login_approve(uid,str(data.get('user_code','')).strip())
             elif op=='device_revoke':

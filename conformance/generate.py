@@ -351,8 +351,9 @@ def placement() -> dict:
 # -- tiers -------------------------------------------------------------------
 
 def tiers() -> dict:
-    from rook.core.authz import BUILTIN, BUILTIN_PREFIX, effective_tier
-    table = {c: {"tier": t, **({"tags": list(g)} if g else {})} for c, (t, g) in sorted(BUILTIN.items())}
+    from rook.core.authz import BUILTIN_PREFIX, builtin_table, effective_tier
+    table = {c: {"tier": t, **({"tags": list(g)} if g else {})}
+             for c, (t, g) in sorted(builtin_table().items())}
     cases = []
     for cap, declared, override, lower in (
         ("shell.exec", None, None, False), ("shell.exec", "read", None, False),

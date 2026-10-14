@@ -32,6 +32,7 @@ import threading
 import time
 import uuid
 
+from ..core.db import open_db
 from .secret_mask import scrub
 
 log = logging.getLogger("rook.band_mcp.chat_rooms")
@@ -46,8 +47,7 @@ class ChatStore:
         d = os.path.dirname(path) or "."
         try:
             os.makedirs(d, exist_ok=True)
-            self._db = sqlite3.connect(path, check_same_thread=False)
-            self._db.execute("PRAGMA journal_mode=WAL")
+            self._db = open_db(path, row_factory=False, mkdir=False)
             self._db.executescript("""
                 CREATE TABLE IF NOT EXISTS rooms (
                     id TEXT PRIMARY KEY, title TEXT, created REAL,

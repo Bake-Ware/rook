@@ -31,6 +31,7 @@ import struct
 import time
 import uuid
 
+from ..core.backoff import Backoff
 from ..worker import termwire
 
 log = logging.getLogger(__name__)
@@ -288,6 +289,8 @@ class TermStream:
 
     async def _pull(self) -> None:
         misses = 0
+        # Jittered so streams that lost the same worker don't retry in step.
+        retry = Backoff(base=1.0, cap=5.0)
         while self.running:
             if not self.viewers and time.monotonic() - self.idle_since > IDLE_SECS:
                 return
@@ -306,9 +309,10 @@ class TermStream:
                     self.finish(None, "Terminal is gone from its host." if gone
                                 else f"Host stopped answering ({e or 'timeout'}).")
                     return
-                await asyncio.sleep(min(2.0 * misses, 5.0))
+                await retry.sleep()
                 continue
             misses = 0
+            retry.reset()
             raw = termwire.decode(r.get("enc", "t"), r.get("data", ""))
             self._append(int(r.get("cursor", self.end)), raw)
             fixed = bool(r.get("fixed"))

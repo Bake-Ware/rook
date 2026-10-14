@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import time
 
-from rook.worker.plugin import Plugin, capability
+from rook.worker.plugin import ANDROID_APP, Plugin, capability, place
 from rook_android.androidctx import app_context, jclass, has_permission
 
 _READ_SMS = "android.permission.READ_SMS"
@@ -61,13 +61,14 @@ def _list(box: str, limit: int, since_ts: float) -> dict:
 
 class AndroidSmsPlugin(Plugin):
     NAMESPACE = "sms"
+    PLACEMENT = place(ANDROID_APP)
 
-    @capability("list")
+    @capability("list", risk="exec", tags=("sensitive",))
     def _list(self, box: str = "inbox", limit: int = 30, since_ts: float = 0.0) -> dict:
         """Recent SMS. ``box`` = inbox|sent|all; newest first."""
         return _list(str(box), int(limit), float(since_ts or 0))
 
-    @capability("send")
+    @capability("send", risk="exec")
     def _send(self, to: str, text: str) -> dict:
         """Send an SMS to ``to``. Long messages are split into parts."""
         ctx = app_context()

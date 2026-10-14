@@ -13,16 +13,20 @@ import threading
 import time
 import uuid
 
+from ...core.pluginkit import ArgError, fail, require_str
 from ..plugin import Plugin, capability, setting
 
 _LOCK = threading.Lock()
 
 
-def _exchange(command: dict) -> dict:
+def _exchange(command: dict, device: str | None = None) -> dict:
     import serial
 
+    device = device or os.environ.get("ROOK_DONGLE_PORT", "")
+    if not device:
+        fail("dongle.port (ROOK_DONGLE_PORT) is not set")
     with _LOCK:
-        with serial.Serial(os.environ["ROOK_DONGLE_PORT"], 115200,
+        with serial.Serial(device, 115200,
                            timeout=0.2, write_timeout=2, exclusive=True) as port:
             def request(payload):
                 token = uuid.uuid4().hex
@@ -65,7 +69,7 @@ class DonglePlugin(Plugin):
     )
 
     def available(self):
-        if not os.environ.get("ROOK_DONGLE_PORT"):
+        if not self.settings.get("port"):
             return False
         try:
             import serial  # noqa: F401
@@ -75,43 +79,49 @@ class DonglePlugin(Plugin):
 
     async def _call(self, command):
         try:
-            return await asyncio.to_thread(_exchange, command)
+            return await asyncio.to_thread(_exchange, command, self.settings.get("port"))
         except (OSError, ValueError, RuntimeError) as exc:
-            return {"ok": False, "error": str(exc)}
+            # Port gone, wrong device, bad reply: the message is the whole story.
+            fail(str(exc))
 
-    @capability("status")
+    @capability("status", risk="read", tags=("physical",))
     async def status(self, **_):
+        """Identity and state of the attached Rook RP2040 dongle (device, protocol, firmware)."""
         return await self._call({"cmd": "status"})
 
-    @capability("display")
+    @capability("display", risk="read", tags=("sensitive", "physical"))
     async def display(self, text: str, **_):
-        if not isinstance(text, str) or len(text.encode()) > 80:
-            return {"ok": False, "error": "text must be at most 80 UTF-8 bytes"}
+        """Show up to 80 UTF-8 bytes of text on the dongle's display."""
+        text = require_str(text, "text", strip=False, empty=True)
+        if len(text.encode()) > 80:
+            raise ArgError("text must be at most 80 UTF-8 bytes")
         return await self._call({"cmd": "display", "text": text})
 
-    @capability("display_probe")
+    @capability("display_probe", risk="read", tags=("physical",))
     async def display_probe(self, **_):
+        """Probe whether the dongle has a working display attached."""
         return await self._call({"cmd": "display_probe"})
 
-    @capability("keyboard")
+    @capability("keyboard", risk="exec", tags=("physical",))
     async def keyboard(self, keys: list[int], mods: int = 0, **_):
         """Tap up to six USB HID usage codes with modifier bitmask (US layout)."""
         return await self._call({"cmd": "keyboard", "keys": keys, "mods": mods})
 
-    @capability("mouse")
+    @capability("mouse", risk="exec", tags=("physical",))
     async def mouse(self, x: int = 0, y: int = 0, buttons: int = 0,
                     wheel: int = 0, pan: int = 0, **_):
         """Relative move (-127..127) and/or button tap (bitmask 0..31)."""
         return await self._call({"cmd": "mouse", "x": x, "y": y,
                                  "buttons": buttons, "wheel": wheel, "pan": pan})
 
-    @capability("consumer")
+    @capability("consumer", risk="write", tags=("physical",))
     async def consumer(self, usage: int, **_):
         """Tap a USB consumer usage, e.g. 0xE9 volume up or 0xCD play/pause."""
         return await self._call({"cmd": "consumer", "usage": usage})
 
-    @capability("release")
+    @capability("release", risk="write", tags=("physical",))
     async def release(self, **_):
+        """Release every key and button the dongle holds on the USB host."""
         return await self._call({"cmd": "release"})
 
 

@@ -145,6 +145,7 @@ Every node describes itself with two kinds of fact (permissions.md 4.8):
   | `camera` | bool | `/dev/video*` (Linux) |
   | `gpu` | `[{vendor, name, vram_gb}]` | `nvidia-smi` (one bounded call) |
   | `embedded` | bool | Android, a device tree (SBCs), or under 2 GB RAM |
+  | `termux` | bool | Termux on Android (`TERMUX_VERSION`, or a `com.termux` `PREFIX`) |
 
   Operators add or correct facts with `ROOK_NODE_FACTS` (a JSON object merged
   over the detected ones, for example `{"camera": true, "gpu": [{"vendor": "amd", "vram_gb": 16}]}`).
@@ -201,7 +202,7 @@ can *function* there (a backend, a config value). Both must pass.
 
 ```python
 @capability(suffix="", *, risk=None, tags=(), limit=None, fields=None,
-            tool=False, description=None)
+            tool=False, description=None, timeout="default")
 ```
 
 A bare `@capability("x")` behaves exactly as before. The keyword metadata
@@ -209,21 +210,37 @@ A bare `@capability("x")` behaves exactly as before. The keyword metadata
 
 | Key | Meaning | Enforced by |
 |---|---|---|
-| `risk` (alias `tier`) | `read` < `write` < `exec` < `admin`, defined in permissions.md section 2. Undeclared = `exec`. | permissions layer (wave 2); the hub node's band ceiling (section 10) today |
+| `risk` (alias `tier`) | `read` < `write` < `exec` < `admin`, defined in permissions.md section 2. Undeclared = `exec`. **Every built-in cap declares it** (a test enforces it); the declaration is the one place a plugin cap's tier is written, and this node's copy of it is the tier floor (5.1). | permissions layer, worker ticket checks, the hub node's band ceiling (section 10.4) |
 | `tags` | `sensitive`, `destructive`, `physical` (permissions.md 2.1) | policy selectors |
 | `limit` | Default page size. If the handler takes a `limit` parameter the default is injected when the caller omits it; otherwise core trims list results (a top-level list, or the `items` list of an envelope dict, adding `truncated`/`total`) to the caller's `limit` or the default. | `CapabilityRegistry.call` |
 | `fields` | `None`: no projection. `"*"`: projection supported, everything by default. `[...]`: the default keys. The caller passes `fields=[...]`, `"a,b"` or `"*"`. Unless the handler takes `fields` itself, core strips it and projects: a dict, each dict of a list, or each item of an envelope's `items`. | `CapabilityRegistry.call` |
-| `tool` | Also expose as a dedicated MCP tool (hub-placed caps; section 10.3) | hub MCP bridge |
-| `description` | Replaces the docstring's first paragraph in tools and rosters | describe / tool generation |
+| `tool` | Also expose as a dedicated MCP tool (hub-placed caps; section 10.3). No built-in cap uses it today; it is kept for third-party hub plugins. | hub MCP bridge |
+| `description` | Replaces the docstring's first paragraph in tools and rosters (with `tool`). Every cap still needs a docstring (a test enforces it). | describe / tool generation |
+| `timeout` | Seconds one call may run before core abandons it and replies `timeout: …`. Omitted: the host default, `ROOK_CAP_TIMEOUT` (300 s; `0` = no limit). `None`: never cut off, for caps that bound themselves and legitimately run long (OTA install, `home.ask`, `decide.drive` with `wait`). A handler that takes a `timeout` argument gets `max(declared, args.timeout + 15 s)`, so `shell.exec(timeout=600)` runs its full 600 s. A sync handler's thread cannot be killed: the caller is answered and the thread finishes in the background. | `CapabilityRegistry.call` |
 
 Enforcement lives in the one registry both node types use, so the same
 contract holds on the hub and on every new worker. Output byte caps are part
 of the token-envelope work and will hook in at the same point.
 
 `caps.describe` returns, per cap, the docstring, parameters and, when
-declared, `risk`, `tags`, `limit`, `fields`, `tool`. Announces carry a compact
-`"tiers": {"cap": "r|w|x|a"}` map of *declared* tiers only (permissions.md
-2.2), omitted when there are none; build-167 peers ignore it.
+declared, `risk`, `tags`, `limit`, `fields`, `tool` and `cap_timeout` (only
+when it differs from the host default; `null` = unbounded). Announces carry a
+compact `"tiers": {"cap": "r|w|x|a"}` map of *declared* tiers only
+(permissions.md 2.2), omitted when there are none; build-167 peers ignore it.
+
+### 5.1 Where a cap's tier comes from
+
+`rook.core.authz.effective_tier(cap, declared)` is the maximum of what the
+cap (or a peer's announce) declares and this node's **floor**:
+`authz.CORE` (caps the cores register themselves: `caps.describe`,
+`worker.plugin.*`, `customcap.*`, `hub.plugin.*`, and the hub's MCP tools
+authorized as caps such as `secret.*`) plus every built-in plugin's own
+`@capability(risk=, tags=)`, read from the plugin packages shipped with the
+node (`authz.FLOOR_PACKAGES`; the Android app adds `rook_android.plugins`).
+A plugin cap therefore declares its tier in one place, and a peer running
+modified code still cannot announce `shell.exec` as `read`. A new core cap
+needs a `CapMeta(risk=…)` at registration or a `CORE` entry; the contract
+test fails otherwise.
 
 The dispatch context (`rook.core.context.current_identity()`) gives a handler
 the caller identity from the envelope, on both node types.
@@ -339,14 +356,42 @@ For each discovered candidate, the host (`rook.core.host.PluginHost`) runs:
 7. **`available()`**: backend/config present on this node.
 8. **Register** caps (all or nothing); default `VERSION`.
 9. Node-specific binding: `bind_worker(worker)` on workers, `bind_host(hub_node)`
-   on the hub.
+   on the hub. The node attaches it once with `host.set_binder(fn)`; the
+   host then runs it for every plugin it activates later, before `start()`.
 10. **`start()`** (async) when the node starts; `heartbeat()` on every announce
    (~30 s; tiny, non-raising); **`stop()`** at shutdown.
 
 `host.status[module]` records the outcome: `loaded`, `disabled`, `skipped`
 (no/None `PLUGIN`), `not_placed`, `unavailable` or `failed` (with a reason),
-plus `start_error` if `start()` raised. `host.manifests()` (and the hub's
-`hub.plugins` cap) expose it.
+plus `start_error` if `start()` raised and `bind_error` if the side hook did.
+`host.manifests()` (and the hub's `hub.plugins` cap) expose it.
+
+### 9.1 Runtime enable, disable and reload
+
+The same steps run for one module on a live node:
+
+| Host call | Does | Exposed as |
+|---|---|---|
+| `await host.enable(module)` | steps 2-10 for one discovered module (even one filtered out at boot) | `worker.plugin.enable` (persisted), `hub.plugin.enable` |
+| `await host.disable(module)` | unregister its caps, `stop()`, status `disabled`; refused while a loaded plugin `DEPENDS` on it | `worker.plugin.disable` (persisted), `hub.plugin.disable` |
+| `await host.reload(module)` | stop, then the boot path again: a new instance with freshly read settings. The old caps stay registered until the new instance replaces them (an announce mid-reload still lists them). If it does not come back, its caps go and dependents' `dependency()` returns `None` (status `dependency_unloaded`) until it is enabled again | `worker.plugin.reload`, `hub.plugin.reload` |
+| `host.settings_changed(namespaces)` | re-read stored settings; schedule `reload` for plugins in `namespaces` that declare an `apply="reload"` setting (safe from any thread) | the hub's settings service on every hub-plugin change; `worker.config_apply(restart=false)` on workers |
+
+Each returns `{"ok", "module", ...}` or `{"ok": false, "error"}`. The hub
+refuses to disable `settings`, the worker `selfupdate`. The settings
+service pushes a worker change without a restart when every changed key is
+`apply="live"`/`"reload"` and the worker has `worker.plugin.reload`.
+`*.plugin.disable` and `*.plugin.reload` are tagged `destructive`: they stop
+a running plugin.
+
+Wiring the node's side hook does not cover (another component holding a
+plugin instance, like the MCP bridge's knowledge wiring) goes in
+`host.add_bind_hook(on_bind, on_unbind)`: `on_bind` runs for every loaded
+plugin and every later activation, after the binder and before `start()`;
+`on_unbind` runs before a plugin is stopped by `disable` or `reload`. A
+plugin that registers something on the node in its binder (the worker's
+`register_binary_handler`) undoes it in `stop()`, since a reload binds the
+new instance first.
 
 ## 10. The hub node: worker `rook`
 
@@ -415,8 +460,8 @@ before. Existing names win here too.
 
 Anyone holding the band PSK can put a request on the band with any
 `identity` string, so band-originated calls to the hub node may reach only
-caps declared `risk="read"`. `ROOK_HUB_BAND_MAX_RISK` raises the ceiling;
-undeclared risk counts as `exec`. MCP calls are token-attributed and are not
+caps whose effective tier (5.1) is `read`. `ROOK_HUB_BAND_MAX_RISK` raises the
+ceiling; undeclared risk counts as `exec`. MCP calls are token-attributed and are not
 limited here. Per-principal policy replaces this rule when permissions
 enforcement lands. Band calls to the hub are journaled with worker `rook`.
 
@@ -445,8 +490,11 @@ with test vectors in `conformance/`.
 ## 12. Discovery
 
 1. **Built-in package scan**: every non-underscore module of the node's
-   plugin package (`rook.worker.plugins` on workers, `rook.hub.plugins` on
-   the hub).
+   plugin packages (`rook.worker.plugins` on workers, `rook.hub.plugins` on
+   the hub; the Android app adds `rook_android.plugins`, whose plugins are
+   placed `app == 'android'` while the stock `screenshot`, `hid`, `battery`
+   and `selfupdate` they replace are placed `app != 'android'`, so exactly
+   one of each loads).
 2. **Entry points**: installed distributions declare
    ```toml
    [project.entry-points."rook.plugins"]

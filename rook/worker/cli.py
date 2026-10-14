@@ -10,6 +10,7 @@ import signal
 import sys
 import time
 
+from ..core.paths import worker_state_dir, worker_state_path
 from .core import Worker
 
 
@@ -37,7 +38,17 @@ def main() -> None:
         from .desktop import main as desktop_main
         desktop_main()
         return
-    ap = argparse.ArgumentParser(prog="rook-worker")
+    ap = argparse.ArgumentParser(
+        prog="rook-worker",
+        epilog="State (identity, enrollment, pushed config, audit log, plugin data) "
+               "lives in ROOK_WORKER_HOME, default ~/.rook-band-worker; the installed "
+               "bundle stays in ~/.rook-band-worker. With ROOK_WORKER_HOME set, state "
+               "missing there is copied once from ~/.rook-band-worker (older releases "
+               "kept it there); ROOK_WORKER_HOME_FRESH=1 starts a separate worker instead. "
+               "ROOK_CAP_TIMEOUT = seconds a capability call may run "
+               "before it is abandoned with a timeout error (default 300; 0 = no limit). "
+               "Caps that take a timeout argument get that plus a margin; long-running "
+               "caps (updates) opt out.")
     ap.add_argument("--hub", default=os.environ.get("ROOK_HUB", "127.0.0.1:7474"),
                     help="hub host:port (or env ROOK_HUB; default 127.0.0.1:7474)")
     ap.add_argument("--psk", default=os.environ.get("ROOK_BAND_PSK") or None,
@@ -62,9 +73,17 @@ def main() -> None:
     ap.add_argument("--bind-port", type=int, default=0,
                     help="local UDP bind port (0 = ephemeral)")
     ap.add_argument("--keepalive", type=float, default=20.0,
-                    help="seconds between transport keepalives")
+                    help="seconds of link silence before a transport keepalive "
+                         "(skipped while other frames flow). Tuning env: "
+                         "ROOK_BAND_UDP_PACE_RATE/_BURST (UDP bulk pacing), "
+                         "ROOK_BAND_DISPATCH_CONCURRENCY/_BACKLOG (inbound bound)")
     ap.add_argument("--ws", action="store_true",
                     help="use WebSocket instead of UDP for hub connection (for cloudflare tunnel)")
+    ap.add_argument("--ws-url", default=None,
+                    help="full ws:// or wss:// URL of the band endpoint, e.g. the relay's "
+                         "native WebSocket listener; implies --ws (or env ROOK_HUB_WS_URL, "
+                         "which a pushed config may set). Default: the hub's /band bridge "
+                         "derived from --hub")
     ap.add_argument("--update-url", default=os.environ.get("ROOK_UPDATE_URL", ""),
                     help="signed manifest URL for OTA self-update "
                          "(e.g. https://rook.example.com/band-worker.json). "
@@ -83,12 +102,14 @@ def main() -> None:
         # Import + construct the plugin registry offline (no transport, no band).
         # A broken/incompatible bundle fails here with a non-zero exit — which is
         # exactly what the OTA self-update checks before swapping a downloaded pyz.
-        from .registry import CapabilityRegistry
-        from .plugin import load_plugins
+        from ..core.host import PluginHost
         from . import desktop
         from rook.cli import band_tui
-        reg = CapabilityRegistry()
-        plugins = load_plugins("rook.worker.plugins", reg, None)
+        # Every built-in plugin, without placement: the check is that each
+        # one imports and constructs, not whether it would run on this host.
+        host = PluginHost(check_placement=False)
+        reg = host.registry
+        plugins = host.load(PluginHost.discover("rook.worker.plugins", entry_points=False))
         print(f"selftest OK v{VERSION}: {len(plugins)} plugins, {len(reg.list())} caps")
         return
 
@@ -104,6 +125,12 @@ def main() -> None:
     # runs only after offline validation modes, which must have no side effects.
     from .desktop import ensure_launcher
     ensure_launcher()
+
+    # State kept in ~/.rook-band-worker before ROOK_WORKER_HOME moved all of
+    # it (identity, enrollment, deauth flag, pushed config...): copy it over
+    # once, before anything reads it. Offline modes above stay side-effect free.
+    from ..core.paths import migrate_legacy_state
+    migrate_legacy_state()
 
     if args.enroll:
         from .enroll import enroll
@@ -132,7 +159,7 @@ def main() -> None:
     # OFF the band (no transport, no announce) instead of rejoining. Runs after
     # --version/--selftest (so OTA bundle validation still works on a banned
     # node) but before any band contact. The flag survives reboots; clearing
-    # ~/.rook-band-worker/banned and restarting rejoins.
+    # <state dir>/banned and restarting rejoins.
     from .plugins.selfupdate import is_banned, ban_info
     if is_banned():
         logging.basicConfig(level=logging.WARNING,
@@ -140,8 +167,8 @@ def main() -> None:
         info = ban_info()
         logging.getLogger("rook.worker").warning(
             "DEAUTHED from band (at=%s reason=%r) — staying dormant, NOT joining. "
-            "Clear ~/.rook-band-worker/banned and restart to rejoin.",
-            info.get("at"), info.get("reason", ""))
+            "Clear %s and restart to rejoin.",
+            info.get("at"), info.get("reason", ""), worker_state_path("banned"))
         # Park quietly so we don't busy-loop under a service manager's Restart
         # policy; a stop signal (systemctl stop) wakes us to exit.
         try:
@@ -192,19 +219,26 @@ def main() -> None:
     # enrolled band instead of the one on its command line.
     if (args.hub, args.psk) != requested:
         logging.getLogger("rook.worker").warning(
-            "using hub %s%s from saved state in ~/.rook-band-worker (enrollment or "
+            "using hub %s%s from saved state in %s (enrollment or "
             "pushed config), not the --hub/--psk given", args.hub,
-            " and a different band key" if args.psk != requested[1] else "")
+            " and a different band key" if args.psk != requested[1] else "",
+            worker_state_dir())
 
     host, _, port = args.hub.partition(":")
     if not port:
         ap.error("--hub must be host:port")
 
-    if args.ws:
+    # Read after the pushed config's env is applied, so the hub can move
+    # workers to another WS endpoint with worker.config_apply.
+    ws_url = (args.ws_url or os.environ.get("ROOK_HUB_WS_URL", "")).strip() or None
+    if ws_url and not ws_url.startswith(("ws://", "wss://")):
+        ap.error("--ws-url / ROOK_HUB_WS_URL must start with ws:// or wss://")
+    if args.ws or ws_url:
         from .transports.telesthete_hub import TelestheteHubTransport
         transport = TelestheteHubTransport(
             psk=args.psk, hub_host=host, hub_port=int(port),
             keepalive_secs=args.keepalive, bind_port=args.bind_port, use_ws=True,
+            ws_url=ws_url,
         )
     else:
         from .transports.telesthete_hub import TelestheteHubTransport

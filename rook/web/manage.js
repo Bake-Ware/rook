@@ -12,7 +12,13 @@ export function h(tag,attrs,...kids){
   for(const kid of kids.flat()){if(kid===null||kid===undefined||kid===false)continue;e.append(kid);}
   return e;
 }
-export const ago=t=>{if(!t)return 'never';const m=Math.round((Date.now()/1000-t)/60);return m<1?'just now':m<60?m+' min ago':m<1440?Math.round(m/60)+'h ago':m<43200?Math.round(m/1440)+'d ago':day(t);};
+// HTML-escape for the few places that build markup strings (quotes too, so
+// the result is safe inside either kind of attribute quote).
+export const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// A text-only element: el('td','value','cls').
+export const el=(tag,txt,cls)=>{const e=document.createElement(tag);if(txt!==undefined&&txt!==null)e.textContent=txt;if(cls)e.className=cls;return e;};
+// Relative time for a unix timestamp; `none` is shown when there is none.
+export const ago=(t,none='never')=>{if(!t)return none;const m=Math.round((Date.now()/1000-t)/60);return m<1?'just now':m<60?m+' min ago':m<1440?Math.round(m/60)+'h ago':m<43200?Math.round(m/1440)+'d ago':day(t);};
 export const day=t=>t?new Date(t*1000).toLocaleDateString(undefined,{month:'short',day:'numeric',year:new Date(t*1000).getFullYear()===new Date().getFullYear()?undefined:'numeric'}):'—';
 export function useCss(){
   if(document.querySelector('link[href*="manage.css"]'))return;
@@ -77,23 +83,70 @@ export function reveal(title,note,text){
   const c=btn('Copy','soft',()=>copy(text,c));
   return dialog(title,h('p',{text:note}),h('pre',{text,tabindex:'0'}),h('div',{class:'mg-actions end'},c));
 }
-// Pairing code: refreshes itself until the dialog closes.
-export function pairing(data){
-  const code=h('strong',{class:'mg-big pairing-code'}),left=h('p',{class:'mg-sub pairing-expiry'}),unix=h('pre',{class:'pairing-command'}),win=h('pre',{class:'pairing-windows'});
+// Copy-paste commands that join a machine with pairing `code` through the hub
+// at `origin` (the server's public base, http:// on a LAN hub):
+// [label, class, text, note]. The notes describe what the installers in
+// rook/remote/bootstrap.py actually do, so a first-time user knows to accept
+// UAC / sudo and to wait rather than assume it hung.
+export function pairCommands(origin,code){
+  const url=origin+'/worker?band='+code;
+  return [['Linux / macOS','pairing-command',`curl -fsSL '${url}' | bash`,
+           'Runs as your user (a systemd user service on Linux) and may ask for your sudo password for system packages. Takes 1-3 minutes; the machine appears under Workers when done.'],
+          ['Windows PowerShell','pairing-windows',`iex (irm "${url}&os=windows")`,
+           'Opens an administrator prompt (UAC). Takes 2-5 minutes; the machine appears under Workers when done.'],
+          ['Android (Termux)','pairing-android',`pkg install -y curl && curl -fsSL '${url}' | bash`,'']];
+}
+// A live pairing code: the code, its countdown and the three commands. `data`
+// is the account pair action's JSON ({pairing, band_id, origin, csrf}). While
+// the panel is on screen an expired code is replaced in the same pairing
+// session; off screen it waits. stop() ends it.
+export function pairingPanel(data){
+  const code=h('strong',{class:'mg-big pairing-code'}),left=h('p',{class:'mg-sub pairing-expiry'}),rows=h('div',{class:'pairing-commands'});
   let grant=data.pairing,pending=false,stopped=false;
-  const show=()=>{const url=data.origin+'/worker?band='+grant.code;code.textContent=grant.code;unix.textContent=`curl -fsSL '${url}' | bash`;win.textContent=`iex (irm "${url}&os=windows")`;};
-  show();
-  const d=dialog('Pair a worker',h('p',{text:'Use this code on the machine you want to connect.'}),code,left,h('span',{class:'mg-label',text:'Linux / macOS'}),unix,h('span',{class:'mg-label',text:'Windows PowerShell'}),win);
-  const timer=setInterval(async()=>{
-    if(stopped)return;
+  const show=()=>{
+    code.textContent=grant.code;
+    rows.replaceChildren(...pairCommands(data.origin,grant.code).map(([label,cls,text,note])=>{
+      const c=btn('Copy','soft',()=>copy(text,c));
+      return h('div',{class:'pairing-row'},h('span',{class:'mg-label',text:label}),h('pre',{class:cls,text,tabindex:'0'}),c,
+        note&&h('p',{class:'mg-sub pairing-note',text:note}));
+    }));
+  };
+  const node=h('div',{class:'pairing-panel'},code,left,rows);
+  const tick=async()=>{
+    if(stopped||pending)return;
     const s=Math.ceil(grant.expires-Date.now()/1000);left.textContent=Math.max(0,s)+' seconds remaining';
-    if(s>0||pending)return;pending=true;
+    if(s>0||!node.isConnected||!node.getClientRects().length)return;
+    pending=true;
     try{
       const r=await fetch('/account/pairing',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({csrf:data.csrf,band_id:data.band_id,session:grant.session})});
       const next=await r.json();if(!r.ok)throw Error(next.error||'Pairing stopped. Generate a new code.');
       grant=next;show();
-    }catch(e){left.textContent=e.message;stopped=true;}finally{pending=false;}
-  },1000);
-  d.addEventListener('close',()=>clearInterval(timer));
+    }catch(e){left.textContent=e.message;stop();}finally{pending=false;}
+  };
+  const timer=setInterval(tick,1000);
+  function stop(){stopped=true;clearInterval(timer);}
+  show();tick();
+  return {node,stop};
+}
+// Start pairing for the operator's band: `preferLabel` (the dashboard's band
+// label) if they own it, else their first active band. Uses the account
+// session (the dashboard login carries over) and the same CSRF-checked
+// account action as the Account page; the server allows owners only.
+export async function mintPairing(preferLabel){
+  const r=await fetch('/account/session',{headers:{Accept:'application/json'}});
+  const d=r.headers.get('content-type')?.includes('application/json')?await r.json():{};
+  if(!r.ok||!d.user)throw Error(d.error||'Sign in with your operator account first.');
+  const owned=(d.bands||[]).filter(b=>b.active&&b.role==='owner');
+  const band=owned.find(b=>b.label===preferLabel)||owned[0];
+  if(!band)throw Error('You do not own a band to pair with. Create one on the Bands page.');
+  const out=await accountAction(d.user.csrf,{op:'pair',band_id:band.id});
+  if(!out.pairing)throw Error(out.note||'Could not start pairing.');
+  return {...out,band_name:band.name};
+}
+// Pairing code dialog: refreshes itself until the dialog closes.
+export function pairing(data){
+  const panel=pairingPanel(data);
+  const d=dialog('Pair a worker',h('p',{text:'Use this code on the machine you want to connect.'}),panel.node);
+  d.addEventListener('close',()=>panel.stop());
   return d;
 }

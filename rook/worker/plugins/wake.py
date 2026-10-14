@@ -7,8 +7,9 @@ and posts back through rook chat. That's the asymmetric half of the design: the
 caller stays in tool-land; the woken agent gets a real session where the room's
 messages are its prompt.
 
-Gated on ``ROOK_WAKE_CMD`` so only machines actually wired to spawn an agent
-announce the cap (like the memory vault's env gate). The command is a template:
+Gated on the ``agent.wake_command`` setting (env ``ROOK_WAKE_CMD``) so only
+machines actually wired to spawn an agent announce the cap (like the memory
+vault's gate). The command is a template:
 
     ROOK_WAKE_CMD='claude -p {prompt_file}'          # {prompt_file} = path to the brief
     ROOK_WAKE_CMD='hermes run --stdin'               # brief arrives on stdin
@@ -30,11 +31,11 @@ import subprocess
 import sys
 import tempfile
 import time
-from pathlib import Path
 
+from ...core.pluginkit import fail, require_str, state_path
 from ..plugin import Plugin, capability, setting
 
-_STATE = Path(os.path.expanduser("~")) / ".rook-band-worker" / "wake-last.txt"
+_STATE = state_path("wake-last.txt")
 # Don't respawn the same agent within this window — a cheap guard against a
 # wake storm (the design's "black-hole a wake for an already-attending agent").
 _REWAKE_SECS = 45.0
@@ -77,29 +78,33 @@ class WakePlugin(Plugin):
     )
 
     def available(self) -> bool:
-        return bool(os.environ.get("ROOK_WAKE_CMD"))
+        return bool(self._command())
 
-    @capability("wake")
+    def _command(self) -> str:
+        return str(self.settings.get("wake_command", "") or "").strip()
+
+    def _agent(self) -> str | None:
+        return self.settings.get("wake_agent") or None
+
+    @capability("wake", risk="exec")
     def _wake(self, room: str, thread_id: str = "", title: str = "",
               transcript: list | None = None, woken_by: str = "",
               note: str = "") -> dict:
         """Spawn the configured local agent to attend ``room``. Returns once the
         agent is launched (it runs detached). Declines if the same agent was
         woken moments ago (already attending)."""
-        cmd_tmpl = os.environ.get("ROOK_WAKE_CMD", "").strip()
+        room = require_str(room, "room", max_len=200)
+        cmd_tmpl = self._command()
         if not cmd_tmpl:
-            return {"ok": False, "error": "ROOK_WAKE_CMD not set on this host"}
+            fail("no wake command on this host (agent.wake_command / ROOK_WAKE_CMD)")
 
         # Black-hole a re-wake of an already-attending agent.
         now = time.time()
+        last, last_room = 0.0, ""
         try:
-            last = float(_STATE.read_text().split(":", 1)[0]) if _STATE.exists() else 0.0
-        except Exception:
-            last = 0.0
-        last_room = ""
-        try:
-            last_room = _STATE.read_text().split(":", 1)[1].strip() if _STATE.exists() else ""
-        except Exception:
+            stamp, _, last_room = _STATE.read_text(encoding="utf-8").partition(":")
+            last, last_room = float(stamp), last_room.strip()
+        except (OSError, ValueError):
             pass
         if now - last < _REWAKE_SECS and last_room == room:
             return {"ok": True, "action": "already-attending",
@@ -112,8 +117,8 @@ class WakePlugin(Plugin):
             fd, pf = tempfile.mkstemp(prefix="rook-wake-", suffix=".md")
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(brief)
-        except Exception as e:
-            return {"ok": False, "error": f"could not write brief: {e}"}
+        except OSError as e:
+            fail(f"could not write brief: {e}")
 
         substituted = ("{prompt_file}" in cmd_tmpl or "{room}" in cmd_tmpl
                        or "{thread_id}" in cmd_tmpl)
@@ -122,8 +127,8 @@ class WakePlugin(Plugin):
                           .replace("{thread_id}", thread_id or room))
         try:
             argv = shlex.split(cmd_str, posix=(sys.platform != "win32"))
-        except Exception as e:
-            return {"ok": False, "error": f"bad ROOK_WAKE_CMD: {e}"}
+        except ValueError as e:
+            fail(f"bad wake command: {e}")
 
         env = dict(os.environ)
         env["ROOK_WAKE_PROMPT"] = brief
@@ -145,21 +150,18 @@ class WakePlugin(Plugin):
                     proc.stdin.close()
                 except Exception:
                     pass
-            _STATE.write_text(f"{now}:{room}")
+            _STATE.write_text(f"{now}:{room}", encoding="utf-8")
         except FileNotFoundError:
-            return {"ok": False, "error": f"wake command not found: {argv[0]!r}"}
-        except Exception as e:
-            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+            fail(f"wake command not found: {argv[0]!r}")
         return {"ok": True, "action": "woken", "pid": proc.pid,
-                "agent": os.environ.get("ROOK_WAKE_AGENT") or None,
+                "agent": self._agent(),
                 "room": room, "prompt_file": pf}
 
-    @capability("wake_info")
+    @capability("wake_info", risk="read")
     def _wake_info(self) -> dict:
         """Report whether this host can wake an agent and which one."""
-        return {"ok": True, "can_wake": bool(os.environ.get("ROOK_WAKE_CMD")),
-                "agent": os.environ.get("ROOK_WAKE_AGENT") or None,
-                "cmd_set": bool(os.environ.get("ROOK_WAKE_CMD"))}
+        can = bool(self._command())
+        return {"ok": True, "can_wake": can, "agent": self._agent(), "cmd_set": can}
 
 
 PLUGIN = WakePlugin

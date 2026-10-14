@@ -24,13 +24,13 @@ import json
 import logging
 import os
 import re
-import sqlite3
 import threading
 import time
 
 import nacl.secret
 import nacl.utils
 
+from ..core.db import open_db
 from .secret_mask import STUB as _STUB, encode as _encode
 
 log = logging.getLogger("rook.band_mcp.vault")
@@ -50,9 +50,11 @@ class Vault:
         self._lock = threading.Lock()
         self._gen = 0  # bumped on every set/delete; drives the reverse mask
         self._box = nacl.secret.SecretBox(self._load_key())
-        self._db = sqlite3.connect(path, check_same_thread=False)
+        # Created 0600 before SQLite opens it, and its -wal/-shm too (open_db):
+        # the rows are encrypted, but the names, descriptions and access log
+        # are not for other local users.
+        self._db = open_db(path, row_factory=False, mode=0o600, mkdir=False)
         self._db.executescript("""
-            PRAGMA journal_mode=WAL;
             CREATE TABLE IF NOT EXISTS secrets(
                 name TEXT PRIMARY KEY, value BLOB NOT NULL, description TEXT NOT NULL,
                 created REAL NOT NULL, updated REAL NOT NULL, set_by TEXT NOT NULL);

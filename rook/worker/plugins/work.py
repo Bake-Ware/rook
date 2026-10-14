@@ -3,12 +3,12 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import time
 import threading
 import uuid
 from pathlib import Path
 
+from ...core.pluginkit import state_path, which
 from ..plugin import Plugin, capability
 from ..work_runtime import WorkRuntime
 
@@ -23,13 +23,15 @@ class WorkPlugin(Plugin):
         self.view_lock = threading.RLock()
         self.adopt_lock = threading.RLock()
 
+    @staticmethod
+    def db_path():
+        return Path(os.environ.get('ROOK_WORK_DB', '') or state_path('work.sqlite3')).expanduser()
+
     def available(self):
-        path = Path(os.environ.get('ROOK_WORK_DB', '~/.rook-band-worker/work.sqlite3')).expanduser()
-        return bool(shutil.which('codex')) or path.exists()
+        return bool(which('codex')) or self.db_path().exists()
 
     def bind_worker(self, worker):
-        path = Path(os.environ.get('ROOK_WORK_DB', '~/.rook-band-worker/work.sqlite3')).expanduser()
-        self.runtime = WorkRuntime(path, worker.registry)
+        self.runtime = WorkRuntime(self.db_path(), worker.registry)
 
     async def start(self):
         await self.runtime.start()
@@ -51,8 +53,11 @@ class WorkPlugin(Plugin):
                     'running': s.get('running', bool(s.get('handle'))), 'needs_input': s.get('needs_input', bool(s.get('pending'))),
                     'has_error': s.get('has_error', bool(s.get('error')))}
 
-    @capability('create')
+    @capability('create', risk='exec')
     async def create(self, session_id: str, command_id: str, cwd: str, title: str = '', model: str = ''):
+        """Create (or reopen) a host-owned Codex work session in ``cwd`` (absolute) and open it.
+
+        ``command_id`` deduplicates retries on the host."""
         sid = self.session_id(session_id)
         if not Path(cwd).is_absolute() or len(cwd) > 2000:
             raise ValueError('An absolute working directory is required.')
@@ -66,8 +71,9 @@ class WorkPlugin(Plugin):
         # Both process creation and subsequent commands are deduplicated on the host.
         return await self.command(sid, dict(op='open', id=command_id))
 
-    @capability('command')
+    @capability('command', risk='exec')
     async def command(self, session_id: str, command: dict):
+        """Send one command (``{id, op, ...}``) to a work session; deduplicated by ``command.id``."""
         sid = self.session_id(session_id)
         self.runtime.store.get(sid)
         cid = str(command.get('id', ''))
@@ -79,8 +85,9 @@ class WorkPlugin(Plugin):
         return {'ok': True, 'session': self.metadata(self.runtime.store.get(sid)),
                 'result': {'status': result['status']}}
 
-    @capability('status')
+    @capability('status', risk='read')
     def status(self, sessions: list[str]):
+        """Metadata (title, status, running, needs_input, has_error) of up to 20 work sessions."""
         if len(sessions) > 20:
             raise ValueError('At most 20 sessions per status request.')
         ids = [self.session_id(sid) for sid in sessions]
@@ -90,7 +97,7 @@ class WorkPlugin(Plugin):
         out = [found.get(sid, {'id': sid, 'missing': True}) for sid in ids]
         return {'ok': True, 'sessions': out}
 
-    @capability('view_page')
+    @capability('view_page', risk='read', tags=('sensitive',))
     def view_page(self, session_id: str, since: int = 0, token: str = '', offset: int = 0):
         """A stable, bounded page of a view delta; content never enters web storage."""
         with self.view_lock:
@@ -127,7 +134,7 @@ class WorkPlugin(Plugin):
         return dict(ok=True, token=token, data=chunk, next_offset=end,
                     truncated=end < len(text), revision=snapshot['revision'])
 
-    @capability('adopt_page')
+    @capability('adopt_page', risk='write')
     def adopt_page(self, session_id: str, digest: str, offset: int, data: str, final: bool = False):
         """Archive and adopt legacy web state before the web removes its copy."""
         with self.adopt_lock:

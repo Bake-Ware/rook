@@ -26,11 +26,12 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import sqlite3
 import threading
 import time
 from pathlib import Path
 from typing import Any, Iterable
+
+from ....core.db import open_db
 
 ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,47}$")
 FAMILY = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,31}$")
@@ -190,8 +191,7 @@ class PersonaStore:
     def __init__(self, path: str | Path, migrate) -> None:
         self.path = Path(path)
         self._lock = threading.Lock()
-        self.db = sqlite3.connect(str(self.path), check_same_thread=False)
-        self.db.row_factory = sqlite3.Row
+        self.db = open_db(self.path, wal=False)
         migrate(self.db)
 
     # -- profiles ------------------------------------------------------------

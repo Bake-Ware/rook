@@ -16,8 +16,15 @@ output contract at dispatch time:
   and projects dict results, each dict in a list, or - for a dict carrying an
   ``items`` list, which is treated as an envelope - each item.
 
-Handlers without metadata are dispatched exactly as before, so every existing
-worker plugin behaves unchanged.
+* ``timeout``: every call is bounded (``CapMeta.timeout``; the host default
+  of :func:`rook.core.plugin.default_cap_timeout`, 300 s, when undeclared or
+  without metadata). A handler that takes a ``timeout`` argument gets at least
+  that value plus a margin. ``timeout=None`` opts a cap out (long-running caps
+  that bound themselves). An expired call raises :class:`CapTimeout`; a sync
+  handler's thread cannot be killed and finishes in the background, but the
+  caller is answered and nothing waits on it.
+
+Handlers without metadata keep their output unchanged.
 
 This module is stdlib-only: it ships inside the worker bundle.
 """
@@ -29,11 +36,17 @@ import inspect
 import logging
 from typing import Any, Callable
 
+from .aiocompat import timeout as aio_timeout
+
 log = logging.getLogger("rook.core.registry")
 
 Handler = Callable[..., Any]
 
 _UNSET = object()
+
+
+class CapTimeout(TimeoutError):
+    """A capability call ran past its timeout and was abandoned."""
 
 
 def _accepts(fn: Handler, name: str) -> bool:
@@ -95,6 +108,7 @@ class CapabilityRegistry:
     def __init__(self) -> None:
         self._caps: dict[str, Handler] = {}
         self._meta: dict[str, Any] = {}
+        self._timeout_param: dict[str, Any] = {}   # dotpath -> handler's timeout default (cache)
 
     def register(self, dotpath: str, fn: Handler, replace: bool = False,
                  meta: Any = None) -> None:
@@ -103,6 +117,7 @@ class CapabilityRegistry:
         if dotpath in self._caps and not replace:
             raise ValueError(f"capability already registered: {dotpath}")
         self._caps[dotpath] = fn
+        self._timeout_param.pop(dotpath, None)
         meta = meta if meta is not None else getattr(fn, "_rook_cap_meta", None)
         if meta is not None:
             self._meta[dotpath] = meta
@@ -114,6 +129,7 @@ class CapabilityRegistry:
         """Drop a capability. Returns True if it was present. Used for runtime
         plugin disable and custom-cap teardown."""
         self._meta.pop(dotpath, None)
+        self._timeout_param.pop(dotpath, None)
         return self._caps.pop(dotpath, None) is not None
 
     def has(self, dotpath: str) -> bool:
@@ -166,6 +182,38 @@ class CapabilityRegistry:
             out[name] = entry
         return out
 
+    def _handler_timeout_default(self, dotpath: str, fn: Handler) -> Any:
+        """``_UNSET`` if the handler takes no ``timeout`` argument, else its
+        default (``None`` when it has none)."""
+        if dotpath not in self._timeout_param:
+            out: Any = _UNSET
+            try:
+                p = inspect.signature(fn).parameters.get("timeout")
+            except (TypeError, ValueError):
+                p = None
+            if p is not None and p.kind not in (p.VAR_POSITIONAL, p.VAR_KEYWORD):
+                out = None if p.default is inspect.Parameter.empty else p.default
+            self._timeout_param[dotpath] = out
+        return self._timeout_param[dotpath]
+
+    def timeout_for(self, dotpath: str, kwargs: dict | None = None) -> float | None:
+        """Seconds core lets this call run (``None`` = unbounded): the cap's
+        declared ``timeout`` or the host default, raised to the caller's own
+        ``timeout`` argument (or the handler's default for it) plus a margin."""
+        from .plugin import DEFAULT_TIMEOUT, TIMEOUT_MARGIN, default_cap_timeout
+        fn = self._caps.get(dotpath)
+        declared = getattr(self._meta.get(dotpath), "timeout", DEFAULT_TIMEOUT)
+        limit = default_cap_timeout() if declared == DEFAULT_TIMEOUT else declared
+        if limit is None or fn is None:
+            return limit
+        default = self._handler_timeout_default(dotpath, fn)
+        if default is _UNSET:
+            return limit
+        asked = (kwargs or {}).get("timeout", default)
+        if isinstance(asked, (int, float)) and not isinstance(asked, bool) and asked > 0:
+            limit = max(limit, float(asked) + TIMEOUT_MARGIN)
+        return limit
+
     async def call(self, dotpath: str, **kwargs: Any) -> Any:
         fn = self._caps.get(dotpath)
         if fn is None:
@@ -190,10 +238,26 @@ class CapabilityRegistry:
                                else _parse_fields(list(fields_default)))
                 else:
                     project = _parse_fields(asked)
+        limit = self.timeout_for(dotpath, kwargs)
         if inspect.iscoroutinefunction(fn):
-            result = await fn(**kwargs)
+            pending = fn(**kwargs)
         else:
-            result = await asyncio.to_thread(fn, **kwargs)
+            pending = asyncio.to_thread(fn, **kwargs)
+        if limit is None:
+            result = await pending
+        else:
+            # asyncio.timeout (not wait_for; aiocompat backports it to 3.10):
+            # the handler stays in the caller's task, so context variables
+            # behave as before, and its own TimeoutError is told apart from
+            # ours by expired().
+            try:
+                async with aio_timeout(limit) as window:
+                    result = await pending
+            except TimeoutError:
+                if window.expired():
+                    log.warning("capability %s timed out after %gs", dotpath, limit)
+                    raise CapTimeout(f"{dotpath} did not finish within {limit:g}s") from None
+                raise
         if trim_to is not None:
             result = _trim(result, trim_to)
         if project is not None:

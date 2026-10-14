@@ -562,6 +562,8 @@ class SettingsService:
             return f"saved, but {eff.get('env')} in the environment still wins"
         if e.owner == "worker":
             return "saved; apply it on the worker page (commit-confirmed restart)"
+        if e.setting.apply == "reload" and e.origin == "hub-plugin":
+            return "active now: the plugin reloads with it"
         return {"live": "active now", "reload": "active when the plugin reloads",
                 "restart": f"active after the {e.owner} process restarts",
                 "risky": "active after a commit-confirmed restart"}.get(e.setting.apply, "")
@@ -717,6 +719,7 @@ class SettingsService:
             raise SettingsError("; ".join(problems))
         if not settings:
             return {"ok": True, "worker": wname, "note": "nothing stored for this worker to push"}
+        restart = self._needs_restart(settings, w)
         from .worker_config import apply_confirmed
         job = {"id": uuid.uuid4().hex[:12], "worker": wname, "state": "running",
                "started": time.time(), "actor": actor,
@@ -727,7 +730,8 @@ class SettingsService:
             try:
                 res = await apply_confirmed(self.node.client, wid, settings, identity=actor,
                                             confirm_within=confirm_within,
-                                            public_env=self.schema.worker_env_names())
+                                            public_env=self.schema.worker_env_names(),
+                                            restart=restart)
             except Exception as err:
                 res = {"ok": False, "error": f"{type(err).__name__}: {err}"}
             job.update(state="done" if res.get("ok") else "failed", result=res,
@@ -751,6 +755,21 @@ class SettingsService:
             return {"ok": job["state"] == "done", "job": job}
         job["task"] = asyncio.ensure_future(run())
         return {"ok": True, "job": {k: v for k, v in job.items() if k != "task"}}
+
+    def _needs_restart(self, settings: dict, w: dict) -> bool:
+        """Whether a push must restart the worker: yes unless it only carries
+        env for settings marked ``live``/``reload`` and the worker can apply
+        those in place (``worker.plugin.reload`` marks a build that can)."""
+        if "worker.plugin.reload" not in (w.get("caps") or []):
+            return True
+        if any(k != "env" for k in settings):
+            return True
+        by_env = {n: e for e in self.schema if e.owner == "worker" for n in e.env_names()}
+        for var in settings.get("env") or {}:
+            e = by_env.get(var)
+            if e is None or e.setting.apply not in ("live", "reload"):
+                return True
+        return False
 
     async def plugin_toggle(self, worker: str, module: str, enable: bool, actor: str) -> dict:
         wid, w = self._worker_entry(worker)

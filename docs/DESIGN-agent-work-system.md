@@ -163,8 +163,8 @@ Most real work happens on workers, where the hub can see activity stop.
 - **The nudge,** once per idle period per task:
   0. First, check whether the claimant's worker (its identity's host) is on
      the band. If it isn't, go straight to step 3 and mark the task dirty.
-  1. The claim recorded a provider session and worker that support
-     `<client>-history.send` → send the hygiene prompt **into that same
+  1. The claim recorded a provider session and the worker supports
+     `sessions.send` → send the hygiene prompt **into that same
      session**, so the agent that did the work, with its context, writes it up.
   2. The worker has `agent.wake` (or `hermes.chat`) → start a fresh agent with
      a brief built from the task, its links and the latest handoff, and ask it

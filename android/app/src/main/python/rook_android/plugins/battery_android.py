@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import time
 
-from rook.worker.plugin import Plugin, capability
+from rook.worker.plugin import ANDROID_APP, Plugin, capability, place
 
 try:
     from java import jclass, cast  # provided by Chaquopy at runtime
@@ -88,6 +88,7 @@ def _read() -> dict | None:
 
 class AndroidBatteryPlugin(Plugin):
     NAMESPACE = "battery"
+    PLACEMENT = place(ANDROID_APP)
 
     def available(self) -> bool:
         try:
@@ -95,7 +96,7 @@ class AndroidBatteryPlugin(Plugin):
         except Exception:
             return False
 
-    @capability("status")
+    @capability("status", risk="read")
     def _status(self) -> dict:
         """Current battery: ``{percent, charging, plugged, status, temp_c?}``."""
         d = _read()

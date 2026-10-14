@@ -1,23 +1,18 @@
-"""Combined HTTP + WebSocket server for remote workers on a single port."""
+"""Hub dashboard: web UI, worker installers, setup wizard and band controller."""
 
 from __future__ import annotations
 
 import asyncio
-import hmac
+import html as _html
 import json
 import logging
 import os
 import secrets
 import sys
 import time
-import uuid
 from pathlib import Path
-from typing import Any
 
-import aiohttp
 from aiohttp import web
-
-from .server import RemoteWorker
 
 log = logging.getLogger(__name__)
 
@@ -39,6 +34,17 @@ def _versioned_assets(html: str, web_dir) -> str:
         return html
     ver = h.hexdigest()[:10]
     return _re.sub(r"(/account/[a-z]+/assets/[\w.-]+\.(?:js|css))(?=['\"])", rf"\1?v={ver}", html)
+
+
+def public_ws_url() -> str:
+    """``ROOK_HUB_PUBLIC_WS_URL`` if it is a plain ws(s):// URL, else "" (it
+    is interpolated into shell and PowerShell command lines)."""
+    url = os.environ.get("ROOK_HUB_PUBLIC_WS_URL", "").strip()
+    if url and _re.fullmatch(r"wss?://[A-Za-z0-9.\[\]:-]+(?:/[A-Za-z0-9._~/-]*)?", url):
+        return url
+    if url:
+        log.warning("ignoring ROOK_HUB_PUBLIC_WS_URL=%r (expected ws[s]://host[:port][/path])", url)
+    return ""
 
 
 class InstallerAccessLogger(web.AbstractAccessLogger):
@@ -92,15 +98,32 @@ def _clean_hermes_stdout(text: str) -> str:
             if not ln.lower().startswith(("query:", "initializing agent") + _HERMES_FOOTER)]
     return " ".join(kept).strip()
 
-WORKER_SCRIPT = (Path(__file__).parent / "worker.py").read_text(encoding="utf-8")
-
-PS_BOOTSTRAP = '''
+PS_BOOTSTRAP = r'''
 # R00K Band Worker Bootstrap (Windows)
+#
+# Usually run as:  iex (irm "<hub>/worker?band=CODE&os=windows")
+#
+# Everything is inside ONE script block run with `&`. Under `iex` this text
+# executes in the user's own interactive session, so a top-level `exit` would
+# close their window (with any error message in it) and preference variables
+# set here would leak into their session. Inside the block, `return` ends the
+# install and leaves the window open. `exit` is used only when this text runs
+# from a FILE (the elevated relaunch below, or automation using -File), where
+# it hands the exit code back to whoever launched us.
+& {{
+param([string]$ResultFile = "")
 $ErrorActionPreference = "Stop"
 # Suppress the progress bar: it speeds up Invoke-WebRequest a lot AND avoids a
 # "reading the console output buffer" crash when the installer runs headless /
 # with redirected output (automation, RMM, remote shells).
 $ProgressPreference = "SilentlyContinue"
+
+$startMsg = "[rook] Installing the Rook worker. This takes 2-5 minutes (longer if Python must be installed)."
+$workerName = $env:COMPUTERNAME
+$installDir = Join-Path $env:USERPROFILE ".rook-band-worker"
+$logPath = Join-Path $installDir "install.log"
+# Set only when this text runs from a file (-File); empty under iex.
+$fromFile = [bool]$PSCommandPath
 
 # Self-elevate if not already Administrator - Register-ScheduledTask below
 # needs -RunLevel Highest, which requires it. Relaunching ourselves elevated
@@ -118,21 +141,66 @@ $ProgressPreference = "SilentlyContinue"
 # pattern (same one Chocolatey/Scoop/rustup use). Writing to disk first
 # doesn't hide anything from AMSI/content scanning, it just avoids that
 # specific self-propagating-elevation process-creation signature.
+#
+# This (non-elevated) window waits for the elevated one and then reports the
+# outcome itself. The elevated run writes a small result file (status, name,
+# log path) rather than relying on its exit code alone, which Start-Process
+# does not always surface for an elevated child.
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {{
-    Write-Host "[r00k] not running elevated - relaunching as Administrator (accept the UAC prompt)..."
+    Write-Host $startMsg
+    Write-Host "[rook] Administrator rights are needed: accept the Windows UAC prompt. Progress shows in the new window; this one reports the result."
+    $tmp = Join-Path $env:TEMP "rook-worker-install.ps1"
+    $res = Join-Path $env:TEMP "rook-worker-install.result"
+    Remove-Item $res -Force -ErrorAction SilentlyContinue
     try {{
-        $tmp = Join-Path $env:TEMP "rook-worker-install.ps1"
-        Invoke-WebRequest -Uri "https://{domain}/worker?os=windows" -OutFile $tmp
-        $p = Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $tmp) -Verb RunAs -Wait -PassThru
-        Remove-Item $tmp -ErrorAction SilentlyContinue
-        exit $p.ExitCode
+        Invoke-WebRequest -Uri "{base}/worker?os=windows" -OutFile $tmp -UseBasicParsing
     }} catch {{
-        Write-Host "[r00k] ERROR: could not elevate (UAC declined, or this account has no admin rights)."
-        Write-Host "[r00k] Re-run from an elevated PowerShell instead: right-click PowerShell -> Run as Administrator, then re-run the iex command."
-        exit 1
+        Write-Host "[rook] ERROR: could not download the installer: $($_.Exception.Message)"
+        Write-Host "[rook] Nothing was installed. Check that this machine can reach the hub, then re-run the command."
+        $global:LASTEXITCODE = 1
+        return
     }}
+    # Quote both paths: Start-Process joins -ArgumentList with spaces, and a
+    # profile path like C:\Users\Jane Doe\... would otherwise split in two.
+    try {{
+        $p = Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$tmp`"", "`"$res`"") -Verb RunAs -Wait -PassThru
+    }} catch {{
+        Remove-Item $tmp -ErrorAction SilentlyContinue
+        Write-Host "[rook] Not installed: the administrator (UAC) prompt was declined or could not be shown."
+        Write-Host "[rook] Re-run the command and choose Yes, or run it from an elevated PowerShell (right-click PowerShell -> Run as administrator)."
+        $global:LASTEXITCODE = 1
+        return
+    }}
+    Remove-Item $tmp -ErrorAction SilentlyContinue
+    $result = @{{}}
+    if (Test-Path $res) {{
+        Get-Content $res -Encoding UTF8 | ForEach-Object {{
+            $kv = $_ -split "=", 2
+            if ($kv.Count -eq 2) {{ $result[$kv[0]] = $kv[1] }}
+        }}
+        Remove-Item $res -Force -ErrorAction SilentlyContinue
+    }}
+    if ($result["status"] -eq "ok") {{
+        Write-Host "[rook] Done: $($result['name']) is installed and joining the band. It will appear under Workers in the dashboard within a minute."
+        $global:LASTEXITCODE = 0
+        return
+    }}
+    $code = 1
+    if ($result["code"]) {{ $code = [int]$result["code"] }}
+    elseif ($p -and $p.ExitCode) {{ $code = $p.ExitCode }}
+    if ($result["log"]) {{ $logPath = $result["log"] }}
+    Write-Host "[rook] FAILED: the install did not finish (exit code $code)."
+    if ($result["error"]) {{ Write-Host "[rook] Error: $($result['error'])" }}
+    Write-Host "[rook] Full log: $logPath"
+    Write-Host "[rook] Fix the problem, then re-run the same command (re-running is safe)."
+    # Report the child's code without closing this window (see the top).
+    $global:LASTEXITCODE = $code
+    return
 }}
+
+# ---- Elevated from here: the relaunched child, or a user who opened an
+# elevated PowerShell themselves. ----
 
 # Resolve a WORKING python - prefer the `py` launcher, which is immune to the
 # Microsoft Store "python.exe" App Execution Alias stub that Windows 10/11 put
@@ -144,112 +212,199 @@ function Resolve-Python {{
     if (Get-Command py -ErrorAction SilentlyContinue) {{
         try {{
             $v = & py -3 --version 2>&1
-            if ($LASTEXITCODE -eq 0 -and "$v" -match '^Python \\d') {{ return @{{ Exe = 'py'; Args = @('-3') }} }}
+            if ($LASTEXITCODE -eq 0 -and "$v" -match '^Python \d') {{ return @{{ Exe = 'py'; Args = @('-3') }} }}
         }} catch {{}}
     }}
     if (Get-Command python -ErrorAction SilentlyContinue) {{
         try {{
             $v = & python --version 2>&1
-            if ($LASTEXITCODE -eq 0 -and "$v" -match '^Python \\d') {{ return @{{ Exe = 'python'; Args = @() }} }}
+            if ($LASTEXITCODE -eq 0 -and "$v" -match '^Python \d') {{ return @{{ Exe = 'python'; Args = @() }} }}
         }} catch {{}}
     }}
     return $null
 }}
 
-$py = Resolve-Python
-if (-not $py) {{
-    Write-Host "[r00k] Python not found (or only the Microsoft Store stub is on PATH). Installing..."
-    if (Get-Command winget -ErrorAction SilentlyContinue) {{
-        winget install -e --id Python.Python.3.12 --accept-package-agreements --accept-source-agreements -h
-    }} elseif (Get-Command choco -ErrorAction SilentlyContinue) {{
-        choco install python3 -y
+# Run a native command with its output routed through PowerShell so the
+# transcript (install.log) keeps it; returns the exit code. Errors are
+# "Continue" here because Windows PowerShell 5.1 turns redirected stderr lines
+# into error records, which "Stop" would make fatal (pip warnings, notices).
+function Invoke-Logged([string]$Exe, [string[]]$Arguments) {{
+    $ErrorActionPreference = "Continue"
+    & $Exe @Arguments 2>&1 | ForEach-Object {{ Write-Host "$_" }}
+    return $LASTEXITCODE
+}}
+
+# Abort the install with a message and an exit code (caught below).
+function Fail([string]$Message, [int]$Code = 1) {{
+    $err = New-Object System.Exception $Message
+    $err.Data["RookExitCode"] = $Code
+    throw $err
+}}
+
+New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+$transcript = $false
+try {{ Start-Transcript -Path $logPath -Force | Out-Null; $transcript = $true }} catch {{}}
+$exitCode = 0
+$failure = ""
+$hadWorker = $false
+try {{
+    Write-Host $startMsg
+
+    try {{
+        Write-Host "[rook] (1/6) Python: checking..."
+        $py = Resolve-Python
+        if (-not $py) {{
+            Write-Host "[rook] Python not found (or only the Microsoft Store stub is on PATH). Installing Python 3.12 - this is the slow part..."
+            if (Get-Command winget -ErrorAction SilentlyContinue) {{
+                $null = Invoke-Logged "winget" @("install", "-e", "--id", "Python.Python.3.12", "--accept-package-agreements", "--accept-source-agreements", "-h")
+            }} elseif (Get-Command choco -ErrorAction SilentlyContinue) {{
+                $null = Invoke-Logged "choco" @("install", "python3", "-y")
+            }} else {{
+                Write-Host "[rook] Downloading the Python installer..."
+                $pyUrl = "https://www.python.org/ftp/python/3.12.7/python-3.12.7-amd64.exe"
+                $pyInstaller = "$env:TEMP\python_install.exe"
+                Invoke-WebRequest -Uri $pyUrl -OutFile $pyInstaller -UseBasicParsing
+                Start-Process -Wait -FilePath $pyInstaller -ArgumentList "/quiet", "InstallAllUsers=1", "PrependPath=1", "Include_launcher=1"
+                Remove-Item $pyInstaller -ErrorAction SilentlyContinue
+            }}
+            $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+            $py = Resolve-Python
+            if (-not $py) {{
+                # PATH refresh doesn't always take effect in THIS process even after a
+                # successful install - hunt well-known install locations directly.
+                $hunt = @(
+                    "$env:LocalAppData\Programs\Python\Python312\python.exe",
+                    "$env:LocalAppData\Programs\Python\Python313\python.exe",
+                    "C:\Python312\python.exe",
+                    "C:\Python313\python.exe",
+                    "$env:ProgramFiles\Python312\python.exe",
+                    "$env:ProgramFiles\Python313\python.exe"
+                ) | Where-Object {{ Test-Path $_ }}
+                if ($hunt) {{ $py = @{{ Exe = @($hunt)[0]; Args = @() }} }}
+            }}
+            if (-not $py) {{
+                Write-Host "[rook] If running 'python' opens the Microsoft Store, disable the alias:"
+                Write-Host "[rook]   Settings -> Apps -> Advanced app settings -> App execution aliases -> turn OFF python.exe/python3.exe"
+                Write-Host "[rook] then re-run: iex (irm `"{base}/worker?os=windows`")"
+                Fail "Python install did not produce a working interpreter."
+            }}
+        }}
+        Write-Host "[rook] Python: $(& $py.Exe @($py.Args) --version)"
+
+        # Use a dedicated venv - avoids PEP 668 and missing/broken system pip.
+        Write-Host "[rook] (2/6) venv: preparing $installDir\venv ..."
+        $venv = Join-Path $installDir "venv"
+        $vpy = "$venv\Scripts\python.exe"
+        if (-not (Test-Path $vpy)) {{
+            $null = Invoke-Logged $py.Exe (@($py.Args) + @("-m", "venv", $venv))
+            if (-not (Test-Path $vpy)) {{ Fail "venv creation failed - $vpy was not created." }}
+        }}
+        # pythonw.exe is the windowless interpreter - the worker runs with NO console window.
+        $vpyw = "$venv\Scripts\pythonw.exe"
+        if (-not (Test-Path $vpyw)) {{ $vpyw = $vpy }}  # fallback if pythonw is absent
+        $null = Invoke-Logged $vpy @("-m", "ensurepip", "--upgrade")
+        $null = Invoke-Logged $vpy @("-m", "pip", "install", "--quiet", "--upgrade", "pip")
+
+        # Install required dependencies into the venv (prebuilt wheels - no compiler needed).
+        # mss+pillow back screenshot.* (see rook/worker/plugins/screenshot.py); hid.* needs
+        # nothing extra - it's stdlib ctypes SendInput. windows-curses gives the chat.open
+        # receiver window a curses UI (chat falls back to a plain line client without it).
+        Write-Host "[rook] (3/6) dependencies: installing with pip (the longest step)..."
+        $rc = Invoke-Logged $vpy @("-m", "pip", "install", "--quiet", "pynacl", "aiohttp", "websockets", "cryptography", "mss", "pillow", "windows-curses")
+        if ($rc -ne 0) {{ Fail "dependency install failed (pip exit code $rc) - see the pip output above." $rc }}
+
+        # Download the bundle to a temp name, THEN stop the running worker and
+        # swap it in. Windows refuses to overwrite a file another process has
+        # open, so a re-run (upgrade, or re-pairing to another hub) used to fail
+        # here while the old worker held band-worker.pyz. Stopping after the
+        # download means a failed download leaves the old worker running.
+        Write-Host "[rook] (4/6) bundle: downloading the worker..."
+        $pyz = Join-Path $installDir "band-worker.pyz"
+        $pyzNew = "$pyz.download"
+        Remove-Item $pyzNew -Force -ErrorAction SilentlyContinue
+        Invoke-WebRequest -Uri "{base}/band-worker.pyz" -OutFile $pyzNew -UseBasicParsing
+
+        # Stop the existing worker - avoids a locked bundle, duplicate processes and
+        # stale worker-ids lingering on the band (each process announces a fresh id).
+        Write-Host "[rook] stopping any existing band worker..."
+        if (Get-ScheduledTask -TaskName "RookBandWorker" -ErrorAction SilentlyContinue) {{ $hadWorker = $true }}
+        Stop-ScheduledTask -TaskName "RookBandWorker" -ErrorAction SilentlyContinue
+        Get-CimInstance Win32_Process -Filter "Name like '%python%'" -ErrorAction SilentlyContinue |
+            Where-Object {{ $_.CommandLine -like "*band-worker.pyz*" }} |
+            ForEach-Object {{ $hadWorker = $true; Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}
+        Start-Sleep -Seconds 1
+        # A just-killed process can keep the file open for a moment; retry briefly.
+        for ($i = 1; ; $i++) {{
+            try {{ Move-Item -Path $pyzNew -Destination $pyz -Force; break }}
+            catch {{ if ($i -ge 10) {{ throw }}; Start-Sleep -Seconds 1 }}
+        }}
+        $rc = Invoke-Logged $vpy @($pyz, "--install-cli")
+        if ($rc -ne 0) {{ Fail "the worker bundle failed to run (exit code $rc) - see the output above." $rc }}
+
+        # Not routed through Invoke-Logged: enrollment may be interactive (browser
+        # sign-in, band choice), so it keeps the console to itself.
+        Write-Host "[rook] (5/6) enrollment: registering this machine with the band..."
+        & $vpy $pyz {enroll_args}
+        $rc = $LASTEXITCODE
+{enroll_retry}        if ($rc -ne 0) {{ Fail "enrollment failed (exit code $rc) - see the message above." $rc }}
+
+        # HID backend: Windows is native - hid.* uses SendInput via user32.dll (no install).
+        # The task runs at logon in the interactive session, so input injection works.
+        Write-Host "[rook] (6/6) service: registering Scheduled Task RookBandWorker (starts at logon)..."
+        Write-Host "[rook] HID backend: native Windows SendInput (no extra setup needed)."
+
+        # Register as Scheduled Task so worker restarts at every logon  (band: {band_name})
+        $workerArgs = "`"$pyz`" --hub {hub_public} --ws --psk {band_psk} --name $workerName --update-url {base}/band-worker.json"
+        $action = New-ScheduledTaskAction -Execute $vpyw -Argument $workerArgs
+        $trigger = New-ScheduledTaskTrigger -AtLogon
+        $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit 0
+        Register-ScheduledTask -TaskName "RookBandWorker" -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest -Force | Out-Null
+        Start-ScheduledTask -TaskName "RookBandWorker"
+        Write-Host "[rook] Band worker installed and started as Scheduled Task (RookBandWorker)."
+    }} catch {{
+        $exitCode = 1
+        if ($_.Exception.Data.Contains("RookExitCode")) {{
+            $exitCode = [int]$_.Exception.Data["RookExitCode"]
+            if ($exitCode -eq 0) {{ $exitCode = 1 }}
+        }} else {{
+            # An unexpected error: say where, for the log.
+            Write-Host $_.InvocationInfo.PositionMessage
+        }}
+        $failure = $_.Exception.Message -replace "[\r\n]+", " "
+        Write-Host "[rook] ERROR: $failure"
+        if ($hadWorker) {{
+            # Don't leave a previously working machine offline.
+            try {{
+                Start-ScheduledTask -TaskName "RookBandWorker"
+                Write-Host "[rook] Restarted the previously installed worker."
+            }} catch {{}}
+        }}
+    }}
+
+    if ($exitCode -eq 0) {{
+        Write-Host "[rook] Done: $workerName is installed and joining the band. It will appear under Workers in the dashboard within a minute."
     }} else {{
-        Write-Host "[r00k] Downloading Python installer..."
-        $pyUrl = "https://www.python.org/ftp/python/3.12.7/python-3.12.7-amd64.exe"
-        $pyInstaller = "$env:TEMP\\python_install.exe"
-        Invoke-WebRequest -Uri $pyUrl -OutFile $pyInstaller
-        Start-Process -Wait -FilePath $pyInstaller -ArgumentList "/quiet", "InstallAllUsers=1", "PrependPath=1", "Include_launcher=1"
-        Remove-Item $pyInstaller
+        Write-Host "[rook] FAILED (exit code $exitCode). Full log: $logPath"
+        Write-Host "[rook] Fix the problem above, then re-run the same command (re-running is safe)."
     }}
-    $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
-    $py = Resolve-Python
-    if (-not $py) {{
-        # PATH refresh doesn't always take effect in THIS process even after a
-        # successful install - hunt well-known install locations directly.
-        $hunt = @(
-            "$env:LocalAppData\\Programs\\Python\\Python312\\python.exe",
-            "$env:LocalAppData\\Programs\\Python\\Python313\\python.exe",
-            "C:\\Python312\\python.exe",
-            "C:\\Python313\\python.exe",
-            "$env:ProgramFiles\\Python312\\python.exe",
-            "$env:ProgramFiles\\Python313\\python.exe"
-        ) | Where-Object {{ Test-Path $_ }}
-        if ($hunt) {{ $py = @{{ Exe = $hunt[0]; Args = @() }} }}
-    }}
-    if (-not $py) {{
-        Write-Host "[r00k] ERROR: Python install did not produce a working interpreter."
-        Write-Host "[r00k] If running 'python' opens the Microsoft Store, disable the alias:"
-        Write-Host "[r00k]   Settings -> Apps -> Advanced app settings -> App execution aliases -> turn OFF python.exe/python3.exe"
-        Write-Host "[r00k] then re-run: iex (irm `"https://{domain}/worker?os=windows`")"
-        exit 1
-    }}
+}} finally {{
+    # finally: also on Ctrl+C, so an elevated session is not left transcribing.
+    if ($transcript) {{ try {{ Stop-Transcript | Out-Null }} catch {{}} }}
 }}
-
-Write-Host "[r00k] Python: $(& $py.Exe @($py.Args) --version)"
-
-# Use a dedicated venv - avoids PEP 668 and missing/broken system pip.
-$venv = "$env:USERPROFILE\\.rook-band-worker\\venv"
-if (-not (Test-Path "$venv\\Scripts\\python.exe")) {{
-    Write-Host "[r00k] creating venv at $venv ..."
-    & $py.Exe @($py.Args) -m venv "$venv"
-    if (-not (Test-Path "$venv\\Scripts\\python.exe")) {{
-        Write-Host "[r00k] ERROR: venv creation failed - $venv\\Scripts\\python.exe was not created."
-        exit 1
-    }}
+if ($ResultFile) {{
+    # Read by the non-elevated window that launched us (see the top).
+    $status = "failed"
+    if ($exitCode -eq 0) {{ $status = "ok" }}
+    try {{
+        Set-Content -Path $ResultFile -Encoding UTF8 -Value @("status=$status", "code=$exitCode", "name=$workerName", "log=$logPath", "error=$failure")
+    }} catch {{}}
+    # Keep a failed run's window open so the error can be read; a successful
+    # one closes and the launching window reports success.
+    if ($exitCode -ne 0) {{ $null = Read-Host "[rook] Press Enter to close this window" }}
 }}
-$vpy = "$venv\\Scripts\\python.exe"
-# pythonw.exe is the windowless interpreter - the worker runs with NO console window.
-$vpyw = "$venv\\Scripts\\pythonw.exe"
-if (-not (Test-Path $vpyw)) {{ $vpyw = $vpy }}  # fallback if pythonw is absent
-& $vpy -m ensurepip --upgrade 2>$null
-& $vpy -m pip install --quiet --upgrade pip 2>$null
-
-# Install required dependencies into the venv (prebuilt wheels - no compiler needed).
-# mss+pillow back screenshot.* (see rook/worker/plugins/screenshot.py); hid.* needs
-# nothing extra - it's stdlib ctypes SendInput. windows-curses gives the chat.open
-# receiver window a curses UI (chat falls back to a plain line client without it).
-Write-Host "[r00k] installing worker dependencies..."
-& $vpy -m pip install --quiet pynacl aiohttp websockets cryptography mss pillow windows-curses
-if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}
-
-# Download band-worker bundle
-$pyz = "$env:USERPROFILE\\.rook-band-worker\\band-worker.pyz"
-New-Item -ItemType Directory -Force -Path (Split-Path $pyz) | Out-Null
-Invoke-WebRequest -Uri "https://{domain}/band-worker.pyz" -OutFile $pyz
-& $vpy $pyz --install-cli
-if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}
-
-# Stop any existing worker FIRST - avoids duplicate processes and stale worker-ids
-# lingering on the band (each worker process announces a fresh random id).
-Write-Host "[r00k] stopping any existing band worker..."
-Stop-ScheduledTask -TaskName "RookBandWorker" -ErrorAction SilentlyContinue
-Get-CimInstance Win32_Process -Filter "Name like '%python%'" -ErrorAction SilentlyContinue |
-    Where-Object {{ $_.CommandLine -like "*band-worker.pyz*" }} |
-    ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}
-Start-Sleep -Seconds 1
-
-# HID backend: Windows is native - hid.* uses SendInput via user32.dll (no install).
-# The task runs at logon in the interactive session, so input injection works.
-Write-Host "[r00k] HID backend: native Windows SendInput (no extra setup needed)."
-
-# Register as Scheduled Task so worker restarts at every logon  (band: {band_name})
-$workerArgs = "`"$pyz`" --hub {hub_public} --ws --psk {band_psk} --name $env:COMPUTERNAME --update-url https://{domain}/band-worker.json"
-$action = New-ScheduledTaskAction -Execute $vpyw -Argument $workerArgs
-$trigger = New-ScheduledTaskTrigger -AtLogon
-$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit 0
-Register-ScheduledTask -TaskName "RookBandWorker" -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest -Force | Out-Null
-Start-ScheduledTask -TaskName "RookBandWorker"
-Write-Host "[r00k] Band worker installed as Scheduled Task (RookBandWorker)."
+if ($fromFile) {{ exit $exitCode }}
+$global:LASTEXITCODE = $exitCode
+}} @args
 '''
 
 BASH_BOOTSTRAP = '''#!/bin/bash
@@ -257,8 +412,12 @@ set -e
 
 # R00K Band Worker Bootstrap (Linux/Mac/Termux)
 
+echo "[rook] Installing the Rook worker. This takes 1-3 minutes (longer if Python must be installed)."
+# set -e stops at the first failing step; say so plainly instead of just ending.
+trap 'rc=$?; [ $rc -ne 0 ] && echo "[rook] FAILED (exit code $rc). Fix the problem above, then re-run the same command (re-running is safe)."' EXIT
+
 install_python() {{
-    echo "[r00k] Python not found. Installing..."
+    echo "[rook] Python not found. Installing..."
     if command -v apt-get &>/dev/null; then
         sudo apt-get update -qq && sudo apt-get install -y -qq python3 python3-pip curl
     elif command -v dnf &>/dev/null; then
@@ -272,15 +431,15 @@ install_python() {{
     elif command -v pkg &>/dev/null; then
         pkg install -y python curl
     else
-        echo "[r00k] ERROR: No supported package manager found."
-        echo "[r00k] Install Python 3 manually and re-run this script."
+        echo "[rook] ERROR: No supported package manager found."
+        echo "[rook] Install Python 3 manually and re-run this script."
         exit 1
     fi
 }}
 
 install_curl() {{
     if ! command -v curl &>/dev/null; then
-        echo "[r00k] curl not found. Installing..."
+        echo "[rook] curl not found. Installing..."
         if command -v apt-get &>/dev/null; then
             sudo apt-get install -y -qq curl
         elif command -v dnf &>/dev/null; then
@@ -301,14 +460,14 @@ setup_hid_linux() {{
     case "$PREFIX" in /data/data/com.termux*) return 0 ;; esac
 
     if ! command -v ydotool &>/dev/null; then
-        echo "[r00k] installing ydotool (HID backend)..."
+        echo "[rook] installing ydotool (HID backend)..."
         if command -v apt-get &>/dev/null; then sudo apt-get install -y -qq ydotool || true
         elif command -v dnf &>/dev/null; then sudo dnf install -y ydotool || true
         elif command -v pacman &>/dev/null; then sudo pacman -Sy --noconfirm ydotool || true
         elif command -v apk &>/dev/null; then sudo apk add ydotool || true
-        else echo "[r00k] WARNING: no known package manager for ydotool; HID unavailable"; fi
+        else echo "[rook] WARNING: no known package manager for ydotool; HID unavailable"; fi
     fi
-    command -v ydotool &>/dev/null || {{ echo "[r00k] WARNING: ydotool missing; HID disabled"; return 0; }}
+    command -v ydotool &>/dev/null || {{ echo "[rook] WARNING: ydotool missing; HID disabled"; return 0; }}
 
     # /dev/uinput access. Active seat sessions get an ACL automatically; the udev
     # rule + input group cover headless and post-reboot. All best-effort (sudo).
@@ -338,9 +497,9 @@ RKYD
         systemctl --user daemon-reload
         systemctl --user enable --now rook-ydotoold.service 2>/dev/null || true
         if systemctl --user is-active --quiet rook-ydotoold.service; then
-            echo "[r00k] HID backend ready (ydotool + ydotoold)."
+            echo "[rook] HID backend ready (ydotool + ydotoold)."
         else
-            echo "[r00k] WARNING: ydotoold inactive — HID may need a relogin for /dev/uinput access."
+            echo "[rook] WARNING: ydotoold inactive — HID may need a relogin for /dev/uinput access."
         fi
     fi
 }}
@@ -376,7 +535,7 @@ TXBOOT
         sv up rook-band-worker 2>/dev/null || true
         sleep 2
         if sv status rook-band-worker 2>/dev/null | grep -q "^run"; then
-            echo "[r00k] Band worker RUNNING (termux-service: rook-band-worker)."
+            echo "[rook] Band worker RUNNING (termux-service: rook-band-worker)."
             return 0
         fi
     fi
@@ -384,17 +543,17 @@ TXBOOT
     nohup $WORKER_CMD >> "$HOME/.rook-band-worker/worker.log" 2>&1 &
     sleep 2
     if kill -0 $! 2>/dev/null; then
-        echo "[r00k] Band worker RUNNING (nohup PID $!). Log: ~/.rook-band-worker/worker.log"
-        echo "[r00k] TIP: restart Termux once so runsvdir supervises rook-band-worker across restarts."
+        echo "[rook] Band worker RUNNING (nohup PID $!). Log: ~/.rook-band-worker/worker.log"
+        echo "[rook] TIP: restart Termux once so runsvdir supervises rook-band-worker across restarts."
     else
-        echo "[r00k] ERROR: worker exited immediately. Check ~/.rook-band-worker/worker.log"
+        echo "[rook] ERROR: worker exited immediately. Check ~/.rook-band-worker/worker.log"
         tail -n 20 "$HOME/.rook-band-worker/worker.log" 2>/dev/null
         exit 1
     fi
 }}
 
 if [ "$IS_TERMUX" = "1" ]; then
-    echo "[r00k] Termux detected — installing native deps (libsodium, termux-api)..."
+    echo "[rook] Termux detected — installing native deps (libsodium, termux-api)..."
     pkg install -y libsodium termux-api >/dev/null 2>&1 || true
     # pynacl: link Termux's prebuilt libsodium instead of compiling the bundled
     # copy, whose configure mis-detects memset_explicit on Android API < 34.
@@ -403,6 +562,7 @@ fi
 
 install_curl
 
+echo "[rook] (1/6) Python: checking..."
 PYTHON=""
 if command -v python3 &>/dev/null; then
     PYTHON=python3
@@ -415,24 +575,25 @@ else
     elif command -v python &>/dev/null; then
         PYTHON=python
     else
-        echo "[r00k] ERROR: Python installation failed."
+        echo "[rook] ERROR: Python installation failed."
         exit 1
     fi
 fi
 
-echo "[r00k] Python: $($PYTHON --version)"
+echo "[rook] Python: $($PYTHON --version)"
 
 # Use a dedicated venv — sidesteps PEP 668 (externally-managed), missing system pip,
 # and --user path quirks. The venv always gets its own pip via ensurepip.
 VENV="$HOME/.rook-band-worker/venv"
+echo "[rook] (2/6) venv: preparing $VENV ..."
 if [ ! -x "$VENV/bin/python" ]; then
-    echo "[r00k] creating venv at $VENV ..."
+    echo "[rook] creating venv at $VENV ..."
     if ! $PYTHON -m venv "$VENV" 2>/dev/null; then
         # venv module missing — install it, then retry
         if command -v apt-get &>/dev/null; then sudo apt-get install -y -qq python3-venv || true
         elif command -v pacman &>/dev/null; then sudo pacman -Sy --noconfirm python || true
         fi
-        $PYTHON -m venv "$VENV" || {{ echo "[r00k] ERROR: could not create venv"; exit 1; }}
+        $PYTHON -m venv "$VENV" || {{ echo "[rook] ERROR: could not create venv"; exit 1; }}
     fi
 fi
 VPY="$VENV/bin/python"
@@ -442,17 +603,23 @@ VPY="$VENV/bin/python"
 "$VPY" -m pip install --quiet --upgrade pip &>/dev/null || true
 
 # Install required dependencies into the venv (prebuilt wheels — no compiler needed)
-echo "[r00k] installing worker dependencies..."
+echo "[rook] (3/6) dependencies: installing with pip (the longest step)..."
 "$VPY" -m pip install --quiet pynacl aiohttp websockets cryptography || {{
-    echo "[r00k] ERROR: dependency install failed. See output above."
+    echo "[rook] ERROR: dependency install failed. See output above."
     exit 1
 }}
 
-# Download band-worker bundle
+# Download band-worker bundle to a temp name, then rename it into place. The
+# rename is atomic and a running worker keeps reading the old file it has
+# open, so a re-run (upgrade, re-pairing) never leaves a half-written bundle
+# under a live worker or after a failed download. The old worker is NOT
+# stopped here: the service manager swaps it below (see the note there).
+echo "[rook] (4/6) bundle: downloading the worker..."
 PYZ="$HOME/.rook-band-worker/band-worker.pyz"
 mkdir -p "$HOME/.rook-band-worker"
-curl -fsSL https://{domain}/band-worker.pyz -o "$PYZ"
-chmod +x "$PYZ"
+curl -fsSL {base}/band-worker.pyz -o "$PYZ.download"
+chmod +x "$PYZ.download"
+mv -f "$PYZ.download" "$PYZ"
 "$VPY" "$PYZ" --install-cli
 
 WORKER_NAME="$(hostname 2>/dev/null || uname -n 2>/dev/null || cat /etc/hostname 2>/dev/null)"
@@ -462,8 +629,13 @@ if [ "$IS_TERMUX" = "1" ]; then
     MODEL=$(getprop ro.product.model 2>/dev/null | tr ' ' '-')
     [ -n "$MODEL" ] && WORKER_NAME="$MODEL"
 fi
+echo "[rook] (5/6) enrollment: registering this machine with the band..."
+# stdin is the curl pipe, so enrollment (and any prompt) talks to the terminal.
+RC=0; "$VPY" "$PYZ" {enroll_args} </dev/tty || RC=$?
+{enroll_retry}[ "$RC" -eq 0 ] || {{ echo "[rook] ERROR: enrollment failed (exit code $RC) - see the message above."; exit "$RC"; }}
+
 # band: {band_name}
-WORKER_CMD="$VPY $PYZ --hub {hub_public} --ws --psk {band_psk} --name $WORKER_NAME --update-url https://{domain}/band-worker.json"
+WORKER_CMD="$VPY $PYZ --hub {hub_public} --ws --psk {band_psk} --name $WORKER_NAME --update-url {base}/band-worker.json"
 
 # Swap in the new worker. CRITICAL: when this installer is launched *by the
 # running worker* (a band-driven update), this script shares the worker's
@@ -473,13 +645,13 @@ WORKER_CMD="$VPY $PYZ --hub {hub_public} --ws --psk {band_psk} --name $WORKER_NA
 # in-process: we let the service manager own the stop+start (it finishes the
 # restart even if this script dies), and on no-service-manager hosts we launch
 # the new worker in its OWN session before reaping the old one.
-echo "[r00k] installing/replacing band worker..."
+echo "[rook] (6/6) service: installing/replacing the band worker service..."
 
 if [ "$IS_TERMUX" = "1" ]; then
     setup_termux_service
     # runit owns the swap; restarting is safe even if this script is the caller.
     sv restart rook-band-worker 2>/dev/null || sv up rook-band-worker 2>/dev/null || true
-    echo "[r00k] Band worker (re)started via termux-services."
+    echo "[rook] Band worker (re)started via termux-services."
 elif command -v systemctl &>/dev/null && systemctl --user show-environment >/dev/null 2>&1; then
     mkdir -p ~/.config/systemd/user
     cat > ~/.config/systemd/user/rook-band-worker.service << ROOKSVC
@@ -503,9 +675,9 @@ ROOKSVC
     # Hand the swap to systemd. `restart` stops the old instance and starts the
     # new one from the unit above — owned by the user manager, NOT this script —
     # so it completes even if stopping the old worker kills this caller.
-    echo "[r00k] (re)starting via systemd user service..."
+    echo "[rook] (re)starting via systemd user service..."
     systemctl --user restart rook-band-worker
-    echo "[r00k] Band worker RUNNING (systemd user service: rook-band-worker)."
+    echo "[rook] Band worker RUNNING (systemd user service: rook-band-worker)."
 else
     # No service manager. Start the NEW worker in its own session FIRST (so it
     # survives even if reaping the old worker kills this script), then reap any
@@ -519,9 +691,9 @@ else
         kill "$pid" 2>/dev/null || true
     done
     if kill -0 "$NEWPID" 2>/dev/null; then
-        echo "[r00k] Band worker RUNNING in background (PID $NEWPID, own session). Log: ~/.rook-band-worker/worker.log"
+        echo "[rook] Band worker RUNNING in background (PID $NEWPID, own session). Log: ~/.rook-band-worker/worker.log"
     else
-        echo "[r00k] ERROR: worker exited immediately. Check: ~/.rook-band-worker/worker.log"
+        echo "[rook] ERROR: worker exited immediately. Check: ~/.rook-band-worker/worker.log"
         tail -n 20 ~/.rook-band-worker/worker.log 2>/dev/null
         exit 1
     fi
@@ -532,9 +704,35 @@ fi
 # The worker detects its backend lazily on the first hid.* call, by which time
 # ydotool is installed — so no restart is needed.
 setup_hid_linux
+
+echo "[rook] Done: $WORKER_NAME is installed and joining the band. It will appear under Workers in the dashboard within a minute."
 '''
 
 
+# Enrollment retry for pairing-code installs, spliced into the scripts above
+# (as {enroll_retry}; inserted verbatim, so single braces). The first attempt
+# runs the code from the command the user copied; if that fails (most often
+# because the 5-minute code expired while Python/pip installed), ask for the
+# fresh code the dashboard is showing instead of making them start over.
+_PS_ENROLL_RETRY = r'''        while ($rc -ne 0) {
+            Write-Host "[rook] Enrollment failed. Pairing codes expire after 5 minutes; the dashboard shows a fresh one (Install page)."
+            $fresh = ""
+            try { $fresh = "$(Read-Host '[rook] Type the new 6-character code to retry, or press Enter to stop')".Trim().ToLower() } catch {}
+            if (-not $fresh) { break }
+            & $vpy $pyz --enroll __BASE__ --pair-code $fresh
+            $rc = $LASTEXITCODE
+        }
+'''
+
+_BASH_ENROLL_RETRY = r'''while [ "$RC" -ne 0 ]; do
+    echo "[rook] Enrollment failed. Pairing codes expire after 5 minutes; the dashboard shows a fresh one (Install page)."
+    printf '%s' "[rook] Type the new 6-character code to retry, or press Enter to stop: "
+    FRESH=""; read -r FRESH </dev/tty || FRESH=""
+    FRESH="$(printf '%s' "$FRESH" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+    [ -n "$FRESH" ] || break
+    RC=0; "$VPY" "$PYZ" --enroll __BASE__ --pair-code "$FRESH" </dev/tty || RC=$?
+done
+'''
 # `curl -fsSL https://<host>/install | bash` — one installer, selectable target.
 #   interactive : prompts worker / cli / both
 #   unattended  : `... | bash -s -- worker|cli|both`  (or ROOK_INSTALL=…)
@@ -659,8 +857,8 @@ echo "[rook] done."
 
 
 # `iex (irm https://<host>/install?os=windows)` — install the `rook` band CLI
-# (the terminal control panel) on Windows. The Linux path is `.../rook | bash`;
-# this is its PowerShell equivalent. Uses .replace("__DOMAIN__", …) rather than
+# (the terminal control panel) on Windows. The Linux path is `.../install | bash`;
+# this is its PowerShell equivalent. Uses .replace("__BASE__", …) rather than
 # str.format so the PowerShell braces don't need doubling.
 PS_CLI_BOOTSTRAP = r'''# R00K Band CLI (rook) installer - Windows
 $ErrorActionPreference = "Stop"
@@ -729,7 +927,7 @@ Write-Host "[rook] installing dependency: windows-curses ..."
 
 # Download the standalone CLI payload.
 $rookpy = "$root\rook.py"
-Invoke-WebRequest -Uri "https://__DOMAIN__/rook.py" -OutFile $rookpy
+Invoke-WebRequest -Uri "__BASE__/rook.py" -OutFile $rookpy
 
 # Launcher shim on PATH: `rook` -> venv python running the CLI.
 $bin = "$root\bin"
@@ -750,7 +948,7 @@ if (($env:PATH -split ';') -notcontains $bin) { $env:PATH = "$env:PATH;$bin" }
 if ($env:ROOK_WEB_PASS) {
     $cfgdir = "$env:USERPROFILE\.config\rook"
     New-Item -ItemType Directory -Force -Path $cfgdir | Out-Null
-    $u = if ($env:ROOK_WEB_URL) { $env:ROOK_WEB_URL } else { "https://__DOMAIN__" }
+    $u = if ($env:ROOK_WEB_URL) { $env:ROOK_WEB_URL } else { "__BASE__" }
     $usr = if ($env:ROOK_WEB_USER) { $env:ROOK_WEB_USER } else { "__WEB_USER__" }
     "# rook band - dashboard connection`nurl=$u`nuser=$usr`npass=$($env:ROOK_WEB_PASS)" |
         Set-Content -Path "$cfgdir\band.conf" -Encoding UTF8
@@ -978,9 +1176,9 @@ say "done. Point workers at this host:  --hub <this-host>:${HUB_BIND##*:}"
 
 
 class CombinedServer:
-    """Single-port server: HTTP for bootstrap + WebSocket for worker connections."""
+    """Single-port HTTP server: dashboard, installers and band control."""
 
-    def __init__(self, port: int = 7005, auth_token: str = "", domain: str = "hub.example.com",
+    def __init__(self, port: int = 7005, domain: str = "hub.example.com",
                  web_user: str = "", web_pass: str = "",
                  band_psk: str = "",
                  hub_host: str = "127.0.0.1", hub_port: int = 7474,
@@ -989,7 +1187,6 @@ class CombinedServer:
                  argv: list | None = None):
         self.port = port
         self.bind = bind
-        self.auth_token = auth_token
         self.domain = domain
         self.web_user = web_user
         self.web_pass = web_pass
@@ -1020,6 +1217,7 @@ class CombinedServer:
             self._ctor_settings, explicit, _s, _ds.stored_values(self._settings_store))
         self.domain, self.hub_public, self.band_name = (
             _vals["domain"], _vals["hub_public"], _vals["band_name"])
+        self._apply_domain(self.domain)
         for _c in self._setting_conflicts:
             log.warning("setting %s: %s", _c["key"], _c["note"])
         self._settings_checked = 0.0
@@ -1050,6 +1248,9 @@ class CombinedServer:
             if getattr(self, "_chat_db", None) else None,
             data_path("mask.token", "/var/lib/rook-band-mcp/mask.token")]).mask
         self._push_task = None  # background: push signed manifest to behind workers
+        # The bundle installers download: operator-built, else built here.
+        from .worker_bundle import WorkerBundle
+        self._bundle = WorkerBundle(lambda: self.public_base)
         from .band_overview import BandOverview
         self._overview = BandOverview(self._band_worker_rows, self._overview_call)
         # Known bands for the dashboard selector. PSKs stay server-side; the UI
@@ -1081,23 +1282,20 @@ class CombinedServer:
                 self._primary_label = _primary["label"]
         except Exception:
             log.warning("could not derive band labels; selector names may be blank")
-        self._workers: dict[str, RemoteWorker] = {}
-        self._on_worker_connect = None
-        self._on_worker_disconnect = None
-        self._on_worker_chat = None  # async callback(worker_name, content, worker_id) -> response
         self._app = web.Application(middlewares=[self._basic_auth_middleware,
                                                  self._principal_middleware])
         self._app.router.add_get("/", self._index)
         self._app.router.add_get("/worker", self._worker_bootstrap)
         self._app.router.add_post("/enroll", self._enroll_config)
-        self._app.router.add_get("/worker.py", self._worker_script)
         self._app.router.add_get("/band-worker.pyz", self._band_worker_pyz)
         self._app.router.add_get("/band-worker-enrollment.pyz", self._band_worker_pyz)
         self._app.router.add_get("/band-worker.json", self._band_worker_manifest)
         self._app.router.add_get("/apk", self._worker_apk)
         self._app.router.add_get("/apk.json", self._worker_apk_manifest)
         self._app.router.add_get("/install", self._installer)    # unified installer (worker | cli | both)
-        self._app.router.add_get("/rook", self._installer)       # alias (back-compat)
+        # Pre-/install URL, still in users' saved one-liners: not a peer, so
+        # the rook.core.compat floor doesn't retire it.
+        self._app.router.add_get("/rook", self._installer)
         self._app.router.add_get("/rook.py", self._band_cli)     # the standalone CLI script itself
         self._app.router.add_get("/hub", self._hub_installer)    # stand up a telesthete-hub (band relay)
         self._app.router.add_get("/telesthete-hub", self._hub_binary)  # prebuilt hub binary (arch-gated)
@@ -1124,7 +1322,6 @@ class CombinedServer:
         self._app.router.add_get("/api/avatars", self._api_avatars)
         self._app.router.add_get("/api/avatar", self._api_avatar)
         self._app.router.add_get("/api/presence", self._api_presence)
-        self._app.router.add_get("/ws", self._websocket_handler)
         # Auth routes (handled by middleware, these are just route stubs)
         async def _noop(r): return web.Response(text="")
         self._app.router.add_get("/login", _noop)
@@ -1146,12 +1343,47 @@ class CombinedServer:
     def _session_ok(self, request: web.Request) -> bool:
         return self._accounts.store.dashboard_session_ok(request.cookies.get("rook_session", ""))
 
-    def _signed_in(self, location: str) -> web.HTTPFound:
+    def _signed_in(self, location: str, request: web.Request) -> web.HTTPFound:
         """Redirect that starts a new random dashboard session."""
+        from .public_url import set_cookie
         resp = web.HTTPFound(location)
-        resp.set_cookie("rook_session", self._accounts.store.dashboard_session(),
-                        max_age=30 * 86400, httponly=True, samesite="Lax")
+        # No configured floor (base ""): this cookie was never Secure, and
+        # requiring it from the https:// setting would lock operators out of
+        # an https hub they open by its raw http://<ip>:<port>. It is Secure
+        # whenever the request itself came over HTTPS (directly or via a proxy).
+        set_cookie(resp, request, "", "rook_session",
+                   self._accounts.store.dashboard_session(), max_age=30 * 86400)
         return resp
+
+    # GET paths where a dashboard (shared password) login is carried over to
+    # the operator's account session: the account pages and the JSON the
+    # dashboard's account-backed views open with.
+    _BRIDGE_PATHS = ("/account", "/account/bands", "/account/bands/component",
+                     "/account/bands/api", "/account/component", "/account/tokens/api",
+                     "/account/session", "/account/settings/api", "/account/knowledge/api",
+                     "/account/guidance/api", "/account/vault/api", "/account/jobs/api")
+    # Set (never Secure, holds nothing secret) on the bridge's redirect: if it
+    # comes back without the account cookie, the browser dropped that cookie
+    # and redirecting again would loop forever.
+    _BRIDGE_MARK = "rook_bridge"
+
+    def _bridge_failed(self, request: web.Request) -> web.Response:
+        """The account cookie set one hop ago did not come back: explain
+        instead of redirecting again (ERR_TOO_MANY_REDIRECTS before)."""
+        from .account_web import NO_STORE, esc
+        origin = self.public_base
+        message = (f"Your browser did not keep the Rook sign-in cookie. This dashboard is set "
+                   f"up for {origin}; open it at that address. If that address is wrong (for "
+                   f"example a LAN hub reached over plain HTTP), set ROOK_DOMAIN to the "
+                   f"address you use, such as http://<host>:{self.port}, and restart the dashboard.")
+        if (request.headers.get("Sec-Fetch-Mode") == "navigate"
+                or "text/html" in request.headers.get("Accept", "")):
+            response = self._accounts.response("Sign-in cookie refused",
+                                               "<p>" + esc(message) + "</p>", 400)
+        else:
+            response = web.json_response({"error": message}, status=400, headers=NO_STORE)
+        response.del_cookie(self._BRIDGE_MARK)   # a reload tries the bridge once more
+        return response
 
     def _check_creds(self, user: str, passwd: str) -> bool:
         """Validate login. Username is enforced only when one is configured,
@@ -1160,7 +1392,7 @@ class CombinedServer:
             return user == self.web_user and passwd == self.web_pass
         return passwd == self.web_pass
 
-    _AUTH_EXEMPT = ("/ws", "/health", "/worker", "/worker.py", "/band-worker.pyz",
+    _AUTH_EXEMPT = ("/health", "/worker", "/band-worker.pyz",
                     "/band-worker-enrollment.pyz", "/band-worker.json", "/enroll", "/install",
                     "/rook", "/rook.py", "/hub", "/telesthete-hub")
 
@@ -1188,13 +1420,28 @@ class CombinedServer:
         # Account routes enforce their own sessions, CSRF and band ownership.
         # A Google/member login never unlocks the legacy global admin APIs.
         if self._accounts.handles(request.path):
-            if (request.path in ("/account", "/account/bands", "/account/bands/component", "/account/component", "/account/tokens/api", "/account/session") and not self._accounts.current(request)
-                    and self.web_pass and self._accounts.bootstrap_id
+            bridged = request.path in self._BRIDGE_PATHS and request.method in ("GET", "HEAD")
+            signed_in = self._accounts.current(request) is not None
+            if (bridged and not signed_in and self.web_pass and self._accounts.bootstrap_id
                     and self._session_ok(request)):
-                response=self._accounts.signed_in(self._accounts.bootstrap_id)
-                response.headers["Location"]=str(request.rel_url)
-                return response
-            return await handler(request)
+                if request.cookies.get(self._BRIDGE_MARK):
+                    return self._bridge_failed(request)
+                from .account_web import NO_STORE
+                response = web.HTTPFound(str(request.rel_url), headers=NO_STORE)
+                self._accounts.start_session(response, request, self._accounts.bootstrap_id)
+                response.set_cookie(self._BRIDGE_MARK, "1", max_age=60, httponly=True,
+                                    samesite="Lax")
+                raise response
+            clear_mark = signed_in and bool(request.cookies.get(self._BRIDGE_MARK))
+            try:
+                response = await handler(request)
+            except web.HTTPException as exc:   # e.g. /account/bands redirects
+                if clear_mark:
+                    exc.del_cookie(self._BRIDGE_MARK)
+                raise
+            if clear_mark and not response.prepared:
+                response.del_cookie(self._BRIDGE_MARK)
+            return response
 
         # Always public: worker bootstrap/artifacts, health, websockets.
         is_exempt = self._auth_exempt(request.path)
@@ -1239,7 +1486,7 @@ class CombinedServer:
             try:
                 data = await request.post()
                 if self._check_creds(data.get("user", ""), data.get("pass", "")):
-                    raise self._signed_in("/setup" if unconfigured else "/")
+                    raise self._signed_in("/setup" if unconfigured else "/", request)
             except web.HTTPFound:
                 raise
             except Exception:
@@ -1288,79 +1535,22 @@ class CombinedServer:
         )
 
     def _login_page(self, error: str = "") -> str:
-        err = f'<div class="err">{error}</div>' if error else ""
-        return f"""<!DOCTYPE html>
-<html><head><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>♖ ROOK</title>
-<style>
-body{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#0b0f14;color:#e6edf3;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0}}
-.box{{background:#11161d;border:1px solid #222c38;padding:32px;border-radius:10px;width:300px;box-shadow:0 8px 40px rgba(0,0,0,.4)}}
-h1{{font-size:1.4rem;margin:0 0 4px;color:#2dd4a7}}
-p{{color:#7d8896;font-size:.8rem;margin:0 0 18px}}
-input{{width:100%;box-sizing:border-box;padding:10px;margin:0 0 12px;background:#0b0f14;color:#e6edf3;border:1px solid #222c38;border-radius:6px;font-family:inherit;font-size:.95rem}}
-button{{width:100%;padding:10px;background:#1a9e7a;color:#fff;border:0;border-radius:6px;cursor:pointer;font-family:inherit;font-size:.95rem}}
-button:hover{{background:#22b88f}}
-.err{{color:#f76a6a;font-size:.8rem;margin-bottom:10px}}
-</style></head>
-<body><div class="box">
-<h1>♖ ROOK</h1>
-<p>Band control panel. Sign in to continue.</p>
-{err}
-<form method="POST" action="/login">
-<input name="user" placeholder="Username" autofocus required autocomplete="username">
-<input name="pass" type="password" placeholder="Password" required autocomplete="current-password">
-<button type="submit">Sign in</button>
-</form>
-<p style="margin-top:18px"><a style="color:#2dd4a7" href="/account/login">Google or personal account login</a></p>
-</div></body></html>"""
+        from .web_pages import render
+        err = f'<p class="error" role="alert">{_html.escape(error)}</p>' if error else ""
+        return render("login.html", error=err)
 
     def _setup_page_html(self, error: str = "") -> str:
         from . import setup_store
-        import html as _html
+        from .web_pages import render
         s = setup_store.load()
-        band_name = _html.escape(s.get("band_name") or self.band_name)
-        hub_public = _html.escape(s.get("hub_public") or "")
-        pyz_domain = _html.escape(s.get("pyz_domain") or "")
         primary = next((b for b in self._enrollment.bands(secrets_visible=True) if b["is_primary"]), None)
         current_key = (primary["psk"] if primary["active"] else "") if primary else s.get("band_psk")
-        band_psk = _html.escape(current_key or setup_store.gen_psk())
-        err = f'<div class="err">{_html.escape(error)}</div>' if error else ""
-        return f"""<!DOCTYPE html>
-<html><head><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>♖ ROOK — setup</title>
-<style>
-body{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#0b0f14;color:#e6edf3;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0}}
-.box{{background:#11161d;border:1px solid #222c38;padding:32px;border-radius:10px;width:420px;max-width:92vw;box-shadow:0 8px 40px rgba(0,0,0,.4)}}
-h1{{font-size:1.4rem;margin:0 0 4px;color:#2dd4a7}}
-p{{color:#7d8896;font-size:.8rem;margin:0 0 18px}}
-label{{display:block;font-size:.75rem;color:#9aa7b4;margin:14px 0 4px}}
-input{{width:100%;box-sizing:border-box;padding:10px;background:#0b0f14;color:#e6edf3;border:1px solid #222c38;border-radius:6px;font-family:inherit;font-size:.95rem}}
-small{{display:block;color:#5d6773;font-size:.68rem;margin-top:4px}}
-button{{width:100%;padding:11px;margin-top:20px;background:#1a9e7a;color:#fff;border:0;border-radius:6px;cursor:pointer;font-family:inherit;font-size:.95rem}}
-button:hover{{background:#22b88f}}
-.err{{color:#f76a6a;font-size:.8rem;margin-bottom:10px}}
-</style></head>
-<body><div class="box">
-<h1>♖ ROOK — first-run setup</h1>
-<p>Configure the band this hub serves. Saved to <code>data/setup.json</code> (never committed).</p>
-{err}
-<form method="POST" action="/setup">
-<input type="hidden" name="csrf" value="{self._setup_csrf}">
-<label>Band name</label>
-<input name="band_name" value="{band_name}" placeholder="my-band" autofocus>
-<small>Cosmetic label for this band, shown in the dashboard + installer.</small>
-<label>Public hub address</label>
-<input name="hub_public" value="{hub_public}" placeholder="hub.mydomain.com:443" required>
-<small>host:port workers connect back to (the band WS endpoint).</small>
-<label>Installer download domain</label>
-<input name="pyz_domain" value="{pyz_domain}" placeholder="hub.mydomain.com" required>
-<small>Domain that serves <code>band-worker.pyz</code> in the one-line installer.</small>
-<label>Band PSK</label>
-<input name="band_psk" value="{band_psk}" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" required>
-<small>New keys use five random words separated by hyphens. Type the key exactly, including hyphens. Use Tokens to replace or revoke an existing band key.</small>
-<button type="submit">Save &amp; activate band</button>
-</form>
-</div></body></html>"""
+        err = f'<p class="error" role="alert">{_html.escape(error)}</p>' if error else ""
+        return render("setup.html", error=err, csrf=self._setup_csrf,
+                      band_name=s.get("band_name") or self.band_name,
+                      hub_public=s.get("hub_public") or "",
+                      pyz_domain=s.get("pyz_domain") or "",
+                      band_psk=current_key or setup_store.gen_psk())
 
     async def _setup_page(self, request: web.Request) -> web.Response:
         return web.Response(text=self._setup_page_html(), content_type="text/html",
@@ -1368,8 +1558,9 @@ button:hover{{background:#22b88f}}
 
     async def _setup_submit(self, request: web.Request) -> web.Response:
         from . import setup_store
+        from .accounts import csrf_ok
         data = await request.post()
-        if not hmac.compare_digest(str(data.get("csrf", "")), self._setup_csrf):
+        if not csrf_ok(data, self._setup_csrf):
             return web.Response(text=self._setup_page_html("The form expired. Check the values and save again."),
                                 status=400, content_type="text/html", headers={"Cache-Control": "no-store"})
         vals = {
@@ -1393,7 +1584,7 @@ button:hover{{background:#22b88f}}
         self.band_name = saved["band_name"]
         self.band_psk = saved["band_psk"]
         self.hub_public = saved["hub_public"]
-        self.domain = saved["pyz_domain"]
+        self._apply_domain(saved["pyz_domain"])
         self._enrollment.import_config(hub=self.hub_public)
         await self._sync_enrollment()
         log.info("Setup wizard: band '%s' configured (hub=%s)", self.band_name, self.hub_public)
@@ -1404,11 +1595,17 @@ button:hover{{background:#22b88f}}
         await self._runner.setup()
         site = web.TCPSite(self._runner, self.bind, self.port)
         await site.start()
-        log.info("Remote server on %s:%d (HTTP + WebSocket)", self.bind, self.port)
+        log.info("Remote server on %s:%d (HTTP)", self.bind, self.port)
         if not self.web_pass:
             log.warning("dashboard password not set: anyone who can reach port %d "
                         "can control every worker", self.port)
         self._report_settings()
+        # A fresh hub has no worker bundle: build it in the background so the
+        # Install page works without a manual build step.
+        try:
+            self._bundle.ensure()
+        except Exception:
+            log.warning("could not start the worker bundle build", exc_info=True)
 
         # Join the band so the dashboard can list workers + invoke caps.
         # Best-effort: a missing/unreachable hub must not take down the
@@ -1439,13 +1636,29 @@ button:hover{{background:#22b88f}}
             setup_store.load(), _ds.stored_values(self._settings_store))
         self.domain, self.hub_public, self.band_name = (
             vals["domain"], vals["hub_public"], vals["band_name"])
+        self._apply_domain(self.domain)
+
+    def _apply_domain(self, value: str) -> None:
+        """Split the configured domain into ``self.domain`` (host[:port], what
+        installers validate and embed) and the scheme behind
+        :attr:`public_base` (rook.remote.public_url)."""
+        from .public_url import split_domain
+        self._domain_setting = value
+        self.public_scheme, self.domain = split_domain(value, self.port)
+
+    @property
+    def public_base(self) -> str:
+        """``http(s)://host[:port]`` browsers and workers use to reach this
+        dashboard: the one base for installers, one-liners, the account
+        origin and the update manifest URL."""
+        return f"{self.public_scheme}://{self.domain}"
 
     def _report_settings(self) -> None:
         from . import dashboard_settings as _ds
         _ds.report(self._settings_store, explicit=self._explicit,
                    sources=self._setting_sources, conflicts=self._setting_conflicts,
                    chat_db=getattr(self, "_chat_db", ""), started_at=self._started_at,
-                   values={"domain": self.domain, "hub_public": self.hub_public,
+                   values={"domain": self._domain_setting, "hub_public": self.hub_public,
                            "band_name": self.band_name}, argv=self._argv)
 
     async def _sync_enrollment(self) -> None:
@@ -1476,7 +1689,6 @@ button:hover{{background:#22b88f}}
         """Auto-converge: push the current signed manifest to apply-capable
         workers reporting an older build. Fail-closed — no-op until a *signed*
         manifest exists, and it only targets workers advertising worker.apply."""
-        manifest_path = Path(__file__).parent / "band-worker.json"
         pushed: dict[str, tuple] = {}      # worker_id -> (target_build, ts)
         REPUSH_SECS = 180.0                # don't re-push the same build too soon
         while True:
@@ -1485,7 +1697,7 @@ button:hover{{background:#22b88f}}
                 if self._band is None:
                     continue
                 try:
-                    manifest = json.loads(manifest_path.read_text())
+                    manifest = json.loads(self._bundle.path("band-worker.json").read_text())
                 except Exception:
                     continue
                 if not manifest.get("sig"):
@@ -1545,7 +1757,6 @@ button:hover{{background:#22b88f}}
 
     async def _index(self, request: web.Request) -> web.Response:
         ua = request.headers.get("User-Agent", "").lower()
-        kw = {"token": self.auth_token, "domain": self.domain}
 
         # Only auto-serve bootstrap at /worker, not /
         # / always shows the help page
@@ -1566,23 +1777,24 @@ button:hover{{background:#22b88f}}
                 pass
 
         # CLI — show instructions
+        base = self.public_base
         text = f"""
   R ☠ ☠ K  Band Worker Installer
   =================================
 
   Linux / Mac:
-    curl -fsSL https://{self.domain}/worker | bash
+    curl -fsSL {base}/worker | bash
 
   Windows (PowerShell, on Windows only):
-    iex (irm https://{self.domain}/worker)
+    iex (irm {base}/worker)
 
   Force a variant (if auto-detect guesses wrong):
-    curl -fsSL "https://{self.domain}/worker?os=unix" | bash
-    iex (irm "https://{self.domain}/worker?os=windows")
+    curl -fsSL "{base}/worker?os=unix" | bash
+    iex (irm "{base}/worker?os=windows")
 
   Stand up a hub (band relay):
-    curl -fsSL https://{self.domain}/hub | bash            # wizard
-    curl -fsSL https://{self.domain}/hub | bash -s -- --yes # unattended
+    curl -fsSL {base}/hub | bash            # wizard
+    curl -fsSL {base}/hub | bash -s -- --yes # unattended
 
   Endpoints:
     /install          unified installer (worker | cli | both)
@@ -1590,8 +1802,6 @@ button:hover{{background:#22b88f}}
     /telesthete-hub   prebuilt hub binary (?arch=x86_64), else built from source
     /worker           bootstrap script (auto-detects OS; ?os=windows|unix to force)
     /band-worker.pyz  self-contained band-worker zipapp
-    /worker.py        legacy exec-worker script
-    /ws               legacy websocket endpoint
     /health           server status
 """
         return web.Response(text=text, content_type="text/plain")
@@ -1611,7 +1821,8 @@ button:hover{{background:#22b88f}}
             except JoinDenied as e:
                 return web.Response(text=str(e), status=403, headers=headers)
         ua = request.headers.get("User-Agent", "").lower()
-        kw = {"domain": self.domain, "band_psk": band["psk"],
+        base = self.public_base
+        kw = {"domain": self.domain, "base": base, "band_psk": band["psk"],
               "hub_public": band["hub"] or self.hub_public,
               "band_name": band["name"].replace("\r", " ").replace("\n", " ")}
         # These fields enter shell/PowerShell command lines. Reject unsupported
@@ -1636,21 +1847,26 @@ button:hover{{background:#22b88f}}
             want_ps = is_ps and on_windows
         # Downloading an installer never grants a reusable band PSK. The worker
         # generates its own key and redeems the short code (or browser approval).
+        kw["enroll_args"] = f'--enroll {base}' + (f' --pair-code {code}' if code else '')
+        # A pairing code lasts PAIRING_TTL (5 min) and a first install can
+        # outlast it, so code-based installs offer to retry with a fresh code.
+        retry = (_PS_ENROLL_RETRY if want_ps else _BASH_ENROLL_RETRY) if code else ""
+        kw["enroll_retry"] = retry.replace("__BASE__", base)
         script = (PS_BOOTSTRAP if want_ps else BASH_BOOTSTRAP).format(**kw)
-        script = script.replace(f'https://{self.domain}/band-worker.pyz',
-                                f'https://{self.domain}/band-worker-enrollment.pyz')
+        script = script.replace(f'{base}/band-worker.pyz',
+                                f'{base}/band-worker-enrollment.pyz')
         script = script.replace(f'--hub {kw["hub_public"]} --ws --psk {kw["band_psk"]}', '--enrolled --ws')
-        script = script.replace(f' --update-url https://{self.domain}/band-worker.json', '')
-        enroll_args = f'--enroll https://{self.domain}' + (f' --pair-code {code}' if code else '')
+        # ROOK_HUB_PUBLIC_WS_URL: point new workers at the relay's native WS
+        # listener instead of this process's /band bridge (core spec 2.6).
+        ws_url = public_ws_url()
+        if ws_url:
+            script = script.replace('--enrolled --ws', f'--enrolled --ws --ws-url {ws_url}')
+        script = script.replace(f' --update-url {base}/band-worker.json', '')
         if want_ps:
+            # The elevated relaunch fetches this same script again: keep the code.
             query = 'login=google' if account_login else f'band={code}'
-            script = script.replace(f'https://{self.domain}/worker?os=windows',
-                                    f'https://{self.domain}/worker?{query}&os=windows')
-            script = script.replace('# Stop any existing worker FIRST',
-                                    f'& $vpy $pyz {enroll_args}\nif ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}\n\n# Stop any existing worker FIRST')
-        else:
-            # stdin is the curl pipe. Python prompts must use the terminal.
-            script = script.replace('# band: ', f'"$VPY" "$PYZ" {enroll_args} </dev/tty\n\n# band: ')
+            script = script.replace(f'{base}/worker?os=windows',
+                                    f'{base}/worker?{query}&os=windows')
         return web.Response(text=script, content_type="text/plain", headers=headers)
 
     async def _enroll_config(self, request: web.Request) -> web.Response:
@@ -1673,18 +1889,25 @@ button:hover{{background:#22b88f}}
                                   "psk": band["psk"], "hub": band["hub"] or self.hub_public,
                                   "epoch": band["epoch"]}, headers=headers)
 
-    async def _worker_script(self, request: web.Request) -> web.Response:
-        return web.Response(text=WORKER_SCRIPT, content_type="text/plain")
+    def _bundle_missing(self, name: str) -> web.Response:
+        """No bundle to serve: 503 while the background build runs (or was
+        just started), 404 with the reason when it cannot be built."""
+        if not self._bundle.error:
+            self._bundle.ensure()
+        if self._bundle.building:
+            return web.Response(status=503, headers={"Retry-After": "60", "Cache-Control": "no-store"},
+                                text=f"{name} is building on this hub, retry in a minute.\n")
+        why = f" ({self._bundle.error})" if self._bundle.error else ""
+        return web.Response(status=404, headers={"Cache-Control": "no-store"},
+                            text=f"{name} is not built yet{why}. "
+                                 "Run: python3 rook/remote/build_band_worker.py\n")
 
     async def _band_worker_pyz(self, request: web.Request) -> web.Response:
         filename = "band-worker-enrollment.pyz" if request.path == "/band-worker-enrollment.pyz" else "band-worker.pyz"
-        pyz_path = Path(__file__).parent / filename
-        if not pyz_path.exists():
-            return web.Response(
-                status=404,
-                text="band-worker.pyz not built yet. Run: python3 rook/remote/build_band_worker.py",
-            )
-        data = pyz_path.read_bytes()
+        pyz_path = self._bundle.path(filename)
+        if pyz_path is None:
+            return self._bundle_missing("band-worker.pyz")
+        data = await asyncio.to_thread(pyz_path.read_bytes)
         return web.Response(
             body=data,
             content_type="application/octet-stream",
@@ -1694,12 +1917,9 @@ button:hover{{background:#22b88f}}
     async def _band_worker_manifest(self, request: web.Request) -> web.Response:
         """Serve the signed OTA manifest (band-worker.json) next to the pyz.
         Public + no-cache so converging workers always see the current build."""
-        manifest_path = Path(__file__).parent / "band-worker.json"
-        if not manifest_path.exists():
-            return web.Response(
-                status=404,
-                text="band-worker.json not built yet. Run: python3 rook/remote/build_band_worker.py",
-            )
+        manifest_path = self._bundle.path("band-worker.json")
+        if manifest_path is None:
+            return self._bundle_missing("band-worker.json")
         return web.Response(
             body=manifest_path.read_bytes(),
             content_type="application/json",
@@ -2114,6 +2334,7 @@ button:hover{{background:#22b88f}}
             self._bans.append({"name": name, "worker_id": worker_id,
                                "at": int(time.time()), "reason": reason})
             try:
+                from . import setup_store
                 setup_store.save_bans(self._bans)
             except Exception:
                 log.exception("failed to persist ban list")
@@ -2151,6 +2372,7 @@ button:hover{{background:#22b88f}}
                       if not ((worker_id and b.get("worker_id") == worker_id)
                               or (name and b.get("name") == name))]
         try:
+            from . import setup_store
             setup_store.save_bans(self._bans)
         except Exception:
             log.exception("failed to persist ban list")
@@ -2356,7 +2578,7 @@ button:hover{{background:#22b88f}}
 
     async def _band_cli(self, request: web.Request) -> web.Response:
         """Serve the `rook band` terminal control panel as a standalone script
-        (the payload the /rook installer downloads)."""
+        (the payload the /install installer downloads)."""
         p = Path(__file__).resolve().parents[1] / "cli" / "band_tui.py"
         try:
             text = p.read_text()
@@ -2391,12 +2613,12 @@ button:hover{{background:#22b88f}}
             on_windows = ("windows" in ua) or ("win32" in ua) or ("win64" in ua)
             want_ps = is_ps and on_windows
         if want_ps:
-            script = (PS_CLI_BOOTSTRAP.replace("__DOMAIN__", self.domain)
+            script = (PS_CLI_BOOTSTRAP.replace("__BASE__", self.public_base)
                       .replace("__WEB_USER__", self._installer_web_user()))
             return web.Response(text=script, content_type="text/plain",
                                 headers={"Content-Disposition": 'inline; filename="rook-cli-install.ps1"',
                                          "Cache-Control": "no-store"})
-        base = f"https://{self.domain}"
+        base = self.public_base
         code = request.query.get("band", "")
         if code and not _re.fullmatch(r"[a-z0-9]{6}", code):
             return web.Response(text="invalid pairing code", status=400)
@@ -2410,7 +2632,7 @@ button:hover{{background:#22b88f}}
         """`curl -fsSL https://<host>/hub | bash` — stand up a telesthete-hub
         (the band relay) with a short wizard, hardened systemd unit, and auto
         dependency install. `bash -s -- --yes` (or env vars) for unattended."""
-        base = f"https://{self.domain}"
+        base = self.public_base
         script = _HUB_INSTALL_SCRIPT.replace("__BASE__", base)
         return web.Response(text=script, content_type="text/x-shellscript",
                             headers={"Content-Disposition": 'inline; filename="hub-install.sh"',
@@ -2440,201 +2662,8 @@ button:hover{{background:#22b88f}}
     async def _health(self, request: web.Request) -> web.Response:
         return web.Response(text=json.dumps({
             "status": "ok",
-            "workers": len(self._workers),
             "band_workers": len(self._band.workers) if self._band else 0,
         }), content_type="application/json")
-
-    # -- WebSocket endpoint --
-
-    async def _websocket_handler(self, request: web.Request) -> web.WebSocketResponse:
-        ws = web.WebSocketResponse(heartbeat=30, receive_timeout=300)
-        await ws.prepare(request)
-
-        worker = None
-        try:
-            # First message must be registration
-            msg = await asyncio.wait_for(ws.receive_json(), timeout=10)
-
-            if msg.get("type") != "register":
-                await ws.close(message=b"Expected registration")
-                return ws
-
-            if self.auth_token and msg.get("token") != self.auth_token:
-                await ws.close(message=b"Invalid token")
-                log.warning("Worker rejected: bad token from %s", request.remote)
-                return ws
-
-            worker_id = str(uuid.uuid4())[:8]
-            # Create a wrapper that adapts aiohttp WS to our RemoteWorker interface
-            worker = AioHttpWorker(
-                id=worker_id,
-                ws=ws,
-                name=msg.get("name", "unnamed"),
-                platform=msg.get("platform", "unknown"),
-                hostname=msg.get("hostname", "unknown"),
-            )
-            self._workers[worker_id] = worker
-            log.info("Worker connected: [%s] %s (%s/%s)", worker_id, worker.name, worker.platform, worker.hostname)
-
-            await ws.send_json({"type": "registered", "id": worker_id})
-
-            # Register as communication channel
-            if self._on_worker_connect:
-                try:
-                    self._on_worker_connect(worker.name, worker.platform, worker.hostname, worker_id)
-                except Exception as e:
-                    log.error("Worker connect callback failed: %s", e)
-
-            # Listen for responses
-            async for raw_msg in ws:
-                if raw_msg.type == aiohttp.WSMsgType.TEXT:
-                    try:
-                        data = json.loads(raw_msg.data)
-                        if data.get("type") == "result":
-                            worker.handle_response(data)
-                        elif data.get("type") == "heartbeat":
-                            worker.last_active = time.time()
-                        elif data.get("type") == "chat":
-                            content = data.get("content", "")
-                            if content and self._on_worker_chat:
-                                async def _handle_chat(ws_ref, w_name, msg, w_id):
-                                    try:
-                                        response = await self._on_worker_chat(w_name, msg, w_id)
-                                        await ws_ref.send_json({
-                                            "type": "chat_response",
-                                            "content": response,
-                                        })
-                                    except Exception as e:
-                                        await ws_ref.send_json({
-                                            "type": "chat_response",
-                                            "content": f"Error: {e}",
-                                        })
-                                asyncio.create_task(_handle_chat(ws, worker.name, content, worker.id))
-                    except json.JSONDecodeError:
-                        pass
-                elif raw_msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSE):
-                    break
-
-        except (asyncio.TimeoutError, Exception) as e:
-            log.info("Worker disconnected: %s (%s)", worker.name if worker else "unknown", e)
-        finally:
-            if worker:
-                for future in worker._pending.values():
-                    if not future.done():
-                        future.set_result({"stdout": "", "stderr": "Worker disconnected", "returncode": -1})
-                self._workers.pop(worker.id, None)
-                log.info("Worker removed: [%s] %s", worker.id, worker.name)
-                if self._on_worker_disconnect:
-                    try:
-                        self._on_worker_disconnect(worker.name, worker.id)
-                    except Exception as e:
-                        log.error("Worker disconnect callback failed: %s", e)
-
-        return ws
-
-    # -- Public API (used by tools) --
-
-    def get_worker(self, name: str) -> AioHttpWorker | None:
-        """Find worker by name or ID. Prefers alive connections."""
-        matches = []
-        for w in self._workers.values():
-            if w.name == name or w.id == name:
-                matches.append(w)
-        if not matches:
-            return None
-        # Prefer alive workers
-        alive = [w for w in matches if not w.ws.closed]
-        return alive[0] if alive else matches[0]
-
-    def list_workers(self) -> list[dict[str, Any]]:
-        return [
-            {
-                "id": w.id,
-                "name": w.name,
-                "platform": w.platform,
-                "hostname": w.hostname,
-                "alive": not w.ws.closed,
-                "connected": f"{time.time() - w.connected_at:.0f}s ago",
-                "last_active": f"{time.time() - w.last_active:.0f}s ago",
-            }
-            for w in self._workers.values()
-        ]
-
-
-class AioHttpWorker:
-    """Worker wrapper using aiohttp WebSocket."""
-
-    def __init__(self, id: str, ws: web.WebSocketResponse, name: str, platform: str, hostname: str):
-        self.id = id
-        self.ws = ws
-        self.name = name
-        self.platform = platform
-        self.hostname = hostname
-        self.connected_at = time.time()
-        self.last_active = time.time()
-        self._pending: dict[str, asyncio.Future] = {}
-
-    async def execute(self, command: str, timeout: float = 60) -> dict[str, Any]:
-        req_id = str(uuid.uuid4())[:8]
-        future: asyncio.Future = asyncio.get_event_loop().create_future()
-        self._pending[req_id] = future
-
-        await self.ws.send_json({
-            "type": "exec",
-            "id": req_id,
-            "command": command,
-        })
-        self.last_active = time.time()
-
-        try:
-            result = await asyncio.wait_for(future, timeout=timeout)
-            return result
-        except asyncio.TimeoutError:
-            self._pending.pop(req_id, None)
-            return {"stdout": "", "stderr": "Command timed out", "returncode": -1}
-
-    def handle_response(self, data: dict) -> None:
-        req_id = data.get("id", "")
-        future = self._pending.pop(req_id, None)
-        if future and not future.done():
-            future.set_result(data)
-
-    async def update(self, new_script: str, timeout: float = 30) -> dict[str, Any]:
-        """Send updated worker script to the worker."""
-        req_id = str(uuid.uuid4())[:8]
-        future: asyncio.Future = asyncio.get_event_loop().create_future()
-        self._pending[req_id] = future
-
-        await self.ws.send_json({
-            "type": "update",
-            "id": req_id,
-            "script": new_script,
-        })
-
-        try:
-            result = await asyncio.wait_for(future, timeout=timeout)
-            return result
-        except asyncio.TimeoutError:
-            self._pending.pop(req_id, None)
-            return {"stdout": "", "stderr": "Update timed out", "returncode": -1}
-
-    async def uninstall(self, timeout: float = 30) -> dict[str, Any]:
-        """Send uninstall command to the worker."""
-        req_id = str(uuid.uuid4())[:8]
-        future: asyncio.Future = asyncio.get_event_loop().create_future()
-        self._pending[req_id] = future
-
-        await self.ws.send_json({
-            "type": "uninstall",
-            "id": req_id,
-        })
-
-        try:
-            result = await asyncio.wait_for(future, timeout=timeout)
-            return result
-        except asyncio.TimeoutError:
-            self._pending.pop(req_id, None)
-            return {"stdout": "", "stderr": "Uninstall timed out", "returncode": -1}
 
 
 def _cli_main() -> None:
@@ -2650,7 +2679,9 @@ def _cli_main() -> None:
     ap.add_argument("--port", type=int, default=int(env("ROOK_PORT", "7005")),
                     help="HTTP listen port (ROOK_PORT, default 7005)")
     ap.add_argument("--domain", default=env("ROOK_DOMAIN", "hub.example.com"),
-                    help="public host[:port] of this dashboard, used in installer URLs (ROOK_DOMAIN)")
+                    help="public host[:port] of this dashboard, or a full http(s):// URL, used "
+                         "in installer URLs (ROOK_DOMAIN). Without a scheme it is https, except "
+                         "a LAN/local address on --port (this plain-HTTP dashboard) or :80")
     ap.add_argument("--psk", default=env("ROOK_BAND_PSK", ""),
                     dest="band_psk", help="band pre-shared key (ROOK_BAND_PSK; "
                                           "blank = configure via the /setup wizard)")
@@ -2658,7 +2689,9 @@ def _cli_main() -> None:
                     help="host:port workers call back to, templated into installers (ROOK_HUB_PUBLIC)")
     ap.add_argument("--band-name", default=env("ROOK_BAND_NAME", "rook-band"),
                     help="cosmetic band label (ROOK_BAND_NAME)")
-    ap.add_argument("--token", default="", help="Legacy exec-worker auth token")
+    # The legacy exec worker and its /ws endpoint are gone; the flag is still
+    # accepted so an old service unit that passes it keeps starting.
+    ap.add_argument("--token", default="", help=argparse.SUPPRESS)
     ap.add_argument("--web-user", default=env("ROOK_WEB_USER", ""),
                     help="dashboard username (ROOK_WEB_USER; blank = password only)")
     ap.add_argument("--web-pass", default=env("ROOK_WEB_PASS", ""),
@@ -2707,7 +2740,6 @@ def _cli_main() -> None:
         port=args.port,
         domain=args.domain,
         band_psk=args.band_psk,
-        auth_token=args.token,
         web_user=args.web_user,
         web_pass=args.web_pass,
         hub_host=args.hub_host,

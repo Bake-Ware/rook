@@ -16,16 +16,16 @@ from __future__ import annotations
 import json
 import os
 import shlex
-import shutil
 import socket
 import subprocess
 import sys
 import time
 from pathlib import Path
 
+from ...core.pluginkit import fail, has_display, is_windows, require_str, state_path, which
 from ..plugin import Plugin, capability
 
-_CHATDIR = Path(os.path.expanduser("~")) / ".rook-band-worker" / "chat"
+_CHATDIR = state_path("chat")
 
 
 def _room_file(room: str) -> Path:
@@ -149,12 +149,10 @@ def run_plain():
     for m in load(room):
         who = "you" if m.get("sender") == me else str(m.get("sender"))
         print("%s: %s" % (who, m.get("text", "")))
-    seen = {id(x): None for x in []}
     last_ts = [max([m.get("ts", 0) for m in load(room)] or [0])]
     stop = threading.Event()
     def watcher():
-        while not stop.is_set():
-            time.sleep(1.0)
+        while not stop.wait(1.0):
             newest = last_ts[0]
             for m in load(room):
                 if m.get("ts", 0) > last_ts[0] and m.get("sender") != me:
@@ -171,7 +169,11 @@ def run_plain():
                 send(room, line)
                 last_ts[0] = int(time.time())
     except (EOFError, KeyboardInterrupt):
+        pass
+    finally:
+        # Stop the watcher on any exit so it never prints over a closing console.
         stop.set()
+        t.join(2.0)
 
 try:
     import curses
@@ -191,8 +193,8 @@ def _spawn_terminal(script: str, chatdir: str, me: str, room: str, title: str) -
 
     # Windows: no DISPLAY concept — spawn a console window directly. Prefer
     # Windows Terminal (wt), else a plain `cmd` window via `start`.
-    if sys.platform == "win32":
-        if shutil.which("wt"):
+    if is_windows():
+        if which("wt"):
             try:
                 subprocess.Popen(["wt", "-w", "0", "new-tab", "--title", title] + cmd,
                                  creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
@@ -206,7 +208,7 @@ def _spawn_terminal(script: str, chatdir: str, me: str, room: str, title: str) -
         except Exception:
             return None
 
-    if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+    if not has_display():
         return None
     joined = " ".join(shlex.quote(c) for c in cmd)
     candidates = [
@@ -219,7 +221,7 @@ def _spawn_terminal(script: str, chatdir: str, me: str, room: str, title: str) -
         ["x-terminal-emulator", "-e"] + cmd,
     ]
     for c in candidates:
-        if not shutil.which(c[0]):
+        if not which(c[0]):
             continue
         try:
             subprocess.Popen(c, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -233,7 +235,7 @@ def _spawn_terminal(script: str, chatdir: str, me: str, room: str, title: str) -
 class ChatPlugin(Plugin):
     NAMESPACE = "chat"
 
-    @capability("open")
+    @capability("open", risk="write")
     def _open(self, room: str, me: str | None = None, title: str = "rook chat") -> dict:
         """Pop a chat window on this worker for ``room`` and return whether one
         was spawned. The local human types there; the operator uses chat.send/poll."""
@@ -246,33 +248,28 @@ class ChatPlugin(Plugin):
         try:
             client.write_text(_RECV_CLIENT, encoding="utf-8")
             os.chmod(client, 0o755)
-        except Exception as e:
-            return {"ok": False, "error": f"could not write client: {e}"}
+        except OSError as e:
+            fail(f"could not write client: {e}")
         via = _spawn_terminal(str(client), str(_CHATDIR), me, room, title)
         return {"ok": True, "spawned": via is not None, "via": via,
                 "room": room, "note": ("no window — no display/terminal here; "
                                         "messages still arrive via chat.poll/msg"
                                         if via is None else None)}
 
-    @capability("send")
+    @capability("send", risk="write")
     def _send(self, room: str, text: str, sender: str = "operator") -> dict:
         """Append a message to the room transcript (the worker's window shows it)."""
-        text = str(text or "")
-        if not text.strip():
-            return {"ok": False, "error": "empty message"}
+        text = require_str(text, "text", strip=False)
         _CHATDIR.mkdir(parents=True, exist_ok=True)
         entry = {"ts": int(time.time()), "sender": str(sender)[:64], "text": text[:4000]}
-        try:
-            # utf-8 + ensure_ascii=False so the transcript is real UTF-8 that
-            # reads back identically on any platform (Windows text I/O defaults
-            # to cp1252, which would otherwise mangle non-ASCII on read-back).
-            with open(_room_file(room), "a", encoding="utf-8") as fh:
-                fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        except Exception as e:
-            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        # utf-8 + ensure_ascii=False so the transcript is real UTF-8 that
+        # reads back identically on any platform (Windows text I/O defaults
+        # to cp1252, which would otherwise mangle non-ASCII on read-back).
+        with open(_room_file(room), "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
         return {"ok": True}
 
-    @capability("rooms")
+    @capability("rooms", risk="read")
     def _rooms(self) -> dict:
         """List chat rooms on this worker with a last-message preview — the band
         CLI aggregates these across workers into its chat sidebar."""
@@ -302,7 +299,7 @@ class ChatPlugin(Plugin):
         out.sort(key=lambda r: r.get("last_ts", 0), reverse=True)
         return {"ok": True, "rooms": out}
 
-    @capability("poll")
+    @capability("poll", risk="read", tags=("sensitive",))
     def _poll(self, room: str, since: float = 0.0) -> dict:
         """Return messages in ``room`` newer than ``since`` (unix ts). The
         operator polls this to receive the local human's replies."""
@@ -311,17 +308,14 @@ class ChatPlugin(Plugin):
             return {"ok": True, "messages": [], "last": since}
         out = []
         last = float(since)
-        try:
-            for ln in f.read_text(encoding="utf-8", errors="replace").splitlines():
-                try:
-                    m = json.loads(ln)
-                except Exception:
-                    continue
-                if float(m.get("ts", 0)) > float(since):
-                    out.append(m)
-                    last = max(last, float(m.get("ts", 0)))
-        except Exception as e:
-            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        for ln in f.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                m = json.loads(ln)
+            except ValueError:
+                continue
+            if float(m.get("ts", 0)) > float(since):
+                out.append(m)
+                last = max(last, float(m.get("ts", 0)))
         return {"ok": True, "messages": out, "last": last}
 
 

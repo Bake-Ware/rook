@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Setup · Rook</title>
+<link rel="stylesheet" href="/account/bands/assets/settings.css">
+<link rel="stylesheet" href="/account/bands/assets/theme.css">
+</head><body class="standalone-account"><main class="settings-workspace narrow">
+<h1>♖ Rook: first-run setup</h1>
+<section>
+<p class="muted">Configure the band this hub serves. Saved to <code>data/setup.json</code> (never committed).</p>
+{{error|raw}}
+<form method="POST" action="/setup">
+<input type="hidden" name="csrf" value="{{csrf}}">
+<label>Band name
+<input name="band_name" value="{{band_name}}" placeholder="my-band" autofocus>
+<small>Cosmetic label for this band, shown in the dashboard + installer.</small></label>
+<label>Public hub address
+<input name="hub_public" value="{{hub_public}}" placeholder="hub.mydomain.com:443" required>
+<small>host:port workers connect back to (the band WS endpoint).</small></label>
+<label>Installer download domain
+<input name="pyz_domain" value="{{pyz_domain}}" placeholder="hub.mydomain.com" required>
+<small>Domain that serves <code>band-worker.pyz</code> in the one-line installer.</small></label>
+<label>Band PSK
+<input name="band_psk" value="{{band_psk}}" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" required>
+<small>New keys use five random words separated by hyphens. Type the key exactly, including hyphens. Use Tokens to replace or revoke an existing band key.</small></label>
+<button type="submit">Save &amp; activate band</button>
+</form>
+</section>
+</main></body></html>

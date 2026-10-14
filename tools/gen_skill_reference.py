@@ -18,6 +18,12 @@ Sources:
   rook/worker/plugins (whether or not it would load on this host), plus the
   worker core caps (caps.describe, worker.description_*, worker.plugin.*,
   customcap.*). Args use the same introspection as caps.describe.
+- Android caps: every @capability under android/.../rook_android/plugins,
+  imported with the Chaquopy-only modules (``java``, the app context helper)
+  stubbed, so no Android dependency is needed.
+
+A plugin module that fails to import stops the generator (exit 2) rather than
+silently leaving its caps out.
 
 Only the regions between the GENERATED markers are rewritten; the prose around
 them is hand-maintained.
@@ -36,7 +42,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 TARGET = ROOT / "skills" / "rook" / "references" / "tools.md"
+ANDROID_PY = ROOT / "android" / "app" / "src" / "main" / "python"
 sys.path.insert(0, str(ROOT))
+
+
+class ImportErrors(RuntimeError):
+    """Some plugin modules did not import: the reference would be incomplete."""
 
 DESC_MAX = 110
 
@@ -171,27 +182,79 @@ def _describe(fns: dict) -> dict:
     return reg.describe()
 
 
-def worker_caps() -> list[tuple[str, str, str, str]]:
-    """(cap, args, description, source) for every Python worker cap."""
+def _package_caps(package: str) -> tuple[dict, dict]:
+    """({cap: fn}, {cap: module stem}) for every Plugin class in ``package``."""
     from rook.worker.plugin import Plugin
-    import rook.worker.plugins as pkg
+    pkg = importlib.import_module(package)
     fns: dict = {}
     source: dict = {}
+    errors = []
     for info in pkgutil.iter_modules(pkg.__path__):
         if info.name.startswith("_"):
             continue
-        mod = importlib.import_module(f"{pkg.__name__}.{info.name}")
+        try:
+            mod = importlib.import_module(f"{package}.{info.name}")
+        except Exception as e:
+            errors.append(f"{package}.{info.name}: {type(e).__name__}: {e}")
+            continue
         classes = {c for c in vars(mod).values()
                    if inspect.isclass(c) and issubclass(c, Plugin) and c is not Plugin
                    and c.__module__ == mod.__name__}
         for cls in sorted(classes, key=lambda c: c.__name__):
-            for attr, fn in inspect.getmembers(cls, callable):
-                suffix = getattr(fn, "_rook_cap_suffix", None)
-                if suffix is None:
-                    continue
-                full = cls.NAMESPACE if not suffix else f"{cls.NAMESPACE}.{suffix}"
+            for full, fn in cls.declared_caps().items():
                 fns[full] = fn
                 source[full] = info.name
+    if errors:
+        raise ImportErrors("; ".join(errors))
+    return fns, source
+
+
+class _AndroidStubs:
+    """Import ``rook_android.plugins`` off-device: the APK source on sys.path,
+    with ``java`` (Chaquopy) absent so each module takes its off-device path
+    and the app-context helper returning nothing."""
+
+    def __enter__(self):
+        import types
+        self._path = str(ANDROID_PY)
+        sys.path.insert(0, self._path)
+        self._saved = {k: sys.modules.get(k) for k in ("java", "rook_android.androidctx")}
+        sys.modules["java"] = None  # makes "from java import ..." raise ImportError
+        sys.modules["rook_android.androidctx"] = types.SimpleNamespace(
+            app_context=lambda: None, jclass=None, cast=None, has_permission=lambda p: False)
+        return self
+
+    def __exit__(self, *exc):
+        for k, v in self._saved.items():
+            if v is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
+        for k in [k for k in sys.modules if k == "rook_android" or k.startswith("rook_android.")]:
+            sys.modules.pop(k, None)
+        try:
+            sys.path.remove(self._path)
+        except ValueError:
+            pass
+        return False
+
+
+def android_caps() -> list[tuple[str, str, str, str, str]]:
+    """(cap, args, risk, description, module) for every native Android cap."""
+    with _AndroidStubs():
+        fns, source = _package_caps("rook_android.plugins")
+        described = _describe(fns)
+    rows = []
+    for cap, d in sorted(described.items()):
+        params = ", ".join(_fmt_param(p["name"], p["required"], p["default"], True)
+                           for p in d["params"])
+        rows.append((cap, params, d.get("risk", "exec"), _first_sentence(d["doc"]), source[cap]))
+    return rows
+
+
+def worker_caps() -> list[tuple[str, str, str, str]]:
+    """(cap, args, description, source) for every Python worker cap."""
+    fns, source = _package_caps("rook.worker.plugins")
     from rook.worker.core import Worker
     from rook.worker.admin import WorkerAdmin
     core = {"caps.describe": Worker._caps_describe,
@@ -200,6 +263,7 @@ def worker_caps() -> list[tuple[str, str, str, str]]:
             "worker.plugin.list": WorkerAdmin.plugin_list,
             "worker.plugin.enable": WorkerAdmin.plugin_enable,
             "worker.plugin.disable": WorkerAdmin.plugin_disable,
+            "worker.plugin.reload": WorkerAdmin.plugin_reload,
             "customcap.list": WorkerAdmin.customcap_list,
             "customcap.add": WorkerAdmin.customcap_add,
             "customcap.remove": WorkerAdmin.customcap_remove}
@@ -248,7 +312,23 @@ def render_caps() -> str:
     return "\n".join(out).rstrip()
 
 
-SECTIONS = {"mcp-tools": render_mcp, "hub-caps": render_hub, "worker-caps": render_caps}
+def render_android() -> str:
+    by_src: dict[str, list] = {}
+    for cap, args, risk, desc, src in android_caps():
+        by_src.setdefault(src, []).append((cap, args, risk, desc))
+    out = []
+    for src in sorted(by_src):
+        out.append(f"**{src}**\n")
+        out.append("| Cap | Args | Risk | Does |")
+        out.append("|---|---|---|---|")
+        for cap, args, risk, desc in by_src[src]:
+            out.append(f"| `{cap}` | {args or '—'} | {risk} | {desc} |")
+        out.append("")
+    return "\n".join(out).rstrip()
+
+
+SECTIONS = {"mcp-tools": render_mcp, "hub-caps": render_hub, "worker-caps": render_caps,
+            "android-caps": render_android}
 
 
 def render(text: str) -> str:
@@ -268,7 +348,11 @@ def main(argv=None) -> int:
     ap.add_argument("--check", action="store_true", help="exit 1 if the file is stale")
     args = ap.parse_args(argv)
     current = TARGET.read_text(encoding="utf-8")
-    fresh = render(current)
+    try:
+        fresh = render(current)
+    except ImportErrors as e:
+        print(f"plugin modules failed to import, reference not generated: {e}", file=sys.stderr)
+        return 2
     if args.check:
         if fresh != current:
             print(f"{TARGET.relative_to(ROOT)} is stale; run python tools/gen_skill_reference.py",

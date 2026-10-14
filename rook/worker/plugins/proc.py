@@ -30,6 +30,7 @@ import time
 import uuid
 
 from ..plugin import Plugin, capability
+from ..ring import ByteRing
 
 log = logging.getLogger("rook.worker.plugins.proc")
 
@@ -79,39 +80,26 @@ class _Session:
         self.proc: asyncio.subprocess.Process | None = None
         self.pid: int | None = None
         self.pty_master: int | None = None
-        self._buf = bytearray()
-        self._limit = buffer_bytes
-        # Absolute offset of _buf[0] in the full output stream. Everything
-        # before this has been dropped off the front of the ring.
-        self.buf_start = 0
-        self.total = 0
+        self.ring = ByteRing(buffer_bytes)
         self._pump: asyncio.Task | None = None
         self._waiter: asyncio.Task | None = None
 
     # -- output ------------------------------------------------------------
 
     def append(self, data: bytes) -> None:
-        self._buf.extend(data)
-        self.total += len(data)
-        if len(self._buf) > self._limit:
-            drop = len(self._buf) - self._limit
-            del self._buf[:drop]
-            self.buf_start += drop
+        self.ring.append(data)
 
     def slice(self, cursor: int, max_bytes: int) -> tuple[bytes, int, int]:
-        """Bytes from ``cursor`` onward. Returns (data, next_cursor, dropped)
-        where ``dropped`` is how many bytes were lost before the data starts
-        because the ring had already discarded them."""
-        cursor = max(0, int(cursor))
-        dropped = 0
-        if cursor < self.buf_start:
-            dropped = self.buf_start - cursor
-            cursor = self.buf_start
-        off = cursor - self.buf_start
-        if off >= len(self._buf):
-            return b"", cursor, dropped
-        chunk = bytes(self._buf[off:off + max_bytes])
-        return chunk, cursor + len(chunk), dropped
+        """Bytes from ``cursor`` onward (see :meth:`ByteRing.slice`)."""
+        return self.ring.slice(cursor, max_bytes)
+
+    @property
+    def total(self) -> int:
+        return self.ring.total
+
+    @property
+    def buf_start(self) -> int:
+        return self.ring.start
 
     @property
     def running(self) -> bool:
@@ -124,7 +112,7 @@ class _Session:
                 "pty": self.pty_master is not None,
                 "started": self.started,
                 "age_secs": round(time.time() - self.started, 1),
-                "bytes": self.total, "buffered": len(self._buf),
+                "bytes": self.total, "buffered": len(self.ring),
                 "first_available_cursor": self.buf_start}
 
 
@@ -142,7 +130,7 @@ class ProcPlugin(Plugin):
 
     # -- lifecycle ---------------------------------------------------------
 
-    @capability("start")
+    @capability("start", risk="exec")
     async def _start(self, cmd: str | None = None, argv: list | None = None,
                      label: str | None = None, cwd: str | None = None,
                      env: dict | None = None, pty: bool = False,
@@ -307,7 +295,7 @@ class ProcPlugin(Plugin):
 
     # -- io ----------------------------------------------------------------
 
-    @capability("read")
+    @capability("read", risk="read", tags=("sensitive",))
     async def _read(self, handle: str, cursor: int = 0,
                     max_bytes: int = DEFAULT_READ_BYTES) -> dict:
         """Read output from ``cursor`` onward (0 = from the beginning).
@@ -339,7 +327,7 @@ class ProcPlugin(Plugin):
                 "exit_code": sess.exit_code, "total": sess.total,
                 "eof": (not sess.running) and next_cursor >= sess.total}
 
-    @capability("write")
+    @capability("write", risk="exec")
     async def _write(self, handle: str, data: str, newline: bool = True) -> dict:
         """Write to the process's stdin. ``newline`` appends "\\n" (what you
         want when answering a prompt). Sent verbatim — no shell involved."""
@@ -360,7 +348,7 @@ class ProcPlugin(Plugin):
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
         return {"ok": True, "handle": handle, "written": len(payload)}
 
-    @capability("signal")
+    @capability("signal", risk="exec", tags=("destructive",))
     async def _signal(self, handle: str, sig: str = "TERM") -> dict:
         """Send a signal to the process group: TERM (polite), KILL (hard),
         INT (ctrl-C), HUP. The session and its output stay readable."""
@@ -392,7 +380,7 @@ class ProcPlugin(Plugin):
         except (ProcessLookupError, PermissionError, OSError):
             sess.proc.send_signal(signum)
 
-    @capability("close")
+    @capability("close", risk="exec", tags=("destructive",))
     async def _close(self, handle: str) -> dict:
         """Kill the process if it's still running and drop the session. Its
         output is gone from the worker afterwards — read anything you still
@@ -412,7 +400,7 @@ class ProcPlugin(Plugin):
         return {"ok": True, "handle": handle, "exit_code": sess.exit_code,
                 "bytes": sess.total}
 
-    @capability("list")
+    @capability("list", risk="read")
     async def _list(self) -> dict:
         """Every session on this worker — live and recently finished."""
         self._reap()

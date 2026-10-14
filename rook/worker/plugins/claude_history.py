@@ -28,7 +28,6 @@ import asyncio
 import json
 import os
 import re
-import sys
 import time
 import threading
 import uuid
@@ -36,23 +35,18 @@ from collections import Counter
 from pathlib import Path
 from typing import Iterable
 
+from .. import agents
 from ..plugin import Plugin, capability
 from ..agent_activity import active_sessions
 from ..session_messages import deliver, messageable
 
 
 def _default_root() -> Path:
-    if sys.platform == "win32":
-        home = Path(os.environ.get("USERPROFILE", str(Path.home())))
-    else:
-        home = Path.home()
-    return home / ".claude" / "projects"
+    return agents.claude_projects()
 
 
 def _expand(path: str | None) -> Path:
-    if not path:
-        return _default_root()
-    return Path(os.path.expanduser(os.path.expandvars(path)))
+    return agents.expand(path, _default_root)
 
 
 def _iter_session_files(root: Path) -> Iterable[Path]:
@@ -81,25 +75,11 @@ def _read_lines(p: Path) -> Iterable[dict]:
 
 
 def _claude_bin() -> str | None:
-    """Locate the Claude Code CLI. On Windows npm installs it as a .cmd shim,
-    which shutil.which misses unless asked by that name."""
-    import shutil
-    if sys.platform == "win32":
-        found = shutil.which("claude") or shutil.which("claude.cmd")
-        if found:
-            return found
-        for c in (r"C:\nvm4w\nodejs\claude.cmd",
-                  str(Path(os.environ.get("APPDATA", "")) / "npm" / "claude.cmd"),
-                  r"C:\Program Files\nodejs\claude.cmd"):
-            if os.path.exists(c):
-                return c
-        return None
-    from ..shim import which_real     # never the session shim itself
-    return which_real("claude")
+    # Kept as a module attribute: tests and callers patch it here.
+    return agents.claude_bin()
 
 
-def _short_id(sid: str) -> str:
-    return sid.split("-", 1)[0] if sid else ""
+_short_id = agents.short_id
 
 
 def _resolve_session(root: Path, session_id: str) -> Path | None:
@@ -528,9 +508,12 @@ class ClaudeHistoryPlugin(Plugin):
         paths, ids = processes if processes is not None else active_sessions(self.NAMESPACE.split('-')[0])
         return str(path.resolve()) in paths or self._session_id(path).lower() in ids
 
-    @capability("send")
+    @capability("send", risk="exec")
     async def _send(self, session_id: str, text: str, command_id: str) -> dict:
-        """Send to this exact existing session; transcripts stay on this host."""
+        """Send to this exact existing session (deprecated: use `sessions.send`).
+
+        ``sessions.send`` routes through this cap for a session with an
+        inbox, so it stays; transcripts stay on this host."""
         path = self._resolve_session(self._default_root(), session_id)
         if path is None or self._session_id(path) != session_id:
             return {"ok": False, "error": "Exact session ID not found on this host."}
@@ -539,12 +522,16 @@ class ClaudeHistoryPlugin(Plugin):
             return {"ok": False, "error": "Session is no longer active. Refresh and resume it on the host first."}
         return await deliver(agent, session_id, command_id, text)
 
-    @capability("resume")
+    @capability("resume", risk="exec")
     async def _resume(self, session_id: str, path: str | None = None,
                       name: str | None = None, cwd: str | None = None,
                       remote_control: bool = True,
                       machine: str | None = None) -> dict:
-        """Relaunch a stored Claude Code session on this machine.
+        """Relaunch a stored Claude Code session here (deprecated: use `work.stream.open` with resume=).
+
+        ``work.stream.open(harness="claude", resume=<id>)`` is what this does
+        on a worker with Rook terminals. The hub no longer calls it; the
+        proc.* path below remains for direct callers.
 
         For picking a conversation back up when it was closed on the PC and you
         are somewhere else: the session restarts here with Remote Control on, so
@@ -621,7 +608,7 @@ class ClaudeHistoryPlugin(Plugin):
                              if remote_control else
                              "Session is starting; it is local-only (no Remote Control).")}
 
-    @capability("resumed")
+    @capability("resumed", risk="read")
     async def _resumed_list(self) -> dict:
         """Sessions this worker relaunched and whether they're still up.
         Entries carry ``terminal`` (a Rook terminal) or ``handle`` (proc.*)."""
@@ -654,7 +641,7 @@ class ClaudeHistoryPlugin(Plugin):
                         "age_secs": s.get("age_secs")})
         return {"ok": True, "sessions": out}
 
-    @capability("pull")
+    @capability("pull", risk="read", tags=("sensitive",))
     def _pull(self, machine: str | None = None, path: str | None = None,
               limit: int = 50, offset: int = 0) -> dict:
         """List session metadata under ``path`` (default ``~/.claude/projects``).
@@ -683,7 +670,7 @@ class ClaudeHistoryPlugin(Plugin):
         return {"ok": True, "root": str(root), "sessions": sessions,
                 "count": len(sessions), "total": total}
 
-    @capability("read")
+    @capability("read", risk="read", tags=("sensitive",))
     def _read(self, session_id: str, path: str | None = None,
               machine: str | None = None, max_messages: int = 1000, offset: int = 0) -> dict:
         """Read a session transcript. Accepts full UUID or short prefix."""
@@ -727,7 +714,7 @@ class ClaudeHistoryPlugin(Plugin):
             out["next_offset"] = max(0, int(offset)) + len(transcript)
         return out
 
-    @capability("read_page")
+    @capability("read_page", risk="read", tags=("sensitive",))
     def _read_page(self, session_id: str, path: str | None = None,
                    offset: int = 0, content_offset: int = 0, max_chars: int = 6000,
                    snapshot: str | None = None) -> dict:
@@ -821,13 +808,13 @@ class ClaudeHistoryPlugin(Plugin):
                               "message_count": meta.get("message_count")}
         return out
 
-    @capability("read_snapshot")
+    @capability("read_snapshot", risk="read", tags=("sensitive",))
     def _read_snapshot(self, session_id: str, path: str | None = None, offset: int = 0,
                        content_offset: int = 0, snapshot: str = "") -> dict:
         """Read a bounded page of a stable, worker-owned conversation snapshot."""
         return self._snapshot_page(session_id, path, offset, content_offset, 6000, snapshot)
 
-    @capability("follow")
+    @capability("follow", risk="read", tags=("sensitive",))
     def _follow(self, session_id: str, offset: int = 0, version: str = "", tail: int = 0) -> dict:
         """Check the selected log and return only its changed tail, in stable pages.
 
@@ -933,7 +920,7 @@ class ClaudeHistoryPlugin(Plugin):
             mtime = None
         return _activity_now(activity, mtime)
 
-    @capability("search")
+    @capability("search", risk="read", tags=("sensitive",))
     def _search(self, query: str, path: str | None = None,
                 machine: str | None = None, limit: int = 20,
                 ignore_case: bool = True) -> dict:
@@ -985,7 +972,7 @@ class ClaudeHistoryPlugin(Plugin):
         hits = hits[: max(int(limit), 0)]
         return {"ok": True, "query": query, "hits": hits, "count": len(hits)}
 
-    @capability("analyze")
+    @capability("analyze", risk="read", tags=("sensitive",))
     def _analyze(self, pattern: str = "tool_usage", path: str | None = None,
                  machine: str | None = None, limit: int = 20) -> dict:
         """Extract a knowledge pattern across all sessions.
@@ -1101,7 +1088,7 @@ class ClaudeHistoryPlugin(Plugin):
             "total_blocks": blocks,
         }
 
-    @capability("export")
+    @capability("export", risk="read", tags=("sensitive",))
     def _export(self, session_id: str, format: str = "markdown",
                 path: str | None = None, machine: str | None = None) -> dict:
         """Export a session as ``markdown``, ``json``, or ``html``."""

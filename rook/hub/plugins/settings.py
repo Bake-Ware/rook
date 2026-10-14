@@ -83,8 +83,11 @@ class HubSettings(Plugin):
                                    enrollment=getattr(node, "enrollment", None))
 
         def refresh(entry) -> None:
-            if entry.origin == "hub-plugin":
-                node.host.refresh_settings()
+            if entry.origin != "hub-plugin":
+                return
+            # live: the next read sees it; reload: restart that plugin with it.
+            node.host.settings_changed([entry.namespace] if entry.setting.apply == "reload"
+                                       else [])
         self.svc.on_change(refresh)
         node.settings = self.svc
 

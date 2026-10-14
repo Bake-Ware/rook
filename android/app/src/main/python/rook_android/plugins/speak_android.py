@@ -24,7 +24,7 @@ import json
 import re
 import time
 
-from rook.worker.plugin import Plugin, capability
+from rook.worker.plugin import ANDROID_APP, Plugin, capability, place
 from rook_android.androidctx import app_context
 
 try:
@@ -90,6 +90,7 @@ def _bridge_ready() -> bool:
 
 class AndroidSpeakPlugin(Plugin):
     NAMESPACE = "voice"
+    PLACEMENT = place(ANDROID_APP)
 
     def available(self) -> bool:
         ctx = app_context()

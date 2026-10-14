@@ -101,8 +101,8 @@ ROOK_BAND_PSK=$ROOK_BAND_PSK"
 ( umask 077
   printf '%s\nROOK_WEB_PASS=%s\nROOK_KNOWLEDGE_ADMIN_URL=http://127.0.0.1:%s/knowledge/account-api\n' \
     "$common" "$ROOK_WEB_PASS" "$MPORT" > "$DIR/env/dashboard.env"
-  printf '%s\nROOK_MCP_STATIC_TOKEN=%s\nROOK_MCP_AUTH_PASSWORD=%s\nROOK_KNOWLEDGE=1\n' \
-    "$common" "$ROOK_MCP_STATIC_TOKEN" "$ROOK_MCP_AUTH_PASSWORD" > "$DIR/env/mcp.env" )
+  printf '%s\nROOK_MCP_STATIC_TOKEN=%s\nROOK_KNOWLEDGE=1\n' \
+    "$common" "$ROOK_MCP_STATIC_TOKEN" > "$DIR/env/mcp.env" )
 cat > "$UNITDIR/$DASH_UNIT" <<EOF
 [Unit]
 Description=Rook hub-deploy e2e dashboard ($DIR)

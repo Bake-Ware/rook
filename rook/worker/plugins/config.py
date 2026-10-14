@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from ...core.pluginkit import ArgError, fail
 from ..plugin import Plugin, capability
 from .. import wconfig
 from ...core.settings import mask_worker_config
@@ -93,7 +94,7 @@ class ConfigPlugin(Plugin):
                     out.update(s.env_names())
         return out
 
-    @capability("config_get")
+    @capability("config_get", risk="read")
     def _get(self) -> dict:
         """Return this worker's active config overrides + pending/confirm state.
 
@@ -101,7 +102,7 @@ class ConfigPlugin(Plugin):
         plugin settings excepted); ``{{secret:…}}`` references are shown."""
         return {"ok": True, **wconfig.current(self._public_env())}
 
-    @capability("config_apply")
+    @capability("config_apply", risk="admin", tags=("destructive",))
     async def _apply(self, settings: dict, epoch: int,
                      confirm_within: float = 120.0, restart: bool = True) -> dict:
         """Apply config overrides and restart under them (commit-confirmed).
@@ -117,12 +118,12 @@ class ConfigPlugin(Plugin):
         Setting ``hub`` or ``psk`` needs a hub-signed order: the call must carry
         a valid ticket from the hub (permissions 6.3)."""
         if not isinstance(settings, dict) or not settings:
-            return {"ok": False, "error": "settings must be a non-empty object"}
+            raise ArgError("settings must be a non-empty object")
         if settings.get("hub") is not None or settings.get("psk") is not None:
             from ..authz_guard import require_hub_order
             refused = require_hub_order("changing hub/psk")
             if refused:
-                return {"ok": False, "error": refused}
+                fail(refused)
         merged = wconfig.stage_apply(settings, epoch, confirm_within)
         result = {"ok": True, "staged_epoch": int(epoch),
                   "confirm_within": confirm_within, "restarting": bool(restart),
@@ -133,9 +134,12 @@ class ConfigPlugin(Plugin):
                 await asyncio.sleep(1.0)
                 await self._restart()
             asyncio.ensure_future(_later())
+        elif self._worker is not None and hasattr(self._worker, "apply_settings"):
+            # No restart: live/reload settings take effect now.
+            result["applied"] = self._worker.apply_settings(merged)
         return result
 
-    @capability("config_confirm")
+    @capability("config_confirm", risk="admin")
     def _confirm(self, epoch: int) -> dict:
         """Confirm a pending config so it commits (the auto-revert watchdog is
         cancelled on the next boot since nothing stays pending). The site calls
@@ -145,7 +149,7 @@ class ConfigPlugin(Plugin):
             self._watchdog.cancel()
         return res
 
-    @capability("config_revert")
+    @capability("config_revert", risk="admin", tags=("destructive",))
     async def _revert(self, restart: bool = True) -> dict:
         """Force a revert to the previous config and restart."""
         res = wconfig.revert()

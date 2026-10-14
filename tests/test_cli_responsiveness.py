@@ -67,17 +67,17 @@ def test_chat_typing_and_escape_while_poll_is_blocked(quiet_curses):
         release.set()
 
 
-def test_single_overview_request_and_legacy_fallback(monkeypatch):
+def test_single_overview_request(monkeypatch):
     band = tui.BandHTTP("https://example.com", "test", "test")
     request = Mock(return_value={"workers": [{"worker_id": "one", "last_seen_age_secs": 1}], "chats": []})
     monkeypatch.setattr(band, "_req", request)
     assert band.overview()["workers"][0]["age"] == 1
     request.assert_called_once_with("/api/band/overview", timeout=8)
-    request.reset_mock()
-    request.side_effect = [urllib.error.HTTPError("url", 404, "missing", {}, None), [], []]
-    assert band.overview() == {"workers": [], "chats": []}
-    assert band.overview() == {"workers": [], "chats": []}
-    assert [args.args[0] for args in request.call_args_list] == ["/api/band/overview", "/api/band/workers", "/api/band/workers"]
+    # Every supported hub serves the overview (rook.core.compat.MIN_HUB_BUILD):
+    # a 404 is an error now, not a cue to fall back to the bare roster.
+    request.side_effect = urllib.error.HTTPError("url", 404, "missing", {}, None)
+    with pytest.raises(urllib.error.HTTPError):
+        band.overview()
 
 
 def test_refresh_preserves_selection_and_last_success_on_error():

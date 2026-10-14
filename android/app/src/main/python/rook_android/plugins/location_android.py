@@ -1,13 +1,14 @@
 """location.get — bounded native GPS/network request, independent of Maps."""
 import json
-from rook.worker.plugin import Plugin, capability
+from rook.worker.plugin import ANDROID_APP, Plugin, capability, place
 from rook_android.androidctx import app_context, jclass
 
 
 class AndroidLocationPlugin(Plugin):
     NAMESPACE = "location"
+    PLACEMENT = place(ANDROID_APP)
 
-    @capability("get")
+    @capability("get", risk="exec", tags=("sensitive",))
     def _get(self, timeout: float = 8.0) -> dict:
         """Get lat/lon, accuracy, age, stale flag and Maps URL. Timeout: 1–25s.
 

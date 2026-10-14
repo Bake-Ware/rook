@@ -30,6 +30,18 @@
   "battery.status": {
    "tier": "read"
   },
+  "calendar.list": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "calllog.list": {
+   "tier": "exec",
+   "tags": [
+    "sensitive"
+   ]
+  },
   "camera.list": {
    "tier": "read"
   },
@@ -148,11 +160,77 @@
   "claude-history.send": {
    "tier": "exec"
   },
+  "claude-history.transcript": {
+   "tier": "read"
+  },
+  "codex-history.analyze": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "codex-history.export": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "codex-history.follow": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "codex-history.pull": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "codex-history.read": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "codex-history.read_page": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "codex-history.read_snapshot": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
   "codex-history.resume": {
    "tier": "exec"
   },
+  "codex-history.resumed": {
+   "tier": "read"
+  },
+  "codex-history.search": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "codex-history.send": {
+   "tier": "exec"
+  },
+  "codex-history.transcript": {
+   "tier": "read"
+  },
   "console.read": {
    "tier": "read"
+  },
+  "contacts.search": {
+   "tier": "exec",
+   "tags": [
+    "sensitive"
+   ]
   },
   "customcap.add": {
    "tier": "admin"
@@ -162,6 +240,33 @@
   },
   "customcap.remove": {
    "tier": "admin"
+  },
+  "decide.confirm": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "decide.drive": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "decide.health": {
+   "tier": "read"
+  },
+  "decide.info": {
+   "tier": "read"
+  },
+  "decide.run": {
+   "tier": "read"
+  },
+  "decide.runs": {
+   "tier": "read"
+  },
+  "decide.stop": {
+   "tier": "write"
   },
   "deluge.add": {
    "tier": "write"
@@ -185,6 +290,76 @@
    "tier": "write"
   },
   "deluge.status": {
+   "tier": "read"
+  },
+  "device.clipboard_get": {
+   "tier": "exec",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "device.clipboard_set": {
+   "tier": "exec"
+  },
+  "device.find": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "device.find_stop": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "device.info": {
+   "tier": "exec"
+  },
+  "device.launch": {
+   "tier": "exec"
+  },
+  "device.open_url": {
+   "tier": "exec"
+  },
+  "device.torch": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "device.unlock": {
+   "tier": "exec",
+   "tags": [
+    "sensitive",
+    "physical"
+   ]
+  },
+  "device.update": {
+   "tier": "admin",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "device.update_status": {
+   "tier": "exec"
+  },
+  "device.vibrate": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "device.wake": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "discord.send": {
+   "tier": "write"
+  },
+  "discord.status": {
    "tier": "read"
   },
   "dongle.consumer": {
@@ -332,8 +507,29 @@
     "physical"
    ]
   },
+  "home.ask": {
+   "tier": "write"
+  },
+  "home.status": {
+   "tier": "read"
+  },
   "hub.info": {
    "tier": "read"
+  },
+  "hub.plugin.disable": {
+   "tier": "admin",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "hub.plugin.enable": {
+   "tier": "admin"
+  },
+  "hub.plugin.reload": {
+   "tier": "admin",
+   "tags": [
+    "destructive"
+   ]
   },
   "hub.plugins": {
    "tier": "read"
@@ -350,6 +546,12 @@
   "info.uptime": {
    "tier": "read"
   },
+  "job.read": {
+   "tier": "read"
+  },
+  "job.write": {
+   "tier": "write"
+  },
   "journal.read": {
    "tier": "read",
    "tags": [
@@ -361,6 +563,12 @@
   },
   "knowledge.write": {
    "tier": "write"
+  },
+  "location.get": {
+   "tier": "exec",
+   "tags": [
+    "sensitive"
+   ]
   },
   "log.audit": {
    "tier": "read",
@@ -406,6 +614,51 @@
   },
   "msg.send": {
    "tier": "write"
+  },
+  "notify.channels": {
+   "tier": "read"
+  },
+  "notify.dismiss": {
+   "tier": "exec"
+  },
+  "notify.list": {
+   "tier": "exec",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "notify.post": {
+   "tier": "exec"
+  },
+  "notify.send": {
+   "tier": "write"
+  },
+  "persona.apply": {
+   "tier": "write"
+  },
+  "persona.assign": {
+   "tier": "admin"
+  },
+  "persona.delete": {
+   "tier": "admin"
+  },
+  "persona.get": {
+   "tier": "read"
+  },
+  "persona.history": {
+   "tier": "read"
+  },
+  "persona.list": {
+   "tier": "read"
+  },
+  "persona.render": {
+   "tier": "read"
+  },
+  "persona.set": {
+   "tier": "admin"
+  },
+  "persona.status": {
+   "tier": "read"
   },
   "pikvm.api.get": {
    "tier": "read",
@@ -558,6 +811,15 @@
     "sensitive"
    ]
   },
+  "serves.clear": {
+   "tier": "write"
+  },
+  "serves.list": {
+   "tier": "read"
+  },
+  "serves.set": {
+   "tier": "write"
+  },
   "sessions.follow": {
    "tier": "read",
    "tags": [
@@ -576,14 +838,32 @@
   "sessions.send": {
    "tier": "exec"
   },
+  "sessions.shim.install": {
+   "tier": "write"
+  },
+  "sessions.shim.status": {
+   "tier": "read"
+  },
+  "sessions.shim.uninstall": {
+   "tier": "write"
+  },
   "sessions.stop": {
    "tier": "exec",
    "tags": [
     "destructive"
    ]
   },
+  "settings.apply_worker": {
+   "tier": "admin"
+  },
   "settings.describe": {
    "tier": "read"
+  },
+  "settings.fetch": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
   },
   "settings.get": {
    "tier": "read"
@@ -591,11 +871,20 @@
   "settings.history": {
    "tier": "read"
   },
+  "settings.report": {
+   "tier": "write"
+  },
   "settings.reset": {
    "tier": "admin"
   },
   "settings.set": {
    "tier": "admin"
+  },
+  "settings.worker_secret": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
   },
   "shell.env.get": {
    "tier": "read",
@@ -615,14 +904,53 @@
   "shell.which": {
    "tier": "read"
   },
+  "sms.list": {
+   "tier": "exec",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "sms.send": {
+   "tier": "exec"
+  },
   "task.read": {
    "tier": "read"
   },
   "task.write": {
    "tier": "write"
   },
+  "telegram.send": {
+   "tier": "write"
+  },
+  "telegram.status": {
+   "tier": "read"
+  },
   "token.admin": {
    "tier": "admin"
+  },
+  "ui.text": {
+   "tier": "exec",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "voice.replies": {
+   "tier": "read"
+  },
+  "voice.speak": {
+   "tier": "write",
+   "tags": [
+    "physical"
+   ]
+  },
+  "voice.speak_status": {
+   "tier": "read"
+  },
+  "voice.speak_stop": {
+   "tier": "write"
+  },
+  "voice.speak_voices": {
+   "tier": "read"
   },
   "work.adopt_page": {
    "tier": "write"
@@ -730,13 +1058,22 @@
    "tier": "admin"
   },
   "worker.plugin.disable": {
-   "tier": "admin"
+   "tier": "admin",
+   "tags": [
+    "destructive"
+   ]
   },
   "worker.plugin.enable": {
    "tier": "admin"
   },
   "worker.plugin.list": {
    "tier": "read"
+  },
+  "worker.plugin.reload": {
+   "tier": "admin",
+   "tags": [
+    "destructive"
+   ]
   },
   "worker.reconfigure": {
    "tier": "admin",
@@ -749,6 +1086,9 @@
    "tags": [
     "destructive"
    ]
+  },
+  "worker.settings_report": {
+   "tier": "read"
   },
   "worker.status": {
    "tier": "read"

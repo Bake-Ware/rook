@@ -3,6 +3,10 @@ import json
 import sys
 from types import SimpleNamespace
 
+import pytest
+
+from rook.core.pluginkit import ArgError, CapError
+
 from rook.worker.plugins import dongle
 
 
@@ -46,8 +50,8 @@ def test_identify_before_hid_and_always_release(monkeypatch):
 
 def test_refuse_wrong_device(monkeypatch):
     port = setup_port(monkeypatch, "unrelated-device")
-    result = asyncio.run(dongle.DonglePlugin().keyboard([4]))
-    assert not result["ok"]
+    with pytest.raises(CapError, match="not a compatible"):
+        asyncio.run(dongle.DonglePlugin().keyboard([4]))
     assert [c["cmd"] for c in port.commands] == ["status"]
 
 
@@ -63,11 +67,27 @@ def test_failed_action_not_retried_but_releases(monkeypatch):
         write(data)
 
     port.write = fail_action
-    result = asyncio.run(dongle.DonglePlugin().keyboard([4]))
-    assert not result["ok"]
+    with pytest.raises(CapError, match="disconnected"):
+        asyncio.run(dongle.DonglePlugin().keyboard([4]))
     assert [c["cmd"] for c in port.commands] == ["status", "keyboard", "release"]
 
 
 def test_display_byte_limit():
-    result = asyncio.run(dongle.DonglePlugin().display("é" * 41))
-    assert not result["ok"]
+    with pytest.raises(ArgError):
+        asyncio.run(dongle.DonglePlugin().display("é" * 41))
+
+
+def test_port_comes_from_settings_not_only_env(monkeypatch):
+    """A port set in the settings UI (stored value) is used, and gates loading."""
+    port = setup_port(monkeypatch)
+    monkeypatch.delenv("ROOK_DONGLE_PORT")
+    seen = []
+    monkeypatch.setitem(sys.modules, "serial",
+                        SimpleNamespace(Serial=lambda dev, *a, **k: seen.append(dev) or port))
+    from rook.core.plugin import SettingsView
+    p = dongle.DonglePlugin()
+    assert not p.available()
+    p.__dict__["_settings"] = SettingsView(p, {"port": "/dev/ttyACM7"})
+    assert p.available()
+    asyncio.run(p.status())
+    assert seen == ["/dev/ttyACM7"]

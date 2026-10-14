@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from rook.worker.plugin import Plugin, capability
+from rook.worker.plugin import ANDROID_APP, Plugin, capability, place
 
 try:
     from java import jclass  # Chaquopy
@@ -29,33 +29,38 @@ def _guard() -> dict[str, Any] | None:
 
 class AndroidHidPlugin(Plugin):
     NAMESPACE = "hid"
+    PLACEMENT = place(ANDROID_APP)
 
-    @capability("backend")
+    @capability("backend", risk="read")
     def _backend(self) -> dict:
+        """Input backend on this phone (Android accessibility service) and whether it is enabled."""
         enabled = bool(_Hid and _Hid.isEnabled())
         return {"ok": True, "backend": "android-accessibility", "ready": enabled}
 
-    @capability("type")
+    @capability("type", risk="exec", tags=("physical",))
     def _type(self, text: str) -> dict:
+        """Type ``text`` into the focused editable field (accessibility service)."""
         if (err := _guard()):
             return err
         ok = bool(_Hid.typeText(str(text)))
         return {"ok": ok} if ok else {"ok": False, "error": "no focused editable field"}
 
-    @capability("mouse.click")
+    @capability("mouse.click", risk="exec", tags=("physical",))
     def _click(self, x: int, y: int) -> dict:
+        """Tap the screen at ``x``, ``y`` (pixels)."""
         if (err := _guard()):
             return err
         return {"ok": bool(_Hid.tap(int(x), int(y)))}
 
-    @capability("mouse.drag")
+    @capability("mouse.drag", risk="exec", tags=("physical",))
     def _drag(self, x1: int, y1: int, x2: int, y2: int, duration: float = 0.3) -> dict:
+        """Swipe from ``x1``,``y1`` to ``x2``,``y2`` over ``duration`` seconds."""
         if (err := _guard()):
             return err
         ms = max(1, int(float(duration) * 1000))
         return {"ok": bool(_Hid.swipe(int(x1), int(y1), int(x2), int(y2), ms))}
 
-    @capability("key_combo")
+    @capability("key_combo", risk="exec", tags=("physical",))
     def _key_combo(self, keys: str) -> dict:
         """Map a few common combos to global accessibility actions."""
         if (err := _guard()):

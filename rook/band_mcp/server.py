@@ -29,7 +29,6 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import AnyHttpUrl
 
-from .api_tokens_ui import build_api_token_routes
 from .client import BandClient, MultiBandClient
 from .tokens import StoreTokenVerifier, TokenStore
 
@@ -48,9 +47,9 @@ def build_server(client: "BandClient | MultiBandClient",
     """Build the FastMCP server. Bearer-token-only auth — no OAuth.
 
     The server validates ``Authorization: Bearer <token>`` against either a
-    fixed ``static_token`` or a token minted through the password-gated
-    ``/tokens`` admin page (``admin_password`` gates that page; tokens
-    persist at ``persist_path``). No OAuth authorization-server routes
+    fixed ``static_token`` or a token minted on the dashboard's Tokens view
+    (tokens persist at ``persist_path``; ``admin_password`` is accepted for
+    old callers and ignored). No OAuth authorization-server routes
     (register/authorize/token) are ever mounted — clients just carry the
     header, no login/registration dance.
     """
@@ -62,7 +61,7 @@ def build_server(client: "BandClient | MultiBandClient",
         ],
     )
 
-    store = TokenStore(admin_password=admin_password, persist_path=persist_path,
+    store = TokenStore(persist_path=persist_path,
                        static_token=static_token or None)
     token_verifier = StoreTokenVerifier(store)
 
@@ -446,40 +445,63 @@ def build_server(client: "BandClient | MultiBandClient",
     # nothing here touches the band call path.
     mcp._rook_knowledge = None
     mcp._rook_hygiene = None
-    _kplugin = mcp._rook_hub.plugin("knowledge") if mcp._rook_hub is not None else None
-    if _kplugin is not None:
+
+    def _principal():
+        att = _attr.current.get()
+        return att.audit() if att is not None else None
+    def _save_handoff(author, h):
+        res = sessions.save(thread_id=h.get("thread_id"), author=author,
+                            goal=h.get("goal", ""), state=h.get("state", ""),
+                            decisions=h.get("decisions"), next_steps=h.get("next_steps"),
+                            artifacts=h.get("artifacts"))
+        if not res.get("ok"):
+            raise ValueError(res.get("error") or "handoff save failed")
+        return res["thread_id"]
+    def _list_handoffs():
+        return sessions.list_recent(limit=200).get("threads", [])
+    def _close_handoff(thread_id, author, reason):
+        res = sessions.close_thread(thread_id, author, reason)
+        return bool(res.get("ok")) and not res.get("already")
+    def _idle_seconds():
+        k = mcp._rook_knowledge
+        engine = getattr(k, "hygiene", None) if k is not None else None
+        if engine is None:
+            return 30 * 60
+        return engine.cfg("hygiene_idle_minutes") * 60 if engine.enabled else None
+
+    # Runs for the instance loaded at boot and again for every instance a
+    # hub.plugin.reload/enable (or an apply="reload" setting change) builds:
+    # a fresh instance has none of this wiring, and without it bands()
+    # collapses to "default" and handoffs fail. Everything that holds the
+    # service (mcp._rook_knowledge, the Hygiene loop, the Knowledge page API)
+    # reads or is repointed here, so none keeps a stopped instance.
+    def _bind_knowledge(plugin):
+        if plugin.NAMESPACE != "knowledge" or plugin.service is None:
+            return
+        plugin.principal = _principal
+        knowledge = plugin.service
+        knowledge.handoffs = _save_handoff
+        knowledge.handoff_list = _list_handoffs
+        knowledge.handoff_close = _close_handoff
+        knowledge.enrollment = enrollment
+        mcp._rook_knowledge = knowledge
+        if mcp._rook_hygiene is not None:
+            mcp._rook_hygiene.knowledge = knowledge
+
+    def _unbind_knowledge(plugin):
+        if plugin.NAMESPACE == "knowledge" and mcp._rook_knowledge is plugin.service:
+            mcp._rook_knowledge = None
+            if mcp._rook_hygiene is not None:
+                mcp._rook_hygiene.knowledge = None
+
+    if mcp._rook_hub is not None:
         try:
-            def _principal():
-                att = _attr.current.get()
-                return att.audit() if att is not None else None
-            def _save_handoff(author, h):
-                res = sessions.save(thread_id=h.get("thread_id"), author=author,
-                                    goal=h.get("goal", ""), state=h.get("state", ""),
-                                    decisions=h.get("decisions"), next_steps=h.get("next_steps"),
-                                    artifacts=h.get("artifacts"))
-                if not res.get("ok"):
-                    raise ValueError(res.get("error") or "handoff save failed")
-                return res["thread_id"]
-            def _list_handoffs():
-                return sessions.list_recent(limit=200).get("threads", [])
-            def _close_handoff(thread_id, author, reason):
-                res = sessions.close_thread(thread_id, author, reason)
-                return bool(res.get("ok")) and not res.get("already")
-            _kplugin.principal = _principal
-            knowledge = _kplugin.service
-            knowledge.handoffs = _save_handoff
-            knowledge.handoff_list = _list_handoffs
-            knowledge.handoff_close = _close_handoff
-            knowledge.enrollment = enrollment
-            mcp._rook_knowledge = knowledge
-            from .hygiene import Hygiene
-            def _idle_seconds():
-                engine = getattr(knowledge, "hygiene", None)
-                if engine is None:
-                    return 30 * 60
-                return engine.cfg("hygiene_idle_minutes") * 60 if engine.enabled else None
-            mcp._rook_hygiene = Hygiene(knowledge, client, chat,
-                                        lambda: guidance.get("hygiene"), journal, idle=_idle_seconds)
+            mcp._rook_hub.host.add_bind_hook(_bind_knowledge, _unbind_knowledge)
+            if mcp._rook_knowledge is not None:
+                from .hygiene import Hygiene
+                mcp._rook_hygiene = Hygiene(mcp._rook_knowledge, client, chat,
+                                            lambda: guidance.get("hygiene"), journal,
+                                            idle=_idle_seconds)
         except Exception:
             log.exception("wiring the knowledge plugin failed; knowledge tools disabled")
             mcp._rook_knowledge = None
@@ -1702,7 +1724,6 @@ async def _amain(args) -> None:
         client,
         allowed_hosts=allowed_hosts,
         public_url=args.public_url,
-        admin_password=args.admin_password,
         persist_path=args.persist_path,
         static_token=args.static_token or None,
         journal_path=args.journal_path or None,
@@ -1733,7 +1754,8 @@ async def _amain(args) -> None:
         # Operator Knowledge page API (proxied by the dashboard). Background
         # embedding indexing runs in the knowledge plugin's start().
         from ..hub.plugins.knowledge.web import routes as knowledge_routes
-        for route in reversed(knowledge_routes(mcp._rook_knowledge, AccountStore(enrollment))):
+        # A getter, not the service: a reload swaps the instance.
+        for route in reversed(knowledge_routes(lambda: mcp._rook_knowledge, AccountStore(enrollment))):
             app.router.routes.insert(0, route)
     # Jobs page API (proxied by the dashboard; the rook band panel comes in
     # with the internal mask token, see rook/remote/jobs_web.py).
@@ -1782,16 +1804,12 @@ async def _amain(args) -> None:
     for route in reversed(build_account_token_routes(store, getattr(mcp, "_rook_chat", None))):
         app.router.routes.insert(0, route)
 
-    # /tokens admin UI (mint/list/revoke bearer tokens).
-    for r in reversed(build_api_token_routes(store, getattr(mcp, "_rook_chat", None))):
-        app.router.routes.insert(0, r)
-
     # Thin OAuth front-door for claude.ai's web connector (which won't take a
     # bare bearer header). The client secret it asks for IS a rook token, and
     # the access_token it gets back is that same token — no separate OAuth
     # lifecycle, tokens stay the single source of truth. Wraps the whole app so
     # /authorize, /token, and the auth-server metadata are always public;
-    # everything else (/mcp, /tokens) passes straight through. See oauth_shim.
+    # everything else (/mcp, /tokens/account-api) passes straight through. See oauth_shim.
     if args.public_url:
         from .oauth_shim import OAuthShim
         app = OAuthShim(app, store, args.public_url)
@@ -1849,7 +1867,9 @@ def main() -> None:
                          "client secret.")
     ap.add_argument("--admin-password",
                     default=os.environ.get("ROOK_MCP_AUTH_PASSWORD", ""),
-                    help="admin password gating the /tokens mint/revoke UI.")
+                    # The MCP-port /tokens page it gated is gone (tokens are
+                    # minted on the dashboard); accepted so old units start.
+                    help=argparse.SUPPRESS)
     ap.add_argument("--persist-path",
                     default=os.environ.get("ROOK_MCP_PERSIST")
                     or data_path("oauth.json", "/var/lib/rook-band-mcp/oauth.json"),
@@ -1860,8 +1880,8 @@ def main() -> None:
                     default=os.environ.get("ROOK_MCP_STATIC_TOKEN", ""),
                     help="fixed bearer token clients send as "
                          "'Authorization: Bearer <token>' — the simplest "
-                         "single-integration auth path. Tokens minted via "
-                         "/tokens also work at the same time.")
+                         "single-integration auth path. Tokens minted on the "
+                         "dashboard's Tokens page also work at the same time.")
     ap.add_argument("--journal-path",
                     default=os.environ.get("ROOK_MCP_JOURNAL", ""),
                     help="sqlite file for the call journal (default: "
@@ -1885,6 +1905,11 @@ def main() -> None:
     # Zero or more seed PSKs (comma-separated). Without one the MCP serves the
     # bands in the shared enrollment database, like the dashboard (settings P3).
     args.psks = [p.strip() for p in (args.psk or "").split(",") if p.strip()]
+
+    if args.admin_password:
+        print("rook-mcp: ROOK_MCP_AUTH_PASSWORD/--admin-password is ignored: the "
+              "MCP /tokens page was removed; mint tokens on the dashboard's Tokens "
+              "page (operator account).", file=sys.stderr)
 
     level = logging.WARNING - 10 * args.verbose
     logging.basicConfig(level=max(level, logging.DEBUG),

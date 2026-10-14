@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from rook.worker.plugin import Plugin, capability
+from rook.worker.plugin import ANDROID_APP, Plugin, capability, place
 from rook_android.androidctx import app_context, jclass, has_permission
 
 _READ_CALL_LOG = "android.permission.READ_CALL_LOG"
@@ -11,8 +11,9 @@ _DIR = {1: "incoming", 2: "outgoing", 3: "missed", 4: "voicemail", 5: "rejected"
 
 class AndroidCallLogPlugin(Plugin):
     NAMESPACE = "calllog"
+    PLACEMENT = place(ANDROID_APP)
 
-    @capability("list")
+    @capability("list", risk="exec", tags=("sensitive",))
     def _list(self, limit: int = 30) -> dict:
         """Recent calls, newest first: number, name, direction, duration_s, ts."""
         ctx = app_context()

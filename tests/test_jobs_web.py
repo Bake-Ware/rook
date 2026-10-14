@@ -287,7 +287,7 @@ def test_index_has_the_jobs_view():
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
 def test_cron_words_and_builder(tmp_path):
     src = (ROOT / "rook/web/jobs.js").read_text(encoding="utf-8")
-    first = src.index("\n", src.index("import {h"))
+    first = src.index("\n", src.index("const {h, ago"))   # the manage.js import
     (tmp_path / "jobs.mjs").write_text("const h=()=>{},ago=0,useCss=0,btn=0,chips=0,table=0,two=0,dialog=0,menu=0;"
                                        + src[first:], encoding="utf-8")
     (tmp_path / "t.mjs").write_text(

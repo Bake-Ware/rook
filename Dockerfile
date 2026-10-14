@@ -1,7 +1,9 @@
 # Rook hub image: the telesthete UDP relay, the dashboard and the MCP server.
 # One image, three processes; compose.yaml runs each as its own service.
 
-ARG TELESTHETE_REV=b6290c7afabe14c0e81d4e9adfd5bcf498a251e5
+# Keep in lockstep with the telesthete pin in pyproject.toml (both move to
+# the merged telesthete main commit once the audit/hub PR lands).
+ARG TELESTHETE_REV=f3419d2292f7fe193fa3205880186823b78b16c1
 
 # --- relay: build telesthete-hub from source --------------------------------
 FROM rust:1-slim-bookworm AS relay

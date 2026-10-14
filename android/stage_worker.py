@@ -23,8 +23,14 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent              # android/
 REPO_ROOT = HERE.parent                             # repo root (…/rook)
 WORKER_SRC = REPO_ROOT / "rook" / "worker"
-# telesthete is a sibling checkout, matching build_band_worker.py's layout.
+# telesthete is a sibling checkout, matching build_band_worker.py's layout;
+# without one, the pip-installed package (as the zipapp builder does).
 TELESTHETE_ROOT = REPO_ROOT.parent / "telesthete" / "telesthete"
+if not TELESTHETE_ROOT.is_dir():
+    import importlib.util as _ilu
+    _spec = _ilu.find_spec("telesthete")
+    if _spec and _spec.origin:
+        TELESTHETE_ROOT = Path(_spec.origin).parent
 PY_DST = HERE / "app" / "src" / "main" / "python"
 
 
@@ -40,8 +46,17 @@ def main() -> int:
         return 1
     if not TELESTHETE_ROOT.is_dir():
         print(f"ERROR: telesthete source not found: {TELESTHETE_ROOT}\n"
-              "Expected a sibling checkout at ../telesthete/telesthete "
-              "(same as build_band_worker.py).", file=sys.stderr)
+              "Expected a sibling checkout at ../telesthete/telesthete or a pip-installed "
+              "telesthete (same as build_band_worker.py).", file=sys.stderr)
+        return 1
+
+    sys.path.insert(0, str(REPO_ROOT))
+    from rook.remote.build_band_worker import check_telesthete
+    try:
+        # Modules (e.g. route.py) and, for a git checkout, the pinned commit.
+        check_telesthete(TELESTHETE_ROOT)
+    except (FileNotFoundError, RuntimeError) as error:
+        print(f"ERROR: {error}", file=sys.stderr)
         return 1
 
     # rook.worker  ->  python/rook/worker  (with a minimal rook/__init__.py)

@@ -381,9 +381,10 @@ def test_package_and_entry_point_discovery(tmp_path, monkeypatch):
 def test_every_builtin_worker_plugin_loads_like_before():
     """The worker host loads exactly what the legacy package-scan loader did
     (no placement), and no built-in worker plugin would land on the hub."""
-    from rook.core.plugin import load_plugins
-    legacy = CapabilityRegistry()
-    legacy_plugins = load_plugins("rook.worker.plugins", legacy)
+    legacy_host = PluginHost(check_placement=False)
+    legacy = legacy_host.registry
+    legacy_plugins = legacy_host.load(PluginHost.discover("rook.worker.plugins",
+                                                          entry_points=False))
     host = PluginHost(facts=NodeFacts(node_id="w", hw=facts_mod.local_facts()))
     host.load(PluginHost.discover("rook.worker.plugins", entry_points=False))
     assert sorted(p._module for p in host.plugins) == sorted(p._module for p in legacy_plugins)
@@ -624,7 +625,8 @@ async def test_mcp_reaches_hub_caps(tmp_path, monkeypatch):
     workers = _text(await mcp.call_tool("rook_workers", {}))
     assert [w["name"] for w in workers] == ["rook"]
     caps = _text(await mcp.call_tool("rook_caps", {"prefix": "hub."}))
-    assert set(caps["caps"]) == {"hub.info", "hub.plugins"}
+    assert set(caps["caps"]) == {"hub.info", "hub.plugins", "hub.plugin.enable",
+                                 "hub.plugin.disable", "hub.plugin.reload"}
 
 
 @pytest.mark.asyncio

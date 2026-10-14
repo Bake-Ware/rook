@@ -54,7 +54,7 @@ through `rook dashboard` (`rook/__main__.py`) and `python -m rook.remote`.
 | `--psk` / `ROOK_BAND_PSK` | flag, env; **overridden by** setup `band_psk` and the enrollment DB primary band | empty (then `/setup`) | band | `CombinedServer`, `setup_store`, `EnrollmentStore.import_config` | **yes** | proc (setup: live) |
 | `--hub-public` / `ROOK_HUB_PUBLIC` | flag, env; **overridden by** setup `hub_public` | `hub.example.com:443` | hub (copied per band into the accounts DB) | `CombinedServer`, installers, `band_web.create_band` | no | proc (setup: live) |
 | `--band-name` / `ROOK_BAND_NAME` | flag, env; **overridden by** setup `band_name` | `rook-band` | band | `CombinedServer` | no | proc (setup: live) |
-| `--token` | flag only | empty | hub | `CombinedServer(auth_token=)` legacy exec-worker auth | **yes** | proc |
+| `--token` | flag only | empty | hub | ignored (the legacy exec worker and `/ws` were removed; still accepted so old units start) | no | proc |
 | `--web-user` / `ROOK_WEB_USER` | flag, env | empty (password only) | hub | `CombinedServer` login | no | proc |
 | `--web-pass` / `ROOK_WEB_PASS` | flag, env | empty (refuses off-loopback) | hub | `CombinedServer` login, first local admin | **yes** | proc |
 | `--insecure-no-auth` | flag only | off | hub | `_cli_main` guard | no | proc |
@@ -87,9 +87,9 @@ Entry point: `rook/band_mcp/server.py:main`.
 | `--bind` / `ROOK_MCP_BIND` | flag, env | `127.0.0.1:8765` | hub | uvicorn | no | proc |
 | `--allowed-hosts` / `ROOK_ALLOWED_HOSTS` | flag, env | empty (loopback only) | hub | transport security | no | proc |
 | `--public-url` / `ROOK_MCP_PUBLIC_URL` | flag, env | empty (OAuth shim off) | hub | resource metadata, `oauth_shim` | no | proc |
-| `--admin-password` / `ROOK_MCP_AUTH_PASSWORD` | flag, env | empty | hub | `TokenStore` (`/tokens` page on the MCP port) | **yes** | proc |
+| `--admin-password` / `ROOK_MCP_AUTH_PASSWORD` | flag, env | empty | hub | ignored: the MCP-port `/tokens` page was removed (mint on the dashboard); still accepted so old units start | no | proc |
 | `--persist-path` / `ROOK_MCP_PERSIST` | flag, env | `$ROOK_DATA_DIR/oauth.json`, else `/var/lib/rook-band-mcp/oauth.json` | hub | `TokenStore`; its directory also holds the other stores unless `--journal-path` moves them | holds secrets | proc |
-| `--static-token` / `ROOK_MCP_STATIC_TOKEN` | flag, env | empty | hub | `TokenStore`, `api_tokens_ui`, watchdog | **yes** | proc |
+| `--static-token` / `ROOK_MCP_STATIC_TOKEN` | flag, env | empty | hub | `TokenStore`, watchdog | **yes** | proc |
 | `--journal-path` / `ROOK_MCP_JOURNAL` | flag, env | `journal.db` next to `--persist-path` | hub | `Journal`; **its directory decides** where `sessions.db`, `chat.db`, `console.db`, `guidance.db`, `vault.db`, `knowledge.db` go | no | proc |
 | `-v` | flag | warning level | hub | logging | no | proc |
 | `ROOK_KNOWLEDGE` | env | `0` (off) | hub | `server._build` (knowledge wiki, tasks, hygiene) | no | proc |
@@ -152,7 +152,7 @@ Sessions, Install. The account pages are served at `/account*`
 | Band PSK rotate / revoke, pairing codes, invites, member roles | UI:Account, UI:API tokens (`/tokens/bands/rotate`, `/tokens/pairing`) | pairing code TTL 300 s (hardcoded) | band | enrollment DB, `EnrollmentStore` | **yes** | live |
 | Profile name, avatar source, local password, linked Google login, devices | UI:Account | from Google or username | user | accounts DB (`users`, `devices`) | password **yes** | live |
 | Operator account, admin flag | `ROOK_WEB_USER`/`ROOK_WEB_PASS` bootstrap an operator account (admin, owner of every band); changing them updates its credentials and ends its sessions | none | user | accounts DB `users.admin`, `account_settings.bootstrap_user` (`AccountStore.bootstrap`) | password **yes** | proc |
-| API tokens (mint, revoke, label, avatar) | UI:API tokens, and `/tokens` on the MCP port (admin password) | none | user / hub | `oauth.json` (`TokenStore`) | **yes** | live |
+| API tokens (mint, revoke, label, avatar) | UI:API tokens (`/tokens` on the MCP port redirects there) | none | user / hub | `oauth.json` (`TokenStore`) | **yes** | live |
 | Vault secrets | UI:Secrets | none | hub | `vault.db` | **yes** | live |
 | Agent instructions (`server`, `hygiene`, `tool:<name>`, `cap:<prefix>`) | UI:Agent instructions | `guidance.DEFAULTS` | hub | `guidance.db` (overrides + attributed history) | no | live |
 | Knowledge pages, tasks, projects | UI:Knowledge, UI:Work, MCP tools | none | band | `knowledge.db` | no | live (content, not configuration) |
@@ -174,8 +174,11 @@ Entry point: `rook/worker/cli.py:main`.
 | `--announce-interval` | flag; **overridden by** pushed `announce_interval` | `30` s | worker | `Worker` | no | proc |
 | `--bind-port` | flag | `0` (ephemeral) | worker | transport | no | proc |
 | `--keepalive` | flag | `20` s | worker | transport | no | proc |
+| `ROOK_BAND_UDP_PACE_RATE`, `ROOK_BAND_UDP_PACE_BURST` | env | `2000` frames/s, `64` (rate `0` = unpaced) | worker, hub band clients | transport (UDP bulk pacing) | no | proc |
+| `ROOK_BAND_DISPATCH_CONCURRENCY`, `ROOK_BAND_DISPATCH_BACKLOG` | env | `64`, `1024` | worker, hub band clients | transport (inbound request bound; replies/announces/Drop are never shed) | no | proc |
+| `ROOK_ANNOUNCE_CAPS_HASH` | env | `0` — keep off until every hub (> build 426) and APK (> 0.4.1) reads `caps_hash` | worker | `Worker.announce` | no | proc |
 | `--ws` | flag | off (UDP) | worker | transport | no | proc |
-| `--enable` | flag | all built-in plugins | worker | `load_plugins` | no | proc |
+| `--enable` | flag | all built-in plugins | worker | `PluginHost.load` | no | proc |
 | `--update-url` / `ROOK_UPDATE_URL` | flag, env | empty (no OTA) | worker | `plugins/selfupdate` | no | proc |
 | `-v` | flag; raised by pushed `log_level` | warning | worker | logging | no | proc |
 | `--version`, `--selftest`, `--install-cli`, `--cli` | flag | n/a | worker | `cli.main` | no | n/a |
@@ -243,9 +246,10 @@ The dashboard renders these scripts with `{hub_public}`, `{band_psk}`,
 The TUI reaches workers only through the hub (`/api/band/*` with this login);
 it holds no PSK and no band connection of its own.
 
-Other `rook` subcommands (`sessions`, `history`, `tmux`) take only per-command
-arguments (`--json`, `--project`, `-d`, `-n`) and read `CODEX_HOME`/`APPDATA` for
-platform paths. They carry no persistent settings.
+Other `rook` subcommands (`sessions`, `history`) take only per-command
+arguments (`--json`, `--project`) and read `USERPROFILE` for platform paths.
+They carry no persistent settings. (`rook tmux` was removed: agent sessions run
+in Rook terminals, driven from the Sessions page or `rook band`.)
 
 ## 1.9 Voice service (`services/voice`)
 
@@ -335,9 +339,7 @@ Out of scope (dev tools or separate products): `tools/diagnostics/*`
 (`ROOK_PROBE_WORKER`, `--seconds`, `--output`, …), `server/rook_kvm/*` and
 `server/validate_dongle.py` (`ROOK_BRIDGE_HOST`, `ROOK_BRIDGE_PORT`,
 `ROOK_ADMIN_USER`, `ROOK_ADMIN_PASS`, `ROOK_FIRMWARE_BIN`; `ROOK_EOF`,
-`ROOK_END__`, `ROOK_FILE` there are protocol markers, not settings),
-`rook/remote/worker.py` (legacy exec worker: `--name --server --token
---no-service --no-banner`).
+`ROOK_END__`, `ROOK_FILE` there are protocol markers, not settings).
 
 ## 1.14 Deployment files
 
@@ -348,7 +350,7 @@ Out of scope (dev tools or separate products): `tools/diagnostics/*`
 - `Dockerfile`: sets `ROOK_DATA_DIR=/data`.
 - `scripts/local-hub.sh`: reads `ROOK_DATA_DIR`, `BIND`, `RELAY_PORT`,
   `DASHBOARD_PORT`, `MCP_PORT`, `PYTHON`; generates `ROOK_BAND_PSK`,
-  `ROOK_WEB_PASS`, `ROOK_MCP_STATIC_TOKEN`, `ROOK_MCP_AUTH_PASSWORD` into
+  `ROOK_WEB_PASS`, `ROOK_MCP_STATIC_TOKEN` into
   `$ROOK_DATA_DIR/quickstart.env` (mode 600).
 - `pikvm/rook-worker.env.example` + `pikvm/rook-worker.service`:
   `ROOK_HUB`, `ROOK_BAND_PSK`, `ROOK_WORKER_NAME`, `PIKVM_*`, expanded into
@@ -480,8 +482,7 @@ Numbered so the migration plan and follow-up tasks can refer to them.
 - **P17. Secrets on command lines.** The worker installers template
   `--psk {band_psk}` into the systemd `ExecStart` and the Windows scheduled task
   arguments; `pikvm/rook-worker.service` expands `--psk ${ROOK_BAND_PSK}`;
-  `scripts/local-hub.sh` prints a worker command with `--psk`; the legacy
-  `remote/worker.py` unit uses `--token`. The PSK is then visible in `ps` and in
+  `scripts/local-hub.sh` prints a worker command with `--psk`. The PSK is then visible in `ps` and in
   unit files. The README tells operators the opposite ("keep them out of process
   arguments"). Enrolled installs (`--enrolled`) avoid this.
 - **P18. Secrets and personal defaults in plaintext files.** `setup.json` (PSKs,

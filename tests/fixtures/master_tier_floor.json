@@ -1,0 +1,1029 @@
+{
+ "_source": "rook/core/authz.py BUILTIN at master 9f0d6df (and the Android app's native caps resolved by master's effective_tier). Frozen: do not regenerate.",
+ "builtin": {
+  "agent.wake": {
+   "tier": "exec",
+   "tags": []
+  },
+  "agent.wake_info": {
+   "tier": "read",
+   "tags": []
+  },
+  "band.admin": {
+   "tier": "admin",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "band.caps": {
+   "tier": "read",
+   "tags": []
+  },
+  "band.deauth": {
+   "tier": "admin",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "band.workers": {
+   "tier": "read",
+   "tags": []
+  },
+  "battery.status": {
+   "tier": "read",
+   "tags": []
+  },
+  "camera.list": {
+   "tier": "read",
+   "tags": []
+  },
+  "camera.snap": {
+   "tier": "read",
+   "tags": [
+    "sensitive",
+    "physical"
+   ]
+  },
+  "caps.describe": {
+   "tier": "read",
+   "tags": []
+  },
+  "cec.ping": {
+   "tier": "read",
+   "tags": [
+    "physical"
+   ]
+  },
+  "cec.raw": {
+   "tier": "write",
+   "tags": [
+    "physical"
+   ]
+  },
+  "cec.send": {
+   "tier": "write",
+   "tags": [
+    "physical"
+   ]
+  },
+  "chat.delete": {
+   "tier": "write",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "chat.open": {
+   "tier": "write",
+   "tags": []
+  },
+  "chat.poll": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "chat.presence": {
+   "tier": "read",
+   "tags": []
+  },
+  "chat.read": {
+   "tier": "read",
+   "tags": []
+  },
+  "chat.rooms": {
+   "tier": "read",
+   "tags": []
+  },
+  "chat.send": {
+   "tier": "write",
+   "tags": []
+  },
+  "chat.write": {
+   "tier": "write",
+   "tags": []
+  },
+  "claude-history.analyze": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "claude-history.export": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "claude-history.follow": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "claude-history.pull": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "claude-history.read": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "claude-history.read_page": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "claude-history.read_snapshot": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "claude-history.resume": {
+   "tier": "exec",
+   "tags": []
+  },
+  "claude-history.resumed": {
+   "tier": "read",
+   "tags": []
+  },
+  "claude-history.search": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "claude-history.send": {
+   "tier": "exec",
+   "tags": []
+  },
+  "codex-history.resume": {
+   "tier": "exec",
+   "tags": []
+  },
+  "console.read": {
+   "tier": "read",
+   "tags": []
+  },
+  "customcap.add": {
+   "tier": "admin",
+   "tags": []
+  },
+  "customcap.list": {
+   "tier": "read",
+   "tags": []
+  },
+  "customcap.remove": {
+   "tier": "admin",
+   "tags": []
+  },
+  "deluge.add": {
+   "tier": "write",
+   "tags": []
+  },
+  "deluge.files": {
+   "tier": "read",
+   "tags": []
+  },
+  "deluge.list": {
+   "tier": "read",
+   "tags": []
+  },
+  "deluge.pause": {
+   "tier": "write",
+   "tags": []
+  },
+  "deluge.remove": {
+   "tier": "write",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "deluge.resume": {
+   "tier": "write",
+   "tags": []
+  },
+  "deluge.status": {
+   "tier": "read",
+   "tags": []
+  },
+  "dongle.consumer": {
+   "tier": "write",
+   "tags": [
+    "physical"
+   ]
+  },
+  "dongle.display": {
+   "tier": "read",
+   "tags": [
+    "sensitive",
+    "physical"
+   ]
+  },
+  "dongle.display_probe": {
+   "tier": "read",
+   "tags": [
+    "physical"
+   ]
+  },
+  "dongle.keyboard": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "dongle.mouse": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "dongle.release": {
+   "tier": "write",
+   "tags": [
+    "physical"
+   ]
+  },
+  "dongle.status": {
+   "tier": "read",
+   "tags": [
+    "physical"
+   ]
+  },
+  "file.exists": {
+   "tier": "read",
+   "tags": []
+  },
+  "file.list": {
+   "tier": "read",
+   "tags": []
+  },
+  "file.read": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "file.search": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "file.write": {
+   "tier": "exec",
+   "tags": []
+  },
+  "grants.revocations": {
+   "tier": "read",
+   "tags": []
+  },
+  "guidance.write": {
+   "tier": "admin",
+   "tags": []
+  },
+  "handoff.read": {
+   "tier": "read",
+   "tags": []
+  },
+  "handoff.write": {
+   "tier": "write",
+   "tags": []
+  },
+  "hermes.chat": {
+   "tier": "exec",
+   "tags": []
+  },
+  "hermes.mcp.list": {
+   "tier": "read",
+   "tags": []
+  },
+  "hermes.memory.read": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "hermes.memory.status": {
+   "tier": "read",
+   "tags": []
+  },
+  "hermes.run": {
+   "tier": "exec",
+   "tags": []
+  },
+  "hermes.sessions.list": {
+   "tier": "read",
+   "tags": []
+  },
+  "hermes.sessions.read": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "hermes.skills.list": {
+   "tier": "read",
+   "tags": []
+  },
+  "hermes.skills.search": {
+   "tier": "read",
+   "tags": []
+  },
+  "hermes.status": {
+   "tier": "read",
+   "tags": []
+  },
+  "hid.backend": {
+   "tier": "read",
+   "tags": []
+  },
+  "hid.key_combo": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "hid.mouse.click": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "hid.mouse.drag": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "hid.mouse.move": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "hid.type": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "hub.info": {
+   "tier": "read",
+   "tags": []
+  },
+  "hub.plugins": {
+   "tier": "read",
+   "tags": []
+  },
+  "identity.whoami": {
+   "tier": "read",
+   "tags": []
+  },
+  "info.host": {
+   "tier": "read",
+   "tags": []
+  },
+  "info.ping": {
+   "tier": "read",
+   "tags": []
+  },
+  "info.uptime": {
+   "tier": "read",
+   "tags": []
+  },
+  "journal.read": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "knowledge.read": {
+   "tier": "read",
+   "tags": []
+  },
+  "knowledge.write": {
+   "tier": "write",
+   "tags": []
+  },
+  "log.audit": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "log.tail": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "member.admin": {
+   "tier": "admin",
+   "tags": []
+  },
+  "memory.entities": {
+   "tier": "read",
+   "tags": []
+  },
+  "memory.get": {
+   "tier": "read",
+   "tags": []
+  },
+  "memory.note": {
+   "tier": "write",
+   "tags": []
+  },
+  "memory.put": {
+   "tier": "write",
+   "tags": []
+  },
+  "memory.search": {
+   "tier": "read",
+   "tags": []
+  },
+  "msg.clear": {
+   "tier": "write",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "msg.read": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "msg.send": {
+   "tier": "write",
+   "tags": []
+  },
+  "pikvm.api.get": {
+   "tier": "read",
+   "tags": [
+    "sensitive",
+    "physical"
+   ]
+  },
+  "pikvm.api.post": {
+   "tier": "exec",
+   "tags": [
+    "destructive",
+    "physical"
+   ]
+  },
+  "pikvm.key": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "pikvm.mouse.click": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "pikvm.mouse.move": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "pikvm.power": {
+   "tier": "exec",
+   "tags": [
+    "destructive",
+    "physical"
+   ]
+  },
+  "pikvm.power.status": {
+   "tier": "read",
+   "tags": [
+    "physical"
+   ]
+  },
+  "pikvm.snap": {
+   "tier": "read",
+   "tags": [
+    "sensitive",
+    "physical"
+   ]
+  },
+  "pikvm.type": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "policy.explain": {
+   "tier": "read",
+   "tags": []
+  },
+  "policy.get": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "policy.set": {
+   "tier": "admin",
+   "tags": []
+  },
+  "policy.status": {
+   "tier": "read",
+   "tags": []
+  },
+  "proc.close": {
+   "tier": "exec",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "proc.list": {
+   "tier": "read",
+   "tags": []
+  },
+  "proc.read": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "proc.signal": {
+   "tier": "exec",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "proc.start": {
+   "tier": "exec",
+   "tags": []
+  },
+  "proc.write": {
+   "tier": "exec",
+   "tags": []
+  },
+  "screenshot.capture": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "screenshot.capture_preview": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "screenshot.capture_region": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "secret.delete": {
+   "tier": "admin",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "secret.get": {
+   "tier": "admin",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "secret.list": {
+   "tier": "read",
+   "tags": []
+  },
+  "secret.log": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "secret.set": {
+   "tier": "admin",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "secret.use": {
+   "tier": "write",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "sessions.follow": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "sessions.list": {
+   "tier": "read",
+   "tags": []
+  },
+  "sessions.mirror": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "sessions.send": {
+   "tier": "exec",
+   "tags": []
+  },
+  "sessions.stop": {
+   "tier": "exec",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "settings.describe": {
+   "tier": "read",
+   "tags": []
+  },
+  "settings.get": {
+   "tier": "read",
+   "tags": []
+  },
+  "settings.history": {
+   "tier": "read",
+   "tags": []
+  },
+  "settings.reset": {
+   "tier": "admin",
+   "tags": []
+  },
+  "settings.set": {
+   "tier": "admin",
+   "tags": []
+  },
+  "shell.env.get": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "shell.env.list": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "shell.exec": {
+   "tier": "exec",
+   "tags": []
+  },
+  "shell.which": {
+   "tier": "read",
+   "tags": []
+  },
+  "task.read": {
+   "tier": "read",
+   "tags": []
+  },
+  "task.write": {
+   "tier": "write",
+   "tags": []
+  },
+  "token.admin": {
+   "tier": "admin",
+   "tags": []
+  },
+  "work.adopt_page": {
+   "tier": "write",
+   "tags": []
+  },
+  "work.command": {
+   "tier": "exec",
+   "tags": []
+  },
+  "work.create": {
+   "tier": "exec",
+   "tags": []
+  },
+  "work.export": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "work.sessions": {
+   "tier": "read",
+   "tags": []
+  },
+  "work.status": {
+   "tier": "read",
+   "tags": []
+  },
+  "work.stream.close": {
+   "tier": "exec",
+   "tags": []
+  },
+  "work.stream.list": {
+   "tier": "read",
+   "tags": []
+  },
+  "work.stream.open": {
+   "tier": "exec",
+   "tags": []
+  },
+  "work.stream.read": {
+   "tier": "read",
+   "tags": []
+  },
+  "work.stream.resize": {
+   "tier": "write",
+   "tags": []
+  },
+  "work.stream.signal": {
+   "tier": "exec",
+   "tags": []
+  },
+  "work.stream.write": {
+   "tier": "exec",
+   "tags": []
+  },
+  "work.view_page": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "worker.apply": {
+   "tier": "admin",
+   "tags": []
+  },
+  "worker.check": {
+   "tier": "admin",
+   "tags": []
+  },
+  "worker.config_apply": {
+   "tier": "admin",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "worker.config_confirm": {
+   "tier": "admin",
+   "tags": []
+  },
+  "worker.config_get": {
+   "tier": "read",
+   "tags": []
+  },
+  "worker.config_revert": {
+   "tier": "admin",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "worker.deauth": {
+   "tier": "admin",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "worker.description_get": {
+   "tier": "read",
+   "tags": []
+  },
+  "worker.description_set": {
+   "tier": "write",
+   "tags": []
+  },
+  "worker.enrollment_finish": {
+   "tier": "admin",
+   "tags": []
+  },
+  "worker.enrollment_move_prepare": {
+   "tier": "admin",
+   "tags": []
+  },
+  "worker.enrollment_prepare": {
+   "tier": "admin",
+   "tags": []
+  },
+  "worker.enrollment_prove": {
+   "tier": "admin",
+   "tags": []
+  },
+  "worker.enrollment_status": {
+   "tier": "read",
+   "tags": []
+  },
+  "worker.hold": {
+   "tier": "admin",
+   "tags": []
+  },
+  "worker.ota_begin": {
+   "tier": "admin",
+   "tags": []
+  },
+  "worker.plugin.disable": {
+   "tier": "admin",
+   "tags": []
+  },
+  "worker.plugin.enable": {
+   "tier": "admin",
+   "tags": []
+  },
+  "worker.plugin.list": {
+   "tier": "read",
+   "tags": []
+  },
+  "worker.reconfigure": {
+   "tier": "admin",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "worker.restart": {
+   "tier": "admin",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "worker.status": {
+   "tier": "read",
+   "tags": []
+  },
+  "worker.update": {
+   "tier": "admin",
+   "tags": [
+    "destructive"
+   ]
+  }
+ },
+ "android": {
+  "battery.status": {
+   "tier": "read",
+   "tags": []
+  },
+  "calendar.list": {
+   "tier": "read",
+   "tags": [
+    "personal"
+   ]
+  },
+  "calllog.list": {
+   "tier": "exec",
+   "tags": []
+  },
+  "contacts.search": {
+   "tier": "exec",
+   "tags": []
+  },
+  "device.clipboard_get": {
+   "tier": "exec",
+   "tags": []
+  },
+  "device.clipboard_set": {
+   "tier": "exec",
+   "tags": []
+  },
+  "device.find": {
+   "tier": "exec",
+   "tags": []
+  },
+  "device.find_stop": {
+   "tier": "exec",
+   "tags": []
+  },
+  "device.info": {
+   "tier": "exec",
+   "tags": []
+  },
+  "device.launch": {
+   "tier": "exec",
+   "tags": []
+  },
+  "device.open_url": {
+   "tier": "exec",
+   "tags": []
+  },
+  "device.torch": {
+   "tier": "exec",
+   "tags": []
+  },
+  "device.unlock": {
+   "tier": "exec",
+   "tags": []
+  },
+  "device.update": {
+   "tier": "exec",
+   "tags": []
+  },
+  "device.update_status": {
+   "tier": "exec",
+   "tags": []
+  },
+  "device.vibrate": {
+   "tier": "exec",
+   "tags": []
+  },
+  "device.wake": {
+   "tier": "exec",
+   "tags": []
+  },
+  "hid.backend": {
+   "tier": "read",
+   "tags": []
+  },
+  "hid.key_combo": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "hid.mouse.click": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "hid.mouse.drag": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "hid.type": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "location.get": {
+   "tier": "exec",
+   "tags": []
+  },
+  "notify.dismiss": {
+   "tier": "exec",
+   "tags": []
+  },
+  "notify.list": {
+   "tier": "exec",
+   "tags": []
+  },
+  "notify.post": {
+   "tier": "exec",
+   "tags": []
+  },
+  "screenshot.capture": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "screenshot.capture_preview": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "sms.list": {
+   "tier": "exec",
+   "tags": []
+  },
+  "sms.send": {
+   "tier": "exec",
+   "tags": []
+  },
+  "ui.text": {
+   "tier": "exec",
+   "tags": []
+  },
+  "voice.replies": {
+   "tier": "read",
+   "tags": []
+  },
+  "voice.speak": {
+   "tier": "write",
+   "tags": [
+    "physical"
+   ]
+  },
+  "voice.speak_status": {
+   "tier": "read",
+   "tags": []
+  },
+  "voice.speak_stop": {
+   "tier": "write",
+   "tags": []
+  },
+  "voice.speak_voices": {
+   "tier": "read",
+   "tags": []
+  }
+ }
+}

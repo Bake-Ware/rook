@@ -13,8 +13,11 @@ import logging
 import time
 import uuid
 
+from ..core.aiocompat import timeout as _timeout
 from ..core.facts import clean_facts
 from ..worker.transports.telesthete_hub import TelestheteHubTransport
+from ..worker.wire import envelope
+from ..worker.wire.codec import route_id_for
 
 log = logging.getLogger("rook.band_mcp.client")
 
@@ -25,6 +28,22 @@ WORKER_STALE_SECS = 90.0
 # The hub's own node (hub-placed plugins, served as worker "rook") announces on
 # the same cadence as workers.
 LOCAL_ANNOUNCE_SECS = 30.0
+# What this client can take in a reply (request ``accept``, core spec 14).
+CLIENT_ACCEPT = [envelope.A_DROP, envelope.A_DROP_NATIVE, envelope.A_Z]
+# Largest reply this client pulls over Drop (a descriptor announcing more is
+# refused).
+MAX_PULL_BYTES = envelope.DEFAULT_MAX_REPLY_BYTES
+# Only used to tell a caller whose timeout ran out during a large-reply pull
+# how long a pull of that size needs (the caller's timeout is never extended).
+PULL_MIN_SECS = 15.0
+PULL_BYTES_PER_SEC = 256 * 1024
+# A worker that sent a hash-only announce we can't resolve is asked for its
+# cap list at most this often.
+CAPS_FETCH_EVERY = 30.0
+# Single-fragment budget of the §6.6 envelope. Extension keys are left off a
+# request to a node that never announced them if they alone would push the
+# request past one fragment (the ESP32/RP2040 firmware reassembles nothing).
+_ONE_FRAGMENT = 1003
 
 
 def _denial(decision, target: str | None) -> dict:
@@ -45,9 +64,23 @@ async def _call_local(node, cap: str, args: dict | None, identity: str | None,
                       timeout: float) -> dict:
     """In-process call to the hub node: same reply shape as a band reply."""
     mid = uuid.uuid4().hex
-    async with asyncio.timeout(timeout):
-        body = await node.dispatch(cap, args or {}, identity, source="local")
+    try:
+        async with _timeout(timeout):
+            body = await node.dispatch(cap, args or {}, identity, source="local")
+    except TimeoutError as e:
+        raise _as_asyncio_timeout(e)
     return {"id": mid, "from": node.worker_id, **body}
+
+
+def _as_asyncio_timeout(e: BaseException) -> BaseException:
+    """``call`` raises ``asyncio.TimeoutError``: the same class as the builtin
+    on 3.11+, a different one on 3.10, where aiocompat's timeout raises the
+    builtin and callers catch ``asyncio.TimeoutError``."""
+    if isinstance(e, asyncio.TimeoutError):
+        return e
+    err = asyncio.TimeoutError(*e.args)
+    err.__cause__ = e
+    return err
 
 
 class WorkerEntry(dict):
@@ -72,10 +105,26 @@ class WorkerEntry(dict):
 
 class BandClient:
     def __init__(self, psk: str, hub_host: str = "127.0.0.1",
-                 hub_port: int = 7474, use_ws: bool = False) -> None:
+                 hub_port: int = 7474, use_ws: bool = False,
+                 route_name: str | None = None) -> None:
         self.transport = TelestheteHubTransport(
             psk=psk, hub_host=hub_host, hub_port=hub_port, use_ws=use_ws,
         )
+        # Our route identity (telesthete SPEC §10.1): replies to our calls
+        # carry ``rr`` = route_id_for(this) and a routing hub delivers them to
+        # us alone. Stable for the process; attach_local() replaces it with
+        # the hub node's id, so band calls to `rook` are addressable too.
+        self.route_name = route_name or f"client:{uuid.uuid4().hex}"
+        if envelope.routing_enabled():
+            self.transport.set_route(self.route_name)
+        # In-flight Drop pulls of large replies, by drop_id, and the lock (with
+        # its user count) that serializes pulls of one drop_id; removed when
+        # the last user is done.
+        self._drop_rx: dict[int, object] = {}
+        self._drop_locks: dict[int, list] = {}
+        # Hash-only announces we could not resolve: worker_id -> last fetch.
+        self._caps_fetch: dict[str, float] = {}
+        self._caps_tasks: set[asyncio.Task] = set()
         self.workers: dict[str, WorkerEntry] = {}
         self._pending: dict[str, asyncio.Future] = {}
         self._stopping = False
@@ -113,6 +162,11 @@ class BandClient:
         Calls from this client to its id short-circuit in-process."""
         self._local = node
         self.workers[node.worker_id] = WorkerEntry(node.entry())
+        # One route per hub peer: the node's id, so workers can address both
+        # replies (rr) and calls to `rook` to this client.
+        self.route_name = node.worker_id
+        if envelope.routing_enabled():
+            self.transport.set_route(self.route_name)
         if self._started:
             self._start_local_announcer()
 
@@ -130,6 +184,9 @@ class BandClient:
             return
         self.workers[node.worker_id] = WorkerEntry(node.entry())
         msg = node.announce_msg()
+        if self.transport.route_id is not None:
+            # Unsigned additive key: this node is addressable (core spec 14).
+            msg["features"] = [envelope.F_ROUTE]
         if self.authz is not None:
             # is_hub grant + op-key signature: proves this node is `rook`.
             msg = self.authz.decorate_announce(msg, self.band_hex)
@@ -177,10 +234,18 @@ class BandClient:
         reply = {"from": node.worker_id, **body}
         if msg.get("id") is not None:
             reply = {"id": msg["id"], **reply}
+        opts = envelope.reply_opts(msg)
         try:
-            await self.transport.send(json.dumps(reply).encode())
+            await self._send(json.dumps(reply).encode(), opts.route)
         except Exception:
             log.exception("hub node reply send failed")
+
+    async def _send(self, payload: bytes, route: int = 0) -> None:
+        # Same rule as Worker._send: address only through a routing transport.
+        if route and getattr(self.transport, "route_id", None) is not None:
+            await self.transport.send(payload, route=route)
+        else:
+            await self.transport.send(payload)
 
     async def start(self) -> None:
         await self.transport.start(self._on_message, on_connect=self._on_connect)
@@ -189,11 +254,12 @@ class BandClient:
         self._start_local_announcer()
         log.info("band-mcp client up (band_id=%s, hub=%s:%d)",
                  self.transport.band_id.hex()[:16],
-                 self.transport._hub[0], self.transport._hub[1])
+                 self.transport.hub[0], self.transport.hub[1])
 
     async def stop(self) -> None:
         self._stopping = True
-        for task in (self._gc_task, self._local_task, *self._local_calls):
+        for task in (self._gc_task, self._local_task, *self._local_calls,
+                     *self._caps_tasks):
             if task is None:
                 continue
             task.cancel()
@@ -210,12 +276,17 @@ class BandClient:
     # -- inbound -------------------------------------------------------------
 
     async def _on_message(self, payload: bytes, peer_id: tuple) -> None:
-        # In-band OTA (telesthete Drop) REQUEST/DONE come back as binary DROP
-        # packets; route them to the active push before JSON parsing.
-        if self._ota_sender is not None:
-            from ..worker.ota_drop import is_drop_packet
+        # Binary Drop packets: chunks of a large reply we are pulling, or the
+        # REQUEST/DONE of an active in-band OTA push. Route them by drop_id
+        # before JSON parsing.
+        if self._drop_rx or self._ota_sender is not None:
+            from ..worker.ota_drop import drop_id_of, is_drop_packet
             if is_drop_packet(payload, self.transport.band_id):
-                self._ota_sender.feed(payload)
+                rx = self._drop_rx.get(drop_id_of(payload))
+                if rx is not None:
+                    rx.feed(payload)
+                elif self._ota_sender is not None:
+                    self._ota_sender.feed(payload)
                 return
 
         try:
@@ -275,6 +346,7 @@ class BandClient:
                                             {"worker_id": wid, "claimed": "rook"})
         facts = msg.get("facts")
         entry = self.workers.get(wid) or WorkerEntry()
+        caps = self._announced_caps(wid, msg, entry)
         tiers = msg.get("tiers")
         entry["tiers"] = ({str(k): str(v) for k, v in list(tiers.items())[:2000]}
                           if isinstance(tiers, dict) else {})
@@ -286,7 +358,9 @@ class BandClient:
             "worker_id": wid,
             "name": name,
             "description": msg.get("description", "")[:280] if isinstance(msg.get("description", ""), str) else "",
-            "caps": list(msg.get("caps", [])),
+            "caps": caps,
+            "caps_hash": msg.get("caps_hash") if isinstance(msg.get("caps_hash"), str) else None,
+            "features": sorted(envelope.features_of(msg)),
             "plugins": list(msg.get("plugins", [])),
             "hb": dict(msg.get("hb") or {}),
             "version": msg.get("version"),
@@ -300,6 +374,56 @@ class BandClient:
             log.info("worker joined: id=%s name=%s caps=%d",
                      wid, entry["name"], len(entry["caps"]))
         self.workers[wid] = entry
+
+    def _announced_caps(self, wid: str, msg: dict, entry: dict) -> list:
+        """The cap list for an announce. A full announce carries ``caps``. A
+        trimmed one (ROOK_ANNOUNCE_CAPS_HASH on the worker) carries only
+        ``caps_hash``: keep what we know if the hash matches; otherwise keep
+        the old list for now and fetch the real one with caps.describe."""
+        caps = msg.get("caps")
+        if isinstance(caps, list):
+            return list(caps)
+        chash = msg.get("caps_hash")
+        known = list(entry.get("caps") or [])
+        if not isinstance(chash, str):
+            return known  # neither key: an odd announce; keep what we had
+        if known and envelope.caps_hash(known) == chash:
+            return known
+        self._fetch_caps(wid, chash)
+        return known
+
+    def _fetch_caps(self, wid: str, chash: str) -> None:
+        now = time.time()
+        if now - self._caps_fetch.get(wid, 0.0) < CAPS_FETCH_EVERY:
+            return
+        self._caps_fetch[wid] = now
+        try:
+            task = asyncio.get_running_loop().create_task(self._refresh_caps(wid, chash))
+        except RuntimeError:
+            return
+        self._caps_tasks.add(task)
+        task.add_done_callback(self._caps_tasks.discard)
+
+    async def _refresh_caps(self, wid: str, chash: str) -> None:
+        from ..hub.authz import system
+        try:
+            reply = await self.call("caps.describe", target=wid, timeout=15.0,
+                                    principal=system("roster"))
+        except Exception as e:
+            log.debug("caps.describe for %s failed: %s", wid, e)
+            return
+        result = reply.get("result") if reply.get("ok") else None
+        if not isinstance(result, dict):
+            return
+        caps = sorted(str(c) for c in result)
+        entry = self.workers.get(wid)
+        if entry is None:
+            return
+        if envelope.caps_hash(caps) != chash:
+            log.info("caps.describe of %s does not match its announced caps_hash; "
+                     "using it anyway", wid)
+        entry["caps"] = caps
+        self._caps_fetch.pop(wid, None)
 
     def _handle_reply(self, msg: dict) -> None:
         mid = msg.get("id")
@@ -332,7 +456,11 @@ class BandClient:
         and nothing is sent) and targeted calls carry a signed ticket.
 
         Returns the reply dict (``{"id", "from", "ok", "result"|"error"}``).
-        Raises ``asyncio.TimeoutError`` on no reply.
+        Raises ``asyncio.TimeoutError`` on no reply. ``timeout`` bounds the
+        whole call, including pulling a large reply over Drop (core spec
+        14.2): a pull that can't finish in what is left of it is abandoned and
+        the call returns ``ok: false`` with an error starting ``timeout:``
+        (the worker did run the call). Give big transfers a big ``timeout``.
         """
         local = self._local is not None and target == self._local.worker_id
         decision = _decision
@@ -345,7 +473,9 @@ class BandClient:
             return await _call_local(self._local, cap, args, identity, timeout)
         if len(self._pending) >= 512:
             raise RuntimeError("band call capacity reached")
-        mid = uuid.uuid4().hex
+        entry = self.workers.get(target) if target else None
+        feats = envelope.features_of(entry)
+        mid = self._new_id(target)
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
         self._pending[mid] = fut
         msg: dict = {"id": mid, "cap": cap, "args": args or {}}
@@ -358,14 +488,133 @@ class BandClient:
                                        args=msg["args"], entry=self.workers.get(target))
             if ticket is not None:
                 msg["ticket"] = ticket  # build-167 workers ignore unknown keys
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
         try:
-            async with asyncio.timeout(timeout):
-                await self.transport.send(json.dumps(msg).encode())
-                return await fut
+            payload, route = self._encode_request(msg, target, feats)
+            async with _timeout(timeout):
+                await self._send(payload, route)
+                reply = await fut
+        except TimeoutError as e:
+            raise _as_asyncio_timeout(e)
         finally:
             self._pending.pop(mid, None)
             if not fut.done():
                 fut.cancel()
+        if "drop" in reply and "result" not in reply and "error" not in reply:
+            reply = await self._pull_reply(reply, max(deadline - loop.time(), 0.0))
+        return reply
+
+    def _new_id(self, target: str | None) -> str:
+        """A request id whose reply drop id from ``target`` (see
+        ota_drop.reply_drop_id) no pull of ours is using, so two of our pulls
+        never share a drop_id (they would feed each other's receiver)."""
+        from ..worker.ota_drop import reply_drop_id
+        mid = uuid.uuid4().hex
+        if not target or not self._drop_rx:
+            return mid
+        for _ in range(8):
+            if reply_drop_id(mid, target) not in self._drop_rx:
+                break
+            mid = uuid.uuid4().hex
+        return mid
+
+    def _encode_request(self, msg: dict, target: str | None,
+                        feats: frozenset) -> tuple[bytes, int]:
+        """Serialize a request with the extensions the target can use:
+        ``rr``/``accept`` (ignored by older workers), addressed delivery to a
+        target that declares a route, compression to one that announced
+        ``z``. Returns ``(payload, route)``: the target's route id when
+        the request is to be ADDRESSED to it, else 0 (broadcast)."""
+        base = json.dumps(msg).encode()
+        rid = self.transport.route_id
+        ext = dict(msg)
+        if rid:
+            ext["rr"] = rid
+        ext["accept"] = CLIENT_ACCEPT
+        payload = json.dumps(ext).encode()
+        if not feats and len(base) <= _ONE_FRAGMENT < len(payload):
+            payload = base  # never make a firmware-sized request multi-fragment
+        if envelope.F_Z in feats:
+            payload = envelope.compress(payload)
+        # Address only a target that declared its route: a target that never
+        # declared would miss a frame whose id another peer's name collides on
+        # (and the TS/Rust example ports drop ADDRESSED frames outright).
+        route = route_id_for(target) if target and envelope.F_ROUTE in feats and rid else 0
+        return payload, route
+
+    async def _pull_reply(self, reply: dict, remaining: float) -> dict:
+        """Fetch a large reply served over Drop (``{"drop": {id, size,
+        sha256}}``), verify it and return the reply it stands for, so callers
+        never see the descriptor. Pulls from the replier (``from``), which for
+        an open call is whichever worker answered first. ``remaining`` is what
+        is left of the caller's timeout; the pull never runs past it."""
+        from ..worker.ota_drop import pull_reply, valid_descriptor
+        base = {k: reply[k] for k in ("id", "from") if k in reply}
+        desc = valid_descriptor(reply.get("drop"), MAX_PULL_BYTES)
+        if desc is None:
+            return {**base, "ok": False, "error": "bad drop descriptor in reply"}
+        did, size, _sha = desc
+        replier = reply.get("from") if isinstance(reply.get("from"), str) else None
+        feats = envelope.features_of(self.workers.get(replier) if replier else None)
+        route = (route_id_for(replier) if replier and envelope.F_ROUTE in feats
+                 and self.transport.route_id else 0)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max(remaining, 0.0)
+
+        def timed_out() -> dict:
+            # Rough guide for the caller: what a pull of this size needs.
+            need = PULL_MIN_SECS + size / PULL_BYTES_PER_SEC
+            return {**base, "ok": False,
+                    "error": f"timeout: large reply ({size} bytes, over Drop) was not "
+                             f"fetched within the call's timeout; allow about "
+                             f"{need:.0f}s for a reply this size"}
+
+        def register(drop_id: int, rx) -> None:
+            if rx is None:
+                self._drop_rx.pop(drop_id, None)
+            else:
+                self._drop_rx[drop_id] = rx
+
+        # Two pulls of one drop_id at once would feed each other's receiver;
+        # _new_id makes that rare, this makes it safe. The entry goes away
+        # with its last user, so the map holds only drop ids being pulled.
+        entry = self._drop_locks.get(did)
+        if entry is None:
+            entry = self._drop_locks[did] = [asyncio.Lock(), 0]
+        entry[1] += 1
+        try:
+            try:
+                async with _timeout(max(deadline - loop.time(), 0.0)):
+                    await entry[0].acquire()
+            except TimeoutError:
+                return timed_out()
+            try:
+                left = deadline - loop.time()
+                blob = (await pull_reply(self.transport.band_id, desc, self._send,
+                                         route=route, timeout=left, register=register)
+                        if left > 0 else None)
+            finally:
+                entry[0].release()
+        finally:
+            entry[1] -= 1
+            if entry[1] == 0 and self._drop_locks.get(did) is entry:
+                del self._drop_locks[did]
+        if blob is None:
+            if loop.time() >= deadline:
+                return timed_out()
+            return {**base, "ok": False,
+                    "error": f"large reply ({size} bytes) over Drop failed its sha256 check"}
+        try:
+            full = json.loads(envelope.decode(blob))
+        except ValueError:
+            full = None
+        if not isinstance(full, dict) or full.get("id") != reply.get("id"):
+            return {**base, "ok": False, "error": "large reply over Drop was not a reply"}
+        from_id = full.get("from")
+        if from_id and from_id in self.workers:
+            self.workers[from_id]["last_seen"] = time.time()
+        return full
 
     async def push_update(self, worker_id: str, bundle: bytes, manifest: dict,
                           *, drop_id: int = 0, name: str = "band-worker.pyz",
@@ -381,10 +630,16 @@ class BandClient:
         reports its sha-verified DONE (it then swaps + restarts on its own).
 
         ``manifest`` must be the same signed object the worker verifies (build,
-        sha256, …). Returns a status dict.
+        sha256, …). ``drop_id`` must be below 0x8000 (higher ids carry large
+        replies). Returns a status dict.
         """
-        from ..worker.ota_drop import OtaDropSender
+        from ..worker.ota_drop import REPLY_DROP_BASE, OtaDropSender, valid_ota_drop_id
 
+        if not valid_ota_drop_id(drop_id):
+            # 0x8000 and up are large-reply drop ids (core spec 14.2): a push
+            # there would cross-feed with a reply transfer of the same id.
+            return {"ok": False, "stage": "begin",
+                    "error": f"drop_id must be 0-{REPLY_DROP_BASE - 1}, got {drop_id!r}"}
         begin = await self.call("worker.ota_begin",
                                 args={"manifest": manifest, "drop_id": drop_id},
                                 target=worker_id, timeout=begin_timeout)
@@ -403,15 +658,25 @@ class BandClient:
         if self._ota_sender is not None:
             return {"ok": False, "error": "another in-band push is already active"}
 
+        feats = envelope.features_of(self.workers.get(worker_id))
+        # One native DROP frame per Drop packet when the worker takes them
+        # (half the frames of the pass-through form; core spec 14.3),
+        # otherwise pass-through, addressed when the worker declares a route.
+        native = (self.transport.send_native
+                  if envelope.F_DROP_NATIVE in feats and envelope.drop_native_enabled()
+                  else None)
+        route = (route_id_for(worker_id) if envelope.F_ROUTE in feats
+                 and self.transport.route_id else 0)
         sender = OtaDropSender(self.transport.band_id, drop_id, name, bundle,
-                               self.transport.send)
+                               self._send, route=route, native=native)
         self._ota_sender = sender
         try:
             sender.offer()
             ok = await sender.wait(timeout=transfer_timeout)
             return {"ok": bool(ok), "stage": "transfer",
                     "sha256": sender.sha256, "chunks": sender.total_chunks,
-                    "verified": bool(ok)}
+                    "verified": bool(ok), "native": native is not None,
+                    "frames": sender.frames_sent}
         finally:
             self._ota_sender = None
 
@@ -448,6 +713,9 @@ class MultiBandClient:
 
     def __init__(self, psks, hub_host: str = "127.0.0.1",
                  hub_port: int = 7474, use_ws: bool = False) -> None:
+        # Every band's client shares one route name (route ids are per band,
+        # so this costs nothing and keeps replies addressable on all of them).
+        self.route_name = f"client:{uuid.uuid4().hex}"
         deduped: list[str] = []
         for p in psks:
             p = (p or "").strip()
@@ -456,7 +724,8 @@ class MultiBandClient:
         # Empty is valid after the last band is revoked; the controller stays
         # available for enrollment management without retaining the old key.
         self._clients = [
-            BandClient(psk=p, hub_host=hub_host, hub_port=hub_port, use_ws=use_ws)
+            BandClient(psk=p, hub_host=hub_host, hub_port=hub_port, use_ws=use_ws,
+                       route_name=self.route_name)
             for p in deduped
         ]
         self.hub_host = hub_host
@@ -490,7 +759,8 @@ class MultiBandClient:
             if any(c.transport.band_id == band_id for c in self._clients):
                 return
             client = BandClient(psk=psk, hub_host=self.hub_host,
-                                hub_port=self.hub_port, use_ws=self.use_ws)
+                                hub_port=self.hub_port, use_ws=self.use_ws,
+                                route_name=self.route_name)
             client.authz = self._authz
             if self._local is not None:
                 client.attach_local(self._local)

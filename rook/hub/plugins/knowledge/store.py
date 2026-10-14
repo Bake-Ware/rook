@@ -18,18 +18,17 @@ docs/DESIGN-agent-work-system.md.
 ``band`` is the existing enrollment band ID. Nothing here authorizes or gates
 band calls.
 """
-from contextlib import contextmanager
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
-import sqlite3
 import time
 import uuid
 
 from ....band_mcp.secret_mask import scrub
 from ....core import migrations
+from ....core.db import open_db, transaction
 from . import chunk
 
 KINDS = ('concept', 'project', 'task', 'knowledge')
@@ -105,8 +104,7 @@ class KnowledgeStore:
     def __init__(self, path):
         self.path = str(path)
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-        db = sqlite3.connect(self.path, timeout=10)
-        db.row_factory = sqlite3.Row
+        db = open_db(self.path, wal=False, check_same_thread=True, mkdir=False)
         try:
             version = db.execute('PRAGMA user_version').fetchone()[0]
             if version > SCHEMA:
@@ -155,21 +153,9 @@ class KnowledgeStore:
             db.execute('ROLLBACK')
             raise
 
-    @contextmanager
     def db(self, write=True):
-        db = sqlite3.connect(self.path, timeout=10)
-        db.row_factory = sqlite3.Row
-        db.execute('PRAGMA foreign_keys=ON')
-        db.execute('PRAGMA journal_mode=WAL')
-        try:
-            db.execute('BEGIN IMMEDIATE' if write else 'BEGIN')
-            yield db
-            db.commit()
-        except BaseException:
-            db.rollback()
-            raise
-        finally:
-            db.close()
+        return transaction(self.path, begin='IMMEDIATE' if write else 'DEFERRED',
+                           foreign_keys=True, wal=True)
 
     @staticmethod
     def record(row):

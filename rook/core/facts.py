@@ -44,6 +44,8 @@ import sys
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from .pluginkit import is_termux
+
 log = logging.getLogger("rook.core.facts")
 
 # -- role grants -------------------------------------------------------------
@@ -121,7 +123,7 @@ def roles_from_announce(msg: dict, band: str | None = None,
 
 # -- hardware / platform facts ---------------------------------------------
 
-_BOOL_FACTS = ("pty", "display", "camera", "embedded")
+_BOOL_FACTS = ("pty", "display", "camera", "embedded", "termux")
 _ROLE_KEYS = ("role", "roles", "grants")
 
 
@@ -191,6 +193,9 @@ def detect_facts() -> dict:
         system = platform.system().lower()
         android = "ANDROID_ROOT" in os.environ or getattr(sys, "platform", "") == "android"
         facts["os"] = "android" if android else system
+        # Termux is Android with a Linux userland and its own tools
+        # (termux-api); placements and plugins gate on it separately.
+        facts["termux"] = is_termux()
         facts["arch"] = platform.machine().lower()
         facts["py"] = f"{sys.version_info.major}.{sys.version_info.minor}"
         facts["cpus"] = os.cpu_count()

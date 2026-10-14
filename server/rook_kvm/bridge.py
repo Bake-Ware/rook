@@ -2,8 +2,31 @@
 
 import asyncio
 import json
+import logging
 import os
+import random
 import httpx
+
+try:  # shared helper when rook is installed alongside (same repo)
+    from rook.core.backoff import Backoff
+except ImportError:  # rook-kvm is packaged on its own; same curve, inline
+    class Backoff:
+        def __init__(self, base=1.0, cap=30.0, factor=2.0, jitter=0.5):
+            self.base, self.cap, self.factor, self.jitter = base, cap, factor, jitter
+            self.attempt = 0
+
+        def next(self):
+            nominal = min(self.cap, self.base * self.factor ** min(self.attempt, 64))
+            self.attempt += 1
+            return nominal * (1.0 - self.jitter * random.random())
+
+        def reset(self):
+            self.attempt = 0
+
+log = logging.getLogger("rook_kvm.bridge")
+
+# A stream that stayed up this long resets the reconnect backoff.
+WS_STABLE_SECS = 10.0
 
 
 class RookBridge:
@@ -30,33 +53,109 @@ class RookBridge:
         self._serial_buffer: list[str] = []
         self._ws_task = None
         self._file_ready_events: list[dict] = []
+        self._closing = False
+        self._backoff = Backoff(base=1.0, cap=30.0)
 
     # ---- WebSocket Serial Stream ----
 
-    async def connect_stream(self):
-        """Establish persistent WebSocket for real-time serial I/O."""
+    async def _connect_ws(self):
         import websockets
-        self._ws = await websockets.connect(self.ws_url)
-        self._ws_task = asyncio.create_task(self._ws_reader())
+        return await websockets.connect(self.ws_url)
+
+    async def connect_stream(self):
+        """Establish persistent WebSocket for real-time serial I/O.
+
+        The first connect is synchronous so a caller learns immediately that
+        the dongle is unreachable. After that a background task keeps the
+        stream up: when the dongle reboots (mode switch, OTA, config save) or
+        WiFi blips, it reconnects with jittered backoff. While it is down
+        ``_ws`` is None, so callers fall back to the HTTP serial endpoints."""
+        self._closing = False
+        self._ws = await self._connect_ws()
+        self._ws_task = asyncio.create_task(self._ws_run())
+
+    async def _ws_run(self):
+        """Serve the current stream, then reconnect until :meth:`close`."""
+        loop = asyncio.get_running_loop()
+        while not self._closing:
+            began = loop.time()
+            ws = self._ws
+            await self._ws_reader()
+            self._ws = None
+            # The reader also returns on errors that leave the socket open;
+            # close it so a reconnect never leaks the old connection.
+            await self._close_quietly(ws)
+            if self._closing:
+                return
+            if loop.time() - began >= WS_STABLE_SECS:
+                self._backoff.reset()
+            while not self._closing:
+                delay = self._backoff.next()
+                log.info("bridge stream lost; reconnecting in %.1fs", delay)
+                await asyncio.sleep(delay)
+                if self._closing:
+                    return
+                try:
+                    self._ws = await self._connect_ws()
+                    break
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    log.debug("bridge stream reconnect failed: %s", e)
+
+    @staticmethod
+    async def _close_quietly(ws) -> None:
+        if ws is None:
+            return
+        try:
+            await ws.close()
+        except Exception:
+            pass
+
+    def _on_ws_message(self, message) -> None:
+        """Buffer one stream message. Anything malformed (not a JSON object,
+        ``data`` without a string ``payload``, ``file_ready`` without a
+        string ``path``) is skipped: one bad message from the dongle must not
+        end the stream."""
+        try:
+            data = json.loads(message)
+        except (TypeError, ValueError):
+            return
+        if not isinstance(data, dict):
+            return
+        kind = data.get("type")
+        if kind == "data":
+            payload = data.get("payload")
+            if isinstance(payload, str):
+                self._serial_buffer.append(payload)
+        elif kind == "file_ready":
+            if isinstance(data.get("path", ""), str):
+                self._file_ready_events.append(data)
 
     async def _ws_reader(self):
-        """Background task: read WS messages, buffer serial data."""
+        """Read WS messages into the buffers until the stream closes."""
+        ws = self._ws
+        if ws is None:
+            return
         try:
-            async for message in self._ws:
-                data = json.loads(message)
-                if data["type"] == "data":
-                    self._serial_buffer.append(data["payload"])
-                elif data["type"] == "file_ready":
-                    self._file_ready_events.append(data)
-        except Exception:
-            pass  # connection closed
+            async for message in ws:
+                self._on_ws_message(message)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            # Connection closed or broke; _ws_run closes it and reconnects.
+            log.debug("bridge stream ended: %s", e)
 
     async def write_serial_ws(self, data: str):
-        """Write to serial via WebSocket."""
-        if self._ws:
-            await self._ws.send(json.dumps({"type": "data", "payload": data}))
-        else:
-            await self.write_serial(data)
+        """Write to serial via WebSocket (HTTP while the stream is down)."""
+        ws = self._ws
+        if ws:
+            try:
+                await ws.send(json.dumps({"type": "data", "payload": data}))
+                return
+            except Exception:
+                pass  # stream just dropped; the reconnect task takes over
+        await self.write_serial(data)
 
     async def read_serial_ws(self, timeout: float = 5.0) -> str:
         """Read accumulated serial data from WS buffer."""
@@ -260,8 +359,18 @@ class RookBridge:
             return {"ok": True, "response_lost": True}
 
     async def close(self):
-        if self._ws:
-            await self._ws.close()
+        self._closing = True
         if self._ws_task:
             self._ws_task.cancel()
+            try:
+                await self._ws_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._ws_task = None
+        if self._ws:
+            try:
+                await self._ws.close()
+            except Exception:
+                pass
+            self._ws = None
         await self._client.aclose()

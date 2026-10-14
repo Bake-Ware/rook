@@ -170,6 +170,17 @@
   .ilinks a{text-decoration:none;background:var(--chip);border:1px solid var(--line2);color:var(--fg);
     border-radius:8px;padding:9px 14px;font-size:.85rem}
   .ilinks a:hover{border-color:var(--accent-dim)}
+  .pair-start{display:flex;align-items:center;gap:10px;margin:0 0 14px}
+  .pair-start .iconbtn{color:var(--fg);border-color:var(--accent-dim)}
+  .pair-msg{color:var(--dim);font-size:.8rem}
+  .pairing-host{gap:10px;margin:0 0 14px}
+  .pairing-host:empty{display:none}
+  .pair-manual{margin:6px 0 12px;color:var(--dim);font-size:.82rem}
+  .pair-manual summary{cursor:pointer;margin-bottom:10px}
+  .first-worker{margin:14px 0;padding:18px 20px;background:var(--panel2);border:1px solid var(--line2);border-radius:10px;max-width:760px}
+  .first-worker h2{font-size:1rem;color:var(--fg);margin:0 0 4px}
+  .first-worker p{color:var(--dim);font-size:.85rem;margin:0 0 14px}
+  .first-worker a{color:var(--dim);font-size:.8rem}
 
   /* modal */
   .overlay{position:fixed;inset:0;background:rgba(4,8,12,.72);display:none;align-items:center;justify-content:center;z-index:50;padding:20px}
@@ -395,6 +406,13 @@
       <div class="list" id="list"></div>
       <div class="fleet-scene" id="fleet-scene" hidden></div>
       <div class="empty" id="empty" style="display:none"></div>
+      <div class="first-worker" id="first-worker" hidden>
+        <h2>Add your first worker</h2>
+        <p>Only the hub is on this band so far. Get a pairing code and run one command on the machine you want to add.</p>
+        <div class="pair-start"><button class="iconbtn" id="first-worker-pairing-btn" onclick="startPairing('first-worker-pairing',this)">Get a pairing code</button><span class="pair-msg" id="first-worker-pairing-msg" role="status"></span></div>
+        <div class="mg pairing-host" id="first-worker-pairing"></div>
+        <a href="#install">More ways to install</a>
+      </div>
       <div class="foot" id="foot"></div>
     </div>
 
@@ -461,10 +479,14 @@
     <div id="view-install" hidden>
       <div class="install">
         <h2>Add a worker</h2>
-        <p>Open Tokens, select a band, and start pairing. Replace CODE below with the current six-character code, or copy the complete command from Tokens.</p>
+        <p>Get a pairing code, then run the command for the new machine's system. A code lasts five minutes and renews itself while this page is open.</p>
+        <div class="pair-start"><button class="iconbtn" id="install-pairing-btn" onclick="startPairing('install-pairing',this)">Get a pairing code</button><span class="pair-msg" id="install-pairing-msg" role="status"></span></div>
+        <div class="mg pairing-host" id="install-pairing"></div>
+        <details class="pair-manual"><summary>Commands with a placeholder code</summary>
         <div class="cmd"><span class="lbl">Linux / macOS</span><span id="cmd-unix"></span></div>
         <div class="cmd"><span class="lbl">Windows (PowerShell)</span><span id="cmd-win"></span></div>
         <div class="cmd"><span class="lbl">Termux / Android</span><span id="cmd-termux"></span></div>
+        </details>
         <div class="ilinks">
           <a href="/apk">⬇ Android APK</a>
           <a href="#account?section=access">Worker pairing</a> · <a href="#tokens">API tokens</a>
@@ -484,12 +506,13 @@
 const $=s=>document.querySelector(s);
 const clock=()=>performance.now()/1000;
 const HB_WINDOW=60;                       // heartbeat bar drains over 60s → 0
-let workers=[], bands=[], curBand='', filterStr='';
+let workers=[], bands=[], curBand='', filterStr='', workersLoaded=false;
 const M=new Map();                        // worker_id -> row state
 let dirty=false;
 const listEl=$('#list'), barsEl=$('#bars'), emptyEl=$('#empty');
 
-function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+// Classic script, so it cannot import manage.js's esc; keep the two identical.
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function col(f){return f>0.5?'#2dd4a7':f>0.22?'#f5b041':'#f76a6a'}
 /* Capabilities as chips by namespace; a chip opens that namespace, a cap runs it.
    One builder for the list, the grid and the 3D card. */
@@ -693,7 +716,7 @@ async function loadWorkers(){
     const r=await fetch('/api/band/workers',{headers:{'Accept':'application/json'}});
     if(r.status===503){ setStatus(false,'band offline'); return; }
     if(!r.ok) throw new Error('HTTP '+r.status);
-    workers=await r.json(); dirty=true;reconcile();discoverDevices();
+    workers=await r.json(); workersLoaded=true; dirty=true;reconcile();discoverDevices();
     setStatus(true, shown().length+' on band');
   }catch(e){ setStatus(false,'error: '+e.message); }
 }
@@ -824,7 +847,12 @@ function reconcile(){
   }
   { const grouping=$('#worker-group').value;
     syncFleet(list,w=>grouping==='os'?deviceDetails(w).os:grouping==='band'?bandName(w.band):''); }
-  emptyEl.style.display=list.length?'none':'block';
+  // A band with only the hub on it: offer the one-click pairing card.
+  const onBand=curBand?workers.filter(w=>w.band===curBand||w.band==='*'):workers;
+  const firstRun=workersLoaded&&!onBand.some(w=>!isHub(w));
+  $('#first-worker').hidden=!firstRun;
+  if(!firstRun&&pairPanels['first-worker-pairing'])stopPairing('first-worker-pairing');
+  emptyEl.style.display=list.length||firstRun?'none':'block';
   emptyEl.textContent=curBand?'No workers on this band.':'No workers on the band.';
   $('#foot').textContent=(curBand?('band '+curBand):'all bands')+' · '+list.length+' workers';
   versionSpread(list);
@@ -1140,7 +1168,8 @@ async function ensureSettings(view){
  if(settingsLoading[view])return settingsLoading[view];
  const host=$('#view-'+view);host.innerHTML='<p class="empty">Loading…</p>';
  settingsLoading[view]=(async()=>{
-  const module=await import('/account/bands/assets/'+view+'.js');
+  // Literal URLs, so the server's ?v= rewrite versions them (and manage.js with them).
+  const module=await (view==='account'?import('/account/bands/assets/account.js'):import('/account/bands/assets/tokens.js'));
   const mount=view==='account'?module.mountAccount:module.mountTokens;
   return settingsUI[view]=await mount(host,{onChange:()=>loadBands()});
  })();
@@ -1368,6 +1397,30 @@ function setCmd(id,text){ const el=document.getElementById(id); if(!el)return; e
   const b=document.createElement('button'); b.className='cp'; b.textContent='copy';
   b.onclick=e=>{e.stopPropagation();navigator.clipboard.writeText(text).then(()=>{b.textContent='copied';setTimeout(()=>b.textContent='copy',1200);});};
   el.parentNode.appendChild(b);
+}
+/* ---- one-click pairing (Install page, first-worker card) ----
+   Mints a code for the selected (else primary) band through the account
+   pair action, the same owner-only, CSRF-checked call as Account & access. */
+const pairPanels={};
+async function startPairing(hostId,button){
+  const host=document.getElementById(hostId),msg=document.getElementById(hostId+'-msg');
+  button.disabled=true;msg.textContent='Getting a code…';
+  try{
+    // Literal URL, so the server's ?v= rewrite versions it (one module instance).
+    const m=await import('/account/bands/assets/manage.js');
+    m.useCss();
+    const data=await m.mintPairing(curBand||(bands.find(b=>b.primary)||{}).id||'');
+    pairPanels[hostId]?.stop();
+    const panel=m.pairingPanel(data);pairPanels[hostId]=panel;
+    host.replaceChildren(m.h('p',{class:'mg-sub',text:'Band '+data.band_name+': run one of these on the new machine. It shows up under Workers once it joins.'}),panel.node);
+    msg.textContent='';button.hidden=true;
+  }catch(e){msg.textContent=e.message;}
+  finally{button.disabled=false;}
+}
+function stopPairing(hostId){
+  pairPanels[hostId]?.stop();delete pairPanels[hostId];
+  document.getElementById(hostId)?.replaceChildren();
+  const button=document.getElementById(hostId+'-btn');if(button)button.hidden=false;
 }
 function wireLinks(){
   const origin=location.origin;

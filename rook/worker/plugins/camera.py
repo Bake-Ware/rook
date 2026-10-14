@@ -14,34 +14,14 @@ Backends:
 
 from __future__ import annotations
 
-import asyncio
 import glob
 import os
-import shutil
 import sys
 import tempfile
 from typing import Any
 
+from ...core.pluginkit import fail, is_termux, is_windows, require_int, run, which
 from ..plugin import Plugin, capability
-
-
-def _is_termux() -> bool:
-    return os.environ.get("PREFIX", "").startswith("/data/data/com.termux")
-
-
-async def _run(cmd: list[str], timeout: float = 20.0) -> tuple[int, bytes, bytes]:
-    proc = await asyncio.create_subprocess_exec(
-        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    try:
-        out, err = await asyncio.wait_for(proc.communicate(), timeout)
-    except asyncio.TimeoutError:
-        proc.kill()
-        try:
-            await proc.wait()
-        except Exception:
-            pass
-        raise
-    return proc.returncode or 0, out, err
 
 
 def _pack(data: bytes, **extra) -> dict[str, Any]:
@@ -53,12 +33,12 @@ def _pack(data: bytes, **extra) -> dict[str, Any]:
 async def _shrink(path: str, quality: int, max_dim: int = 1600) -> None:
     """Downscale/re-encode in place so the base64 payload relays over the band.
     Best-effort via ImageMagick; a no-op if it isn't installed."""
-    conv = shutil.which("magick") or shutil.which("convert")
+    conv = which("magick", "convert")
     if not conv:
         return
     out = path + ".s.jpg"
     try:
-        code, _, _ = await _run([conv, path, "-resize", f"{max_dim}x{max_dim}>",
+        code, _, _ = await run([conv, path, "-resize", f"{max_dim}x{max_dim}>",
                                  "-quality", str(quality), out], timeout=10)
         if code == 0 and os.path.exists(out) and os.path.getsize(out) > 0:
             os.replace(out, path)
@@ -82,26 +62,26 @@ def _linux_device(camera) -> str:
 async def _linux_snap(camera, quality: int, resolution: str) -> dict:
     dev = _linux_device(camera)
     if not os.path.exists(dev):
-        return {"ok": False, "error": f"no such camera device: {dev} (try camera.list)"}
+        fail(f"no such camera device: {dev} (try camera.list)")
     fd, path = tempfile.mkstemp(suffix=".jpg", prefix="rook-cam-")
     os.close(fd)
     try:
-        if shutil.which("fswebcam"):
-            code, _out, err = await _run(
+        if which("fswebcam"):
+            code, _out, err = await run(
                 ["fswebcam", "-d", dev, "--no-banner", "-q", "-r", resolution,
                  "--jpeg", str(int(quality)), path], timeout=25)
-        elif shutil.which("ffmpeg"):
+        elif which("ffmpeg"):
             # -frames:v 3 then keep the last: skip the first (often dark) frames.
-            code, _out, err = await _run(
+            code, _out, err = await run(
                 ["ffmpeg", "-y", "-f", "v4l2", "-video_size", resolution, "-i", dev,
                  "-frames:v", "1", "-q:v", "3", path], timeout=25)
         else:
-            return {"ok": False, "error": "no capture tool — install fswebcam or ffmpeg"}
+            fail("no capture tool — install fswebcam or ffmpeg")
         if code == 0 and os.path.exists(path) and os.path.getsize(path) > 0:
             await _shrink(path, quality)
             with open(path, "rb") as f:
                 return _pack(f.read(), camera=dev)
-        return {"ok": False, "error": err.decode(errors="replace").strip() or f"capture failed (exit {code})"}
+        fail(err.strip() or f"capture failed (exit {code})")
     finally:
         try:
             os.unlink(path)
@@ -113,10 +93,11 @@ async def _termux_snap(camera, quality: int) -> dict:
     fd, path = tempfile.mkstemp(suffix=".jpg", prefix="rook-cam-")
     os.close(fd)
     try:
-        code, _out, err = await _run(
-            ["termux-camera-photo", "-c", str(int(camera)), path], timeout=30)
+        code, _out, err = await run(
+            ["termux-camera-photo", "-c", str(require_int(camera, "camera", min=0)), path],
+            timeout=30)
         if code != 0 or not os.path.getsize(path):
-            return {"ok": False, "error": err.decode(errors="replace").strip() or f"exit {code}"}
+            fail(err.strip() or f"termux-camera-photo exit {code}")
         await _shrink(path, quality)
         with open(path, "rb") as f:
             return _pack(f.read(), camera=int(camera))
@@ -128,23 +109,23 @@ async def _termux_snap(camera, quality: int) -> dict:
 
 
 async def _windows_snap(camera, quality: int, resolution: str) -> dict:
-    ff = shutil.which("ffmpeg")
+    ff = which("ffmpeg")
     if not ff:
-        return {"ok": False, "error": "ffmpeg required on Windows"}
+        fail("ffmpeg required on Windows")
     fd, path = tempfile.mkstemp(suffix=".jpg", prefix="rook-cam-")
     os.close(fd)
     try:
         # `camera` is the dshow device name (see camera.list); index falls back to first.
         name = str(camera) if not str(camera).isdigit() else None
         src = f"video={name}" if name else "video=Integrated Camera"
-        code, _out, err = await _run(
+        code, _out, err = await run(
             [ff, "-y", "-f", "dshow", "-video_size", resolution, "-i", src,
              "-frames:v", "1", "-q:v", "3", path], timeout=25)
         if code == 0 and os.path.getsize(path) > 0:
             await _shrink(path, quality)
             with open(path, "rb") as f:
                 return _pack(f.read(), camera=src)
-        return {"ok": False, "error": err.decode(errors="replace").strip() or f"exit {code}"}
+        fail(err.strip() or f"ffmpeg exit {code}")
     finally:
         try:
             os.unlink(path)
@@ -156,25 +137,24 @@ class CameraPlugin(Plugin):
     NAMESPACE = "camera"
 
     def available(self) -> bool:
-        if _is_termux():
-            return bool(shutil.which("termux-camera-photo"))
+        if is_termux():
+            return bool(which("termux-camera-photo"))
         if sys.platform.startswith("linux"):
-            return bool(glob.glob("/dev/video*")) and bool(
-                shutil.which("fswebcam") or shutil.which("ffmpeg"))
-        if sys.platform == "win32":
-            return bool(shutil.which("ffmpeg"))
+            return bool(glob.glob("/dev/video*")) and bool(which("fswebcam", "ffmpeg"))
+        if is_windows():
+            return bool(which("ffmpeg"))
         return False
 
-    @capability("list")
+    @capability("list", risk="read")
     async def _list(self) -> dict:
         """List the cameras on this worker (use one as the ``camera`` arg to snap)."""
-        if _is_termux():
-            if shutil.which("termux-camera-info"):
-                code, out, _ = await _run(["termux-camera-info"], timeout=10)
+        if is_termux():
+            if which("termux-camera-info"):
+                code, out, _ = await run(["termux-camera-info"], timeout=10)
                 if code == 0:
                     import json
                     try:
-                        return {"ok": True, "cameras": json.loads(out.decode())}
+                        return {"ok": True, "cameras": json.loads(out)}
                     except Exception:
                         pass
             return {"ok": True, "cameras": [{"id": 0, "facing": "back"},
@@ -182,10 +162,10 @@ class CameraPlugin(Plugin):
         if sys.platform.startswith("linux"):
             devs = sorted(glob.glob("/dev/video*"))
             names: dict[str, str] = {}
-            if shutil.which("v4l2-ctl"):
-                code, out, _ = await _run(["v4l2-ctl", "--list-devices"], timeout=8)
+            if which("v4l2-ctl"):
+                code, out, _ = await run(["v4l2-ctl", "--list-devices"], timeout=8)
                 cur = None
-                for line in out.decode(errors="replace").splitlines():
+                for line in out.splitlines():
                     if line and not line[0].isspace():
                         cur = line.strip().rstrip(":")
                     elif line.strip().startswith("/dev/video") and cur:
@@ -198,7 +178,7 @@ class CameraPlugin(Plugin):
             return {"ok": True, "cameras": cams}
         return {"ok": True, "cameras": []}
 
-    @capability("snap")
+    @capability("snap", risk="read", tags=("sensitive", "physical"))
     async def _snap(self, camera=0, quality: int = 85,
                     resolution: str = "1280x720") -> dict:
         """Capture a still JPEG from a camera.
@@ -212,13 +192,14 @@ class CameraPlugin(Plugin):
 
         Returns ``{ok, format:"jpeg", data:<base64>, bytes, camera}``.
         """
-        if _is_termux():
-            return await _termux_snap(camera, int(quality))
+        quality = require_int(quality, "quality", min=1, max=100)
+        if is_termux():
+            return await _termux_snap(camera, quality)
         if sys.platform.startswith("linux"):
-            return await _linux_snap(camera, int(quality), str(resolution))
-        if sys.platform == "win32":
-            return await _windows_snap(camera, int(quality), str(resolution))
-        return {"ok": False, "error": f"unsupported platform: {sys.platform}"}
+            return await _linux_snap(camera, quality, str(resolution))
+        if is_windows():
+            return await _windows_snap(camera, quality, str(resolution))
+        fail(f"unsupported platform: {sys.platform}")
 
 
 PLUGIN = CameraPlugin

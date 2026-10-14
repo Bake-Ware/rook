@@ -447,7 +447,7 @@ def plugin_terms(band):
 
 
 @pytest.mark.asyncio
-async def test_resume_uses_pty_when_supported_and_proc_otherwise(portal, plugin, tmp_path, monkeypatch):  # noqa: F811
+async def test_resume_uses_pty_and_refuses_hosts_without_terminals(portal, plugin, tmp_path, monkeypatch):  # noqa: F811
     p = portal
     work = p.account.work_web
     fake = tmp_path / "claude"
@@ -470,14 +470,14 @@ async def test_resume_uses_pty_when_supported_and_proc_otherwise(portal, plugin,
         out, _ = await follow(plugin, tid, "RESUMED")
         assert b"--resume 8f3a1b2c-0000" in out
         await ws.close()
-    # A build-167 worker (no work.stream.*) keeps today's proc.* resume path.
+    # A build-167 worker (no work.stream.*) is asked to update: the hub no
+    # longer falls back to claude-history.resume.
     sid2 = "b" * 32
     old = PtyBand(plugin, caps=["proc.start", "proc.read", "proc.write", "claude-history.resume"])
 
     async def old_call(cap, args, target, timeout, identity=None):
         old.calls.append((cap, dict(args)))
-        assert cap == "claude-history.resume", cap
-        return {"ok": True, "from": target, "result": {"ok": True, "handle": "h1", "note": "started"}}
+        raise AssertionError(cap)
     old.call = old_call
     p.server._band = old
     work.store.save(dict(id=sid2, owner=p.uid, worker_id="host1", worker_name="test-host", band="test",
@@ -486,8 +486,8 @@ async def test_resume_uses_pty_when_supported_and_proc_otherwise(portal, plugin,
     async with TestClient(TestServer(p.app)) as client:
         ws = await client.ws_connect("/account/work/ws", headers=p.headers)
         await ws.send_json({"op": "resume", "id": "resume-test-456", "session": sid2, "csrf": p.csrf, "pty": True})
-        await until(lambda: work.store.get(sid2).get("external_handle") == "h1")
-        assert [c[0] for c in old.calls] == ["claude-history.resume"]
+        await until(lambda: "update its worker" in (work.store.get(sid2).get("error") or ""))
+        assert old.calls == [] and not work.store.get(sid2).get("external_handle")
         await ws.close()
 
 

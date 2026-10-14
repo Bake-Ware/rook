@@ -10,8 +10,8 @@ import re
 import secrets
 import sqlite3
 import time
-from contextlib import contextmanager
 
+from ..core.db import transaction
 from .enrollment import EnrollmentStore
 
 GOOGLE = 'https://accounts.google.com'
@@ -19,6 +19,16 @@ GOOGLE = 'https://accounts.google.com'
 
 def digest(value):
     return hashlib.sha256(value.encode()).hexdigest()
+
+
+def csrf_ok(data, expected, field='csrf'):
+    """Constant-time check that a request body's ``field`` matches the
+    expected per-session (or per-form) token. ``data`` is anything with
+    ``.get`` (a JSON object or a posted form); anything else fails. Compared
+    as bytes, so non-ASCII input fails the check instead of raising."""
+    if not expected or not hasattr(data, 'get'):
+        return False
+    return hmac.compare_digest(str(data.get(field, '')).encode(), str(expected).encode())
 
 
 def password_hash(password, salt=None):
@@ -83,20 +93,8 @@ class AccountStore:
                     expires REAL NOT NULL, user_id TEXT, last_poll REAL NOT NULL DEFAULT 0);
             ''')
 
-    @contextmanager
     def db(self):
-        db = sqlite3.connect(self.path, timeout=10)
-        db.row_factory = sqlite3.Row
-        db.execute('PRAGMA foreign_keys=ON')
-        db.execute('BEGIN IMMEDIATE')
-        try:
-            yield db
-            db.commit()
-        except BaseException:
-            db.rollback()
-            raise
-        finally:
-            db.close()
+        return transaction(self.path, foreign_keys=True)
 
     @staticmethod
     def audit(db, actor, action, target=''):

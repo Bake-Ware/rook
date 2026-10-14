@@ -5,41 +5,19 @@ Backend detection per platform:
   Windows : mss → pyautogui (Win32 API)
   Android : termux-camera-photo (Termux)
 
-All capabilities return {"ok": True, ...} or {"ok": False, "error": ...}.
+Failures raise (the host reports them as the reply's ``error``).
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
-import shutil
 import sys
 import tempfile
 from typing import Any
 
-from ..plugin import Plugin, capability
-
-
-def _is_termux() -> bool:
-    return os.environ.get("PREFIX", "").startswith("/data/data/com.termux")
-
-
-async def _run(cmd: list[str], timeout: float = 10.0) -> tuple[int, bytes, bytes]:
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    try:
-        out, err = await asyncio.wait_for(proc.communicate(), timeout)
-    except asyncio.TimeoutError:
-        proc.kill()
-        try:
-            await proc.wait()
-        except Exception:
-            pass
-        raise
-    return proc.returncode or 0, out, err
+from ...core.pluginkit import fail, has_display, is_termux, is_windows, require_int, run, which
+from ..plugin import ANDROID_APP_REPLACED, Plugin, capability, place
 
 
 def _pack(data: bytes) -> dict[str, Any]:
@@ -53,12 +31,12 @@ async def _shrink(path: str, quality: int, max_dim: int = 1600) -> None:
     small enough to relay reliably over the band. Some grabbers (e.g. spectacle)
     ignore the quality flag and emit multi-hundred-KB frames. Best-effort via
     ImageMagick; a no-op if it isn't installed."""
-    conv = shutil.which("magick") or shutil.which("convert")
+    conv = which("magick", "convert")
     if not conv:
         return
     out = path + ".s.jpg"
     try:
-        code, _, _ = await _run(
+        code, _, _ = await run(
             [conv, path, "-resize", f"{max_dim}x{max_dim}>", "-quality", str(quality), out],
             timeout=10)
         if code == 0 and os.path.exists(out) and os.path.getsize(out) > 0:
@@ -75,8 +53,8 @@ async def _shrink(path: str, quality: int, max_dim: int = 1600) -> None:
 # ---------- Linux -----------------------------------------------------------
 
 async def _linux_capture(quality: int, region: tuple[int, int, int, int] | None) -> dict:
-    if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
-        return {"ok": False, "error": "no DISPLAY/WAYLAND_DISPLAY set"}
+    if not has_display():
+        fail("no DISPLAY/WAYLAND_DISPLAY set")
     fd, path = tempfile.mkstemp(suffix=".jpg", prefix="rook-shot-")
     os.close(fd)
     wl = bool(os.environ.get("WAYLAND_DISPLAY"))
@@ -87,27 +65,27 @@ async def _linux_capture(quality: int, region: tuple[int, int, int, int] | None)
     # box where (say) grim exists but the compositor rejects wlr-screencopy
     # still succeeds via spectacle.
     backends: list[tuple[str, list[str]]] = []
-    if wl and shutil.which("grim"):
+    if wl and which("grim"):
         g = ["grim", "-t", "jpeg", "-q", str(quality)]
         if region:
             x, y, w, h = region
             g += ["-g", f"{x},{y} {w}x{h}"]
         backends.append(("grim", g + [path]))
-    if not region and shutil.which("spectacle"):
+    if not region and which("spectacle"):
         backends.append(("spectacle", ["spectacle", "-b", "-n", "-o", path]))
-    if not region and shutil.which("gnome-screenshot"):
+    if not region and which("gnome-screenshot"):
         backends.append(("gnome-screenshot", ["gnome-screenshot", "-f", path]))
-    if shutil.which("scrot"):
+    if which("scrot"):
         s = ["scrot", "-q", str(quality), "-o"]
         if region:
             x, y, w, h = region
             s += ["-a", f"{x},{y},{w},{h}"]
         backends.append(("scrot", s + [path]))
-    if shutil.which("import"):
+    if which("import"):
         i = ["import", "-window", "root", "-quality", str(quality)]
         if region:
             x, y, w, h = region
-            i += ["-crop", f"{w}x{h}+{x}+{y}"]
+            i += ["-crop", f"{w}x{h}{x:+d}{y:+d}"]  # signed: WxH-10+0, not WxH+-10+0
         backends.append(("import", i + [path]))
 
     if not backends:
@@ -115,13 +93,13 @@ async def _linux_capture(quality: int, region: tuple[int, int, int, int] | None)
             os.unlink(path)
         except OSError:
             pass
-        return {"ok": False, "error": "no screenshot backend (install grim / spectacle / scrot / imagemagick)"}
+        fail("no screenshot backend (install grim / spectacle / scrot / imagemagick)")
 
     errs = []
     try:
         for name, cmd in backends:
             try:
-                code, _, err = await _run(cmd, timeout=15)
+                code, _, err = await run(cmd, timeout=15)
             except Exception as e:
                 errs.append(f"{name}: {type(e).__name__}: {e}")
                 continue
@@ -129,12 +107,12 @@ async def _linux_capture(quality: int, region: tuple[int, int, int, int] | None)
                 await _shrink(path, quality)
                 with open(path, "rb") as f:
                     return _pack(f.read())
-            errs.append(f"{name}: {err.decode(errors='replace').strip() or f'exit {code}'}")
+            errs.append(f"{name}: {err.strip() or f'exit {code}'}")
             try:
                 open(path, "wb").close()   # clear for the next backend
             except OSError:
                 pass
-        return {"ok": False, "error": "all screenshot backends failed — " + " | ".join(errs)}
+        fail("all screenshot backends failed — " + " | ".join(errs))
     finally:
         try:
             os.unlink(path)
@@ -170,9 +148,7 @@ def _windows_capture_sync(quality: int, region: tuple[int, int, int, int] | None
         img.save(buf, format="JPEG", quality=quality)
         return _pack(buf.getvalue())
     except ImportError as e:
-        return {"ok": False, "error": f"missing dependency: {e.name} (pip install mss pillow)"}
-    except Exception as e:
-        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        fail(f"missing dependency: {e.name} (pip install mss pillow)")
 
 
 async def _windows_capture(quality: int, region: tuple[int, int, int, int] | None) -> dict:
@@ -182,14 +158,14 @@ async def _windows_capture(quality: int, region: tuple[int, int, int, int] | Non
 # ---------- Android ----------------------------------------------------------
 
 async def _android_capture(quality: int, region: tuple[int, int, int, int] | None) -> dict:
-    if not shutil.which("termux-camera-photo"):
-        return {"ok": False, "error": "termux-camera-photo not found (install termux-api)"}
+    if not which("termux-camera-photo"):
+        fail("termux-camera-photo not found (install termux-api)")
     fd, path = tempfile.mkstemp(suffix=".jpg", prefix="rook-shot-")
     os.close(fd)
     try:
-        code, _, err = await _run(["termux-camera-photo", "-c", "0", path], timeout=20.0)
+        code, _, err = await run(["termux-camera-photo", "-c", "0", path], timeout=20.0)
         if code != 0:
-            return {"ok": False, "error": f"termux-camera-photo failed: {err.decode(errors='replace').strip()}"}
+            fail(f"termux-camera-photo failed: {err.strip()}")
         with open(path, "rb") as f:
             data = f.read()
         if region:
@@ -215,22 +191,23 @@ async def _android_capture(quality: int, region: tuple[int, int, int, int] | Non
 # ---------- Dispatch ---------------------------------------------------------
 
 async def _dispatch(quality: int, region: tuple[int, int, int, int] | None) -> dict:
-    if _is_termux():
+    if is_termux():
         return await _android_capture(quality, region)
-    if sys.platform == "win32":
+    if is_windows():
         return await _windows_capture(quality, region)
     if sys.platform.startswith("linux"):
         return await _linux_capture(quality, region)
-    return {"ok": False, "error": f"unsupported platform: {sys.platform}"}
+    fail(f"unsupported platform: {sys.platform}")
 
 
 class ScreenshotPlugin(Plugin):
     NAMESPACE = "screenshot"
+    PLACEMENT = place(ANDROID_APP_REPLACED)  # the APK has native replacements
 
     def available(self) -> bool:
-        if _is_termux():
-            return bool(shutil.which("termux-camera-photo"))
-        if sys.platform == "win32":
+        if is_termux():
+            return bool(which("termux-camera-photo"))
+        if is_windows():
             try:
                 import mss  # noqa: F401
                 return True
@@ -241,24 +218,28 @@ class ScreenshotPlugin(Plugin):
                 except ImportError:
                     return False
         if sys.platform.startswith("linux"):
-            if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+            if not has_display():
                 return False  # headless / no logged-in graphical session
-            return any(shutil.which(t) for t in
+            return any(which(t) for t in
                        ("grim", "spectacle", "gnome-screenshot", "scrot", "import"))
         return False
 
-    @capability("capture")
+    @capability("capture", risk="read", tags=("sensitive",))
     async def _capture(self, quality: int = 85) -> dict:
         """Capture the full primary display as a JPEG."""
-        return await _dispatch(int(quality), None)
+        return await _dispatch(require_int(quality, "quality", min=1, max=100), None)
 
-    @capability("capture_region")
+    @capability("capture_region", risk="read", tags=("sensitive",))
     async def _capture_region(self, x: int, y: int, w: int, h: int,
                               quality: int = 85) -> dict:
-        """Capture a rectangular region of the screen."""
-        return await _dispatch(int(quality), (int(x), int(y), int(w), int(h)))
+        """Capture a rectangular region of the screen (x/y may be negative on multi-monitor desktops)."""
+        # x/y are virtual-desktop coordinates: a monitor left of or above
+        # the primary one has negative ones.
+        region = (require_int(x, "x"), require_int(y, "y"),
+                  require_int(w, "w", min=1), require_int(h, "h", min=1))
+        return await _dispatch(require_int(quality, "quality", min=1, max=100), region)
 
-    @capability("capture_preview")
+    @capability("capture_preview", risk="read", tags=("sensitive",))
     async def _capture_preview(self) -> dict:
         """Low-quality full-screen grab for quick visual checks."""
         return await _dispatch(40, None)

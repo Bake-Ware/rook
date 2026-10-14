@@ -3,7 +3,7 @@
 A worker's tunables (name, announce interval, log level) and — crucially —
 plugin **env-gates** (``ROOK_WAKE_CMD``, ``ROOK_MEMORY_VAULT``, …) can be set
 over the band without touching the box or re-running the installer. Overrides
-live in ``~/.rook-band-worker/config.json``, loaded at boot; ``env`` entries are
+live in ``config.json`` in the worker state directory, loaded at boot; ``env`` entries are
 pushed into ``os.environ`` *before* plugins load, so a config push can turn on a
 gated capability (wake, memory vault) on any worker.
 
@@ -15,7 +15,8 @@ must be confirmed by the site within the window — otherwise a watchdog reverts
 the previous config and restarts again. A worker that never came back to confirm
 reverts itself.
 
-State files (all under ~/.rook-band-worker/):
+State files (all in the worker state directory: ROOK_WORKER_HOME, else
+~/.rook-band-worker/):
     config.json          the active overrides (merged into argv at boot)
     config.json.prev     snapshot to revert to while a pending apply is unconfirmed
     config.json.pending  {epoch, deadline, confirm_within} — present ⇒ awaiting confirm
@@ -29,9 +30,12 @@ import os
 import time
 from pathlib import Path
 
+from ..core.paths import worker_state_dir
+from ..core.db import atomic_write_json
+
 log = logging.getLogger("rook.worker.wconfig")
 
-_DIR = Path(os.path.expanduser("~")) / ".rook-band-worker"
+_DIR = worker_state_dir()
 _ACTIVE = _DIR / "config.json"
 _PREV = _DIR / "config.json.prev"
 _PENDING = _DIR / "config.json.pending"
@@ -50,10 +54,8 @@ def _read(p: Path) -> dict:
 
 
 def _write(p: Path, data: dict) -> None:
-    _DIR.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(p.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    os.replace(tmp, p)
+    # 0600: ``env`` overrides can carry plugin credentials.
+    atomic_write_json(p, data, 0o600, indent=2)
 
 
 def load() -> dict:

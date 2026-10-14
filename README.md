@@ -37,6 +37,23 @@ and runs a command on it. It takes about ten minutes, most of it compiling the r
 toolchain (`cargo`, from [rustup.rs](https://rustup.rs)) to build the relay. Windows and
 Android work as *workers*; these hub steps assume a POSIX shell.
 
+### 0. Prerequisites
+
+On a fresh Debian 12+ / Ubuntu 24.04+ machine (older Ubuntu ships Python 3.10; install a
+newer `python3` first):
+
+```sh
+sudo apt-get update
+sudo apt-get install -y git python3-venv build-essential pkg-config curl
+# Fedora: sudo dnf install -y git python3 gcc make pkgconf-pkg-config curl
+# Arch:   sudo pacman -S --needed git python base-devel pkgconf curl
+
+# Rust, for building the relay, then load it into this shell
+# (rustup only adds ~/.cargo/bin to PATH for new login shells):
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+. "$HOME/.cargo/env"
+```
+
 ### 1. Install
 
 ```sh
@@ -55,7 +72,8 @@ pip install -e .              # add '.[desktop]' for screenshots on desktop work
 ### 2. Start the hub
 
 ```sh
-scripts/local-hub.sh
+scripts/local-hub.sh                 # this machine only
+BIND=0.0.0.0 scripts/local-hub.sh    # reachable from your LAN (see "Workers on your LAN")
 ```
 
 On first run it generates a band key, a dashboard password and an MCP token into
@@ -66,7 +84,13 @@ On first run it generates a band key, a dashboard password and an MCP token into
   Dashboard   http://127.0.0.1:7005    password: …
   MCP         http://127.0.0.1:8765/mcp      bearer token in rook-data/quickstart.env
   Relay       udp://127.0.0.1:7474
+
+Install a worker:  http://127.0.0.1:7005/#install
 ```
+
+The script finds `telesthete-hub` in `~/.cargo/bin` even if that is not on your PATH yet.
+On first start the dashboard also builds the worker bundle its installers download; that
+takes about a minute in the background.
 
 ### 3. Enroll a worker
 
@@ -176,14 +200,27 @@ the agent workspace, OTA updates and the installers.
 
 ## Going beyond localhost
 
-**Workers on your LAN.** Start the hub with `BIND=0.0.0.0 scripts/local-hub.sh` (or use
-Docker), then run `rook worker --hub <hub-ip>:7474 --psk … --name …` on each machine. Allow
-UDP 7474 through the hub's firewall. To reach MCP by IP, add that `host:port` to
-`ROOK_ALLOWED_HOSTS`.
+**Workers on your LAN.** Start the hub with `BIND=0.0.0.0 scripts/local-hub.sh`, open the
+printed `http://<hub-ip>:7005/#install` in a browser, sign in, and click **Get a pairing
+code**. The page shows the command for Linux/macOS (`curl … | bash`), Windows PowerShell
+(`iex (irm …)`) and Android (Termux) with the code filled in; run it on the new machine
+within five minutes (the code renews while the page is open). The installer enrolls with
+the code, installs the worker as a service, and the machine appears under Workers.
+
+Everything runs over plain HTTP here: `local-hub.sh` passes `--domain http://<hub-ip>:7005`,
+so installer links say `http://`, cookies are not marked `Secure`, and workers accept a
+plain-HTTP enrollment server only at a non-public IP address. Installed workers reach the
+relay through the MCP server's WebSocket bridge (`--hub <hub-ip>:8765 --ws`, the same path a
+public hub uses behind TLS), so allow TCP 7005 and 8765 through the hub's firewall. Workers
+you start by hand can instead use UDP directly: `rook worker --hub <hub-ip>:7474 --psk … --name …`
+(allow UDP 7474). With Docker, set `ROOK_DOMAIN=http://<hub-ip>:7005` and
+`ROOK_HUB_PUBLIC=<hub-ip>:8765`. To reach MCP by IP, add that `host:port` to
+`ROOK_ALLOWED_HOSTS` (`local-hub.sh` does). Plain HTTP is for a network you trust: anyone on
+it can read pairing codes and installer traffic. Use the HTTPS setup below for anything else.
 
 **Workers anywhere.** Put the hub behind HTTPS: a reverse proxy (Caddy, nginx) or a tunnel
 (Cloudflare Tunnel) that forwards your domain to the dashboard (7005) and the paths `/mcp`,
-`/band`, `/tokens`, `/authorize`, `/token` and `/.well-known/` to the MCP server (8765).
+`/band`, `/tokens/account-api`, `/authorize`, `/token` and `/.well-known/` to the MCP server (8765).
 Then remote workers join with `--hub your.domain:443 --ws`. Set:
 
 - `ROOK_DOMAIN=your.domain` and `ROOK_HUB_PUBLIC=your.domain:443` for the dashboard, which
@@ -194,12 +231,15 @@ Then remote workers join with `--hub your.domain:443 --ws`. Set:
 Never expose the dashboard without `ROOK_WEB_PASS`; it refuses to start on a non-loopback
 address without one unless you pass `--insecure-no-auth`.
 
-**One-line installers.** Once the hub is on HTTPS, the dashboard's **Install a worker** page
-issues short-lived pairing codes, and machines join with
-`curl -fsSL 'https://your.domain/worker?band=CODE' | bash` (PowerShell and Android variants are
-on the same page). The installers download a worker bundle that you build once from a source
-checkout, with the [telesthete](https://github.com/Bake-Ware/telesthete) repo cloned next to it
-or pip-installed:
+**One-line installers.** On HTTPS the **Install a worker** page works the same way, and
+machines join with `curl -fsSL 'https://your.domain/worker?band=CODE' | bash` (PowerShell
+and Android variants are on the same page). A `ROOK_DOMAIN` without a scheme means `https`;
+write `http://…` or `https://…` to be explicit. The installers download a worker bundle.
+The dashboard builds one itself on first start (into `ROOK_DATA_DIR/worker-bundle`, signed
+with the hub's key, using the pip-installed [telesthete](https://github.com/Bake-Ware/telesthete))
+and rebuilds it when the installed code changes. To decide yourself when a new build goes
+out (connected workers update to it), build it by hand from a source checkout; a bundle
+built next to the script takes precedence and is never rebuilt automatically:
 
 ```sh
 ROOK_PUBLIC_BASE=https://your.domain python rook/remote/build_band_worker.py
@@ -227,9 +267,8 @@ from the schema). [`.env.example`](.env.example) covers a first deployment. The 
 | `ROOK_DATA_DIR` | dashboard, MCP | Directory for all hub state |
 | `ROOK_BAND_PSK` | all | Band key. Generate with `python -m rook.remote.psk` |
 | `ROOK_WEB_PASS` | dashboard | Dashboard admin password (required off-loopback) |
-| `ROOK_DOMAIN`, `ROOK_HUB_PUBLIC` | dashboard | Public addresses written into installers |
+| `ROOK_DOMAIN`, `ROOK_HUB_PUBLIC` | dashboard | Public addresses written into installers (`ROOK_DOMAIN` may start with `http://` or `https://`) |
 | `ROOK_MCP_STATIC_TOKEN` | MCP | Fixed bearer token for MCP clients |
-| `ROOK_MCP_AUTH_PASSWORD` | MCP | Password for `/tokens`, where you mint one token per agent |
 | `ROOK_MCP_PUBLIC_URL`, `ROOK_ALLOWED_HOSTS` | MCP | Public URL and accepted Host headers |
 | `ROOK_HUB` | worker, MCP | Relay `host:port` |
 | `ROOK_UPDATE_URL`, `ROOK_UPDATE_PUBKEY` | worker | OTA manifest URL; trusted signing key for workers not installed from a hub bundle |

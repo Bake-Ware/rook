@@ -4,8 +4,8 @@ Bridges the rook band to a Pico W running the WiFi-enabled Pico-CEC firmware,
 which listens on a TCP port for newline-terminated CEC commands and injects
 them onto the HDMI CEC bus. This plugin just forwards raw frames.
 
-Config (env):
-    CEC_HOST     hostname/IP of the Pico (required; plugin is inert without it)
+Config (settings ``cec.host``/``cec.port``/``cec.timeout``, or env):
+    CEC_HOST     hostname/IP of the Pico (required; cec.* stays off without it)
     CEC_PORT     TCP port the firmware listens on (default 9526)
     CEC_TIMEOUT  socket timeout in seconds (default 5)
 
@@ -26,18 +26,10 @@ Capabilities:
 from __future__ import annotations
 
 import asyncio
-import os
 import socket
 
+from ...core.pluginkit import fail, require_str
 from ..plugin import Plugin, capability, setting
-
-
-def _cfg() -> tuple[str, int, float]:
-    return (
-        os.environ.get("CEC_HOST", ""),
-        int(os.environ.get("CEC_PORT", "9526")),
-        float(os.environ.get("CEC_TIMEOUT", "5")),
-    )
 
 
 def _hex(v) -> str:
@@ -54,11 +46,10 @@ def _hex(v) -> str:
     return f"{n:x}"
 
 
-def _exchange(line: str) -> str:
+def _exchange(line: str, host: str, port: int, timeout: float) -> str:
     """Send one command line to the Pico and return its reply text."""
-    host, port, timeout = _cfg()
     if not host:
-        raise RuntimeError("CEC_HOST is not set")
+        fail("cec.host (CEC_HOST) is not set")
     with socket.create_connection((host, port), timeout=timeout) as s:
         s.settimeout(timeout)
         s.sendall((line + "\n").encode())
@@ -80,27 +71,38 @@ class CecPlugin(Plugin):
                 apply="restart", min=0.1, label="Timeout (s)"),
     )
 
-    @capability("send")
+    def available(self) -> bool:
+        # Inert unless this host is configured to reach a Pico-CEC device.
+        return bool(self.settings.get("host"))
+
+    async def _exchange(self, line: str) -> str:
+        s = self.settings
+        return await asyncio.to_thread(_exchange, line, s.get("host", ""),
+                                       s.get("port", 9526), s.get("timeout", 5.0))
+
+    @capability("send", risk="write", tags=("physical",))
     async def _send(self, addr, opcode, operands=None, **_) -> dict:
+        """Transmit a CEC frame: ``addr`` destination (0-f, 0 = TV), ``opcode`` byte, optional ``operands`` (ints or hex strings)."""
         line = f"send {_hex(addr)} {_hex(opcode)}"
         if operands:
             if isinstance(operands, str):
                 operands = operands.split()
             line += " " + " ".join(_hex(o) for o in operands)
-        reply = await asyncio.to_thread(_exchange, line)
+        reply = await self._exchange(line)
         return {"ok": reply.startswith("OK"), "sent": line, "reply": reply}
 
-    @capability("raw")
+    @capability("raw", risk="write", tags=("physical",))
     async def _raw(self, cmd, **_) -> dict:
-        line = str(cmd).strip()
-        reply = await asyncio.to_thread(_exchange, line)
+        """Send one literal Pico-CEC firmware command line (e.g. ``"send 0 36"``) and return its reply."""
+        line = require_str(cmd, "cmd", max_len=200)
+        reply = await self._exchange(line)
         return {"ok": not reply.startswith("ERR"), "sent": line, "reply": reply}
 
-    @capability("ping")
+    @capability("ping", risk="read", tags=("physical",))
     async def _ping(self, **_) -> dict:
-        reply = await asyncio.to_thread(_exchange, "ping")
+        """Check the Pico-CEC bridge answers; returns its reply (logical/physical address)."""
+        reply = await self._exchange("ping")
         return {"ok": reply.startswith("pong"), "reply": reply}
 
 
-# Inert unless this host is configured to reach a Pico-CEC device.
-PLUGIN = CecPlugin if os.environ.get("CEC_HOST") else None
+PLUGIN = CecPlugin

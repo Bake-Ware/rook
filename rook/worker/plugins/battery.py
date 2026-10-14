@@ -15,21 +15,16 @@ Backends, no extra deps:
 
 from __future__ import annotations
 
-import asyncio
 import glob
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import time
 
-from ..plugin import Plugin, capability
-
-
-def _is_termux() -> bool:
-    return os.environ.get("PREFIX", "").startswith("/data/data/com.termux")
+from ...core.pluginkit import fail, is_termux, is_windows, run
+from ..plugin import ANDROID_APP_REPLACED, Plugin, capability, place
 
 
 # ---- Linux sysfs -----------------------------------------------------------
@@ -86,14 +81,11 @@ def _linux_status() -> dict | None:
 
 async def _termux_status() -> dict | None:
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "termux-battery-status",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        out, _ = await asyncio.wait_for(proc.communicate(), 10)
+        out = (await run(["termux-battery-status"], 10)).stdout
     except Exception:
         return None
     try:
-        d = json.loads(out.decode() or "{}")
+        d = json.loads(out or "{}")
     except Exception:
         return None
     pct = d.get("percentage")
@@ -185,11 +177,11 @@ def _macos_status() -> dict | None:
 
 def _read_status_sync() -> dict | None:
     """Best cheap synchronous read for this host (used by heartbeat + gate)."""
-    if _is_termux():
+    if is_termux():
         return _termux_status_sync()
     if sys.platform.startswith("linux"):
         return _linux_status()
-    if sys.platform == "win32":
+    if is_windows():
         return _windows_status()
     if sys.platform == "darwin":
         return _macos_status()
@@ -198,6 +190,7 @@ def _read_status_sync() -> dict | None:
 
 class BatteryPlugin(Plugin):
     NAMESPACE = "battery"
+    PLACEMENT = place(ANDROID_APP_REPLACED)  # the APK has native replacements
 
     def available(self) -> bool:
         try:
@@ -205,19 +198,19 @@ class BatteryPlugin(Plugin):
         except Exception:
             return False
 
-    @capability("status")
+    @capability("status", risk="read")
     async def _status(self) -> dict:
         """Current battery: ``{percent, charging, plugged, status, ...}``.
 
         ``percent`` 0-100, ``charging`` True while charging, ``plugged`` True
         on external power (charging or full). Extra fields when the platform
         exposes them (Termux: temp_c, health)."""
-        if _is_termux():
+        if is_termux():
             d = await _termux_status()
         else:
             d = _read_status_sync()
         if not d:
-            return {"ok": False, "error": "battery unreadable on this host"}
+            fail("battery unreadable on this host")
         d["ok"] = True
         d["ts"] = time.time()
         return d

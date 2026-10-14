@@ -26,8 +26,13 @@ credentials and revocations affect active authentication immediately. New token
 secrets appear once in a dialog, never in URLs or browser storage. Closing the
 dialog or leaving the view clears the displayed secret.
 
-Existing MCP `/mcp`, OAuth, `/tokens`, and legacy token-management HTTP routes
-remain available. `/tokens` on the main web host opens the integrated view.
+The MCP port's old password-gated, server-rendered `/tokens` page (and its
+`/tokens/auth`, `/tokens/create`, `/tokens/pairing`, ... form routes) has been
+removed together with `ROOK_MCP_AUTH_PASSWORD`. `/tokens` on either host now
+redirects to the integrated view: the dashboard serves `/#tokens`, and the MCP
+port sends a browser to `https://<installer domain>/#tokens` (the setup wizard's
+installer download domain), or to `/#tokens` on the same host when none is
+configured. `/mcp` and the OAuth front door are unchanged.
 Agent/identity pictures are managed under Tokens; pairing, invitations, device
 certificates, and immediate credential recovery are under Account → Band access.
 Staged PSK migration and worker moves remain under Bands.

@@ -7,6 +7,9 @@ it has been retired in favour of the library (single source of truth, and rook
 picks up the reviewed/hardened Reassembler — bounded eviction + stale GC — for
 free). The worker bundle already vendors `telesthete.protocol`, so this import
 resolves in the pyz and the Android source set alike.
+
+:mod:`rook.worker.wire.codec` (:class:`BandCodec`) builds on it: the shared
+frame pipeline (crypto, sequence, fragment/seal, ingest) every band link uses.
 """
 
 from telesthete.protocol.fragment import (

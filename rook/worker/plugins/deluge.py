@@ -16,26 +16,24 @@ live commands, and ``deluge.status`` reports whether it is.
 
 from __future__ import annotations
 
-import asyncio
 import re
-import shutil
+import shlex
 
+from ...core.pluginkit import RunTimeout, fail, require_str, run, which
 from ..plugin import Plugin, capability
 
 
 def _which_console() -> str | None:
-    return shutil.which("deluge-console")
+    return which("deluge-console")
 
 
 async def _run(*argv: str, timeout: float = 30.0) -> tuple[int, str, str]:
-    proc = await asyncio.create_subprocess_exec(
-        *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    """``run``, with a timeout reported like a failed command (exit 124) so
+    the console callers keep one code path."""
     try:
-        out, err = await asyncio.wait_for(proc.communicate(), timeout)
-    except asyncio.TimeoutError:
-        proc.kill()
-        return 124, "", f"timed out after {timeout}s"
-    return proc.returncode or 0, out.decode(errors="replace"), err.decode(errors="replace")
+        return tuple(await run(argv, timeout))
+    except RunTimeout as e:
+        return 124, "", str(e)
 
 
 # deluge-console exits 0 even when it fails to reach the daemon, so detect the
@@ -56,8 +54,43 @@ async def _console(command: str, timeout: float = 30.0) -> tuple[int, str, str]:
     """Run a single deluge-console command against the local daemon."""
     exe = _which_console()
     if not exe:
-        return 127, "", "deluge-console not installed"
+        fail("deluge-console not installed")
     return await _run(exe, command, timeout=timeout)
+
+
+# deluge-console takes the whole command as one argument and parses it
+# itself: it splits on every ';' first (quotes do not protect one), then
+# shlex-splits each piece. So a ';' or a newline in an identifier could
+# smuggle in a second console command, quotes and backslashes could unbalance
+# the quoting, and a leading '-' would be read as an option (rm --remove_data).
+# deluge matches the identifier against torrent ids and names (prefix/suffix
+# with '*'), so names are allowed: rejected are only those characters, and
+# the rest is shlex-quoted as one word. A space-separated list of hex ids is
+# still several ids, as before.
+_HEX_IDS = re.compile(r"[0-9a-fA-F]{1,40}(?: [0-9a-fA-F]{1,40})*")
+_BREAKOUT = re.compile(r"[;\'\"\\\x00-\x1f\x7f]")
+
+
+def _torrent_id(value) -> str:
+    """The identifier as console command text: ``*``, hex ids, or one
+    quoted name."""
+    tid = require_str(value, "torrent_id").strip()
+    if tid == "*" or _HEX_IDS.fullmatch(tid):
+        return tid
+    if _BREAKOUT.search(tid):
+        fail("torrent_id must not contain ; quotes, backslashes or control characters")
+    if tid.startswith("-"):
+        fail("torrent_id must not start with -")
+    return shlex.quote(tid)
+
+
+async def _simple(command: str) -> dict:
+    """A console command whose only result is success and its output."""
+    code, out, err = await _console(command)
+    output = (out or err).strip()[:300]
+    if code != 0 or _conn_failed(out, err):
+        fail(output or f"deluge-console exit {code}")
+    return {"ok": True, "output": output}
 
 
 # `deluge-console info` state letters.
@@ -97,9 +130,9 @@ class DelugePlugin(Plugin):
     def available(self) -> bool:
         # Installed is enough (running or not); live commands report if the
         # daemon is down. deluged alone (headless box) also counts.
-        return bool(_which_console() or shutil.which("deluged") or shutil.which("deluge"))
+        return bool(which("deluge-console", "deluged", "deluge"))
 
-    @capability("status")
+    @capability("status", risk="read")
     async def _status(self) -> dict:
         """Whether the daemon is running, plus a session summary if reachable."""
         running = False
@@ -112,35 +145,36 @@ class DelugePlugin(Plugin):
         reachable = False
         if _which_console():
             code, out, err = await _console("info", timeout=15)
-            fail = _conn_failed(out, err)
-            if code == 0 and not fail:
+            unreachable = _conn_failed(out, err)
+            if code == 0 and not unreachable:
                 reachable = True
                 summary = f"{len(_parse_info(out))} torrents"
             else:
-                summary = f"daemon not reachable ({fail})" if fail else (err or out).strip()[:200]
+                summary = f"daemon not reachable ({unreachable})" if unreachable else (err or out).strip()[:200]
         return {"ok": True, "daemon_running": running, "reachable": reachable,
                 "summary": summary, "console": bool(_which_console())}
 
-    @capability("list")
+    @capability("list", risk="read")
     async def _list(self) -> dict:
         """Current torrents: name, state, progress, size, ratio (+ raw output)."""
         code, out, err = await _console("info")
-        fail = _conn_failed(out, err)
-        if code != 0 or fail:
-            return {"ok": False, "error": (f"cannot reach deluge daemon ({fail})" if fail
-                    else (err or out).strip()[:300] or "deluge-console failed (is deluged running?)")}
+        unreachable = _conn_failed(out, err)
+        if code != 0 or unreachable:
+            fail(f"cannot reach deluge daemon ({unreachable})" if unreachable
+                 else (err or out).strip()[:300] or "deluge-console failed (is deluged running?)")
         torrents = _parse_info(out)
         return {"ok": True, "count": len(torrents), "torrents": torrents,
                 "raw": out[:8000]}
 
-    @capability("files")
+    @capability("files", risk="read")
     async def _files(self, torrent_id: str) -> dict:
-        """A torrent's save path + files — pull them over the band with file.read."""
-        if not torrent_id:
-            return {"ok": False, "error": "torrent_id required"}
-        code, out, err = await _console(f"info -v {torrent_id}")
+        """A torrent's save path + files — pull them over the band with file.read.
+
+        ``torrent_id`` is a hash (or prefix) or the torrent's name."""
+        tid = _torrent_id(torrent_id)
+        code, out, err = await _console(f"info -v {tid}")
         if code != 0:
-            return {"ok": False, "error": (err or out).strip()[:300]}
+            fail((err or out).strip()[:300] or f"deluge-console exit {code}")
         save_path = None
         files = []
         for line in out.splitlines():
@@ -150,41 +184,40 @@ class DelugePlugin(Plugin):
             fm = re.match(r"\s*([^\(]+)\s*\(([\d.]+\s*\w+)\)\s*$", line)
             if "::Files" in line or (fm and save_path):
                 pass  # deluge-console file lines vary; keep raw as the source of truth
-        return {"ok": True, "torrent_id": torrent_id, "save_path": save_path,
+        return {"ok": True, "torrent_id": torrent_id.strip(), "save_path": save_path,
                 "raw": out[:8000],
                 "note": "read files with file.read(save_path + '/' + name, encoding='base64')"}
 
-    @capability("add")
+    @capability("add", risk="write")
     async def _add(self, torrent: str) -> dict:
         """Add a torrent by magnet link, .torrent URL, or local path."""
-        torrent = str(torrent or "").strip()
-        if not torrent:
-            return {"ok": False, "error": "torrent (magnet/url/path) required"}
-        code, out, err = await _console(f'add "{torrent}"', timeout=45)
-        return {"ok": code == 0 and "error" not in out.lower(),
-                "output": (out or err).strip()[:500]}
+        torrent = require_str(torrent, "torrent (magnet/url/path)")
+        # Quotes do not protect a ';' from the console's own split (see
+        # _torrent_id); single-quoting keeps a Windows path's backslashes.
+        if re.search(r"[;\x00-\x1f\x7f]", torrent):
+            fail("torrent must not contain ; or control characters")
+        code, out, err = await _console(f"add {shlex.quote(torrent)}", timeout=45)
+        output = (out or err).strip()[:500]
+        if code != 0 or "error" in out.lower():
+            fail(output or f"deluge-console exit {code}")
+        return {"ok": True, "output": output}
 
-    @capability("pause")
+    @capability("pause", risk="write")
     async def _pause(self, torrent_id: str = "*") -> dict:
-        """Pause a torrent by id, or all with ``*``."""
-        code, out, err = await _console(f"pause {torrent_id}")
-        return {"ok": code == 0, "output": (out or err).strip()[:300]}
+        """Pause a torrent by id or name, or all with ``*``."""
+        return await _simple(f"pause {_torrent_id(torrent_id)}")
 
-    @capability("resume")
+    @capability("resume", risk="write")
     async def _resume(self, torrent_id: str = "*") -> dict:
-        """Resume a torrent by id, or all with ``*``."""
-        code, out, err = await _console(f"resume {torrent_id}")
-        return {"ok": code == 0, "output": (out or err).strip()[:300]}
+        """Resume a torrent by id or name, or all with ``*``."""
+        return await _simple(f"resume {_torrent_id(torrent_id)}")
 
-    @capability("remove")
+    @capability("remove", risk="write", tags=("destructive",))
     async def _remove(self, torrent_id: str, data: bool = False) -> dict:
-        """Remove a torrent. ``data=True`` also deletes the downloaded files."""
-        if not torrent_id:
-            return {"ok": False, "error": "torrent_id required"}
+        """Remove a torrent by id or name. ``data=True`` also deletes the downloaded files."""
+        torrent_id = _torrent_id(torrent_id)
         cmd = f"rm {'--remove_data ' if data else ''}{torrent_id}"
-        code, out, err = await _console(cmd)
-        return {"ok": code == 0, "output": (out or err).strip()[:300],
-                "removed_data": bool(data)}
+        return {**await _simple(cmd), "removed_data": bool(data)}
 
 
 PLUGIN = DelugePlugin

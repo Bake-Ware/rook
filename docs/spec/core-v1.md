@@ -32,6 +32,7 @@ they appear in capitals.
 11. [Conformance](#11-conformance)
 12. [Security considerations](#12-security-considerations)
 13. [Appendix: wire examples](#13-appendix-wire-examples)
+14. [Negotiated extensions](#14-negotiated-extensions)
 
 ---
 
@@ -98,7 +99,7 @@ Each UDP datagram carries exactly one frame:
 | Offset | Size | Field | Value |
 |---|---|---|---|
 | 0 | 16 | `band_id` | from 2.1 |
-| 16 | 1 | `channel_type` | `0x02` (CHANNEL) |
+| 16 | 1 | `channel_type` | `0x02` (CHANNEL); `0x06` (ADDRESSED) per section 14.1 |
 | 17 | 2 | `channel_id` | `0`, big-endian |
 | 19 | 8 | `sequence` | big-endian u64, see 2.3 |
 | 27 | n+16 | sealed chunk | ChaCha20-Poly1305 ciphertext of one fragment chunk (2.4), then the 16-byte tag |
@@ -109,10 +110,16 @@ Each UDP datagram carries exactly one frame:
   channel header as AAD; the Rook worker transport does not, and every Rook
   peer (build 167 onwards) seals and opens with empty AAD. Implementations
   MUST use empty AAD to interoperate.
-- A sender MUST send `channel_type = 0x02` and `channel_id = 0`. A receiver
-  SHOULD drop frames with another channel type and MUST drop frames shorter
-  than 43 bytes, with a foreign `band_id`, or that fail authentication,
-  silently.
+- A sender MUST send `channel_type = 0x02` and `channel_id = 0`, except as
+  section 14 allows (an ADDRESSED frame, `0x06`, carries a message chunk to
+  a declared route id in `channel_id`, sealed with empty AAD like CHANNEL;
+  ROUTE and DROP frames are sent with the spec AAD). A receiver SHOULD drop
+  frames with any other channel type, MUST NOT drop a CHANNEL or ADDRESSED
+  frame because of its `channel_id`, and MUST drop frames shorter than 43
+  bytes, with a foreign `band_id`, or that fail authentication, silently. A
+  receiver that ignores the channel type still interoperates: it opens
+  ADDRESSED frames like CHANNEL ones, and ROUTE and DROP frames fail its
+  empty-AAD tag check.
 
 ### 2.3 Sequence numbers
 
@@ -162,7 +169,14 @@ carries many bands at once.
   **keepalive** message (the one-byte payload `0x00`, fragmented and sealed
   like any message) and MUST repeat it at least every 20 s while it wants to
   stay registered; the relay evicts idle peers (`HUB_PEER_TTL_SECS`, 60 s in
-  the shipped deployment).
+  the shipped deployment; the relay's own default is 15 s, which is shorter
+  than the keepalive, so deployments MUST raise it). A ROUTE declaration
+  (14.1) also counts as a frame that keeps a peer registered.
+- A routing relay (telesthete SPEC §10.1, telesthete 0.3.0 and later)
+  delivers an ADDRESSED (`0x06`) frame whose nonzero `channel_id` another
+  eligible peer declared only to the declarers, and consumes ROUTE frames.
+  Everything else, CHANNEL frames of any `channel_id` included, is relayed
+  as above.
 - Receivers MUST discard a reassembled message equal to the single byte
   `0x00`.
 - Messages that are not JSON objects (binary sub-protocols such as the
@@ -183,7 +197,25 @@ Trade-off: the bridge adds a TCP hop and depends on the hub process being up,
 but lets an implementation skip UDP entirely; everything above the frame is
 identical. Implementations SHOULD reconnect with backoff (reference: 1 s
 doubling to 30 s) and MUST send a keepalive and an announce after every
-(re)connect. The example ports use UDP.
+(re)connect (and a ROUTE declaration, if they declare one). The example
+ports use UDP.
+
+The relay itself also has a native WebSocket listener (`HUB_WS_BIND`, path
+`HUB_WS_PATH`, default `/band`) with the same one-frame-per-message framing;
+there each connection is a first-class relay peer (no extra UDP hop, no TTL
+eviction). Migration from the bridge, which stays the default because
+deployed workers dial it:
+
+1. Expose the relay's listener (e.g. `HUB_WS_BIND=127.0.0.1:7475` behind the
+   same TLS proxy as the dashboard, or `HUB_WS_TLS=1` with its own cert).
+2. Move existing workers with a pushed config setting `ROOK_HUB_WS_URL`
+   (`worker.config_apply` with restart), or start them with `--ws-url`; set
+   `ROOK_HUB_PUBLIC_WS_URL` on the dashboard so new installers pass
+   `--ws-url` too. Both paths share one band; nothing else changes.
+3. Keep the bridge running until no worker uses it (its peers show up as
+   UDP peers from the hub host in the relay's view). Frames stay
+   datagram-sized on WS (section 2.4): the relay forwards WS-originated
+   frames to UDP peers unchanged.
 
 ## 3. Messages
 
@@ -219,6 +251,7 @@ chatter and MUST be ignored.
 | `target` | SHOULD | `worker_id` of the one node that should answer. Absent or falsy = open call: every node owning `cap` answers. |
 | `identity` | MAY | Display identity of whoever the call is for (section 8). Self-asserted; never proof of anything. |
 | `ticket` | MAY | Hub-signed call ticket (6.6). |
+| `rr`, `accept` | MAY | Reply route and accepted reply encodings (section 14). |
 
 A worker handling a request MUST apply these rules in order (vectors:
 `messages.json`):
@@ -289,6 +322,7 @@ nodes started together de-phase.
 | `tiers` | SHOULD | `{cap: "r"|"w"|"x"|"a"}` for caps with a declared risk (4.3). |
 | `authz` | MAY | Ticket-verification readiness (6.6). |
 | `hb` | MAY | Tiny per-plugin live status keyed by namespace. |
+| `features`, `caps_hash` | MAY | Negotiated extensions the node speaks, and a digest of `caps` (section 14). |
 | `grants`, `asig`, `ts`, `seq`, `revocations`, `roles`, `core_api` | MAY | Hub announces (6.4, 6.5). |
 
 Announces SHOULD stay well under one datagram's worth of fragments; facts are
@@ -369,8 +403,9 @@ The **effective tier** (vectors: `tiers.json`) is:
 1. `cmd.*`: `exec`.
 2. otherwise `max(builtin[cap], declared)`, where `builtin` is the table in
    Appendix A of `docs/design/permissions.md` (machine-readable in
-   `tiers.json`) and `declared` is the cap's own risk (or its announce
-   `tiers` entry). A node can raise its tier but never lower it.
+   `tiers.json`; the reference builds it from its plugins' declared tiers)
+   and `declared` is the cap's own risk (or its announce `tiers` entry). A
+   node can raise its tier but never lower it.
 3. A cap in neither: `exec`. Never assume a cap is harmless.
 4. An operator override raises freely and lowers only when explicitly
    allowed.
@@ -777,13 +812,15 @@ and stops the run; released files are never edited.
   existing keys MUST NOT change meaning or type; normative error strings
   MUST NOT change; new message kinds MUST NOT carry `cap` (old workers
   treat anything with `cap` as a request) and SHOULD carry `kind`.
-- Keys added since build 167, all optional: request `ticket`; announce
-  `facts`, `tiers`, `authz`, `grants`, `asig`, `ts`, `seq`, `revocations`,
-  `roles`, `core_api`; reply `denied`; deauth `v2`; `caps.describe` `prefix`
-  argument and `risk/tags/limit/fields/tool` keys.
+- Keys added since build 167, all optional: request `ticket`, `rr`,
+  `accept`; announce `facts`, `tiers`, `authz`, `grants`, `asig`, `ts`,
+  `seq`, `revocations`, `roles`, `core_api`, `features`, `caps_hash`; reply
+  `denied`, `drop`; deauth `v2`; `caps.describe` `prefix` argument and
+  `risk/tags/limit/fields/tool` keys.
 - Relay and transport changes follow the telesthete protocol's own
-  versioning; the Rook profile (empty AAD, CHANNEL 0, fragmentation v1) is
-  frozen for spec 1.x.
+  versioning; the Rook profile (empty AAD, CHANNEL, fragmentation v1) is
+  frozen for spec 1.x. Section 14's frames (ADDRESSED, ROUTE, native DROP)
+  are negotiated or harmless to peers that ignore them.
 
 ## 11. Conformance
 
@@ -816,9 +853,15 @@ harness. Both example ports pass every vector and the full live run.
   they cover. Don't expose a relay to untrusted networks without that.
 - **Header not authenticated.** With empty AAD the `channel_type`,
   `channel_id` and `band_id` bytes are not covered by the tag. Changing
-  them only misroutes or drops frames (receivers use CHANNEL 0 only, and
-  the key is per band), but implementations MUST NOT give those bytes any
-  other meaning.
+  them only misroutes or drops frames (`channel_type` 0x02/0x06 and
+  `channel_id` are delivery hints for the relay, never otherwise read by a
+  receiver, and the key is per band), but
+  implementations MUST NOT give those bytes any other meaning. ROUTE and
+  native DROP frames are sealed with the spec AAD, so their header is
+  authenticated to receivers (not to the relay, which holds no key).
+- **Route ids are metadata.** A routing relay learns which peer a frame is
+  addressed to, by a 16-bit id derived from a worker id or client name;
+  anyone who can forge a header could already drop or redirect frames.
 - **Nonce reuse is catastrophic.** Reusing a sequence under the band key
   leaks plaintext and allows forgery; follow 2.3 exactly.
 - **Facts can lie.** They only choose where plugins run and which workers a
@@ -857,3 +900,135 @@ The reply:
 A reply larger than 1003 bytes (`frames.json`, case "large reply") becomes
 three datagrams with one fragment id, chunk indexes 0..2 of total 3, and
 three consecutive sequences.
+
+## 14. Negotiated extensions
+
+Optional extensions, each used only toward a peer that advertised it, so a
+section-1.0 implementation that ignores this section stays conformant and
+interoperable. Nodes advertise them in the announce's `features` list (the
+hub node advertises `route` too); a caller treats a node without `features`
+as speaking none of them.
+
+| Feature | The node… |
+|---|---|
+| `route` | declares `route_id_for(worker_id)` (14.1) and honours a request's `rr` |
+| `drop` | serves a large reply over Drop when the request accepts `drop` (14.2) |
+| `z` | accepts compressed requests and compresses replies on `accept: z` (14.3) |
+| `drop-native` | accepts Drop as native DROP frames (14.4) |
+
+Request keys: `rr` (integer 1-65535, the caller's own route id) and
+`accept` (list of strings: `"z"`, `"drop"`, `"drop-native"`). Unknown
+tokens and malformed values MUST be ignored (treated as absent). Callers
+MUST NOT add these keys to a request toward a node without `features` if
+they alone would make the request more than one fragment (the ESP32 and
+RP2040 firmware reassemble nothing).
+
+### 14.1 Addressed routing
+
+`route_id_for(name)` = the first nonzero big-endian 16-bit word of
+`SHA-256("telesthete-route-v1:" ‖ utf8(name))` (1 if none); vectors in
+telesthete `tests/vectors.json` `route` (e.g. `rook` → 6393). A peer
+declares its id with a ROUTE frame: `channel_type = 0x05`, `channel_id` =
+the id, empty payload sealed under the band key with AAD
+`[0x05, id_hi, id_lo]` (43 bytes), sequence from the shared source (2.3).
+
+- Workers declare `route_id_for(worker_id)`; a band client declares
+  `route_id_for` of its hub node id when it serves one, else of a random
+  per-process name. Declare on start, after every WS (re)connect, and at
+  least once per keepalive interval while connected, even when other
+  traffic flows: the relay keeps the route as soft state, losing it on
+  eviction or restart, and only a declaration restores it.
+- Addressed messages are sent as ADDRESSED frames: every chunk (2.4) of
+  the message in its own frame with `channel_type = 0x06` and `channel_id`
+  = the destination's route id, sealed exactly like a CHANNEL frame (empty
+  AAD, sequence from 2.3); telesthete `route.pack_addressed(crypto, seq,
+  route_id, chunk, associated_data=b"")`. Empty AAD is what lets a
+  deployed receiver (every Rook worker and client since build 167, the
+  ESP32 firmware) open one that an old relay broadcasts to it.
+- A targeted request to a node that announced `route` is sent ADDRESSED to
+  `route_id_for(target)`, and carries `rr`. A reply to a request with `rr`
+  is sent ADDRESSED to `rr`; without `rr`, as CHANNEL on 0. Announces, open
+  calls, requests to nodes without `route` and everything else are CHANNEL
+  frames on `channel_id = 0`. Never address a node that did not announce
+  `route`: the example ports accept only `0x02`, and a routing relay
+  delivers an ADDRESSED frame to a non-declaring peer only by broadcast
+  fallback.
+- Receivers that announce `route` MUST accept ADDRESSED frames exactly like
+  CHANNEL frames. Receivers MUST drop ROUTE frames (an old relay forwards
+  them; a receiver that opens every frame with empty AAD drops them on the
+  tag check). Receivers keep matching replies by `id` and requests by
+  `target`, since 16-bit ids collide and an old relay broadcasts
+  everything.
+- A relay that routed CHANNEL frames by `channel_id` (the telesthete
+  branch before ADDRESSED existed) was never released; this profile does
+  not use nonzero CHANNEL ids.
+
+### 14.2 Large replies over Drop
+
+When a request accepts `drop` and its serialized reply exceeds the worker's
+threshold (reference: 32 KB, `ROOK_BAND_DROP_THRESHOLD`), the worker sends
+
+```json
+{"id": "…", "from": "…", "ok": true, "drop": {"id": 33012, "size": 1048576, "sha256": "…"}}
+```
+
+and serves the serialized reply (the bytes it would have sent, compressed
+per 14.3 if the request accepted `z`) as a telesthete Drop (SPEC §8) with
+that `drop_id`, sending its Drop packets ADDRESSED to `rr` when the
+request had one. The caller pulls it receiver-driven: it requests 64-chunk
+windows and re-requests missing chunks (reference: after 250 ms without
+progress), verifies the SHA-256, decodes it and uses the reply it contains
+exactly as if it had arrived inline. Drop packets ride as pass-through
+packets inside CHANNEL messages (a 27-byte Drop header, the Drop frame, 16
+zero bytes in place of a tag) unless 14.4 applies. Reference ids are
+`0x8000 | (SHA-256(id ‖ "\n" ‖ worker_id)[0:2] & 0x7FFF)`; workers keep a
+reply for 120 s or until the caller's DONE verifies.
+
+Every worker caps its replies (reference 32 MiB,
+`ROOK_BAND_MAX_REPLY_BYTES`); a bigger one becomes `ok: false` with an
+error starting `reply too large: `.
+
+### 14.3 Compression
+
+A payload of `00 72 7A` ("\0rz") followed by a zlib stream is the
+compressed form of the JSON message that stream inflates to. A worker
+compresses a reply (and a large reply's Drop bytes) only when the request
+accepts `z`, the message is at least 1 KB and compression saves at least
+10%; a caller compresses a request only toward a node that announced `z`.
+Receivers inflate right after reassembly, bounded (reference: 64 MiB). This
+is how binary attachments (base64 screenshots, camera frames, file reads)
+travel compactly: deflate recovers most of base64's 33% overhead, with no
+per-field encoding.
+
+### 14.4 Native DROP frames
+
+A pass-through Drop CHUNK (1,029-byte frame + 27 + 16 bytes) needs two
+fragments. Toward a node that announced `drop-native` (the in-band OTA push,
+or a large reply when the caller has no route), Drop packets are sent as
+ONE outer frame each: `channel_type = 0x04`, `channel_id` = the drop id,
+the Drop frame sealed under the band key with AAD `[0x04, id_hi, id_lo]`
+and a sequence from the shared source. Native frames are not addressable
+(a routing relay routes only ADDRESSED frames) and are broadcast. Receivers
+that announced `drop-native` accept both forms; everyone else drops native
+frames on the tag check.
+
+### 14.5 Hash-only announces
+
+Announces carry `caps_hash`: the first 16 hex digits of SHA-256 over the
+sorted cap names joined by `\n`. A client keeps a node's previously known
+caps when an announce omits `caps` and its `caps_hash` matches them; on a
+mismatch it keeps the old list and fetches `caps.describe` (the keys of its
+result are the cap list). Workers send full announces by default. With
+`ROOK_ANNOUNCE_CAPS_HASH=1` they omit `caps` except on the first announce,
+after a reconnect, when the caps change, and on every 10th announce.
+
+**Keep `ROOK_ANNOUNCE_CAPS_HASH` off (the default) until every client of
+the band understands `caps_hash`.** Clients that predate it — hubs up to
+and including build 426, and the Android APK through 0.4.1 — read an
+announce without `caps` as an empty cap list, so with it on they show the
+worker with no caps (and refuse or misroute calls to it) for up to 5
+minutes at a time, between full announces. Rollout: (1) upgrade every
+client of the band (every hub — dashboard, MCP bridge, migration tools,
+other bands' hubs — and the APK); (2) only then enable
+`ROOK_ANNOUNCE_CAPS_HASH=1` on workers, e.g. with a pushed config. There is
+no negotiation: a worker can't tell which clients are listening.
