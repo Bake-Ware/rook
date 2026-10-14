@@ -147,6 +147,10 @@ def build_parser() -> argparse.ArgumentParser:
                         "journal.db beside --persist-path)")
     g.add_argument("--admin-password", default=env("ROOK_MCP_AUTH_PASSWORD", ""),
                    help=argparse.SUPPRESS)
+    g.add_argument("--mcp-max-body", type=int,
+                   default=int(env("ROOK_MCP_MAX_BODY", str(16 * 1024 * 1024))),
+                   help="largest request body the MCP paths accept, in bytes; larger "
+                        "ones get 413 (ROOK_MCP_MAX_BODY, default 16 MiB; 0 = no limit)")
     g.add_argument("-v", "--verbose", action="count", default=0)
     return ap
 
@@ -258,8 +262,10 @@ class Hub:
 
         try:
             self._uninstall = install()
-        except (NotImplementedError, RuntimeError, ValueError):
-            self._uninstall = None   # no signal handlers here (e.g. not the main thread)
+        except (NotImplementedError, RuntimeError, ValueError, AttributeError):
+            # No signal handlers here: not the main thread, or Windows (no
+            # SIGUSR1/SIGUSR2, and no add_signal_handler).
+            self._uninstall = None
         settings_store = _ds.open_store()
         enrollment = EnrollmentStore()
         conflicts = seed_enrollment(enrollment, args.psks)
@@ -291,7 +297,8 @@ class Hub:
         await self.mcp.start()
         self.lifespan = Lifespan(self.mcp.app)
         await self.lifespan.start()
-        self.bridge = AsgiBridge(self.mcp.app, lifespan=self.lifespan)
+        self.bridge = AsgiBridge(self.mcp.app, lifespan=self.lifespan,
+                                 max_body=args.mcp_max_body or None)
         self._unregister = upstream.register_local(self.upstream_origins(), self.mcp.app)
 
         bridge = self.bridge
@@ -322,29 +329,67 @@ class Hub:
                      args.mcp_bind_host, args.mcp_bind_port)
 
     async def stop(self) -> None:
-        """Stop everything start() started, each part once, in reverse."""
-        if self.mcp is not None and self.mcp.ws_bridge is not None:
-            await self.mcp.ws_bridge.stop()        # /band peers: let the servers drain
-        if self.lifespan is not None:
-            await self.lifespan.stop()             # ends MCP sessions and their streams
-        if self._mcp_runner is not None:
-            await self._mcp_runner.cleanup()
-            self._mcp_runner = None
-        if self.server is not None:
-            await self.server.stop()
-        if self._unregister is not None:
-            self._unregister()
-            self._unregister = None
-        if self.mcp is not None:
-            await self.mcp.stop()
-        if self.client is not None:
-            try:
+        """Stop everything start() started, each part once, in reverse.
+
+        Order: stop accepting connections, refuse MCP requests still arriving
+        on kept-alive connections (503), end the /band peers and the MCP
+        sessions (the lifespan), then let the servers drain and clean up.
+        Each step runs even if an earlier one failed."""
+        runners = [r for r in (self._mcp_runner, getattr(self.server, "_runner", None))
+                   if r is not None]
+
+        async def stop_listening():
+            for runner in runners:
+                for site in list(runner.sites):
+                    await site.stop()     # closes the listening socket only
+
+        def refuse():
+            if self.bridge is not None:
+                self.bridge.stopping = True
+
+        async def ws_peers():
+            if self.mcp is not None and self.mcp.ws_bridge is not None:
+                await self.mcp.ws_bridge.stop()
+
+        async def mcp_runner():
+            runner, self._mcp_runner = self._mcp_runner, None
+            if runner is not None:
+                await runner.cleanup()
+
+        async def dashboard():
+            if self.server is not None:
+                await self.server.stop()
+
+        def unregister():
+            undo, self._unregister = self._unregister, None
+            if undo is not None:
+                undo()
+
+        async def mcp_service():
+            if self.mcp is not None:
+                await self.mcp.stop()
+
+        async def band_client():
+            if self.client is not None:
                 await self.client.stop()
+
+        def diagnostics():
+            undo, self._uninstall = self._uninstall, None
+            if undo is not None:
+                undo()
+
+        async def lifespan():
+            if self.lifespan is not None:
+                await self.lifespan.stop()   # ends MCP sessions and their streams
+
+        for step in (stop_listening, refuse, ws_peers, lifespan, mcp_runner, dashboard,
+                     unregister, mcp_service, band_client, diagnostics):
+            try:
+                result = step()
+                if asyncio.iscoroutine(result):
+                    await result
             except Exception:
-                log.exception("band client stop failed")
-        if self._uninstall is not None:
-            self._uninstall()
-            self._uninstall = None
+                log.exception("rook hub: stop step %s failed; continuing", step.__name__)
 
 
 async def serve(args, argv: list[str], stop: asyncio.Event | None = None) -> None:
