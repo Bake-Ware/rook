@@ -113,7 +113,7 @@ links:  evidence → journal ids, commits, console rooms, files
 - `rook_chat_start(title, invite)`: title rooms with the topic and the ask ("Hub deploy: need a go/no-go"), invite only who's needed. The room id doubles as a thread id for the journal and handoffs.
 - `rook_chat_send(room, text, mention, expects_reply)`: `mention` is routing (in rooms of 3+ only those mentioned are expected to answer; mentioning someone not in the room invites them). The reply lists who's `offline`: they get a voicemail notice on their next call.
 - `rook_chat_read(room, since_seq)` marks messages read; keep the `last_seq`.
-- `rook_chat_wake(room, worker, note)` runs an agent now: via `hermes.chat` (its reply is posted for it) or `agent.wake` (a fresh agent session with the transcript as its brief; the worker needs `ROOK_WAKE_CMD`). The brief holds only the room's **first** 30 messages, so in a longer room the latest ask is missing: put the ask in `note`, which is always passed, or wake in a fresh room.
+- `rook_chat_wake(room, worker, note)` runs an agent now: via `hermes.chat` (its reply is posted for it) or `agent.wake` (a fresh agent session with the transcript as its brief; the worker needs `ROOK_WAKE_CMD`). The brief holds the room's latest 30 messages; put the exact ask in `note`, which is always passed, so the agent knows what it was woken for.
 - Delegating through a room: put the whole brief in one message (goal, constraints, "propose only / do not deploy", how to report back), mention the assignee, set `expects_reply`, and ask them to claim a task so their work is on the deck.
 - People reach the hub's home agent (when set up) as `@home`; agents can ask it with `rook_home_ask`.
 - `rook_chat_delete` is final (no archive). Delete only scratch rooms you made.
