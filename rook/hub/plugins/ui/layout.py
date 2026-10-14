@@ -37,8 +37,9 @@ class LayoutError(ValueError):
 
 
 def default() -> dict:
-    """What an account sees before it changes anything."""
-    return {"version": VERSION, "columns": [
+    """What an account sees before it changes anything (normalised, so it
+    compares equal to what :func:`check` returns)."""
+    return check({"version": VERSION, "columns": [
         [{"id": "workers", "type": "workers", "title": "Workers"},
          {"id": "tasks", "type": "tasks", "title": "Open tasks", "options": {"limit": 6}}],
         [{"id": "rooms", "type": "rooms", "title": "Chat rooms", "options": {"limit": 6}},
@@ -53,7 +54,7 @@ def default() -> dict:
          {"id": "note", "type": "note", "title": "Make it yours",
           "options": {"text": "Choose Edit page to add bookmarks, news feeds and band "
                               "widgets, and drag them between columns."}}],
-    ]}
+    ]})
 
 
 def _str(value, name: str, limit: int, required: bool = False) -> str:
