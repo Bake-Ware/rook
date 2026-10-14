@@ -39,7 +39,7 @@
 </style>
 </head>
 <body>
-<header>Rook · Voice <a href="/admin" style="margin-left:20px;color:#7aa2f7;letter-spacing:normal;text-transform:none">Admin</a></header>
+<header>Rook · Voice <a href="admin" style="margin-left:20px;color:#7aa2f7;letter-spacing:normal;text-transform:none">Admin</a></header>
 <div class="stage">
   <div id="orb">idle</div>
   <div class="status" id="status">Click connect to start talking</div>
@@ -68,6 +68,9 @@
 </div>
 <div id="log"></div>
 <script>
+// Served at / by the standalone voice server and at /voice/ by a hub (rook hub serve):
+// every URL is relative to where this page was loaded from.
+const BASE=(location.pathname||'/').replace(/\/[^\/]*$/,'');
 const orb=document.getElementById('orb'), statusEl=document.getElementById('status'),
       btn=document.getElementById('btn'), logEl=document.getElementById('log');
 let ws, inputCtx, outputCtx, workletNode, micStream, running=false;
@@ -134,7 +137,7 @@ async function connect(){
   const want=wantedMode();
   if(!modeCatalog[want]){ refuseMode('Mode "'+want+'" is not available on this server. Not connecting; pick another mode.'); return; }
   modeRefused=false; statusEl.style.color='';
-  const _tok=new URLSearchParams(location.search).get('token')||localStorage.getItem('voice_token')||''; if(_tok) localStorage.setItem('voice_token',_tok); ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws'+(_tok?'?token='+encodeURIComponent(_tok):''));
+  const _tok=new URLSearchParams(location.search).get('token')||localStorage.getItem('voice_token')||''; if(_tok) localStorage.setItem('voice_token',_tok); ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+BASE+'/ws'+(_tok?'?token='+encodeURIComponent(_tok):''));
   ws.binaryType='arraybuffer';
   ws.onopen=async()=>{
     // Assistant keeps the original conversation; other modes each get their own history.
@@ -203,7 +206,7 @@ function teardown(){ running=false; btn.textContent='Connect'; btn.classList.rem
 const LANG={a:"US",b:"UK",e:"ES",f:"FR",h:"HI",i:"IT",j:"JP",p:"BR",z:"ZH"};
 function vlabel(v){ const nm=v.slice(3); const lang=LANG[v[0]]||v[0].toUpperCase(); const sx=v[1]==="f"?"♀":v[1]==="m"?"♂":""; return nm.charAt(0).toUpperCase()+nm.slice(1)+" · "+lang+" "+sx; }
 // Ids are bare names ("af_heart", "sojourn"); the catalog gives each one's engine. Some servers sent "engine:name".
-async function loadVoices(){ try{ const r=await fetch("/voices"); const d=await r.json(); const sel=document.getElementById("voiceSel"); sel.innerHTML="";
+async function loadVoices(){ try{ const r=await fetch(BASE+"/voices"); const d=await r.json(); const sel=document.getElementById("voiceSel"); sel.innerHTML="";
   const order=["chatterbox","a","b","e","f","i","p","h","j","z"]; const GN={chatterbox:"Chatterbox (expressive)",a:"English (US)",b:"English (UK)",e:"Spanish",f:"French",i:"Italian",p:"Portuguese",h:"Hindi",j:"Japanese",z:"Chinese"};
   const groups={}, labels={}, engines={}; for(const e of (d.catalog||[])){ labels[e.id]=e.label; engines[e.id]=e.engine; }
   for(const v of d.voices){ const i=v.indexOf(":"), eng=engines[v]||(i<0?"kokoro":v.slice(0,i)), nm=i<0?v:v.slice(i+1); const g=eng==="kokoro"?nm[0]:eng; (groups[g]=groups[g]||[]).push([v,eng==="kokoro"?vlabel(nm):(labels[v]||nm)]); }
@@ -229,7 +232,7 @@ function sayChunks(text){
 }
 async function sayFetch(text, voice, token){
   const headers={'Content-Type':'application/json'}; if(token) headers.Authorization='Bearer '+token;
-  const r=await fetch('/api/voice',{method:'POST',headers,
+  const r=await fetch(BASE+'/api/voice',{method:'POST',headers,
                                     body:JSON.stringify({text,voice})});
   if(r.status===401){ sayKeyRow.hidden=false; sayKey.focus(); throw new Error(token?'that voice key was not accepted':'this server needs a voice key'); }
   if(!r.ok){ let msg=r.status+''; try{ msg=(await r.json()).detail||msg; }catch(e){} throw new Error(msg); }
@@ -277,7 +280,7 @@ function showMode(){ const m=currentMode(); modeSel.value=m; const d=modeCatalog
 // Same-mode instruction edits apply live; a mode change reconnects (see modeSel.onchange).
 function sendMode(){ const m=currentMode(); if(ws&&ws.readyState===1&&m===requestedMode) ws.send(JSON.stringify({type:'mode',mode:m,prompt:lsGet('voice_mode_prompt_'+m)||''})); }
 function saveModePrompt(){ const m=currentMode(), t=modePrompt.value.trim().slice(0,2000); lsSet('voice_mode_prompt_'+m,t===modeCatalog[m].prompt?'':t); }
-async function loadModes(){ try{ const d=await (await fetch('/modes')).json(); if(!Array.isArray(d.modes)||!d.modes.length) throw 0; modeCatalog={}; modeSel.innerHTML='';
+async function loadModes(){ try{ const d=await (await fetch(BASE+'/modes')).json(); if(!Array.isArray(d.modes)||!d.modes.length) throw 0; modeCatalog={}; modeSel.innerHTML='';
   for(const m of d.modes){ modeCatalog[m.id]=m; const o=document.createElement('option'); o.value=m.id; o.textContent=m.label; modeSel.appendChild(o); }
   if(d.max_prompt) modePrompt.maxLength=d.max_prompt; }catch(e){} showMode(); }
 // Each mode has its own conversation: switching reconnects so no mode inherits another's history.
