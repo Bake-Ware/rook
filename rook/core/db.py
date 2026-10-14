@@ -252,7 +252,11 @@ _IN_PLACE_ERRNOS = {errno.EBUSY, errno.EXDEV}
 
 def _write_in_place(p: Path, text: str, mode: int | None, encoding: str,
                     owner: tuple[int, int] | None = None) -> None:
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0)
+    # O_NOFOLLOW: this is only reached for a path that cannot be swapped (a
+    # bind-mounted file), never a symlink; one swapped in by whoever owns the
+    # folder must not be followed (to a root-owned file, say).
+    flags = (os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0)
+             | getattr(os, "O_NOFOLLOW", 0))
     fd = os.open(str(p), flags, mode if mode is not None else 0o600)
     with os.fdopen(fd, "wb") as f:
         f.write(text.encode(encoding))

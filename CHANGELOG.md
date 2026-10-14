@@ -114,7 +114,9 @@ Preparation for public use.
   settings file byte for byte; settings files keep their owner and are
   re-read just before they are replaced (mode and owner are set on the temp
   file's descriptor, never by path after the rename; `atomic_write_text`
-  does the same for every caller); the outbox is capped (500) and stale
+  does the same for every caller, and its in-place fallback does not follow
+  symlinks); a worker running as root refuses a settings file reached
+  through a symlink to another user's file; the outbox is capped (500) and stale
   events (10 min) dropped; hook input up to 8 MiB; pushes record who pushed
   and capability actions run as `system:ccmod:<rule>`; the Claude Code page
   uses the theme colours.

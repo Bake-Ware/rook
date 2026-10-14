@@ -38,6 +38,7 @@ import os
 import pkgutil
 import re
 import shutil
+import stat
 import sys
 import time
 import uuid
@@ -72,6 +73,46 @@ def base_dir() -> Path:
 
 def _sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _is_root() -> bool:
+    return hasattr(os, "geteuid") and os.geteuid() == 0
+
+
+def _lstat_uid(path) -> int:
+    return os.lstat(path).st_uid
+
+
+def _stat_uid(path) -> int:
+    return os.stat(path).st_uid
+
+
+def foreign_link(path: Path) -> str | None:
+    """Why a worker running as root must not write ``path``: it reaches,
+    through a symlink (the file, or a folder above it), a file owned by
+    someone other than the owner of the link and of the folder it sits in.
+    User U could otherwise point their settings.json (or their ``.claude``
+    folder) at a root-owned file and have a root worker rewrite it. ``None``:
+    safe, or not root (a worker writes only what its own user can)."""
+    if not _is_root():
+        return None
+    nominal = Path(os.path.abspath(path))
+    real = Path(os.path.realpath(path))
+    if real == nominal:
+        return None
+    try:
+        owners = {_lstat_uid(nominal.parent)}
+        try:
+            owners.add(_lstat_uid(nominal))
+        except FileNotFoundError:
+            pass
+        target_uid = _stat_uid(real if real.exists() else real.parent)
+    except OSError as e:
+        return f"{path} goes through a symlink that cannot be checked ({e}); not written"
+    if owners != {target_uid}:
+        return (f"{path} is a symlink to {real}, which belongs to another user (uid {target_uid}); "
+                "a worker running as root does not write through it")
+    return None
 
 
 def _owner(before) -> tuple[int, int] | None:
@@ -423,7 +464,11 @@ class ClaudeCodeRules(Plugin):
         Rook out of a file nobody changed since Rook last wrote it gives back
         the exact bytes it had before Rook first went in (the merge rewrites
         the file as JSON, so a hand-formatted file would otherwise come back
-        reformatted)."""
+        reformatted). A file a root worker must not write through a symlink
+        (:func:`foreign_link`) is refused like a file that is not JSON."""
+        refused = foreign_link(path)
+        if refused:
+            raise cs.SettingsError(refused)
         p = cs.plan(path, want[0], python, script, want[1],
                     entry.get("created") if entry else None)
         if p["action"] == "remove" and entry.get("sha") and _sha(p["old"]) == entry["sha"]:
@@ -527,6 +572,9 @@ class ClaudeCodeRules(Plugin):
             # Claude Code (a /model or /permissions change) may have written the
             # file since it was read: plan again from what is there now.
             try:
+                refused = foreign_link(path)   # again: the link may have changed since
+                if refused:
+                    raise cs.SettingsError(refused)
                 now = real.read_bytes().decode("utf-8") if real.exists() else ""
                 if now != p["old"]:
                     p = self._plan(path, want, entry, python, script)
@@ -540,6 +588,13 @@ class ClaudeCodeRules(Plugin):
                 before = os.lstat(real) if p["exists"] else os.lstat(real.parent)
             except OSError:
                 before = None
+            if before is not None and stat.S_ISLNK(before.st_mode):
+                # ``real`` was resolved a moment ago: a symlink there now was
+                # swapped in since. Its own mode (0777) and owner are not the
+                # file's; refuse it like any symlink that cannot be trusted.
+                row.update(action="error", error=f"{real} turned into a symlink while it was being "
+                                                 "updated; not written")
+                continue
             if p["exists"]:
                 row["backup"] = self._backup(path)
             if p["action"] == "remove" and p.get("empty") and entry.get("file_created"):

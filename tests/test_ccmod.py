@@ -418,6 +418,107 @@ async def test_settings_keep_their_owner_and_a_swapped_symlink_is_not_chowned(bo
     assert victim.read_text() == "root:x:0:0\n"
 
 
+def _theirs(monkeypatch, *paths, uid=4242):
+    """Make ``paths`` (and what is inside them) look owned by another user."""
+    real = wp._stat_uid
+    roots = [os.path.realpath(x) for x in paths]
+    monkeypatch.setattr(wp, "_stat_uid", lambda q: uid if any(
+        os.path.realpath(q) == r or os.path.realpath(q).startswith(r + os.sep) for r in roots) else real(q))
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not hasattr(os, "symlink") or os.name != "posix", reason="POSIX symlinks")
+async def test_root_worker_refuses_a_symlink_to_another_users_file(box, monkeypatch):
+    settings = box / "claude" / "settings.json"
+    victim = box / "victim.json"
+    victim.write_text('{"model": "root-only"}\n')
+    settings.symlink_to(victim)
+    _theirs(monkeypatch, victim)
+    monkeypatch.setattr(wp, "_is_root", lambda: True)
+    plugin = wp.ClaudeCodeRules()
+    res = await plugin.apply(config())
+    row = res["installations"][0]
+    assert row["action"] == "error" and "another user" in row["error"]
+    assert victim.read_text() == '{"model": "root-only"}\n' and settings.is_symlink()
+    gone = await plugin.remove()
+    assert gone["installations"][0]["action"] == "error"
+    assert victim.read_text() == '{"model": "root-only"}\n'
+    # A link to the same user's own file (dotfiles) is fine, as before.
+    monkeypatch.setattr(wp, "_stat_uid", lambda q: os.stat(q).st_uid)
+    assert (await plugin.apply(config()))["installations"][0]["action"] == "update"
+    assert "hooks" in json.loads(victim.read_text())
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not hasattr(os, "symlink") or os.name != "posix", reason="POSIX symlinks")
+async def test_root_worker_refuses_a_claude_folder_linked_to_another_user(box, monkeypatch):
+    theirs = box / "theirs"
+    theirs.mkdir()
+    (theirs / "settings.json").write_text("{}\n")
+    (box / "linked").symlink_to(theirs, target_is_directory=True)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(box / "linked"))
+    _theirs(monkeypatch, theirs)
+    monkeypatch.setattr(wp, "_is_root", lambda: True)
+    res = await wp.ClaudeCodeRules().apply(config())
+    assert res["installations"][0]["action"] == "error"
+    assert (theirs / "settings.json").read_text() == "{}\n"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not hasattr(os, "symlink") or os.name != "posix", reason="POSIX symlinks")
+async def test_non_root_worker_still_writes_through_symlinks(box, monkeypatch):
+    settings = box / "claude" / "settings.json"
+    target = box / "dotfiles.json"
+    target.write_text("{}\n")
+    settings.symlink_to(target)
+    _theirs(monkeypatch, target)
+    monkeypatch.setattr(wp, "_is_root", lambda: False)
+    assert wp.foreign_link(settings) is None
+    res = await wp.ClaudeCodeRules().apply(config())
+    assert res["installations"][0]["action"] == "update" and settings.is_symlink()
+    assert "hooks" in json.loads(target.read_text())
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not hasattr(os, "symlink") or os.name != "posix", reason="POSIX symlinks")
+async def test_a_symlink_swapped_in_before_the_write_is_refused(box, monkeypatch):
+    # Between resolving settings.json and reading its mode and owner, it is
+    # swapped for a symlink: its 0777 and its owner must not be copied, and
+    # nothing is written through it.
+    settings = box / "claude" / "settings.json"
+    settings.write_text("{}\n")
+    os.chmod(settings, 0o600)
+    victim = box / "victim.json"
+    victim.write_text('{"model": "x"}\n')
+    os.chmod(victim, 0o600)
+    calls = []
+
+    def check(path):
+        calls.append(path)
+        if len(calls) == 2:              # the check just before the write
+            os.unlink(settings)
+            os.symlink(victim, settings)
+        return None
+
+    monkeypatch.setattr(wp, "foreign_link", check)
+    res = await wp.ClaudeCodeRules().apply(config())
+    row = res["installations"][0]
+    assert row["action"] == "error" and "turned into a symlink" in row["error"]
+    assert victim.read_text() == '{"model": "x"}\n' and victim.stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.skipif(not hasattr(os, "O_NOFOLLOW"), reason="needs O_NOFOLLOW")
+def test_in_place_fallback_does_not_follow_a_symlink(tmp_path):
+    from rook.core import db
+    victim = tmp_path / "victim"
+    victim.write_text("root:x:0:0\n")
+    link = tmp_path / "settings.json"
+    link.symlink_to(victim)
+    with pytest.raises(OSError):
+        db._write_in_place(link, "{}\n", 0o600, "utf-8")
+    assert victim.read_text() == "root:x:0:0\n"
+
+
 @pytest.mark.asyncio
 async def test_new_settings_file_goes_to_the_folders_owner(box, monkeypatch):
     calls = []

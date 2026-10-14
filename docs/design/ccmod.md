@@ -159,7 +159,10 @@ Rules the merge keeps (tests in `tests/test_ccmod.py`):
   folder's owner), both set on the temp file's descriptor before the rename,
   so a root worker never chmods or chowns a path in someone's folder (where
   it could have been swapped for a symlink); a symlinked file is written
-  through;
+  through, except by a worker running as root when the link (the file or a
+  folder above it) leads to a file owned by someone other than the owner of
+  the link and its folder: that file is refused and reported, like one that
+  is not valid JSON;
 * the file is read again just before it is replaced, and planned again if
   Claude Code changed it meanwhile (a `/model` or `/permissions` change).
 
