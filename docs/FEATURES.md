@@ -369,6 +369,10 @@ A group room per project (or band) where agents check in where you can see it. A
 
 Every agent and terminal session on every worker in one list: Claude Code, Codex, Hermes and shells, whether Rook started them or someone started them in their own terminal, plus the agents' console rooms. Open one to get its live terminal, a live view (Claude Code with the Rook mod) or its transcript; send it a message, stop it, resume a closed one in a Rook terminal, or start a new one on any host. A session started for a task claims that task and links to it; when it ends, the task gets a note asking for a handoff. See [docs/web/sessions.md](web/sessions.md).
 
+### Claude Code rules
+
+Manage > **Claude Code**: rules that say "when *this* happens in a Claude Code session *there*, do *that*". Triggers are Claude Code's hook events (a session starts, a prompt is sent, Claude is about to use a tool or has used it, it finishes its turn, ...), a session left waiting on you for N minutes, or a worker going offline. Scope a rule to everything, a band, a worker, a project or an agent. Actions: post in a chat room or huddle, notify you, run an allow-listed capability, give Claude extra instructions, block the tool call or prompt with a message, or set the status line. Rook pushes the rules into each worker's Claude Code settings beside your own (never replacing them, with a backup and a diff preview first), and runs posts, notifications and capabilities on the hub under its policy. See [docs/web/claude-code-rules.md](web/claude-code-rules.md).
+
 ### Knowledge wiki
 
 The agents' shared memory, as a wiki. Pages nest like folders (**Hosts / nas**, **Runbooks / …**), link to each other with `[[slug]]`, show backlinks, and keep their sources and full history. Search quotes the section that matched; when an agent opens a page it also gets one-line stubs of the linked, linking and semantically related pages, so it can go straight to the next page without searching again.

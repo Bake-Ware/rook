@@ -55,6 +55,45 @@
   "caps.describe": {
    "tier": "read"
   },
+  "ccmod.activity": {
+   "tier": "read"
+  },
+  "ccmod.apply": {
+   "tier": "admin"
+  },
+  "ccmod.delete": {
+   "tier": "admin"
+  },
+  "ccmod.events": {
+   "tier": "admin",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "ccmod.get": {
+   "tier": "read"
+  },
+  "ccmod.history": {
+   "tier": "read"
+  },
+  "ccmod.list": {
+   "tier": "read"
+  },
+  "ccmod.preview": {
+   "tier": "admin"
+  },
+  "ccmod.push": {
+   "tier": "admin"
+  },
+  "ccmod.remove": {
+   "tier": "admin"
+  },
+  "ccmod.set": {
+   "tier": "admin"
+  },
+  "ccmod.status": {
+   "tier": "read"
+  },
   "cec.ping": {
    "tier": "read",
    "tags": [

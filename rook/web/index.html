@@ -348,6 +348,7 @@
       <a id="tab-install" href="#install" onclick="showView('install');return false">Install a worker</a>
       <a id="tab-settings" href="#settings" onclick="showView('settings');return false">Settings</a>
       <a id="tab-plugins" href="#plugins" onclick="showView('plugins');return false">Plugins</a>
+      <a id="tab-ccmod" href="#ccmod" onclick="showView('ccmod');return false">Claude Code</a>
       <a id="tab-account" href="#account" onclick="showView('account');return false">Account & access</a>
       <a id="tab-tokens" href="#tokens" onclick="showView('tokens');return false">API tokens</a>
       <a id="tab-guidance" href="#guidance" onclick="showView('guidance');return false">Agent instructions</a>
@@ -439,6 +440,7 @@
     <div id="view-memory" hidden></div>
     <div id="view-settings" hidden></div>
     <div id="view-plugins" hidden></div>
+    <div id="view-ccmod" hidden></div>
     <div id="view-account" hidden></div>
     <div id="view-tokens" hidden></div>
     <div id="view-bands" hidden><p class="empty">Loading bands…</p></div>
@@ -1117,6 +1119,7 @@ const viewInfo={
  memory:['Memory','What the home agent remembers about people, your home, past conversations and how to do things.'],
  settings:['Settings','Hub, band, worker, plugin and personal settings, with where each value comes from.'],
  plugins:['Plugins','What Rook can do on the hub and on each worker: switch plugins live, set defaults for new workers.'],
+ ccmod:['Claude Code','Rules for Claude Code on your workers: when something happens in a session, do something.'],
  work:['Work','Projects and tasks on a board, a list and a timeline, and the huddle where agents check in with you.'],
  sessions:['Sessions','Start, watch, steer and resume agent and terminal sessions on every worker.'],
  install:['Install a worker','Connect another machine to your workspace.'],
@@ -1189,6 +1192,12 @@ async function ensurePlugins(){
  if(!pluginsLoading)pluginsLoading=import('/account/plugins/assets/plugins.js').then(m=>m.mountPlugins($('#view-plugins'))).then(ui=>pluginsUI=ui).finally(()=>{pluginsLoading=null;});
  return pluginsLoading;
 }
+let ccmodUI=null, ccmodLoading=null;
+async function ensureCcmod(){
+ if(ccmodUI)return ccmodUI;
+ if(!ccmodLoading)ccmodLoading=import('/account/ccmod/assets/ccmod.js').then(m=>m.mountCcmod($('#view-ccmod'))).then(ui=>ccmodUI=ui).finally(()=>{ccmodLoading=null;});
+ return ccmodLoading;
+}
 function settingsQuery(){const [view,query]=location.hash.slice(1).split('?');return view==='settings'?(query||''):'';}
 async function ensureGuidance(){
  if(guidanceUI)return guidanceUI;
@@ -1259,6 +1268,7 @@ function showView(v,updateHistory=true){
  if(activeView==='voice')voiceUI?.deactivate();
  if(activeView==='memory')memoryUI?.deactivate();
  if(activeView==='plugins')pluginsUI?.deactivate();
+ if(activeView==='ccmod')ccmodUI?.deactivate();
  if(activeView==='overview')overviewUI?.deactivate();
  if(activeView==='start')startUI?.deactivate();
  activeView=v;document.body.dataset.view=v;
@@ -1270,6 +1280,7 @@ function showView(v,updateHistory=true){
  document.title=viewInfo[v][0]+' · Rook';$('#worker-controls').hidden=v!=='workers';$('#worker-stats').hidden=v!=='workers';$('#addband-form').hidden=true;
  if(v==='chat'){startChat();}else{stopChat();}
  if(v==='settings')ensureSettingsArea().then(ui=>{if(activeView==='settings')return ui.activate(settingsQuery());}).catch(e=>{$('#view-settings').textContent=e.message;});
+ if(v==='ccmod')ensureCcmod().then(ui=>{if(activeView==='ccmod')return ui.activate();}).catch(e=>{$('#view-ccmod').textContent=e.message;});
  if(v==='plugins')ensurePlugins().then(ui=>{if(activeView==='plugins')return ui.activate();}).catch(e=>{$('#view-plugins').textContent=e.message;});
  if(v==='vault')ensureVault().then(ui=>{if(activeView==='vault')ui.activate();}).catch(e=>{$('#view-vault').textContent=e.message;});
  if(v==='voice')ensureVoice().then(ui=>{if(activeView==='voice')ui.activate();}).catch(e=>{$('#view-voice').textContent=e.message;});

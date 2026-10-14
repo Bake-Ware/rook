@@ -158,3 +158,13 @@ class UiWeb(KnowledgeWeb):
         return web.FileResponse(path, headers={'Cache-Control': 'no-cache',
                                                'Content-Type': 'application/json',
                                                'X-Content-Type-Options': 'nosniff'})
+
+
+class CcmodWeb(KnowledgeWeb):
+    """Manage > Claude Code: rules for Claude Code on the workers, their
+    pushes and previews. Operator account only, like the upstream."""
+    PATH = '/account/ccmod'
+    UPSTREAM = ('ROOK_CCMOD_ADMIN_URL', 'http://127.0.0.1:8765/ccmod/account-api')
+    ASSETS = ('ccmod.js',)
+    UNAVAILABLE = 'The Claude Code rules service is unavailable (is the MCP server running?).'
+    TIMEOUT = 90   # a push waits on every worker it writes to

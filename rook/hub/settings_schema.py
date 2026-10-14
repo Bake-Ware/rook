@@ -309,6 +309,7 @@ PLUGIN_TITLES.update({"voice": "Voice", "llm": "Model providers", "llmanifold": 
                       "decide": "Decide (decision model)", "home": "Home agent",
                       "memory": "Memory",
                       "pikvm": "PiKVM", "cec": "HDMI-CEC", "agent": "Wake (agent.wake)",
+                      "ccmod": "Claude Code rules",
                       "ui": "Dashboard (look, start page, feeds)"})
 
 

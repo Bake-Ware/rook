@@ -179,6 +179,35 @@ Manual: help, welcome, getting-started, overview-and-start-page, adding-machines
   New references: `coordination.md` (states, required fields, templates, hygiene
   findings), `examples.md` (worked calls) and `troubleshooting.md` (errors and
   fixes).
+### Claude Code rules
+Manual: claude-code-rules
+- Manage > Claude Code: hub-managed triggers and actions for Claude Code on
+  the workers (hub plugin and worker plugin `ccmod`). Triggers: Claude Code
+  hook events with tool and text filters, Idle for N minutes, worker
+  offline/online; scopes: everything, band, worker, project, agent; actions:
+  post in a room or huddle, notify, run an allow-listed capability, inject
+  instructions, block, status line. `ccmod.push` merges Rook's managed hooks
+  into each Claude Code `settings.json` next to the person's own (backup kept,
+  diff preview, clean removal); older workers are skipped. Capability actions
+  are admin-only, allow-listed (`ccmod.cap_allowlist`) and need
+  `ccmod.allow_exec` for exec-tier caps. Docs: docs/web/claude-code-rules.md,
+  docs/design/ccmod.md.
+- Claude Code rules hardening: a missing hook script (worker folder deleted)
+  no longer blocks Claude Code (the hook command ends in `|| exit 0`, and
+  the script is kept while any settings file still runs it); a hub restart
+  no longer replays queued events (the poll position is stored per worker);
+  writing, deleting and previewing rules and the worker's `ccmod.events` are
+  admin-only; the hub accepts the hook's word for `contains` on prompts and
+  notifications and for project paths; removal restores an untouched
+  settings file byte for byte; settings files keep their owner and are
+  re-read just before they are replaced (mode and owner are set on the temp
+  file's descriptor, never by path after the rename; `atomic_write_text`
+  does the same for every caller, and its in-place fallback does not follow
+  symlinks); a worker running as root refuses a settings file reached
+  through a symlink to another user's file; the outbox is capped (500) and stale
+  events (10 min) dropped; hook input up to 8 MiB; pushes record who pushed
+  and capability actions run as `system:ccmod:<rule>`; the Claude Code page
+  uses the theme colours.
 
 ### Hub merge
 - One hub process: `rook hub serve` (console script `rook-hub`) runs the
