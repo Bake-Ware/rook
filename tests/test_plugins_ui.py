@@ -106,3 +106,38 @@ def test_preset_picker_posts_the_choice(tmp_path):
     assert out["posted"] == [{"csrf": "k", "action": "apply_presets", "presets": ["remote"], "band": "b1"}]
     assert "Runs shell commands (exec)" in out["text"] and "Screen capture" in out["text"]
     assert out["applied"]["band"] == "b1"
+
+
+@pytest.mark.asyncio
+async def test_rerunning_the_setup_wizard_keeps_choices_made_elsewhere(tmp_path, monkeypatch):
+    import re
+    from aiohttp.test_utils import TestClient, TestServer
+    from rook.remote.bootstrap import CombinedServer
+    monkeypatch.setenv("ROOK_SETUP_PATH", str(tmp_path / "setup.json"))
+    monkeypatch.setenv("ROOK_ENROLLMENT_DB", str(tmp_path / "enrollment.db"))
+    monkeypatch.setenv("ROOK_CHAT_DB", str(tmp_path / "chat.db"))
+    monkeypatch.setenv("ROOK_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("ROOK_SETTINGS_DB", raising=False)
+    monkeypatch.delenv("ROOK_BAND_PSK", raising=False)
+    server = CombinedServer(bind="127.0.0.1", port=7005)
+    form = {"band_name": "home", "hub_public": "hub.example.com:443",
+            "pyz_domain": "hub.example.com", "band_psk": "piano-haste-nugget-drift-mangle",
+            "presets_shown": "1"}
+    defaults = [p["id"] for p in pp.PRESETS if p["default"]]
+    async with TestClient(TestServer(server._app)) as client:
+        first = list({**form, "csrf": server._setup_csrf}.items()) + [("preset", p) for p in defaults]
+        assert (await client.post("/setup", data=first, allow_redirects=False)).status == 302
+        # Later, on the Plugins page: Knowledge ticked, Hardware unticked.
+        store = SettingsStore()
+        band = server._enrollment.bands()[0]
+        pp.apply_presets_to_store(store, [p for p in defaults if p != "hardware"] + ["knowledge"],
+                                  band["id"], actor="human:op")
+        page = await (await client.get("/setup")).text()
+        ticked = set(re.findall(r'name="preset" value="([a-z]+)" checked', page))
+        assert "knowledge" in ticked and "hardware" not in ticked
+        before = (pp.hub_state(store), pp.worker_defaults(band["id"], store))
+        # Saving the wizard as shown reverses nothing.
+        again = list({**form, "csrf": server._setup_csrf}.items()) + [("preset", p) for p in sorted(ticked)]
+        assert (await client.post("/setup", data=again, allow_redirects=False)).status == 302
+        assert (pp.hub_state(store), pp.worker_defaults(band["id"], store)) == before
+        assert pp.hub_state(store)["knowledge"] is True
