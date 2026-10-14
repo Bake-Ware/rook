@@ -16,9 +16,11 @@ from rook.remote.bootstrap import CombinedServer
 from rook.remote.enrollment import EnrollmentStore
 
 LAN = "192.0.2.10"   # TEST-NET-1
-STEPS = ["(1/6) Python", "(2/6) venv", "(3/6) dependencies", "(4/6) bundle",
-         "(5/6) enrollment", "(6/6) service"]
-DONE = "is installed and joining the band. It will appear under Workers in the dashboard within a minute."
+# Plain words, no jargon (venv, bundle, enrollment, service) on a first run.
+STEPS = ["(1/6) Checking for Python", "(2/6) Preparing a private Python environment",
+         "(3/6) Installing the libraries", "(4/6) Downloading the worker",
+         "(5/6) Joining the band", "(6/6) Starting the worker in the background"]
+DONE = "It appears under Workers in the dashboard within a minute."
 
 
 @pytest_asyncio.fixture
@@ -69,7 +71,7 @@ async def test_windows_script_is_ascii_and_never_exits_under_iex(scripts):
         # without touching the user's session, and $ErrorActionPreference etc.
         # stay local to it.
         assert code[0] == "& {" and code[-1] == "} @args", name
-        assert code[1] == 'param([string]$ResultFile = "")'
+        assert code[1] == 'param([string]$ResultFile = "", [string]$Yes = "")'
         # The only `exit` is for a run from a FILE (the elevated relaunch or
         # automation), never reachable under `iex`.
         exits = [ln for ln in code if re.search(r"(^|[{;]\s*)exit(\s|$)", ln)]
@@ -86,7 +88,8 @@ async def test_windows_stub_waits_for_elevated_run_and_reports_it(scripts):
     assert '"-File", "`"$tmp`"", "`"$res`""' in stub
     assert "Installing the Rook worker. This takes 2-5 minutes (longer if Python must be installed)." in text
     assert stub.count("Write-Host $startMsg") == 1
-    assert 'Write-Host "[rook] Done: $($result[\'name\'])' in stub and DONE in stub
+    assert 'Write-Host "[rook] Done: $($result[\'name\']) joined $joined.' in stub and DONE in stub
+    assert "rook status" in stub
     assert "declined" in stub and "Full log: $logPath" in stub
     # Every way out of the stub returns (window stays open) and reports a code.
     assert stub.count("return") == stub.count("$global:LASTEXITCODE =") == 4
@@ -107,7 +110,9 @@ async def test_windows_elevated_run_logs_and_holds_failures_open(scripts):
     # only, and the pause only to a failure.
     child = body[body.index("if ($ResultFile) {"):body.index("if ($fromFile)")]
     assert '"status=$status"' in child and '"log=$logPath"' in child
-    assert 'if ($exitCode -ne 0) { $null = Read-Host "[rook] Press Enter to close this window" }' in child
+    assert ('if ($exitCode -ne 0 -and $interactive) { $null = Read-Host "[rook] Press Enter to '
+            'close this window" }') in child
+    assert '"band=$bandName"' in child
     assert DONE in body and "FAILED (exit code $exitCode). Full log: $logPath" in body
 
 
@@ -122,7 +127,7 @@ async def test_windows_rerun_swaps_the_bundle_after_stopping_the_worker(scripts)
              '$_.CommandLine -like "*band-worker.pyz*"',  # the running-process sweep
              "Move-Item -Path $pyzNew -Destination $pyz -Force",
              '@($pyz, "--install-cli")',
-             f"& $vpy $pyz --enroll http://{LAN}:7005 --pair-code {scripts['code']}",
+             f"& $vpy $pyz --enroll http://{LAN}:7005 --pair-code {scripts['code']} @enrollExtra",
              "Register-ScheduledTask -TaskName")
     # A failure after the stop restarts the worker that was there before.
     assert 'if ($hadWorker) {' in body
@@ -153,7 +158,7 @@ async def test_unix_script_progress_and_atomic_bundle_swap(scripts):
              'mv -f "$PYZ.download" "$PYZ"',
              '"$VPY" "$PYZ" --install-cli',
              "systemctl --user restart rook-band-worker",
-             'echo "[rook] Done: $WORKER_NAME ' + DONE)
+             'say "Done: $WORKER_NAME joined ${BAND:-the band}. ' + DONE)
     assert "trap '" in text and "FAILED (exit code $rc)" in text
 
 
@@ -171,3 +176,184 @@ async def test_rendered_scripts_parse(scripts):
         run = subprocess.run([pwsh, "-NoProfile", "-Command", check], input=scripts[name],
                              capture_output=True, text=True, timeout=120)
         assert run.returncode == 0, (name, run.stdout, run.stderr)
+
+
+# -- unattended installs: piped, --yes, cloud-init, systemd, management tools --------
+
+def _bash_function(text, name):
+    """One shell function from a rendered script, by its `name() {` line."""
+    start = text.index(f"{name}() {{")
+    end = text.index("\n}\n", start) + 3
+    return text[start:end]
+
+
+@pytest.mark.asyncio
+async def test_unix_prompts_only_with_a_terminal(scripts):
+    text = scripts["unix"]
+    # --yes / ROOK_YES and no openable /dev/tty both mean: never prompt.
+    assert "-y|--yes) ROOK_YES=1 ;;" in text and "export ROOK_YES" in text
+    assert "ROOK_INSTALLER=1" in text
+    assert 'if { true </dev/tty; } 2>/dev/null; then HAVE_TTY=1; fi' in text
+    enroll = _bash_function(text, "enroll")
+    assert '</dev/tty' in enroll and '--yes </dev/null' in enroll
+    assert 'while [ "$RC" -ne 0 ] && [ "$HAVE_TTY" = 1 ]; do' in text
+    # Every /dev/tty read sits behind HAVE_TTY.
+    for line in text.splitlines():
+        if "</dev/tty" in line and "true </dev/tty" not in line:
+            assert "HAVE_TTY" in line or "FRESH" in line, line
+    # sudo never waits for a password nobody can type.
+    assert 'SUDO="sudo -n"' in text and " sudo apt-get" not in text
+
+
+
+
+@pytest.mark.asyncio
+async def test_unix_tty_detection_runs_without_a_terminal(scripts, tmp_path):
+    text = scripts["unix"]
+    start = text.index("for arg in")
+    end = text.index("# Root needs no sudo")
+    probe = text[start:end].replace("export ROOK_YES", "ROOK_YES") + "echo $HAVE_TTY\n"
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)}
+    # A new session has no controlling terminal: cloud-init, systemd, CI.
+    for args, extra in ([], {}), (["--yes"], {}), ([], {"ROOK_YES": "1"}):
+        run = subprocess.run(["setsid", "bash", "-c", probe, "bash", *args], stdin=subprocess.DEVNULL,
+                             capture_output=True, text=True, env={**env, **extra})
+        assert run.stdout.strip() == "0", (args, extra, run.stderr)
+        assert run.stderr == ""
+
+
+@pytest.mark.asyncio
+async def test_windows_never_prompts_unattended(scripts):
+    text = scripts["win"]
+    assert "$interactive = [Environment]::UserInteractive -and -not [Console]::IsInputRedirected" in text
+    assert "$unattended = (\"$env:ROOK_YES\" -match '^(1|true|yes)$') -or ($Yes -eq \"yes\")" in text
+    # Unattended without admin rights stops with an instruction, no UAC prompt.
+    _ordered(text, "if (-not $isAdmin -and -not $interactive) {",
+             "an unattended install needs an administrator PowerShell", "-Verb RunAs")
+    # The elevated relaunch carries the choice (its environment is fresh).
+    assert 'if ($unattended) { $relaunch += "yes" }' in text
+    assert 'if (-not $interactive) { $enrollExtra += "--yes" }' in text
+    assert "while ($rc -ne 0 -and $interactive) {" in text
+    reads = [ln for ln in text.splitlines() if "Read-Host" in ln]
+    assert len(reads) == 2 and all("$interactive" in ln or "$fresh" in ln for ln in reads), reads
+    assert '$env:ROOK_INSTALLER = "1"' in text
+    assert "if ($env:ROOK_WORKER_NAME) { $workerName = $env:ROOK_WORKER_NAME }" in text
+
+
+# -- keyboard/mouse control is skipped where there is no screen --------------------
+
+def _hid_harness(text, tmp_path):
+    """setup_hid_linux with every system command stubbed to log its call."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "calls"
+    for cmd in ("apt-get", "sudo", "ydotool", "ydotoold", "modprobe", "udevadm", "usermod",
+                "tee", "loginctl"):
+        (bin_dir / cmd).write_text(f'#!/bin/sh\necho "{cmd} $*" >> "{calls}"\n')
+        (bin_dir / cmd).chmod(0o755)
+    # A server: multi-user boot target, and no user manager to talk to.
+    (bin_dir / "systemctl").write_text(
+        '#!/bin/sh\ncase "$*" in get-default) echo multi-user.target ;; *) exit 1 ;; esac\n')
+    (bin_dir / "systemctl").chmod(0o755)
+    script = ('LOG=/dev/null\nSUDO=""\nsay() { echo "[rook] $*"; }\nquietly() { "$@" >/dev/null 2>&1; }\n'
+              + _bash_function(text, "hid_headless") + _bash_function(text, "setup_hid_linux")
+              + "setup_hid_linux\n")
+    return script, {"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": str(tmp_path), "USER": "pi"}, calls
+
+
+@pytest.mark.asyncio
+async def test_hid_setup_skips_a_headless_machine(scripts, tmp_path):
+    if not shutil.which("setsid") or not __import__("sys").platform.startswith("linux"):
+        pytest.skip("needs Linux")
+    script, env, calls = _hid_harness(scripts["unix"], tmp_path)
+    if any(__import__("glob").glob(p) for p in ("/tmp/.X11-unix/X*", "/run/user/*/wayland-*")):
+        pytest.skip("this test machine has a display")
+    run = subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=env)
+    assert run.returncode == 0, run.stderr
+    assert "Skipped keyboard and mouse control: this machine has no screen." in run.stdout
+    assert "ROOK_HID=1" in run.stdout
+    assert not calls.exists()            # nothing installed, no sudo
+    # ROOK_HID=1 sets it up anyway; ROOK_HID=0 skips it even with a screen.
+    run = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                         env={**env, "ROOK_HID": "1"})
+    assert "Setting up keyboard and mouse control" in run.stdout
+    assert "modprobe uinput" in calls.read_text()
+    run = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                         env={**env, "ROOK_HID": "0", "DISPLAY": ":0"})
+    assert "Skipped keyboard and mouse control (ROOK_HID=0)." in run.stdout
+
+
+@pytest.mark.asyncio
+async def test_hid_setup_runs_with_a_screen(scripts, tmp_path):
+    script, env, calls = _hid_harness(scripts["unix"], tmp_path)
+    run = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                         env={**env, "WAYLAND_DISPLAY": "wayland-0"})
+    assert run.returncode == 0, run.stderr
+    assert "Setting up keyboard and mouse control" in run.stdout
+    assert "Skipped" not in run.stdout
+
+
+# -- Windows without Python ----------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_windows_python_is_pinned_verified_and_per_user(scripts):
+    text = scripts["win"]
+    assert '$pyVersion = "3.12.10"' in text
+    assert re.search(r'"amd64" = "[0-9A-F]{64}"', text) and re.search(r'"arm64" = "[0-9A-F]{64}"', text)
+    install = text[text.index("function Install-Python {"):text.index("# Run a native command")]
+    _ordered(install, "Invoke-WebRequest", "Get-FileHash -Path $setup -Algorithm SHA256",
+             "if ($hash -ne $pyHashes[$arch]) {", "Remove-Item $setup", "Fail ", "Start-Process")
+    assert '"InstallAllUsers=0"' in install and '"PrependPath=0"' in install
+    assert "InstallAllUsers=1" not in text and "choco" not in text
+    # winget only as a fallback, and for this user only.
+    assert '"--scope", "user"' in text
+    # One clear instruction when nothing worked.
+    assert "Install Python 3.12 from https://www.python.org/downloads/windows/" in text
+    # An old Python is not good enough.
+    assert "sys.version_info >= (3, 11)" in text
+
+
+def _ps_functions(text):
+    start = text.index("function Test-Python(")
+    end = text.index("# Run a native command")
+    fail = text[text.index("function Fail("):text.index("New-Item -ItemType Directory")]
+    return text[start:end] + fail
+
+
+@pytest.mark.asyncio
+async def test_windows_python_install_refuses_a_tampered_download(scripts, tmp_path):
+    pwsh = shutil.which("pwsh")
+    if not pwsh:
+        pytest.skip("pwsh is not installed")
+    funcs = _ps_functions(scripts["win"])
+    harness = tmp_path / "harness.ps1"
+    started = tmp_path / "started.txt"
+    harness.write_text(
+        '$ErrorActionPreference = "Stop"\n'
+        f'$env:LOCALAPPDATA = "{tmp_path}"; $env:TEMP = "{tmp_path}"\n'
+        # Stubs: functions win over cmdlets of the same name.
+        'function Invoke-WebRequest { param($Uri, $OutFile, [switch]$UseBasicParsing) '
+        'Set-Content -Path $OutFile -Value "not the real installer" }\n'
+        f'function Start-Process {{ param($FilePath, [switch]$Wait, [switch]$PassThru, $ArgumentList) '
+        f'Set-Content -Path "{started}" -Value ($ArgumentList -join " "); return @{{ ExitCode = 0 }} }}\n'
+        + funcs +
+        'try { Install-Python | Out-Null; Write-Output "INSTALLED" } '
+        'catch { Write-Output ("FAILED: " + $_.Exception.Message) }\n'
+        # Now pretend the pinned hash is this file's: it runs, for this user.
+        '$real = $pyHashes["amd64"]\n'
+        'function Invoke-WebRequest { param($Uri, $OutFile, [switch]$UseBasicParsing) '
+        'Set-Content -Path $OutFile -Value "stand-in" }\n'
+        'Set-Content -Path (Join-Path $env:TEMP "probe.exe") -Value "stand-in"\n'
+        '$pyHashes["amd64"] = (Get-FileHash (Join-Path $env:TEMP "probe.exe") -Algorithm SHA256).Hash\n'
+        '$env:PROCESSOR_ARCHITECTURE = "AMD64"\n'
+        'if (Install-Python) { Write-Output "RAN" }\n')
+    run = subprocess.run([pwsh, "-NoProfile", "-File", str(harness)], capture_output=True,
+                         text=True, timeout=120)
+    out = run.stdout
+    assert "FAILED: the downloaded Python installer did not match its known SHA-256" in out, (out, run.stderr)
+    assert "RAN" in out
+    args = started.read_text()
+    assert "/quiet" in args and "InstallAllUsers=0" in args and "PrependPath=0" in args
+    assert f"TargetDir=\"{tmp_path}" in args
+    # The tampered file was deleted, unused.
+    assert not list(tmp_path.glob("rook-python-*.exe"))
