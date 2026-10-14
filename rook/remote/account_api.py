@@ -10,8 +10,6 @@ data)``; ``data`` is ``None`` on GET, which never needs CSRF.
 """
 from functools import wraps
 
-from starlette.responses import JSONResponse
-
 from .accounts import csrf_ok
 from .account_web import COOKIE, NO_STORE
 
@@ -20,6 +18,12 @@ NOT_JSON = 'Expected a JSON object.'
 
 
 def json_reply(data, status=200):
+    # Imported here, not at module level: this module sits in rook.remote,
+    # and the dashboard's environment (aiohttp) need not have Starlette,
+    # which only the MCP process that serves these APIs uses. The hub
+    # deploy preflight imports every rook.remote module with the
+    # dashboard's interpreter.
+    from starlette.responses import JSONResponse
     return JSONResponse(data, status, headers=NO_STORE)
 
 
