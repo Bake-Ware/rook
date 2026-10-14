@@ -1,0 +1,66 @@
+[package]
+name = "rook-desktop"
+version = "0.1.0"
+description = "Rook desktop companion: tray, dashboard window, quick-ask hotkey, notifications and voice"
+license = "Apache-2.0"
+edition = "2021"
+rust-version = "1.80"
+publish = false
+
+[lib]
+name = "rook_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-notification = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+url = "2"
+base64 = "0.22"
+log = "0.4"
+env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
+tokio = { version = "1", features = ["time", "process", "io-util", "sync", "macros"] }
+dirs = "6"
+# Push-to-talk and wake word: microphone capture.
+cpal = { version = "0.15", optional = true }
+# Wake word: openWakeWord's ONNX models on a pure-Rust runtime (no native
+# onnxruntime to ship or download at build time).
+tract-onnx = { version = "0.21", optional = true }
+
+[features]
+default = ["voice"]
+# Push-to-talk: record, transcribe on the voice server, ask the home agent.
+voice = ["dep:cpal"]
+# Hands-free wake word (openWakeWord pipeline). Off by default: it needs a wake
+# model the user supplies and it keeps the microphone open.
+wake-word = ["voice", "dep:tract-onnx"]
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
+
+# tract's optimizer trips one of its own debug-only consistency checks on
+# openWakeWord's melspectrogram model (release builds skip the check, and the
+# results match onnxruntime; see voice::wake tests). Building tract optimized
+# in dev also keeps the test run fast.
+[profile.dev.package.tract-core]
+debug-assertions = false
+opt-level = 2
+[profile.dev.package.tract-linalg]
+opt-level = 2
+[profile.dev.package.tract-hir]
+opt-level = 2
+[profile.dev.package.tract-onnx]
+opt-level = 2
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros", "time"] }

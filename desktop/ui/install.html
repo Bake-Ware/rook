@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Install a Rook hub</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<main class="page">
+  <header class="top">
+    <img src="rook.svg" alt="">
+    <div><h1 id="title">Install a hub</h1><p class="muted small">The hub is the home base your devices and agents connect to.</p></div>
+  </header>
+  <section class="card">
+    <p id="message"></p>
+    <div id="options" hidden>
+      <h2>Who should be able to reach it?</h2>
+      <label class="choice"><input type="radio" name="reach" value="lan" checked>
+        <span><b>My home network</b><br><span class="muted small">Other computers and phones at home can join it.</span></span></label>
+      <label class="choice"><input type="radio" name="reach" value="local">
+        <span><b>Only this computer</b><br><span class="muted small">Good for trying Rook out. You can change it later.</span></span></label>
+      <div class="actions"><button class="primary" id="go">Install the hub</button></div>
+    </div>
+    <div id="manual" hidden>
+      <p class="muted small">Command:</p>
+      <div class="cmd"><code id="manual-cmd"></code><button id="copy">Copy</button></div>
+    </div>
+    <p class="msg" id="msg"></p>
+    <pre class="log" id="log" hidden></pre>
+    <div class="done" id="done" hidden>
+      <h2>Your hub is running</h2>
+      <dl><dt>Dashboard</dt><dd id="d-url"></dd><dt>Password</dt><dd id="d-pass"></dd></dl>
+      <p class="note">Keep the password somewhere safe: it unlocks the dashboard.</p>
+      <div class="actions"><button class="primary" id="connect">Connect this app to it</button></div>
+    </div>
+    <details id="terminal" hidden>
+      <summary>Run it in a terminal instead</summary>
+      <div class="cmd"><code id="terminal-cmd"></code></div>
+    </details>
+  </section>
+</main>
+<script src="common.js"></script>
+<script src="install.js"></script>
+</body>
+</html>

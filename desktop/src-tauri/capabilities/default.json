@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "local-ui",
+  "description": "The app's own pages (settings, quick ask, hub installer). The dashboard window loads the hub's pages and gets no capability: hub content can never call into the app.",
+  "windows": ["settings", "overlay", "install"],
+  "permissions": ["core:default"]
+}
