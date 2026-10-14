@@ -60,11 +60,16 @@ fork or a mirror.
    directory (mode 700).
 3. Creates a virtualenv and installs Rook from the release wheel
    (`https://github.com/Bake-Ware/rook/releases/download/<tag>/rook-<version>-py3-none-any.whl`).
-   The wheel pins its transport, `telesthete`, as a wheel on the same release with its
-   sha256, so pip needs nothing but HTTPS. With no release yet it installs from `master`
-   with `git` instead, and says so.
+   The wheel is checked against the release's `SHA256SUMS`, and it pins its transport,
+   `telesthete`, as a wheel on the same release with its sha256, so pip needs nothing
+   but HTTPS. Only when the repository has no release at all does it install from
+   `master` with `git` instead (and says so); if a release exists but can't be
+   downloaded, it stops rather than install something else.
 4. Downloads the relay, `telesthete-hub-<arch>-linux.tar.gz` from the telesthete release
-   the Rook release names, and checks it against the `.sha256` beside it. With no
+   Rook pins (`RELAY` in `rook/_release.py`), and checks it against the sha256 Rook
+   pins for that archive (`RELAY_SHA256`), not against a checksum file published next
+   to it; only a version the pin doesn't cover falls back to the release's `.sha256`,
+   with a warning. With no
    prebuilt for this machine, it builds the relay with an existing `cargo`, or stops and
    explains how to get one (`--relay-bin` takes a binary you built).
 5. Writes `hub.env` (settings) and `secrets.env` (`ROOK_BAND_PSK`, `ROOK_WEB_PASS`,
@@ -121,8 +126,11 @@ curl -fsSL https://raw.githubusercontent.com/Bake-Ware/rook/master/scripts/insta
 
 stops and disables the units, deletes them, the virtualenv and the relay, and keeps the
 data directory: reinstalling picks up the same band keys, password and history. Add
-`--purge` to delete the data as well (and, for `--system`, the `rook` user). Workers you
-enrolled keep trying to reach the hub until you deauthorize or uninstall them.
+`--purge` to delete the data as well (and, for `--system`, the `rook` user); it asks
+first, and without a terminal it needs `--yes`. It only deletes a directory that holds
+the hub's `hub.env` or `secrets.env` (or is empty), never `/` or your home. `--user`
+uninstalls never use `sudo`. Workers you enrolled keep trying to reach the hub until
+you deauthorize or uninstall them.
 
 ### Without systemd (containers, CI)
 
@@ -148,6 +156,10 @@ they run as the `rook` user. CI uses this mode (`.github/workflows/installer.yml
   workers started by hand with `--hub <ip>:7474`) through the firewall, e.g.
   `sudo ufw allow 7005,8765/tcp`. Check the printed URL uses an address they can reach;
   fix it with `--public-host`.
+- **"this machine has a public address"**: with the default `--bind 0.0.0.0` on a
+  machine with a non-private IP (a VPS), the dashboard and MCP server are reachable from
+  the internet over plain HTTP. Firewall them, or use `--bind 127.0.0.1` behind an HTTPS
+  proxy as the README's "Workers anywhere" describes.
 - **Downloads fail behind a proxy**: the installer uses `curl` and `pip`, which honour
   `HTTPS_PROXY`; with `sudo`, pass it through (`sudo -E`) or run as root.
 - **No prebuilt relay** for your architecture: install Rust (`https://rustup.rs`) and a C
@@ -159,15 +171,18 @@ they run as the `rook` user. CI uses this mode (`.github/workflows/installer.yml
 
 `compose.yaml` runs `ghcr.io/bake-ware/rook:${ROOK_VERSION:-latest}` (linux/amd64 and
 linux/arm64) as three services sharing the `rook-data` volume; see the
-[README](../../README.md#b-docker) for the `.env` it needs. The image contains the
-prebuilt, checksum-verified relay from the telesthete release recorded in the image label
-`io.github.bake-ware.telesthete.relay`.
+[README](../../README.md#b-docker) for the `.env` it needs. The dashboard reaches the
+MCP server's account APIs at `http://mcp:8765` (the `ROOK_*_ADMIN_URL` variables in
+`compose.yaml`). The image contains the prebuilt relay pinned in `rook/_release.py`,
+checked against its pinned sha256, and records the version in the image label
+`io.github.bake-ware.telesthete.relay`. Base images are pinned by digest
+(`PYTHON_IMAGE`, `RUST_IMAGE` build args).
 
 Building it yourself:
 
 ```sh
 docker compose -f compose.yaml -f compose.build.yaml up -d --build
-docker build --build-arg TELESTHETE_RELAY_VERSION=v0.3.0 -t rook-hub .     # pin the relay
+docker build --build-arg TELESTHETE_RELAY_VERSION=v0.4.0 -t rook-hub .     # another relay (checked against its .sha256)
 docker build --build-arg RELAY_SOURCE=source -t rook-hub .                 # compile the relay
 ```
 
@@ -186,17 +201,28 @@ A release is a `vX.Y.Z` tag; `.github/workflows/release.yml` does the rest:
   so worker bundles built by a hub installed from a wheel carry the release's build
   number and update like bundles built from a clone.
 
-The workflow builds the sdist and wheel (plus the pinned telesthete wheel), publishes
-them with `SHA256SUMS` as a GitHub Release, pushes the multi-arch image to
-`ghcr.io/bake-ware/rook` (`:latest` only for final releases), and runs the installer
-against the published release. The relay it ships is the latest telesthete release unless
-the repository variable `TELESTHETE_RELAY_VERSION` pins one. Cut the telesthete release
-first when a Rook release needs a new relay.
+The workflow:
+
+1. verifies the pinned relay release (telesthete's build provenance on every archive,
+   `gh attestation verify`) and records or checks its archives' sha256 in
+   `rook/_release.py`;
+2. builds the sdist and wheel (plus the pinned telesthete wheel) and publishes them with
+   `SHA256SUMS` as a GitHub **prerelease**, with build provenance attestations;
+3. pushes `ghcr.io/bake-ware/rook:<version>` for amd64 and arm64 (attested), and runs
+   the installer against the published release;
+4. only when both passed, and only for a final version, marks the release latest (what
+   the installer and `releases/latest` resolve) and tags the image `:latest`.
+
+The relay is pinned, not "latest": to move to a new telesthete release, cut that first,
+then `python tools/release_prep.py --pin-relay vX.Y.Z` (records `RELAY`,
+`RELAY_SHA256` and the Dockerfile default) and commit. Verify any download with
+`gh attestation verify <file> -R Bake-Ware/rook`.
 
 ```sh
 git tag -a v0.2.0 -m "Rook 0.2.0" && git push origin v0.2.0
 ```
 
-GitHub creates the `ghcr.io/bake-ware/rook` package private on the first push: make it
-public once (the package's settings page on GitHub) so `docker compose pull` works without
-a login.
+**After the first release:** GitHub creates the `ghcr.io/bake-ware/rook` package
+private on its first push. Make it public once (github.com/orgs/Bake-Ware/packages →
+rook → Package settings → Change visibility) so `docker compose pull` works without a
+login.

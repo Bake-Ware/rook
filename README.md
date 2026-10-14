@@ -90,7 +90,9 @@ This runs `ghcr.io/bake-ware/rook` (amd64 and arm64; `ROOK_VERSION=0.2.0` in `.e
 release) as three containers: the dashboard on 7005, the MCP server on 8765 and the relay on
 7474/udp, with state in the `rook-data` volume. From a clone, build the image yourself with
 `docker compose -f compose.yaml -f compose.build.yaml up -d --build`. (The image is
-published by the release workflow; before the first release, build it from a clone.)
+published by the release workflow; before the first release, build it from a clone.
+Maintainers: GitHub creates the GHCR package private on its first push; make it public
+once in its package settings, or `docker compose pull` needs a login.)
 
 ### C. From source
 

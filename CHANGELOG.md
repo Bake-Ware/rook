@@ -52,6 +52,17 @@ Preparation for public use.
 - CI: pytest on Python 3.11 and 3.12, generated-file checks, `node --check`,
   shellcheck, and an installer end-to-end run. Voice-service tests skip when
   that service's packages are missing instead of failing.
+- The relay is pinned (`RELAY`, and each archive's sha256 in `RELAY_SHA256`,
+  in `rook/_release.py`); the installer, `scripts/fetch-relay.py` and the image
+  verify downloads against that pin, and the installer checks the Rook wheel
+  against the release's `SHA256SUMS`. Releases publish as prereleases and are
+  marked latest only after the image and an install test pass; artifacts and
+  images carry build provenance attestations. Base images are pinned by digest.
+- Installer: `--uninstall --purge` asks first (or needs `--yes`) and refuses a
+  directory that isn't a hub data directory; `--user` never uses sudo; it never
+  signals a pid that isn't its own service; it only falls back to building from
+  git when there is no release at all; it warns when the hub would listen on a
+  public address.
 
 ### Protocol features
 - Addressed routing (telesthete SPEC §10.1, needs telesthete 0.3.0): workers
