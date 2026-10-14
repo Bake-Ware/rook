@@ -354,6 +354,7 @@
       <a id="tab-guidance" href="#guidance" onclick="showView('guidance');return false">Agent instructions</a>
       <a id="tab-vault" href="#vault" onclick="showView('vault');return false">Secrets</a>
       <a id="tab-home" href="#home" onclick="showView('home');return false">Home agent</a>
+      <a id="tab-memory" href="#memory" onclick="showView('memory');return false">Memory</a>
     </nav>
     <div class="sidebar-footer"><button class="art-toggle" id="art-toggle" type="button" hidden>Pause artwork</button><span class="live"><span class="dot" id="dot"></span><span id="count">Connecting…</span></span><a class="signout" href="/logout">Sign out</a></div>
   </aside>
@@ -428,6 +429,7 @@
     <div id="view-guidance" hidden></div>
     <div id="view-vault" hidden></div>
     <div id="view-home" hidden></div>
+    <div id="view-memory" hidden></div>
     <div id="view-settings" hidden></div>
     <div id="view-plugins" hidden></div>
     <div id="view-ccmod" hidden></div>
@@ -1104,6 +1106,7 @@ const viewInfo={
  vault:['Secrets','Credentials your agents can use, with every access logged.'],
  guidance:['Agent instructions','What Rook tells agents when they connect, list tools, and call capabilities.'],
  home:['Home agent','The hub\'s own LLM: who it is, which model it runs, and what it has been asked.'],
+ memory:['Memory','What the home agent remembers about people, your home, past conversations and how to do things.'],
  settings:['Settings','Hub, band, worker, plugin and personal settings, with where each value comes from.'],
  plugins:['Plugins','What Rook can do on the hub and on each worker: switch plugins live, set defaults for new workers.'],
  ccmod:['Claude Code','Rules for Claude Code on your workers: when something happens in a session, do something.'],
@@ -1139,6 +1142,12 @@ async function ensureHome(){
  if(homeUI)return homeUI;
  if(!homeLoading)homeLoading=import('/account/settings/assets/home.js').then(m=>m.mountHome($('#view-home'))).then(ui=>homeUI=ui).finally(()=>{homeLoading=null;});
  return homeLoading;
+}
+let memoryUI=null, memoryLoading=null;
+async function ensureMemory(){
+ if(memoryUI)return memoryUI;
+ if(!memoryLoading)memoryLoading=import('/account/settings/assets/memory.js').then(m=>m.mountMemory($('#view-memory'))).then(ui=>memoryUI=ui).finally(()=>{memoryLoading=null;});
+ return memoryLoading;
 }
 let settingsAreaUI=null, settingsAreaLoading=null;
 async function ensureSettingsArea(){
@@ -1225,6 +1234,7 @@ function showView(v,updateHistory=true){
  if(activeView==='knowledge')knowledgeUI?.deactivate();
  if(activeView==='jobs')jobsUI?.deactivate();
  if(activeView==='home')homeUI?.deactivate();
+ if(activeView==='memory')memoryUI?.deactivate();
  if(activeView==='plugins')pluginsUI?.deactivate();
  if(activeView==='ccmod')ccmodUI?.deactivate();
  if(activeView==='overview')overviewUI?.deactivate();
@@ -1242,6 +1252,7 @@ function showView(v,updateHistory=true){
  if(v==='plugins')ensurePlugins().then(ui=>{if(activeView==='plugins')return ui.activate();}).catch(e=>{$('#view-plugins').textContent=e.message;});
  if(v==='vault')ensureVault().then(ui=>{if(activeView==='vault')ui.activate();}).catch(e=>{$('#view-vault').textContent=e.message;});
  if(v==='home')ensureHome().then(ui=>{if(activeView==='home')ui.activate();}).catch(e=>{$('#view-home').textContent=e.message;});
+ if(v==='memory')ensureMemory().then(ui=>{if(activeView==='memory')ui.activate();}).catch(e=>{$('#view-memory').textContent=e.message;});
  if(v==='guidance')ensureGuidance().then(ui=>{if(activeView==='guidance')ui.activate();}).catch(e=>{$('#view-guidance').textContent=e.message;});
  if(v==='jobs')ensureJobs().then(ui=>{if(activeView==='jobs')return ui.activate();}).catch(e=>{$('#view-jobs').textContent=e.message;});
  if(v==='knowledge')ensureKnowledge().then(ui=>{if(activeView==='knowledge')ui.activate();}).catch(e=>{$('#view-knowledge').textContent=e.message;});

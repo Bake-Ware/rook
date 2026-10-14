@@ -630,11 +630,29 @@
   "member.admin": {
    "tier": "admin"
   },
+  "memory.consolidate": {
+   "tier": "write"
+  },
+  "memory.edit": {
+   "tier": "write"
+  },
   "memory.entities": {
    "tier": "read"
   },
+  "memory.forget": {
+   "tier": "write",
+   "tags": [
+    "destructive"
+   ]
+  },
   "memory.get": {
    "tier": "read"
+  },
+  "memory.list": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
   },
   "memory.note": {
    "tier": "write"
@@ -642,7 +660,25 @@
   "memory.put": {
    "tier": "write"
   },
+  "memory.recall": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "memory.remember": {
+   "tier": "write"
+  },
   "memory.search": {
+   "tier": "read"
+  },
+  "memory.show": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "memory.status": {
    "tier": "read"
   },
   "msg.clear": {

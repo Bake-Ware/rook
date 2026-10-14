@@ -77,8 +77,9 @@ PRESETS: tuple[dict, ...] = (
      "summary": "A shared knowledge base and task deck for your agents.",
      "hub": ["knowledge", "tasks"], "worker": ["memory"], "high_risk": []},
     {"id": "home", "default": True, "tiers": ("read", "write"), "title": "Home & voice agent",
-     "summary": "The home agent, its persona in your harnesses, and speech on phones.",
-     "hub": ["home"], "worker": ["persona", "speak_android"], "high_risk": []},
+     "summary": "The home agent, what it remembers, its persona in your harnesses, and speech "
+                "on phones.",
+     "hub": ["home", "memory"], "worker": ["persona", "speak_android"], "high_risk": []},
     {"id": "alerts", "default": True, "tiers": ("read", "write", "exec"), "title": "Phone & chat alerts",
      "summary": "Notifications on phones, Telegram and Discord.",
      "hub": ["notify", "telegram", "discord"], "worker": ["notify_android"],
@@ -96,6 +97,7 @@ PRESET_IDS = tuple(p["id"] for p in PRESETS)
 #: it against :func:`enabled_setting_keys`).
 HUB_ENABLED_SETTINGS = {"discord": "discord.enabled", "home": "home.enabled", "huddle": "huddle.enabled",
                         "jobs": "job.enabled", "knowledge": "knowledge.enabled",
+                        "memory": "memory.enabled",
                         "tasks": "task.enabled", "telegram": "telegram.enabled"}
 
 #: Risk tiers of the Android app's plugins, which the hub cannot import (they
