@@ -1,0 +1,85 @@
+# Rook desktop app (desktop/): tests on Linux, unsigned bundles on Linux,
+# macOS and Windows. Signing and notarisation are not wired up yet.
+name: desktop
+
+on:
+  push:
+    branches: [master, next]
+    paths: ["desktop/**", "scripts/install-hub.sh", "android/app/src/main/assets/wakeword/**", ".github/workflows/desktop.yml"]
+  pull_request:
+    paths: ["desktop/**", "scripts/install-hub.sh", "android/app/src/main/assets/wakeword/**", ".github/workflows/desktop.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  LINUX_DEPS: >-
+    libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev
+    libssl-dev libasound2-dev pkg-config patchelf file
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: desktop/src-tauri
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $LINUX_DEPS
+      - name: Check the UI scripts parse
+        working-directory: desktop/ui
+        run: for f in *.js; do node --check "$f"; done
+      - run: cargo fmt --check
+      - run: cargo clippy --features wake-word --all-targets -- -D warnings
+      - run: cargo test --features wake-word --lib
+      - name: Builds without the optional features
+        run: cargo check --no-default-features
+
+  bundle:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04      # older glibc: the AppImage and .deb run on more distros
+            bundles: deb,appimage
+          - os: macos-14          # Apple silicon
+            bundles: app,dmg
+          - os: windows-latest
+            bundles: nsis
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $LINUX_DEPS
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build unsigned bundles
+        working-directory: desktop/src-tauri
+        run: npx --yes @tauri-apps/cli@2 build --features wake-word --bundles ${{ matrix.bundles }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rook-desktop-${{ runner.os }}
+          if-no-files-found: error
+          path: |
+            desktop/src-tauri/target/release/bundle/deb/*.deb
+            desktop/src-tauri/target/release/bundle/appimage/*.AppImage
+            desktop/src-tauri/target/release/bundle/dmg/*.dmg
+            desktop/src-tauri/target/release/bundle/nsis/*.exe
