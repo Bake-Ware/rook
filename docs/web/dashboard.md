@@ -1,9 +1,13 @@
 # Dashboard workspace
 
-The dashboard is a single document with hash-routed Workers, Bands, Chat,
-Work, Install, Account, and Tokens views. Work replaces Sessions; old Sessions links redirect there. `shell.css` owns layout;
-`theme.css` uses an olive/amber palette, square panels, DM Sans, and IBM
-Plex Mono.
+The dashboard is a single document with hash-routed views (Overview, Start
+page, Workers, Bands, Chat, Work, Knowledge, Jobs, Sessions, Install,
+Settings, Plugins, Account, Tokens and the rest); an empty hash opens the
+[Overview](overview.md), and the [Start page](start-page.md) is each
+account's own. `shell.css` owns layout; `theme.css` defines the default
+theme's colour tokens (olive/amber), with square panels, DM Sans, and IBM
+Plex Mono. Every colour is a token, so the [themes](themes.md) restyle all of
+it.
 
 Account, band, and token controls are mounted modules in `rook/web`. Account
 forms retain the existing authorization and CSRF handlers; enhanced submissions

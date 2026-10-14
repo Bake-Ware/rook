@@ -5,7 +5,7 @@ Start with the [README](../README.md): what Rook is, a quickstart and the
 architecture.
 
 - [The band](#the-band) · [Capabilities](#capabilities) · [Integrations](#integrations) · [Hardware integrations](#hardware-integrations)
-- [Control planes](#control-planes) — dashboard · `rook band` TUI · chat · MCP
+- [Control planes](#control-planes) — dashboard · `rook band` TUI · desktop app · chat · MCP
 - [Agent workspace](#agent-workspace) — chat rooms · work · knowledge wiki · jobs · secrets · agent instructions
 - [Reliability](#reliability) · [OTA self-update](#ota-self-update) · [Security](#security) · [Installers served by the hub](#installers-served-by-the-hub)
 
@@ -236,7 +236,13 @@ Drive the same band three ways — they all read from the same roster and invoke
 
 <img src="img/dashboard-workers-mobile.png" align="right" width="220" alt="Rook dashboard on mobile">
 
-A band-first control panel with a sidebar split into **Workspace** (Workers, Bands, Chat, Work, Knowledge, Jobs, Sessions) and **Manage** (Install a worker, Account & access, API tokens, Agent instructions, Secrets).
+A band-first control panel with a sidebar split into **Workspace** (Overview, Start page, Workers, Bands, Chat, Work, Knowledge, Jobs, Sessions) and **Manage** (Install a worker, Settings, Plugins, Account & access, API tokens, Agent instructions, Secrets, Home agent).
+
+After sign-in it opens on the **Overview**: what is running now, what is waiting on you (sessions idle for input, unread rooms, blocked tasks, decisions), open tasks by project and recent knowledge changes, each row linked to its task, room and session. See [docs/web/overview.md](web/overview.md).
+
+The **Start page** is each account's own page of widgets in columns: bookmark groups, RSS/Atom news feeds (fetched by the hub behind an address guard, with size and time limits), notes, and band widgets (workers, tasks, rooms, knowledge, sessions). Drag to arrange; plugins can add widget kinds. See [docs/web/start-page.md](web/start-page.md).
+
+**Themes**: Rook (dark amber, the default), Paper (light), Graphite (neutral dark) and High contrast, picked per account under Settings > My preferences. Themes are small JSON files of colour tokens that other clients can reuse; see [docs/web/themes.md](web/themes.md).
 
 The **Workers** view is a live roster: group by operating system or band, sort, filter, list or grid layout; per-device icons (computer / phone / tablet / microcontroller), battery pills for anything with a battery (⚡ while charging, amber and red as it drains), version-spread and live heartbeat visualizations, click-to-expand capabilities, run any cap from a form, and one-click **deauth/ban**. Fully responsive.
 
@@ -301,6 +307,15 @@ curl -fsSL https://<your-host>/install | bash -s -- cli
 # then just: rook
 ```
 
+### Desktop app (preview)
+
+A tray app for Windows, macOS and Linux (`desktop/`, Tauri 2): your dashboard
+in a window, a global hotkey (`Ctrl+Alt+Space`) to ask the home agent,
+notifications for new chat messages, push-to-talk and an optional wake word,
+start/stop for this computer's worker, and an "Install a hub on this
+computer" wizard on Linux. It signs in with the hub's usual login; nothing
+changes on the hub. See [desktop-app.md](desktop-app.md).
+
 ### Chat & messaging
 
 Two flavors, both worker-gated:
@@ -322,6 +337,7 @@ Expose the band — and the agent workspace — as MCP tools. Each agent connect
 | Consoles | `rook_console_open / write / read / search / signal / list / close` — named, searchable long-running terminal sessions (in a Rook terminal, on the Sessions page, where the worker has them) |
 | Chat | `rook_chat_start / send / read / rooms / delete` · `rook_presence` · `rook_chat_wake` (wake an offline agent on its worker) |
 | Work | `rook_concept` · `rook_project` · `rook_task` (claim, deck, update, link evidence) · `rook_handoff_save / get / list` |
+| Huddles | `rook_huddle` — post status (working on / blocked / needs a decision), ask the person a question (pinned until answered), read the room |
 | Knowledge | `rook_knowledge` — search, read and write wiki pages |
 | Jobs | `rook_jobs` — create, schedule and run jobs; read their runs (masked output) |
 | Credentials | `rook_secret` — list the vault, or use `{{secret:name}}` inside `rook_call` args |
@@ -340,6 +356,12 @@ Rooms shared by people and agents. **@mention** an agent to address it; if it's 
 ### Work
 
 A task board for agents: **concepts** (why) → **projects** (what outcome) → **tasks**. Agents *claim* a task before working on it, and their calls, consoles and handoffs link to it automatically. A task can only be marked done with an outcome and an evidence link; stopping unfinished work needs a handoff, so the next agent can pick it up. In Rook, **Work** always means tasks; the sessions doing the work are under **Sessions**.
+
+Views: a **Board** (drag a card between To do, In progress, Blocked, Paused and Done; the move goes through the same rules as an agent's, asking for a reason, a handoff or an outcome when they apply), a sortable **List**, a **Timeline** of tasks with start and due dates by project with dependency arrows, and a page per **project** with progress, counts, recent activity and its linked rooms and knowledge pages. One set of filters (project, owner, status, label, dates) covers all three. See [docs/web/work-views.md](web/work-views.md).
+
+### Huddles
+
+A group room per project (or band) where agents check in where you can see it. A strip above the conversation shows each agent's latest status (working on, blocked, needs you); questions an agent asks you stay pinned until you answer, and your answer goes back to that agent and wakes it if its machine can. Agents post with `rook_huddle`; huddles are ordinary chat rooms, so they also show on the Chat page. See [docs/web/work-views.md](web/work-views.md#huddles).
 
 ![Work board](img/work.png)
 
