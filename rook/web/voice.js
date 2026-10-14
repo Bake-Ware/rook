@@ -45,7 +45,8 @@ export async function mountVoice(root){
     return 'On this hub';
   }
   const hostOf=u=>{try{return new URL(u).host;}catch{return u||'';}};
-  const row=(label,...value)=>h('div',{class:'mg-log',style:'grid-template-columns:150px minmax(0,1fr);padding:9px 0'},h('span',{class:'mg-label',style:'align-self:center',text:label}),h('span',{style:'white-space:normal;overflow:visible'},...value));
+  // Label beside the value, or above it on a phone.
+  const row=(label,...value)=>h('div',{style:'display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;padding:9px 0;border-top:1px solid #20261d;font-size:13px'},h('span',{class:'mg-label',style:'flex:0 0 150px',text:label}),h('span',{style:'flex:1 1 220px;min-width:0;white-space:normal'},...value));
 
   function draw(){drawState();drawMic();drawConnect();drawPanel();}
 
@@ -63,7 +64,7 @@ export async function mountVoice(root){
     stateBox.replaceChildren(
       h('div',{class:'mg-panel-head'},h('div',{class:'mg-two'},h('h2',{text:'Voice'}),h('small',{text:'The voice plugin on worker rook'})),h('div',{class:'mg-actions'},err,check)),
       h('div',{class:'mg-pad',style:'gap:0'},...body),
-      why?h('div',{class:'mg-pad',style:'border-top:1px solid var(--line)'},needs(why,req)):null);
+      ...(why?[h('div',{class:'mg-pad',style:'border-top:1px solid var(--line)'},needs(why,req))]:[]));
   }
   // What is missing, and the one thing to do about it.
   function needs(why,req){
@@ -132,7 +133,7 @@ export async function mountVoice(root){
     const url=h('input',{value:val('remote_url')||'',placeholder:'https://gpu.example.com:8900',autocomplete:'off',spellcheck:'false',style:'font-family:var(--mono)',disabled:locked('remote_url')});
     const tls=h('input',{type:'checkbox',checked:val('remote_verify_tls')!==false,disabled:locked('remote_verify_tls')});
     const urlField=h('label',{class:'mg-field'},'Voice server address',url,h('small',{class:'mg-sub',style:'white-space:normal',text:locked('remote_url')?'Set by '+d.settings.remote_url.env+' in the hub\'s environment.':'Where the standalone voice server listens (python -m services.voice.server).'}));
-    const tlsField=h('label',{class:'mg-actions'},tls,'Check its certificate (turn off only for a self-signed one on your network)');
+    const tlsField=h('label',{class:'mg-actions',style:'font-size:13px;color:var(--dim);flex-wrap:nowrap'},tls,'Check its certificate (turn off only for a self-signed one on your network)');
     const pick=()=>root.querySelector('input[name=voice-engine]:checked')?.value||engine;
     const sync=()=>{const r=pick()==='remote';urlField.hidden=tlsField.hidden=!r;};
     for(const c of [here,remote])c.querySelector('input').addEventListener('change',sync);
