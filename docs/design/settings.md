@@ -101,6 +101,24 @@ Stores in the MCP data directory, managed through UI pages (see 1.5): `oauth.jso
 (tokens), `vault.db`, `guidance.db`, `knowledge.db`, `chat.db`, `console.db`,
 `sessions.db`, `journal.db`.
 
+## 1.2a The merged hub (`rook hub serve`, `rook-hub`, `python -m rook.hub.serve`)
+
+Entry point: `rook/hub/serve.py:main`. One process runs the dashboard and the
+MCP server. It takes every option of 1.1 (same flags and variables) and every
+option of 1.2 except rook-mcp's `--bind`, which is `--mcp-bind` here (`--bind`
+is the dashboard's listen address). Differences:
+
+| Name | Where | Default | Scope | Read by | Secret | Restart |
+|---|---|---|---|---|---|---|
+| `--port` / `ROOK_PORT` (with `--bind` / `ROOK_BIND`) | flag, env | `7005` | hub | the one aiohttp server: dashboard **and** `/mcp`, `/band`, `/tokens/account-api`, `/authorize`, `/token`, `/.well-known/*`, `/skill/*`, `/healthz` | no | proc |
+| `--mcp-bind` / `ROOK_MCP_BIND` | flag, env | `127.0.0.1:8765` | hub | a second listener serving the MCP app alone, exactly as rook-mcp did (old proxy routes, agent configs, workers on `ws://<hub>:8765/band`); `off` drops it | no | proc |
+| `--hub-host`, `--hub-port` / `ROOK_HUB_HOST`, `ROOK_HUB_PORT` | flag, env | `127.0.0.1`, `7474` | hub | the one band client (dashboard + MCP + `/band` bridge) | no | proc |
+| `--hub` / `ROOK_HUB` | flag, env | unset | hub | relay `host:port` when `ROOK_HUB_HOST`/`ROOK_HUB_PORT` are unset (an MCP unit's environment carried over) | no | proc |
+| `--allowed-hosts` / `ROOK_ALLOWED_HOSTS` | flag, env | empty | hub | as 1.2, plus the dashboard's `--domain` host, since `/mcp` is served under it | no | proc |
+| `--psk` / `ROOK_BAND_PSK` | flag, env (comma list) | empty | band | seeds the enrollment DB (every key, as rook-mcp); the first key is the dashboard's setup key | **yes** | proc |
+| `-v` | flag | info; MCP loggers at warning | hub | logging | no | proc |
+| `ROOK_*_ADMIN_URL`, `ROOK_MASK_URL` | env | `http://127.0.0.1:8765/...` | hub | still honoured; a loopback URL on port 8765 or `--mcp-bind`'s port is answered in memory (`rook/remote/upstream.py`), anything else over HTTP | no | proc |
+
 ## 1.3 Relay (`telesthete-hub`) and its installer
 
 The relay is a separate Rust binary. Rook only sets its environment in
@@ -126,6 +144,7 @@ Run from cron or a timer, once on the hub and once off-hub.
 | `ROOK_WATCHDOG_MCP_URL` | env | `http://127.0.0.1:8765` (hub); required for `remote` | hub | watchdog | no | next run |
 | `ROOK_WATCHDOG_HOST` | env | required in hub mode | hub | watchdog | no | next run |
 | `ROOK_WATCHDOG_NAME` | env | `hub` / `external` | hub | watchdog | no | next run |
+| `ROOK_WATCHDOG_SERVICES` | env (comma list) | `rook-band-mcp,rook-remote,telesthete-hub,cloudflared` | hub | watchdog unit check (a `rook hub serve` hub names its one unit) | no | next run |
 | `ROOK_WATCHDOG_EVICT_PER_MIN` | env | `10` | hub | watchdog | no | next run |
 | `ROOK_WATCHDOG_MIN_MEM_MB` | env | `80` | hub | watchdog | no | next run |
 | `ROOK_WATCHDOG_REPEAT_MIN` | env | `60` | hub | watchdog | no | next run |
