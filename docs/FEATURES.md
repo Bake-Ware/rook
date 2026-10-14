@@ -311,8 +311,8 @@ reachability, clock skew and common misconfigurations, each with a plain fix),
 knowledge search`, `rook plugins list|enable|disable` (the dashboard's switches,
 with the hub's protected plugins kept on), `rook logs`, `rook pair <code>` and
 shell completion for bash, zsh, fish and PowerShell. Hub reads and the home agent
-go through your saved dashboard login (`rook login`), else this worker's band
-link. Details: [docs/operations/worker-cli.md](operations/worker-cli.md).
+go through a saved API token (`rook login --token`), else your saved dashboard
+login, else this worker's band link (reads only). Details: [docs/operations/worker-cli.md](operations/worker-cli.md).
 
 ### Chat & messaging
 

@@ -15,7 +15,7 @@ rook knowledge search <q>    search the knowledge pages; knowledge get <slug>
 rook plugins                 list plugins; plugins enable|disable <module>
 rook logs [-f] [--audit]     this worker's recent log lines, or the calls it answered
 rook pair <code>             join a band with a pairing code
-rook login                   save the dashboard login ask/tasks/rooms/knowledge use
+rook login [--token]         save an API token (or the dashboard login) for the hub
 rook completion <shell>      bash, zsh, fish or powershell completion
 ```
 
@@ -32,7 +32,7 @@ $ rook status
   Hub      https://hub.example.com  (device certificate good for 29 days)
   Plugins  15 on: chat, config, enrollment, file_ops, info, log, ...
   Update   build 512 confirmed healthy 2 days ago (band round trip)
-  Ask      through your saved dashboard login
+  Hub link  your API token (ask, tasks, rooms, knowledge)
 ```
 
 The band, hub and certificate come from the pairing saved in the worker's state
@@ -71,18 +71,22 @@ It exits 1 when something failed, so scripts can use it.
 
 `ask`, `chat`, `tasks`, `rooms` and `knowledge` use, in order:
 
-1. **Your dashboard login**, when one is saved: `rook login` (or the file `rook
+1. **An API token**, when one is saved: create it on the dashboard's **Tokens**
+   page, then run `rook login --token` and paste it (or set `ROOK_TOKEN`). Calls
+   go to the hub's agent endpoint (`/mcp`, the one Claude Code uses) and run as
+   that token, with its permissions and its rows in the journal. This is the way
+   to ask the home agent from a terminal.
+2. **Your dashboard login**, when one is saved: `rook login` (or the file `rook
    band` saves, `~/.config/rook/band.conf`, or `ROOK_WEB_URL`, `ROOK_WEB_USER`,
-   `ROOK_WEB_PASS`). Calls run as you, under the hub's permissions for your login,
-   and rooms are your rooms.
-2. **This worker's band link**, through the running worker. Calls run as this
-   worker, under the hub's band rules: reads (tasks, rooms, knowledge) work, but
-   the hub answers band calls only up to the `read` risk tier by default
-   (the hub setting `hub.band_max_risk`), so asking the home agent from a worker
-   needs a saved login (the command says so).
+   `ROOK_WEB_PASS`). Reads run as you, and rooms are your rooms. The dashboard
+   sends these calls over the band, so the band's limit below applies too.
+3. **This worker's band link**, through the running worker. Calls run as this
+   worker. The hub answers band calls only up to the `read` risk tier by default
+   (the hub setting `hub.band_max_risk`): reads work, asking the home agent does
+   not, and the command says how to fix that.
 
-`--via login` or `--via band` picks one. The home agent answers whole replies
-(no streaming); `rook chat` passes the last few turns along as context, since the
+`--via token|login|band` picks one. The home agent answers whole replies (no
+streaming); `rook chat` passes the last few turns along as context, since the
 agent keeps no memory between questions. `rook ask -` reads the question from
 standard input.
 

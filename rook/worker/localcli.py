@@ -12,18 +12,25 @@ The worker bundle's ``rook`` launcher (rook.worker.desktop) and the package's
     rook logs [-f] [--audit]    this worker's recent log lines (or its call audit)
     rook doctor                 check the setup; says how to fix what is wrong
     rook pair <code>            join a band with a pairing code
-    rook login                  save the dashboard login rook ask/tasks/rooms use
+    rook login [--token]        save an API token (or dashboard login) for the hub
     rook completion <shell>     bash, zsh, fish or powershell completion
 
 How it reaches things. Local state (enrollment, plugin switches, update
 results) is read from the worker's state directory. Live state (band contact,
 loaded plugins, log lines) comes from the running worker over its local
-control link (rook.worker.control). Hub reads and the home agent go through
-the saved dashboard login when there is one (``rook login``, the same file
-``rook band`` saves, or ROOK_WEB_URL/ROOK_WEB_USER/ROOK_WEB_PASS: calls run as
-that person), else out on the band through the running worker (calls run as
-this worker, under the hub's band rules: reads work, asking the home agent
-needs the hub to allow write-tier band calls). ``--via login|band`` picks one.
+control link (rook.worker.control). Hub reads and the home agent go, in order,
+through:
+
+1. a saved API token (``rook login --token``, or ROOK_TOKEN): the hub's MCP
+   endpoint (rook.worker.mcp_client) runs the call as that token, so it can
+   ask the home agent;
+2. the saved dashboard login (``rook login``, the file ``rook band`` saves, or
+   ROOK_WEB_URL/ROOK_WEB_USER/ROOK_WEB_PASS): reads, as that person; the
+   dashboard's call API goes over the band, so the hub's band ceiling applies;
+3. the band, through the running worker, as this worker: reads only by
+   default (``hub.band_max_risk`` is ``read``).
+
+``--via token|login|band`` picks one.
 
 Stdlib only, ASCII output, no curses: it runs in PowerShell, cmd and any
 terminal the worker runs on.
@@ -55,7 +62,7 @@ COMMANDS = {
     "logs":       "This worker's recent log lines",
     "doctor":     "Check this worker's setup and say how to fix problems",
     "pair":       "Join a band with a pairing code",
-    "login":      "Save your dashboard login for ask, tasks, rooms and knowledge",
+    "login":      "Save an API token (--token) or dashboard login for the hub commands",
     "completion": "Print a shell completion script (bash, zsh, fish, powershell)",
 }
 #: Never switched off from here: the ways back in (as on the dashboard).
@@ -154,6 +161,25 @@ def worker_name(live: dict | None = None) -> str:
 
 # -- the hub -----------------------------------------------------------------------
 
+def token_file() -> Path:
+    return Path.home() / ".config" / "rook" / "cli-token.json"
+
+
+def saved_token() -> tuple[str, str] | None:
+    """(MCP URL, API token) from ROOK_TOKEN (with ROOK_MCP_URL or ROOK_WEB_URL)
+    or the file `rook login --token` saves, or None."""
+    data = _read_json(token_file())
+    token = os.environ.get("ROOK_TOKEN") or data.get("token")
+    url = (os.environ.get("ROOK_MCP_URL") or data.get("mcp_url")
+           or _mcp_url(os.environ.get("ROOK_WEB_URL") or data.get("url") or ""))
+    return (url, token) if url and token else None
+
+
+def _mcp_url(dashboard: str) -> str:
+    """The hub serves MCP at /mcp on its dashboard address (one process)."""
+    return dashboard.rstrip("/") + "/mcp" if dashboard else ""
+
+
 def saved_login() -> tuple[str, str, str] | None:
     """(url, user, password) from ROOK_WEB_* or the file `rook band` and
     `rook login` save, or None."""
@@ -166,11 +192,26 @@ def saved_login() -> tuple[str, str, str] | None:
 
 
 BAND_CEILING = "not callable over the band"
+NEEDS_TOKEN = ("{what} only answers this through an API token. Create one on the dashboard's "
+               "Tokens page, then run:\n  rook login --token\n"
+               "  (or an owner can raise the hub setting hub.band_max_risk to 'write').")
 
 
 def hub_call(cap: str, args: dict, timeout: float = 20.0, via: str = "auto") -> tuple[dict, str]:
-    """Run a hub cap; returns (reply, how). Raises CliError with what to do
-    when neither the saved login nor the band can reach the hub."""
+    """Run a hub cap; returns (reply, how): through a saved API token (MCP),
+    else the saved dashboard login, else this worker's band link. Raises
+    CliError with what to do when none of them can."""
+    token = saved_token() if via in ("auto", "token") else None
+    if via == "token" and token is None:
+        raise CliError("No API token saved on this machine. Run: rook login --token")
+    if token is not None:
+        from .mcp_client import McpError, rook_call
+        try:
+            return rook_call(token[0], token[1], cap, args, timeout=timeout), "token"
+        except McpError as e:
+            raise CliError(f"The hub's agent endpoint ({token[0]}): {e}") from None
+        except OSError as e:
+            raise CliError(f"Can't reach the hub at {token[0]}: {getattr(e, 'reason', e)}") from None
     login = saved_login() if via in ("auto", "login") else None
     if via == "login" and login is None:
         raise CliError("No saved dashboard login on this machine. Run: rook login")
@@ -180,18 +221,17 @@ def hub_call(cap: str, args: dict, timeout: float = 20.0, via: str = "auto") -> 
         err = str(reply.get("error") or "")
         if reply.get("ok") is False and ("HTTP 401" in err or "Unauthorized" in err):
             raise CliError("The hub refused the saved dashboard login. Run: rook login")
+        if reply.get("ok") is False and BAND_CEILING in err:
+            raise CliError(NEEDS_TOKEN.format(what="The hub"))
         return reply, "login"
     try:
         reply = control.request("call", wait=timeout + 5, cap=cap, args=args, timeout=timeout)
     except control.NotRunning:
-        raise CliError("Can't reach the hub: the worker isn't running here and no dashboard "
-                       "login is saved.\n  Start the worker (rook doctor says how), or run: "
-                       "rook login") from None
+        raise CliError("Can't reach the hub: the worker isn't running here and no login is "
+                       "saved.\n  Start the worker (rook doctor says how), or run: rook login "
+                       "--token") from None
     if reply.get("ok") is False and BAND_CEILING in str(reply.get("error") or ""):
-        raise CliError(
-            "The hub only answers reads from workers over the band. To use this from here,\n"
-            "  save your dashboard login: rook login\n"
-            "  (or an owner can raise the hub setting hub.band_max_risk to 'write').")
+        raise CliError(NEEDS_TOKEN.format(what="Over the band, the hub"))
     return reply, "band"
 
 
@@ -228,7 +268,7 @@ def gather_status() -> dict:
                     if live else {"disabled": sorted(_plugin_state().get("disabled", []))}),
         "update": update_info(),
         "banned": worker_state_path("banned").exists(),
-        "login_saved": saved_login() is not None,
+        "hub_link": ("token" if saved_token() else "login" if saved_login() else "band"),
     }
 
 
@@ -297,8 +337,11 @@ def cmd_status(args) -> int:
         rows.append(("Plugins", "switched off here: " + (", ".join(off) if off else "none")
                      + "  (start the worker for the full list)"))
     rows.append(("Update", _update_line(st["update"])))
-    rows.append(("Ask", "through your saved dashboard login" if st["login_saved"]
-                 else "through this worker's band link (rook login for more)"))
+    rows.append(("Hub link", {
+        "token": "your API token (ask, tasks, rooms, knowledge)",
+        "login": "your dashboard login for reads; rook login --token to ask the home agent",
+        "band": "this worker's band link for reads; rook login --token to ask the home agent",
+    }[st["hub_link"]]))
     width = max(len(k) for k, _ in rows)
     for k, v in rows:
         _out(f"  {k:<{width}}  {v}")
@@ -861,11 +904,38 @@ def cmd_pair(args) -> int:
 
 
 def cmd_login(args) -> int:
+    """Save how this machine reaches the hub as a person: an API token
+    (--token; the agent endpoint, which may ask the home agent) or the
+    dashboard password (reads; the same file `rook band` uses)."""
     import getpass
-    from rook.cli.band_tui import BandHTTP, _save_conf
     url = (args.url or os.environ.get("ROOK_WEB_URL") or enrollment().get("server") or "").strip()
     if not url:
-        raise CliError("Which dashboard? rook login --url http://<hub address>:7005")
+        raise CliError("Which hub? rook login --url http://<hub address>:7005")
+    if "://" not in url:
+        url = "http://" + url
+    if args.token:
+        token = os.environ.get("ROOK_TOKEN", "").strip()
+        if not token:
+            if not sys.stdin.isatty():
+                raise CliError("No terminal to paste the token in: set ROOK_TOKEN.")
+            token = getpass.getpass("API token (from the dashboard's Tokens page): ").strip()
+        mcp = args.mcp_url or _mcp_url(url)
+        from .mcp_client import McpError, rook_call
+        try:
+            reply = rook_call(mcp, token, "home.status", {}, timeout=15)
+        except (McpError, OSError) as e:
+            raise CliError(f"The hub at {mcp} didn't accept that: {getattr(e, 'reason', e)}") from None
+        if reply.get("ok") is False and "no live worker" not in str(reply.get("error")):
+            raise CliError(f"The hub at {mcp} answered: {reply.get('error')}")
+        from ..core.db import atomic_write_text
+        try:
+            atomic_write_text(token_file(), json.dumps({"url": url, "mcp_url": mcp,
+                                                        "token": token}) + "\n", 0o600)
+        except OSError as e:
+            raise CliError(f"Could not save the token ({e}).") from None
+        _out(f"Saved to {token_file()}. rook ask, chat, tasks, rooms and knowledge now use it.")
+        return 0
+    from rook.cli.band_tui import BandHTTP, _save_conf
     user = args.user or os.environ.get("ROOK_WEB_USER") or "admin"
     password = os.environ.get("ROOK_WEB_PASS")
     if not password:
@@ -877,7 +947,8 @@ def cmd_login(args) -> int:
         raise CliError(f"The dashboard at {url} didn't accept that: {error}")
     if not _save_conf(url, user, password):
         raise CliError("Could not save the login (check your home folder is writable).")
-    _out("Saved. rook ask, tasks, rooms and knowledge now use your dashboard login.")
+    _out("Saved. rook tasks, rooms and knowledge now read as you (rook band uses it too).\n"
+         "To ask the home agent from here, also save an API token: rook login --token")
     return 0
 
 
@@ -957,16 +1028,18 @@ def cmd_completion(args) -> int:
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="rook", description="Rook on this machine.",
-        epilog="ask, chat, tasks, rooms and knowledge use your saved dashboard login "
-               "(rook login) when there is one, else this worker's band link; --via picks.")
+        epilog="ask, chat, tasks, rooms and knowledge use your saved API token "
+               "(rook login --token), else your saved dashboard login (rook login), else "
+               "this worker's band link; --via picks.")
     sub = ap.add_subparsers(dest="command", metavar="<command>")
 
     def add(name: str, **kw) -> argparse.ArgumentParser:
         return sub.add_parser(name, help=COMMANDS[name], description=COMMANDS[name] + ".", **kw)
 
     def via(p: argparse.ArgumentParser, timeout: float | None = None) -> None:
-        p.add_argument("--via", choices=["auto", "login", "band"], default="auto",
-                       help="how to reach the hub (default: login if saved, else band)")
+        p.add_argument("--via", choices=["auto", "token", "login", "band"], default="auto",
+                       help="how to reach the hub (default: the saved API token, else the "
+                            "saved dashboard login, else this worker's band link)")
         if timeout is not None:
             p.add_argument("--timeout", type=float, default=timeout,
                            help=f"seconds to wait for an answer (default {int(timeout)})")
@@ -1001,7 +1074,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--band", help="(account sign-in) the band to join")
     p.add_argument("-y", "--yes", action="store_true", help="never prompt")
     p.set_defaults(fn=cmd_pair)
-    p = add("login"); p.add_argument("--url", help="the dashboard's address")
+    p = add("login"); p.add_argument("--url", help="the hub's dashboard address "
+                                                   "(default: the hub this machine joined)")
+    p.add_argument("--token", action="store_true",
+                   help="save an API token from the dashboard's Tokens page (env ROOK_TOKEN); "
+                        "needed to ask the home agent")
+    p.add_argument("--mcp-url", help="with --token: the agent endpoint (default <url>/mcp)")
     p.add_argument("--user", help="dashboard username (default admin)"); p.set_defaults(fn=cmd_login)
     p = add("completion"); p.add_argument("shell", choices=["bash", "zsh", "fish", "powershell"])
     p.set_defaults(fn=cmd_completion)

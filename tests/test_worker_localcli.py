@@ -22,9 +22,11 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setenv("ROOK_WORKER_HOME", str(state))
     monkeypatch.delenv("ROOK_ENROLLMENT_FILE", raising=False)
     for var in ("ROOK_WEB_URL", "ROOK_WEB_USER", "ROOK_WEB_PASS", "ROOK_BAND_PSK", "ROOK_HUB",
+                "ROOK_TOKEN", "ROOK_MCP_URL",
                 "ROOK_SERVER", "ROOK_YES", "ROOK_BAND", "ROOK_INSTALLER"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr(band_tui, "_CONF", tmp_path / "band.conf")
+    monkeypatch.setattr(localcli, "token_file", lambda: tmp_path / "cli-token.json")
     monkeypatch.setattr(admin, "_WORKER_DIR", state)
     monkeypatch.setattr(admin, "_PLUGIN_STATE", state / "plugins.json")
     return state
@@ -158,6 +160,55 @@ def test_ask_through_the_saved_login(home, capsys, monkeypatch):
     # --via band never uses the login.
     code, _, err = run(["ask", "--via", "band", "x"], capsys)
     assert code == 1 and "worker isn't running" in err
+
+
+def test_ask_prefers_the_api_token(home, capsys, monkeypatch):
+    from rook.worker import mcp_client
+    band_tui._save_conf("http://192.0.2.10:7005", "admin", "pw")
+    monkeypatch.setattr(band_tui.BandHTTP, "call", lambda *a, **k: pytest.fail("used the login"))
+    (home.parent / "cli-token.json").write_text(json.dumps(
+        {"url": "http://192.0.2.10:7005", "mcp_url": "http://192.0.2.10:7005/mcp", "token": "t0k"}))
+    seen = {}
+
+    def rook_call(url, token, cap, args, worker="rook", timeout=30.0):
+        seen.update(url=url, token=token, cap=cap)
+        return {"ok": True, "result": {"answer": "Yes."}}
+    monkeypatch.setattr(mcp_client, "rook_call", rook_call)
+    code, out, _ = run(["ask", "ok?"], capsys)
+    assert code == 0 and out == "Yes.\n"
+    assert seen == {"url": "http://192.0.2.10:7005/mcp", "token": "t0k", "cap": "home.ask"}
+    code, out, _ = run(["status"], capsys)
+    assert "Hub link  your API token" in out
+
+
+def test_ask_through_the_login_hits_the_band_ceiling(home, capsys, monkeypatch):
+    """The dashboard's call API sends hub calls over the band, so write-tier
+    hub caps (home.ask) need the API token."""
+    band_tui._save_conf("http://192.0.2.10:7005", "admin", "pw")
+    monkeypatch.setattr(band_tui.BandHTTP, "call", lambda *a, **k: {
+        "ok": False, "error": "home.ask is not callable over the band on the hub (risk above "
+                              "'read'); call it through the MCP bridge"})
+    code, _, err = run(["ask", "hi"], capsys)
+    assert code == 1 and "rook login --token" in err and "Tokens page" in err
+
+
+def test_login_token_is_checked_and_saved_privately(home, capsys, monkeypatch):
+    from rook.worker import mcp_client
+    enroll_file(home)
+    monkeypatch.setenv("ROOK_TOKEN", "t0k")
+    monkeypatch.setattr(mcp_client, "rook_call", lambda url, token, cap, args, worker="rook",
+                        timeout=30.0: {"ok": True, "result": {"enabled": False}})
+    code, out, _ = run(["login", "--token"], capsys)
+    assert code == 0 and "Saved" in out
+    saved = json.loads((home.parent / "cli-token.json").read_text())
+    assert saved == {"url": "http://192.0.2.10:7005", "mcp_url": "http://192.0.2.10:7005/mcp",
+                     "token": "t0k"}
+    if os.name == "posix":
+        assert (home.parent / "cli-token.json").stat().st_mode & 0o777 == 0o600
+    monkeypatch.setattr(mcp_client, "rook_call", lambda *a, **k: (_ for _ in ()).throw(
+        mcp_client.McpError("the hub refused the API token")))
+    code, _, err = run(["login", "--token"], capsys)
+    assert code == 1 and "refused the API token" in err
 
 
 def test_chat_carries_earlier_turns(home, capsys, monkeypatch):

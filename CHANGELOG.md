@@ -13,8 +13,9 @@ Preparation for public use.
 ### Worker CLI and onboarding
 - `rook` on a worker machine gained commands for the person sitting at it:
   `status`, `doctor` (plain-language fixes; exit 1 on a problem), `ask` and
-  `chat` (the home agent, through the saved dashboard login or the worker's
-  band link), `tasks`, `rooms`, `knowledge search|get`, `plugins
+  `chat` (the home agent, through an API token saved with `rook login
+  --token` and the hub's MCP endpoint; reads also work through the saved
+  dashboard login or the worker's band link), `tasks`, `rooms`, `knowledge search|get`, `plugins
   list|enable|disable` (the hub's protected plugins stay on), `logs [-f]
   [--audit]`, `pair <code>`, `login` and `completion bash|zsh|fish|powershell`.
   Both the bundle's launcher and the package's `rook` have them. See
