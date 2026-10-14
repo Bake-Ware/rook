@@ -73,6 +73,7 @@ body.overlay{background:var(--panel);border:1px solid var(--line2);height:100vh;
 /* Installer */
 pre.log{background:#0b0e0b;border:1px solid var(--line);color:#c9d1b5;font:11px/1.5 var(--mono);padding:10px;height:240px;overflow:auto;white-space:pre-wrap;margin:12px 0 0}
 .done{border:1px solid #38432d;background:#141b12;padding:12px 14px;margin-top:12px}
+.facts{display:grid;grid-template-columns:110px 1fr;gap:4px 10px;margin:8px 0}.facts dt{font:10px var(--mono);color:var(--dim2);text-transform:uppercase;letter-spacing:.6px;padding-top:3px}.facts dd{margin:0;overflow-wrap:anywhere}
 .done dl{display:grid;grid-template-columns:110px 1fr;gap:4px 10px;margin:8px 0}
 .done dt{font:10px var(--mono);color:var(--dim2);text-transform:uppercase;letter-spacing:.6px;padding-top:3px}
 .done dd{margin:0;font-family:var(--mono);overflow-wrap:anywhere}

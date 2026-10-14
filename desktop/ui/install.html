@@ -22,6 +22,17 @@
         <span><b>Only this computer</b><br><span class="muted small">Good for trying Rook out. You can change it later.</span></span></label>
       <div class="actions"><button class="primary" id="go">Install the hub</button></div>
     </div>
+    <div id="existing" hidden>
+      <dl class="facts">
+        <dt>Dashboard</dt><dd id="e-url"></dd>
+        <dt>Service</dt><dd id="e-unit"></dd>
+        <dt>Check on it</dt><dd id="e-manage" class="mono"></dd>
+      </dl>
+      <div class="actions">
+        <button class="primary" id="e-connect">Connect this app to it</button>
+        <button id="e-update">Update it</button>
+      </div>
+    </div>
     <div id="manual" hidden>
       <p class="muted small">Command:</p>
       <div class="cmd"><code id="manual-cmd"></code><button id="copy">Copy</button></div>

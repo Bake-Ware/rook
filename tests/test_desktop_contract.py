@@ -55,3 +55,20 @@ def test_installer_flags_and_summary_lines():
     assert re.search(r"^  Dashboard   \$DOMAIN$", script, re.M)
     assert re.search(r"^  Password    \$WEB_PASS ", script, re.M)
     assert "install-hub.sh" in INSTALLER_RS
+
+
+def test_installer_records_what_the_wizard_reads():
+    # installer::find_existing reads install.env (DATA_DIR, SYSTEMD, LAYOUT),
+    # hub.env (ROOK_DOMAIN), secrets.env (ROOK_WEB_PASS) and expects the hub
+    # service to be rook-hub (merged layout) or rook-dashboard (split).
+    script = (ROOT / "scripts/install-hub.sh").read_text(encoding="utf-8")
+    for line in ('echo "DATA_DIR=$DATA_DIR"', 'echo "SYSTEMD=$USE_SYSTEMD"', 'echo "LAYOUT=$LAYOUT"'):
+        assert line in script, line
+    assert 'HUB_ENV="$DATA_DIR/hub.env"' in script and 'SECRETS_ENV="$DATA_DIR/secrets.env"' in script
+    assert "ROOK_DOMAIN=" in script and "ROOK_WEB_PASS" in script
+    assert 'unit_name() { echo "rook-$1"; }' in script
+    assert "echo merged; else echo split" in script
+    assert 'USER_APP_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/rook-hub"' in script
+    assert 'SYSTEM_APP_DIR="/opt/rook"' in script
+    for s in ('"rook-hub"', '"rook-dashboard"', '"split"', 'SYSTEM_APP_DIR: &str = "/opt/rook"'):
+        assert s in INSTALLER_RS, s
