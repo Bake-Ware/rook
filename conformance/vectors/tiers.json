@@ -627,6 +627,18 @@
     "sensitive"
    ]
   },
+  "manual.get": {
+   "tier": "read"
+  },
+  "manual.list": {
+   "tier": "read"
+  },
+  "manual.status": {
+   "tier": "read"
+  },
+  "manual.update": {
+   "tier": "admin"
+  },
   "member.admin": {
    "tier": "admin"
   },

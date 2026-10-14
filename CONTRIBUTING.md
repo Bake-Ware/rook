@@ -80,14 +80,38 @@ steps; see [android/README.md](android/README.md) and the PlatformIO project in
   release wrote. Raise the floor deliberately, in its own change.
 - Match the surrounding code's style and comment density. Comments explain *why*.
 
+## The user manual
+
+`docs/manual/` is Rook's user manual: plain-language pages for people who run
+Rook, shown under **Help** and copied into each hub's knowledge base. It is
+part of the product, so it ships current with **every release**:
+
+- A change that adds, removes or deprecates a user-visible feature, setting,
+  plugin or command updates the manual pages that cover it in the same pull
+  request. A new feature goes into a page's front matter `features`; a removed
+  one is dropped from it, or its page is marked `deprecated: true`.
+- A bullet under an `Added`, `Removed` or `Deprecated` heading in the
+  CHANGELOG names the pages it changed: `(manual: jobs, workers)` on the
+  bullet, or a `Manual: jobs` line in its block (`n/a` for a change users
+  cannot see).
+- Run `python tools/manual_check.py` before you push. The test suite only
+  checks that pages parse and their links resolve; CI reports coverage and
+  CHANGELOG findings without blocking your pull request; the release tooling
+  (`tools/release_prep.py`) runs the same check with `--release` and refuses
+  to cut a release with a stale manual, so whoever cuts it has to fix what
+  was left. `docs/manual/manifest.json` is generated, never committed.
+
+See docs/manual/README.md for how to write a page and
+docs/operations/user-manual.md for the checks and the hub side.
+
 ## Pull requests
 
 1. Branch from `master`.
 2. Keep each commit to one logical change with a message that says why.
-3. Run `pytest -q` before pushing.
+3. Run `pytest -q` before pushing (it includes the user-manual check).
 4. Describe what changed, how you tested it, and anything reviewers should look at.
    For user-visible changes, add a line to [CHANGELOG.md](CHANGELOG.md) under
-   *Unreleased*.
+   *Unreleased* and update the user manual (above).
 
 ## Security issues
 

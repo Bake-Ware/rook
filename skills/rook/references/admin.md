@@ -74,6 +74,9 @@ It is served as `references/site.md` to MCP clients and to HTTP callers with a v
 
 ## Troubleshooting ladder (cheapest first)
 
+For agent-side errors (task and knowledge validation, consoles, chat, timeouts) see `troubleshooting.md`.
+
+
 1. `rook_call("info.ping", worker=X)` — alive on the band?
 2. Refused call → read the error; it names who has the cap or that the worker is unknown (roster evicts after ~90 s of silence).
 3. Timed out? It may still be running: `rook_journal(call_id=…)` before retrying anything with side effects.

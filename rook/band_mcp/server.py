@@ -1797,6 +1797,11 @@ class McpService:
             # A getter, not the service: a reload swaps the instance.
             for route in reversed(knowledge_routes(lambda: mcp._rook_knowledge, accounts)):
                 app.router.routes.insert(0, route)
+        # Help page and the manual update prompt (proxied by the dashboard).
+        from ..hub.plugins.manual.web import routes as manual_routes
+        for route in manual_routes(lambda: (mcp._rook_hub.plugin("manual")
+                                            if mcp._rook_hub is not None else None), accounts):
+            app.router.routes.insert(0, route)
         # Jobs page API (proxied by the dashboard; the rook band panel comes in
         # with the internal mask token, see rook/remote/jobs_web.py).
         from ..hub.plugins.jobs.web import routes as job_routes
