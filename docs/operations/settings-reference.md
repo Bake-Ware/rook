@@ -272,6 +272,13 @@ are set only in the environment or on the command line.
 | `llmanifold.admin_url` | Admin address | hub | url |  | `ROOK_LLMANIFOLD_ADMIN_URL` | live |
 | `llmanifold.timeout_s` | Status timeout (s) | hub | float | `8.0` | `ROOK_LLMANIFOLD_TIMEOUT_S` | live |
 
+## Manual (hub plugin, runs in mcp)
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `manual.auto_seed` | Copy the manual on a new hub | hub | bool | on | `ROOK_MANUAL_AUTO_SEED` | live |
+| `manual.prompt_updates` | Ask after updates | hub | bool | on | `ROOK_MANUAL_PROMPT_UPDATES` | live |
+
 ## Memory (hub plugin, runs in mcp)
 
 | Key | Label | Scope | Type | Default | Env / flag | Apply |

@@ -6,6 +6,7 @@
 !rook/
 !skills/
 !services/voice/
+!docs/manual/
 !scripts/fetch-relay.py
 !integrations/claude-code/.claude-plugin/plugin.json
 rook/**/__pycache__

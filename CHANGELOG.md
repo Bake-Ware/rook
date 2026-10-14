@@ -11,6 +11,7 @@ version was `0.1.0`.
 Preparation for public use.
 
 ### Voice and model provider plugins
+Manual: voice, model-providers, home-agent
 - Voice is a hub plugin: `rook hub serve` serves the voice service at
   `/voice/` (`/voice/ws`, `/voice/api/transcribe`, `/voice/api/voice`, the
   browser client, voice keys at `/voice/admin`; `/api/transcribe`,
@@ -47,6 +48,43 @@ Preparation for public use.
 - Plugins: a plugin that cannot load says why in plain words
   (`Plugin.unavailable_reason()`), and is retried when one of its settings
   changes. Hub plugins can serve paths on the hub site (`rook/hub/site.py`).
+
+### User manual
+Manual: help, welcome, getting-started, overview-and-start-page, adding-machines, bands-and-keys, accounts-and-access, workers, chat, work, sessions, knowledge, jobs, secrets, agents-and-mcp, home-agent, home-agent-memory, settings, plugins, phones-and-tablets, hardware, integrations, voice, updates, security, terminal-and-commands, running-a-hub, desktop-app
+- Added a user manual: 27 plain-language pages in `docs/manual/` covering
+  every current feature (and a preview page for the desktop app), shipped in
+  the wheel (`rook/_manual`) and the image. **Help** in the dashboard sidebar
+  reads it (search, page links): the operator from the knowledge base copy
+  when there is one, everyone else from the bundled files. New
+  hub plugin `manual` with caps `manual.status`, `manual.list`, `manual.get`
+  (read) and `manual.update` (admin), and settings `manual.auto_seed` and
+  `manual.prompt_updates`.
+- A new hub copies the manual into its knowledge base the first time the
+  knowledge plugin is on and empty: contents page `rook-manual` (never
+  someone else's page with that slug: then `rook-manual-2`), pages
+  `manual-<id>`, tagged `rook-manual` and `rook-<version>`, verified against
+  the bundled file (`attrs.verified_from`: the knowledge store marks such a
+  page unverified when anyone else changes its text). A knowledge base that
+  already has pages is asked first.
+- After an update whose manual differs from the copy, the operator sees "The
+  Rook manual changed in this update: update your knowledge base copy?" with
+  the pages added, changed and removed: Update, Not now (24 hours) or Never
+  for this version. Pages edited in the knowledge base (text or tags, the
+  contents page too) are only replaced when ticked, and their own tags are
+  kept; removed pages are archived. The `rook_knowledge` tool's description
+  tells agents where the manual is (an empty plugin guidance default no
+  longer hides another plugin's text for the same slot).
+- `tools/manual_check.py` reports a FEATURES.md section, settings group,
+  plugin or command with no manual page, a page mapping a feature that no
+  longer exists without being deprecated, and an Unreleased bullet under an
+  Added/Removed/Deprecated heading that names no manual page (`--base REF`:
+  or names pages that did not change). Blocking only as the release gate:
+  `tools/release_prep.py --tag` runs it with `--release` (and writes
+  `docs/manual/manifest.json` for the build; `--skip-manual-check` for
+  emergencies). CI runs it as an advisory job; pytest checks only that pages
+  parse and their links resolve. CONTRIBUTING has the rule. The split-layout
+  hub installer sets `ROOK_MANUAL_ADMIN_URL`.
+- The Knowledge page renders numbered lists and wrapped list items.
 
 ### Home agent memory
 - New hub plugin `memory` (on by default, part of the "Home & voice agent"
@@ -130,6 +168,17 @@ Preparation for public use.
 - CI: `.github/workflows/desktop.yml` tests on Linux and builds unsigned
   bundles on Linux, macOS and Windows (actions pinned by commit, cargo
   `--locked`).
+### Agent skill
+- The Rook skill (`skills/rook/`) now teaches agents to work as a team, not just to
+  run commands: a start-of-session ritual (whoami, a narrowed deck, handoffs,
+  knowledge search, unread chat), the task lifecycle (claim, one owner, outcome
+  plus evidence, or a handoff), room etiquette, huddle status and questions,
+  when to wake an agent, what belongs in knowledge versus tasks and handoffs,
+  handoff contents, timeouts and safe retries (`rook_journal`, same
+  `request_id`), and common failure modes.
+  New references: `coordination.md` (states, required fields, templates, hygiene
+  findings), `examples.md` (worked calls) and `troubleshooting.md` (errors and
+  fixes).
 
 ### Hub merge
 - One hub process: `rook hub serve` (console script `rook-hub`) runs the
@@ -594,6 +643,7 @@ Preparation for public use.
   participants without posting. The Chat page opens `#chat?room=<id>`.
 
 ### Added
+Manual: sessions, workers, work, chat, agents-and-mcp, settings, integrations, accounts-and-access, running-a-hub, getting-started, knowledge, terminal-and-commands
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps
   `sessions.list`, `sessions.follow`, `sessions.send` and `sessions.stop`
   give one record per agent session (state live/idle/closed, origin, view,

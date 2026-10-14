@@ -103,6 +103,16 @@ class PluginsWeb(KnowledgeWeb):
     TIMEOUT = 60   # a band-wide switch waits on every worker it touches
 
 
+class ManualWeb(KnowledgeWeb):
+    """Help (the user manual) and the manual update prompt. Any signed-in
+    account may read; the upstream keeps updating to the operator."""
+    PATH = '/account/manual'
+    UPSTREAM = ('ROOK_MANUAL_ADMIN_URL', 'http://127.0.0.1:8765/manual/account-api')
+    ASSETS = ('manual.js', 'manual.css')
+    UNAVAILABLE = 'The manual service is unavailable (is the MCP server running?).'
+    ADMIN_ONLY = False
+
+
 class HuddleWeb(KnowledgeWeb):
     """Work > Huddle: agents' status strip, pinned questions and answers.
     Operator account only, like the upstream (rook/hub/plugins/huddle/web.py)."""

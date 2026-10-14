@@ -74,3 +74,33 @@ jobs:
         run: find rook/web -name '*.js' -print0 | xargs -0 -n1 node --check
       - name: shellcheck the hub installer
         run: shellcheck scripts/install-hub.sh scripts/local-hub.sh
+
+  manual:
+    # Advisory on pull requests: features without a manual page and CHANGELOG
+    # bullets that name none are reported here but never block a merge (page
+    # parsing and links are in pytest). tools/release_prep.py runs the same
+    # check with --release and refuses to cut a release with a stale manual.
+    name: user manual coverage (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install rook
+        run: python -m pip install -e .
+      - name: The manual covers every feature and the CHANGELOG names its pages
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ -n "$BASE_REF" ]; then
+            python tools/manual_check.py --base "origin/$BASE_REF"
+          else
+            python tools/manual_check.py
+          fi
