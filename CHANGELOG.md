@@ -82,6 +82,29 @@ Preparation for public use.
   refuse a telesthete git checkout at any other commit
   (`ROOK_TELESTHETE_ANY_REV=1` to override).
 
+### OTA health gate
+- After an OTA update, a worker keeps the new build only once it has completed
+  a band round trip, meaning a reply to its own request (it probes
+  `caps.describe` on the hub node or another peer it heard announce). Before,
+  staying up for 60 s was enough, so a build with a broken transport stranded
+  the worker off-band.
+- With no round trip within `ROOK_UPDATE_HEALTH_SECS` (setting
+  `core.worker.update_health_secs`, default 180 s, 0 = off), the worker
+  restores `band-worker.pyz.prev` and restarts into it at once. The reason goes
+  to `update_state.json`, a new `update_result.json` and the log.
+- The restored build reports `hb.worker.update = "rolled back: no band
+  contact: …"` in its announce (shown by `rook_workers`), and `worker.status`
+  returns `update.state` / `update.last`.
+- A rolled-back build isn't re-applied by the hub push, `worker.apply`,
+  `worker.ota_begin` or the poll loop for 24 h (`action: skipped`;
+  `worker.check(force=true)` overrides). Pushes during verification are
+  skipped as well, so `.prev` is never overwritten by an unverified build.
+- The gate applies only if the old build heard the band in the 10 minutes
+  before the swap, so a hub that was already unreachable doesn't make every
+  worker roll back a good build. Updates from releases older than the gate
+  get the old 60 s alive check. Crash-loop rollback (3 boots) and the wire
+  format are unchanged.
+
 ### Plugin host
 - Runtime plugin enable now uses the boot path (`PluginHost.enable`/`disable`/
   `reload`): placement, stored settings, collision safety, status and the

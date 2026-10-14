@@ -407,9 +407,23 @@ The Python worker fleet updates itself with a **signed-manifest + in-band push**
 
 - Every build stamps a monotonic build number and emits an **ed25519-signed** manifest (`{build, sha256, url, sig}`) next to the bundle.
 - The controller watches each worker's announced build and pushes `worker.apply(manifest)` to any worker that's behind. Workers **verify signature + sha256 + a `--selftest`** before swapping (fail-closed), keep the previous bundle for **rollback**, and restart kill-safely (systemd / runit / `os.execv`).
+- **Band health gate.** A new build is kept only once it proves two-way band contact: a reply to one of its own requests (it probes `caps.describe` on the hub node, or another peer it heard announce). Staying alive is not enough: a build that boots but can't talk on the band would otherwise strand the worker off-band, fixable only over SSH. No round trip within `ROOK_UPDATE_HEALTH_SECS` (180 s) and the worker restores the previous bundle and restarts into it at once. Crashing builds still roll back after three failed boots. Details below.
 - `worker.hold` pins a node; `worker.check(force=true)` drives canary rollouts. The **dongle** (ESP32 firmware) is excluded and has its own signed flash path.
 
 Ship a build → commit → rebuild the signed bundle → the running push loop converges the whole fleet in minutes, no manual per-device steps.
+
+### Post-update health gate
+
+After a swap the worker restarts into the new build with `update_state.json` in the `verifying` stage and `band-worker.pyz.prev` kept for rollback.
+
+- **Proof.** Any reply to a request the new build sent (for example the hub answering a pushed-secret fetch) confirms it. Until one arrives the worker sends `caps.describe` every 15 s to a peer it heard announce, hub node first; the hub announces every ~30 s, so a healthy band always has someone to ask. An error reply counts too, because it still proves the full path: peers open our sealed frames, the relay forwards both ways, our route declaration lets the reply find us, and we decrypt it. Hearing the band alone does not count, because it says nothing about our own sends.
+- **Confirmed.** The state is cleared, `.prev` is deleted and `update_result.json` records `{"result": "ok", "check": "band"}`.
+- **Not proven in time** (`ROOK_UPDATE_HEALTH_SECS`, default 180 s; setting `core.worker.update_health_secs`). The worker copies `.prev` back over the bundle, records the reason in `update_state.json` (`stage: rolledback`), in `update_result.json` and in the log (`no band contact: heard nothing from the band…` or `…heard the band but got no reply…`), sends one last announce in case only the reply path is broken, and restarts into the old build. The old build doesn't wait for three crash boots.
+- **Reported.** While the restored build runs, its announce carries `hb.worker = {"update": "rolled back: no band contact: …", "bad_build": N}`, which shows in `rook_workers` and the hub's roster. `worker.status` returns `update.state` and `update.last`. A build restored by a release older than the gate can't report it; the record stays in `update_result.json`.
+- **No retry loop.** A worker doesn't re-apply a build it rolled back for 24 hours, whether the hub pushes it, `worker.apply` sends it or the poll loop finds it. It answers `action: skipped` instead. A newer build installs normally, and `worker.check(force=true)` overrides the skip. While a build is still being verified, new pushes are also skipped, so `.prev` always holds the last build known to work.
+- **When the gate is not enforced.** The old build records how long ago it last heard the band (`band_seen_ago`) when it swaps. If that was never, or more than 10 minutes ago, the band was already unreachable before the update. Rolling back can't fix that, and during a hub outage every worker would otherwise drop a good build. In that case, and when the swap came from a release older than the gate (it records nothing), only the old check applies: the build has to stay up for 60 s. `ROOK_UPDATE_HEALTH_SECS=0` also turns the gate off.
+- **Trade-off.** If the hub goes down after an update has started, the updating workers roll back and don't retry that build for 24 hours, unless a newer build ships or `worker.check(force=true)` is run. That is the price of never leaving a worker off-band.
+- **Scope.** The gate covers the zipapp workers on Linux (systemd `--user`), Termux (runit) and Windows. On Windows the restart uses the same `os.execv` path as an update. The Android app replaces `selfupdate` with its own APK updater, so the gate doesn't apply there. The wire format is unchanged: the probe is an ordinary targeted `caps.describe` call and the report is an additive heartbeat key.
 
 ## Security
 
