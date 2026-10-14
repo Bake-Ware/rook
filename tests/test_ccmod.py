@@ -354,28 +354,92 @@ async def test_apply_plans_again_when_the_file_changed_meanwhile(box, monkeypatc
     assert len(calls) == 2 and data["model"] == "sonnet" and "hooks" in data
 
 
+@pytest.mark.skipif(not hasattr(os, "fchown"), reason="POSIX owners")
+def test_atomic_write_sets_mode_and_owner_on_the_descriptor(tmp_path, monkeypatch):
+    from rook.core.db import atomic_write_text
+    target = tmp_path / "settings.json"
+    seen = []
+
+    def by_path(*a, **kw):
+        raise AssertionError(f"mode or owner set by path: {a}")
+
+    monkeypatch.setattr(os, "chmod", by_path)
+    monkeypatch.setattr(os, "chown", by_path)
+    monkeypatch.setattr(os, "fchown", lambda fd, uid, gid: seen.append((type(fd), uid, gid)))
+    st = tmp_path.stat()
+    atomic_write_text(target, "{}\n", 0o640, owner=(st.st_uid + 7, st.st_gid + 7))
+    assert seen == [(int, st.st_uid + 7, st.st_gid + 7)]
+    assert target.stat().st_mode & 0o777 == 0o640 and target.read_text() == "{}\n"
+    seen.clear()
+    atomic_write_text(target, "{}\n", 0o600, owner=(os.getuid(), os.getgid()))
+    assert seen == []                                     # already theirs: nothing to do
+
+
 @pytest.mark.asyncio
-async def test_rewritten_settings_keep_their_owner(box, monkeypatch):
+@pytest.mark.skipif(not hasattr(os, "fchown"), reason="POSIX owners")
+async def test_settings_keep_their_owner_and_a_swapped_symlink_is_not_chowned(box, monkeypatch):
+    # A root worker writing into user U's folder: the file goes back to U, set
+    # on the temp file before the rename. U swapping settings.json for a
+    # symlink to a root file right after the rename must not get that file.
     settings = box / "claude" / "settings.json"
     settings.write_text('{"model": "opus"}\n')
-    st = settings.stat()
-    seen = []
-    monkeypatch.setattr(os, "chown", lambda path, uid, gid: seen.append((str(path), uid, gid)))
-    # A file owned by someone else (a root worker, a user's folder) goes back to them.
-    wp._keep_owner(settings, os.stat_result((st.st_mode, 0, 0, 1, st.st_uid + 7, st.st_gid + 7,
-                                             0, 0, 0, 0)))
-    assert seen == [(str(settings), st.st_uid + 7, st.st_gid + 7)]
-    seen.clear()
-    wp._keep_owner(settings, settings.stat())     # same owner: nothing to do
-    assert seen == []
-    # apply() hands it the owner from before the write (the folder's, for a new file).
+    victim = box / "victim"
+    victim.write_text("root:x:0:0\n")
+    real_settings = os.path.realpath(settings)
+    st = os.lstat(settings)
+    events = []
+    real_lstat, real_replace = os.lstat, os.replace
+
+    def lstat(path, *a, **kw):            # U owns the file, not the worker
+        r = real_lstat(path, *a, **kw)
+        if os.fspath(path) == real_settings and not __import__("stat").S_ISLNK(r.st_mode):
+            return os.stat_result((r.st_mode, r.st_ino, r.st_dev, r.st_nlink, st.st_uid + 7,
+                                   st.st_gid + 7, r.st_size, int(r.st_atime), int(r.st_mtime),
+                                   int(r.st_ctime)))
+        return r
+
+    def replace(src, dst):
+        real_replace(src, dst)
+        events.append(("replace", os.fspath(dst)))
+        if os.fspath(dst) == real_settings:      # U's swap, the moment after the rename
+            os.unlink(dst)
+            os.symlink(victim, dst)
+
+    monkeypatch.setattr(os, "lstat", lstat)
+    monkeypatch.setattr(os, "replace", replace)
+    monkeypatch.setattr(os, "fchown", lambda fd, uid, gid: events.append(("fchown", uid, gid)))
+    for name in ("chown", "lchown"):
+        monkeypatch.setattr(os, name, lambda *a, **kw: events.append(("by-path",) + a))
+    await wp.ClaudeCodeRules().apply(config())
+    assert ("fchown", st.st_uid + 7, st.st_gid + 7) in events
+    mine = [e for e in events if e[0] != "replace" or e[1] == real_settings]
+    assert mine.index(("fchown", st.st_uid + 7, st.st_gid + 7)) < mine.index(("replace", real_settings))
+    assert not [e for e in events if e[0] == "by-path"]
+    assert victim.read_text() == "root:x:0:0\n"
+
+
+@pytest.mark.asyncio
+async def test_new_settings_file_goes_to_the_folders_owner(box, monkeypatch):
     calls = []
-    monkeypatch.setattr(wp, "_keep_owner", lambda path, before: calls.append((path, before.st_ino)))
+    real = wp._owner
+    monkeypatch.setattr(wp, "_owner", lambda before: calls.append(before.st_ino) or real(before))
     monkeypatch.setenv("ROOK_CCMOD_CLAUDE_DIRS", str(box / "other"))
     await wp.ClaudeCodeRules().apply(config())
-    real = lambda q: Path(os.path.realpath(q))  # noqa: E731
-    assert calls == [(real(settings), st.st_ino),
-                     (real(box / "other" / "settings.json"), (box / "other").stat().st_ino)]
+    assert calls == [(box / "claude").stat().st_ino, (box / "other").stat().st_ino]
+
+
+@pytest.mark.asyncio
+async def test_removal_finishes_when_rooks_hooks_were_taken_out_by_hand(box):
+    settings = box / "claude" / "settings.json"
+    settings.write_text('{"model": "opus"}\n')
+    plugin = wp.ClaudeCodeRules()
+    await plugin.apply(config())
+    settings.write_text('{"model": "opus", "env": {"B": "2"}}\n')     # Rook's hooks deleted by hand
+    gone = await plugin.remove()
+    assert gone["installations"][0]["action"] == "absent" and "script_kept" not in gone
+    assert not plugin.script_path.exists() and not plugin.manifest_path.exists()
+    assert settings.read_text() == '{"model": "opus", "env": {"B": "2"}}\n'
+    assert "script_kept" not in await plugin.remove()
 
 
 @pytest.mark.asyncio
@@ -895,6 +959,10 @@ def test_dashboard_wiring():
     root = Path(__file__).resolve().parent.parent
     html = (root / "rook" / "web" / "index.html").read_text(encoding="utf-8")
     assert "import('/account/ccmod/assets/ccmod.js')" in html and 'id="view-ccmod"' in html
+    # Colours come from the theme tokens (Paper is light), never literals.
+    js = (root / "rook" / "web" / "ccmod.js").read_text(encoding="utf-8")
+    css = js[js.index("const CSS=`"):js.index("`;", js.index("const CSS=`"))]
+    assert not __import__("re").search(r"#[0-9a-fA-F]{3,8}\b|rgba?\(|var\(--green\)", css)
     from rook.remote.knowledge_web import CcmodWeb
     assert CcmodWeb.ASSETS == ("ccmod.js",) and (root / "rook" / "web" / "ccmod.js").is_file()
     if shutil.which("node"):

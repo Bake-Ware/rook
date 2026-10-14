@@ -133,7 +133,8 @@ would deny every hooked tool call, erase every prompt and keep a Stop hook
 from ever letting Claude stop. The worker also never deletes the script
 while any settings file may still run it: a removal that cannot change one
 file (not valid JSON, say) keeps the script and lists the file under
-`script_kept`; the rules file goes, and without it the hook does nothing.
+`script_kept`; the rules file goes, and without it the hook does nothing. A file whose Rook
+entries the person already took out by hand counts as done.
 
 One entry per event; the matcher is the union of the rules' tool patterns
 (none when a rule takes every tool). Idle rules add `SessionStart`,
@@ -155,7 +156,10 @@ Rules the merge keeps (tests in `tests/test_ccmod.py`):
 * indent (spaces or tab) and CRLF line endings are kept (while Rook's
   entries are in, the rest of the file is rewritten as JSON in that style);
   writes are atomic and keep the file's mode and owner (a new file gets its
-  folder's owner); a symlinked file is written through;
+  folder's owner), both set on the temp file's descriptor before the rename,
+  so a root worker never chmods or chowns a path in someone's folder (where
+  it could have been swapped for a symlink); a symlinked file is written
+  through;
 * the file is read again just before it is replaced, and planned again if
   Claude Code changed it meanwhile (a `/model` or `/permissions` change).
 

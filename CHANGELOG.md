@@ -81,9 +81,12 @@ Preparation for public use.
   admin-only; the hub accepts the hook's word for `contains` on prompts and
   notifications and for project paths; removal restores an untouched
   settings file byte for byte; settings files keep their owner and are
-  re-read just before they are replaced; the outbox is capped (500) and
-  stale events (10 min) dropped; hook input up to 8 MiB; pushes record who
-  pushed and capability actions run as `system:ccmod:<rule>`.
+  re-read just before they are replaced (mode and owner are set on the temp
+  file's descriptor, never by path after the rename; `atomic_write_text`
+  does the same for every caller); the outbox is capped (500) and stale
+  events (10 min) dropped; hook input up to 8 MiB; pushes record who pushed
+  and capability actions run as `system:ccmod:<rule>`; the Claude Code page
+  uses the theme colours.
 
 ### Hub merge
 - One hub process: `rook hub serve` (console script `rook-hub`) runs the

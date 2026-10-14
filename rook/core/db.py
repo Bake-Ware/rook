@@ -183,27 +183,50 @@ def add_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -
     return added
 
 
+def _set_mode_owner(fd: int, path: str, mode: int | None,
+                    owner: tuple[int, int] | None) -> None:
+    """``mode`` and ``owner`` on an open file, through its descriptor where
+    the platform has it: the folder may belong to someone else, who could
+    swap the path for a symlink, and a chmod or chown by path would follow
+    it (to /etc/shadow, say)."""
+    if owner is not None and hasattr(os, "fchown"):
+        try:
+            st = os.fstat(fd)
+            if (st.st_uid, st.st_gid) != tuple(owner):
+                os.fchown(fd, owner[0], owner[1])
+        except OSError:
+            pass
+    if mode is not None:
+        try:
+            if hasattr(os, "fchmod"):
+                os.fchmod(fd, mode)
+            else:   # Windows: no descriptor calls, and no symlink race to speak of
+                os.chmod(path, mode)
+        except OSError:
+            pass
+
+
 def atomic_write_text(path, text: str, mode: int | None = 0o600, *,
-                      encoding: str = "utf-8", fsync: bool = True) -> None:
+                      encoding: str = "utf-8", fsync: bool = True,
+                      owner: tuple[int, int] | None = None) -> None:
     """Replace ``path`` with ``text`` so readers see the old or the new file,
     never a torn one: write a temp file beside it, then ``os.replace``.
-    ``mode`` is applied to the new file (``None`` keeps the temp file's 0600).
-    Where the path cannot be replaced (a bind-mounted single file: EBUSY or
-    EXDEV) it is rewritten in place and fsync'd instead, keeping ``mode``."""
+    ``mode`` is applied to the new file (``None`` keeps the temp file's 0600)
+    and ``owner`` (``(uid, gid)``, POSIX) gives it to that user; both are set
+    on the temp file's descriptor before the rename, so nothing touches a
+    path after it. Where the path cannot be replaced (a bind-mounted single
+    file: EBUSY or EXDEV) it is rewritten in place and fsync'd instead,
+    keeping ``mode``."""
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=f".{p.name}.", suffix=".tmp", dir=str(p.parent))
     try:
         with os.fdopen(fd, "w", encoding=encoding, newline="") as f:
             f.write(text)
+            f.flush()
+            _set_mode_owner(f.fileno(), tmp, mode, owner)
             if fsync:
-                f.flush()
                 os.fsync(f.fileno())
-        if mode is not None:
-            try:
-                os.chmod(tmp, mode)
-            except OSError:
-                pass
         try:
             os.replace(tmp, p)
         except OSError as e:
@@ -213,7 +236,7 @@ def atomic_write_text(path, text: str, mode: int | None = 0o600, *,
             # in compose) cannot be replaced (EBUSY), nor can a file across
             # a mount boundary (EXDEV): write it in place instead. Not atomic,
             # so fsync'd; the temp file goes.
-            _write_in_place(p, text, mode, encoding)
+            _write_in_place(p, text, mode, encoding, owner)
             os.unlink(tmp)
     except BaseException:
         try:
@@ -227,18 +250,15 @@ def atomic_write_text(path, text: str, mode: int | None = 0o600, *,
 _IN_PLACE_ERRNOS = {errno.EBUSY, errno.EXDEV}
 
 
-def _write_in_place(p: Path, text: str, mode: int | None, encoding: str) -> None:
+def _write_in_place(p: Path, text: str, mode: int | None, encoding: str,
+                    owner: tuple[int, int] | None = None) -> None:
     flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0)
     fd = os.open(str(p), flags, mode if mode is not None else 0o600)
     with os.fdopen(fd, "wb") as f:
         f.write(text.encode(encoding))
         f.flush()
         os.fsync(f.fileno())
-    if mode is not None:
-        try:
-            os.chmod(str(p), mode)
-        except OSError:
-            pass
+        _set_mode_owner(f.fileno(), str(p), mode, owner)
 
 
 def atomic_write_json(path, obj: Any, mode: int | None = 0o600, **dumps: Any) -> None:

@@ -74,19 +74,18 @@ def _sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _keep_owner(path: Path, before) -> None:
-    """Give a rewritten (or new) settings file back to the user who owned it
-    (or its folder): a worker running as root writing into someone's
+def _owner(before) -> tuple[int, int] | None:
+    """Who a rewritten (or new) settings file goes back to: the user who
+    owned it (or its folder). A worker running as root writing into someone's
     ``ROOK_CCMOD_CLAUDE_DIRS`` folder must not leave them a root-owned 0600
-    file they cannot read."""
+    file they cannot read. ``before`` comes from ``os.lstat`` (a symlink is
+    not followed) and the owner is set on the temp file's descriptor before
+    the rename (:func:`atomic_write_text`), never by path afterwards: that
+    folder is the user's, and a path swapped for a symlink to /etc/shadow
+    between the rename and a chown would hand them that file."""
     if before is None or not hasattr(os, "chown"):
-        return
-    try:
-        st = path.stat()
-        if (st.st_uid, st.st_gid) != (before.st_uid, before.st_gid):
-            os.chown(path, before.st_uid, before.st_gid)
-    except OSError:
-        pass
+        return None
+    return before.st_uid, before.st_gid
 
 
 def installations(environ=None) -> list[Path]:
@@ -500,6 +499,11 @@ class ClaudeCodeRules(Plugin):
             rows.append(row)
             if p["action"] in ("create", "update", "remove"):
                 writes.append((path, p, entry, row, want))
+            elif not (want[0] or want[1]) and not p["had_ours"] and str(path) in files and not dry_run:
+                # Taking Rook out of a file that holds none of it (the person
+                # took Rook's hooks out by hand): nothing runs the script there.
+                files.pop(str(path), None)
+                self._drop_pristine(path)
             elif p["action"] == "unchanged" and not entry and p["created"]:
                 # Rook's part is already there but the manifest was lost: record it again.
                 files[str(path)] = {"created": p["created"], "file_created": False}
@@ -533,7 +537,7 @@ class ClaudeCodeRules(Plugin):
             if p["action"] not in ("create", "update", "remove"):
                 continue
             try:
-                before = real.stat() if p["exists"] else real.parent.stat()
+                before = os.lstat(real) if p["exists"] else os.lstat(real.parent)
             except OSError:
                 before = None
             if p["exists"]:
@@ -543,8 +547,7 @@ class ClaudeCodeRules(Plugin):
                 row["deleted_empty_file"] = True
             else:
                 mode = before.st_mode & 0o777 if (before is not None and p["exists"]) else 0o600
-                atomic_write_text(real, p["new"], mode, fsync=False)
-                _keep_owner(real, before)
+                atomic_write_text(real, p["new"], mode, fsync=False, owner=_owner(before))
             if p.get("verbatim"):
                 row["restored_original"] = True
             if p["action"] == "remove":
