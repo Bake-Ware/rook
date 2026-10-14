@@ -7,6 +7,7 @@ import json
 
 import pytest
 
+from tests.plugins_fakes import band_env, make_node
 from rook.hub import plugin_catalog
 
 
@@ -41,3 +42,15 @@ def test_catalog_format_and_example():
     got = cache.load(["https://example.com/c.json"])
     assert got[0]["plugins"] == [] and "down" in got[0]["errors"][0]
     assert cache.load([])[0]["example"]
+
+
+@pytest.mark.asyncio
+async def test_marketplace_caps_list_and_refuse_to_install(tmp_path, monkeypatch):
+    band_env(tmp_path, monkeypatch)
+    node = make_node(tmp_path)
+    await node.start()
+    listed = await node.dispatch("plugin.marketplace.list", {"fields": "*"})
+    assert listed["ok"] and {e["id"] for e in listed["result"]} >= {"com.example.weather"}
+    r = await node.dispatch("plugin.marketplace.install", {"id": "com.example.weather"})
+    assert not r["ok"] and "not implemented" in r["error"] and "rook.plugins" in r["error"]
+    await node.stop()

@@ -1776,6 +1776,9 @@ class McpService:
         from ..hub.settings_web import routes as settings_routes
         for route in settings_routes(lambda: getattr(mcp._rook_hub, "settings", None), accounts):
             app.router.routes.insert(0, route)
+        from ..hub.plugins_web import routes as plugins_routes
+        for route in plugins_routes(lambda: mcp._rook_hub, accounts):
+            app.router.routes.insert(0, route)
         if mcp._rook_knowledge is not None:
             # Operator Knowledge page API (proxied by the dashboard). Background
             # embedding indexing runs in the knowledge plugin's start().
