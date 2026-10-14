@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import socket
+import time
 import uuid
 from pathlib import Path
 
@@ -139,6 +140,15 @@ class Worker:
         set_route = getattr(transport, "set_route", None)
         if callable(set_route) and envelope.routing_enabled():
             set_route(self.worker_id)
+        # Band-contact evidence for the post-update health gate (selfupdate):
+        # monotonic times of the last authenticated message from another peer
+        # and of the last reply to one of our own requests (a full round trip:
+        # our sealed send was opened, answered and routed back), plus who
+        # announced lately, as targets for a probe. Stamped here, never parsed
+        # again: the transport only delivers frames that passed the band AEAD.
+        self.band_rx_at: float | None = None
+        self.band_rtt_at: float | None = None
+        self._band_peers: dict[str, tuple[bool, float]] = {}
         # Announce trimming state (ROOK_ANNOUNCE_CAPS_HASH, core spec 14.5).
         self._announces = 0
         self._full_caps_hash: str | None = None
@@ -386,6 +396,7 @@ class Worker:
         if not isinstance(msg, dict):
             return
 
+        self._note_band_rx(msg)
         cap = msg.get("cap")
         if not cap:
             # Hub announces carry the is_hub grant behind its call tickets;
@@ -398,6 +409,7 @@ class Worker:
             # A reply to one of our own requests (Worker.request)?
             fut = self._pending_replies.get(msg.get("id")) if msg.get("id") else None
             if fut is not None and not fut.done():
+                self.band_rtt_at = time.monotonic()
                 fut.set_result(msg)
             return  # not a request
 
@@ -486,6 +498,33 @@ class Worker:
         finally:
             context.call_ticket.reset(ttok)
             context.caller_identity.reset(tok)
+
+    # Most recent announcers remembered as probe targets (bounded: a big band
+    # must not grow this without limit).
+    BAND_PEERS_MAX = 32
+
+    def _note_band_rx(self, msg: dict) -> None:
+        """Record band contact for an inbound message from another peer (our
+        own traffic never counts, should a relay ever echo it)."""
+        if msg.get("from") == self.worker_id or msg.get("worker_id") == self.worker_id:
+            return
+        now = time.monotonic()
+        self.band_rx_at = now
+        wid = msg.get("worker_id")
+        if msg.get("kind") == "announce" and isinstance(wid, str) and wid:
+            peers = self._band_peers
+            peers.pop(wid, None)
+            # "grants" marks the hub node (unverified here; any peer that
+            # answers a probe proves the round trip just as well).
+            peers[wid] = ("grants" in msg, now)
+            while len(peers) > self.BAND_PEERS_MAX:
+                peers.pop(next(iter(peers)))
+
+    def band_peers(self) -> list[str]:
+        """Recently announced peers, the hub node first, then newest first:
+        targets for a band round-trip probe."""
+        ranked = sorted(self._band_peers.items(), key=lambda kv: (not kv[1][0], -kv[1][1]))
+        return [wid for wid, _ in ranked]
 
     async def _reply(self, msg_id: str | None, body: dict) -> None:
         body = {"from": self.worker_id, **body}
