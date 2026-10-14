@@ -9,6 +9,29 @@ releases yet: workers identify themselves by build number (for example
 
 Preparation for public use.
 
+### Overview, start page and themes
+- The dashboard opens on a new **Overview** after sign-in: tiles for workers,
+  sessions, open tasks and unread chat; Waiting on you (sessions idle for
+  input, unread rooms, blocked tasks, hygiene decisions); Active now; open
+  tasks by project; recent knowledge changes. Rows link to the task, room
+  and session they relate to. Chat and Sessions accept `#chat?room=<id>` and
+  `#sessions?key=<key>` deep links. docs/web/overview.md.
+- A per-account **Start page** of widgets in 1 to 4 columns: bookmark groups,
+  RSS/Atom feeds, notes and band widgets (workers, tasks, rooms, knowledge,
+  sessions), arranged by dragging or arrow buttons. Feeds are fetched by the
+  hub: public addresses only unless `ui.feeds_allow_private` is on, a size
+  cap (`ui.feed_max_kb`), a time cap (`ui.feed_timeout`) and a shared cache
+  (`ui.feed_cache_minutes`). Hub plugins can add widget kinds (`WIDGETS`).
+  docs/web/start-page.md.
+- **Themes**: every dashboard colour is now a CSS token. Rook (the default,
+  unchanged), Paper (light), Graphite and High contrast, picked per account
+  under Settings > My preferences (`ui.theme`) and applied before the first
+  paint. Themes are `rook-theme/1` JSON files (rook/web/themes/, served at
+  `/account/ui/themes/<id>.json`) meant for the desktop app too.
+  docs/web/themes.md.
+- New hub plugin `ui` (Settings > Dashboard) behind `/ui/account-api`,
+  proxied as `/account/ui/api` (`ROOK_UI_ADMIN_URL` for a split hub).
+
 ### Hub merge
 - One hub process: `rook hub serve` (console script `rook-hub`) runs the
   dashboard and the MCP server together on the dashboard port (7005): the MCP
