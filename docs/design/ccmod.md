@@ -53,10 +53,16 @@ stop then.
 
 ## 2. Policy
 
-* Every rule edit is attributed (`ccmod.history`). `ccmod.set`/`delete` are
-  `write` caps; a rule with a `cap` action (or any action above `write`)
-  needs a hub administrator (`require_hub_admin`). `ccmod.push` is `admin`:
-  it writes people's settings files. The dashboard page is operator-only.
+* Every rule edit is attributed (`ccmod.history`), and so is every push
+  (the push record keeps who pushed). `ccmod.set`, `ccmod.delete`,
+  `ccmod.preview` and `ccmod.push` are `admin` and need a hub administrator
+  (`require_hub_admin`, which holds in audit mode too): a rule's text reaches
+  Claude inside people's sessions (`inject` is as good as running code there,
+  since Claude runs Bash), the hub runs a rule's posts from its *current*
+  rules with no push (so a post template with `{prompt}` would carry
+  people's prompts to any room), a push writes people's settings files, and
+  a preview shows parts of them (which can hold keys under `env`). The
+  dashboard page is operator-only.
 * A `cap` action's capability must be on `ccmod.cap_allowlist` (exact names
   or `prefix.*`; empty by default). Its tier is the highest any live worker
   declares for it, floored by the built-in table, and unknown capabilities
@@ -67,12 +73,22 @@ stop then.
   is saved; templates fill only messages. The hook command itself is Rook's
   fixed script; a push cannot make it run anything else.
 * Remote actions are decided on the hub. The worker reports an event and the
-  rule ids its hook matched; the hub checks the event against its own
-  current rules and runs only those that match (it accepts the worker's word
-  only for `contains` on tool input, which it does not receive). At most
-  `ccmod.rate_per_minute` (default 6) runs per rule and worker a minute.
-* The worker's `ccmod.apply` and `ccmod.remove` are `admin` (a worker in
-  `enforce-admin` mode wants a hub ticket for them).
+  rule ids its hook matched; the hub runs a rule only when the hook matched
+  it *and* the hub's current version of the rule still matches what the hub
+  can check itself: the event, the tool, the agent, a project given by name,
+  the Idle minutes, the band and worker. Text (`contains`) and a project
+  given as a path are the hook's call: the hook saw the whole prompt or tool
+  input (the hub gets a 300-character excerpt, or none), and a path such as
+  `~/src/app` or `C:\src\app` means the worker's home and the worker's kind
+  of path. At most `ccmod.rate_per_minute` (default 6) runs per rule and
+  worker a minute.
+* Background work runs as the hub, never as whoever pushed: the pollers and
+  the actions start in a clean context, and a `cap` action calls with the
+  identity `system:ccmod:<rule id>`.
+* The worker's `ccmod.apply`, `ccmod.remove` and `ccmod.events` are `admin`
+  (a worker in `enforce-admin` mode wants a hub ticket for them). The events
+  carry prompt and notification excerpts, and only the hub's own poller
+  needs them.
 
 ## 3. Push and preview
 
@@ -95,9 +111,11 @@ Installations: `$CLAUDE_CONFIG_DIR` (else `~/.claude`) and the folders in
 `ROOK_CCMOD_CLAUDE_DIRS` (path-separator list), those that exist. Files in
 `<worker state>/ccmod/`: `rules.json` (what the hook reads),
 `rook-ccmod-hook.py` (copied from the bundle; refreshed when the worker
-updates), `managed.json` (per settings file, the containers Rook created),
-`backups/` (the previous settings file before each write, newest five per
-installation), `outbox/`, `status/` (per-session status line text).
+updates), `managed.json` (per settings file, the containers Rook created and
+the SHA-256 of what Rook last wrote), `originals/` (each settings file as it
+was before Rook first went into it), `backups/` (the previous settings file
+before each write, newest five per installation), `outbox/`, `status/`
+(per-session status line text).
 
 **The managed block** in `settings.json` is JSON, so its marker is in the
 data: every hook Rook adds runs `rook-ccmod-hook.py`, in a group of its own
@@ -105,8 +123,17 @@ appended after the person's groups for that event:
 
 ```json
 {"matcher": "Bash", "hooks": [{"type": "command", "timeout": 10,
-  "command": "\"/usr/bin/python3\" -I -S \"/home/user/.rook-band-worker/ccmod/rook-ccmod-hook.py\" PreToolUse"}]}
+  "command": "\"/usr/bin/python3\" -I -S \"/home/user/.rook-band-worker/ccmod/rook-ccmod-hook.py\" PreToolUse || exit 0"}]}
 ```
+
+`|| exit 0` (the same in sh, bash and cmd.exe) keeps a missing script or
+Python harmless. Python exits 2 when it cannot open its script, and Claude
+Code reads exit status 2 as "block": without it, deleting the worker folder
+would deny every hooked tool call, erase every prompt and keep a Stop hook
+from ever letting Claude stop. The worker also never deletes the script
+while any settings file may still run it: a removal that cannot change one
+file (not valid JSON, say) keeps the script and lists the file under
+`script_kept`; the rules file goes, and without it the hook does nothing.
 
 One entry per event; the matcher is the union of the rules' tool patterns
 (none when a rule takes every tool). Idle rules add `SessionStart`,
@@ -118,13 +145,19 @@ Rules the merge keeps (tests in `tests/test_ccmod.py`):
 * nothing outside Rook's entries changes: other keys, their order, the
   person's hooks (also one they added to Rook's group), unknown fields;
 * applying the same config again writes nothing; removing restores the file
-  byte for byte when it was in Claude Code's own format (2-space JSON), and
-  JSON-equal otherwise; containers the person wrote (an empty
-  `"Stop": []`) stay; a settings file Rook created is deleted again;
+  byte for byte when nobody changed it since Rook last wrote it (from
+  `originals/`, so a hand-formatted file comes back as it was), and
+  otherwise takes Rook's entries out and leaves the rest JSON-equal;
+  containers the person wrote (an empty `"Stop": []`) stay; a settings file
+  Rook created is deleted again;
 * a file that is not valid JSON, or whose `hooks` is not an object, is
   reported and left alone; `disableAllHooks` is reported in the preview;
-* indent (spaces or tab) and CRLF line endings are kept; writes are atomic
-  and keep the file's mode; a symlinked file is written through.
+* indent (spaces or tab) and CRLF line endings are kept (while Rook's
+  entries are in, the rest of the file is rewritten as JSON in that style);
+  writes are atomic and keep the file's mode and owner (a new file gets its
+  folder's owner); a symlinked file is written through;
+* the file is read again just before it is replaced, and planned again if
+  Claude Code changed it meanwhile (a `/model` or `/permissions` change).
 
 **The hook** (`ccmod_hook.py`, stdlib only, `python -I -S`) reads the event
 from stdin and the rules file, applies `block`/`inject`/`statusline` and
@@ -133,14 +166,23 @@ to the worker: a `{"op": "hook"}` frame on the session shim's owner-only
 socket (`<state>/shim/run/worker.sock`, peer uid checked; the shim plugin
 listens for it even when the shim itself is not installed), else a file in
 `outbox/` the worker reads every second (Windows, or no socket). The
-prompt and notification text go along only for rules that forward. It
-always exits 0, so a broken rules file or a missing worker never affects
-the session.
+outbox holds 500 events at most (the hook drops more), and the worker
+drops events older than 10 minutes unread, so a worker that was stopped
+does not fire stale posts when it starts. The prompt and notification text
+go along only for rules that forward. Hook input is read up to 8 MiB; past
+that, the short fields are read from the head of the text and `contains`
+looks in the raw text, so a huge Write still meets a "block Write
+containing X" rule. It always exits 0, so a broken rules file or a missing
+worker never affects the session.
 
 **Events to the hub.** The worker queues forwarded events (500 at most,
 numbered per worker boot) and serves them with `ccmod.events(after, wait,
 boot)`, a long poll (25 s at most). The hub keeps one poll open per online
-worker that holds forwarding rules (`ccmod.listen`, on by default).
+worker that holds forwarding rules (`ccmod.listen`, on by default). Where
+it got to (boot and cursor) is kept per worker in the hub's store, so a hub
+restart or a new poller after the worker flapped offline does not replay
+the queue; it is recorded before the batch's actions run (an action is
+lost rather than run twice if the hub stops halfway).
 
 ## 5. Compatibility
 
@@ -154,6 +196,9 @@ worker that holds forwarding rules (`ccmod.listen`, on by default).
 
 ## 6. Not done yet
 
+* While Rook's entries are in, the settings file is JSON as Python writes
+  it (compact arrays spread over lines, `\u` escapes written out); the
+  original comes back on removal.
 * No Windows socket: the hook uses the outbox (one-second delay).
 * Agent identity is `ROOK_AGENT` in the session's environment; Rook-launched
   terminals do not set it yet.

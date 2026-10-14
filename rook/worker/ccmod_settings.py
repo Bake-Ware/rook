@@ -115,10 +115,17 @@ def unmerge(data: dict, created=None) -> dict:
 
 def command(python: str, script: str, arg: str) -> str:
     """The hook command line. Forward slashes on Windows too: Claude Code runs
-    hooks through a POSIX shell there, and Python takes either."""
+    hooks through a POSIX shell there, and Python takes either.
+
+    It ends in ``|| exit 0`` (the same in sh, bash and cmd.exe): when the
+    script or the Python is gone (the worker folder deleted or moved), the
+    command still exits 0 and Claude Code carries on. Without it, Python's
+    status 2 for a missing script would read as "block" to Claude Code:
+    every hooked tool call denied, every prompt erased, and a Stop hook that
+    never lets Claude stop."""
     def q(p: str) -> str:
         return '"' + str(p).replace("\\", "/").replace('"', "") + '"'
-    return f"{q(python)} -I -S {q(script)} {arg}"
+    return f"{q(python)} -I -S {q(script)} {arg} || exit 0"
 
 
 def merge(data: dict, events: dict, python: str, script: str,
@@ -174,15 +181,17 @@ def diff(old: str, new: str, path) -> str:
 def plan(path: Path, events: dict, python: str, script: str, statusline: bool,
          created=None) -> dict:
     """What applying would do to one settings file, without writing:
-    ``{action, old, new, created, notes, diff}``. ``action`` is ``create``,
-    ``update``, ``remove``, ``unchanged`` or ``absent``. ``created``: the
-    manifest's list for this file (``None``: no manifest)."""
+    ``{action, old, new, created, notes, diff, exists, had_ours}``.
+    ``action`` is ``create``, ``update``, ``remove``, ``unchanged`` or
+    ``absent``; ``had_ours``: the file holds Rook's entries now. ``created``:
+    the manifest's list for this file (``None``: no manifest)."""
     exists = path.exists()
     if exists and path.stat().st_size > MAX_FILE:
         raise SettingsError(f"{path} is larger than {MAX_FILE} bytes")
     old = path.read_bytes().decode("utf-8") if exists else ""
     current = load(old)
     base = unmerge(current, created)
+    had_ours = base != current
     if events or statusline:
         new_data, made, notes = merge(base, events, python, script, statusline)
     else:
@@ -190,14 +199,15 @@ def plan(path: Path, events: dict, python: str, script: str, statusline: bool,
     if new_data == current:
         return {"action": "unchanged" if (events or statusline) else "absent", "old": old,
                 "new": old, "created": made, "notes": notes, "diff": "",
-                "exists": exists}
+                "exists": exists, "had_ours": had_ours}
     if not new_data and not exists:
         return {"action": "absent", "old": old, "new": old, "created": [], "notes": notes,
-                "diff": "", "exists": exists}
+                "diff": "", "exists": exists, "had_ours": had_ours}
     new = dump(new_data, old)
     if not (events or statusline):
         action = "remove"
     else:
         action = "create" if not exists else "update"
     return {"action": action, "old": old, "new": new, "created": made, "notes": notes,
-            "diff": diff(old, new, path), "exists": exists, "empty": not new_data}
+            "diff": diff(old, new, path), "exists": exists, "empty": not new_data,
+            "had_ours": had_ours}

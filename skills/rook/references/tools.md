@@ -61,13 +61,13 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 |---|---|---|---|
 | `caps.describe` | prefix='' | read | Arg schema, docstring and declared risk/limit/fields for every hub cap. |
 | `ccmod.activity` | limit=50 | read | What the rules did recently: posts, notifications, capability runs. |
-| `ccmod.delete` | id, note='' | write | Delete a rule (push afterwards to take it off the workers). |
+| `ccmod.delete` | id, note='' | admin | Delete a rule (push afterwards to take it off the workers). |
 | `ccmod.get` | id | read | One rule. |
 | `ccmod.history` | id='', limit=20 | read | Attributed changes to the rules, newest first (`id`: one rule). |
 | `ccmod.list` | — | read | Every Claude Code rule, with a one-line summary and its risk tier. |
-| `ccmod.preview` | worker, remove=false | read | What a push would write on `worker`: per settings file, the action and a unified diff (nothing is written). |
+| `ccmod.preview` | worker, remove=false | admin | What a push would write on `worker`: per settings file, the action and a unified diff (nothing is written). |
 | `ccmod.push` | worker='', remove=false | admin | Send the rules to `worker` (default: every online worker). |
-| `ccmod.set` | rule, note='', dry_run=false, expect_rev? | write | Create or replace a rule. |
+| `ccmod.set` | rule, note='', dry_run=false, expect_rev? | admin | Create or replace a rule. |
 | `ccmod.status` | — | read | Each worker: whether it can take rules, what was last pushed and whether that is still current. |
 | `chat.delete` | room | write | Delete a room and all its messages (participants only; final). |
 | `chat.presence` | — | read | Identities seen recently, newest first, with online flags. |

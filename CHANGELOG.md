@@ -73,6 +73,17 @@ Preparation for public use.
   are admin-only, allow-listed (`ccmod.cap_allowlist`) and need
   `ccmod.allow_exec` for exec-tier caps. Docs: docs/web/claude-code-rules.md,
   docs/design/ccmod.md.
+- Claude Code rules hardening: a missing hook script (worker folder deleted)
+  no longer blocks Claude Code (the hook command ends in `|| exit 0`, and
+  the script is kept while any settings file still runs it); a hub restart
+  no longer replays queued events (the poll position is stored per worker);
+  writing, deleting and previewing rules and the worker's `ccmod.events` are
+  admin-only; the hub accepts the hook's word for `contains` on prompts and
+  notifications and for project paths; removal restores an untouched
+  settings file byte for byte; settings files keep their owner and are
+  re-read just before they are replaced; the outbox is capped (500) and
+  stale events (10 min) dropped; hook input up to 8 MiB; pushes record who
+  pushed and capability actions run as `system:ccmod:<rule>`.
 
 ### Hub merge
 - One hub process: `rook hub serve` (console script `rook-hub`) runs the

@@ -155,7 +155,7 @@ def test_merge_appends_after_user_hooks_and_round_trips():
     pre = new["hooks"]["PreToolUse"]
     assert pre[0] == USER["hooks"]["PreToolUse"][0]                  # theirs first, untouched
     assert pre[1]["matcher"] == "Bash" and cs.is_ours(pre[1]["hooks"][0])
-    assert pre[1]["hooks"][0]["command"] == f'"{PY}" -I -S "{SCRIPT}" PreToolUse'
+    assert pre[1]["hooks"][0]["command"] == f'"{PY}" -I -S "{SCRIPT}" PreToolUse || exit 0'
     assert "matcher" not in new["hooks"]["Stop"][0]
     assert list(new)[:4] == list(USER)                                # key order kept
     assert created == ["hooks.SessionStart"] and notes == []
@@ -203,7 +203,19 @@ def test_plan_keeps_style_refuses_bad_json_and_warns_on_disabled_hooks(tmp_path)
 
 def test_windows_paths_use_forward_slashes():
     cmd = cs.command(r"C:\Program Files\Python\python.exe", r"C:\Users\u\.rook\h.py", "Stop")
-    assert cmd == '"C:/Program Files/Python/python.exe" -I -S "C:/Users/u/.rook/h.py" Stop'
+    assert cmd == '"C:/Program Files/Python/python.exe" -I -S "C:/Users/u/.rook/h.py" Stop || exit 0'
+
+
+@pytest.mark.skipif(os.name != "posix", reason="runs the command through /bin/sh")
+def test_hook_command_exits_0_when_the_script_or_python_is_gone(tmp_path):
+    # Python exits 2 when it cannot open its script, and Claude Code reads 2 as
+    # "block": every tool call denied, every prompt erased, Stop never ending.
+    assert subprocess.run([sys.executable, "-I", "-S", str(tmp_path / "gone.py")],
+                          capture_output=True).returncode == 2
+    for py, script in ((sys.executable, tmp_path / "gone.py"), (tmp_path / "no-python", tmp_path / "x.py")):
+        cmd = cs.command(str(py), str(script), "PreToolUse")
+        run = subprocess.run(cmd, shell=True, capture_output=True, text=True, input="{}", timeout=30)
+        assert run.returncode == 0 and run.stdout == ""
 
 
 # -- the worker plugin -----------------------------------------------------------------------
@@ -263,7 +275,107 @@ async def test_apply_dry_run_write_repeat_and_remove(box):
     assert gone["installations"][0]["action"] == "remove"
     assert settings.read_text() == canonical(USER)                 # byte for byte
     assert not plugin.rules_path.exists() and not plugin.script_path.exists()
+    assert "script_kept" not in gone
     assert not plugin.status()["installations"][0]["managed"]
+    assert not (wp.base_dir() / "originals").exists() or not os.listdir(wp.base_dir() / "originals")
+
+
+@pytest.mark.asyncio
+async def test_removal_restores_a_hand_formatted_file_byte_for_byte(box):
+    settings = box / "claude" / "settings.json"
+    mine = '{ "model": "opus",\n  "env": {"A": "caf\\u00e9"},   "permissions": {"allow": ["x", "y"]}\n}\n'
+    settings.write_text(mine)
+    plugin = wp.ClaudeCodeRules()
+    await plugin.apply(config())
+    assert settings.read_text() != mine                          # rewritten as JSON
+    await plugin.apply(config(rev=4, *config()["rules"][:2]))    # rules change, file untouched by hand
+    dry = await plugin.remove(dry_run=True)
+    assert settings.read_text() != mine and dry["installations"][0]["action"] == "remove"
+    gone = await plugin.remove()
+    assert gone["installations"][0]["restored_original"] and settings.read_text() == mine
+
+
+@pytest.mark.asyncio
+async def test_removal_after_a_hand_edit_unmerges_instead(box):
+    settings = box / "claude" / "settings.json"
+    settings.write_text('{"model": "opus"}')
+    plugin = wp.ClaudeCodeRules()
+    await plugin.apply(config())
+    data = json.loads(settings.read_text())
+    data["model"] = "sonnet"                                     # the person (or /model) changed it
+    settings.write_text(json.dumps(data, indent=2) + "\n")
+    gone = await plugin.remove()
+    assert "restored_original" not in gone["installations"][0]
+    assert json.loads(settings.read_text()) == {"model": "sonnet"}
+
+
+@pytest.mark.asyncio
+async def test_removal_keeps_the_script_while_a_file_still_runs_it(box, monkeypatch):
+    # One installation cannot be changed: its hooks still name the script, so
+    # the script must stay (else Claude Code would run a missing file).
+    monkeypatch.setenv("ROOK_CCMOD_CLAUDE_DIRS", str(box / "other"))
+    plugin = wp.ClaudeCodeRules()
+    await plugin.apply(config())
+    other = box / "other" / "settings.json"
+    other.write_text(other.read_text().rstrip().rstrip("}") + ', "broken": }')
+    gone = await plugin.remove()
+    rows = {r["path"]: r for r in gone["installations"]}
+    assert rows[str(other)]["action"] == "error"
+    assert plugin.script_path.exists() and str(other) in gone["script_kept"]
+    assert not plugin.rules_path.exists()          # the hook does nothing without its rules
+    cmd = json.loads(other.read_text().replace(', "broken": }', "}"))["hooks"]["Stop"][0]["hooks"][0]["command"]
+    run = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30, input="{}")
+    assert run.returncode == 0 and run.stdout == ""
+    # Once the file is fixed, removal finishes and the script goes.
+    other.write_text(other.read_text().replace(', "broken": }', "}"))
+    done = await plugin.remove()
+    assert "script_kept" not in done and not plugin.script_path.exists()
+    assert not other.exists() and not plugin.manifest_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_apply_plans_again_when_the_file_changed_meanwhile(box, monkeypatch):
+    settings = box / "claude" / "settings.json"
+    settings.write_text('{"model": "opus"}\n')
+    plugin = wp.ClaudeCodeRules()
+    real_plan = plugin._plan
+    calls = []
+
+    def racing(path, *a):
+        out = real_plan(path, *a)
+        if not calls:                    # Claude Code writes /model right after the first read
+            settings.write_text('{"model": "sonnet"}\n')
+        calls.append(path)
+        return out
+
+    monkeypatch.setattr(plugin, "_plan", racing)
+    await plugin.apply(config())
+    data = json.loads(settings.read_text())
+    assert len(calls) == 2 and data["model"] == "sonnet" and "hooks" in data
+
+
+@pytest.mark.asyncio
+async def test_rewritten_settings_keep_their_owner(box, monkeypatch):
+    settings = box / "claude" / "settings.json"
+    settings.write_text('{"model": "opus"}\n')
+    st = settings.stat()
+    seen = []
+    monkeypatch.setattr(os, "chown", lambda path, uid, gid: seen.append((str(path), uid, gid)))
+    # A file owned by someone else (a root worker, a user's folder) goes back to them.
+    wp._keep_owner(settings, os.stat_result((st.st_mode, 0, 0, 1, st.st_uid + 7, st.st_gid + 7,
+                                             0, 0, 0, 0)))
+    assert seen == [(str(settings), st.st_uid + 7, st.st_gid + 7)]
+    seen.clear()
+    wp._keep_owner(settings, settings.stat())     # same owner: nothing to do
+    assert seen == []
+    # apply() hands it the owner from before the write (the folder's, for a new file).
+    calls = []
+    monkeypatch.setattr(wp, "_keep_owner", lambda path, before: calls.append((path, before.st_ino)))
+    monkeypatch.setenv("ROOK_CCMOD_CLAUDE_DIRS", str(box / "other"))
+    await wp.ClaudeCodeRules().apply(config())
+    real = lambda q: Path(os.path.realpath(q))  # noqa: E731
+    assert calls == [(real(settings), st.st_ino),
+                     (real(box / "other" / "settings.json"), (box / "other").stat().st_ino)]
 
 
 @pytest.mark.asyncio
@@ -320,6 +432,40 @@ async def test_hook_replies_block_inject_statusline_and_forwards(box):
     assert [(e["event"], e["matched"], e["project"]) for e in got["events"]] == [
         ("PreToolUse", ["no-rm"], "myapp")]
     assert run_hook(base, "Bogus", {}) == "" and hook.run("PreToolUse", "not json", {}, str(base)) == ""
+
+
+def test_outbox_is_capped_and_stale_events_are_dropped(box, monkeypatch):
+    base = wp.base_dir()
+    box_dir = base / "outbox"
+    cfg = {"outbox": str(box_dir)}
+    monkeypatch.setattr(hook, "MAX_OUTBOX", 3)
+    for i in range(5):
+        hook.forward(cfg, {"op": "hook", "event": "Stop", "ts": __import__("time").time(), "i": i}, str(base))
+    assert len(os.listdir(box_dir)) == 3                     # the rest dropped, not queued forever
+    old = {"op": "hook", "event": "Stop", "ts": 1000.0}
+    (box_dir / "1-1.json").write_text(json.dumps(old))
+    plugin = wp.ClaudeCodeRules()
+    got = plugin._drain_outbox()
+    assert len(got) == 3 and all(g["ts"] != 1000.0 for g in got)
+    assert os.listdir(box_dir) == []
+
+
+def test_large_tool_input_still_meets_contains_rules():
+    cfg = {"worker": "w", "rules": [
+        {"id": "a", "trigger": {"event": "PreToolUse", "matcher": "Write", "contains": "SECRET"},
+         "local": [{"type": "block", "message": "No."}]}]}
+    big = {"session_id": "s", "cwd": "/x", "hook_event_name": "PreToolUse", "tool_name": "Write",
+           "tool_input": {"file_path": "/x/a", "content": "y" * (hook.MAX_STDIN + 10) + " SECRET"}}
+    raw = json.dumps(big)
+    cut = raw[:hook.MAX_STDIN + 1]                               # what main() reads at most
+    assert "SECRET" not in cut
+    assert hook.run("PreToolUse", cut, cfg, tempfile.mkdtemp()) == ""
+    big["tool_input"]["content"] = "SECRET " + "y" * (hook.MAX_STDIN + 10)
+    cut = json.dumps(big)[:hook.MAX_STDIN + 1]
+    out = json.loads(hook.run("PreToolUse", cut, cfg, tempfile.mkdtemp()))
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert hook.partial(cut)["tool_name"] == "Write" and hook.partial(cut)["session_id"] == "s"
+    assert hook.MAX_STDIN >= 8 << 20
 
 
 def test_hook_stop_inject_runs_once_and_prompts_can_be_blocked():
@@ -521,11 +667,41 @@ async def test_events_run_remote_actions_rechecked_on_the_hub(hub):
     assert "user:operator" in chat.rooms_for("user:operator")["rooms"][0]["participants"]
     # A second event reuses the room; the rate limit then drops the excess.
     plugin.settings.refresh({"rate_per_minute": 2})
-    await plugin.handle_event("w-new", entry, {"event": "PreToolUse", "tool": "Bash"})
-    limited = await plugin.handle_event("w-new", entry, {"event": "PreToolUse", "tool": "Bash"})
+    await plugin.handle_event("w-new", entry, {"event": "PreToolUse", "tool": "Bash", "matched": ["waiting"]})
+    limited = await plugin.handle_event("w-new", entry, {"event": "PreToolUse", "tool": "Bash",
+                                                         "matched": ["waiting"]})
     assert limited[0]["detail"] == "rate limit: skipped"
     assert len(chat.rooms_for("user:operator")["rooms"]) == 1
     assert plugin.store.activity()[0]["detail"] == "rate limit: skipped"
+
+
+@pytest.mark.asyncio
+async def test_hub_takes_the_hooks_word_for_text_and_paths(hub):
+    node, plugin, worker = hub
+    entry = {**node.client.workers["w-new"], "worker_id": "w-new"}
+    post = [{"type": "post", "room_title": "Claude Code", "text": "{prompt}"}]
+    plugin.save_rule({"name": "Deploy", "trigger": {"event": "UserPromptSubmit", "contains": "deploy"},
+                      "scope": {"kind": "all"}, "actions": post}, "human:op")
+    plugin.save_rule({"name": "Home app", "trigger": {"event": "Stop"},
+                      "scope": {"kind": "project", "target": "~/src/app"}, "actions": post}, "human:op")
+    plugin.save_rule({"name": "Win app", "trigger": {"event": "Stop"},
+                      "scope": {"kind": "project", "target": "C:\\src\\app"}, "actions": post}, "human:op")
+    plugin.save_rule({"name": "Named", "trigger": {"event": "Stop"},
+                      "scope": {"kind": "project", "target": "other"}, "actions": post}, "human:op")
+    # The needle is past the excerpt the hub receives; the hook saw it.
+    rows = await plugin.handle_event("w-new", entry, {"event": "UserPromptSubmit", "prompt": "x" * 300 + "...",
+                                                      "matched": ["deploy"]})
+    assert [r["rule"] for r in rows] == ["deploy"]
+    # Path scopes are the worker's paths (its home, its kind of path).
+    rows = await plugin.handle_event("w-new", entry, {"event": "Stop", "cwd": "/home/u/src/app",
+                                                      "project": "app",
+                                                      "matched": ["home-app", "win-app", "named"]})
+    assert sorted(r["rule"] for r in rows) == ["home-app", "win-app"]    # a project name it checks
+    # Not matched by the hook: not run, whatever the hub would think.
+    assert await plugin.handle_event("w-new", entry, {"event": "Stop", "project": "other"}) == []
+    from rook.hub.plugins.ccmod import hub_scope
+    assert hub_scope({"kind": "project", "target": "myapp"}) == {"kind": "project", "target": "myapp"}
+    assert hub_scope({"kind": "project", "target": "/srv/x"})["kind"] == "all"
 
 
 @pytest.mark.asyncio
@@ -536,7 +712,7 @@ async def test_cap_actions_recheck_policy_when_they_run(hub):
                                actions=[{"type": "cap", "cap": "info.ping", "args": {}}]), "human:op")
     plugin.settings.refresh({"cap_allowlist": []})              # taken off the list since
     entry = {**node.client.workers["w-new"], "worker_id": "w-new"}
-    rows = await plugin.handle_event("w-new", entry, {"event": "Stop"})
+    rows = await plugin.handle_event("w-new", entry, {"event": "Stop", "matched": ["ping"]})
     assert rows[0]["action"] == "cap" and not rows[0]["ok"] and "allow-list" in rows[0]["detail"]
     assert not [c for c in node.client.calls if c[0] == "info.ping"]
 
@@ -574,6 +750,70 @@ async def test_poller_follows_a_worker_and_runs_actions(hub):
     await plugin.stop()
 
 
+async def _wait_for(cond, tries=150):
+    for _ in range(tries):
+        if cond():
+            return True
+        await asyncio.sleep(0.02)
+    return cond()
+
+
+@pytest.mark.asyncio
+async def test_a_restarted_hub_does_not_replay_events(hub, tmp_path):
+    node, plugin, worker = hub
+    plugin.save_rule(post_rule(), "human:op")
+    await plugin.push("lab-pc", "human:op")
+    assert plugin.store.pushes()["w-new"]["actor"] == "human:op"      # who pushed
+    for _ in range(3):
+        worker.ingest({"op": "hook", "event": "PreToolUse", "tool": "Bash", "matched": ["waiting"]})
+    assert await _wait_for(lambda: len(plugin.store.activity()) == 3)
+    assert plugin.store.cursor("w-new") == (worker._boot, 3)
+    await plugin.stop()
+    # A new hub process: same store file, fresh plugin state.
+    from rook.hub.plugins.ccmod import ClaudeCodeRules
+    again = ClaudeCodeRules()
+    again._store = model.Store(plugin.store.path)
+    again._node = node
+    again._sync_pollers()
+    assert set(again._pollers) == {"w-new"}
+    worker.ingest({"op": "hook", "event": "PreToolUse", "tool": "Bash", "matched": ["waiting"]})
+    assert await _wait_for(lambda: len(again.store.activity()) == 4)
+    await asyncio.sleep(0.1)
+    assert len(again.store.activity()) == 4                            # 3 old ones not run again
+    await again.stop()
+
+
+@pytest.mark.asyncio
+async def test_background_actions_do_not_act_as_the_pusher(hub):
+    from rook.hub.authz import current_principal
+    from rook.hub.policy import Principal
+    node, plugin, worker = hub
+    plugin.settings.refresh({"cap_allowlist": ["ccmod.remove"], "allow_exec": True})
+    plugin.save_rule(post_rule("Ping", trigger={"event": "PreToolUse", "matcher": "Bash"},
+                               actions=[{"type": "cap", "cap": "ccmod.remove", "args": {"dry_run": True}}]),
+                     "human:op")
+    seen = []
+    real = node.client.call
+
+    async def call(cap, args=None, target=None, timeout=15.0, identity=None, principal=None):
+        if cap == "ccmod.remove":
+            seen.append((identity, current_principal.get()))
+        return await real(cap, args, target, timeout, identity, principal)
+
+    node.client.call = call
+    tok = current_principal.set(Principal("token:op", "token", "operator"))
+    try:
+        await plugin.push("lab-pc", "token:op")          # starts the poller inside the pusher's call
+    finally:
+        current_principal.reset(tok)
+    worker.ingest({"op": "hook", "event": "PreToolUse", "tool": "Bash", "matched": ["ping"]})
+    assert await _wait_for(lambda: seen)
+    assert seen[0] == ("system:ccmod:ping", None)
+    from rook.hub.authz import Authorizer
+    assert Authorizer.principal(None, seen[0][0]).id == "system:ccmod:ping"
+    await plugin.stop()
+
+
 @pytest.mark.asyncio
 async def test_caps_tiers_admin_gate_and_band_ceiling(hub):
     from rook.hub.authz import current_principal
@@ -583,22 +823,28 @@ async def test_caps_tiers_admin_gate_and_band_ceiling(hub):
     assert {c: meta(f"ccmod.{c}").risk for c in ("list", "get", "history", "status", "activity",
                                                   "preview", "set", "delete", "push")} == {
         "list": "read", "get": "read", "history": "read", "status": "read", "activity": "read",
-        "preview": "read", "set": "write", "delete": "write", "push": "admin"}
+        "preview": "admin", "set": "admin", "delete": "admin", "push": "admin"}
+    assert wp.ClaudeCodeRules.events._rook_cap_meta.risk == "admin"   # prompt excerpts: the hub's poller only
     plugin.settings.refresh({"cap_allowlist": ["info.ping"]})
     capped = post_rule("Ping", trigger={"event": "Stop"},
                        actions=[{"type": "cap", "cap": "info.ping", "args": {}}])
     tok = current_principal.set(Principal("token:agent_x", "token", "agent"))
     try:
-        assert (await node.dispatch("ccmod.set", {"rule": post_rule()}, "agent:x"))["ok"]
-        res = await node.dispatch("ccmod.set", {"rule": capped}, "agent:x")
-        assert not res["ok"] and "denied" in res["error"]
-        assert (await node.dispatch("ccmod.set", {"rule": capped, "dry_run": True}))["ok"]
+        # A rule's text reaches Claude in people's sessions, and its posts can
+        # carry their prompts: writing any rule is for administrators.
+        for args in ({"rule": post_rule()}, {"rule": capped}):
+            res = await node.dispatch("ccmod.set", args, "agent:x")
+            assert not res["ok"] and "denied" in res["error"]
+        assert not (await node.dispatch("ccmod.delete", {"id": "x"}, "agent:x"))["ok"]
+        assert not (await node.dispatch("ccmod.preview", {"worker": "lab-pc"}, "agent:x"))["ok"]
         assert not (await node.dispatch("ccmod.push", {}))["ok"]
+        assert plugin.store.rules() == []
     finally:
         current_principal.reset(tok)
     tok = current_principal.set(Principal("token:op", "token", "operator"))
     try:
         assert (await node.dispatch("ccmod.set", {"rule": capped}, "agent:op"))["ok"]
+        assert (await node.dispatch("ccmod.preview", {"worker": "lab-pc"}, "agent:op"))["ok"]
     finally:
         current_principal.reset(tok)
     assert not (await node.dispatch("ccmod.set", {"rule": post_rule("Band")}, source="band"))["ok"]

@@ -69,6 +69,19 @@ when they were last pushed and whether that is still up to date.
 Workers that cannot take rules (an older Rook build, or no Claude Code on
 them) are left alone and say so.
 
+Only hub administrators can write, delete, preview and push rules: a rule's
+instructions reach Claude inside people's sessions, and its posts can carry
+what they type.
+
+**Uninstalling.** Before you delete a worker's folder
+(`~/.rook-band-worker`) or uninstall Rook from a machine, press **Remove**
+for that worker (or `ccmod.push` with `remove: true`): it takes Rook's
+entries out of its Claude Code settings and restores each file as it was
+when nobody has changed it since. If you deleted the folder first, nothing
+breaks: Rook's hook entries are written so that a missing script is simply
+skipped, and you can take them out of `~/.claude/settings.json` by hand
+(they all mention `rook-ccmod-hook`).
+
 ## Activity
 
 What the rules did on the hub: each post, notification and capability run,

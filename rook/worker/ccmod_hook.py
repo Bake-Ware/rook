@@ -6,7 +6,11 @@ and adds one hook entry per event to each Claude Code installation's
 ``settings.json``. Each entry runs this file with the worker's Python
 (``-I -S``: no site, nothing from the current folder) and the event name::
 
-    "<python>" -I -S "<worker state>/ccmod/rook-ccmod-hook.py" PreToolUse
+    "<python>" -I -S "<worker state>/ccmod/rook-ccmod-hook.py" PreToolUse || exit 0
+
+(``|| exit 0``: if this file or that Python is gone, say the worker folder
+was deleted, the command still ends with status 0. Claude Code reads status
+2 as "block", and Python exits 2 when it cannot open its script.)
 
 It is copied out of the worker bundle, so it imports nothing from Rook:
 stdlib only. The hub reuses its matching and template code
@@ -25,7 +29,8 @@ What one run does:
    (post to a room, notify, run a capability). Those run on the hub, under
    the hub's rules and policy, never here. It goes over the worker's local
    shim socket (owner-only) and, when that is not there, as a file in the
-   worker's ``ccmod/outbox`` folder.
+   worker's ``ccmod/outbox`` folder (at most :data:`MAX_OUTBOX` files; the
+   worker drops ones that waited too long).
 
 It never fails a hook: any error ends the run quietly with exit status 0,
 so Claude Code carries on as if the hook were not there.
@@ -59,11 +64,18 @@ INJECTABLE = ("SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "Subage
 FIELDS = ("worker", "band", "event", "tool", "project", "cwd", "session", "agent",
           "prompt", "message", "minutes")
 TEXT_CLIP = 300
-MAX_STDIN = 1 << 20
+#: Hook input read at most (a large Write or Edit can carry megabytes). Past
+#: this, the fields that can still be read are taken from the head of the
+#: text and ``contains`` looks in the raw text (:func:`partial`).
+MAX_STDIN = 8 << 20
 MAX_FRAME = 1 << 20
+#: Events waiting in the outbox at most; more are dropped (the worker is not
+#: reading them).
+MAX_OUTBOX = 500
 CONNECT_TIMEOUT = 0.2
 _TEMPLATE = re.compile(r"\{(" + "|".join(FIELDS) + r")\}")
 _SESSION_FILE = re.compile(r"[^A-Za-z0-9_-]")
+_HEAD_FIELDS = ("hook_event_name", "session_id", "cwd", "tool_name", "stop_hook_active")
 
 
 def clip(text, room=TEXT_CLIP):
@@ -131,7 +143,9 @@ def matches(rule, event, ctx, data=None):
             return False
     needle = str(trig.get("contains") or "").strip().lower()
     if needle:
-        if event in TOOL_EVENTS:
+        if data and "_raw" in data:   # too large to read whole: look in the text itself
+            hay = data["_raw"]
+        elif event in TOOL_EVENTS:
             hay = json.dumps((data or {}).get("tool_input") or {}, ensure_ascii=False)
         elif event == "Notification":
             hay = str(ctx.get("message") or "")
@@ -140,6 +154,22 @@ def matches(rule, event, ctx, data=None):
         if needle not in hay.lower():
             return False
     return in_scope(rule.get("scope"), ctx)
+
+
+def partial(raw):
+    """What can be read from hook input too large to read whole (cut at
+    :data:`MAX_STDIN`, so not valid JSON): the short fields from the head of
+    the text, and the raw text itself for ``contains`` (a rule that blocks
+    "Write containing X" still sees X in a huge Write)."""
+    data = {"_raw": raw}
+    for key in _HEAD_FIELDS:
+        m = re.search(r'"%s"\s*:\s*("(?:[^"\\]|\\.){0,4096}"|true|false)' % key, raw[:65536])
+        if m:
+            try:
+                data[key] = json.loads(m.group(1))
+            except ValueError:
+                pass
+    return data
 
 
 def context(data, event, cfg, environ=None):
@@ -234,6 +264,8 @@ def forward(cfg, payload, base):
     outbox = cfg.get("outbox") or os.path.join(base, "outbox")
     try:
         os.makedirs(outbox, mode=0o700, exist_ok=True)
+        if sum(1 for n in os.listdir(outbox) if n.endswith(".json")) >= MAX_OUTBOX:
+            return False   # nobody is reading them: do not fill the disk
         name = "%d-%d.json" % (time.time_ns(), os.getpid())
         tmp = os.path.join(outbox, "." + name)
         with open(tmp, "wb") as f:
@@ -249,7 +281,7 @@ def run(mode, raw, cfg, base, environ=None):
     try:
         data = json.loads(raw) if raw.strip() else {}
     except ValueError:
-        data = {}
+        data = partial(raw) if len(raw) > MAX_STDIN else {}
     if not isinstance(data, dict):
         data = {}
     if mode == "statusline":
@@ -295,7 +327,8 @@ def main(argv=None):
             return 0
         if not isinstance(cfg, dict):
             return 0
-        raw = sys.stdin.read(MAX_STDIN) if not sys.stdin.isatty() else ""
+        # One character past the limit tells run() the input was cut.
+        raw = sys.stdin.read(MAX_STDIN + 1) if not sys.stdin.isatty() else ""
         out = run(mode, raw, cfg, base)
         if out:
             sys.stdout.write(out + "\n")

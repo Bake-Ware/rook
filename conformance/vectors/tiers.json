@@ -62,10 +62,10 @@
    "tier": "admin"
   },
   "ccmod.delete": {
-   "tier": "write"
+   "tier": "admin"
   },
   "ccmod.events": {
-   "tier": "read",
+   "tier": "admin",
    "tags": [
     "sensitive"
    ]
@@ -80,7 +80,7 @@
    "tier": "read"
   },
   "ccmod.preview": {
-   "tier": "read"
+   "tier": "admin"
   },
   "ccmod.push": {
    "tier": "admin"
@@ -89,7 +89,7 @@
    "tier": "admin"
   },
   "ccmod.set": {
-   "tier": "write"
+   "tier": "admin"
   },
   "ccmod.status": {
    "tier": "read"

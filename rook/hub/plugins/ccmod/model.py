@@ -22,7 +22,8 @@ rule is saved.
 
 The store is one JSON file in the plugin's data folder: the rules (each with
 its own ``rev``), the band-wide ``rev``, rooms made for rules, the last push
-to each worker, an attributed history and a short activity log.
+to each worker (and who pushed), where the hub got to in each worker's event
+queue, an attributed history and a short activity log.
 """
 
 from __future__ import annotations
@@ -329,7 +330,7 @@ class Store:
                 data = {}
             data = data if isinstance(data, dict) else {}
             for key, default in (("rev", 0), ("rules", []), ("rooms", {}), ("pushes", {}),
-                                 ("history", []), ("activity", [])):
+                                 ("cursors", {}), ("history", []), ("activity", [])):
                 if not isinstance(data.get(key), type(default)):
                     data[key] = copy.deepcopy(default)
             self._data = data
@@ -428,6 +429,25 @@ class Store:
     def record_push(self, worker_id: str, row: dict) -> None:
         with self._lock:
             self._load()["pushes"][worker_id] = {**row, "at": self.clock()}
+            self._save()
+
+    # -- where the hub got to in each worker's event queue -------------------------------
+    def cursor(self, worker_id: str) -> tuple[str, int]:
+        """``(boot, cursor)`` of the last events taken from a worker
+        (``("", 0)``: none yet)."""
+        with self._lock:
+            c = self._load()["cursors"].get(worker_id)
+        if not isinstance(c, dict):
+            return "", 0
+        try:
+            return str(c.get("boot") or ""), max(0, int(c.get("cursor") or 0))
+        except (TypeError, ValueError):
+            return "", 0
+
+    def set_cursor(self, worker_id: str, boot: str, cursor: int) -> None:
+        with self._lock:
+            self._load()["cursors"][worker_id] = {"boot": str(boot), "cursor": int(cursor),
+                                                  "at": self.clock()}
             self._save()
 
     # -- activity -------------------------------------------------------------------------

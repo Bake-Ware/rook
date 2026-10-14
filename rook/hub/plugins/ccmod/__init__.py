@@ -10,23 +10,28 @@ happens in a scope, do something (docs/design/ccmod.md, :mod:`.model`).
   (older builds, or no Claude Code) are skipped and shown as such.
   ``ccmod.preview`` asks a worker for the diff it would write.
 * Remote actions run here. The hub long-polls ``ccmod.events`` on each worker
-  it pushed rules to, checks each event against its own current rules (the
-  worker's list of matched rules is not trusted) and posts, notifies or calls
-  an allow-listed capability, at most ``ccmod.rate_per_minute`` times a
-  minute per rule and worker. Everything it does is in ``ccmod.activity``.
-* Rules that run capabilities (or anything above ``write``) are for hub
-  administrators only; so are pushes, which write people's settings files.
+  it pushed rules to (where it got to, per worker, is kept in the store, so
+  a hub restart does not replay events), runs a rule only when the worker's
+  hook matched it *and* the hub's current version of it still matches what
+  the hub can check itself, and posts, notifies or calls an allow-listed
+  capability, at most ``ccmod.rate_per_minute`` times a minute per rule and
+  worker. Everything it does is in ``ccmod.activity``.
+* Writing rules is for hub administrators: a rule's text reaches Claude
+  inside people's sessions (``inject``, ``block``) and its posts can carry
+  their prompts. Pushes write people's settings files; previews show them.
 
 Caps on worker ``rook``: ``list``/``get``/``history``/``status``/
-``activity``/``preview`` (read), ``set``/``delete`` (write; admin for
-capability rules), ``push`` (admin).
+``activity`` (read), ``set``/``delete``/``preview``/``push`` (admin).
 """
 
 from __future__ import annotations
 
 import asyncio
 import collections
+import contextvars
 import logging
+import os
+import re
 import time
 from typing import Any
 
@@ -48,6 +53,29 @@ UNSUPPORTED = "This worker cannot take Claude Code rules yet (an older build, or
 def _actor() -> str:
     ident = context.caller_identity.get()
     return str(ident) if ident else "system:rook-hub"
+
+
+def _task(coro) -> asyncio.Task:
+    """A background task that does not inherit the caller's context: a
+    poller started by someone's push must not act as that person (the
+    policy reads ``current_principal``, a context variable)."""
+    return asyncio.get_running_loop().create_task(coro, context=contextvars.Context())
+
+
+_WIN_ABS = re.compile(r"^[A-Za-z]:[\\/]")
+
+
+def hub_scope(scope: dict) -> dict:
+    """The part of a rule's scope the hub can check itself. A project given
+    as a path is a path on the worker (its home folder for ``~``, its own
+    kind of path on Windows), so only the worker's hook can tell; the hub
+    takes the hook's word for it. Names, agents, bands and workers it checks."""
+    sc = scope if isinstance(scope, dict) else {}
+    target = str(sc.get("target") or "")
+    if sc.get("kind") == "project" and (os.path.isabs(target) or target.startswith(("~", "/", "\\"))
+                                        or _WIN_ABS.match(target)):
+        return {"kind": "all", "target": ""}
+    return sc
 
 
 def _admin_gate(what: str) -> None:
@@ -107,7 +135,7 @@ class ClaudeCodeRules(Plugin):
         return self._store
 
     async def start(self) -> None:
-        self._task = asyncio.create_task(self._run())
+        self._task = _task(self._run())
 
     async def stop(self) -> None:
         for t in [self._task, *self._pollers.values()]:
@@ -205,7 +233,8 @@ class ClaudeCodeRules(Plugin):
         name = entry.get("name") or wid[:8]
         if not self.supported(entry):
             row = {"worker": name, "ok": False, "skipped": True, "error": UNSUPPORTED}
-            self.store.record_push(wid, {"name": name, "ok": False, "skipped": True, "error": UNSUPPORTED})
+            self.store.record_push(wid, {"name": name, "ok": False, "skipped": True, "error": UNSUPPORTED,
+                                         "actor": actor})
             return row
         cfg = {"v": 1, "rev": self.store.rev, "sha": "", "rules": []} if remove else self.config_for(entry)
         try:
@@ -217,7 +246,7 @@ class ClaudeCodeRules(Plugin):
         res = reply.get("result") if isinstance(reply.get("result"), dict) else {}
         ok = bool(reply.get("ok")) and bool(res.get("ok", True))
         bad = [i for i in res.get("installations") or () if i.get("action") == "error"]
-        row = {"name": name, "ok": ok and not bad, "rev": cfg["rev"], "sha": cfg["sha"],
+        row = {"name": name, "ok": ok and not bad, "rev": cfg["rev"], "sha": cfg["sha"], "actor": actor,
                "rules": len(cfg["rules"]), "error": reply.get("error") or "; ".join(
                    f"{i.get('path')}: {i.get('error')}" for i in bad) or None,
                "installations": [{k: i.get(k) for k in ("path", "action", "error")}
@@ -288,7 +317,7 @@ class ClaudeCodeRules(Plugin):
             self._spawn(self.handle_event(wid, before[wid], {"event": "rook.worker_offline", "ts": self.clock()}))
 
     def _spawn(self, coro) -> None:
-        task = asyncio.ensure_future(coro)
+        task = _task(coro)
         task.add_done_callback(lambda t: t.cancelled() or (t.exception() and log.error(
             "ccmod: action failed", exc_info=t.exception())))
 
@@ -305,10 +334,14 @@ class ClaudeCodeRules(Plugin):
             if wid not in want or self._pollers[wid].done():
                 self._pollers.pop(wid).cancel()
         for wid in want - set(self._pollers):
-            self._pollers[wid] = asyncio.create_task(self._poll(wid))
+            self._pollers[wid] = _task(self._poll(wid))
 
     async def _poll(self, wid: str) -> None:
-        boot, cursor, backoff = "", 0, 2.0
+        # Where this hub got to on the worker survives a hub restart (and a
+        # new poller after the worker flapped offline), so the worker's queue
+        # is not replayed: no duplicate posts, notifications or capability runs.
+        boot, cursor = self.store.cursor(wid)
+        backoff = 2.0
         while True:
             entry = self.online().get(wid)
             if entry is None:
@@ -323,10 +356,15 @@ class ClaudeCodeRules(Plugin):
                     # A restarted worker numbers events from 1 again; this
                     # first answer is from the new boot, so take it whole.
                     boot = str(res.get("boot") or "")
+                new = int(res.get("cursor") or 0)
+                if (boot, new) != self.store.cursor(wid):
+                    # Recorded before the actions run: an action is lost
+                    # rather than run twice if the hub stops halfway.
+                    self.store.set_cursor(wid, boot, new)
+                cursor = new
                 for ev in res.get("events") or ():
                     if isinstance(ev, dict):
                         await self.handle_event(wid, entry, ev)
-                cursor = int(res.get("cursor") or cursor)
                 backoff = 2.0
             except asyncio.CancelledError:
                 raise
@@ -346,8 +384,15 @@ class ClaudeCodeRules(Plugin):
         return False
 
     async def handle_event(self, wid: str, entry: dict, ev: dict) -> list[dict]:
-        """Run the remote actions of every rule that matches ``ev`` (re-checked
-        against the hub's own rules). Returns the activity rows written."""
+        """Run the remote actions of the rules the worker's hook matched for
+        ``ev`` that the hub's own current rules still match. Returns the
+        activity rows written.
+
+        The hub checks what it can see itself: the event, the tool, the
+        agent, a project given by name, the Idle minutes, band and worker.
+        Text (``contains``) and project paths are the hook's call: it saw the
+        whole prompt and tool input (the hub gets a short excerpt or none)
+        and the worker's own paths."""
         event = ev.get("event")
         if event not in model.EVENTS:
             return []
@@ -360,19 +405,18 @@ class ClaudeCodeRules(Plugin):
         for rule in self.store.rules():
             if not rule.get("enabled") or not model.applies_to(rule, {**entry, "worker_id": wid}):
                 continue
+            matched = rule["id"] in (ev.get("matched") or ())
             if event == hook.IDLE:
-                hit = rule["trigger"]["event"] == hook.IDLE and rule["id"] in (ev.get("matched") or ()) \
+                hit = matched and rule["trigger"]["event"] == hook.IDLE \
                     and str(rule["trigger"].get("minutes")) == ctx["minutes"] \
-                    and hook.in_scope(rule["scope"], ctx)
+                    and hook.in_scope(hub_scope(rule["scope"]), ctx)
             elif event in model.ROOK_EVENTS:
                 hit = rule["trigger"]["event"] == event
             else:
-                # The hook's own matcher, minus the tool input it does not send.
-                hit = hook.matches(rule, event, ctx) or (
-                    rule["id"] in (ev.get("matched") or ()) and rule["trigger"].get("contains")
-                    and event in hook.TOOL_EVENTS and hook.matches(
-                        {**rule, "trigger": {k: v for k, v in rule["trigger"].items()
-                                             if k != "contains"}}, event, ctx))
+                # The hook's own matcher, minus what only the hook could see.
+                checkable = {**rule, "scope": hub_scope(rule["scope"]),
+                             "trigger": {k: v for k, v in rule["trigger"].items() if k != "contains"}}
+                hit = matched and hook.matches(checkable, event, ctx)
             if not hit:
                 continue
             actions = [a for a in rule["actions"] if a["type"] in model.REMOTE]
@@ -443,7 +487,7 @@ class ClaudeCodeRules(Plugin):
             self.policy().check_cap(a["cap"])
             target = wid if a.get("worker") in ("", "same", None) else self.resolve(a["worker"])[0]
             reply = await self._call(a["cap"], dict(a.get("args") or {}), target, 30.0,
-                                     f"ccmod:{rule['id']}")
+                                     f"system:ccmod:{rule['id']}")
             if not reply.get("ok"):
                 raise RuntimeError(reply.get("error") or f"{a['cap']} failed")
             return f"{a['cap']} on {self.roster().get(target, {}).get('name') or target}: ok"
@@ -480,29 +524,32 @@ class ClaudeCodeRules(Plugin):
         whether that is still current."""
         return {"rev": self.store.rev, "workers": self.status_rows()}
 
-    @capability("preview", risk="read")
+    @capability("preview", risk="admin")
     async def preview_cap(self, worker: str, remove: bool = False) -> dict:
         """What a push would write on ``worker``: per settings file, the action
-        and a unified diff (nothing is written)."""
+        and a unified diff (nothing is written). Admin, like the push: the
+        diff shows parts of the person's settings file, which can hold keys."""
+        _admin_gate(f"ccmod.preview {worker}")
         return await self.preview(worker, remove)
 
-    @capability("set", risk="write")
+    @capability("set", risk="admin")
     def set(self, rule: dict, note: str = "", dry_run: bool = False,
             expect_rev: int | None = None) -> dict:
         """Create or replace a rule. ``rule``: {id?, name, enabled, trigger {event,
-        matcher?, contains?, minutes?}, scope {kind, target}, actions [...]}. Rules
-        that run capabilities need a hub administrator. ``dry_run`` checks only."""
+        matcher?, contains?, minutes?}, scope {kind, target}, actions [...]}.
+        Hub administrators only: a rule's text reaches Claude in people's
+        sessions, and the hub runs its posts with no further push. ``dry_run``
+        checks only."""
         checked = model.validate(rule, self.policy())
-        if model.needs_admin(checked) and not dry_run:
-            _admin_gate(f"ccmod.set {checked['id']} (runs capabilities)")
+        if not dry_run:
+            _admin_gate(f"ccmod.set {checked['id']}")
         return self.save_rule(rule, _actor(), note, expect_rev, dry_run)
 
-    @capability("delete", risk="write")
+    @capability("delete", risk="admin")
     def delete(self, id: str, note: str = "") -> dict:
-        """Delete a rule (push afterwards to take it off the workers)."""
-        cur = self.store.get(id)
-        if cur is not None and model.needs_admin(cur):
-            _admin_gate(f"ccmod.delete {id}")
+        """Delete a rule (push afterwards to take it off the workers). Hub
+        administrators only."""
+        _admin_gate(f"ccmod.delete {id}")
         return self.delete_rule(id, _actor(), note=note)
 
     @capability("push", risk="admin")

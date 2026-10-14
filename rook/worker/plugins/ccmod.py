@@ -12,14 +12,17 @@ actions. It pushes each worker the rules that apply to it with
   installation here (``~/.claude/settings.json``, ``$CLAUDE_CONFIG_DIR``,
   and the folders in ``ROOK_CCMOD_CLAUDE_DIRS``), merged with the person's
   own settings and never replacing them (:mod:`rook.worker.ccmod_settings`),
-  keeping a backup of the file before each write;
+  keeping a backup of the file before each write and a copy of it as it
+  was before Rook first went in (removal restores that copy when the file
+  is untouched since);
 * takes the events the hook hands over (on the session shim's owner-only
   socket, else through ``ccmod/outbox``), notices sessions left idle, and
   serves them to the hub with ``ccmod.events``, a long poll. The hub runs the
   remote actions (posts, notifications, capabilities) under its own policy.
 
 Pushing a config with no rules takes everything out again (``ccmod.remove``
-does the same). ``dry_run`` shows each file's diff without writing.
+does the same); the hook script stays while any settings file may still run
+it. ``dry_run`` shows each file's diff without writing.
 Workers without this plugin never see a push: the hub checks for
 ``ccmod.apply`` first.
 """
@@ -28,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import hashlib
 import json
 import logging
 import os
@@ -51,6 +55,10 @@ MAX_RULES = 200
 MAX_TEXT = 4000
 MAX_WAIT = 25.0
 QUEUE = 500
+#: Outbox events older than this are dropped unread: they wait there only
+#: while the worker is down, and a stopped worker should not fire an hour of
+#: stale posts when it starts.
+OUTBOX_MAX_AGE = 600.0
 KEEP_BACKUPS = 5
 TICK = 1.0
 IDLE_TICK = 15.0
@@ -60,6 +68,25 @@ LOCAL = ("block", "inject", "statusline")
 
 def base_dir() -> Path:
     return state_dir() / "ccmod"
+
+
+def _sha(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _keep_owner(path: Path, before) -> None:
+    """Give a rewritten (or new) settings file back to the user who owned it
+    (or its folder): a worker running as root writing into someone's
+    ``ROOK_CCMOD_CLAUDE_DIRS`` folder must not leave them a root-owned 0600
+    file they cannot read."""
+    if before is None or not hasattr(os, "chown"):
+        return
+    try:
+        st = path.stat()
+        if (st.st_uid, st.st_gid) != (before.st_uid, before.st_gid):
+            os.chown(path, before.st_uid, before.st_gid)
+    except OSError:
+        pass
 
 
 def installations(environ=None) -> list[Path]:
@@ -281,11 +308,15 @@ class ClaudeCodeRules(Plugin):
         except OSError:
             return []
         out = []
+        now = time.time()
         for name in names[:200]:
             p = box / name
             try:
                 data = json.loads(p.read_text(encoding="utf-8"))
-                if isinstance(data, dict):
+                ts = data.get("ts") if isinstance(data, dict) else None
+                if not isinstance(ts, (int, float)):
+                    ts = p.stat().st_mtime
+                if isinstance(data, dict) and now - ts <= OUTBOX_MAX_AGE:
                     out.append(data)
             except (OSError, ValueError):
                 pass
@@ -388,12 +419,68 @@ class ClaudeCodeRules(Plugin):
         installation here and delete the rules (the person's settings stay)."""
         return await self.apply({"v": 1, "rules": []}, dry_run=dry_run)
 
+    def _plan(self, path: Path, want: tuple, entry: dict, python: str, script: str) -> dict:
+        """:func:`cs.plan` for one file, plus the verbatim restore: taking
+        Rook out of a file nobody changed since Rook last wrote it gives back
+        the exact bytes it had before Rook first went in (the merge rewrites
+        the file as JSON, so a hand-formatted file would otherwise come back
+        reformatted)."""
+        p = cs.plan(path, want[0], python, script, want[1],
+                    entry.get("created") if entry else None)
+        if p["action"] == "remove" and entry.get("sha") and _sha(p["old"]) == entry["sha"]:
+            original = None
+            if entry.get("pristine"):
+                try:
+                    original = self._pristine_path(path).read_bytes().decode("utf-8")
+                except (OSError, UnicodeDecodeError):
+                    original = None
+            if original is not None:
+                p.update(new=original, empty=False, verbatim=True,
+                         diff=cs.diff(p["old"], original, path))
+            elif entry.get("file_created"):
+                p.update(new="", empty=True, verbatim=True, diff=cs.diff(p["old"], "", path))
+        return p
+
+    def _pristine_path(self, path) -> Path:
+        name = hashlib.sha256(str(path).encode("utf-8")).hexdigest()[:24]
+        return base_dir() / "originals" / f"{name}.json"
+
+    def _drop_pristine(self, path) -> None:
+        try:
+            self._pristine_path(path).unlink()
+        except OSError:
+            pass
+
+    def _save_pristine(self, path: Path, text: str) -> None:
+        dest = self._pristine_path(path)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            os.chmod(dest.parent, 0o700)
+        except OSError:
+            pass
+        atomic_write_text(dest, text, 0o600, fsync=False)
+
+    def _write_manifest(self, files: dict) -> None:
+        if files:
+            atomic_write_text(self.manifest_path, json.dumps({"files": files}, indent=2) + "\n",
+                              0o600, fsync=False)
+            return
+        try:
+            self.manifest_path.unlink()
+        except OSError:
+            pass
+
     def _apply(self, cfg: dict, dry_run: bool) -> dict:
         events, statusline, _idle = hook_spec(cfg)
         python = sys.executable or "python3"
         script = str(self.script_path)
         manifest = self._read_json(self.manifest_path, {})
         files = manifest.get("files") if isinstance(manifest.get("files"), dict) else {}
+        if not dry_run:
+            # A managed file that is gone holds none of Rook's hooks any more.
+            for gone in [f for f in files if not Path(f).exists()]:
+                files.pop(gone, None)
+                self._drop_pristine(gone)
         paths = [d / "settings.json" for d in installations()]
         known = {str(p) for p in paths}
         # A folder that was managed before but is no longer configured: take Rook out.
@@ -404,16 +491,15 @@ class ClaudeCodeRules(Plugin):
             want = (events, statusline) if str(path) in known else ({}, False)
             row = {"dir": str(path.parent), "path": str(path)}
             try:
-                p = cs.plan(path, want[0], python, script, want[1],
-                            entry.get("created") if entry else None)
-            except (cs.SettingsError, OSError) as e:
+                p = self._plan(path, want, entry, python, script)
+            except (cs.SettingsError, OSError, UnicodeDecodeError) as e:
                 row.update(action="error", error=str(e))
                 rows.append(row)
                 continue
             row.update(action=p["action"], diff=p["diff"], notes=p["notes"])
             rows.append(row)
             if p["action"] in ("create", "update", "remove"):
-                writes.append((path, p, entry, row))
+                writes.append((path, p, entry, row, want))
             elif p["action"] == "unchanged" and not entry and p["created"]:
                 # Rook's part is already there but the manifest was lost: record it again.
                 files[str(path)] = {"created": p["created"], "file_created": False}
@@ -432,40 +518,72 @@ class ClaudeCodeRules(Plugin):
                               "folder); the rules are kept for when there is one.")
         if dry_run:
             return result
-        for path, p, entry, row in writes:
+        for path, p, entry, row, want in writes:
+            real = Path(os.path.realpath(path))
+            # Claude Code (a /model or /permissions change) may have written the
+            # file since it was read: plan again from what is there now.
+            try:
+                now = real.read_bytes().decode("utf-8") if real.exists() else ""
+                if now != p["old"]:
+                    p = self._plan(path, want, entry, python, script)
+                    row.update(action=p["action"], diff=p["diff"], notes=p["notes"])
+            except (cs.SettingsError, OSError, UnicodeDecodeError) as e:
+                row.update(action="error", error=str(e))
+                continue
+            if p["action"] not in ("create", "update", "remove"):
+                continue
+            try:
+                before = real.stat() if p["exists"] else real.parent.stat()
+            except OSError:
+                before = None
             if p["exists"]:
                 row["backup"] = self._backup(path)
             if p["action"] == "remove" and p.get("empty") and entry.get("file_created"):
-                os.unlink(os.path.realpath(path))
+                os.unlink(real)
                 row["deleted_empty_file"] = True
             else:
-                real = Path(os.path.realpath(path))
-                mode = real.stat().st_mode & 0o777 if real.exists() else 0o600
+                mode = before.st_mode & 0o777 if (before is not None and p["exists"]) else 0o600
                 atomic_write_text(real, p["new"], mode, fsync=False)
+                _keep_owner(real, before)
+            if p.get("verbatim"):
+                row["restored_original"] = True
             if p["action"] == "remove":
                 files.pop(str(path), None)
+                self._drop_pristine(path)
+                continue
+            new_entry = {"created": p["created"],
+                         "file_created": bool(entry.get("file_created") or not p["exists"]),
+                         "sha": _sha(p["new"])}
+            if p["exists"] and not p["had_ours"] and not entry.get("file_created"):
+                # Rook goes into this file for the first time: keep it as it was.
+                self._save_pristine(path, p["old"])
+                new_entry["pristine"] = True
+            elif entry.get("pristine") and entry.get("sha") == _sha(p["old"]):
+                new_entry["pristine"] = True        # untouched since: the copy still holds
             else:
-                files[str(path)] = {"created": p["created"],
-                                    "file_created": bool(entry.get("file_created") or not p["exists"])}
+                self._drop_pristine(path)           # edited since: removal unmerges instead
+            files[str(path)] = new_entry
         if cfg["rules"]:
             self._write_script()
             atomic_write_text(self.rules_path, new_rules, 0o600, fsync=False)
-            atomic_write_text(self.manifest_path, json.dumps({"files": files}, indent=2) + "\n",
-                              0o600, fsync=False)
+            self._write_manifest(files)
         else:
-            for p in (self.rules_path, self.script_path):
-                try:
-                    p.unlink()
-                except OSError:
-                    pass
-            if files:
-                atomic_write_text(self.manifest_path, json.dumps({"files": files}, indent=2) + "\n",
-                                  0o600, fsync=False)
+            try:
+                self.rules_path.unlink()   # the hook does nothing without its rules file
+            except OSError:
+                pass
+            # Never delete the script while a settings file may still run it: a
+            # file that could not be changed (an error above) or one still in
+            # the manifest keeps Rook's hook entries until the next removal.
+            held = sorted(set(files) | {r["path"] for r in rows if r.get("action") == "error"})
+            if held:
+                result["script_kept"] = held
             else:
                 try:
-                    self.manifest_path.unlink()
+                    self.script_path.unlink()
                 except OSError:
                     pass
+            self._write_manifest(files)
             shutil.rmtree(base_dir() / "status", ignore_errors=True)
         self._cfg = cfg if cfg["rules"] else None
         return result
@@ -515,12 +633,13 @@ class ClaudeCodeRules(Plugin):
                 "installations": rows, "socket": bool(self._socket), "queued": len(self._events),
                 "sessions": len(self._sessions), "boot": self._boot}
 
-    @capability("events", risk="read", tags=("sensitive",))
+    @capability("events", risk="admin", tags=("sensitive",))
     async def events(self, after: int = 0, wait: float = 0, boot: str = "") -> dict:
         """Hook events for the hub's remote actions, those after ``after``
         (from this ``boot``; a different boot starts over). With ``wait`` the
         call holds (up to 25 s) until there is one. Returns {boot, events,
-        cursor}."""
+        cursor}. Admin: the events carry prompt and notification excerpts,
+        and only the hub's own poller needs them."""
         after = 0 if boot != self._boot else max(0, int(after))
         wait = max(0.0, min(float(wait), MAX_WAIT))
 
