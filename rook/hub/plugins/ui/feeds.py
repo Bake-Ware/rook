@@ -31,8 +31,6 @@ from email.utils import parsedate_to_datetime
 from datetime import datetime, timezone
 from urllib.parse import urljoin, urlsplit
 
-import aiohttp
-from aiohttp.abc import AbstractResolver
 
 MAX_REDIRECTS = 3
 MAX_URL = 2000
@@ -79,30 +77,33 @@ def check_url(url: str) -> tuple[str, int]:
     return host, port or (443 if parts.scheme == "https" else 80)
 
 
-class GuardedResolver(AbstractResolver):
-    """Resolves a name and keeps only the addresses :func:`address_ok`
-    allows; aiohttp then connects to those. (aiohttp skips the resolver for
-    IP literals, so :func:`fetch` checks those itself.)"""
+def guarded_resolver(allow_private: bool):
+    """An aiohttp resolver that resolves a name and keeps only the addresses
+    :func:`address_ok` allows; aiohttp then connects to those. (aiohttp
+    skips the resolver for IP literals, so :func:`fetch` checks those
+    itself.) Built on demand: aiohttp is imported only when a feed is
+    fetched, so the plugin loads without it."""
+    from aiohttp.abc import AbstractResolver
 
-    def __init__(self, allow_private: bool) -> None:
-        self.allow_private = allow_private
+    class GuardedResolver(AbstractResolver):
+        async def resolve(self, host: str, port: int = 0, family: int = socket.AF_UNSPEC):
+            loop = asyncio.get_running_loop()
+            try:
+                infos = await loop.getaddrinfo(host, port, type=socket.SOCK_STREAM, family=family)
+            except socket.gaierror:
+                raise OSError(f"cannot resolve {host}") from None
+            out = [{"hostname": host, "host": sockaddr[0], "port": port, "family": fam,
+                    "proto": proto, "flags": socket.AI_NUMERICHOST}
+                   for fam, _type, proto, _canon, sockaddr in infos
+                   if address_ok(sockaddr[0], allow_private)]
+            if not out:
+                raise BlockedAddress(host)
+            return out
 
-    async def resolve(self, host: str, port: int = 0, family: int = socket.AF_UNSPEC):
-        loop = asyncio.get_running_loop()
-        try:
-            infos = await loop.getaddrinfo(host, port, type=socket.SOCK_STREAM, family=family)
-        except socket.gaierror:
-            raise OSError(f"cannot resolve {host}") from None
-        out = [{"hostname": host, "host": sockaddr[0], "port": port, "family": fam,
-                "proto": proto, "flags": socket.AI_NUMERICHOST}
-               for fam, _type, proto, _canon, sockaddr in infos
-               if address_ok(sockaddr[0], self.allow_private)]
-        if not out:
-            raise BlockedAddress(host)
-        return out
+        async def close(self) -> None:
+            return None
 
-    async def close(self) -> None:
-        return None
+    return GuardedResolver()
 
 
 class BlockedAddress(OSError):
@@ -122,9 +123,10 @@ def _is_ip(host: str) -> bool:
 async def fetch(url: str, *, allow_private: bool = False, max_bytes: int = 512 * 1024,
                 timeout: float = 8.0) -> bytes:
     """The body at ``url`` under the guard, size and time limits."""
+    import aiohttp
     blocked = FeedError("That address is on a private or local network, which feeds may not "
                         "reach. The operator can allow it in Settings (Dashboard > Feeds).")
-    connector = aiohttp.TCPConnector(resolver=GuardedResolver(allow_private), use_dns_cache=False,
+    connector = aiohttp.TCPConnector(resolver=guarded_resolver(allow_private), use_dns_cache=False,
                                      limit=2)
     deadline = aiohttp.ClientTimeout(total=timeout)
     try:

@@ -276,7 +276,8 @@ async def test_a_redirect_to_a_private_address_is_refused(monkeypatch):
         def get(self, url, **kw):
             assert "169.254" not in url, "connected to a private address"
             return Resp()
-    monkeypatch.setattr(F.aiohttp, "ClientSession", Session)
+    import aiohttp
+    monkeypatch.setattr(aiohttp, "ClientSession", Session)
     with pytest.raises(F.FeedError, match="private or local"):
         await F.fetch("https://feeds.example.com/rss")
     assert calls == ["https://feeds.example.com/rss", "http://169.254.169.254/latest/meta-data/"]
