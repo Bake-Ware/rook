@@ -476,7 +476,9 @@ def test_followup_spoken_after_front_with_timing(tmp_path, monkeypatch):
         assert seqs == sorted(seqs) and len(set(seqs)) == len(seqs)
         call_event = next(e for e in events if e.get('kind') == 'tool_call')
         assert call_event['tool'] == 'calendar_list'
-        assert reads.calls[0][:2] == ('phone', 'calendar.list')
+        # The wake prefetch (battery, screen text) reads concurrently with the
+        # tool call, so their order is up to the event loop (3.11 runs ui.text first).
+        assert ('phone', 'calendar.list') in [c[:2] for c in reads.calls]
         assert [m['content'] for m in history] == ["what's on my calendar", 'Let me check your calendar.',
                                                    'You have a dentist visit at 3.']
         done = [e for e in events if e.get('kind') == 'done'][0]
