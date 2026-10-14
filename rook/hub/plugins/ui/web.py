@@ -16,6 +16,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
+import time
+from collections import deque
 from typing import Any, Callable
 
 from starlette.routing import Route
@@ -29,6 +32,12 @@ log = logging.getLogger("rook.hub.plugins.ui.web")
 
 PATH = "/ui/account-api"
 UNAVAILABLE = "The dashboard plugin (ui) is not loaded on this hub."
+#: Saves (theme and start page) one account may make per window; the start
+#: page editor saves once per Save click, so this only stops a runaway client.
+SAVES_PER_WINDOW, SAVE_WINDOW = 30, 600.0
+#: History entries kept per account for these settings: each start page save
+#: stores the whole layout, so the history of a busy account would grow.
+HISTORY_KEEP = 20
 
 
 def _actor(user: dict) -> str:
@@ -45,7 +54,40 @@ def _user_value(svc, key: str, uid: str) -> Any:
         return None
 
 
+def _limit(value) -> int:
+    """A feed's item count from the request: 1 to 30, or ValueError."""
+    if value is None or value == "":
+        return 8
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise ValueError("limit must be a number from 1 to 30")
+    return max(1, min(int(value), 30))
+
+
 def routes(get_node: Callable[[], Any], accounts):
+    saves: dict[str, deque] = {}
+
+    def save_allowed(uid: str) -> bool:
+        now = time.monotonic()
+        recent = saves.setdefault(uid, deque())
+        while recent and now - recent[0] > SAVE_WINDOW:
+            recent.popleft()
+        if len(recent) >= SAVES_PER_WINDOW:
+            return False
+        recent.append(now)
+        return True
+
+    def save(svc, key, value, uid, user, note):
+        """Store a user-scope value unless it is unchanged, and keep its
+        history short. Returns whether anything was written."""
+        if _user_value(svc, key, uid) == value and svc.store.get(key, "user", uid) is not None:
+            return False
+        svc.set(key, value, scope="user", target=uid, actor=_actor(user), source="ui", note=note)
+        try:
+            svc.store.prune_history(key, "user", uid, keep=HISTORY_KEEP)
+        except Exception:
+            log.exception("pruning the history of %s failed", key)
+        return True
+
     def parts():
         node = get_node()
         plugin = node.plugin("ui") if node is not None else None
@@ -53,6 +95,16 @@ def routes(get_node: Callable[[], Any], accounts):
 
     @account_api(accounts, admin=False, sign_in="Sign in to use the dashboard.")
     async def api(request, user, data):
+        try:
+            return await handle(request, user, data)
+        except ImportError:
+            log.exception("ui account API: a dependency is missing")
+            return json_error("This hub is missing a component this needs (see the hub log).", 503)
+        except Exception:
+            log.exception("ui account API failed")
+            return json_error("The request failed; see the hub log.", 500)
+
+    async def handle(request, user, data):
         node, ui, svc = parts()
         uid = str(user["id"])
         if ui is None:
@@ -83,27 +135,32 @@ def routes(get_node: Callable[[], Any], accounts):
         action = data.get("action")
         if action == "feed":
             try:
-                feed = await ui.feed(str(data.get("url") or ""), int(data.get("limit") or 8))
-            except (FeedError, ValueError, TypeError) as e:
+                limit = _limit(data.get("limit"))
+            except ValueError as e:
+                return json_error(str(e), 400)
+            try:
+                feed = await ui.feed(str(data.get("url") or ""), limit, account=uid)
+            except FeedError as e:
                 return json_reply({"ok": False, "error": str(e)})
             return json_reply({"ok": True, "feed": feed})
         if svc is None:
             return json_error("Settings are unavailable on this hub, so this cannot be saved.", 503)
+        if action in ("theme", "startpage", "startpage_reset") and not save_allowed(uid):
+            return json_error("Too many saves in a short time; wait a few minutes and try again.", 429)
         try:
             if action == "theme":
                 theme = str(data.get("theme") or "")
                 if theme not in ui.themes():
                     return json_error("Unknown theme.", 400)
-                svc.set("ui.theme", theme, scope="user", target=uid, actor=_actor(user),
-                        source="ui", note="theme picker")
-                return json_reply({"ok": True, "theme": ui.theme_css(theme)})
+                saved = save(svc, "ui.theme", theme, uid, user, "theme picker")
+                return json_reply({"ok": True, "saved": saved, "theme": ui.theme_css(theme)})
             if action == "startpage":
                 layout = L.check(data.get("layout"))
-                svc.set("ui.startpage", layout, scope="user", target=uid, actor=_actor(user),
-                        source="ui", note="start page editor")
-                return json_reply({"ok": True, "startpage": layout})
+                saved = save(svc, "ui.startpage", layout, uid, user, "start page editor")
+                return json_reply({"ok": True, "saved": saved, "startpage": layout})
             if action == "startpage_reset":
                 svc.reset("ui.startpage", scope="user", target=uid, actor=_actor(user), source="ui")
+                svc.store.prune_history("ui.startpage", "user", uid, keep=HISTORY_KEEP)
                 return json_reply({"ok": True, "startpage": L.default()})
         except L.LayoutError as e:
             return json_error(str(e), 400)

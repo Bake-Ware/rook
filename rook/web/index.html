@@ -1249,8 +1249,8 @@ function routeFromHash(){
  const [view,query]=location.hash.slice(1).split('?');showView(view||'overview',false);
  const params=new URLSearchParams(query||'');
  const wid=params.get('worker');if(view==='bands'&&wid)openWorkerMove(wid);
- // #chat?room=<id>: the Overview and start page link straight to a room.
- const room=params.get('room');if(view==='chat'&&room){history.replaceState(null,'','#chat');loadRooms().then(()=>openRoom(room)).catch(()=>{});}
+ // #chat?room=<id>: the Overview and start page link straight to a room (one that exists).
+ const room=params.get('room');if(view==='chat'&&room){history.replaceState(null,'','#chat');loadRooms().then(()=>{if(roomById(room))openRoom(room);}).catch(()=>{});}
 }
 window.addEventListener('hashchange',routeFromHash);
 window.addEventListener('popstate',routeFromHash);

@@ -5,6 +5,7 @@ proxy (rook/hub/plugins/ui, rook/remote/knowledge_web.py UiWeb)."""
 from __future__ import annotations
 
 import asyncio
+import gzip
 import json
 import re
 import uuid
@@ -145,14 +146,30 @@ def test_plugin_widgets_keep_their_options_and_old_link_lists_become_a_group():
     ("169.254.169.254", False), ("100.64.0.1", False), ("::1", False), ("fd00::1", False),
     ("fe80::1", False), ("::ffff:127.0.0.1", False), ("::ffff:10.0.0.1", False), ("0.0.0.0", False),
     ("224.0.0.1", False), ("192.0.2.1", False), ("nonsense", False),
+    # IPv4 inside IPv6: NAT64, the old IPv4-compatible form, 6to4.
+    ("64:ff9b::7f00:1", False), ("64:ff9b::a00:1", False), ("64:ff9b::808:808", True),
+    ("::127.0.0.1", False), ("::10.0.0.1", False), ("2002:7f00:1::", False), ("2002:808:808::", True),
 ])
 def test_feed_addresses(ip, public):
     assert F.address_ok(ip, allow_private=False) is public
 
 
-def test_allowing_private_addresses_still_refuses_unspecified_and_multicast():
+def test_allowing_private_addresses_still_refuses_unspecified_multicast_and_metadata():
     assert F.address_ok("192.168.1.10", True) and F.address_ok("127.0.0.1", True)
-    assert not F.address_ok("0.0.0.0", True) and not F.address_ok("ff02::1", True)
+    assert F.address_ok("fd12::1", True)
+    for ip in ("0.0.0.0", "ff02::1", "169.254.169.254", "169.254.1.1", "fe80::1", "fd00:ec2::254",
+               "::ffff:169.254.169.254", "64:ff9b::a9fe:a9fe"):
+        assert not F.address_ok(ip, True), ip
+
+
+@pytest.mark.parametrize("host, odd", [
+    ("2130706433", True), ("127.1", True), ("0177.0.0.1", True), ("127.0.0.01", True),
+    ("0x7f.1", True), ("0x7f000001", True), ("[::ffff:7f00:1:]", True),
+    ("127.0.0.1", False), ("93.184.216.34", False), ("[::1]", False), ("example.com", False),
+    ("1password.example", False), ("deadbeef.example", False), ("2600.example", False),
+])
+def test_numeric_hosts_that_are_not_canonical_addresses(host, odd):
+    assert F.numeric_but_not_ip(host) is odd
 
 
 @pytest.mark.parametrize("url", ["ftp://example.com/feed", "file:///etc/passwd", "https://user:pw@example.com/f",
@@ -162,6 +179,8 @@ def test_feed_urls_refused(url):
         F.check_url(url)
 
 
+# 20 MB of zeros, about 20 KB on the wire.
+BOMB = gzip.compress(b"<rss>" + b"\0" * 20_000_000)
 RSS = b"""<?xml version="1.0"?><rss version="2.0"><channel><title>Homelab Weekly</title>
 <link>https://news.example.com/</link>
 <item><title>ZFS &amp; you</title><link>https://news.example.com/1</link>
@@ -191,7 +210,11 @@ def test_parse_rss_and_atom():
 
 def test_parse_refuses_entities_and_non_feeds():
     bomb = b'<?xml version="1.0"?><!DOCTYPE r [<!ENTITY a "aaaa"><!ENTITY b "&a;&a;">]><rss><channel><title>&b;</title></channel></rss>'
-    for data in (bomb, b"<html><body>hi</body></html>", b"not xml at all"):
+    utf16 = ('<?xml version="1.0" encoding="UTF-16"?><!DOCTYPE r [<!ENTITY a "aaaa">'
+             '<!ENTITY b "&a;&a;&a;&a;">]><rss><channel><title>&b;</title></channel></rss>').encode("utf-16")
+    assert b"<!ENTITY" not in utf16.upper()
+    doctype = b'<?xml version="1.0"?><!DOCTYPE rss SYSTEM "http://example.com/rss.dtd"><rss><channel/></rss>'
+    for data in (bomb, utf16, doctype, b"<html><body>hi</body></html>", b"not xml at all"):
         with pytest.raises(F.FeedError):
             F.parse(data)
 
@@ -223,7 +246,25 @@ async def feed_server():
         raise web.HTTPFound("/loop")
 
     app.router.add_get("/loop", loop)
+
+    async def gz(request):
+        # Sent compressed although the hub asked for identity.
+        seen_encoding.append(request.headers.get("Accept-Encoding"))
+        return web.Response(body=gzip.compress(RSS), headers={"Content-Encoding": "gzip",
+                                                              "Content-Type": "application/rss+xml"})
+
+    async def bomb(request):
+        return web.Response(body=BOMB, headers={"Content-Encoding": "gzip",
+                                                "Content-Type": "application/rss+xml"})
+
+    async def brotli(request):
+        return web.Response(body=b"\x0b\x02\x80", headers={"Content-Encoding": "br"})
+    seen_encoding = []
+    app.router.add_get("/gz", gz)
+    app.router.add_get("/bomb", bomb)
+    app.router.add_get("/br", brotli)
     async with TestServer(app, host="127.0.0.1") as server:
+        server.encodings = seen_encoding
         server.hits = hits
         yield server
 
@@ -238,6 +279,35 @@ async def test_fetch_refuses_loopback_unless_allowed(feed_server):
         await F.fetch(by_name)                     # through the resolver, not just IP literals
     assert feed_server.hits == []                  # nothing was ever sent
     assert b"Homelab Weekly" in await F.fetch(url, allow_private=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("host", ["2130706433", "127.1", "0177.0.0.1", "127.0.0.01"])
+async def test_numeric_ipv4_forms_are_refused_before_connecting(feed_server, host):
+    url = str(feed_server.make_url("/feed")).replace("127.0.0.1", host)
+    for allow in (False, True):   # not a canonical address: refused either way
+        with pytest.raises(F.FeedError, match="private or local"):
+            await F.fetch(url, allow_private=allow)
+    assert feed_server.hits == []
+
+
+@pytest.mark.asyncio
+async def test_a_redirect_to_a_numeric_ipv4_form_is_refused(feed_server):
+    to = str(feed_server.make_url("/feed")).replace("127.0.0.1", "2130706433")
+    url = str(feed_server.make_url("/hop").with_query(to=to))
+    with pytest.raises(F.FeedError, match="private or local"):
+        await F.fetch(url, allow_private=True)
+    assert feed_server.hits == []
+
+
+@pytest.mark.asyncio
+async def test_compressed_bodies_are_inflated_under_the_cap(feed_server):
+    body = await F.fetch(str(feed_server.make_url("/gz")), allow_private=True)
+    assert body == RSS and feed_server.encodings == ["identity"]
+    with pytest.raises(F.FeedError, match="larger than"):
+        await F.fetch(str(feed_server.make_url("/bomb")), allow_private=True, max_bytes=512 * 1024)
+    with pytest.raises(F.FeedError, match="encoding"):
+        await F.fetch(str(feed_server.make_url("/br")), allow_private=True)
 
 
 @pytest.mark.asyncio
@@ -305,6 +375,29 @@ async def test_feed_cache_shares_fetches_and_remembers_failures(monkeypatch):
     await cache.get("https://c.example/f", ttl=60, limit=5)
     await cache.get("https://d.example/f", ttl=60, limit=5)
     assert len(cache._rows) == 2
+    # A feed fetched while private addresses were allowed is not served
+    # from the cache once they are not.
+    await cache.get("https://d.example/f", ttl=60, limit=5, allow_private=True)
+    assert n["ok"] == 4
+
+
+@pytest.mark.asyncio
+async def test_feed_cache_limits_fetches_per_account(monkeypatch):
+    gate = asyncio.Event()
+
+    async def slow_fetch(url, **kw):
+        await gate.wait()
+        return RSS
+    monkeypatch.setattr(F, "fetch", slow_fetch)
+    cache = F.FeedCache(per_account=2)
+    a = [asyncio.create_task(cache.get(f"https://{i}.example/f", ttl=60, limit=5, account="u1")) for i in range(2)]
+    await asyncio.sleep(0)
+    with pytest.raises(F.FeedError, match="still loading"):
+        await cache.get("https://3.example/f", ttl=60, limit=5, account="u1")
+    other = asyncio.create_task(cache.get("https://4.example/f", ttl=60, limit=5, account="u2"))
+    gate.set()
+    await asyncio.gather(*a, other)
+    assert cache._busy == {}
 
 
 # -- the Overview's knowledge half --------------------------------------------------------------
@@ -399,11 +492,28 @@ async def test_account_api(tmp_path, monkeypatch):
         assert r.status_code == 400 and "http" in r.json()["error"]
         r = await c.post(api, headers=member, json={"csrf": "k", "action": "startpage_reset"})
         assert r.json()["startpage"] == L.default()
+        # An unchanged save writes nothing; history stays short.
+        r = await c.post(api, headers=member, json={"csrf": "k", "action": "theme", "theme": "paper"})
+        assert r.json()["saved"] is False
+        statuses = []
+        for i in range(26):
+            page = _page({"id": "n", "type": "note", "options": {"text": f"v{i}"}})
+            statuses.append((await c.post(api, headers=member, json={"csrf": "k", "action": "startpage",
+                                                                     "layout": page})).status_code)
+        # Six saves came before the loop; the window allows 30.
+        assert statuses == [200] * 24 + [429] * 2
+        assert len(node.settings_store.history(key="ui.startpage", scope="user", target="m1")) == 20
+        assert (await c.get(api, headers=op)).status_code == 200      # other accounts unaffected
         hist = node.settings_store.history(scope="user", target="m1")
         assert {h["key"] for h in hist} >= {"ui.theme", "ui.startpage"}
         # Feeds: the guard's answer comes back as a plain message.
         r = (await c.post(api, headers=member, json={"csrf": "k", "action": "feed", "url": "http://127.0.0.1:9/f"})).json()
         assert r["ok"] is False and "private or local" in r["error"]
+        for limit in ("Infinity", "lots", [1]):
+            body = '{"csrf": "k", "action": "feed", "url": "https://a.example/f", "limit": %s}' % (
+                limit if limit == "Infinity" else json.dumps(limit))
+            r = await c.post(api, headers={**member, "Content-Type": "application/json"}, content=body)
+            assert r.status_code == 400 and "limit" in r.json()["error"], limit
         # The knowledge half is the operator's, and only with the knowledge plugin on.
         assert (await c.get(api, headers=member, params={"view": "overview"})).json()["knowledge"] is None
         assert (await c.get(api, headers=op, params={"view": "overview"})).json() == {"knowledge": None, "reason": "off"}
