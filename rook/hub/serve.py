@@ -53,6 +53,7 @@ PUBLIC_MCP_PATHS = ("/mcp", "/band", "/tokens/account-api", "/authorize", "/toke
 PUBLIC_MCP_PREFIXES = ("/mcp/", "/.well-known/", "/skill/")
 
 DEFAULT_MCP_BIND = "127.0.0.1:8765"
+SHUTDOWN_TIMEOUT = 5.0
 LOOPBACK_NAMES = ("127.0.0.1", "localhost", "[::1]")
 
 
@@ -304,6 +305,8 @@ class Hub:
             return await handler(request)
 
         self.server._app.middlewares.insert(0, mcp_paths)
+        # A service stop (SIGTERM) should not wait a minute on long-polls.
+        self.server.shutdown_timeout = SHUTDOWN_TIMEOUT
         await self.server.start()
         log.info("rook hub: dashboard and MCP on %s:%d (/mcp)", args.bind, args.port)
 
@@ -311,7 +314,8 @@ class Hub:
             app = web.Application()
             app.router.add_route("*", "/{tail:.*}", bridge.handle)
             from ..remote.bootstrap import InstallerAccessLogger
-            self._mcp_runner = web.AppRunner(app, access_log_class=InstallerAccessLogger)
+            self._mcp_runner = web.AppRunner(app, access_log_class=InstallerAccessLogger,
+                                             shutdown_timeout=SHUTDOWN_TIMEOUT)
             await self._mcp_runner.setup()
             await web.TCPSite(self._mcp_runner, args.mcp_bind_host, args.mcp_bind_port).start()
             log.info("rook hub: MCP also on http://%s:%d/mcp (--mcp-bind)",

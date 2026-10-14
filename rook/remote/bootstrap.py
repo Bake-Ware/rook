@@ -1347,6 +1347,9 @@ class CombinedServer:
         from .policy_web import PolicyWeb
         PolicyWeb(self).install(self._app)
         self._runner: web.AppRunner | None = None
+        # Seconds stop() lets open requests (long-polls, terminal sockets)
+        # finish before cancelling them; aiohttp's default.
+        self.shutdown_timeout = 60.0
 
 
     def _session_ok(self, request: web.Request) -> bool:
@@ -1600,7 +1603,8 @@ class CombinedServer:
         raise web.HTTPFound("/")
 
     async def start(self) -> None:
-        self._runner = web.AppRunner(self._app, access_log_class=InstallerAccessLogger)
+        self._runner = web.AppRunner(self._app, access_log_class=InstallerAccessLogger,
+                                     shutdown_timeout=self.shutdown_timeout)
         await self._runner.setup()
         site = web.TCPSite(self._runner, self.bind, self.port)
         await site.start()
