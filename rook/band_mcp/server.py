@@ -1796,6 +1796,10 @@ class McpService:
             _jt = None
         for route in job_routes(lambda: mcp._rook_hub, accounts, _jt):
             app.router.routes.insert(0, route)
+        # Huddle view API (Work > Huddle; proxied by the dashboard).
+        from ..hub.plugins.huddle.web import routes as huddle_routes
+        for route in huddle_routes(lambda: mcp._rook_hub, accounts):
+            app.router.routes.insert(0, route)
         self._hygiene_task = (asyncio.create_task(mcp._rook_hygiene.run())
                               if mcp._rook_hygiene is not None else None)
 

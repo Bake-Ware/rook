@@ -223,6 +223,22 @@ class ChatStore:
         return {"id": r[0], "title": r[1], "created": r[2],
                 "last_activity": r[3], "participants": json.loads(r[4] or "[]")}
 
+    def join(self, rid: str, identities: list[str]) -> dict:
+        """Add participants to a room without posting (a huddle adds whoever
+        opens it, so their unread notices start then)."""
+        if self._db is None:
+            return {"ok": False, "error": "chat store not available"}
+        room = self._room(rid)
+        if room is None:
+            return {"ok": False, "error": f"no such room: {rid}"}
+        parts = room["participants"]
+        added = [i for i in dict.fromkeys(str(x).strip() for x in identities) if i and i not in parts]
+        if added:
+            with self._lock:
+                self._set_participants(rid, parts + added)
+                self._db.commit()
+        return {"ok": True, "room": rid, "participants": parts + added, "added": added}
+
     def _set_participants(self, rid: str, parts: list[str]) -> None:
         self._db.execute("UPDATE rooms SET participants=? WHERE id=?",
                          (json.dumps(parts), rid))
@@ -256,11 +272,12 @@ class ChatStore:
         now = time.time()
         try:
             with self._lock:
-                self._db.execute(
+                cur = self._db.execute(
                     "INSERT INTO messages (room_id,ts,sender,text,mentions,expects_reply) "
                     "VALUES (?,?,?,?,?,?)",
                     (rid, now, sender, text[:8000], json.dumps(ment),
                      1 if expects_reply else 0))
+                seq = cur.lastrowid
                 self._set_participants(rid, parts)
                 self._db.execute("UPDATE rooms SET last_activity=? WHERE id=?", (now, rid))
                 self._db.commit()
@@ -270,7 +287,7 @@ class ChatStore:
         implicit = [p for p in parts if p != sender] if len(parts) == 2 else []
         addressed = ment or implicit
         offline = [a for a in addressed if not self.is_online(a)]
-        return {"ok": True, "room": rid, "participants": parts,
+        return {"ok": True, "room": rid, "seq": seq, "participants": parts,
                 "mentioned": ment, "addressed": addressed, "offline": offline}
 
     def read(self, rid: str, reader: str | None, since_seq: int = 0,

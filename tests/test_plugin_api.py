@@ -620,7 +620,7 @@ async def test_mcp_reaches_hub_caps(tmp_path, monkeypatch):
                                  {"name": "jobs"}, {"name": "marketplace"}, {"name": "notify"},
                                  {"name": "persona"},
                                  {"name": "hub-policy"}, {"name": "chat-rooms"},
-                                 {"name": "serves"}, {"name": "settings"}]
+                                 {"name": "serves"}, {"name": "settings"}, {"name": "huddle"}]
 
     workers = _text(await mcp.call_tool("rook_workers", {}))
     assert [w["name"] for w in workers] == ["rook"]

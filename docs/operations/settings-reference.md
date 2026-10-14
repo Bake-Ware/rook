@@ -204,6 +204,13 @@ are set only in the environment or on the command line.
 |---|---|---|---|---|---|---|
 | `hub.motd` | Message of the day | hub | str |  | `ROOK_HUB_MOTD` | live |
 
+## Huddle (hub plugin, runs in mcp)
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `huddle.enabled` | Huddles | hub | bool | on | `ROOK_HUDDLE`, `ROOK_HUDDLE_ENABLED` | restart |
+| `huddle.wake_on_answer` | Wake the agent when you answer | hub | bool | on | `ROOK_HUDDLE_WAKE_ON_ANSWER` | live |
+
 ## Jobs (hub plugin, runs in mcp)
 
 | Key | Label | Scope | Type | Default | Env / flag | Apply |
