@@ -359,12 +359,15 @@ def test_deadman_rolls_back_an_unfinished_deploy(repo, tmp_path, key, svc):
     cfg.health_timeout = 1
     commit(repo, "crashes at start", {"BROKEN": "1"})
     src2, m2 = build(repo, tmp_path, key)
-    # The deploy "dies" without rolling back: only the dead-man is left.
+    # The deploy "dies" without rolling back: only the dead-man is left. It is
+    # armed before the restart, so its delay must outlast the failed deploy
+    # itself (settle + health_timeout + restarts: over 2 s on a slow CI box)
+    # or it fires before the "still on m2" assertion below can see m2.
     with pytest.raises(dp.DeployError):
-        dp.deploy(cfg, src2, auto_rollback=False, deadman_minutes=2 / 60, **QUIET)
+        dp.deploy(cfg, src2, auto_rollback=False, deadman_minutes=6 / 60, **QUIET)
     assert dp.Selector(cfg).current(cfg.services["web"]) == m2["version"]
     assert len(dp.armed_deploys(cfg)) == 1
-    for _ in range(80):
+    for _ in range(150):
         if dp.Selector(cfg).current(cfg.services["web"]) == m1["version"] and svc.version():
             break
         time.sleep(0.1)

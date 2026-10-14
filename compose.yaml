@@ -1,14 +1,20 @@
-# Rook hub: the relay, and the hub (dashboard + MCP server in one process).
+# Rook hub: the relay, and the hub (dashboard + MCP server in one process),
+# from the published image.
 #
 #   cp .env.example .env    # then set ROOK_BAND_PSK and ROOK_WEB_PASS at least
-#   docker compose up -d --build
+#   docker compose up -d
+#
+# The image is ghcr.io/bake-ware/rook (amd64 and arm64), built by the release
+# workflow with a prebuilt relay. Pin a release with ROOK_VERSION=0.2.0 in .env
+# (default: latest). To build the image from this checkout instead:
+#
+#   docker compose -f compose.yaml -f compose.build.yaml up -d --build
 #
 # Values come from .env through ${...} interpolation only, so the bare-metal
 # defaults in .env.example (127.0.0.1 addresses, ./data) never leak in here.
 
 x-rook: &rook
-  build: .
-  image: rook-hub:local
+  image: ${ROOK_IMAGE:-ghcr.io/bake-ware/rook}:${ROOK_VERSION:-latest}
   restart: unless-stopped
   volumes:
     - rook-data:/data
@@ -41,7 +47,7 @@ services:
       ROOK_PORT: "7005"
       ROOK_WEB_PASS: ${ROOK_WEB_PASS:?set ROOK_WEB_PASS in .env}
       ROOK_WEB_USER: ${ROOK_WEB_USER:-}
-      ROOK_BAND_PSK: ${ROOK_BAND_PSK:?set ROOK_BAND_PSK in .env (python -m rook.remote.psk)}
+      ROOK_BAND_PSK: ${ROOK_BAND_PSK:?set ROOK_BAND_PSK in .env (docker run --rm ghcr.io/bake-ware/rook python -m rook.remote.psk)}
       ROOK_BAND_NAME: ${ROOK_BAND_NAME:-rook-band}
       # Public addresses templated into installer scripts.
       ROOK_DOMAIN: ${ROOK_DOMAIN:-localhost:7005}
@@ -52,6 +58,11 @@ services:
       # (e.g. 192.168.1.10:8765).
       ROOK_ALLOWED_HOSTS: ${ROOK_ALLOWED_HOSTS:-}
       ROOK_KNOWLEDGE: ${ROOK_KNOWLEDGE:-0}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7005/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
     ports:
       # Dashboard, /mcp and /band.
       - "7005:7005"
