@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 import threading
 import time
 import uuid
@@ -53,6 +54,16 @@ class MemoryStore:
         self._conn = open_db(self.path, mode=0o600, migrations=MIGRATIONS, ns=NAMESPACE)
         # Forgotten text is overwritten on disk, not just unlinked from pages.
         self._conn.execute("PRAGMA secure_delete=ON")
+        # FTS5 'delete' alone leaves a purged memory's words in older index
+        # segments; secure-delete (SQLite 3.44+) removes them in place. Older
+        # SQLite gets an 'optimize' after each purge instead (see purge()).
+        self.fts_secure_delete = True
+        try:
+            with self._conn:
+                self._conn.execute(
+                    "INSERT INTO memories_fts(memories_fts, rank) VALUES('secure-delete', 1)")
+        except sqlite3.Error:
+            self.fts_secure_delete = False
 
     def close(self) -> None:
         with self._lock:
@@ -177,6 +188,13 @@ class MemoryStore:
                 db.execute("DELETE FROM memory_history WHERE id=?", (i,))
                 self._history(db, i, "purge", actor, {"state": "forgotten",
                                                       "with": mid if i != mid else None})
+            if not self.fts_secure_delete:
+                # No secure-delete: merge the index so no old segment keeps the words.
+                db.execute("INSERT INTO memories_fts(memories_fts) VALUES('optimize')")
+        with self.db(False) as db:
+            # Until a checkpoint the old pages are still in the -wal file:
+            # write them back and empty it.
+            db.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchall()
         return ids
 
     def expire(self, before: float) -> int:

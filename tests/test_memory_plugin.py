@@ -716,6 +716,34 @@ async def test_purge_erases_every_earlier_version(env):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("fts_secure_delete", [True, False], ids=["secure-delete", "optimize"])
+async def test_purged_text_is_gone_from_the_files(env, fts_secure_delete):
+    """No copy of purged text stays in the FTS5 index segments or the WAL,
+    with FTS5 secure-delete and with the 'optimize' fallback for SQLite
+    without it."""
+    from pathlib import Path
+
+    store = env.m.store
+    assert store.fts_secure_delete              # this SQLite has it
+    if not fts_secure_delete:                   # behave like SQLite < 3.44
+        with store.db() as db:
+            db.execute("INSERT INTO memories_fts(memories_fts, rank) VALUES('secure-delete', 0)")
+        store.fts_secure_delete = False
+    keep = await env.m.add("The spare key hides under the blue flowerpot", "fact")
+    a = await env.m.add("The plumber is called Zorblexquat", "fact")
+    b = await env.m.edit(a["id"], "human:op", text="The plumber is now called Zorblexquat Jr")
+    assert await env.m.recall("Zorblexquat", [rules.SHARED])
+    await env.m.forget(b["id"], "human:op", purge=True)
+
+    files = [Path(store.path), Path(store.path + "-wal")]
+    for f in files:
+        data = f.read_bytes() if f.exists() else b""
+        assert b"orblexquat" not in data.lower(), f.name
+    assert await env.m.recall("Zorblexquat", [rules.SHARED]) == []
+    assert [r["id"] for r in await env.m.recall("flowerpot", [rules.SHARED])] == [keep["id"]]
+
+
+@pytest.mark.asyncio
 async def test_slots_supersede_only_single_values_or_corrections(env):
     a = await env.m.add("The user's son is Sam", "profile", about=OP)
     b = await env.m.add("The user's son is Max", "profile", about=OP)

@@ -204,7 +204,11 @@ sources without credentials or query strings.
 
 **Purge** erases the memory and every earlier version it replaced (text,
 vectors, history; one `purge` history row stays as a tombstone), with SQLite
-`secure_delete` on.
+`secure_delete` on. The keyword index forgets the words too: the store turns on
+FTS5 `secure-delete` when it opens (SQLite 3.44+; on older SQLite a purge runs
+an FTS5 `optimize` instead), and every purge ends with
+`PRAGMA wal_checkpoint(TRUNCATE)`, so no copy of the text is left in
+`memory.db` or `memory.db-wal`.
 
 `rook_memory(action=search|add|forget|status)` is listed for MCP agents only
 when `memory.agent_tool` is on when the MCP server starts (tools/list budget);

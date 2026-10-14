@@ -32,7 +32,8 @@ Preparation for public use.
 - Privacy: agents, `home.ask` and job steps see shared memory only; another
   person's memory, forgotten rows, procedures, pinning and approval are for
   the operator. Learned skills keep no tool output and need the operator's
-  approval before any prompt uses them. Purge erases every earlier version;
+  approval before any prompt uses them. Purge erases every earlier version
+  and leaves no copy in the keyword index or the WAL file;
   replaced and forgotten rows expire after `memory.retention_days` (90).
   `rook_home_ask` is now authorized as `home.ask`.
 - Manage > Memory: browse, search, correct, keep, approve, forget and erase memories,
