@@ -25,6 +25,10 @@ Before ``python -m build`` and ``docker build``, on a clean checkout of the tag:
    first) or downloaded here, and must match each archive's published
    ``.sha256``. A hash already pinned for the same tag must not change.
 
+With ``--tag`` it first runs the user-manual release gate
+(``tools/manual_check.py --release``; ``--skip-manual-check`` overrides it)
+and writes ``docs/manual/manifest.json`` for the build.
+
 The build number is computed before anything is modified (a modified tree
 would otherwise count as dirty). ``--print-telesthete-pin`` prints the pinned
 telesthete commit and exits.
@@ -35,6 +39,7 @@ from __future__ import annotations
 import argparse
 import ast
 import hashlib
+import json
 import re
 import subprocess
 import sys
@@ -199,6 +204,22 @@ def git_build(root: Path = ROOT) -> tuple[int, str]:
     return int(git("rev-list", "--count", "HEAD")), git("rev-parse", "--short", "HEAD")
 
 
+def check_manual(tag: str, skip: bool = False):
+    """The user-manual release gate (tools/manual_check.py --release): every
+    release ships a manual that covers every feature. Returns the bundle, for
+    the manifest the release build carries (docs/manual/manifest.json)."""
+    sys.path.insert(0, str(ROOT / "tools"))
+    import manual_check
+    from rook.hub.plugins.manual import bundle as manual_bundle
+    problems = [] if skip else manual_check.check(release=tag)
+    if problems:
+        raise SystemExit("the user manual is out of date (CONTRIBUTING.md, 'The user manual'; "
+                         "--skip-manual-check overrides):\n  - " + "\n  - ".join(problems))
+    if skip:
+        print("warning: the user-manual check was skipped (--skip-manual-check)", file=sys.stderr)
+    return manual_bundle.load()
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--tag", help="release tag, e.g. v0.2.0")
@@ -209,6 +230,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--relay-dir", type=Path, default=None,
                     help="hash the relay archives in this directory instead of downloading them")
     ap.add_argument("--print-telesthete-pin", action="store_true")
+    ap.add_argument("--skip-manual-check", action="store_true",
+                    help="cut the release even if the user manual is out of date (emergencies only)")
     a = ap.parse_args(argv)
 
     if a.print_telesthete_pin:
@@ -230,6 +253,7 @@ def main(argv: list[str] | None = None) -> int:
     writes: dict[Path, str] = {}
     if a.tag:
         version = version_from_tag(a.tag)
+        manual = check_manual(a.tag, skip=a.skip_manual_check)
         build, commit = git_build()          # before anything changes the tree
         name = f"{build}.{build_name(commit)}"
     if a.pin_relay:
@@ -253,6 +277,9 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit("rook/_release.py pins no relay hashes: pass --pin-relay "
                              f"{relay or 'vX.Y.Z'} (a release must ship verified relay hashes)")
     writes[release_path] = release
+    if a.tag and manual is not None:
+        writes[manual.directory / "manifest.json"] = json.dumps(manual.manifest(), indent=1,
+                                                                ensure_ascii=False) + "\n"
     for path, content in writes.items():
         path.write_text(content, encoding="utf-8")
     if a.tag:
