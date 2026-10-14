@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
-# Run a complete Rook hub on this machine: the UDP relay (telesthete-hub), the
-# dashboard and the MCP server, in the foreground. Ctrl-C stops all three.
+# Run a complete Rook hub on this machine: the UDP relay (telesthete-hub) and
+# the hub (`rook-hub`: dashboard + MCP server in one process), in the
+# foreground. Ctrl-C stops both.
 #
 # First run generates a band key, a dashboard password and an MCP token into
 # $ROOK_DATA_DIR/quickstart.env (mode 600) and reuses them afterwards.
 #
-# Needs: `pip install` of this repo (rook-dashboard / rook-mcp on PATH) and
-# telesthete-hub on PATH or in ~/.cargo/bin (see README). Environment knobs:
+# Needs: `pip install` of this repo (rook-hub on PATH) and telesthete-hub on
+# PATH or in ~/.cargo/bin (see README). Environment knobs:
 #   ROOK_DATA_DIR  state directory             (default ./rook-data)
-#   BIND           address all three listen on (default 127.0.0.1; 0.0.0.0 for LAN workers)
+#   BIND           address all of it listens on (default 127.0.0.1; 0.0.0.0 for LAN workers)
 #   RELAY_PORT     UDP relay                   (default 7474)
-#   DASHBOARD_PORT web dashboard               (default 7005)
-#   MCP_PORT       MCP server + /band bridge   (default 8765)
+#   DASHBOARD_PORT dashboard, /mcp and /band   (default 7005)
+#   MCP_PORT       the MCP server alone, as the separate rook-mcp served it
+#                  (default 8765; "off" to serve MCP only on DASHBOARD_PORT)
+#   ROOK_HUB_SPLIT=1  run the dashboard and the MCP server as two processes
+#                  (rook-dashboard + rook-mcp, the pre-merge layout; compat)
 set -euo pipefail
 
 DATA="${ROOK_DATA_DIR:-$PWD/rook-data}"
@@ -28,9 +32,13 @@ if [ -z "$HUB_BIN" ] && [ -x "${CARGO_HOME:-$HOME/.cargo}/bin/telesthete-hub" ];
   HUB_BIN="${CARGO_HOME:-$HOME/.cargo}/bin/telesthete-hub"
 fi
 
+SPLIT="${ROOK_HUB_SPLIT:-0}"
+[ "$SPLIT" = 1 ] && [ "$MCP_PORT" = off ] && { echo "ROOK_HUB_SPLIT=1 needs an MCP_PORT" >&2; exit 1; }
+if [ "$SPLIT" = 1 ]; then cmds="rook-dashboard rook-mcp"; else cmds="rook-hub"; fi
+
 missing=""
 [ -n "$HUB_BIN" ] || missing=" telesthete-hub"
-for cmd in rook-dashboard rook-mcp; do
+for cmd in $cmds; do
   command -v "$cmd" >/dev/null 2>&1 || missing="$missing $cmd"
 done
 if [ -n "$missing" ]; then
@@ -72,21 +80,36 @@ HUB_BIND="$BIND:$RELAY_PORT" HUB_PEER_TTL_SECS=60 HUB_PRUNE_SECS=10 RUST_LOG="${
   "$HUB_BIN" &
 sleep 1
 # The dashboard serves plain HTTP here, so its installer links say http://.
-# Workers reach the relay through the MCP server's WebSocket bridge
-# (--hub-public, ws:// on a non-443 port): one TCP port to allow, and the
+# Workers reach the relay through the hub's WebSocket bridge (--hub-public,
+# ws://<host>:<port>/band on a non-443 port): one TCP port to allow, and the
 # same path a public hub uses behind its TLS proxy.
-rook-dashboard --bind "$BIND" --port "$DASHBOARD_PORT" \
-  --hub-host 127.0.0.1 --hub-port "$RELAY_PORT" \
-  --domain "http://$PUBLIC_HOST:$DASHBOARD_PORT" --hub-public "$PUBLIC_HOST:$MCP_PORT" &
-rook-mcp --hub "127.0.0.1:$RELAY_PORT" --bind "$BIND:$MCP_PORT" \
-  --allowed-hosts "$PUBLIC_HOST:$MCP_PORT" &
+if [ "$SPLIT" = 1 ]; then
+  rook-dashboard --bind "$BIND" --port "$DASHBOARD_PORT" \
+    --hub-host 127.0.0.1 --hub-port "$RELAY_PORT" \
+    --domain "http://$PUBLIC_HOST:$DASHBOARD_PORT" --hub-public "$PUBLIC_HOST:$MCP_PORT" &
+  rook-mcp --hub "127.0.0.1:$RELAY_PORT" --bind "$BIND:$MCP_PORT" \
+    --allowed-hosts "$PUBLIC_HOST:$MCP_PORT" &
+  MCP_URL="http://$PUBLIC_HOST:$MCP_PORT/mcp"
+else
+  # One process. MCP_PORT keeps the old MCP-only port for workers and agents
+  # set up against it; new installers use the dashboard port for everything.
+  mcp_bind="off"; extra_hosts=""
+  if [ "$MCP_PORT" != off ]; then
+    mcp_bind="$BIND:$MCP_PORT"; extra_hosts=",$PUBLIC_HOST:$MCP_PORT"
+  fi
+  rook-hub --bind "$BIND" --port "$DASHBOARD_PORT" --mcp-bind "$mcp_bind" \
+    --hub-host 127.0.0.1 --hub-port "$RELAY_PORT" \
+    --domain "http://$PUBLIC_HOST:$DASHBOARD_PORT" --hub-public "$PUBLIC_HOST:$DASHBOARD_PORT" \
+    --allowed-hosts "$PUBLIC_HOST:$DASHBOARD_PORT$extra_hosts" &
+  MCP_URL="http://$PUBLIC_HOST:$DASHBOARD_PORT/mcp"
+fi
 
 cat <<EOF
 
 Rook hub running (Ctrl-C to stop). State: $DATA
 
   Dashboard   http://$PUBLIC_HOST:$DASHBOARD_PORT    password: $ROOK_WEB_PASS
-  MCP         http://$PUBLIC_HOST:$MCP_PORT/mcp      bearer token in $SECRETS
+  MCP         $MCP_URL      bearer token in $SECRETS
   Relay       udp://$PUBLIC_HOST:$RELAY_PORT
 
 Install a worker:  http://$PUBLIC_HOST:$DASHBOARD_PORT/#install

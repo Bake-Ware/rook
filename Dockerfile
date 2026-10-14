@@ -1,5 +1,6 @@
-# Rook hub image: the telesthete UDP relay, the dashboard and the MCP server.
-# One image, three processes; compose.yaml runs each as its own service.
+# Rook hub image: the telesthete UDP relay and the hub (dashboard + MCP server
+# in one process, rook-hub). One image, two processes; compose.yaml runs each
+# as its own service. rook-dashboard / rook-mcp are still installed (compat).
 
 # Keep in lockstep with the telesthete pin in pyproject.toml (both move to
 # the merged telesthete main commit once the audit/hub PR lands).
@@ -39,6 +40,6 @@ USER rook
 WORKDIR /data
 VOLUME /data
 
-# 7005 dashboard, 8765 MCP + WebSocket worker bridge, 7474/udp relay
+# 7005 dashboard + MCP + /band, 8765 MCP + /band alone (old layout), 7474/udp relay
 EXPOSE 7005 8765 7474/udp
-CMD ["rook-dashboard"]
+CMD ["rook-hub"]
