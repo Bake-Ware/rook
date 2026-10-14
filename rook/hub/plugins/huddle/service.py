@@ -188,7 +188,8 @@ class HuddleService:
     when the knowledge plugin is off); ``bands()`` -> ``[{id, name,
     primary}]``; ``link(project, band, room)`` records the room on the
     project (best effort); ``client()`` -> the band client or None;
-    ``origin()`` -> the current caller's verified principal and host
+    ``origin()`` -> the current caller's verified principal and its
+    self-declared host (X-Rook-Host, not verified)
     (``{principal: {id, kind, role, groups, verified, label}, host}``), or
     None when there is none to trust (a band caller, in-process code)."""
 
@@ -330,8 +331,9 @@ class HuddleService:
         return out
 
     def _asked_from(self) -> dict:
-        """The asker's verified principal and the worker it called from, at
-        ask time, so an answer can only wake that worker, as that principal.
+        """The asker's verified principal and the worker its self-declared
+        host (X-Rook-Host) names, at ask time, so an answer can only wake
+        that worker, as that principal.
         Nothing for callers that cannot be trusted (over the band,
         unverified): their questions are answered without a wake-up."""
         try:
@@ -444,7 +446,9 @@ class HuddleService:
     def wake_target(self, question: int) -> dict:
         """Which worker answering ``question`` would wake, and whether it
         can: ``{state: "ready"|"off"|"notice", worker?, reason?}``. Only the
-        worker recorded when the question was asked, as the asker."""
+        worker recorded when the question was asked (named by the asker's
+        own X-Rook-Host, so not verified), and only as the asker: policy for
+        that principal decides whether it may start anything there."""
         if not self._wake_on_answer():
             return {"state": "off", "reason": "waking agents on an answer is off (Plugins > huddle)"}
         client = self._client()

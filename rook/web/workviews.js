@@ -31,7 +31,8 @@ export function who(id){if(!id)return '';if(id.startsWith('human:'))return id.sl
 function initials(id){const [a,b]=who(id).split(/[@_]/).map(x=>x.replace(/[^A-Za-z0-9]/g,''));return ((a||'?')[0]+((b||a||'')[b?0:1]||'')).toUpperCase();}
 const PAL=['#a4bc92','#d8ad6d','#9fb8c9','#c9a3b8','#b7b276','#8fc1a9','#d39a7a','#b3a3d6'];
 function tint(id){let x=0;for(const ch of who(id))x=(x*31+ch.charCodeAt(0))>>>0;return PAL[x%PAL.length];}
-export function avatar(id,cls){const a=el('span',initials(id),'wv-av'+(cls?' '+cls:''));a.style.setProperty('--tint',tint(id));a.title=who(id);return a;}
+// Pastel tints whatever the theme, so the initials stay dark on them.
+export function avatar(id,cls){const a=el('span',initials(id),'wv-av'+(cls?' '+cls:''));a.style.setProperty('--tint',tint(id));a.style.color='#1b1d17';a.title=who(id);return a;}
 function dueState(t){if(!t.due||FINISHED.has(t.state))return '';const n=daysBetween(today(),t.due);return n<0?'overdue':n<=3?'soon':'';}
 function dueChip(t){if(!t.due)return null;const s=dueState(t);const n=daysBetween(today(),t.due);
   const txt=s==='overdue'?'Overdue · '+fmtDay(t.due):n===0?'Due today':n===1?'Due tomorrow':'Due '+fmtDay(t.due);

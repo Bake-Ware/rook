@@ -47,8 +47,8 @@ class Huddle(Plugin):
                      "Huddle. Read at start: restart the hub to apply."),
         setting("wake_on_answer", bool, default=False, label="Wake the agent when you answer",
                 help="After you answer a question, start the asking agent again on the machine it "
-                     "asked from (hermes or agent.wake), with the agent's own permissions. Off: it "
-                     "sees the answer on its next call."),
+                     "says it runs on (hermes or agent.wake), with the agent's own permissions. Off: "
+                     "it sees the answer on its next call."),
     )
     GUIDANCE = {
         "tool:rook_huddle": "",

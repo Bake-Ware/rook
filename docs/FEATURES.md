@@ -5,7 +5,7 @@ Start with the [README](../README.md): what Rook is, a quickstart and the
 architecture.
 
 - [The band](#the-band) · [Capabilities](#capabilities) · [Integrations](#integrations) · [Hardware integrations](#hardware-integrations)
-- [Control planes](#control-planes) — dashboard · `rook band` TUI · chat · MCP
+- [Control planes](#control-planes) — dashboard · `rook band` TUI · desktop app · chat · MCP
 - [Agent workspace](#agent-workspace) — chat rooms · work · knowledge wiki · jobs · secrets · agent instructions
 - [Reliability](#reliability) · [OTA self-update](#ota-self-update) · [Security](#security) · [Installers served by the hub](#installers-served-by-the-hub)
 
@@ -236,7 +236,13 @@ Drive the same band three ways — they all read from the same roster and invoke
 
 <img src="img/dashboard-workers-mobile.png" align="right" width="220" alt="Rook dashboard on mobile">
 
-A band-first control panel with a sidebar split into **Workspace** (Workers, Bands, Chat, Work, Knowledge, Jobs, Sessions) and **Manage** (Install a worker, Account & access, API tokens, Agent instructions, Secrets).
+A band-first control panel with a sidebar split into **Workspace** (Overview, Start page, Workers, Bands, Chat, Work, Knowledge, Jobs, Sessions) and **Manage** (Install a worker, Settings, Plugins, Account & access, API tokens, Agent instructions, Secrets, Home agent).
+
+After sign-in it opens on the **Overview**: what is running now, what is waiting on you (sessions idle for input, unread rooms, blocked tasks, decisions), open tasks by project and recent knowledge changes, each row linked to its task, room and session. See [docs/web/overview.md](web/overview.md).
+
+The **Start page** is each account's own page of widgets in columns: bookmark groups, RSS/Atom news feeds (fetched by the hub behind an address guard, with size and time limits), notes, and band widgets (workers, tasks, rooms, knowledge, sessions). Drag to arrange; plugins can add widget kinds. See [docs/web/start-page.md](web/start-page.md).
+
+**Themes**: Rook (dark amber, the default), Paper (light), Graphite (neutral dark) and High contrast, picked per account under Settings > My preferences. Themes are small JSON files of colour tokens that other clients can reuse; see [docs/web/themes.md](web/themes.md).
 
 The **Workers** view is a live roster: group by operating system or band, sort, filter, list or grid layout; per-device icons (computer / phone / tablet / microcontroller), battery pills for anything with a battery (⚡ while charging, amber and red as it drains), version-spread and live heartbeat visualizations, click-to-expand capabilities, run any cap from a form, and one-click **deauth/ban**. Fully responsive.
 
@@ -300,6 +306,15 @@ For a controller without a local worker, the standalone installer remains availa
 curl -fsSL https://<your-host>/install | bash -s -- cli
 # then just: rook
 ```
+
+### Desktop app (preview)
+
+A tray app for Windows, macOS and Linux (`desktop/`, Tauri 2): your dashboard
+in a window, a global hotkey (`Ctrl+Alt+Space`) to ask the home agent,
+notifications for new chat messages, push-to-talk and an optional wake word,
+start/stop for this computer's worker, and an "Install a hub on this
+computer" wizard on Linux. It signs in with the hub's usual login; nothing
+changes on the hub. See [desktop-app.md](desktop-app.md).
 
 ### Chat & messaging
 

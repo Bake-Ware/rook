@@ -3,11 +3,11 @@ body{isolation:isolate}
 .rook-art{position:fixed;z-index:0;pointer-events:none;right:-70px;top:120px;width:min(760px,62vw);height:min(820px,calc(100vh - 100px));min-height:480px;opacity:.43;contain:strict;mask-image:linear-gradient(to bottom,transparent 0%,#000 12%,#000 82%,transparent 100%)}
 .rook-canvas,.rook-sketch{position:absolute;inset:0;width:100%;height:100%}.rook-canvas canvas{display:block;width:100%;height:100%}
 .rook-canvas{opacity:0}.rook-art[data-mode=webgl] .rook-canvas{opacity:1}.rook-art[data-mode=webgl] .rook-sketch{display:none}
-.rook-art .plate-number{position:absolute;left:16%;top:15%;font:9px var(--mono);letter-spacing:2px;color:#b6a377;writing-mode:vertical-rl;transform:rotate(180deg)}
-.rook-art .plate-caption{position:absolute;left:3%;bottom:13%;font:8px/1.9 var(--mono);letter-spacing:1px;color:#a6ad91;text-align:left}.rook-art .plate-caption b{font-weight:400;color:#d8ad6d}
+.rook-art .plate-number{position:absolute;left:16%;top:15%;font:9px var(--mono);letter-spacing:2px;color:var(--art-text);writing-mode:vertical-rl;transform:rotate(180deg)}
+.rook-art .plate-caption{position:absolute;left:3%;bottom:13%;font:8px/1.9 var(--mono);letter-spacing:1px;color:var(--art-text2);text-align:left}.rook-art .plate-caption b{font-weight:400;color:var(--accent)}
 .wrap{position:relative;z-index:1}
-.list,.tile,.sess,.chatwrap,.install-card,.bands-workspace section,.settings-workspace section{background:rgba(21,25,20,.91)}
-.worker-group-heading{background:rgba(16,22,16,.94)}
+.list,.tile,.sess,.chatwrap,.install-card,.bands-workspace section,.settings-workspace section{background:var(--overlay)}
+.worker-group-heading{background:var(--overlay)}
 .art-toggle{color:var(--dim2);background:none;border:0;padding:0;text-align:left;font:9px var(--mono);cursor:pointer;letter-spacing:.25px}.art-toggle:hover{color:var(--accent)}
 @media(min-width:1650px){.rook-art{right:1vw;opacity:.5}}
 @media(max-width:800px){.rook-art{right:-120px;top:190px;width:560px;height:700px;min-height:0;opacity:.22}}

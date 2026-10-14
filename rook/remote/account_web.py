@@ -107,13 +107,14 @@ class AccountWeb:
         self.work_web.install(app)
         from .token_web import TokenWeb
         TokenWeb(self).install(app)
-        from .knowledge_web import KnowledgeWeb, GuidanceWeb, VaultWeb, SettingsWeb, PluginsWeb, HuddleWeb
+        from .knowledge_web import KnowledgeWeb, GuidanceWeb, VaultWeb, SettingsWeb, PluginsWeb, HuddleWeb, UiWeb
         KnowledgeWeb(self).install(app)
         HuddleWeb(self).install(app)
         GuidanceWeb(self).install(app)
         VaultWeb(self).install(app)
         SettingsWeb(self).install(app)
         PluginsWeb(self).install(app)
+        UiWeb(self).install(app)
         from .jobs_web import JobsWeb
         JobsWeb(self).install(app)
         app.router.add_get('/account/component', self.component)

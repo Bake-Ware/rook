@@ -91,12 +91,16 @@ agents that only know `rook_chat_*` can read and post in them.
 Settings (Plugins > huddle, or Settings): **Huddles** (on by default) and
 **Wake the agent when you answer** (off by default).
 
-Waking is bound to the question, not to anything the agent says: when an
-agent asks, the hub records the agent's verified API-token identity and the
-machine its connection names (the `X-Rook-Host` it connects with, matched
-exactly to one worker on the band). An answer can only wake that machine
-(through `hermes.chat` or `agent.wake`), and the call is authorized as the
-agent that asked, so your permission rules for that agent apply. A question
+Waking is bound to the question, not to what the question says: when an
+agent asks, the hub records the agent's API-token identity (verified) and the
+machine the agent says it runs on (the `X-Rook-Host` header its MCP client
+sends, matched exactly to one worker on the band). That machine name is
+self-declared, not verified: an agent could name another of your machines.
+What keeps that safe is the second half: an answer can only wake that one
+machine (through `hermes.chat` or `agent.wake`), and the call is authorized
+as the agent that asked, so your permission rules for that agent decide
+whether it may start anything there. The answer form shows which machine
+it is before you send. A question
 from an unverified caller, from over the band, or from a machine that is not
 on the band or cannot start an agent is answered without a wake-up. The wake
 brief gives your answer as your words and quotes the agent's question as the

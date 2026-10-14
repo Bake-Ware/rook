@@ -161,6 +161,18 @@ class SettingsStore:
         return out
 
     # -- writes ------------------------------------------------------------
+    def prune_history(self, key: str, scope: str, target: str = "", keep: int = 20) -> int:
+        """Drop all but the newest ``keep`` history entries of one key at one
+        scope and target (for values an account saves often and in bulk, such
+        as its start page layout). Returns how many were dropped."""
+        if not self.exists():
+            return 0
+        with self._db(write=True) as db:
+            return db.execute(
+                "DELETE FROM history WHERE key=? AND scope=? AND target=? AND id NOT IN "
+                "(SELECT id FROM history WHERE key=? AND scope=? AND target=? ORDER BY id DESC LIMIT ?)",
+                (key, scope, target, key, scope, target, max(0, int(keep)))).rowcount
+
     def set(self, key: str, scope: str, target: str, *, value: Any = None,
             secret_ref: str | None = None, actor: str = "system", note: str = "",
             source: str = "api", old_shown: Any = None, new_shown: Any = None,
