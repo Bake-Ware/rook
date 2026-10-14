@@ -673,21 +673,25 @@ async def test_knowledge_tool_only_for_askers_who_may_read_it(env, tmp_path, mon
         res = await env.node.dispatch("home.ask", {"question": "x"}, "agent:claude")
     finally:
         current_principal.reset(tok)
-    assert res["ok"] and "tools" not in env.llm.chats()[-1][2]
+    assert res["ok"] and "knowledge_search" not in _tool_names(env)
     tok = current_principal.set(Principal("human:1", "human", "owner", ("human:owner",)))
     try:
         await env.node.dispatch("home.ask", {"question": "x"}, "user:op")
     finally:
         current_principal.reset(tok)
-    assert "tools" in env.llm.chats()[-1][2]
+    assert "knowledge_search" in _tool_names(env)
     # Chat: an agent sender gets no tool, a person does.
     group = _room(env, "kb", ["agent:home", "agent:claude"])
     env.chat.send(group, "agent:claude", "@home search the wiki", ["agent:home"], True)
     await _drain(env)
-    assert "tools" not in env.llm.chats()[-1][2]
+    assert "knowledge_search" not in _tool_names(env)
     env.chat.send(group, OP, "@home search the wiki", ["agent:home"], True)
     await _drain(env)
-    assert "tools" in env.llm.chats()[-1][2]
+    assert "knowledge_search" in _tool_names(env)
+
+
+def _tool_names(env) -> list[str]:
+    return [t["function"]["name"] for t in env.llm.chats()[-1][2].get("tools") or []]
 
 
 @pytest.mark.asyncio
