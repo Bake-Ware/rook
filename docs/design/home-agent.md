@@ -187,19 +187,14 @@ Next step after read-only knowledge search:
 
 ### 2.2 Memory
 
-Hermes keeps `MEMORY.md`/`USER.md` files. The home agent's memory is the
-shared knowledge wiki plus the persona:
-
-- **Facts and procedures**: knowledge pages (search before answering; write
-  new pages with evidence links once write tools are allowed), so every other
-  agent shares them.
-- **Who the operator is and how to talk**: the persona plugin (`owner`,
-  rules, a `home` family addendum).
-- **Conversation continuity**: chat rooms are already persistent; long rooms
-  get a rolling summary stored as a handoff on the room's thread id.
-- **Import**: a one-off migration turns Hermes' memory files into
-  knowledge pages (as was done for other memory imports: unverified, one
-  source link per page, no secrets).
+Done: the `memory` hub plugin (docs/design/memory.md). The home agent reads
+a budgeted memory section before every chat reply, `home.ask` and job step,
+and keeps what it learned afterwards (people's profiles, facts, conversation
+episodes, procedures from job steps). The shared knowledge wiki stays the
+place for curated, evidenced pages that every agent shares; the persona
+plugin still says how to talk. Importing Hermes' `MEMORY.md`/`USER.md` is
+still a one-off migration (to memory with `memory.remember`, or to the wiki),
+never with the secrets those files held.
 
 ### 2.3 Scheduled work
 
@@ -256,4 +251,4 @@ stream) is a prerequisite for the first.
 - More than one home agent per hub, or per-band home agents (the settings are
   hub scope; a band override would need `overridable=("band",)` and a band
   argument on every path).
-- Write tools, worker caps, schedules, memory writes.
+- Write tools, worker caps, schedules.
