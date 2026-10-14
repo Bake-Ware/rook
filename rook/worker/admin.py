@@ -78,7 +78,7 @@ def _save_disabled(names: set[str]) -> None:
 
 
 #: Never switched off by an enrollment profile: worker control and enrollment.
-_PROFILE_PROTECTED = frozenset({"selfupdate", "config", "enrollment"})
+_PROFILE_PROTECTED = frozenset({"selfupdate", "config", "enrollment", "info"})
 
 
 def _profile_modules(v: Any) -> set[str]:
@@ -89,15 +89,19 @@ def _profile_modules(v: Any) -> set[str]:
 
 
 def apply_enrollment_profile(saved: dict | None = None) -> dict | None:
-    """Apply the plugin profile the hub handed this worker at enrollment, once.
+    """Apply the plugin profile the hub handed this worker at enrollment, on
+    its first start only.
 
     ``saved`` is the enrollment file (rook.worker.enroll.load()). The profile
     (``{"enable": [...], "disable": [...]}``, a pairing code's or the band's
-    defaults) is merged into the persisted plugin state exactly like
-    ``worker.plugin.enable/disable`` would, so it holds across restarts and an
-    operator's later switches win. Its id is recorded, so it is applied again
-    only after an enrollment brings a different one. Returns what changed, or
-    ``None`` when there was nothing to apply."""
+    defaults) is applied only while this worker has no persisted plugin state
+    yet (no ``plugins.json``): a re-enrollment or a re-pairing of a worker that
+    already ran never undoes an operator's per-worker switches. Its
+    ``disable`` list becomes the persisted disables, exactly like
+    ``worker.plugin.disable`` (protected modules excepted). Its ``enable``
+    list is recorded but changes nothing: every plugin loads by default, and
+    adding to the persisted ``enabled`` set would widen an ``--enable``
+    allowlist. Returns what was applied, or ``None``."""
     if saved is None:
         try:
             from .enroll import load
@@ -111,21 +115,16 @@ def apply_enrollment_profile(saved: dict | None = None) -> dict | None:
     disable = _profile_modules(profile.get("disable")) - enable - _PROFILE_PROTECTED
     if not enable and not disable:
         return None
+    if _PLUGIN_STATE.exists():
+        return None   # not the first start: the worker's own state wins
     import hashlib
     pid = hashlib.sha256(json.dumps({"enable": sorted(enable), "disable": sorted(disable)},
                                     sort_keys=True).encode("utf-8")).hexdigest()[:16]
-    state = _load_state()
-    if state.get("profile_applied") == pid:
-        return None
-    d = (load_disabled() | disable) - enable
-    e = (load_enabled() | enable) - disable
-    _save_state(disabled=d, enabled=e)
-    state = _load_state()
-    state["profile_applied"] = pid
     _WORKER_DIR.mkdir(parents=True, exist_ok=True)
-    _PLUGIN_STATE.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
-    log.info("applied the enrollment plugin profile %s: on %s, off %s", pid,
-             sorted(enable) or "-", sorted(disable) or "-")
+    _PLUGIN_STATE.write_text(json.dumps({"disabled": sorted(disable), "enabled": [],
+                                         "profile_applied": pid}, indent=2) + "\n",
+                             encoding="utf-8")
+    log.info("applied the enrollment plugin profile %s: off %s", pid, sorted(disable) or "-")
     return {"id": pid, "enable": sorted(enable), "disable": sorted(disable)}
 
 

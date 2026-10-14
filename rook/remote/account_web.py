@@ -641,9 +641,14 @@ class AccountWeb:
             elif op in ('pair','pair_revoke','invite','member','rotate','revoke'):
                 self.store.require_band(uid,bid,True)
                 if op=='pair':
-                    # The code carries a plugin profile: the form's (JSON) or
-                    # the band's current defaults, snapshotted now.
-                    grant=self.server._enrollment.issue(bid,profile=self.plugin_profile(bid,data.get('profile')),keep_profile=False)
+                    # A code carries only an explicit plugin profile (operator
+                    # account only); without one the worker gets the band's
+                    # defaults as they are when it enrolls, so presets saved
+                    # after the code was shown still reach it.
+                    explicit=data.get('profile')
+                    if explicit not in (None,'') and not user.get('admin'):
+                        raise ValueError('Only the operator account can attach a plugin profile.')
+                    grant=self.server._enrollment.issue(bid,profile=self.plugin_profile(bid,explicit) if explicit not in (None,'') else None,keep_profile=False)
                     url=self.origin+'/worker?band='+grant['code']
                     if request.headers.get('X-Rook-View') == 'account':
                         return web.json_response({'pairing': grant, 'band_id': bid, 'origin': self.origin, 'csrf': user['csrf']}, headers=NO_STORE)
