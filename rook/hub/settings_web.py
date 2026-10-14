@@ -55,6 +55,16 @@ def _llm(svc):
     return plugin
 
 
+def _memory(svc):
+    """The memory hub plugin behind the Manage > Memory page."""
+    node = getattr(svc, "node", None)
+    plugin = node.plugin("memory") if node is not None else None
+    if plugin is None:
+        raise SettingsError("Memory is off on this hub. Turn it on under Manage > Plugins "
+                            "(hub plugin memory) or Settings > Memory.")
+    return plugin
+
+
 def routes(get_service, accounts):
     """``get_service()`` returns the live SettingsService (or None)."""
 
@@ -99,6 +109,8 @@ def routes(get_service, accounts):
                     data = page_data(svc, node, plugin)
                 elif view == "llm":
                     data = await _llm(svc).page(svc)
+                elif view == "memory":
+                    data = _memory(svc).page()
                 elif view == "search":
                     data = {"results": svc.search(q.get("q", ""))}
                 elif view == "history":
@@ -148,9 +160,11 @@ def routes(get_service, accounts):
                 res = await plugin.page_action(svc, data, actor)
             elif action in ("llm_save", "llm_delete", "llm_check", "llm_models"):
                 res = await _llm(svc).page_action(svc, data, actor)
+            elif str(action or "").startswith("memory_"):
+                res = await _memory(svc).page_action(data, actor)
             else:
                 return _json({"error": "Use set, dry_run, reset, apply_worker, plugin or "
-                                       "persona_*, home_*, voice_* or llm_*"}, 400)
+                                       "persona_*, home_*, memory_*, voice_* or llm_*"}, 400)
             return _json(res)
         except PermissionError as e:
             return _json({"error": str(e)}, 403)

@@ -11,9 +11,9 @@ dependencies = [
     # Encrypted transport. Not on PyPI yet, so it installs from GitHub.
     # 0.3.0 (audit/hub): ROUTE/ADDRESSED channel types + route_id_for for
     # addressed hub routing (SPEC §10.1), bounded Reassembler, linear-time
-    # DropReceiver. This is a PR-branch commit: once that PR merges, move the
-    # pin (and Dockerfile TELESTHETE_REV) to the merged main commit.
-    "telesthete @ git+https://github.com/Bake-Ware/telesthete@f3419d2292f7fe193fa3205880186823b78b16c1",
+    # DropReceiver. Pinned to telesthete main at the v0.3.0 tag; move it
+    # together with Dockerfile TELESTHETE_REV.
+    "telesthete @ git+https://github.com/Bake-Ware/telesthete@f3fc597402a76f78cec9da0487de0725aaf77eb2",
     "pynacl>=1.5",
     "cryptography>=42",
     "aiohttp>=3.9",

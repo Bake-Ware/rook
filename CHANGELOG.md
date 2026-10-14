@@ -48,6 +48,37 @@ Preparation for public use.
   (`Plugin.unavailable_reason()`), and is retried when one of its settings
   changes. Hub plugins can serve paths on the hub site (`rook/hub/site.py`).
 
+### Home agent memory
+- New hub plugin `memory` (on by default, part of the "Home & voice agent"
+  preset): the home agent remembers people, facts, conversations and skills
+  between conversations, Hermes-agent style. It recalls a budgeted memory
+  section before each chat reply, `home.ask` and job step, and keeps what it
+  learned afterwards ("my name is", "I prefer", "remember that", "forget
+  that"); job steps it finishes with tools become skills. Setting
+  `home.memory` turns it off for the home agent; with `home.tools` on the
+  model also gets `memory_save` / `memory_search`.
+- Write rules: no secrets (vault values become `{{secret:name}}`
+  references; key, password, access-code and card shapes are refused or
+  redacted; `memory.deny_patterns` adds your own), no prompt-injection text,
+  dedupe, and a changed fact supersedes the old one instead of editing it.
+- Recall: keywords (FTS5) always, plus embeddings from `memory.embedder`, the
+  home agent's endpoint (`memory.embed_model`) or any worker's `embed.text`,
+  falling back to keywords when none answers.
+- A consolidation job (every 30 minutes; `memory.consolidate`) summarises
+  finished conversations, rolls old ones up by week, merges duplicates,
+  fades unused memories and enforces budgets.
+- Privacy: agents, `home.ask` and job steps see shared memory only; another
+  person's memory, forgotten rows, procedures, pinning and approval are for
+  the operator. Learned skills keep no tool output and need the operator's
+  approval before any prompt uses them. Purge erases every earlier version
+  and leaves no copy in the keyword index or the WAL file;
+  replaced and forgotten rows expire after `memory.retention_days` (90).
+  `rook_home_ask` is now authorized as `home.ask`.
+- Manage > Memory: browse, search, correct, keep, approve, forget and erase memories,
+  with provenance and history. Caps `memory.recall/show/list/status`
+  (read, sensitive) and `memory.remember/edit/consolidate/forget` (write);
+  MCP tool `rook_memory` only with `memory.agent_tool` on.
+
 ### Overview, start page and themes
 - The dashboard opens on a new **Overview** after sign-in: tiles for workers,
   sessions, open tasks and unread chat; Waiting on you (sessions idle for

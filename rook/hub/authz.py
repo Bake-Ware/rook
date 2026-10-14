@@ -254,6 +254,7 @@ _TOOL_CAPS = {
     "rook_console_list": "console.read", "rook_console_search": "console.read",
     "rook_console_read": "console.read",
     "rook_install_claude_code": "hub.info",
+    "rook_home_ask": "home.ask",
 }
 _READ_ACTIONS = frozenset({"search", "get", "list", "context", "status", "deck", "board"})
 
@@ -274,6 +275,9 @@ def hub_cap_for_tool(name: str, arguments: Any) -> str | None:
     if name in ("rook_task", "rook_project", "rook_concept"):
         default = "deck" if name == "rook_task" else "list"
         return "task.read" if (action or default) in _READ_ACTIONS else "task.write"
+    if name == "rook_memory":
+        return {"add": "memory.remember", "forget": "memory.forget",
+                "status": "memory.status"}.get(action or "search", "memory.recall")
     if name == "rook_huddle":
         return "huddle.read" if (action or "read") in ("read", "list", "mine") else "huddle.write"
     if name == "rook_jobs":
