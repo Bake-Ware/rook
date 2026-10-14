@@ -92,6 +92,17 @@ Preparation for public use.
 - CI: `.github/workflows/desktop.yml` tests on Linux and builds unsigned
   bundles on Linux, macOS and Windows (actions pinned by commit, cargo
   `--locked`).
+### Agent skill
+- The Rook skill (`skills/rook/`) now teaches agents to work as a team, not just to
+  run commands: a start-of-session ritual (whoami, a narrowed deck, handoffs,
+  knowledge search, unread chat), the task lifecycle (claim, one owner, outcome
+  plus evidence, or a handoff), room etiquette, huddle status and questions,
+  when to wake an agent, what belongs in knowledge versus tasks and handoffs,
+  handoff contents, timeouts and safe retries (`rook_journal`, same
+  `request_id`), and common failure modes.
+  New references: `coordination.md` (states, required fields, templates, hygiene
+  findings), `examples.md` (worked calls) and `troubleshooting.md` (errors and
+  fixes).
 
 ### Hub merge
 - One hub process: `rook hub serve` (console script `rook-hub`) runs the
