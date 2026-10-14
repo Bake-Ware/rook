@@ -16,8 +16,14 @@ Two version schemes, two jobs:
   these values; without them every such bundle would be build 0 and its workers
   would never update.
 
-``RELAY`` names the telesthete release (``v0.3.0``) whose prebuilt relay the
-release's Docker image ships; scripts/install-hub.sh installs the same one.
+``RELAY`` and ``RELAY_SHA256`` pin the relay (telesthete-hub) this Rook runs
+with. They are committed, not stamped: the Dockerfile's default
+``TELESTHETE_RELAY_VERSION`` must equal ``RELAY`` (a test checks), and the image,
+scripts/install-hub.sh and scripts/fetch-relay.py check each download against
+``RELAY_SHA256`` rather than a checksum file from the same release page. To
+move to a new telesthete release: ``python tools/release_prep.py --pin-relay
+vX.Y.Z`` (it also updates the Dockerfile). The release workflow fills
+``RELAY_SHA256`` the same way when it is still empty.
 
 Deliberately separate from ``rook/worker/_build_info.py``: stamping that file
 in a wheel would make a pip-installed *worker* accept OTA updates, which only
@@ -28,4 +34,5 @@ VERSION = ""     # PEP 440 release version; "" in a source checkout
 BUILD = 0        # git rev-list --count of the release commit; 0 = not a release
 COMMIT = ""      # short hash of the release commit
 NAME = ""        # "<build>.<adjective>.<noun>", e.g. 523.lumpy.moose
-RELAY = ""       # telesthete release whose relay this was built and tested with
+RELAY = "v0.3.0"
+RELAY_SHA256 = {}   # {"x86_64": "<sha256 of telesthete-hub-x86_64-linux.tar.gz>", ...}

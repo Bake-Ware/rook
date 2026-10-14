@@ -4,14 +4,19 @@
 # Published multi-arch (amd64, arm64) as ghcr.io/bake-ware/rook by
 # .github/workflows/release.yml.
 #
-#   docker build -t rook-hub .                                   # prebuilt relay, latest release
+#   docker build -t rook-hub .                                   # the pinned prebuilt relay
 #   docker build --build-arg TELESTHETE_RELAY_VERSION=v0.3.0 .   # pin the relay
 #   docker build --build-arg RELAY_SOURCE=source .               # compile the relay instead
 
-# Which telesthete release's prebuilt, static relay to use ("latest" or a tag
-# such as v0.3.0). It must speak the same wire as the telesthete pinned in
-# pyproject.toml (addressed routing needs a relay with ROUTE support).
-ARG TELESTHETE_RELAY_VERSION=latest
+# Base images, pinned by digest (multi-arch manifest lists; refresh both the
+# tag and the digest together).
+ARG PYTHON_IMAGE=python:3.12-slim-bookworm@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258
+ARG RUST_IMAGE=rust:1-slim-bookworm@sha256:2c3a22f0a5533ea2dd5a16627bc841228151faa2d4de2644ac9987e4a2f1f2fa
+# Which telesthete release's prebuilt, static relay to use. Must equal RELAY in
+# rook/_release.py, whose RELAY_SHA256 the download is checked against (move
+# both with `python tools/release_prep.py --pin-relay vX.Y.Z`). It must speak
+# the same wire as the telesthete pinned in pyproject.toml.
+ARG TELESTHETE_RELAY_VERSION=v0.3.0
 # "release" downloads that binary (seconds, sha256-verified); "source" compiles
 # it with cargo at TELESTHETE_REV (minutes; for unreleased relay changes or an
 # arch without a prebuilt).
@@ -24,18 +29,21 @@ ARG TELESTHETE_REV=f3419d2292f7fe193fa3205880186823b78b16c1
 # --- relay, option 1: prebuilt binary from the telesthete GitHub Release -----
 # Runs on the build machine's own arch (no emulation) and fetches the binary
 # for the target arch.
-FROM --platform=$BUILDPLATFORM python:3.12-slim-bookworm AS relay-release
+# hadolint ignore=DL3006
+FROM --platform=$BUILDPLATFORM ${PYTHON_IMAGE} AS relay-release
 ARG TARGETARCH
 ARG TARGETVARIANT
 ARG TELESTHETE_RELAY_VERSION
 ARG TELESTHETE_RELAY_BASE_URL=https://github.com/Bake-Ware/telesthete/releases
 COPY scripts/fetch-relay.py /fetch-relay.py
-RUN python3 /fetch-relay.py --version "${TELESTHETE_RELAY_VERSION}" \
+COPY rook/_release.py /rook_release.py
+RUN python3 /fetch-relay.py --version "${TELESTHETE_RELAY_VERSION}" --pins /rook_release.py \
       --docker-arch "${TARGETARCH}${TARGETVARIANT:+/${TARGETVARIANT}}" \
       --base-url "${TELESTHETE_RELAY_BASE_URL}" --dest /out/bin
 
 # --- relay, option 2: build telesthete-hub from source -------------------------
-FROM rust:1-slim-bookworm AS relay-source
+# hadolint ignore=DL3006
+FROM ${RUST_IMAGE} AS relay-source
 ARG TELESTHETE_REV
 # hadolint ignore=DL3008
 RUN apt-get update \
@@ -49,7 +57,8 @@ RUN cargo install --locked --root /out \
 FROM relay-${RELAY_SOURCE} AS relay
 
 # --- runtime ---------------------------------------------------------------
-FROM python:3.12-slim-bookworm
+# hadolint ignore=DL3006
+FROM ${PYTHON_IMAGE}
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \

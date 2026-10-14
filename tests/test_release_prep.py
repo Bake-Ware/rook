@@ -53,16 +53,56 @@ def test_telesthete_requirement_is_validated(url, sha):
 
 
 def test_release_module_round_trips(tmp_path):
-    src = rp.release_module("0.2.0", 523, "abc1234", "523.lumpy.moose", "v0.3.0")
+    src = rp.release_module("0.2.0", 523, "abc1234", "523.lumpy.moose")
     (tmp_path / "rook").mkdir()
     (tmp_path / "rook" / "_release.py").write_text(src, encoding="utf-8")
     info = runpy.run_path(str(tmp_path / "rook" / "_release.py"))
-    assert (info["VERSION"], info["BUILD"], info["COMMIT"], info["NAME"], info["RELAY"]) == \
-        ("0.2.0", 523, "abc1234", "523.lumpy.moose", "v0.3.0")
-    with pytest.raises(ValueError):
-        rp.release_module("0.2.0", 523, "abc1234", "x", "latest")
+    assert (info["VERSION"], info["BUILD"], info["COMMIT"], info["NAME"]) == \
+        ("0.2.0", 523, "abc1234", "523.lumpy.moose")
+    # The relay pin is committed, not stamped: stamping keeps it.
+    assert info["RELAY"] == runpy.run_path(str(ROOT / "rook" / "_release.py"))["RELAY"]
     # The committed defaults are "not a release".
     assert bbw.release_stamp(ROOT) is None
+
+
+H1, H2, H3 = "1" * 64, "2" * 64, "3" * 64
+
+
+def test_relay_pin_round_trips_and_refuses_a_changed_archive():
+    src = (ROOT / "rook" / "_release.py").read_text(encoding="utf-8")
+    pinned = rp.set_relay_pin(src, "v0.4.0", {"x86_64": H1, "aarch64": H2})
+    assert rp.current_relay_pin(pinned) == ("v0.4.0", {"x86_64": H1, "aarch64": H2})
+    again = rp.set_relay_pin(pinned, "v0.4.0", {"x86_64": H1, "aarch64": H2, "armv7": H3})
+    assert rp.current_relay_pin(again)[1]["armv7"] == H3
+    with pytest.raises(ValueError, match="changed since"):
+        rp.set_relay_pin(again, "v0.4.0", {"x86_64": H3, "aarch64": H2})
+    # A new tag may have new hashes; a pin needs both main arches.
+    assert rp.current_relay_pin(rp.set_relay_pin(again, "v0.5.0", {"x86_64": H3, "aarch64": H3}))[0] == "v0.5.0"
+    with pytest.raises(ValueError):
+        rp.set_relay_pin(src, "v0.4.0", {"x86_64": H1})
+    with pytest.raises(ValueError):
+        rp.set_relay_pin(src, "latest", {"x86_64": H1, "aarch64": H2})
+
+
+def test_relay_hashes_come_from_the_archives(tmp_path):
+    import hashlib
+    for arch, body in (("x86_64", b"a"), ("aarch64", b"b")):
+        name = rp.relay_asset(arch)
+        (tmp_path / name).write_bytes(body)
+        (tmp_path / (name + ".sha256")).write_text(f"{hashlib.sha256(body).hexdigest()}  {name}\n")
+    shas = rp.relay_hashes("v0.4.0", tmp_path)
+    assert shas == {"x86_64": hashlib.sha256(b"a").hexdigest(), "aarch64": hashlib.sha256(b"b").hexdigest()}
+    (tmp_path / rp.relay_asset("aarch64")).write_bytes(b"tampered")
+    with pytest.raises(ValueError, match="does not match"):
+        rp.relay_hashes("v0.4.0", tmp_path)
+
+
+def test_dockerfile_relay_default_matches_the_pin():
+    """The image and the installer must run the same relay."""
+    relay, _ = rp.current_relay_pin((ROOT / "rook" / "_release.py").read_text(encoding="utf-8"))
+    docker = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    assert f"ARG TELESTHETE_RELAY_VERSION={relay}\n" in docker
+    assert "ARG TELESTHETE_RELAY_VERSION=v9.9.9" in rp.set_dockerfile_relay(docker, "v9.9.9")
 
 
 def test_wheel_install_bundles_carry_the_release_build(tmp_path, monkeypatch):

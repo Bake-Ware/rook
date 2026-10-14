@@ -2,7 +2,9 @@
 """Stamp a checkout for a release build (run by .github/workflows/release.yml).
 
     python tools/release_prep.py --tag v0.2.0 \
-        [--telesthete-wheel-url URL --telesthete-wheel-sha256 HEX]
+        [--telesthete-wheel-url URL --telesthete-wheel-sha256 HEX] \
+        [--pin-relay v0.3.0 [--relay-dir DIR]]
+    python tools/release_prep.py --pin-relay v0.3.0      # move the relay pin
 
 Before ``python -m build`` and ``docker build``, on a clean checkout of the tag:
 
@@ -10,12 +12,18 @@ Before ``python -m build`` and ``docker build``, on a clean checkout of the tag:
    pyproject.toml and ``rook/__init__.py`` (``v0.3.0-rc1`` -> ``0.3.0rc1``).
 2. Writes ``rook/_release.py`` with that version and the commit's build number
    and ``<build>.<adjective>.<noun>`` name, so a hub installed from the wheel
-   stamps the worker bundles it builds (OTA needs a real build number), plus
-   ``--relay-version``: the telesthete release whose relay goes with it.
+   stamps the worker bundles it builds (OTA needs a real build number).
 3. With ``--telesthete-wheel-url``: replaces the ``telesthete @ git+https://…``
    pin with ``telesthete @ <wheel URL>#sha256=<hash>``. A git direct reference
    makes pip clone the repo, so installing the release wheel would need git;
    a hash-pinned wheel URL needs only HTTPS, and pip verifies the hash.
+4. With ``--pin-relay TAG``: records the telesthete release and the sha256 of
+   each ``telesthete-hub-<arch>-linux.tar.gz`` in ``rook/_release.py`` (``RELAY``,
+   ``RELAY_SHA256``) and the Dockerfile's default ``TELESTHETE_RELAY_VERSION``.
+   The hashes come from the archives themselves: from ``--relay-dir`` (the
+   release workflow downloads them there and verifies their build provenance
+   first) or downloaded here, and must match each archive's published
+   ``.sha256``. A hash already pinned for the same tag must not change.
 
 The build number is computed before anything is modified (a modified tree
 would otherwise count as dirty). ``--print-telesthete-pin`` prints the pinned
@@ -25,9 +33,13 @@ telesthete commit and exits.
 from __future__ import annotations
 
 import argparse
+import ast
+import hashlib
 import re
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -80,17 +92,103 @@ def set_telesthete_requirement(pyproject: str, url: str, sha256: str) -> str:
     return out
 
 
-def release_module(version: str, build: int, commit: str, name: str, relay: str = "") -> str:
-    if relay and not re.fullmatch(r"v\d[0-9A-Za-z.\-]*", relay):
-        raise ValueError(f"--relay-version must be a telesthete tag like v0.3.0, not {relay!r}")
-    src = (ROOT / "rook" / "_release.py").read_text(encoding="utf-8")
+def release_module(version: str, build: int, commit: str, name: str,
+                   src: str | None = None) -> str:
+    if src is None:
+        src = (ROOT / "rook" / "_release.py").read_text(encoding="utf-8")
     values = {"VERSION": repr(version), "BUILD": str(build), "COMMIT": repr(commit),
-              "NAME": repr(name), "RELAY": repr(relay)}
+              "NAME": repr(name)}
     for key, value in values.items():
         src, n = re.subn(rf"(?m)^{key}(\s*)=\s*[^#\n]*?(\s*#|$)", rf"{key}\g<1>= {value}\g<2>", src, count=1)
         if n != 1:
             raise ValueError(f"no {key} in rook/_release.py")
     return src
+
+
+RELAY_REPO = "https://github.com/Bake-Ware/telesthete/releases/download"
+RELAY_ARCHES = ("x86_64", "aarch64", "armv7")
+REQUIRED_ARCHES = ("x86_64", "aarch64")       # armv7 is best effort upstream
+_TAG = re.compile(r"v\d[0-9A-Za-z.\-]*")
+
+
+def relay_asset(arch: str) -> str:
+    return f"telesthete-hub-{arch}-linux.tar.gz"
+
+
+def current_relay_pin(src: str) -> tuple[str, dict]:
+    """(RELAY, RELAY_SHA256) as written in a rook/_release.py source."""
+    tree = ast.parse(src)
+    vals = {t.id: ast.literal_eval(node.value) for node in tree.body
+            if isinstance(node, ast.Assign) for t in node.targets
+            if isinstance(t, ast.Name) and t.id in ("RELAY", "RELAY_SHA256")}
+    return vals.get("RELAY", ""), dict(vals.get("RELAY_SHA256", {}))
+
+
+def set_relay_pin(src: str, tag: str, shas: dict) -> str:
+    if not _TAG.fullmatch(tag):
+        raise ValueError(f"--pin-relay takes a telesthete tag like v0.3.0, not {tag!r}")
+    missing = [a for a in REQUIRED_ARCHES if a not in shas]
+    if missing:
+        raise ValueError(f"relay {tag} has no archive for {', '.join(missing)}")
+    if any(not re.fullmatch(r"[0-9a-f]{64}", h) for h in shas.values()):
+        raise ValueError("relay hashes must be 64 lowercase hex digits")
+    old_tag, old_shas = current_relay_pin(src)
+    if old_tag == tag:
+        changed = {a for a in old_shas if a in shas and old_shas[a] != shas[a]}
+        if changed:
+            raise ValueError(f"relay {tag} archives changed since they were pinned "
+                             f"({', '.join(sorted(changed))}): refusing to re-pin a tag")
+    pinned = "{" + ", ".join(f"{a!r}: {shas[a]!r}" for a in RELAY_ARCHES if a in shas) + "}"
+    src, n = re.subn(r'(?m)^RELAY\s*=\s*"[^"]*"', f'RELAY = "{tag}"', src, count=1)
+    if n != 1:
+        raise ValueError("no RELAY in rook/_release.py")
+    src, n = re.subn(r"(?ms)^RELAY_SHA256\s*=\s*\{.*?\}(?=[ \t]*(#[^\n]*)?$)", f"RELAY_SHA256 = {pinned}", src, count=1)
+    if n != 1:
+        raise ValueError("no RELAY_SHA256 in rook/_release.py")
+    return src
+
+
+def set_dockerfile_relay(dockerfile: str, tag: str) -> str:
+    out, n = re.subn(r"(?m)^ARG TELESTHETE_RELAY_VERSION=\S*", f"ARG TELESTHETE_RELAY_VERSION={tag}",
+                     dockerfile, count=1)
+    if n != 1:
+        raise ValueError("no ARG TELESTHETE_RELAY_VERSION= in the Dockerfile")
+    return out
+
+
+def _fetch(url: str) -> bytes | None:
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "rook-release-prep"}),
+                                    timeout=120) as r:
+            return r.read()
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None
+        raise
+
+
+def relay_hashes(tag: str, relay_dir: Path | None = None) -> dict:
+    """sha256 of each relay archive of ``tag``, checked against its .sha256."""
+    shas = {}
+    for arch in RELAY_ARCHES:
+        name = relay_asset(arch)
+        if relay_dir is not None:
+            path, sums = relay_dir / name, relay_dir / (name + ".sha256")
+            if not path.is_file():
+                continue
+            data = path.read_bytes()
+            published = sums.read_text(encoding="utf-8") if sums.is_file() else ""
+        else:
+            data = _fetch(f"{RELAY_REPO}/{tag}/{name}")
+            if data is None:
+                continue
+            published = (_fetch(f"{RELAY_REPO}/{tag}/{name}.sha256") or b"").decode("utf-8", "replace")
+        got = hashlib.sha256(data).hexdigest()
+        want = published.split()[0].lower() if published.split() else ""
+        if want != got:
+            raise ValueError(f"{name}: sha256 {got} does not match its .sha256 ({want or 'missing'})")
+        shas[arch] = got
+    return shas
 
 
 def git_build(root: Path = ROOT) -> tuple[int, str]:
@@ -106,8 +204,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--tag", help="release tag, e.g. v0.2.0")
     ap.add_argument("--telesthete-wheel-url", default="")
     ap.add_argument("--telesthete-wheel-sha256", default="")
-    ap.add_argument("--relay-version", default="",
-                    help="telesthete release tag of the relay this release ships (v0.3.0)")
+    ap.add_argument("--pin-relay", metavar="TAG", default="",
+                    help="pin the relay to this telesthete release (records its archives' sha256)")
+    ap.add_argument("--relay-dir", type=Path, default=None,
+                    help="hash the relay archives in this directory instead of downloading them")
     ap.add_argument("--print-telesthete-pin", action="store_true")
     a = ap.parse_args(argv)
 
@@ -118,27 +218,45 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(pin)
         return 0
-    if not a.tag:
-        ap.error("--tag is required")
+    if not a.tag and not a.pin_relay:
+        ap.error("--tag and/or --pin-relay is required")
     if bool(a.telesthete_wheel_url) != bool(a.telesthete_wheel_sha256):
         ap.error("--telesthete-wheel-url and --telesthete-wheel-sha256 go together")
+    if a.relay_dir and not a.pin_relay:
+        ap.error("--relay-dir goes with --pin-relay")
 
-    version = version_from_tag(a.tag)
-    build, commit = git_build()
-    name = f"{build}.{build_name(commit)}"
-
-    pyproject = ROOT / "pyproject.toml"
-    text = set_project_version(pyproject.read_text(encoding="utf-8"), version)
-    if a.telesthete_wheel_url:
-        text = set_telesthete_requirement(text, a.telesthete_wheel_url, a.telesthete_wheel_sha256)
-    init = ROOT / "rook" / "__init__.py"
-    init_text = set_init_version(init.read_text(encoding="utf-8"), version)
-    release = release_module(version, build, commit, name, a.relay_version)
-
-    pyproject.write_text(text, encoding="utf-8")
-    init.write_text(init_text, encoding="utf-8")
-    (ROOT / "rook" / "_release.py").write_text(release, encoding="utf-8")
-    print(f"rook {version} = build {name} (commit {commit})")
+    release_path = ROOT / "rook" / "_release.py"
+    release = release_path.read_text(encoding="utf-8")
+    writes: dict[Path, str] = {}
+    if a.tag:
+        version = version_from_tag(a.tag)
+        build, commit = git_build()          # before anything changes the tree
+        name = f"{build}.{build_name(commit)}"
+    if a.pin_relay:
+        shas = relay_hashes(a.pin_relay, a.relay_dir)
+        release = set_relay_pin(release, a.pin_relay, shas)
+        dockerfile = ROOT / "Dockerfile"
+        writes[dockerfile] = set_dockerfile_relay(dockerfile.read_text(encoding="utf-8"), a.pin_relay)
+        print(f"relay pinned to telesthete {a.pin_relay}: "
+              + ", ".join(f"{k} {v[:12]}…" for k, v in shas.items()))
+    if a.tag:
+        pyproject = ROOT / "pyproject.toml"
+        text = set_project_version(pyproject.read_text(encoding="utf-8"), version)
+        if a.telesthete_wheel_url:
+            text = set_telesthete_requirement(text, a.telesthete_wheel_url, a.telesthete_wheel_sha256)
+        writes[pyproject] = text
+        init = ROOT / "rook" / "__init__.py"
+        writes[init] = set_init_version(init.read_text(encoding="utf-8"), version)
+        release = release_module(version, build, commit, name, release)
+        relay, relay_shas = current_relay_pin(release)
+        if not relay or not all(a_ in relay_shas for a_ in REQUIRED_ARCHES):
+            raise SystemExit("rook/_release.py pins no relay hashes: pass --pin-relay "
+                             f"{relay or 'vX.Y.Z'} (a release must ship verified relay hashes)")
+    writes[release_path] = release
+    for path, content in writes.items():
+        path.write_text(content, encoding="utf-8")
+    if a.tag:
+        print(f"rook {version} = build {name} (commit {commit})")
     return 0
 
 
