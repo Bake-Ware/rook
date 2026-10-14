@@ -263,6 +263,7 @@ are set only in the environment or on the command line.
 | `memory.episode_idle_minutes` | A conversation is finished after (minutes idle) | hub | int | `20` | `ROOK_MEMORY_EPISODE_IDLE_MINUTES` | live |
 | `memory.rollup_days` | Roll conversations up by week after (days) | hub | int | `14` | `ROOK_MEMORY_ROLLUP_DAYS` | live |
 | `memory.min_confidence` | Keep automatic memories from confidence | hub | float | `0.5` | `ROOK_MEMORY_MIN_CONFIDENCE` | live |
+| `memory.retention_days` | Delete replaced and forgotten memories after (days) | hub | int | `90` | `ROOK_MEMORY_RETENTION_DAYS` | live |
 | `memory.half_life_days` | Fade half-life by kind (days) | hub | dict | `{'episode': 45, 'fact': 180}` | `ROOK_MEMORY_HALF_LIFE_DAYS` | live |
 | `memory.archive_below` | Archive below strength | hub | float | `0.1` | `ROOK_MEMORY_ARCHIVE_BELOW` | live |
 | `memory.budgets` | Budget per person and kind (characters) | hub | dict | `{'profile': 3000, 'fact': 8000, 'procedure':…` | `ROOK_MEMORY_BUDGETS` | live |

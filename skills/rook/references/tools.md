@@ -84,8 +84,8 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `knowledge.read` | action='search', band?, id?, query='', data? | read | Read the shared wiki: search\|get\|list\|context\|status\|bands\|deck. |
 | `knowledge.write` | action, band?, id?, data?, request_id? | write | Write the shared wiki: create\|update\|link\|retract (needs request_id). |
 | `memory.consolidate` | force=false | write | Tidy up now: summarise conversations, roll up old ones, merge, fade, re-embed. |
-| `memory.edit` | id, text?, kind?, pinned?, about? | write | Change a memory: new text or kind replaces it (history kept); pinned keeps it from fading. |
-| `memory.forget` | id, purge=false, reason='' | write | Forget a memory. purge=true also erases its text (kept otherwise, as forgotten). |
+| `memory.edit` | id, text?, kind?, pinned?, about?, approved? | write | Change a memory: new text or kind replaces it (history kept). pinned keeps it from fading; approved lets a sk… |
+| `memory.forget` | id, purge=false, reason='' | write | Forget a memory. purge=true also erases its text and every earlier version (kept otherwise, as forgotten). |
 | `memory.list` | kind?, about?, state='active', query='', limit=50, offset=0 | read | List memories, newest first, by kind, person and state (active\|superseded\|archived\|forgotten\|all); query filt… |
 | `memory.recall` | query='', kind?, about?, limit=5, include_archived=false | read | Search memory (keywords, and meaning when embeddings are on). |
 | `memory.remember` | text, kind='fact', about?, pinned=false, supersedes? | write | Remember one statement (write rules apply: no secrets, dedupe, a changed fact replaces the old one). kind: pr… |
@@ -145,7 +145,7 @@ Scheduled, branching work the hub runs. `rook_jobs(action="describe_schema")` gi
 The shared wiki. Use the `rook_knowledge` tool: `search` before starting (5 hits, each with the passage that matched and its `section`; `data.limit`/`data.fields` for more), `get` a page by id or slug (its [[links]], backlinks and semantically `related` pages come as `{slug, title, gist}` stubs: get one by slug, no new search), `create` a page with a unique `request_id`. Over the band the same actions are `knowledge.read` (search/get/list/context/status/bands) and `knowledge.write` (create/update/link/retract) on worker `rook`; band callers reach only the read cap by default. Semantic search needs an embedding service (setting `embedder`).
 
 ### memory
-What the hub's home agent remembers (people, facts, conversations, skills). `memory.recall(query)` on worker `rook` searches it; `memory.remember(text, kind)` (kind profile|fact|procedure, `about` a person or `shared`) adds one; `memory.forget(id)` removes one. Never store secrets. People browse and edit it on Manage > Memory.
+What the hub's home agent remembers (people, facts, conversations, skills). `memory.recall(query)` on worker `rook` searches shared memory (and your own); `memory.remember(text, kind)` (kind fact, or profile about yourself) adds one; `memory.forget(id)` removes one. Other people's memory, skills (procedures) and pinning are the operator's. Never store secrets. People browse and edit it on Manage > Memory.
 
 ### notify
 `rook_call(worker="rook", cap="notify.send", args={"text": "..."})` posts a notification to every configured chat integration (Telegram, Discord); `channel="telegram"` picks one.

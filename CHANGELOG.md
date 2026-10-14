@@ -29,7 +29,13 @@ Preparation for public use.
 - A consolidation job (every 30 minutes; `memory.consolidate`) summarises
   finished conversations, rolls old ones up by week, merges duplicates,
   fades unused memories and enforces budgets.
-- Manage > Memory: browse, search, correct, keep, forget and erase memories,
+- Privacy: agents, `home.ask` and job steps see shared memory only; another
+  person's memory, forgotten rows, procedures, pinning and approval are for
+  the operator. Learned skills keep no tool output and need the operator's
+  approval before any prompt uses them. Purge erases every earlier version;
+  replaced and forgotten rows expire after `memory.retention_days` (90).
+  `rook_home_ask` is now authorized as `home.ask`.
+- Manage > Memory: browse, search, correct, keep, approve, forget and erase memories,
   with provenance and history. Caps `memory.recall/show/list/status`
   (read, sensitive) and `memory.remember/edit/consolidate/forget` (write);
   MCP tool `rook_memory` only with `memory.agent_tool` on.

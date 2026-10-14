@@ -49,12 +49,15 @@ Every write passes `screen()`:
 
 1. **Vault values become references.** The same reverse masking the rest of
    Rook uses (`band_mcp.secret_mask.scrub`) turns any known vault value into
-   `{{secret:name}}`. A reference is safe to keep and useful ("the guest wifi
+   `{{secret:name}}`; every value is passed as `extra`, so values shorter than
+   the band-wide 8-character minimum (a 5-digit PIN) are masked too, down to 4. A reference is safe to keep and useful ("the guest wifi
    password is in Secrets as `{{secret:guest-wifi}}`").
 2. **Deny patterns.** Built in: private keys, API keys and tokens (OpenAI,
    Anthropic, GitHub, Slack, AWS, Google, JWT, bearer), `password=`/`token:`,
-   "password/PIN/passphrase is ...", door/garage/alarm codes, card numbers and
-   national ID shapes; plus the operator's regexes in `memory.deny_patterns`.
+   "password/PIN/passphrase is ...", door/garage/alarm codes however written
+   ("door code 4821", "the code to the garage is 4821", "opens with 4821"),
+   wifi and router passwords ("Wifi: hunter22", "login admin / x"), card
+   numbers and national ID shapes; plus the operator's regexes in `memory.deny_patterns`.
    References are exempt. A deliberate write (page, agent, model tool) that
    matches is **refused** with a reason; an automatic one (conversation
    summaries) has the match replaced by `[redacted]`.
@@ -69,7 +72,10 @@ Every write passes `screen()`:
 Then dedupe and supersede, within one scope and kind:
 
 - identical normalised text reinforces the existing memory (`duplicate`);
-- the same `slot` supersedes the old value;
+- the same `slot` supersedes the old value when the attribute has one value
+  (name, lives in, works at, partner, favourite ...) or the new statement says
+  it changed ("actually", "now", "no longer"); "son is Max" does not replace
+  "son is Sam";
 - with embeddings: cosine >= `dedupe_similarity` (0.92) reinforces, >=
   `supersede_similarity` (0.82) supersedes;
 - without: token Jaccard >= 0.85 reinforces, >= 0.5 supersedes when the new
@@ -81,8 +87,9 @@ people, never agents): "remember (that) ...", "my name is / call me", "my X is
 Y", "I live/work in/at ...", "I prefer/like/hate/always/never/usually ...",
 "from now on / always / never ..." (recorded as "The user asked: ..."). Each
 is rewritten in the third person ("The user prefers metric units.") with a
-slot where it has one. Questions are skipped. "Forget that ..." forgets the
-closest active memory of that person or shared (Jaccard >= 0.5).
+slot where it has one. Questions are skipped. "Forget that ..." erases
+(purges) the closest active memory of that person (Jaccard >= 0.5); shared
+facts and skills only when the speaker is the operator (`default_person`).
 
 ## 4. Recall and the prompt
 
@@ -113,15 +120,25 @@ used:
 |---|---|---|---|
 | chat, a person (`user:` / `human:`) | the sender | yes | turns + extraction |
 | chat, an agent sender | none | no | nothing |
-| `home.ask` | default person | yes | nothing |
+| `home.ask` | none | no | nothing |
 | job `agent` step | none | no | a procedure when the step ends `ok` with tools |
 
-Memory is offered only when the asker may call `memory.recall` under the
+Without a person the context is **shared memory only**: no profile and no
+conversations, so nobody's private memory reaches an agent, `home.ask` or a
+job. Memory is offered only when the asker may call `memory.recall` under the
 policy (the same check the knowledge tool uses), and not at all with
 `home.memory` off.
 
+**Skills need approval.** Procedures steer which tools the agent calls, so
+only the ones the operator approved (Approve on Manage > Memory, `memory.edit
+approved=true`) or pinned are read into any prompt. A learned procedure keeps
+the job prompt and the tool names, never the result text (that is tool
+output). Procedures the operator adds are approved.
+
 **Model tools.** With `home.tools` on, the model also gets `memory_save(text,
-kind)` and `memory_search(query)`, acting for the person it talks to. They are
+kind)` (profile or fact; a profile only when it talks to a person) and
+`memory_search(query)`, acting for the person it talks to. `memory_save` is
+offered only when the asker may call `memory.remember`. They are
 journaled as the home agent with the shape of the call (kind, length, query),
 never the remembered text. They ride `home.tools` because some local
 endpoints refuse requests that carry tools.
@@ -164,6 +181,9 @@ minute after start):
    fact 8,000, procedure 6,000, episode 20,000) archive the weakest unpinned
    memories; the same check runs on every write.
 6. **Index** up to 32 rows without a vector.
+7. **Retention.** Superseded, archived and forgotten rows, their vectors and
+   history are deleted after `retention_days` (90; 0 keeps them). Waiting turns
+   are dropped when `auto_remember` is off, and after a week in any case.
 
 ## 7. Caps, tools, page
 
@@ -173,6 +193,18 @@ minute after start):
 | `memory.status` | read | |
 | `memory.remember`, `memory.edit`, `memory.consolidate` | write | |
 | `memory.forget` (`purge=true` erases the text) | write | destructive |
+
+Who may do what: anyone allowed the cap reads and writes shared memory and
+their own (a person's identity); another person's memory (`about=`), forgotten
+rows (`state=forgotten|all`), procedures, pinning and approval are for the
+operator (band owners and operator tokens, `require_hub_admin`). Read replies
+are reverse-masked again (the caps are tagged `sensitive`, so they are not
+journaled and skip the bridge's masking). `memory.status` shows embedding
+sources without credentials or query strings.
+
+**Purge** erases the memory and every earlier version it replaced (text,
+vectors, history; one `purge` history row stays as a tombstone), with SQLite
+`secure_delete` on.
 
 `rook_memory(action=search|add|forget|status)` is listed for MCP agents only
 when `memory.agent_tool` is on when the MCP server starts (tools/list budget);
@@ -194,7 +226,7 @@ Hub scope, on Settings > Memory: `enabled` (restart), `auto_remember`,
 `max_chars`, `embeddings`, `embedder`, `embed_model`, `dedupe_similarity`,
 `supersede_similarity`, `consolidate_minutes`, `summarise_with_model`,
 `episode_idle_minutes`, `rollup_days`, `min_confidence`, `half_life_days`,
-`archive_below`, `budgets`. Home agent: `home.memory`.
+`archive_below`, `budgets`, `retention_days`. Home agent: `home.memory`.
 
 ## 9. What came from PR #31
 
