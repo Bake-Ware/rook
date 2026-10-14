@@ -146,3 +146,55 @@ def test_print_telesthete_pin():
                          capture_output=True, text=True, check=True).stdout.strip()
     assert out == bbw.pinned_telesthete_rev(ROOT / "pyproject.toml")
     assert len(out) == 40
+
+
+# -- release.json (rook/hub/release_meta.py) ---------------------------------
+
+def _stamped(version="0.3.0", build=530, name="530.lumpy.moose"):
+    return rp.release_module(version, build, "abc1234", name)
+
+
+def test_release_json_carries_the_compat_floors_and_versions():
+    from rook.core import compat
+    meta = rp.release_json(_stamped())
+    assert meta["typ"] == "rook-release" and meta["tag"] == "v0.3.0"
+    assert meta["build"] == 530 and meta["name"] == "530.lumpy.moose"
+    assert meta["min_worker_build"] == compat.MIN_WORKER_BUILD
+    assert meta["min_android_app"] == compat.MIN_ANDROID_APP
+    assert meta["min_hub_build"] == compat.MIN_HUB_BUILD
+    assert meta["channel"] == "stable" and meta["breaking"] is False
+    assert meta["firmware"]["esp32"] and meta["firmware"]["rp2040"]
+    assert isinstance(meta["android_app"]["version_code"], int)
+    assert rp.release_json(_stamped("0.3.0rc1"))["channel"] == "prerelease"
+
+
+def test_release_json_is_breaking_when_a_floor_rises():
+    prev = rp.release_json(_stamped())
+    prev["min_worker_build"] -= 10
+    prev["min_android_app"] = "0.3.9"
+    meta = rp.release_json(_stamped(), previous=prev)
+    assert meta["breaking"] is True
+    assert any("workers older than build" in r for r in meta["breaking_reasons"])
+    assert any("Android app" in r for r in meta["breaking_reasons"])
+    marked = rp.release_json(_stamped(), breaking=True, breaking_note="new band key format")
+    assert marked["breaking"] and marked["breaking_reasons"] == ["new band key format"]
+
+
+def test_release_json_needs_a_stamped_tree():
+    with pytest.raises(ValueError):
+        rp.release_json((ROOT / "rook" / "_release.py").read_text(encoding="utf-8"))
+
+
+def test_release_json_cli(tmp_path, monkeypatch):
+    import json
+    import shutil
+    tree = tmp_path / "tree"
+    (tree / "rook" / "core").mkdir(parents=True)
+    shutil.copy(ROOT / "rook" / "core" / "compat.py", tree / "rook" / "core" / "compat.py")
+    (tree / "rook" / "_release.py").write_text(_stamped(), encoding="utf-8")
+    monkeypatch.setattr(rp, "ROOT", tree)
+    out = tmp_path / "dist" / "release.json"
+    assert rp.main(["--release-json", str(out), "--breaking"]) == 0
+    meta = json.loads(out.read_text(encoding="utf-8"))
+    assert meta["breaking"] and meta["version"] == "0.3.0" and meta["firmware"] == {}
+    assert (tree / "rook" / "_release.py").read_text(encoding="utf-8") == _stamped()
