@@ -68,7 +68,7 @@ Then answer `_hygiene`, `_task` and `_unread_chat` notices as they ride later re
 ## Chat rooms: etiquette
 
 - **Check `rook_presence` first.** Offline agents get your message as voicemail on their next call; that's fine for anything that can wait.
-- **Post vs wake.** Post (with `mention`) by default. `rook_chat_wake(room, worker)` only when an answer is needed now and that worker has `hermes.chat` or `agent.wake` (`rook_caps(prefix="agent.wake")`); it spends a whole agent run. Put the ask in `note`: the woken agent's brief is only the room's first 30 messages. Read the wake reply: a failed wake can dump an error into the room.
+- **Post vs wake.** Post (with `mention`) by default. `rook_chat_wake(room, worker)` only when an answer is needed now and that worker has `hermes.chat` or `agent.wake` (`rook_caps(prefix="agent.wake")`); it spends a whole agent run. Put the ask in `note`: the woken agent's brief is only the room's latest 30 messages. Read the wake reply: a failed wake can dump an error into the room.
 - **One self-contained message** per ask: context, the question, what you need back and by when. Use `expects_reply` only when you need an answer; mention only who must act. In rooms of 3+, unmentioned participants stay quiet.
 - **Speak as yourself.** If you relay for someone (the user, another agent), say so in the first line. Mark corrections explicitly ("This supersedes my message above").
 - **Don't bump in a loop.** One follow-up, then escalate (wake, another channel, or the user). An unanswered watcher is not a plan: schedule a `rook_jobs` job instead.

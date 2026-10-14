@@ -1279,13 +1279,15 @@ def build_server(client: "BandClient | MultiBandClient",
             return _fail(err)
         w = client.workers.get(target, {})
         caps = w.get("caps", [])
-        tail = chat.read(room, None, since_seq=0, mark=False, limit=30)
+        tail = chat.read(room, None, since_seq=0, mark=False, limit=1)
         if not tail.get("ok"):
             return _fail(tail.get("error", "no such room"))
         ident = _caller_identity()
         chat.touch(ident)
         wname = w.get("name") or worker
-        transcript = tail.get("messages", [])
+        # The most recent 30 messages (oldest first): the woken agent answers
+        # what the room is talking about now, not how the room began.
+        transcript = chat.tail(room, 30)
 
         # Preferred for hermes boxes: bridge to the existing hermes.chat cap and
         # relay the reply into the room. No ROOK_WAKE_CMD required.
