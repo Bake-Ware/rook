@@ -43,11 +43,11 @@ Manual: worker-commands, adding-machines, terminal-and-commands, workers, gettin
   even under `sudo -E`. The Windows
   installer refuses to run as SYSTEM (the worker must run in the user's
   session). Worker names are limited to letters, digits, `.`, `_` and `-`.
-- `rook login` defaults a bare public host to `https://` (names whose
-  addresses are all private, like Tailscale's, keep `http://`; https against a
+- `rook login` defaults a bare dotted host to `https://` (https against a
   plain-http hub suggests the `http://` command), asks before sending a token
   or password over plain http to a public address (`ROOK_ALLOW_HTTP=1` without
-  a terminal), and never follows
+  a terminal; a written-out `http://` name that resolves only to private
+  addresses, like Tailscale's, isn't asked about), and never follows
   a redirect from the MCP endpoint (the token would go along). The control
   link drops connections that don't send their token within 2 seconds, and
   `control.json` and the saved token get an owner-only ACL on Windows.

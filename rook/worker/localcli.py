@@ -910,11 +910,33 @@ def cmd_pair(args) -> int:
     return 0
 
 
-def _local_host(host: str) -> bool:
-    """A loopback, private-LAN, link-local or CGNAT/Tailscale address, a
-    name that only resolves on a home network (no dot, .local, .lan, ...), or
-    a name whose addresses are all of those (hub.tailnet.ts.net, a LAN DNS
-    name for 10.x). A name that doesn't resolve counts as public."""
+#: Longest wait for a DNS answer when deciding whether an address is local.
+RESOLVE_SECS = 3.0
+
+
+def _resolve(host: str) -> list | None:
+    """getaddrinfo with a time limit (it has none of its own); None on failure."""
+    import socket
+    import threading
+    box: list = []
+
+    def run():
+        try:
+            box.append(socket.getaddrinfo(host, None))
+        except (OSError, UnicodeError, ValueError):
+            box.append(None)
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    t.join(RESOLVE_SECS)
+    return box[0] if box else None
+
+
+def _local_host(host: str, resolve: bool = False) -> bool:
+    """A loopback, private-LAN, link-local or CGNAT/Tailscale address, or a
+    name that only resolves on a home network (no dot, .local, .lan, ...).
+    With ``resolve``, also a name whose addresses are all of those
+    (hub.tailnet.ts.net, a LAN DNS name for 10.x); a name that doesn't resolve
+    in time counts as public."""
     import ipaddress
     host = host.strip("[]").lower()
     try:
@@ -924,11 +946,13 @@ def _local_host(host: str) -> bool:
     if ("." not in host or host == "localhost"
             or host.endswith((".localhost", ".local", ".lan", ".home", ".internal", ".home.arpa"))):
         return True
-    import socket
+    if not resolve:
+        return False
+    infos = _resolve(host)
     try:
-        addrs = {info[4][0].split("%")[0] for info in socket.getaddrinfo(host, None)}
+        addrs = {info[4][0].split("%")[0] for info in infos or []}
         return bool(addrs) and all(not ipaddress.ip_address(a).is_global for a in addrs)
-    except (OSError, UnicodeError, ValueError):
+    except ValueError:
         return False
 
 
@@ -943,14 +967,16 @@ def _tls_hint(url: str, error: object, flag: str = "--url") -> str:
 
 
 def _with_scheme(url: str) -> str:
-    """A bare host gets https://, except a LAN address (a hub there usually
-    serves plain http on :7005)."""
+    """A bare host gets https://, except a LAN address or name (a hub there
+    usually serves plain http on :7005). Decided by the address as written,
+    never by a DNS answer: a spoofed private answer must not turn a dotted
+    name into plain http with no prompt."""
     url = url.strip()
     if "://" in url:
         return url
     from urllib.parse import urlsplit
     host = urlsplit("//" + url).hostname or ""
-    return ("http://" if _local_host(host) else "https://") + url
+    return ("http://" if _local_host(host, resolve=False) else "https://") + url
 
 
 def _confirm_cleartext(url: str, what: str) -> None:
@@ -958,7 +984,9 @@ def _confirm_cleartext(url: str, what: str) -> None:
     at a terminal; without one it is refused."""
     from urllib.parse import urlsplit
     parts = urlsplit(url)
-    if parts.scheme != "http" or _local_host(parts.hostname or ""):
+    # The user wrote http:// themselves: a name that resolves only to private
+    # addresses (a tailnet, a LAN DNS name) needs no prompt.
+    if parts.scheme != "http" or _local_host(parts.hostname or "", resolve=True):
         return
     msg = (f"{url} is plain http on a public address: the {what} would cross the "
            "internet unencrypted.")
