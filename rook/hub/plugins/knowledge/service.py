@@ -191,20 +191,21 @@ class KnowledgeService:
                                | {'tasks': linked.get(t['thread_id'], [])} for t in self.handoff_list()]
         return out
 
-    def _board(self, band, rid, data):
+    async def _board(self, band, rid, data):
         """Projects and tasks, flat, for the Work board, list and timeline
         (``KnowledgeStore.board``). ``id`` = a project: only it, plus its page
         extras (activity, linked rooms and knowledge). data {done_days (default
         30; null = all), archived}."""
         bands = [b['id'] for b in self.bands()] if not band else [self.band(band)]
         done_days = data.get('done_days', 30)
-        out = self.store.board(bands, project=rid, archived=bool(data.get('archived')),
-                               done_days=None if done_days is None else float(done_days))
+        # Off the event loop: a big tree is a few thousand rows to walk.
+        out = await asyncio.to_thread(self.store.board, bands, project=rid, archived=bool(data.get('archived')),
+                                      done_days=None if done_days is None else float(done_days))
         if rid:
             if not out['projects']:
                 raise ValueError(f'Project {rid!r} not found')
             p = out['projects'][0]
-            out.update(self.store.overview(p['band'], p['id'], data.get('activity', 25)))
+            out.update(await asyncio.to_thread(self.store.overview, p['band'], p['id'], data.get('activity', 25)))
             flags = self._hook('flags', bands) or {}
             for t in out['tasks']:
                 if t['id'] in flags:
@@ -287,7 +288,7 @@ class KnowledgeService:
         if action == 'deck':
             return self._deck(band, rid, data, fields, lean)
         if action == 'board':
-            return self._board(band, rid, data)
+            return await self._board(band, rid, data)
         if action == 'hygiene':
             if self.hygiene is None:
                 return {'findings': [], 'enabled': False}

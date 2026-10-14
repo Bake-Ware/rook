@@ -123,3 +123,24 @@ async def test_moving_a_card_uses_the_agents_rules(svc):
     assert got['events'][0]['actor'] == HUMAN['id'] and got['events'][0]['data']['state'] == 'blocked'
     board = await do(svc, 'board')
     assert next(t for t in board['tasks'] if t['id'] == w['a']['id'])['claimants'] == []
+
+
+@pytest.mark.asyncio
+async def test_a_legacy_free_text_due_neither_blocks_updates_nor_shows(svc):
+    w = await seed(svc)
+    with svc.store.db() as db:
+        db.execute("UPDATE records SET attrs=json_set(attrs,'$.due','next week') WHERE id=?", (w['b']['id'],))
+    cur = await do(svc, 'get', id=w['b']['id'])
+    got = await do(svc, 'update', id=w['b']['id'], revision=cur['revision'], patch={'title': 'Schedule it', 'attrs': {'tags': ['x']}})
+    assert got['attrs']['due'] == 'next week'                  # untouched, not re-validated
+    with pytest.raises(ValueError, match='date like'):
+        await do(svc, 'update', id=w['b']['id'], revision=got['revision'], patch={'attrs': {'due': 'soon'}})
+    board = await do(svc, 'board')
+    assert 'due' not in next(t for t in board['tasks'] if t['id'] == w['b']['id'])
+
+
+@pytest.mark.asyncio
+async def test_board_cap_keeps_open_work_first(svc):
+    w = await seed(svc)
+    out = svc.store.board(['default'], limit=1)
+    assert out['truncated'] and out['tasks'][0]['state'] in ('todo', 'in_progress')

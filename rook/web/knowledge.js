@@ -260,7 +260,9 @@ export async function mountTasks(root){
     if(proj&&proj.project.id!==r.id){crumbs.append(document.createTextNode(' / '));crumbs.append(btn(proj.project.title,()=>go({p:proj.project.slug,b:proj.band}),'kn-linkish'));}
     crumbs.append(document.createTextNode(' / '+r.title));main.append(crumbs,el('h1',r.title));
     const meta=el('p',undefined,'kn-meta');meta.append(badge(STATE_LABEL[r.state]||r.state,r.state),document.createTextNode(' '+r.kind+' · [['+r.slug+']] · '+c.bandName(r.band)+' · created by '+r.creator+' · updated '+ago(r.updated)));main.append(meta);
-    if(r.kind==='task'||r.kind==='project'){const plan=el('div',undefined,'wv-taskplan');const a=r.attrs;
+    if(r.kind==='task'||r.kind==='project'){const plan=el('div',undefined,'wv-taskplan');
+      // Only real YYYY-MM-DD dates: older records may hold free text there.
+      const day=v=>/^\d{4}-\d{2}-\d{2}$/.test(v||'')?v:'';const a={...r.attrs,start:day(r.attrs.start),due:day(r.attrs.due)};
       const t={...r,start:a.start,due:a.due,tags:a.tags};
       if(r.kind==='task'&&r.state!=='archived'){const s=el('select');s.setAttribute('aria-label','Status');for(const [k,l] of wv.COLUMNS){const o=el('option',l);o.value=k;s.append(o);}
         s.value={closed:'done',cancelled:'done'}[r.state]||r.state;s.onchange=async()=>{const to=s.value;s.value={closed:'done',cancelled:'done'}[r.state]||r.state;await kit.move(t,to);await drawTask(slug,band);};plan.append(s);}

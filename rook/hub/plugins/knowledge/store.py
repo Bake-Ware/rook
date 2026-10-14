@@ -107,6 +107,15 @@ def day(value, key='date'):
         raise ValueError(f'attrs.{key} must be a date like 2026-10-31') from None
 
 
+def valid_day(value):
+    """``value`` if it is a YYYY-MM-DD date, else None (older free-text values
+    are left out of the Work views rather than shown as invalid dates)."""
+    try:
+        return day(value) if value else None
+    except ValueError:
+        return None
+
+
 def slugify(title):
     s = re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-')[:80].strip('-')
     return s or 'page'
@@ -251,7 +260,10 @@ class KnowledgeStore:
 
     # -- records ----------------------------------------------------------------
 
-    def _validate(self, db, band, kind, parent, attrs, rid=None):
+    def _validate(self, db, band, kind, parent, attrs, rid=None, changed=None):
+        """``changed``: the attrs keys this write sets (None = all, a create).
+        Only those dates are checked, so a record written before dates were
+        validated (a free-text ``due``) can still be updated."""
         if kind in ('project', 'task'):
             if not parent:
                 raise ValueError('A project needs a parent concept; a task needs a parent project or task')
@@ -298,11 +310,14 @@ class KnowledgeStore:
         # Planning dates for the Work timeline: calendar days, YYYY-MM-DD.
         # Empty or null clears one (attrs merge on update, so it is dropped).
         for key in DATE_ATTRS:
+            if changed is not None and key not in changed:
+                continue
             if key in attrs and attrs[key] in (None, ''):
                 attrs.pop(key)
             elif key in attrs:
                 attrs[key] = day(attrs[key], key)
-        if attrs.get('start') and attrs.get('due') and attrs['due'] < attrs['start']:
+        if (changed is None or set(DATE_ATTRS) & set(changed)) and \
+                valid_day(attrs.get('start')) and valid_day(attrs.get('due')) and attrs['due'] < attrs['start']:
             raise ValueError('attrs.due is before attrs.start')
         if len(packed(attrs)) > 30000:
             raise ValueError('Metadata is too large')
@@ -371,7 +386,7 @@ class KnowledgeStore:
         attrs = {**r['attrs'], **(patch.get('attrs') or {})}
         if attrs.get('supersedes') != r['attrs'].get('supersedes'):
             raise ValueError('To supersede, create a new knowledge page with attrs.supersedes')
-        self._validate(db, band, r['kind'], parent, attrs, r['id'])
+        self._validate(db, band, r['kind'], parent, attrs, r['id'], changed=set(patch.get('attrs') or {}))
         state = patch.get('state', r['state'])
         if state not in STATES[r['kind']]:
             raise ValueError(f"{r['kind']} state must be one of " + ', '.join(STATES[r['kind']]))
@@ -867,12 +882,14 @@ class KnowledgeStore:
 
     # -- Work views (board, list, timeline, project page) ------------------------
 
-    def _project_tasks(self, db, project_id):
-        """Every task under a project (subtasks included), parent first."""
+    def _project_tasks(self, db, band, project_id):
+        """Every task under a project (subtasks included), from one query."""
+        children = {}
+        for t in db.execute("SELECT * FROM records WHERE band=? AND kind='task' ORDER BY created", (band,)):
+            children.setdefault(t['parent'], []).append(t)
         out, todo = [], [project_id]
         while todo:
-            kids = db.execute("SELECT * FROM records WHERE parent=? AND kind='task' ORDER BY created",
-                              (todo.pop(0),)).fetchall()
+            kids = children.get(todo.pop(0), [])
             out += kids
             todo += [k['id'] for k in kids]
         return out
@@ -882,9 +899,9 @@ class KnowledgeStore:
         and timeline: per task its state, project, dates, labels (tags),
         dependencies, claimants and owner; per project its counts. Finished
         tasks older than ``done_days`` (None = all) and archived ones are left
-        out unless asked for."""
+        out unless asked for; past ``limit`` tasks, open ones are kept first.
+        A fixed handful of queries, whatever the size of the tree."""
         since = None if done_days is None else time.time() - float(done_days) * 86400
-        projects, tasks = [], []
         with self.db(False) as db:
             marks = ','.join('?' * len(bands))
             rows = db.execute(f"SELECT * FROM records WHERE kind='project' AND band IN ({marks})"
@@ -893,52 +910,74 @@ class KnowledgeStore:
                               (*bands, *((project, project) if project else ()))).fetchall()
             concepts = {r['id']: r['title'] for r in db.execute(
                 f"SELECT id,title FROM records WHERE kind='concept' AND band IN ({marks})", tuple(bands))}
-            claims = {}
-            for c in db.execute(f"SELECT task,actor,started,last_active,released,dirty FROM claims "
-                                f"WHERE band IN ({marks}) ORDER BY started", tuple(bands)):
-                claims.setdefault(c['task'], []).append(dict(c))
-            for p in rows:
-                prec = self.record(p)
-                counts = {s: 0 for s in STATES['task']}
-                for t in self._project_tasks(db, p['id']):
+            all_tasks = [self.record(t) for t in db.execute(
+                f"SELECT * FROM records WHERE kind='task' AND band IN ({marks})", tuple(bands))]
+            live = {}
+            for c in db.execute(f"SELECT task,actor,started,last_active,dirty FROM claims "
+                                f"WHERE band IN ({marks}) AND released IS NULL ORDER BY started", tuple(bands)):
+                live.setdefault(c['task'], []).append(dict(c))
+            # The latest claimant of each task (SQLite takes the bare column
+            # from the max(started) row): the owner once nobody holds it.
+            last = {r['task']: r['actor'] for r in db.execute(
+                f"SELECT task,actor,max(started) FROM claims WHERE band IN ({marks}) GROUP BY task", tuple(bands))}
+        children, by_ref = {}, {}
+        for t in all_tasks:
+            children.setdefault(t['parent'], []).append(t)
+            by_ref[(t['band'], t['id'])] = by_ref[(t['band'], t['slug'])] = t
+        projects, candidates = [], []
+        for p in rows:
+            prec = self.record(p)
+            counts = {s: 0 for s in STATES['task']}
+            todo = [p['id']]
+            while todo:
+                for t in children.get(todo.pop(), []):
+                    todo.append(t['id'])
                     counts[t['state']] += 1
                     if t['state'] == 'archived' and not archived:
                         continue
                     if t['state'] in CLOSED and since is not None and t['updated'] < since:
                         continue
-                    if len(tasks) >= limit:
-                        continue
-                    rec = self.record(t)
-                    a = rec['attrs']
-                    mine = claims.get(t['id'], [])
-                    live = [c for c in mine if not c['released']]
-                    item = {k: rec[k] for k in ('id', 'slug', 'title', 'state', 'band', 'parent', 'revision',
-                                                'created', 'updated', 'creator')}
-                    item.update(project=p['id'], excerpt=rec['body'][:EXCERPT_CHARS],
-                                tags=a.get('tags') or [], claimants=[
-                                    {k: c[k] for k in ('actor', 'started', 'last_active')} for c in live],
-                                needs_hygiene=any(c['dirty'] for c in live),
-                                owner=([c['actor'] for c in live] or [c['actor'] for c in mine[-1:]]))
-                    for key in DATE_ATTRS + ('blocked_reason',):
-                        if a.get(key):
-                            item[key] = a[key]
-                    if a.get('outcome'):
-                        item['outcome'] = a['outcome'][:EXCERPT_CHARS]
-                    if a.get('dependencies'):
-                        item['dependencies'], item['unblocked'] = self._dependencies(db, t['band'], a)
-                    tasks.append(item)
-                total = sum(n for s, n in counts.items() if s != 'archived')
-                finished = counts['done'] + counts['closed']
-                projects.append({**{k: prec[k] for k in ('id', 'slug', 'title', 'state', 'band', 'parent',
-                                                          'revision', 'updated', 'creator')},
-                                 'concept': concepts.get(prec['parent']), 'excerpt': prec['body'][:EXCERPT_CHARS],
-                                 'tags': prec['attrs'].get('tags') or [],
-                                 **{k: prec['attrs'][k] for k in DATE_ATTRS if prec['attrs'].get(k)},
-                                 'counts': {k: v for k, v in counts.items() if v}, 'total': total,
-                                 'open': sum(counts[s] for s in OPEN_TASK),
-                                 'progress': round(finished / (total - counts['cancelled']), 3)
-                                 if total - counts['cancelled'] > 0 else 0})
-        return {'projects': projects, 'tasks': tasks, 'truncated': len(tasks) >= limit}
+                    candidates.append((p['id'], t))
+            total = sum(n for s, n in counts.items() if s != 'archived')
+            finished = counts['done'] + counts['closed']
+            projects.append({**{k: prec[k] for k in ('id', 'slug', 'title', 'state', 'band', 'parent',
+                                                      'revision', 'updated', 'creator')},
+                             'concept': concepts.get(prec['parent']), 'excerpt': prec['body'][:EXCERPT_CHARS],
+                             'tags': prec['attrs'].get('tags') or [],
+                             **{k: valid_day(prec['attrs'].get(k)) for k in DATE_ATTRS
+                                if valid_day(prec['attrs'].get(k))},
+                             'counts': {k: v for k, v in counts.items() if v}, 'total': total,
+                             'open': sum(counts[s] for s in OPEN_TASK),
+                             'progress': round(finished / (total - counts['cancelled']), 3)
+                             if total - counts['cancelled'] > 0 else 0})
+        # Over the cap, open work first, then the most recently finished.
+        candidates.sort(key=lambda pt: (pt[1]['state'] not in OPEN_TASK, -pt[1]['updated']))
+        tasks = []
+        for pid, t in candidates[:limit]:
+            a = t['attrs']
+            claims = live.get(t['id'], [])
+            item = {k: t[k] for k in ('id', 'slug', 'title', 'state', 'band', 'parent', 'revision',
+                                      'created', 'updated', 'creator')}
+            item.update(project=pid, excerpt=t['body'][:EXCERPT_CHARS], tags=a.get('tags') or [],
+                        claimants=[{k: c[k] for k in ('actor', 'started', 'last_active')} for c in claims],
+                        needs_hygiene=any(c['dirty'] for c in claims),
+                        owner=[c['actor'] for c in claims] or ([last[t['id']]] if t['id'] in last else []))
+            for key in DATE_ATTRS:
+                if valid_day(a.get(key)):
+                    item[key] = valid_day(a[key])
+            if a.get('blocked_reason'):
+                item['blocked_reason'] = a['blocked_reason']
+            if a.get('outcome'):
+                item['outcome'] = a['outcome'][:EXCERPT_CHARS]
+            if a.get('dependencies'):
+                deps = []
+                for ref in a['dependencies']:
+                    d = by_ref.get((t['band'], ref))
+                    deps.append({'id': d['id'], 'slug': d['slug'], 'state': d['state']} if d
+                                else {'id': ref, 'slug': None, 'state': 'missing'})
+                item['dependencies'], item['unblocked'] = deps, all(d['state'] == 'done' for d in deps)
+            tasks.append(item)
+        return {'projects': projects, 'tasks': tasks, 'truncated': len(candidates) > limit}
 
     def overview(self, band, rid, activity=25):
         """A project page's extras: recent activity across the project and its
@@ -949,7 +988,7 @@ class KnowledgeStore:
             p = self._get(db, band, rid)
             if p['kind'] != 'project':
                 raise ValueError(f"{rid!r} is a {p['kind']}, not a project")
-            tasks = [self.record(t) for t in self._project_tasks(db, p['id'])]
+            tasks = [self.record(t) for t in self._project_tasks(db, band, p['id'])]
             ids = [p['id']] + [t['id'] for t in tasks]
             titles = {r['id']: (r['slug'], r['title']) for r in [p, *tasks]}
             marks = ','.join('?' * len(ids))
@@ -958,14 +997,17 @@ class KnowledgeStore:
                 f'SELECT seq,record,actor,action,ts,data FROM events WHERE band=? AND record IN ({marks}) '
                 'ORDER BY seq DESC LIMIT ?', (band, *ids, max(1, min(int(activity), 200))))]
             rooms, record_refs = {}, set()
-            for rec_id in ids:
-                for link in self._live_links(db, rec_id):
-                    if link['kind'] == 'chat':
-                        room = link['ref'].split('#', 1)[0]
-                        rooms.setdefault(room, {'room': room, 'note': link['note'], 'records': []})
-                        rooms[room]['records'].append(titles[rec_id][0])
-                    elif link['kind'] == 'record':
-                        record_refs.add(link['ref'])
+            rows = [dict(l) for l in db.execute(f'SELECT * FROM links WHERE record IN ({marks}) ORDER BY ts', ids)]
+            gone = {l['retracts'] for l in rows if l['retracts']}
+            for link in rows:
+                if link['retracts'] or link['id'] in gone:
+                    continue
+                if link['kind'] == 'chat':
+                    room = link['ref'].split('#', 1)[0]
+                    rooms.setdefault(room, {'room': room, 'note': link['note'], 'records': []})
+                    rooms[room]['records'].append(titles[link['record']][0])
+                elif link['kind'] == 'record':
+                    record_refs.add(link['ref'])
             slugs = set(WIKI.findall(p['body']))
             for t in tasks:
                 slugs |= set(WIKI.findall(t['body']))
