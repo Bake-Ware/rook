@@ -84,7 +84,7 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `knowledge.read` | action='search', band?, id?, query='', data? | read | Read the shared wiki: search\|get\|list\|context\|status\|bands\|deck. |
 | `knowledge.write` | action, band?, id?, data?, request_id? | write | Write the shared wiki: create\|update\|link\|retract (needs request_id). |
 | `manual.get` | id, source='auto' | read | One manual page by id (`getting-started`; `manual-` prefix optional): title and Markdown body. |
-| `manual.list` | — | read | The manual's table of contents: id, title, since, deprecated, and whether the page is read from the knowledge… |
+| `manual.list` | source='auto' | read | The manual's table of contents: id, title, since, deprecated, preview, and whether the page is read from the… |
 | `manual.status` | — | read | The bundled manual and its knowledge copy: version, page count, what an update would add, change and remove (… |
 | `manual.update` | action='update', overwrite? | admin | Update the knowledge copy (`action` update; `overwrite` = page ids whose local edits may be replaced), put th… |
 | `notify.channels` | — | read | Which notification channels are running on this hub. |

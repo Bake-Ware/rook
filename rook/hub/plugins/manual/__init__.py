@@ -32,8 +32,10 @@ from .sync import ManualSync
 
 log = logging.getLogger("rook.hub.plugins.manual")
 
-#: Seconds between checks for a knowledge base to seed while none was seeded.
+#: Seconds between checks for a knowledge base to seed (doubling up to SEED_MAX)
+#: while the knowledge plugin is off.
 SEED_EVERY = 60.0
+SEED_MAX = 1800.0
 
 
 def rook_version() -> str:
@@ -132,15 +134,24 @@ class Manual(Plugin):
                 service, auto_seed=bool(self.settings.get("auto_seed", True)))
 
     async def _seed_loop(self) -> None:
+        """Seed a new hub once its knowledge base is on. Stops after one
+        try against an open knowledge base (seeded, or not empty: the
+        dashboard asks instead); while the knowledge plugin is off it checks
+        again with a growing pause, up to every SEED_MAX seconds."""
         await asyncio.sleep(2)
+        pause = SEED_EVERY
         while not self._sync().state().get("imported"):
             try:
-                result = await self.seed_once()
-                if result is not None:
-                    log.info("manual: imported %d pages into the knowledge base", len(result["written"]))
+                if self.knowledge() is not None:
+                    result = await self.seed_once()
+                    if result is not None:
+                        log.info("manual: imported %d pages into the knowledge base",
+                                 len(result["written"]))
+                    return
             except Exception:
                 log.exception("manual: seeding the knowledge base failed")
-            await asyncio.sleep(SEED_EVERY)
+            await asyncio.sleep(pause)
+            pause = min(pause * 2, SEED_MAX)
 
     async def start(self) -> None:
         if self._seeder is None:
@@ -183,10 +194,11 @@ class Manual(Plugin):
         return self.status_view()
 
     @capability("list", risk="read")
-    def list_pages(self) -> dict:
-        """The manual's table of contents: id, title, since, deprecated, and
-        whether the page is read from the knowledge copy."""
-        return self._sync().pages(self.knowledge())
+    def list_pages(self, source: str = "auto") -> dict:
+        """The manual's table of contents: id, title, since, deprecated,
+        preview, and whether the page is read from the knowledge copy
+        (``source`` auto, or bundle for the pages shipped with Rook)."""
+        return self._sync().pages(self.knowledge() if source != "bundle" else None)
 
     @capability("get", risk="read")
     def get(self, id: str, source: str = "auto") -> dict:

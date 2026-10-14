@@ -2,8 +2,9 @@
 ``/manual/account-api`` (proxied from ``/account/manual/api``).
 
 GET ``?view=status`` | ``pages[&full=1]`` | ``page&id=<page id>[&source=bundle]``: any
-signed-in account (the manual is not secret; the update prompt is only
-offered to the operator). POST ``{"action": "update" | "snooze" |
+signed-in account. Other accounts read the manual as Rook ships it; only the
+operator sees the knowledge base copy (it may hold the operator's notes) and
+is offered the update prompt. POST ``{"action": "update" | "snooze" |
 "decline", "overwrite": [page ids]}``: operator account only, with the
 session's CSRF token.
 """
@@ -39,12 +40,13 @@ def routes(get_plugin: Callable[[], Any], accounts):
                         data = {k: data[k] for k in ("version", "pages", "knowledge", "imported")}
                         data["prompt"] = False
                 elif view == "pages":
-                    data = plugin.list_pages()
+                    source = (q.get("source") or "auto") if admin else "bundle"
+                    data = plugin.list_pages(source)
                     if q.get("full") in ("1", "true"):     # bodies too, for search
                         for row in data["pages"]:
-                            row["body"] = plugin.get(row["id"])["body"]
+                            row["body"] = plugin.get(row["id"], source)["body"]
                 elif view == "page":
-                    data = plugin.get(q.get("id") or "", q.get("source") or "auto")
+                    data = plugin.get(q.get("id") or "", (q.get("source") or "auto") if admin else "bundle")
                 else:
                     return json_error(f"unknown view {view!r}", 400)
                 return json_reply({"csrf": user["csrf"], "admin": admin, **data})
