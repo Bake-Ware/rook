@@ -33,6 +33,11 @@ _WORKER_ID_FILE = worker_state_path("worker_id")
 # missed a change or joined late converges even without fetching.
 ANNOUNCE_FULL_EVERY = 10
 
+# One id per process: a re-exec gets a new one, a plugin reload (which
+# re-imports plugin modules, not this one) keeps it. The OTA health gate uses
+# it to tell a real boot from a reload of the selfupdate plugin.
+BOOT_ID = uuid.uuid4().hex
+
 
 def stable_worker_id() -> str:
     """A worker_id that survives restarts, so a node keeps ONE identity on the
@@ -149,6 +154,9 @@ class Worker:
         self.band_rx_at: float | None = None
         self.band_rtt_at: float | None = None
         self._band_peers: dict[str, tuple[bool, float]] = {}
+        # Ids of our requests that timed out: a late reply still proves the
+        # round trip (a slow link is not a broken one). Bounded, oldest out.
+        self._late_ids: dict[str, None] = {}
         # Announce trimming state (ROOK_ANNOUNCE_CAPS_HASH, core spec 14.5).
         self._announces = 0
         self._full_caps_hash: str | None = None
@@ -239,6 +247,10 @@ class Worker:
             return await asyncio.wait_for(fut, timeout)
         finally:
             self._pending_replies.pop(msg_id, None)
+            if not fut.done() or fut.cancelled():
+                self._late_ids[msg_id] = None
+                while len(self._late_ids) > self.BAND_PEERS_MAX:
+                    self._late_ids.pop(next(iter(self._late_ids)))
 
     async def resolve_secret_refs(self) -> list[str]:
         """Fetch pushed ``{{secret:…}}`` values from the hub (worker ``rook``,
@@ -407,10 +419,15 @@ class Worker:
                 except Exception:
                     log.debug("hub grant check failed", exc_info=True)
             # A reply to one of our own requests (Worker.request)?
-            fut = self._pending_replies.get(msg.get("id")) if msg.get("id") else None
+            mid = msg.get("id")
+            mid = mid if isinstance(mid, str) else None
+            fut = self._pending_replies.get(mid) if mid else None
             if fut is not None and not fut.done():
                 self.band_rtt_at = time.monotonic()
                 fut.set_result(msg)
+            elif mid and "ok" in msg and mid in self._late_ids:
+                del self._late_ids[mid]
+                self.band_rtt_at = time.monotonic()   # late, but a round trip
             return  # not a request
 
         target = msg.get("target")
