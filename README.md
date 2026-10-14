@@ -58,10 +58,19 @@ token into `/var/lib/rook/secrets.env` (mode 600, owned by a dedicated `rook` us
 services; waits until they answer; and prints:
 
 ```
-  Dashboard   http://192.0.2.20:7005
-  Password    …      (any username)
-  MCP         http://192.0.2.20:7005/mcp    bearer token: ROOK_MCP_STATIC_TOKEN in /var/lib/rook/secrets.env
+[rook] Your Rook hub is running.
+
+  Open        http://192.0.2.20:7005
+  Password    …
+              (keep it safe; it is also saved in /var/lib/rook/secrets.env)
+
+Next steps
+  1. Open http://192.0.2.20:7005 in a web browser and enter the password above.
+  2. Go to "Install a worker" and click "Get a pairing code".
+  3. Run the command it shows on each computer you want to add.
 ```
+
+followed by the address and token for AI agents (MCP) and how to look after the hub.
 
 Open the URL from any machine on your network and continue with **Get a pairing code**.
 Run the same command again to upgrade (your keys and settings are kept);
@@ -151,7 +160,7 @@ Below, `SECRETS` is where your hub keeps its secrets: `/var/lib/rook/secrets.env
 installer (read it with `sudo`), your `.env` for Docker, `rook-data/quickstart.env` from
 source. `HUB` is the hub's address (`127.0.0.1` on the hub itself).
 
-**In the browser:** open `http://HUB:7005`, sign in with any username and the password,
+**In the browser:** open `http://HUB:7005`, sign in with the password,
 and your workers are in the Workers list. Expand one to see its capabilities, and run
 `shell.exec` with `{"cmd": "uname -a"}` from the form.
 

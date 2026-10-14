@@ -79,8 +79,9 @@ fork or a mirror.
    Secrets are generated once and never rewritten.
 6. Writes and starts the systemd units, waits until the dashboard and MCP server answer
    their health checks (90 s each), and prints the dashboard URL, the password and the
-   next step: open the URL, sign in (any username), **Install a worker**, **Get a
-   pairing code**.
+   next steps in plain words: open the URL, enter the password, **Install a
+   worker**, **Get a pairing code**; then the address and token for AI agents (MCP) and
+   how to check on, upgrade or remove the hub.
 
 ### Files
 

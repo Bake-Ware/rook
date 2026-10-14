@@ -56,6 +56,12 @@ def main() -> None:
     ap.add_argument("--enroll", metavar="HTTPS_SERVER", help="sign in through Google/local web login and fetch your configurations")
     ap.add_argument("--pair-code", default=None, help="use a temporary pairing code with --enroll instead of account login")
     ap.add_argument("--enrolled", action="store_true", help="use the active band saved by --enroll")
+    ap.add_argument("--band", default=None,
+                    help="with --enroll and an account login: the band to join when the "
+                         "account has several (or env ROOK_BAND)")
+    ap.add_argument("-y", "--yes", action="store_true",
+                    help="never prompt (also env ROOK_YES=1); prompts appear only at a terminal")
+    ap.add_argument("--enrolled-band", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--version", action="store_true",
                     help="print the bundle version and exit")
     ap.add_argument("--selftest", action="store_true",
@@ -118,7 +124,9 @@ def main() -> None:
         result = install_launcher()
         if not result["installed"]:
             ap.error(result["reason"])
-        print(f"Installed {result['launcher']}; open a new terminal and run rook.")
+        # The installers say this once at the end, in their own words.
+        if os.environ.get("ROOK_INSTALLER") != "1":
+            print(f"Installed {result['launcher']}; open a new terminal and run rook.")
         return
 
     # Also covers existing workers receiving their first CLI through OTA. This
@@ -132,12 +140,22 @@ def main() -> None:
     from ..core.paths import migrate_legacy_state
     migrate_legacy_state()
 
+    if args.enrolled_band:
+        # For the installers' last line ("Done: <worker> joined <band>").
+        from .enroll import active_band_name
+        print(active_band_name())
+        return
+    if args.yes:
+        os.environ["ROOK_YES"] = "1"
     if args.enroll:
-        from .enroll import enroll
+        from .enroll import enroll, plain_error
         try:
-            enroll(args.enroll,args.pair_code)
-        except (ValueError,OSError) as error:
-            ap.error(str(error))
+            enroll(args.enroll, args.pair_code, name=args.name, band=args.band)
+        except (ValueError, OSError) as error:
+            # One plain line, not argparse's usage dump: this is what a person
+            # sees when a code expired or the hub is unreachable.
+            print(f"Could not join the band: {plain_error(error)}", file=sys.stderr)
+            sys.exit(2)
         return
     from .enroll import load as load_enrollment
     if load_enrollment().get('auto_start'):
@@ -210,9 +228,21 @@ def main() -> None:
             args.verbose = max(args.verbose, {"ERROR": 0, "WARNING": 0,
                                               "INFO": 1, "DEBUG": 2}[_lvl])
 
-    level = logging.WARNING - 10 * args.verbose
-    logging.basicConfig(level=max(level, logging.DEBUG),
+    level = max(logging.WARNING - 10 * args.verbose, logging.DEBUG)
+    logging.basicConfig(level=level,
                         format="%(asctime)s %(name)s %(levelname)s: %(message)s")
+    # `rook logs` reads INFO and up from an in-memory ring over the local
+    # control link (the Windows task has no console to log to); the console
+    # keeps the level asked for.
+    from .control import LogRing, enabled as control_enabled
+    ring = LogRing() if control_enabled() else None
+    if ring is not None:
+        root = logging.getLogger()
+        for h in root.handlers:
+            h.setLevel(level)
+        root.addHandler(ring)
+        ring.setLevel(logging.INFO)
+        root.setLevel(min(level, logging.INFO))
 
     # Saved enrollment and pushed config beat --hub/--psk; say so, because a
     # second worker started on an enrolled machine otherwise quietly joins the
@@ -262,6 +292,19 @@ def main() -> None:
                 pass  # Windows
         task = asyncio.create_task(worker.run())
         task.add_done_callback(lambda _: stop.set())
+        control = None
+        if ring is not None:
+            # A failure here (no loopback, read-only state dir) must never
+            # keep the worker off the band: the local CLI just reports it.
+            from .control import ControlServer
+            try:
+                control = ControlServer(worker, ring)
+                await control.start()
+            except Exception as error:
+                logging.getLogger("rook.worker").warning(
+                    "local control link unavailable (%s); `rook status` will "
+                    "read files only", error)
+                control = None
 
         async def enrollment_watch():
             nonlocal outcome
@@ -289,6 +332,8 @@ def main() -> None:
         if enrollment_task:
             enrollment_task.cancel()
             await asyncio.gather(enrollment_task, return_exceptions=True)
+        if control is not None:
+            await control.stop()
         await worker.shutdown()
         try:
             await asyncio.wait_for(task, timeout=2.0)

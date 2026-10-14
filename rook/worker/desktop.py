@@ -111,15 +111,20 @@ def ensure_launcher() -> None:
 
 
 def main() -> None:
+    from .localcli import COMMANDS, help_lines
     if len(sys.argv) > 1 and sys.argv[1] in ("-h", "--help", "help"):
-        print("Rook — worker and terminal dashboard\n\n"
-              "Usage: rook [band|tui] [dashboard options]\n"
-              "       rook worker [worker options]\n\n"
-              "Run rook with no arguments to open the dashboard.\n"
-              "rook band --help     Dashboard connection options\n"
-              "rook worker --help   Background worker options\n"
-              "rook --version       Installed bundle version")
+        print("Rook - this machine's worker and the band\n\n"
+              "Usage: rook <command> [options]\n"
+              "Run rook with no arguments to open the terminal dashboard.\n\n"
+              "Commands:\n" + "\n".join(help_lines()) + "\n"
+              "  band         Terminal dashboard for the whole band (rook band --help)\n"
+              "  worker       Run the background worker (rook worker --help)\n\n"
+              "rook <command> --help shows each command's options; rook --version the "
+              "installed version.")
         return
+    if len(sys.argv) > 1 and sys.argv[1] in COMMANDS:
+        from .localcli import main as local_main
+        sys.exit(local_main(sys.argv[1:]))
     if len(sys.argv) > 1 and sys.argv[1] == "--version":
         from ._build_info import VERSION
         print(VERSION)

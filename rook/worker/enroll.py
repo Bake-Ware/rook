@@ -65,19 +65,107 @@ def load():
         return {}
 
 
-def enroll(server,pair_code=None):
+class Steps:
+    """Enrollment progress as numbered, plain steps.
+
+    ``nested`` (the installers set ``ROOK_INSTALLER=1``): the installer
+    numbers its own steps and prints the final line, so only what the
+    person must act on (the sign-in link, a band choice) is shown,
+    indented under the installer's step."""
+
+    def __init__(self, out=None, nested=None):
+        import sys
+        self.out = out or sys.stdout
+        self.nested = (os.environ.get('ROOK_INSTALLER') == '1') if nested is None else nested
+        self.n = 0
+
+    def _print(self, text):
+        print(text, file=self.out, flush=True)
+
+    def title(self, text):
+        if not self.nested:
+            self._print(text)
+
+    def step(self, text):
+        self.n += 1
+        if not self.nested:
+            self._print(f'  {self.n}. {text}')
+
+    def act(self, text):
+        """A line the person needs, shown in both modes."""
+        self._print(('[rook]       ' if self.nested else '     ') + text)
+
+    def done(self, text):
+        if not self.nested:
+            self._print(text)
+
+
+def interactive():
+    """Prompts only with a person at a terminal, never with --yes/ROOK_YES."""
+    import sys
+    if os.environ.get('ROOK_YES', '').strip().lower() in ('1', 'true', 'yes'):
+        return False
+    try:
+        return sys.stdin.isatty() and sys.stdout.isatty()
+    except (AttributeError, ValueError):
+        return False
+
+
+def choose_band(bands, wanted=None, ask=None):
+    """The band to join: the only one, the one named ``wanted`` (name or id,
+    also ROOK_BAND), or one picked at a prompt when ``ask`` can prompt.
+    Never prompts without a terminal: says how to choose instead."""
+    wanted = (wanted or os.environ.get('ROOK_BAND', '')).strip()
+    if wanted:
+        hits = [b for b in bands if wanted in (b.get('id'), b.get('name'))]
+        if len(hits) != 1:
+            hits = [b for b in bands if str(b.get('name', '')).casefold() == wanted.casefold()]
+        if len(hits) == 1:
+            return hits[0]
+        raise ValueError(f'No band called {wanted!r}. Your bands: '
+                         + ', '.join(b['name'] for b in bands) + '.')
+    if len(bands) == 1:
+        return bands[0]
+    names = ', '.join(b['name'] for b in bands)
+    if ask is None:
+        raise ValueError(f'Your account has {len(bands)} bands ({names}). Choose one with '
+                         '--band NAME (or ROOK_BAND=NAME) and run this again.')
+    for index, band in enumerate(bands, 1):
+        ask.act(f'{index}) {band["name"]}')
+    try:
+        chosen = int(input(('[rook]       ' if ask.nested else '     ') + 'Band number: ')) - 1
+    except (ValueError, EOFError):
+        chosen = -1
+    if chosen not in range(len(bands)):
+        raise ValueError('Invalid band selection.')
+    return bands[chosen]
+
+
+def enroll(server,pair_code=None,name=None,band=None,out=None):
+    """Join a band: with a pairing code, or by approving this machine in a
+    browser signed in to the hub. Prints numbered steps and returns
+    ``{'worker', 'band'}``. Prompts only at a terminal (:func:`interactive`)."""
+    import socket
+    steps=Steps(out)
+    name=(name or socket.gethostname() or 'worker').strip()
+    check_origin(server)
+    if pair_code:
+        steps.title(f'Joining a band with pairing code {pair_code.strip().lower()}')
+    else:
+        steps.title(f'Joining a band through your account on {server.rstrip("/")}')
     key,csr=certificate_request()
+    steps.step('Made a private key for this machine')
     issued=None
     if pair_code:
-        import socket
-        issued=post(server,'/auth/devices/enroll',{'code':pair_code.strip().lower(),'csr':csr,'name':socket.gethostname()})
-        band=issued['band']
-        bands=[band]
+        issued=post(server,'/auth/devices/enroll',{'code':pair_code.strip().lower(),'csr':csr,'name':name})
+        bands=[issued['band']]
+        chosen=bands[0]
+        steps.step(f'The hub accepted the code: band "{chosen["name"]}"')
     else:
         grant=post(server,'/auth/device/start',{})
-        print('Open',grant['verification_uri_complete'])
-        print('Verify this installer code:',grant['user_code'])
-        print('Sign in with Google or your local account, then authorize this installer.')
+        steps.step('Approve this machine in a browser signed in to the hub:')
+        steps.act(grant['verification_uri_complete'])
+        steps.act(f'Check that the page shows the code {grant["user_code"]}.')
         try:webbrowser.open(grant['verification_uri_complete'])
         except Exception:pass
         deadline=time.monotonic()+min(grant['expires_in'],600)
@@ -88,17 +176,13 @@ def enroll(server,pair_code=None):
             error=result.get('error')
             if error=='authorization_pending':continue
             if error=='slow_down':interval+=5;continue
-            if error:raise ValueError('Installer authorization expired. Start again.')
+            if error:raise ValueError('The approval expired. Run the same command again.')
             bands=result['bands'];break
-        else:raise ValueError('Installer authorization expired.')
-    if not bands:raise ValueError('No authorized bands. Create a band or accept an invitation in the web app first.')
-    for index,band in enumerate(bands,1):
-        print(f'{index}. {band["name"]}')
-    chosen=0 if len(bands)==1 else int(input('Active band number: '))-1
-    if chosen not in range(len(bands)):raise ValueError('Invalid band selection.')
-    if issued is None:
-        import socket
-        issued=post(server,'/auth/devices/enroll',{'enrollment_grant':result['enrollment_grants'][bands[chosen]['id']],'csr':csr,'name':socket.gethostname()})
+        else:raise ValueError('The approval expired. Run the same command again.')
+        if not bands:raise ValueError('Your account has no bands yet. Create one on the dashboard, then run this again.')
+        chosen=choose_band(bands,band,steps if interactive() else None)
+        steps.step(f'Approved. Band: "{chosen["name"]}"')
+        issued=post(server,'/auth/devices/enroll',{'enrollment_grant':result['enrollment_grants'][chosen['id']],'csr':csr,'name':name})
     from .device_key import private_pem
     issued['private_key']=private_pem(key)
     issued.pop('band',None)
@@ -106,11 +190,34 @@ def enroll(server,pair_code=None):
     # the band's defaults); the worker applies it once, on its next start
     # (rook.worker.admin.apply_enrollment_profile).
     profile=issued.pop('plugin_profile',None)
-    data={'server':server.rstrip('/'),'bands':bands,'active_band':bands[chosen]['id'],'device':issued,'last_verified':time.time()}
+    data={'server':server.rstrip('/'),'bands':bands,'active_band':chosen['id'],'device':issued,'last_verified':time.time()}
     if isinstance(profile,dict):data['plugin_profile']=profile
     save(data)
-    print('Saved configurations privately to',storage_path())
-    print('Start the worker with --enrolled (add --ws when using a port-443 hub).')
+    steps.step('Saved the band settings where only you can read them')
+    steps.done(f'Done: {name} joined {chosen["name"]}')
+    return {'worker':name,'band':chosen['name']}
+
+
+def active_band_name(saved=None):
+    """The enrolled band's name, or '' (the installers print it at the end)."""
+    saved=load() if saved is None else saved
+    return next((b.get('name','') for b in saved.get('bands',[]) if b.get('id')==saved.get('active_band')),'')
+
+
+def plain_error(error: BaseException) -> str:
+    """An enrollment failure in words a person can act on."""
+    import urllib.error
+    if isinstance(error, urllib.error.HTTPError):
+        if error.code in (400, 403):
+            return ("the hub refused it. Pairing codes work once and expire after "
+                    "5 minutes: get a fresh code on the dashboard's Install page.")
+        if error.code == 429:
+            return "too many tries. Wait a minute, then try again."
+        return f"the hub answered with an error (HTTP {error.code})."
+    if isinstance(error, urllib.error.URLError):
+        return (f"could not reach the hub ({getattr(error, 'reason', error)}). Check the "
+                "address and that this machine can reach it.")
+    return str(error)
 
 
 def certificate_request():

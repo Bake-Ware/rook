@@ -37,6 +37,9 @@ every conversation.
 A task you close yourself ("we don't need this any more") is **closed**, kept
 apart from done, with your words recorded.
 
+From a worker machine's terminal, `rook tasks` shows the task deck and
+`rook tasks <words>` searches it ([[manual-worker-commands]]).
+
 ## Hygiene nudges
 
 Rook notices when work looks forgotten: a claimed task that has gone quiet, a

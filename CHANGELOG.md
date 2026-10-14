@@ -49,6 +49,51 @@ Manual: voice, model-providers, home-agent
   (`Plugin.unavailable_reason()`), and is retried when one of its settings
   changes. Hub plugins can serve paths on the hub site (`rook/hub/site.py`).
 
+### Worker CLI and onboarding
+Manual: worker-commands, adding-machines, terminal-and-commands, workers, getting-started, accounts-and-access, running-a-hub, agents-and-mcp, chat, work, knowledge
+- `rook` on a worker machine gained commands for the person sitting at it:
+  `status`, `doctor` (plain-language fixes; exit 1 on a problem), `ask` and
+  `chat` (the home agent, through an API token saved with `rook login
+  --token` and the hub's MCP endpoint; reads also work through the saved
+  dashboard login or the worker's band link), `tasks`, `rooms`, `knowledge search|get`, `plugins
+  list|enable|disable` (the hub's protected plugins stay on), `logs [-f]
+  [--audit]`, `pair <code>`, `login` and `completion bash|zsh|fish|powershell`.
+  Both the bundle's launcher and the package's `rook` have them. See
+  docs/operations/worker-cli.md.
+- The worker serves a local control link for them on 127.0.0.1 (token in
+  `<state dir>/control.json`, mode 600; `ROOK_CONTROL=0` turns it off) and
+  keeps its recent log lines in memory for `rook logs`.
+- Enrollment prints numbered steps and "Done: <worker> joined <band>", prompts
+  only at a terminal (`--yes` / `ROOK_YES=1`, `--band` / `ROOK_BAND`), sends
+  the worker's `--name`, and reports failures in one plain sentence.
+- Worker installers: plain step names, details in `install.log`, "Done:
+  <worker> joined <band>"; unattended runs (piped, cloud-init, systemd, CI,
+  `--yes`) never prompt and get a user service; keyboard/mouse setup is
+  skipped on machines without a screen (`ROOK_HID=0|1`); Windows installs a
+  missing Python 3.12 from python.org for the current user after checking a
+  pinned SHA-256 (then `winget --scope user`, then one clear instruction).
+  The `/install` and `/hub` installers no longer die under cloud-init at a
+  prompt.
+- Run as root (cloud-init, `sudo`), the Linux worker installer stops unless
+  told whose worker it is: `ROOK_USER=<account>` installs it for that account
+  (it runs as them; a worker installed for root earlier is then stopped and
+  disabled once the new one is in), `ROOK_ALLOW_ROOT=1` runs it as root
+  (updating such a root worker in place). Root writes only to its own home,
+  even under `sudo -E`. The Windows
+  installer refuses to run as SYSTEM (the worker must run in the user's
+  session). Worker names are limited to letters, digits, `.`, `_` and `-`.
+- `rook login` defaults a bare public host to `https://` (names whose
+  addresses are all private, like Tailscale's, keep `http://`; https against a
+  plain-http hub suggests the `http://` command), asks before sending a token
+  or password over plain http to a public address (`ROOK_ALLOW_HTTP=1` without
+  a terminal), and never follows
+  a redirect from the MCP endpoint (the token would go along). The control
+  link drops connections that don't send their token within 2 seconds, and
+  `control.json` and the saved token get an owner-only ACL on Windows.
+- A password-only hub's sign-in page asks for the password alone. The setup
+  wizard and install-hub.sh's last screen use plain words; the wizard fills
+  in its own address.
+
 ### User manual
 Manual: help, welcome, getting-started, overview-and-start-page, adding-machines, bands-and-keys, accounts-and-access, workers, chat, work, sessions, knowledge, jobs, secrets, agents-and-mcp, home-agent, home-agent-memory, settings, plugins, phones-and-tablets, hardware, integrations, voice, updates, security, terminal-and-commands, running-a-hub, desktop-app
 - Added a user manual: 27 plain-language pages in `docs/manual/` covering

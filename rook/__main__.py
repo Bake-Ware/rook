@@ -42,7 +42,18 @@ def main() -> None:
             if cmd == "history":
                 continue
             print(f"  {cmd:12s} {desc}")
+        from .worker.localcli import help_lines
+        print("\nOn a worker machine:")
+        print("\n".join(help_lines()))
         return
+
+    # This machine's worker, the home agent and band reads (rook status,
+    # rook ask, rook doctor, ...): the same commands the worker bundle's
+    # launcher has.
+    from .worker.localcli import COMMANDS as LOCAL_COMMANDS
+    if sys.argv[1] in LOCAL_COMMANDS:
+        from .worker.localcli import main as local_main
+        sys.exit(local_main(sys.argv[1:]))
 
     # Lightweight subcommands — no heavy imports needed
     if sys.argv[1] == "worker":

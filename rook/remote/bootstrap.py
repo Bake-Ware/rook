@@ -102,6 +102,13 @@ PS_BOOTSTRAP = r'''
 # R00K Band Worker Bootstrap (Windows)
 #
 # Usually run as:  iex (irm "<hub>/worker?band=CODE&os=windows")
+# Unattended (an elevated shell of the person who uses this machine, from a
+# management tool or CI):
+#   $env:ROOK_YES = "1"; iex (irm "<hub>/worker?band=CODE&os=windows")
+# It then never prompts; nor does it without an interactive console. Also
+# read: ROOK_WORKER_NAME (this machine's name on the band), ROOK_BAND (which
+# band, for an account sign-in with several). Not as SYSTEM: the worker runs
+# as, and in the session of, the account that installs it.
 #
 # Everything is inside ONE script block run with `&`. Under `iex` this text
 # executes in the user's own interactive session, so a top-level `exit` would
@@ -111,7 +118,7 @@ PS_BOOTSTRAP = r'''
 # from a FILE (the elevated relaunch below, or automation using -File), where
 # it hands the exit code back to whoever launched us.
 & {{
-param([string]$ResultFile = "")
+param([string]$ResultFile = "", [string]$Yes = "")
 $ErrorActionPreference = "Stop"
 # Suppress the progress bar: it speeds up Invoke-WebRequest a lot AND avoids a
 # "reading the console output buffer" crash when the installer runs headless /
@@ -119,11 +126,43 @@ $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
 $startMsg = "[rook] Installing the Rook worker. This takes 2-5 minutes (longer if Python must be installed)."
-$workerName = $env:COMPUTERNAME
+# Prompts need a person: never under a service account, with redirected input
+# (management tools, CI) or with ROOK_YES=1. The elevated relaunch gets a fresh
+# environment, so the choice travels as its -Yes argument.
+$unattended = ("$env:ROOK_YES" -match '^(1|true|yes)$') -or ($Yes -eq "yes")
+$interactive = [Environment]::UserInteractive -and -not [Console]::IsInputRedirected -and -not $unattended
+$workerName = $env:COMPUTERNAME -replace '[^A-Za-z0-9._-]', '-'
+if ($env:ROOK_WORKER_NAME) {{ $workerName = $env:ROOK_WORKER_NAME }}
+$bandChoice = "$env:ROOK_BAND"
+# The elevated relaunch below has a fresh environment: the name and band
+# come as its extra arguments.
+foreach ($extra in $args) {{
+    if ("$extra" -like "name=*") {{ $workerName = "$extra".Substring(5) }}
+    elseif ("$extra" -like "band=*") {{ $bandChoice = "$extra".Substring(5) }}
+}}
+if ($bandChoice) {{ $env:ROOK_BAND = $bandChoice }}
 $installDir = Join-Path $env:USERPROFILE ".rook-band-worker"
 $logPath = Join-Path $installDir "install.log"
+$detailsPath = Join-Path $installDir "install-details.log"
 # Set only when this text runs from a file (-File); empty under iex.
 $fromFile = [bool]$PSCommandPath
+
+# The name goes into the scheduled task's command line.
+if ($workerName -notmatch '^[A-Za-z0-9._-]+$') {{
+    Write-Host "[rook] Not installed: the worker name '$workerName' may only use letters, digits, '.', '_' and '-' (set ROOK_WORKER_NAME)."
+    $global:LASTEXITCODE = 1
+    return
+}}
+# The worker belongs to the person at this machine: its task starts at their
+# sign-in, in their session (keyboard, mouse and screenshots need one), and
+# its files and the `rook` command live in their profile. SYSTEM has none of
+# that (its profile is under C:\Windows\System32 and it runs in session 0).
+if ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -eq "S-1-5-18") {{
+    Write-Host "[rook] Not installed: this is running as SYSTEM, but the worker must run as the person who uses this machine."
+    Write-Host "[rook] Run the same command in their PowerShell (as administrator), or have your management tool run it as the signed-in user."
+    $global:LASTEXITCODE = 1
+    return
+}}
 
 # Self-elevate if not already Administrator - Register-ScheduledTask below
 # needs -RunLevel Highest, which requires it. Relaunching ourselves elevated
@@ -147,6 +186,13 @@ $fromFile = [bool]$PSCommandPath
 # log path) rather than relying on its exit code alone, which Start-Process
 # does not always surface for an elevated child.
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin -and -not $interactive) {{
+    # Nobody is here to accept the Windows administrator prompt.
+    Write-Host "[rook] Not installed: an unattended install needs an administrator PowerShell."
+    Write-Host "[rook] Run the same command from an elevated PowerShell signed in as the person who uses this machine."
+    $global:LASTEXITCODE = 1
+    return
+}}
 if (-not $isAdmin) {{
     Write-Host $startMsg
     Write-Host "[rook] Administrator rights are needed: accept the Windows UAC prompt. Progress shows in the new window; this one reports the result."
@@ -163,8 +209,15 @@ if (-not $isAdmin) {{
     }}
     # Quote both paths: Start-Process joins -ArgumentList with spaces, and a
     # profile path like C:\Users\Jane Doe\... would otherwise split in two.
+    $relaunch = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$tmp`"", "`"$res`"")
+    if ($unattended) {{ $relaunch += "yes" }} else {{ $relaunch += "no" }}
+    $relaunch += "`"name=$workerName`""
+    if ($bandChoice) {{
+        $bandArg = $bandChoice -replace '"', ''
+        $relaunch += "`"band=$bandArg`""
+    }}
     try {{
-        $p = Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$tmp`"", "`"$res`"") -Verb RunAs -Wait -PassThru
+        $p = Start-Process -FilePath "powershell.exe" -ArgumentList $relaunch -Verb RunAs -Wait -PassThru
     }} catch {{
         Remove-Item $tmp -ErrorAction SilentlyContinue
         Write-Host "[rook] Not installed: the administrator (UAC) prompt was declined or could not be shown."
@@ -182,7 +235,10 @@ if (-not $isAdmin) {{
         Remove-Item $res -Force -ErrorAction SilentlyContinue
     }}
     if ($result["status"] -eq "ok") {{
-        Write-Host "[rook] Done: $($result['name']) is installed and joining the band. It will appear under Workers in the dashboard within a minute."
+        $joined = "the band"
+        if ($result["band"]) {{ $joined = $result["band"] }}
+        Write-Host "[rook] Done: $($result['name']) joined $joined. It appears under Workers in the dashboard within a minute."
+        Write-Host "[rook] To check on it from this machine, open a new PowerShell window and run: rook status"
         $global:LASTEXITCODE = 0
         return
     }}
@@ -202,36 +258,87 @@ if (-not $isAdmin) {{
 # ---- Elevated from here: the relaunched child, or a user who opened an
 # elevated PowerShell themselves. ----
 
-# Resolve a WORKING python - prefer the `py` launcher, which is immune to the
+# Resolve a WORKING python 3.11+ - prefer the `py` launcher, which is immune to the
 # Microsoft Store "python.exe" App Execution Alias stub that Windows 10/11 put
 # on PATH by default. That stub makes `Get-Command python` succeed even with
 # no real Python installed, and `python --version` silently prints nothing -
 # which used to make this script believe Python was already there and crash
-# later at venv creation with no real interpreter behind it.
+# later at venv creation with no real interpreter behind it. An older Python
+# (3.8, say) counts as missing: the worker needs 3.11.
+function Test-Python([string]$Exe, [string[]]$PyArgs) {{
+    try {{
+        $ok = & $Exe @PyArgs -c "import sys; print(sys.version_info >= (3, 11))" 2>$null
+        return ($LASTEXITCODE -eq 0 -and "$ok".Trim() -eq "True")
+    }} catch {{ return $false }}
+}}
 function Resolve-Python {{
-    if (Get-Command py -ErrorAction SilentlyContinue) {{
-        try {{
-            $v = & py -3 --version 2>&1
-            if ($LASTEXITCODE -eq 0 -and "$v" -match '^Python \d') {{ return @{{ Exe = 'py'; Args = @('-3') }} }}
-        }} catch {{}}
-    }}
-    if (Get-Command python -ErrorAction SilentlyContinue) {{
-        try {{
-            $v = & python --version 2>&1
-            if ($LASTEXITCODE -eq 0 -and "$v" -match '^Python \d') {{ return @{{ Exe = 'python'; Args = @() }} }}
-        }} catch {{}}
+    if ((Get-Command py -ErrorAction SilentlyContinue) -and (Test-Python "py" @("-3"))) {{ return @{{ Exe = 'py'; Args = @('-3') }} }}
+    if ((Get-Command python -ErrorAction SilentlyContinue) -and (Test-Python "python" @())) {{ return @{{ Exe = 'python'; Args = @() }} }}
+    # Installed (by an earlier run of this script, or by hand) but not on
+    # PATH: a PATH refresh doesn't always reach this process either.
+    foreach ($v in @("312", "313", "311")) {{
+        foreach ($exe in @((Join-Path $env:LOCALAPPDATA "Programs\Python\Python$v\python.exe"),
+                           (Join-Path $env:ProgramFiles "Python$v\python.exe"), "C:\Python$v\python.exe")) {{
+            if ((Test-Path $exe) -and (Test-Python $exe @())) {{ return @{{ Exe = $exe; Args = @() }} }}
+        }}
     }}
     return $null
+}}
+
+# Python from python.org, for this user only (no administrator files, no PATH
+# change), checked against its published SHA-256 before it runs. The pinned
+# hashes are the python.org installers' (also in winget's Python.Python.3.12
+# 3.12.10 manifest). A download that does not match is deleted, never run.
+$pyVersion = "3.12.10"
+$pyHashes = @{{
+    "amd64" = "67B5635E80EA51072B87941312D00EC8927C4DB9BA18938F7AD2D27B328B95FB"
+    "arm64" = "377AC8FD478987940088E879441E702A71B53164D2A1E6F1D51FF77A7E470258"
+}}
+function Install-Python {{
+    $arch = "amd64"
+    if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64" -or $env:PROCESSOR_ARCHITEW6432 -eq "ARM64") {{ $arch = "arm64" }}
+    $target = Join-Path $env:LOCALAPPDATA "Programs\Python\Python312"
+    # A new folder of our own, not a guessable name in %TEMP% that something
+    # else could swap between the hash check and the run.
+    $setupDir = Join-Path $installDir ("python-setup-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Force -Path $setupDir | Out-Null
+    $setup = Join-Path $setupDir "python-$pyVersion-$arch.exe"
+    Write-Host "[rook]       Downloading Python $pyVersion from python.org..."
+    try {{
+        Invoke-WebRequest -Uri "https://www.python.org/ftp/python/$pyVersion/python-$pyVersion-$arch.exe" -OutFile $setup -UseBasicParsing
+    }} catch {{
+        Write-Host "[rook]       Could not download it ($($_.Exception.Message))."
+        Remove-Item $setupDir -Recurse -Force -ErrorAction SilentlyContinue
+        return $false
+    }}
+    $hash = (Get-FileHash -Path $setup -Algorithm SHA256).Hash
+    if ($hash -ne $pyHashes[$arch]) {{
+        Remove-Item $setupDir -Recurse -Force -ErrorAction SilentlyContinue
+        Fail "the downloaded Python installer did not match its known SHA-256 fingerprint, so it was deleted unused. Something between this machine and python.org changed it; install Python 3.12 yourself from https://www.python.org/downloads/windows/ and run this command again."
+    }}
+    Write-Host "[rook]       Installing Python $pyVersion for this user (about a minute)..."
+    $p = Start-Process -FilePath $setup -Wait -PassThru -ArgumentList @(
+        "/quiet", "InstallAllUsers=0", "TargetDir=`"$target`"", "PrependPath=0",
+        "Include_launcher=0", "Include_test=0", "Include_doc=0", "Shortcuts=0", "AssociateFiles=0")
+    Remove-Item $setupDir -Recurse -Force -ErrorAction SilentlyContinue
+    if ($p.ExitCode -ne 0) {{ Write-Host "[rook]       The Python installer exited with code $($p.ExitCode)." }}
+    return $true
 }}
 
 # Run a native command with its output routed through PowerShell so the
 # transcript (install.log) keeps it; returns the exit code. Errors are
 # "Continue" here because Windows PowerShell 5.1 turns redirected stderr lines
 # into error records, which "Stop" would make fatal (pip warnings, notices).
+#
+# Successful output goes only to install-details.log beside install.log (the
+# screen keeps to the numbered steps); a failure's output is shown too.
 function Invoke-Logged([string]$Exe, [string[]]$Arguments) {{
     $ErrorActionPreference = "Continue"
-    & $Exe @Arguments 2>&1 | ForEach-Object {{ Write-Host "$_" }}
-    return $LASTEXITCODE
+    $lines = @(& $Exe @Arguments 2>&1 | ForEach-Object {{ "$_" }})
+    $code = $LASTEXITCODE
+    try {{ Add-Content -Path $detailsPath -Value (@("> $Exe $($Arguments -join ' ')") + $lines) -Encoding UTF8 }} catch {{}}
+    if ($code -ne 0) {{ $lines | Select-Object -Last 20 | ForEach-Object {{ Write-Host $_ }} }}
+    return $code
 }}
 
 # Abort the install with a message and an exit code (caught below).
@@ -242,57 +349,38 @@ function Fail([string]$Message, [int]$Code = 1) {{
 }}
 
 New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+Remove-Item $detailsPath -Force -ErrorAction SilentlyContinue
 $transcript = $false
 try {{ Start-Transcript -Path $logPath -Force | Out-Null; $transcript = $true }} catch {{}}
 $exitCode = 0
 $failure = ""
 $hadWorker = $false
+$bandName = ""
 try {{
     Write-Host $startMsg
 
     try {{
-        Write-Host "[rook] (1/6) Python: checking..."
+        Write-Host "[rook] (1/6) Checking for Python 3.11 or newer..."
         $py = Resolve-Python
         if (-not $py) {{
-            Write-Host "[rook] Python not found (or only the Microsoft Store stub is on PATH). Installing Python 3.12 - this is the slow part..."
-            if (Get-Command winget -ErrorAction SilentlyContinue) {{
-                $null = Invoke-Logged "winget" @("install", "-e", "--id", "Python.Python.3.12", "--accept-package-agreements", "--accept-source-agreements", "-h")
-            }} elseif (Get-Command choco -ErrorAction SilentlyContinue) {{
-                $null = Invoke-Logged "choco" @("install", "python3", "-y")
-            }} else {{
-                Write-Host "[rook] Downloading the Python installer..."
-                $pyUrl = "https://www.python.org/ftp/python/3.12.7/python-3.12.7-amd64.exe"
-                $pyInstaller = "$env:TEMP\python_install.exe"
-                Invoke-WebRequest -Uri $pyUrl -OutFile $pyInstaller -UseBasicParsing
-                Start-Process -Wait -FilePath $pyInstaller -ArgumentList "/quiet", "InstallAllUsers=1", "PrependPath=1", "Include_launcher=1"
-                Remove-Item $pyInstaller -ErrorAction SilentlyContinue
-            }}
-            $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+            Write-Host "[rook]       Python was not found (or only the Microsoft Store shortcut is there). Installing it - this is the slow part..."
+            $null = Install-Python
             $py = Resolve-Python
-            if (-not $py) {{
-                # PATH refresh doesn't always take effect in THIS process even after a
-                # successful install - hunt well-known install locations directly.
-                $hunt = @(
-                    "$env:LocalAppData\Programs\Python\Python312\python.exe",
-                    "$env:LocalAppData\Programs\Python\Python313\python.exe",
-                    "C:\Python312\python.exe",
-                    "C:\Python313\python.exe",
-                    "$env:ProgramFiles\Python312\python.exe",
-                    "$env:ProgramFiles\Python313\python.exe"
-                ) | Where-Object {{ Test-Path $_ }}
-                if ($hunt) {{ $py = @{{ Exe = @($hunt)[0]; Args = @() }} }}
+            if (-not $py -and (Get-Command winget -ErrorAction SilentlyContinue)) {{
+                Write-Host "[rook]       Trying winget instead..."
+                $null = Invoke-Logged "winget" @("install", "-e", "--id", "Python.Python.3.12", "--scope", "user", "--accept-package-agreements", "--accept-source-agreements", "-h")
+                $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+                $py = Resolve-Python
             }}
             if (-not $py) {{
-                Write-Host "[rook] If running 'python' opens the Microsoft Store, disable the alias:"
-                Write-Host "[rook]   Settings -> Apps -> Advanced app settings -> App execution aliases -> turn OFF python.exe/python3.exe"
-                Write-Host "[rook] then re-run: iex (irm `"{base}/worker?os=windows`")"
-                Fail "Python install did not produce a working interpreter."
+                Write-Host "[rook] Python could not be installed automatically. Install Python 3.12 from https://www.python.org/downloads/windows/, then run this command again."
+                Fail "Python 3.11 or newer is needed."
             }}
         }}
-        Write-Host "[rook] Python: $(& $py.Exe @($py.Args) --version)"
+        $null = Invoke-Logged $py.Exe (@($py.Args) + @("--version"))
 
         # Use a dedicated venv - avoids PEP 668 and missing/broken system pip.
-        Write-Host "[rook] (2/6) venv: preparing $installDir\venv ..."
+        Write-Host "[rook] (2/6) Preparing a private Python environment for the worker..."
         $venv = Join-Path $installDir "venv"
         $vpy = "$venv\Scripts\python.exe"
         if (-not (Test-Path $vpy)) {{
@@ -309,16 +397,16 @@ try {{
         # mss+pillow back screenshot.* (see rook/worker/plugins/screenshot.py); hid.* needs
         # nothing extra - it's stdlib ctypes SendInput. windows-curses gives the chat.open
         # receiver window a curses UI (chat falls back to a plain line client without it).
-        Write-Host "[rook] (3/6) dependencies: installing with pip (the longest step)..."
+        Write-Host "[rook] (3/6) Installing the libraries it needs (the longest step)..."
         $rc = Invoke-Logged $vpy @("-m", "pip", "install", "--quiet", "pynacl", "aiohttp", "websockets", "cryptography", "mss", "pillow", "windows-curses")
-        if ($rc -ne 0) {{ Fail "dependency install failed (pip exit code $rc) - see the pip output above." $rc }}
+        if ($rc -ne 0) {{ Fail "installing the libraries failed (pip exit code $rc) - see the output above." $rc }}
 
         # Download the bundle to a temp name, THEN stop the running worker and
         # swap it in. Windows refuses to overwrite a file another process has
         # open, so a re-run (upgrade, or re-pairing to another hub) used to fail
         # here while the old worker held band-worker.pyz. Stopping after the
         # download means a failed download leaves the old worker running.
-        Write-Host "[rook] (4/6) bundle: downloading the worker..."
+        Write-Host "[rook] (4/6) Downloading the worker..."
         $pyz = Join-Path $installDir "band-worker.pyz"
         $pyzNew = "$pyz.download"
         Remove-Item $pyzNew -Force -ErrorAction SilentlyContinue
@@ -326,7 +414,6 @@ try {{
 
         # Stop the existing worker - avoids a locked bundle, duplicate processes and
         # stale worker-ids lingering on the band (each process announces a fresh id).
-        Write-Host "[rook] stopping any existing band worker..."
         if (Get-ScheduledTask -TaskName "RookBandWorker" -ErrorAction SilentlyContinue) {{ $hadWorker = $true }}
         Stop-ScheduledTask -TaskName "RookBandWorker" -ErrorAction SilentlyContinue
         Get-CimInstance Win32_Process -Filter "Name like '%python%'" -ErrorAction SilentlyContinue |
@@ -342,16 +429,20 @@ try {{
         if ($rc -ne 0) {{ Fail "the worker bundle failed to run (exit code $rc) - see the output above." $rc }}
 
         # Not routed through Invoke-Logged: enrollment may be interactive (browser
-        # sign-in, band choice), so it keeps the console to itself.
-        Write-Host "[rook] (5/6) enrollment: registering this machine with the band..."
-        & $vpy $pyz {enroll_args}
+        # sign-in, band choice), so it keeps the console to itself. Its output
+        # fits under this step (ROOK_INSTALLER), and without a person it never
+        # prompts (--yes).
+        Write-Host "[rook] (5/6) Joining the band as $workerName..."
+        $env:ROOK_INSTALLER = "1"
+        $enrollExtra = @("--name", $workerName)
+        if (-not $interactive) {{ $enrollExtra += "--yes" }}
+        & $vpy $pyz {enroll_args} @enrollExtra
         $rc = $LASTEXITCODE
-{enroll_retry}        if ($rc -ne 0) {{ Fail "enrollment failed (exit code $rc) - see the message above." $rc }}
+{enroll_retry}        if ($rc -ne 0) {{ Fail "joining the band failed (exit code $rc) - see the message above." $rc }}
 
         # HID backend: Windows is native - hid.* uses SendInput via user32.dll (no install).
         # The task runs at logon in the interactive session, so input injection works.
-        Write-Host "[rook] (6/6) service: registering Scheduled Task RookBandWorker (starts at logon)..."
-        Write-Host "[rook] HID backend: native Windows SendInput (no extra setup needed)."
+        Write-Host "[rook] (6/6) Starting the worker in the background (it starts again at every sign-in)..."
 
         # Register as Scheduled Task so worker restarts at every logon  (band: {band_name})
         $workerArgs = "`"$pyz`" --hub {hub_public} --ws --psk {band_psk} --name $workerName --update-url {base}/band-worker.json"
@@ -360,7 +451,12 @@ try {{
         $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit 0
         Register-ScheduledTask -TaskName "RookBandWorker" -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest -Force | Out-Null
         Start-ScheduledTask -TaskName "RookBandWorker"
-        Write-Host "[rook] Band worker installed and started as Scheduled Task (RookBandWorker)."
+        # The worker already runs: a stray stderr line here (which "Stop"
+        # makes fatal in Windows PowerShell 5.1) must not mark it FAILED.
+        try {{
+            $ErrorActionPreference = "Continue"
+            $bandName = "$(& $vpy $pyz --enrolled-band 2>$null | Select-Object -First 1)".Trim()
+        }} catch {{ $bandName = "" }} finally {{ $ErrorActionPreference = "Stop" }}
     }} catch {{
         $exitCode = 1
         if ($_.Exception.Data.Contains("RookExitCode")) {{
@@ -382,7 +478,9 @@ try {{
     }}
 
     if ($exitCode -eq 0) {{
-        Write-Host "[rook] Done: $workerName is installed and joining the band. It will appear under Workers in the dashboard within a minute."
+        $joined = "the band"
+        if ($bandName) {{ $joined = $bandName }}
+        Write-Host "[rook] Done: $workerName joined $joined. It appears under Workers in the dashboard within a minute."
     }} else {{
         Write-Host "[rook] FAILED (exit code $exitCode). Full log: $logPath"
         Write-Host "[rook] Fix the problem above, then re-run the same command (re-running is safe)."
@@ -396,11 +494,11 @@ if ($ResultFile) {{
     $status = "failed"
     if ($exitCode -eq 0) {{ $status = "ok" }}
     try {{
-        Set-Content -Path $ResultFile -Encoding UTF8 -Value @("status=$status", "code=$exitCode", "name=$workerName", "log=$logPath", "error=$failure")
+        Set-Content -Path $ResultFile -Encoding UTF8 -Value @("status=$status", "code=$exitCode", "name=$workerName", "band=$bandName", "log=$logPath", "error=$failure")
     }} catch {{}}
     # Keep a failed run's window open so the error can be read; a successful
     # one closes and the launching window reports success.
-    if ($exitCode -ne 0) {{ $null = Read-Host "[rook] Press Enter to close this window" }}
+    if ($exitCode -ne 0 -and $interactive) {{ $null = Read-Host "[rook] Press Enter to close this window" }}
 }}
 if ($fromFile) {{ exit $exitCode }}
 $global:LASTEXITCODE = $exitCode
@@ -411,73 +509,160 @@ BASH_BOOTSTRAP = '''#!/bin/bash
 set -e
 
 # R00K Band Worker Bootstrap (Linux/Mac/Termux)
+#
+#   curl -fsSL '<hub>/worker?band=CODE' | bash                 # at a terminal
+#   curl -fsSL '<hub>/worker?band=CODE' | bash -s -- --yes     # unattended
+#
+# Unattended runs (cloud-init, a systemd unit, CI, --yes or ROOK_YES=1) never
+# prompt: a prompt needs a person at a terminal, and stdin here is the curl
+# pipe, so prompts read /dev/tty only when it can be opened. Other knobs:
+# ROOK_WORKER_NAME (this machine's name on the band), ROOK_BAND (which band,
+# for an account sign-in with several), ROOK_HID=0|1 (keyboard/mouse control:
+# skip, or set up even with no screen).
+#
+# As root (cloud-init, sudo) it installs nothing unless told whose worker this
+# is: ROOK_USER=<account> installs it for that account (it runs as them), and
+# ROOK_ALLOW_ROOT=1 runs it as root (a container, say). A root worker runs
+# every band command (shell, files, terminals) as root.
 
-echo "[rook] Installing the Rook worker. This takes 1-3 minutes (longer if Python must be installed)."
+for arg in "$@"; do
+    case "$arg" in
+        -y|--yes) ROOK_YES=1 ;;
+        --no-hid) ROOK_HID=0 ;;
+    esac
+done
+# The name goes into the service's command line: keep it to safe characters.
+case "${{ROOK_WORKER_NAME:-}}" in
+    *[!A-Za-z0-9._-]*)
+        echo "[rook] Not installed: ROOK_WORKER_NAME may only use letters, digits, '.', '_' and '-'."
+        exit 1 ;;
+esac
+# The worker's own enrollment output fits under step 5 when it sees this.
+export ROOK_YES="${{ROOK_YES:-}}" ROOK_INSTALLER=1
+
+HAVE_TTY=0
+case "$ROOK_YES" in
+    1|true|yes) ;;
+    *) if {{ true </dev/tty; }} 2>/dev/null; then HAVE_TTY=1; fi ;;
+esac
+
+# cloud-init and systemd units may run us without HOME or USER, and `su`
+# without `-` leaves USER naming the account it came from: USER is always
+# whoever this really runs as (lingering and the input group are for them).
+export USER="$(id -un)"
+# Root writes only to its own home: `sudo -E` keeps the caller's HOME, and a
+# root-owned install.log there would break that person's own install later.
+if [ "$(id -u)" = 0 ]; then
+    export HOME="$(getent passwd "$USER" 2>/dev/null | cut -d: -f6)"
+fi
+[ -n "${{HOME:-}}" ] || export HOME="$(getent passwd "$USER" 2>/dev/null | cut -d: -f6)"
+if [ -z "${{HOME:-}}" ]; then
+    if [ "$(id -u)" = 0 ]; then export HOME=/root
+    else echo "[rook] Not installed: HOME is not set. Set it to your home folder, then run the same command again."; exit 1
+    fi
+fi
+
+# Root needs no sudo (a container, cloud-init); without a terminal sudo must
+# fail at once instead of waiting for a password nobody can type.
+SUDO=""
+if [ "$(id -u)" != 0 ] && command -v sudo &>/dev/null; then
+    if [ "$HAVE_TTY" = 1 ]; then SUDO="sudo"; else SUDO="sudo -n"; fi
+fi
+
+mkdir -p "$HOME/.rook-band-worker"
+# Details (package managers, pip) go here; the screen gets the steps.
+LOG="$HOME/.rook-band-worker/install.log"
+: > "$LOG"
+say() {{ echo "[rook] $*"; echo "[rook] $*" >> "$LOG"; }}
+quietly() {{ "$@" >> "$LOG" 2>&1; }}
+
+say "Installing the Rook worker. This takes 1-3 minutes (longer if Python must be installed)."
 # set -e stops at the first failing step; say so plainly instead of just ending.
-trap 'rc=$?; [ $rc -ne 0 ] && echo "[rook] FAILED (exit code $rc). Fix the problem above, then re-run the same command (re-running is safe)."' EXIT
+trap 'rc=$?; [ $rc -ne 0 ] && echo "[rook] FAILED (exit code $rc). Fix the problem above, then re-run the same command (re-running is safe). Details: $LOG"' EXIT
 
 install_python() {{
-    echo "[rook] Python not found. Installing..."
+    say "      Python was not found; installing it..."
     if command -v apt-get &>/dev/null; then
-        sudo apt-get update -qq && sudo apt-get install -y -qq python3 python3-pip curl
+        quietly $SUDO apt-get update -qq && quietly $SUDO apt-get install -y -qq python3 python3-pip python3-venv curl
     elif command -v dnf &>/dev/null; then
-        sudo dnf install -y python3 python3-pip curl
+        quietly $SUDO dnf install -y python3 python3-pip curl
     elif command -v pacman &>/dev/null; then
-        sudo pacman -Sy --noconfirm python python-pip curl
+        quietly $SUDO pacman -Sy --noconfirm python python-pip curl
     elif command -v apk &>/dev/null; then
-        sudo apk add python3 py3-pip curl
+        quietly $SUDO apk add python3 py3-pip curl
     elif command -v brew &>/dev/null; then
-        brew install python3
+        quietly brew install python3
     elif command -v pkg &>/dev/null; then
-        pkg install -y python curl
+        quietly pkg install -y python curl
     else
-        echo "[rook] ERROR: No supported package manager found."
-        echo "[rook] Install Python 3 manually and re-run this script."
+        say "ERROR: no supported package manager found."
+        say "Install Python 3.11 or newer, then run the same command again."
         exit 1
     fi
 }}
 
 install_curl() {{
     if ! command -v curl &>/dev/null; then
-        echo "[rook] curl not found. Installing..."
+        say "      curl was not found; installing it..."
         if command -v apt-get &>/dev/null; then
-            sudo apt-get install -y -qq curl
+            quietly $SUDO apt-get install -y -qq curl
         elif command -v dnf &>/dev/null; then
-            sudo dnf install -y curl
+            quietly $SUDO dnf install -y curl
         elif command -v pacman &>/dev/null; then
-            sudo pacman -Sy --noconfirm curl
+            quietly $SUDO pacman -Sy --noconfirm curl
         elif command -v pkg &>/dev/null; then
-            pkg install -y curl
+            quietly pkg install -y curl
         fi
     fi
 }}
 
-# ---- HID backend (Linux): ydotool + ydotoold so hid.* works out of the box ----
+# ---- keyboard/mouse control (Linux): ydotool + ydotoold so hid.* works ----
 # Wayland needs ydotool (xdotool is X11-only); ydotool also covers X11. Mac/Windows
 # use their own native backends; Termux/Android does not use this path.
+
+# No screen to type into (a server, a container, a VM without a desktop): the
+# worker's hid plugin stays off there anyway, so don't install anything.
+# A desktop reached over SSH still counts: its display sockets or graphical
+# boot target give it away.
+hid_headless() {{
+    [ -n "${{DISPLAY:-}}${{WAYLAND_DISPLAY:-}}" ] && return 1
+    ls /tmp/.X11-unix/X* >/dev/null 2>&1 && return 1
+    ls /run/user/*/wayland-* >/dev/null 2>&1 && return 1
+    [ "$(systemctl get-default 2>/dev/null || true)" = graphical.target ] && return 1
+    return 0
+}}
+
 setup_hid_linux() {{
     [ "$(uname -s)" = "Linux" ] || return 0
     case "$PREFIX" in /data/data/com.termux*) return 0 ;; esac
-
+    case "${{ROOK_HID:-}}" in
+        0) say "Skipped keyboard and mouse control (ROOK_HID=0)."; return 0 ;;
+        1) ;;
+        *) if hid_headless; then
+               say "Skipped keyboard and mouse control: this machine has no screen."
+               say "      (To set it up anyway, run the same command with ROOK_HID=1.)"
+               return 0
+           fi ;;
+    esac
+    say "Setting up keyboard and mouse control..."
     if ! command -v ydotool &>/dev/null; then
-        echo "[rook] installing ydotool (HID backend)..."
-        if command -v apt-get &>/dev/null; then sudo apt-get install -y -qq ydotool || true
-        elif command -v dnf &>/dev/null; then sudo dnf install -y ydotool || true
-        elif command -v pacman &>/dev/null; then sudo pacman -Sy --noconfirm ydotool || true
-        elif command -v apk &>/dev/null; then sudo apk add ydotool || true
-        else echo "[rook] WARNING: no known package manager for ydotool; HID unavailable"; fi
+        if command -v apt-get &>/dev/null; then quietly $SUDO apt-get install -y -qq ydotool || true
+        elif command -v dnf &>/dev/null; then quietly $SUDO dnf install -y ydotool || true
+        elif command -v pacman &>/dev/null; then quietly $SUDO pacman -Sy --noconfirm ydotool || true
+        elif command -v apk &>/dev/null; then quietly $SUDO apk add ydotool || true
+        fi
     fi
-    command -v ydotool &>/dev/null || {{ echo "[rook] WARNING: ydotool missing; HID disabled"; return 0; }}
+    command -v ydotool &>/dev/null || {{ say "Note: keyboard and mouse control is not available (ydotool could not be installed). Everything else works."; return 0; }}
 
     # /dev/uinput access. Active seat sessions get an ACL automatically; the udev
     # rule + input group cover headless and post-reboot. All best-effort (sudo).
-    sudo modprobe uinput 2>/dev/null || true
+    quietly $SUDO modprobe uinput || true
     if [ ! -e /etc/udev/rules.d/99-rook-uinput.rules ]; then
-        echo 'KERNEL=="uinput", MODE="0660", GROUP="input", OPTIONS+="static_node=uinput"' | sudo tee /etc/udev/rules.d/99-rook-uinput.rules >/dev/null 2>&1 || true
-        sudo udevadm control --reload-rules 2>/dev/null || true
-        sudo udevadm trigger /dev/uinput 2>/dev/null || true
+        echo 'KERNEL=="uinput", MODE="0660", GROUP="input", OPTIONS+="static_node=uinput"' | $SUDO tee /etc/udev/rules.d/99-rook-uinput.rules >/dev/null 2>&1 || true
+        quietly $SUDO udevadm control --reload-rules || true
+        quietly $SUDO udevadm trigger /dev/uinput || true
     fi
-    sudo usermod -aG input "$USER" 2>/dev/null || true
+    quietly $SUDO usermod -aG input "$USER" || true
 
     # ydotoold as our own user service (portable across distro unit naming).
     if command -v systemctl &>/dev/null && systemctl --user show-environment >/dev/null 2>&1; then
@@ -494,12 +679,10 @@ RestartSec=3
 [Install]
 WantedBy=default.target
 RKYD
-        systemctl --user daemon-reload
-        systemctl --user enable --now rook-ydotoold.service 2>/dev/null || true
-        if systemctl --user is-active --quiet rook-ydotoold.service; then
-            echo "[rook] HID backend ready (ydotool + ydotoold)."
-        else
-            echo "[rook] WARNING: ydotoold inactive — HID may need a relogin for /dev/uinput access."
+        quietly systemctl --user daemon-reload
+        quietly systemctl --user enable --now rook-ydotoold.service || true
+        if ! systemctl --user is-active --quiet rook-ydotoold.service; then
+            say "Note: keyboard and mouse control starts after you sign out and back in."
         fi
     fi
 }}
@@ -511,7 +694,7 @@ case "$PREFIX" in /data/data/com.termux*) IS_TERMUX=1 ;; esac
 setup_termux_service() {{
     # Persist via termux-services (runit). Falls back to nohup this session if
     # runsvdir isn't supervising yet (first install before a Termux restart).
-    pkg install -y termux-services >/dev/null 2>&1 || true
+    quietly pkg install -y termux-services || true
     SVDIR="$PREFIX/var/service/rook-band-worker"
     mkdir -p "$SVDIR"
     cat > "$SVDIR/run" << TXSVC
@@ -535,7 +718,6 @@ TXBOOT
         sv up rook-band-worker 2>/dev/null || true
         sleep 2
         if sv status rook-band-worker 2>/dev/null | grep -q "^run"; then
-            echo "[rook] Band worker RUNNING (termux-service: rook-band-worker)."
             return 0
         fi
     fi
@@ -543,26 +725,141 @@ TXBOOT
     nohup $WORKER_CMD >> "$HOME/.rook-band-worker/worker.log" 2>&1 &
     sleep 2
     if kill -0 $! 2>/dev/null; then
-        echo "[rook] Band worker RUNNING (nohup PID $!). Log: ~/.rook-band-worker/worker.log"
-        echo "[rook] TIP: restart Termux once so runsvdir supervises rook-band-worker across restarts."
+        say "Tip: restart Termux once so the worker keeps running after Termux restarts."
     else
-        echo "[rook] ERROR: worker exited immediately. Check ~/.rook-band-worker/worker.log"
+        say "ERROR: the worker stopped right after starting. Its log: ~/.rook-band-worker/worker.log"
         tail -n 20 "$HOME/.rook-band-worker/worker.log" 2>/dev/null
         exit 1
     fi
 }}
 
 if [ "$IS_TERMUX" = "1" ]; then
-    echo "[rook] Termux detected — installing native deps (libsodium, termux-api)..."
-    pkg install -y libsodium termux-api >/dev/null 2>&1 || true
+    quietly pkg install -y libsodium termux-api || true
     # pynacl: link Termux's prebuilt libsodium instead of compiling the bundled
     # copy, whose configure mis-detects memset_explicit on Android API < 34.
     export SODIUM_INSTALL=system
 fi
 
+# ---- run as root: whose worker is this? ------------------------------------
+# A root worker runs every band command as root, and lingering (below) would
+# bring it back at every boot. ROOK_USER=<account>: prepare what that account
+# can't install without sudo, then run this same installer as them.
+SELF_URL='{base}/worker?os=unix'
+install_for_user() {{
+    case "$ROOK_USER" in
+        -*|*[!A-Za-z0-9._-]*) say "ERROR: ROOK_USER is not an account name: $ROOK_USER"; exit 1 ;;
+    esac
+    local entry
+    entry="$(getent passwd "$ROOK_USER" 2>/dev/null || true)"
+    if [ -z "$entry" ]; then
+        say "ERROR: there is no account named $ROOK_USER here. Create it first (useradd -m $ROOK_USER), then run the same command again."
+        exit 1
+    fi
+    if ! command -v runuser &>/dev/null; then
+        say "ERROR: installing for another account needs runuser (util-linux). Run the command as $ROOK_USER instead."
+        exit 1
+    fi
+    local uhome uid tmp
+    uhome="$(echo "$entry" | cut -d: -f6)"
+    uid="$(echo "$entry" | cut -d: -f3)"
+    say "Installing for the account $ROOK_USER: the worker will run as $ROOK_USER, not as root."
+    install_curl
+    # Fetched first, while a pairing code is fresh; a private folder they own.
+    tmp="$(mktemp -d)"
+    if ! curl -fsSL "$SELF_URL" -o "$tmp/install.sh"; then
+        rm -rf "$tmp"
+        say "ERROR: could not download the installer again for $ROOK_USER (an expired pairing code? Get a new one)."
+        exit 1
+    fi
+    chown -R "$ROOK_USER" "$tmp"
+    command -v python3 &>/dev/null || command -v python &>/dev/null || install_python
+    local py
+    py="$(command -v python3 || command -v python)"
+    if ! quietly "$py" -c "import venv, ensurepip" && command -v apt-get &>/dev/null; then
+        quietly apt-get install -y -qq python3-venv || true
+    fi
+    # Their user service runs without a login, now and at every boot.
+    command -v loginctl &>/dev/null && {{ quietly loginctl enable-linger "$ROOK_USER" || true; }}
+    # An earlier root run (`sudo -E`, older installers) may have left files of
+    # root's in their folder; theirs again, without following any links.
+    if [ -d "$uhome/.rook-band-worker" ] && [ ! -L "$uhome/.rook-band-worker" ]; then
+        chown -R -h -P "$ROOK_USER" "$uhome/.rook-band-worker" || true
+    fi
+    local envs=(HOME="$uhome" USER="$ROOK_USER" LOGNAME="$ROOK_USER" ROOK_YES=1
+                PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+                XDG_RUNTIME_DIR="/run/user/$uid")
+    local v
+    for v in ROOK_WORKER_NAME ROOK_BAND ROOK_HID LANG http_proxy https_proxy no_proxy \\
+             HTTP_PROXY HTTPS_PROXY NO_PROXY; do
+        [ -n "${{!v:-}}" ] && envs+=("$v=${{!v}}")
+    done
+    trap - EXIT
+    local rc=0
+    runuser -u "$ROOK_USER" -- env -i "${{envs[@]}}" bash "$tmp/install.sh" --yes </dev/null || rc=$?
+    rm -rf "$tmp"
+    if [ "$rc" -ne 0 ]; then
+        root_worker_present && say "The worker already installed for root was left running."
+        exit "$rc"
+    fi
+    # Only once the new worker is in: one machine, one worker.
+    if root_worker_present; then stop_root_worker || exit 1; fi
+    exit 0
+}}
+# A worker installed for root earlier (older installers made root-over-SSH
+# installs a lingering user service, or a plain background process).
+ROOT_PYZ="$HOME/.rook-band-worker/band-worker.pyz"
+ROOT_UNIT="$HOME/.config/systemd/user/rook-band-worker.service"
+root_worker_present() {{ [ -e "$ROOT_PYZ" ] || [ -e "$ROOT_UNIT" ]; }}
+root_worker_pids() {{ pgrep -u 0 -f -- "$ROOT_PYZ" 2>/dev/null || true; }}
+stop_root_worker() {{
+    say "Stopping the worker installed for root here, so this machine runs one worker..."
+    if [ -e "$ROOT_UNIT" ]; then
+        quietly env XDG_RUNTIME_DIR="${{XDG_RUNTIME_DIR:-/run/user/0}}" \\
+            systemctl --user disable --now rook-band-worker || true
+        # Never again at boot, even where root's user manager isn't reachable now.
+        rm -f "$HOME/.config/systemd/user/default.target.wants/rook-band-worker.service"
+        mv -f "$ROOT_UNIT" "$ROOT_UNIT.disabled" || true
+    fi
+    local pids
+    pids="$(root_worker_pids)"
+    if [ -n "$pids" ]; then
+        kill $pids 2>/dev/null || true
+        sleep 2
+        pids="$(root_worker_pids)"
+    fi
+    if [ -n "$pids" ]; then
+        say "ERROR: the root worker (process $pids) did not stop. Stop it with: sudo kill $pids"
+        return 1
+    fi
+    say "      Done: root's worker is stopped and won't start at boot. Its files stay in $HOME/.rook-band-worker; delete that folder when you no longer need it."
+}}
+if [ "$(id -u)" = 0 ] && [ "$IS_TERMUX" != "1" ]; then
+    if [ -n "${{ROOK_USER:-}}" ] && [ "$ROOK_USER" != root ]; then
+        install_for_user
+    fi
+    case "${{ROOK_ALLOW_ROOT:-}}" in
+        1|true|yes)
+            if root_worker_present; then
+                say "Updating the worker already installed for root here, in place."
+            fi
+            say "WARNING: installing as root (ROOK_ALLOW_ROOT=1). Every band command (shell, files, terminals) runs as root on this machine, and the worker starts again at every boot." ;;
+        *)
+            say "Not installed: this runs as root, so the worker would run every band command (shell, files, terminals) as root."
+            if root_worker_present; then
+                say "A worker is already installed for root here ($HOME/.rook-band-worker)."
+                say "To update that root worker in place, set ROOK_ALLOW_ROOT=1 and run the same command."
+                say "To move it to an everyday account, set ROOK_USER=<account>: once that account's worker is in, root's is stopped and disabled."
+            else
+                say "Install it for an everyday account instead: set ROOK_USER=<account> and run the same command (it runs as that account)."
+                say "Or, if root is really what you want (a container, say), set ROOK_ALLOW_ROOT=1."
+            fi
+            exit 1 ;;
+    esac
+fi
+
 install_curl
 
-echo "[rook] (1/6) Python: checking..."
+say "(1/6) Checking for Python 3..."
 PYTHON=""
 if command -v python3 &>/dev/null; then
     PYTHON=python3
@@ -575,37 +872,36 @@ else
     elif command -v python &>/dev/null; then
         PYTHON=python
     else
-        echo "[rook] ERROR: Python installation failed."
+        say "ERROR: Python could not be installed. Install Python 3.11 or newer, then run the same command again."
         exit 1
     fi
 fi
-
-echo "[rook] Python: $($PYTHON --version)"
+echo "Python: $($PYTHON --version 2>&1)" >> "$LOG"
 
 # Use a dedicated venv — sidesteps PEP 668 (externally-managed), missing system pip,
 # and --user path quirks. The venv always gets its own pip via ensurepip.
 VENV="$HOME/.rook-band-worker/venv"
-echo "[rook] (2/6) venv: preparing $VENV ..."
+say "(2/6) Preparing a private Python environment for the worker..."
 if [ ! -x "$VENV/bin/python" ]; then
-    echo "[rook] creating venv at $VENV ..."
-    if ! $PYTHON -m venv "$VENV" 2>/dev/null; then
+    if ! quietly $PYTHON -m venv "$VENV"; then
         # venv module missing — install it, then retry
-        if command -v apt-get &>/dev/null; then sudo apt-get install -y -qq python3-venv || true
-        elif command -v pacman &>/dev/null; then sudo pacman -Sy --noconfirm python || true
+        if command -v apt-get &>/dev/null; then quietly $SUDO apt-get install -y -qq python3-venv || true
+        elif command -v pacman &>/dev/null; then quietly $SUDO pacman -Sy --noconfirm python || true
         fi
-        $PYTHON -m venv "$VENV" || {{ echo "[rook] ERROR: could not create venv"; exit 1; }}
+        quietly $PYTHON -m venv "$VENV" || {{ say "ERROR: could not create the Python environment. Details: $LOG"; exit 1; }}
     fi
 fi
 VPY="$VENV/bin/python"
 
 # Ensure pip inside the venv (ensurepip is bundled with venv; belt-and-suspenders)
-"$VPY" -m ensurepip --upgrade &>/dev/null || true
-"$VPY" -m pip install --quiet --upgrade pip &>/dev/null || true
+quietly "$VPY" -m ensurepip --upgrade || true
+quietly "$VPY" -m pip install --quiet --upgrade pip || true
 
 # Install required dependencies into the venv (prebuilt wheels — no compiler needed)
-echo "[rook] (3/6) dependencies: installing with pip (the longest step)..."
-"$VPY" -m pip install --quiet pynacl aiohttp websockets cryptography || {{
-    echo "[rook] ERROR: dependency install failed. See output above."
+say "(3/6) Installing the libraries it needs (the longest step)..."
+quietly "$VPY" -m pip install --quiet pynacl aiohttp websockets cryptography || {{
+    say "ERROR: installing the libraries failed. Details: $LOG"
+    tail -n 15 "$LOG"
     exit 1
 }}
 
@@ -614,25 +910,31 @@ echo "[rook] (3/6) dependencies: installing with pip (the longest step)..."
 # open, so a re-run (upgrade, re-pairing) never leaves a half-written bundle
 # under a live worker or after a failed download. The old worker is NOT
 # stopped here: the service manager swaps it below (see the note there).
-echo "[rook] (4/6) bundle: downloading the worker..."
+say "(4/6) Downloading the worker..."
 PYZ="$HOME/.rook-band-worker/band-worker.pyz"
-mkdir -p "$HOME/.rook-band-worker"
 curl -fsSL {base}/band-worker.pyz -o "$PYZ.download"
 chmod +x "$PYZ.download"
 mv -f "$PYZ.download" "$PYZ"
-"$VPY" "$PYZ" --install-cli
+quietly "$VPY" "$PYZ" --install-cli
 
-WORKER_NAME="$(hostname 2>/dev/null || uname -n 2>/dev/null || cat /etc/hostname 2>/dev/null)"
+WORKER_NAME="${{ROOK_WORKER_NAME:-}}"
+[ -n "$WORKER_NAME" ] || WORKER_NAME="$(hostname 2>/dev/null || uname -n 2>/dev/null || cat /etc/hostname 2>/dev/null)"
 [ -z "$WORKER_NAME" ] && WORKER_NAME="${{HOSTNAME:-rook-worker}}"
-if [ "$IS_TERMUX" = "1" ]; then
+if [ "$IS_TERMUX" = "1" ] && [ -z "${{ROOK_WORKER_NAME:-}}" ]; then
     # Termux hostname is always "localhost" — use the device model instead.
     MODEL=$(getprop ro.product.model 2>/dev/null | tr ' ' '-')
     [ -n "$MODEL" ] && WORKER_NAME="$MODEL"
 fi
-echo "[rook] (5/6) enrollment: registering this machine with the band..."
-# stdin is the curl pipe, so enrollment (and any prompt) talks to the terminal.
-RC=0; "$VPY" "$PYZ" {enroll_args} </dev/tty || RC=$?
-{enroll_retry}[ "$RC" -eq 0 ] || {{ echo "[rook] ERROR: enrollment failed (exit code $RC) - see the message above."; exit "$RC"; }}
+# A derived name too goes into a command line: anything unusual becomes '-'.
+WORKER_NAME="$(printf '%s' "$WORKER_NAME" | tr -c 'A-Za-z0-9._-' '-')"
+say "(5/6) Joining the band as $WORKER_NAME..."
+# With a terminal, enrollment may ask (which band); without one it never does.
+enroll() {{
+    if [ "$HAVE_TTY" = 1 ]; then "$VPY" "$PYZ" "$@" --name "$WORKER_NAME" </dev/tty
+    else "$VPY" "$PYZ" "$@" --name "$WORKER_NAME" --yes </dev/null; fi
+}}
+RC=0; enroll {enroll_args} || RC=$?
+{enroll_retry}[ "$RC" -eq 0 ] || {{ say "ERROR: joining the band failed (exit code $RC) - see the message above."; exit "$RC"; }}
 
 # band: {band_name}
 WORKER_CMD="$VPY $PYZ --hub {hub_public} --ws --psk {band_psk} --name $WORKER_NAME --update-url {base}/band-worker.json"
@@ -645,13 +947,25 @@ WORKER_CMD="$VPY $PYZ --hub {hub_public} --ws --psk {band_psk} --name $WORKER_NA
 # in-process: we let the service manager own the stop+start (it finishes the
 # restart even if this script dies), and on no-service-manager hosts we launch
 # the new worker in its OWN session before reaping the old one.
-echo "[rook] (6/6) service: installing/replacing the band worker service..."
+say "(6/6) Starting the worker in the background..."
+
+# cloud-init, a systemd unit or an SSH session without a login session has no
+# user service manager yet. Lingering starts one now (and at every boot), so
+# the worker below gets a real service instead of a process that a reboot ends.
+if [ "$IS_TERMUX" != "1" ] && command -v systemctl &>/dev/null && command -v loginctl &>/dev/null \
+        && ! systemctl --user show-environment >/dev/null 2>&1; then
+    quietly loginctl enable-linger "$USER" || quietly $SUDO loginctl enable-linger "$USER" || true
+    export XDG_RUNTIME_DIR="${{XDG_RUNTIME_DIR:-/run/user/$(id -u)}}"
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        systemctl --user show-environment >/dev/null 2>&1 && break
+        sleep 1
+    done
+fi
 
 if [ "$IS_TERMUX" = "1" ]; then
     setup_termux_service
     # runit owns the swap; restarting is safe even if this script is the caller.
     sv restart rook-band-worker 2>/dev/null || sv up rook-band-worker 2>/dev/null || true
-    echo "[rook] Band worker (re)started via termux-services."
 elif command -v systemctl &>/dev/null && systemctl --user show-environment >/dev/null 2>&1; then
     mkdir -p ~/.config/systemd/user
     cat > ~/.config/systemd/user/rook-band-worker.service << ROOKSVC
@@ -668,21 +982,18 @@ RestartSec=10
 [Install]
 WantedBy=default.target
 ROOKSVC
-    systemctl --user daemon-reload
-    systemctl --user enable rook-band-worker >/dev/null 2>&1 || true
+    quietly systemctl --user daemon-reload
+    quietly systemctl --user enable rook-band-worker || true
     # Enable lingering so the service survives logout/reboot (best-effort)
-    loginctl enable-linger "$USER" 2>/dev/null || sudo loginctl enable-linger "$USER" 2>/dev/null || true
+    quietly loginctl enable-linger "$USER" || quietly $SUDO loginctl enable-linger "$USER" || true
     # Hand the swap to systemd. `restart` stops the old instance and starts the
     # new one from the unit above — owned by the user manager, NOT this script —
     # so it completes even if stopping the old worker kills this caller.
-    echo "[rook] (re)starting via systemd user service..."
     systemctl --user restart rook-band-worker
-    echo "[rook] Band worker RUNNING (systemd user service: rook-band-worker)."
 else
     # No service manager. Start the NEW worker in its own session FIRST (so it
     # survives even if reaping the old worker kills this script), then reap any
     # other band-worker processes except the one we just launched.
-    mkdir -p ~/.rook-band-worker
     setsid bash -c "exec $WORKER_CMD >> $HOME/.rook-band-worker/worker.log 2>&1" </dev/null >/dev/null 2>&1 &
     NEWPID=$!
     sleep 2
@@ -691,21 +1002,23 @@ else
         kill "$pid" 2>/dev/null || true
     done
     if kill -0 "$NEWPID" 2>/dev/null; then
-        echo "[rook] Band worker RUNNING in background (PID $NEWPID, own session). Log: ~/.rook-band-worker/worker.log"
+        say "      No service manager here: the worker runs until the next reboot (log: ~/.rook-band-worker/worker.log). Run this command again after a reboot."
     else
-        echo "[rook] ERROR: worker exited immediately. Check: ~/.rook-band-worker/worker.log"
+        say "ERROR: the worker stopped right after starting. Its log: ~/.rook-band-worker/worker.log"
         tail -n 20 ~/.rook-band-worker/worker.log 2>/dev/null
         exit 1
     fi
 fi
 
-# HID backend setup runs LAST, on purpose: the worker is already on the band, so a
+# Keyboard/mouse setup runs LAST, on purpose: the worker is already on the band, so a
 # slow/hung/failed ydotool install (e.g. a stalled pacman) can never strand it.
 # The worker detects its backend lazily on the first hid.* call, by which time
 # ydotool is installed — so no restart is needed.
 setup_hid_linux
 
-echo "[rook] Done: $WORKER_NAME is installed and joining the band. It will appear under Workers in the dashboard within a minute."
+BAND="$("$VPY" "$PYZ" --enrolled-band 2>/dev/null || true)"
+say "Done: $WORKER_NAME joined ${{BAND:-the band}}. It appears under Workers in the dashboard within a minute."
+say "To check on it from this machine, open a new terminal and run: rook status"
 '''
 
 
@@ -714,23 +1027,25 @@ echo "[rook] Done: $WORKER_NAME is installed and joining the band. It will appea
 # runs the code from the command the user copied; if that fails (most often
 # because the 5-minute code expired while Python/pip installed), ask for the
 # fresh code the dashboard is showing instead of making them start over.
-_PS_ENROLL_RETRY = r'''        while ($rc -ne 0) {
-            Write-Host "[rook] Enrollment failed. Pairing codes expire after 5 minutes; the dashboard shows a fresh one (Install page)."
+_PS_ENROLL_RETRY = r'''        # Only a person can type a fresh code.
+        while ($rc -ne 0 -and $interactive) {
+            Write-Host "[rook] Pairing codes work once and expire after 5 minutes; the dashboard's Install page shows a fresh one."
             $fresh = ""
             try { $fresh = "$(Read-Host '[rook] Type the new 6-character code to retry, or press Enter to stop')".Trim().ToLower() } catch {}
             if (-not $fresh) { break }
-            & $vpy $pyz --enroll __BASE__ --pair-code $fresh
+            & $vpy $pyz --enroll __BASE__ --pair-code $fresh @enrollExtra
             $rc = $LASTEXITCODE
         }
 '''
 
-_BASH_ENROLL_RETRY = r'''while [ "$RC" -ne 0 ]; do
-    echo "[rook] Enrollment failed. Pairing codes expire after 5 minutes; the dashboard shows a fresh one (Install page)."
+_BASH_ENROLL_RETRY = r'''# Only a person at a terminal can type a fresh code.
+while [ "$RC" -ne 0 ] && [ "$HAVE_TTY" = 1 ]; do
+    echo "[rook] Pairing codes work once and expire after 5 minutes; the dashboard's Install page shows a fresh one."
     printf '%s' "[rook] Type the new 6-character code to retry, or press Enter to stop: "
     FRESH=""; read -r FRESH </dev/tty || FRESH=""
     FRESH="$(printf '%s' "$FRESH" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
     [ -n "$FRESH" ] || break
-    RC=0; "$VPY" "$PYZ" --enroll __BASE__ --pair-code "$FRESH" </dev/tty || RC=$?
+    RC=0; enroll --enroll __BASE__ --pair-code "$FRESH" || RC=$?
 done
 '''
 # `curl -fsSL https://<host>/install | bash` — one installer, selectable target.
@@ -743,9 +1058,13 @@ BASE="${ROOK_BASE:-__BASE__}"
 DEST="${ROOK_BIN:-$HOME/.local/bin}"
 CONF="$HOME/.config/rook/band.conf"
 
+# A prompt needs a person at a terminal: /dev/tty must open (it exists but
+# can't be opened under cloud-init, systemd or CI) and ROOK_YES must be unset.
+has_tty() { [ -z "${ROOK_YES:-}" ] && { true </dev/tty; } 2>/dev/null; }
+
 TARGET="${1:-${ROOK_INSTALL:-}}"
 if [ -z "$TARGET" ]; then
-  if [ -r /dev/tty ]; then
+  if has_tty; then
     {
       echo "[rook] what do you want to install?"
       echo "  1) worker  — make this machine a band node (controlled remotely)"
@@ -764,7 +1083,7 @@ case "$TARGET" in tui|controller|dashboard) TARGET=cli;; node|agent) TARGET=work
 install_worker() {
   echo "[rook] installing band worker…"
   local JOIN_CODE="${ROOK_JOIN_CODE:-__JOIN_CODE__}"
-  if [ -z "$JOIN_CODE" ] && [ -r /dev/tty ]; then
+  if [ -z "$JOIN_CODE" ] && has_tty; then
     printf '[rook] pairing code, or Enter to sign in with Google/local account: ' > /dev/tty
     read -r JOIN_CODE < /dev/tty
   fi
@@ -812,7 +1131,7 @@ install_cli() {
   elif [ -n "${ROOK_WEB_PASS:-}" ]; then
     ( umask 077; printf '# rook band connection (chmod 600)\nurl=%s\nuser=%s\npass=%s\n' "$BASE" "${ROOK_WEB_USER:-__WEB_USER__}" "$ROOK_WEB_PASS" > "$CONF" )
     chmod 600 "$CONF"; echo "[rook] saved login (from ROOK_WEB_PASS)"
-  elif [ -r /dev/tty ]; then
+  elif has_tty; then
     WU="${ROOK_WEB_USER:-__WEB_USER__}"
     printf "[rook] dashboard password (user %s): " "$WU" > /dev/tty
     read -rs WP < /dev/tty || true; printf "\n" > /dev/tty
@@ -1024,7 +1343,8 @@ ask(){
   local __v="$1" __p="$2" __d="$3" __cur __in
   eval "__cur=\${$__v}"
   if [ -n "$__cur" ]; then return; fi
-  if [ -n "$ASSUME_YES" ] || [ ! -r /dev/tty ]; then eval "$__v=\$__d"; return; fi
+  # /dev/tty exists but can't be opened under cloud-init, systemd or CI.
+  if [ -n "$ASSUME_YES" ] || ! { true </dev/tty; } 2>/dev/null; then eval "$__v=\$__d"; return; fi
   printf "[hub] %s [%s]: " "$__p" "$__d" > /dev/tty
   read -r __in < /dev/tty || true
   [ -z "$__in" ] && __in="$__d"
@@ -1505,7 +1825,9 @@ class CombinedServer:
                 raise
             except Exception:
                 pass
-            return web.Response(text=self._login_page("Invalid credentials"), content_type="text/html")
+            return web.Response(text=self._login_page(
+                "That password is not right." if not self.web_user
+                else "That username and password are not right."), content_type="text/html")
 
         if request.path == "/login":
             return web.Response(text=self._login_page(), content_type="text/html")
@@ -1549,11 +1871,38 @@ class CombinedServer:
         )
 
     def _login_page(self, error: str = "") -> str:
+        """The dashboard sign-in form. A hub set up with a password only
+        (the installers' default, one operator) asks for just the password:
+        the username field is hidden, since any value would do. A
+        configured username keeps its field."""
         from .web_pages import render
         err = f'<p class="error" role="alert">{_html.escape(error)}</p>' if error else ""
-        return render("login.html", error=err)
+        if self.web_user:
+            field = ('<label>Username <input name="user" autofocus required '
+                     'autocomplete="username"></label>')
+            lead, focus = "Sign in to the dashboard.", ""
+        else:
+            # Hidden but present, so password managers still pair the saved
+            # password with this site.
+            field = '<input type="hidden" name="user" value="admin" autocomplete="username">'
+            lead, focus = "Enter the dashboard password to continue.", " autofocus"
+        return render("login.html", error=err, user_field=field, lead=lead, pass_focus=focus)
 
-    def _setup_page_html(self, error: str = "") -> str:
+    @staticmethod
+    def _setup_suggestions(request) -> dict:
+        """First-run defaults for the wizard's two addresses, from the
+        address the operator opened it at: on a single-process hub workers
+        reach the band on the dashboard's own port, and installers download
+        from it. Only ever a suggestion shown to the signed-in operator."""
+        if request is None or not request.host:
+            return {}
+        from .public_url import request_is_https
+        https = request_is_https(request)
+        host = request.host
+        hub = host if _re.search(r":\d+$", host) else f"{host}:{443 if https else 80}"
+        return {"hub_public": hub, "pyz_domain": f"{'https' if https else 'http'}://{host}"}
+
+    def _setup_page_html(self, error: str = "", request=None) -> str:
         from . import setup_store
         from .web_pages import render
         s = setup_store.load()
@@ -1566,15 +1915,16 @@ class CombinedServer:
         except Exception:
             log.warning("Setup wizard: reading the stored plugin choices failed", exc_info=True)
             states = None
+        hint = self._setup_suggestions(request)
         return render("setup.html", error=err, csrf=self._setup_csrf,
                       presets=setup_presets_html(states),
                       band_name=s.get("band_name") or self.band_name,
-                      hub_public=s.get("hub_public") or "",
-                      pyz_domain=s.get("pyz_domain") or "",
+                      hub_public=s.get("hub_public") or hint.get("hub_public", ""),
+                      pyz_domain=s.get("pyz_domain") or hint.get("pyz_domain", ""),
                       band_psk=current_key or setup_store.gen_psk())
 
     async def _setup_page(self, request: web.Request) -> web.Response:
-        return web.Response(text=self._setup_page_html(), content_type="text/html",
+        return web.Response(text=self._setup_page_html(request=request), content_type="text/html",
                             headers={"Cache-Control": "no-store"})
 
     async def _setup_submit(self, request: web.Request) -> web.Response:
@@ -1582,7 +1932,7 @@ class CombinedServer:
         from .accounts import csrf_ok
         data = await request.post()
         if not csrf_ok(data, self._setup_csrf):
-            return web.Response(text=self._setup_page_html("The form expired. Check the values and save again."),
+            return web.Response(text=self._setup_page_html("The form expired. Check the values and save again.", request),
                                 status=400, content_type="text/html", headers={"Cache-Control": "no-store"})
         vals = {
             "band_name": (data.get("band_name") or "").strip() or "rook-band",
@@ -1592,13 +1942,13 @@ class CombinedServer:
         }
         if not vals["hub_public"] or not vals["band_psk"] or not vals["pyz_domain"]:
             return web.Response(
-                text=self._setup_page_html("Public hub address, installer domain, and band PSK are all required."),
+                text=self._setup_page_html("Fill in both addresses and the band key.", request),
                 content_type="text/html",
                 headers={"Cache-Control": "no-store"},
             )
         primary = next((b for b in self._enrollment.bands(secrets_visible=True) if b["is_primary"]), None)
         if primary and (not primary["active"] or vals["band_psk"] != primary["psk"]):
-            return web.Response(text=self._setup_page_html("Use the Tokens page to replace or revoke the band PSK."),
+            return web.Response(text=self._setup_page_html("The band key can't be changed here: use the Tokens page to replace it.", request),
                                 status=400, content_type="text/html", headers={"Cache-Control": "no-store"})
         saved = setup_store.save(vals)
         # Apply live so the installer one-liners reflect the new band immediately.
@@ -1906,11 +2256,15 @@ class CombinedServer:
         if ws_url:
             script = script.replace('--enrolled --ws', f'--enrolled --ws --ws-url {ws_url}')
         script = script.replace(f' --update-url {base}/band-worker.json', '')
+        # The elevated relaunch (Windows) and a root install for ROOK_USER
+        # (Linux) fetch this same script again: keep the code.
+        query = 'login=google' if account_login else f'band={code}'
         if want_ps:
-            # The elevated relaunch fetches this same script again: keep the code.
-            query = 'login=google' if account_login else f'band={code}'
             script = script.replace(f'{base}/worker?os=windows',
                                     f'{base}/worker?{query}&os=windows')
+        else:
+            script = script.replace(f"SELF_URL='{base}/worker?os=unix'",
+                                    f"SELF_URL='{base}/worker?{query}&os=unix'")
         return web.Response(text=script, content_type="text/plain", headers=headers)
 
     async def _enroll_config(self, request: web.Request) -> web.Response:

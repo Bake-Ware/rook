@@ -8,13 +8,14 @@
 </head><body class="standalone-account"><main class="settings-workspace narrow">
 <h1>♖ Rook</h1>
 <section>
-<p class="muted">Band control panel. Sign in to continue.</p>
+<p class="muted">{{lead}}</p>
 {{error|raw}}
 <form method="POST" action="/login">
-<label>Username <input name="user" autofocus required autocomplete="username"></label>
-<label>Password <input name="pass" type="password" required autocomplete="current-password"></label>
+{{user_field|raw}}
+<label>Password <input name="pass" type="password" required autocomplete="current-password"{{pass_focus|raw}}></label>
 <button type="submit">Sign in</button>
 </form>
-<p><a href="/account/login">Google or personal account login</a></p>
+<p class="muted">The password was shown at the end of the hub's install.</p>
+<p><a href="/account/login">Sign in with Google or a personal account instead</a></p>
 </section>
 </main></body></html>
