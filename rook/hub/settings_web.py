@@ -39,6 +39,16 @@ def _home(svc):
     return plugin
 
 
+def _memory(svc):
+    """The memory hub plugin behind the Manage > Memory page."""
+    node = getattr(svc, "node", None)
+    plugin = node.plugin("memory") if node is not None else None
+    if plugin is None:
+        raise SettingsError("Memory is off on this hub. Turn it on under Manage > Plugins "
+                            "(hub plugin memory) or Settings > Memory.")
+    return plugin
+
+
 def routes(get_service, accounts):
     """``get_service()`` returns the live SettingsService (or None)."""
 
@@ -77,6 +87,8 @@ def routes(get_service, accounts):
                     data = _persona(svc).page()
                 elif view == "home":
                     data = _home(svc).page(svc)
+                elif view == "memory":
+                    data = _memory(svc).page()
                 elif view == "search":
                     data = {"results": svc.search(q.get("q", ""))}
                 elif view == "history":
@@ -117,9 +129,11 @@ def routes(get_service, accounts):
                 res = _persona(svc).page_action(data, actor)
             elif action in ("home_save", "home_models", "home_test"):
                 res = await _home(svc).page_action(svc, data, actor)
+            elif str(action or "").startswith("memory_"):
+                res = await _memory(svc).page_action(data, actor)
             else:
                 return _json({"error": "Use set, dry_run, reset, apply_worker, plugin or "
-                                       "persona_* or home_*"}, 400)
+                                       "persona_*, home_* or memory_*"}, 400)
             return _json(res)
         except PermissionError as e:
             return _json({"error": str(e)}, 403)
