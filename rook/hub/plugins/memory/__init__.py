@@ -478,6 +478,11 @@ class Memory(Plugin):
             out.update(self.list_memories(limit=50))
         return out
 
+    def _with_room(self, row: dict) -> dict:
+        if row.get("room"):
+            row["room_title"] = _room_title(self._node, row["room"])
+        return row
+
     async def page_action(self, data: dict, actor: str) -> dict:
         svc = self._svc()
         action = data.get("action")
@@ -491,7 +496,7 @@ class Memory(Plugin):
                                           limit=data.get("limit") or 50,
                                           offset=data.get("offset") or 0)
             if action == "memory_show":
-                return {"memory": svc.show(str(data.get("id") or ""))}
+                return {"memory": self._with_room(svc.show(str(data.get("id") or "")))}
             if action == "memory_add":
                 res = await svc.add(str(data.get("text") or ""), str(data.get("kind") or "fact"),
                                     about=data.get("about") or None, source="page",
@@ -516,6 +521,16 @@ class Memory(Plugin):
             raise ValueError(str(e).strip("'\"")) from None
         finally:
             core_context.caller_identity.reset(tok)
+
+
+def _room_title(node, rid: str) -> str | None:
+    """A chat room's title for the page (the id means nothing to a person)."""
+    store = getattr(node, "chat", None) if node is not None else None
+    try:
+        room = store._room(rid) if store is not None and rid else None
+    except Exception:  # noqa: BLE001 - a missing title is not an error
+        return None
+    return (room or {}).get("title") or None
 
 
 def _page_result(svc: MemoryService, res: dict) -> dict:
