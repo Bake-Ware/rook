@@ -87,7 +87,7 @@ class SettingsWeb(KnowledgeWeb):
     upstream limits non-operators to their own preferences (user scope)."""
     PATH = '/account/settings'
     UPSTREAM = ('ROOK_SETTINGS_ADMIN_URL', 'http://127.0.0.1:8765/settings/account-api')
-    ASSETS = ('settings-area.js', 'home.js', 'memory.js')
+    ASSETS = ('settings-area.js', 'home.js', 'memory.js', 'voice.js', 'llm.js')
     UNAVAILABLE = 'The settings service is unavailable (is the MCP server running?).'
     ADMIN_ONLY = False
     TIMEOUT = 30   # a worker page asks the worker for its plugins and config
@@ -101,6 +101,16 @@ class PluginsWeb(KnowledgeWeb):
     ASSETS = ('plugins.js',)
     UNAVAILABLE = 'The plugins service is unavailable (is the MCP server running?).'
     TIMEOUT = 60   # a band-wide switch waits on every worker it touches
+
+
+class UpdatesWeb(KnowledgeWeb):
+    """Manage > Updates: versions across the band, release notes, staged
+    rollouts and history. Operator account only, like the upstream."""
+    PATH = '/account/updates'
+    UPSTREAM = ('ROOK_UPDATES_ADMIN_URL', 'http://127.0.0.1:8765/updates/account-api')
+    ASSETS = ('updates.js',)
+    UNAVAILABLE = 'The update service is unavailable (is the MCP server running?).'
+    TIMEOUT = 300   # applying downloads and verifies the release first
 
 
 class ManualWeb(KnowledgeWeb):
@@ -158,3 +168,13 @@ class UiWeb(KnowledgeWeb):
         return web.FileResponse(path, headers={'Cache-Control': 'no-cache',
                                                'Content-Type': 'application/json',
                                                'X-Content-Type-Options': 'nosniff'})
+
+
+class CcmodWeb(KnowledgeWeb):
+    """Manage > Claude Code: rules for Claude Code on the workers, their
+    pushes and previews. Operator account only, like the upstream."""
+    PATH = '/account/ccmod'
+    UPSTREAM = ('ROOK_CCMOD_ADMIN_URL', 'http://127.0.0.1:8765/ccmod/account-api')
+    ASSETS = ('ccmod.js',)
+    UNAVAILABLE = 'The Claude Code rules service is unavailable (is the MCP server running?).'
+    TIMEOUT = 90   # a push waits on every worker it writes to

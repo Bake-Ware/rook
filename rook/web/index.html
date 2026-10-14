@@ -113,6 +113,9 @@
   button.danger.sm{padding:5px 11px;font-size:.72rem;border-radius:6px;cursor:pointer;
     background:var(--bad-bg);border:1px solid var(--bad-line);color:var(--bad)}
   button.danger.sm:hover{background:color-mix(in srgb,var(--bad) 18%,transparent);border-color:var(--bad)}
+  .tagold{margin-left:8px;padding:1px 6px;border:1px solid var(--bad-line);color:var(--bad);font-size:.62rem;letter-spacing:.5px;text-transform:uppercase;white-space:nowrap}
+  .update-note{margin:6px 0;padding:8px 10px;border:1px solid var(--bad-line);background:var(--bad-bg);color:var(--fg);font-size:.78rem;line-height:1.45}
+  .update-note a{color:var(--accent)}
   .banbadge{display:inline-block;margin-right:10px;font-size:.72rem;font-weight:600;color:var(--bad);
     letter-spacing:.03em;vertical-align:middle}
   .item.banned{opacity:.6} .item.banned .row{border-left:2px solid var(--bad)}
@@ -155,6 +158,8 @@
   .install{max-width:760px}
   .install h2{font-size:1rem;color:var(--fg);margin:0 0 4px}
   .install p{color:var(--dim);font-size:.85rem;margin:0 0 16px}
+  .install p.install-after{font-size:.8rem;margin:10px 0 14px}
+  .install-after code{color:var(--fg)}
   .cmd{position:relative;background:var(--panel2);border:1px solid var(--line);border-radius:9px;
     padding:12px 14px;margin:0 0 12px;font-size:.84rem;color:var(--accent);white-space:pre-wrap;word-break:break-all}
   .cmd .lbl{color:var(--dim);font-size:.68rem;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:6px}
@@ -348,11 +353,15 @@
       <a id="tab-install" href="#install" onclick="showView('install');return false">Install a worker</a>
       <a id="tab-settings" href="#settings" onclick="showView('settings');return false">Settings</a>
       <a id="tab-plugins" href="#plugins" onclick="showView('plugins');return false">Plugins</a>
+      <a id="tab-ccmod" href="#ccmod" onclick="showView('ccmod');return false">Claude Code</a>
+      <a id="tab-updates" href="#updates" onclick="showView('updates');return false">Updates</a>
       <a id="tab-account" href="#account" onclick="showView('account');return false">Account & access</a>
       <a id="tab-tokens" href="#tokens" onclick="showView('tokens');return false">API tokens</a>
       <a id="tab-guidance" href="#guidance" onclick="showView('guidance');return false">Agent instructions</a>
       <a id="tab-vault" href="#vault" onclick="showView('vault');return false">Secrets</a>
       <a id="tab-home" href="#home" onclick="showView('home');return false">Home agent</a>
+      <a id="tab-voice" href="#voice" onclick="showView('voice');return false">Voice</a>
+      <a id="tab-models" href="#models" onclick="showView('models');return false">Model providers</a>
       <a id="tab-memory" href="#memory" onclick="showView('memory');return false">Memory</a>
     </nav>
     <nav aria-label="Help" class="nav-help">
@@ -432,9 +441,13 @@
     <div id="view-guidance" hidden></div>
     <div id="view-vault" hidden></div>
     <div id="view-home" hidden></div>
+    <div id="view-voice" hidden></div>
+    <div id="view-models" hidden></div>
     <div id="view-memory" hidden></div>
     <div id="view-settings" hidden></div>
     <div id="view-plugins" hidden></div>
+    <div id="view-ccmod" hidden></div>
+    <div id="view-updates" hidden></div>
     <div id="view-account" hidden></div>
     <div id="view-tokens" hidden></div>
     <div id="view-bands" hidden><p class="empty">Loading bands…</p></div>
@@ -496,10 +509,12 @@
         <details class="pair-presets" id="install-presets" ontoggle="window.loadPresetStep&&loadPresetStep(this)"><summary>1. What should new workers do? (optional: your band's defaults apply otherwise)</summary><div class="preset-host"></div></details>
         <div class="pair-start"><span class="pair-step">2.</span><button class="iconbtn" id="install-pairing-btn" onclick="startPairing('install-pairing',this)">Get a pairing code</button><span class="pair-msg" id="install-pairing-msg" role="status"></span></div>
         <div class="mg pairing-host" id="install-pairing"></div>
+        <p class="install-after">Once it has joined, run <code>rook status</code> on that machine to see how it is doing, or <code>rook doctor</code> if it doesn't show up under Workers.</p>
         <details class="pair-manual"><summary>Commands with a placeholder code</summary>
         <div class="cmd"><span class="lbl">Linux / macOS</span><span id="cmd-unix"></span></div>
         <div class="cmd"><span class="lbl">Windows (PowerShell)</span><span id="cmd-win"></span></div>
         <div class="cmd"><span class="lbl">Termux / Android</span><span id="cmd-termux"></span></div>
+        <p class="install-after">Installing without anyone at the keyboard (cloud-init, a script, a management tool)? Add <code>-s -- --yes</code> after <code>bash</code>, or on Windows set <code>$env:ROOK_YES = "1"</code> first in an administrator PowerShell (the user's own, not SYSTEM). Nothing will prompt. As root (cloud-init), also put <code>ROOK_USER=&lt;account&gt;</code> before <code>bash</code>: the worker then runs as that account instead of as root.</p>
         </details>
         <div class="ilinks">
           <a href="/apk">⬇ Android APK</a>
@@ -783,7 +798,7 @@ function updateMeta(m,w){
   // What it hosts (hand-written on the hub): links on expand.
   const hsig=JSON.stringify(w.serves||null);
   if(hsig!==m.hostingSig){ m.hostingSig=hsig; m.hosting.replaceChildren(hostingBox(w)); }
-  m.wrap.querySelector('.name').innerHTML=deviceIcon(w)+`<span class="n">${esc(w.name||w.worker_id)}</span><span class="id">${esc(w.worker_id.slice(0,8))}</span>`+(fw?'<span class="tagfw">firmware</span>':'')+(w.description?'<span class="worker-description">'+esc(w.description)+'</span>':'');
+  m.wrap.querySelector('.name').innerHTML=deviceIcon(w)+`<span class="n">${esc(w.name||w.worker_id)}</span><span class="id">${esc(w.worker_id.slice(0,8))}</span>`+(fw?'<span class="tagfw">firmware</span>':'')+(w.update_note?'<span class="tagold" title="'+esc(w.update_note)+'">update needed</span>':'')+(w.description?'<span class="worker-description">'+esc(w.description)+'</span>':'');
   const caps=w.caps||[], has=c=>caps.includes(c);
   if(!m.acts.firstChild){
     const button=document.createElement('button');button.className='worker-menu-button';button.textContent='⋯';
@@ -798,6 +813,15 @@ function updateMeta(m,w){
   if(!!w.banned!==m.bannedSig){ m.bannedSig=!!w.banned;
     m.wrap.classList.toggle('banned',!!w.banned);
     m.banrow.innerHTML = w.banned?'<span class="banbadge">⛔ deauthed</span>':'';
+  }
+  // Too old for this hub, or for a pending breaking update (rook/hub/update_feed.py):
+  // a tag by the name, the full sentence (with a link to Updates) when expanded.
+  if((w.update_note||'')!==m.noteSig){ m.noteSig=w.update_note||'';
+    m.wrap.classList.toggle('too-old',!!w.update_note);
+    let n=m.banrow.parentNode.querySelector('.update-note');
+    if(w.update_note){ if(!n){n=document.createElement('div');n.className='update-note';m.banrow.before(n);}
+      n.innerHTML=esc(w.update_note).replace('Manage &gt; Updates','<a href="#updates" onclick="event.stopPropagation();showView(\'updates\');return false">Manage &gt; Updates</a>'); }
+    else if(n) n.remove();
   }
   m.bar.title=w.name||w.worker_id;
 }
@@ -1108,9 +1132,13 @@ const viewInfo={
  vault:['Secrets','Credentials your agents can use, with every access logged.'],
  guidance:['Agent instructions','What Rook tells agents when they connect, list tools, and call capabilities.'],
  home:['Home agent','The hub\'s own LLM: who it is, which model it runs, and what it has been asked.'],
+ voice:['Voice','Talk to your agents from phones, the desktop app and a browser, through this hub.'],
+ models:['Model providers','The language models this hub can use: for the home agent, memory and voice.'],
  memory:['Memory','What the home agent remembers about people, your home, past conversations and how to do things.'],
  settings:['Settings','Hub, band, worker, plugin and personal settings, with where each value comes from.'],
  plugins:['Plugins','What Rook can do on the hub and on each worker: switch plugins live, set defaults for new workers.'],
+ ccmod:['Claude Code','Rules for Claude Code on your workers: when something happens in a session, do something.'],
+ updates:['Updates','New Rook releases for the hub, your workers, apps and devices: what each one runs, and updating them safely.'],
  work:['Work','Projects and tasks on a board, a list and a timeline, and the huddle where agents check in with you.'],
  sessions:['Sessions','Start, watch, steer and resume agent and terminal sessions on every worker.'],
  install:['Install a worker','Connect another machine to your workspace.'],
@@ -1154,6 +1182,17 @@ async function ensureHome(){
  if(!homeLoading)homeLoading=import('/account/settings/assets/home.js').then(m=>m.mountHome($('#view-home'))).then(ui=>homeUI=ui).finally(()=>{homeLoading=null;});
  return homeLoading;
 }
+let voiceUI=null, voiceLoading=null, modelsUI=null, modelsLoading=null;
+async function ensureVoice(){
+ if(voiceUI)return voiceUI;
+ if(!voiceLoading)voiceLoading=import('/account/settings/assets/voice.js').then(m=>m.mountVoice($('#view-voice'))).then(ui=>voiceUI=ui).finally(()=>{voiceLoading=null;});
+ return voiceLoading;
+}
+async function ensureModels(){
+ if(modelsUI)return modelsUI;
+ if(!modelsLoading)modelsLoading=import('/account/settings/assets/llm.js').then(m=>m.mountModels($('#view-models'))).then(ui=>modelsUI=ui).finally(()=>{modelsLoading=null;});
+ return modelsLoading;
+}
 let memoryUI=null, memoryLoading=null;
 async function ensureMemory(){
  if(memoryUI)return memoryUI;
@@ -1171,6 +1210,18 @@ async function ensurePlugins(){
  if(pluginsUI)return pluginsUI;
  if(!pluginsLoading)pluginsLoading=import('/account/plugins/assets/plugins.js').then(m=>m.mountPlugins($('#view-plugins'))).then(ui=>pluginsUI=ui).finally(()=>{pluginsLoading=null;});
  return pluginsLoading;
+}
+let ccmodUI=null, ccmodLoading=null;
+async function ensureCcmod(){
+ if(ccmodUI)return ccmodUI;
+ if(!ccmodLoading)ccmodLoading=import('/account/ccmod/assets/ccmod.js').then(m=>m.mountCcmod($('#view-ccmod'))).then(ui=>ccmodUI=ui).finally(()=>{ccmodLoading=null;});
+ return ccmodLoading;
+ }
+let updatesUI=null, updatesLoading=null;
+async function ensureUpdates(){
+ if(updatesUI)return updatesUI;
+ if(!updatesLoading)updatesLoading=import('/account/updates/assets/updates.js').then(m=>m.mountUpdates($('#view-updates'))).then(ui=>updatesUI=ui).finally(()=>{updatesLoading=null;});
+ return updatesLoading;
 }
 function settingsQuery(){const [view,query]=location.hash.slice(1).split('?');return view==='settings'?(query||''):'';}
 async function ensureGuidance(){
@@ -1239,8 +1290,11 @@ function showView(v,updateHistory=true){
  if(activeView==='knowledge')knowledgeUI?.deactivate();
  if(activeView==='jobs')jobsUI?.deactivate();
  if(activeView==='home')homeUI?.deactivate();
+ if(activeView==='voice')voiceUI?.deactivate();
  if(activeView==='memory')memoryUI?.deactivate();
  if(activeView==='plugins')pluginsUI?.deactivate();
+ if(activeView==='ccmod')ccmodUI?.deactivate();
+ if(activeView==='updates')updatesUI?.deactivate();
  if(activeView==='overview')overviewUI?.deactivate();
  if(activeView==='start')startUI?.deactivate();
  activeView=v;document.body.dataset.view=v;
@@ -1252,8 +1306,12 @@ function showView(v,updateHistory=true){
  document.title=viewInfo[v][0]+' · Rook';$('#worker-controls').hidden=v!=='workers';$('#worker-stats').hidden=v!=='workers';$('#addband-form').hidden=true;
  if(v==='chat'){startChat();}else{stopChat();}
  if(v==='settings')ensureSettingsArea().then(ui=>{if(activeView==='settings')return ui.activate(settingsQuery());}).catch(e=>{$('#view-settings').textContent=e.message;});
+ if(v==='ccmod')ensureCcmod().then(ui=>{if(activeView==='ccmod')return ui.activate();}).catch(e=>{$('#view-ccmod').textContent=e.message;});
+ if(v==='updates')ensureUpdates().then(ui=>{if(activeView==='updates')return ui.activate();}).catch(e=>{$('#view-updates').textContent=e.message;});
  if(v==='plugins')ensurePlugins().then(ui=>{if(activeView==='plugins')return ui.activate();}).catch(e=>{$('#view-plugins').textContent=e.message;});
  if(v==='vault')ensureVault().then(ui=>{if(activeView==='vault')ui.activate();}).catch(e=>{$('#view-vault').textContent=e.message;});
+ if(v==='voice')ensureVoice().then(ui=>{if(activeView==='voice')ui.activate();}).catch(e=>{$('#view-voice').textContent=e.message;});
+ if(v==='models')ensureModels().then(ui=>{if(activeView==='models')ui.activate();}).catch(e=>{$('#view-models').textContent=e.message;});
  if(v==='home')ensureHome().then(ui=>{if(activeView==='home')ui.activate();}).catch(e=>{$('#view-home').textContent=e.message;});
  if(v==='memory')ensureMemory().then(ui=>{if(activeView==='memory')ui.activate();}).catch(e=>{$('#view-memory').textContent=e.message;});
  if(v==='guidance')ensureGuidance().then(ui=>{if(activeView==='guidance')ui.activate();}).catch(e=>{$('#view-guidance').textContent=e.message;});

@@ -61,6 +61,15 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | Cap | Args | Risk | Does |
 |---|---|---|---|
 | `caps.describe` | prefix='' | read | Arg schema, docstring and declared risk/limit/fields for every hub cap. |
+| `ccmod.activity` | limit=50 | read | What the rules did recently: posts, notifications, capability runs. |
+| `ccmod.delete` | id, note='' | admin | Delete a rule (push afterwards to take it off the workers). |
+| `ccmod.get` | id | read | One rule. |
+| `ccmod.history` | id='', limit=20 | read | Attributed changes to the rules, newest first (`id`: one rule). |
+| `ccmod.list` | — | read | Every Claude Code rule, with a one-line summary and its risk tier. |
+| `ccmod.preview` | worker, remove=false | admin | What a push would write on `worker`: per settings file, the action and a unified diff (nothing is written). |
+| `ccmod.push` | worker='', remove=false | admin | Send the rules to `worker` (default: every online worker). |
+| `ccmod.set` | rule, note='', dry_run=false, expect_rev? | admin | Create or replace a rule. |
+| `ccmod.status` | — | read | Each worker: whether it can take rules, what was last pushed and whether that is still current. |
 | `chat.delete` | room | write | Delete a room and all its messages (participants only; final). |
 | `chat.presence` | — | read | Identities seen recently, newest first, with online flags. |
 | `chat.read` | action='rooms', room?, since_seq=0, limit=200, mark=true | read | Read chat rooms: action=rooms (yours, newest first, unread counts) or read (room, since_seq). |
@@ -87,6 +96,9 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `job.write` | action, id?, data? | write | Write jobs: create\|update\|delete\|enable\|disable\|run\|cancel\|set_guardrails\|settings. |
 | `knowledge.read` | action='search', band?, id?, query='', data? | read | Read the shared wiki: search\|get\|list\|context\|status\|bands\|deck. |
 | `knowledge.write` | action, band?, id?, data?, request_id? | write | Write the shared wiki: create\|update\|link\|retract (needs request_id). |
+| `llm.check` | provider='' | read | llm.check — whether a provider (or every one) answers, with latency. |
+| `llm.models` | provider, live=false | read | llm.models — model ids one provider offers (live=true asks its /models). |
+| `llm.providers` | fields? | read | llm.providers — the model providers this hub can use: id, kind, host, offered models, last check. |
 | `manual.get` | id, source='auto' | read | One manual page by id (`getting-started`; `manual-` prefix optional): title and Markdown body. |
 | `manual.list` | source='auto' | read | The manual's table of contents: id, title, since, deprecated, preview, and whether the page is read from the… |
 | `manual.status` | — | read | The bundled manual and its knowledge copy: version, page count, what an update would add, change and remove (… |
@@ -130,6 +142,14 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `task.write` | action, kind='task', band?, id?, data?, request_id? | write | Write tasks/projects/concepts: create\|update\|link\|retract\|claim\|release\|note\|batch. |
 | `telegram.send` | text, chat? | write | Post a message to the configured Telegram chat. |
 | `telegram.status` | — | read | Telegram integration status: connected, chat and token configured (never the token), bridged rooms, counters… |
+| `updates.apply_hub` | tag | admin | Update the hub to release `tag` (restarts it). |
+| `updates.check` | — | admin | Check GitHub for new releases now. |
+| `updates.history` | n=30 | read | Recent update events: hub updates, rollouts, rollbacks, APK publishes. |
+| `updates.rollout` | workers?, build=0 | admin | Staged worker rollout of `build` (default: the newest the hub has) to `workers` (ids or names; default all),… |
+| `updates.status` | — | read | Hub version against the newest release, how many workers are behind, the running rollout, and the mode/channe… |
+
+### Claude Code rules
+Hub-managed triggers and actions for Claude Code on the workers (dashboard: Manage > Claude Code). `rook_call(worker="rook", cap="ccmod.list")` lists them; `ccmod.status` shows what each worker holds. Changing or pushing rules writes people's Claude Code settings: ask the user first.
 
 ### chat rooms
 Persistent rooms shared by agents, people and workers. MCP: `rook_chat_*`. Over the band, on worker `rook`: `chat.read` (action rooms|read), `chat.write` (action start|send), `chat.delete`, `chat.presence`. Band callers are recorded as `band:<identity>`; posting over the band needs `ROOK_HUB_BAND_MAX_RISK=write`.
@@ -154,6 +174,9 @@ Scheduled, branching work the hub runs. `rook_jobs(action="describe_schema")` gi
 
 ### knowledge
 The shared wiki. Use the `rook_knowledge` tool: `search` before starting (5 hits, each with the passage that matched and its `section`; `data.limit`/`data.fields` for more), `get` a page by id or slug (its [[links]], backlinks and semantically `related` pages come as `{slug, title, gist}` stubs: get one by slug, no new search), `create` a page with a unique `request_id`. Over the band the same actions are `knowledge.read` (search/get/list/context/status/bands) and `knowledge.write` (create/update/link/retract) on worker `rook`; band callers reach only the read cap by default. Semantic search needs an embedding service (setting `embedder`).
+
+### model providers
+The language models this hub can reach: `llm.providers` (ids, hosts, models), `llm.models(provider=…)`, `llm.check(provider=…)` on worker `rook`. Read only; the home agent uses one of them.
 
 ### manual
 The Rook user manual (plain-language help for every feature). In the knowledge wiki it is the page `rook-manual` and its children `manual-<topic>`; `manual.list` and `manual.get(id)` on worker `rook` read it even when the wiki is off. Check it before explaining a Rook feature to a person.
@@ -184,6 +207,9 @@ Tasks, projects and concepts. Use `rook_task(action="deck")` to see what is on; 
 
 ### telegram
 When the Telegram integration is on: `telegram.send` (text) posts to the configured chat; `telegram.status` shows whether it is connected. Prefer `notify.send` to reach every configured channel.
+
+### updates
+`updates.status` on worker `rook`: hub version vs the newest release, workers behind, the running rollout. Applying updates (`updates.apply_hub`, `updates.rollout`) is for operators: ask the person who runs the hub first.
 <!-- END GENERATED: hub-caps -->
 
 ## Worker capabilities
@@ -218,6 +244,15 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 |---|---|---|
 | `camera.list` | — | List the cameras on this worker (use one as the `camera` arg to snap). |
 | `camera.snap` | camera=0, quality=85, resolution='1280x720' | Capture a still JPEG from a camera. |
+
+**ccmod**
+
+| Cap | Args | Does |
+|---|---|---|
+| `ccmod.apply` | config, dry_run=false | Put the hub's Claude Code rules into effect here (the hub pushes them). |
+| `ccmod.events` | after=0, wait=0, boot='' | Hook events for the hub's remote actions, those after `after` (from this `boot`; a different boot starts over… |
+| `ccmod.remove` | dry_run=false | Take Rook's managed hooks and status line out of every Claude Code installation here and delete the rules (th… |
+| `ccmod.status` | — | Which Claude Code installations here carry Rook's managed hooks, and the revision of the rules this worker ho… |
 
 **cec**
 

@@ -40,6 +40,9 @@ curl -fsSL https://<your-hub>/install | bash -s -- cli
 `rook --help` lists them:
 
 - `rook` or `rook band` (also `rook tui`): the terminal dashboard.
+- `rook status`, `rook doctor`, `rook ask`, `rook plugins`, `rook logs`,
+  `rook pair`, `rook login` and more: look after the machine you are on and
+  talk to the band from it, see [[manual-worker-commands]].
 - `rook worker`: run the worker by hand (the installers set it up as a
   service). `rook worker --help` lists its options.
 - `rook sessions` (also `rook history`): browse Claude Code history on this

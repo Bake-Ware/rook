@@ -949,37 +949,49 @@ TCP_PORTS="$DASHBOARD_PORT"
 [ "$MCP_PORT" = off ] || TCP_PORTS="$DASHBOARD_PORT and $MCP_PORT"
 if [ "$USE_SYSTEMD" = 1 ]; then
   if [ "$MODE" = system ]; then
-    MANAGE="sudo systemctl status 'rook-*'    logs: sudo journalctl -u 'rook-*' -f"
+    MANAGE="sudo systemctl status 'rook-*'    (logs: sudo journalctl -u 'rook-*' -f)"
   else
-    MANAGE="systemctl --user status 'rook-*'    logs: journalctl --user -u 'rook-*' -f"
+    MANAGE="systemctl --user status 'rook-*'    (logs: journalctl --user -u 'rook-*' -f)"
   fi
 else
-  MANAGE="logs: $DATA_DIR/logs/    (background processes: re-run this installer after a reboot)"
+  MANAGE="logs in $DATA_DIR/logs/  (after a reboot, run this installer again to start it)"
 fi
+PORT_WORD="port"; [ "$TCP_PORTS" = "$DASHBOARD_PORT" ] || PORT_WORD="ports"
+# Plain words first: the person reading this may never have run a server.
+# The agent (MCP) details and upkeep come after the next steps.
 cat <<EOF
 
-[rook] The Rook hub is running.
+[rook] Your Rook hub is running.
 
   Dashboard   $DOMAIN
-  Password    $WEB_PASS      (any username)
-  MCP         $MCP_URL    bearer token: ROOK_MCP_STATIC_TOKEN in $SECRETS_ENV
+  Password    $WEB_PASS
+              (keep it safe; it is also saved in $SECRETS_ENV)
 
-Next: open $DOMAIN, sign in with the password above, go to
-"Install a worker" and click "Get a pairing code". Run the command it shows on
-each machine you want to add. For other machines to reach this one, allow TCP
-$TCP_PORTS through its firewall (and UDP $RELAY_PORT for workers that join the
-relay directly with --hub <this-ip>:$RELAY_PORT).
+Next steps
+  1. Open $DOMAIN in a web browser and enter the password above.
+  2. Go to "Install a worker" and click "Get a pairing code".
+  3. Run the command it shows on each computer you want to add.
 
-  Manage      $MANAGE
-  Settings    $HUB_ENV    (secrets: $SECRETS_ENV)
-  Upgrade     re-run this installer
-  Uninstall   curl -fsSL https://raw.githubusercontent.com/$ROOK_REPO/master/scripts/install-hub.sh | bash -s -- --uninstall
+  Other computers reach this one on TCP $PORT_WORD $TCP_PORTS. If they can't
+  connect, allow that in this machine's firewall.
+
+Connecting AI agents (Claude Code and others)
+  Address       $MCP_URL
+  Access token  ROOK_MCP_STATIC_TOKEN in $SECRETS_ENV
+
+Looking after the hub
+  Status        $MANAGE
+  Settings      $HUB_ENV
+  Upgrade       run this installer again (your data and passwords are kept)
+  Uninstall     curl -fsSL https://raw.githubusercontent.com/$ROOK_REPO/master/scripts/install-hub.sh | bash -s -- --uninstall
+  Advanced      workers can also join the relay directly on UDP $RELAY_PORT
+                (rook worker --hub <this machine's address>:$RELAY_PORT)
 EOF
 if [ "$MODE" = user ] && [ "$USE_SYSTEMD" = 1 ] && command -v loginctl >/dev/null 2>&1; then
   if [ "$(loginctl show-user "$SVC_USER" -p Linger --value 2>/dev/null || true)" != yes ]; then
     cat <<EOF
 
-  Note: user services stop when you log out. To keep the hub running, run once:
+  Note: the hub stops when you log out. To keep it running, run this once:
       sudo loginctl enable-linger $SVC_USER
 EOF
   fi

@@ -88,6 +88,11 @@ The hub can keep a short list of the websites and services each machine hosts
 and agents see them in the worker list. Agents and administrators set them with
 the `serves.*` capabilities on the hub.
 
+## Checking a machine from the machine itself
+
+At the machine, `rook status` shows how its worker is doing and `rook doctor`
+finds common problems and says how to fix them. See [[manual-worker-commands]].
+
 ## Worker settings
 
 The `worker.*` capabilities (restart, reconfigure, plugin switches, updates)

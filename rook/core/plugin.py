@@ -660,6 +660,14 @@ class Plugin:
         settings schema can gate loading."""
         return True
 
+    def unavailable_reason(self) -> str:
+        """Why :meth:`available` returned False, in plain words for the
+        Plugins page and ``worker.plugin.list`` ("Needs the voice extras:
+        pip install 'rook[voice]'"). Read only after ``available()`` said no;
+        the default (empty) keeps the generic note. Optional: hosts that
+        predate it ignore it."""
+        return ""
+
     def heartbeat(self) -> dict | None:
         """Optional compact status merged into the worker's announce (~every
         30s) under this plugin's namespace, so live state (battery level,

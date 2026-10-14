@@ -5,7 +5,9 @@ name: Release
 #   1. dist     verifies the pinned relay archives (build provenance + the
 #               hashes committed in rook/_release.py), builds the sdist + wheel
 #               (version from the tag, build name stamped by
-#               tools/release_prep.py) and the telesthete wheel they pin;
+#               tools/release_prep.py) and the telesthete wheel they pin, and
+#               writes release.json (compat floors, breaking flag) for the
+#               hubs' update service, beside a copy of scripts/install-hub.sh;
 #   2. publish  a GitHub *prerelease* with those files and SHA256SUMS, with
 #               build provenance attestations;
 #   3. docker   ghcr.io/bake-ware/rook:<version> for linux/amd64 + linux/arm64;
@@ -26,6 +28,13 @@ on:
       tag:
         description: Existing tag to (re)release, e.g. v0.2.0
         required: true
+      breaking:
+        description: Mark the release breaking (hubs ask the operator before applying it)
+        type: boolean
+        default: false
+      breaking_note:
+        description: Why it is breaking, in plain words
+        default: ""
 
 permissions:
   contents: read
@@ -115,10 +124,29 @@ jobs:
             echo "build_name=$name"
             echo "prerelease=$pre"
           } >> "$GITHUB_OUTPUT"
+      # The last release's metadata: a compat floor raised since then makes
+      # this release breaking (rook/hub/release_meta.py). None yet is fine.
+      - name: Previous release metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          latest="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName 2>/dev/null || true)"
+          if [ -n "$latest" ] && [ "$latest" != "$TAG" ]; then
+            gh release download "$latest" --repo "$GITHUB_REPOSITORY" -p release.json -D prev-release \
+              || echo "no release.json in $latest"
+          fi
       - name: Build sdist and wheel
+        env:
+          BREAKING: ${{ inputs.breaking && '1' || '' }}
+          BREAKING_NOTE: ${{ inputs.breaking_note }}
         run: |
           python -m build -o dist
           cp telesthete-dist/*.whl dist/
+          cp scripts/install-hub.sh dist/install-hub.sh
+          python tools/release_prep.py --release-json dist/release.json \
+            --previous-release-json prev-release/release.json \
+            ${BREAKING:+--breaking} ${BREAKING_NOTE:+--breaking-note "$BREAKING_NOTE"}
+          cat dist/release.json
           (cd dist && sha256sum ./* | sed 's#  \./#  #' > SHA256SUMS && cat SHA256SUMS)
       - name: Check the wheel is self-contained and carries the relay pin
         run: |
@@ -171,6 +199,8 @@ jobs:
           subject-path: |
             dist/*.whl
             dist/*.tar.gz
+            dist/release.json
+            dist/install-hub.sh
       # Always a prerelease first: `latest` (what the installer and
       # releases/latest resolve) moves only in the promote job, after the
       # image and the install test passed.

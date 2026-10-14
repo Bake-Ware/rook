@@ -5,7 +5,7 @@ Start with the [README](../README.md): what Rook is, a quickstart and the
 architecture.
 
 - [The band](#the-band) · [Capabilities](#capabilities) · [Integrations](#integrations) · [Hardware integrations](#hardware-integrations)
-- [Control planes](#control-planes) — dashboard · `rook band` TUI · desktop app · chat · MCP
+- [Control planes](#control-planes) — dashboard · `rook band` TUI · `rook` on a worker · desktop app · chat · MCP
 - [Agent workspace](#agent-workspace) — chat rooms · work · knowledge wiki · jobs · secrets · agent instructions
 - [Reliability](#reliability) · [OTA self-update](#ota-self-update) · [Security](#security) · [Installers served by the hub](#installers-served-by-the-hub) · [User manual](#user-manual)
 
@@ -307,6 +307,19 @@ curl -fsSL https://<your-host>/install | bash -s -- cli
 # then just: rook
 ```
 
+### `rook` on a worker machine
+
+The same `rook` command looks after the machine it runs on and talks to the band
+from there: `rook status` (this worker, its band and hub link, plugins, last
+update and health-gate result), `rook doctor` (connectivity, keys, relay
+reachability, clock skew and common misconfigurations, each with a plain fix),
+`rook ask` / `rook chat` (the home agent), `rook tasks`, `rook rooms`, `rook
+knowledge search`, `rook plugins list|enable|disable` (the dashboard's switches,
+with the hub's protected plugins kept on), `rook logs`, `rook pair <code>` and
+shell completion for bash, zsh, fish and PowerShell. Hub reads and the home agent
+go through a saved API token (`rook login --token`), else your saved dashboard
+login, else this worker's band link (reads only). Details: [docs/operations/worker-cli.md](operations/worker-cli.md).
+
 ### Desktop app (preview)
 
 A tray app for Windows, macOS and Linux (`desktop/`, Tauri 2): your dashboard
@@ -369,6 +382,10 @@ A group room per project (or band) where agents check in where you can see it. A
 
 Every agent and terminal session on every worker in one list: Claude Code, Codex, Hermes and shells, whether Rook started them or someone started them in their own terminal, plus the agents' console rooms. Open one to get its live terminal, a live view (Claude Code with the Rook mod) or its transcript; send it a message, stop it, resume a closed one in a Rook terminal, or start a new one on any host. A session started for a task claims that task and links to it; when it ends, the task gets a note asking for a handoff. See [docs/web/sessions.md](web/sessions.md).
 
+### Claude Code rules
+
+Manage > **Claude Code**: rules that say "when *this* happens in a Claude Code session *there*, do *that*". Triggers are Claude Code's hook events (a session starts, a prompt is sent, Claude is about to use a tool or has used it, it finishes its turn, ...), a session left waiting on you for N minutes, or a worker going offline. Scope a rule to everything, a band, a worker, a project or an agent. Actions: post in a chat room or huddle, notify you, run an allow-listed capability, give Claude extra instructions, block the tool call or prompt with a message, or set the status line. Rook pushes the rules into each worker's Claude Code settings beside your own (never replacing them, with a backup and a diff preview first), and runs posts, notifications and capabilities on the hub under its policy. See [docs/web/claude-code-rules.md](web/claude-code-rules.md).
+
 ### Knowledge wiki
 
 The agents' shared memory, as a wiki. Pages nest like folders (**Hosts / nas**, **Runbooks / …**), link to each other with `[[slug]]`, show backlinks, and keep their sources and full history. Search quotes the section that matched; when an agent opens a page it also gets one-line stubs of the linked, linking and semantically related pages, so it can go straight to the next page without searching again.
@@ -424,6 +441,14 @@ Edit what Rook tells agents, without a deploy: the connection instructions every
 
 ![Agent instructions](img/guidance.png)
 
+### Voice on the hub
+
+Talk to your agents from the Android app, the desktop app or a browser through the hub's own address: the **voice** hub plugin serves the voice service at `/voice/` (`wss://<hub>/voice/ws`, the browser client at `/voice/`, voice keys at `/voice/admin`). Speech runs either **on the hub** (install the voice extras with `pip install 'rook[voice]'` and put the speech model files in its model folder) or **on another machine** with a graphics card, which the hub forwards to; devices use the hub's address either way. Without what the chosen option needs, the plugin stays off and Manage > Plugins says exactly what is missing, so a small hub that does not use voice never loads any of it. **Manage > Voice** shows whether voice is ready, the address to give the apps, a choice of where speech runs, and a **microphone check** that records a few seconds in the browser and shows what the hub heard. Every voice setting (voices, recognition, the assistant's name) is on Settings > Voice. See [docs/operations/voice.md](operations/voice.md).
+
+### Model providers
+
+The language models the hub can use, by name: **Manage > Model providers** lists them, checks that each answers (with its latency), lists its models and lets you choose which to offer. Add any OpenAI-compatible server (llama.cpp, vLLM, LM Studio, Ollama, a paid API) with its key from Secrets. The **llmanifold** plugin adds your llmanifold front door as the provider `llmanifold` once its address is set, with its flows and, given its admin address, its lanes and queue. The home agent picks a provider by name (Model provider on its page), and whatever uses the home agent's model follows. Agents read them with `llm.providers`, `llm.models`, `llm.check` and `llmanifold.status` on worker `rook`. See [docs/design/model-providers.md](design/model-providers.md).
+
 ## Reliability
 
 One misbehaving client must not take Rook down for everyone:
@@ -440,7 +465,11 @@ The Python worker fleet updates itself with a **signed-manifest + in-band push**
 - **Band health gate.** A new build is kept only once it proves two-way band contact: a reply to one of its own requests (it probes `caps.describe` on the hub node, or another peer it heard announce). Staying alive is not enough: a build that boots but can't talk on the band would otherwise strand the worker off-band, fixable only over SSH. No round trip within `ROOK_UPDATE_HEALTH_SECS` (180 s) and the worker restores the previous bundle and restarts into it at once. Crashing builds still roll back after three failed boots. Details below.
 - `worker.hold` pins a node; `worker.check(force=true)` drives canary rollouts. The **dongle** (ESP32 firmware) is excluded and has its own signed flash path.
 
-Ship a build → commit → rebuild the signed bundle → the running push loop converges the whole fleet in minutes, no manual per-device steps.
+Ship a build → the hub keeps it in its worker feed → **Manage > Updates** rolls it out: a test worker first, then a few at a time, stopping at the first worker that fails its health check; a rollout to everyone releases the build to workers that check in later. With the updates plugin off, the push loop converges the whole fleet to the hub's bundle as before.
+
+## Hub-owned updates (Manage > Updates)
+
+The hub checks Rook's GitHub releases (and the relay's), verifies every download against the release's `SHA256SUMS`, and shows what the hub, each worker, app and firmware device runs against what is available, with release notes. It updates the hub through `rook hub deploy` (dead-man rollback) or by re-running the release's installer, or says how to do it by hand; rolls worker builds out in stages; publishes a release's Android app through `/apk` and asks phones to update; and keeps a history with hub rollback. A **breaking** release (one that raises the oldest supported worker, app or hub, from `rook/core/compat.py`) lists the devices it would cut off and needs them updated or an explicit acknowledgement first; the Workers page tags them. Modes: off, notify (default) and auto (inside a maintenance window, never a breaking release). Desktop apps poll `/updates/desktop.json`. Guide: [docs/operations/updates.md](operations/updates.md).
 
 ### Post-update health gate
 
@@ -488,6 +517,32 @@ enter the current code when prompted. Unattended worker installs require the
 code in the URL (or `ROOK_JOIN_CODE` in the installer's environment). Direct
 Windows worker installation uses
 `iex (irm "https://<your-host>/worker?band=CODE&os=windows")`.
+
+The worker installers print six numbered steps and end with "Done: <worker>
+joined <band>"; package-manager and pip output goes to
+`~/.rook-band-worker/install.log` and shows only when a step fails. They prompt
+only with a person at a terminal: piped installs without one, cloud-init,
+systemd units, CI and `--yes` / `ROOK_YES=1` never prompt (Windows: an
+interactive console, not `ROOK_YES=1`; unattended Windows installs need an
+administrator PowerShell of the person who uses the machine, never SYSTEM).
+`ROOK_WORKER_NAME`, `ROOK_BAND` and `ROOK_HID=0|1`
+set the machine's name, the band (for an account sign-in with several) and
+whether to set up keyboard/mouse control, which is skipped on machines with no
+screen. Run as root (cloud-init, `sudo`), the Linux installer stops unless told
+whose worker it is: `ROOK_USER=<account>` installs it for that account (it runs
+as them, as a user service that starts at boot), and `ROOK_ALLOW_ROOT=1` really
+runs it as root, where every band command then runs as root. Where a worker
+was already installed for root, `ROOK_ALLOW_ROOT=1` updates it in place, and
+`ROOK_USER` stops and disables it once the account's worker is in. On Windows without Python 3.11+, the installer downloads Python 3.12
+from python.org, checks it against a pinned SHA-256 and installs it for the
+current user only; if that fails it tries `winget --scope user`, then says how
+to install it by hand.
+
+```sh
+curl -fsSL 'https://<your-host>/worker?band=CODE' | bash -s -- --yes   # unattended
+# cloud-init (runs as root): install for the account "rook"
+curl -fsSL 'https://<your-host>/worker?band=CODE' | ROOK_USER=rook bash -s -- --yes
+```
 
 ### Run your own hub
 

@@ -20,6 +20,10 @@ dashboard first and MCP last; if the dashboard fails verification the MCP is
 never touched. Moving a two-unit hub to one is described in
 [Moving to one hub process](#moving-to-one-hub-process).
 
+Manage > Updates runs this for a GitHub release: it repacks the release's
+source archive as a hub release signed by this hub's update key and runs
+`rook hub deploy` detached (docs/operations/updates.md).
+
 ## Why this exists
 
 Hand deploys fail in quiet ways. A typical failure history:

@@ -30,6 +30,8 @@ board and this manual's knowledge copy need it.
   link to it.
 - **Search** finds the passage that matched, not only the page title.
 - Each page keeps its sources and its full history.
+- From a worker machine's terminal, `rook knowledge search <words>` and
+  `rook knowledge get <page>` do the same ([[manual-worker-commands]]).
 
 ## Checking what agents wrote
 

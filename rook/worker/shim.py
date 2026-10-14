@@ -509,11 +509,14 @@ class LocalTermServer:
     """Listens on the shim socket and turns each shim into a local terminal
     of the terminals plugin (``attach_local``)."""
 
-    def __init__(self, terminals, path: Path | None = None) -> None:
+    def __init__(self, terminals, path: Path | None = None, hooks=None) -> None:
         self.terminals = terminals          # () -> TerminalsPlugin | None
         self.path = Path(path) if path else socket_path()
         self.server: asyncio.AbstractServer | None = None
         self.links: set[LocalLink] = set()
+        # (dict) -> None: Rook's Claude Code hook (rook-ccmod-hook.py) hands
+        # events in on this socket too, one ``{"op": "hook"}`` frame per run.
+        self.hooks = hooks
 
     def _plugin(self):
         return self.terminals()
@@ -575,6 +578,12 @@ class LocalTermServer:
         try:
             kind, payload = await asyncio.wait_for(self._frame(reader), 5.0)
             hello = json.loads(payload) if kind == b"J" else {}
+            if hello.get("op") == "hook":
+                if self.hooks is not None:
+                    self.hooks(hello)
+                writer.write(jframe({"op": "ok", "taken": self.hooks is not None}))
+                await writer.drain()
+                return
             if hello.get("op") != "hello":
                 raise ValueError("expected hello")
             if plugin is None:

@@ -53,7 +53,7 @@ def test_installer_flags_and_summary_lines():
         assert flag in script, flag
     # installer::parse_summary reads these two lines of the closing banner.
     assert re.search(r"^  Dashboard   \$DOMAIN$", script, re.M)
-    assert re.search(r"^  Password    \$WEB_PASS ", script, re.M)
+    assert re.search(r"^  Password    \$WEB_PASS(\s|$)", script, re.M)
     assert "install-hub.sh" in INSTALLER_RS
 
 

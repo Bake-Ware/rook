@@ -9,24 +9,24 @@
 </head><body class="standalone-account"><main class="settings-workspace narrow">
 <h1>♖ Rook: first-run setup</h1>
 <section>
-<p class="muted">Configure the band this hub serves. Saved to <code>data/setup.json</code> (never committed).</p>
+<p class="muted">A <b>band</b> is your group of computers that Rook connects. Name it and check the two addresses; the values filled in from this page's address usually work as they are.</p>
 {{error|raw}}
 <form method="POST" action="/setup">
 <input type="hidden" name="csrf" value="{{csrf}}">
 <label>Band name
-<input name="band_name" value="{{band_name}}" placeholder="my-band" autofocus>
-<small>Cosmetic label for this band, shown in the dashboard + installer.</small></label>
-<label>Public hub address
-<input name="hub_public" value="{{hub_public}}" placeholder="hub.mydomain.com:443" required>
-<small>host:port workers connect back to (the band WS endpoint).</small></label>
-<label>Installer download domain
-<input name="pyz_domain" value="{{pyz_domain}}" placeholder="hub.mydomain.com" required>
-<small>Domain that serves <code>band-worker.pyz</code> in the one-line installer.</small></label>
-<label>Band PSK
+<input name="band_name" value="{{band_name}}" placeholder="home" autofocus>
+<small>What to call this group of computers. Shown in the dashboard and when a computer joins.</small></label>
+<label>Address your computers connect to
+<input name="hub_public" value="{{hub_public}}" placeholder="192.168.1.10:7005 or hub.example.com:443" required>
+<small>This hub's address and port as your other computers can reach it: a home address like <code>192.168.1.10:7005</code>, or your domain and <code>:443</code> when it is behind HTTPS.</small></label>
+<label>Address for install commands
+<input name="pyz_domain" value="{{pyz_domain}}" placeholder="http://192.168.1.10:7005" required>
+<small>Where the install command on a new computer downloads Rook from: usually the address you opened this page at.</small></label>
+<label>Band key
 <input name="band_psk" value="{{band_psk}}" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" required>
-<small>New keys use five random words separated by hyphens. Type the key exactly, including hyphens. Use Tokens to replace or revoke an existing band key.</small></label>
+<small>A secret every computer in the band shares; one was made for you. Keep it private, and type it exactly (with its hyphens) if you change it. To replace it later, use Tokens.</small></label>
 {{presets|raw}}
-<button type="submit">Save &amp; activate band</button>
+<button type="submit">Save and start</button>
 </form>
 </section>
 </main></body></html>

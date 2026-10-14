@@ -17,7 +17,13 @@ Before ``python -m build`` and ``docker build``, on a clean checkout of the tag:
    pin with ``telesthete @ <wheel URL>#sha256=<hash>``. A git direct reference
    makes pip clone the repo, so installing the release wheel would need git;
    a hash-pinned wheel URL needs only HTTPS, and pip verifies the hash.
-4. With ``--pin-relay TAG``: records the telesthete release and the sha256 of
+4. With ``--release-json PATH``: writes the release's metadata (version,
+   build, channel, the compat floors from rook/core/compat.py, the relay pin,
+   the APK and firmware versions, and whether it is ``breaking``) for the
+   hub's update service; see rook/hub/release_meta.py. A release is breaking
+   when ``--breaking`` says so or it raises a floor over
+   ``--previous-release-json`` (the last release's release.json).
+5. With ``--pin-relay TAG``: records the telesthete release and the sha256 of
    each ``telesthete-hub-<arch>-linux.tar.gz`` in ``rook/_release.py`` (``RELAY``,
    ``RELAY_SHA256``) and the Dockerfile's default ``TELESTHETE_RELAY_VERSION``.
    The hashes come from the archives themselves: from ``--relay-dir`` (the
@@ -50,6 +56,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from rook.hub import release_meta  # noqa: E402
 from rook.remote.build_band_worker import build_name, pinned_telesthete_rev  # noqa: E402
 
 # Public PEP 440 release versions we tag: N(.N)* with an optional pre-release
@@ -196,6 +203,23 @@ def relay_hashes(tag: str, relay_dir: Path | None = None) -> dict:
     return shas
 
 
+def release_json(release_src: str, root: Path | None = None, previous: dict | None = None,
+                 breaking: bool = False, breaking_note: str = "") -> dict:
+    """release.json for the tree whose rook/_release.py source is ``release_src``
+    (stamped: a source checkout has no release to describe)."""
+    tree = ast.parse(release_src)
+    vals = {t.id: ast.literal_eval(node.value) for node in tree.body
+            if isinstance(node, ast.Assign) for t in node.targets if isinstance(t, ast.Name)}
+    if not vals.get("VERSION") or not vals.get("BUILD"):
+        raise ValueError("rook/_release.py is not stamped: pass --tag too (or run it first)")
+    version = vals["VERSION"]
+    tag = "v" + version
+    return release_meta.build_release_json(
+        root or ROOT, tag=tag, version=version, build=int(vals["BUILD"]), name=vals.get("NAME", ""),
+        commit=vals.get("COMMIT", ""), relay=vals.get("RELAY", ""), previous=previous,
+        breaking=breaking, breaking_note=breaking_note)
+
+
 def git_build(root: Path = ROOT) -> tuple[int, str]:
     def git(*args: str) -> str:
         return subprocess.check_output(["git", *args], cwd=root, text=True).strip()
@@ -230,6 +254,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--relay-dir", type=Path, default=None,
                     help="hash the relay archives in this directory instead of downloading them")
     ap.add_argument("--print-telesthete-pin", action="store_true")
+    ap.add_argument("--release-json", type=Path, default=None, metavar="PATH",
+                    help="write the release metadata (release.json) here")
+    ap.add_argument("--previous-release-json", type=Path, default=None, metavar="PATH",
+                    help="the previous release's release.json: a raised compat floor "
+                         "makes this release breaking")
+    ap.add_argument("--breaking", action="store_true",
+                    help="mark the release breaking (operators must approve it)")
+    ap.add_argument("--breaking-note", default="", help="why it is breaking, in plain words")
     ap.add_argument("--skip-manual-check", action="store_true",
                     help="cut the release even if the user manual is out of date (emergencies only)")
     a = ap.parse_args(argv)
@@ -241,8 +273,10 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(pin)
         return 0
-    if not a.tag and not a.pin_relay:
-        ap.error("--tag and/or --pin-relay is required")
+    if not a.tag and not a.pin_relay and not a.release_json:
+        ap.error("--tag, --pin-relay and/or --release-json is required")
+    if (a.previous_release_json or a.breaking or a.breaking_note) and not a.release_json:
+        ap.error("--previous-release-json/--breaking go with --release-json")
     if bool(a.telesthete_wheel_url) != bool(a.telesthete_wheel_sha256):
         ap.error("--telesthete-wheel-url and --telesthete-wheel-sha256 go together")
     if a.relay_dir and not a.pin_relay:
@@ -284,6 +318,22 @@ def main(argv: list[str] | None = None) -> int:
         path.write_text(content, encoding="utf-8")
     if a.tag:
         print(f"rook {version} = build {name} (commit {commit})")
+    if a.release_json:
+        import json
+        prev = None
+        if a.previous_release_json and a.previous_release_json.is_file():
+            try:
+                prev = release_meta.parse_release_json(
+                    json.loads(a.previous_release_json.read_text(encoding="utf-8")))
+            except ValueError as e:
+                print(f"ignoring --previous-release-json: {e}", file=sys.stderr)
+        meta = release_json(release, previous=prev, breaking=a.breaking,
+                            breaking_note=a.breaking_note)
+        a.release_json.parent.mkdir(parents=True, exist_ok=True)
+        a.release_json.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+        print(f"release.json: {meta['version']} ({meta['channel']}"
+              + (", BREAKING: " + "; ".join(meta["breaking_reasons"]) if meta["breaking"] else "")
+              + ")")
     return 0
 
 

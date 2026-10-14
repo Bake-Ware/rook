@@ -36,6 +36,10 @@ claude mcp add --transport http rook https://<your-hub>/mcp \
 Then ask it something like "list my Rook workers and check the disk space on
 the NAS". Revoke a token on the same page to cut an agent off at once.
 
+A token also lets you ask the home agent from a worker machine's terminal:
+save it there with `rook login --token`, then use `rook ask` or `rook chat`
+([[manual-worker-commands]]).
+
 ## What agents can do
 
 - See the machines and their capabilities, and use them (`rook_workers`,

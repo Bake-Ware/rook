@@ -25,7 +25,9 @@ Open **Home agent** (under Manage).
 2. Give it a **Name**. People write `@name` in chat to talk to it.
 3. Fill in the model: the service's **Base URL**, the **Model** name and, if the
    service needs one, an **API key**. Store the key under Secrets and enter its
-   name; the page never shows the key itself.
+   name; the page never shows the key itself. Or pick a saved **Model
+   provider** instead, and its address and key are used
+   ([[manual-model-providers]]).
 4. Optionally choose a **Persona** ([[manual-agents-and-mcp]]) and add your own
    instructions.
 

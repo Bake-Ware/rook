@@ -88,6 +88,11 @@ class HubSettings(Plugin):
             # live: the next read sees it; reload: restart that plugin with it.
             node.host.settings_changed([entry.namespace] if entry.setting.apply == "reload"
                                        else [])
+            # A plugin that stayed unloaded for want of a setting (an engine
+            # choice, an address) gets another try with it.
+            retry = getattr(node.host, "retry_unavailable", None)
+            if retry is not None:
+                retry(entry.namespace)
         self.svc.on_change(refresh)
         node.settings = self.svc
 

@@ -225,6 +225,25 @@ async def test_semantic_recall_via_the_home_endpoint(env):
 
 
 @pytest.mark.asyncio
+async def test_embeddings_follow_the_home_agents_model_provider(env):
+    # The home agent names a model provider (Manage > Model providers) and has
+    # no base URL of its own: memory embeds through that provider.
+    await env.node.plugin("llm").page_action(env.svc, {"action": "llm_save", "provider": {
+        "id": "lab", "base_url": "http://192.0.2.5:8080/v1", "api_key": "{{secret:llm-key}}"}},
+        "human:op")
+    configure_home(env, base_url="", api_key="", llm_provider="lab")
+    env.svc.set("memory.embed_model", "embed-small", actor="human:op")
+    await env.m.add("The family vehicle is serviced in March", "fact")
+    await env.m.add("The user drinks tea, not coffee", "profile", about=OP)
+    rows = await env.m.recall("what car do we have", [OP, rules.SHARED], limit=1)
+    assert rows[0]["text"] == "The family vehicle is serviced in March"
+    assert env.mem.status()["embeddings"]["sources"] == ["home agent endpoint (embed-small)"]
+    emb = [r for r in env.llm.requests if r[1].endswith("/embeddings")]
+    assert emb and emb[0][1] == "http://192.0.2.5:8080/v1/embeddings"
+    assert emb[0][3]["Authorization"] == f"Bearer {KEY}"
+
+
+@pytest.mark.asyncio
 async def test_a_failing_embedder_backs_off_to_keywords(env, monkeypatch):
     calls = []
 

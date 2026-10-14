@@ -39,6 +39,19 @@ from .registry import CapabilityRegistry, CapTimeout
 log = logging.getLogger("rook.core.host")
 
 
+
+def _why_unavailable(plugin: Plugin) -> str:
+    """The reason recorded when ``available()`` says no: the plugin's own
+    plain-words :meth:`Plugin.unavailable_reason` when it gives one (the
+    Plugins page shows it), else the generic note."""
+    generic = "available() returned False"
+    try:
+        why = str(plugin.unavailable_reason() or "").strip()
+    except Exception:
+        log.exception("%s: unavailable_reason() raised", plugin.NAMESPACE)
+        return generic
+    return why[:400] if why else generic
+
 class PluginHost:
     def __init__(self, registry: CapabilityRegistry | None = None,
                  facts: NodeFacts | None = None, *,
@@ -228,7 +241,10 @@ class PluginHost:
         try:
             if not plugin.available():
                 log.info("%s: backend/config not present here, skipping", name)
-                self._mark(name, "unavailable", "available() returned False")
+                # The namespace lets a settings change find it again
+                # (retry_unavailable): it is not loaded, so nothing else does.
+                self._mark(name, "unavailable", _why_unavailable(plugin),
+                           namespace=plugin.NAMESPACE)
                 return False
         except Exception:
             log.exception("%s: available() raised, skipping", name)
@@ -466,14 +482,31 @@ class PluginHost:
         """Schedule :meth:`reload` from any thread (settings change hooks run
         in a cap's worker thread). Returns False when the host has not been
         started on a loop yet; the next start reads the new settings anyway."""
+        return self._schedule(lambda: self.reload(module), f"reloading {module}")
+
+    def retry_unavailable(self, namespace: str) -> list[str]:
+        """Schedule :meth:`enable` for the modules of ``namespace`` that are
+        not loaded only because ``available()`` said no (never one an
+        operator switched off): a setting that plugin waits for (an address,
+        an engine choice) was just changed, so it may load now. Returns the
+        modules scheduled."""
+        out = []
+        for module, st in list(self.status.items()):
+            if (st.get("state") == "unavailable" and st.get("namespace") == namespace
+                    and self.loaded(module) is None
+                    and self._schedule(lambda m=module: self.enable(m), f"enabling {module}")):
+                out.append(module)
+        return out
+
+    def _schedule(self, make, what: str) -> bool:
         loop = self._loop
         if loop is None or loop.is_closed():
             return False
 
         def go() -> None:
-            task = loop.create_task(self.reload(module))
+            task = loop.create_task(make())
             task.add_done_callback(lambda t: t.cancelled() or t.exception() is None
-                                   or log.error("reloading %s failed: %s", module, t.exception()))
+                                   or log.error("%s failed: %s", what, t.exception()))
         try:
             running = asyncio.get_running_loop()
         except RuntimeError:

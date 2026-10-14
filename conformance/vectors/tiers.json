@@ -55,6 +55,45 @@
   "caps.describe": {
    "tier": "read"
   },
+  "ccmod.activity": {
+   "tier": "read"
+  },
+  "ccmod.apply": {
+   "tier": "admin"
+  },
+  "ccmod.delete": {
+   "tier": "admin"
+  },
+  "ccmod.events": {
+   "tier": "admin",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "ccmod.get": {
+   "tier": "read"
+  },
+  "ccmod.history": {
+   "tier": "read"
+  },
+  "ccmod.list": {
+   "tier": "read"
+  },
+  "ccmod.preview": {
+   "tier": "admin"
+  },
+  "ccmod.push": {
+   "tier": "admin"
+  },
+  "ccmod.remove": {
+   "tier": "admin"
+  },
+  "ccmod.set": {
+   "tier": "admin"
+  },
+  "ccmod.status": {
+   "tier": "read"
+  },
   "cec.ping": {
    "tier": "read",
    "tags": [
@@ -570,6 +609,18 @@
   "knowledge.write": {
    "tier": "write"
   },
+  "llm.check": {
+   "tier": "read"
+  },
+  "llm.models": {
+   "tier": "read"
+  },
+  "llm.providers": {
+   "tier": "read"
+  },
+  "llmanifold.status": {
+   "tier": "read"
+  },
   "location.get": {
    "tier": "exec",
    "tags": [
@@ -997,6 +1048,27 @@
     "sensitive"
    ]
   },
+  "updates.apply_hub": {
+   "tier": "admin",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "updates.check": {
+   "tier": "admin"
+  },
+  "updates.history": {
+   "tier": "read"
+  },
+  "updates.rollout": {
+   "tier": "admin",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "updates.status": {
+   "tier": "read"
+  },
   "voice.replies": {
    "tier": "read"
   },
@@ -1013,6 +1085,9 @@
    "tier": "write"
   },
   "voice.speak_voices": {
+   "tier": "read"
+  },
+  "voice.status": {
    "tier": "read"
   },
   "work.adopt_page": {

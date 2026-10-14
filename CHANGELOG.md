@@ -8,7 +8,93 @@ version was `0.1.0`.
 
 ## Unreleased
 
-Preparation for public use.
+## [0.2.0] - 2026-10-14
+
+The first tagged release. Preparation for public use.
+
+### Voice and model provider plugins
+Manual: voice, model-providers, home-agent
+- Voice is a hub plugin: `rook hub serve` serves the voice service at
+  `/voice/` (`/voice/ws`, `/voice/api/transcribe`, `/voice/api/voice`, the
+  browser client, voice keys at `/voice/admin`; `/api/transcribe`,
+  `/api/voice` and `/voices` at the root too, for the Android app). Speech
+  runs on the hub (`voice.engine=here`, needs `pip install 'rook[voice]'`
+  and the model files) or on another machine the hub forwards to
+  (`voice.engine=remote`, `voice.remote_url`). Without what that needs the
+  plugin stays off and the Plugins page says what is missing. The voice
+  settings keep their keys and variables. The standalone server
+  (`python -m services.voice.server`) is unchanged. Docs:
+  docs/operations/voice.md.
+- Voice on the hub only loads under `rook hub serve`; in the two-process
+  layout the Plugins and Voice pages say so. With `voice.engine=remote` the
+  hub forwards only the voice admin cookie (never the dashboard session or
+  `Cf-Access-*` headers), passes back only that cookie under `/voice/admin`,
+  keeps the voice server's own `Host` and presents the hub's origin as the
+  voice server's so voice admin sign-in works through the hub (with failed
+  sign-ins counted per client),
+  refuses paths with `.`/`..` segments and caps voice WebSockets at 16 per
+  client address. Changing a voice setting while the models load waits for
+  that load instead of running two. Dashboard routes always win over plugin
+  paths. Addresses with a user name or password are refused for the voice
+  server, model providers and llmanifold; `llm.models`/`llm.check` are
+  attributed to and rate limited per caller.
+- Manage > Voice: state, the address for the apps, where speech runs, and a
+  microphone check that transcribes a few seconds recorded in the browser.
+- Model providers (`llm` hub plugin, Manage > Model providers): name the
+  OpenAI-compatible model servers the hub can use, check and list their
+  models; `llm.providers`, `llm.models`, `llm.check` on worker `rook`. The
+  home agent can use one by name (`home.llm_provider`).
+- llmanifold hub plugin: once `llmanifold.base_url` is set, llmanifold is the
+  model provider `llmanifold`, and `llmanifold.status` reports its flows and,
+  with its admin address, lanes and queue.
+- Plugins: a plugin that cannot load says why in plain words
+  (`Plugin.unavailable_reason()`), and is retried when one of its settings
+  changes. Hub plugins can serve paths on the hub site (`rook/hub/site.py`).
+
+### Worker CLI and onboarding
+Manual: worker-commands, adding-machines, terminal-and-commands, workers, getting-started, accounts-and-access, running-a-hub, agents-and-mcp, chat, work, knowledge
+- `rook` on a worker machine gained commands for the person sitting at it:
+  `status`, `doctor` (plain-language fixes; exit 1 on a problem), `ask` and
+  `chat` (the home agent, through an API token saved with `rook login
+  --token` and the hub's MCP endpoint; reads also work through the saved
+  dashboard login or the worker's band link), `tasks`, `rooms`, `knowledge search|get`, `plugins
+  list|enable|disable` (the hub's protected plugins stay on), `logs [-f]
+  [--audit]`, `pair <code>`, `login` and `completion bash|zsh|fish|powershell`.
+  Both the bundle's launcher and the package's `rook` have them. See
+  docs/operations/worker-cli.md.
+- The worker serves a local control link for them on 127.0.0.1 (token in
+  `<state dir>/control.json`, mode 600; `ROOK_CONTROL=0` turns it off) and
+  keeps its recent log lines in memory for `rook logs`.
+- Enrollment prints numbered steps and "Done: <worker> joined <band>", prompts
+  only at a terminal (`--yes` / `ROOK_YES=1`, `--band` / `ROOK_BAND`), sends
+  the worker's `--name`, and reports failures in one plain sentence.
+- Worker installers: plain step names, details in `install.log`, "Done:
+  <worker> joined <band>"; unattended runs (piped, cloud-init, systemd, CI,
+  `--yes`) never prompt and get a user service; keyboard/mouse setup is
+  skipped on machines without a screen (`ROOK_HID=0|1`); Windows installs a
+  missing Python 3.12 from python.org for the current user after checking a
+  pinned SHA-256 (then `winget --scope user`, then one clear instruction).
+  The `/install` and `/hub` installers no longer die under cloud-init at a
+  prompt.
+- Run as root (cloud-init, `sudo`), the Linux worker installer stops unless
+  told whose worker it is: `ROOK_USER=<account>` installs it for that account
+  (it runs as them; a worker installed for root earlier is then stopped and
+  disabled once the new one is in), `ROOK_ALLOW_ROOT=1` runs it as root
+  (updating such a root worker in place). Root writes only to its own home,
+  even under `sudo -E`. The Windows
+  installer refuses to run as SYSTEM (the worker must run in the user's
+  session). Worker names are limited to letters, digits, `.`, `_` and `-`.
+- `rook login` defaults a bare dotted host to `https://` (https against a
+  plain-http hub suggests the `http://` command), asks before sending a token
+  or password over plain http to a public address (`ROOK_ALLOW_HTTP=1` without
+  a terminal; a written-out `http://` name that resolves only to private
+  addresses, like Tailscale's, isn't asked about), and never follows
+  a redirect from the MCP endpoint (the token would go along). The control
+  link drops connections that don't send their token within 2 seconds, and
+  `control.json` and the saved token get an owner-only ACL on Windows.
+- A password-only hub's sign-in page asks for the password alone. The setup
+  wizard and install-hub.sh's last screen use plain words; the wizard fills
+  in its own address.
 
 ### User manual
 Manual: help, welcome, getting-started, overview-and-start-page, adding-machines, bands-and-keys, accounts-and-access, workers, chat, work, sessions, knowledge, jobs, secrets, agents-and-mcp, home-agent, home-agent-memory, settings, plugins, phones-and-tablets, hardware, integrations, voice, updates, security, terminal-and-commands, running-a-hub, desktop-app
@@ -140,6 +226,85 @@ Manual: help, welcome, getting-started, overview-and-start-page, adding-machines
   New references: `coordination.md` (states, required fields, templates, hygiene
   findings), `examples.md` (worked calls) and `troubleshooting.md` (errors and
   fixes).
+### Claude Code rules
+Manual: claude-code-rules
+- Manage > Claude Code: hub-managed triggers and actions for Claude Code on
+  the workers (hub plugin and worker plugin `ccmod`). Triggers: Claude Code
+  hook events with tool and text filters, Idle for N minutes, worker
+  offline/online; scopes: everything, band, worker, project, agent; actions:
+  post in a room or huddle, notify, run an allow-listed capability, inject
+  instructions, block, status line. `ccmod.push` merges Rook's managed hooks
+  into each Claude Code `settings.json` next to the person's own (backup kept,
+  diff preview, clean removal); older workers are skipped. Capability actions
+  are admin-only, allow-listed (`ccmod.cap_allowlist`) and need
+  `ccmod.allow_exec` for exec-tier caps. Docs: docs/web/claude-code-rules.md,
+  docs/design/ccmod.md.
+- Claude Code rules hardening: a missing hook script (worker folder deleted)
+  no longer blocks Claude Code (the hook command ends in `|| exit 0`, and
+  the script is kept while any settings file still runs it); a hub restart
+  no longer replays queued events (the poll position is stored per worker);
+  writing, deleting and previewing rules and the worker's `ccmod.events` are
+  admin-only; the hub accepts the hook's word for `contains` on prompts and
+  notifications and for project paths; removal restores an untouched
+  settings file byte for byte; settings files keep their owner and are
+  re-read just before they are replaced (mode and owner are set on the temp
+  file's descriptor, never by path after the rename; `atomic_write_text`
+  does the same for every caller, and its in-place fallback does not follow
+  symlinks); a worker running as root refuses a settings file reached
+  through a symlink to another user's file; the outbox is capped (500) and stale
+  events (10 min) dropped; hook input up to 8 MiB; pushes record who pushed
+  and capability actions run as `system:ccmod:<rule>`; the Claude Code page
+  uses the theme colours.
+
+### Autoupdate
+Manual: updates
+- Manage > Updates (new hub plugin `updates`): the hub checks Rook's GitHub
+  releases (ETag, backoff; prereleases only on the prerelease channel),
+  verifies downloads against `SHA256SUMS` and, where required, build
+  provenance of the files and `release.json` (`gh attestation verify` scoped
+  to the release workflow, the release tag and GitHub-hosted runners; fails
+  closed), re-reads a tag that was published again, and shows the hub,
+  workers, apps and firmware against what is available, with release notes,
+  progress and history.
+- Hub self-update through `rook hub deploy` (the release sdist repacked and
+  signed by the hub; dead-man rollback applies; the hub's key is passed
+  explicitly unless the operator pinned one, and a pin to another key
+  refuses the update) or by re-running the release's `install-hub.sh` with the wheel
+  the hub verified (`--package`) on a `--user` install; other installs get the
+  command to run. Refused, not run inside the hub's own service, when
+  `systemd-run` cannot start it. Rollback from the History tab.
+- Staged worker rollouts: test worker first, then batches, stopping at the
+  first failed health check (new build announced, answers the hub, stays on
+  it). Behaviour change: with the updates plugin on, a new worker bundle is
+  no longer pushed to every worker at once; `/band-worker.json` and the push
+  loop serve the *released* build (`/updates/worker/<build>/band-worker.pyz`)
+  until a rollout releases the next one, and new builds are announced in
+  chat. The first run releases the bundle the hub already has. Switching the
+  plugin off, or the update service not running for 15 minutes, restores the
+  old behaviour. The push loop leaves a running rollout's workers alone, and
+  the feed keeps only bundles signed by the hub's own key.
+- Breaking releases: each release publishes `release.json` (compat floors,
+  breaking flag and reasons, relay pin, app and firmware versions) and
+  `install-hub.sh`; a breaking or unknown update (cumulative over every
+  release since the hub's own; a missing or mistyped floor counts as unknown)
+  needs the operator's acknowledgement, and the devices it cuts off updated
+  or acknowledged; the Workers page tags devices too old for this hub or for
+  a pending breaking update.
+- Settings `updates.mode` (off / notify, the default / auto), `channel`,
+  `window`, `canary`, `batch`, `gate_secs`, `auto_min_age_hours`. Auto mode
+  updates the hub only to a stable patch release of its own minor version,
+  stable for 24 hours, crossing no breaking or unknown release, whose
+  provenance verifies (needs the `gh` CLI). New releases are announced once
+  through `notify.send`.
+- Android: publish a release's APK through `/apk` and ask phones to update
+  (`device.update`). Desktop: `GET /updates/desktop.json`. Firmware versions
+  are shown (ESP32 announce, RP2040 `dongle.status`); flashing stays manual.
+- Workers install one update at a time: a second `worker.apply`,
+  `worker.check`, `worker.update` or in-band push while one is downloading,
+  or after one was swapped in and the restart is pending, is refused ("an
+  update is already in progress") instead of interleaving, so the rollback
+  copy (`band-worker.pyz.prev`) is never overwritten by an unverified build.
+  Each download goes to its own temporary file, removed on failure.
 
 ### Hub merge
 - One hub process: `rook hub serve` (console script `rook-hub`) runs the

@@ -21,6 +21,15 @@ def _isolated_hub_keys(tmp_path, monkeypatch):
     OTA key and the permissions op key beside it)."""
     if "ROOK_UPDATE_KEY" not in os.environ:
         monkeypatch.setenv("ROOK_UPDATE_KEY", str(tmp_path / "keys" / "update-signing-key"))
+    # A hub node started by a test runs the updates plugin: keep it off
+    # GitHub and out of the real data directory.
+    if "ROOK_UPDATES_DIR" not in os.environ:
+        monkeypatch.setenv("ROOK_UPDATES_DIR", str(tmp_path / "updates"))
+    if "ROOK_UPDATES_MODE" not in os.environ:
+        monkeypatch.setenv("ROOK_UPDATES_MODE", "off")
+    # updates.check ignores the mode: point it at a closed local port too.
+    if "ROOK_UPDATES_API" not in os.environ:
+        monkeypatch.setenv("ROOK_UPDATES_API", "http://127.0.0.1:9")
 
 
 def pytest_configure(config):

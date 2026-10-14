@@ -104,6 +104,9 @@ class HubNode:
             settings_store = SettingsStore()
         self.settings_store = settings_store
         self.settings = None  # SettingsService, set by the settings hub plugin
+        # Paths plugins serve on the hub site (rook hub serve hands them over).
+        from .site import SiteMounts
+        self.site = SiteMounts()
         risk = band_max_risk or os.environ.get("ROOK_HUB_BAND_MAX_RISK", "read")
         self.band_max_risk = core_authz.norm_tier(risk) or "read"
         # Local authority: the hub holds the band's signing key, so its own node

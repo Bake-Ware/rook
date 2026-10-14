@@ -11,8 +11,6 @@ import uuid
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
-import uvicorn
-import webrtcvad
 from .jobs import Jobs
 from .thinking import ThinkingAgent
 from .runtime import Connection
@@ -49,7 +47,9 @@ credential_sessions = {}
 async def lifespan(app):
     from .providers import Provider, DIRECT_TOOLS, ACP_HOST, ACP_PORT
     from .workers import inventory
-    app.state.provider = Provider()
+    # A host that loaded the models already (the hub's voice plugin builds the
+    # Provider in a thread, so the hub's loop never blocks on it) hands it over.
+    app.state.provider = getattr(app.state, 'preloaded_provider', None) or Provider()
     async def maintain_workers():
         while True:
             with contextlib.suppress(Exception):
@@ -275,6 +275,7 @@ async def websocket(ws: WebSocket):
         if conn.fb:
             conn.fb.resend_timers()
             conn.fb.prefetch('session')
+        import webrtcvad   # here, not at import: a hub mounting this app imports it first
         vad = webrtcvad.Vad(3)
         preroll = deque(maxlen=10)
         utterance = bytearray()
@@ -421,6 +422,7 @@ async def websocket(ws: WebSocket):
                 connections.pop(key, None)
 
 if __name__ == '__main__':
+    import uvicorn
     uvicorn.run(app, host=os.environ.get('VOICE_BIND', '127.0.0.1'), port=int(os.environ.get('VOICE_PORT', '8900')),
                 ssl_keyfile=os.environ.get('VOICE_TLS_KEY'), ssl_certfile=os.environ.get('VOICE_TLS_CERT'),
                 log_level='warning', ws_max_size=8*1024*1024)

@@ -290,7 +290,10 @@ class Memory(Plugin):
         an embedding model is set, else any worker's ``embed.text``."""
         s = self.settings
         home = self._home()
-        home_key = (home.settings.get("base_url"), home.settings.get("api_key")) if home else None
+        # The home agent's resolved endpoint: a named model provider
+        # (home.llm_provider, Manage > Model providers) supplies it when set.
+        home_cfg = home.config() if home is not None else {}
+        home_key = (home_cfg.get("base_url"), home_cfg.get("api_key")) if home else None
         key = (s.get("embeddings"), s.get("embedder"), s.get("embed_model"), home_key)
         if self._embedder is not None and self._embedder_key == key:
             return self._embedder
@@ -309,7 +312,7 @@ class Memory(Plugin):
                     {"texts": texts}, timeout=8.0)))
             elif res is not None and res.scheme in ("http", "https"):
                 sources.append(Source(_safe_url(res.url), _http_embed(res.url)))
-            elif model and home is not None and str(home.settings.get("base_url") or "").strip():
+            elif model and home is not None and str(home_cfg.get("base_url") or "").strip():
                 sources.append(Source(f"home agent endpoint ({model})",
                                       self._home_embed(model), shape="openai", model=model))
             elif self.__dict__.get("_cap_caller") is not None:

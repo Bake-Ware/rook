@@ -30,7 +30,7 @@ export async function mountHome(root){
   const val=k=>d.settings[k]?.value;
   function state(s){
     if(!s.enabled)return ['Off','mg-dimtext'];
-    if(s.missing.length)return ['Needs '+s.missing.join(' and ').replace('base_url','a base URL'),'mg-warn'];
+    if(s.missing.length)return ['Needs '+s.missing.join(' and ').replace('base_url','a base URL').replace('llm_provider','its model provider back'),'mg-warn'];
     if(s.last_error)return ['On · last error','mg-bad'];
     return ['On','mg-good'];
   }
@@ -63,6 +63,9 @@ export async function mountHome(root){
     const enabled=h('input',{type:'checkbox',checked:!!val('enabled')});
     const name=h('input',{value:val('name')||'home',autocomplete:'off',spellcheck:'false',style:'font-family:var(--mono)'});
     const provider=h('select',null,d.providers.map(p=>h('option',{value:p,text:p==='openai'?'OpenAI-compatible':p,selected:p===val('provider')})));
+    // A named model provider (Manage > Model providers) replaces the endpoint fields.
+    const lp=val('llm_provider')||'',lps=d.llm_providers||[];
+    const llmProvider=h('select',null,h('option',{value:'',text:'None: use the endpoint below'}),lps.map(p=>h('option',{value:p.id,text:(p.label||p.id)+(p.host?' · '+p.host:''),selected:p.id===lp})),lp&&!lps.some(p=>p.id===lp)?h('option',{value:lp,text:lp+' (not available now)',selected:true}):null);
     const base=h('input',{value:val('base_url')||'',placeholder:'http://llm.example:1234/v1',autocomplete:'off',spellcheck:'false',style:'font-family:var(--mono)'});
     const dl=h('datalist',{id:'home-models'},models.map(m=>h('option',{value:m})));
     const model=h('input',{value:val('model')||'',list:'home-models',placeholder:'model id',autocomplete:'off',spellcheck:'false',style:'font-family:var(--mono)'});
@@ -74,7 +77,7 @@ export async function mountHome(root){
     const memory=h('input',{type:'checkbox',checked:val('memory')!==false});
     const num=(k,step)=>h('input',{type:'number',step:step||'1',value:val(k)??'',style:'font-family:var(--mono)'});
     const timeout=num('timeout_s','1'),maxTok=num('max_tokens'),temp=num('temperature','0.05'),ctx=num('context_messages');
-    const values=()=>({enabled:enabled.checked,name:name.value.trim().toLowerCase(),provider:provider.value,base_url:base.value.trim(),model:model.value.trim(),
+    const values=()=>({enabled:enabled.checked,name:name.value.trim().toLowerCase(),llm_provider:llmProvider.value,provider:provider.value,base_url:base.value.trim(),model:model.value.trim(),
       api_key:key.value?'{{secret:'+key.value+'}}':'',persona:persona.value,system_prompt:prompt.value,tools:tools.checked,memory:memory.checked,
       timeout_s:Number(timeout.value||90),max_tokens:Number(maxTok.value||1024),temperature:temp.value===''?null:Number(temp.value),context_messages:Number(ctx.value||20)});
     const run=async(b,work)=>{if(busy)return;busy=true;b.disabled=true;err.textContent='';try{await work();}catch(e){err.textContent=e.message;}finally{busy=false;b.disabled=false;}};
@@ -91,16 +94,21 @@ export async function mountHome(root){
     const save=btn('Save','primary',()=>run(save,async()=>{
       const r=await post({action:'home_save',values:values()});
       d=r;draw();status.textContent=r.saved.length?'Saved '+r.saved.map(k=>k.slice(5)).join(', ')+'. It takes effect now.':'No changes.';}));
+    const endpoint=h('div',{style:'display:flex;flex-direction:column;gap:14px'},
+      field('Provider',provider,'provider'),
+      field('Base URL',base,'base_url','The endpoint\'s /v1 base. Any OpenAI-compatible server works.'),
+      field('API key',key,'api_key','A secret from Secrets, used as {{secret:name}}. Add the key there first; it is never shown or stored here.'));
+    const syncEndpoint=()=>{endpoint.hidden=!!llmProvider.value;};
+    llmProvider.addEventListener('change',syncEndpoint);syncEndpoint();
     const hist=d.history.slice(0,10);
     panel.replaceChildren(
       h('div',{class:'mg-panel-head'},h('div',{class:'mg-two'},h('h2',{text:'Home agent'}),h('small',{text:'Stored as home.* in Settings · hub-wide'}))),
       h('div',{class:'mg-pad'},
         h('label',{class:'mg-actions'},enabled,'Enabled: answer in chat and to home.ask'),
         field('Name',name,'name','Chat identity agent:<name>; people write @'+(val('name')||'home')+'.'),
-        field('Provider',provider,'provider'),
-        field('Base URL',base,'base_url','The endpoint\'s /v1 base. Any OpenAI-compatible server works.'),
+        field('Model provider',llmProvider,'llm_provider','From Model providers (llmanifold, or one you added there). Its address and key are used.'),
+        endpoint,
         field('Model',h('div',{class:'mg-actions',style:'flex-wrap:nowrap'},model,fetchModels),'model','List models reads /v1/models with the values on this form.'),dl,
-        field('API key',key,'api_key','A secret from Secrets, used as {{secret:name}}. Add the key there first; it is never shown or stored here.'),
         field('Persona',persona,'persona'),
         field('System prompt addition',prompt,'system_prompt'),
         h('label',{class:'mg-actions',style:'flex-wrap:nowrap;align-items:flex-start'},memory,h('span',null,'Memory: remember people, facts and past conversations (',h('a',{href:'#memory',text:'see what it remembers'}),')')),

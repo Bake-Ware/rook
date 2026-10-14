@@ -5,11 +5,13 @@
 !NOTICE
 !rook/
 !skills/
+!services/voice/
 !docs/manual/
 !scripts/fetch-relay.py
 !integrations/claude-code/.claude-plugin/plugin.json
 rook/**/__pycache__
 rook/**/*.pyc
+services/**/__pycache__
 rook/remote/band-worker*
 rook/remote/rook-worker.apk
 rook/remote/telesthete-hub*

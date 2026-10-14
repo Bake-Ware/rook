@@ -37,11 +37,30 @@ async def test_login_page_form_and_error(env):  # noqa: F811
         assert 'name="user"' in page and 'name="pass" type="password"' in page
         assert 'href="/account/login"' in page and "error" not in page
         response = await client.post("/login", data={"user": "owner", "pass": "wrong"})
-        assert response.status == 200 and "Invalid credentials" in await response.text()
+        assert response.status == 200 and "username and password are not right" in await response.text()
         # The stylesheet the page links is public, or a signed-out browser
         # would get an unstyled login form.
         css = await client.get("/account/bands/assets/theme.css")
         assert css.status == 200 and "--accent" in await css.text()
+
+
+@pytest.mark.asyncio
+async def test_password_only_hub_asks_for_just_the_password(env):  # noqa: F811
+    """The installers set a password and no username (one operator): the
+    first sign-in is the password alone, the username field hidden."""
+    setup_store.save(SETUP)
+    server = env(web_user="", web_pass="test-password-1")
+    async with TestClient(TestServer(server._app)) as client:
+        page = await (await client.get("/login")).text()
+        assert "Username" not in page
+        assert '<input type="hidden" name="user"' in page
+        assert 'name="pass" type="password" required autocomplete="current-password" autofocus' in page
+        assert "Enter the dashboard password" in page and "{{" not in page
+        response = await client.post("/login", data={"pass": "wrong"})
+        assert "That password is not right." in await response.text()
+        response = await client.post("/login", data={"user": "admin", "pass": "test-password-1"},
+                                     allow_redirects=False)
+        assert response.status == 302
 
 
 @pytest.mark.asyncio
@@ -57,10 +76,27 @@ async def test_setup_page_keeps_csrf_and_escapes_values(env):  # noqa: F811
         assert response.status == 400 and "The form expired" in await response.text()
         response = await client.post("/setup", data={**SETUP, "hub_public": "",
                                                      "csrf": server._setup_csrf})
-        assert response.status == 200 and "are all required" in await response.text()
+        assert response.status == 200 and "Fill in both addresses and the band key." in await response.text()
         response = await client.post("/setup", data={**SETUP, "csrf": server._setup_csrf},
                                      allow_redirects=False)
         assert response.status == 302 and response.headers["Location"] == "/"
+
+
+@pytest.mark.asyncio
+async def test_setup_page_speaks_plainly_and_suggests_its_own_address(env):  # noqa: F811
+    server = env(bind="127.0.0.1")
+    async with TestClient(TestServer(server._app)) as client:
+        page = await (await client.get("/setup", headers={"Host": "192.0.2.10:7005"})).text()
+        for jargon in ("PSK", "WS endpoint", "band-worker.pyz", "setup.json"):
+            assert jargon not in page, jargon
+        assert "Band key" in page and "Address your computers connect to" in page
+        assert 'name="hub_public" value="192.0.2.10:7005"' in page
+        assert 'name="pyz_domain" value="http://192.0.2.10:7005"' in page
+        # Behind an HTTPS proxy, on the default port.
+        page = await (await client.get("/setup", headers={
+            "Host": "hub.example.com", "X-Forwarded-Proto": "https"})).text()
+        assert 'name="hub_public" value="hub.example.com:443"' in page
+        assert 'name="pyz_domain" value="https://hub.example.com"' in page
 
 
 @pytest.mark.asyncio
@@ -91,3 +127,12 @@ async def test_account_document_shell(env):  # noqa: F811
         assert '<form method="post" action="/account/login">' in page
         assert 'name="form_token"' in page and 'class="standalone-account"' in page
         assert response.headers["Cache-Control"] == "no-store"
+
+
+def test_install_page_points_at_the_local_cli_and_unattended_installs():
+    text = (WEB_DIR / "index.html").read_text(encoding="utf-8")
+    view = text[text.index('<div id="view-install"'):text.index('<div class="overlay"')]
+    assert "<code>rook status</code>" in view and "<code>rook doctor</code>" in view
+    assert "<code>-s -- --yes</code>" in view and "ROOK_YES" in view
+    # cloud-init runs as root: the page says how to give the worker an account.
+    assert "<code>ROOK_USER=&lt;account&gt;</code>" in view and "not SYSTEM" in view

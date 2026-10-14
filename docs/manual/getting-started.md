@@ -32,7 +32,8 @@ curl -fsSL https://raw.githubusercontent.com/Bake-Ware/rook/master/scripts/insta
 It asks once before changing anything, then installs Rook and the relay (a
 small program that passes band messages along) as background services that
 start again after a reboot. When it is done it prints the dashboard address,
-for example `http://192.0.2.20:7005`, and a password.
+for example `http://192.0.2.20:7005`, the password and the next steps in plain
+words.
 
 - Run the same command again later to upgrade; your keys and settings are kept.
 - No administrator rights? Add `-s -- --user` after `bash` to install it just
@@ -49,7 +50,8 @@ On its first start the hub:
 - builds the worker installer in the background (about a minute).
 
 Open the printed address from any computer on your network and sign in with
-any user name and the printed password.
+the printed password (a hub with no operator user name set asks for the
+password alone).
 
 ## Add your first worker
 
