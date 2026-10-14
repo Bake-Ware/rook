@@ -191,6 +191,26 @@ class KnowledgeService:
                                | {'tasks': linked.get(t['thread_id'], [])} for t in self.handoff_list()]
         return out
 
+    def _board(self, band, rid, data):
+        """Projects and tasks, flat, for the Work board, list and timeline
+        (``KnowledgeStore.board``). ``id`` = a project: only it, plus its page
+        extras (activity, linked rooms and knowledge). data {done_days (default
+        30; null = all), archived}."""
+        bands = [b['id'] for b in self.bands()] if not band else [self.band(band)]
+        done_days = data.get('done_days', 30)
+        out = self.store.board(bands, project=rid, archived=bool(data.get('archived')),
+                               done_days=None if done_days is None else float(done_days))
+        if rid:
+            if not out['projects']:
+                raise ValueError(f'Project {rid!r} not found')
+            p = out['projects'][0]
+            out.update(self.store.overview(p['band'], p['id'], data.get('activity', 25)))
+            flags = self._hook('flags', bands) or {}
+            for t in out['tasks']:
+                if t['id'] in flags:
+                    t['hygiene'] = flags[t['id']]
+        return out
+
     def _related(self, band, got, linked, limit):
         """Stubs (with ``score``) of the wiki pages semantically nearest
         ``got``, leaving out the pages it is already structurally tied to
@@ -266,6 +286,8 @@ class KnowledgeService:
             return self.bands()
         if action == 'deck':
             return self._deck(band, rid, data, fields, lean)
+        if action == 'board':
+            return self._board(band, rid, data)
         if action == 'hygiene':
             if self.hygiene is None:
                 return {'findings': [], 'enabled': False}
@@ -327,7 +349,7 @@ class KnowledgeService:
                     'semantic_error': self.search.last_error, 'last_maintenance': self.last_maintenance,
                     'maintenance_error': self.last_error}
         if action not in WRITES:
-            raise ValueError('Actions: bands, deck, hygiene, list, get, search, context, status, '
+            raise ValueError('Actions: bands, deck, board, hygiene, list, get, search, context, status, '
                              'create, update, link, retract, claim, release, note, batch')
         if action == 'review':
             data = {k: data.get(k) for k in ('revision', 'verdict', 'note')}
