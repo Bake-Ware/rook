@@ -15,8 +15,9 @@ deprecated: false
 ## Signing in
 
 Sign in to the dashboard with the operator password the hub printed on its
-first start, with a Google account, or with a local Rook account. Open
-**Account & access** to manage your account.
+first start, with a Google account, or with a local Rook account. When the hub
+has no operator user name set, the sign-in page asks for the password alone.
+Open **Account & access** to manage your account.
 
 - **Profile**: your name and picture. Your Google picture is used by default;
   you can upload your own or use your initials.

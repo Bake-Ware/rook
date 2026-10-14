@@ -54,12 +54,47 @@ curl -fsSL 'https://<your-hub>/worker?login=google' | bash
 
 It shows a code to approve in the web app, then asks which band to join.
 
+## Installing without anyone at the keyboard
+
+The installers show six numbered steps and end with "Done: <machine> joined
+<band>"; the details go to `install.log` in `~/.rook-band-worker`. They only
+ask questions when a person is at a terminal. For cloud-init, a script or a
+management tool, add `-s -- --yes` after `bash` (on Windows, set
+`$env:ROOK_YES = "1"` first) and nothing will prompt. `ROOK_WORKER_NAME` sets
+the machine's name on the band (letters, digits, `.`, `_` and `-`), and
+`ROOK_BAND` picks the band when an account sign-in offers several.
+
+**Run as root** (cloud-init, `sudo`), the Linux installer stops and asks whose
+worker this is, because a worker running as root would run every band command
+(shell, files, terminals) as root:
+
+- `ROOK_USER=<account>` installs it for that account instead: it runs as
+  them, as a service that starts at boot. The account must exist already.
+- `ROOK_ALLOW_ROOT=1` installs it as root anyway, for example in a container.
+
+```sh
+curl -fsSL 'https://<your-hub>/worker?band=CODE' | ROOK_USER=alice bash -s -- --yes
+```
+
+If a worker was installed for root on that machine before, `ROOK_ALLOW_ROOT=1`
+updates it in place, and `ROOK_USER` stops and disables it once the account's
+new worker is in, so the machine never runs two.
+
+**On Windows**, run the command in an administrator PowerShell of the person
+who uses the machine. It refuses to run as SYSTEM: the worker runs in that
+person's session, which keyboard, mouse and screenshots need.
+
 ## What the installer sets up
 
 The worker runs in the background and starts again after a reboot. It keeps its
 settings and certificate in `~/.rook-band-worker/` on that machine; keep that
 folder if you reinstall the system. Desktop installs also add the `rook`
-command, the terminal dashboard ([[manual-terminal-and-commands]]).
+command: the terminal dashboard ([[manual-terminal-and-commands]]), and
+`rook status` and `rook doctor` to check on the worker from that machine
+([[manual-worker-commands]]). Keyboard and mouse control is skipped on a Linux
+machine with no screen (set `ROOK_HID=1` to set it up anyway). On Windows
+without Python, the installer downloads it from python.org, checks it against
+a known fingerprint and installs it for the current user.
 
 Workers renew their certificates on their own (they last 30 days). If a worker
 loses its connection to the hub, it keeps working for up to an hour on what it

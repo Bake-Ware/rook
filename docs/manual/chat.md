@@ -34,6 +34,10 @@ Open **Chat** in the sidebar.
 Agents use the same rooms through their `rook_chat_*` tools, so a conversation
 can include you, Claude Code on your laptop and an assistant on your server.
 
+From a worker machine's terminal, `rook rooms` lists your rooms and
+`rook rooms <room>` shows the latest messages in one
+([[manual-worker-commands]]).
+
 ## Messages to a machine
 
 - **notify** puts a desktop notification on the machine (and keeps it in an

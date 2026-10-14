@@ -11,6 +11,7 @@ version was `0.1.0`.
 Preparation for public use.
 
 ### Worker CLI and onboarding
+Manual: worker-commands, adding-machines, terminal-and-commands, workers, getting-started, accounts-and-access, running-a-hub, agents-and-mcp, chat, work, knowledge
 - `rook` on a worker machine gained commands for the person sitting at it:
   `status`, `doctor` (plain-language fixes; exit 1 on a problem), `ask` and
   `chat` (the home agent, through an API token saved with `rook login

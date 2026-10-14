@@ -26,8 +26,10 @@ This page is for whoever looks after the hub machine.
   `rook-hub`, checks every download against its published checksum, and keeps
   the hub's settings in `hub.env` and its keys in `secrets.env`. Run it again
   to upgrade; `--uninstall` removes it and keeps the data (`--purge` deletes
-  that too). `--user` installs without root. All options and troubleshooting:
-  docs/operations/install.md.
+  that too). `--user` installs without root. When it finishes it prints, in
+  plain words, the dashboard address and password, the next steps, the address
+  and token for AI agents, and how to check on, upgrade or remove the hub. All
+  options and troubleshooting: docs/operations/install.md.
 - **Docker**: download `compose.yaml` and `.env.example` (as `.env`), fill in
   the band key, password and agent token, and run `docker compose up -d`. It
   runs the published image as two containers, the hub and the relay, with
