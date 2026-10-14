@@ -319,7 +319,6 @@ def main(argv: list[str] | None = None) -> int:
     if a.tag:
         print(f"rook {version} = build {name} (commit {commit})")
     if a.release_json:
-        import json
         prev = None
         if a.previous_release_json and a.previous_release_json.is_file():
             try:
