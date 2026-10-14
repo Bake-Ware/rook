@@ -24,6 +24,11 @@ Manual: voice
   to the vault. Defaults are the service's own, and they apply when speech
   runs on the hub (`voice.engine=here`); a remote voice server keeps its own
   environment. Docs: docs/operations/voice.md.
+- A voice setting given in the hub's environment as `ROOK_VOICE_<NAME>`
+  (e.g. `ROOK_VOICE_HASS_URL`) now reaches the voice service on the hub
+  under the variable it reads (`VOICE_HASS_URL`); before, Settings showed it
+  locked but the service never saw it. The service's own variable, when
+  set, still wins. `voice.llm_model` shows the service's default model id.
 
 ## [0.2.0] - 2026-10-14
 

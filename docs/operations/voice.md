@@ -84,7 +84,10 @@ environment variables as before (`VOICE_TOKEN`, `WHISPER_MODEL`, `VOICE`,
 `voice.root_aliases`. With engine `here`, the values an operator stored (and
 secrets set in the vault) are handed to the voice service as its environment
 variables; defaults stay the service's own, and a variable already set in the
-hub's environment always wins. Changing one restarts the plugin (and reloads
+hub's environment always wins. A value the hub's environment gives under
+another name (the automatic `ROOK_VOICE_<NAME>`, e.g. `ROOK_VOICE_HASS_URL`)
+is handed on under the variable the service reads (`VOICE_HASS_URL`), unless
+that variable is set itself. Changing one restarts the plugin (and reloads
 the models; a load still in progress is waited for first, so two never run at
 once). If that load is still running after three minutes, the new engine
 waits for it to finish and be cleared away before it starts, and the Voice

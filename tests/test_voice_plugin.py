@@ -800,6 +800,53 @@ async def test_engine_here_exports_them_and_the_hubs_environment_wins(
     assert os.environ["VOICE_TTS_THREADS"] == "2"
 
 
+def test_a_value_from_another_variable_reaches_the_service_under_its_own(
+        tmp_path, fake_engine, monkeypatch):
+    # The automatic name and an alias-like other name: handed on under the
+    # variable the service reads (a stored value would lose to them anyway).
+    monkeypatch.setenv("ROOK_VOICE_HASS_URL", "https://ha.example.com:8123")
+    monkeypatch.setenv("ROOK_VOICE_HASS_TOKEN", "ha-token-from-env")
+    monkeypatch.setenv("ROOK_VOICE_TTS_THREADS", "3")
+    monkeypatch.setenv("ROOK_VOICE_HASS_VERIFY_TLS", "off")
+    monkeypatch.setenv("ROOK_VOICE_HOME_LAT", "north")            # invalid: left out
+    monkeypatch.setenv("VOICE_PIANOBAR_WORKER", "music-box")      # the service's own name
+    monkeypatch.setenv("ROOK_VOICE_PIANOBAR_WORKER", "other-box")
+    node = gpu_node(tmp_path, DictVault({}), model_dir=str(fake_engine.models),
+                    hass_url="https://stored.example.com:8123", tts_threads=6)
+    voice = node.plugin("voice")
+    assert voice.settings.source("hass_url") == "env"
+    env = voice.engine_env()
+    assert env["VOICE_HASS_URL"] == "https://ha.example.com:8123"
+    assert env["VOICE_HASS_TOKEN"] == "ha-token-from-env"
+    assert env["VOICE_TTS_THREADS"] == "3"
+    assert env["VOICE_HASS_VERIFY_TLS"] == "0"
+    assert "VOICE_HOME_LAT" not in env
+    # Already under the service's own name: nothing to hand on, and it wins.
+    assert "VOICE_PIANOBAR_WORKER" not in env
+    # Only the service's variable gets the value: no other name carries the secret.
+    assert [k for k, v in env.items() if v == "ha-token-from-env"] == ["VOICE_HASS_TOKEN"]
+
+
+@pytest.mark.asyncio
+async def test_engine_here_hands_on_rook_voice_names_and_the_services_own_wins(
+        tmp_path, fake_engine, monkeypatch):
+    monkeypatch.setenv("ROOK_VOICE_HASS_URL", "https://ha.example.com:8123")
+    monkeypatch.setenv("ROOK_VOICE_CHATTERBOX_DEVICE", "cuda:1")
+    monkeypatch.setenv("VOICE_CHATTERBOX_DEVICE", "cuda:0")
+    node = gpu_node(tmp_path, model_dir=str(fake_engine.models))
+    voice = node.plugin("voice")
+    await node.start()
+    try:
+        assert await wait_for(lambda: voice.engine.state == "ready"), voice.engine.error
+        assert os.environ["VOICE_HASS_URL"] == "https://ha.example.com:8123"
+        assert os.environ["VOICE_CHATTERBOX_DEVICE"] == "cuda:0"
+    finally:
+        await node.stop()
+    assert "VOICE_HASS_URL" not in os.environ
+    assert os.environ["VOICE_CHATTERBOX_DEVICE"] == "cuda:0"
+    assert os.environ["ROOK_VOICE_HASS_URL"] == "https://ha.example.com:8123"
+
+
 @pytest.mark.asyncio
 async def test_engine_remote_never_exports_them(tmp_path, monkeypatch):
     monkeypatch.setattr(eng, "missing_extras", lambda: ["webrtcvad"])
@@ -858,8 +905,8 @@ def _service_defaults():
 
 
 #: Hub defaults that differ from the service's on purpose: the model folder is
-#: always the hub's (plugin data folder), and the hub has never guessed a model id.
-DEFAULTS_DIFFER = {"VOICE_MODEL_DIR", "VLLM_MODEL"}
+#: always the hub's (plugin data folder).
+DEFAULTS_DIFFER = {"VOICE_MODEL_DIR"}
 
 
 def test_every_voice_variable_is_read_by_the_service_with_the_same_default():

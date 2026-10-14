@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -154,8 +155,8 @@ SETTINGS = (
     # Agent
     _s("llm_url", "url", "http://127.0.0.1:1234/v1/chat/completions", env="VLLM_URL",
        apply="reload", label="Language model URL", group="Agent"),
-    _s("llm_model", "str", "", env="VLLM_MODEL", apply="reload", label="Model id",
-       group="Agent"),
+    _s("llm_model", "str", "qwen3.8-flash-next-iq2_xs", env="VLLM_MODEL", apply="reload",
+       label="Model id", group="Agent"),
     _s("mcp_url", "url", "http://127.0.0.1:8765/mcp", env="ROOK_MCP_URL", apply="reload",
        label="Rook MCP URL", group="Agent"),
     _s("mcp_token", "str", secret=True, env="ROOK_MCP_TOKEN", apply="reload",
@@ -353,14 +354,27 @@ class Voice(Plugin):
     def engine_env(self) -> dict[str, str]:
         """The voice service's environment from this plugin's settings: values
         an operator stored (or put in the vault) only; defaults stay the
-        service's own, and the hub's environment always wins."""
+        service's own, and the hub's environment always wins. A value the
+        hub's environment gives under another name (an alias, or the
+        automatic ``ROOK_VOICE_<NAME>``) is handed on under the variable the
+        service reads."""
         env: dict[str, str] = {}
         for s in self.SETTINGS:
             if not s.env or s.name in HUB_ONLY or s.scope != "hub":
                 continue
-            if self.settings.source(s.name) not in ("stored", "vault"):
+            source = self.settings.source(s.name)
+            if source == "env":
+                var = self.settings.env_var(s.name)
+                if var == s.env:
+                    continue          # the service reads it there already
+                try:
+                    value = s.coerce(os.environ.get(var or ""))
+                except (ValueError, TypeError):
+                    continue          # invalid: the service keeps its own default
+            elif source in ("stored", "vault"):
+                value = self.settings.get(s.name)
+            else:
                 continue
-            value = self.settings.get(s.name)
             if value is None or value == "":
                 continue
             env[s.env] = _env_value(value)

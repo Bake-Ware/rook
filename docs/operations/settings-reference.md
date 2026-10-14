@@ -419,7 +419,7 @@ are set only in the environment or on the command line.
 | `voice.chatterbox_voices_dir` | Cloned voices folder | hub | path |  | `VOICE_CHATTERBOX_VOICES_DIR`, `ROOK_VOICE_CHATTERBOX_VOICES_DIR` | reload |
 | `voice.chatterbox_start_timeout_s` | Chatterbox start timeout (s) | hub | float | `180.0` | `VOICE_CHATTERBOX_START_TIMEOUT_S`, `ROOK_VOICE_CHATTERBOX_START_TIMEOUT_S` | reload |
 | `voice.llm_url` | Language model URL | hub | url | `http://127.0.0.1:1234/v1/chat/completions` | `VLLM_URL`, `ROOK_VOICE_LLM_URL` | reload |
-| `voice.llm_model` | Model id | hub | str |  | `VLLM_MODEL`, `ROOK_VOICE_LLM_MODEL` | reload |
+| `voice.llm_model` | Model id | hub | str | `qwen3.8-flash-next-iq2_xs` | `VLLM_MODEL`, `ROOK_VOICE_LLM_MODEL` | reload |
 | `voice.mcp_url` | Rook MCP URL | hub | url | `http://127.0.0.1:8765/mcp` | `ROOK_MCP_URL`, `ROOK_VOICE_MCP_URL` | reload |
 | `voice.mcp_token` | Rook MCP token (secret) | hub | str |  | `ROOK_MCP_TOKEN`, `ROOK_VOICE_MCP_TOKEN` | reload |
 | `voice.acp_host` | ACP host | hub | str | `127.0.0.1` | `ACP_HOST`, `ROOK_VOICE_ACP_HOST` | reload |
