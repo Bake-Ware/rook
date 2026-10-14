@@ -510,6 +510,12 @@ def build_server(client: "BandClient | MultiBandClient",
         if mcp._rook_hygiene is not None:
             mcp._rook_hygiene.knowledge = knowledge
 
+    def _bind_huddle(plugin):
+        # Huddle questions record the asker's attributed host, so an answer
+        # can only wake the machine the agent asked from.
+        if plugin.NAMESPACE == "huddle":
+            plugin.attribution = _principal
+
     def _unbind_knowledge(plugin):
         if plugin.NAMESPACE == "knowledge" and mcp._rook_knowledge is plugin.service:
             mcp._rook_knowledge = None
@@ -519,6 +525,7 @@ def build_server(client: "BandClient | MultiBandClient",
     if mcp._rook_hub is not None:
         try:
             mcp._rook_hub.host.add_bind_hook(_bind_knowledge, _unbind_knowledge)
+            mcp._rook_hub.host.add_bind_hook(_bind_huddle)
             if mcp._rook_knowledge is not None:
                 from .hygiene import Hygiene
                 mcp._rook_hygiene = Hygiene(mcp._rook_knowledge, client, chat,
@@ -1800,6 +1807,14 @@ class McpService:
         except Exception:
             _jt = None
         for route in job_routes(lambda: mcp._rook_hub, accounts, _jt):
+            app.router.routes.insert(0, route)
+        # Huddle view API (Work > Huddle; proxied by the dashboard).
+        from ..hub.plugins.huddle.web import routes as huddle_routes
+        for route in huddle_routes(lambda: mcp._rook_hub, accounts):
+            app.router.routes.insert(0, route)
+        # Overview, start page and themes (the ui hub plugin).
+        from ..hub.plugins.ui.web import routes as ui_routes
+        for route in ui_routes(lambda: mcp._rook_hub, accounts):
             app.router.routes.insert(0, route)
         self._hygiene_task = (asyncio.create_task(mcp._rook_hygiene.run())
                               if mcp._rook_hygiene is not None else None)

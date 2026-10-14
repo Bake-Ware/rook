@@ -15,10 +15,10 @@ const CSS=`
 .pl-filters input[type=search]{flex:1 1 200px;min-width:0}
 .pl-grid{border:1px solid var(--line);background:var(--panel);overflow-x:auto}
 .pl-grid>div{min-width:var(--min,640px)}
-.pl-r{display:grid;grid-template-columns:var(--cols);gap:0;align-items:stretch;border-bottom:1px solid #20261d}
+.pl-r{display:grid;grid-template-columns:var(--cols);gap:0;align-items:stretch;border-bottom:1px solid var(--line-soft)}
 .pl-r:last-child{border-bottom:0}
 .pl-r.head{position:sticky;top:0;background:var(--panel);z-index:1;font:500 10px var(--mono);letter-spacing:1px;color:var(--dim);text-transform:uppercase}
-.pl-r.group{background:#161b13;font:500 10px var(--mono);letter-spacing:1px;color:var(--dim);text-transform:uppercase}
+.pl-r.group{background:var(--group-bg);font:500 10px var(--mono);letter-spacing:1px;color:var(--dim);text-transform:uppercase}
 .pl-r.group>div{padding:8px 14px;grid-column:1/-1}
 .pl-r>div{padding:8px 6px;display:flex;align-items:center;justify-content:center;min-width:0}
 .pl-r>div:first-child{justify-content:flex-start;padding-left:14px;position:sticky;left:0;background:var(--panel);z-index:1}
@@ -30,14 +30,14 @@ const CSS=`
 .pl-name:hover b{color:var(--accent)}
 .pl-tags{display:flex;gap:4px;flex-wrap:wrap;margin-top:2px}
 .pl-risk{font:500 9px var(--mono);letter-spacing:1px;padding:1px 5px;border:1px solid var(--line2);color:var(--dim);text-transform:uppercase}
-.pl-risk.exec,.pl-risk.admin{border-color:#6b4336;color:var(--bad)}
-.pl-risk.write{border-color:#514b35;color:var(--accent)}
-.pl-risk.hi{background:#241614;border-color:#6b4336;color:var(--bad);text-transform:none;letter-spacing:0}
+.pl-risk.exec,.pl-risk.admin{border-color:var(--bad-line);color:var(--bad)}
+.pl-risk.write{border-color:var(--accent-line);color:var(--accent)}
+.pl-risk.hi{background:var(--bad-bg);border-color:var(--bad-line);color:var(--bad);text-transform:none;letter-spacing:0}
 .pl .pl-cell{min-width:58px;min-height:30px;padding:0 8px;border:1px solid var(--line);background:transparent;color:var(--dim);font:500 11px var(--mono);cursor:default}
-.pl .pl-cell.on{border-color:#3d5a33;color:var(--green);background:#16200f}
+.pl .pl-cell.on{border-color:var(--good-line);color:var(--green);background:var(--good-bg)}
 .pl .pl-cell.off{border-color:var(--line2);color:var(--dim)}
-.pl .pl-cell.unavailable{border-style:dashed;color:#8a8d7a}
-.pl .pl-cell.error{border-color:#6b4336;color:var(--bad);background:#241614}
+.pl .pl-cell.unavailable{border-style:dashed;color:var(--dim2)}
+.pl .pl-cell.error{border-color:var(--bad-line);color:var(--bad);background:var(--bad-bg)}
 .pl .pl-cell.na,.pl .pl-cell.absent{border-color:transparent}
 .pl .pl-cell.can{cursor:pointer}.pl .pl-cell.can:hover{border-color:var(--accent);color:var(--accent)}
 .pl .pl-cell.busy{opacity:.5;cursor:progress}
@@ -60,12 +60,12 @@ const CSS=`
 .pl-caps .pl-risk{justify-self:start}
 .pl>.mg-status{position:sticky;top:0;z-index:3;background:var(--bg);padding:6px 0}
 .pl-caps span.doc{grid-column:1/-1;color:var(--dim)}
-.pl-banner{padding:10px 14px;border:1px solid var(--accent-dim);background:#1f1c12;font-size:13px;line-height:1.5}
+.pl-banner{padding:10px 14px;border:1px solid var(--accent-dim);background:var(--banner-bg);font-size:13px;line-height:1.5}
 @media(max-width:760px){.pl-grid .pl-r{grid-template-columns:minmax(0,1fr) 120px}.pl-grid .pl-r>div.pl-c{display:none}.pl-grid .pl-r>div.pl-sum{display:flex}.pl-grid>div{min-width:0}}
 .pp{display:flex;flex-direction:column;gap:10px}
 .pp-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:8px}
 .pp-item{display:grid;grid-template-columns:20px minmax(0,1fr);gap:4px 10px;align-items:start;padding:10px 12px;border:1px solid var(--line);background:var(--panel);cursor:pointer;font-size:13px}
-.pp-item.on{border-color:var(--accent-dim);background:#1f1c12}
+.pp-item.on{border-color:var(--accent-dim);background:var(--banner-bg)}
 .pp-item input{margin-top:2px}
 .pp-item b{font-weight:500}
 .pp-item small{grid-column:2;color:var(--dim);font-size:12px;line-height:1.45}
