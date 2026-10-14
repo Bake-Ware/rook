@@ -58,6 +58,8 @@ for the Work board are in the same settings group.
 
 ## The memory vault (older)
 
-The `memory.*` capabilities offer a separate, simpler shared notes folder on
-one machine (set its **Memory** vault folder in that machine's settings). New
-setups should use the knowledge wiki.
+A worker's `memory.get`, `memory.put`, `memory.note` and `memory.search`
+capabilities offer a separate, simpler shared notes folder on one machine (set
+its **Memory** vault folder in that machine's settings). New setups should use
+the knowledge wiki. This is not the home agent's memory
+([[manual-home-agent-memory]]).

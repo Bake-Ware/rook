@@ -33,6 +33,9 @@ The page also shows its recent activity, so you can see what it was asked and
 what it said. With **Read-only tools** on, it can search the knowledge wiki
 before answering. Jobs can use it as a step too ([[manual-jobs]]).
 
+It remembers people, facts, earlier conversations and skills between
+conversations; see [[manual-home-agent-memory]].
+
 ## Decide (preview)
 
 The **Decide** plugin connects Rook to a fast decision model: a model that
