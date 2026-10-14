@@ -493,6 +493,11 @@ case "$ROOK_YES" in
     *) if {{ true </dev/tty; }} 2>/dev/null; then HAVE_TTY=1; fi ;;
 esac
 
+# cloud-init and systemd units may run us without HOME or USER.
+[ -n "${{HOME:-}}" ] || export HOME="$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f6)"
+[ -n "${{HOME:-}}" ] || export HOME=/root
+[ -n "${{USER:-}}" ] || export USER="$(id -un)"
+
 # Root needs no sudo (a container, cloud-init); without a terminal sudo must
 # fail at once instead of waiting for a password nobody can type.
 SUDO=""
@@ -760,6 +765,19 @@ WORKER_CMD="$VPY $PYZ --hub {hub_public} --ws --psk {band_psk} --name $WORKER_NA
 # restart even if this script dies), and on no-service-manager hosts we launch
 # the new worker in its OWN session before reaping the old one.
 say "(6/6) Starting the worker in the background..."
+
+# cloud-init, a systemd unit or an SSH session without a login session has no
+# user service manager yet. Lingering starts one now (and at every boot), so
+# the worker below gets a real service instead of a process that a reboot ends.
+if [ "$IS_TERMUX" != "1" ] && command -v systemctl &>/dev/null && command -v loginctl &>/dev/null \
+        && ! systemctl --user show-environment >/dev/null 2>&1; then
+    quietly loginctl enable-linger "$USER" || quietly $SUDO loginctl enable-linger "$USER" || true
+    export XDG_RUNTIME_DIR="${{XDG_RUNTIME_DIR:-/run/user/$(id -u)}}"
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        systemctl --user show-environment >/dev/null 2>&1 && break
+        sleep 1
+    done
+fi
 
 if [ "$IS_TERMUX" = "1" ]; then
     setup_termux_service

@@ -373,3 +373,16 @@ def test_unified_and_relay_installers_need_an_openable_terminal(tmp_path):
     run = subprocess.run(["setsid", "bash", "-c", probe], stdin=subprocess.DEVNULL,
                          capture_output=True, text=True)
     assert run.stdout.strip() == "no" and run.stderr == ""
+
+
+@pytest.mark.asyncio
+async def test_unix_cloud_init_gets_home_and_a_user_service(scripts):
+    """cloud-init and systemd units run the installer without HOME/USER and
+    without a user service manager; lingering starts one so the worker is a
+    real service that survives a reboot."""
+    text = scripts["unix"]
+    _ordered(text, '[ -n "${HOME:-}" ] || export HOME=', 'mkdir -p "$HOME/.rook-band-worker"')
+    assert '[ -n "${USER:-}" ] || export USER="$(id -un)"' in text
+    _ordered(text, "(6/6) Starting the worker", 'loginctl enable-linger "$USER"',
+             'export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"',
+             "elif command -v systemctl &>/dev/null && systemctl --user show-environment")
