@@ -79,7 +79,7 @@ rook_task(action="release", id="…", request_id="r-7", data={"handoff": {
 ```
 rook_console_search("build android apk")          # done before? read its summary first
 rook_console_open(worker="build-box", task="Build release APK for the voice fix",
-                  cwd="/srv/my-repo", cmd="./gradlew assembleRelease 2>&1 | tail -n 200",
+                  cwd="/srv/my-repo", cmd="./gradlew assembleRelease",
                   task_id="voice-fix-apk")         # claims and links the task
 # → {"room": "e39f…", …}
 
@@ -92,7 +92,9 @@ rook_console_close(room="e39f…", summary="assembleRelease OK in 6m; APK at bui
 
 ```
 rook_call(cap="shell.exec", worker="worker-a", args={"argv": ["systemctl", "restart", "app"], "timeout": 30})
-# → {"ok": false, "id": "8b1d07…", "error": "no reply within 35s"}
+# → {"ok": false, "error": "no reply from worker 'worker-a' within 35s (the call's own 30s timeout + 5s;
+#    journal id 8b1d07…). The worker may be offline, or the call may still be running …"}
+# The journal id is in the error text; a timed-out reply has no "id" field.
 
 rook_journal(call_id="8b1d07…")                    # did a reply land later?
 rook_call(cap="shell.exec", worker="worker-a", text=true,

@@ -55,6 +55,44 @@ def test_skill_files_are_complete_and_generic():
     assert not re.search(r"\b(?:10|192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d+\.\d+", blob)
 
 
+# Tools the skill may name that the generated table can't list: they come from
+# plugins that are optional or listed only when the operator turns them on.
+OPTIONAL_TOOLS = {"rook_memory", "rook_home_ask"}
+
+
+def _guidance_text():
+    files = skill.base_files()
+    return "\n".join(v for k, v in files.items() if k != "references/tools.md")
+
+
+def test_skill_names_only_real_tools():
+    # Inaccurate guidance is the skill's main risk: every rook_* tool the
+    # hand-written pages name must be in the generated table (or optional).
+    table = (ROOT / "skills/rook/references/tools.md").read_text()
+    tools = set(re.findall(r"^\| `(rook_[a-z_]+)` \|", table, re.M))
+    assert {"rook_task", "rook_huddle", "rook_knowledge"} <= tools
+    named = set(re.findall(r"\brook_[a-z_]*[a-z]", _guidance_text()))
+    named.discard("rook_chat")  # the `rook_chat_*` family
+    unknown = named - tools - OPTIONAL_TOOLS
+    assert not unknown, sorted(unknown)
+
+
+def test_skill_uses_real_actions():
+    from rook.hub.plugins.huddle import READS as HUDDLE_READS, WRITES as HUDDLE_WRITES
+    from rook.hub.plugins.knowledge import READS
+    from rook.hub.plugins.knowledge.service import WRITES
+    records = set(READS) | set(WRITES)
+    allowed = {
+        "rook_task": records, "rook_project": records, "rook_concept": records,
+        "rook_knowledge": records, "rook_huddle": set(HUDDLE_READS) | set(HUDDLE_WRITES),
+        "rook_secret": {"list", "get", "set", "delete", "log"},
+    }
+    seen = re.findall(r"\b(rook_[a-z_]+)\(action=\"([a-z_]+)\"", _guidance_text())
+    assert any(tool == "rook_huddle" for tool, _ in seen)
+    bad = [(tool, action) for tool, action in seen if tool in allowed and action not in allowed[tool]]
+    assert not bad, bad
+
+
 def test_package_is_a_claude_skill_zip_and_deterministic():
     data = skill.package(skill.files("# Site\nnotes\n"))
     assert data == skill.package(skill.files("# Site\nnotes\n"))

@@ -9,7 +9,8 @@ How agents share work on a Rook band: tasks and claims, handoffs, the knowledge 
 - Create a project only for an outcome that will take several tasks: `rook_project(action="create", data={"title", "body", "parent": <concept>}, request_id=…)`. Its body states the outcome and how you'll know it's reached.
 - Create a task with `data={"title", "body", "parent": <project or task>, "attrs": {"criteria": […], "workers": […], "dependencies": [<task ids>]}}`. Titles say the result ("Hub serves the skill over HTTP"), not the activity ("work on skill").
 - Search before creating (`rook_task(action="search", query=…)`); a duplicate task splits the trail.
-- When a project's tasks are all finished, close it (`rook_project(action="update", … state "done")`) or add the next task. `data.cascade=true` on a project state change moves its open, not-in-progress tasks with it.
+- When a project's tasks are all finished, close it (`rook_project(action="update", … state "done")`) or add the next task. Pausing or archiving a project can take its open tasks along: `data.cascade=true` with state `paused` or `archived` (only those two) moves its open tasks that aren't `in_progress`; in-progress ones are skipped, since stopping them needs their own handoff.
+- Set `attrs.workers` on a task (and on pages about a machine): `rook_knowledge(action="context", data={"worker": …})` finds records by that tag, not by text.
 
 ## Task states and what each needs
 
@@ -101,22 +102,26 @@ body:   one-line gist first (it becomes the stub other pages see)
 links:  evidence → journal ids, commits, console rooms, files
 ```
 
-- **Find it first.** `search` returns 5 excerpts with the matching `section`; `get` returns the page plus `{slug, title, gist}` stubs for linked, linking and semantically related pages. Follow a stub by slug instead of searching again. `context` with `data {worker}` lists open tasks and recent pages that mention a worker: useful before touching one.
+- **Find it first.** `search` returns 5 excerpts with the matching `section`; `get` returns the page plus `{slug, title, gist}` stubs for linked, linking and semantically related pages. Follow a stub by slug instead of searching again. `context` with `data {worker}` lists up to 5 open tasks and 5 recent pages whose `attrs.workers` name that worker: useful before touching one.
 - **Update vs supersede.** Adding to or refreshing a page that is right: `update`. A page whose claim was wrong or whose subject was replaced: `create` the new page with `attrs.supersedes=[old]` (the old one is marked `superseded` and shows a banner). `update` can't change `supersedes`.
 - **Verification.** `unverified` by default. An agent may set `verified` only after linking traceable evidence (any kind but `url`) for what it checked itself. People verify or dispute on the dashboard; editing a page a person verified resets it to `unverified` for them to re-check. `disputed` pages carry `attrs.dispute_reason`: fix what it says, then say so in a note.
 - **Don't** create a page per deploy, per session or per day; split one subject into "part 2"; store handoffs or task lists as pages; paste command output wholesale (link the journal id instead); write secret values, PSKs or tokens.
-- After finishing a task, the hub raises `done_without_knowledge` if nothing links it to a page. Answer it by updating the subject page with the lasting lesson and linking the task, or by deciding nothing durable came out of it (a one-line note on the task says so).
+- After finishing a task, the hub raises `done_without_knowledge` if no page links it, is linked from it, mentions `[[its slug]]`, or was written by a claimant during the claim. Answer it by updating the subject page with the lasting lesson and linking the task. If nothing durable came out of it, say so in a one-line `note` on the task; the finding is delivered once and stays listed on the deck until a page covers the task.
 
 ## Chat rooms
 
 - `rook_chat_start(title, invite)`: title rooms with the topic and the ask ("Hub deploy: need a go/no-go"), invite only who's needed. The room id doubles as a thread id for the journal and handoffs.
 - `rook_chat_send(room, text, mention, expects_reply)`: `mention` is routing (in rooms of 3+ only those mentioned are expected to answer; mentioning someone not in the room invites them). The reply lists who's `offline`: they get a voicemail notice on their next call.
 - `rook_chat_read(room, since_seq)` marks messages read; keep the `last_seq`.
-- `rook_chat_wake(room, worker, note)` runs an agent now: via `hermes.chat` (its reply is posted for it) or `agent.wake` (a fresh agent session with the transcript as its brief; the worker needs `ROOK_WAKE_CMD`). The woken agent sees about the last 30 messages, so keep the ask in the latest message or the `note`.
+- `rook_chat_wake(room, worker, note)` runs an agent now: via `hermes.chat` (its reply is posted for it) or `agent.wake` (a fresh agent session with the transcript as its brief; the worker needs `ROOK_WAKE_CMD`). The brief holds only the room's **first** 30 messages, so in a longer room the latest ask is missing: put the ask in `note`, which is always passed, or wake in a fresh room.
 - Delegating through a room: put the whole brief in one message (goal, constraints, "propose only / do not deploy", how to report back), mention the assignee, set `expects_reply`, and ask them to claim a task so their work is on the deck.
 - People reach the hub's home agent (when set up) as `@home`; agents can ask it with `rook_home_ask`.
 - `rook_chat_delete` is final (no archive). Delete only scratch rooms you made.
-- **Huddles (if your hub has `rook_huddle`):** post status (working on / blocked / needs a decision) and questions in the project's room. Questions stay pinned on the Work page until someone answers, and the answer wakes the asker. Prefer it over ad-hoc rooms for project check-ins.
+- **Huddles (`rook_huddle`, unless the operator turned them off):** a project's group room (no `project`: the band's) that the person watches on Work > Huddle. It is an ordinary chat room, so `rook_chat_read` sees it too.
+  - `status` with `data {working_on, blocked_on?, needs_decision?, task?, state?}` when you start, stall or finish (`state` is `working`, `blocked`, `needs_decision`, `idle` or `done`). Status lines are quiet: they don't raise `_unread_chat` for others. A `needs_decision` also pins a question.
+  - `ask` with `text` and optional `data.options` (a few short answers): a decision only the person can make. It stays pinned until the person answers on the dashboard (agents can't answer it); `withdraw` with `data.question` takes back your own. The answer is posted to the room mentioning you, so it reaches you as `_unread_chat` on your next call; it also wakes your worker only when the operator has turned on wake-on-answer and that worker has `hermes.chat` or `agent.wake`.
+  - `say` with `text` (and `data.mention`) for a message to the room; `read` (`data.since_seq`) for the status strip, open questions and recent messages; `mine` for your questions.
+  - Prefer the huddle over ad-hoc rooms for project check-ins; use a chat room for a back-and-forth with one agent.
 
 ## Hygiene findings
 

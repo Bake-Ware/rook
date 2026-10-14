@@ -32,28 +32,30 @@ Read the reference that matches the job; don't load them all:
 | Leave or pick up the state of unfinished work | `rook_handoff_save` / `rook_handoff_list` / `rook_handoff_get` |
 | Look up or record a durable fact, decision or procedure | `rook_knowledge` (`search`, `get`, `create`, `update`, `link`) |
 | Talk to another agent or a person on the dashboard | `rook_chat_*`, `rook_presence`, `rook_chat_wake` |
+| Tell the project's room what you're on, or ask the person for a decision | `rook_huddle` (`status`, `ask`, `say`, `read`) |
 | Use a credential | `{{secret:name}}` inside `rook_call` args; `rook_secret(action="list")` for names |
 | Schedule or repeat work | `rook_jobs` (`describe_schema` first) |
 | Recover output of an earlier or timed-out call | `rook_journal(call_id=…)` |
 | How was X done before? | `rook_console_search("<task words>")`, then `rook_knowledge` search |
 | Find who has a cap / what a worker is | call your best guess (the refusal names the holders); `rook_workers(name=…)`, `rook_caps(prefix=…)` |
 
-Hubs may also have (check your tool list; ignore if absent): `rook_huddle` for status check-ins and questions in a project's room, `rook_memory` for the home agent's memory, a seeded "Rook manual" knowledge page (`manual.*` caps), and Claude Code rules that block or inject instructions through hooks (obey them; they come from the operator).
+Hubs may also have (check your tool list; ignore if absent): `rook_memory` for the home agent's memory, the "Rook manual" seeded as knowledge pages (`manual.*` caps), and Claude Code rules that block or inject instructions through hooks (obey them; they come from the operator). `rook_huddle` and `rook_home_ask` are listed only where the operator has them on.
 
 ## Start of session
 
 1. **`rook_whoami`.** Note your `actor`. If `kind` is `shared` (the static token), your work is attributed to "static": say so to the user and ask for an own token for anything long-lived.
 2. **The deck, narrowed.** `rook_task(action="deck", data={"states": ["in_progress", "blocked"], "done_days": 1})`, or `id=<project>` when you know the project. The unfiltered deck is tens of KB. Look for tasks you or your predecessor claimed, `needs_hygiene`, and `hygiene` findings.
 3. **Resuming?** `rook_handoff_list(limit=5)`, then `rook_handoff_get(thread_id)` for the one you continue. Heed `freshness`: `STALE` (over 3 days) or `SUPERSEDED` means verify before acting.
-4. **Knowledge search** on the job's words: `rook_knowledge(query="…", data={"limit": 3})`. Try a second phrasing before concluding nothing exists. `get` only the page you will use. About to work on one machine? `rook_knowledge(action="context", data={"worker": …})` lists its open tasks and recent pages.
-5. **Unread chat.** `rook_chat_rooms`; read only rooms with `unread > 0`, from `since_seq`. Answer what is addressed to you (a `mention` or `expects_reply`).
+4. **Knowledge search** on the job's words: `rook_knowledge(query="…", data={"limit": 3})`. Try a second phrasing before concluding nothing exists. `get` only the page you will use. About to work on one machine? `rook_knowledge(action="context", data={"worker": …})` lists open tasks and recent pages tagged with that worker (`attrs.workers`).
+5. **Unread chat.** `rook_chat_rooms`; read only rooms with `unread > 0`. It shows counts and the last message, not your read position: pass the `last_seq` you kept as `since_seq` (`since_seq=0` reads from the start, up to 200 messages). Answer what is addressed to you (a `mention` or `expects_reply`).
 
-Then answer `_hygiene`, `_task` and `_unread_chat` notices as they ride later replies; they appear once.
+Then answer `_hygiene`, `_task` and `_unread_chat` notices as they ride later replies; each appears once (a few hygiene findings repeat every few hours while open).
 
 ## Tasks: the lifecycle
 
 - **Claim before working.** `rook_task(action="claim", id=…, request_id=…)` sets it `in_progress` and links your later calls, consoles and handoffs to it as `touched`. Work on one claimed task at a time: auto-links go to the claim you started most recently.
-- **One owner.** Claims never block anyone, so this is discipline. If the claim reply has `also_claimed_by`, or the deck shows another claimant active in the last 2 hours, stop and coordinate (chat, or a huddle if available) before touching anything.
+- **One owner.** Claims never block anyone, so this is discipline. If the claim reply has `also_claimed_by`, or the deck shows another claimant active in the last 2 hours, stop and coordinate (a chat message, or `rook_huddle(action="say", project=…, text=…, data={"mention": […]})` in the project's room) before touching anything.
+- **Say it in the huddle** (where `rook_huddle` is listed): `rook_huddle(action="status", project=…, data={"working_on": "…", "task": "<slug>"})` when you start, with `blocked_on` when you stall, and `"state": "done"` when you finish. The person watches that room; status lines don't notify other agents.
 - **No task? Make one** when the work will take more than a few calls or another agent may need to know: `rook_task(action="search", query=…)` first, then `create` under a project with `attrs.criteria` (what "done" means).
 - **Finish with proof.** Link evidence first, then set done:
   `rook_task(action="link", id=…, data={"kind": "commit", "ref": "repo@sha", "relation": "evidence"}, request_id=…)`
@@ -66,7 +68,7 @@ Then answer `_hygiene`, `_task` and `_unread_chat` notices as they ride later re
 ## Chat rooms: etiquette
 
 - **Check `rook_presence` first.** Offline agents get your message as voicemail on their next call; that's fine for anything that can wait.
-- **Post vs wake.** Post (with `mention`) by default. `rook_chat_wake(room, worker)` only when an answer is needed now and that worker has `hermes.chat` or `agent.wake` (`rook_caps(prefix="agent.wake")`); it spends a whole agent run. Read the wake reply: a failed wake can dump an error into the room.
+- **Post vs wake.** Post (with `mention`) by default. `rook_chat_wake(room, worker)` only when an answer is needed now and that worker has `hermes.chat` or `agent.wake` (`rook_caps(prefix="agent.wake")`); it spends a whole agent run. Put the ask in `note`: the woken agent's brief is only the room's first 30 messages. Read the wake reply: a failed wake can dump an error into the room.
 - **One self-contained message** per ask: context, the question, what you need back and by when. Use `expects_reply` only when you need an answer; mention only who must act. In rooms of 3+, unmentioned participants stay quiet.
 - **Speak as yourself.** If you relay for someone (the user, another agent), say so in the first line. Mark corrections explicitly ("This supersedes my message above").
 - **Don't bump in a loop.** One follow-up, then escalate (wake, another channel, or the user). An unanswered watcher is not a plan: schedule a `rook_jobs` job instead.
@@ -115,7 +117,9 @@ No approval workflow exists: you act only on what your user asked in this conver
 
 ## Reaching the user
 
-When the user isn't in the conversation, send **one** short message per milestone, result, blocker, or question that needs them; never repeat it. The hub's connection instructions (or `references/site.md`) name the channels for your band, typically: voice on their phone (`voice.speak`, with `reply: true` to ask out loud), a quiet phone notification (`notify.post`), or a text through the hub (`rook_call(worker="rook", cap="notify.send", args={"text": …})`). A spoken reply is what the microphone heard: confirm before acting on anything risky.
+When the user isn't in the conversation, send **one** short message per milestone, result, blocker, or question that needs them; never repeat it. The hub's connection instructions (or `references/site.md`) name the channels for your band and the order to try them, typically: a phone notification (`notify.post` on their phone worker), speech on their phone (`voice.speak`, with `reply: true` to ask out loud), or a messaging bridge (`rook_call(worker="rook", cap="notify.send", args={"text": …})` reaches the hub's Telegram/Discord integrations). A spoken reply is what the microphone heard: confirm before acting on anything risky.
+
+A decision on project work can go in the project's huddle instead: `rook_huddle(action="ask", project=…, text=…, data={"options": […]})` pins it on the dashboard (Work > Huddle) until the person answers. The answer comes back as a chat message mentioning you (an `_unread_chat` notice on your next call); it wakes you only if the operator turned on wake-on-answer and your worker can be woken. Questions are for the person; ask other agents in chat.
 
 ## Cost and token hygiene
 
