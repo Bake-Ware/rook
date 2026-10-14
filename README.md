@@ -22,7 +22,7 @@ You install a small background **worker** on each machine you want to reach (a h
 > Anyone who holds a band's key can run commands on every worker in it; treat that key
 > like a root password.
 
-- [Quickstart](#quickstart): a hub, one worker and a first call, on one machine
+- [Quickstart](#quickstart): a hub in one command (or Docker, or from source), then workers and a first call
 - [How it works](#how-it-works): architecture
 - [Going beyond localhost](#going-beyond-localhost): LAN, remote workers, HTTPS, installers
 - [Configuration](#configuration) · [Security model](#security-model) · [Repository layout](#repository-layout)
@@ -30,46 +30,91 @@ You install a small background **worker** on each machine you want to reach (a h
 
 ## Quickstart
 
-This stands up a complete hub on your own machine, joins that same machine as a worker,
-and runs a command on it. It takes about ten minutes, most of it compiling the relay.
+A hub is three small programs on one Linux machine: the relay, the dashboard and the MCP
+server. Pick one way to run it:
 
-**You need:** Linux (macOS should work but is untested), Python 3.11+, `git`, and a Rust
-toolchain (`cargo`, from [rustup.rs](https://rustup.rs)) to build the relay. Windows and
-Android work as *workers*; these hub steps assume a POSIX shell.
+| | Best for | Needs |
+|---|---|---|
+| **[A. One-command installer](#a-one-command-installer-recommended)** (recommended) | a home server, a Pi, a VM: a hub that starts on boot | Linux with systemd, `curl`, `sudo` |
+| **[B. Docker](#b-docker)** | machines that already run containers | Docker with Compose |
+| **[C. From source](#c-from-source)** | developing Rook, trying a branch | Python 3.11+, `git`, Rust |
 
-### 0. Prerequisites
+Each ends the same way: open the dashboard, sign in with the printed password, go to
+**Install a worker**, click **Get a pairing code**, and run the command it shows on each
+machine you want to add. Windows and Android work as *workers*; the hub runs on Linux
+(macOS from source should work but is untested).
+
+### A. One-command installer (recommended)
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Bake-Ware/rook/master/scripts/install-hub.sh | bash
+```
+
+It asks once before changing anything, then: installs Python and `curl` if they are missing
+(apt, dnf, pacman or zypper); installs the latest Rook release into `/opt/rook` and the
+prebuilt relay (checksum verified); generates a band key, a dashboard password and an MCP
+token into `/var/lib/rook/secrets.env` (mode 600, owned by a dedicated `rook` user); starts
+`rook-relay`, `rook-dashboard` and `rook-mcp` as systemd services; waits until they answer;
+and prints:
+
+```
+  Dashboard   http://192.0.2.20:7005
+  Password    …      (any username)
+  MCP         http://192.0.2.20:8765/mcp    bearer token: ROOK_MCP_STATIC_TOKEN in /var/lib/rook/secrets.env
+```
+
+Open the URL from any machine on your network and continue with **Get a pairing code**.
+Run the same command again to upgrade (your keys and settings are kept);
+`… | bash -s -- --uninstall` removes it (`--purge` also deletes the data). Options such as
+`--user` (no root: a per-user service), `--version v0.2.0` or `--bind 127.0.0.1` are in
+[docs/operations/install.md](docs/operations/install.md), with troubleshooting.
+
+> Until the first tagged release exists, the installer falls back to installing Rook from
+> `master` (it installs `git`) and, with no relay release either, to building the relay
+> with an existing Rust toolchain (`cargo`); it says so and stops with instructions if
+> there is none.
+
+### B. Docker
+
+```sh
+curl -fsSLO https://raw.githubusercontent.com/Bake-Ware/rook/master/compose.yaml
+curl -fsSL -o .env https://raw.githubusercontent.com/Bake-Ware/rook/master/.env.example
+docker run --rm ghcr.io/bake-ware/rook python -m rook.remote.psk                # a band key
+python3 -c "import secrets; print(secrets.token_urlsafe(16))"                   # a password
+$EDITOR .env        # set ROOK_BAND_PSK, ROOK_WEB_PASS, ROOK_MCP_STATIC_TOKEN, and
+                    # ROOK_DOMAIN=http://<this-machine's-ip>:7005, ROOK_HUB_PUBLIC=<ip>:8765
+docker compose up -d
+```
+
+This runs `ghcr.io/bake-ware/rook` (amd64 and arm64; `ROOK_VERSION=0.2.0` in `.env` pins a
+release) as three containers: the dashboard on 7005, the MCP server on 8765 and the relay on
+7474/udp, with state in the `rook-data` volume. From a clone, build the image yourself with
+`docker compose -f compose.yaml -f compose.build.yaml up -d --build`. (The image is
+published by the release workflow; before the first release, build it from a clone.)
+
+### C. From source
 
 On a fresh Debian 12+ / Ubuntu 24.04+ machine (older Ubuntu ships Python 3.10; install a
 newer `python3` first):
 
 ```sh
-sudo apt-get update
-sudo apt-get install -y git python3-venv build-essential pkg-config curl
-# Fedora: sudo dnf install -y git python3 gcc make pkgconf-pkg-config curl
-# Arch:   sudo pacman -S --needed git python base-devel pkgconf curl
+sudo apt-get install -y git python3-venv curl
+# Fedora: sudo dnf install -y git python3 curl     Arch: sudo pacman -S --needed git python curl
 
-# Rust, for building the relay, then load it into this shell
-# (rustup only adds ~/.cargo/bin to PATH for new login shells):
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-. "$HOME/.cargo/env"
-```
-
-### 1. Install
-
-```sh
-# The relay: a small Rust program that forwards encrypted band traffic.
-cargo install --locked --git https://github.com/Bake-Ware/telesthete telesthitium
-# (installs `telesthete-hub` into ~/.cargo/bin)
-
-# Rook itself: the hub (dashboard + MCP server), worker and CLI.
 git clone https://github.com/Bake-Ware/rook
 cd rook
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -e .              # add '.[desktop]' for screenshots on desktop workers
+
+# The relay: a small Rust program that forwards encrypted band traffic. Download the
+# prebuilt one from the latest telesthete release (x86_64, aarch64, armv7)...
+python3 scripts/fetch-relay.py --dest .venv/bin
+# ...or build it: install Rust (https://rustup.rs) and a C compiler, then
+# cargo install --locked --git https://github.com/Bake-Ware/telesthete telesthitium
 ```
 
-### 2. Start the hub
+Start the hub in the foreground (Ctrl-C stops all three processes):
 
 ```sh
 scripts/local-hub.sh                 # this machine only
@@ -77,24 +122,13 @@ BIND=0.0.0.0 scripts/local-hub.sh    # reachable from your LAN (see "Workers on 
 ```
 
 On first run it generates a band key, a dashboard password and an MCP token into
-`rook-data/quickstart.env` (mode 600), then starts the relay and the hub (dashboard and
-MCP server in one process, `rook-hub`) in the foreground (Ctrl-C stops both):
+`rook-data/quickstart.env` (mode 600) and prints the dashboard URL and password. It finds
+`telesthete-hub` on your PATH (the virtualenv) or in `~/.cargo/bin`. On first start the
+dashboard also builds the worker bundle its installers download; that takes about a minute
+in the background.
 
-```
-  Dashboard   http://127.0.0.1:7005    password: …
-  MCP         http://127.0.0.1:7005/mcp      bearer token in rook-data/quickstart.env
-  Relay       udp://127.0.0.1:7474
-
-Install a worker:  http://127.0.0.1:7005/#install
-```
-
-The script finds `telesthete-hub` in `~/.cargo/bin` even if that is not on your PATH yet.
-On first start the dashboard also builds the worker bundle its installers download; that
-takes about a minute in the background.
-
-### 3. Enroll a worker
-
-In a second terminal (same virtualenv), join this machine to the band:
+To try a worker without the pairing flow, join this machine to the band in a second
+terminal (same virtualenv):
 
 ```sh
 rook worker --hub 127.0.0.1:7474 \
@@ -108,27 +142,31 @@ Workers announce themselves every 30 seconds, so give it up to half a minute to 
 > in `~/.rook-band-worker/` takes precedence over `--hub`/`--psk` (the worker logs a
 > warning when it does). Run the demo worker with `HOME=$(mktemp -d)` to keep it separate.
 
-### 4. Make a first call
+### Make a first call
 
-**In the browser:** open <http://127.0.0.1:7005>, sign in with any username and the
-printed password, and `my-worker` is in the Workers list. Expand it to see its
-capabilities, and run `shell.exec` with `{"cmd": "uname -a"}` from the form.
+Below, `SECRETS` is where your hub keeps its secrets: `/var/lib/rook/secrets.env` for the
+installer (read it with `sudo`), your `.env` for Docker, `rook-data/quickstart.env` from
+source. `HUB` is the hub's address (`127.0.0.1` on the hub itself).
+
+**In the browser:** open `http://HUB:7005`, sign in with any username and the password,
+and your workers are in the Workers list. Expand one to see its capabilities, and run
+`shell.exec` with `{"cmd": "uname -a"}` from the form.
 
 **From the command line**, through the dashboard API:
 
 ```sh
-. rook-data/quickstart.env
+. "$SECRETS"
 curl -s -u "admin:$ROOK_WEB_PASS" -H 'Content-Type: application/json' \
   -d '{"cap": "shell.exec", "target": "my-worker", "args": {"cmd": "uname -a"}}' \
-  http://127.0.0.1:7005/api/band/call
+  http://HUB:7005/api/band/call
 # {"id": "…", "from": "…", "ok": true, "result": {"ok": true, "code": 0, "stdout": "Linux …", "stderr": ""}}
 ```
 
 **From an AI agent**, over MCP. For Claude Code:
 
 ```sh
-. rook-data/quickstart.env
-claude mcp add --transport http rook http://127.0.0.1:7005/mcp \
+. "$SECRETS"
+claude mcp add --transport http rook http://HUB:7005/mcp \
   --header "Authorization: Bearer $ROOK_MCP_STATIC_TOKEN"
 ```
 
@@ -144,22 +182,8 @@ sessions across the band and its open tasks (the Deck). See
 by default (`--url` for another hub) and prompts for the dashboard password.
 Every call it makes goes through the hub, under that login.
 
-### Or run the hub with Docker
-
-```sh
-cp .env.example .env
-python3 -c "import secrets; print(secrets.token_urlsafe(16))"   # use as ROOK_WEB_PASS
-python3 -m rook.remote.psk                                       # use as ROOK_BAND_PSK (needs rook installed)
-$EDITOR .env        # set ROOK_WEB_PASS, ROOK_BAND_PSK and ROOK_MCP_STATIC_TOKEN
-docker compose up -d --build
-```
-
-This publishes the dashboard and MCP server on 7005 (and the MCP server alone on 8765,
-where older setups expect it) and the relay on 7474/udp, with state in the `rook-data`
-volume. Upgrading from the two-service compose file: `docker compose up -d --build
---remove-orphans`. Join workers exactly as in step 3, using the Docker
-host's address. The image builds the relay from source, so the first build takes a few
-minutes. (The compose setup has not yet been run in CI; please report problems.)
+**On the roadmap:** a desktop app, a single binary that is a worker and can also install a
+hub on the machine it runs on.
 
 ## How it works
 
@@ -202,15 +226,17 @@ the agent workspace, OTA updates and the installers.
 
 ## Going beyond localhost
 
-**Workers on your LAN.** Start the hub with `BIND=0.0.0.0 scripts/local-hub.sh`, open the
-printed `http://<hub-ip>:7005/#install` in a browser, sign in, and click **Get a pairing
+**Workers on your LAN.** The installer and Docker hubs listen on your LAN already; from
+source, start the hub with `BIND=0.0.0.0 scripts/local-hub.sh`. Open
+`http://<hub-ip>:7005/#install` in a browser, sign in, and click **Get a pairing
 code**. The page shows the command for Linux/macOS (`curl … | bash`), Windows PowerShell
 (`iex (irm …)`) and Android (Termux) with the code filled in; run it on the new machine
 within five minutes (the code renews while the page is open). The installer enrolls with
 the code, installs the worker as a service, and the machine appears under Workers.
 
-Everything runs over plain HTTP here: `local-hub.sh` passes `--domain http://<hub-ip>:7005`,
-so installer links say `http://`, cookies are not marked `Secure`, and workers accept a
+Everything runs over plain HTTP here: the installer and `local-hub.sh` set the dashboard's
+domain to `http://<hub-ip>:7005`, so installer links say `http://`, cookies are not marked
+`Secure`, and workers accept a
 plain-HTTP enrollment server only at a non-public IP address. Installed workers reach the
 relay through the hub's WebSocket bridge (`--hub <hub-ip>:7005 --ws`, the same path a
 public hub uses behind TLS), so allow TCP 7005 through the hub's firewall (and 8765 for
@@ -218,7 +244,7 @@ workers set up by an older `local-hub.sh`, which pointed them there). Workers
 you start by hand can instead use UDP directly: `rook worker --hub <hub-ip>:7474 --psk … --name …`
 (allow UDP 7474). With Docker, set `ROOK_DOMAIN=http://<hub-ip>:7005` and
 `ROOK_HUB_PUBLIC=<hub-ip>:7005`. To reach MCP by IP, add that `host:port` to
-`ROOK_ALLOWED_HOSTS` (`local-hub.sh` does; the `ROOK_DOMAIN` host is always allowed). Plain HTTP is for a network you trust: anyone on
+`ROOK_ALLOWED_HOSTS` (the installer and `local-hub.sh` do; the `ROOK_DOMAIN` host is always allowed). Plain HTTP is for a network you trust: anyone on
 it can read pairing codes and installer traffic. Use the HTTPS setup below for anything else.
 
 **Workers anywhere.** Put the hub behind HTTPS: a reverse proxy (Caddy, nginx) or a tunnel
@@ -324,7 +350,7 @@ firmware-rp2040/ RP2040-Zero USB keyboard/mouse dongle firmware (PlatformIO)
 server/          standalone MCP server for the dongle's local KVM bridge
 pikvm/           systemd unit for running a worker on a PiKVM
 services/        optional voice and embeddings services
-scripts/         local-hub.sh
+scripts/         install-hub.sh (one-command hub install), local-hub.sh, fetch-relay.py
 docs/            feature tour, design notes, screenshots; docs/spec: the core spec for other implementations
 conformance/     test vectors and live harness for the core spec
 integrations/claude-code/  Claude Code plugin: the /rook-bands pane (marketplace in .claude-plugin/)

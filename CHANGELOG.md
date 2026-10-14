@@ -1,9 +1,10 @@
 # Changelog
 
 All notable changes to Rook are recorded here. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Rook has no tagged
-releases yet: workers identify themselves by build number (for example
-`111.stinky.goat`), and the Python package version is `0.1.0`.
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Releases are
+tagged `vX.Y.Z` (the Python package version); workers identify themselves by
+build number (for example `111.stinky.goat`). Before the first tag the package
+version was `0.1.0`.
 
 ## Unreleased
 
@@ -30,6 +31,27 @@ Preparation for public use.
 - `rook hub` deploy configs can name a single `hub` service
   (`rook.hub.serve`); the watchdog's unit list is configurable
   (`ROOK_WATCHDOG_SERVICES`).
+### Release pipeline and hub install
+- One-command hub install: `curl -fsSL https://raw.githubusercontent.com/Bake-Ware/rook/master/scripts/install-hub.sh | bash`
+  sets up Python, Rook from the release wheel, the prebuilt relay, generated
+  secrets (mode 600) and systemd units (`--system` or `--user`), waits for
+  health and prints the dashboard URL and password. Re-runs upgrade in place;
+  `--uninstall [--purge]`; `--no-systemd` for containers and CI. See
+  docs/operations/install.md.
+- Releases: a `vX.Y.Z` tag publishes the sdist and wheel (version from the
+  tag), a GitHub Release, and `ghcr.io/bake-ware/rook` for amd64 and arm64.
+  Build names (`<build>.<adjective>.<noun>`) are unchanged; a hub installed
+  from a wheel now stamps its worker bundles with the release's build number
+  (they were build 0, so their workers never updated).
+- The Docker image uses the prebuilt, sha256-checked relay from a telesthete
+  release (`RELAY_SOURCE=source` compiles it as before), and builds again: the
+  build context lacked a file `pyproject.toml` force-includes. `compose.yaml`
+  runs the published image; `compose.build.yaml` builds from a clone.
+- The release wheel requires telesthete by hash-pinned wheel URL instead of
+  git, so installing it needs no git.
+- CI: pytest on Python 3.11 and 3.12, generated-file checks, `node --check`,
+  shellcheck, and an installer end-to-end run. Voice-service tests skip when
+  that service's packages are missing instead of failing.
 
 ### Protocol features
 - Addressed routing (telesthete SPEC §10.1, needs telesthete 0.3.0): workers
