@@ -198,3 +198,17 @@ def test_release_json_cli(tmp_path, monkeypatch):
     meta = json.loads(out.read_text(encoding="utf-8"))
     assert meta["breaking"] and meta["version"] == "0.3.0" and meta["firmware"] == {}
     assert (tree / "rook" / "_release.py").read_text(encoding="utf-8") == _stamped()
+
+
+def test_main_has_no_function_local_imports_that_shadow_module_names():
+    """A function-local ``import json`` in main() made every earlier use of
+    json in main() an UnboundLocalError (the v0.2.0 release run failed so)."""
+    import ast
+    src = (ROOT / "tools" / "release_prep.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    top = {a.asname or a.name for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom))
+           for a in n.names}
+    main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
+    local = {a.asname or a.name for n in ast.walk(main) if isinstance(n, (ast.Import, ast.ImportFrom))
+             for a in n.names}
+    assert not (top & local), top & local
