@@ -198,10 +198,26 @@ fn open_dashboard(app: &AppHandle, path: &str) -> Result<(), String> {
         let _ = w.set_focus();
         return Ok(());
     }
+    // The window stays on the hub: anything else (a link out, Google's
+    // sign-in page, a popup) opens in the system browser instead.
+    let hub_origin = target.origin();
+    let nav_app = app.clone();
+    let popup_app = app.clone();
     let w = WebviewWindowBuilder::new(app, "dashboard", WebviewUrl::External(target.clone()))
         .title("Rook")
         .inner_size(1280.0, 860.0)
         .min_inner_size(380.0, 480.0)
+        .on_navigation(move |url| {
+            if stays_in_window(url, &hub_origin) {
+                return true;
+            }
+            open_outside(&nav_app, url);
+            false
+        })
+        .on_new_window(move |url, _features| {
+            open_outside(&popup_app, &url);
+            tauri::webview::NewWindowResponse::Deny
+        })
         .build()
         .map_err(|e| e.to_string())?;
     // Signed in here already (password sign-in): hand the window the same
@@ -215,6 +231,25 @@ fn open_dashboard(app: &AppHandle, path: &str) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Whether a navigation in the dashboard window may happen there: the hub's
+/// own origin only (plus about:blank, which WebKit uses internally).
+fn stays_in_window(url: &url::Url, hub: &url::Origin) -> bool {
+    url.origin() == *hub || url.as_str() == "about:blank"
+}
+
+/// Hand a link the dashboard window won't load to the system browser.
+fn open_outside(app: &AppHandle, url: &url::Url) {
+    use tauri_plugin_opener::OpenerExt;
+    if matches!(url.scheme(), "http" | "https" | "mailto") {
+        match app.opener().open_url(url.as_str(), None::<&str>) {
+            Ok(()) => log::info!("opened a {} link in the browser", url.scheme()),
+            Err(e) => log::warn!("couldn't open a link in the browser: {e}"),
+        }
+    } else {
+        log::info!("blocked a {} link from the dashboard window", url.scheme());
+    }
 }
 
 // ---- state for the settings page -----------------------------------------------
@@ -240,11 +275,14 @@ struct UiState {
     worker: worker::Info,
 }
 
-fn ui_state(app: &AppHandle) -> UiState {
+/// What the settings page shows. The worker status and the microphone name
+/// come from system tools (systemctl, schtasks, pgrep, the audio host), so
+/// they are read on a blocking thread, never the main or async threads.
+async fn ui_state(app: &AppHandle) -> UiState {
     let s = settings(app);
     let c = creds(app);
     let origin = config::normalize_hub_url(&s.hub_url).unwrap_or_default();
-    let worker = state(app).worker.lock().unwrap().info();
+    let (worker, microphone) = system_facts(app).await;
     update_worker_item(app, &worker);
     UiState {
         signed_in: c.signed_in_to(&origin),
@@ -257,11 +295,35 @@ fn ui_state(app: &AppHandle) -> UiState {
             voice: cfg!(feature = "voice"),
             wake_word: cfg!(feature = "wake-word"),
         },
-        microphone: microphone_name(),
+        microphone,
         version: env!("CARGO_PKG_VERSION"),
         os: installer::current_os(),
         worker,
     }
+}
+
+async fn system_facts(app: &AppHandle) -> (worker::Info, Option<String>) {
+    let a = app.clone();
+    tauri::async_runtime::spawn_blocking(move || (state(&a).worker.lock().unwrap().info(), microphone_name()))
+        .await
+        .unwrap_or_else(|_| (worker::Info::unknown(), None))
+}
+
+/// Start or stop the worker on a blocking thread.
+async fn worker_do(app: &AppHandle, action: &str) -> Result<worker::Info, String> {
+    let a = app.clone();
+    let action = action.to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        let st = state(&a);
+        let mut w = st.worker.lock().unwrap();
+        match action.as_str() {
+            "start" => w.start(),
+            "stop" => w.stop(),
+            _ => Ok(w.info()),
+        }
+    })
+    .await
+    .map_err(|_| "The worker action failed.".to_string())?
 }
 
 #[cfg(feature = "voice")]
@@ -450,60 +512,97 @@ fn ptt_begin(_: &AppHandle) {}
 fn ptt_end(_: &AppHandle) {}
 
 #[cfg(feature = "wake-word")]
-fn wake_features_dir(app: &AppHandle) -> PathBuf {
-    let bundled = app.path().resource_dir().ok().map(|d| d.join("wakeword"));
-    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../android/app/src/main/assets/wakeword");
-    bundled
-        .filter(|d| d.join("melspectrogram.onnx").is_file())
-        .unwrap_or(dev)
+fn wake_models(app: &AppHandle, s: &Settings) -> voice::wake::Models {
+    let bundled = app
+        .path()
+        .resource_dir()
+        .map(|d| d.join("wakeword"))
+        .unwrap_or_default();
+    // `cargo run` has no bundle: use the repository's copy.
+    #[cfg(debug_assertions)]
+    let bundled = if bundled.join("melspectrogram.onnx").is_file() {
+        bundled
+    } else {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../android/app/src/main/assets/wakeword")
+    };
+    voice::wake::Models {
+        features_dir: bundled,
+        classifier: PathBuf::from(&s.wake_model),
+    }
 }
 
-/// Start or stop the wake word listener to match the settings. Returns a
-/// problem to show (a missing model, no microphone).
+/// Before the wake word setting is saved on: load the model (guarded, on a
+/// blocking thread) and run it once, so a bad file is refused up front.
 #[cfg(feature = "wake-word")]
-fn apply_wake(app: &AppHandle) -> Option<String> {
-    let st = state(app);
-    let s = settings(app);
-    let mut slot = st.listener.lock().unwrap();
-    if let Some(mut l) = slot.take() {
-        l.stop();
-    }
+async fn check_wake_model(app: &AppHandle, s: &Settings) -> Result<(), String> {
     if !s.wake_word {
-        return None;
+        return Ok(());
     }
-    let models = voice::wake::Models {
-        features_dir: wake_features_dir(app),
-        classifier: PathBuf::from(&s.wake_model),
-    };
-    let handle = app.clone();
-    match voice::wake::Listener::start(models, s.wake_threshold, move |ev| match ev {
-        voice::wake::Event::Woke => {
-            show_overlay(&handle);
-            overlay_state(&handle, "wake", "", "");
-        }
-        voice::wake::Event::Utterance(pcm) if pcm.is_empty() => {
-            overlay_state(&handle, "error", "I didn't hear a question.", "")
-        }
-        voice::wake::Event::Utterance(pcm) => {
-            tauri::async_runtime::spawn(voice_question(handle.clone(), pcm));
-        }
-        voice::wake::Event::Error(e) => {
-            log::warn!("wake word stopped: {e}");
-            notify(&handle, "Wake word stopped", &e);
-        }
-    }) {
-        Ok(l) => {
-            *slot = Some(l);
-            None
-        }
-        Err(e) => Some(e),
-    }
+    let models = wake_models(app, s);
+    let threshold = s.wake_threshold;
+    tauri::async_runtime::spawn_blocking(move || voice::wake::load_guarded(&models, threshold, true).map(|_| ()))
+        .await
+        .map_err(|_| "The wake word model couldn't be checked.".to_string())?
 }
 
 #[cfg(not(feature = "wake-word"))]
-fn apply_wake(_: &AppHandle) -> Option<String> {
-    None
+async fn check_wake_model(_: &AppHandle, _: &Settings) -> Result<(), String> {
+    Ok(())
 }
+
+/// Start or stop the wake word listener to match the settings, on a thread
+/// of its own. If the model can't be loaded (a file changed or removed since
+/// it was checked), the wake word is switched off and saved that way, and
+/// the person is told: a bad model must not fail every start.
+#[cfg(feature = "wake-word")]
+fn apply_wake(app: &AppHandle) {
+    let old = state(app).listener.lock().unwrap().take();
+    let app = app.clone();
+    std::thread::spawn(move || {
+        if let Some(mut l) = old {
+            l.stop();
+        }
+        let s = settings(&app);
+        if !s.wake_word {
+            return;
+        }
+        let handle = app.clone();
+        let started = voice::wake::Listener::start(wake_models(&app, &s), s.wake_threshold, move |ev| match ev {
+            voice::wake::Event::Woke => {
+                show_overlay(&handle);
+                overlay_state(&handle, "wake", "", "");
+            }
+            voice::wake::Event::Utterance(pcm) if pcm.is_empty() => {
+                overlay_state(&handle, "error", "I didn't hear a question.", "")
+            }
+            voice::wake::Event::Utterance(pcm) => {
+                tauri::async_runtime::spawn(voice_question(handle.clone(), pcm));
+            }
+            voice::wake::Event::Error(e) => {
+                log::warn!("wake word stopped: {e}");
+                notify(&handle, "Wake word stopped", &e);
+            }
+        });
+        match started {
+            Ok(l) => *state(&app).listener.lock().unwrap() = Some(l),
+            Err(e) => {
+                log::warn!("wake word off: {e}");
+                let st = state(&app);
+                let mut s = st.settings.lock().unwrap();
+                s.wake_word = false;
+                if let Err(err) = st.store.save_settings(&s) {
+                    log::error!("saving settings: {err}");
+                }
+                drop(s);
+                notify(&app, "Wake word turned off", &e);
+                changed(&app);
+            }
+        }
+    });
+}
+
+#[cfg(not(feature = "wake-word"))]
+fn apply_wake(_: &AppHandle) {}
 
 // ---- background: notifications and the sign-in watcher -----------------------------
 
@@ -519,7 +618,7 @@ fn spawn_poller(app: AppHandle) {
             tokio::time::sleep(Duration::from_secs(s.poll_seconds)).await;
             polls += 1;
             if polls % 4 == 0 {
-                let info = state(&app).worker.lock().unwrap().info();
+                let (info, _) = system_facts(&app).await;
                 update_worker_item(&app, &info);
             }
             if !s.notifications {
@@ -643,10 +742,11 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     } else {
         format!("Ask the home agent\u{2026}  ({})", s.ask_shortcut)
     };
-    let info = state(app).worker.lock().unwrap().info();
     let dashboard = MenuItem::with_id(app, "dashboard", "Open dashboard", true, None::<&str>)?;
     let ask = MenuItem::with_id(app, "ask", ask_label, true, None::<&str>)?;
-    let worker = MenuItem::with_id(app, "worker", worker_label(&info), true, None::<&str>)?;
+    // The real label (start, stop, add) comes from refresh_worker_item, which
+    // asks the system on a blocking thread.
+    let worker = MenuItem::with_id(app, "worker", "This computer's worker\u{2026}", true, None::<&str>)?;
     let install = MenuItem::with_id(
         app,
         "install",
@@ -682,26 +782,25 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             }
             "ask" => show_overlay(app),
             "worker" => {
-                let st = state(app);
-                let mut w = st.worker.lock().unwrap();
-                let info = w.info();
-                let res = match info.status {
-                    "running" => w.stop(),
-                    "stopped" => w.start(),
-                    _ => {
-                        drop(w);
-                        if open_dashboard(app, "/#install").is_err() {
-                            show_settings(app, Some("worker"));
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let (info, _) = system_facts(&app).await;
+                    let action = match info.status {
+                        "running" => "stop",
+                        "stopped" => "start",
+                        _ => {
+                            if open_dashboard(&app, "/#install").is_err() {
+                                show_settings(&app, Some("worker"));
+                            }
+                            return;
                         }
-                        return;
+                    };
+                    match worker_do(&app, action).await {
+                        Ok(i) => update_worker_item(&app, &i),
+                        Err(e) => notify(&app, "Worker", &e),
                     }
-                };
-                drop(w);
-                match res {
-                    Ok(i) => update_worker_item(app, &i),
-                    Err(e) => notify(app, "Worker", &e),
-                }
-                changed(app);
+                    changed(&app);
+                });
             }
             "install" => show_install(app),
             "settings" => show_settings(app, None),
@@ -715,15 +814,23 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+fn refresh_worker_item(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let (info, _) = system_facts(&app).await;
+        update_worker_item(&app, &info);
+    });
+}
+
 // ---- commands -------------------------------------------------------------------------
 
 #[tauri::command]
-fn get_state(app: AppHandle) -> UiState {
-    ui_state(&app)
+async fn get_state(app: AppHandle) -> UiState {
+    ui_state(&app).await
 }
 
 #[tauri::command]
-fn save_settings(app: AppHandle, mut settings: Settings) -> Result<UiState, String> {
+async fn save_settings(app: AppHandle, mut settings: Settings) -> Result<UiState, String> {
     settings = settings.sanitized();
     if !settings.hub_url.is_empty() {
         settings.hub_url = config::normalize_hub_url(&settings.hub_url)?;
@@ -733,6 +840,10 @@ fn save_settings(app: AppHandle, mut settings: Settings) -> Result<UiState, Stri
     }
     parse_shortcut(&settings.ask_shortcut)?;
     parse_shortcut(&settings.ptt_shortcut)?;
+    // A wake model that can't load is refused here, before it is saved.
+    check_wake_model(&app, &settings)
+        .await
+        .map_err(|e| format!("The wake word can't use that model: {e}"))?;
     let st = state(&app);
     let old = std::mem::replace(&mut *st.settings.lock().unwrap(), settings.clone());
     if let Err(e) = apply_shortcuts(&app) {
@@ -743,16 +854,17 @@ fn save_settings(app: AppHandle, mut settings: Settings) -> Result<UiState, Stri
     st.store
         .save_settings(&settings)
         .map_err(|e| format!("Couldn't save settings: {e}"))?;
-    let problem = apply_wake(&app);
+    apply_wake(&app);
     changed(&app);
-    match problem {
-        Some(p) => Err(format!("Saved, but the wake word is off: {p}")),
-        None => Ok(ui_state(&app)),
-    }
+    Ok(ui_state(&app).await)
 }
 
 #[tauri::command]
-fn save_secrets(app: AppHandle, voice_key: Option<String>, agent_token: Option<String>) -> Result<UiState, String> {
+async fn save_secrets(
+    app: AppHandle,
+    voice_key: Option<String>,
+    agent_token: Option<String>,
+) -> Result<UiState, String> {
     let st = state(&app);
     {
         let mut c = st.creds.lock().unwrap();
@@ -766,7 +878,7 @@ fn save_secrets(app: AppHandle, voice_key: Option<String>, agent_token: Option<S
             .save_credentials(&c)
             .map_err(|e| format!("Couldn't save: {e}"))?;
     }
-    Ok(ui_state(&app))
+    Ok(ui_state(&app).await)
 }
 
 fn set_hub(app: &AppHandle, hub: &str) -> Result<String, String> {
@@ -793,7 +905,7 @@ async fn sign_in_password(app: AppHandle, hub: String, username: String, passwor
         .await
         .map_err(|e| e.to_string())?;
     save_sign_in(&app, &origin, &cookie, who.principal.unwrap_or_default());
-    Ok(ui_state(&app))
+    Ok(ui_state(&app).await)
 }
 
 #[tauri::command]
@@ -804,22 +916,30 @@ fn sign_in_browser(app: AppHandle, hub: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Sign out here and at the hub: the hub forgets the session (its /logout),
+/// and the dashboard window forgets its cookies.
 #[tauri::command]
-fn sign_out(app: AppHandle) -> Result<UiState, String> {
+async fn sign_out(app: AppHandle) -> Result<UiState, String> {
     let st = state(&app);
     st.signin_gen.fetch_add(1, Ordering::SeqCst);
-    {
+    let old = {
         let mut c = st.creds.lock().unwrap();
-        c.cookie.clear();
+        let old = (c.hub.clone(), std::mem::take(&mut c.cookie));
         c.principal.clear();
         st.store.save_credentials(&c).map_err(|e| e.to_string())?;
+        old
+    };
+    if !old.1.is_empty() {
+        if let Err(e) = hub::Hub::new(&old.0, &old.1).logout().await {
+            log::info!("hub logout: {e}");
+        }
     }
     if let Some(w) = app.get_webview_window("dashboard") {
         let _ = w.clear_all_browsing_data();
         let _ = w.close();
     }
     changed(&app);
-    Ok(ui_state(&app))
+    Ok(ui_state(&app).await)
 }
 
 #[tauri::command]
@@ -878,18 +998,12 @@ fn ptt_toggle(app: AppHandle) -> Result<bool, String> {
 }
 
 #[tauri::command]
-fn worker_action(app: AppHandle, action: String) -> Result<UiState, String> {
-    {
-        let st = state(&app);
-        let mut w = st.worker.lock().unwrap();
-        match action.as_str() {
-            "start" => w.start().map(|_| ())?,
-            "stop" => w.stop().map(|_| ())?,
-            _ => {}
-        }
+async fn worker_action(app: AppHandle, action: String) -> Result<UiState, String> {
+    if action == "start" || action == "stop" {
+        worker_do(&app, &action).await?;
     }
     changed(&app);
-    Ok(ui_state(&app))
+    Ok(ui_state(&app).await)
 }
 
 #[tauri::command]
@@ -898,8 +1012,11 @@ fn test_notification(app: AppHandle) {
 }
 
 #[tauri::command]
-fn install_plan() -> installer::Plan {
-    installer::plan(installer::current_os())
+async fn install_plan() -> installer::Plan {
+    // Looks for an existing hub install (files and systemctl): blocking work.
+    tauri::async_runtime::spawn_blocking(|| installer::plan_here(installer::current_os()))
+        .await
+        .unwrap_or_else(|_| installer::plan(installer::current_os()))
 }
 
 /// Run the hub installer, streaming its output as `install-log` events.
@@ -921,7 +1038,10 @@ async fn install_inner(app: &AppHandle, local_only: bool) -> Result<installer::S
     use tokio::io::{AsyncBufReadExt, BufReader};
     let script = installer::script_path(app.path().resource_dir().ok().as_deref())
         .ok_or("The installer script is missing from this app.")?;
-    let args = installer::args(local_only, installer::has_systemd_user());
+    let systemd = tauri::async_runtime::spawn_blocking(installer::has_systemd_user)
+        .await
+        .unwrap_or(false);
+    let args = installer::args(local_only, systemd);
     let mut child = tokio::process::Command::new("bash")
         .arg(&script)
         .args(&args)
@@ -958,9 +1078,22 @@ async fn install_inner(app: &AppHandle, local_only: bool) -> Result<installer::S
         .ok_or_else(|| "The installer finished but didn't print the hub's address.".into())
 }
 
-/// Connect to the hub the installer just made, with the password it printed.
+/// Connect to the hub the installer just made, with the password it
+/// printed; with no password, to the hub already installed here (its
+/// password is read from its secrets file, never sent to the page).
 #[tauri::command]
 async fn install_connect(app: AppHandle, dashboard: String, password: String) -> Result<UiState, String> {
+    let (dashboard, password) = if password.is_empty() {
+        let plan = tauri::async_runtime::spawn_blocking(|| installer::plan_here(installer::current_os()))
+            .await
+            .map_err(|_| "Couldn't read the installed hub's settings.".to_string())?;
+        match plan.existing {
+            Some(e) if e.can_connect => (e.dashboard, e.password),
+            _ => return Err("Can't read that hub's password. Sign in from Settings instead.".into()),
+        }
+    } else {
+        (dashboard, password)
+    };
     sign_in_password(app, dashboard, "admin".into(), password).await
 }
 
@@ -977,6 +1110,7 @@ pub fn run() {
     let show: Vec<String> = std::env::args().skip_while(|a| a != "--show").skip(1).take(1).collect();
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, sc, event| on_shortcut(app, sc, event.state() == ShortcutState::Pressed))
@@ -1015,17 +1149,20 @@ pub fn run() {
                 log::warn!("{e}");
                 notify(&handle, "Rook", &e);
             }
-            if let Some(p) = apply_wake(&handle) {
-                log::warn!("wake word: {p}");
+            apply_wake(&handle);
+            if !no_tray {
+                refresh_worker_item(&handle);
             }
             if autostart {
-                let st = state(&handle);
-                let mut w = st.worker.lock().unwrap();
-                if w.info().status == "stopped" {
-                    if let Err(e) = w.start() {
-                        log::warn!("worker autostart: {e}");
+                let h = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    let (info, _) = system_facts(&h).await;
+                    if info.status == "stopped" {
+                        if let Err(e) = worker_do(&h, "start").await {
+                            log::warn!("worker autostart: {e}");
+                        }
                     }
-                }
+                });
             }
             spawn_poller(handle.clone());
             match show.first().map(String::as_str) {
@@ -1087,6 +1224,21 @@ mod tests {
         for s in ["Ctrl+Shift+K", "Super+Alt+1", "F9", "Ctrl+Alt+Space"] {
             assert!(parse_shortcut(s).unwrap().is_some(), "{s}");
         }
+    }
+
+    #[test]
+    fn dashboard_window_stays_on_the_hub() {
+        let hub: url::Url = "https://rook.example.com".parse().unwrap();
+        let o = hub.origin();
+        let ok = |u: &str| stays_in_window(&u.parse().unwrap(), &o);
+        assert!(ok("https://rook.example.com/#chat"));
+        assert!(ok("https://rook.example.com/account/login?x=1"));
+        assert!(ok("about:blank"));
+        assert!(!ok("https://accounts.google.com/o/oauth2/auth"));
+        assert!(!ok("http://rook.example.com/"), "another scheme is another origin");
+        assert!(!ok("https://rook.example.com:8443/"));
+        assert!(!ok("https://evil.example/rook.example.com"));
+        assert!(!ok("file:///etc/passwd"));
     }
 
     #[test]

@@ -80,6 +80,11 @@ the wake word is on, but nothing leaves your computer until the wake word is
 heard. Rook doesn't include a wake word model: openWakeWord's ready-made ones
 are licensed for non-commercial use only, so you train or bring your own.
 
+The app checks the model when you save. If a model it accepted later can't
+be loaded (the file was moved or replaced), it turns the wake word off and
+tells you, rather than failing every time it starts. Models over 10 MB are
+refused (wake word models are well under 1 MB).
+
 The answer is shown in the quick-ask box; spoken answers are planned.
 
 ## This computer's worker
@@ -105,6 +110,11 @@ Tray > **Install a hub on this computer** opens a short wizard.
   missing), shows its progress, and then shows the dashboard address and
   password. **Connect this app to it** signs you in. If something fails, the
   wizard shows the command to run in a terminal instead.
+- **Already installed:** if this computer already has a hub from Rook's
+  installer, the wizard says so, shows its address and whether its service
+  (`rook-hub`) is running, and offers **Connect this app to it** and
+  **Update it** (re-runs the installer; your data and passwords are kept). A
+  system-wide install is updated from a terminal with the command shown.
 - **macOS:** the hub installer is for Linux. Run the hub in Docker Desktop
   (`docker compose up -d` in the Rook repository), or on a Linux machine on
   your network, and connect the app to it.
@@ -117,7 +127,8 @@ Tray > **Install a hub on this computer** opens a short wizard.
   keeps), the voice key and the optional agent token in `credentials.json`
   in its settings folder, readable only by you. Signing out clears the
   sign-in and the dashboard window's cookies.
-- The dashboard window shows your hub's own pages. They can't use the app's
+- The dashboard window shows your hub's own pages and nothing else: a link
+  to another site opens in your usual browser. Hub pages can't use the app's
   features (microphone, hotkeys, files); only the app's built-in pages can.
 - Only the hub's operator account (or the dashboard password) can use the
   app, the same as the dashboard.

@@ -146,16 +146,29 @@ fn write_json<T: Serialize>(path: &Path, value: &T, private: bool) -> std::io::R
     let tmp = path.with_extension("json.tmp");
     let body = serde_json::to_vec_pretty(value).map_err(std::io::Error::other)?;
     {
+        // A leftover temp file (a crash mid-write) keeps whatever mode it was
+        // created with, and `mode` only applies to new files: start fresh,
+        // and set the mode explicitly before any secret is written.
+        match fs::remove_file(&tmp) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
+        }
         let mut opts = fs::OpenOptions::new();
-        opts.write(true).create(true).truncate(true);
+        opts.write(true).create_new(true);
         #[cfg(unix)]
         if private {
             use std::os::unix::fs::OpenOptionsExt;
             opts.mode(0o600);
         }
+        let mut f = opts.open(&tmp)?;
+        #[cfg(unix)]
+        if private {
+            use std::os::unix::fs::PermissionsExt;
+            f.set_permissions(fs::Permissions::from_mode(0o600))?;
+        }
         #[cfg(not(unix))]
         let _ = private; // per-user profile directory ACLs on Windows
-        let mut f = opts.open(&tmp)?;
         f.write_all(&body)?;
         f.sync_all()?;
     }
@@ -247,6 +260,18 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             let mode = fs::metadata(dir.join("credentials.json")).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o600);
+        }
+        #[cfg(unix)]
+        {
+            // A leftover world-readable temp file doesn't leak the next write.
+            use std::os::unix::fs::PermissionsExt;
+            let tmp = dir.join("credentials.json.tmp");
+            fs::write(&tmp, b"old").unwrap();
+            fs::set_permissions(&tmp, fs::Permissions::from_mode(0o644)).unwrap();
+            store.save_credentials(&c).unwrap();
+            let mode = fs::metadata(dir.join("credentials.json")).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+            assert!(!tmp.exists());
         }
         assert!(c.signed_in_to("https://a.example"));
         assert!(!c.signed_in_to("https://b.example"));

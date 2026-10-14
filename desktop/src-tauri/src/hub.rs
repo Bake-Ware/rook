@@ -230,6 +230,22 @@ impl Hub {
         serde_json::from_str(&body).map_err(|_| HubError::Http(status, "not JSON".into()))
     }
 
+    /// End this session at the hub (`/logout` drops the account session and
+    /// the dashboard-password session, whichever the cookie is). The hub
+    /// answers with a redirect to its login page.
+    pub async fn logout(&self) -> Result<(), HubError> {
+        if self.cookie.is_empty() {
+            return Ok(());
+        }
+        let resp = self.req(reqwest::Method::GET, "/logout").send().await?;
+        let status = resp.status().as_u16();
+        if (200..400).contains(&status) || status == 401 {
+            Ok(())
+        } else {
+            Err(HubError::Http(status, String::new()))
+        }
+    }
+
     pub async fn whoami(&self) -> Result<Whoami, HubError> {
         let v = self.json(self.req(reqwest::Method::GET, "/api/band/whoami")).await?;
         Ok(serde_json::from_value(v).unwrap_or_default())

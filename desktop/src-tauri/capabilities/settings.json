@@ -1,0 +1,19 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "settings",
+  "description": "The settings window. The dashboard window (hub pages) is in no capability, so hub content can call nothing in the app.",
+  "windows": ["settings"],
+  "permissions": [
+    "core:default",
+    "allow-get-state",
+    "allow-save-settings",
+    "allow-save-secrets",
+    "allow-sign-in-password",
+    "allow-sign-in-browser",
+    "allow-sign-out",
+    "allow-open-dashboard-cmd",
+    "allow-show-window",
+    "allow-worker-action",
+    "allow-test-notification"
+  ]
+}

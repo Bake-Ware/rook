@@ -26,11 +26,17 @@ Preparation for public use.
   docs/design/desktop-voice.md.
 - Start and stop this computer's worker from the tray, and an "Install a hub
   on this computer" wizard that runs `scripts/install-hub.sh` on Linux (and
-  explains Docker or WSL on macOS and Windows).
+  explains Docker or WSL on macOS and Windows). It finds a hub the installer
+  already put here (its `rook-hub` service) and offers to connect or update.
+- The dashboard window stays on the hub (other links open in the browser),
+  and an ACL manifest limits each app page to the commands it uses. A wake
+  model that can't load is refused when saved, or switches the wake word off
+  with a notification, instead of crashing the app.
 - Notifications also read `GET /api/attention` (huddle questions, tasks that
   need you) on hubs that serve it; the contract is in docs/desktop-app.md.
 - CI: `.github/workflows/desktop.yml` tests on Linux and builds unsigned
-  bundles on Linux, macOS and Windows.
+  bundles on Linux, macOS and Windows (actions pinned by commit, cargo
+  `--locked`).
 
 ### Hub merge
 - One hub process: `rook hub serve` (console script `rook-hub`) runs the

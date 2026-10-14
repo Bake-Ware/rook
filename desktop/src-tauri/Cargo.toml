@@ -12,12 +12,14 @@ name = "rook_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2.7", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
-tauri-plugin-global-shortcut = "2"
-tauri-plugin-notification = "2"
+tauri = { version = "2.12", features = ["tray-icon", "image-png"] }
+tauri-plugin-global-shortcut = "2.4"
+tauri-plugin-notification = "2.6"
+# Links the dashboard window leaves the hub for open in the system browser.
+tauri-plugin-opener = "2.7"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
@@ -45,7 +47,8 @@ wake-word = ["voice", "dep:tract-onnx"]
 codegen-units = 1
 lto = true
 opt-level = "s"
-panic = "abort"
+# Unwinding, not abort: a broken wake model must not take the app down
+# (voice::wake loads models inside catch_unwind).
 strip = true
 
 # tract's optimizer trips one of its own debug-only consistency checks on

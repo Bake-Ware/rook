@@ -57,9 +57,16 @@ desktop/
     tests/live_hub.rs end-to-end against a running hub (ignored by default)
 ```
 
-The dashboard window loads the hub's own site. No capability lists it, so hub
-pages cannot call into the app; only the app's bundled pages (settings,
-overlay, install) can.
+The dashboard window loads the hub's own site and stays there:
+
+- **No app access for hub pages.** `build.rs` declares every app command in
+  an ACL manifest, so a command is callable only from a window whose
+  capability allows it (`capabilities/settings.json`, `overlay.json`,
+  `install.json`, each listing just what that page uses). No capability
+  names the dashboard window.
+- **Navigation guard.** It may navigate only within the hub's origin. Links
+  elsewhere, popups and `target=_blank` open in the system browser (the
+  opener plugin); other schemes are dropped.
 
 ## Talking to the hub
 
@@ -108,6 +115,10 @@ cargo tauri build --features wake-word      # installers in target/release/bundl
 `--show settings|overlay|install|dashboard` opens that window at start (the
 settings window also opens on first run).
 
+Release builds unwind on panic (no `panic = "abort"`): the wake model is
+loaded inside `catch_unwind`, so a malformed model file turns the wake word
+off instead of crashing the app on every start.
+
 Features:
 
 - `voice` (default): microphone capture (cpal) and push-to-talk.
@@ -129,8 +140,9 @@ ROOK_TEST_HUB=http://127.0.0.1:7005 ROOK_TEST_PASS=... ROOK_TEST_MCP_TOKEN=... \
   cargo test --test live_hub -- --ignored
 ```
 
-CI (`.github/workflows/desktop.yml`) runs the tests and clippy on Linux and
-builds unsigned bundles on Linux, macOS and Windows.
+CI (`.github/workflows/desktop.yml`) runs fmt, clippy and the tests on Linux
+and builds unsigned bundles on Linux, macOS and Windows. Actions are pinned
+by commit, the Tauri CLI by exact version, and cargo runs with `--locked`.
 
 ## Known limits (v0.1)
 
@@ -141,8 +153,9 @@ builds unsigned bundles on Linux, macOS and Windows.
   desktop-environment shortcut that runs the app's "Ask" action (follow-up).
 - **The sign-in cookie is stored in a 0600 file** in the app's config
   directory, not the OS keychain (follow-up).
-- **Google sign-in inside the dashboard window** may be refused by Google for
-  embedded browsers. Use the password sign-in, or a local account.
+- **Google sign-in** leaves the hub's origin, so the navigation guard sends
+  it to the system browser, where it signs in the browser, not the app. Use
+  the password sign-in, or a local account.
 - **Tray on GNOME** needs the AppIndicator extension (Ubuntu ships it). Where
   no tray shows, the hotkey still works, and running the app again with
   `--show settings` opens its window (a single-instance hand-off is a

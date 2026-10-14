@@ -55,9 +55,56 @@ fn run(plan: &Plan, shape: &[usize], data: Vec<f32>) -> Result<Vec<f32>, String>
     Ok(view.iter().copied().collect())
 }
 
+#[derive(Clone)]
 pub struct Models {
     pub features_dir: PathBuf,
     pub classifier: PathBuf,
+}
+
+/// The largest wake classifier accepted. openWakeWord's are a few hundred KB;
+/// anything far bigger is the wrong file.
+pub const MAX_MODEL_BYTES: u64 = 10 * 1024 * 1024;
+
+fn check_model_file(path: &Path) -> Result<(), String> {
+    let meta =
+        std::fs::metadata(path).map_err(|_| "Choose your wake word model (.onnx) in Settings > Voice.".to_string())?;
+    if !meta.is_file() || meta.len() == 0 {
+        return Err(format!("{} isn't a wake word model file.", path.display()));
+    }
+    if meta.len() > MAX_MODEL_BYTES {
+        return Err(format!(
+            "{} is too big for a wake word model (over {} MB).",
+            path.display(),
+            MAX_MODEL_BYTES / (1024 * 1024)
+        ));
+    }
+    Ok(())
+}
+
+/// Load the models on a thread of their own inside `catch_unwind`: a
+/// malformed file can make tract panic, and that must cost the wake word,
+/// not the app. With `probe`, also run the classifier once on silence and
+/// check it gives one score (what Settings does before saving).
+pub fn load_guarded(models: &Models, threshold: f32, probe: bool) -> Result<Detector, String> {
+    let m = models.clone();
+    let name = models.classifier.display().to_string();
+    let bad = move || format!("{name} can't be used as a wake word model.");
+    let bad2 = bad.clone();
+    std::thread::spawn(move || {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let det = Detector::new(&m, threshold)?;
+            if probe {
+                let score = run(&det.wake, &[1, N_FRAMES, EMB_DIM], vec![0.0; N_FRAMES * EMB_DIM])?;
+                if score.is_empty() || !score[0].is_finite() {
+                    return Err(bad());
+                }
+            }
+            Ok(det)
+        }))
+        .unwrap_or_else(|_| Err(bad2()))
+    })
+    .join()
+    .unwrap_or_else(|_| Err("The wake word model crashed while loading.".into()))
 }
 
 pub struct Detector {
@@ -75,9 +122,7 @@ pub struct Detector {
 
 impl Detector {
     pub fn new(models: &Models, threshold: f32) -> Result<Self, String> {
-        if !models.classifier.is_file() {
-            return Err("Choose your wake word model (.onnx) in Settings > Voice.".into());
-        }
+        check_model_file(&models.classifier)?;
         Ok(Detector {
             mel: load(&models.features_dir.join("melspectrogram.onnx"), &[1, WINDOW])?,
             emb: load(
@@ -203,46 +248,50 @@ pub struct Listener {
 
 impl Listener {
     pub fn start(models: Models, threshold: f32, on_event: impl Fn(Event) + Send + 'static) -> Result<Self, String> {
-        // Load on the caller's thread, so a bad model is reported right away.
-        let mut det = Detector::new(&models, threshold)?;
+        // Loaded before the listener starts, so a bad model is reported now.
+        let mut det = load_guarded(&models, threshold, false)?;
         let stop = Arc::new(AtomicBool::new(false));
         let flag = stop.clone();
         let handle = std::thread::spawn(move || {
             let mut question: Option<(Endpointer, Vec<i16>)> = None;
-            let res = capture::run(&flag, &mut |pcm| {
-                if let Some((ep, buf)) = question.as_mut() {
-                    buf.extend_from_slice(pcm);
-                    match ep.feed(pcm) {
-                        Endpoint::Listening => {}
-                        Endpoint::Done => {
-                            on_event(Event::Utterance(std::mem::take(buf)));
-                            question = None;
-                            det.reset();
+            let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                capture::run(&flag, &mut |pcm| {
+                    if let Some((ep, buf)) = question.as_mut() {
+                        buf.extend_from_slice(pcm);
+                        match ep.feed(pcm) {
+                            Endpoint::Listening => {}
+                            Endpoint::Done => {
+                                on_event(Event::Utterance(std::mem::take(buf)));
+                                question = None;
+                                det.reset();
+                            }
+                            Endpoint::Nothing => {
+                                on_event(Event::Utterance(vec![]));
+                                question = None;
+                                det.reset();
+                            }
                         }
-                        Endpoint::Nothing => {
-                            on_event(Event::Utterance(vec![]));
-                            question = None;
+                        return true;
+                    }
+                    match det.feed(pcm) {
+                        Ok(true) => {
+                            on_event(Event::Woke);
                             det.reset();
+                            question = Some((Endpointer::default(), Vec::new()));
+                        }
+                        Ok(false) => {}
+                        Err(e) => {
+                            on_event(Event::Error(e));
+                            return false;
                         }
                     }
-                    return true;
-                }
-                match det.feed(pcm) {
-                    Ok(true) => {
-                        on_event(Event::Woke);
-                        det.reset();
-                        question = Some((Endpointer::default(), Vec::new()));
-                    }
-                    Ok(false) => {}
-                    Err(e) => {
-                        on_event(Event::Error(e));
-                        return false;
-                    }
-                }
-                true
-            });
-            if let Err(e) = res {
-                on_event(Event::Error(e));
+                    true
+                })
+            }));
+            match res {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => on_event(Event::Error(e)),
+                Err(_) => on_event(Event::Error("The wake word stopped unexpectedly.".into())),
             }
         });
         Ok(Listener {
@@ -312,6 +361,32 @@ mod tests {
         d.reset();
         let quiet = vec![0i16; 16_000 * 3];
         assert!(!d.feed(&quiet).unwrap(), "no speech, no wake");
+    }
+
+    #[test]
+    fn bad_model_files_are_refused_without_a_crash() {
+        let dir = std::env::temp_dir().join(format!("rook-wake-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut m = models();
+        // Not ONNX at all.
+        m.classifier = dir.join("junk.onnx");
+        std::fs::write(&m.classifier, b"this is not a model").unwrap();
+        assert!(load_guarded(&m, 0.5, true).is_err());
+        // Empty, and far too big (sparse file).
+        std::fs::write(&m.classifier, b"").unwrap();
+        assert!(load_guarded(&m, 0.5, true)
+            .err()
+            .unwrap()
+            .contains("isn't a wake word model"));
+        let f = std::fs::File::create(&m.classifier).unwrap();
+        f.set_len(MAX_MODEL_BYTES + 1).unwrap();
+        assert!(load_guarded(&m, 0.5, true).err().unwrap().contains("too big"));
+        // A real ONNX model with the wrong input shape (the mel model).
+        m.classifier = models().features_dir.join("melspectrogram.onnx");
+        assert!(load_guarded(&m, 0.5, true).is_err());
+        // The fixture passes the probe.
+        assert!(load_guarded(&models(), 0.5, true).is_ok());
+        std::fs::remove_dir_all(dir).ok();
     }
 
     #[test]

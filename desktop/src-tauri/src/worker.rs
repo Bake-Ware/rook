@@ -40,6 +40,19 @@ pub struct Info {
     pub can_stop: bool,
 }
 
+impl Info {
+    /// When the status couldn't be read at all.
+    pub fn unknown() -> Self {
+        Info {
+            mode: "none",
+            status: "unknown",
+            detail: "Couldn't check this computer's worker.".into(),
+            can_start: false,
+            can_stop: false,
+        }
+    }
+}
+
 /// Where the installer puts things (rook.core.paths: worker_install_dir,
 /// worker_state_dir).
 #[derive(Debug, Clone)]
