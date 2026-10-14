@@ -92,9 +92,11 @@ worker that is already running moves to the new band within a minute.
 `rook login` and `rook login --token` ask for the hub's address the first time
 (`--url`; by default the hub this machine joined). An address without
 `http://` or `https://` means `https://`, unless it is on your own network (a
-private or Tailscale address, `localhost`, or a name only your network knows),
-which means `http://`. If the hub turns out to serve plain http, the error
-says so and gives the command to use.
+private or Tailscale address, `localhost`, a name without a dot, or one ending
+`.local` or `.lan`), which means `http://`. If the hub turns out to serve
+plain http, the error says so and gives the command to use. To use plain http
+with a name like `hub.<tailnet>.ts.net`, write `http://` yourself; a name that
+only points at addresses on your network is not asked about.
 
 Your token or password is never sent unencrypted across the internet without
 your say-so: for a plain `http://` address outside your network, `rook login`

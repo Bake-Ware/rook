@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 
 import pytest
 import pytest_asyncio
@@ -418,12 +419,18 @@ def _root_harness(text, tmp_path):
         "chown": f'echo "chown $*" >> "{calls}"',
         "loginctl": f'echo "loginctl $*" >> "{calls}"',
         "apt-get": f'echo "apt-get $*" >> "{calls}"',
-        "systemctl": f'echo "systemctl $*" >> "{calls}"',
-        # A root worker process: RUNNING = there until killed, STUCK = never stops.
+        "systemctl": f'echo "systemctl $*" >> "{calls}"; '
+                     f'echo "xdg=$XDG_RUNTIME_DIR dbus=${{DBUS_SESSION_BUS_ADDRESS:-none}}" >> "{calls}.env"; '
+                     'exit "${SYSTEMCTL_RC:-0}"',
+        # A root worker process: RUNNING = there until killed, STUCK = never
+        # stops; PGREP_SEQ = what each call finds ("4194305:-" = the first only, "-" = none).
         "pgrep": f'n=$(cat "{tmp_path}/pgrep.n" 2>/dev/null || echo 0); '
                  f'echo $((n+1)) > "{tmp_path}/pgrep.n"; echo "pgrep $*" >> "{calls}"; '
+                 'if [ -n "${PGREP_SEQ:-}" ]; then IFS=: read -ra seq <<< "$PGREP_SEQ"; '
+                 '[ "$n" -lt "${#seq[@]}" ] || n=$(( ${#seq[@]} - 1 )); '
+                 '[ "${seq[$n]}" != - ] && echo "${seq[$n]}" && exit 0; exit 1; fi; '
                  'if [ -n "${STUCK:-}" ] || { [ -n "${RUNNING:-}" ] && [ "$n" = 0 ]; }; '
-                 'then echo 999999; else exit 1; fi',
+                 'then echo 4194305; else exit 1; fi',
     }
     for name, body in stubs.items():
         (bin_dir / name).write_text("#!/bin/bash\n" + body + "\n")
@@ -433,6 +440,7 @@ def _root_harness(text, tmp_path):
     script = ("set -e\nLOG=/dev/null\nsay() { echo \"[rook] $*\"; }\n"
               "quietly() { \"$@\" >/dev/null 2>&1; }\ninstall_curl() { :; }\n"
               f"install_python() {{ echo install_python >> \"{calls}\"; }}\nIS_TERMUX=0\n"
+              f"if [ -n \"${{FAST_SLEEP:-}}\" ]; then sleep() {{ echo \"sleep $*\" >> \"{calls}\"; }}; fi\n"
               + block + "\necho CONTINUED\n")
     (tmp_path / "root").mkdir()
     env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": str(tmp_path / "root")}
@@ -571,8 +579,87 @@ async def test_unix_existing_root_worker_is_named_and_updated_or_moved(scripts, 
     shutil.rmtree(home)
     _root_install(home, unit=False)
     run = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
-                         env={**env, "ROOK_USER": "alice", "STUCK": "1"})
-    assert run.returncode == 1 and "did not stop. Stop it with: sudo kill 999999" in run.stdout
+                         env={**env, "ROOK_USER": "alice", "STUCK": "1", "FAST_SLEEP": "1"})
+    assert run.returncode == 1 and "still running (process 4194305). Stop it: sudo kill 4194305" in run.stdout
+
+
+@pytest.mark.asyncio
+async def test_unix_root_worker_stop_talks_to_roots_manager_and_checks_it_stays_down(
+        scripts, tmp_path):
+    """Under `sudo -E` or `su`, XDG_RUNTIME_DIR and the session bus are the
+    caller's: systemctl --user must still reach root's manager. When it can't,
+    a loaded unit with Restart=always brings the worker back after 10 s."""
+    script, env, calls = _root_harness(scripts["unix"], tmp_path)
+    home = tmp_path / "root"
+    caller = {"XDG_RUNTIME_DIR": "/run/user/1000",
+              "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus",
+              "ROOK_USER": "alice", "FAST_SLEEP": "1"}
+
+    def go(**extra):
+        for f in (calls, tmp_path / "calls.env", tmp_path / "pgrep.n"):
+            f.unlink(missing_ok=True)
+        if home.exists():
+            shutil.rmtree(home)
+        _root_install(home)
+        return subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                              env={**env, **caller, **extra})
+
+    run = go(PGREP_SEQ="4194305:-")
+    assert run.returncode == 0 and "root's worker is stopped" in run.stdout, run.stdout
+    log = calls.read_text().splitlines()
+    assert {*(tmp_path / "calls.env").read_text().splitlines()} == {"xdg=/run/user/0 dbus=none"}
+    assert log.index("systemctl --user disable --now rook-band-worker") < \
+        log.index("systemctl --user daemon-reload")              # the renamed unit is unloaded
+    assert "sleep 12" not in log                                 # the manager answered
+    # Root's manager unreachable: look again after RestartSec; it came back.
+    run = go(SYSTEMCTL_RC="1", PGREP_SEQ="4194305:-:4242")
+    assert run.returncode == 1, run.stdout
+    assert "sleep 12" in calls.read_text().splitlines()
+    assert "still running (process 4242)" in run.stdout and "reboot" in run.stdout
+    assert "Done" not in run.stdout
+    # ... and when it stayed down, done.
+    run = go(SYSTEMCTL_RC="1", PGREP_SEQ="4194305:-")
+    assert run.returncode == 0 and "root's worker is stopped" in run.stdout
+
+
+@pytest.mark.asyncio
+async def test_unix_root_worker_is_found_without_pgrep(scripts, tmp_path):
+    """Slim images have no procps: the check reads /proc instead of reporting
+    a worker it could not see as stopped."""
+    if not os.path.isdir("/proc/self"):
+        pytest.skip("needs /proc")
+    script, env, calls = _root_harness(scripts["unix"], tmp_path)
+    (tmp_path / "bin" / "pgrep").unlink()
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    for tool in ("bash", "env", "tr", "grep", "mktemp", "rm", "cut", "cat", "mv", "sleep",
+                 "dirname", "python3"):
+        found = shutil.which(tool)
+        if found:
+            (tools / tool).symlink_to(found)
+    home = tmp_path / "root"
+    _root_install(home, unit=False)
+    pyz = home / ".rook-band-worker" / "band-worker.pyz"
+    # Our own stand-in for root's worker (the check matches processes we own).
+    worker = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", str(pyz)])
+    try:
+        run = subprocess.run([str(tools / "bash"), "-c", script], capture_output=True, text=True,
+                             env={**env, "PATH": f"{tmp_path / 'bin'}:{tools}", "ROOK_USER": "alice"})
+        assert run.returncode == 0, (run.stdout, run.stderr)
+        assert "root's worker is stopped" in run.stdout
+        assert worker.wait(timeout=10) != 0                     # it was found and stopped
+    finally:
+        if worker.poll() is None:
+            worker.kill()
+            worker.wait()
+
+
+@pytest.mark.asyncio
+async def test_unix_reap_without_a_service_manager_is_scoped(scripts):
+    """As root, the no-service-manager swap must not kill other users' workers."""
+    text = scripts["unix"]
+    assert 'pgrep -u "$(id -u)" -f -- "$PYZ"' in text
+    assert 'pgrep -f "band-worker.pyz"' not in text
 
 
 @pytest.mark.asyncio
@@ -581,12 +668,17 @@ async def test_unix_self_url_keeps_the_pairing_code(scripts):
     assert f"SELF_URL='http://{LAN}:7005/worker?login=google&os=unix'" in scripts["unix_login"]
 
 
-def _probe(text, tmp_path, env_extra, uid="1000", user="pi"):
-    """The installer's top (arguments, name check, HOME/USER) with a stubbed id."""
+def _probe(text, tmp_path, env_extra, uid="1000", user="pi", getent=True):
+    """The installer's top (arguments, name check, HOME/USER) with a stubbed id
+    (and, with ``getent=False``, no getent, as on macOS)."""
     bin_dir = tmp_path / "pbin"
     bin_dir.mkdir(exist_ok=True)
     (bin_dir / "id").write_text(f'#!/bin/sh\ncase "$*" in -u) echo {uid} ;; -un) echo {user} ;; esac\n')
     (bin_dir / "id").chmod(0o755)
+    (bin_dir / "getent").unlink(missing_ok=True)
+    if not getent:
+        (bin_dir / "getent").write_text("#!/bin/sh\nexit 127\n")
+        (bin_dir / "getent").chmod(0o755)
     body = text[text.index("for arg in"):text.index("# Root needs no sudo")]
     probe = body + 'echo "HOME=$HOME USER=$USER"\n'
     return subprocess.run(["setsid", "bash", "-c", probe], stdin=subprocess.DEVNULL,
@@ -608,6 +700,17 @@ async def test_unix_home_user_and_worker_name_checks(scripts, tmp_path):
     # Root never writes into the HOME `sudo -E` kept: it uses its own.
     run = _probe(text, tmp_path, {"HOME": "/home/alice"}, uid="0", user="root")
     assert run.returncode == 0 and "HOME=/root USER=root" in run.stdout
+    # No getent (macOS): ~root names it. Nothing names it: HOME is left alone
+    # (never a made-up /root, which is read-only on macOS).
+    run = _probe(text, tmp_path, {"HOME": "/Users/alice"}, uid="0", user="root", getent=False)
+    assert run.returncode == 0 and "HOME=/root USER=root" in run.stdout
+    run = _probe(text, tmp_path, {"HOME": "/Users/alice"}, uid="0", user="nosuchuser-rook",
+                 getent=False)
+    assert run.returncode == 0 and "HOME=/Users/alice " in run.stdout
+    # Rooted Termux keeps its own HOME.
+    termux = {"HOME": "/data/data/com.termux/files/home", "PREFIX": "/data/data/com.termux/files/usr"}
+    run = _probe(text, tmp_path, termux, uid="0", user="root")
+    assert run.returncode == 0 and "HOME=/data/data/com.termux/files/home " in run.stdout
     # A worker name goes into a command line.
     run = _probe(text, tmp_path, {"HOME": "/home/pi", "ROOK_WORKER_NAME": "my box; rm -rf ~"})
     assert run.returncode == 1 and "ROOK_WORKER_NAME may only use" in run.stdout

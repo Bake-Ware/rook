@@ -77,12 +77,14 @@ It exits 1 when something failed, so scripts can use it.
    that token, with its permissions and its rows in the journal. This is the way
    to ask the home agent from a terminal. A bare `--url host` means
    `https://host` unless the host is on your network (a private or Tailscale
-   address, `localhost`, a name without a dot or ending `.local`/`.lan`, or a
-   name whose addresses are all private, like `hub.<tailnet>.ts.net`), which
-   gets `http://`. If https meets a hub serving plain http, the error says so
-   and gives the `http://` command. A token or password is never sent over
-   plain http to a public address without a yes at the prompt (or
-   `ROOK_ALLOW_HTTP=1` where there is no terminal), and a redirect from the endpoint is
+   address, `localhost`, a name without a dot or ending `.local`/`.lan`), which
+   gets `http://`; any other dotted name gets `https://` whatever DNS says (a
+   spoofed private answer must not turn it into plain http). If https meets a
+   hub serving plain http, the error says so and gives the `http://` command. A
+   token or password is never sent over plain http to a public address without
+   a yes at the prompt (or `ROOK_ALLOW_HTTP=1` where there is no terminal); an
+   `http://` you write out for a name that resolves only to private addresses
+   (`hub.<tailnet>.ts.net`, a LAN DNS name; 3 s DNS limit) needs no yes. A redirect from the endpoint is
    never followed (the token would go along): the error names the address to
    use. On a hub whose MCP server runs on its own port, pass
    `--mcp-url http://<hub address>:8765/mcp`.

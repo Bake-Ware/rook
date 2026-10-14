@@ -236,10 +236,29 @@ def test_login_defaults_a_bare_public_host_to_https(dns):
                 "localhost:7005", "rookhub:7005", "rookhub.local", "hub.lan:7005"):
         assert localcli._with_scheme(lan) == "http://" + lan, lan
     assert localcli._with_scheme("http://hub.example.com") == "http://hub.example.com"
-    # Dotted names count as local when every address they resolve to is.
-    assert localcli._with_scheme("hub.tail1234.ts.net:7005") == "http://hub.tail1234.ts.net:7005"
-    assert localcli._with_scheme("hub.corp.test:7005") == "http://hub.corp.test:7005"
-    assert localcli._with_scheme("mixed.example.com") == "https://mixed.example.com"
+    # A bare dotted name gets https even when DNS says it is private: a
+    # spoofed answer must not downgrade it to plain http with no prompt.
+    assert localcli._with_scheme("hub.tail1234.ts.net:7005") == "https://hub.tail1234.ts.net:7005"
+    assert localcli._with_scheme("hub.corp.test:7005") == "https://hub.corp.test:7005"
+    # Where DNS counts: an explicit http:// to a name with only private addresses.
+    assert localcli._local_host("hub.tail1234.ts.net", resolve=True)
+    assert localcli._local_host("hub.corp.test", resolve=True)
+    assert not localcli._local_host("mixed.example.com", resolve=True)
+    assert not localcli._local_host("hub.tail1234.ts.net")
+
+
+def test_a_slow_dns_answer_counts_as_public(monkeypatch):
+    import socket
+    import threading
+    gate = threading.Event()
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: gate.wait(5) and [])
+    monkeypatch.setattr(localcli, "RESOLVE_SECS", 0.2)
+    started = time.monotonic()
+    try:
+        assert not localcli._local_host("slow.example.com", resolve=True)
+    finally:
+        gate.set()
+    assert time.monotonic() - started < 2
 
 
 def test_login_suggests_http_when_https_meets_a_plain_http_hub(home, capsys, monkeypatch, dns):
@@ -299,6 +318,10 @@ def test_login_never_sends_a_secret_over_public_http_unasked(home, capsys, monke
     assert run(["login", "--token", "--url", "hub.example.com"], capsys)[0] == 0
     assert run(["login", "--token", "--url", "192.168.1.5:7005"], capsys)[0] == 0
     assert sent == ["https://hub.example.com/mcp", "http://192.168.1.5:7005/mcp"]
+    # An explicit http:// to a name with only private addresses: no prompt.
+    sent.clear()
+    assert run(["login", "--token", "--url", "http://hub.tail1234.ts.net:7005"], capsys)[0] == 0
+    assert sent == ["http://hub.tail1234.ts.net:7005/mcp"]
     # ROOK_ALLOW_HTTP=1: sent without a terminal, with a warning.
     monkeypatch.setattr("sys.stdin", __import__("io").StringIO(""))
     monkeypatch.setenv("ROOK_ALLOW_HTTP", "1")

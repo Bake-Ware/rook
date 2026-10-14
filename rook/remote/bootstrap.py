@@ -562,10 +562,24 @@ esac
 export USER="$(id -un)"
 # Root writes only to its own home: `sudo -E` keeps the caller's HOME, and a
 # root-owned install.log there would break that person's own install later.
-if [ "$(id -u)" = 0 ]; then
-    export HOME="$(getent passwd "$USER" 2>/dev/null | cut -d: -f6)"
-fi
-[ -n "${{HOME:-}}" ] || export HOME="$(getent passwd "$USER" 2>/dev/null | cut -d: -f6)"
+# Only a home the system names (getent, or ~user where there is no getent:
+# macOS) replaces HOME; rooted Termux keeps its own.
+own_home() {{
+    local h
+    h="$(getent passwd "$USER" 2>/dev/null | cut -d: -f6)"
+    if [ -z "$h" ]; then
+        case "$USER" in *[!A-Za-z0-9._-]*|"") ;; *) h="$(eval "echo ~$USER")" ;; esac
+        case "$h" in "~"*) h="" ;; esac
+    fi
+    echo "$h"
+}}
+case "${{PREFIX:-}}" in /data/data/com.termux*) ;; *)
+    if [ "$(id -u)" = 0 ]; then
+        _own="$(own_home)"
+        [ -n "$_own" ] && export HOME="$_own"
+    fi ;;
+esac
+[ -n "${{HOME:-}}" ] || export HOME="$(own_home)"
 if [ -z "${{HOME:-}}" ]; then
     if [ "$(id -u)" = 0 ]; then export HOME=/root
     else echo "[rook] Not installed: HOME is not set. Set it to your home folder, then run the same command again."; exit 1
@@ -820,25 +834,58 @@ install_for_user() {{
 ROOT_PYZ="$HOME/.rook-band-worker/band-worker.pyz"
 ROOT_UNIT="$HOME/.config/systemd/user/rook-band-worker.service"
 root_worker_present() {{ [ -e "$ROOT_PYZ" ] || [ -e "$ROOT_UNIT" ]; }}
-root_worker_pids() {{ pgrep -u 0 -f -- "$ROOT_PYZ" 2>/dev/null || true; }}
+# Root's own user manager, never the caller's: `sudo -E` and `su` keep the
+# caller's XDG_RUNTIME_DIR and session bus.
+root_systemctl() {{
+    env -u DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR=/run/user/0 systemctl --user "$@"
+}}
+# uid-0 processes running root's worker: pgrep, else /proc (slim images have
+# no procps). Fails when neither can tell.
+root_worker_pids() {{
+    if command -v pgrep &>/dev/null; then
+        pgrep -u 0 -f -- "$ROOT_PYZ" 2>/dev/null || true
+        return 0
+    fi
+    [ -d /proc/self ] || return 2
+    local d
+    for d in /proc/[0-9]*; do
+        [ -O "$d" ] || continue
+        if tr '\\0' ' ' < "$d/cmdline" 2>/dev/null | grep -qF -- "$ROOT_PYZ"; then
+            echo "${{d#/proc/}}"
+        fi
+    done
+    return 0
+}}
+ROOT_STOP_STEPS="ps -ef | grep band-worker.pyz, then sudo kill <pid> for root's; or reboot (its service no longer starts at boot)"
 stop_root_worker() {{
     say "Stopping the worker installed for root here, so this machine runs one worker..."
+    local had_unit=0 manager=0 pids rc=0
     if [ -e "$ROOT_UNIT" ]; then
-        quietly env XDG_RUNTIME_DIR="${{XDG_RUNTIME_DIR:-/run/user/0}}" \\
-            systemctl --user disable --now rook-band-worker || true
+        had_unit=1
+        if quietly root_systemctl disable --now rook-band-worker; then manager=1; fi
         # Never again at boot, even where root's user manager isn't reachable now.
         rm -f "$HOME/.config/systemd/user/default.target.wants/rook-band-worker.service"
         mv -f "$ROOT_UNIT" "$ROOT_UNIT.disabled" || true
+        quietly root_systemctl daemon-reload || true
     fi
-    local pids
-    pids="$(root_worker_pids)"
-    if [ -n "$pids" ]; then
+    pids="$(root_worker_pids)" || rc=$?
+    if [ "$rc" -eq 0 ] && [ -n "$pids" ]; then
         kill $pids 2>/dev/null || true
         sleep 2
-        pids="$(root_worker_pids)"
+        pids="$(root_worker_pids)" || rc=$?
+    fi
+    # Root's manager wasn't reached: a unit it still has loaded (Restart=always)
+    # starts the worker again after RestartSec (10 s). Look again after that.
+    if [ "$rc" -eq 0 ] && [ -z "$pids" ] && [ "$had_unit" = 1 ] && [ "$manager" = 0 ]; then
+        sleep 12
+        pids="$(root_worker_pids)" || rc=$?
+    fi
+    if [ "$rc" -ne 0 ]; then
+        say "WARNING: could not check whether root's worker still runs (no pgrep or /proc here). Check: $ROOT_STOP_STEPS."
+        return 1
     fi
     if [ -n "$pids" ]; then
-        say "ERROR: the root worker (process $pids) did not stop. Stop it with: sudo kill $pids"
+        say "ERROR: root's worker is still running (process $pids). Stop it: sudo kill $pids. If it comes back: $ROOT_STOP_STEPS."
         return 1
     fi
     say "      Done: root's worker is stopped and won't start at boot. Its files stay in $HOME/.rook-band-worker; delete that folder when you no longer need it."
@@ -1003,11 +1050,12 @@ ROOKSVC
 else
     # No service manager. Start the NEW worker in its own session FIRST (so it
     # survives even if reaping the old worker kills this script), then reap any
-    # other band-worker processes except the one we just launched.
+    # other band-worker processes except the one we just launched: only this
+    # account's, running this install's bundle (as root, never other users').
     setsid bash -c "exec $WORKER_CMD >> $HOME/.rook-band-worker/worker.log 2>&1" </dev/null >/dev/null 2>&1 &
     NEWPID=$!
     sleep 2
-    for pid in $(pgrep -f "band-worker.pyz" 2>/dev/null); do
+    for pid in $(pgrep -u "$(id -u)" -f -- "$PYZ" 2>/dev/null); do
         [ "$pid" = "$NEWPID" ] && continue
         kill "$pid" 2>/dev/null || true
     done
