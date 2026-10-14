@@ -33,12 +33,28 @@ Under **Settings** on the Updates page (also Settings > Plugins > Updates):
 
 Advanced: `updates.repo` / `updates.relay_repo` (GitHub repositories),
 `updates.api_base` (`ROOK_UPDATES_API`, for GitHub Enterprise or a mirror),
-`updates.token` (`ROOK_UPDATES_GITHUB_TOKEN`, optional, raises the rate limit),
-`updates.verify_attestations`, `updates.check_hours`.
+`updates.token` (`ROOK_UPDATES_GITHUB_TOKEN`, optional, raises the rate limit;
+also given to `gh` for the provenance check), `updates.verify_attestations`,
+`updates.auto_min_age_hours`, `updates.check_hours`.
 
-Auto mode never installs a **breaking** update (below): those always wait for
-you. It tries each release and each worker build once; a failure is recorded
-in the history and waits for you too.
+What auto mode installs on the hub by itself is deliberately narrow. A hub
+release goes in only when all of these hold; anything else is announced and
+waits for you:
+
+- it is a stable (promoted) release, not a test release;
+- it is a patch release of the version the hub runs (0.3.0 to 0.3.1, never
+  0.3.x to 0.4.0);
+- the hub has seen it as a stable release for `updates.auto_min_age_hours`
+  (24 by default);
+- it is not breaking, and neither is any release between the hub's version
+  and it, and every one of them has verified update metadata (below);
+- its files pass the build provenance check (see "Release metadata and
+  trust"): this needs the `gh` CLI on the hub, signed in or given
+  `updates.token`. Without it, auto mode never updates the hub.
+
+It tries each release and each worker build once; a failure is recorded in
+the history and waits for you too. A new worker build is announced in chat
+once; auto mode rolls it out in the window, notify mode waits for you.
 
 ## Updating the hub
 
@@ -50,12 +66,18 @@ updates depends on how it was installed; the page says which applies:
   and runs `rook hub deploy` in a transient systemd unit (outside the hub's
   own service, since the deploy restarts it). Preflight checks, database
   backups, health checks and the dead-man rollback all apply: if the new
-  release does not come up healthy, the hub goes back on its own. A hub whose
+  release does not come up healthy, the hub goes back on its own. When the
+  hub runs as a systemd service and `systemd-run` cannot start the update
+  (for example no user bus for a `--user` unit), the update is refused rather
+  than run inside the hub's own service, which the restart would stop
+  halfway. A hub whose
   units are system units and that does not run as root cannot do this
   itself; the page shows the command to run.
 - **The one-command installer** (`scripts/install-hub.sh --user`): the hub
-  downloads the release's own `install-hub.sh`, checks it, and re-runs it
-  with `--version <tag>`. Data, keys and passwords are kept. A system-wide
+  downloads the release's own `install-hub.sh` and Rook wheel, checks both,
+  and re-runs the installer with `--version <tag> --package <that wheel>`, so
+  what gets installed is exactly the file the hub checked. Data, keys and
+  passwords are kept. A system-wide
   install (`--system`) runs as the unprivileged `rook` user and cannot
   reinstall itself: the page shows the `sudo` command to run.
 - **Docker**: the image is the release. Pull the new image and recreate the
@@ -95,7 +117,11 @@ from here (signed builds only go forward): its own health gate is what rolls
 back a bad build.
 
 Before this page existed the hub pushed its newest bundle to every worker as
-soon as the bundle changed. Turning the updates plugin off restores that.
+soon as the bundle changed. Turning the updates plugin off restores that, and
+so does the update service not running: when it has not written its
+`summary.json` for 15 minutes, the dashboard serves and pushes the newest
+bundle again rather than keep the fleet pinned. While a rollout runs, the
+hub's background push leaves its workers alone.
 When the update service starts for the first time it releases the bundle the
 hub already has, so nothing changes for the workers until the next build.
 
@@ -103,8 +129,14 @@ hub already has, so nothing changes for the workers until the next build.
 
 A release is **breaking** when it raises the oldest worker build, Android app
 or hub build Rook still supports (`rook/core/compat.py`), or when its release
-says so. The page then lists every device that would stop working with the
-new hub, why, and how to fix each:
+says so. Updates add up: going from 0.2.0 straight to 0.2.2 is breaking when
+0.2.1 was, and Rook cannot tell what an update means (so it asks you) when a
+release in between has no verified `release.json`, or when the hub is so far
+behind that GitHub's list (the newest 30 releases) no longer reaches its own
+release. A breaking or unknown update always needs your acknowledgement,
+even when no device on the band right now is affected (a phone that is
+asleep is not on the band). The page lists every device that would stop
+working with the new hub, why, and how to fix each:
 
 - a worker the hub can update now: **Update these workers first**;
 - an Android app: install the new app on the phone (the app does not update
@@ -150,12 +182,26 @@ and firmware versions in it. The hub reads it before it offers an update.
 
 Every download is checked against the release's `SHA256SUMS`, and a cached
 file is checked again before use. That proves the file is what the release
-published, not who published it: the release's build provenance attestations
-do that, and need Sigstore's trust root to check. With
-`updates.verify_attestations` on and the `gh` CLI installed, the hub runs
-`gh attestation verify` on each download too; otherwise run it yourself
-(`gh attestation verify <file> -R Bake-Ware/rook`). Worker bundles are signed
-by the hub's own update key either way.
+published, not who published it. The release's build provenance
+attestations do that: the hub runs
+
+    gh attestation verify <file> --repo Bake-Ware/rook \
+      --signer-workflow Bake-Ware/rook/.github/workflows/release.yml \
+      --source-ref refs/tags/<tag> --deny-self-hosted-runners
+
+(or `refs/heads/master` for a release re-run by hand from the default
+branch), so an attestation from any other workflow, branch or a self-hosted
+runner does not count. The check fails closed: when `gh` is missing or the
+check fails, the update is refused. Auto mode always requires it before it
+updates the hub; for an update you start, `updates.verify_attestations` turns
+it on (off by default: then only `SHA256SUMS` is checked, and you can run
+the command above yourself).
+
+The hub then signs the hub release it builds with its own update key (that
+is what `rook hub deploy` checks), so that signature means "this hub checked
+it", nothing more; the provenance check is what ties it to Rook's release
+workflow. Worker bundles are kept in the feed only when they verify against
+the hub's own key, and are re-signed with it.
 
 The hub asks GitHub at most every few hours, with the last `ETag` (an
 unchanged list costs nothing), and backs off after errors (15 minutes,

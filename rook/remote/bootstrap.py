@@ -1271,6 +1271,7 @@ class CombinedServer:
         self._bundle = WorkerBundle(lambda: self.public_base)
         from ..hub.update_feed import WorkerFeed
         self._feed = WorkerFeed()
+        self._started_at = time.time()
         from .band_overview import BandOverview
         self._overview = BandOverview(self._band_worker_rows, self._overview_call)
         # Known bands for the dashboard selector. PSKs stay server-side; the UI
@@ -1758,11 +1759,17 @@ class CombinedServer:
                 # The update service's released build when it runs the
                 # feed (new builds go out by staged rollout), else the bundle.
                 manifest = self._feed_manifest()
+                # Workers in a running staged rollout are the rollout's: a
+                # push of the released build would race its pushes.
+                busy: set = set()
                 if manifest is None:
                     try:
                         manifest = json.loads(self._bundle.path("band-worker.json").read_text())
                     except Exception:
                         continue
+                else:
+                    from ..hub.update_feed import rollout_targets
+                    busy = rollout_targets(self._feed.root)
                 if not manifest.get("sig"):
                     continue  # unsigned -> workers would reject; don't bother
                 target = int(manifest.get("build", 0))
@@ -1774,6 +1781,8 @@ class CombinedServer:
                         continue  # deauthed — never feed a banned node updates
                     if "worker.apply" not in (w.get("caps") or []):
                         continue  # can't receive an in-band push yet
+                    if wid in busy:
+                        continue  # the staged rollout is updating it
                     b = w.get("build")
                     if not isinstance(b, int) or b <= 0 or b >= target:
                         continue
@@ -1999,8 +2008,10 @@ class CombinedServer:
     def _feed_manifest(self) -> dict | None:
         """The update service's released worker manifest, or None when the
         service is off (hub plugins off, or its plugin switched off on the
-        Plugins page): then the bundle is served and pushed as before, and a
-        feed left behind by an earlier run pins nobody."""
+        Plugins page) or not running (its summary.json has gone stale while
+        this dashboard has been up long enough to see a fresh one): then the
+        bundle is served and pushed as before, and a feed left behind pins
+        nobody."""
         if os.environ.get("ROOK_HUB_PLUGINS", "1") == "0":
             return None
         try:
@@ -2009,6 +2020,10 @@ class CombinedServer:
                 return None
         except Exception:
             log.debug("reading the hub plugin switches failed", exc_info=True)
+        from ..hub.update_feed import SERVICE_STALE_SECS, service_alive
+        now = time.time()
+        if now - self._started_at > SERVICE_STALE_SECS and not service_alive(self._feed.root, now):
+            return None
         return self._feed.released_manifest()
 
     async def _feed_pyz(self, request: web.Request) -> web.Response:

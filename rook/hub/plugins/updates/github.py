@@ -11,9 +11,12 @@
 Trust: ``SHA256SUMS`` comes from the same release page as the files, so it
 proves the download is the file the release published (no corruption, no
 proxy rewriting), not who published it. The release's build provenance
-attestations prove that; checking them needs Sigstore's trust root, so it
-is optional (:func:`verify_attestation`, with the ``gh`` CLI). Worker
-bundles are then re-signed by this hub's own update key as before.
+attestations prove that: :func:`verify_attestation` runs ``gh attestation
+verify`` scoped to this repository's release workflow
+(``.github/workflows/release.yml``) at the release's tag, on GitHub-hosted
+runners only, and fails closed (``ok`` False) when it cannot check. The
+service requires it before auto mode installs a hub release, and before
+any hub release when ``updates.verify_attestations`` is on.
 """
 
 from __future__ import annotations
@@ -38,8 +41,14 @@ API = "https://api.github.com"
 UA = "rook-hub-updates"
 MAX_ASSET_BYTES = 400 * 1024 * 1024
 SMALL_ASSET_BYTES = 1024 * 1024        # release.json, SHA256SUMS
+PER_PAGE = 30
 BACKOFF_BASE = 15 * 60.0
 BACKOFF_MAX = 24 * 3600.0
+META_RETRY_SECS = 30 * 60.0            # a release.json that failed to verify
+RELEASE_WORKFLOW = ".github/workflows/release.yml"
+# The refs a release's provenance may name: the tag push that made it, or a
+# workflow_dispatch re-release run from the default branch.
+ATTEST_REFS = ("refs/tags/{tag}", "refs/heads/master")
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,200}$")
 
 
@@ -178,9 +187,12 @@ class ReleaseFeed:
         """Check for releases now (``force``) or when due. Returns
         ``{"changed", "error", "skipped"}``; the state keeps the rest."""
         now = time.time()
-        if not force and not self.due(now):
+        # "Check now" may skip the ordinary schedule, never what GitHub
+        # itself asked for (Retry-After, an exhausted rate limit).
+        limited = float(self.state.get("limited_until") or 0) > now
+        if (not force and not self.due(now)) or limited:
             return {"changed": False, "skipped": True, "error": self.state.get("error", "")}
-        url = f"{self.api}/repos/{self.repo}/releases?per_page=30"
+        url = f"{self.api}/repos/{self.repo}/releases?per_page={PER_PAGE}"
         headers = self._headers()
         if self.state.get("etag") and self.state.get("releases"):
             headers["If-None-Match"] = self.state["etag"]
@@ -198,25 +210,29 @@ class ReleaseFeed:
                     old = {x["tag"]: x for x in self.state.get("releases") or []}
                     for rel in rels:   # keep what we learned about known tags
                         prev = old.get(rel["tag"]) or {}
-                        for k in ("meta", "meta_error", "sums"):
+                        for k in ("meta", "meta_error", "meta_retry_at", "sums"):
                             if k in prev:
                                 rel[k] = prev[k]
                     changed = [x["tag"] for x in rels] != [x["tag"] for x in old.values()]
                     self.state["releases"] = rels
+                    # Fewer than a page: this is every release there is.
+                    self.state["listed_all"] = len(raw) < PER_PAGE
                     self.state["etag"] = r.headers.get("ETag", "")
                 else:
                     wait = _retry_after(r.headers, now)
                     raise ReleaseError(f"GitHub answered HTTP {r.status}"
                                        + (f"; retry in {int(wait)}s" if wait else ""),
                                        wait)
-            self.state.update(ok_at=now, failures=0, error="", next_at=now + interval)
+            self.state.update(ok_at=now, failures=0, error="", next_at=now + interval,
+                              limited_until=0)
         except Exception as e:
             failures = int(self.state.get("failures") or 0) + 1
             wait = e.args[1] if isinstance(e, ReleaseError) and len(e.args) > 1 and e.args[1] else None
             delay = wait if wait is not None else min(BACKOFF_MAX, BACKOFF_BASE * 2 ** (failures - 1))
             msg = e.args[0] if isinstance(e, ReleaseError) else f"{type(e).__name__}: {e}"
             self.state.update(failures=failures, error=str(msg)[:300],
-                              next_at=now + max(delay, 60.0))
+                              next_at=now + max(delay, 60.0),
+                              limited_until=now + wait if wait is not None else 0)
             log.info("release check for %s failed (%s); next try in %ds", self.repo, msg,
                      int(max(delay, 60.0)))
         self._save()
@@ -289,23 +305,30 @@ class ReleaseFeed:
                                f"({want[:16]}...); download discarded")
         return dest
 
-    async def meta(self, rel: dict) -> dict | None:
+    async def meta(self, rel: dict, force: bool = False) -> dict | None:
         """The release's verified release.json (None for a release from
-        before release.json existed; the error is kept in ``meta_error``)."""
+        before release.json existed; the error is kept in ``meta_error``).
+        A failed download or check is tried again after META_RETRY_SECS (or
+        now with ``force``), not on every tick."""
         if isinstance(rel.get("meta"), dict):
             return rel["meta"]
         if "release.json" not in rel["assets"]:
             rel["meta_error"] = "this release has no release.json (it predates update metadata)"
             self._remember(rel)
             return None
+        now = time.time()
+        if not force and rel.get("meta_error") and float(rel.get("meta_retry_at") or 0) > now:
+            return None
         try:
             path = await self.fetch(rel, "release.json", SMALL_ASSET_BYTES)
             meta = parse_release_json(json.loads(path.read_text(encoding="utf-8")))
         except (ReleaseError, ValueError, OSError) as e:
             rel["meta_error"] = str(e)[:300]
+            rel["meta_retry_at"] = now + META_RETRY_SECS
             self._remember(rel)
             return None
         rel["meta"], rel["meta_error"] = meta, ""
+        rel.pop("meta_retry_at", None)
         self._remember(rel)
         return meta
 
@@ -317,20 +340,45 @@ class ReleaseFeed:
                 shutil.rmtree(p, ignore_errors=True)
 
 
-async def verify_attestation(path: Path, repo: str, timeout: float = 120.0) -> dict:
-    """Check a downloaded file's build provenance with ``gh attestation
-    verify``. ``{"checked": False, ...}`` when ``gh`` is not installed: the
-    Sigstore check needs its trust root, which this hub does not carry."""
+def attestation_argv(gh: str, path: Path, repo: str, ref: str) -> list[str]:
+    """``gh attestation verify`` scoped to ``repo``'s release workflow at
+    ``ref``, on GitHub-hosted runners only: an attestation made by any other
+    workflow, ref or a self-hosted runner does not count."""
+    return [gh, "attestation", "verify", str(path), "--repo", repo,
+            "--signer-workflow", f"{repo}/{RELEASE_WORKFLOW}",
+            "--source-ref", ref, "--deny-self-hosted-runners"]
+
+
+async def verify_attestation(path: Path, repo: str, tag: str, token: str = "",
+                             timeout: float = 120.0) -> dict:
+    """Check a downloaded file's build provenance (:func:`attestation_argv`)
+    for release ``tag``: the tag push that built it, or a re-release
+    dispatched from the default branch (:data:`ATTEST_REFS`). Fails closed:
+    ``ok`` is True only when gh verified it. ``checked`` is False when gh is
+    not installed (the Sigstore check needs its trust root, which this hub
+    does not carry). ``token`` (the update service's GitHub token) is given
+    to gh as ``GH_TOKEN`` unless one is already set."""
     gh = shutil.which("gh")
     if not gh:
-        return {"checked": False, "ok": None,
-                "detail": "gh CLI not installed: provenance not checked (SHA256SUMS was)"}
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            gh, "attestation", "verify", str(path), "-R", repo,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout)
-    except (OSError, asyncio.TimeoutError) as e:
-        return {"checked": True, "ok": False, "detail": f"gh failed: {e}"}
-    text = (out or b"").decode("utf-8", "replace").strip().splitlines()
-    return {"checked": True, "ok": proc.returncode == 0, "detail": (text[-1] if text else "")[:300]}
+        return {"checked": False, "ok": False,
+                "detail": "the gh CLI is not installed, so build provenance cannot be checked"}
+    if not _tag_ok(tag):
+        return {"checked": True, "ok": False, "detail": f"bad tag {tag!r}"}
+    env = dict(os.environ)
+    if token and not env.get("GH_TOKEN"):
+        env["GH_TOKEN"] = token
+    detail = ""
+    for ref in (r.format(tag=tag) for r in ATTEST_REFS):
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *attestation_argv(gh, path, repo, ref), env=env,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout)
+        except (OSError, asyncio.TimeoutError) as e:
+            return {"checked": True, "ok": False, "detail": f"gh failed: {e}"}
+        text = (out or b"").decode("utf-8", "replace").strip().splitlines()
+        if proc.returncode == 0:
+            return {"checked": True, "ok": True, "ref": ref,
+                    "detail": (text[-1] if text else "verified")[:300]}
+        detail = (text[-1] if text else f"gh exited {proc.returncode}")[:300]
+    return {"checked": True, "ok": False, "detail": detail}

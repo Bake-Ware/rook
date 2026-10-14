@@ -66,6 +66,31 @@ def _write_json(path: Path, data: Any) -> None:
     os.replace(tmp, path)
 
 
+def _sign_with(sk: Any, manifest: dict) -> dict:
+    import base64
+    from rook.worker._update_verify import canonical_payload
+    sig = sk.sign(canonical_payload(manifest)).signature
+    return {**manifest, "sig": base64.b64encode(sig).decode("ascii")}
+
+
+def _signers(sign: Callable[[dict], dict] | None, verify: Callable[[dict], bool] | None):
+    """(sign, verify) for the feed, filling in this hub's existing update key
+    (never created here) for either one not given; None without a key."""
+    if sign is not None and verify is not None:
+        return sign, verify
+    from rook.remote.update_keys import load_signing_key, public_key_b64
+    sk = load_signing_key()
+    if sk is None:
+        return None
+    if verify is None:
+        from rook.worker._update_verify import verify_manifest
+        pub = public_key_b64(sk)
+        verify = lambda m: verify_manifest(m, pub)  # noqa: E731
+    if sign is None:
+        sign = lambda m: _sign_with(sk, m)  # noqa: E731
+    return sign, verify
+
+
 def snapshot_url(original_url: str, build: int) -> str:
     """``https://hub/band-worker.pyz`` -> ``https://hub/updates/worker/<b>/band-worker.pyz``."""
     base = original_url.rsplit("/", 1)[0] if "/" in original_url else ""
@@ -128,10 +153,17 @@ class WorkerFeed:
 
     # -- writing (update service side) -------------------------------------
     def snapshot(self, manifest_path: Path, pyz_path: Path,
-                 sign: Callable[[dict], dict] | None = None) -> int:
+                 sign: Callable[[dict], dict] | None = None,
+                 verify: Callable[[dict], bool] | None = None) -> int:
         """Copy a signed bundle into the feed under its build, re-signed with
-        its snapshot URL. Returns the build (0: unsigned or unreadable, not
-        copied). An existing snapshot of the same build is kept."""
+        its snapshot URL. Returns the build (0: not copied). The bundle's own
+        signature must verify against this hub's update key first (``verify``;
+        by default the public half of the existing key, which is never
+        created here): re-signing a bundle signed by some other key would
+        hand workers a bundle, and the public key inside it, they would have
+        refused. An existing snapshot of the same build is kept; when the
+        hub's public URL changed since, every kept snapshot is re-signed with
+        the new one (:meth:`repoint`)."""
         manifest = _read_json(Path(manifest_path))
         if not isinstance(manifest, dict) or not manifest.get("sig"):
             return 0
@@ -139,20 +171,30 @@ class WorkerFeed:
         if not isinstance(build, int) or build <= 0:
             return 0
         dest = self.dir / str(build)
-        if (dest / MANIFEST).is_file() and (dest / PYZ).is_file():
-            return build
-        from rook.worker._update_verify import sha256_file
-        if sha256_file(pyz_path) != manifest.get("sha256"):
-            # The bundle is mid-rebuild (pyz swapped, manifest not yet): next time.
-            return 0
-        if sign is None:
-            from rook.remote.update_keys import sign_manifest as sign
         new = {k: v for k, v in manifest.items() if k != "sig"}
         if manifest.get("url"):
             new["url"] = snapshot_url(str(manifest["url"]), build)
         else:
             new["filename"] = f"{SNAPSHOT_PATH.lstrip('/')}/{build}/{PYZ}"
         new["snapshot_of"] = manifest.get("filename", PYZ)
+        if (dest / MANIFEST).is_file() and (dest / PYZ).is_file():
+            kept = _read_json(dest / MANIFEST)
+            if isinstance(kept, dict) and kept.get("url") != new.get("url") and new.get("url"):
+                self.repoint(str(manifest["url"]), sign, verify)
+            return build
+        from rook.worker._update_verify import sha256_file
+        if sha256_file(pyz_path) != manifest.get("sha256"):
+            # The bundle is mid-rebuild (pyz swapped, manifest not yet): next time.
+            return 0
+        signers = _signers(sign, verify)
+        if signers is None:
+            log.warning("worker feed: this hub has no update signing key; build %s not kept", build)
+            return 0
+        sign, verify = signers
+        if not verify(manifest):
+            log.warning("worker feed: build %s is not signed by this hub's update key; not kept",
+                        build)
+            return 0
         signed = sign(new)
         if not signed.get("sig"):
             return 0
@@ -165,7 +207,32 @@ class WorkerFeed:
             shutil.rmtree(dest)
         os.replace(tmp, dest)
         log.info("worker feed: kept build %s", build)
+        if new.get("url"):
+            self.repoint(str(manifest["url"]), sign, verify)
         return build
+
+    def repoint(self, bundle_url: str, sign: Callable[[dict], dict] | None = None,
+                verify: Callable[[dict], bool] | None = None) -> list[int]:
+        """Re-sign every kept snapshot whose URL is not under ``bundle_url``'s
+        base (the hub's public URL changed). Only snapshots this hub signed
+        (``verify``) are touched; the bundles themselves stay as they are."""
+        signers = _signers(sign, verify)
+        if signers is None:
+            return []
+        sign, verify = signers
+        done = []
+        for b in self.builds():
+            m = self.manifest_for(b)
+            want = snapshot_url(bundle_url, b)
+            if not m or not m.get("url") or m["url"] == want or not verify(m):
+                continue
+            signed = sign({**{k: v for k, v in m.items() if k != "sig"}, "url": want})
+            if signed.get("sig"):
+                _write_json(self.dir / str(b) / MANIFEST, signed)
+                done.append(b)
+        if done:
+            log.info("worker feed: re-signed builds %s for the hub's new address", done)
+        return done
 
     def release(self, build: int, by: str = "system", note: str = "") -> dict:
         if not self.manifest_for(build) or not self.pyz_for(build):
@@ -205,6 +272,31 @@ def summary(root: Path | None = None) -> dict:
     desktop update check. {} when the service has not run."""
     data = _read_json((Path(root) if root is not None else updates_dir()) / "summary.json")
     return data if isinstance(data, dict) else {}
+
+
+# The service rewrites summary.json every minute; older than this, it is not
+# running (its plugin crashed, or the MCP side of a split hub is down).
+SERVICE_STALE_SECS = 15 * 60.0
+
+
+def service_alive(root: Path | None = None, now: float | None = None) -> bool:
+    """Whether the update service has written its summary recently."""
+    try:
+        at = float(summary(root).get("updated_at") or 0)
+    except (TypeError, ValueError):
+        return False
+    return (now or time.time()) - at < SERVICE_STALE_SECS
+
+
+def rollout_targets(root: Path | None = None) -> set[str]:
+    """Worker ids in the running staged rollout (``state.json``): the push
+    loop leaves them to the rollout."""
+    data = _read_json((Path(root) if root is not None else updates_dir()) / "state.json")
+    ro = data.get("rollout") if isinstance(data, dict) else None
+    if not isinstance(ro, dict) or ro.get("status") != "running":
+        return set()
+    return {str(t.get("worker_id")) for t in ro.get("targets") or []
+            if isinstance(t, dict) and t.get("worker_id")}
 
 
 def worker_note(row: dict, floors: dict | None = None, pending: dict | None = None) -> str:

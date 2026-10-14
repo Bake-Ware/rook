@@ -4,7 +4,7 @@ Operator account only, same session and CSRF rules as the other account
 APIs; the dashboard proxies ``/account/updates/api`` here
 (rook/remote/knowledge_web.py UpdatesWeb).
 
-GET: the overview (``refresh=1`` checks GitHub and the dongles now).
+GET: the overview (read-only; ``check`` below asks GitHub and the dongles).
 POST ``{"action": ...}``: ``check``, ``settings`` (``mode``, ``channel``,
 ``window``), ``acknowledge`` (``tag``), ``apply_hub`` (``tag``),
 ``rollback_hub``, ``rollout`` (``selection``, ``build?``, ``canaries?``),
@@ -51,9 +51,8 @@ def routes(get_node: Callable[[], Any], accounts):
         actor = "human:" + str(user.get("username") or user["id"])
         try:
             if body is None:
-                if request.query_params.get("refresh") in ("1", "true"):
-                    await svc.check(force=True)
-                    await svc.refresh_firmware()
+                # Read-only: checking GitHub or the dongles is the POST
+                # "check" action (CSRF-checked), never a GET.
                 return json_reply({"csrf": user["csrf"], **svc.overview()})
             action = str(body.get("action") or "")
             if action == "check":

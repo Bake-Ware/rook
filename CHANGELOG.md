@@ -64,28 +64,40 @@ Preparation for public use.
 ### Autoupdate
 - Manage > Updates (new hub plugin `updates`): the hub checks Rook's GitHub
   releases (ETag, backoff; prereleases only on the prerelease channel),
-  verifies downloads against `SHA256SUMS` (optionally `gh attestation
-  verify`), and shows the hub, workers, apps and firmware against what is
-  available, with release notes, progress and history.
+  verifies downloads against `SHA256SUMS` and, where required, build
+  provenance (`gh attestation verify` scoped to the release workflow, the
+  release tag and GitHub-hosted runners; fails closed), and shows the hub,
+  workers, apps and firmware against what is available, with release notes,
+  progress and history.
 - Hub self-update through `rook hub deploy` (the release sdist repacked and
-  signed by the hub; dead-man rollback applies) or by re-running the release's
-  `install-hub.sh` on a `--user` install; other installs get the command to
-  run. Rollback from the History tab.
+  signed by the hub; dead-man rollback applies; the trusted key is passed
+  explicitly) or by re-running the release's `install-hub.sh` with the wheel
+  the hub verified (`--package`) on a `--user` install; other installs get the
+  command to run. Refused, not run inside the hub's own service, when
+  `systemd-run` cannot start it. Rollback from the History tab.
 - Staged worker rollouts: test worker first, then batches, stopping at the
   first failed health check (new build announced, answers the hub, stays on
   it). Behaviour change: with the updates plugin on, a new worker bundle is
   no longer pushed to every worker at once; `/band-worker.json` and the push
   loop serve the *released* build (`/updates/worker/<build>/band-worker.pyz`)
-  until a rollout releases the next one. The first run releases the bundle the
-  hub already has. Switching the plugin off restores the old behaviour.
+  until a rollout releases the next one, and new builds are announced in
+  chat. The first run releases the bundle the hub already has. Switching the
+  plugin off, or the update service not running for 15 minutes, restores the
+  old behaviour. The push loop leaves a running rollout's workers alone, and
+  the feed keeps only bundles signed by the hub's own key.
 - Breaking releases: each release publishes `release.json` (compat floors,
   breaking flag and reasons, relay pin, app and firmware versions) and
-  `install-hub.sh`; the wizard lists the devices a release would cut off and
-  needs them updated or an acknowledgement first; the Workers page tags
-  devices too old for this hub or for a pending breaking update.
+  `install-hub.sh`; a breaking or unknown update (cumulative over every
+  release since the hub's own; a missing or mistyped floor counts as unknown)
+  needs the operator's acknowledgement, and the devices it cuts off updated
+  or acknowledged; the Workers page tags devices too old for this hub or for
+  a pending breaking update.
 - Settings `updates.mode` (off / notify, the default / auto), `channel`,
-  `window`, `canary`, `batch`, `gate_secs`; auto never applies a breaking
-  release. New releases are announced once through `notify.send`.
+  `window`, `canary`, `batch`, `gate_secs`, `auto_min_age_hours`. Auto mode
+  updates the hub only to a stable patch release of its own minor version,
+  stable for 24 hours, crossing no breaking or unknown release, whose
+  provenance verifies (needs the `gh` CLI). New releases are announced once
+  through `notify.send`.
 - Android: publish a release's APK through `/apk` and ask phones to update
   (`device.update`). Desktop: `GET /updates/desktop.json`. Firmware versions
   are shown (ESP32 announce, RP2040 `dongle.status`); flashing stays manual.

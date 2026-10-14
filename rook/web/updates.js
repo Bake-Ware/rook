@@ -79,7 +79,7 @@ export async function mountUpdates(root){
   let relTag=null, ackBox=false;
   const say=(t,bad)=>{status.className='mg-status'+(bad?' bad':'');status.textContent=t||'';};
 
-  async function load(refresh){o=await get(refresh?{refresh:'1'}:{});return o;}
+  async function load(){o=await get({});return o;}
   async function act(body,done,button){
     if(busy)return;busy=true;if(button)button.disabled=true;say('Working…');
     try{const r=await post(body);await load(false);render();say(typeof done==='function'?done(r):done);}
@@ -153,8 +153,10 @@ export async function mountUpdates(root){
   function breakingBox(rel){
     const a=rel.analysis;
     if(!a.breaking&&a.known)return null;
-    if(!a.known)return h('div',{class:'up-warn'},h('h3',{text:'This release has no update information'}),
-      h('p',{class:'mg-sub',text:'It came out before Rook described its updates ('+a.note+'). Rook cannot tell which devices it affects. Read the release notes first.'}),ackControls(rel,[]));
+    if(!a.known)return h('div',{class:'up-warn'},h('h3',{text:'Rook cannot tell what this update changes'}),
+      h('p',{class:'mg-sub',text:'Some update information is missing ('+a.note+'), so Rook cannot tell which devices it affects. Read the release notes first.'}),
+      a.reasons&&a.reasons.length?h('ul',null,a.reasons.map(r=>h('li',{text:r}))):null,
+      ackControls(rel,a.cut_off||[]));
     const fixFirst=a.cut_off.filter(c=>c.fix==='update_first');
     return h('div',{class:'up-warn'},
       h('h3',{text:'This update changes which devices Rook supports'}),
@@ -167,13 +169,13 @@ export async function mountUpdates(root){
   function ackControls(rel,cut){
     const a=rel.analysis;
     if(a.acked)return h('p',{class:'mg-sub',text:'Acknowledged by '+String(a.acked.by||'').replace(/^human:/,'')+' '+ago(a.acked.at)+'.'});
-    if(a.known&&!cut.length)return null;
+    if(a.known&&!a.breaking&&!cut.length)return null;
     const box=h('input',{type:'checkbox',checked:ackBox,onchange:()=>{ackBox=box.checked;b.disabled=!box.checked;}});
     const b=btn('Acknowledge','danger',e=>act({action:'acknowledge',tag:rel.tag},'Acknowledged. You can update the hub now.',e.target),{disabled:!ackBox});
     return h('div',{class:'mg-actions'},h('label',null,box,h('span',{text:cut.length?'I understand that '+cut.map(c=>c.name).join(', ')+' will stop working until '+(cut.length===1?'it is':'they are')+' updated.':'I have read the release notes and want to install it anyway.'})),b);
   }
   function hubStep(rel){
-    const a=rel.analysis, blocked=(a.breaking&&a.cut_off.length&&!a.acked)||(!a.known&&!a.acked);
+    const a=rel.analysis, blocked=(a.breaking||!a.known)&&!a.acked;
     const inst=o.hub.install;
     let action;
     if(o.hub_apply)action=h('p',{class:'mg-sub',text:'In progress.'});

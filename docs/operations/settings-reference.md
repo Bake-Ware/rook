@@ -322,6 +322,7 @@ are set only in the environment or on the command line.
 | `updates.api_base` | GitHub API URL | hub | str |  | `ROOK_UPDATES_API`, `ROOK_UPDATES_API_BASE` | live |
 | `updates.token` | GitHub token (secret) | hub | str |  | `ROOK_UPDATES_GITHUB_TOKEN`, `ROOK_UPDATES_TOKEN` | live |
 | `updates.verify_attestations` | Check build provenance | hub | bool | off | `ROOK_UPDATES_VERIFY_ATTESTATIONS` | live |
+| `updates.auto_min_age_hours` | Auto: wait after a release (hours) | hub | int | `24` | `ROOK_UPDATES_AUTO_MIN_AGE_HOURS` | live |
 
 ## Voice (service, runs in service:voice)
 

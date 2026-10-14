@@ -10,6 +10,7 @@ import datetime
 import hashlib
 import json
 import tarfile
+import time
 
 import pytest
 import pytest_asyncio
@@ -96,7 +97,8 @@ def make_svc(tmp_path, keyenv, gh, band, monkeypatch):
 
 def std_release(gh, version="0.3.0", build=530, **kw):
     assets = {"release.json": release_json(version, build, **kw),
-              f"rook-{version}.tar.gz": sdist(version), "install-hub.sh": b"#!/bin/bash\necho hi\n"}
+              f"rook-{version}.tar.gz": sdist(version), "install-hub.sh": b"#!/bin/bash\necho hi\n",
+              f"rook-{version}-py3-none-any.whl": b"PK wheel " + version.encode()}
     return gh.add_release(REPO, "v" + version, assets, body=f"## Rook {version}\n- things")
 
 
@@ -114,6 +116,133 @@ def test_parse_release_json_drops_junk():
     assert "evil" not in meta and len(meta["breaking_reasons"]) == 10
     with pytest.raises(ValueError):
         release_meta.parse_release_json({"typ": "something"})
+
+
+@pytest.mark.parametrize("change", [
+    {"min_worker_build": None}, {"min_worker_build": "505"}, {"min_worker_build": True},
+    {"min_hub_build": None}, {"min_hub_build": 2.5}, {"min_android_app": None},
+    {"min_android_app": ""}, {"min_android_app": 4}, {"build": None}, {"build": 0},
+    {"breaking": None}, {"breaking": "no"}])
+def test_release_json_with_missing_or_mistyped_floors_is_refused(change):
+    """A floor that is missing or of the wrong type must never read as "not
+    breaking": the release becomes unknown (the operator decides)."""
+    data = json.loads(release_json("0.3.0", 530))
+    for k, v in change.items():
+        if v is None:
+            data.pop(k)
+        else:
+            data[k] = v
+    with pytest.raises(ValueError):
+        release_meta.parse_release_json(data)
+
+
+@pytest.mark.asyncio
+async def test_bad_release_json_is_unknown_and_not_refetched_every_tick(make_svc, gh, monkeypatch):
+    bad = json.loads(release_json("0.2.1", 501))
+    del bad["min_worker_build"]
+    gh.add_release(REPO, "v0.2.1", {"release.json": json.dumps(bad).encode(),
+                                    "install-hub.sh": b"x"})
+    s = make_svc()
+    await s.check(force=True)
+    rel = s.rook.find("v0.2.1")
+    assert "min_worker_build" in rel["meta_error"] and not s.analyse(rel)["known"]
+    fetched = []
+    orig = s.rook.fetch
+
+    async def counting(rel, name, limit=0):
+        fetched.append(name)
+        return await orig(rel, name, limit)
+    monkeypatch.setattr(s.rook, "fetch", counting)
+    await s.check(force=True)
+    assert "release.json" not in fetched
+    await s.rook.meta(s.rook.find("v0.2.1"), force=True)    # applying always looks again
+    assert "release.json" in fetched
+
+
+@pytest.mark.asyncio
+async def test_breaking_release_needs_ack_even_when_no_device_is_cut_off(make_svc, gh, band, monkeypatch):
+    """Breaking by flag only (or for a device not on the roster right now,
+    like a phone that is asleep): still the operator's call."""
+    std_release(gh, breaking=True, reasons=["new band key format"])
+    band.add("w1", "garage", 510)
+    s = make_svc()
+    await s.check(force=True)
+    a = s.analyse(s.rook.find("v0.3.0"))
+    assert a["breaking"] and not a["cut_off"]
+    monkeypatch.setattr(hubself, "detect", lambda repo="": dict(INSTALLER))
+    with pytest.raises(Refused, match="new band key format") as e:
+        await s.apply_hub("v0.3.0", "human:owner")
+    assert e.value.data["needs_ack"] and not s.launched
+    s.acknowledge("v0.3.0", "human:owner")
+    await s.apply_hub("v0.3.0", "human:owner")
+    assert s.launched
+
+
+@pytest.mark.asyncio
+async def test_hub_update_waits_for_a_running_rollout(make_svc, gh, monkeypatch):
+    std_release(gh)
+    s = make_svc()
+    await s.check(force=True)
+    monkeypatch.setattr(hubself, "detect", lambda repo="": dict(INSTALLER))
+    s.state["rollout"] = {"id": "x", "status": "running", "build": 510, "targets": []}
+    with pytest.raises(Refused, match="rollout is running"):
+        await s.apply_hub("v0.3.0", "human:owner")
+
+
+# -- build provenance -----------------------------------------------------------------
+
+def _fake_gh(tmp_path, monkeypatch, ok_refs=()):
+    """A `gh` on PATH that logs its argv and passes only for ``ok_refs``."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    log = tmp_path / "gh.log"
+    ok = " ".join(ok_refs)
+    script = bindir / "gh"
+    script.write_text("#!/bin/sh\n"
+                      f'echo "$@ GH_TOKEN=$GH_TOKEN" >> "{log}"\n'
+                      'ref=""; prev=""\n'
+                      'for a in "$@"; do [ "$prev" = "--source-ref" ] && ref="$a"; prev="$a"; done\n'
+                      f'for r in {ok}; do [ "$r" = "$ref" ] && {{ echo verified; exit 0; }}; done\n'
+                      'echo "no matching attestation"; exit 1\n')
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bindir}:/usr/bin:/bin")
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    return log
+
+
+@pytest.mark.asyncio
+async def test_attestation_is_scoped_to_the_release_workflow_and_tag(tmp_path, monkeypatch):
+    from rook.hub.plugins.updates.github import verify_attestation
+    f = tmp_path / "rook-0.3.0.tar.gz"
+    f.write_bytes(b"x")
+    log = _fake_gh(tmp_path, monkeypatch, ok_refs=("refs/tags/v0.3.0",))
+    res = await verify_attestation(f, REPO, "v0.3.0", token="tok")
+    assert res["ok"] and res["ref"] == "refs/tags/v0.3.0"
+    line = log.read_text().splitlines()[0]
+    assert f"--repo {REPO}" in line and "--deny-self-hosted-runners" in line
+    assert f"--signer-workflow {REPO}/.github/workflows/release.yml" in line
+    assert "--source-ref refs/tags/v0.3.0" in line and "GH_TOKEN=tok" in line
+    # Signed from some other ref (a branch someone pushed): refused.
+    log.unlink()
+    res = await verify_attestation(f, REPO, "v0.3.1")
+    assert not res["ok"] and res["checked"]
+    assert [ln.split("--source-ref ")[1].split()[0] for ln in log.read_text().splitlines()] == [
+        "refs/tags/v0.3.1", "refs/heads/master"]
+
+
+@pytest.mark.asyncio
+async def test_attestation_fails_closed_without_gh(make_svc, gh, monkeypatch, tmp_path):
+    from rook.hub.plugins.updates.github import verify_attestation
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    res = await verify_attestation(tmp_path / "x", REPO, "v0.3.0")
+    assert res == {"checked": False, "ok": False, "detail": res["detail"]}
+    std_release(gh)
+    s = make_svc(verify_attestations=True)
+    await s.check(force=True)
+    monkeypatch.setattr(hubself, "detect", lambda repo="": dict(INSTALLER))
+    with pytest.raises(Refused, match="provenance could not be verified"):
+        await s.apply_hub("v0.3.0", "human:owner")
+    assert not s.launched and not s.state.get("hub_apply")
 
 
 def test_member_classification_and_floor_notes():
@@ -173,6 +302,10 @@ async def test_poll_backs_off_and_honours_rate_limits(gh, tmp_path):
     assert "403" in feed.state["error"]
     gh.fail = None
     std_release(gh)
+    # "Check now" does not override what GitHub asked for.
+    asked = len(gh.requests)
+    assert (await feed.poll(3600, force=True))["skipped"] and len(gh.requests) == asked
+    feed.state["limited_until"] = 0                     # ... until the wait is over
     await feed.poll(3600, force=True)
     assert feed.state["failures"] == 0 and feed.state["error"] == ""
 
@@ -219,6 +352,41 @@ def test_feed_snapshots_resign_with_their_own_url(tmp_path, keyenv):
     assert feed.pyz_for("../../etc") is None
 
 
+def test_feed_never_resigns_a_bundle_signed_by_another_key(tmp_path, keyenv, monkeypatch):
+    """Re-signing a foreign bundle would make workers accept it, and the
+    public key inside it: a fleet-wide key swap. Before the feed existed,
+    workers refused such a bundle; they still must."""
+    from nacl.signing import SigningKey
+
+    from rook.remote import update_keys
+    man, pyz = make_bundle(tmp_path / "b", 530)
+    other = SigningKey.generate()
+    with monkeypatch.context() as m:
+        m.setattr(update_keys, "ensure_key", lambda: other)        # signed elsewhere
+        foreign_man, foreign_pyz = make_bundle(tmp_path / "foreign", 531)
+    feed = update_feed.WorkerFeed(tmp_path / "updates")
+    assert feed.snapshot(foreign_man, foreign_pyz) == 0 and feed.builds() == []
+    assert feed.snapshot(man, pyz) == 530
+    # No key on this hub: nothing is kept, and the feed does not create one.
+    monkeypatch.setenv("ROOK_UPDATE_KEY", str(tmp_path / "no-key-here"))
+    man2, pyz2 = make_bundle(tmp_path / "c", 532)   # (signed by a key make_bundle creates)
+    (tmp_path / "no-key-here").unlink()
+    assert update_feed.WorkerFeed(tmp_path / "updates2").snapshot(man2, pyz2) == 0
+    assert not (tmp_path / "no-key-here").exists()
+
+
+def test_feed_snapshots_follow_a_new_hub_address(tmp_path, keyenv):
+    from rook.worker._update_verify import verify_manifest
+    feed = update_feed.WorkerFeed(tmp_path / "updates")
+    feed.snapshot(*make_bundle(tmp_path / "a", 510, url="http://192.0.2.10:7005/band-worker.pyz"))
+    feed.snapshot(*make_bundle(tmp_path / "b", 511, url="http://192.0.2.10:7005/band-worker.pyz"))
+    feed.snapshot(*make_bundle(tmp_path / "c", 511, url="https://hub.example.com/band-worker.pyz"))
+    for b in (510, 511):
+        m = feed.manifest_for(b)
+        assert m["url"] == f"https://hub.example.com/updates/worker/{b}/band-worker.pyz"
+        assert verify_manifest(m, keyenv)
+
+
 # -- breaking updates and the hub ----------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -255,6 +423,8 @@ async def test_breaking_release_names_who_is_cut_off_and_needs_ack(make_svc, gh,
     argv = s.launched[0][0]
     assert argv[:2] == ["bash", str(s.rook.root / "v0.3.0" / "install-hub.sh")]
     assert argv[argv.index("--version") + 1] == "v0.3.0" and "--user" in argv
+    # The installer installs the wheel the hub verified, not its own download.
+    assert argv[argv.index("--package") + 1] == str(s.rook.root / "v0.3.0" / "rook-0.3.0-py3-none-any.whl")
     assert op["target_build"] == 530 and s.state["hub_apply"]
     with pytest.raises(Refused, match="already in progress"):
         await s.apply_hub("v0.3.0", "human:owner")
@@ -289,8 +459,12 @@ async def test_rook_hub_deploy_path_builds_a_signed_hub_release(make_svc, gh, ke
         "kind": "rook-hub", "can_apply": True, "config": "/etc/rook/hub-deploy.json", "scope": "user"})
     await s.apply_hub("v0.3.0", "human:owner")
     argv, kw = s.launched[0]
-    assert argv[-3:-1] == ["deploy", argv[-2]] and argv[-1] == "--yes"
-    m = mf.verify(mf.load_manifest(argv[-2]), keyenv)
+    i = argv.index("deploy")
+    assert argv[-1] == "--yes"
+    # The trusted key goes on the command line: the transient unit does not
+    # see the hub's ROOK_UPDATE_KEY / ROOK_DATA_DIR.
+    assert argv[argv.index("--pubkey") + 1] == keyenv
+    m = mf.verify(mf.load_manifest(argv[i + 1]), keyenv)
     assert m["version"] == "530.lumpy.moose" and m["github_tag"] == "v0.3.0"
     with tarfile.open(s.root / "hub" / m["filename"]) as tf:
         names = tf.getnames()
@@ -298,20 +472,172 @@ async def test_rook_hub_deploy_path_builds_a_signed_hub_release(make_svc, gh, ke
     assert kw["user_scope"] is True
 
 
+AT_3AM = datetime.datetime(2026, 10, 14, 3, 0)
+INSTALLER = {"kind": "installer", "can_apply": True, "mode": "user", "systemd": True}
+
+
+def _aged(s):
+    """Pretend every stable release went stable two days ago."""
+    for tag in s.state.get("stable_since", {}):
+        s.state["stable_since"][tag] -= 48 * 3600
+
+
+@pytest.fixture
+def attest(monkeypatch):
+    """A provenance check that passes, recording what it was asked."""
+    calls = []
+
+    async def fake(path, repo, tag, token="", timeout=120.0):
+        calls.append((path.name, repo, tag))
+        return {"checked": True, "ok": True, "ref": f"refs/tags/{tag}", "detail": "ok"}
+    monkeypatch.setattr(svcmod, "verify_attestation", fake)
+    return calls
+
+
 @pytest.mark.asyncio
-async def test_auto_mode_applies_only_non_breaking_releases_in_the_window(make_svc, gh, monkeypatch):
-    std_release(gh, breaking=True, reasons=["new band key format"])
+async def test_auto_mode_applies_only_non_breaking_releases_in_the_window(make_svc, gh, monkeypatch, attest):
+    std_release(gh, "0.2.0", 500)                        # the hub's own release
+    std_release(gh, "0.2.1", 501, breaking=True, reasons=["new band key format"])
     s = make_svc(mode="auto", window="02:00-05:00")
-    monkeypatch.setattr(hubself, "detect", lambda repo="": {"kind": "installer", "can_apply": True,
-                                                            "mode": "user", "systemd": True})
+    monkeypatch.setattr(hubself, "detect", lambda repo="": dict(INSTALLER))
     await s.check(force=True)
+    _aged(s)
     assert await s.auto(datetime.datetime(2026, 10, 14, 12, 0)) == "outside the maintenance window"
-    assert "breaking" in await s.auto(datetime.datetime(2026, 10, 14, 3, 0))
+    assert "breaking" in await s.auto(AT_3AM)
     assert not s.launched
-    std_release(gh, "0.3.1", 531)
+
+
+@pytest.mark.asyncio
+async def test_auto_mode_never_skips_past_a_breaking_release(make_svc, gh, monkeypatch, attest):
+    """0.2.1 is breaking (no floor raised: a new band key format), 0.2.2 is
+    not: a hub on 0.2.0 going to 0.2.2 gets 0.2.1's change too."""
+    std_release(gh, "0.2.0", 500)
+    std_release(gh, "0.2.1", 501, breaking=True, reasons=["new band key format"])
+    std_release(gh, "0.2.2", 502)
+    s = make_svc(mode="auto", window="")
+    monkeypatch.setattr(hubself, "detect", lambda repo="": dict(INSTALLER))
     await s.check(force=True)
-    assert await s.auto(datetime.datetime(2026, 10, 14, 3, 0)) == "hub update started"
-    assert "v0.3.1" in s.launched[0][0]
+    _aged(s)
+    a = s.analyse(s.rook.find("v0.2.2"))
+    assert a["breaking"] and a["span"] == ["v0.2.1", "v0.2.2"]
+    assert a["reasons"] == ["v0.2.1: new band key format"]
+    assert "breaking" in await s.auto(AT_3AM)
+    assert not s.launched
+    # The operator is asked too, not only auto mode.
+    with pytest.raises(Refused, match="breaking") as e:
+        await s.apply_hub("v0.2.2", "human:owner")
+    assert e.value.data["needs_ack"]
+
+
+@pytest.mark.asyncio
+async def test_a_release_in_between_without_metadata_makes_the_update_unknown(make_svc, gh, monkeypatch):
+    std_release(gh, "0.2.0", 500)
+    gh.add_release(REPO, "v0.2.1", {"install-hub.sh": b"x"})          # no release.json
+    std_release(gh, "0.2.2", 502)
+    s = make_svc()
+    await s.check(force=True)
+    a = s.analyse(s.rook.find("v0.2.2"))
+    assert not a["known"] and "v0.2.1" in a["note"]
+    monkeypatch.setattr(hubself, "detect", lambda repo="": dict(INSTALLER))
+    with pytest.raises(Refused, match="unknown"):
+        await s.apply_hub("v0.2.2", "human:owner")
+    # A hub too far behind to see every release in between: unknown too.
+    s.rook.state["listed_all"] = False
+    s.rook.state["releases"] = [r for r in s.rook.state["releases"] if r["tag"] == "v0.2.2"]
+    a = s.analyse(s.rook.find("v0.2.2"))
+    assert not a["known"] and "too many releases behind" in a["note"]
+
+
+@pytest.mark.asyncio
+async def test_auto_mode_only_installs_verified_aged_patch_releases(make_svc, gh, monkeypatch):
+    std_release(gh, "0.2.0", 500)
+    std_release(gh, "0.2.1", 501)
+    s = make_svc(mode="auto", window="")
+    monkeypatch.setattr(hubself, "detect", lambda repo="": dict(INSTALLER))
+    await s.check(force=True)
+    # Just went stable: auto waits (and tries again later).
+    assert "less than 24 hours" in await s.auto(AT_3AM)
+    assert "hub:v0.2.1" not in s.state.get("auto_tried", {})
+    _aged(s)
+    # No gh CLI: provenance cannot be verified, so auto does not install it.
+    from rook.hub.plugins.updates import github as ghmod
+    monkeypatch.setattr(ghmod.shutil, "which", lambda name: None)
+    out = await s.auto(AT_3AM)
+    assert "provenance could not be verified" in out and not s.launched
+    assert s.history()[0]["event"] == "auto-skipped"
+    # A verified patch release goes in.
+    calls = []
+
+    async def ok(path, repo, tag, token="", timeout=120.0):
+        calls.append((path.name, tag))
+        return {"checked": True, "ok": True, "ref": f"refs/tags/{tag}", "detail": "ok"}
+    monkeypatch.setattr(svcmod, "verify_attestation", ok)
+    s.state["auto_tried"] = {}
+    assert await s.auto(AT_3AM) == "hub update started"
+    assert "v0.2.1" in s.launched[0][0]
+    assert {c[0] for c in calls} == {"install-hub.sh", "rook-0.2.1-py3-none-any.whl"}
+    assert s.state["hub_apply"]["provenance"] == "verified (refs/tags/v0.2.1)"
+
+
+@pytest.mark.asyncio
+async def test_auto_mode_leaves_minor_releases_and_test_releases_to_the_operator(make_svc, gh, monkeypatch, attest):
+    std_release(gh, "0.2.0", 500)
+    std_release(gh, "0.3.0", 530)
+    s = make_svc(mode="auto", window="")
+    monkeypatch.setattr(hubself, "detect", lambda repo="": dict(INSTALLER))
+    await s.check(force=True)
+    _aged(s)
+    assert "not a patch release" in await s.auto(AT_3AM)
+    assert not s.launched and not attest
+    rel = {"tag": "v0.2.1", "prerelease": True}
+    assert "test release" in s.auto_hub_blocker(rel, dict(HUB))[0]
+
+
+# -- starting the update outside the hub -------------------------------------------------------
+
+class _Run:
+    def __init__(self, rc, err=""):
+        self.returncode, self.stderr, self.stdout = rc, err, ""
+
+
+def test_launch_passes_the_key_locations_and_never_falls_back_under_systemd(tmp_path, monkeypatch):
+    import subprocess
+
+    ran = []
+    monkeypatch.setattr(hubself.shutil, "which", lambda n: "/usr/bin/systemd-run")
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: ran.append(cmd) or _Run(0))
+    monkeypatch.delenv("ROOK_UPDATES_NO_SYSTEMD_RUN", raising=False)
+    monkeypatch.setenv("ROOK_DATA_DIR", "/srv/rook-data")
+    monkeypatch.setenv("ROOK_UPDATE_KEY", "/srv/rook-data/update-signing-key")
+    out = hubself.launch(["true"], unit="u1", log_path=tmp_path / "l.log", env={"PYTHONPATH": "/r"})
+    assert out["how"] == "systemd-run"
+    assert {"--setenv=ROOK_DATA_DIR=/srv/rook-data", "--setenv=PYTHONPATH=/r",
+            "--setenv=ROOK_UPDATE_KEY=/srv/rook-data/update-signing-key"} <= set(ran[0])
+    # systemd-run fails (say, --user without a user bus) while the hub is a
+    # systemd unit: a plain child would die with it mid-switch. Refuse.
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: _Run(1, "Failed to connect to bus"))
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: pytest.fail("fell back to Popen"))
+    monkeypatch.setenv("INVOCATION_ID", "abc")
+    with pytest.raises(hubself.LaunchError, match="Failed to connect to bus"):
+        hubself.launch(["true"], unit="u2", log_path=tmp_path / "l.log")
+    monkeypatch.setattr(hubself.shutil, "which", lambda n: None)
+    with pytest.raises(hubself.LaunchError, match="not installed"):
+        hubself.launch(["true"], unit="u3", log_path=tmp_path / "l.log")
+
+
+@pytest.mark.asyncio
+async def test_launch_failure_is_a_refusal_and_starts_nothing(make_svc, gh, monkeypatch):
+    std_release(gh)
+    s = make_svc()
+    await s.check(force=True)
+    monkeypatch.setattr(hubself, "detect", lambda repo="": dict(INSTALLER))
+
+    def boom(argv, **kw):
+        raise hubself.LaunchError("systemd-run could not start the update")
+    monkeypatch.setattr(hubself, "launch", boom)
+    with pytest.raises(Refused, match="systemd-run"):
+        await s.apply_hub("v0.3.0", "human:owner")
+    assert not s.state.get("hub_apply")
 
 
 # -- staged worker rollouts --------------------------------------------------------------------
@@ -379,6 +705,30 @@ async def test_gate_failures_held_workers_and_selection(make_svc, band):
     assert ro["status"] == "stopped"
     assert s.feed.released_build() == 500     # a partial selection never releases the build
     assert band.workers["w0"]["build"] == 500
+
+
+@pytest.mark.asyncio
+async def test_a_new_worker_build_is_announced_once(make_svc, band):
+    band.add("w0", "alpha", 500)
+    s = make_svc()
+    _feed_with(s, 500)
+    await s._announce_feed()
+    assert s.notes == []                              # nothing waiting
+    _feed_with(s, 510)
+    await s._announce_feed()
+    await s._announce_feed()
+    assert len(s.notes) == 1 and "build 510" in s.notes[0] and "roll it out" in s.notes[0]
+
+
+def test_rollout_targets_are_read_from_the_service_state(tmp_path):
+    root = tmp_path / "updates"
+    assert update_feed.rollout_targets(root) == set()
+    hubself.json_dump(root / "state.json", {"rollout": {"status": "running", "targets": [
+        {"worker_id": "w1"}, {"worker_id": "w2"}]}})
+    assert update_feed.rollout_targets(root) == {"w1", "w2"}
+    hubself.json_dump(root / "state.json", {"rollout": {"status": "done", "targets": [
+        {"worker_id": "w1"}]}})
+    assert update_feed.rollout_targets(root) == set()
 
 
 @pytest.mark.asyncio
@@ -498,6 +848,55 @@ async def test_dashboard_serves_the_released_build_and_snapshots(tmp_path, keyen
         d = await (await client.get("/updates/desktop.json?version=0.1.0&platform=linux")).json()
         assert d["update_available"] and [x["name"] for x in d["downloads"]] == [
             "rook-desktop_0.3.0_amd64.AppImage"]
+        # The service stopped writing its summary (its plugin died, or the
+        # MCP side is down) while the dashboard has been up: the feed pins
+        # nobody any more...
+        server._started_at -= 3600
+        assert (await (await client.get("/band-worker.json")).json())["build"] == 520
+        # ... and a live service is in charge again.
+        hubself.json_dump(update_feed.updates_dir() / "summary.json", {"updated_at": time.time()})
+        assert (await (await client.get("/band-worker.json")).json())["build"] == 510
+
+
+def _dashboard(tmp_path, monkeypatch):
+    from rook.remote import setup_store
+    from rook.remote.bootstrap import CombinedServer
+    from rook.remote.enrollment import EnrollmentStore
+    monkeypatch.setenv("ROOK_SETUP_PATH", str(tmp_path / "setup.json"))
+    monkeypatch.setenv("ROOK_ENROLLMENT_DB", str(tmp_path / "enrollment.db"))
+    monkeypatch.setenv("ROOK_CHAT_DB", str(tmp_path / "chat.db"))
+    setup_store.save({"band_name": "home", "band_psk": "piano-haste-nugget-drift-mangle",
+                      "hub_public": "192.0.2.10:8765", "pyz_domain": "192.0.2.10:7005"})
+    EnrollmentStore().import_config()
+    return CombinedServer(web_user="owner", web_pass="password", port=7005,
+                          domain="192.0.2.10:7005", hub_public="192.0.2.10:8765")
+
+
+@pytest.mark.asyncio
+async def test_push_loop_leaves_rollout_targets_to_the_rollout(tmp_path, keyenv, monkeypatch):
+    server = _dashboard(tmp_path, monkeypatch)
+    feed = update_feed.WorkerFeed()
+    feed.snapshot(*make_bundle(tmp_path / "b", 510))
+    feed.release(510, by="test")
+    hubself.json_dump(feed.root / "summary.json", {"updated_at": time.time()})
+    hubself.json_dump(feed.root / "state.json", {"rollout": {
+        "status": "running", "build": 520, "targets": [{"worker_id": "w1"}]}})
+    band = FakeBand()
+    band.add("w1", "in-rollout", 500)
+    band.add("w2", "bystander", 500)
+    server._band = band
+    sleeps = []
+    real_sleep = asyncio.sleep
+
+    async def one_pass(secs):
+        sleeps.append(secs)
+        if len(sleeps) > 1:
+            raise asyncio.CancelledError
+        await real_sleep(0)
+    monkeypatch.setattr(asyncio, "sleep", one_pass)
+    await server._push_loop()
+    monkeypatch.setattr(asyncio, "sleep", real_sleep)
+    assert [(c, t) for c, t, _ in band.calls] == [("worker.apply", "w2")]
 
 
 # -- the account API ------------------------------------------------------------------------------
@@ -536,3 +935,25 @@ async def test_account_api_is_operator_only_and_reports_refusals(make_svc, gh, b
         r = await c.post(api, headers=op, json={"csrf": "k", "action": "cancel"})
         assert r.status_code == 409 and "no rollout" in r.json()["error"]
         assert (await c.post(api, headers=op, json={"csrf": "k", "action": "nope"})).status_code == 400
+        # A GET never reaches out (no CSRF on GET): checking is the POST action.
+        asked = len(gh.requests)
+        assert (await c.get(api + "?refresh=1", headers=op)).status_code == 200
+        assert len(gh.requests) == asked
+
+
+@pytest.mark.asyncio
+async def test_phones_are_not_told_about_an_apk_the_hub_will_not_serve(make_svc, gh, band, monkeypatch):
+    apk = b"PK fake apk" * 100
+    man = {"package": "systems.bake.rook", "version_name": "0.4.16", "version_code": 20,
+           "sha256": hashlib.sha256(apk).hexdigest(), "size": len(apk)}
+    gh.add_release(REPO, "v0.3.0", {"release.json": release_json("0.3.0", 530),
+                                    "rook-worker.apk": apk,
+                                    "rook-worker-apk.json": json.dumps(man).encode()})
+    s = make_svc()
+    await s.check(force=True)
+    await s.publish_apk("v0.3.0", "human:owner")
+    assert s.app_available()["source"] == "release"
+    # ROOK_PUBLIC_APK_SHA256 approves a different APK: /apk will not serve
+    # the published one, so it is not what phones are compared against.
+    monkeypatch.setenv("ROOK_PUBLIC_APK_SHA256", "0" * 64)
+    assert (s.app_available() or {}).get("source") != "release"

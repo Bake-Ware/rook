@@ -9,8 +9,8 @@
   deploy. Rollback is ``rook hub rollback``.
 * ``installer``: a hub from scripts/install-hub.sh (``install.env`` beside
   its virtualenv). A ``--user`` install re-runs the release's own verified
-  install-hub.sh with ``--version <tag>``; it keeps the data and secrets and
-  restarts the services. A ``--system`` install runs as the unprivileged
+  install-hub.sh with ``--version <tag> --package <verified wheel>``; it
+  keeps the data and secrets and restarts the services. A ``--system`` install runs as the unprivileged
   ``rook`` user, so the hub cannot do it: it shows the command to run.
 * ``docker``, ``source`` and anything else: explained, never attempted.
 """
@@ -203,16 +203,33 @@ def hub_release_manifest(tarball: Path, meta: dict, signing_key=None) -> dict:
 
 # -- running the update outside our own process ---------------------------------------
 
+class LaunchError(RuntimeError):
+    """The update could not be started where it would survive the hub restart."""
+
+
+# Where the hub's keys and data are: a transient unit starts with a clean
+# environment, so `rook hub deploy` (and the installer) would otherwise look
+# in the default places and miss a key under ROOK_DATA_DIR or ROOK_UPDATE_KEY.
+PASS_ENV = ("ROOK_DATA_DIR", "ROOK_UPDATE_KEY", "ROOK_UPDATE_PUBKEY", "ROOK_HUB_DEPLOY_CONFIG",
+            "ROOK_INSTALL_ENV")
+
+
 def launch(argv: list[str], *, unit: str, log_path: Path, env: dict | None = None,
            user_scope: bool = True, cwd: str | None = None) -> dict:
     """Start ``argv`` so that it survives the hub restarting under it:
     a transient systemd unit when ``systemd-run`` exists (a child of the hub
-    would die with the hub's cgroup), else a new session."""
+    would die with the hub's cgroup), else a new session. Raises
+    :class:`LaunchError` instead of falling back to a new session when the
+    hub itself runs under systemd (``INVOCATION_ID``): that child would be
+    killed with the hub's unit halfway through the switch.
+    ``ROOK_UPDATES_NO_SYSTEMD_RUN=1`` always uses a new session."""
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    full_env = {**os.environ, **(env or {})}
+    env = {**{k: os.environ[k] for k in PASS_ENV if os.environ.get(k)}, **(env or {})}
+    full_env = {**os.environ, **env}
     sd = shutil.which("systemd-run")
-    if sd and os.environ.get("ROOK_UPDATES_NO_SYSTEMD_RUN") != "1":
-        setenv = [f"--setenv={k}={v}" for k, v in (env or {}).items()]
+    forced_session = os.environ.get("ROOK_UPDATES_NO_SYSTEMD_RUN") == "1"
+    if sd and not forced_session:
+        setenv = [f"--setenv={k}={v}" for k, v in env.items()]
         cmd = [sd, *(["--user"] if user_scope else []), f"--unit={unit}", "--collect",
                "--description=Rook hub update", *setenv,
                *([f"--working-directory={cwd}"] if cwd else []),
@@ -221,8 +238,14 @@ def launch(argv: list[str], *, unit: str, log_path: Path, env: dict | None = Non
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         if r.returncode == 0:
             return {"how": "systemd-run", "unit": unit}
-        log.warning("systemd-run failed (%s); starting the update in a new session",
-                    (r.stderr or r.stdout).strip()[:200])
+        why = (r.stderr or r.stdout).strip()[:200]
+        if os.environ.get("INVOCATION_ID"):
+            raise LaunchError(f"systemd-run could not start the update ({why}); the hub runs "
+                              "under systemd, so a plain child process would be stopped with it")
+        log.warning("systemd-run failed (%s); starting the update in a new session", why)
+    elif os.environ.get("INVOCATION_ID") and not forced_session:
+        raise LaunchError("systemd-run is not installed and the hub runs under systemd, so the "
+                          "update would be stopped with the hub; update by hand")
     with open(log_path, "ab") as out:
         p = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
                              env=full_env, cwd=cwd, start_new_session=True, close_fds=True)
@@ -260,11 +283,24 @@ def rook_hub_argv(config: str, *args: str) -> tuple[list[str], dict]:
     return [sys.executable, "-m", "rook", "hub", "--config", config, *args], env
 
 
-def installer_argv(script: Path, info: dict, tag: str) -> list[str]:
+def installer_argv(script: Path, info: dict, tag: str, package: Path | None = None) -> list[str]:
+    """The release's install-hub.sh for ``tag``; ``package`` is the release
+    wheel the hub already downloaded and verified, so the installer installs
+    exactly that file instead of fetching its own copy."""
     argv = ["bash", str(script), f"--{info.get('mode', 'user')}", "--yes", "--version", tag]
+    if package is not None:
+        argv += ["--package", str(package)]
     if info.get("systemd") is False:
         argv.append("--no-systemd")
     return argv
+
+
+def release_wheel(rel: dict) -> str | None:
+    """The name of the release's Rook wheel (``rook-<version>-py3-none-any.whl``)."""
+    import re
+    names = [n for n in rel.get("assets", {})
+             if re.fullmatch(r"rook-[0-9][A-Za-z0-9.+]*-py3-none-any\.whl", n)]
+    return names[0] if len(names) == 1 else None
 
 
 def describe_apply(kind: dict, meta: dict, tag: str) -> str:

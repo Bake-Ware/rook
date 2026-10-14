@@ -17,8 +17,10 @@ member of the band runs against what is available and applies it:
 A release that raises a compat floor is *breaking*: the wizard names the
 devices it would cut off and needs them updated or an explicit
 acknowledgement first. Mode ``off`` / ``notify`` (default) / ``auto``; auto
-works only inside the maintenance window and never applies a breaking
-release. docs/operations/updates.md is the user guide.
+works only inside the maintenance window, installs only a stable patch
+release whose build provenance verifies, and never a breaking release (or
+one crossing a breaking or unknown release). docs/operations/updates.md is
+the user guide.
 """
 
 from __future__ import annotations
@@ -53,8 +55,8 @@ class Updates(Plugin):
         setting("mode", str, default="notify", choices=("off", "notify", "auto"),
                 env="ROOK_UPDATES_MODE", group="Updates", label="Updates",
                 help="off: never check. notify: check and tell you (dashboard, chat). auto: also "
-                     "install updates inside the maintenance window; breaking updates always "
-                     "wait for you."),
+                     "install updates inside the maintenance window (hub: verified patch "
+                     "releases only); breaking updates always wait for you."),
         setting("channel", str, default="stable", choices=("stable", "prerelease"),
                 group="Updates", label="Release channel",
                 help="prerelease also offers test releases (release candidates)."),
@@ -91,8 +93,14 @@ class Updates(Plugin):
                 help="Optional; raises the API rate limit. Read-only access is enough."),
         setting("verify_attestations", bool, default=False, group="Source", advanced=True,
                 label="Check build provenance",
-                help="Also run `gh attestation verify` on each download (needs the gh CLI "
-                     "and network). SHA256SUMS is always checked."),
+                help="Also check build provenance (`gh attestation verify`, scoped to the "
+                     "release workflow and tag) before a hub update you start; it is refused "
+                     "if the check fails or the gh CLI is missing. Auto mode always checks it. "
+                     "SHA256SUMS is always checked."),
+        setting("auto_min_age_hours", int, default=24, min=1, max=720, group="Updates",
+                advanced=True, label="Auto: wait after a release (hours)",
+                help="Auto mode installs a hub release only once it has been a stable release "
+                     "this long (and only a patch release of the version the hub runs)."),
     )
     SKILL = ("### updates\n"
              "`updates.status` on worker `rook`: hub version vs the newest release, workers "

@@ -22,6 +22,7 @@ import datetime
 import json
 import logging
 import os
+import re
 import shutil
 import time
 from pathlib import Path
@@ -40,6 +41,7 @@ log = logging.getLogger("rook.hub.plugins.updates.service")
 MODES = ("off", "notify", "auto")
 HUB_APPLY_TIMEOUT = 20 * 60.0      # after this, an unconfirmed hub update has failed
 HISTORY_MAX = 500
+AUTO_MIN_AGE_HOURS = 24            # auto waits this long after a release went stable
 
 
 class Refused(Exception):
@@ -53,6 +55,12 @@ class Refused(Exception):
 def current_floors() -> dict:
     return {"min_worker_build": compat.MIN_WORKER_BUILD,
             "min_android_app": compat.MIN_ANDROID_APP, "min_hub_build": compat.MIN_HUB_BUILD}
+
+
+def _semver(v: Any) -> tuple[int, int, int] | None:
+    """``"v0.3.1"`` -> ``(0, 3, 1)``; None for anything else (pre-releases too)."""
+    m = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", str(v or "").strip())
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else None
 
 
 def in_window(window: str, now: datetime.datetime | None = None) -> bool:
@@ -170,12 +178,28 @@ class UpdateService:
         res = await self.rook.poll(interval, force=force)
         await self.relay.poll(interval, force=force)
         hub = hubself.current_hub()
-        for rel in self.rook.releases(self.prerelease)[:6]:
+        # Every release between this hub and the newest one: a breaking
+        # release in between makes the newest one breaking too (analyse).
+        for rel in self.rook.releases(self.prerelease):
             if self._newer(rel, hub) or rel["tag"].lstrip("v") == hub["version"]:
                 await self.rook.meta(rel)
+        self._note_stable()
         self.write_summary()
         await self._announce_new()
+        await self._announce_feed()
         return res
+
+    def _note_stable(self) -> None:
+        """When this hub first saw each release as a stable (promoted)
+        release: auto mode waits AUTO_MIN_AGE_HOURS after that."""
+        seen = self.state.setdefault("stable_since", {})
+        now, changed = time.time(), False
+        for rel in self.rook.releases(False):
+            if rel["tag"] not in seen:
+                seen[rel["tag"]] = now
+                changed = True
+        if changed:
+            self.save()
 
     @staticmethod
     def _newer(rel: dict, hub: dict) -> bool:
@@ -217,6 +241,32 @@ class UpdateService:
                          "shown on Manage > Updates"})
         except Exception:
             log.debug("could not announce %s", latest["tag"], exc_info=True)
+
+    async def _announce_feed(self) -> None:
+        """A new worker build waits in the feed until a rollout releases it:
+        say so once, or nobody would know to roll it out."""
+        if self.mode == "off" or not self.s("notify_chat", True) or self._notify is None:
+            return
+        newest, released = self.feed.newest_build(), self.feed.released_build()
+        if not released or newest <= released:
+            return
+        seen = self.state.setdefault("announced", {})
+        key = f"workers:{newest}"
+        if key in seen:
+            return
+        seen[key] = time.time()
+        self.save()
+        text = (f"Worker build {newest} is ready on the hub; your workers run build {released}. "
+                + ("Auto mode rolls it out in the maintenance window, test worker first. "
+                   if self.mode == "auto" else
+                   "Open Manage > Updates on the dashboard to roll it out (test worker first). ")
+                + "Workers do not get it until then.")
+        try:
+            await self._notify(text)
+            self.record({"kind": "workers", "event": "announced", "build": newest,
+                         "detail": f"build {newest} is waiting for a rollout"})
+        except Exception:
+            log.debug("could not announce worker build %s", newest, exc_info=True)
 
     # -- the band as the update service sees it ----------------------------------
     def roster(self) -> dict:
@@ -322,7 +372,11 @@ class UpdateService:
         """The APK version phones can update to from this hub (published by
         this service, else the operator's rook/remote/rook-worker-apk.json)."""
         pub = published_apk(self.root)
-        if pub:
+        env_hash = os.environ.get("ROOK_PUBLIC_APK_SHA256", "")
+        # /apk serves the published APK only when ROOK_PUBLIC_APK_SHA256 is
+        # unset or approves it (rook/remote/bootstrap.py _apk_files): don't
+        # tell phones they are behind an APK they would not get.
+        if pub and (not env_hash or env_hash == pub[1].get("sha256")):
             return {**pub[1], "source": "release"}
         legacy = Path(__file__).resolve().parents[3] / "remote" / "rook-worker-apk.json"
         try:
@@ -334,13 +388,57 @@ class UpdateService:
         return None
 
     # -- breaking analysis --------------------------------------------------------
+    def span(self, rel: dict) -> tuple[list[dict], bool]:
+        """The releases on this channel that updating to ``rel`` crosses:
+        newer than this hub, up to and including ``rel``, oldest first. The
+        flag says whether the list is complete: GitHub returned every
+        release there is, or its list (the newest 30) reaches back to this
+        hub's own release. A hub further behind cannot see every release in
+        between."""
+        hub = hubself.current_hub()
+        if not self._newer(rel, hub):
+            return [rel], True            # a reinstall or a rollback: only itself
+        target = version_tuple(rel["tag"])
+        out = [r for r in self.rook.releases(self.prerelease)
+               if self._newer(r, hub) and version_tuple(r["tag"]) <= target]
+        if rel["tag"] not in {r["tag"] for r in out}:
+            out.append(rel)
+        out.sort(key=lambda r: version_tuple(r["tag"]))
+        complete = (bool(self.rook.state.get("listed_all"))
+                    or any(not self._newer(r, hub) for r in self.rook.releases(True)))
+        return out, complete
+
     def analyse(self, rel: dict, members: list[dict] | None = None) -> dict:
+        """What updating the hub to ``rel`` means for the band. Cumulative:
+        a release in between that is breaking makes ``rel`` breaking, and one
+        without verified metadata (or a gap in what this hub can see) makes
+        it unknown. Unknown and breaking both wait for the operator."""
         meta = rel.get("meta") or {}
         members = self.members() if members is None else members
+        ack = (self.state.get("acks") or {}).get(rel["tag"])
+        crossed, complete = self.span(rel)
+        tags = [r["tag"] for r in crossed]
         if not meta:
             return {"known": False, "breaking": False, "reasons": [], "cut_off": [],
+                    "span": tags, "acked": ack,
                     "note": rel.get("meta_error") or "this release carries no update metadata"}
-        reasons = list(meta.get("breaking_reasons") or [])
+        unknown = [r["tag"] for r in crossed if not r.get("meta")]
+        note = ""
+        if unknown:
+            note = (f"{', '.join(unknown)}, between this hub and {rel['tag']}, "
+                    f"{'has' if len(unknown) == 1 else 'have'} no verified update metadata")
+        elif not complete:
+            note = (f"this hub is too many releases behind to check every release up to "
+                    f"{rel['tag']}")
+        reasons = []
+        for r in crossed:
+            m = r.get("meta") or {}
+            if r["tag"] != rel["tag"] and m.get("breaking"):
+                for why in (m.get("breaking_reasons") or ["marked breaking by the release"]):
+                    reasons.append(f"{r['tag']}: {why}")
+        for r in meta.get("breaking_reasons") or []:
+            if r not in reasons:
+                reasons.append(r)
         for r in raised_against(meta, current_floors()):
             if r not in reasons:
                 reasons.append(r)
@@ -367,9 +465,8 @@ class UpdateService:
             out.append({"worker_id": m["worker_id"], "name": m["name"], "kind": m["kind"],
                         "why": m["why"], "fix": fix, "how": how, "online": m.get("online")})
         breaking = bool(meta.get("breaking") or reasons or out)
-        ack = (self.state.get("acks") or {}).get(rel["tag"])
-        return {"known": True, "breaking": breaking, "reasons": reasons, "cut_off": out,
-                "floors": floors, "acked": ack, "note": ""}
+        return {"known": not note, "breaking": breaking, "reasons": reasons, "cut_off": out,
+                "floors": floors, "acked": ack, "span": tags, "note": note}
 
     # -- the overview the wizard renders ----------------------------------------------
     def overview(self) -> dict:
@@ -449,18 +546,31 @@ class UpdateService:
                                + ", ".join(ack["cut_off"])})
         return ack
 
-    async def apply_hub(self, tag: str, actor: str) -> dict:
+    async def apply_hub(self, tag: str, actor: str, require_provenance: bool = False) -> dict:
+        """Update the hub to ``tag``. A breaking or unknown release needs the
+        operator's acknowledgement (covering every device it cuts off).
+        ``require_provenance`` (auto mode) refuses unless the files that run
+        pass the scoped build provenance check."""
         async with self._lock:
             if self.state.get("hub_apply"):
                 raise Refused("a hub update is already in progress")
+            if (self.state.get("rollout") or {}).get("status") == "running":
+                raise Refused("a worker rollout is running; wait for it to finish or cancel it")
             rel = self._find(tag)
-            await self.rook.meta(rel)
+            crossed, _ = self.span(rel)
+            for r in crossed:
+                await self.rook.meta(r, force=True)
             a = self.analyse(rel)
             ack = (self.state.get("acks") or {}).get(tag)
             if not a["known"] and not ack:
-                raise Refused("This release has no update metadata, so what it changes for your "
-                              "devices is unknown. Acknowledge it to go ahead.", needs_ack=True,
-                              cut_off=[])
+                raise Refused(f"What this release changes for your devices is unknown ({a['note']}). "
+                              "Read the release notes, then acknowledge it to go ahead.",
+                              needs_ack=True, cut_off=a["cut_off"])
+            if a["breaking"] and not ack:
+                raise Refused("This is a breaking update"
+                              + (f": {'; '.join(a['reasons'])}" if a["reasons"] else "")
+                              + ". Update the devices it affects first, then acknowledge it.",
+                              needs_ack=True, cut_off=a["cut_off"])
             if a["cut_off"] and not (ack and set(ack.get("cut_off", [])) >= {m["name"] for m in a["cut_off"]}):
                 raise Refused(f"{len(a['cut_off'])} device(s) would stop working after this update. "
                               "Update them first, or acknowledge it.", needs_ack=True,
@@ -484,26 +594,42 @@ class UpdateService:
                     raise Refused("this release has no build name, so `rook hub deploy` cannot "
                                   "place it; update by hand")
                 sdist = await self.rook.fetch(rel, f"rook-{meta.get('version') or rel['version']}.tar.gz")
-                await self._attest(sdist)
+                op["provenance"] = await self._attest(sdist, rel, require_provenance)
                 tarball = hubself.repack_sdist(sdist, meta["name"], self.root / "hub")
                 key = self._hub_key() if self._hub_key else None
+                if key is None:
+                    from ....remote.update_keys import load_signing_key
+                    key = load_signing_key()
+                if key is None:
+                    raise Refused("this hub has no update signing key, so it cannot sign the "
+                                  "hub release for `rook hub deploy`")
+                from ....remote.update_keys import public_key_b64
                 manifest = hubself.hub_release_manifest(tarball, meta, key)
                 mpath = self.root / "hub" / f"rook-hub-{meta['name']}.json"
                 hubself.json_dump(mpath, manifest)
-                argv, env = hubself.rook_hub_argv(kind["config"], "deploy", str(mpath), "--yes")
-                op["launch"] = hubself.launch(argv, unit=f"rook-hub-update-{op['id']}",
-                                              log_path=log_path, env=env,
-                                              user_scope=kind.get("scope") == "user")
+                # The trusted key explicitly: the transient unit does not see
+                # where this hub keeps its key.
+                argv, env = hubself.rook_hub_argv(kind["config"], "deploy", str(mpath),
+                                                  "--pubkey", public_key_b64(key), "--yes")
+                op["launch"] = self._launch(argv, unit=f"rook-hub-update-{op['id']}",
+                                            log_path=log_path, env=env,
+                                            user_scope=kind.get("scope") == "user")
             elif kind["kind"] == "installer":
+                whl = hubself.release_wheel(rel)
+                if not whl:
+                    raise Refused(f"{tag} has no Rook wheel to install; update by hand",
+                                  manual=kind.get("manual", "").replace("{tag}", tag))
                 script = await self.rook.fetch(rel, "install-hub.sh")
-                await self._attest(script)
+                wheel = await self.rook.fetch(rel, whl)
+                op["provenance"] = await self._attest(script, rel, require_provenance)
+                await self._attest(wheel, rel, require_provenance)
                 env = {"ROOK_REPO": self.rook.repo}
                 gh = os.environ.get("ROOK_GITHUB", "")
                 if gh:
                     env["ROOK_GITHUB"] = gh
-                op["launch"] = hubself.launch(hubself.installer_argv(script, kind, tag),
-                                              unit=f"rook-hub-update-{op['id']}",
-                                              log_path=log_path, env=env, user_scope=True)
+                op["launch"] = self._launch(hubself.installer_argv(script, kind, tag, package=wheel),
+                                            unit=f"rook-hub-update-{op['id']}",
+                                            log_path=log_path, env=env, user_scope=True)
             else:
                 raise Refused(kind.get("why") or "this hub cannot update itself")
             self.state["hub_apply"] = op
@@ -513,12 +639,25 @@ class UpdateService:
                          "detail": hubself.describe_apply(kind, meta, tag)})
             return op
 
-    async def _attest(self, path: Path) -> None:
-        if not self.s("verify_attestations", False):
-            return
-        res = await verify_attestation(path, self.rook.repo)
-        if res.get("checked") and not res.get("ok"):
-            raise Refused(f"{path.name}: build provenance check failed ({res.get('detail')})")
+    @staticmethod
+    def _launch(argv: list[str], **kw: Any) -> dict:
+        try:
+            return hubself.launch(argv, **kw)
+        except hubself.LaunchError as e:
+            raise Refused(str(e)) from None
+
+    async def _attest(self, path: Path, rel: dict, required: bool = False) -> str:
+        """Check ``path``'s build provenance when ``required`` (auto mode) or
+        ``updates.verify_attestations`` is on. Fails closed: no gh, or a
+        failed or unscoped attestation, refuses. Returns what was checked."""
+        if not (required or self.s("verify_attestations", False)):
+            return "not checked (SHA256SUMS only)"
+        res = await verify_attestation(path, self.rook.repo, rel["tag"],
+                                       token=str(self.s("token", "") or ""))
+        if not res.get("ok"):
+            raise Refused(f"{path.name}: build provenance could not be verified "
+                          f"({res.get('detail')}); not installed")
+        return f"verified ({res.get('ref')})"
 
     def check_hub_apply(self) -> None:
         """After a restart: did the hub update land?"""
@@ -550,8 +689,8 @@ class UpdateService:
         if kind.get("kind") == "rook-hub" and kind.get("can_apply"):
             argv, env = hubself.rook_hub_argv(kind["config"], "rollback", "--yes")
             log_path = self.root / "logs" / f"hub-rollback-{int(time.time())}.log"
-            info = hubself.launch(argv, unit=f"rook-hub-rollback-{int(time.time())}",
-                                  log_path=log_path, env=env, user_scope=kind.get("scope") == "user")
+            info = self._launch(argv, unit=f"rook-hub-rollback-{int(time.time())}",
+                                log_path=log_path, env=env, user_scope=kind.get("scope") == "user")
             self.record({"kind": "hub", "event": "rollback", "by": actor, "result": "started",
                          "detail": "rook hub rollback: back to the previous release"})
             return {"ok": True, "launch": info}
@@ -677,20 +816,25 @@ class UpdateService:
 
     # -- apps ---------------------------------------------------------------------------
     async def publish_apk(self, tag: str, actor: str, notify: bool = False) -> dict:
-        rel = self._find(tag)
-        apk = await self.rook.fetch(rel, "rook-worker.apk")
-        man_path = await self.rook.fetch(rel, "rook-worker-apk.json", 64 * 1024)
-        man = json.loads(man_path.read_text(encoding="utf-8"))
-        from .github import sha256_of
-        if (not isinstance(man, dict) or man.get("package") != "systems.bake.rook"
-                or man.get("sha256") != sha256_of(apk) or man.get("size") != apk.stat().st_size
-                or type(man.get("version_code")) is not int):
-            raise Refused("the release's APK and its manifest do not match; not published")
-        dest = self.root / "apk"
-        dest.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(apk, dest / "rook-worker.apk.new")
-        os.replace(dest / "rook-worker.apk.new", dest / "rook-worker.apk")
-        hubself.json_dump(dest / "rook-worker-apk.json", man)
+        async with self._lock:
+            rel = self._find(tag)
+            apk = await self.rook.fetch(rel, "rook-worker.apk")
+            man_path = await self.rook.fetch(rel, "rook-worker-apk.json", 64 * 1024)
+            man = json.loads(man_path.read_text(encoding="utf-8"))
+            from .github import sha256_of
+            if (not isinstance(man, dict) or man.get("package") != "systems.bake.rook"
+                    or man.get("sha256") != sha256_of(apk) or man.get("size") != apk.stat().st_size
+                    or type(man.get("version_code")) is not int):
+                raise Refused("the release's APK and its manifest do not match; not published")
+            dest = self.root / "apk"
+            dest.mkdir(parents=True, exist_ok=True)
+            # The manifest is the approval: withdraw it first, so the old one
+            # never vouches for the new file (nothing is published for a
+            # moment), then the file, then its manifest.
+            (dest / "rook-worker-apk.json").unlink(missing_ok=True)
+            shutil.copy2(apk, dest / "rook-worker.apk.new")
+            os.replace(dest / "rook-worker.apk.new", dest / "rook-worker.apk")
+            hubself.json_dump(dest / "rook-worker-apk.json", man)
         self.record({"kind": "app", "event": "published", "tag": tag, "by": actor,
                      "detail": f"Rook app {man.get('version_name')} ({man.get('version_code')}) "
                                "is served at /apk"})
@@ -743,6 +887,9 @@ class UpdateService:
 
     async def tick(self) -> None:
         self.sync_feed()
+        # First, so the dashboard knows the service is alive before a slow
+        # GitHub check (it ignores the feed when summary.json goes stale).
+        self.write_summary()
         self.check_hub_apply()
         ro = self.state.get("rollout")
         if ro and ro.get("status") == "running" and (self._rollout_task is None
@@ -760,15 +907,37 @@ class UpdateService:
                 await self.check()
             except Exception:
                 log.exception("release check failed")
-        else:
-            self.write_summary()
         if self.mode == "auto":
             await self.auto()
 
+    def auto_hub_blocker(self, rel: dict, hub: dict) -> tuple[str, bool]:
+        """Why auto mode may not install ``rel`` on the hub ("" when it may),
+        and whether that can change by waiting. Auto installs only a stable
+        patch release of the hub's own minor version that has been stable
+        for AUTO_MIN_AGE_HOURS, crosses no breaking or unknown release, and
+        (checked when applying) passes the scoped provenance check."""
+        if rel.get("prerelease"):
+            return "a test release: waits for the operator", False
+        cur, new = _semver(hub.get("version")), _semver(rel["tag"])
+        if not cur or not new or cur[:2] != new[:2] or new[2] <= cur[2]:
+            return ("not a patch release of the version this hub runs: waits for the operator",
+                    False)
+        a = self.analyse(rel)
+        if not a["known"] or a["breaking"]:
+            return ("breaking, or what it changes is unknown"
+                    + (f" ({a['note']})" if a.get("note") else "")
+                    + ": waits for the operator"), False
+        since = float((self.state.get("stable_since") or {}).get(rel["tag"]) or 0)
+        hours = float(self.s("auto_min_age_hours", AUTO_MIN_AGE_HOURS))
+        if not since or time.time() - since < hours * 3600:
+            return f"released less than {hours:g} hours ago: waiting", True
+        return "", False
+
     async def auto(self, now: datetime.datetime | None = None) -> str:
         """Auto mode: inside the maintenance window, apply a newer non-breaking
-        release to the hub, then roll the newer worker build out (canary
-        first). Never a breaking release, never twice the same target."""
+        patch release to the hub (:meth:`auto_hub_blocker`; its provenance
+        must verify), then roll the newer worker build out (canary first).
+        Never a breaking release, never twice the same target."""
         if not in_window(str(self.s("window", "") or ""), now):
             return "outside the maintenance window"
         if self.state.get("hub_apply") or (self.state.get("rollout") or {}).get("status") == "running":
@@ -777,19 +946,21 @@ class UpdateService:
         hub = hubself.current_hub()
         latest = self.latest()
         if latest and self._newer(latest, hub) and f"hub:{latest['tag']}" not in tried:
-            a = self.analyse(latest)
+            why, wait = self.auto_hub_blocker(latest, hub)
+            if why and wait:
+                return why
             tried[f"hub:{latest['tag']}"] = time.time()
             self.save()
-            if not a["known"] or a["breaking"]:
+            if why:
                 self.record({"kind": "hub", "event": "auto-skipped", "tag": latest["tag"],
-                             "detail": "breaking or without metadata: waits for the operator"})
-                return "breaking: waiting for the operator"
+                             "detail": why})
+                return why
             try:
-                await self.apply_hub(latest["tag"], "auto")
+                await self.apply_hub(latest["tag"], "auto", require_provenance=True)
                 return "hub update started"
-            except Refused as e:
+            except (Refused, ReleaseError) as e:
                 self.record({"kind": "hub", "event": "auto-skipped", "tag": latest["tag"],
-                             "detail": str(e)})
+                             "detail": f"{e}: waits for the operator"})
                 return str(e)
         newest, released = self.feed.newest_build(), self.feed.released_build()
         if newest > released and f"workers:{newest}" not in tried:

@@ -153,27 +153,43 @@ def build_release_json(root: Path, *, tag: str, version: str, build: int, name: 
 def parse_release_json(data: Any) -> dict:
     """Validate a downloaded release.json; returns a cleaned copy. Raises
     ValueError when it is not one (unknown keys are dropped, never trusted
-    as anything but data)."""
+    as anything but data).
+
+    The fields the breaking-update gate decides on (``build``, ``breaking``
+    and the three floors) must be present with the right type: a missing or
+    mistyped one makes the release *unknown* (the operator decides), never
+    "not breaking"."""
     if not isinstance(data, dict) or data.get("typ") != TYP:
         raise ValueError("not a Rook release.json")
     if data.get("schema") != SCHEMA:
         raise ValueError(f"unsupported release.json schema {data.get('schema')!r}")
+
+    def _count(k: str) -> int:
+        v = data.get(k)
+        if type(v) is not int or v < 0:
+            raise ValueError(f"release.json: {k} is missing or not a whole number")
+        return v
+
     out: dict = {}
     for k in ("tag", "version", "name", "commit", "relay"):
         v = data.get(k)
         out[k] = str(v)[:80] if isinstance(v, (str, int)) else ""
-    b = data.get("build")
-    out["build"] = b if isinstance(b, int) and b >= 0 else 0
+    out["build"] = _count("build")
+    if out["build"] <= 0:
+        raise ValueError("release.json: build must be positive")
     out["channel"] = "prerelease" if data.get("channel") == "prerelease" else "stable"
-    out["breaking"] = bool(data.get("breaking"))
+    if type(data.get("breaking")) is not bool:
+        raise ValueError("release.json: breaking is missing or not true/false")
+    out["breaking"] = data["breaking"]
     reasons = data.get("breaking_reasons")
     out["breaking_reasons"] = ([str(r)[:300] for r in reasons[:10]]
                                if isinstance(reasons, list) else [])
-    mw = data.get("min_worker_build")
-    out["min_worker_build"] = mw if isinstance(mw, int) and mw >= 0 else 0
-    out["min_android_app"] = str(data.get("min_android_app") or "")[:40]
-    mh = data.get("min_hub_build")
-    out["min_hub_build"] = mh if isinstance(mh, int) and mh >= 0 else 0
+    out["min_worker_build"] = _count("min_worker_build")
+    app_floor = data.get("min_android_app")
+    if not isinstance(app_floor, str) or not version_tuple(app_floor):
+        raise ValueError("release.json: min_android_app is missing or not a version")
+    out["min_android_app"] = app_floor[:40]
+    out["min_hub_build"] = _count("min_hub_build")
     app = data.get("android_app") if isinstance(data.get("android_app"), dict) else {}
     out["android_app"] = {k: app[k] for k in ("version_name", "version_code")
                           if isinstance(app.get(k), (str, int))}

@@ -27,6 +27,9 @@ def _isolated_hub_keys(tmp_path, monkeypatch):
         monkeypatch.setenv("ROOK_UPDATES_DIR", str(tmp_path / "updates"))
     if "ROOK_UPDATES_MODE" not in os.environ:
         monkeypatch.setenv("ROOK_UPDATES_MODE", "off")
+    # updates.check ignores the mode: point it at a closed local port too.
+    if "ROOK_UPDATES_API" not in os.environ:
+        monkeypatch.setenv("ROOK_UPDATES_API", "http://127.0.0.1:9")
 
 
 def pytest_configure(config):
