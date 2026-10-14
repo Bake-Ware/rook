@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "overlay",
+  "description": "The quick-ask box.",
+  "windows": ["overlay"],
+  "permissions": [
+    "core:default",
+    "allow-get-state",
+    "allow-ask",
+    "allow-overlay-hide",
+    "allow-open-settings",
+    "allow-ptt-toggle",
+    "allow-open-dashboard-cmd"
+  ]
+}

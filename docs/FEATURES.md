@@ -5,7 +5,7 @@ Start with the [README](../README.md): what Rook is, a quickstart and the
 architecture.
 
 - [The band](#the-band) · [Capabilities](#capabilities) · [Integrations](#integrations) · [Hardware integrations](#hardware-integrations)
-- [Control planes](#control-planes) — dashboard · `rook band` TUI · chat · MCP
+- [Control planes](#control-planes) — dashboard · `rook band` TUI · desktop app · chat · MCP
 - [Agent workspace](#agent-workspace) — chat rooms · work · knowledge wiki · jobs · secrets · agent instructions
 - [Reliability](#reliability) · [OTA self-update](#ota-self-update) · [Security](#security) · [Installers served by the hub](#installers-served-by-the-hub)
 
@@ -300,6 +300,15 @@ For a controller without a local worker, the standalone installer remains availa
 curl -fsSL https://<your-host>/install | bash -s -- cli
 # then just: rook
 ```
+
+### Desktop app (preview)
+
+A tray app for Windows, macOS and Linux (`desktop/`, Tauri 2): your dashboard
+in a window, a global hotkey (`Ctrl+Alt+Space`) to ask the home agent,
+notifications for new chat messages, push-to-talk and an optional wake word,
+start/stop for this computer's worker, and an "Install a hub on this
+computer" wizard on Linux. It signs in with the hub's usual login; nothing
+changes on the hub. See [desktop-app.md](desktop-app.md).
 
 ### Chat & messaging
 
