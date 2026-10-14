@@ -80,7 +80,14 @@ class Worker:
                                data_root=str(_WORKER_ID_FILE.parent / "plugins"))
         # Persisted runtime disables (via worker.plugin.disable) are honoured at
         # boot so a disabled plugin is never loaded in the first place.
-        from .admin import load_disabled, load_enabled, WorkerAdmin
+        from .admin import apply_enrollment_profile, load_disabled, load_enabled, WorkerAdmin
+        # First start after enrollment: the plugin profile the pairing code
+        # carried (the band's choice of plugins) becomes this worker's
+        # persisted state before anything loads.
+        try:
+            apply_enrollment_profile()
+        except Exception:
+            log.exception("applying the enrollment plugin profile failed; loading the defaults")
         # Plugins enabled at runtime (worker.plugin.enable) survive a restart
         # even when --enable leaves them out (settings P14).
         self.enable_arg = list(enabled) if enabled is not None else None

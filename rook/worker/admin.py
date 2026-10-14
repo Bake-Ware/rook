@@ -77,6 +77,58 @@ def _save_disabled(names: set[str]) -> None:
     _save_state(disabled=names)
 
 
+#: Never switched off by an enrollment profile: worker control and enrollment.
+_PROFILE_PROTECTED = frozenset({"selfupdate", "config", "enrollment"})
+
+
+def _profile_modules(v: Any) -> set[str]:
+    if not isinstance(v, list):
+        return set()
+    return {m for m in (str(x or "").strip() for x in v)
+            if m and len(m) <= 64 and m.replace("_", "").replace("-", "").isalnum()}
+
+
+def apply_enrollment_profile(saved: dict | None = None) -> dict | None:
+    """Apply the plugin profile the hub handed this worker at enrollment, once.
+
+    ``saved`` is the enrollment file (rook.worker.enroll.load()). The profile
+    (``{"enable": [...], "disable": [...]}``, a pairing code's or the band's
+    defaults) is merged into the persisted plugin state exactly like
+    ``worker.plugin.enable/disable`` would, so it holds across restarts and an
+    operator's later switches win. Its id is recorded, so it is applied again
+    only after an enrollment brings a different one. Returns what changed, or
+    ``None`` when there was nothing to apply."""
+    if saved is None:
+        try:
+            from .enroll import load
+            saved = load()
+        except Exception:
+            return None
+    profile = (saved or {}).get("plugin_profile")
+    if not isinstance(profile, dict):
+        return None
+    enable = _profile_modules(profile.get("enable"))
+    disable = _profile_modules(profile.get("disable")) - enable - _PROFILE_PROTECTED
+    if not enable and not disable:
+        return None
+    import hashlib
+    pid = hashlib.sha256(json.dumps({"enable": sorted(enable), "disable": sorted(disable)},
+                                    sort_keys=True).encode("utf-8")).hexdigest()[:16]
+    state = _load_state()
+    if state.get("profile_applied") == pid:
+        return None
+    d = (load_disabled() | disable) - enable
+    e = (load_enabled() | enable) - disable
+    _save_state(disabled=d, enabled=e)
+    state = _load_state()
+    state["profile_applied"] = pid
+    _WORKER_DIR.mkdir(parents=True, exist_ok=True)
+    _PLUGIN_STATE.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    log.info("applied the enrollment plugin profile %s: on %s, off %s", pid,
+             sorted(enable) or "-", sorted(disable) or "-")
+    return {"id": pid, "enable": sorted(enable), "disable": sorted(disable)}
+
+
 def _load_custom() -> dict:
     try:
         d = json.loads(_CUSTOM_STATE.read_text(encoding="utf-8"))
@@ -168,6 +220,9 @@ class WorkerAdmin:
                 "caps": sorted(p.caps().keys()) if p else [],
             }
             st = (self.host.status.get(mod) if self.host is not None else None) or {}
+            cand = self.host.candidates.get(mod) if self.host is not None else None
+            if cand is not None:
+                row["source"] = cand.source   # package:<pkg> | entry_point:<name>
             if p is None:
                 # Why it isn't loaded, so a UI can explain it (settings P14).
                 if mod in disabled:

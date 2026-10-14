@@ -7,6 +7,7 @@ it is never a dashboard login, MCP token, or the permanent PSK.
 """
 
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -22,6 +23,17 @@ PAIRING_TTL = 300
 _ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz"
 _GLOBAL_ATTEMPTS = 20  # per minute, shared across all server processes
 _PEER_ATTEMPTS = 5
+
+
+def _profile(raw):
+    """A stored pairing profile (JSON text) as a dict, or None."""
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        return None
+    return value if isinstance(value, dict) else None
 
 
 def _hash(value: str) -> str:
@@ -65,6 +77,9 @@ class EnrollmentStore:
             db.executescript(SCHEMA)
             upgrade_schema(db)
             add_columns(db, "bands", {"deleted": "INTEGER NOT NULL DEFAULT 0"})
+            # The plugin profile a code hands the worker it enrolls (JSON,
+            # rook.hub.plugin_profiles); NULL: none.
+            add_columns(db, "pairing", {"profile": "TEXT"})
 
     def _db(self):
         return transaction(self.path, timeout=5)
@@ -148,8 +163,15 @@ class EnrollmentStore:
             db.execute('INSERT OR IGNORE INTO retired VALUES(?)',(row['new_hash'],))
         db.execute("UPDATE band_migrations SET phase='superseded',new_psk=NULL WHERE band_id=? AND phase IN ('prepared','active')",(band_id,))
 
-    def issue(self, band_id: str, session: str | None = None) -> dict:
+    def issue(self, band_id: str, session: str | None = None, *, profile: dict | None = None,
+              keep_profile: bool = True) -> dict:
+        """The band's live pairing code, minted when there is none. ``profile``
+        (a plugin profile) rides with the code to the worker it enrolls; it
+        replaces the live code's profile. Without one, a re-minted code keeps
+        its predecessor's (``keep_profile``), so a countdown refresh carries
+        the profile the panel was opened with."""
         now = time.time()
+        stored = json.dumps(profile, sort_keys=True) if profile else None
         with self._db() as db:
             band = db.execute("SELECT * FROM bands WHERE id=? AND active=1", (band_id,)).fetchone()
             if not band:
@@ -157,8 +179,12 @@ class EnrollmentStore:
             row = db.execute("SELECT * FROM pairing WHERE band_id=?", (band_id,)).fetchone()
             if session is not None and (not row or row["session"] != session):
                 raise ValueError("pairing was stopped; start a new pairing session")
+            if stored is None and keep_profile and row:
+                stored = row["profile"]
             if row and row["expires"] > now and row["epoch"] == band["epoch"]:
-                return dict(row)
+                if stored != row["profile"]:
+                    db.execute("UPDATE pairing SET profile=? WHERE band_id=?", (stored, band_id))
+                return {**dict(row), "profile": _profile(stored)}
             token = row["session"] if row else secrets.token_urlsafe(24)
             db.execute("DELETE FROM pairing WHERE band_id=?", (band_id,))
             for _ in range(20):
@@ -166,10 +192,12 @@ class EnrollmentStore:
                 if row and code == row["code"]:
                     continue
                 try:
-                    db.execute("INSERT INTO pairing VALUES(?,?,?,?,?)",
-                               (band_id, code, band["epoch"], now + PAIRING_TTL, token))
+                    db.execute("INSERT INTO pairing(band_id,code,epoch,expires,session,profile)"
+                               " VALUES(?,?,?,?,?,?)",
+                               (band_id, code, band["epoch"], now + PAIRING_TTL, token, stored))
                     return {"band_id": band_id, "code": code,
-                            "epoch": band["epoch"], "expires": now + PAIRING_TTL, "session": token}
+                            "epoch": band["epoch"], "expires": now + PAIRING_TTL, "session": token,
+                            "profile": _profile(stored)}
                 except sqlite3.IntegrityError:
                     continue
             raise RuntimeError("could not allocate a unique pairing code")
@@ -199,11 +227,13 @@ class EnrollmentStore:
                 if limited:
                     break
             if not limited and isinstance(code, str) and re.fullmatch(r"[a-z0-9]{6}", code):
-                row = db.execute("""SELECT b.* FROM pairing p JOIN bands b ON b.id=p.band_id
+                row = db.execute("""SELECT b.*, p.profile AS pairing_profile FROM pairing p
+                    JOIN bands b ON b.id=p.band_id
                     WHERE p.code=? AND p.expires>? AND b.active=1 AND p.epoch=b.epoch""",
                                  (code, now)).fetchone()
                 if row:
                     result = dict(row)
+                    result["pairing_profile"] = _profile(result.get("pairing_profile"))
         if limited:
             raise JoinLimited("too many pairing attempts; retry in one minute")
         if result is None:
