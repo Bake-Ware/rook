@@ -90,3 +90,13 @@ class SettingsWeb(KnowledgeWeb):
     UNAVAILABLE = 'The settings service is unavailable (is the MCP server running?).'
     ADMIN_ONLY = False
     TIMEOUT = 30   # a worker page asks the worker for its plugins and config
+
+
+class PluginsWeb(KnowledgeWeb):
+    """Manage > Plugins: the band-wide plugin grid, presets and the
+    marketplace preview. Operator account only, like the upstream."""
+    PATH = '/account/plugins'
+    UPSTREAM = ('ROOK_PLUGINS_ADMIN_URL', 'http://127.0.0.1:8765/plugins/account-api')
+    ASSETS = ('plugins.js',)
+    UNAVAILABLE = 'The plugins service is unavailable (is the MCP server running?).'
+    TIMEOUT = 60   # a band-wide switch waits on every worker it touches

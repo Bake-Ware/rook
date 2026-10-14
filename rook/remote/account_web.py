@@ -107,11 +107,12 @@ class AccountWeb:
         self.work_web.install(app)
         from .token_web import TokenWeb
         TokenWeb(self).install(app)
-        from .knowledge_web import KnowledgeWeb, GuidanceWeb, VaultWeb, SettingsWeb
+        from .knowledge_web import KnowledgeWeb, GuidanceWeb, VaultWeb, SettingsWeb, PluginsWeb
         KnowledgeWeb(self).install(app)
         GuidanceWeb(self).install(app)
         VaultWeb(self).install(app)
         SettingsWeb(self).install(app)
+        PluginsWeb(self).install(app)
         from .jobs_web import JobsWeb
         JobsWeb(self).install(app)
         app.router.add_get('/account/component', self.component)
@@ -352,6 +353,7 @@ class AccountWeb:
             # scoped. Migration grants (csr_hash) enroll every worker that held
             # the band key, a friend's device included: band scope only.
             account_scope=False
+            code_profile=None
             if data.get('enrollment_grant'):
                 grant=self.store.consume(str(data['enrollment_grant']),'device_enroll')
                 bid=grant['band_id'];sponsor=grant['user_id']
@@ -369,11 +371,19 @@ class AccountWeb:
             else:
                 band=self.server._enrollment.redeem(str(data.get('code','')),request.remote or 'unknown')
                 bid=band['id'];sponsor=None
+                code_profile=band.get('pairing_profile')
             result=self.devices.enroll(bid,sponsor,data.get('csr',''),data.get('name','worker'),account_scope=account_scope)
             if grant.get('csr_hash'):
                 # A copied grant/CSR cannot disclose any band credential. The
                 # new key must prove possession in a separate config request.
                 result['band_id']=result.pop('band')['id']
+            else:
+                # The plugins the new worker turns on/off on its first start:
+                # the pairing code's profile, else the band's defaults. A
+                # migration grant re-enrolls an existing worker: none. Older
+                # workers ignore the key.
+                profile=code_profile or self.plugin_profile(bid)
+                if profile:result['plugin_profile']=profile
             return web.json_response(result,headers=NO_STORE)
         except JoinLimited:
             return web.json_response({'error':'Too many enrollment attempts.'},status=429,headers=NO_STORE)
@@ -438,6 +448,19 @@ class AccountWeb:
         out.sort(key=lambda b:(not b['current'],b['name'].lower(),b['id']))
         return {'scope':scope,'connected':band_client is not None,
                 'generated_at':now,'bands':out}
+
+    def plugin_profile(self,band_id,explicit=None):
+        """The plugin profile for a worker enrolling on ``band_id``: ``explicit``
+        (normalized) or the band's defaults for new workers (Manage > Plugins).
+        Never fails enrollment: a store problem means no profile."""
+        from ..hub import plugin_profiles
+        if explicit not in (None,''):
+            return plugin_profiles.normalize_profile(explicit)
+        try:
+            return plugin_profiles.band_profile(band_id,getattr(self.server,'_settings_store',None))
+        except Exception:
+            log.warning('reading the plugin defaults for band %s failed',band_id,exc_info=True)
+            return None
 
     async def pairing_refresh(self,request):
         user=self.require(request)
@@ -618,7 +641,14 @@ class AccountWeb:
             elif op in ('pair','pair_revoke','invite','member','rotate','revoke'):
                 self.store.require_band(uid,bid,True)
                 if op=='pair':
-                    grant=self.server._enrollment.issue(bid)
+                    # A code carries only an explicit plugin profile (operator
+                    # account only); without one the worker gets the band's
+                    # defaults as they are when it enrolls, so presets saved
+                    # after the code was shown still reach it.
+                    explicit=data.get('profile')
+                    if explicit not in (None,'') and not user.get('admin'):
+                        raise ValueError('Only the operator account can attach a plugin profile.')
+                    grant=self.server._enrollment.issue(bid,profile=self.plugin_profile(bid,explicit) if explicit not in (None,'') else None,keep_profile=False)
                     url=self.origin+'/worker?band='+grant['code']
                     if request.headers.get('X-Rook-View') == 'account':
                         return web.json_response({'pairing': grant, 'band_id': bid, 'origin': self.origin, 'csrf': user['csrf']}, headers=NO_STORE)

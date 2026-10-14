@@ -176,6 +176,9 @@
   .pairing-host{gap:10px;margin:0 0 14px}
   .pairing-host:empty{display:none}
   .pair-manual{margin:6px 0 12px;color:var(--dim);font-size:.82rem}
+  .pair-presets{margin:0 0 14px}
+  .pair-presets>summary{cursor:pointer;color:var(--fg);font-size:.88rem;margin-bottom:10px}
+  .pair-step{color:var(--dim);font-size:.85rem}
   .pair-manual summary{cursor:pointer;margin-bottom:10px}
   .first-worker{margin:14px 0;padding:18px 20px;background:var(--panel2);border:1px solid var(--line2);border-radius:10px;max-width:760px}
   .first-worker h2{font-size:1rem;color:var(--fg);margin:0 0 4px}
@@ -345,6 +348,7 @@
     <nav aria-label="Management">
       <a id="tab-install" href="#install" onclick="showView('install');return false">Install a worker</a>
       <a id="tab-settings" href="#settings" onclick="showView('settings');return false">Settings</a>
+      <a id="tab-plugins" href="#plugins" onclick="showView('plugins');return false">Plugins</a>
       <a id="tab-account" href="#account" onclick="showView('account');return false">Account & access</a>
       <a id="tab-tokens" href="#tokens" onclick="showView('tokens');return false">API tokens</a>
       <a id="tab-guidance" href="#guidance" onclick="showView('guidance');return false">Agent instructions</a>
@@ -408,8 +412,9 @@
       <div class="empty" id="empty" style="display:none"></div>
       <div class="first-worker" id="first-worker" hidden>
         <h2>Add your first worker</h2>
-        <p>Only the hub is on this band so far. Get a pairing code and run one command on the machine you want to add.</p>
-        <div class="pair-start"><button class="iconbtn" id="first-worker-pairing-btn" onclick="startPairing('first-worker-pairing',this)">Get a pairing code</button><span class="pair-msg" id="first-worker-pairing-msg" role="status"></span></div>
+        <p>Only the hub is on this band so far. Choose what Rook may do, then get a pairing code and run one command on the machine you want to add.</p>
+        <details class="pair-presets" id="first-worker-presets" open ontoggle="window.loadPresetStep&&loadPresetStep(this)"><summary>1. What do you want Rook to do?</summary><div class="preset-host"></div></details>
+        <div class="pair-start"><span class="pair-step">2.</span><button class="iconbtn" id="first-worker-pairing-btn" onclick="startPairing('first-worker-pairing',this)">Get a pairing code</button><span class="pair-msg" id="first-worker-pairing-msg" role="status"></span></div>
         <div class="mg pairing-host" id="first-worker-pairing"></div>
         <a href="#install">More ways to install</a>
       </div>
@@ -422,6 +427,7 @@
     <div id="view-vault" hidden></div>
     <div id="view-home" hidden></div>
     <div id="view-settings" hidden></div>
+    <div id="view-plugins" hidden></div>
     <div id="view-account" hidden></div>
     <div id="view-tokens" hidden></div>
     <div id="view-bands" hidden><p class="empty">Loading bands…</p></div>
@@ -480,7 +486,8 @@
       <div class="install">
         <h2>Add a worker</h2>
         <p>Get a pairing code, then run the command for the new machine's system. A code lasts five minutes and renews itself while this page is open.</p>
-        <div class="pair-start"><button class="iconbtn" id="install-pairing-btn" onclick="startPairing('install-pairing',this)">Get a pairing code</button><span class="pair-msg" id="install-pairing-msg" role="status"></span></div>
+        <details class="pair-presets" id="install-presets" ontoggle="window.loadPresetStep&&loadPresetStep(this)"><summary>1. What should new workers do? (optional: your band's defaults apply otherwise)</summary><div class="preset-host"></div></details>
+        <div class="pair-start"><span class="pair-step">2.</span><button class="iconbtn" id="install-pairing-btn" onclick="startPairing('install-pairing',this)">Get a pairing code</button><span class="pair-msg" id="install-pairing-msg" role="status"></span></div>
         <div class="mg pairing-host" id="install-pairing"></div>
         <details class="pair-manual"><summary>Commands with a placeholder code</summary>
         <div class="cmd"><span class="lbl">Linux / macOS</span><span id="cmd-unix"></span></div>
@@ -851,6 +858,7 @@ function reconcile(){
   const onBand=curBand?workers.filter(w=>w.band===curBand||w.band==='*'):workers;
   const firstRun=workersLoaded&&!onBand.some(w=>!isHub(w));
   $('#first-worker').hidden=!firstRun;
+  if(firstRun)loadPresetStep($('#first-worker-presets'));
   if(!firstRun&&pairPanels['first-worker-pairing'])stopPairing('first-worker-pairing');
   emptyEl.style.display=list.length||firstRun?'none':'block';
   emptyEl.textContent=curBand?'No workers on this band.':'No workers on the band.';
@@ -1091,6 +1099,7 @@ const viewInfo={
  guidance:['Agent instructions','What Rook tells agents when they connect, list tools, and call capabilities.'],
  home:['Home agent','The hub\'s own LLM: who it is, which model it runs, and what it has been asked.'],
  settings:['Settings','Hub, band, worker, plugin and personal settings, with where each value comes from.'],
+ plugins:['Plugins','What Rook can do on the hub and on each worker: switch plugins live, set defaults for new workers.'],
  work:['Work','Tasks and projects: what the agents are working on, in progress, blocked and done.'],
  sessions:['Sessions','Start, watch, steer and resume agent and terminal sessions on every worker.'],
  install:['Install a worker','Connect another machine to your workspace.']
@@ -1118,6 +1127,12 @@ async function ensureSettingsArea(){
  if(settingsAreaUI)return settingsAreaUI;
  if(!settingsAreaLoading)settingsAreaLoading=import('/account/settings/assets/settings-area.js').then(m=>m.mountSettings($('#view-settings'))).then(ui=>settingsAreaUI=ui).finally(()=>{settingsAreaLoading=null;});
  return settingsAreaLoading;
+}
+let pluginsUI=null, pluginsLoading=null;
+async function ensurePlugins(){
+ if(pluginsUI)return pluginsUI;
+ if(!pluginsLoading)pluginsLoading=import('/account/plugins/assets/plugins.js').then(m=>m.mountPlugins($('#view-plugins'))).then(ui=>pluginsUI=ui).finally(()=>{pluginsLoading=null;});
+ return pluginsLoading;
 }
 function settingsQuery(){const [view,query]=location.hash.slice(1).split('?');return view==='settings'?(query||''):'';}
 async function ensureGuidance(){
@@ -1186,6 +1201,7 @@ function showView(v,updateHistory=true){
  if(activeView==='knowledge')knowledgeUI?.deactivate();
  if(activeView==='jobs')jobsUI?.deactivate();
  if(activeView==='home')homeUI?.deactivate();
+ if(activeView==='plugins')pluginsUI?.deactivate();
  activeView=v;document.body.dataset.view=v;
  for(const n of Object.keys(viewInfo)){
   $('#view-'+n).hidden=v!==n; const tab=$('#tab-'+n);tab.classList.toggle('active',v===n);
@@ -1195,6 +1211,7 @@ function showView(v,updateHistory=true){
  document.title=viewInfo[v][0]+' · Rook';$('#worker-controls').hidden=v!=='workers';$('#worker-stats').hidden=v!=='workers';$('#addband-form').hidden=true;
  if(v==='chat'){startChat();}else{stopChat();}
  if(v==='settings')ensureSettingsArea().then(ui=>{if(activeView==='settings')return ui.activate(settingsQuery());}).catch(e=>{$('#view-settings').textContent=e.message;});
+ if(v==='plugins')ensurePlugins().then(ui=>{if(activeView==='plugins')return ui.activate();}).catch(e=>{$('#view-plugins').textContent=e.message;});
  if(v==='vault')ensureVault().then(ui=>{if(activeView==='vault')ui.activate();}).catch(e=>{$('#view-vault').textContent=e.message;});
  if(v==='home')ensureHome().then(ui=>{if(activeView==='home')ui.activate();}).catch(e=>{$('#view-home').textContent=e.message;});
  if(v==='guidance')ensureGuidance().then(ui=>{if(activeView==='guidance')ui.activate();}).catch(e=>{$('#view-guidance').textContent=e.message;});
@@ -1416,6 +1433,21 @@ async function startPairing(hostId,button){
     msg.textContent='';button.hidden=true;
   }catch(e){msg.textContent=e.message;}
   finally{button.disabled=false;}
+}
+/* "What do you want Rook to do?": the plugin presets step before pairing.
+   Stores the hub's plugins and the band's defaults for new workers; the
+   next pairing code carries those defaults to the worker it enrolls. */
+async function loadPresetStep(details){
+  // Not while hidden (the first-worker card): it loads when it is shown.
+  if(!details.open||details.dataset.loaded||!details.getClientRects().length)return;
+  details.dataset.loaded='1';
+  const host=details.querySelector('.preset-host');
+  try{
+    const m=await import('/account/plugins/assets/plugins.js');
+    const picker=m.presetPicker({band:curBand||'',applyLabel:'Save choices',
+      onApplied:r=>{if(r.ok!==false)details.querySelector('summary').textContent='1. Saved: '+(r.presets.length?r.presets.length+' group'+(r.presets.length===1?'':'s')+' on':'only the basics')+' (change it under Plugins)';}});
+    host.replaceChildren(picker.node);
+  }catch(e){host.textContent=e.message;delete details.dataset.loaded;}
 }
 function stopPairing(hostId){
   pairPanels[hostId]?.stop();delete pairPanels[hostId];

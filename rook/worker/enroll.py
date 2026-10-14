@@ -102,7 +102,12 @@ def enroll(server,pair_code=None):
     from .device_key import private_pem
     issued['private_key']=private_pem(key)
     issued.pop('band',None)
+    # The plugins the hub wants on or off here (the pairing code's profile, or
+    # the band's defaults); the worker applies it once, on its next start
+    # (rook.worker.admin.apply_enrollment_profile).
+    profile=issued.pop('plugin_profile',None)
     data={'server':server.rstrip('/'),'bands':bands,'active_band':bands[chosen]['id'],'device':issued,'last_verified':time.time()}
+    if isinstance(profile,dict):data['plugin_profile']=profile
     save(data)
     print('Saved configurations privately to',storage_path())
     print('Start the worker with --enrolled (add --ws when using a port-443 hub).')

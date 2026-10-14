@@ -718,6 +718,15 @@
     "physical"
    ]
   },
+  "plugin.marketplace.install": {
+   "tier": "admin",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "plugin.marketplace.list": {
+   "tier": "read"
+  },
   "policy.explain": {
    "tier": "read"
   },

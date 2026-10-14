@@ -372,13 +372,14 @@ The same steps run for one module on a live node:
 
 | Host call | Does | Exposed as |
 |---|---|---|
-| `await host.enable(module)` | steps 2-10 for one discovered module (even one filtered out at boot) | `worker.plugin.enable` (persisted), `hub.plugin.enable` |
-| `await host.disable(module)` | unregister its caps, `stop()`, status `disabled`; refused while a loaded plugin `DEPENDS` on it | `worker.plugin.disable` (persisted), `hub.plugin.disable` |
+| `await host.enable(module)` | steps 2-10 for one discovered module (even one filtered out at boot) | `worker.plugin.enable` (persisted), `hub.plugin.enable` (persisted) |
+| `await host.disable(module)` | unregister its caps, `stop()`, status `disabled`; refused while a loaded plugin `DEPENDS` on it | `worker.plugin.disable` (persisted), `hub.plugin.disable` (persisted) |
 | `await host.reload(module)` | stop, then the boot path again: a new instance with freshly read settings. The old caps stay registered until the new instance replaces them (an announce mid-reload still lists them). If it does not come back, its caps go and dependents' `dependency()` returns `None` (status `dependency_unloaded`) until it is enabled again | `worker.plugin.reload`, `hub.plugin.reload` |
 | `host.settings_changed(namespaces)` | re-read stored settings; schedule `reload` for plugins in `namespaces` that declare an `apply="reload"` setting (safe from any thread) | the hub's settings service on every hub-plugin change; `worker.config_apply(restart=false)` on workers |
 
 Each returns `{"ok", "module", ...}` or `{"ok": false, "error"}`. The hub
-refuses to disable `settings`, the worker `selfupdate`. The settings
+refuses to disable `settings`, `policy` and `info`, the worker `selfupdate`
+(Manage > Plugins also keeps `config` and `enrollment` on). The settings
 service pushes a worker change without a restart when every changed key is
 `apply="live"`/`"reload"` and the worker has `worker.plugin.reload`.
 `*.plugin.disable` and `*.plugin.reload` are tagged `destructive`: they stop
@@ -392,6 +393,65 @@ plugin and every later activation, after the binder and before `start()`;
 plugin that registers something on the node in its binder (the worker's
 `register_binary_handler`) undoes it in `stop()`, since a reload binds the
 new instance first.
+
+### 9.2 Switching plugins band-wide (Manage > Plugins)
+
+The dashboard's **Plugins** page shows every plugin on the hub and on each
+online worker (rows: plugins; columns: the hub and the workers, from each
+worker's `worker.plugin.list`, cached 45 s; offline workers are never
+called). A cell switches that plugin live through the calls above, so the
+choice persists where it lands:
+
+* on a worker, in its `plugins.json` (`worker.plugin.enable/disable`);
+* on the hub, in the settings store, key `core.plugins.hub`
+  (`{"<module>": true|false}`, rook/hub/plugin_profiles.py), applied at
+  start and re-read when the page loads (so the dashboard's /setup wizard,
+  which writes the store directly, takes effect without a restart).
+
+Hub precedence, highest first:
+
+1. an environment variable for the plugin's own `enabled` setting
+   (`ROOK_KNOWLEDGE=0`): it locks the setting; turning the plugin on is
+   refused with that reason;
+2. `core.plugins.hub` = `false`: not loaded at start, whatever its settings;
+3. the plugin's `enabled` setting (knowledge, tasks, jobs, home, telegram,
+   discord): turning the plugin on from the page or `hub.plugin.enable`
+   turns this setting on too (recorded in its history);
+4. `available()`: a plugin switched on that still cannot load (no token)
+   stays recorded as on and loads once it can.
+
+**Defaults for new workers** are band settings (`core.plugins.worker_defaults`,
+`{"<module>": true|false}`; unlisted modules keep the built-in behaviour).
+Enrollment (`/auth/devices/enroll`) hands them to the worker as its *plugin
+profile* (`{"enable": [...], "disable": [...]}`), read when the worker
+enrolls, so presets saved while a pairing code is on screen still reach it.
+A code carries a profile of its own only when the operator account attaches
+one explicitly (`profile` on the account `pair` action). A device-login
+enrollment gets the band's defaults; a migration re-enrollment gets none.
+The worker saves the profile in `enrollment.json` and applies it on its
+first start only, while it has no `plugins.json` yet: the `disable` list
+becomes its persisted disables, like `worker.plugin.disable` (selfupdate,
+config, enrollment and info are never switched off). A re-enrollment never
+undoes an operator's per-worker switches, and `enable` changes nothing on a
+worker (everything loads by default; adding to the persisted `enabled` set
+would widen an `--enable` allowlist). Older workers ignore the key.
+
+**Presets** ("What do you want Rook to do?": remote control, agent
+sessions, knowledge & tasks, home & voice agent, phone & chat alerts,
+hardware) show a box per group, ticked from the stored choices only (the
+group's stored hub switches, band defaults and `enabled` settings: all on,
+all off, or nothing / mixed = the group's built-in default), never from
+what happens to be loaded. Saving writes only the boxes that changed:
+ticking a group turns its hub plugins on and its worker modules on for new
+workers; unticking turns them off (worker `info`, hub `notify` and `tasks`
+are never switched off). Saving the boxes as shown changes nothing. They
+are offered on the Plugins page, as the first step before "Get a pairing
+code" on the first-worker card and the Install page, and in the /setup
+wizard. The list lives in `rook.hub.plugin_profiles.PRESETS`; a test keeps
+its module names and risk tiers in step with the plugins.
+
+The marketplace preview (catalog format, `plugin.marketplace.*`) is in
+[plugin-marketplace.md](plugin-marketplace.md).
 
 ## 10. The hub node: worker `rook`
 

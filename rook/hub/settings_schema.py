@@ -179,6 +179,22 @@ _CORE: list[tuple[Setting, str, dict]] = [
         group="Plugins",
         help='{"voice": ["<token label or agent_id>"]}: tokens allowed to call '
              'settings.fetch for that plugin, secrets included.'), "mcp", {}),
+    # Written by Manage > Plugins (rook/hub/plugin_profiles.py); shown here so
+    # the history and the stored value stay visible.
+    (_s("plugins.hub", dict, {}, apply="restart", label="Hub plugins switched on or off",
+        group="Plugins", advanced=True,
+        help='{"<module>": true|false}. false keeps a hub plugin from loading. Set on the '
+             'Plugins page, which applies it at once.'), "mcp", {}),
+    (_s("plugins.worker_defaults", dict, {}, scope="band", apply="live",
+        label="Plugins for new workers", group="Plugins",
+        help='{"<module>": true|false}: what a worker enrolled on this band turns on or '
+             'off on its first start (its pairing code carries it). Unlisted plugins load '
+             'where available. Set on the Plugins page.'), "mcp", {}),
+    (_s("plugins.catalogs", list, [], env="ROOK_PLUGIN_CATALOGS", label="Plugin catalog URLs",
+        group="Plugins", advanced=True,
+        help="https:// URLs of plugin marketplace catalogs (preview: listed on the Plugins "
+             "page, not installable yet). Empty shows a bundled example catalog."),
+     "mcp", {}),
     # Band (managed in the enrollment database; shown here with its source)
     (_s("band.key", "str", secret=True, scope="band", env="ROOK_BAND_PSK", flag="--psk",
         bootstrap=True, apply="risky", label="Band key", group="Keys & access",
