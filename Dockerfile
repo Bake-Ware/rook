@@ -24,7 +24,7 @@ ARG RELAY_SOURCE=release
 # Source fallback only. Keep in lockstep with the telesthete pin in
 # pyproject.toml (both move to the merged telesthete main commit once the
 # audit/hub PR lands).
-ARG TELESTHETE_REV=f3419d2292f7fe193fa3205880186823b78b16c1
+ARG TELESTHETE_REV=f3fc597402a76f78cec9da0487de0725aaf77eb2
 
 # --- relay, option 1: prebuilt binary from the telesthete GitHub Release -----
 # Runs on the build machine's own arch (no emulation) and fetches the binary

@@ -35,4 +35,4 @@ BUILD = 0        # git rev-list --count of the release commit; 0 = not a release
 COMMIT = ""      # short hash of the release commit
 NAME = ""        # "<build>.<adjective>.<noun>", e.g. 523.lumpy.moose
 RELAY = "v0.3.0"
-RELAY_SHA256 = {}   # {"x86_64": "<sha256 of telesthete-hub-x86_64-linux.tar.gz>", ...}
+RELAY_SHA256 = {'x86_64': '0b40e3aef245e1d294bbf865441e21f945998c64a0d8e4d6b6bcf295d7371a6d', 'aarch64': '3a3cff7786814047d20bc6775b5df9f1fd1613047990d20aeeb5c5a2cf48d474', 'armv7': 'e16abf547082e0f40e38bcb09ab0a67e4ce5a06a7fc17dbbc70abb853793e2cf'}   # {"x86_64": "<sha256 of telesthete-hub-x86_64-linux.tar.gz>", ...}
