@@ -107,6 +107,7 @@ are set only in the environment or on the command line.
 | `core.worker.announce_interval` | Announce interval (s) | band+worker | int | `30` | `--announce-interval` | restart |
 | `core.worker.log_level` | Log level | band+worker | str | `warning` | `-v` | restart |
 | `core.worker.update_poll` | Update check interval (s) | band+worker | int | `300` | `ROOK_UPDATE_POLL` | restart |
+| `core.worker.update_health_secs` | Update band-contact window (s) | band+worker | int | `180` | `ROOK_UPDATE_HEALTH_SECS` | restart |
 | `core.worker.authz_mode` | Worker permission checks | band+worker | str | `audit` | `ROOK_AUTHZ_MODE` | restart |
 | `core.worker.authz_allow_unsigned_repoint` | Allow unsigned hub/PSK changes | band+worker | bool | off | `ROOK_AUTHZ_ALLOW_UNSIGNED_REPOINT` | restart |
 

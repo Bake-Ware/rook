@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import socket
+import time
 import uuid
 from pathlib import Path
 
@@ -31,6 +32,11 @@ _WORKER_ID_FILE = worker_state_path("worker_id")
 # full cap list (~5 minutes at the default 30 s interval), so a client that
 # missed a change or joined late converges even without fetching.
 ANNOUNCE_FULL_EVERY = 10
+
+# One id per process: a re-exec gets a new one, a plugin reload (which
+# re-imports plugin modules, not this one) keeps it. The OTA health gate uses
+# it to tell a real boot from a reload of the selfupdate plugin.
+BOOT_ID = uuid.uuid4().hex
 
 
 def stable_worker_id() -> str:
@@ -146,6 +152,18 @@ class Worker:
         set_route = getattr(transport, "set_route", None)
         if callable(set_route) and envelope.routing_enabled():
             set_route(self.worker_id)
+        # Band-contact evidence for the post-update health gate (selfupdate):
+        # monotonic times of the last authenticated message from another peer
+        # and of the last reply to one of our own requests (a full round trip:
+        # our sealed send was opened, answered and routed back), plus who
+        # announced lately, as targets for a probe. Stamped here, never parsed
+        # again: the transport only delivers frames that passed the band AEAD.
+        self.band_rx_at: float | None = None
+        self.band_rtt_at: float | None = None
+        self._band_peers: dict[str, tuple[bool, float]] = {}
+        # Ids of our requests that timed out: a late reply still proves the
+        # round trip (a slow link is not a broken one). Bounded, oldest out.
+        self._late_ids: dict[str, None] = {}
         # Announce trimming state (ROOK_ANNOUNCE_CAPS_HASH, core spec 14.5).
         self._announces = 0
         self._full_caps_hash: str | None = None
@@ -236,6 +254,10 @@ class Worker:
             return await asyncio.wait_for(fut, timeout)
         finally:
             self._pending_replies.pop(msg_id, None)
+            if not fut.done() or fut.cancelled():
+                self._late_ids[msg_id] = None
+                while len(self._late_ids) > self.BAND_PEERS_MAX:
+                    self._late_ids.pop(next(iter(self._late_ids)))
 
     async def resolve_secret_refs(self) -> list[str]:
         """Fetch pushed ``{{secret:…}}`` values from the hub (worker ``rook``,
@@ -393,6 +415,7 @@ class Worker:
         if not isinstance(msg, dict):
             return
 
+        self._note_band_rx(msg)
         cap = msg.get("cap")
         if not cap:
             # Hub announces carry the is_hub grant behind its call tickets;
@@ -403,9 +426,15 @@ class Worker:
                 except Exception:
                     log.debug("hub grant check failed", exc_info=True)
             # A reply to one of our own requests (Worker.request)?
-            fut = self._pending_replies.get(msg.get("id")) if msg.get("id") else None
+            mid = msg.get("id")
+            mid = mid if isinstance(mid, str) else None
+            fut = self._pending_replies.get(mid) if mid else None
             if fut is not None and not fut.done():
+                self.band_rtt_at = time.monotonic()
                 fut.set_result(msg)
+            elif mid and "ok" in msg and mid in self._late_ids:
+                del self._late_ids[mid]
+                self.band_rtt_at = time.monotonic()   # late, but a round trip
             return  # not a request
 
         target = msg.get("target")
@@ -493,6 +522,33 @@ class Worker:
         finally:
             context.call_ticket.reset(ttok)
             context.caller_identity.reset(tok)
+
+    # Most recent announcers remembered as probe targets (bounded: a big band
+    # must not grow this without limit).
+    BAND_PEERS_MAX = 32
+
+    def _note_band_rx(self, msg: dict) -> None:
+        """Record band contact for an inbound message from another peer (our
+        own traffic never counts, should a relay ever echo it)."""
+        if msg.get("from") == self.worker_id or msg.get("worker_id") == self.worker_id:
+            return
+        now = time.monotonic()
+        self.band_rx_at = now
+        wid = msg.get("worker_id")
+        if msg.get("kind") == "announce" and isinstance(wid, str) and wid:
+            peers = self._band_peers
+            peers.pop(wid, None)
+            # "grants" marks the hub node (unverified here; any peer that
+            # answers a probe proves the round trip just as well).
+            peers[wid] = ("grants" in msg, now)
+            while len(peers) > self.BAND_PEERS_MAX:
+                peers.pop(next(iter(peers)))
+
+    def band_peers(self) -> list[str]:
+        """Recently announced peers, the hub node first, then newest first:
+        targets for a band round-trip probe."""
+        ranked = sorted(self._band_peers.items(), key=lambda kv: (not kv[1][0], -kv[1][1]))
+        return [wid for wid, _ in ranked]
 
     async def _reply(self, msg_id: str | None, body: dict) -> None:
         body = {"from": self.worker_id, **body}
