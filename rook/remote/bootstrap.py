@@ -1704,7 +1704,21 @@ class CombinedServer:
             lead, focus = "Enter the dashboard password to continue.", " autofocus"
         return render("login.html", error=err, user_field=field, lead=lead, pass_focus=focus)
 
-    def _setup_page_html(self, error: str = "") -> str:
+    @staticmethod
+    def _setup_suggestions(request) -> dict:
+        """First-run defaults for the wizard's two addresses, from the
+        address the operator opened it at: on a single-process hub workers
+        reach the band on the dashboard's own port, and installers download
+        from it. Only ever a suggestion shown to the signed-in operator."""
+        if request is None or not request.host:
+            return {}
+        from .public_url import request_is_https
+        https = request_is_https(request)
+        host = request.host
+        hub = host if _re.search(r":\d+$", host) else f"{host}:{443 if https else 80}"
+        return {"hub_public": hub, "pyz_domain": f"{'https' if https else 'http'}://{host}"}
+
+    def _setup_page_html(self, error: str = "", request=None) -> str:
         from . import setup_store
         from .web_pages import render
         s = setup_store.load()
@@ -1717,15 +1731,16 @@ class CombinedServer:
         except Exception:
             log.warning("Setup wizard: reading the stored plugin choices failed", exc_info=True)
             states = None
+        hint = self._setup_suggestions(request)
         return render("setup.html", error=err, csrf=self._setup_csrf,
                       presets=setup_presets_html(states),
                       band_name=s.get("band_name") or self.band_name,
-                      hub_public=s.get("hub_public") or "",
-                      pyz_domain=s.get("pyz_domain") or "",
+                      hub_public=s.get("hub_public") or hint.get("hub_public", ""),
+                      pyz_domain=s.get("pyz_domain") or hint.get("pyz_domain", ""),
                       band_psk=current_key or setup_store.gen_psk())
 
     async def _setup_page(self, request: web.Request) -> web.Response:
-        return web.Response(text=self._setup_page_html(), content_type="text/html",
+        return web.Response(text=self._setup_page_html(request=request), content_type="text/html",
                             headers={"Cache-Control": "no-store"})
 
     async def _setup_submit(self, request: web.Request) -> web.Response:
@@ -1733,7 +1748,7 @@ class CombinedServer:
         from .accounts import csrf_ok
         data = await request.post()
         if not csrf_ok(data, self._setup_csrf):
-            return web.Response(text=self._setup_page_html("The form expired. Check the values and save again."),
+            return web.Response(text=self._setup_page_html("The form expired. Check the values and save again.", request),
                                 status=400, content_type="text/html", headers={"Cache-Control": "no-store"})
         vals = {
             "band_name": (data.get("band_name") or "").strip() or "rook-band",
@@ -1743,13 +1758,13 @@ class CombinedServer:
         }
         if not vals["hub_public"] or not vals["band_psk"] or not vals["pyz_domain"]:
             return web.Response(
-                text=self._setup_page_html("Public hub address, installer domain, and band PSK are all required."),
+                text=self._setup_page_html("Fill in both addresses and the band key.", request),
                 content_type="text/html",
                 headers={"Cache-Control": "no-store"},
             )
         primary = next((b for b in self._enrollment.bands(secrets_visible=True) if b["is_primary"]), None)
         if primary and (not primary["active"] or vals["band_psk"] != primary["psk"]):
-            return web.Response(text=self._setup_page_html("Use the Tokens page to replace or revoke the band PSK."),
+            return web.Response(text=self._setup_page_html("The band key can't be changed here: use the Tokens page to replace it.", request),
                                 status=400, content_type="text/html", headers={"Cache-Control": "no-store"})
         saved = setup_store.save(vals)
         # Apply live so the installer one-liners reflect the new band immediately.

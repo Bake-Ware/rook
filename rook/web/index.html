@@ -160,6 +160,8 @@
   .install{max-width:760px}
   .install h2{font-size:1rem;color:var(--fg);margin:0 0 4px}
   .install p{color:var(--dim);font-size:.85rem;margin:0 0 16px}
+  .install p.install-after{font-size:.8rem;margin:10px 0 14px}
+  .install-after code{color:var(--fg)}
   .cmd{position:relative;background:var(--panel2);border:1px solid var(--line);border-radius:9px;
     padding:12px 14px;margin:0 0 12px;font-size:.84rem;color:var(--accent);white-space:pre-wrap;word-break:break-all}
   .cmd .lbl{color:var(--dim);font-size:.68rem;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:6px}
@@ -489,10 +491,12 @@
         <details class="pair-presets" id="install-presets" ontoggle="window.loadPresetStep&&loadPresetStep(this)"><summary>1. What should new workers do? (optional: your band's defaults apply otherwise)</summary><div class="preset-host"></div></details>
         <div class="pair-start"><span class="pair-step">2.</span><button class="iconbtn" id="install-pairing-btn" onclick="startPairing('install-pairing',this)">Get a pairing code</button><span class="pair-msg" id="install-pairing-msg" role="status"></span></div>
         <div class="mg pairing-host" id="install-pairing"></div>
+        <p class="install-after">Once it has joined, run <code>rook status</code> on that machine to see how it is doing, or <code>rook doctor</code> if it doesn't show up under Workers.</p>
         <details class="pair-manual"><summary>Commands with a placeholder code</summary>
         <div class="cmd"><span class="lbl">Linux / macOS</span><span id="cmd-unix"></span></div>
         <div class="cmd"><span class="lbl">Windows (PowerShell)</span><span id="cmd-win"></span></div>
         <div class="cmd"><span class="lbl">Termux / Android</span><span id="cmd-termux"></span></div>
+        <p class="install-after">Installing without anyone at the keyboard (cloud-init, a script, a management tool)? Add <code>-s -- --yes</code> after <code>bash</code>, or on Windows set <code>$env:ROOK_YES = "1"</code> first in an administrator PowerShell. Nothing will prompt.</p>
         </details>
         <div class="ilinks">
           <a href="/apk">⬇ Android APK</a>

@@ -76,10 +76,27 @@ async def test_setup_page_keeps_csrf_and_escapes_values(env):  # noqa: F811
         assert response.status == 400 and "The form expired" in await response.text()
         response = await client.post("/setup", data={**SETUP, "hub_public": "",
                                                      "csrf": server._setup_csrf})
-        assert response.status == 200 and "are all required" in await response.text()
+        assert response.status == 200 and "Fill in both addresses and the band key." in await response.text()
         response = await client.post("/setup", data={**SETUP, "csrf": server._setup_csrf},
                                      allow_redirects=False)
         assert response.status == 302 and response.headers["Location"] == "/"
+
+
+@pytest.mark.asyncio
+async def test_setup_page_speaks_plainly_and_suggests_its_own_address(env):  # noqa: F811
+    server = env(bind="127.0.0.1")
+    async with TestClient(TestServer(server._app)) as client:
+        page = await (await client.get("/setup", headers={"Host": "192.0.2.10:7005"})).text()
+        for jargon in ("PSK", "WS endpoint", "band-worker.pyz", "setup.json"):
+            assert jargon not in page, jargon
+        assert "Band key" in page and "Address your computers connect to" in page
+        assert 'name="hub_public" value="192.0.2.10:7005"' in page
+        assert 'name="pyz_domain" value="http://192.0.2.10:7005"' in page
+        # Behind an HTTPS proxy, on the default port.
+        page = await (await client.get("/setup", headers={
+            "Host": "hub.example.com", "X-Forwarded-Proto": "https"})).text()
+        assert 'name="hub_public" value="hub.example.com:443"' in page
+        assert 'name="pyz_domain" value="https://hub.example.com"' in page
 
 
 @pytest.mark.asyncio
@@ -110,3 +127,10 @@ async def test_account_document_shell(env):  # noqa: F811
         assert '<form method="post" action="/account/login">' in page
         assert 'name="form_token"' in page and 'class="standalone-account"' in page
         assert response.headers["Cache-Control"] == "no-store"
+
+
+def test_install_page_points_at_the_local_cli_and_unattended_installs():
+    text = (WEB_DIR / "index.html").read_text(encoding="utf-8")
+    view = text[text.index('<div id="view-install"'):text.index('<div class="overlay"')]
+    assert "<code>rook status</code>" in view and "<code>rook doctor</code>" in view
+    assert "<code>-s -- --yes</code>" in view and "ROOK_YES" in view
