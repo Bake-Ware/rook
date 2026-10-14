@@ -515,7 +515,9 @@ whether to set up keyboard/mouse control, which is skipped on machines with no
 screen. Run as root (cloud-init, `sudo`), the Linux installer stops unless told
 whose worker it is: `ROOK_USER=<account>` installs it for that account (it runs
 as them, as a user service that starts at boot), and `ROOK_ALLOW_ROOT=1` really
-runs it as root, where every band command then runs as root. On Windows without Python 3.11+, the installer downloads Python 3.12
+runs it as root, where every band command then runs as root. Where a worker
+was already installed for root, `ROOK_ALLOW_ROOT=1` updates it in place, and
+`ROOK_USER` stops and disables it once the account's worker is in. On Windows without Python 3.11+, the installer downloads Python 3.12
 from python.org, checks it against a pinned SHA-256 and installs it for the
 current user only; if that fails it tries `winget --scope user`, then says how
 to install it by hand.

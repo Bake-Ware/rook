@@ -550,6 +550,11 @@ esac
 # without `-` leaves USER naming the account it came from: USER is always
 # whoever this really runs as (lingering and the input group are for them).
 export USER="$(id -un)"
+# Root writes only to its own home: `sudo -E` keeps the caller's HOME, and a
+# root-owned install.log there would break that person's own install later.
+if [ "$(id -u)" = 0 ]; then
+    export HOME="$(getent passwd "$USER" 2>/dev/null | cut -d: -f6)"
+fi
 [ -n "${{HOME:-}}" ] || export HOME="$(getent passwd "$USER" 2>/dev/null | cut -d: -f6)"
 if [ -z "${{HOME:-}}" ]; then
     if [ "$(id -u)" = 0 ]; then export HOME=/root
@@ -775,6 +780,11 @@ install_for_user() {{
     fi
     # Their user service runs without a login, now and at every boot.
     command -v loginctl &>/dev/null && {{ quietly loginctl enable-linger "$ROOK_USER" || true; }}
+    # An earlier root run (`sudo -E`, older installers) may have left files of
+    # root's in their folder; theirs again, without following any links.
+    if [ -d "$uhome/.rook-band-worker" ] && [ ! -L "$uhome/.rook-band-worker" ]; then
+        chown -R -h -P "$ROOK_USER" "$uhome/.rook-band-worker" || true
+    fi
     local envs=(HOME="$uhome" USER="$ROOK_USER" LOGNAME="$ROOK_USER" ROOK_YES=1
                 PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
                 XDG_RUNTIME_DIR="/run/user/$uid")
@@ -787,7 +797,41 @@ install_for_user() {{
     local rc=0
     runuser -u "$ROOK_USER" -- env -i "${{envs[@]}}" bash "$tmp/install.sh" --yes </dev/null || rc=$?
     rm -rf "$tmp"
-    exit "$rc"
+    if [ "$rc" -ne 0 ]; then
+        root_worker_present && say "The worker already installed for root was left running."
+        exit "$rc"
+    fi
+    # Only once the new worker is in: one machine, one worker.
+    if root_worker_present; then stop_root_worker || exit 1; fi
+    exit 0
+}}
+# A worker installed for root earlier (older installers made root-over-SSH
+# installs a lingering user service, or a plain background process).
+ROOT_PYZ="$HOME/.rook-band-worker/band-worker.pyz"
+ROOT_UNIT="$HOME/.config/systemd/user/rook-band-worker.service"
+root_worker_present() {{ [ -e "$ROOT_PYZ" ] || [ -e "$ROOT_UNIT" ]; }}
+root_worker_pids() {{ pgrep -u 0 -f -- "$ROOT_PYZ" 2>/dev/null || true; }}
+stop_root_worker() {{
+    say "Stopping the worker installed for root here, so this machine runs one worker..."
+    if [ -e "$ROOT_UNIT" ]; then
+        quietly env XDG_RUNTIME_DIR="${{XDG_RUNTIME_DIR:-/run/user/0}}" \\
+            systemctl --user disable --now rook-band-worker || true
+        # Never again at boot, even where root's user manager isn't reachable now.
+        rm -f "$HOME/.config/systemd/user/default.target.wants/rook-band-worker.service"
+        mv -f "$ROOT_UNIT" "$ROOT_UNIT.disabled" || true
+    fi
+    local pids
+    pids="$(root_worker_pids)"
+    if [ -n "$pids" ]; then
+        kill $pids 2>/dev/null || true
+        sleep 2
+        pids="$(root_worker_pids)"
+    fi
+    if [ -n "$pids" ]; then
+        say "ERROR: the root worker (process $pids) did not stop. Stop it with: sudo kill $pids"
+        return 1
+    fi
+    say "      Done: root's worker is stopped and won't start at boot. Its files stay in $HOME/.rook-band-worker; delete that folder when you no longer need it."
 }}
 if [ "$(id -u)" = 0 ] && [ "$IS_TERMUX" != "1" ]; then
     if [ -n "${{ROOK_USER:-}}" ] && [ "$ROOK_USER" != root ]; then
@@ -795,11 +839,20 @@ if [ "$(id -u)" = 0 ] && [ "$IS_TERMUX" != "1" ]; then
     fi
     case "${{ROOK_ALLOW_ROOT:-}}" in
         1|true|yes)
+            if root_worker_present; then
+                say "Updating the worker already installed for root here, in place."
+            fi
             say "WARNING: installing as root (ROOK_ALLOW_ROOT=1). Every band command (shell, files, terminals) runs as root on this machine, and the worker starts again at every boot." ;;
         *)
             say "Not installed: this runs as root, so the worker would run every band command (shell, files, terminals) as root."
-            say "Install it for an everyday account instead: set ROOK_USER=<account> and run the same command (it runs as that account)."
-            say "Or, if root is really what you want (a container, say), set ROOK_ALLOW_ROOT=1."
+            if root_worker_present; then
+                say "A worker is already installed for root here ($HOME/.rook-band-worker)."
+                say "To update that root worker in place, set ROOK_ALLOW_ROOT=1 and run the same command."
+                say "To move it to an everyday account, set ROOK_USER=<account>: once that account's worker is in, root's is stopped and disabled."
+            else
+                say "Install it for an everyday account instead: set ROOK_USER=<account> and run the same command (it runs as that account)."
+                say "Or, if root is really what you want (a container, say), set ROOK_ALLOW_ROOT=1."
+            fi
             exit 1 ;;
     esac
 fi

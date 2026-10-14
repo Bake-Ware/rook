@@ -410,7 +410,7 @@ def _root_harness(text, tmp_path):
     stubs = {
         "id": 'case "$*" in -u) echo "${FAKE_UID:-0}" ;; -un) echo "${FAKE_USER:-root}" ;; '
               '*) /usr/bin/id "$@" ;; esac',
-        "getent": 'case "$2" in alice) echo "alice:x:1001:1001::/home/alice:/bin/bash" ;; '
+        "getent": 'case "$2" in alice) echo "alice:x:1001:1001::${FAKE_UHOME:-/home/alice}:/bin/bash" ;; '
                   '*) exit 2 ;; esac',
         "runuser": f'echo "runuser $*" >> "{calls}"; exit "${{RUNUSER_RC:-0}}"',
         "curl": f'echo "curl $*" >> "{calls}"; while [ $# -gt 0 ]; do '
@@ -418,6 +418,12 @@ def _root_harness(text, tmp_path):
         "chown": f'echo "chown $*" >> "{calls}"',
         "loginctl": f'echo "loginctl $*" >> "{calls}"',
         "apt-get": f'echo "apt-get $*" >> "{calls}"',
+        "systemctl": f'echo "systemctl $*" >> "{calls}"',
+        # A root worker process: RUNNING = there until killed, STUCK = never stops.
+        "pgrep": f'n=$(cat "{tmp_path}/pgrep.n" 2>/dev/null || echo 0); '
+                 f'echo $((n+1)) > "{tmp_path}/pgrep.n"; echo "pgrep $*" >> "{calls}"; '
+                 'if [ -n "${STUCK:-}" ] || { [ -n "${RUNNING:-}" ] && [ "$n" = 0 ]; }; '
+                 'then echo 999999; else exit 1; fi',
     }
     for name, body in stubs.items():
         (bin_dir / name).write_text("#!/bin/bash\n" + body + "\n")
@@ -428,7 +434,8 @@ def _root_harness(text, tmp_path):
               "quietly() { \"$@\" >/dev/null 2>&1; }\ninstall_curl() { :; }\n"
               f"install_python() {{ echo install_python >> \"{calls}\"; }}\nIS_TERMUX=0\n"
               + block + "\necho CONTINUED\n")
-    env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": str(tmp_path)}
+    (tmp_path / "root").mkdir()
+    env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": str(tmp_path / "root")}
     return script, env, calls
 
 
@@ -489,6 +496,83 @@ async def test_unix_root_install_for_rook_user_runs_as_that_account(scripts, tmp
     run = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
                          env={**env, "ROOK_USER": "alice", "RUNUSER_RC": "7"})
     assert run.returncode == 7
+    # No earlier root worker: nothing to stop.
+    assert "Stopping the worker installed for root" not in run.stdout
+    assert not any(ln.startswith(("systemctl", "pgrep")) for ln in calls.read_text().splitlines())
+
+
+@pytest.mark.asyncio
+async def test_unix_root_run_gives_root_files_in_the_account_home_back(scripts, tmp_path):
+    """`sudo -E` kept the caller's HOME, so an older root run left a root-owned
+    install.log in their folder; their own install then failed writing it."""
+    script, env, calls = _root_harness(scripts["unix"], tmp_path)
+    uhome = tmp_path / "alice"
+    (uhome / ".rook-band-worker").mkdir(parents=True)
+    run = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                         env={**env, "ROOK_USER": "alice", "FAKE_UHOME": str(uhome)})
+    assert run.returncode == 0, (run.stdout, run.stderr)
+    log = calls.read_text().splitlines()
+    assert f"chown -R -h -P alice {uhome}/.rook-band-worker" in log
+    assert log.index(f"chown -R -h -P alice {uhome}/.rook-band-worker") < \
+        [ln.split()[0] for ln in log].index("runuser")
+
+
+def _root_install(home, unit=True):
+    (home / ".rook-band-worker").mkdir(parents=True)
+    (home / ".rook-band-worker" / "band-worker.pyz").write_text("old")
+    if unit:
+        units = home / ".config" / "systemd" / "user"
+        (units / "default.target.wants").mkdir(parents=True)
+        (units / "rook-band-worker.service").write_text("[Service]\n")
+        (units / "default.target.wants" / "rook-band-worker.service").symlink_to(
+            units / "rook-band-worker.service")
+
+
+@pytest.mark.asyncio
+async def test_unix_existing_root_worker_is_named_and_updated_or_moved(scripts, tmp_path):
+    """Older installers made root-over-SSH installs a lingering user service.
+    Re-running as root must not end with two workers of the same name."""
+    script, env, calls = _root_harness(scripts["unix"], tmp_path)
+    home = tmp_path / "root"
+    _root_install(home)
+    units = home / ".config" / "systemd" / "user"
+    # Neither variable: refused, and told about the root worker and both ways on.
+    run = subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=env)
+    assert run.returncode == 1
+    assert f"A worker is already installed for root here ({home}/.rook-band-worker)" in run.stdout
+    assert "update that root worker in place, set ROOK_ALLOW_ROOT=1" in run.stdout
+    assert "set ROOK_USER=<account>: once that account's worker is in, root's is stopped" in run.stdout
+    # ROOK_ALLOW_ROOT=1 updates it in place (the rest of the installer runs as before).
+    run = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                         env={**env, "ROOK_ALLOW_ROOT": "1"})
+    assert run.returncode == 0 and "CONTINUED" in run.stdout
+    assert "Updating the worker already installed for root here, in place." in run.stdout
+    assert (units / "rook-band-worker.service").exists()
+    # ROOK_USER: a failed install for the account leaves root's worker alone.
+    run = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                         env={**env, "ROOK_USER": "alice", "RUNUSER_RC": "3", "RUNNING": "1"})
+    assert run.returncode == 3 and "left running" in run.stdout
+    assert (units / "rook-band-worker.service").exists()
+    # Once the account's worker is in, root's is stopped and disabled for good.
+    (tmp_path / "pgrep.n").unlink(missing_ok=True)
+    run = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                         env={**env, "ROOK_USER": "alice", "RUNNING": "1"})
+    assert run.returncode == 0, (run.stdout, run.stderr)
+    assert "root's worker is stopped and won't start at boot" in run.stdout
+    log = calls.read_text().splitlines()
+    assert "systemctl --user disable --now rook-band-worker" in log
+    assert f"pgrep -u 0 -f -- {home}/.rook-band-worker/band-worker.pyz" in log
+    last = {ln.split()[0]: i for i, ln in enumerate(log)}
+    assert last["runuser"] < last["systemctl"]          # stopped only after the new one is in
+    assert not (units / "rook-band-worker.service").exists()
+    assert (units / "rook-band-worker.service.disabled").exists()
+    assert not os.path.lexists(units / "default.target.wants" / "rook-band-worker.service")
+    # A root worker that won't stop: the exact command, and a failure.
+    shutil.rmtree(home)
+    _root_install(home, unit=False)
+    run = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                         env={**env, "ROOK_USER": "alice", "STUCK": "1"})
+    assert run.returncode == 1 and "did not stop. Stop it with: sudo kill 999999" in run.stdout
 
 
 @pytest.mark.asyncio
@@ -521,6 +605,9 @@ async def test_unix_home_user_and_worker_name_checks(scripts, tmp_path):
     assert run.returncode == 1 and "HOME is not set" in run.stdout
     run = _probe(text, tmp_path, {}, uid="0", user="nosuchuser-rook")
     assert run.returncode == 0 and "HOME=/root " in run.stdout
+    # Root never writes into the HOME `sudo -E` kept: it uses its own.
+    run = _probe(text, tmp_path, {"HOME": "/home/alice"}, uid="0", user="root")
+    assert run.returncode == 0 and "HOME=/root USER=root" in run.stdout
     # A worker name goes into a command line.
     run = _probe(text, tmp_path, {"HOME": "/home/pi", "ROOK_WORKER_NAME": "my box; rm -rf ~"})
     assert run.returncode == 1 and "ROOK_WORKER_NAME may only use" in run.stdout
