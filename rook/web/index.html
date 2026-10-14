@@ -306,6 +306,8 @@
 <link rel="stylesheet" href="/account/bands/assets/theme.css">
 <link rel="stylesheet" href="/account/bands/assets/rook-art.css">
 <link rel="stylesheet" href="/account/bands/assets/manage.css">
+<link rel="stylesheet" href="/account/ui/assets/ui.css">
+<script src="/account/ui/assets/theme-boot.js"></script>
 </head>
 <body>
   <!-- decoy fields soak up browser/password-manager autofill so it never lands
@@ -328,10 +330,12 @@
     <span class="plate-caption"><b>ROOK / YOUR MACHINES, YOUR MOVE</b><br>ENCRYPTED · AGENT MESH · POWERFUL</span>
   </div>
   <aside class="app-sidebar" aria-label="Application navigation">
-    <a class="brand" href="#workers" onclick="showView('workers');return false">♜ ROOK</a>
+    <a class="brand" href="#overview" onclick="showView('overview');return false">♜ ROOK</a>
     <span class="nav-label">WORKSPACE</span>
     <nav aria-label="Workspace">
-      <a id="tab-workers" href="#workers" class="active" onclick="showView('workers');return false">Workers</a>
+      <a id="tab-overview" href="#overview" onclick="showView('overview');return false">Overview</a>
+      <a id="tab-start" href="#start" onclick="showView('start');return false">Start page</a>
+      <a id="tab-workers" href="#workers" onclick="showView('workers');return false">Workers</a>
       <a id="tab-bands" href="#bands" onclick="showView('bands');return false">Bands</a>
       <a id="tab-chat" href="#chat" onclick="showView('chat');return false">Chat</a>
       <a id="tab-work" href="#work" onclick="showView('work');return false">Work</a>
@@ -396,7 +400,7 @@
 
   <div class="wrap">
     <!-- WORKERS VIEW -->
-    <div id="view-workers">
+    <div id="view-workers" hidden>
       <div class="listhead">
         <span style="width:12px"></span><span style="width:9px"></span>
         <span style="flex:1">worker</span><span class="band-column">band</span><span style="width:150px">version</span>
@@ -416,6 +420,8 @@
       <div class="foot" id="foot"></div>
     </div>
 
+    <div id="view-overview" hidden></div>
+    <div id="view-start" hidden></div>
     <div id="view-knowledge" hidden></div>
     <div id="view-jobs" hidden></div>
     <div id="view-guidance" hidden></div>
@@ -1084,6 +1090,8 @@ function renderCapResult(out,cap,reply){
 
 /* ---- views / install ---- */
 const viewInfo={
+ overview:['Overview','What is running, what is waiting on you, and the work in progress.'],
+ start:['Start page','Your own page: links, news and your band at a glance.'],
  workers:['Workers','Your connected machines, across every band.'],
  account:['Account & access','Your profile, connected logins, and band permissions.'],
  tokens:['API tokens','Credentials and identities for your agents and integrations.'],
@@ -1107,6 +1115,17 @@ async function ensureVault(){
  return vaultLoading;
 }
 let jobsUI=null, jobsLoading=null;
+let overviewUI=null, overviewLoading=null, startUI=null, startLoading=null;
+async function ensureOverview(){
+ if(overviewUI)return overviewUI;
+ if(!overviewLoading)overviewLoading=import('/account/ui/assets/overview.js').then(m=>m.mountOverview($('#view-overview'))).then(ui=>overviewUI=ui).finally(()=>{overviewLoading=null;});
+ return overviewLoading;
+}
+async function ensureStart(){
+ if(startUI)return startUI;
+ if(!startLoading)startLoading=import('/account/ui/assets/startpage.js').then(m=>m.mountStartPage($('#view-start'))).then(ui=>startUI=ui).finally(()=>{startLoading=null;});
+ return startLoading;
+}
 async function ensureJobs(){
  if(jobsUI)return jobsUI;
  if(!jobsLoading)jobsLoading=import('/account/jobs/assets/jobs.js').then(m=>m.mountJobs($('#view-jobs'))).then(ui=>jobsUI=ui).finally(()=>{jobsLoading=null;});
@@ -1188,7 +1207,7 @@ async function ensureSettings(view){
  finally{delete settingsLoading[view];}
 }
 function showView(v,updateHistory=true){
- if(!viewInfo[v])v='workers';
+ if(!viewInfo[v])v='overview';
  if(updateHistory&&location.hash.split('?')[0]!=='#'+v)history.pushState(null,'','#'+v);
  if(activeView===v){if(v==='account'&&settingsUI.account)settingsUI.account.refresh().catch(()=>{});if(v==='settings'&&settingsAreaUI&&settingsQuery())settingsAreaUI.activate(settingsQuery()).catch(()=>{});return;}
  settingsUI[activeView]?.deactivate();
@@ -1198,6 +1217,8 @@ function showView(v,updateHistory=true){
  if(activeView==='jobs')jobsUI?.deactivate();
  if(activeView==='home')homeUI?.deactivate();
  if(activeView==='plugins')pluginsUI?.deactivate();
+ if(activeView==='overview')overviewUI?.deactivate();
+ if(activeView==='start')startUI?.deactivate();
  activeView=v;document.body.dataset.view=v;
  for(const n of Object.keys(viewInfo)){
   $('#view-'+n).hidden=v!==n; const tab=$('#tab-'+n);tab.classList.toggle('active',v===n);
@@ -1215,6 +1236,8 @@ function showView(v,updateHistory=true){
  if(v==='knowledge')ensureKnowledge().then(ui=>{if(activeView==='knowledge')ui.activate();}).catch(e=>{$('#view-knowledge').textContent=e.message;});
  if(v==='sessions')ensureSessions().then(ui=>{if(activeView==='sessions')ui.activate();else ui.deactivate();}).catch(()=>{});
  if(v==='work')ensureTasks().then(ui=>{if(activeView==='work')ui.activate();}).catch(e=>{$('#view-work').textContent=e.message;});
+ if(v==='overview')ensureOverview().then(ui=>{if(activeView==='overview')ui.activate();}).catch(e=>{$('#view-overview').textContent=e.message;});
+ if(v==='start')ensureStart().then(ui=>{if(activeView==='start')ui.activate();}).catch(e=>{$('#view-start').textContent=e.message;});
  if(v==='bands')ensureBands().then(ui=>ui.refresh()).catch(()=>{});
  if(v==='account'||v==='tokens')ensureSettings(v).then(ui=>ui.refresh()).catch(()=>{});
 }
@@ -1223,8 +1246,11 @@ async function openWorkerMove(wid){
  try{const ui=await ensureBands();await ui.openWorker(wid);}catch(error){console.warn(error.message);}
 }
 function routeFromHash(){
- const [view,query]=location.hash.slice(1).split('?');showView(view||'workers',false);
- const wid=new URLSearchParams(query||'').get('worker');if(view==='bands'&&wid)openWorkerMove(wid);
+ const [view,query]=location.hash.slice(1).split('?');showView(view||'overview',false);
+ const params=new URLSearchParams(query||'');
+ const wid=params.get('worker');if(view==='bands'&&wid)openWorkerMove(wid);
+ // #chat?room=<id>: the Overview and start page link straight to a room.
+ const room=params.get('room');if(view==='chat'&&room){history.replaceState(null,'','#chat');loadRooms().then(()=>openRoom(room)).catch(()=>{});}
 }
 window.addEventListener('hashchange',routeFromHash);
 window.addEventListener('popstate',routeFromHash);
@@ -1462,6 +1488,8 @@ wireLinks(); routeFromHash(); loadBands(); loadWorkers();
 setInterval(loadWorkers,3000); setInterval(loadBands,20000);
 </script>
 <script type="module">
+// The account's saved theme (theme-boot.js applied this browser's last one).
+import('/account/ui/assets/themes.js').then(m=>m.syncTheme()).catch(()=>{});
 const loadArtwork=()=>import('/account/bands/assets/rook-scene.js').then(({mountRook})=>mountRook(document.getElementById('rook-art'),document.getElementById('art-toggle'))).catch(()=>{});
 if(!navigator.connection?.saveData){
  if('requestIdleCallback' in window)requestIdleCallback(loadArtwork,{timeout:1800});
