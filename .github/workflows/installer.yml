@@ -38,8 +38,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: shellcheck
         run: shellcheck scripts/install-hub.sh
-      # The relay comes from the latest telesthete release; with none yet the
-      # installer falls back to building it with the runner's cargo.
+      # The relay is the telesthete release rook/_release.py pins; until that
+      # release exists the installer builds it with the runner's cargo, at the
+      # telesthete commit pyproject.toml pins.
       - name: Install from this checkout
         run: |
           bash scripts/install-hub.sh --user --no-systemd --yes --package "$GITHUB_WORKSPACE" \
@@ -64,5 +65,5 @@ jobs:
       - name: Uninstall and purge
         if: always()
         run: |
-          bash scripts/install-hub.sh --uninstall --purge --yes
+          bash scripts/install-hub.sh --uninstall --purge --yes --user --data-dir "$DATA"
           test ! -e "$DATA"

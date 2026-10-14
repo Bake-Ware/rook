@@ -601,7 +601,7 @@ fetch_relay() {   # download + verify the prebuilt relay into $TMP/relay/telesth
 }
 
 build_relay() {   # the fallback: compile it with an existing Rust toolchain
-  local cargo ref=()
+  local cargo
   cargo="$(command -v cargo || true)"
   [ -n "$cargo" ] || [ ! -x "$HOME/.cargo/bin/cargo" ] || cargo="$HOME/.cargo/bin/cargo"
   if [ -z "$cargo" ]; then
@@ -609,12 +609,32 @@ build_relay() {   # the fallback: compile it with an existing Rust toolchain
 compiler and re-run to build it from source, or build telesthete-hub yourself \
 (cd rust && cargo build --release -p telesthitium in $GITHUB/$TELESTHETE_REPO) and re-run with --relay-bin PATH."
   fi
-  case "$RELAY_VERSION" in latest|"") ;; *) ref=(--tag "$RELAY_VERSION") ;; esac
+  # Build the pinned release tag; before that tag exists, the telesthete
+  # commit this Rook was installed with (a source install records it), so the
+  # relay matches the transport.
+  local rev built=""
+  rev="$("$VENV/bin/python" -c 'import json, importlib.metadata as m
+d = json.loads(m.distribution("telesthete").read_text("direct_url.json") or "{}")
+print(d.get("vcs_info", {}).get("commit_id", ""))' 2>/dev/null || true)"
   say "building the relay from source with cargo; this takes several minutes"
-  "$cargo" install --locked --root "$TMP/cargo" --git "$GITHUB/$TELESTHETE_REPO" "${ref[@]}" telesthitium \
-    || die "cargo could not build telesthete-hub"
+  case "$RELAY_VERSION" in latest|"") ;; *)
+    if "$cargo" install --locked --root "$TMP/cargo" --git "$GITHUB/$TELESTHETE_REPO" --tag "$RELAY_VERSION" telesthitium; then
+      built="tag $RELAY_VERSION"
+    fi ;;
+  esac
+  if [ -z "$built" ] && [ -n "$rev" ]; then
+    warn "building the relay at telesthete $rev (the commit this Rook's transport came from)"
+    "$cargo" install --locked --root "$TMP/cargo" --git "$GITHUB/$TELESTHETE_REPO" --rev "$rev" telesthitium \
+      && built="rev $rev"
+  fi
+  if [ -z "$built" ]; then
+    warn "building the relay from the default branch of $TELESTHETE_REPO"
+    "$cargo" install --locked --root "$TMP/cargo" --git "$GITHUB/$TELESTHETE_REPO" telesthitium \
+      && built="default branch"
+  fi
+  [ -n "$built" ] || die "cargo could not build telesthete-hub"
   as_app install -m 0755 "$TMP/cargo/bin/telesthete-hub" "$RELAY_DEST"
-  echo "source ${RELAY_VERSION:-latest}" | as_app tee "$RELAY_STAMP" >/dev/null
+  echo "source $built" | as_app tee "$RELAY_STAMP" >/dev/null
 }
 
 if [ -n "$RELAY_BIN" ]; then
