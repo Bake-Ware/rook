@@ -66,8 +66,9 @@ PRESETS: tuple[dict, ...] = (
      "hub": [], "worker": ["shell", "file_ops", "proc", "info"],
      "high_risk": ["Runs shell commands (exec)"]},
     {"id": "agents", "default": True, "tiers": ("read", "write", "exec"), "title": "Agent sessions",
-     "summary": "Start, watch and resume Claude Code, Codex and terminal sessions.",
-     "hub": [], "worker": ["sessions", "session_mirror", "session_shim", "terminals", "work",
+     "summary": "Start, watch and resume Claude Code, Codex and terminal sessions; agents check in "
+                "with you in huddles.",
+     "hub": ["huddle"], "worker": ["sessions", "session_mirror", "session_shim", "terminals", "work",
                            "claude_history", "codex_history", "wake", "hermes"],
      "high_risk": ["Starts agent sessions and terminals (exec)"]},
     {"id": "knowledge", "default": False, "tiers": ("read", "write"), "title": "Knowledge & tasks",
@@ -92,7 +93,7 @@ PRESET_IDS = tuple(p["id"] for p in PRESETS)
 #: Hub plugins whose settings schema has an ``enabled`` switch, by module
 #: (kept literal so the dashboard need not import hub plugins; a test checks
 #: it against :func:`enabled_setting_keys`).
-HUB_ENABLED_SETTINGS = {"discord": "discord.enabled", "home": "home.enabled",
+HUB_ENABLED_SETTINGS = {"discord": "discord.enabled", "home": "home.enabled", "huddle": "huddle.enabled",
                         "jobs": "job.enabled", "knowledge": "knowledge.enabled",
                         "memory": "memory.enabled",
                         "tasks": "task.enabled", "telegram": "telegram.enabled"}

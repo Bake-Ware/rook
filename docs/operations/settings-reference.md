@@ -111,6 +111,17 @@ are set only in the environment or on the command line.
 | `core.worker.authz_mode` | Worker permission checks | band+worker | str | `audit` | `ROOK_AUTHZ_MODE` | restart |
 | `core.worker.authz_allow_unsigned_repoint` | Allow unsigned hub/PSK changes | band+worker | bool | off | `ROOK_AUTHZ_ALLOW_UNSIGNED_REPOINT` | restart |
 
+## Dashboard (look, start page, feeds) (hub plugin, runs in mcp)
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `ui.theme` | Theme | user | str | `rook-dark` | `ROOK_UI_THEME` | live |
+| `ui.startpage` | Start page layout | user | dict |  | `ROOK_UI_STARTPAGE` | live |
+| `ui.feeds_allow_private` | Let feeds reach private addresses | hub | bool | off | `ROOK_UI_FEEDS_ALLOW_PRIVATE` | live |
+| `ui.feed_max_kb` | Largest feed (KB) | hub | int | `512` | `ROOK_UI_FEED_MAX_KB` | live |
+| `ui.feed_timeout` | Feed time limit (seconds) | hub | float | `8.0` | `ROOK_UI_FEED_TIMEOUT` | live |
+| `ui.feed_cache_minutes` | Keep a fetched feed for (minutes) | hub | int | `15` | `ROOK_UI_FEED_CACHE_MINUTES` | live |
+
 ## Decide (decision model) (hub plugin, runs in mcp)
 
 | Key | Label | Scope | Type | Default | Env / flag | Apply |
@@ -204,6 +215,13 @@ are set only in the environment or on the command line.
 | Key | Label | Scope | Type | Default | Env / flag | Apply |
 |---|---|---|---|---|---|---|
 | `hub.motd` | Message of the day | hub | str |  | `ROOK_HUB_MOTD` | live |
+
+## Huddle (hub plugin, runs in mcp)
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `huddle.enabled` | Huddles | hub | bool | on | `ROOK_HUDDLE`, `ROOK_HUDDLE_ENABLED` | restart |
+| `huddle.wake_on_answer` | Wake the agent when you answer | hub | bool | off | `ROOK_HUDDLE_WAKE_ON_ANSWER` | live |
 
 ## Jobs (hub plugin, runs in mcp)
 

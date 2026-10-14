@@ -41,6 +41,58 @@ Preparation for public use.
   (read, sensitive) and `memory.remember/edit/consolidate/forget` (write);
   MCP tool `rook_memory` only with `memory.agent_tool` on.
 
+### Overview, start page and themes
+- The dashboard opens on a new **Overview** after sign-in: tiles for workers,
+  sessions, open tasks and unread chat; Waiting on you (sessions idle for
+  input, unread rooms, blocked tasks, hygiene decisions); Active now; open
+  tasks by project; recent knowledge changes. Rows link to the task, room
+  and session they relate to. Chat and Sessions accept `#chat?room=<id>` and
+  `#sessions?key=<key>` deep links. docs/web/overview.md.
+- A per-account **Start page** of widgets in 1 to 4 columns: bookmark groups,
+  RSS/Atom feeds, notes and band widgets (workers, tasks, rooms, knowledge,
+  sessions), arranged by dragging or arrow buttons. Feeds are fetched by the
+  hub: public addresses only unless `ui.feeds_allow_private` is on, a size
+  cap (`ui.feed_max_kb`), a time cap (`ui.feed_timeout`) and a shared cache
+  (`ui.feed_cache_minutes`). Link-local and metadata addresses and
+  non-canonical numeric hosts are always refused; compressed bodies are
+  inflated against the size cap; DOCTYPEs are refused. Hub plugins can add
+  widget kinds (`WIDGETS`). docs/web/start-page.md.
+- **Themes**: every dashboard colour is now a CSS token. Rook (the default,
+  unchanged), Paper (light), Graphite and High contrast, picked per account
+  under Settings > My preferences (`ui.theme`) and applied before the first
+  paint. Themes are `rook-theme/1` JSON files (rook/web/themes/, served at
+  `/account/ui/themes/<id>.json`) meant for the desktop app too.
+  docs/web/themes.md.
+- New hub plugin `ui` (Settings > Dashboard) behind `/ui/account-api`,
+  proxied as `/account/ui/api` (`ROOK_UI_ADMIN_URL` for a split hub).
+### Desktop app
+- A first desktop app (preview), in `desktop/`: a Tauri 2 tray app for
+  Windows, macOS and Linux. It shows the hub's dashboard in a window, opens a
+  quick-ask box for the home agent on a global hotkey (default
+  `Ctrl+Alt+Space`), shows notifications for new chat messages, and offers
+  push-to-talk (`Ctrl+Alt+V`) through the voice server's `/api/transcribe`.
+  Sign-in uses the hub's existing login (in the dashboard window, or user name
+  and password); nothing changes on the hub. Quick ask goes to a private chat
+  room with the home agent, or, with an agent token, to `home.ask` over MCP.
+  docs/desktop-app.md; why Tauri over Electron: desktop/README.md.
+- Wake word behind the `wake-word` build feature and an off-by-default
+  setting: openWakeWord's pipeline on tract (pure Rust), with the user's own
+  wake model (openWakeWord's ready-made ones are non-commercial). Design:
+  docs/design/desktop-voice.md.
+- Start and stop this computer's worker from the tray, and an "Install a hub
+  on this computer" wizard that runs `scripts/install-hub.sh` on Linux (and
+  explains Docker or WSL on macOS and Windows). It finds a hub the installer
+  already put here (its `rook-hub` service) and offers to connect or update.
+- The dashboard window stays on the hub (other links open in the browser),
+  and an ACL manifest limits each app page to the commands it uses. A wake
+  model that can't load is refused when saved, or switches the wake word off
+  with a notification, instead of crashing the app.
+- Notifications also read `GET /api/attention` (huddle questions, tasks that
+  need you) on hubs that serve it; the contract is in docs/desktop-app.md.
+- CI: `.github/workflows/desktop.yml` tests on Linux and builds unsigned
+  bundles on Linux, macOS and Windows (actions pinned by commit, cargo
+  `--locked`).
+
 ### Hub merge
 - One hub process: `rook hub serve` (console script `rook-hub`) runs the
   dashboard and the MCP server together on the dashboard port (7005): the MCP
@@ -478,6 +530,30 @@ Preparation for public use.
 - The Install page's pairing commands carry a short note: UAC and 2-5 minutes
   on Windows; a per-user service, possible sudo prompt and 1-3 minutes on
   Linux/macOS.
+
+### Work views and huddles
+- Work area: **Board** (kanban by status; drag a card or use its menu),
+  **List** (sortable, filterable table), **Timeline** (tasks with dates by
+  project, today line, dependency arrows) and a **project page** (progress,
+  open/blocked/overdue counts, recent activity, linked rooms and knowledge).
+  Moving a card is the same `update` an agent sends, so the saving rules,
+  claims and history apply; the dialogs collect the reason, handoff or
+  outcome they need. docs/web/work-views.md.
+- Tasks and projects take optional `attrs.start` / `attrs.due`
+  (`YYYY-MM-DD`); new read action `board` (knowledge/task caps) returns
+  projects and tasks flat, plus a project page's extras with `id=`.
+- **Huddles** (hub plugin `huddle`, on by default, in the *Agent sessions*
+  preset): a group chat room per project or band where agents post status
+  and ask the person questions with the new `rook_huddle` tool (caps
+  `huddle.read` / `huddle.write`). Questions stay pinned on Work > Huddle
+  until answered; the answer is posted to the asker. Optionally (setting
+  `wake_on_answer`, off by default) it also wakes the asker, only on the
+  machine it names (its own X-Rook-Host) and authorized as the asking agent. Huddles are
+  plain chat rooms for older clients; the structure lives in new tables in
+  `chat.db`. Status lines are "quiet" chat messages (new nullable column):
+  they do not raise `_unread_chat` for other agents.
+- `ChatStore.send` also returns the message `seq`; `ChatStore.join` adds
+  participants without posting. The Chat page opens `#chat?room=<id>`.
 
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps

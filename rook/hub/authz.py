@@ -256,7 +256,7 @@ _TOOL_CAPS = {
     "rook_install_claude_code": "hub.info",
     "rook_home_ask": "home.ask",
 }
-_READ_ACTIONS = frozenset({"search", "get", "list", "context", "status", "deck"})
+_READ_ACTIONS = frozenset({"search", "get", "list", "context", "status", "deck", "board"})
 
 
 def hub_cap_for_tool(name: str, arguments: Any) -> str | None:
@@ -278,6 +278,8 @@ def hub_cap_for_tool(name: str, arguments: Any) -> str | None:
     if name == "rook_memory":
         return {"add": "memory.remember", "forget": "memory.forget",
                 "status": "memory.status"}.get(action or "search", "memory.recall")
+    if name == "rook_huddle":
+        return "huddle.read" if (action or "read") in ("read", "list", "mine") else "huddle.write"
     if name == "rook_jobs":
         from .plugins.jobs.service import route
         return route(action or "list")
