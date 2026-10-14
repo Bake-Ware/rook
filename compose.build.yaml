@@ -1,0 +1,20 @@
+# Build the hub image from this checkout instead of pulling it:
+#
+#   docker compose -f compose.yaml -f compose.build.yaml up -d --build
+#
+# The relay is still the prebuilt telesthete release binary; add
+# RELAY_SOURCE: source below to compile it (minutes) instead.
+
+x-build: &build
+  image: rook-hub:local
+  build:
+    context: .
+    args:
+      TELESTHETE_RELAY_VERSION: ${TELESTHETE_RELAY_VERSION:-latest}
+      # RELAY_SOURCE: source
+
+services:
+  relay:
+    <<: *build
+  hub:
+    <<: *build

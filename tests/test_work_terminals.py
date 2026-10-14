@@ -119,7 +119,8 @@ async def test_pty_round_trip_resize_signal_and_close(plugin, tmp_path):
 @pytest.mark.asyncio
 async def test_long_poll_returns_promptly_and_times_out(plugin, tmp_path):
     tid = (await plugin.open(harness="shell", cwd=str(tmp_path)))["id"]
-    _, cur = await follow(plugin, tid, "$")
+    # Wait for the login shell's prompt: "#" for root (CI containers), else "$".
+    _, cur = await follow(plugin, tid, "#" if os.geteuid() == 0 else "$")
     t0 = time.monotonic()
     r = await plugin.read(tid, cur, wait=0.4)
     assert r["data"] == "" and 0.35 < time.monotonic() - t0 < 2
