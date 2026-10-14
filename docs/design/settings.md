@@ -116,6 +116,7 @@ is the dashboard's listen address). Differences:
 | `--hub` / `ROOK_HUB` | flag, env | unset | hub | relay `host:port` when `ROOK_HUB_HOST`/`ROOK_HUB_PORT` are unset (an MCP unit's environment carried over) | no | proc |
 | `--allowed-hosts` / `ROOK_ALLOWED_HOSTS` | flag, env | empty | hub | as 1.2, plus the dashboard's `--domain` host, since `/mcp` is served under it | no | proc |
 | `--psk` / `ROOK_BAND_PSK` | flag, env (comma list) | empty | band | seeds the enrollment DB (every key, as rook-mcp); the first key is the dashboard's setup key | **yes** | proc |
+| `--mcp-max-body` / `ROOK_MCP_MAX_BODY` | flag, env | `16777216` (16 MiB; `0` = no limit) | hub | ASGI bridge: larger request bodies to the MCP paths get 413 | no | proc |
 | `-v` | flag | info; MCP loggers at warning | hub | logging | no | proc |
 | `ROOK_*_ADMIN_URL`, `ROOK_MASK_URL` | env | `http://127.0.0.1:8765/...` | hub | still honoured; a loopback URL on port 8765 or `--mcp-bind`'s port is answered in memory (`rook/remote/upstream.py`), anything else over HTTP | no | proc |
 

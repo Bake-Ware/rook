@@ -1559,8 +1559,14 @@ class CombinedServer:
         primary = next((b for b in self._enrollment.bands(secrets_visible=True) if b["is_primary"]), None)
         current_key = (primary["psk"] if primary["active"] else "") if primary else s.get("band_psk")
         err = f'<p class="error" role="alert">{_html.escape(error)}</p>' if error else ""
-        from ..hub.plugin_profiles import setup_presets_html
-        return render("setup.html", error=err, csrf=self._setup_csrf, presets=setup_presets_html(),
+        from ..hub.plugin_profiles import setup_presets_html, stored_preset_states
+        try:
+            states = stored_preset_states(self._settings_store, primary["id"] if primary else None)
+        except Exception:
+            log.warning("Setup wizard: reading the stored plugin choices failed", exc_info=True)
+            states = None
+        return render("setup.html", error=err, csrf=self._setup_csrf,
+                      presets=setup_presets_html(states),
                       band_name=s.get("band_name") or self.band_name,
                       hub_public=s.get("hub_public") or "",
                       pyz_domain=s.get("pyz_domain") or "",

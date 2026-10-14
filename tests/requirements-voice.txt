@@ -1,0 +1,9 @@
+# What tests/test_voice_*.py import from the voice service's stack: the light
+# half of services/voice/requirements.txt. The model runtimes there
+# (faster-whisper, kokoro-onnx, onnxruntime) are not needed by any test.
+# CI installs this on top of rook[dev]; without it those tests skip.
+fastapi
+uvicorn
+numpy
+webrtcvad==2.0.10
+setuptools<81  # webrtcvad still imports pkg_resources

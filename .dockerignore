@@ -1,9 +1,13 @@
 *
 !pyproject.toml
 !README.md
+!LICENSE
+!NOTICE
 !rook/
 !skills/
 !docs/manual/
+!scripts/fetch-relay.py
+!integrations/claude-code/.claude-plugin/plugin.json
 rook/**/__pycache__
 rook/**/*.pyc
 rook/remote/band-worker*

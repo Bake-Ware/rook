@@ -186,12 +186,33 @@ def build_name(commit: str, dirty: bool = False) -> str:
     return f"{adjective}.{NOUNS[h[1] % len(NOUNS)]}"
 
 
+def release_stamp(root: Optional[Path] = None) -> Optional[tuple[int, str, str]]:
+    """(build, commit, version) from the ``rook/_release.py`` a release wheel
+    carries (tools/release_prep.py), or None when it isn't stamped."""
+    try:
+        import runpy
+        info = runpy.run_path(str((root or REPO_ROOT) / "rook" / "_release.py"))
+        build, commit = int(info.get("BUILD") or 0), str(info.get("COMMIT") or "")
+    except (OSError, ValueError, SyntaxError):
+        return None
+    if build <= 0 or not commit:
+        return None
+    return build, commit, f"{build}.{build_name(commit)}"
+
+
 def compute_build() -> tuple[int, str, str]:
     """Return (build, commit, version). ``build`` is git's commit count — a
     monotonic integer that the OTA self-update compares. ``version`` is the
-    human-facing "<build>.<adjective>.<noun>". Falls back to (0, "", "0.dev")
-    outside a git checkout, which disables auto-update for that bundle (0 is
-    never greater than a published build)."""
+    human-facing "<build>.<adjective>.<noun>". A pip-installed release (no
+    ``.git`` beside the package) uses the build its wheel was stamped with.
+    Otherwise falls back to (0, "", "0.dev") outside a git checkout, which
+    disables auto-update for that bundle (0 is never greater than a published
+    build)."""
+    if not (REPO_ROOT / ".git").exists():
+        stamped = release_stamp()
+        if stamped:
+            print(f"Build {stamped[0]} is \"{stamped[2]}\" (release commit {stamped[1]})")
+            return stamped
     try:
         build = int(_git("rev-list", "--count", "HEAD"))
         commit = _git("rev-parse", "--short", "HEAD")
