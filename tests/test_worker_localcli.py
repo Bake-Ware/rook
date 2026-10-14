@@ -361,3 +361,19 @@ def test_status_reports_the_running_workers_version(home, capsys, monkeypatch):
     code, out, _ = run(["status"], capsys)
     assert "den  v512.calm.otter  (running for 2 h)" in out
     assert "home via 192.0.2.10:7005 (WebSocket)" in out and "connected, last heard 3 s ago" in out
+
+
+def test_powershell_completion_completes(tmp_path, capsys):
+    pwsh = shutil.which("pwsh")
+    if not pwsh:
+        pytest.skip("pwsh is not installed")
+    run(["completion", "powershell"], capsys)
+    script = tmp_path / "comp.ps1"
+    script.write_text(localcli.completion_script("powershell"))
+    probe = (f". '{script}'; "
+             "foreach ($s in @('rook pl', 'rook plugins dis', 'rook plugins disable hi')) {"
+             " (TabExpansion2 -inputScript $s -cursorColumn $s.Length).CompletionMatches |"
+             " % CompletionText }")
+    res = subprocess.run([pwsh, "-NoProfile", "-Command", probe], capture_output=True,
+                         text=True, timeout=120)
+    assert res.stdout.split() == ["plugins", "disable", "hid"], (res.stdout, res.stderr)
