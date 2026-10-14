@@ -357,3 +357,19 @@ async def test_windows_python_install_refuses_a_tampered_download(scripts, tmp_p
     assert f"TargetDir=\"{tmp_path}" in args
     # The tampered file was deleted, unused.
     assert not list(tmp_path.glob("rook-python-*.exe"))
+
+
+def test_unified_and_relay_installers_need_an_openable_terminal(tmp_path):
+    """`[ -r /dev/tty ]` is true under cloud-init, where opening it fails and
+    `set -e` then killed the install at the first prompt."""
+    from rook.remote import bootstrap
+    for template in (bootstrap._INSTALL_SCRIPT, bootstrap._HUB_INSTALL_SCRIPT):
+        text = template.replace("__BASE__", "http://192.0.2.10:7005")
+        assert "-r /dev/tty" not in text
+        run = subprocess.run(["bash", "-n"], input=text, capture_output=True, text=True)
+        assert run.returncode == 0, run.stderr
+    line = next(ln for ln in bootstrap._INSTALL_SCRIPT.splitlines() if ln.startswith("has_tty()"))
+    probe = line + "\nif has_tty; then echo yes; else echo no; fi\n"
+    run = subprocess.run(["setsid", "bash", "-c", probe], stdin=subprocess.DEVNULL,
+                         capture_output=True, text=True)
+    assert run.stdout.strip() == "no" and run.stderr == ""

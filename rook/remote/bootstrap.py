@@ -857,9 +857,13 @@ BASE="${ROOK_BASE:-__BASE__}"
 DEST="${ROOK_BIN:-$HOME/.local/bin}"
 CONF="$HOME/.config/rook/band.conf"
 
+# A prompt needs a person at a terminal: /dev/tty must open (it exists but
+# can't be opened under cloud-init, systemd or CI) and ROOK_YES must be unset.
+has_tty() { [ -z "${ROOK_YES:-}" ] && { true </dev/tty; } 2>/dev/null; }
+
 TARGET="${1:-${ROOK_INSTALL:-}}"
 if [ -z "$TARGET" ]; then
-  if [ -r /dev/tty ]; then
+  if has_tty; then
     {
       echo "[rook] what do you want to install?"
       echo "  1) worker  — make this machine a band node (controlled remotely)"
@@ -878,7 +882,7 @@ case "$TARGET" in tui|controller|dashboard) TARGET=cli;; node|agent) TARGET=work
 install_worker() {
   echo "[rook] installing band worker…"
   local JOIN_CODE="${ROOK_JOIN_CODE:-__JOIN_CODE__}"
-  if [ -z "$JOIN_CODE" ] && [ -r /dev/tty ]; then
+  if [ -z "$JOIN_CODE" ] && has_tty; then
     printf '[rook] pairing code, or Enter to sign in with Google/local account: ' > /dev/tty
     read -r JOIN_CODE < /dev/tty
   fi
@@ -926,7 +930,7 @@ install_cli() {
   elif [ -n "${ROOK_WEB_PASS:-}" ]; then
     ( umask 077; printf '# rook band connection (chmod 600)\nurl=%s\nuser=%s\npass=%s\n' "$BASE" "${ROOK_WEB_USER:-__WEB_USER__}" "$ROOK_WEB_PASS" > "$CONF" )
     chmod 600 "$CONF"; echo "[rook] saved login (from ROOK_WEB_PASS)"
-  elif [ -r /dev/tty ]; then
+  elif has_tty; then
     WU="${ROOK_WEB_USER:-__WEB_USER__}"
     printf "[rook] dashboard password (user %s): " "$WU" > /dev/tty
     read -rs WP < /dev/tty || true; printf "\n" > /dev/tty
@@ -1138,7 +1142,8 @@ ask(){
   local __v="$1" __p="$2" __d="$3" __cur __in
   eval "__cur=\${$__v}"
   if [ -n "$__cur" ]; then return; fi
-  if [ -n "$ASSUME_YES" ] || [ ! -r /dev/tty ]; then eval "$__v=\$__d"; return; fi
+  # /dev/tty exists but can't be opened under cloud-init, systemd or CI.
+  if [ -n "$ASSUME_YES" ] || ! { true </dev/tty; } 2>/dev/null; then eval "$__v=\$__d"; return; fi
   printf "[hub] %s [%s]: " "$__p" "$__d" > /dev/tty
   read -r __in < /dev/tty || true
   [ -z "$__in" ] && __in="$__d"
