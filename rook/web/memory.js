@@ -69,7 +69,7 @@ export async function mountMemory(root){
       const r=h('div',{class:'mg-row pick'+(sel&&sel.id===m.id?' sel':''),tabindex:'0',role:'button','aria-label':m.text},
         h('span',{class:'mg-two'},h('b',{text:m.text,style:'white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical'}),
           h('small',{class:'mem-meta',text:[KIND_ONE[m.kind]||m.kind,'about '+who(m.about),ago(m.updated)].join(' · ')}),
-          h('small',{text:[SOURCES[m.source]||m.source,m.state&&m.state!=='active'?STATES.find(x=>x[0]===m.state)?.[1].toLowerCase():null,m.pinned?'kept':null].filter(Boolean).join(' · ')})),
+          h('small',{text:[SOURCES[m.source]||m.source,m.state&&m.state!=='active'?STATES.find(x=>x[0]===m.state)?.[1].toLowerCase():null,m.pinned?'kept':null,m.kind==='procedure'&&!m.approved&&!m.pinned?'needs your approval':null].filter(Boolean).join(' · ')})),
         h('span',{class:'mg-dimtext mem-c',text:KIND_ONE[m.kind]||m.kind}),
         h('span',{class:'mg-dimtext mem-c',text:who(m.about)}),
         h('span',{class:'mg-sub mem-c',text:ago(m.updated)}));
@@ -99,7 +99,11 @@ export async function mountMemory(root){
       :{action:'memory_edit',id:sel.id,text:text.value,kind:kind.value,about:about.value.trim(),pinned:pinned.checked},
       r=>r.verdict==='duplicate'?'It already remembered that; kept the existing memory.':isNew?'Remembered.':r.verdict==='updated'?'Saved.':'Saved as a new version; the old one is kept in its history.'));
     const forget=btn('Forget','danger',()=>act(forget,{action:'memory_forget',id:sel.id},()=>'Forgotten. It will not be used again.'));
-    const erase=btn('Forget and erase','danger',()=>{if(!confirm('Erase the text of this memory for good? Its history will only say that something was forgotten.'))return;act(erase,{action:'memory_forget',id:sel.id,purge:true},()=>'Forgotten and erased.');});
+    const erase=btn('Forget and erase','danger',()=>{if(!confirm('Erase this memory and every earlier version of it for good? Its history will only say that something was forgotten.'))return;act(erase,{action:'memory_forget',id:sel.id,purge:true},()=>'Forgotten and erased.');});
+    // Skills steer what the agent does with tools, so only approved ones reach a prompt.
+    const skill=!isNew&&sel.kind==='procedure'&&live;
+    const approve=skill?btn(sel.approved?'Withdraw approval':'Approve','soft',()=>act(approve,{action:'memory_approve',id:sel.id,approved:!sel.approved},
+      ()=>sel.approved?'Approval withdrawn: the agent no longer uses this skill.':'Approved: the agent may use this skill.')):null;
     const close=btn('×','icon',()=>{sel=null;drawList();drawPanel();},{'aria-label':'Close'});
     const facts=isNew?null:h('div',{class:'mg-pad',style:'padding-top:0'},
       h('div',{class:'mg-label',text:'Where it came from'}),
@@ -118,7 +122,8 @@ export async function mountMemory(root){
         h('label',{class:'mg-field'},'What it remembers',text,live?null:h('small',{class:'mg-sub',text:'Only memories in use can be changed.'})),
         h('div',{class:'mg-actions',style:'flex-wrap:wrap;gap:12px'},h('label',{class:'mg-field',style:'flex:1 1 150px'},'Kind',kind),h('label',{class:'mg-field',style:'flex:1 1 180px'},'About (a person, or "shared")',about)),
         h('label',{class:'mg-actions'},pinned,'Keep: never let it fade'),
-        live?h('div',{class:'mg-actions end'},err,isNew?null:erase,isNew?null:forget,save):h('div',{class:'mg-actions end'},err,sel.state!=='forgotten'||sel.text!=='[forgotten]'?erase:null)),
+        skill?h('p',{class:sel.approved||sel.pinned?'mg-sub':'mg-sub mg-warn',style:'white-space:normal',text:sel.approved||sel.pinned?'Approved: the agent reads this skill when it is relevant.':'Learned, not yet approved: the agent will not use this skill until you approve it.'}):null,
+        live?h('div',{class:'mg-actions end'},err,isNew?null:erase,isNew?null:forget,approve,save):h('div',{class:'mg-actions end'},err,sel.state!=='forgotten'||sel.text!=='[forgotten]'?erase:null)),
       facts);
   }
   function kv(k,v){return h('div',{class:'mg-log',style:'grid-template-columns:96px minmax(0,1fr)'},h('span',{class:'mg-sub',text:k}),h('span',{text:v,style:'white-space:normal;overflow-wrap:anywhere'}));}
