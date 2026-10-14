@@ -33,7 +33,7 @@ from .plugin_catalog import NOT_IMPLEMENTED, CatalogCache
 
 log = logging.getLogger("rook.hub.plugin_admin")
 
-LIST_TTL = 15.0
+LIST_TTL = 45.0   # longer than the page's 20 s poll: most polls hit the cache
 LIST_TIMEOUT = 8.0
 TOGGLE_TIMEOUT = 25.0
 _TIER_CODE = {"r": "read", "w": "write", "x": "exec", "a": "admin"}
@@ -415,11 +415,37 @@ class PluginAdmin:
                 "synced": synced, "generated_at": time.time()}
 
     # -- presets -------------------------------------------------------------
-    def presets(self, band_id: str | None, hub_state: dict | None = None) -> list[dict]:
-        index = plugin_index()
+    def _enabled_choices(self) -> dict[str, bool]:
+        """Hub module -> its ``enabled`` setting, where an operator set one
+        (stored or in the environment): a choice, unlike loaded state."""
+        svc = self._svc
+        out: dict[str, bool] = {}
+        for module, key in pp.HUB_ENABLED_SETTINGS.items():
+            try:
+                if svc is not None:
+                    r = svc.resolve(key)
+                    if r.get("source") != "default" and isinstance(r.get("value"), bool):
+                        out[module] = r["value"]
+                    continue
+                row = self._store.get(key, "hub", "") if self._store is not None else None
+                if row and isinstance(row.get("value"), bool):
+                    out[module] = row["value"]
+            except Exception:
+                continue
+        return out
+
+    def preset_states(self, band_id: str | None, hub_state: dict | None = None) -> dict:
         hub_state = pp.hub_state(self._store) if hub_state is None else hub_state
         defaults = pp.worker_defaults(band_id, self._store) if band_id else {}
-        host = self.node.host
+        return pp.preset_states(hub_state, defaults, self._enabled_choices())
+
+    def presets(self, band_id: str | None, hub_state: dict | None = None) -> list[dict]:
+        """Each preset with its risk and its box: ``selected`` from the stored
+        choices (``state`` on/off; ``default`` when nothing is stored or the
+        plugins were switched one by one), never from what is loaded."""
+        index = plugin_index()
+        states = self.preset_states(band_id, hub_state)
+        shown = pp.preset_selected(states)
         out = []
         for p in pp.PRESETS:
             tiers: set[str] = set()
@@ -430,17 +456,18 @@ class PluginAdmin:
                         tiers |= {c["risk"] for c in info["caps"]}
                     else:
                         tiers |= set(pp.ANDROID_RISK.get(m, ()))
-            hub_on = all(hub_state.get(m, host.loaded(m) is not None) for m in p["hub"])
-            worker_on = all(defaults.get(m, True) for m in p["worker"] if m not in pp.KEEP_ON)
-            out.append({**p, "risk": _risk(tiers), "selected": bool(hub_on and worker_on)})
+            st = states[p["id"]]
+            out.append({**p, "risk": _risk(tiers), "selected": shown[p["id"]],
+                        "state": "default" if st is None else ("on" if st else "off")})
         return out
 
     async def apply_presets(self, selected: list[str], band: str | None, actor: str) -> dict:
-        """Choose exactly ``selected``: switch the hub's preset plugins now
-        (persisted) and store the band's defaults for new workers."""
+        """Tick exactly ``selected``: for each preset whose box changed, switch
+        its hub plugins now (persisted) and store the band's defaults for new
+        workers. Presets left as they were change nothing."""
         selected = [pp.preset(s)["id"] for s in dict.fromkeys(selected or ())]
-        hub, worker = pp.preset_changes(selected)
         band_id = self.resolve_band(band)
+        hub, worker = pp.preset_changes(selected, self.preset_states(band_id))
         results = []
         stored = pp.hub_state(self._store)
         for module, on in sorted(hub.items()):

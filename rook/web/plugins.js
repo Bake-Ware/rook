@@ -120,7 +120,8 @@ export function presetPicker(opts={}){
     for(const p of data.presets){
       const cb=h('input',{type:'checkbox',checked:p.selected,'aria-label':p.title});
       const item=h('label',{class:'pp-item'+(p.selected?' on':'')},cb,h('b',{text:p.title}),
-        h('small',{text:p.summary}),riskTags(p.risk||{tiers:p.tiers},p.high_risk));
+        h('small',{text:p.summary}),riskTags(p.risk||{tiers:p.tiers},p.high_risk),
+        p.state==='default'?h('small',{text:'Not chosen yet: shows what Rook does by default. Saving leaves it as is unless you change the box.'}):null);
       cb.onchange=()=>item.classList.toggle('on',cb.checked);
       boxes.push([p.id,cb]);list.append(item);
     }
@@ -139,7 +140,7 @@ export function presetPicker(opts={}){
     });
     const bar=h('div',{class:'mg-actions'},(data.bands||[]).length>1?band:null,apply,opts.skip||null);
     node.replaceChildren(...[opts.intro?h('p',{class:'mg-sub',text:opts.intro}):null,list,
-      h('p',{class:'mg-sub',text:'Unchecked groups are turned off on new workers (and their hub plugins on the hub). Red tags mark plugins that can run code, control input or capture the screen.'}),bar,status].filter(Boolean));
+      h('p',{class:'mg-sub',text:'Only the groups you change are saved: ticking one turns its plugins on, unticking one turns them off on new workers (and on the hub). Red tags mark plugins that can run code, control input or capture the screen.'}),bar,status].filter(Boolean));
   }
   refresh();
   return {node,refresh};
@@ -369,7 +370,7 @@ export async function mountPlugins(root){
     async activate(){
       try{await load(false);await render();}
       catch(e){page.replaceChildren(h('h1',{text:'Plugins'}),h('p',{class:'mg-error',text:e.message}));}
-      clearInterval(timer);timer=setInterval(tick,15000);
+      clearInterval(timer);timer=setInterval(tick,20000);
     },
     deactivate(){clearInterval(timer);timer=null;},
   };

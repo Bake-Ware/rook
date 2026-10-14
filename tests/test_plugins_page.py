@@ -45,15 +45,27 @@ async def test_apply_presets_switches_the_hub_and_stores_band_defaults(tmp_path,
     node = make_node(tmp_path, enrollment=enroll)
     await node.start()
     admin = PluginAdmin(node)
-    r = await admin.apply_presets(["remote", "knowledge"], None, "human:op")
-    assert r["band"] == band["id"]                   # the primary band by default
+    shown = {p["id"]: p for p in admin.presets(band["id"])}
+    # Nothing chosen yet: the boxes show the built-in behaviour, whatever is loaded.
+    assert all(p["state"] == "default" for p in shown.values())
+    assert shown["home"]["selected"] and shown["alerts"]["selected"]
+    assert not shown["knowledge"]["selected"]
+    # Saving them unchanged changes nothing.
+    r = await admin.apply_presets([k for k, p in shown.items() if p["selected"]], None, "human:op")
+    assert r["band"] == band["id"] and r["hub"] == [] and r["worker_defaults"] == {}
+    assert pp.hub_state(node.settings_store) == {}
+    assert node.host.loaded("notify") is not None and node.host.loaded("home") is not None
+    # Tick Knowledge, untick Hardware.
+    pick = [k for k, p in shown.items() if p["selected"] and k != "hardware"] + ["knowledge"]
+    r = await admin.apply_presets(pick, None, "human:op")
     assert node.host.loaded("knowledge") is not None
     assert {x["module"] for x in r["hub"]} >= {"knowledge"}
     defaults = pp.worker_defaults(band["id"], node.settings_store)
-    assert defaults["shell"] is True and defaults["hid"] is False and defaults["memory"] is True
+    assert defaults["hid"] is False and defaults["memory"] is True and "shell" not in defaults
     assert pp.band_profile(band["id"], node.settings_store)["disable"].count("hid") == 1
-    presets = {p["id"]: p["selected"] for p in admin.presets(band["id"])}
-    assert presets["remote"] and presets["knowledge"] and not presets["hardware"]
+    presets = {p["id"]: p for p in admin.presets(band["id"])}
+    assert presets["knowledge"]["state"] == "on" and presets["hardware"]["state"] == "off"
+    assert presets["remote"]["state"] == "default" and presets["remote"]["selected"]
     assert node.journal.rows[-1]["cap"] == "plugin.presets.apply"
     assert node.journal.rows[-1]["identity"] == "human:op"
     # One default by hand, then back to built-in.
@@ -61,8 +73,9 @@ async def test_apply_presets_switches_the_hub_and_stores_band_defaults(tmp_path,
     assert pp.worker_defaults(band["id"], node.settings_store)["hid"] is True
     admin.set_default(band["id"], "hid", None, "human:op")
     assert "hid" not in pp.worker_defaults(band["id"], node.settings_store)
-    with pytest.raises(ValueError):
-        admin.set_default(band["id"], "selfupdate", False, "human:op")
+    for core in ("selfupdate", "info"):
+        with pytest.raises(ValueError):
+            admin.set_default(band["id"], core, False, "human:op")
     await node.stop()
 
 
@@ -222,3 +235,77 @@ def test_a_dashboard_login_carries_over_to_the_plugins_api():
     # The Plugins page and the onboarding presets open with a GET on it.
     from rook.remote.bootstrap import CombinedServer
     assert "/account/plugins/api" in CombinedServer._BRIDGE_PATHS
+
+
+@pytest.mark.asyncio
+async def test_band_wide_switches_get_the_long_timeout_in_process_too(monkeypatch):
+    """`rook hub serve` answers /account/plugins/api in process (asgi_bridge):
+    the proxy's 60 s budget reaches that path, not a shorter default."""
+    import asyncio
+    from aiohttp import web
+    from aiohttp.test_utils import TestClient, TestServer
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+    from rook.remote import upstream
+    from rook.remote.knowledge_web import PluginsWeb
+    assert PluginsWeb.TIMEOUT == 60
+    seen = []
+    real = upstream.request_json
+
+    async def spy(method, url, **kw):
+        seen.append(kw["timeout"])
+        return await real(method, url, **kw)
+    monkeypatch.setattr(upstream, "request_json", spy)
+
+    async def slow(request):
+        await asyncio.sleep(0.3)
+        return JSONResponse({"ok": True})
+    inner = Starlette(routes=[Route("/plugins/account-api", slow, methods=["GET", "POST"])])
+    unregister = upstream.register_local(["http://127.0.0.1:8765"], inner)
+    try:
+        user = {"id": "u", "admin": True, "csrf": "k"}
+        pw = PluginsWeb(SimpleNamespace(require=lambda r: user, csrf=lambda r, d, u: None))
+        pw.url = "http://127.0.0.1:8765/plugins/account-api"
+        app = web.Application()
+        pw.install(app)
+        async with TestClient(TestServer(app)) as client:
+            r = await client.get("/account/plugins/api")
+            assert r.status == 200 and (await r.json()) == {"ok": True}
+            monkeypatch.setattr(PluginsWeb, "TIMEOUT", 0.05)
+            assert (await client.get("/account/plugins/api")).status == 503
+        assert seen == [60, 0.05]
+    finally:
+        unregister()
+
+
+@pytest.mark.asyncio
+async def test_marketplace_refresh_is_for_admins_and_rate_limited(tmp_path, monkeypatch):
+    from rook.hub.authz import current_principal, principal_for_user
+    band_env(tmp_path, monkeypatch)
+    node = make_node(tmp_path)
+    await node.start()
+    calls = []
+    from rook.hub.plugin_admin import admin_for
+    admin = admin_for(node)
+    monkeypatch.setattr(admin, "catalog_urls", lambda: ["https://example.com/c.json"])
+    admin.catalogs._fetch = lambda url: (calls.append(url), {"name": "c", "source": url,
+                                                             "example": False, "plugins": [],
+                                                             "errors": []})[1]
+    assert (await node.dispatch("plugin.marketplace.list", {}))["ok"] and len(calls) == 1
+    # A read-only caller asking for a refresh gets the cached copy.
+    assert (await node.dispatch("plugin.marketplace.list", {"refresh": True}))["ok"]
+    assert len(calls) == 1
+    tok = current_principal.set(principal_for_user(None, True))
+    try:
+        await node.dispatch("plugin.marketplace.list", {"refresh": True})
+        assert len(calls) == 2
+        await node.dispatch("plugin.marketplace.list", {"refresh": True})   # within a minute
+        assert len(calls) == 2
+    finally:
+        current_principal.reset(tok)
+    await node.stop()
+
+
+def test_worker_info_is_core_on_the_page():
+    assert "info" in pp.PROTECTED_WORKER and "info" in pp.PROTECTED_HUB
+    assert pp.normalize_profile({"disable": ["info"]}) is None

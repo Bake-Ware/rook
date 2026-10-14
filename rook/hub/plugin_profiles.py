@@ -40,16 +40,17 @@ CATALOGS_KEY = "core.plugins.catalogs"
 
 #: Worker modules nobody switches off remotely: they carry worker.restart,
 #: config pushes and enrollment, the ways back in (the Settings worker page's
-#: rule, plus enrollment).
-PROTECTED_WORKER = frozenset({"selfupdate", "config", "enrollment"})
+#: rule, plus enrollment), and ``info`` (cheap, read-only, the dashboard reads it).
+PROTECTED_WORKER = frozenset({"selfupdate", "config", "enrollment", "info"})
 #: Hub modules that stay on: settings carries the switches to turn things back
 #: on, policy the permission rules, info what agents read first (hub.info).
 PROTECTED_HUB = frozenset({"settings", "policy", "info"})
-#: Listed in a preset for what it shows, but never turned off by leaving that
-#: preset out: worker ``info`` (cheap, read-only, the dashboard reads it) and
+#: Listed in a preset (turned on with it), but never turned off by unticking
+#: that preset: worker ``info`` (cheap, read-only, the dashboard reads it),
 #: hub ``notify`` (the watchdog and plugins call notify.send and fall back
-#: when it reports no channel, not when the cap is missing).
-KEEP_ON = frozenset({"info", "notify"})
+#: when it reports no channel, not when the cap is missing) and hub ``tasks``
+#: (on by default; it needs knowledge anyway, so it idles without it).
+KEEP_ON = frozenset({"info", "notify", "tasks"})
 
 #: "What do you want Rook to do?" Module names are real plugin modules: the
 #: stock worker plugins (rook/worker/plugins), the hub plugins
@@ -242,26 +243,61 @@ def preset(pid: str) -> dict:
     raise ValueError(f"unknown preset {pid!r}; use one of {', '.join(PRESET_IDS)}")
 
 
-def preset_changes(selected: Iterable[str]) -> tuple[dict[str, bool], dict[str, bool]]:
-    """``(hub, worker)`` ``{module: bool}`` for choosing exactly ``selected``:
-    every module of a chosen preset on; the modules of the others off, unless a
-    chosen one also lists it (or it is in :data:`KEEP_ON`)."""
-    chosen = [preset(p) for p in dict.fromkeys(selected or ())]
-    on_hub = {m for p in chosen for m in p["hub"]}
-    on_worker = {m for p in chosen for m in p["worker"]}
+def _switchable(p: dict, side: str) -> list[str]:
+    """A preset's modules that unticking it switches off."""
+    protected = PROTECTED_HUB if side == "hub" else PROTECTED_WORKER
+    return [m for m in p[side] if m not in KEEP_ON and m not in protected]
+
+
+def preset_states(hub: dict[str, bool] | None = None, worker: dict[str, bool] | None = None,
+                  enabled: dict[str, bool] | None = None) -> dict[str, bool | None]:
+    """What the operator has chosen for each preset, from stored choices only
+    (never from what happens to be loaded): ``True`` when every stored value
+    for its switchable modules is on, ``False`` when every one is off,
+    ``None`` when nothing is stored (built-in behaviour) or the values are
+    mixed (switched one by one). ``hub``: :func:`hub_state`; ``worker``: a
+    band's :func:`worker_defaults`; ``enabled``: hub module -> its effective
+    ``enabled`` setting, where one was set (a stored choice too)."""
+    hub, worker, enabled = hub or {}, worker or {}, enabled or {}
+    out: dict[str, bool | None] = {}
+    for p in PRESETS:
+        vals = [worker[m] for m in _switchable(p, "worker") if m in worker]
+        for m in _switchable(p, "hub"):
+            if m in hub:
+                vals.append(hub[m])
+            elif m in enabled:
+                vals.append(enabled[m])
+        out[p["id"]] = (True if vals and all(vals) else
+                        False if vals and not any(vals) else None)
+    return out
+
+
+def preset_selected(states: dict[str, bool | None]) -> dict[str, bool]:
+    """Checkbox state per preset: the stored choice, else its built-in default."""
+    return {p["id"]: (p["default"] if states.get(p["id"]) is None else bool(states[p["id"]]))
+            for p in PRESETS}
+
+
+def preset_changes(selected: Iterable[str], states: dict[str, bool | None] | None = None
+                   ) -> tuple[dict[str, bool], dict[str, bool]]:
+    """``(hub, worker)`` ``{module: bool}`` for ticking exactly ``selected``,
+    given the current ``states`` (:func:`preset_states`; none = nothing
+    stored). Only a preset whose box changed from what it shows
+    (:func:`preset_selected`) writes anything: ticked, its modules on;
+    unticked, its switchable modules off (never :data:`KEEP_ON`). A preset
+    left as it was writes nothing, so saving the default selection changes
+    no default. A module turned on by one changed preset stays on."""
+    chosen = {preset(p)["id"] for p in dict.fromkeys(selected or ())}
+    shown = preset_selected(states or {})
     hub: dict[str, bool] = {}
     worker: dict[str, bool] = {}
     for p in PRESETS:
-        for m in p["hub"]:
-            if m in on_hub:
-                hub[m] = True
-            elif m not in KEEP_ON and m not in PROTECTED_HUB:
-                hub.setdefault(m, False)
-        for m in p["worker"]:
-            if m in on_worker:
-                worker[m] = True
-            elif m not in KEEP_ON and m not in PROTECTED_WORKER:
-                worker.setdefault(m, False)
+        want = p["id"] in chosen
+        if want == shown[p["id"]]:
+            continue
+        for side, out in (("hub", hub), ("worker", worker)):
+            for m in (p[side] if want else _switchable(p, side)):
+                out[m] = out.get(m, False) or want
     return hub, worker
 
 
@@ -270,17 +306,25 @@ def apply_presets_to_store(store: Any, selected: Iterable[str], band_id: str | N
                            source: str = "presets") -> dict:
     """Store a preset choice: the hub's set, the ``enabled`` setting of chosen
     hub plugins that have one (``hub_enabled_settings``: module -> setting
-    key), and ``band_id``'s defaults for new workers. Does not touch a running
+    key), and ``band_id``'s defaults for new workers. Only presets whose box
+    changed write anything (:func:`preset_changes`). Does not touch a running
     hub (the hub node applies stored changes on its next sync; see
     :meth:`rook.hub.node.HubNode.sync_plugin_state`). Used where the hub node
     is not at hand (the dashboard's /setup wizard)."""
     store = _store(store)
     selected = list(dict.fromkeys(selected or ()))
-    hub, worker = preset_changes(selected)
+    keys = HUB_ENABLED_SETTINGS if hub_enabled_settings is None else hub_enabled_settings
+    enabled = {}
+    for module, key in keys.items():
+        row = store.get(key, "hub", "")
+        if row and isinstance(row.get("value"), bool):
+            enabled[module] = row["value"]
+    states = preset_states(hub_state(store), worker_defaults(band_id, store) if band_id else {},
+                           enabled)
+    hub, worker = preset_changes(selected, states)
     note = "preset: " + (", ".join(selected) or "none")
     set_hub_state(store, hub, actor=actor, note=note, source=source)
-    for module, key in (HUB_ENABLED_SETTINGS if hub_enabled_settings is None
-                        else hub_enabled_settings).items():
+    for module, key in keys.items():
         if hub.get(module):
             row = store.get(key, "hub", "")
             if not row or row.get("value") is not True:
@@ -321,7 +365,8 @@ def setup_presets_html() -> str:
     rows = ['<fieldset class="presets"><legend>What do you want Rook to do?</legend>',
             '<input type="hidden" name="presets_shown" value="1">',
             '<small>Applies to the hub and to workers you add later; change it any time on '
-            'Manage &gt; Plugins. Unchecked groups stay off on new workers.</small>']
+            'Manage &gt; Plugins. The ticks show what Rook does by default: only the groups '
+            'you change are saved (unticked ones stay off on new workers).</small>']
     for p in PRESETS:
         risk = ", ".join(p["tiers"])
         high = "".join(f'<span class="risk-high">{escape(h)}</span>' for h in p["high_risk"])

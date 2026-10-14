@@ -33,16 +33,19 @@ async def test_setup_wizard_stores_the_preset_choice(tmp_path, monkeypatch):
         page = await (await client.get("/setup")).text()
         assert "What do you want Rook to do?" in page and 'name="preset" value="hardware"' in page
         assert "Keyboard and mouse control (hid)" in page
+        assert 'value="remote" checked' in page and 'value="knowledge">' in page
         form = {"csrf": server._setup_csrf, "band_name": "home", "hub_public": "hub.example.com:443",
                 "pyz_domain": "hub.example.com", "band_psk": "piano-haste-nugget-drift-mangle",
                 "presets_shown": "1"}
-        body = list(form.items()) + [("preset", "remote"), ("preset", "knowledge")]
+        # The default ticks, with Knowledge ticked and Hardware unticked.
+        picks = [p["id"] for p in pp.PRESETS if p["default"] and p["id"] != "hardware"]
+        body = list(form.items()) + [("preset", p) for p in picks + ["knowledge"]]
         r = await client.post("/setup", data=body, allow_redirects=False)
         assert r.status == 302
     store = SettingsStore()
     band = server._enrollment.bands()[0]
     defaults = pp.worker_defaults(band["id"], store)
-    assert defaults["shell"] is True and defaults["hid"] is False
+    assert defaults["hid"] is False and defaults["memory"] is True and "shell" not in defaults
     assert pp.hub_state(store)["knowledge"] is True and store.get("knowledge.enabled", "hub", "")["value"]
     assert store.history(key=pp.WORKER_DEFAULTS_KEY)[0]["actor"] == "human:setup"
 

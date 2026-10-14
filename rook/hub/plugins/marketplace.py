@@ -29,9 +29,29 @@ class Marketplace(Plugin):
     def __init__(self) -> None:
         super().__init__()
         self._node: Any = None
+        self._last_refresh = float("-inf")
 
     def bind_host(self, node: Any) -> None:
         self._node = node
+
+    #: Seconds between forced catalog refetches (outbound fetches).
+    REFRESH_EVERY = 60.0
+
+    def _may_refresh(self, refresh: bool) -> bool:
+        """``refresh`` fetches every catalog URL again: honoured only for band
+        owners and operator tokens, at most once a minute. Anyone else (this
+        cap is read-only) gets the cached copy."""
+        if not refresh:
+            return False
+        from ..authz import require_hub_admin
+        if require_hub_admin("plugin.marketplace.list refresh"):
+            return False
+        import time
+        now = time.monotonic()
+        if now - self._last_refresh < self.REFRESH_EVERY:
+            return False
+        self._last_refresh = now
+        return True
 
     def _admin(self):
         if self._node is None:
@@ -46,8 +66,10 @@ class Marketplace(Plugin):
         caps, placement, package and whether this core can run it.
 
         Catalog URLs come from the hub setting ``core.plugins.catalogs``; with
-        none set, a bundled example catalog (fictional entries) is listed."""
-        data = await self._admin().catalog(refresh=bool(refresh))
+        none set, a bundled example catalog (fictional entries) is listed.
+        ``refresh`` refetches the catalogs: band owners and operator tokens
+        only, at most once a minute; otherwise the (5 min) cached copy."""
+        data = await self._admin().catalog(refresh=self._may_refresh(bool(refresh)))
         out = []
         for cat in data["catalogs"]:
             for e in cat["plugins"]:

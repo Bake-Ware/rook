@@ -76,28 +76,69 @@ async def test_stored_switches_from_another_process_are_synced(tmp_path, monkeyp
     node = make_node(tmp_path)
     await node.start()
     # What the dashboard's /setup wizard writes, without the hub node at hand.
-    pp.apply_presets_to_store(node.settings_store, ["knowledge", "remote"], band["id"],
-                              actor="human:setup")
+    defaults = {p["id"] for p in pp.PRESETS if p["default"]}
+    pp.apply_presets_to_store(node.settings_store, (defaults - {"home"}) | {"knowledge"},
+                              band["id"], actor="human:setup")
     assert node.host.loaded("knowledge") is None
     done = await node.sync_plugin_state()
     assert {d["module"] for d in done} >= {"knowledge"} and all(d["ok"] for d in done)
     assert node.host.loaded("knowledge") is not None
-    assert node.host.loaded("home") is None            # its preset was left out
+    assert node.host.loaded("home") is None            # its box was unticked
     assert await node.sync_plugin_state() == []      # nothing new
     await node.stop()
 
 
-def test_preset_changes_choose_exactly_the_selection():
-    hub, worker = pp.preset_changes(["remote"])
-    assert worker["shell"] and worker["file_ops"] and worker["proc"]
-    assert worker["hid"] is False and worker["sessions"] is False and worker["memory"] is False
-    assert "info" in worker and worker["info"] is True        # listed, kept on
-    assert hub["knowledge"] is False and "notify" not in hub   # notify is never switched off
+def test_the_default_selection_changes_nothing():
+    defaults = [p["id"] for p in pp.PRESETS if p["default"]]
+    assert pp.preset_changes(defaults) == ({}, {})            # nothing stored yet
+    assert pp.preset_changes(defaults, {pid: None for pid in pp.PRESET_IDS}) == ({}, {})
+    # Stored choices are what the boxes show; saving them as shown is a no-op.
+    states = {"remote": True, "agents": False, "knowledge": True, "home": None,
+              "alerts": None, "hardware": False}
+    shown = pp.preset_selected(states)
+    assert pp.preset_changes([k for k, v in shown.items() if v], states) == ({}, {})
+
+
+def test_preset_changes_only_write_the_boxes_that_changed():
+    defaults = {p["id"] for p in pp.PRESETS if p["default"]}
+    # Untick Hardware, tick Knowledge; leave the rest as shown.
+    hub, worker = pp.preset_changes((defaults - {"hardware"}) | {"knowledge"})
+    assert worker == {"hid": False, "hid_a11y": False, "cec": False, "pikvm": False,
+                      "dongle": False, "camera": False, "screenshot": False, "screen": False,
+                      "memory": True}
+    assert hub == {"knowledge": True, "tasks": True}
+    # Unticking Knowledge & tasks never turns tasks off (KEEP_ON), nor info / notify.
+    hub, worker = pp.preset_changes(defaults - {"remote", "alerts"},
+                                    {"knowledge": True})
+    assert hub == {"knowledge": False, "telegram": False, "discord": False}
+    assert "tasks" not in hub and "notify" not in hub and "info" not in worker
+    assert worker["shell"] is False and "persona" not in worker and "speak_android" not in worker
     assert not (set(worker) & pp.PROTECTED_WORKER)
-    hub, worker = pp.preset_changes(pp.PRESET_IDS)
-    assert all(worker.values()) and all(hub.values())
     with pytest.raises(ValueError):
         pp.preset_changes(["nope"])
+
+
+def test_preset_states_come_from_stored_choices():
+    st = pp.preset_states({"knowledge": True}, {"shell": True, "file_ops": True, "proc": True,
+                                               "hid": False, "sessions": True, "work": False})
+    assert st["remote"] is True and st["knowledge"] is True
+    assert st["agents"] is None             # mixed: switched one by one
+    assert st["hardware"] is False and st["home"] is None
+    assert pp.preset_states({}, {}, {"knowledge": True})["knowledge"] is True
     prof = pp.profile_from_defaults({"shell": True, "hid": False, "selfupdate": False, "x": 1})
     assert prof == {"enable": ["shell"], "disable": ["hid"]}
     assert pp.normalize_profile({"enable": ["a;rm"], "disable": []}) is None
+
+
+def test_setup_wizard_default_ticks_store_nothing(tmp_path, monkeypatch):
+    from rook.hub.settings_store import SettingsStore
+    enroll, band = band_env(tmp_path, monkeypatch)
+    store = SettingsStore(tmp_path / "s.db")
+    defaults = [p["id"] for p in pp.PRESETS if p["default"]]
+    r = pp.apply_presets_to_store(store, defaults, band["id"], actor="human:setup")
+    assert r["hub"] == {} and r["worker_defaults"] == {} and store.history() == []
+    # A hub whose knowledge was already turned on in Settings shows it ticked:
+    # keeping the box ticked changes nothing either.
+    store.set("knowledge.enabled", "hub", "", value=True, actor="human:op")
+    r = pp.apply_presets_to_store(store, defaults + ["knowledge"], band["id"], actor="human:setup")
+    assert r["hub"] == {} and r["worker_defaults"] == {}

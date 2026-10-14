@@ -91,7 +91,9 @@ whose three entries are fictional and labelled as examples. Catalogs are
 fetched by the MCP process over HTTPS only, cached for five minutes.
 
 Agents read the same list with `plugin.marketplace.list` on worker `rook`
-(read); `plugin.marketplace.install` (admin, destructive) is the stub.
+(read; its `refresh` refetches only for band owners and operator tokens, at
+most once a minute, so a read-only caller cannot make the hub fetch);
+`plugin.marketplace.install` (admin, destructive) is the stub.
 
 ## 3. Installing (not implemented): the plan
 
