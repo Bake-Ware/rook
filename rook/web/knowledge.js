@@ -189,8 +189,8 @@ export async function mountKnowledge(root){
 // carries the view and its filters: #work?v=board&project=<id>&label=…
 const WORK_TABS=[['','Overview'],['board','Board'],['list','List'],['timeline','Timeline'],['huddle','Huddle']];
 export async function mountTasks(root){
-  loadCss();const c=client();const V=new URL(import.meta.url).search;
-  const wv=await import('/account/knowledge/assets/workviews.js'+V);wv.loadCss();
+  loadCss();const c=client();const search=new URL(import.meta.url).search;
+  const wv=await import('/account/knowledge/assets/workviews.js'+search);wv.loadCss();
   root.replaceChildren();
   const bar=el('div',undefined,'wv-bar');const tabs=el('nav',undefined,'wv-tabs');tabs.setAttribute('aria-label','Work views');
   const msg=el('span','','wv-msg');msg.setAttribute('role','status');bar.append(tabs,el('span',undefined,'wv-grow'),msg);
@@ -216,7 +216,7 @@ export async function mountTasks(root){
     b.append(el('small',ago(t.updated)+(t.creator?' · by '+t.creator:''),'kn-dim'));return b;}
   function section(title,items,band){if(!items.length)return null;const s=el('div',undefined,'kn-section');s.append(el('h3',title+' ('+items.length+')'));for(const t of items)s.append(taskCard(t,t._band||band));return s;}
   async function load(){const v=++version;const d=await c.api('deck');let cs=[];try{cs=await c.listAll('concept');}catch{}if(v!==version)return;deck=d.deck;concepts=cs;drawSide();loadPins();}
-  async function huddleModule(){return huddle||(huddle=await import('/account/huddle/assets/huddle.js'+V));}
+  async function huddleModule(){return huddle||(huddle=await import('/account/huddle/assets/huddle.js'+search));}
   async function loadPins(){try{const n=await (await huddleModule()).openQuestions();if(n!==pins){pins=n;const p=hashParams('work');drawTabs(currentTab(p));}}catch{}}
   function drawSide(){side.replaceChildren();const row=el('div',undefined,'kn-row');row.append(btn('All work',()=>go({}),'kn-linkish'),btn('New',()=>create(),'kn-primary'));side.append(row);
     const byConcept={};for(const p of deck){const k=p.project.parent||'';(byConcept[k]=byConcept[k]||[]).push(p);}

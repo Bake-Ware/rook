@@ -4,16 +4,16 @@
 // and the conversation. Talks to /account/huddle/api (operator session +
 // CSRF). Stored text is only ever rendered as text.
 
-const V=new URL(import.meta.url).search;
-const {h,el,ago}=await import('/account/bands/assets/manage.js'+V);
-const {avatar,who}=await import('/account/knowledge/assets/workviews.js'+V);
+const search=new URL(import.meta.url).search;
+const {h,el,ago}=await import('/account/bands/assets/manage.js'+search);
+const {avatar,who}=await import('/account/knowledge/assets/workviews.js'+search);
 
 const API='/account/huddle/api';
 const YOU='user:operator';
 const STATE={working:'Working',blocked:'Blocked',needs_decision:'Needs you',idle:'Idle',done:'Done'};
 const QUIET=2*3600;
 
-function loadCss(){if(document.querySelector('link[data-hd]'))return;const l=document.createElement('link');l.rel='stylesheet';l.href='/account/huddle/assets/huddle.css'+V;l.dataset.hd='1';document.head.append(l);}
+function loadCss(){if(document.querySelector('link[data-hd]'))return;const l=document.createElement('link');l.rel='stylesheet';l.href='/account/huddle/assets/huddle.css'+search;l.dataset.hd='1';document.head.append(l);}
 
 let csrf='';
 async function api(action,body={}){

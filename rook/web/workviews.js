@@ -4,8 +4,8 @@
 // task's history behave exactly as they do for agents. Stored text is only
 // ever rendered as text.
 
-const V=new URL(import.meta.url).search;
-const {h,el,ago}=await import('/account/bands/assets/manage.js'+V);
+const search=new URL(import.meta.url).search;
+const {h,el,ago}=await import('/account/bands/assets/manage.js'+search);
 
 export const COLUMNS=[['todo','To do'],['in_progress','In progress'],['blocked','Blocked'],['paused','Paused'],['done','Done']];
 const COLUMN={todo:'todo',in_progress:'in_progress',blocked:'blocked',paused:'paused',done:'done',closed:'done',cancelled:'done'};
@@ -13,7 +13,7 @@ const LABEL={todo:'To do',in_progress:'In progress',blocked:'Blocked',paused:'Pa
 const FINISHED=new Set(['done','closed','cancelled','archived']);
 const DAY=86400000;
 
-export function loadCss(){if(document.querySelector('link[data-wv]'))return;const l=document.createElement('link');l.rel='stylesheet';l.href='/account/knowledge/assets/workviews.css'+V;l.dataset.wv='1';document.head.append(l);}
+export function loadCss(){if(document.querySelector('link[data-wv]'))return;const l=document.createElement('link');l.rel='stylesheet';l.href='/account/knowledge/assets/workviews.css'+search;l.dataset.wv='1';document.head.append(l);}
 
 // -- small helpers ---------------------------------------------------------
 const pad=n=>String(n).padStart(2,'0');
