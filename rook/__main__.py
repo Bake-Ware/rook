@@ -13,7 +13,8 @@ SUBCOMMANDS = {
     "sessions":  "Browse Claude Code session history",
     "history":   "Browse Claude Code session history",
     "skill":     "Install or package the Rook agent skill (Claude Code, Codex)",
-    "hub":       "Build, deploy, inspect and roll back signed hub releases",
+    "hub":       "Run the hub (`rook hub serve`: dashboard + MCP in one process); "
+                 "build, deploy, inspect and roll back signed hub releases",
 }
 
 
@@ -79,6 +80,12 @@ def main() -> None:
         # beside the worker's Rook terminals. Say where its jobs went.
         print(TMUX_RETIRED, file=sys.stderr)
         sys.exit(2)
+
+    if sys.argv[1] == "hub" and sys.argv[2:3] == ["serve"]:
+        from .hub.serve import main as serve_main
+        sys.argv = ["rook hub serve"] + sys.argv[3:]
+        serve_main(sys.argv[1:])
+        return
 
     if sys.argv[1] == "hub":
         from .hubdeploy.cli import main as hub_main
