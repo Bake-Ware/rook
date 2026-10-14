@@ -166,8 +166,9 @@ def merge(data: dict, events: dict, python: str, script: str,
 
 
 def diff(old: str, new: str, path) -> str:
+    name = Path(str(path)).name   # the full path is shown beside the diff
     return "".join(difflib.unified_diff(old.splitlines(True), new.splitlines(True),
-                                        fromfile=str(path), tofile=str(path)))[:20000]
+                                        fromfile=f"{name} (now)", tofile=f"{name} (after)"))[:20000]
 
 
 def plan(path: Path, events: dict, python: str, script: str, statusline: bool,

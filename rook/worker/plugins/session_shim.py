@@ -92,6 +92,10 @@ class SessionShimPlugin(Plugin):
         where the shim itself is not installed. Returns the socket path, or
         ``None`` when it cannot listen (the hook then uses its outbox)."""
         self._hooks = handler
+        if len(str(shim.socket_path()).encode()) > shim.MAX_SOCK_PATH:
+            log.info("worker state folder too deep for a local socket; Claude Code hooks use "
+                     "the outbox")
+            return None
         try:
             async with self._lock:
                 await self._listen()

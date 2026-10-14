@@ -430,7 +430,7 @@ class ClaudeCodeRules(Plugin):
                 return f"posted in the {a['huddle']} huddle"
             room = await self._room(a, sender)
             await self._invoke("chat.write", {"action": "send", "room": room, "text": text}, sender)
-            return f"posted in room {room}"
+            return f"posted in {a.get('room_title') or 'room ' + room}"
         if kind == "notify":
             res = await self._invoke("notify.send", {"text": hook.render(a.get("text"), ctx),
                                                      "channel": a.get("channel") or "all"}, sender)

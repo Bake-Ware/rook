@@ -53,9 +53,10 @@ dialog.cc-wide{width:min(760px,calc(100vw - 32px))}
 .cc-w:last-child{border-bottom:0}
 .cc-w.head{font:500 10px var(--mono);letter-spacing:1px;color:var(--dim);text-transform:uppercase;min-height:0}
 .cc-w small{display:block;color:var(--dim);font-size:11px;overflow-wrap:anywhere}
-.cc-w .acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.cc-w .acts{display:flex;gap:6px;flex-wrap:nowrap;justify-content:flex-end}
 .cc-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:var(--dim)}
 .cc-dot.ok{background:var(--green)}.cc-dot.stale{background:var(--accent)}.cc-dot.bad{background:var(--bad)}
+.mg pre.cc-diff{white-space:pre;max-height:420px}
 .cc-diff{margin:0;padding:10px 0;background:#10140f;border:1px solid var(--line);font:12px/1.55 var(--mono);max-height:420px;overflow:auto;white-space:pre}
 .cc-diff span{display:block;padding:0 12px;color:#c9cdb8}
 .cc-diff .add{background:#16200f;color:var(--green)}
@@ -70,7 +71,7 @@ dialog.cc-wide{width:min(760px,calc(100vw - 32px))}
 .cc-log .bad{color:var(--bad)}
 @media(max-width:760px){
  .cc-rule{grid-template-columns:auto minmax(0,1fr)}.cc-rule>.mg-actions{grid-column:1/-1}
- .cc-w{grid-template-columns:minmax(0,1fr) auto}.cc-w .hide{display:none}.cc-w .acts{grid-column:1/-1;justify-content:flex-start}
+ .cc-w{grid-template-columns:minmax(0,1fr) auto}.cc-w .hide{display:none}.cc-w .acts{grid-column:1/-1;justify-content:flex-start;flex-wrap:wrap}
  .cc-w.head{display:none}
  .cc-log>div{grid-template-columns:minmax(0,1fr)}
 }
@@ -270,11 +271,11 @@ export async function mountCcmod(root){
       catch(e){err.textContent=e.message;}finally{save.disabled=false;}
     });
     const dlg=dialog(rule?'Edit rule':'New rule',h('div',{class:'cc-form'},
-      h('label',{class:'mg-field'},'Name',name),
+      h('label',{class:'mg-field'},'Name',name),sentence,risk,
       h('h3',{class:'mg-label',text:'When'}),h('div',{class:'cc-row'},h('label',{class:'mg-field'},'This happens',event),fMatcher,fMinutes),fContains,
       h('h3',{class:'mg-label',text:'Where'}),h('div',{class:'cc-row'},h('label',{class:'mg-field'},'On',scope),targetBox),
       h('h3',{class:'mg-label',text:'Do'}),actionsBox,
-      sentence,risk,err,h('div',{class:'mg-actions',style:'display:flex;gap:8px;justify-content:flex-end'},btn('Cancel','',()=>dlg.close()),save)));
+      err,h('div',{class:'mg-actions',style:'display:flex;gap:8px;justify-content:flex-end'},btn('Cancel','',()=>dlg.close()),save)));
     dlg.classList.add('cc-wide');
     drawActions();
   }
