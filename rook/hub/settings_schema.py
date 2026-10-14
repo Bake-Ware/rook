@@ -191,6 +191,12 @@ _CORE: list[tuple[Setting, str, dict]] = [
     (_s("worker.update_poll", int, 300, scope="band", overridable=("worker",),
         env="ROOK_UPDATE_POLL", min=30, apply="restart", label="Update check interval (s)",
         group="Worker defaults", advanced=True), "worker", {}),
+    (_s("worker.update_health_secs", int, 180, scope="band", overridable=("worker",),
+        env="ROOK_UPDATE_HEALTH_SECS", min=0, max=3600, apply="restart",
+        label="Update band-contact window (s)", group="Worker defaults", advanced=True,
+        help="After an update a worker must complete a band round trip within this "
+             "window or it rolls back to the previous build. 0 = only check it stays up."),
+     "worker", {}),
     (_s("worker.authz_mode", "str", "audit", scope="band", overridable=("worker",),
         env="ROOK_AUTHZ_MODE", choices=("off", "audit", "enforce"), apply="restart",
         label="Worker permission checks", group="Worker defaults",

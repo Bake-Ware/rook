@@ -184,6 +184,7 @@ Entry point: `rook/worker/cli.py:main`.
 | `--version`, `--selftest`, `--install-cli`, `--cli` | flag | n/a | worker | `cli.main` | no | n/a |
 | `ROOK_UPDATE_PUBKEY` | env; stamped into hub-built bundles (`_update_pubkey.py`) | bundled key, else none trusted | worker | `_update_verify` | no | proc |
 | `ROOK_UPDATE_POLL` | env | `300` s | worker | `selfupdate` | no | proc |
+| `ROOK_UPDATE_HEALTH_SECS` | env | `180` s (0 = alive check only) | worker | `selfupdate` (band gate) | no | proc |
 | `ROOK_ENROLLMENT_FILE` | env | `~/.rook-band-worker/enrollment.json` | worker | `enroll.py` | holds secrets | proc |
 | `ROOK_WORK_DB` | env | `~/.rook-band-worker/work.sqlite3` | worker | `plugins/work`, `session_messages` | no | proc |
 | `ROOK_CODEX_CONTROL_SOCKET` | env | `$CODEX_HOME/app-server-control/app-server-control.sock` | worker | `codex_input` | no | per call |
@@ -971,6 +972,7 @@ the changelog.
 | `--announce-interval`, pushed `announce_interval` | `core.worker.announce_interval` | band, worker override | restart |
 | pushed `log_level`, `-v` | `core.worker.log_level` | band, worker override | live |
 | `ROOK_UPDATE_POLL` | `core.worker.update_poll` | band | restart |
+| `ROOK_UPDATE_HEALTH_SECS` | `core.worker.update_health_secs` | band | restart |
 | `ROOK_WAKE_CMD`, `ROOK_WAKE_AGENT` | `wake.command`, `wake.agent` | worker | reload |
 | `ROOK_MEMORY_VAULT` | `memory.notes_dir` | worker | reload |
 | `PIKVM_*` | `pikvm.url`, `pikvm.user`, `pikvm.password` (vault), `pikvm.verify_tls` | worker | reload |
