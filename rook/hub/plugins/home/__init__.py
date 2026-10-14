@@ -19,7 +19,11 @@ on the dashboard's Manage > Home agent page. The agent is then:
   person or agent who asked.
 
 Tools are off by default. With ``home.tools`` on it may search the shared
-knowledge wiki (read-only). Job ``agent`` steps get a separate, opt-in tool
+knowledge wiki (read-only). With ``home.memory`` on (the default) and the
+memory plugin loaded it remembers: before answering it reads what it knows
+about the person and what is relevant to the message (``memory.context``),
+after answering it keeps what it learned (``memory.observe``), and it gets
+two memory tools (save, search). See docs/design/memory.md. Job ``agent`` steps get a separate, opt-in tool
 set that acts on behalf of the job (:mod:`.job_agent`,
 :meth:`HomeAgent.work_job_step`); chat never sees it. See
 docs/design/home-agent.md and docs/design/jobs.md 6.
@@ -142,9 +146,13 @@ class HomeAgent(Plugin):
         setting("context_messages", int, 20, min=1, max=100, group="Behaviour", order=3,
                 label="Room messages sent as context"),
         setting("tools", bool, False, group="Behaviour", order=4,
-                label="Read-only tools (knowledge search)",
-                help="Lets the model search the knowledge wiki. Each search is journaled "
-                     "as the home agent."),
+                label="Tools (knowledge search; memory save and search)",
+                help="Lets the model search the knowledge wiki and, when memory is on, save and "
+                     "search its memory. Each call is journaled as the home agent. Leave off "
+                     "for endpoints that do not support tool calls."),
+        setting("memory", bool, True, group="Behaviour", order=5, label="Use memory",
+                help="Remember people, facts, conversations and skills between conversations "
+                     "(Manage > Memory). Off: it neither reads nor writes memory."),
         setting("job_steps", bool, True, group="Jobs", order=1, label="Work job agent steps",
                 help="Job steps with agent \"home\" may run the home agent with a tool set that "
                      "acts on behalf of the job (never more than the job may do). Chat never "
@@ -279,7 +287,7 @@ class HomeAgent(Plugin):
             log.exception("home agent: persona unavailable")
             return ""
 
-    def system_prompt(self, cfg: dict, where: str) -> str:
+    def system_prompt(self, cfg: dict, where: str, memory: str = "") -> str:
         parts = [self.persona_text(cfg),
                  f"You are {self.agent_name}, the home agent on this Rook hub (chat identity "
                  f"{self.identity}). {where} Answer plainly and briefly; say when you do not "
@@ -287,19 +295,28 @@ class HomeAgent(Plugin):
         extra = str(cfg.get("system_prompt") or "").strip()
         if extra:
             parts.append(extra)
+        if memory:
+            parts.append(memory)
         return "\n\n".join(p for p in parts if p)
 
     # -- the model, with optional read-only tools ---------------------------
     async def complete(self, messages: list[dict], cfg: dict, *, thread: str | None = None,
                        via: str = "", may_search: bool = True,
-                       cli: ChatClient | None = None) -> dict:
+                       cli: ChatClient | None = None, memory: dict | None = None) -> dict:
         """Run one turn (and up to MAX_TOOL_ROUNDS tool rounds). Returns
         ``{content, model, latency_ms, tools_used}`` with the API key scrubbed.
         ``may_search`` is False when whoever asked may not read the knowledge
-        wiki themselves; the tool is then not offered."""
+        wiki themselves; the tool is then not offered. ``memory`` (``{person,
+        room}``) offers the memory tools, acting for that person."""
         cli = cli or self.client(cfg)
         tools = ([KNOWLEDGE_TOOL] if cfg.get("tools") and may_search and self._has_knowledge()
-                 else None)
+                 else [])
+        # Memory tools ride the same switch as knowledge search: some local
+        # endpoints refuse any request that carries tools.
+        mem = self._memory() if memory is not None and cfg.get("tools") else None
+        if mem is not None:
+            tools += mem.tools()
+        tools = tools or None
         used: list[str] = []
         total = 0
         msgs = list(messages)
@@ -316,7 +333,8 @@ class HomeAgent(Plugin):
                          "tool_calls": res["tool_calls"]})
             for call in res["tool_calls"]:
                 fn = (call.get("function") or {}) if isinstance(call, dict) else {}
-                out = await self._run_tool(str(fn.get("name") or ""), fn.get("arguments"), thread)
+                out = await self._run_tool(str(fn.get("name") or ""), fn.get("arguments"), thread,
+                                           memory if mem is not None else None)
                 used.append(str(fn.get("name") or "?"))
                 msgs.append({"role": "tool", "tool_call_id": str(call.get("id") or ""),
                              "content": out})
@@ -326,11 +344,17 @@ class HomeAgent(Plugin):
         return self._node is not None and self._node.plugin("knowledge") is not None
 
     def may_read_knowledge(self, principal: Any) -> bool:
-        """May ``principal`` call ``knowledge.read`` on the hub under the
-        current policy? The tool runs as the home agent, so this keeps it from
-        reading for someone who may not read themselves. ``deny`` and
-        ``would_deny`` both count as no. With no permission layer (plain hubs,
-        tests) nothing is enforced anywhere, so yes."""
+        return self.may_call(principal, "knowledge.read")
+
+    def may_use_memory(self, principal: Any) -> bool:
+        return self.may_call(principal, "memory.recall")
+
+    def may_call(self, principal: Any, cap: str) -> bool:
+        """May ``principal`` call ``cap`` on the hub under the current
+        policy? Tools run as the home agent, so this keeps it from reading
+        for someone who may not read themselves. ``deny`` and ``would_deny``
+        both count as no. With no permission layer (plain hubs, tests)
+        nothing is enforced anywhere, so yes."""
         authz = getattr(getattr(self._node, "client", None), "authz", None)
         if authz is None or principal is None:
             return True
@@ -341,10 +365,10 @@ class HomeAgent(Plugin):
             except Exception:  # noqa: BLE001
                 entry = {"name": "rook", "roles": ["is_hub"]}
             d = authz.store.current().evaluate(
-                [principal], "knowledge.read",
+                [principal], cap,
                 target_from_entry(getattr(self._node, "worker_id", None), entry, local=True))
         except Exception:  # noqa: BLE001 - when unsure, do not offer the tool
-            log.exception("home agent: knowledge.read policy check failed")
+            log.exception("home agent: %s policy check failed", cap)
             return False
         return d.decision in ("allow", "off")
 
@@ -405,11 +429,14 @@ class HomeAgent(Plugin):
         except Exception:
             log.exception("home agent: journaling %s failed", cap)
 
-    async def _run_tool(self, name: str, raw_args: Any, thread: str | None) -> str:
+    async def _run_tool(self, name: str, raw_args: Any, thread: str | None,
+                        memory: dict | None = None) -> str:
         try:
             args = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args or {})
         except (ValueError, TypeError):
             args = {}
+        if name in ("memory_save", "memory_search") and memory is not None:
+            return await self._memory_tool(name, args, thread, memory)
         if name != "knowledge_search":
             return json.dumps({"error": f"unknown tool {name!r}"})
         cap_args = {"action": "search", "query": str(args.get("query") or "")[:300]}
@@ -422,6 +449,81 @@ class HomeAgent(Plugin):
         self.journal("knowledge.read", cap_args, reply, thread)
         return json.dumps(reply.get("result") if reply["ok"] else {"error": reply["error"]},
                           default=str)[:TOOL_RESULT_CHARS]
+
+    # -- memory (rook/hub/plugins/memory; docs/design/memory.md) ----------------
+    def _memory(self):
+        """The memory plugin when it is loaded and on, and ``home.memory`` is on."""
+        if self._node is None or not self.settings.get("memory", True):
+            return None
+        mem = self._node.plugin("memory")
+        return mem if mem is not None and getattr(mem, "ready", lambda: False)() else None
+
+    @staticmethod
+    def person_of(sender: Any) -> str | None:
+        """A chat sender whose profile memory may be read and written: people
+        only. Agents get shared memory, never a profile."""
+        s = str(sender or "")
+        return s if s.startswith(("user:", "human:")) else None
+
+    async def recall_for(self, query: str, person: str | None, room: str | None = None,
+                         people: bool = True) -> dict:
+        mem = self._memory()
+        if mem is None:
+            return {"text": "", "ids": []}
+        return await mem.context(query, person, room=room, include_people=people)
+
+    async def _memory_tool(self, name: str, args: dict, thread: str | None,
+                           memory: dict) -> str:
+        """A memory tool call, run as the home agent for ``memory['person']``
+        and journaled under the home agent like knowledge_search."""
+        mem = self._memory()
+        cap = "memory.remember" if name == "memory_save" else "memory.recall"
+        person = (memory.get("person") or mem.config().default_person) if mem else None
+        with self._as_self():
+            try:
+                if mem is None:
+                    raise RuntimeError("memory is off")
+                result = await mem.run_tool(name, args, person=person, actor=self.identity,
+                                            room=memory.get("room"))
+                reply = {"ok": "error" not in result, "result": result}
+            except Exception as e:  # noqa: BLE001 - a tool error goes back to the model
+                reply = {"ok": False, "error": f"{type(e).__name__}: {e}"[:300]}
+        # The journal gets the shape of the call, not the remembered text or
+        # the recalled rows (they are personal; the Memory page has them).
+        if name == "memory_save":
+            logged = {"kind": str(args.get("kind") or "fact"),
+                      "chars": len(str(args.get("text") or ""))}
+            jreply = reply
+        else:
+            logged = {"query": str(args.get("query") or "")[:200]}
+            jreply = {"ok": reply["ok"], "result": {"results": len(
+                (reply.get("result") or {}).get("results") or [])}}
+        self.journal(cap, {"tool": name, **logged}, jreply, thread)
+        return json.dumps(reply.get("result") if reply["ok"] else {"error": reply.get("error")},
+                          default=str)[:TOOL_RESULT_CHARS]
+
+    async def summarise_for_memory(self, what: str, lines: list[str]) -> str | None:
+        """A short summary for the memory plugin's consolidation (no tools),
+        journaled as ``home.summarise``. ``what`` is ``conversation`` or ``week``."""
+        cfg = self.config()
+        cfg["tools"] = False
+        task = ("Summarise this conversation for your own memory in two or three plain "
+                "sentences: who wanted what, what was decided or answered, and anything to "
+                "follow up. Third person. Never include passwords, codes or keys."
+                if what == "conversation" else
+                "Combine these conversation summaries from one week into one short paragraph "
+                "for your own memory. Keep decisions, preferences and open threads; drop "
+                "small talk. Never include passwords, codes or keys.")
+        body = "\n".join(str(x) for x in lines)[-12000:]
+        msgs = [{"role": "system", "content": self.system_prompt(cfg, task)},
+                {"role": "user", "content": body}]
+        async with self._ask_sem:
+            res = await self.complete(msgs, {**cfg, "max_tokens": min(int(cfg.get("max_tokens")
+                                                                          or 300), 300)},
+                                      via="memory")
+        self.journal("home.summarise", {"what": what, "lines": len(lines)},
+                     {"ok": True, "result": {"model": res["model"], "chars": len(res["content"])}})
+        return res["content"]
 
     def _note(self, via: str, ok: bool, **extra) -> None:
         """Activity for the operator's page keeps the detail; ``last_error``
@@ -600,24 +702,40 @@ class HomeAgent(Plugin):
                 where = (f"You are in the chat room \"{title}\" with {others}. Each user message "
                          f"is prefixed with its sender. Reply to the latest message from "
                          f"{trigger['sender']}.")
-                msgs = [{"role": "system", "content": self.system_prompt(cfg, where)}]
+                person = self.person_of(trigger["sender"])
+                principal = self.chat_principal(trigger["sender"])
+                use_memory = self.may_use_memory(principal)
+                recalled = (await self.recall_for(str(trigger.get("text") or ""), person, rid,
+                                                  people=person is not None)
+                            if use_memory else {"text": "", "ids": []})
+                msgs = [{"role": "system", "content": self.system_prompt(cfg, where,
+                                                                         recalled["text"])}]
                 msgs += self.room_messages(store, rid, cfg)
                 res = await self.complete(
                     msgs, cfg, thread=rid, via="chat",
-                    may_search=self.may_read_knowledge(self.chat_principal(trigger["sender"])))
+                    may_search=self.may_read_knowledge(principal),
+                    memory={"person": person, "room": rid} if person and use_memory else None)
             text = res["content"] or "(no answer)"
             # Address the person who asked in a group room; never @mention an
             # agent (a mention is what makes the other bot answer back).
             ments = ([trigger["sender"]] if len(participants) > 2
                      and not _is_agent(trigger["sender"]) else [])
             store.send(rid, self.identity, text, ments, False)
+            learned = {"remembered": [], "forgotten": []}
+            mem = self._memory()
+            if mem is not None and person and use_memory:
+                learned = await mem.observe(rid, person, str(trigger.get("text") or ""), text,
+                                            self.identity)
+            memo = {"recalled": len(recalled["ids"]), "remembered": len(learned["remembered"]),
+                    "forgotten": len(learned["forgotten"])}
             self._note("chat", True, room=title, sender=trigger["sender"], model=res["model"],
-                       latency_ms=res["latency_ms"], tools=res["tools_used"])
+                       latency_ms=res["latency_ms"], tools=res["tools_used"], memory=memo)
             self.journal("home.reply", {"room": rid, "to": trigger["sender"],
                                         "seq": trigger["seq"]},
                          {"ok": True, "result": {"model": res["model"], "chars": len(text),
                                                  "latency_ms": res["latency_ms"],
-                                                 "tools": res["tools_used"]}}, rid)
+                                                 "tools": res["tools_used"],
+                                                 "memory": {**memo, "ids": recalled["ids"]}}}, rid)
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001 - say so in the room instead of going silent
@@ -661,7 +779,11 @@ class HomeAgent(Plugin):
         cfg["tools"] = False                      # chat's knowledge tool stays out of it
         limit = int(max_calls or self.settings.get("job_max_tool_calls")
                     or job_agent.DEFAULT_MAX_CALLS)
-        msgs = [{"role": "system", "content": self.system_prompt(cfg, job_agent.WHERE)},
+        # Skills that worked before for similar steps, and shared facts; no
+        # person's profile (a job is not a conversation with someone).
+        recalled = await self.recall_for(str(prompt or ""), None, people=False)
+        msgs = [{"role": "system", "content": self.system_prompt(cfg, job_agent.WHERE,
+                                                                 recalled["text"])},
                 {"role": "user", "content": job_agent.first_message(prompt, context)[:40000]}]
         args = {"job": job, "run": run, "step": step}
         try:
@@ -674,8 +796,13 @@ class HomeAgent(Plugin):
             self._note("job", False, sender=f"job:{job}", error=str(e)[:300])
             self.journal("home.job_step", args, {"ok": False, "error": str(e)[:300]}, run or None)
             raise
+        mem = self._memory()
+        if mem is not None and out.get("verdict") == "ok" and out.get("tools_used"):
+            # A step that worked with tools is a skill worth keeping.
+            await mem.learn_procedure(str(prompt or ""), out["tools_used"], out.get("text") or "",
+                                      job=job, step=step, run=run, actor=self.identity)
         self._note("job", True, sender=f"job:{job}", model=out["model"], verdict=out["verdict"],
-                   tools=out["tools_used"])
+                   tools=out["tools_used"], memory={"recalled": len(recalled["ids"])})
         self.journal("home.job_step", args,
                      {"ok": True, "result": {"verdict": out["verdict"], "calls": out["calls"],
                                              "tools": out["tools_used"], "model": out["model"]}},
@@ -703,20 +830,29 @@ class HomeAgent(Plugin):
             raise HomeError(f"rate limited: at most {ASK_RATE} home.ask calls a minute; "
                             "try again shortly")
         user = f"[{who}] {question}" + (f"\n\nContext:\n{context.strip()}" if context else "")
+        # Asked by an agent on the operator's behalf: shared memory and the
+        # default person's profile; nothing is captured from the question.
+        use_memory = self.may_use_memory(principal)
+        recalled = (await self.recall_for(question, None) if use_memory
+                    else {"text": "", "ids": []})
         msgs = [{"role": "system", "content": self.system_prompt(
-                    cfg, "Another agent or a person is asking you directly, not in a chat room.")},
+                    cfg, "Another agent or a person is asking you directly, not in a chat room.",
+                    recalled["text"])},
                 {"role": "user", "content": user[:20000]}]
         try:
             async with self._ask_sem:
                 res = await self.complete(msgs, cfg, via="ask",
-                                          may_search=self.may_read_knowledge(principal))
+                                          may_search=self.may_read_knowledge(principal),
+                                          memory={"person": None, "room": None}
+                                          if use_memory else None)
         except (LLMError, HomeError) as e:
             self._note("ask", False, sender=who, error=str(e)[:300])
             raise HomeError(summarise(str(e))) from None
         self._note("ask", True, sender=who, model=res["model"], latency_ms=res["latency_ms"],
-                   tools=res["tools_used"])
+                   tools=res["tools_used"], memory={"recalled": len(recalled["ids"])})
         return {"agent": self.identity, "answer": res["content"], "model": res["model"],
-                "latency_ms": res["latency_ms"], "tools_used": res["tools_used"]}
+                "latency_ms": res["latency_ms"], "tools_used": res["tools_used"],
+                "memories_used": len(recalled["ids"])}
 
     @capability("status", risk="read")
     def status(self) -> dict:
@@ -731,7 +867,8 @@ class HomeAgent(Plugin):
                 "provider": cfg.get("provider"), "endpoint_host": host,
                 "model": cfg.get("model") or "", "missing": self.missing(cfg),
                 "tools": bool(cfg.get("tools")), "key_set": bool(cfg.get("api_key")),
-                "chat": self._store() is not None, "last_error": self.last_error}
+                "chat": self._store() is not None, "memory": self._memory() is not None,
+                "last_error": self.last_error}
 
     # -- MCP -----------------------------------------------------------------
     def mcp_tools(self, invoke):
