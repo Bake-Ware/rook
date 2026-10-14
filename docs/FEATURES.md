@@ -394,6 +394,14 @@ Edit what Rook tells agents, without a deploy: the connection instructions every
 
 ![Agent instructions](img/guidance.png)
 
+### Voice on the hub
+
+Talk to your agents from the Android app, the desktop app or a browser through the hub's own address: the **voice** hub plugin serves the voice service at `/voice/` (`wss://<hub>/voice/ws`, the browser client at `/voice/`, voice keys at `/voice/admin`). Speech runs either **on the hub** (install the voice extras with `pip install 'rook[voice]'` and put the speech model files in its model folder) or **on another machine** with a graphics card, which the hub forwards to; devices use the hub's address either way. Without what the chosen option needs, the plugin stays off and Manage > Plugins says exactly what is missing, so a small hub that does not use voice never loads any of it. **Manage > Voice** shows whether voice is ready, the address to give the apps, a choice of where speech runs, and a **microphone check** that records a few seconds in the browser and shows what the hub heard. Every voice setting (voices, recognition, the assistant's name) is on Settings > Voice. See [docs/operations/voice.md](operations/voice.md).
+
+### Model providers
+
+The language models the hub can use, by name: **Manage > Model providers** lists them, checks that each answers (with its latency), lists its models and lets you choose which to offer. Add any OpenAI-compatible server (llama.cpp, vLLM, LM Studio, Ollama, a paid API) with its key from Secrets. The **llmanifold** plugin adds your llmanifold front door as the provider `llmanifold` once its address is set, with its flows and, given its admin address, its lanes and queue. The home agent picks a provider by name (Model provider on its page), and whatever uses the home agent's model follows. Agents read them with `llm.providers`, `llm.models`, `llm.check` and `llmanifold.status` on worker `rook`. See [docs/design/model-providers.md](design/model-providers.md).
+
 ## Reliability
 
 One misbehaving client must not take Rook down for everyone:

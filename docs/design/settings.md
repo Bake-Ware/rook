@@ -276,6 +276,11 @@ in Rook terminals, driven from the Sessions page or `rook band`.)
 
 Run as `python -m services.voice.server`. Configuration is env only.
 
+(Update: these are now the settings of the voice hub plugin, same keys and
+variables, `origin` hub-plugin; with `voice.engine=here` the hub hands the
+stored ones to the service as its environment. See
+docs/operations/voice.md.)
+
 | Name | Default | Scope | Read by | Secret |
 |---|---|---|---|---|
 | `VOICE_BIND`, `VOICE_PORT` | `127.0.0.1`, `8900` | hub (service) | `server.py` | no |
