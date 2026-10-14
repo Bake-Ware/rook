@@ -100,3 +100,13 @@ class PluginsWeb(KnowledgeWeb):
     ASSETS = ('plugins.js',)
     UNAVAILABLE = 'The plugins service is unavailable (is the MCP server running?).'
     TIMEOUT = 60   # a band-wide switch waits on every worker it touches
+
+
+class UpdatesWeb(KnowledgeWeb):
+    """Manage > Updates: versions across the band, release notes, staged
+    rollouts and history. Operator account only, like the upstream."""
+    PATH = '/account/updates'
+    UPSTREAM = ('ROOK_UPDATES_ADMIN_URL', 'http://127.0.0.1:8765/updates/account-api')
+    ASSETS = ('updates.js', 'updates.css')
+    UNAVAILABLE = 'The update service is unavailable (is the MCP server running?).'
+    TIMEOUT = 300   # applying downloads and verifies the release first

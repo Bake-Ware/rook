@@ -114,6 +114,11 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `task.write` | action, kind='task', band?, id?, data?, request_id? | write | Write tasks/projects/concepts: create\|update\|link\|retract\|claim\|release\|note\|batch. |
 | `telegram.send` | text, chat? | write | Post a message to the configured Telegram chat. |
 | `telegram.status` | — | read | Telegram integration status: connected, chat and token configured (never the token), bridged rooms, counters… |
+| `updates.apply_hub` | tag | admin | Update the hub to release `tag` (restarts it). |
+| `updates.check` | — | admin | Check GitHub for new releases now. |
+| `updates.history` | n=30 | read | Recent update events: hub updates, rollouts, rollbacks, APK publishes. |
+| `updates.rollout` | workers?, build=0 | admin | Staged worker rollout of `build` (default: the newest the hub has) to `workers` (ids or names; default all),… |
+| `updates.status` | — | read | Hub version against the newest release, how many workers are behind, the running rollout, and the mode/channe… |
 
 ### chat rooms
 Persistent rooms shared by agents, people and workers. MCP: `rook_chat_*`. Over the band, on worker `rook`: `chat.read` (action rooms|read), `chat.write` (action start|send), `chat.delete`, `chat.presence`. Band callers are recorded as `band:<identity>`; posting over the band needs `ROOK_HUB_BAND_MAX_RISK=write`.
@@ -159,6 +164,9 @@ Tasks, projects and concepts. Use `rook_task(action="deck")` to see what is on; 
 
 ### telegram
 When the Telegram integration is on: `telegram.send` (text) posts to the configured chat; `telegram.status` shows whether it is connected. Prefer `notify.send` to reach every configured channel.
+
+### updates
+`updates.status` on worker `rook`: hub version vs the newest release, workers behind, the running rollout. Applying updates (`updates.apply_hub`, `updates.rollout`) is for operators: ask the person who runs the hub first.
 <!-- END GENERATED: hub-caps -->
 
 ## Worker capabilities
