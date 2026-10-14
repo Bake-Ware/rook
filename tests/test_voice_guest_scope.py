@@ -7,6 +7,10 @@ import time
 import httpx
 import pytest
 
+# services/voice's own deps (services/voice/requirements.txt) are not in
+# rook[dev]: skip, rather than fail collection, in a hub-only venv.
+pytest.importorskip("numpy")
+
 from services.voice import providers
 from services.voice.identity import Identity, PolicyRefusal, current_identity
 from services.voice.jobs import GUEST_JOB_TIMEOUT, Jobs

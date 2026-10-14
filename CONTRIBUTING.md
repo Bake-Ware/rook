@@ -26,7 +26,8 @@ you can work on both at once.
 
 The pin is one commit, in two places that must agree: `pyproject.toml` (the
 `telesthete @ git+...@<sha>` dependency) and the `Dockerfile`'s `TELESTHETE_REV`
-(the relay the hub image builds); a test checks they match. The bundle builders
+(the relay the hub image compiles with `RELAY_SOURCE=source`; by default it uses
+the prebuilt relay from a telesthete release); a test checks they match. The bundle builders
 (`rook/remote/build_band_worker.py`, `android/stage_worker.py`) refuse to build
 from a telesthete git checkout at any other commit, so a bundle never ships a
 different transport than the hub installs; set `ROOK_TELESTHETE_ANY_REV=1` to
@@ -34,9 +35,15 @@ build anyway (a warning) while changing both repos. The pin may point at a
 telesthete PR branch while a change is in review; when that PR merges, move both
 to the merged commit on telesthete `main`.
 
-To run a hub locally, build the relay once
-(`cargo install --locked --git https://github.com/Bake-Ware/telesthete telesthitium`) and
-use `scripts/local-hub.sh`; see the [README quickstart](README.md#quickstart).
+To run a hub locally, get the relay once (`python3 scripts/fetch-relay.py --dest
+.venv/bin` downloads the prebuilt one; or
+`cargo install --locked --git https://github.com/Bake-Ware/telesthete telesthitium`) and
+use `scripts/local-hub.sh`; see the [README quickstart](README.md#c-from-source).
+
+CI (`.github/workflows/ci.yml`) runs the suite on Python 3.11 and 3.12 with the voice
+service's light deps (`tests/requirements-voice.txt`), the generators' `--check` modes,
+`node --check` and shellcheck. Releases are cut by pushing a `vX.Y.Z` tag; see
+[Releases and versions](docs/operations/install.md#releases-and-versions).
 
 ## Tests
 

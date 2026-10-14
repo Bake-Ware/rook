@@ -4,29 +4,38 @@ Pieces: **relay** (`telesthete-hub`, Rust, UDP 7474, blind forwarder), **hub** (
 
 Hub state lives in `ROOK_DATA_DIR` (keys, enrollment DB, tokens, journal, chat, vault, knowledge). Worker state lives in `~/.rook-band-worker/` (`worker_id`, `enrollment.json`, `band-worker.pyz`, `audit.jsonl`, custom caps).
 
-## Hub: quickstart (one machine)
+## Hub: one-command install (recommended)
 
-Needs Linux, Python 3.11+, git, Rust (`cargo`).
+On the Linux machine that will be the hub (Debian/Ubuntu/Fedora/Arch/openSUSE, x86_64 or aarch64):
 
 ```sh
-cargo install --locked --git https://github.com/Bake-Ware/telesthete telesthitium   # → ~/.cargo/bin/telesthete-hub
-git clone https://github.com/Bake-Ware/rook && cd rook
-python3 -m venv .venv && . .venv/bin/activate
-pip install -e .            # '.[desktop]' for screenshots on desktop workers
-scripts/local-hub.sh        # BIND=0.0.0.0 to serve the LAN
+curl -fsSL https://raw.githubusercontent.com/Bake-Ware/rook/master/scripts/install-hub.sh | bash
+# options after `bash -s --`: --user (no root) --version vX.Y.Z --bind 127.0.0.1 --yes --uninstall [--purge]
 ```
 
-First run writes `rook-data/quickstart.env` (mode 600) with `ROOK_BAND_PSK`, `ROOK_WEB_PASS`, `ROOK_MCP_STATIC_TOKEN`, and starts the hub (dashboard :7005, MCP :7005/mcp) and the relay (udp :7474) in the foreground.
+Installs python3/venv/curl if missing, Rook from the release wheel into `/opt/rook/venv`, the prebuilt relay (sha256-checked), generates `ROOK_BAND_PSK`, `ROOK_WEB_PASS`, `ROOK_MCP_STATIC_TOKEN` into `/var/lib/rook/secrets.env` (mode 600; settings in `hub.env` beside it), starts systemd units `rook-relay` and `rook-hub` (dashboard + MCP in one process, :7005) as user `rook`, waits for health, and prints the dashboard URL + password. Next step for the user: open the URL, sign in (any username), **Install a worker** → **Get a pairing code**. Re-run = upgrade (secrets kept). `--user` puts everything in `~/.local/share/rook-hub` with `systemctl --user` units (`sudo loginctl enable-linger $USER` to survive logout); `--no-systemd` runs background processes (containers/CI). Logs: `sudo journalctl -u rook-hub -n 50 --no-pager`. A `--version` from before the single-process hub gets `rook-dashboard` + `rook-mcp` units instead. Details and troubleshooting: `docs/operations/install.md`.
 
 ## Hub: Docker
 
 ```sh
-cp .env.example .env
-python3 -c "import secrets; print(secrets.token_urlsafe(16))"   # ROOK_WEB_PASS
-python3 -m rook.remote.psk                                       # ROOK_BAND_PSK
-# set ROOK_WEB_PASS, ROOK_BAND_PSK, ROOK_MCP_STATIC_TOKEN in .env
-docker compose up -d --build
+# compose.yaml + .env.example from the repo; set ROOK_WEB_PASS, ROOK_BAND_PSK, ROOK_MCP_STATIC_TOKEN,
+# ROOK_DOMAIN=http://<ip>:7005, ROOK_HUB_PUBLIC=<ip>:7005 in .env
+docker run --rm ghcr.io/bake-ware/rook python -m rook.remote.psk   # a band key
+docker compose up -d                                               # ghcr.io/bake-ware/rook:${ROOK_VERSION:-latest}, amd64/arm64
+docker compose -f compose.yaml -f compose.build.yaml up -d --build # build from a clone instead
 ```
+
+## Hub: from source (development)
+
+```sh
+git clone https://github.com/Bake-Ware/rook && cd rook
+python3 -m venv .venv && . .venv/bin/activate
+pip install -e .                                  # '.[desktop]' for screenshots on desktop workers
+python3 scripts/fetch-relay.py --dest .venv/bin   # prebuilt relay; or: cargo install --locked --git https://github.com/Bake-Ware/telesthete telesthitium
+scripts/local-hub.sh                              # BIND=0.0.0.0 to serve the LAN
+```
+
+First run writes `rook-data/quickstart.env` (mode 600) with `ROOK_BAND_PSK`, `ROOK_WEB_PASS`, `ROOK_MCP_STATIC_TOKEN`, and starts the hub (dashboard :7005, MCP :7005/mcp) and the relay (udp :7474) in the foreground.
 
 ## Hub: public (workers anywhere)
 
