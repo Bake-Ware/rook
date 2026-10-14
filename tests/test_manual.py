@@ -386,6 +386,27 @@ async def test_tag_edits_count_and_user_tags_are_kept(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_records_from_an_earlier_build_are_not_read_as_edits(tmp_path):
+    s, d = service(tmp_path), manual_dir(tmp_path)
+    sync = make_sync(tmp_path, d)
+    await sync.seed_if_fresh(s)
+    state = sync.state()
+    for pid, entry in state["imported"]["pages"].items():     # title+body hash, no fp
+        r = s.store.get("default", entry["record"])
+        entry.pop("fp")
+        entry["written"] = mb.content_hash(r["title"], r["body"])
+    root = state["imported"].pop("root_entry")
+    state["imported"]["root"] = root["record"]
+    sync._save(state)
+    page(d, "start", "Start", "Reworded.")
+    page(d, "jobs", "Jobs", "New.", order=4)
+    assert [(c["id"], c["local_edit"]) for c in sync.diff(s)["changed"]] == [("start", False), ("_root", False)]
+    res = await sync.apply(s)
+    assert sorted(res["written"]) == ["jobs", "start"] and not res["kept"]
+    assert "[[manual-jobs]]" in s.store.get("default", "rook-manual")["body"]
+
+
+@pytest.mark.asyncio
 async def test_not_now_and_never_for_this_version(tmp_path, monkeypatch):
     s, d = service(tmp_path), manual_dir(tmp_path)
     sync = make_sync(tmp_path, d)

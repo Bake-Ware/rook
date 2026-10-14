@@ -52,6 +52,10 @@ def _now() -> float:
     return time.time()
 
 
+#: The ``written`` fingerprint's format (entries without it: title+body only).
+FP = 2
+
+
 def fingerprint(r: dict) -> str:
     """What counts as an edit of a knowledge page: title, body and tags."""
     tags = sorted(str(t) for t in (r.get("attrs") or {}).get("tags") or [])
@@ -117,6 +121,12 @@ class ManualSync:
         r = self._record(service, band, entry.get("record"))
         if r is None or r["state"] != "active":
             return True
+        if entry.get("fp") != FP:
+            # Recorded by an earlier build of this plugin: ``written`` was the
+            # title+body hash, and the contents page had none (it was always
+            # rewritten, so nobody's edit can be on it).
+            written = entry.get("written")
+            return written is not None and manual_bundle.content_hash(r["title"], r["body"]) != written
         return fingerprint(r) != entry.get("written")
 
     @staticmethod
@@ -270,7 +280,7 @@ class ManualSync:
 
     def _entry(self, r: dict, source: str, **extra: Any) -> dict:
         return {"record": r["id"], "slug": r["slug"], "source": source, "written": fingerprint(r),
-                "revision": r["revision"], **extra}
+                "fp": FP, "revision": r["revision"], **extra}
 
     def _free_root_slug(self, service, band: str) -> str:
         """``rook-manual``, or the first free ``rook-manual-N``: a page of
@@ -422,7 +432,7 @@ class ManualSync:
                 r = self._record(service, band, entry.get("record"))
                 if r is not None and r["state"] == "active":
                     row.update(title=r["title"], source="knowledge", slug=r["slug"],
-                               edited=fingerprint(r) != entry.get("written"))
+                               edited=self._edited(service, band, entry))
             out.append(row)
         return {"pages": out, "version": self.version, "manual_sha256": b.hash,
                 "knowledge": service is not None, "imported": bool(imported)}
@@ -441,7 +451,7 @@ class ManualSync:
             if r is not None and r["state"] == "active":
                 return {"id": pid, "title": r["title"], "body": r["body"], "source": "knowledge",
                         "slug": r["slug"], "record": r["id"], "updated": r["updated"],
-                        "edited": fingerprint(r) != entry.get("written"),
+                        "edited": self._edited(service, imported["band"], entry),
                         "verification": r["attrs"].get("verification"), **meta}
         if p is None:
             raise ValueError(f"No manual page {pid!r}")
