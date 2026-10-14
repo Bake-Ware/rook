@@ -13,6 +13,9 @@ in one process:
   ``/skill/*``, ``/healthz``) are handed to the FastMCP ASGI app through
   rook/hub/asgi_bridge.py before any dashboard middleware sees them, so one
   port serves the whole site with the same split a reverse proxy made.
+* paths a hub plugin serves on the site (rook/hub/site.py: the voice
+  plugin's ``/voice/*``) go to that plugin the same way, before dashboard
+  middleware: they bring their own auth.
 * optionally (``--mcp-bind``, default ``127.0.0.1:8765``, ``off`` to drop it)
   the old MCP port too, serving exactly what ``rook-mcp`` served there, so
   Cloudflare routes, LAN workers dialing ``ws://<hub>:8765/band`` and agent
@@ -59,6 +62,13 @@ LOOPBACK_NAMES = ("127.0.0.1", "localhost", "[::1]")
 
 def is_mcp_path(path: str) -> bool:
     return path in PUBLIC_MCP_PATHS or path.startswith(PUBLIC_MCP_PREFIXES)
+
+
+def _unrouted(request) -> bool:
+    """True when the dashboard's router has no route for this path (any
+    method): only then may a hub plugin's site mount answer it."""
+    exc = getattr(request.match_info, "http_exception", None)
+    return exc is not None and getattr(exc, "status", None) == 404
 
 
 # -- the dashboard's view of the shared band client -----------------------------
@@ -240,6 +250,11 @@ class Hub:
         self._unregister = None
         self._uninstall = None
 
+    def hub_node(self):
+        """The hub node (worker ``rook``) the MCP side built, or None."""
+        mcp = getattr(self.mcp, "mcp", None) if self.mcp is not None else None
+        return getattr(mcp, "_rook_hub", None) if mcp is not None else None
+
     def upstream_origins(self) -> list[str]:
         """Loopback origins the dashboard's proxies may name for the MCP
         side: the default ``ROOK_*_ADMIN_URL`` port and ``--mcp-bind``'s."""
@@ -290,6 +305,11 @@ class Hub:
                                        chat=chat if same else None,
                                        settings_store=settings_store)
         await self.client.start()
+        # This process hands site paths to hub plugins (the middleware below),
+        # so plugins that serve them (voice) may load; say so before the MCP
+        # side builds the hub node and its plugins.
+        from .site import enable_serving
+        enable_serving()
         self.mcp = McpService(_mcp_args(args, self.server.domain), self.client, enrollment,
                               accounts=self.server._accounts.store,
                               startup_conflicts=conflicts, banned=self.server._ban_match,
@@ -302,6 +322,7 @@ class Hub:
         self._unregister = upstream.register_local(self.upstream_origins(), self.mcp.app)
 
         bridge = self.bridge
+        hub_node = self.hub_node
 
         @web.middleware
         async def mcp_paths(request: web.Request, handler):
@@ -309,6 +330,15 @@ class Hub:
             # (bearer tokens, OAuth), never the dashboard login.
             if is_mcp_path(request.path):
                 return await bridge.handle(request)
+            # Paths a hub plugin serves (rook/hub/site.py: /voice/*) bring
+            # their own auth too (voice keys), so they skip the dashboard's.
+            node = hub_node()
+            site = getattr(node, "site", None) if node is not None else None
+            served = site.match(request.path) if site is not None else None
+            # A path the dashboard routes stays the dashboard's, whatever a
+            # plugin mounted (the router resolved it before middlewares ran).
+            if served is not None and _unrouted(request):
+                return await served(request)
             return await handler(request)
 
         self.server._app.middlewares.insert(0, mcp_paths)

@@ -195,6 +195,7 @@ are set only in the environment or on the command line.
 |---|---|---|---|---|---|---|
 | `home.enabled` | Enabled | hub | bool | off | `ROOK_HOME_ENABLED` | live |
 | `home.name` | Name | hub | str | `home` | `ROOK_HOME_NAME` | live |
+| `home.llm_provider` | Model provider | hub | str |  | `ROOK_HOME_LLM_PROVIDER` | live |
 | `home.provider` | Provider | hub | str | `openai` | `ROOK_HOME_PROVIDER` | live |
 | `home.base_url` | Base URL | hub | url |  | `ROOK_HOME_BASE_URL` | live |
 | `home.model` | Model | hub | str |  | `ROOK_HOME_MODEL` | live |
@@ -260,6 +261,17 @@ are set only in the environment or on the command line.
 | `knowledge.hygiene_scan_seconds` | Scan interval (seconds) | hub | int | `300` | `ROOK_KNOWLEDGE_HYGIENE_SCAN_SECONDS` | live |
 | `knowledge.hygiene_notify_people` | Also notify people | hub | bool | off | `ROOK_KNOWLEDGE_HYGIENE_NOTIFY_PEOPLE` | live |
 
+## llmanifold (hub plugin, runs in mcp)
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `llmanifold.base_url` | llmanifold address | hub | url |  | `ROOK_LLMANIFOLD_BASE_URL` | reload |
+| `llmanifold.api_key` | Token (vault reference) | hub | str |  | `ROOK_LLMANIFOLD_API_KEY` | live |
+| `llmanifold.models` | Flows to offer | hub | list |  | `ROOK_LLMANIFOLD_MODELS` | live |
+| `llmanifold.default_model` | Default flow | hub | str |  | `ROOK_LLMANIFOLD_DEFAULT_MODEL` | live |
+| `llmanifold.admin_url` | Admin address | hub | url |  | `ROOK_LLMANIFOLD_ADMIN_URL` | live |
+| `llmanifold.timeout_s` | Status timeout (s) | hub | float | `8.0` | `ROOK_LLMANIFOLD_TIMEOUT_S` | live |
+
 ## Manual (hub plugin, runs in mcp)
 
 | Key | Label | Scope | Type | Default | Env / flag | Apply |
@@ -298,6 +310,13 @@ are set only in the environment or on the command line.
 | Key | Label | Scope | Type | Default | Env / flag | Apply |
 |---|---|---|---|---|---|---|
 | `memory.notes_dir` | Notes directory | worker | path |  | `ROOK_MEMORY_VAULT` | restart |
+
+## Model providers (hub plugin, runs in mcp)
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `llm.providers` | OpenAI-compatible providers | hub | list |  | `ROOK_LLM_PROVIDERS` | live |
+| `llm.check_timeout_s` | Check timeout (s) | hub | float | `10.0` | `ROOK_LLM_CHECK_TIMEOUT_S` | live |
 
 ## PiKVM (worker plugin, runs in worker)
 
@@ -338,34 +357,39 @@ are set only in the environment or on the command line.
 | `telegram.rate_in` | Inbound messages per user per minute | hub | int | `10` | `ROOK_TELEGRAM_RATE_IN` | restart |
 | `telegram.api_base` | API base URL | hub | url | `https://api.telegram.org` | `ROOK_TELEGRAM_API`, `ROOK_TELEGRAM_API_BASE` | restart |
 
-## Voice (service, runs in service:voice)
+## Voice (hub plugin, runs in mcp)
 
 | Key | Label | Scope | Type | Default | Env / flag | Apply |
 |---|---|---|---|---|---|---|
-| `voice.bind` | Listen address | hub | str | `127.0.0.1` | `VOICE_BIND` | restart · bootstrap |
-| `voice.port` | Port | hub | int | `8900` | `VOICE_PORT` | restart · bootstrap |
-| `voice.token` | Client bearer token (secret) | hub | str |  | `VOICE_TOKEN` | restart |
-| `voice.allow_anonymous` | Allow clients without a token | hub | bool | off | `VOICE_ALLOW_ANONYMOUS` | restart |
-| `voice.whisper_model` | Speech recognition model | hub | str | `small.en` | `WHISPER_MODEL` | reload |
-| `voice.whisper_device` | Recognition device | hub | str | `cpu` | `WHISPER_DEVICE` | reload |
-| `voice.whisper_compute` | Compute type | hub | str | `int8` | `WHISPER_COMPUTE` | reload |
-| `voice.min_speech_ms` | Minimum speech (ms) | hub | int | `450` | `MIN_SPEECH_MS` | live |
-| `voice.min_rms` | Energy floor | hub | float | `0.008` | `MIN_RMS` | live |
-| `voice.max_no_speech` | No-speech ceiling | hub | float | `0.6` | `MAX_NO_SPEECH` | live |
-| `voice.min_logprob` | Minimum log-probability | hub | float | `-1.0` | `MIN_LOGPROB` | live |
-| `voice.default_voice` | Voice | hub+user | str | `af_heart` | `VOICE` | live |
-| `voice.assistant_name` | Assistant name | hub+user | str |  | `ROOK_VOICE_ASSISTANT_NAME` | live |
-| `voice.owner` | Whose assistant | hub+user | str |  | `ROOK_VOICE_OWNER` | live |
-| `voice.show_thinking` | Show thinking | user | bool | off |  | live |
-| `voice.hotword_enabled` | Wake word on this account | user | bool | on |  | live |
-| `voice.llm_url` | Language model URL | hub | url | `http://127.0.0.1:1234/v1/chat/completions` | `VLLM_URL` | live |
-| `voice.llm_model` | Model id | hub | str |  | `VLLM_MODEL` | live |
-| `voice.mcp_url` | Rook MCP URL | hub | url | `http://127.0.0.1:8765/mcp` | `ROOK_MCP_URL` | live |
-| `voice.mcp_token` | Rook MCP token (secret) | hub | str |  | `ROOK_MCP_TOKEN` | live |
-| `voice.acp_host` | ACP host | hub | str | `127.0.0.1` | `ACP_HOST` | live |
-| `voice.acp_port` | ACP port | hub | int | `9200` | `ACP_PORT` | live |
-| `voice.acp_auto_approve` | Auto-approve ACP prompts | hub | bool | on | `ACP_AUTO_APPROVE` | live |
-| `voice.direct_tool_budget` | Direct tool calls per turn | hub | int | `1` | `DIRECT_TOOL_BUDGET` | live |
+| `voice.engine` | Where speech runs | hub | str | `here` | `ROOK_VOICE_ENGINE` | reload |
+| `voice.remote_url` | Voice server address | hub | url |  | `ROOK_VOICE_REMOTE_URL` | reload |
+| `voice.remote_verify_tls` | Check the voice server's certificate | hub | bool | on | `ROOK_VOICE_REMOTE_VERIFY_TLS` | reload |
+| `voice.model_dir` | Model folder | hub | path |  | `VOICE_MODEL_DIR`, `ROOK_VOICE_MODEL_DIR` | reload |
+| `voice.root_aliases` | Also answer the Android app's root paths | hub | bool | on | `ROOK_VOICE_ROOT_ALIASES` | reload |
+| `voice.token` | Client bearer token (secret) | hub | str |  | `VOICE_TOKEN`, `ROOK_VOICE_TOKEN` | reload |
+| `voice.allow_anonymous` | Allow clients without a token | hub | bool | off | `VOICE_ALLOW_ANONYMOUS`, `ROOK_VOICE_ALLOW_ANONYMOUS` | reload |
+| `voice.bind` | Listen address | hub | str | `127.0.0.1` | `VOICE_BIND`, `ROOK_VOICE_BIND` | restart · bootstrap |
+| `voice.port` | Port | hub | int | `8900` | `VOICE_PORT`, `ROOK_VOICE_PORT` | restart · bootstrap |
+| `voice.whisper_model` | Speech recognition model | hub | str | `small.en` | `WHISPER_MODEL`, `ROOK_VOICE_WHISPER_MODEL` | reload |
+| `voice.whisper_device` | Recognition device | hub | str | `cpu` | `WHISPER_DEVICE`, `ROOK_VOICE_WHISPER_DEVICE` | reload |
+| `voice.whisper_compute` | Compute type | hub | str | `int8` | `WHISPER_COMPUTE`, `ROOK_VOICE_WHISPER_COMPUTE` | reload |
+| `voice.min_speech_ms` | Minimum speech (ms) | hub | int | `450` | `MIN_SPEECH_MS`, `ROOK_VOICE_MIN_SPEECH_MS` | reload |
+| `voice.min_rms` | Energy floor | hub | float | `0.008` | `MIN_RMS`, `ROOK_VOICE_MIN_RMS` | reload |
+| `voice.max_no_speech` | No-speech ceiling | hub | float | `0.6` | `MAX_NO_SPEECH`, `ROOK_VOICE_MAX_NO_SPEECH` | reload |
+| `voice.min_logprob` | Minimum log-probability | hub | float | `-1.0` | `MIN_LOGPROB`, `ROOK_VOICE_MIN_LOGPROB` | reload |
+| `voice.default_voice` | Voice | hub+user | str | `af_heart` | `VOICE`, `ROOK_VOICE_DEFAULT_VOICE` | reload |
+| `voice.assistant_name` | Assistant name | hub+user | str |  | `ROOK_VOICE_ASSISTANT_NAME` | reload |
+| `voice.owner` | Whose assistant | hub+user | str |  | `ROOK_VOICE_OWNER` | reload |
+| `voice.show_thinking` | Show thinking | user | bool | off | `ROOK_VOICE_SHOW_THINKING` | live |
+| `voice.hotword_enabled` | Wake word on this account | user | bool | on | `ROOK_VOICE_HOTWORD_ENABLED` | live |
+| `voice.llm_url` | Language model URL | hub | url | `http://127.0.0.1:1234/v1/chat/completions` | `VLLM_URL`, `ROOK_VOICE_LLM_URL` | reload |
+| `voice.llm_model` | Model id | hub | str |  | `VLLM_MODEL`, `ROOK_VOICE_LLM_MODEL` | reload |
+| `voice.mcp_url` | Rook MCP URL | hub | url | `http://127.0.0.1:8765/mcp` | `ROOK_MCP_URL`, `ROOK_VOICE_MCP_URL` | reload |
+| `voice.mcp_token` | Rook MCP token (secret) | hub | str |  | `ROOK_MCP_TOKEN`, `ROOK_VOICE_MCP_TOKEN` | reload |
+| `voice.acp_host` | ACP host | hub | str | `127.0.0.1` | `ACP_HOST`, `ROOK_VOICE_ACP_HOST` | reload |
+| `voice.acp_port` | ACP port | hub | int | `9200` | `ACP_PORT`, `ROOK_VOICE_ACP_PORT` | reload |
+| `voice.acp_auto_approve` | Auto-approve ACP prompts | hub | bool | on | `ACP_AUTO_APPROVE`, `ROOK_VOICE_ACP_AUTO_APPROVE` | reload |
+| `voice.direct_tool_budget` | Direct tool calls per turn | hub | int | `1` | `DIRECT_TOOL_BUDGET`, `ROOK_VOICE_DIRECT_TOOL_BUDGET` | reload |
 
 ## Wake (agent.wake) (worker plugin, runs in worker)
 

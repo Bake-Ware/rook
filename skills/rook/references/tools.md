@@ -87,6 +87,9 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `job.write` | action, id?, data? | write | Write jobs: create\|update\|delete\|enable\|disable\|run\|cancel\|set_guardrails\|settings. |
 | `knowledge.read` | action='search', band?, id?, query='', data? | read | Read the shared wiki: search\|get\|list\|context\|status\|bands\|deck. |
 | `knowledge.write` | action, band?, id?, data?, request_id? | write | Write the shared wiki: create\|update\|link\|retract (needs request_id). |
+| `llm.check` | provider='' | read | llm.check — whether a provider (or every one) answers, with latency. |
+| `llm.models` | provider, live=false | read | llm.models — model ids one provider offers (live=true asks its /models). |
+| `llm.providers` | fields? | read | llm.providers — the model providers this hub can use: id, kind, host, offered models, last check. |
 | `manual.get` | id, source='auto' | read | One manual page by id (`getting-started`; `manual-` prefix optional): title and Markdown body. |
 | `manual.list` | source='auto' | read | The manual's table of contents: id, title, since, deprecated, preview, and whether the page is read from the… |
 | `manual.status` | — | read | The bundled manual and its knowledge copy: version, page count, what an update would add, change and remove (… |
@@ -154,6 +157,9 @@ Scheduled, branching work the hub runs. `rook_jobs(action="describe_schema")` gi
 
 ### knowledge
 The shared wiki. Use the `rook_knowledge` tool: `search` before starting (5 hits, each with the passage that matched and its `section`; `data.limit`/`data.fields` for more), `get` a page by id or slug (its [[links]], backlinks and semantically `related` pages come as `{slug, title, gist}` stubs: get one by slug, no new search), `create` a page with a unique `request_id`. Over the band the same actions are `knowledge.read` (search/get/list/context/status/bands) and `knowledge.write` (create/update/link/retract) on worker `rook`; band callers reach only the read cap by default. Semantic search needs an embedding service (setting `embedder`).
+
+### model providers
+The language models this hub can reach: `llm.providers` (ids, hosts, models), `llm.models(provider=…)`, `llm.check(provider=…)` on worker `rook`. Read only; the home agent uses one of them.
 
 ### manual
 The Rook user manual (plain-language help for every feature). In the knowledge wiki it is the page `rook-manual` and its children `manual-<topic>`; `manual.list` and `manual.get(id)` on worker `rook` read it even when the wiki is off. Check it before explaining a Rook feature to a person.

@@ -69,6 +69,8 @@ COPY pyproject.toml README.md LICENSE NOTICE ./
 COPY integrations/claude-code/.claude-plugin/plugin.json integrations/claude-code/.claude-plugin/plugin.json
 COPY rook ./rook
 COPY skills ./skills
+# Packaged as rook/_voice_engine (voice plugin; its extras are not installed here).
+COPY services/voice ./services/voice
 COPY docs/manual ./docs/manual
 # A source checkout pins telesthete as git+https, which needs git to fetch; a
 # release build (tools/release_prep.py) pins a hash-checked wheel URL instead,

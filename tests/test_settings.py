@@ -243,11 +243,11 @@ def test_restart_pending_flag(tmp_path):
     svc = _svc(tmp_path, started_at=1.0)
     svc.set("voice.whisper_model", "base.en")          # apply=reload: no restart flag
     assert "pending" not in svc.resolve("voice.whisper_model")
-    svc.store.report_runtime("service:voice", {"started_at": 1.0})
-    svc.set("voice.acp_port", 9300)                    # live
-    assert "pending" not in svc.resolve("voice.acp_port")
-    svc.set("voice.allow_anonymous", True)             # apply=restart, service started before
-    assert svc.resolve("voice.allow_anonymous")["pending"] == "restart"
+    svc.store.report_runtime("mcp", {"started_at": 1.0})
+    svc.set("home.timeout_s", 30.0)                    # live
+    assert "pending" not in svc.resolve("home.timeout_s")
+    svc.set("core.plugins.hub", {"notify": False})     # apply=restart, MCP started before
+    assert svc.resolve("core.plugins.hub")["pending"] == "restart"
 
 
 def _worker_node(caps=("worker.plugin.list", "worker.config_get", "worker.settings_report")):

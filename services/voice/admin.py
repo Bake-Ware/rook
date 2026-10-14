@@ -82,6 +82,12 @@ class PasswordChange(BaseModel):
     password: str = Field(min_length=1, max_length=1024)
 
 
+def admin_path(request):
+    """The admin cookie's path: /admin, or /voice/admin when a hub serves this
+    app under /voice (ASGI root_path)."""
+    return (request.scope.get('root_path') or '').rstrip('/') + '/admin'
+
+
 def router(store, legacy, invalidate):
     routes = APIRouter()
     attempts = {}
@@ -135,7 +141,7 @@ def router(store, legacy, invalidate):
             db.execute('DELETE FROM sessions WHERE expires<?', (now,))
             db.execute('INSERT INTO sessions VALUES(?,?,?)', (digest(token), csrf, now + 28800))
         response.set_cookie(cookie, token, secure=True, httponly=True, samesite='strict',
-                            max_age=28800, path='/admin')
+                            max_age=28800, path=admin_path(request))
         return {'csrf': csrf}
 
     @routes.get('/admin/api/session')
@@ -148,7 +154,7 @@ def router(store, legacy, invalidate):
         session(request, True)
         with store.db() as db:
             db.execute('DELETE FROM sessions WHERE id=?', (digest(request.cookies[cookie]),))
-        response.delete_cookie(cookie, path='/admin', secure=True, httponly=True, samesite='strict')
+        response.delete_cookie(cookie, path=admin_path(request), secure=True, httponly=True, samesite='strict')
         return {'ok': True}
 
     @routes.get('/admin/api/keys')
@@ -203,7 +209,7 @@ def router(store, legacy, invalidate):
         with store.db() as db:
             db.execute('UPDATE users SET salt=?,hash=? WHERE name=?', (salt, hashed, name))
             db.execute('DELETE FROM sessions')
-        response.delete_cookie(cookie, path='/admin', secure=True, httponly=True, samesite='strict')
+        response.delete_cookie(cookie, path=admin_path(request), secure=True, httponly=True, samesite='strict')
         return {'ok': True}
 
     return routes

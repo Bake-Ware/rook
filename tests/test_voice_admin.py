@@ -85,3 +85,37 @@ def test_login_throttled_and_bootstrap_preserves_password(setup):
     for _ in range(9):
         assert c.post('/admin/api/login', json={'username': 'admin', 'password': 'wrong'}, headers={'X-Voice-Admin': '1'}).status_code == 401
     assert c.post('/admin/api/login', json={'username': 'admin', 'password': 'wrong'}, headers={'X-Voice-Admin': '1'}).status_code == 429
+
+
+def test_admin_cookie_follows_the_mount_point(tmp_path):
+    """Served by a hub under /voice (ASGI root_path), the admin cookie must be
+    scoped to /voice/admin or the browser never sends it back."""
+    store = AdminStore(tmp_path / 'admin.sqlite3')
+    store.bootstrap('admin', 'test-password')
+
+    async def invalidate(key):
+        pass
+    app = FastAPI()
+    app.include_router(router(store, {}, invalidate))
+    with TestClient(app, base_url='https://voice.test', root_path='/voice') as c:
+        r = c.post('/voice/admin/api/login', json={'username': 'admin', 'password': 'test-password'},
+                   headers={'X-Voice-Admin': '1', 'Origin': 'https://voice.test'})
+        assert r.status_code == 200
+        assert 'path=/voice/admin' in r.headers['set-cookie'].lower()
+    with TestClient(app, base_url='https://voice.test') as c:
+        r = c.post('/admin/api/login', json={'username': 'admin', 'password': 'test-password'},
+                   headers={'X-Voice-Admin': '1', 'Origin': 'https://voice.test'})
+        assert 'path=/admin;' in r.headers['set-cookie'].lower() + ';'
+
+
+def test_bundled_pages_use_relative_urls():
+    """The browser client and the admin page load from / (standalone) or
+    /voice/ (a hub): no absolute path may remain."""
+    import re
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent / 'services' / 'voice'
+    page = (root / 'static' / 'index.html').read_text(encoding='utf-8')
+    admin = (root / 'admin.html').read_text(encoding='utf-8')
+    for text in (page, admin):
+        assert not re.search(r"""(fetch\(|href=)["'`]/""", text)
+    assert "location.host+BASE+'/ws'" in page

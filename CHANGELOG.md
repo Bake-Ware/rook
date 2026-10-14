@@ -10,6 +10,45 @@ version was `0.1.0`.
 
 Preparation for public use.
 
+### Voice and model provider plugins
+Manual: voice, model-providers, home-agent
+- Voice is a hub plugin: `rook hub serve` serves the voice service at
+  `/voice/` (`/voice/ws`, `/voice/api/transcribe`, `/voice/api/voice`, the
+  browser client, voice keys at `/voice/admin`; `/api/transcribe`,
+  `/api/voice` and `/voices` at the root too, for the Android app). Speech
+  runs on the hub (`voice.engine=here`, needs `pip install 'rook[voice]'`
+  and the model files) or on another machine the hub forwards to
+  (`voice.engine=remote`, `voice.remote_url`). Without what that needs the
+  plugin stays off and the Plugins page says what is missing. The voice
+  settings keep their keys and variables. The standalone server
+  (`python -m services.voice.server`) is unchanged. Docs:
+  docs/operations/voice.md.
+- Voice on the hub only loads under `rook hub serve`; in the two-process
+  layout the Plugins and Voice pages say so. With `voice.engine=remote` the
+  hub forwards only the voice admin cookie (never the dashboard session or
+  `Cf-Access-*` headers), passes back only that cookie under `/voice/admin`,
+  keeps the voice server's own `Host` and presents the hub's origin as the
+  voice server's so voice admin sign-in works through the hub (with failed
+  sign-ins counted per client),
+  refuses paths with `.`/`..` segments and caps voice WebSockets at 16 per
+  client address. Changing a voice setting while the models load waits for
+  that load instead of running two. Dashboard routes always win over plugin
+  paths. Addresses with a user name or password are refused for the voice
+  server, model providers and llmanifold; `llm.models`/`llm.check` are
+  attributed to and rate limited per caller.
+- Manage > Voice: state, the address for the apps, where speech runs, and a
+  microphone check that transcribes a few seconds recorded in the browser.
+- Model providers (`llm` hub plugin, Manage > Model providers): name the
+  OpenAI-compatible model servers the hub can use, check and list their
+  models; `llm.providers`, `llm.models`, `llm.check` on worker `rook`. The
+  home agent can use one by name (`home.llm_provider`).
+- llmanifold hub plugin: once `llmanifold.base_url` is set, llmanifold is the
+  model provider `llmanifold`, and `llmanifold.status` reports its flows and,
+  with its admin address, lanes and queue.
+- Plugins: a plugin that cannot load says why in plain words
+  (`Plugin.unavailable_reason()`), and is retried when one of its settings
+  changes. Hub plugins can serve paths on the hub site (`rook/hub/site.py`).
+
 ### User manual
 Manual: help, welcome, getting-started, overview-and-start-page, adding-machines, bands-and-keys, accounts-and-access, workers, chat, work, sessions, knowledge, jobs, secrets, agents-and-mcp, home-agent, home-agent-memory, settings, plugins, phones-and-tablets, hardware, integrations, voice, updates, security, terminal-and-commands, running-a-hub, desktop-app
 - Added a user manual: 27 plain-language pages in `docs/manual/` covering

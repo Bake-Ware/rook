@@ -353,6 +353,8 @@
       <a id="tab-guidance" href="#guidance" onclick="showView('guidance');return false">Agent instructions</a>
       <a id="tab-vault" href="#vault" onclick="showView('vault');return false">Secrets</a>
       <a id="tab-home" href="#home" onclick="showView('home');return false">Home agent</a>
+      <a id="tab-voice" href="#voice" onclick="showView('voice');return false">Voice</a>
+      <a id="tab-models" href="#models" onclick="showView('models');return false">Model providers</a>
       <a id="tab-memory" href="#memory" onclick="showView('memory');return false">Memory</a>
     </nav>
     <nav aria-label="Help" class="nav-help">
@@ -432,6 +434,8 @@
     <div id="view-guidance" hidden></div>
     <div id="view-vault" hidden></div>
     <div id="view-home" hidden></div>
+    <div id="view-voice" hidden></div>
+    <div id="view-models" hidden></div>
     <div id="view-memory" hidden></div>
     <div id="view-settings" hidden></div>
     <div id="view-plugins" hidden></div>
@@ -1108,6 +1112,8 @@ const viewInfo={
  vault:['Secrets','Credentials your agents can use, with every access logged.'],
  guidance:['Agent instructions','What Rook tells agents when they connect, list tools, and call capabilities.'],
  home:['Home agent','The hub\'s own LLM: who it is, which model it runs, and what it has been asked.'],
+ voice:['Voice','Talk to your agents from phones, the desktop app and a browser, through this hub.'],
+ models:['Model providers','The language models this hub can use: for the home agent, memory and voice.'],
  memory:['Memory','What the home agent remembers about people, your home, past conversations and how to do things.'],
  settings:['Settings','Hub, band, worker, plugin and personal settings, with where each value comes from.'],
  plugins:['Plugins','What Rook can do on the hub and on each worker: switch plugins live, set defaults for new workers.'],
@@ -1153,6 +1159,17 @@ async function ensureHome(){
  if(homeUI)return homeUI;
  if(!homeLoading)homeLoading=import('/account/settings/assets/home.js').then(m=>m.mountHome($('#view-home'))).then(ui=>homeUI=ui).finally(()=>{homeLoading=null;});
  return homeLoading;
+}
+let voiceUI=null, voiceLoading=null, modelsUI=null, modelsLoading=null;
+async function ensureVoice(){
+ if(voiceUI)return voiceUI;
+ if(!voiceLoading)voiceLoading=import('/account/settings/assets/voice.js').then(m=>m.mountVoice($('#view-voice'))).then(ui=>voiceUI=ui).finally(()=>{voiceLoading=null;});
+ return voiceLoading;
+}
+async function ensureModels(){
+ if(modelsUI)return modelsUI;
+ if(!modelsLoading)modelsLoading=import('/account/settings/assets/llm.js').then(m=>m.mountModels($('#view-models'))).then(ui=>modelsUI=ui).finally(()=>{modelsLoading=null;});
+ return modelsLoading;
 }
 let memoryUI=null, memoryLoading=null;
 async function ensureMemory(){
@@ -1239,6 +1256,7 @@ function showView(v,updateHistory=true){
  if(activeView==='knowledge')knowledgeUI?.deactivate();
  if(activeView==='jobs')jobsUI?.deactivate();
  if(activeView==='home')homeUI?.deactivate();
+ if(activeView==='voice')voiceUI?.deactivate();
  if(activeView==='memory')memoryUI?.deactivate();
  if(activeView==='plugins')pluginsUI?.deactivate();
  if(activeView==='overview')overviewUI?.deactivate();
@@ -1254,6 +1272,8 @@ function showView(v,updateHistory=true){
  if(v==='settings')ensureSettingsArea().then(ui=>{if(activeView==='settings')return ui.activate(settingsQuery());}).catch(e=>{$('#view-settings').textContent=e.message;});
  if(v==='plugins')ensurePlugins().then(ui=>{if(activeView==='plugins')return ui.activate();}).catch(e=>{$('#view-plugins').textContent=e.message;});
  if(v==='vault')ensureVault().then(ui=>{if(activeView==='vault')ui.activate();}).catch(e=>{$('#view-vault').textContent=e.message;});
+ if(v==='voice')ensureVoice().then(ui=>{if(activeView==='voice')ui.activate();}).catch(e=>{$('#view-voice').textContent=e.message;});
+ if(v==='models')ensureModels().then(ui=>{if(activeView==='models')ui.activate();}).catch(e=>{$('#view-models').textContent=e.message;});
  if(v==='home')ensureHome().then(ui=>{if(activeView==='home')ui.activate();}).catch(e=>{$('#view-home').textContent=e.message;});
  if(v==='memory')ensureMemory().then(ui=>{if(activeView==='memory')ui.activate();}).catch(e=>{$('#view-memory').textContent=e.message;});
  if(v==='guidance')ensureGuidance().then(ui=>{if(activeView==='guidance')ui.activate();}).catch(e=>{$('#view-guidance').textContent=e.message;});
