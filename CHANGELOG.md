@@ -9,6 +9,19 @@ releases yet: workers identify themselves by build number (for example
 
 Preparation for public use.
 
+### Claude Code rules
+- Manage > Claude Code: hub-managed triggers and actions for Claude Code on
+  the workers (hub plugin and worker plugin `ccmod`). Triggers: Claude Code
+  hook events with tool and text filters, Idle for N minutes, worker
+  offline/online; scopes: everything, band, worker, project, agent; actions:
+  post in a room or huddle, notify, run an allow-listed capability, inject
+  instructions, block, status line. `ccmod.push` merges Rook's managed hooks
+  into each Claude Code `settings.json` next to the person's own (backup kept,
+  diff preview, clean removal); older workers are skipped. Capability actions
+  are admin-only, allow-listed (`ccmod.cap_allowlist`) and need
+  `ccmod.allow_exec` for exec-tier caps. Docs: docs/web/claude-code-rules.md,
+  docs/design/ccmod.md.
+
 ### Hub merge
 - One hub process: `rook hub serve` (console script `rook-hub`) runs the
   dashboard and the MCP server together on the dashboard port (7005): the MCP
