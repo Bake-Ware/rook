@@ -56,12 +56,12 @@ FIRST_RUN_S = 60.0
 #: Model tools the home agent gets while memory is on (chat and home.ask).
 SAVE_TOOL = {"type": "function", "function": {
     "name": "memory_save",
-    "description": ("Remember something for later conversations: a durable fact, something about "
-                    "the person you are talking to, or a way of doing something that worked. One "
-                    "short statement in the third person. Never secrets, passwords or codes."),
+    "description": ("Remember something for later conversations: a durable fact, or something "
+                    "about the person you are talking to (kind profile). One short statement in "
+                    "the third person. Never secrets, passwords or codes."),
     "parameters": {"type": "object", "properties": {
         "text": {"type": "string"},
-        "kind": {"type": "string", "enum": ["profile", "fact", "procedure"]}},
+        "kind": {"type": "string", "enum": ["profile", "fact"]}},
         "required": ["text"]}}}
 SEARCH_TOOL = {"type": "function", "function": {
     "name": "memory_search",
@@ -73,6 +73,38 @@ SEARCH_TOOL = {"type": "function", "function": {
 def _actor() -> str:
     ident = core_context.caller_identity.get()
     return str(ident) if ident else "system:rook-hub"
+
+
+def _is_admin() -> bool:
+    """The operator: band owners, operator tokens (``require_hub_admin``)."""
+    from ...authz import require_hub_admin
+    return require_hub_admin("memory") is None
+
+
+def _person(identity: str) -> str | None:
+    """The caller's own scope, when the caller is a person."""
+    return identity if identity.startswith(("user:", "human:")) else None
+
+
+def _scrub(obj):
+    """Reverse-mask a reply: these caps are tagged sensitive (not journaled,
+    exempt from the bridge's masking), and a value may have joined the vault
+    after a memory was written."""
+    try:
+        from ....band_mcp.secret_mask import scrub
+        return scrub(obj)
+    except Exception:  # noqa: BLE001
+        return obj
+
+
+def _safe_url(url: str) -> str:
+    """A connection string for display: no credentials, no query."""
+    from urllib.parse import urlsplit
+    u = urlsplit(str(url or ""))
+    host = u.hostname or ""
+    if u.port:
+        host += f":{u.port}"
+    return f"{u.scheme}://{host}{u.path}" if u.scheme else ""
 
 
 class Memory(Plugin):
@@ -136,6 +168,10 @@ class Memory(Plugin):
                 advanced=True, label="Roll conversations up by week after (days)"),
         setting("min_confidence", float, 0.5, min=0.0, max=1.0, group="Tidying up", order=5,
                 advanced=True, label="Keep automatic memories from confidence"),
+        setting("retention_days", int, 90, min=0, max=3650, group="Tidying up", order=9,
+                advanced=True, label="Delete replaced and forgotten memories after (days)",
+                help="Replaced, archived and forgotten memories, their history and vectors are "
+                     "deleted for good after this long. 0: kept."),
         setting("half_life_days", dict, dict(DEFAULT_HALF_LIFE), group="Tidying up", order=6,
                 advanced=True, label="Fade half-life by kind (days)",
                 help="Unused memories lose strength; kinds not listed (profile, procedure) and "
@@ -155,9 +191,10 @@ class Memory(Plugin):
     }
     SKILL = ("### memory\n"
              "What the hub's home agent remembers (people, facts, conversations, skills). "
-             "`memory.recall(query)` on worker `rook` searches it; `memory.remember(text, kind)` "
-             "(kind profile|fact|procedure, `about` a person or `shared`) adds one; "
-             "`memory.forget(id)` removes one. Never store secrets. People browse and edit it on "
+             "`memory.recall(query)` on worker `rook` searches shared memory (and your own); "
+             "`memory.remember(text, kind)` (kind fact, or profile about yourself) adds one; "
+             "`memory.forget(id)` removes one. Other people's memory, skills (procedures) and "
+             "pinning are the operator's. Never store secrets. People browse and edit it on "
              "Manage > Memory.\n")
 
     def __init__(self) -> None:
@@ -186,7 +223,9 @@ class Memory(Plugin):
                                 else 0.1),
             budgets={**DEFAULT_BUDGETS, **(s.get("budgets") or {})},
             episode_idle_minutes=float(s.get("episode_idle_minutes") or 20),
-            rollup_days=int(s.get("rollup_days") or 14))
+            rollup_days=int(s.get("rollup_days") or 14),
+            retention_days=int(s.get("retention_days") if s.get("retention_days") is not None
+                               else 90))
 
     def available(self) -> bool:
         if not self.settings.get("enabled", True):
@@ -222,7 +261,9 @@ class Memory(Plugin):
             minutes = int(self.settings.get("consolidate_minutes") or 0)
             if minutes > 0:
                 try:
-                    stats = await self.service.consolidate(self.summariser())
+                    stats = await self.service.consolidate(
+                        self.summariser(),
+                        capture=bool(self.settings.get("auto_remember", True)))
                     if any(v for k, v in stats.items() if k != "summariser"):
                         log.info("memory tidy-up: %s", stats)
                 except asyncio.CancelledError:
@@ -264,10 +305,10 @@ class Memory(Plugin):
                 log.warning("memory: the embedder setting is not a valid connection string")
             model = str(s.get("embed_model") or "").strip()
             if res is not None and res.scheme == "cap":
-                sources.append(Source(res.url, lambda texts, r=res: r.call({"texts": texts},
-                                                                          timeout=8.0)))
+                sources.append(Source(_safe_url(res.url), lambda texts, r=res: r.call(
+                    {"texts": texts}, timeout=8.0)))
             elif res is not None and res.scheme in ("http", "https"):
-                sources.append(Source(res.url.split("?")[0], _http_embed(res.url)))
+                sources.append(Source(_safe_url(res.url), _http_embed(res.url)))
             elif model and home is not None and str(home.settings.get("base_url") or "").strip():
                 sources.append(Source(f"home agent endpoint ({model})",
                                       self._home_embed(model), shape="openai", model=model))
@@ -323,7 +364,7 @@ class Memory(Plugin):
             log.exception("memory: capturing the exchange failed")
             return {"remembered": [], "forgotten": []}
 
-    async def learn_procedure(self, prompt: str, tools: list, result: str, **kw) -> dict:
+    async def learn_procedure(self, prompt: str, tools: list, result: str = "", **kw) -> dict:
         if self.service is None or not self.settings.get("auto_remember", True):
             return {"verdict": "dropped"}
         try:
@@ -332,25 +373,61 @@ class Memory(Plugin):
             log.exception("memory: learning a procedure failed")
             return {"verdict": "dropped"}
 
-    def tools(self) -> list[dict]:
-        return [SAVE_TOOL, SEARCH_TOOL] if self.service is not None else []
+    def tools(self, save: bool = True) -> list[dict]:
+        """Model tools: search, and save when the asker may write memory."""
+        if self.service is None:
+            return []
+        return [SAVE_TOOL, SEARCH_TOOL] if save else [SEARCH_TOOL]
 
-    async def run_tool(self, name: str, args: dict, *, person: str, actor: str,
+    async def run_tool(self, name: str, args: dict, *, person: str | None, actor: str,
                        room: str | None = None) -> dict:
-        """One model tool call from the home agent, on behalf of ``person``."""
+        """One model tool call from the home agent, on behalf of ``person``
+        (None: an agent or a job; shared memory only). The model never writes
+        procedures or pins: those steer tool use, so they are the operator's."""
         svc = self._svc()
         if name == "memory_save":
             kind = str(args.get("kind") or "fact")
-            if kind not in ("profile", "fact", "procedure"):
-                kind = "fact"
+            if kind not in ("profile", "fact"):
+                return {"verdict": "rejected", "reason": "only profile and fact memories can be "
+                                                         "saved this way"}
+            if kind == "profile" and not person:
+                return {"verdict": "rejected", "reason": "there is no person to remember this about"}
             res = await svc.add(str(args.get("text") or ""), kind,
                                 about=person if kind == "profile" else SHARED, source="tool",
-                                author=person, actor=actor, room=room, tags=["agent"])
+                                author=person or actor, actor=actor, room=room, tags=["agent"])
             return {k: res[k] for k in ("verdict", "id", "reason", "superseded") if k in res}
         if name == "memory_search":
-            rows = await svc.recall(str(args.get("query") or "")[:300], [person, SHARED], limit=5)
+            scopes = [person, SHARED] if person else [SHARED]
+            rows = await svc.recall(str(args.get("query") or "")[:300], scopes, limit=5)
             return {"results": [{k: r[k] for k in ("kind", "text", "when")} for r in rows]}
         return {"error": f"unknown tool {name!r}"}
+
+    # -- who may see and change what ---------------------------------------------------
+    def _read_scopes(self, svc: MemoryService, about: str | None, default_all: bool,
+                     admin: bool | None = None) -> list | None:
+        """Scopes a caller may read. The operator: anything (``None`` = all
+        when ``default_all``). Anyone else: shared memory and their own."""
+        who = _actor()
+        if _is_admin() if admin is None else admin:
+            if about:
+                scope = svc.scope_for("profile", about)
+                return [scope] + ([SHARED] if scope != SHARED and not default_all else [])
+            return None if default_all else [svc.cfg.default_person, SHARED]
+        own = _person(who)
+        allowed = [SHARED] + ([own] if own else [])
+        if about:
+            scope = svc.scope_for("profile", about)
+            if scope not in allowed:
+                raise PermissionError(f"denied: memory about {scope} is the operator's to read")
+            return [scope] if default_all else list(dict.fromkeys([scope, SHARED]))
+        return allowed
+
+    def _may_change(self, row: dict) -> None:
+        if _is_admin():
+            return
+        own = _person(_actor())
+        if row["scope"] != SHARED and row["scope"] != own:
+            raise PermissionError(f"denied: memory about {row['scope']} is the operator's to change")
 
     # -- read caps --------------------------------------------------------------------
     @capability("recall", risk="read", tags=("sensitive",))
@@ -358,22 +435,24 @@ class Memory(Plugin):
                      limit: int = 5, include_archived: bool = False) -> dict:
         """Search memory (keywords, and meaning when embeddings are on).
 
-        kind: profile|fact|episode|procedure (comma list ok). about: a person
-        (user:operator) or shared; omitted: the default person and shared."""
+        kind: profile|fact|episode|procedure (comma list ok). about: shared, or a
+        person (another person's memory is the operator's to read)."""
         svc = self._svc()
-        scopes = [svc.scope_for("profile", about)] if about else \
-            [svc.cfg.default_person, SHARED]
-        if about and about != SHARED:
-            scopes.append(SHARED)
-        kinds = _kinds(kind)
-        rows = await svc.recall(query, scopes, kinds=kinds, limit=limit,
+        scopes = self._read_scopes(svc, about, default_all=False)
+        rows = await svc.recall(query, scopes, kinds=_kinds(kind), limit=limit,
                                 include_archived=bool(include_archived))
-        return {"results": rows, "about": scopes}
+        return _scrub({"results": rows, "about": scopes})
 
     @capability("show", risk="read", tags=("sensitive",))
     def show(self, id: str) -> dict:
         """One memory in full: text, provenance, what it replaced and its history."""
-        return self._svc().show(id)
+        svc = self._svc()
+        row = svc.show(id)
+        if not _is_admin():
+            self._read_scopes(svc, row["scope"], default_all=True)
+            if row["state"] == "forgotten":
+                raise PermissionError("denied: forgotten memories are the operator's to read")
+        return _scrub(row)
 
     @capability("list", risk="read", tags=("sensitive",))
     def list_memories(self, kind: str | None = None, about: str | None = None,
@@ -381,18 +460,24 @@ class Memory(Plugin):
                       offset: int = 0) -> dict:
         """List memories, newest first, by kind, person and state
         (active|superseded|archived|forgotten|all); query filters by text."""
+        return self._list(kind, about, state, query, limit, offset, _is_admin())
+
+    def _list(self, kind, about, state, query, limit, offset, admin: bool) -> dict:
         svc = self._svc()
         if state != "all" and state not in STATES:
             raise ValueError(f"state must be one of {', '.join(STATES)} or all")
-        scopes = [svc.scope_for("profile", about)] if about else None
+        if state in ("forgotten", "all") and not admin:
+            raise PermissionError("denied: forgotten memories are the operator's to read")
+        scopes = self._read_scopes(svc, about, default_all=True, admin=admin)
         kinds = _kinds(kind)
         states = None if state == "all" else (state,)
         limit = max(1, min(int(limit or 50), 200))
         rows = svc.store.select(scopes, kinds, states, limit=limit, offset=max(0, int(offset)),
                                 query=str(query or "")[:200])
-        return {"items": [svc.compact(r) | {"source": r["source"], "updated": r["updated"]}
-                          for r in rows],
-                "total": svc.store.count(scopes, kinds, states, query=str(query or "")[:200])}
+        return _scrub({"items": [svc.compact(r) | {"source": r["source"], "updated": r["updated"]}
+                                 for r in rows],
+                       "total": svc.store.count(scopes, kinds, states,
+                                                query=str(query or "")[:200])})
 
     @capability("status", risk="read")
     def status(self) -> dict:
@@ -404,31 +489,53 @@ class Memory(Plugin):
     async def remember(self, text: str, kind: str = "fact", about: str | None = None,
                        pinned: bool = False, supersedes: list | None = None) -> dict:
         """Remember one statement (write rules apply: no secrets, dedupe, a
-        changed fact replaces the old one). kind: profile|fact|procedure|episode;
-        about: a person (user:operator) or shared (default by kind)."""
+        changed fact replaces the old one). kind: profile|fact|episode, or
+        procedure (operator only); about: a person or shared (default by kind).
+        pinned (operator only) keeps it from fading."""
+        svc = self._svc()
         who = _actor()
-        return await self._svc().add(text, kind, about=about, source="agent", author=who,
-                                     actor=who, pinned=bool(pinned),
-                                     supersedes=as_list(supersedes))
+        admin = _is_admin()
+        kind = str(kind or "fact").strip().lower()
+        if (kind == "procedure" or pinned) and not admin:
+            raise PermissionError("denied: skills (procedures) and pinned memories are the "
+                                  "operator's to write; save it as a fact")
+        if not admin:
+            scope = svc.scope_for(kind, about)
+            if scope not in (SHARED, _person(who)):
+                raise PermissionError(f"denied: memory about {scope} is the operator's to write")
+        return await svc.add(text, kind, about=about, source="agent", author=who, actor=who,
+                             pinned=bool(pinned), supersedes=as_list(supersedes),
+                             approved=admin and kind == "procedure")
 
     @capability("edit", risk="write")
     async def edit(self, id: str, text: str | None = None, kind: str | None = None,
-                   pinned: bool | None = None, about: str | None = None) -> dict:
-        """Change a memory: new text or kind replaces it (history kept); pinned
-        keeps it from fading."""
-        return await self._svc().edit(id, _actor(), text=text, kind=kind, pinned=pinned,
-                                      about=about)
+                   pinned: bool | None = None, about: str | None = None,
+                   approved: bool | None = None) -> dict:
+        """Change a memory: new text or kind replaces it (history kept). pinned
+        keeps it from fading; approved lets a skill into prompts (both operator only)."""
+        svc = self._svc()
+        row = svc.show(id)
+        self._may_change(row)
+        if not _is_admin() and (pinned is not None or approved is not None
+                                or kind == "procedure" or row["kind"] == "procedure"):
+            raise PermissionError("denied: skills, pinning and approval are the operator's")
+        return await svc.edit(id, _actor(), text=text, kind=kind, pinned=pinned, about=about,
+                              approved=approved)
 
     @capability("forget", risk="write", tags=("destructive",))
     async def forget(self, id: str, purge: bool = False, reason: str = "") -> dict:
-        """Forget a memory. purge=true also erases its text (kept otherwise, as forgotten)."""
-        return await self._svc().forget(id, _actor(), purge=bool(purge), reason=reason)
+        """Forget a memory. purge=true also erases its text and every earlier
+        version (kept otherwise, as forgotten)."""
+        svc = self._svc()
+        self._may_change(svc.show(id))
+        return await svc.forget(id, _actor(), purge=bool(purge), reason=reason)
 
     @capability("consolidate", risk="write")
     async def consolidate(self, force: bool = False) -> dict:
         """Tidy up now: summarise conversations, roll up old ones, merge, fade, re-embed."""
         return await self._svc().consolidate(self.summariser(), actor=_actor(),
-                                             force=bool(force))
+                                             force=bool(force),
+                                             capture=bool(self.settings.get("auto_remember", True)))
 
     # -- MCP --------------------------------------------------------------------------
     def mcp_tools(self, invoke):
@@ -475,7 +582,7 @@ class Memory(Plugin):
                          "embeddings", "embed_model", "summarise_with_model")}}
         if svc is not None:
             out["status"] = svc.status()
-            out.update(self.list_memories(limit=50))
+            out.update(self._list(None, None, "active", "", 50, 0, admin=True))
         return out
 
     def _with_room(self, row: dict) -> dict:
@@ -489,23 +596,26 @@ class Memory(Plugin):
         tok = core_context.caller_identity.set(actor)
         try:
             if action == "memory_list":
-                return self.list_memories(kind=data.get("kind") or None,
-                                          about=data.get("about") or None,
-                                          state=data.get("state") or "active",
-                                          query=data.get("query") or "",
-                                          limit=data.get("limit") or 50,
-                                          offset=data.get("offset") or 0)
+                # The page is the operator account's (settings_web checks it).
+                return self._list(data.get("kind") or None, data.get("about") or None,
+                                  data.get("state") or "active", data.get("query") or "",
+                                  data.get("limit") or 50, data.get("offset") or 0, admin=True)
             if action == "memory_show":
                 return {"memory": self._with_room(svc.show(str(data.get("id") or "")))}
             if action == "memory_add":
                 res = await svc.add(str(data.get("text") or ""), str(data.get("kind") or "fact"),
                                     about=data.get("about") or None, source="page",
-                                    author=actor, actor=actor, pinned=bool(data.get("pinned")))
+                                    author=actor, actor=actor, pinned=bool(data.get("pinned")),
+                                    approved=True)
                 return _page_result(svc, res)
             if action == "memory_edit":
                 res = await svc.edit(str(data.get("id") or ""), actor, text=data.get("text"),
                                      kind=data.get("kind") or None,
                                      pinned=data.get("pinned"), about=data.get("about"))
+                return _page_result(svc, res)
+            if action == "memory_approve":
+                res = await svc.edit(str(data.get("id") or ""), actor,
+                                     approved=bool(data.get("approved", True)))
                 return _page_result(svc, res)
             if action == "memory_forget":
                 res = await svc.forget(str(data.get("id") or ""), actor,
@@ -513,10 +623,11 @@ class Memory(Plugin):
                                        reason="forgotten on the Memory page")
                 return {"ok": True, **res, "memory": svc.show(res["id"])}
             if action == "memory_consolidate":
-                stats = await svc.consolidate(self.summariser(), actor=actor, force=True)
+                stats = await svc.consolidate(self.summariser(), actor=actor, force=True,
+                                              capture=bool(self.settings.get("auto_remember", True)))
                 return {"ok": True, "stats": stats, "status": svc.status()}
             raise ValueError("use memory_list, memory_show, memory_add, memory_edit, "
-                             "memory_forget or memory_consolidate")
+                             "memory_approve, memory_forget or memory_consolidate")
         except KeyError as e:
             raise ValueError(str(e).strip("'\"")) from None
         finally:

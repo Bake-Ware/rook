@@ -254,6 +254,7 @@ _TOOL_CAPS = {
     "rook_console_list": "console.read", "rook_console_search": "console.read",
     "rook_console_read": "console.read",
     "rook_install_claude_code": "hub.info",
+    "rook_home_ask": "home.ask",
 }
 _READ_ACTIONS = frozenset({"search", "get", "list", "context", "status", "deck"})
 

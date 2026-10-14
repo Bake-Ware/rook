@@ -29,7 +29,7 @@ MIGRATIONS = Path(__file__).resolve().parent / "migrations"
 STATES = ("active", "superseded", "archived", "forgotten")
 COLUMNS = ("id", "kind", "scope", "text", "hash", "slot", "state", "confidence", "pinned",
            "uses", "reinforced", "last_used", "created", "updated", "source", "author", "room",
-           "ref", "supersedes", "superseded_by", "tags", "reason")
+           "ref", "supersedes", "superseded_by", "tags", "reason", "approved")
 _JSON = ("supersedes", "tags")
 
 
@@ -51,6 +51,8 @@ class MemoryStore:
         self._lock = threading.RLock()
         # 0600: memories are personal data, like the vault and the journal.
         self._conn = open_db(self.path, mode=0o600, migrations=MIGRATIONS, ns=NAMESPACE)
+        # Forgotten text is overwritten on disk, not just unlinked from pages.
+        self._conn.execute("PRAGMA secure_delete=ON")
 
     def close(self) -> None:
         with self._lock:
@@ -75,8 +77,9 @@ class MemoryStore:
                     d[k] = json.loads(d[k] or "[]")
                 except ValueError:
                     d[k] = []
-        if "pinned" in d:
-            d["pinned"] = bool(d["pinned"])
+        for k in ("pinned", "approved"):
+            if k in d:
+                d[k] = bool(d[k])
         return d
 
     def insert(self, rec: dict, actor: str) -> dict:
@@ -86,6 +89,7 @@ class MemoryStore:
         rec.setdefault("created", now)
         rec.setdefault("updated", now)
         rec["pinned"] = int(bool(rec.get("pinned")))
+        rec["approved"] = int(bool(rec.get("approved")))
         for k in _JSON:
             rec[k] = json.dumps(rec.get(k) or [], separators=(",", ":"))
         cols = [c for c in COLUMNS if c in rec]
@@ -106,13 +110,15 @@ class MemoryStore:
         for k in _JSON:
             if k in fields:
                 fields[k] = json.dumps(fields[k] or [], separators=(",", ":"))
-        if "pinned" in fields:
-            fields["pinned"] = int(bool(fields["pinned"]))
+        for k in ("pinned", "approved"):
+            if k in fields:
+                fields[k] = int(bool(fields[k]))
         with self.db() as db:
             db.execute(f"UPDATE memories SET {','.join(f'{k}=?' for k in fields)} WHERE id=?",
                        [*fields.values(), mid])
             data = {k: v for k, v in fields.items()
-                    if k in ("state", "reason", "confidence", "superseded_by", "pinned", "kind")}
+                    if k in ("state", "reason", "confidence", "superseded_by", "pinned", "kind",
+                             "approved")}
             self._history(db, mid, action, actor, data)
 
     def bump(self, mid: str, **counters) -> None:
@@ -134,14 +140,65 @@ class MemoryStore:
                               "ORDER BY seq DESC LIMIT ?", (mid, limit)).fetchall()
         return [{**dict(r), "data": json.loads(r["data"] or "{}")} for r in rows]
 
-    def purge(self, mid: str, actor: str) -> None:
-        """Blank the text everywhere it is kept (the row stays as a tombstone
-        so the history still says that something was forgotten, and when)."""
+    def chain(self, mid: str) -> list[str]:
+        """``mid`` and every older version it replaced, transitively."""
+        seen: list[str] = []
+        todo = [mid]
+        with self.db(False) as db:
+            while todo:
+                cur = todo.pop()
+                if cur in seen:
+                    continue
+                seen.append(cur)
+                r = db.execute("SELECT supersedes FROM memories WHERE id=?", (cur,)).fetchone()
+                if r:
+                    try:
+                        todo += [x for x in json.loads(r[0] or "[]") if isinstance(x, str)]
+                    except ValueError:
+                        pass
+                todo += [x[0] for x in db.execute(
+                    "SELECT id FROM memories WHERE superseded_by=? AND state='superseded'", (cur,))]
+        return seen
+
+    def purge(self, mid: str, actor: str) -> list[str]:
+        """Erase the text of ``mid`` and of every older version it replaced
+        (a corrected memory's earlier wording is the same personal data),
+        their vectors and their history. Each row stays as a tombstone with
+        one ``purge`` history entry, so the page still says that something
+        was forgotten, and when. Returns the ids erased."""
+        ids = self.chain(mid)
+        now = time.time()
         with self.db() as db:
-            db.execute("UPDATE memories SET text='[forgotten]', hash='purged', slot=NULL, "
-                       "state='forgotten', updated=? WHERE id=?", (time.time(), mid))
-            db.execute("DELETE FROM memory_vectors WHERE id=?", (mid,))
-            self._history(db, mid, "purge", actor, {"state": "forgotten"})
+            for i in ids:
+                db.execute("UPDATE memories SET text='[forgotten]', hash='purged', slot=NULL, "
+                           "state='forgotten', reason='erased', tags='[]', updated=? WHERE id=?",
+                           (now, i))
+                db.execute("DELETE FROM memory_vectors WHERE id=?", (i,))
+                db.execute("DELETE FROM memory_history WHERE id=?", (i,))
+                self._history(db, i, "purge", actor, {"state": "forgotten",
+                                                      "with": mid if i != mid else None})
+        return ids
+
+    def expire(self, before: float) -> int:
+        """Delete superseded, archived and forgotten rows last changed before
+        ``before``, with their vectors and history (retention)."""
+        with self.db() as db:
+            ids = [r[0] for r in db.execute(
+                "SELECT id FROM memories WHERE state IN ('superseded','archived','forgotten') "
+                "AND updated < ?", (before,))]
+            for i in range(0, len(ids), 500):
+                chunk = ids[i:i + 500]
+                marks = ",".join("?" * len(chunk))
+                db.execute(f"DELETE FROM memory_vectors WHERE id IN ({marks})", chunk)
+                db.execute(f"DELETE FROM memory_history WHERE id IN ({marks})", chunk)
+                db.execute(f"DELETE FROM memories WHERE id IN ({marks})", chunk)
+        return len(ids)
+
+    def drop_all_turns(self, older_than: float | None = None) -> int:
+        with self.db() as db:
+            if older_than is None:
+                return db.execute("DELETE FROM memory_turns").rowcount
+            return db.execute("DELETE FROM memory_turns WHERE ts < ?", (older_than,)).rowcount
 
     # -- queries -----------------------------------------------------------------
     @staticmethod

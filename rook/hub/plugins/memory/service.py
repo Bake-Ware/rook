@@ -55,6 +55,7 @@ class Config:
     episode_idle_minutes: float = 20.0
     episode_max_turns: int = 30
     rollup_days: int = 14
+    retention_days: int = 90
 
 
 def person_label(scope: str) -> str:
@@ -132,9 +133,11 @@ class MemoryService:
                   confidence: float | None = None, pinned: bool = False, slot: str | None = None,
                   supersedes: list | None = None, automatic: bool = False,
                   room: str | None = None, ref: str | None = None, tags: list | None = None,
-                  created: float | None = None) -> dict:
+                  created: float | None = None, approved: bool = False) -> dict:
         """Remember one statement under the write rules. Returns ``{verdict:
-        added|duplicate|rejected|dropped, id?, superseded?, ...}``."""
+        added|duplicate|rejected|dropped, id?, superseded?, ...}``. Callers
+        decide who may write procedures or pin (the plugin's caps: the
+        operator only); ``approved`` marks a procedure the operator vouched for."""
         cfg = self.cfg
         kind = str(kind or "fact").strip().lower()
         conf = DEFAULT_CONFIDENCE.get(source, 0.7) if confidence is None else float(confidence)
@@ -150,10 +153,10 @@ class MemoryService:
                                    slot=slot if slot is not None else (
                                        rules.slot_of(verdict.text) if kind == "profile" else None),
                                    supersedes=supersedes, automatic=automatic, room=room, ref=ref,
-                                   tags=tags, created=created)
+                                   tags=tags, created=created, approved=approved)
 
     async def _add(self, verdict, kind, scope, *, source, author, actor, pinned, slot, supersedes,
-                   automatic, room, ref, tags, created) -> dict:
+                   automatic, room, ref, tags, created, approved=False) -> dict:
         cfg = self.cfg
         text, conf = verdict.text, verdict.confidence
         base = {"kind": kind, "scope": scope, "text": text, **verdict.to_dict()}
@@ -161,15 +164,15 @@ class MemoryService:
         explicit = [str(s) for s in (supersedes or []) if isinstance(s, str)][:20]
         same = self.store.by_hash(scope, kind, h)
         if same is not None and same["id"] not in explicit:
-            self._reinforce(same, conf, actor, pinned)
+            self._reinforce(same, conf, actor, pinned, approved)
             return {**base, "verdict": "duplicate", "id": same["id"]}
         vec = await self._vector(text)
         planned = list(explicit)
-        if slot:
+        if slot and rules.slot_replaces(slot, text):
             planned += [r["id"] for r in self.store.by_slot(scope, kind, slot) if r["id"] not in planned]
         if kind != "episode":
             similar = [x for x in self._similar(text, vec, scope, kind) if x[2]["id"] not in planned]
-            correction = "correction" in verdict.signals or bool(slot)
+            correction = "correction" in verdict.signals or rules.slot_replaces(slot, text)
             if similar:
                 sim, method, row = similar[0]
                 dup = sim >= (cfg.dedupe_similarity if method == "cosine" else LEX_DUPLICATE)
@@ -188,6 +191,7 @@ class MemoryService:
         rec = {"kind": kind, "scope": scope, "text": text, "hash": h, "slot": slot,
                "state": "active", "confidence": round(conf, 4), "pinned": pinned,
                "source": source, "author": author, "room": room, "ref": ref,
+               "approved": bool(approved and kind == "procedure"),
                "supersedes": planned, "tags": [str(t)[:40] for t in (tags or [])][:12]}
         if created:
             rec["created"] = float(created)
@@ -203,12 +207,15 @@ class MemoryService:
             out["archived"] = archived
         return out
 
-    def _reinforce(self, row: dict, conf: float, actor: str, pinned: bool = False) -> None:
+    def _reinforce(self, row: dict, conf: float, actor: str, pinned: bool = False,
+                   approved: bool = False) -> None:
         new = min(1.0, max(float(row["confidence"]), conf) + 0.05)
         self.store.bump(row["id"], reinforced=1)
         fields: dict = {"confidence": round(new, 4)}
         if pinned and not row.get("pinned"):
             fields["pinned"] = True
+        if approved and row["kind"] == "procedure" and not row.get("approved"):
+            fields["approved"] = True
         self.store.update(row["id"], actor, "reinforce", **fields)
 
     def _supersede(self, ids, new_id: str, actor: str) -> list[str]:
@@ -223,7 +230,8 @@ class MemoryService:
         return done
 
     async def edit(self, mid: str, actor: str, *, text: str | None = None, kind: str | None = None,
-                   pinned: bool | None = None, about: str | None = None) -> dict:
+                   pinned: bool | None = None, about: str | None = None,
+                   approved: bool | None = None) -> dict:
         """Change a memory. New text, kind or scope is a new memory that
         supersedes this one (the old text stays in its history); pinning is
         changed in place."""
@@ -240,12 +248,17 @@ class MemoryService:
         if (new_text, new_kind, new_scope) == (row["text"], row["kind"], row["scope"]):
             if pinned is not None and bool(pinned) != row["pinned"]:
                 self.store.update(mid, actor, "pin" if pinned else "unpin", pinned=bool(pinned))
+            if approved is not None and row["kind"] == "procedure" and \
+                    bool(approved) != row.get("approved"):
+                self.store.update(mid, actor, "approve" if approved else "unapprove",
+                                  approved=bool(approved))
             return {"verdict": "updated", "id": mid, **self.show(mid)}
         res = await self.add(new_text, new_kind, about=new_scope, source="page", author=actor,
                              actor=actor, confidence=max(float(row["confidence"]), 0.8),
                              pinned=row["pinned"] if pinned is None else bool(pinned),
                              supersedes=[mid], room=row.get("room"), ref=row.get("ref"),
-                             tags=row.get("tags"))
+                             tags=row.get("tags"),
+                             approved=row.get("approved") if approved is None else bool(approved))
         if res["verdict"] == "duplicate" and res.get("id") != mid:
             self._supersede([mid], res["id"], actor)
         return res
@@ -255,7 +268,8 @@ class MemoryService:
         if row is None:
             raise KeyError(f"no memory {mid!r}")
         if purge:
-            self.store.purge(mid, actor)
+            erased = self.store.purge(mid, actor)
+            return {"id": mid, "state": "forgotten", "purged": True, "erased": erased}
         else:
             self.store.update(mid, actor, "forget", state="forgotten",
                               reason=(reason or "forgotten")[:300])
@@ -313,6 +327,8 @@ class MemoryService:
                "when": time.strftime("%Y-%m-%d", time.gmtime(r["created"]))}
         if r.get("pinned"):
             out["pinned"] = True
+        if r.get("approved"):
+            out["approved"] = True
         if r["state"] != "active":
             out["state"] = r["state"]
         if score is not None:
@@ -327,24 +343,27 @@ class MemoryService:
         ``{text, ids}`` (``text`` is "" when nothing applies)."""
         cfg = self.cfg
         cap = max(200, min(int(budget or cfg.context_chars), 12000))
-        person = person or cfg.default_person
-        scopes = [person, SHARED]
+        # No person (an agent asking, home.ask, a job step): shared memory
+        # only. Nobody's profile or conversations go to someone else.
+        scopes = [person, SHARED] if person else [SHARED]
         query = str(query or "")[:1000]
         qvec = await self._vector(query) if query.strip() else None
         now = time.time()
         sections: list[tuple[str, list[dict], int]] = []
-        if include_people:
+        if include_people and person:
             profile = sorted(self.store.select([person], ["profile"], ("active",), limit=100),
                              key=lambda r: (-self.strength(r, now), -r["updated"]))
             sections.append((f"About {person_label(person)}:", profile, 220))
         facts = await self.recall(query, scopes, kinds=["fact"], limit=6, touch=False, qvec=qvec)
         sections.append(("Facts that may be relevant:", facts, 220))
-        skills = await self.recall(query, scopes, kinds=["procedure"], limit=3, touch=False,
-                                   qvec=qvec) if query.strip() else []
+        # Procedures steer tool use: only the ones the operator approved or pinned.
+        skills = [s for s in (await self.recall(query, scopes, kinds=["procedure"], limit=12,
+                                                touch=False, qvec=qvec) if query.strip() else [])
+                  if s.get("approved") or s.get("pinned")][:3]
         sections.append(("Ways of doing things that worked before:", skills, 260))
         eps = await self.recall(query, [person], kinds=["episode"], limit=2, touch=False,
-                                qvec=qvec) if query.strip() else []
-        if room:
+                                qvec=qvec) if query.strip() and person else []
+        if room and person:
             last = [r for r in self.store.select([person], ["episode"], ("active",), limit=20,
                                                  order="created DESC") if r.get("room") == room][:1]
             if last and last[0]["id"] not in {e["id"] for e in eps}:
@@ -392,14 +411,17 @@ class MemoryService:
             return out
         target = rules.forget_request(user_text or "")
         if target:
+            # Your own memories; shared ones only when the operator asks.
+            scopes = [person, SHARED] if person == self.cfg.default_person else [person]
             best = None
-            for r in self.store.select([person, SHARED], ["profile", "fact", "procedure"],
+            for r in self.store.select(scopes, ["profile", "fact", "procedure"],
                                        ("active",), limit=500):
                 sim = rules.jaccard(target, r["text"])
                 if sim >= 0.5 and (best is None or sim > best[0]):
                     best = (sim, r)
             if best is not None:
-                await self.forget(best[1]["id"], actor, reason=f"{person} asked to forget it")
+                # Asked to forget: erased, with every earlier version of it.
+                await self.forget(best[1]["id"], actor, purge=True)
                 out["forgotten"].append(best[1]["id"])
         for c in rules.extract(user_text or ""):
             res = await self.add(c["text"], c["kind"],
@@ -412,17 +434,19 @@ class MemoryService:
                                           "text": res["text"]})
         return out
 
-    async def learn_procedure(self, prompt: str, tools: list[str], result: str, *, job: str = "",
-                              step: str = "", run: str = "", actor: str) -> dict:
+    async def learn_procedure(self, prompt: str, tools: list[str], result: str = "", *,
+                              job: str = "", step: str = "", run: str = "", actor: str) -> dict:
         """A job step the home agent finished successfully with tools becomes a
-        skill: what it was asked and which tools did it. The same job step
-        re-learned supersedes its earlier version (slot ``job <id>/<step>``)."""
+        skill: what it was asked and which tools did it. Never the result
+        text: that is tool output, and a skill is read back into prompts that
+        call tools. Learned skills wait for the operator's approval (Manage >
+        Memory) before any prompt sees them. The same job step re-learned
+        supersedes its earlier version (slot ``job <id>/<step>``)."""
         seq = list(dict.fromkeys(t for t in tools if t and t != "finish"))
         if not seq:
             return {"verdict": "dropped", "reason": "no tools were used"}
         ask = clip(rules.normalize(str(prompt or "").splitlines()[0] if prompt else ""), 160)
-        done = clip(rules.normalize(result or ""), 160)
-        text = f"To \"{ask}\": using {', '.join(seq[:8])} worked." + (f" Result: {done}" if done else "")
+        text = f"To \"{ask}\": using {', '.join(seq[:8])} worked."
         return await self.add(text, "procedure", about=SHARED, source="job", author=actor,
                               actor=actor, slot=f"job {job}/{step}" if job else None,
                               automatic=True, ref=f"job:{job}/{run}/{step}" if job else None,
@@ -469,7 +493,8 @@ class MemoryService:
 
     async def consolidate(self, summarise: Summarise | None = None, *,
                           actor: str = "system:memory", now: float | None = None,
-                          force: bool = False, index_batch: int = 32) -> dict:
+                          force: bool = False, index_batch: int = 32,
+                          capture: bool = True) -> dict:
         """The periodic job: summarise finished conversations into episodes,
         roll old episodes up by week, merge near-duplicates, let unused
         memories fade, keep each kind within its budget, and embed rows that
@@ -477,7 +502,9 @@ class MemoryService:
         cfg = self.cfg
         now = now or time.time()
         stats = {"episodes": 0, "rolled_up": 0, "merged": 0, "faded": 0, "budget_archived": 0,
-                 "indexed": 0, "summariser": "none"}
+                 "indexed": 0, "expired": 0, "turns_dropped": 0, "summariser": "none"}
+        # 0. turns nobody will summarise: capture is off, or they are a week old
+        stats["turns_dropped"] = self.store.drop_all_turns(None if not capture else now - 7 * DAY)
         # 1. conversations -> episodes
         for g in self.store.turn_rooms():
             idle = now - g["last"] >= cfg.episode_idle_minutes * 60
@@ -508,7 +535,8 @@ class MemoryService:
             model = self.embedder.last_model
             for (scope, kind), rows in groups.items():
                 if kind != "episode":
-                    stats["merged"] += self._merge(rows, model, actor)
+                    # Pairwise, so off the event loop (the store serialises itself).
+                    stats["merged"] += await asyncio.to_thread(self._merge, rows, model, actor)
                 for r in rows:
                     cur = self.store.get(r["id"])
                     if cur and cur["state"] == "active" and not cur["pinned"] and \
@@ -519,6 +547,9 @@ class MemoryService:
                 stats["budget_archived"] += len(self._enforce_budget(scope, kind, actor))
         # 6. embeddings for rows that have none yet
         stats["indexed"] = await self._index(index_batch)
+        # 7. retention: replaced, archived and forgotten rows go for good
+        if cfg.retention_days > 0:
+            stats["expired"] = self.store.expire(now - cfg.retention_days * DAY)
         self.store.set_meta("last_consolidation", {"ts": now, **stats})
         return stats
 
@@ -574,6 +605,7 @@ class MemoryService:
         vecs = self.store.vectors([r["id"] for r in rows], model) if model else {}
         rank = sorted(rows, key=lambda r: (-int(r["pinned"]), -float(r["confidence"]),
                                            -int(r["uses"] or 0), -r["updated"]))
+        toks = {r["id"]: rules.tokens(r["text"]) for r in rows}   # once per row, not per pair
         gone: set[str] = set()
         merged = 0
         for i, keep in enumerate(rank):
@@ -587,7 +619,8 @@ class MemoryService:
                 if keep["id"] in vecs and other["id"] in vecs:
                     dup = cosine(vecs[keep["id"]], vecs[other["id"]]) >= self.cfg.dedupe_similarity
                 else:
-                    dup = rules.jaccard(keep["text"], other["text"]) >= LEX_DUPLICATE
+                    a, b = toks[keep["id"]], toks[other["id"]]
+                    dup = bool(a and b) and len(a & b) / len(a | b) >= LEX_DUPLICATE
                 if dup:
                     self.store.update(other["id"], actor, "merge", state="superseded",
                                       superseded_by=keep["id"], reason=f"merged into {keep['id']}")

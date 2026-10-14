@@ -71,8 +71,21 @@ DENY_PATTERNS: tuple[tuple[str, str], ...] = (
      r"(?!\{\{secret:)[^\s\"',;]{4,}", "credential"),
     (r"(?i)\b(?:password|passcode|passphrase|pin(?: code| number)?|wi-?fi key)\s+(?:is|was|=)\s+"
      r"[\"']?(?!\{\{secret:)\S{3,}", "credential"),
-    (r"(?i)\b(?:door|garage|gate|alarm|lock|safe|access|security|entry|unlock)\s+code\s+"
-     r"(?:is|was|=|:)\s*[\"']?(?!\{\{secret:)\S{3,}", "access code"),
+    # Door, gate and alarm codes, however they are written ("door code 4821",
+    # "alarm code=1234", "the code to the garage is 4821", "opens with 4821").
+    (r"(?i)\b(?:door|garage|gate|alarm|lock|safe|access|security|entry|unlock|keypad)\s+code\s*"
+     r"(?:is|was|=|:)?\s*[\"']?(?!\{\{secret:)\S*\d\S*", "access code"),
+    (r"(?i)\bcode\s+(?:to|for)\s+(?:the\s+)?[\w' -]{2,30}?\s+(?:is|was|=|:)\s*[\"']?"
+     r"(?!\{\{secret:)\S*\d\S*", "access code"),
+    (r"(?i)\b(?:opens?|unlocks?|disarms?)\s+with\s+(?:the\s+)?(?:code\s+)?\d{3,}", "access code"),
+    # Wifi and router credentials ("Wifi: hunter22", "wifi password - x",
+    # "router admin login admin / x"). "The wifi network is called Blue" is fine.
+    (r"(?i)\b(?:wi-?fi|router|ssid|network|admin)\s*(?:password|passphrase|pass|key|pw)\s*"
+     r"(?:is|was|=|:|-)?\s*[\"']?(?!\{\{secret:)\S{4,}", "network password"),
+    (r"(?i)\blogin\s*(?:is|was|=|:)?\s*\S+\s*/\s*(?!\{\{secret:)\S{4,}", "login and password"),
+    # "Wifi: hunter22" (a value with a digit or symbol; "router: unplug it" is prose)
+    (r"(?i)\b(?:wi-?fi|router)\s*[:=]\s*[\"']?(?!\{\{secret:)(?=\S*[0-9!@#$%^&*_+=~])\S{4,}",
+     "network password"),
     (r"(?i)\bbearer\s+[A-Za-z0-9._~+/-]{16,}=*", "bearer token"),
     (r"\b(?:\d[ -]?){13,19}\b", "card number"),
     (r"\b\d{3}-\d{2}-\d{4}\b", "national ID number"),
@@ -154,14 +167,27 @@ def compile_deny(extra=()) -> list[tuple[re.Pattern, str]]:
     return out
 
 
+def _vault_values() -> dict:
+    """Every vault value, from the masker's source (no access-log entry:
+    masking is not a use). Empty without a vault."""
+    try:
+        from ....band_mcp.secret_mask import installed
+        m = installed()
+        return dict(m.source.masking_values() or {}) if m is not None else {}
+    except Exception:  # noqa: BLE001 - masking by pattern still applies
+        return {}
+
+
 def _vault_scrub(text: str) -> str:
     """Known vault values become ``{{secret:name}}`` references (the hub's
-    installed masker; a no-op without a vault)."""
+    installed masker; a no-op without a vault). Every value goes in as
+    ``extra``, so values shorter than the band-wide minimum (a 5-digit PIN)
+    are masked here too, down to secret_mask.MIN_EXTRA_LEN."""
     try:
         from ....band_mcp.secret_mask import scrub
     except Exception:  # noqa: BLE001 - a hub without the MCP package still screens by pattern
         return text
-    out = scrub(text)
+    out = scrub(text, extra=_vault_values() or None)
     return out if isinstance(out, str) else text
 
 
@@ -348,6 +374,25 @@ def slot_of(text: str) -> str | None:
     if not m:
         return None
     return _slot(m.group(1))
+
+
+#: Attributes a person has one of: a new value replaces the old one. Anything
+#: else ("son", "dog's name") may have several values, so a new statement
+#: only replaces an old one when it says so ("actually", "now", "no longer").
+SINGLE_SLOTS = frozenset({"name", "lives in", "lives at", "works at", "works for", "works in",
+                          "timezone", "time zone", "pronouns", "email", "birthday", "age",
+                          "job", "partner", "wife", "husband"})
+_UPDATE = re.compile(r"(?i)\b(actually|now|no longer|any ?more|instead|changed|moved|new|"
+                     r"correction|not .{1,40} but)\b")
+
+
+def slot_replaces(slot: str | None, text: str) -> bool:
+    """Whether a statement with ``slot`` replaces the earlier value of it."""
+    if not slot:
+        return False
+    if slot in SINGLE_SLOTS or slot.startswith(("favourite ", "job ")):
+        return True
+    return bool(_UPDATE.search(text))
 
 
 def forget_request(text: str) -> str | None:

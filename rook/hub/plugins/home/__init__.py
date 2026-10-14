@@ -315,7 +315,7 @@ class HomeAgent(Plugin):
         # endpoints refuse any request that carries tools.
         mem = self._memory() if memory is not None and cfg.get("tools") else None
         if mem is not None:
-            tools += mem.tools()
+            tools += mem.tools(save=bool(memory.get("save")))
         tools = tools or None
         used: list[str] = []
         total = 0
@@ -478,11 +478,13 @@ class HomeAgent(Plugin):
         and journaled under the home agent like knowledge_search."""
         mem = self._memory()
         cap = "memory.remember" if name == "memory_save" else "memory.recall"
-        person = (memory.get("person") or mem.config().default_person) if mem else None
+        person = memory.get("person")          # None: shared memory only
         with self._as_self():
             try:
                 if mem is None:
                     raise RuntimeError("memory is off")
+                if name == "memory_save" and not memory.get("save"):
+                    raise PermissionError("whoever asked may not write memory")
                 result = await mem.run_tool(name, args, person=person, actor=self.identity,
                                             room=memory.get("room"))
                 reply = {"ok": "error" not in result, "result": result}
@@ -714,7 +716,9 @@ class HomeAgent(Plugin):
                 res = await self.complete(
                     msgs, cfg, thread=rid, via="chat",
                     may_search=self.may_read_knowledge(principal),
-                    memory={"person": person, "room": rid} if person and use_memory else None)
+                    memory={"person": person, "room": rid,
+                            "save": self.may_call(principal, "memory.remember")}
+                    if person and use_memory else None)
             text = res["content"] or "(no answer)"
             # Address the person who asked in a group room; never @mention an
             # agent (a mention is what makes the other bot answer back).
@@ -799,7 +803,9 @@ class HomeAgent(Plugin):
         mem = self._memory()
         if mem is not None and out.get("verdict") == "ok" and out.get("tools_used"):
             # A step that worked with tools is a skill worth keeping.
-            await mem.learn_procedure(str(prompt or ""), out["tools_used"], out.get("text") or "",
+            # Prompt and tool names only (never the result: that is tool
+            # output); it reaches prompts once the operator approves it.
+            await mem.learn_procedure(str(prompt or ""), out["tools_used"],
                                       job=job, step=step, run=run, actor=self.identity)
         self._note("job", True, sender=f"job:{job}", model=out["model"], verdict=out["verdict"],
                    tools=out["tools_used"], memory={"recalled": len(recalled["ids"])})
@@ -830,8 +836,10 @@ class HomeAgent(Plugin):
             raise HomeError(f"rate limited: at most {ASK_RATE} home.ask calls a minute; "
                             "try again shortly")
         user = f"[{who}] {question}" + (f"\n\nContext:\n{context.strip()}" if context else "")
-        # Asked by an agent on the operator's behalf: shared memory and the
-        # default person's profile; nothing is captured from the question.
+        # Asked by an agent (or a person) directly: shared memory only, never
+        # anyone's profile or conversations, and nothing is captured from the
+        # question. With tools, the model may save shared facts when the asker
+        # may write memory itself.
         use_memory = self.may_use_memory(principal)
         recalled = (await self.recall_for(question, None) if use_memory
                     else {"text": "", "ids": []})
@@ -843,7 +851,9 @@ class HomeAgent(Plugin):
             async with self._ask_sem:
                 res = await self.complete(msgs, cfg, via="ask",
                                           may_search=self.may_read_knowledge(principal),
-                                          memory={"person": None, "room": None}
+                                          memory={"person": None, "room": None,
+                                                  "save": self.may_call(principal,
+                                                                        "memory.remember")}
                                           if use_memory else None)
         except (LLMError, HomeError) as e:
             self._note("ask", False, sender=who, error=str(e)[:300])
