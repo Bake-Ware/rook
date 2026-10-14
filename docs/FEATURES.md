@@ -483,24 +483,30 @@ between pages. The same pages are the `manual.*` caps on worker `rook`
 (`manual.list`, `manual.get`), so agents can read them on any hub.
 
 When the knowledge base is on, the hub copies the manual into it as the
-**Rook manual** folder (slug `rook-manual`, pages `manual-<topic>`, tagged
-`rook-manual` and `rook-<version>`), so agents find it with `rook_knowledge`
-search; the `rook_knowledge` tool's description says so. A new hub copies it
-by itself the first time its knowledge base is available and empty (setting
+**Rook manual** folder (slug `rook-manual`, or `rook-manual-2`... when a page
+of yours already has that slug; pages `manual-<topic>`, tagged `rook-manual`
+and `rook-<version>`), so agents find it with `rook_knowledge` search; the
+`rook_knowledge` tool's description says so. A new hub copies it by itself the
+first time its knowledge base is available and empty (setting
 `manual.auto_seed`); a knowledge base that already has pages is asked first.
+The copied pages are verified against the bundled files; when anyone edits one
+(its text, or its tags), it goes back to unverified and Help marks it edited.
 
 After an update whose manual differs from the copy, the dashboard asks:
 *The Rook manual changed in this update: update your knowledge base copy?*
 **Review changes** lists the pages added, changed and removed, with the ones
-someone edited in the knowledge base marked; those are replaced only when you
-tick **Replace my edits**. **Update** writes the changes (removed pages are
-archived), **Not now** asks again in a day and **Never for this version**
-waits for the next manual change. Setting `manual.prompt_updates` turns the
-question off. Help reads the knowledge copy, with your edits, when there is
-one, and the bundled pages otherwise.
+someone edited in the knowledge base marked (the contents page included);
+those are replaced only when you tick **Replace my edits**, and your own tags
+are kept. **Update** writes the changes (removed pages are archived),
+**Not now** asks again in a day and **Never for this version** waits for the
+next manual change. Setting `manual.prompt_updates` turns the question off.
+For the operator, Help reads the knowledge copy, with your edits, when there
+is one; everyone else, and every account when there is no copy, reads the
+pages bundled with Rook.
 
-Every release must keep the manual current: `tools/manual_check.py` (run by
-the test suite and the release tooling) fails when a feature, setting group,
-plugin or command has no page, or when the CHANGELOG adds or removes a
-feature without naming the manual pages it changed. See
+Every release must keep the manual current: `tools/release_prep.py` refuses to
+cut a release when a feature, setting group, plugin or command has no page,
+or when an Added/Removed/Deprecated CHANGELOG bullet names no manual page
+(`tools/manual_check.py --release`). On pull requests the same check is
+advisory; the test suite checks that pages parse and their links resolve. See
 [docs/operations/user-manual.md](operations/user-manual.md).

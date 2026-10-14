@@ -11,15 +11,16 @@ to them).
 
 **Every release has a current manual.** A change that adds, removes or
 deprecates something a user can see updates the manual in the same pull
-request, and its CHANGELOG line names the pages it changed. The build
-enforces it:
+request, and its CHANGELOG bullet names the pages it changed. Only the
+release blocks on it, so an unrelated pull request is never held up by
+someone else's missing page:
 
-| Where | What runs | Fails when |
+| Where | What runs | Blocks? |
 |---|---|---|
-| `pytest` | `tests/test_manual.py::test_the_repository_manual_passes_the_release_check` | anything below, offline |
-| By hand | `python tools/manual_check.py` | same |
-| Pull request CI (suggested) | `python tools/manual_check.py --base origin/master` | also: a page the CHANGELOG names did not change in this branch |
-| Release (`tools/release_prep.py`, PR #104) | `python tools/manual_check.py --release <tag>` | also: against the previous tag, and a page's `since` is newer than the release |
+| `pytest` | `tests/test_manual.py::test_the_repository_manual_pages_parse_and_link` (`manual_check --pages`): every page parses and its `[[manual-…]]` links resolve | yes |
+| CI job "user manual coverage (advisory)" (`ci.yml`, `continue-on-error`) | `python tools/manual_check.py --base origin/<base branch>`: coverage, the CHANGELOG, and pages the CHANGELOG names must have changed in the branch | no: shown on the pull request |
+| By hand | `python tools/manual_check.py` | no |
+| Release: `tools/release_prep.py --tag vX.Y.Z` (release workflow, "Stamp version…") | `manual_check.check(release=tag)`: everything above against the previous tag, plus no page's `since` newer than the release | **yes**: the release is not built (`--skip-manual-check` overrides, for emergencies) |
 
 `tools/manual_check.py` builds a **feature inventory** from the code and
 checks the manual against it:
@@ -39,28 +40,29 @@ that lists a feature which no longer exists must be marked
 `python tools/manual_check.py --list` prints the inventory with the pages
 covering each feature.
 
-`docs/manual/manifest.json` is generated (`--write`): the pages in reading
-order with their content hashes, and the feature-to-page map. A page edited
-without regenerating it fails the check, so a reviewer always sees the
-manifest change next to the page change.
+`docs/manual/manifest.json` (the pages in reading order with their content
+hashes, and the feature-to-page map) is generated, not committed:
+`tools/release_prep.py` writes it for every release build and
+`manual_check --write` writes it locally. Nothing at runtime needs it; the hub
+hashes the pages itself.
 
 ### CHANGELOG lines
 
-Under *Unreleased*, a bullet that adds, removes or deprecates something (it
-is under an `### Added` / `### Removed` / `### Deprecated` heading, or
-starts with Added, Adds, New, Removed, Remove, Deprecated, Retired...) must
-name the manual pages it changed:
+Under *Unreleased*, a bullet under an `Added`, `Removed` or `Deprecated`
+heading (`###`, or `####` inside a workstream block) must name the manual
+pages it changed. Other headings are not checked, whatever a bullet's verb.
 
 ```markdown
 ### Widgets
+#### Added
 Manual: workers, jobs
-- Added a widget column to the Workers page.
-- Removed the gadget view (manual: workers).
+- A widget column on the Workers page.
+#### Removed
+- The gadget view (manual: workers).
 ```
 
-A `Manual:` line under the `###` heading covers the whole block; a
-`(manual: <page-id>, ...)` on a bullet covers that bullet. `n/a` says the
-change is not user-visible (an internal module, a test helper).
+A `Manual:` line covers its block; a `(manual: <page-id>, ...)` on a bullet
+covers that bullet. `n/a` says the change is not user-visible.
 
 ## Front matter
 
@@ -75,6 +77,7 @@ features:
   - settings/job
 since: 0.1.0              # the Rook version that added the page
 deprecated: false         # true: the feature is going or gone
+preview: false            # optional; true: not in a release yet (may list no features)
 ---
 ```
 
@@ -83,35 +86,15 @@ Body: `#`-`###` headings, `-` and `1.` lists, code blocks, `inline code`,
 Both the Help page and the knowledge page render exactly that subset. At most
 18,000 characters a page (the knowledge store's limit is 20,000).
 
-## The release hook (for PR #104)
+`desktop-app.md` is a preview page for the desktop app (#109), so that work
+updates it instead of adding a page of its own.
 
-`tools/release_prep.py` is not on this branch yet. When the release pipeline
-lands, it should refuse to stamp a release with a stale manual by calling the
-check before anything is modified:
-
-```python
-# tools/release_prep.py, in main(), right after the tag is validated:
-import manual_check                       # tools/ is on sys.path (ROOT/tools)
-problems = manual_check.check(release=args.tag)
-if problems:
-    sys.exit("the user manual is out of date:\n  - " + "\n  - ".join(problems))
-```
-
-or, from the workflow, a step before `release_prep.py` in the `dist` job
-(`fetch-depth: 0` is already set, so the previous tag is available):
-
-```yaml
-- name: The user manual is current
-  run: python tools/manual_check.py --release "$TAG"
-```
-
-The CI workflow (`ci.yml`) should run `python tools/manual_check.py --base
-origin/${{ github.base_ref }}` on pull requests. The pytest above already
-runs in CI without git.
+## Packaging
 
 The wheel carries the pages as `rook/_manual/` (pyproject force-include, like
 the agent skill), the Docker image copies `docs/manual/`, and
-`ROOK_MANUAL_DIR` overrides both.
+`ROOK_MANUAL_DIR` overrides both. The split-layout hub installer writes
+`ROOK_MANUAL_ADMIN_URL` with the other `ROOK_*_ADMIN_URL`s.
 
 ## On a hub
 
@@ -119,26 +102,38 @@ The hub plugin `manual` (rook/hub/plugins/manual, always loaded on the hub)
 serves the pages and keeps the knowledge copy:
 
 - **Seed.** When the knowledge plugin is loaded (`ROOK_KNOWLEDGE=1`) and its
-  store is empty, the manual is imported once: a folder page `rook-manual`
-  and one child per page (`manual-<id>`), in the primary band, written by
-  `system:rook-manual`, tagged `rook-manual` and `rook-<version>`, each with a
-  `file` evidence link to `docs/manual/<id>.md` and marked verified (so the
-  pages do not land in Review mode). Setting `manual.auto_seed` turns it off.
-  A knowledge base that already has pages is not seeded silently: the
-  operator is asked, as for an update.
-- **Update prompt.** The import is recorded in
-  `<hub state>/plugins/manual/state.json` (per page: the bundled hash it came
-  from and the hash of what was written). When the bundled manual differs,
-  the operator sees a banner on the dashboard; **Review changes** lists pages
-  added, changed and removed, marking pages edited in the knowledge base
-  since (those are only replaced when ticked). **Update** applies it (removed
-  pages are archived), **Not now** snoozes it for 24 hours, **Never for this
+  store is empty, the manual is imported once: a contents page
+  ("Rook manual", slug `rook-manual`) and one child per page
+  (`manual-<id>`), in the primary band, written by `system:rook-manual`,
+  tagged `rook-manual` and `rook-<version>`, with one `file` evidence link to
+  `docs/manual/<id>.md` and marked verified (so the pages do not land in
+  Review mode). A page someone else already has at `rook-manual` is never
+  adopted: the contents page becomes `rook-manual-2` (and so on). A
+  knowledge base that already has pages is not seeded silently: the plugin
+  tries once, then leaves it to the operator's prompt (while the knowledge
+  plugin is off it re-checks with a growing pause, up to every 30 minutes).
+  Setting `manual.auto_seed` turns seeding off.
+- **Edits.** The pages carry `attrs.verified_from {actor, label}`: the
+  knowledge store marks a page unverified (with a review note) when anyone
+  but that actor changes its title or body. The import record,
+  `<hub state>/plugins/manual/state.json`, keeps per page (and for the
+  contents page, `root_entry`) the bundled hash it came from and a
+  fingerprint of what was written (title, body and tags), so text and tag
+  edits both count as edits.
+- **Update prompt.** When the bundled manual differs, the operator sees a
+  banner on the dashboard; **Review changes** lists pages added, changed and
+  removed (the contents page as "Contents page", id `_root`, when its list of
+  pages changed), marking pages edited in the knowledge base since and
+  pages whose slug someone else holds; those are only written when ticked,
+  and a page's own extra tags are kept. **Update** applies it (removed pages
+  are archived), **Not now** snoozes it for 24 hours, **Never for this
   version** records the manual's hash and asks again only when it changes.
   `manual.prompt_updates` turns the question off.
 - **Agents.** The `rook_knowledge` tool's description says where the manual
   is (guidance slot `tool:rook_knowledge`, editable on Agent instructions);
   `manual.list` / `manual.get` / `manual.status` on worker `rook` read it
   without the wiki; `manual.update` (admin) does what the banner does.
-- **Help** (`#help`) reads the knowledge copy when there is one (showing the
-  operator's edits) and the bundled pages otherwise. API:
-  `/account/manual/api` on the dashboard, proxied to `/manual/account-api`.
+- **Help** (`#help`) reads the knowledge copy for the operator when there is
+  one (showing the operator's edits) and the bundled pages for everyone else
+  and when there is no copy. API: `/account/manual/api` on the dashboard,
+  proxied to `/manual/account-api`.

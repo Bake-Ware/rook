@@ -13,31 +13,38 @@ Preparation for public use.
 ### User manual
 Manual: help, welcome, getting-started, adding-machines, bands-and-keys, accounts-and-access, workers, chat, work, sessions, knowledge, jobs, secrets, agents-and-mcp, home-agent, settings, plugins, phones-and-tablets, hardware, integrations, voice, updates, security, terminal-and-commands, running-a-hub
 - Added a user manual: 25 plain-language pages in `docs/manual/` covering
-  every current feature, shipped in the wheel (`rook/_manual`) and the image.
-  **Help** in the dashboard sidebar reads it (search, page links), from the
-  knowledge base copy when there is one, else from the bundled files. New
+  every current feature (and a preview page for the desktop app), shipped in
+  the wheel (`rook/_manual`) and the image. **Help** in the dashboard sidebar
+  reads it (search, page links): the operator from the knowledge base copy
+  when there is one, everyone else from the bundled files. New
   hub plugin `manual` with caps `manual.status`, `manual.list`, `manual.get`
   (read) and `manual.update` (admin), and settings `manual.auto_seed` and
   `manual.prompt_updates`.
 - A new hub copies the manual into its knowledge base the first time the
-  knowledge plugin is on and empty: folder page `rook-manual`, pages
+  knowledge plugin is on and empty: contents page `rook-manual` (never
+  someone else's page with that slug: then `rook-manual-2`), pages
   `manual-<id>`, tagged `rook-manual` and `rook-<version>`, verified against
-  the bundled file. A knowledge base that already has pages is asked first.
+  the bundled file (`attrs.verified_from`: the knowledge store marks such a
+  page unverified when anyone else changes its text). A knowledge base that
+  already has pages is asked first.
 - After an update whose manual differs from the copy, the operator sees "The
   Rook manual changed in this update: update your knowledge base copy?" with
   the pages added, changed and removed: Update, Not now (24 hours) or Never
-  for this version. Pages edited in the knowledge base are only replaced when
-  ticked; removed pages are archived. The `rook_knowledge` tool's description
+  for this version. Pages edited in the knowledge base (text or tags, the
+  contents page too) are only replaced when ticked, and their own tags are
+  kept; removed pages are archived. The `rook_knowledge` tool's description
   tells agents where the manual is (an empty plugin guidance default no
   longer hides another plugin's text for the same slot).
-- `tools/manual_check.py` fails when a FEATURES.md section, settings group,
-  plugin or command has no manual page, when a page maps a feature that no
-  longer exists without being deprecated, when `docs/manual/manifest.json` is
-  stale, or when an Unreleased bullet adds or removes a feature without
-  naming its manual pages (`--base REF`: and those pages did not change;
-  `--release TAG`: the release gate). Run by the test suite; the release
-  pipeline hook is in docs/operations/user-manual.md. CONTRIBUTING has the
-  rule.
+- `tools/manual_check.py` reports a FEATURES.md section, settings group,
+  plugin or command with no manual page, a page mapping a feature that no
+  longer exists without being deprecated, and an Unreleased bullet under an
+  Added/Removed/Deprecated heading that names no manual page (`--base REF`:
+  or names pages that did not change). Blocking only as the release gate:
+  `tools/release_prep.py --tag` runs it with `--release` (and writes
+  `docs/manual/manifest.json` for the build; `--skip-manual-check` for
+  emergencies). CI runs it as an advisory job; pytest checks only that pages
+  parse and their links resolve. CONTRIBUTING has the rule. The split-layout
+  hub installer sets `ROOK_MANUAL_ADMIN_URL`.
 - The Knowledge page renders numbered lists and wrapped list items.
 
 ### Hub merge
@@ -127,7 +134,6 @@ Manual: help, welcome, getting-started, adding-machines, bands-and-keys, account
   builders refuse a vendored telesthete without `protocol/route.py`.
 
 ### Transport
-Manual: n/a
 - Band transport split into a shared frame codec (`rook.worker.wire.codec.
   BandCodec`) and thin UDP/WS links behind the unchanged
   `TelestheteHubTransport` facade. Frames shorter than header + AEAD tag
@@ -236,7 +242,6 @@ Manual: n/a
   ones. Optional `aiohttp`/PyNaCl imports are lazy, so plugins load and
   `tools/gen_*_reference.py --check` refuse to run with modules missing.
 ### Plugin kit
-Manual: n/a
 - `ROOK_WORKER_HOME` now moves all worker state (identity, enrollment, pushed
   config, audit log, plugin data, chat/inbox, deauth flag, work DB, trust
   anchors), not only the session mirror; the installed bundle stays in
@@ -261,7 +266,6 @@ Manual: n/a
 - Worker chat client: its watcher thread now stops on every exit path.
   `hermes` logs through `logging` instead of printing.
 ### Dashboard
-Manual: agents-and-mcp, adding-machines
 - Removed the legacy exec worker (`rook/remote/worker.py`, served as
   `/worker.py`) and the dashboard's `/ws` endpoint it connected to. Every
   installer has deployed `band-worker.pyz` (which joins over `/band`) for a
@@ -290,7 +294,6 @@ Manual: agents-and-mcp, adding-machines
   Knowledge and Settings used to say "5m ago").
 
 ### Compatibility cleanup
-Manual: n/a
 - Cap errors raised through the plugin kit (`fail()`, `CapError`) reach the
   caller as the bare message (`file not found: /x`), not
   `CapError: file not found: /x`, and no longer log a traceback on the
@@ -672,7 +675,6 @@ Manual: sessions, workers, work, chat, agents-and-mcp, settings, integrations, a
   their readiness under `authz`. Build-167 workers ignore the extra keys.
 
 ### Changed
-Manual: terminal-and-commands
 - Over MCP, `rook_task`/`rook_knowledge` `get` returns only hand-made links
   plus `auto_links` (a count per kind) and the last 10 events; pass
   `data {links: "all", events: N}` for more. Deck outcomes are cut to 240

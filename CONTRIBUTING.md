@@ -90,13 +90,16 @@ part of the product, so it ships current with **every release**:
   plugin or command updates the manual pages that cover it in the same pull
   request. A new feature goes into a page's front matter `features`; a removed
   one is dropped from it, or its page is marked `deprecated: true`.
-- Its CHANGELOG bullet names the pages it changed: `(manual: jobs, workers)`
-  on the bullet, or a `Manual: jobs` line under its `###` block (`n/a` for a
-  change users cannot see).
-- Run `python tools/manual_check.py --write` after editing a page (it
-  regenerates `docs/manual/manifest.json`), then `python tools/manual_check.py`.
-  The test suite and the release tooling run the same check and fail on a
-  stale manual.
+- A bullet under an `Added`, `Removed` or `Deprecated` heading in the
+  CHANGELOG names the pages it changed: `(manual: jobs, workers)` on the
+  bullet, or a `Manual: jobs` line in its block (`n/a` for a change users
+  cannot see).
+- Run `python tools/manual_check.py` before you push. The test suite only
+  checks that pages parse and their links resolve; CI reports coverage and
+  CHANGELOG findings without blocking your pull request; the release tooling
+  (`tools/release_prep.py`) runs the same check with `--release` and refuses
+  to cut a release with a stale manual, so whoever cuts it has to fix what
+  was left. `docs/manual/manifest.json` is generated, never committed.
 
 See docs/manual/README.md for how to write a page and
 docs/operations/user-manual.md for the checks and the hub side.
