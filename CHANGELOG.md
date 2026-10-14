@@ -10,6 +10,33 @@ version was `0.1.0`.
 
 Preparation for public use.
 
+### Worker CLI and onboarding
+- `rook` on a worker machine gained commands for the person sitting at it:
+  `status`, `doctor` (plain-language fixes; exit 1 on a problem), `ask` and
+  `chat` (the home agent, through the saved dashboard login or the worker's
+  band link), `tasks`, `rooms`, `knowledge search|get`, `plugins
+  list|enable|disable` (the hub's protected plugins stay on), `logs [-f]
+  [--audit]`, `pair <code>`, `login` and `completion bash|zsh|fish|powershell`.
+  Both the bundle's launcher and the package's `rook` have them. See
+  docs/operations/worker-cli.md.
+- The worker serves a local control link for them on 127.0.0.1 (token in
+  `<state dir>/control.json`, mode 600; `ROOK_CONTROL=0` turns it off) and
+  keeps its recent log lines in memory for `rook logs`.
+- Enrollment prints numbered steps and "Done: <worker> joined <band>", prompts
+  only at a terminal (`--yes` / `ROOK_YES=1`, `--band` / `ROOK_BAND`), sends
+  the worker's `--name`, and reports failures in one plain sentence.
+- Worker installers: plain step names, details in `install.log`, "Done:
+  <worker> joined <band>"; unattended runs (piped, cloud-init, systemd, CI,
+  `--yes`) never prompt and get a user service; keyboard/mouse setup is
+  skipped on machines without a screen (`ROOK_HID=0|1`); Windows installs a
+  missing Python 3.12 from python.org for the current user after checking a
+  pinned SHA-256 (then `winget --scope user`, then one clear instruction).
+  The `/install` and `/hub` installers no longer die under cloud-init at a
+  prompt.
+- A password-only hub's sign-in page asks for the password alone. The setup
+  wizard and install-hub.sh's last screen use plain words; the wizard fills
+  in its own address.
+
 ### Hub merge
 - One hub process: `rook hub serve` (console script `rook-hub`) runs the
   dashboard and the MCP server together on the dashboard port (7005): the MCP

@@ -5,7 +5,7 @@ Start with the [README](../README.md): what Rook is, a quickstart and the
 architecture.
 
 - [The band](#the-band) · [Capabilities](#capabilities) · [Integrations](#integrations) · [Hardware integrations](#hardware-integrations)
-- [Control planes](#control-planes) — dashboard · `rook band` TUI · chat · MCP
+- [Control planes](#control-planes) — dashboard · `rook band` TUI · `rook` on a worker · chat · MCP
 - [Agent workspace](#agent-workspace) — chat rooms · work · knowledge wiki · jobs · secrets · agent instructions
 - [Reliability](#reliability) · [OTA self-update](#ota-self-update) · [Security](#security) · [Installers served by the hub](#installers-served-by-the-hub)
 
@@ -301,6 +301,19 @@ curl -fsSL https://<your-host>/install | bash -s -- cli
 # then just: rook
 ```
 
+### `rook` on a worker machine
+
+The same `rook` command looks after the machine it runs on and talks to the band
+from there: `rook status` (this worker, its band and hub link, plugins, last
+update and health-gate result), `rook doctor` (connectivity, keys, relay
+reachability, clock skew and common misconfigurations, each with a plain fix),
+`rook ask` / `rook chat` (the home agent), `rook tasks`, `rook rooms`, `rook
+knowledge search`, `rook plugins list|enable|disable` (the dashboard's switches,
+with the hub's protected plugins kept on), `rook logs`, `rook pair <code>` and
+shell completion for bash, zsh, fish and PowerShell. Hub reads and the home agent
+go through your saved dashboard login (`rook login`), else this worker's band
+link. Details: [docs/operations/worker-cli.md](operations/worker-cli.md).
+
 ### Chat & messaging
 
 Two flavors, both worker-gated:
@@ -458,6 +471,24 @@ enter the current code when prompted. Unattended worker installs require the
 code in the URL (or `ROOK_JOIN_CODE` in the installer's environment). Direct
 Windows worker installation uses
 `iex (irm "https://<your-host>/worker?band=CODE&os=windows")`.
+
+The worker installers print six numbered steps and end with "Done: <worker>
+joined <band>"; package-manager and pip output goes to
+`~/.rook-band-worker/install.log` and shows only when a step fails. They prompt
+only with a person at a terminal: piped installs without one, cloud-init,
+systemd units, CI and `--yes` / `ROOK_YES=1` never prompt (Windows: an
+interactive console, not `ROOK_YES=1`; unattended Windows installs need an
+administrator PowerShell). `ROOK_WORKER_NAME`, `ROOK_BAND` and `ROOK_HID=0|1`
+set the machine's name, the band (for an account sign-in with several) and
+whether to set up keyboard/mouse control, which is skipped on machines with no
+screen. On Windows without Python 3.11+, the installer downloads Python 3.12
+from python.org, checks it against a pinned SHA-256 and installs it for the
+current user only; if that fails it tries `winget --scope user`, then says how
+to install it by hand.
+
+```sh
+curl -fsSL 'https://<your-host>/worker?band=CODE' | bash -s -- --yes   # unattended
+```
 
 ### Run your own hub
 

@@ -191,7 +191,7 @@ def hub_call(cap: str, args: dict, timeout: float = 20.0, via: str = "auto") -> 
         raise CliError(
             "The hub only answers reads from workers over the band. To use this from here,\n"
             "  save your dashboard login: rook login\n"
-            "  (or an owner can raise Settings > Hub > band_max_risk to 'write').")
+            "  (or an owner can raise the hub setting hub.band_max_risk to 'write').")
     return reply, "band"
 
 
