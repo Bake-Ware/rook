@@ -11,8 +11,8 @@ version was `0.1.0`.
 Preparation for public use.
 
 ### User manual
-Manual: help, welcome, getting-started, adding-machines, bands-and-keys, accounts-and-access, workers, chat, work, sessions, knowledge, jobs, secrets, agents-and-mcp, home-agent, settings, plugins, phones-and-tablets, hardware, integrations, voice, updates, security, terminal-and-commands, running-a-hub
-- Added a user manual: 25 plain-language pages in `docs/manual/` covering
+Manual: help, welcome, getting-started, overview-and-start-page, adding-machines, bands-and-keys, accounts-and-access, workers, chat, work, sessions, knowledge, jobs, secrets, agents-and-mcp, home-agent, settings, plugins, phones-and-tablets, hardware, integrations, voice, updates, security, terminal-and-commands, running-a-hub, desktop-app
+- Added a user manual: 26 plain-language pages in `docs/manual/` covering
   every current feature (and a preview page for the desktop app), shipped in
   the wheel (`rook/_manual`) and the image. **Help** in the dashboard sidebar
   reads it (search, page links): the operator from the knowledge base copy

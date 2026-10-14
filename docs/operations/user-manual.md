@@ -86,8 +86,8 @@ Body: `#`-`###` headings, `-` and `1.` lists, code blocks, `inline code`,
 Both the Help page and the knowledge page render exactly that subset. At most
 18,000 characters a page (the knowledge store's limit is 20,000).
 
-`desktop-app.md` is a preview page for the desktop app (#109), so that work
-updates it instead of adding a page of its own.
+`desktop-app.md` covers the desktop app, which is still a preview
+(`preview: true`, feature `features/desktop-app-preview`).
 
 ## Packaging
 
