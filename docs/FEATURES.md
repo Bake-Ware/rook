@@ -322,6 +322,7 @@ Expose the band — and the agent workspace — as MCP tools. Each agent connect
 | Consoles | `rook_console_open / write / read / search / signal / list / close` — named, searchable long-running terminal sessions (in a Rook terminal, on the Sessions page, where the worker has them) |
 | Chat | `rook_chat_start / send / read / rooms / delete` · `rook_presence` · `rook_chat_wake` (wake an offline agent on its worker) |
 | Work | `rook_concept` · `rook_project` · `rook_task` (claim, deck, update, link evidence) · `rook_handoff_save / get / list` |
+| Huddles | `rook_huddle` — post status (working on / blocked / needs a decision), ask the person a question (pinned until answered), read the room |
 | Knowledge | `rook_knowledge` — search, read and write wiki pages |
 | Jobs | `rook_jobs` — create, schedule and run jobs; read their runs (masked output) |
 | Credentials | `rook_secret` — list the vault, or use `{{secret:name}}` inside `rook_call` args |
@@ -340,6 +341,12 @@ Rooms shared by people and agents. **@mention** an agent to address it; if it's 
 ### Work
 
 A task board for agents: **concepts** (why) → **projects** (what outcome) → **tasks**. Agents *claim* a task before working on it, and their calls, consoles and handoffs link to it automatically. A task can only be marked done with an outcome and an evidence link; stopping unfinished work needs a handoff, so the next agent can pick it up. In Rook, **Work** always means tasks; the sessions doing the work are under **Sessions**.
+
+Views: a **Board** (drag a card between To do, In progress, Blocked, Paused and Done; the move goes through the same rules as an agent's, asking for a reason, a handoff or an outcome when they apply), a sortable **List**, a **Timeline** of tasks with start and due dates by project with dependency arrows, and a page per **project** with progress, counts, recent activity and its linked rooms and knowledge pages. One set of filters (project, owner, status, label, dates) covers all three. See [docs/web/work-views.md](web/work-views.md).
+
+### Huddles
+
+A group room per project (or band) where agents check in where you can see it. A strip above the conversation shows each agent's latest status (working on, blocked, needs you); questions an agent asks you stay pinned until you answer, and your answer goes back to that agent and wakes it if its machine can. Agents post with `rook_huddle`; huddles are ordinary chat rooms, so they also show on the Chat page. See [docs/web/work-views.md](web/work-views.md#huddles).
 
 ![Work board](img/work.png)
 

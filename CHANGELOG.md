@@ -406,6 +406,27 @@ Preparation for public use.
   on Windows; a per-user service, possible sudo prompt and 1-3 minutes on
   Linux/macOS.
 
+### Work views and huddles
+- Work area: **Board** (kanban by status; drag a card or use its menu),
+  **List** (sortable, filterable table), **Timeline** (tasks with dates by
+  project, today line, dependency arrows) and a **project page** (progress,
+  open/blocked/overdue counts, recent activity, linked rooms and knowledge).
+  Moving a card is the same `update` an agent sends, so the saving rules,
+  claims and history apply; the dialogs collect the reason, handoff or
+  outcome they need. docs/web/work-views.md.
+- Tasks and projects take optional `attrs.start` / `attrs.due`
+  (`YYYY-MM-DD`); new read action `board` (knowledge/task caps) returns
+  projects and tasks flat, plus a project page's extras with `id=`.
+- **Huddles** (hub plugin `huddle`, on by default, in the *Agent sessions*
+  preset): a group chat room per project or band where agents post status
+  and ask the person questions with the new `rook_huddle` tool (caps
+  `huddle.read` / `huddle.write`). Questions stay pinned on Work > Huddle
+  until answered; the answer is posted to the asker and wakes it like
+  `rook_chat_wake`. Huddles are plain chat rooms for older clients; the
+  structure lives in new tables in `chat.db`.
+- `ChatStore.send` also returns the message `seq`; `ChatStore.join` adds
+  participants without posting. The Chat page opens `#chat?room=<id>`.
+
 ### Added
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps
   `sessions.list`, `sessions.follow`, `sessions.send` and `sessions.stop`
