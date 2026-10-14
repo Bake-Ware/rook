@@ -249,6 +249,14 @@ async def test_llmanifold_refuses_an_address_with_credentials(env):
         n = len(env.fake.requests)
         assert (await lm.status_cap()) is lm.last_status
         assert len(env.fake.requests) == n
+        # ...unless what it depends on changed: never a stale address's answer.
+        cached = lm.last_status
+        svc.set("llmanifold.admin_url", "http://192.0.2.64:1240", actor="human:op")
+        st = await lm.status_cap()
+        assert st is not cached and st["admin"]["ok"] and len(env.fake.requests) > n
+        lm.settings.get = (lambda real: lambda k, *a: (
+            "http://192.0.2.65:1234/v1" if k == "base_url" else real(k, *a)))(lm.settings.get)
+        assert (await lm.status_cap())["host"] == "192.0.2.65:1234"
     finally:
         await node.stop()
 

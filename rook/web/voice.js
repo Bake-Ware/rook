@@ -33,6 +33,7 @@ export async function mountVoice(root){
   function state(){
     const s=d.status;
     if(!s.loaded)return ['Not running','mg-warn'];
+    if(s.state==='waiting')return ['Waiting for the previous engine to finish loading','mg-warn'];
     if(s.state==='starting')return ['Starting: loading the speech models','mg-warn'];
     if(s.state==='error')return ['Failed to start','mg-bad'];
     const c=s.last_check;

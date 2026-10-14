@@ -45,6 +45,12 @@ MAX_PCM = 30 * 16000 * 2
 EXTRAS_HINT = "pip install 'rook[voice]'"
 #: Longest stop() waits for a model load in progress to finish.
 BOOT_WAIT = 180
+#: A load stop() gave up waiting for, with its teardown to follow; the next
+#: engine waits for it rather than start on its modules and environment.
+_STALE: "asyncio.Task | None" = None
+STALE_REASON = ("The previous voice engine is still loading its models (a setting changed "
+                "while they loaded). Voice starts with the new settings once that load "
+                "finishes; restart the hub if it never does.")
 
 
 def find_engine(packages: tuple = ENGINE_PACKAGES) -> str | None:
@@ -100,7 +106,7 @@ class LocalEngine:
         self.package = package
         self.env = env
         self.prefix = prefix
-        self.state = "stopped"        # stopped | starting | ready | error
+        self.state = "stopped"        # stopped | waiting | starting | ready | error
         self.error = ""
         self.started_at = 0.0
         self.ready_at = 0.0
@@ -115,9 +121,20 @@ class LocalEngine:
     def start(self) -> None:
         self.state, self.error, self.started_at = "starting", "", time.time()
         self._stopping = False
+        if _STALE is not None and not _STALE.done():
+            # Never start on the old load's modules and environment (its
+            # VOICE_TOKEN, say): wait for it to finish and be torn down.
+            self.state, self.error = "waiting", STALE_REASON
+            log.warning("voice: %s", STALE_REASON)
         self._task = asyncio.get_running_loop().create_task(self._boot())
 
     async def _boot(self) -> None:
+        stale = _STALE
+        if stale is not None and not stale.done():
+            await asyncio.wait({stale})
+            if self._stopping:
+                return
+            self.state, self.error, self.started_at = "starting", "", time.time()
         try:
             # The service reads its configuration from the environment, much
             # of it at import: set the hub's values first, never overriding
@@ -155,18 +172,32 @@ class LocalEngine:
             log.exception("voice: the engine failed to start")
 
     async def stop(self) -> None:
+        global _STALE
         self._stopping = True
         task, self._task = self._task, None
-        if task is not None and not task.done():
+        if task is not None and not task.done() and self.state == "waiting":
+            # Only waiting on an older load: nothing of its own runs yet.
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        elif task is not None and not task.done():
             # Cancelling would not stop the import or model load running in
             # its thread: wait for it, so two loads never run side by side and
             # the modules and environment are not torn down under it.
             await asyncio.wait({task}, timeout=BOOT_WAIT)
             if not task.done():
-                log.error("voice: the engine is still loading after %d s; leaving its "
-                          "modules and environment in place", BOOT_WAIT)
+                log.error("voice: the engine is still loading after %d s; it is torn down "
+                          "once it finishes, and the next start waits for that", BOOT_WAIT)
+                _STALE = asyncio.get_running_loop().create_task(self._finish_late(task))
                 self.state = "stopped"
                 return
+        await self._teardown()
+
+    async def _finish_late(self, task: asyncio.Task) -> None:
+        await asyncio.wait({task})
+        await self._teardown()
+        log.info("voice: the late engine load finished and was torn down")
+
+    async def _teardown(self) -> None:
         for bridge in self._bridges.values():
             bridge.stopping = True
         if self._lifespan is not None:
@@ -187,6 +218,8 @@ class LocalEngine:
     # -- serving ---------------------------------------------------------------
     async def handle(self, request: Any, *, alias: bool = False):
         if self.state != "ready":
+            if self.state == "waiting":
+                return _not_ready(STALE_REASON)
             if self.state == "starting":
                 return _not_ready("Voice is starting: the speech models are loading.")
             return _not_ready("Voice is not running on this hub. " + (self.error or ""))
@@ -245,16 +278,19 @@ def _set_cookie(value: str, prefix: str) -> str | None:
     return "; ".join(out)
 
 
+def _is_loopback(addr: str) -> bool:
+    import ipaddress
+    try:
+        return ipaddress.ip_address(addr).is_loopback
+    except ValueError:
+        return False
+
+
 def client_address(request: Any) -> str:
     """The client's address: the tunnel's X-Forwarded-For when a loopback
     proxy (cloudflared) sent the request, else the peer."""
-    import ipaddress
     peer = request.remote or ""
-    try:
-        loopback = ipaddress.ip_address(peer).is_loopback
-    except ValueError:
-        loopback = False
-    if loopback:
+    if _is_loopback(peer):
         fwd = request.headers.get("X-Forwarded-For", "").split(",")[-1].strip()
         if fwd:
             return fwd
@@ -317,6 +353,18 @@ class RemoteEngine:
         from yarl import URL
         return URL(self.url(raw_sub, query, ws=ws), encoded=True)
 
+    def upstream_host(self) -> str:
+        """The Host the voice server is addressed by (what aiohttp sends for
+        :attr:`base`: no port when it is the scheme's default)."""
+        from yarl import URL
+        u = URL(self.base)
+        host = (u.raw_host or "").rstrip(".")
+        if ":" in host:
+            host = f"[{host}]"
+        if u.port is not None and not u.is_default_port():
+            host += f":{u.port}"
+        return host
+
     def _headers(self, request: Any) -> dict:
         # Never the dashboard's session or Cloudflare Access identity: only
         # the voice server's own admin cookie goes.
@@ -326,12 +374,24 @@ class RemoteEngine:
         cookie = _voice_cookie(request.headers.get("Cookie", ""))
         if cookie:
             out["Cookie"] = cookie
-        # The client's Host: the voice admin's same-origin check compares the
-        # browser's Origin with it.
-        out["Host"] = request.host
+        # Host stays the voice server's own (aiohttp sets it from the URL): a
+        # name-based proxy in front of it routes on it. The voice admin's
+        # same-origin check compares Origin with that Host, so a page on this
+        # hub's own origin (the hub already holds the same check: Origin is
+        # https://<the Host it was asked for>) is presented as the voice
+        # server's origin; any other Origin goes as sent and is refused there.
+        origin = request.headers.get("Origin")
+        if origin and origin.lower() == ("https://" + request.host).lower():
+            out["Origin"] = "https://" + self.upstream_host()
         peer = request.remote or ""
         prior = request.headers.get("X-Forwarded-For")
-        out["X-Forwarded-For"] = f"{prior}, {peer}" if prior else peer
+        # Behind a local tunnel its chain is the client's; this hub's loopback
+        # hop would only hide the client from a voice server that trusts the
+        # hub (uvicorn's FORWARDED_ALLOW_IPS), so it is not appended.
+        if prior and _is_loopback(peer):
+            out["X-Forwarded-For"] = prior
+        else:
+            out["X-Forwarded-For"] = f"{prior}, {peer}" if prior else peer
         out["X-Forwarded-Proto"] = request.scheme
         out["X-Forwarded-Host"] = request.host
         out["X-Forwarded-Prefix"] = self.prefix

@@ -76,6 +76,7 @@ class Llmanifold(Plugin):
         self._node: Any = None
         self._http = aiohttp_request          # tests swap in a fake llmanifold
         self.last_status: dict | None = None
+        self._status_for: tuple | None = None   # the settings last_status was taken with
 
     def bind_host(self, node) -> None:
         self._node = node
@@ -133,6 +134,12 @@ class Llmanifold(Plugin):
                 "inflight": sum(int(e.get("inflight") or 0) for e in endpoints),
                 "queued": len(queue) if isinstance(queue, list) else queue}
 
+    def _status_key(self) -> tuple:
+        """What a status answer depends on: a change to any of these (a new
+        address, say) is never answered from the cache."""
+        return tuple(str(self.settings.get(k) or "") for k in
+                     ("base_url", "admin_url", "api_key", "models"))
+
     async def status(self) -> dict:
         """API reachability and flows (through the model providers plugin's
         client, so the token is resolved the same way) plus admin state."""
@@ -154,7 +161,7 @@ class Llmanifold(Plugin):
             out["api"] = {"ok": False, "error": str(e)[:300]}
         out["admin"] = await self._admin_status()
         out["ok"] = bool(out["api"].get("ok"))
-        self.last_status = out
+        self.last_status, self._status_for = out, self._status_key()
         return out
 
     async def provider_detail(self) -> dict:
@@ -168,7 +175,8 @@ class Llmanifold(Plugin):
         # Band readers share one answer for a few seconds: each live one is
         # outbound requests (and a vault read for the token).
         last = self.last_status
-        if last is not None and time.time() - float(last.get("checked_at") or 0) < STATUS_TTL:
+        if (last is not None and self._status_for == self._status_key()
+                and time.time() - float(last.get("checked_at") or 0) < STATUS_TTL):
             return last
         return await self.status()
 

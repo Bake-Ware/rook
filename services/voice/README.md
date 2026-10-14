@@ -9,7 +9,9 @@ transport framework is not a runtime dependency.
 A hub can serve this service itself, at `/voice/` on its own address, either
 in the hub process or by forwarding to this server running on a GPU host: see
 the voice hub plugin, [docs/operations/voice.md](../../docs/operations/voice.md).
-Running it standalone, as below, is unchanged.
+Running it standalone, as below, is unchanged. Behind a hub on another
+machine, set `FORWARDED_ALLOW_IPS=<the hub's address>` so the admin page's
+sign-in limit counts each client, not the hub.
 
 Run from the repository root with Python 3.12:
 

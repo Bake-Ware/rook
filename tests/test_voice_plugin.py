@@ -464,6 +464,67 @@ async def test_stop_waits_for_a_model_load_in_progress(tmp_path, fake_engine, mo
     assert "WHISPER_MODEL" not in os.environ and "fakevoice.server" not in sys.modules
 
 
+@web.middleware
+async def own_host_only(request, handler):
+    """A voice server behind a name-based proxy: any Host but its own is
+    another site (cloudflared, Caddy and nginx answer 404/421)."""
+    ip, port = request.transport.get_extra_info("sockname")[:2]
+    if request.host != f"{ip}:{port}":
+        return web.json_response({"error": "misdirected"}, status=421)
+    return await handler(request)
+
+
+@pytest.mark.asyncio
+async def test_a_late_load_holds_the_next_engine_until_it_is_torn_down(
+        tmp_path, fake_engine, monkeypatch):
+    gate, loading = asyncio.Event(), asyncio.Event()
+    real = asyncio.to_thread
+
+    async def slow(fn, *a, **k):
+        if getattr(fn, "__name__", "") == "Provider":
+            loading.set()
+            await gate.wait()
+        return await real(fn, *a, **k)
+    monkeypatch.setattr(eng.asyncio, "to_thread", slow)
+    monkeypatch.setattr(eng, "BOOT_WAIT", 0.1)
+    monkeypatch.setattr(eng, "_STALE", None)
+    old = eng.LocalEngine("fakevoice", {"WHISPER_MODEL": "tiny.en"}, "/voice")
+    old.start()
+    new = None
+    try:
+        await asyncio.wait_for(loading.wait(), 5)
+        await old.stop()                         # gives up waiting after BOOT_WAIT
+        assert os.environ.get("WHISPER_MODEL") == "tiny.en"   # still the old load's
+        new = eng.LocalEngine("fakevoice", {"WHISPER_MODEL": "base.en"}, "/voice")
+        new.start()
+        # It never starts on the old load's modules and environment, and says why.
+        assert new.state == "waiting" and "still loading" in new.error
+        assert (await new.health())["state"] == "waiting"
+        gate.set()
+        assert await wait_for(lambda: new.state == "ready"), new.error
+        assert os.environ["WHISPER_MODEL"] == "base.en"
+        assert new.app.state.provider.model == "base.en"
+    finally:
+        gate.set()
+        if new is not None:
+            await new.stop()
+    assert "WHISPER_MODEL" not in os.environ and "fakevoice.server" not in sys.modules
+    # Stopping an engine that is only waiting is immediate.
+    gate.clear()
+    loading.clear()
+    old = eng.LocalEngine("fakevoice", {}, "/voice")
+    old.start()
+    await asyncio.wait_for(loading.wait(), 5)
+    await old.stop()
+    waiting = eng.LocalEngine("fakevoice", {}, "/voice")
+    waiting.start()
+    assert waiting.state == "waiting"
+    await asyncio.wait_for(waiting.stop(), 1)
+    assert waiting.state == "stopped"
+    gate.set()
+    await asyncio.wait_for(eng._STALE, 5)
+
+
 def recording_voice_server(seen):
     async def anything(request):
         seen.append({"path": request.raw_path, "headers": dict(request.headers)})
@@ -472,7 +533,7 @@ def recording_voice_server(seen):
         resp.headers.add("Set-Cookie", "voice_admin=tok123; HttpOnly; Path=/admin; "
                                        "Domain=voice.example; Secure; SameSite=Strict")
         return resp
-    app = web.Application()
+    app = web.Application(middlewares=[own_host_only])
     app.router.add_route("*", "/{tail:.*}", anything)
     return app
 
@@ -482,7 +543,12 @@ def proxy_app(remote):
 
     async def handler(request):
         return await remote.handle(request)
+
+    async def alias(request):
+        return await remote.handle(request, alias=True)
     app.router.add_route("*", "/voice/{tail:.*}", handler)
+    for path in voice_mod.ALIASES:
+        app.router.add_route("*", path, alias)
     return app
 
 
@@ -499,15 +565,26 @@ async def test_remote_keeps_the_dashboards_credentials_and_bad_paths_on_the_hub(
             r = await http.get("/voice/a%20b?x=1", headers={
                 "Host": "hub.example", "Authorization": "Bearer voice-key",
                 "Cookie": "rook_account=SECRET; voice_admin=abc; other=1",
+                "X-Forwarded-For": "198.51.100.7",       # what a local tunnel says
                 "Cf-Access-Jwt-Assertion": "jwt", "Cf-Access-Authenticated-User-Email": "a@b"})
-            assert r.status == 200
+            assert r.status == 200, await r.text()
             got = seen[-1]
             assert got["path"] == "/a%20b?x=1"                     # as the client encoded it
             hdr = {k.lower(): v for k, v in got["headers"].items()}
             assert hdr["cookie"] == "voice_admin=abc"              # never the dashboard session
             assert not [k for k in hdr if k.startswith("cf-access-")]
-            assert hdr["host"] == "hub.example" and hdr["authorization"] == "Bearer voice-key"
+            # The voice server's own Host (its proxy routes on it); the hub's
+            # name goes as X-Forwarded-Host.
+            assert hdr["host"] == remote.upstream_host() and hdr["authorization"] == "Bearer voice-key"
+            assert hdr["x-forwarded-host"] == "hub.example"
             assert hdr["x-forwarded-prefix"] == "/voice"
+            # The tunnel's client, without this hub's loopback hop.
+            assert hdr["x-forwarded-for"] == "198.51.100.7"
+            # The Android app's root paths reach it too.
+            for path in voice_mod.ALIASES:
+                async with http.post(path, data=b"\0\0", headers={"Host": "hub.example"}) as r:
+                    assert r.status == 200, path
+                assert seen[-1]["path"] == path
             # Only the voice admin cookie comes back, under /voice, for this host.
             cookies = r.headers.getall("Set-Cookie")
             assert len(cookies) == 1 and cookies[0].startswith("voice_admin=tok123")
@@ -540,7 +617,7 @@ async def test_voice_admin_signs_in_through_the_hub(tmp_path):
     api = FastAPI()
     api.include_router(router(store, {}, invalidate))
     bridge = AsgiBridge(api)
-    upapp = web.Application()
+    upapp = web.Application(middlewares=[own_host_only])
     upapp.router.add_route("*", "/{tail:.*}", bridge.handle)
     upstream = TestServer(upapp)
     await upstream.start_server()
@@ -559,11 +636,25 @@ async def test_voice_admin_signs_in_through_the_hub(tmp_path):
             r = await http.get("/voice/admin/api/session", headers={
                 "Host": "hub.example", "Cookie": f"rook_account=SECRET; voice_admin={token}"})
             assert r.status == 200 and (await r.json())["csrf"]
-            # Another site's page still cannot sign in.
+            # Another site's page still cannot sign in, nor a plain-http origin.
+            for origin in ("https://evil.example", "http://hub.example"):
+                r = await http.post("/voice/admin/api/login", headers={**hdr, "Origin": origin},
+                                    json={"username": "admin", "password": "test-password"})
+                assert r.status == 403, origin
+            # Failed sign-ins count per client (the tunnel's address), not
+            # per hub: one client locking itself out leaves the others be.
+            bad = {"username": "admin", "password": "wrong"}
+            for _ in range(10):
+                r = await http.post("/voice/admin/api/login", json=bad,
+                                    headers={**hdr, "X-Forwarded-For": "198.51.100.7"})
+                assert r.status == 401
+            r = await http.post("/voice/admin/api/login", json=bad,
+                                headers={**hdr, "X-Forwarded-For": "198.51.100.7"})
+            assert r.status == 429
             r = await http.post("/voice/admin/api/login",
-                                headers={**hdr, "Origin": "https://evil.example"},
+                                headers={**hdr, "X-Forwarded-For": "198.51.100.8"},
                                 json={"username": "admin", "password": "test-password"})
-            assert r.status == 403
+            assert r.status == 200
     finally:
         await remote.stop()
         await upstream.close()

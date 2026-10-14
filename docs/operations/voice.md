@@ -52,14 +52,22 @@ certificate on a private network. The address must not carry a user name or
 password (`https://user:pass@...` is refused).
 
 What the hub forwards: the request as the client sent it (path encoding
-included) with the client's `Host` (the voice admin's same-origin check needs
-it) and `X-Forwarded-For`, `-Proto`, `-Host` and `-Prefix`. The dashboard's
+included), addressed to the voice server by its own name (`Host` is the voice
+server's, so a proxy in front of it routes as usual), with
+`X-Forwarded-For`, `-Proto`, `-Host` (the hub's name) and `-Prefix`. A
+browser `Origin` equal to the hub's own `https://` origin is presented as the
+voice server's origin, so voice admin sign-in works through the hub; any
+other origin goes as sent and the voice server refuses it. The dashboard's
 session cookie and Cloudflare Access headers (`Cf-Access-*`) never leave the
 hub: the only cookie forwarded is the voice admin's (`voice_admin`), and the
 only cookie passed back is that one, with its path moved under
 `/voice/admin` and no domain. One client address may hold at most 16 voice
 WebSockets through the hub (429 beyond that); behind a local tunnel the
-address is the tunnel's `X-Forwarded-For`.
+address is the tunnel's `X-Forwarded-For`, and the hub passes that on without
+adding its own loopback hop. The voice admin counts failed sign-ins per client
+address: for that address to be the client's rather than the hub's, start the
+voice server with `FORWARDED_ALLOW_IPS=<the hub's address>` (uvicorn trusts
+only loopback by default).
 
 Without what the chosen engine needs the plugin does not load, and
 Manage > Plugins shows the reason ("Needs the voice extras ...", "Speech model
@@ -78,7 +86,9 @@ secrets set in the vault) are handed to the voice service as its environment
 variables; defaults stay the service's own, and a variable already set in the
 hub's environment always wins. Changing one restarts the plugin (and reloads
 the models; a load still in progress is waited for first, so two never run at
-once).
+once). If that load is still running after three minutes, the new engine
+waits for it to finish and be cleared away before it starts, and the Voice
+page says so, rather than start on the old settings.
 
 `voice.token` is an owner voice key. In `remote` mode the hub also uses it for
 the Voice page's microphone check, so the voice server must accept it.

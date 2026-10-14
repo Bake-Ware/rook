@@ -26,7 +26,9 @@ Preparation for public use.
   layout the Plugins and Voice pages say so. With `voice.engine=remote` the
   hub forwards only the voice admin cookie (never the dashboard session or
   `Cf-Access-*` headers), passes back only that cookie under `/voice/admin`,
-  forwards the client's `Host` so voice admin sign-in works through the hub,
+  keeps the voice server's own `Host` and presents the hub's origin as the
+  voice server's so voice admin sign-in works through the hub (with failed
+  sign-ins counted per client),
   refuses paths with `.`/`..` segments and caps voice WebSockets at 16 per
   client address. Changing a voice setting while the models load waits for
   that load instead of running two. Dashboard routes always win over plugin
