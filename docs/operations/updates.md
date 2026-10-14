@@ -190,17 +190,28 @@ attestations do that: the hub runs
       --source-ref refs/tags/<tag> --deny-self-hosted-runners
 
 (or `refs/heads/master` for a release re-run by hand from the default
-branch), so an attestation from any other workflow, branch or a self-hosted
-runner does not count. The check fails closed: when `gh` is missing or the
-check fails, the update is refused. Auto mode always requires it before it
-updates the hub; for an update you start, `updates.verify_attestations` turns
-it on (off by default: then only `SHA256SUMS` is checked, and you can run
-the command above yourself).
+branch; then the attestation must also list this release's own sdist or
+wheel among its subjects), so an attestation from any other workflow,
+branch, release or a self-hosted runner does not count. `release.json` is
+checked the same way, since whether an update is breaking comes from it.
+The check fails closed: when `gh` is missing, hangs or the check fails, the
+update is refused. Auto mode always requires it before it updates the hub;
+for an update you start, `updates.verify_attestations` turns it on (off by
+default: then only `SHA256SUMS` is checked, and you can run the command
+above yourself).
+
+A release that is published again under the same tag (re-run with
+`--clobber`, for example to mark it breaking) is read again: the hub keys
+what it verified on GitHub's asset ids, so a new `release.json` or
+`SHA256SUMS` replaces the old, and an acknowledgement given before the
+re-release no longer counts.
 
 The hub then signs the hub release it builds with its own update key (that
 is what `rook hub deploy` checks), so that signature means "this hub checked
 it", nothing more; the provenance check is what ties it to Rook's release
-workflow. Worker bundles are kept in the feed only when they verify against
+workflow. If the deploy config pins a `pubkey` (or `ROOK_UPDATE_PUBKEY` is
+set) and it is not this hub's key, the hub does not override it: the update
+is refused with the reason, and you update by hand. Worker bundles are kept in the feed only when they verify against
 the hub's own key, and are re-signed with it.
 
 The hub asks GitHub at most every few hours, with the last `ETag` (an

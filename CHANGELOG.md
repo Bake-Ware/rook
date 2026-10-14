@@ -96,13 +96,15 @@ Preparation for public use.
 - Manage > Updates (new hub plugin `updates`): the hub checks Rook's GitHub
   releases (ETag, backoff; prereleases only on the prerelease channel),
   verifies downloads against `SHA256SUMS` and, where required, build
-  provenance (`gh attestation verify` scoped to the release workflow, the
-  release tag and GitHub-hosted runners; fails closed), and shows the hub,
+  provenance of the files and `release.json` (`gh attestation verify` scoped
+  to the release workflow, the release tag and GitHub-hosted runners; fails
+  closed), re-reads a tag that was published again, and shows the hub,
   workers, apps and firmware against what is available, with release notes,
   progress and history.
 - Hub self-update through `rook hub deploy` (the release sdist repacked and
-  signed by the hub; dead-man rollback applies; the trusted key is passed
-  explicitly) or by re-running the release's `install-hub.sh` with the wheel
+  signed by the hub; dead-man rollback applies; the hub's key is passed
+  explicitly unless the operator pinned one, and a pin to another key
+  refuses the update) or by re-running the release's `install-hub.sh` with the wheel
   the hub verified (`--package`) on a `--user` install; other installs get the
   command to run. Refused, not run inside the hub's own service, when
   `systemd-run` cannot start it. Rollback from the History tab.

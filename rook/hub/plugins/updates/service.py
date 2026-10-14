@@ -33,7 +33,7 @@ from ...release_meta import (below_floor, cut_off, floors_of, raised_against, ve
                              version_tuple)
 from ...update_feed import WorkerFeed, member_kind, published_apk
 from . import hubself
-from .github import ReleaseError, ReleaseFeed, verify_attestation
+from .github import SMALL_ASSET_BYTES, ReleaseError, ReleaseFeed, verify_attestation
 from .rollout import RolloutEngine, new_rollout, online
 
 log = logging.getLogger("rook.hub.plugins.updates.service")
@@ -538,7 +538,8 @@ class UpdateService:
     def acknowledge(self, tag: str, actor: str) -> dict:
         rel = self._find(tag)
         a = self.analyse(rel)
-        ack = {"by": actor, "at": time.time(), "cut_off": [m["name"] for m in a["cut_off"]]}
+        ack = {"by": actor, "at": time.time(), "cut_off": [m["name"] for m in a["cut_off"]],
+               "fp": self._meta_fp(rel)}
         self.state.setdefault("acks", {})[tag] = ack
         self.save()
         self.record({"kind": "hub", "event": "acknowledged", "tag": tag, "by": actor,
@@ -560,8 +561,17 @@ class UpdateService:
             crossed, _ = self.span(rel)
             for r in crossed:
                 await self.rook.meta(r, force=True)
+            if require_provenance or self.s("verify_attestations", False):
+                # breaking, build and name come from release.json: it must
+                # be the release workflow's too (it attests it).
+                for r in crossed:
+                    if r.get("meta"):
+                        rj = await self.rook.fetch(r, "release.json", SMALL_ASSET_BYTES)
+                        await self._attest(rj, r, True)
             a = self.analyse(rel)
             ack = (self.state.get("acks") or {}).get(tag)
+            if ack and ack.get("fp") and ack["fp"] != self._meta_fp(rel):
+                ack = None     # acknowledged before the release was re-published
             if not a["known"] and not ack:
                 raise Refused(f"What this release changes for your devices is unknown ({a['note']}). "
                               "Read the release notes, then acknowledge it to go ahead.",
@@ -593,9 +603,6 @@ class UpdateService:
                 if not meta.get("name") or not meta.get("build"):
                     raise Refused("this release has no build name, so `rook hub deploy` cannot "
                                   "place it; update by hand")
-                sdist = await self.rook.fetch(rel, f"rook-{meta.get('version') or rel['version']}.tar.gz")
-                op["provenance"] = await self._attest(sdist, rel, require_provenance)
-                tarball = hubself.repack_sdist(sdist, meta["name"], self.root / "hub")
                 key = self._hub_key() if self._hub_key else None
                 if key is None:
                     from ....remote.update_keys import load_signing_key
@@ -604,13 +611,27 @@ class UpdateService:
                     raise Refused("this hub has no update signing key, so it cannot sign the "
                                   "hub release for `rook hub deploy`")
                 from ....remote.update_keys import public_key_b64
+                hub_pub = public_key_b64(key)
+                # A key the operator pinned (deploy config `pubkey`, else
+                # ROOK_UPDATE_PUBKEY) is what `rook hub deploy` trusts; never
+                # override it. Without a pin, name this hub's key explicitly:
+                # the transient unit does not see where the hub keeps it.
+                pinned, where = hubself.deploy_pinned_pubkey(kind["config"])
+                if pinned and pinned != hub_pub:
+                    raise Refused(f"`rook hub deploy` here trusts the update key pinned in {where}, "
+                                  "not this hub's own key, so a hub release this hub signs "
+                                  "would not verify. Update by hand with a release signed by "
+                                  "the pinned key, or change the pin.",
+                                  manual=kind.get("manual", ""))
+                sdist = await self.rook.fetch(rel, f"rook-{meta.get('version') or rel['version']}.tar.gz")
+                op["provenance"] = await self._attest(sdist, rel, require_provenance)
+                tarball = hubself.repack_sdist(sdist, meta["name"], self.root / "hub")
                 manifest = hubself.hub_release_manifest(tarball, meta, key)
                 mpath = self.root / "hub" / f"rook-hub-{meta['name']}.json"
                 hubself.json_dump(mpath, manifest)
-                # The trusted key explicitly: the transient unit does not see
-                # where this hub keeps its key.
                 argv, env = hubself.rook_hub_argv(kind["config"], "deploy", str(mpath),
-                                                  "--pubkey", public_key_b64(key), "--yes")
+                                                  *([] if pinned else ["--pubkey", hub_pub]),
+                                                  "--yes")
                 op["launch"] = self._launch(argv, unit=f"rook-hub-update-{op['id']}",
                                             log_path=log_path, env=env,
                                             user_scope=kind.get("scope") == "user")
@@ -638,6 +659,14 @@ class UpdateService:
                          "from": hub["version"] or hub["name"], "to": rel["version"],
                          "detail": hubself.describe_apply(kind, meta, tag)})
             return op
+
+    def _meta_fp(self, rel: dict) -> str:
+        """A fingerprint of the metadata an acknowledgement was given for
+        (``rel`` and every release it crosses)."""
+        import hashlib
+        crossed, _ = self.span(rel)
+        blob = json.dumps([[r["tag"], r.get("meta")] for r in crossed], sort_keys=True)
+        return hashlib.sha256(blob.encode()).hexdigest()[:16]
 
     @staticmethod
     def _launch(argv: list[str], **kw: Any) -> dict:

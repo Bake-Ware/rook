@@ -47,7 +47,8 @@ BACKOFF_MAX = 24 * 3600.0
 META_RETRY_SECS = 30 * 60.0            # a release.json that failed to verify
 RELEASE_WORKFLOW = ".github/workflows/release.yml"
 # The refs a release's provenance may name: the tag push that made it, or a
-# workflow_dispatch re-release run from the default branch.
+# workflow_dispatch re-release run from the default branch (then the
+# attestation must also name this release's sdist or wheel).
 ATTEST_REFS = ("refs/tags/{tag}", "refs/heads/master")
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,200}$")
 
@@ -76,7 +77,10 @@ def clean_release(raw: dict) -> dict | None:
         url = str(a.get("browser_download_url") or "")
         if _SAFE_NAME.match(name) and url.startswith(("https://", "http://")):
             size = a.get("size")
-            assets[name] = {"url": url, "size": size if isinstance(size, int) else None}
+            aid = a.get("id")
+            assets[name] = {"url": url, "size": size if isinstance(size, int) else None,
+                            "id": aid if isinstance(aid, int) else None,
+                            "updated_at": str(a.get("updated_at") or "")[:40]}
     return {
         "tag": tag,
         "version": tag.lstrip("v"),
@@ -87,6 +91,30 @@ def clean_release(raw: dict) -> dict | None:
         "html_url": str(raw.get("html_url") or "")[:500],
         "assets": assets,
     }
+
+
+def _asset_ident(rel: dict, name: str) -> tuple | None:
+    """What identifies one uploaded asset: GitHub's asset id (a re-upload
+    with ``--clobber`` gets a new one), its update time and size."""
+    a = (rel.get("assets") or {}).get(name)
+    return (a.get("id"), a.get("updated_at"), a.get("size")) if isinstance(a, dict) else None
+
+
+def _carry(prev: dict, rel: dict) -> None:
+    """Keep what was verified about a known tag only while the assets it was
+    read from are the same uploads: a re-release (new SHA256SUMS or
+    release.json) is read again, so a release re-marked breaking is seen and
+    rebuilt files are checked against their new sums."""
+    if not prev:
+        return
+    same_sums = _asset_ident(prev, "SHA256SUMS") == _asset_ident(rel, "SHA256SUMS")
+    same_meta = same_sums and _asset_ident(prev, "release.json") == _asset_ident(rel, "release.json")
+    if same_sums and "sums" in prev:
+        rel["sums"] = prev["sums"]
+    if same_meta:
+        for k in ("meta", "meta_error", "meta_retry_at"):
+            if k in prev:
+                rel[k] = prev[k]
 
 
 def parse_sums(text: str) -> dict[str, str]:
@@ -209,10 +237,7 @@ class ReleaseFeed:
                     rels = [c for c in (clean_release(x) for x in raw) if c]
                     old = {x["tag"]: x for x in self.state.get("releases") or []}
                     for rel in rels:   # keep what we learned about known tags
-                        prev = old.get(rel["tag"]) or {}
-                        for k in ("meta", "meta_error", "meta_retry_at", "sums"):
-                            if k in prev:
-                                rel[k] = prev[k]
+                        _carry(old.get(rel["tag"]) or {}, rel)
                     changed = [x["tag"] for x in rels] != [x["tag"] for x in old.values()]
                     self.state["releases"] = rels
                     # Fewer than a page: this is every release there is.
@@ -369,16 +394,55 @@ async def verify_attestation(path: Path, repo: str, tag: str, token: str = "",
         env["GH_TOKEN"] = token
     detail = ""
     for ref in (r.format(tag=tag) for r in ATTEST_REFS):
+        on_tag = ref == f"refs/tags/{tag}"
+        # A run from the default branch is not tied to the tag by its
+        # certificate: read the attestation and require it to name this
+        # release's own files.
+        argv = attestation_argv(gh, path, repo, ref) + ([] if on_tag else ["--format", "json"])
+        proc = None
         try:
             proc = await asyncio.create_subprocess_exec(
-                *attestation_argv(gh, path, repo, ref), env=env,
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-            out, _ = await asyncio.wait_for(proc.communicate(), timeout)
+                *argv, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            out, err = await asyncio.wait_for(proc.communicate(), timeout)
         except (OSError, asyncio.TimeoutError) as e:
-            return {"checked": True, "ok": False, "detail": f"gh failed: {e}"}
-        text = (out or b"").decode("utf-8", "replace").strip().splitlines()
+            if proc is not None and proc.returncode is None:
+                proc.kill()
+                await proc.wait()
+            return {"checked": True, "ok": False,
+                    "detail": f"gh failed: {str(e) or f'timed out after {timeout:g}s'}"}
+        text = ((out or b"") + b"\n" + (err or b"")).decode("utf-8", "replace").strip().splitlines()
         if proc.returncode == 0:
+            if not on_tag and not attestation_names_release(out or b"", tag):
+                detail = (f"the attestation from {ref} does not name release {tag}'s files")
+                continue
             return {"checked": True, "ok": True, "ref": ref,
-                    "detail": (text[-1] if text else "verified")[:300]}
+                    "detail": (text[-1] if text and on_tag else "verified")[:300]}
         detail = (text[-1] if text else f"gh exited {proc.returncode}")[:300]
     return {"checked": True, "ok": False, "detail": detail}
+
+
+def release_file_names(tag: str) -> set[str]:
+    """The versioned files a Rook release attests (sdist and wheel), as
+    ``python -m build`` names them for ``tag``."""
+    v = re.sub(r"-(a|b|rc)(\d+)$", r"\1\2", tag.lstrip("v"))
+    return {f"rook-{v}.tar.gz", f"rook-{v}-py3-none-any.whl"}
+
+
+def attestation_names_release(out: bytes, tag: str) -> bool:
+    """Whether ``gh attestation verify --format json`` output holds an
+    attestation whose subjects include this release's sdist or wheel (the
+    release workflow attests them together with release.json and
+    install-hub.sh, in one statement). Anything unreadable: False."""
+    try:
+        data = json.loads(out.decode("utf-8", "replace"))
+    except ValueError:
+        return False
+    want = release_file_names(tag)
+    for result in data if isinstance(data, list) else [data]:
+        try:
+            subjects = result["verificationResult"]["statement"]["subject"]
+        except (KeyError, TypeError):
+            continue
+        if any(isinstance(s, dict) and s.get("name") in want for s in subjects or []):
+            return True
+    return False

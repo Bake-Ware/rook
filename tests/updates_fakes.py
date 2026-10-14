@@ -69,11 +69,31 @@ class FakeGitHub:
                "prerelease": prerelease, "draft": draft,
                "published_at": "2026-10-14T12:00:00Z",
                "html_url": f"https://github.example.com/{repo}/releases/tag/{tag}",
-               "assets": [{"name": n, "size": len(d),
-                           "browser_download_url": f"{{base}}/dl/{repo}/{tag}/{n}"}
-                          for n, d in assets.items()]}
+               "assets": [self._asset_entry(repo, tag, n, d) for n, d in assets.items()]}
         self.releases.setdefault(repo, []).insert(0, rel)
         return rel
+
+    _next_id = 1000
+
+    def _asset_entry(self, repo: str, tag: str, name: str, data: bytes) -> dict:
+        FakeGitHub._next_id += 1
+        return {"name": name, "size": len(data), "id": FakeGitHub._next_id,
+                "updated_at": f"2026-10-14T12:{FakeGitHub._next_id % 60:02d}:00Z",
+                "browser_download_url": f"{{base}}/dl/{repo}/{tag}/{name}"}
+
+    def reupload(self, repo: str, tag: str, assets: dict[str, bytes]) -> None:
+        """``gh release upload --clobber``: replace assets (new ids) and
+        SHA256SUMS, as a re-run of the release workflow does."""
+        rel = next(r for r in self.releases[repo] if r["tag_name"] == tag)
+        for n, d in assets.items():
+            self.files[(repo, tag, n)] = d
+        names = [a["name"] for a in rel["assets"] if a["name"] != "SHA256SUMS"]
+        sums = "".join(f"{hashlib.sha256(self.files[(repo, tag, n)]).hexdigest()}  {n}\n"
+                       for n in names).encode()
+        self.files[(repo, tag, "SHA256SUMS")] = sums
+        rel["assets"] = [self._asset_entry(repo, tag, a["name"], self.files[(repo, tag, a["name"])])
+                         if a["name"] in assets or a["name"] == "SHA256SUMS" else a
+                         for a in rel["assets"]]
 
     def _payload(self, repo: str) -> bytes:
         out = json.loads(json.dumps(self.releases.get(repo, [])))

@@ -191,19 +191,26 @@ async def test_hub_update_waits_for_a_running_rollout(make_svc, gh, monkeypatch)
 
 # -- build provenance -----------------------------------------------------------------
 
-def _fake_gh(tmp_path, monkeypatch, ok_refs=()):
-    """A `gh` on PATH that logs its argv and passes only for ``ok_refs``."""
+def _fake_gh(tmp_path, monkeypatch, ok_refs=(), subjects=(), body=None):
+    """A `gh` on PATH that logs its argv and passes only for ``ok_refs``;
+    with ``--format json`` it prints an attestation naming ``subjects``."""
     bindir = tmp_path / "bin"
-    bindir.mkdir()
+    bindir.mkdir(exist_ok=True)
     log = tmp_path / "gh.log"
     ok = " ".join(ok_refs)
+    out = tmp_path / "gh-json.out"
+    out.write_text(json.dumps([{"verificationResult": {"statement": {
+        "subject": [{"name": n, "digest": {"sha256": "ab" * 32}} for n in subjects]}}}]))
     script = bindir / "gh"
-    script.write_text("#!/bin/sh\n"
-                      f'echo "$@ GH_TOKEN=$GH_TOKEN" >> "{log}"\n'
-                      'ref=""; prev=""\n'
-                      'for a in "$@"; do [ "$prev" = "--source-ref" ] && ref="$a"; prev="$a"; done\n'
-                      f'for r in {ok}; do [ "$r" = "$ref" ] && {{ echo verified; exit 0; }}; done\n'
-                      'echo "no matching attestation"; exit 1\n')
+    script.write_text(body or (
+        "#!/bin/sh\n"
+        f'echo "$@ GH_TOKEN=$GH_TOKEN" >> "{log}"\n'
+        'ref=""; prev=""; fmt=""\n'
+        'for a in "$@"; do [ "$prev" = "--source-ref" ] && ref="$a"; '
+        '[ "$prev" = "--format" ] && fmt="$a"; prev="$a"; done\n'
+        f'for r in {ok}; do [ "$r" = "$ref" ] && {{ '
+        f'if [ "$fmt" = json ]; then cat "{out}"; else echo verified; fi; exit 0; }}; done\n'
+        'echo "no matching attestation" >&2; exit 1\n'))
     script.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bindir}:/usr/bin:/bin")
     monkeypatch.delenv("GH_TOKEN", raising=False)
@@ -228,6 +235,123 @@ async def test_attestation_is_scoped_to_the_release_workflow_and_tag(tmp_path, m
     assert not res["ok"] and res["checked"]
     assert [ln.split("--source-ref ")[1].split()[0] for ln in log.read_text().splitlines()] == [
         "refs/tags/v0.3.1", "refs/heads/master"]
+
+
+@pytest.mark.asyncio
+async def test_a_default_branch_attestation_must_name_this_release(tmp_path, monkeypatch):
+    """A re-release run from master is not tied to the tag by its
+    certificate: the attestation's subjects must be this release's files."""
+    from rook.hub.plugins.updates.github import verify_attestation
+    f = tmp_path / "release.json"
+    f.write_bytes(b"{}")
+    _fake_gh(tmp_path, monkeypatch, ok_refs=("refs/heads/master",),
+             subjects=("rook-0.3.0.tar.gz", "release.json", "install-hub.sh"))
+    res = await verify_attestation(f, REPO, "v0.3.0")
+    assert res["ok"] and res["ref"] == "refs/heads/master"
+    # The same master attestation offered for another release: refused.
+    res = await verify_attestation(f, REPO, "v0.3.1")
+    assert not res["ok"] and "does not name release v0.3.1" in res["detail"]
+    _fake_gh(tmp_path, monkeypatch, ok_refs=("refs/heads/master",),
+             subjects=("rook-0.3.0rc1-py3-none-any.whl",))
+    assert (await verify_attestation(f, REPO, "v0.3.0-rc1"))["ok"]
+
+
+@pytest.mark.asyncio
+async def test_a_hung_gh_is_killed(tmp_path, monkeypatch):
+    from rook.hub.plugins.updates.github import verify_attestation
+    pidfile = tmp_path / "gh.pid"
+    _fake_gh(tmp_path, monkeypatch, body=f'#!/bin/sh\necho $$ > "{pidfile}"\nexec sleep 30\n')
+    t0 = time.monotonic()
+    res = await verify_attestation(tmp_path / "x", REPO, "v0.3.0", timeout=0.5)
+    assert not res["ok"] and "timed out" in res["detail"] and time.monotonic() - t0 < 10
+    import os
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(pidfile.read_text()), 0)
+
+
+@pytest.mark.asyncio
+async def test_release_json_provenance_is_checked_when_required(make_svc, gh, monkeypatch):
+    std_release(gh)
+    s = make_svc(verify_attestations=True)
+    await s.check(force=True)
+    monkeypatch.setattr(hubself, "detect", lambda repo="": dict(INSTALLER))
+    checked = []
+
+    async def all_but_release_json(path, repo, tag, token="", timeout=120.0):
+        checked.append(path.name)
+        ok = path.name != "release.json"
+        return {"checked": True, "ok": ok, "ref": f"refs/tags/{tag}",
+                "detail": "ok" if ok else "no matching attestation"}
+    monkeypatch.setattr(svcmod, "verify_attestation", all_but_release_json)
+    with pytest.raises(Refused, match="release.json: build provenance"):
+        await s.apply_hub("v0.3.0", "human:owner")
+    assert checked == ["release.json"] and not s.launched
+
+
+@pytest.mark.asyncio
+async def test_a_re_released_tag_is_read_again(make_svc, gh, monkeypatch):
+    """workflow_dispatch breaking=true re-uploads release.json and rebuilt
+    files with --clobber: the hub must see the new metadata and sums."""
+    std_release(gh)
+    s = make_svc()
+    await s.check(force=True)
+    assert not s.analyse(s.rook.find("v0.3.0"))["breaking"]
+    old_whl = await s.rook.fetch(s.rook.find("v0.3.0"), "rook-0.3.0-py3-none-any.whl")
+    assert old_whl.read_bytes() == b"PK wheel 0.3.0"
+    gh.reupload(REPO, "v0.3.0", {
+        "release.json": release_json("0.3.0", 530, breaking=True, reasons=["new band key format"]),
+        "rook-0.3.0-py3-none-any.whl": b"PK wheel 0.3.0, rebuilt"})
+    await s.check(force=True)
+    rel = s.rook.find("v0.3.0")
+    a = s.analyse(rel)
+    assert a["breaking"] and a["reasons"] == ["new band key format"]
+    whl = await s.rook.fetch(rel, "rook-0.3.0-py3-none-any.whl")
+    assert whl.read_bytes() == b"PK wheel 0.3.0, rebuilt"
+    # An unchanged release keeps what was verified (no refetch).
+    sums_before = rel["sums"]
+    await s.check(force=True)
+    assert s.rook.find("v0.3.0")["sums"] is not None and s.rook.find("v0.3.0")["sums"] == sums_before
+    # An acknowledgement given before a re-release no longer counts.
+    monkeypatch.setattr(hubself, "detect", lambda repo="": dict(INSTALLER))
+    s.acknowledge("v0.3.0", "human:owner")
+    gh.reupload(REPO, "v0.3.0", {"release.json": release_json(
+        "0.3.0", 530, breaking=True, reasons=["also drops the old relay"])})
+    await s.check(force=True)
+    with pytest.raises(Refused, match="also drops the old relay"):
+        await s.apply_hub("v0.3.0", "human:owner")
+    assert not s.launched
+
+
+@pytest.mark.asyncio
+async def test_a_pinned_deploy_key_is_never_overridden(make_svc, gh, keyenv, monkeypatch):
+    std_release(gh)
+    s = make_svc()
+    await s.check(force=True)
+    monkeypatch.setattr(hubself, "detect", lambda repo="": {
+        "kind": "rook-hub", "can_apply": True, "config": "/etc/rook/hub-deploy.json", "scope": "user"})
+    monkeypatch.setattr(hubself, "deploy_pinned_pubkey",
+                        lambda cfg: ("b3RoZXIta2V5" + "A" * 32, "the deploy config (x)"))
+    with pytest.raises(Refused, match="pinned in the deploy config"):
+        await s.apply_hub("v0.3.0", "human:owner")
+    assert not s.launched and not s.state.get("hub_apply")
+    # Pinned to this hub's own key: deploy uses the pin, no --pubkey.
+    monkeypatch.setattr(hubself, "deploy_pinned_pubkey", lambda cfg: (keyenv, "ROOK_UPDATE_PUBKEY"))
+    await s.apply_hub("v0.3.0", "human:owner")
+    assert "--pubkey" not in s.launched[0][0]
+
+
+def test_deploy_pin_comes_from_the_config_then_the_environment(tmp_path, monkeypatch):
+    monkeypatch.delenv("ROOK_UPDATE_PUBKEY", raising=False)
+    assert hubself.deploy_pinned_pubkey(str(tmp_path / "missing.json")) == ("", "")
+    monkeypatch.setenv("ROOK_UPDATE_PUBKEY", "ZW52LWtleQ==")
+    assert hubself.deploy_pinned_pubkey(str(tmp_path / "missing.json")) == (
+        "ZW52LWtleQ==", "ROOK_UPDATE_PUBKEY")
+
+    class Cfg:
+        pubkey = "Y29uZmlnLWtleQ=="
+    from rook.hubdeploy import config as cfgmod
+    monkeypatch.setattr(cfgmod, "load", lambda path: Cfg())
+    assert hubself.deploy_pinned_pubkey("x")[0] == "Y29uZmlnLWtleQ=="
 
 
 @pytest.mark.asyncio
@@ -575,7 +699,8 @@ async def test_auto_mode_only_installs_verified_aged_patch_releases(make_svc, gh
     s.state["auto_tried"] = {}
     assert await s.auto(AT_3AM) == "hub update started"
     assert "v0.2.1" in s.launched[0][0]
-    assert {c[0] for c in calls} == {"install-hub.sh", "rook-0.2.1-py3-none-any.whl"}
+    assert {c[0] for c in calls} == {"install-hub.sh", "rook-0.2.1-py3-none-any.whl",
+                                     "release.json"}
     assert s.state["hub_apply"]["provenance"] == "verified (refs/tags/v0.2.1)"
 
 

@@ -273,6 +273,22 @@ def deploy_history(config: str, n: int = 20) -> list[dict]:
         return []
 
 
+def deploy_pinned_pubkey(config: str) -> tuple[str, str]:
+    """The update key ``rook hub deploy`` trusts when no ``--pubkey`` is
+    given, if the operator pinned one: the deploy config's ``pubkey``, else
+    ``$ROOK_UPDATE_PUBKEY`` (rook/hubdeploy/deploy.py and manifest.py, in
+    that order). ``("", "")`` when nothing is pinned."""
+    try:
+        from rook.hubdeploy import config as cfgmod
+        pinned = (cfgmod.load(config).pubkey or "").strip()
+    except Exception:
+        pinned = ""
+    if pinned:
+        return pinned, f"the deploy config ({config})"
+    env = os.environ.get("ROOK_UPDATE_PUBKEY", "").strip()
+    return (env, "ROOK_UPDATE_PUBKEY") if env else ("", "")
+
+
 def rook_hub_argv(config: str, *args: str) -> tuple[list[str], dict]:
     """``python -m rook hub --config C <args>`` run from the release the hub
     runs now (its PYTHONPATH), so the deploy tool is the one we tested with."""
