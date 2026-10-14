@@ -47,8 +47,10 @@ jobs:
       - name: The hub answers
         run: |
           curl -fsS http://127.0.0.1:7005/health
-          token="$(sed -n 's/^ROOK_MCP_STATIC_TOKEN=//p' "$DATA/secrets.env")"
-          curl -fsS -H "Authorization: Bearer $token" http://127.0.0.1:8765/healthz
+          # The token goes to curl from a file, not argv.
+          ( umask 077; printf 'Authorization: Bearer %s\n' \
+              "$(sed -n 's/^ROOK_MCP_STATIC_TOKEN=//p' "$DATA/secrets.env")" > "$RUNNER_TEMP/auth" )
+          curl -fsS -H "@$RUNNER_TEMP/auth" http://127.0.0.1:8765/healthz
           test "$(stat -c %a "$DATA/secrets.env")" = 600
           sed -n 's/^ROOK_WEB_PASS=//p' "$DATA/secrets.env" > "$RUNNER_TEMP/pass1"
       - name: Re-run upgrades in place and keeps the secrets

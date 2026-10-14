@@ -39,11 +39,17 @@
 #   --python PATH       Python 3.11+ to build the virtualenv with
 set -euo pipefail
 
+# Everything runs from main(), called on the last line: a download cut short
+# by the network (curl | bash) defines a partial function and runs nothing.
+main() {
 ROOK_REPO="${ROOK_REPO:-Bake-Ware/rook}"
 TELESTHETE_REPO="${TELESTHETE_REPO:-Bake-Ware/telesthete}"
 GITHUB="${ROOK_GITHUB:-https://github.com}"
 
 say() { printf '[rook] %s\n' "$*"; }
+# /dev/tty can exist and be rw yet not open (no controlling terminal: cron,
+# CI, ssh without -t): try it.
+have_tty() { { true > /dev/tty; } 2>/dev/null; }
 warn() { printf '[rook] WARNING: %s\n' "$*" >&2; }
 die() { printf '[rook] ERROR: %s\n' "$*" >&2; exit 1; }
 
@@ -108,6 +114,9 @@ SUDO=""
 if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then SUDO="sudo"; fi
 can_root() { [ "$(id -u)" -eq 0 ] || [ -n "$SUDO" ]; }
 as_root() { if [ "$(id -u)" -eq 0 ]; then "$@"; else $SUDO "$@"; fi; }
+# Program and data files: root's in --system mode, the caller's own (never
+# sudo) in --user mode.
+as_app() { if [ "$MODE" = system ]; then as_root "$@"; else "$@"; fi; }
 
 SYSTEM_APP_DIR="/opt/rook"
 USER_APP_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/rook-hub"
@@ -200,18 +209,27 @@ service_env_files() {
 }
 
 # ---- uninstall -------------------------------------------------------------------
+# Is pid still the service we started? A stale pid file can name a pid the
+# kernel has since given to something else: never signal that.
+is_our_process() {   # is_our_process pid svc
+  local exe cmdline
+  exe="$(service_cmd "$2")"; exe="${exe%% *}"
+  [ -r "/proc/$1/cmdline" ] || return 1
+  cmdline="$(tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null || true)"
+  case " $cmdline " in *" $exe "*) return 0 ;; *) return 1 ;; esac
+}
 stop_bg() {
   local svc pidfile pid
   for svc in $ALL_SERVICES; do
     pidfile="$DATA_DIR/run/$svc.pid"
-    [ -f "$pidfile" ] || continue
-    pid="$(cat "$pidfile" 2>/dev/null || true)"
-    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-      kill "$pid" 2>/dev/null || as_root kill "$pid" 2>/dev/null || true
-      for _ in $(seq 1 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.2; done
-      kill -0 "$pid" 2>/dev/null && { kill -9 "$pid" 2>/dev/null || as_root kill -9 "$pid" 2>/dev/null || true; }
+    as_app test -f "$pidfile" || continue
+    pid="$(as_app cat "$pidfile" 2>/dev/null || true)"
+    if [[ "$pid" =~ ^[0-9]+$ ]] && is_our_process "$pid" "$svc"; then
+      as_app kill "$pid" 2>/dev/null || true
+      for _ in $(seq 1 50); do is_our_process "$pid" "$svc" || break; sleep 0.2; done
+      ! is_our_process "$pid" "$svc" || as_app kill -9 "$pid" 2>/dev/null || true
     fi
-    as_root rm -f "$pidfile"
+    as_app rm -f "$pidfile"
   done
 }
 
@@ -228,16 +246,38 @@ remove_units() {   # remove_units svc...: stop, disable and delete these units
   [ -z "$changed" ] || "${SYSTEMCTL[@]}" daemon-reload || true
 }
 
+# Refuse to rm -rf anything that isn't plainly a hub data directory.
+safe_data_dir() {
+  local d="${DATA_DIR%/}"
+  case "$d" in
+    ""|/|/root|/home|/var|/var/lib|/opt|/etc|/usr|/tmp|"${HOME%/}"|"$(dirname "${HOME%/}")")
+      die "refusing to delete '$DATA_DIR': not a hub data directory" ;;
+  esac
+  as_app test -f "$d/hub.env" || as_app test -f "$d/secrets.env" || [ -z "$(as_app ls -A "$d")" ] \
+    || die "refusing to delete $DATA_DIR: it has no hub.env or secrets.env (pass the right --data-dir)"
+}
+
 if [ -n "$UNINSTALL" ]; then
+  if [ -n "$PURGE" ] && as_app test -d "$DATA_DIR"; then
+    safe_data_dir
+    if [ -z "$ASSUME_YES" ]; then
+      if ! have_tty; then
+        die "--purge deletes the band keys in $DATA_DIR: add --yes to confirm"
+      fi
+      printf '[rook] Delete %s: band keys, passwords and history? Workers will need new pairing codes. [y/N] ' "$DATA_DIR" > /dev/tty
+      read -r answer < /dev/tty || answer=""
+      case "$answer" in [yY]*) ;; *) die "cancelled; nothing was removed" ;; esac
+    fi
+  fi
   say "uninstalling the Rook hub ($MODE)"
   stop_bg
   if command -v systemctl >/dev/null 2>&1; then
     # shellcheck disable=SC2086
     remove_units $ALL_SERVICES
   fi
-  as_root rm -rf "$VENV" "$APP_DIR/bin" "$INSTALL_ENV"
-  if [ -n "$PURGE" ]; then
-    as_root rm -rf "$DATA_DIR"
+  as_app rm -rf "$VENV" "$APP_DIR/bin" "$INSTALL_ENV"
+  if [ -n "$PURGE" ] && as_app test -d "$DATA_DIR"; then
+    as_app rm -rf "$DATA_DIR"
     say "deleted $DATA_DIR (band keys, passwords, history)"
     if [ "$MODE" = system ] && id rook >/dev/null 2>&1; then
       as_root userdel rook 2>/dev/null || true
@@ -246,21 +286,54 @@ if [ -n "$UNINSTALL" ]; then
     say "kept your data in $DATA_DIR (band keys, passwords, history): re-running the"
     say "installer reuses it; --uninstall --purge deletes it"
   fi
-  rmdir "$APP_DIR" 2>/dev/null || as_root rmdir "$APP_DIR" 2>/dev/null || true
+  as_app rmdir "$APP_DIR" 2>/dev/null || true
   say "done"
   exit 0
 fi
 
 # ---- defaults that need the network config -----------------------------------------
+# On a re-run, what hub.env says is the default for anything not passed again.
+existing() { if as_app test -f "$HUB_ENV"; then as_app sed -n "s/^$1=//p" "$HUB_ENV" | head -n1; fi; }
+[ -n "$BIND_SET" ] || BIND="$(existing ROOK_BIND)"
+[ -n "$DPORT_SET" ] || DASHBOARD_PORT="$(existing ROOK_PORT)"
+[ -n "$MPORT_SET" ] || { MCP_PORT="$(existing ROOK_MCP_BIND)"; MCP_PORT="${MCP_PORT##*:}"; }
+[ -n "$RPORT_SET" ] || { RELAY_PORT="$(existing HUB_BIND)"; RELAY_PORT="${RELAY_PORT##*:}"; }
+if [ -z "$PUBLIC_SET" ] && [ -z "$BIND_SET" ]; then
+  PUBLIC_HOST="$(existing ROOK_DOMAIN | sed -E 's#^[a-z]+://##; s#:[0-9]+/?$##')"
+fi
 BIND="${BIND:-0.0.0.0}"
 DASHBOARD_PORT="${DASHBOARD_PORT:-7005}"
 MCP_PORT="${MCP_PORT:-8765}"
 RELAY_PORT="${RELAY_PORT:-7474}"
+# Docker bridges and VPN overlays (tailscale's 100.64.0.0/10) are not where
+# other machines on the LAN reach this one.
+skip_ip() {
+  case "$1" in
+    127.*|169.254.*|172.17.*|172.18.*|172.19.*|172.20.*|fe80:*|::1) return 0 ;;
+    100.6[4-9].*|100.[7-9][0-9].*|100.1[01][0-9].*|100.12[0-7].*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+private_ip() {   # RFC 1918, CGNAT, loopback, link-local, IPv6 ULA
+  case "$1" in
+    10.*|192.168.*|127.*|169.254.*|fe80:*|fc*|fd*|::1) return 0 ;;
+    172.1[6-9].*|172.2[0-9].*|172.3[01].*) return 0 ;;
+    100.6[4-9].*|100.[7-9][0-9].*|100.1[01][0-9].*|100.12[0-7].*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 lan_ip() {
-  local ip=""
-  ip="$(hostname -I 2>/dev/null | awk '{print $1}')" || true
-  if [ -z "$ip" ] && command -v ip >/dev/null 2>&1; then
+  local ip="" a
+  # The source address of the default route is the machine's LAN address.
+  if command -v ip >/dev/null 2>&1; then
     ip="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") print $(i + 1)}')" || true
+  fi
+  if [ -z "$ip" ] || skip_ip "$ip"; then
+    ip=""
+    for a in $(hostname -I 2>/dev/null || true); do
+      skip_ip "$a" && continue
+      case "$a" in *:*) [ -n "$ip" ] || ip="[$a]" ;; *) ip="$a"; break ;; esac
+    done
   fi
   echo "${ip:-127.0.0.1}"
 }
@@ -268,6 +341,12 @@ if [ -z "$PUBLIC_HOST" ]; then
   case "$BIND" in 0.0.0.0|::|'[::]') PUBLIC_HOST="$(lan_ip)" ;; *) PUBLIC_HOST="$BIND" ;; esac
 fi
 case "$BIND" in 0.0.0.0|::|'[::]') LOCAL_HOST=127.0.0.1 ;; *) LOCAL_HOST="$BIND" ;; esac
+EXPOSED=""
+case "$BIND" in
+  0.0.0.0|::|'[::]')
+    for a in $(hostname -I 2>/dev/null || true); do private_ip "$a" || EXPOSED="$EXPOSED $a"; done ;;
+  *) private_ip "$BIND" || EXPOSED=" $BIND" ;;
+esac
 
 if [ "$USE_SYSTEMD" = 1 ]; then
   command -v systemctl >/dev/null 2>&1 || die "systemd not found: re-run with --no-systemd (or use Docker)"
@@ -317,7 +396,12 @@ cat <<EOF
 [rook]   dashboard    http://$PUBLIC_HOST:$DASHBOARD_PORT   (listening on $BIND)
 [rook]   rook         $SOURCE_PLAN
 EOF
-if [ -z "$ASSUME_YES" ] && [ -r /dev/tty ] && [ -w /dev/tty ]; then
+if [ -n "$EXPOSED" ]; then
+  warn "this machine has a public address (${EXPOSED# }) and the hub will listen on it over"
+  warn "plain HTTP. Anyone who can reach it can try the dashboard password. Use a firewall,"
+  warn "or --bind 127.0.0.1 behind an HTTPS proxy (docs/operations/install.md)."
+fi
+if [ -z "$ASSUME_YES" ] && have_tty; then
   printf '[rook] Continue? [Y/n] ' > /dev/tty
   read -r answer < /dev/tty || answer=""
   case "$answer" in [nN]*) die "cancelled" ;; esac
@@ -389,7 +473,6 @@ else
   chmod 700 "$DATA_DIR"
   run_as_svc() { "$@"; }
 fi
-as_app() { if [ "$MODE" = system ]; then as_root "$@"; else "$@"; fi; }
 
 # ---- Rook into a virtualenv -----------------------------------------------------------------
 if [ ! -x "$VENV/bin/python" ] || ! py_ok "$VENV/bin/python"; then
@@ -404,13 +487,23 @@ ensure_git() {
   case "$PKG" in apt-get|dnf|pacman|zypper) pkg_install git ;; *) die "git is needed to install from source" ;; esac
 }
 
-# The latest release's tag, from the releases/latest redirect (no API token, no rate limit).
+# The latest release's tag, from the releases/latest redirect (no API token, no
+# rate limit). Returns 1 when the repository has no release (GitHub redirects
+# to /releases), 2 when it couldn't tell (network, proxy).
 latest_tag() {   # latest_tag owner/repo
   local url
-  url="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$GITHUB/$1/releases/latest" 2>/dev/null)" || return 1
-  case "$url" in */releases/tag/*) echo "${url##*/}" ;; *) return 1 ;; esac
+  url="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$GITHUB/$1/releases/latest" 2>/dev/null)" || return 2
+  case "$url" in
+    */releases/tag/*) echo "${url##*/}" ;;
+    */releases|*/releases/) return 1 ;;
+    *) return 2 ;;
+  esac
 }
 pep440() { echo "${1#v}" | sed -E 's/-(a|b|rc)([0-9]+)$/\1\2/'; }
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
+  else "$PY" -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$1"; fi
+}
 
 SPEC="" SOURCE_DESC=""
 if [ -n "$PACKAGE" ]; then
@@ -421,20 +514,32 @@ elif [ -n "$GIT_REF" ]; then
 else
   TAG="$VERSION"
   if [ -z "$TAG" ] || [ "$TAG" = latest ]; then
-    TAG="$(latest_tag "$ROOK_REPO" || true)"
+    rc=0
+    TAG="$(latest_tag "$ROOK_REPO")" || rc=$?
+    case "$rc" in
+      0) ;;
+      1) TAG="" ;;
+      *) die "could not reach $GITHUB/$ROOK_REPO to find the latest release (network or proxy?)" ;;
+    esac
   fi
   if [ -n "$TAG" ]; then
+    # A release exists: install exactly it, or stop. Never fall back to
+    # building something else from source.
     whl="rook-$(pep440 "$TAG")-py3-none-any.whl"
-    url="$GITHUB/$ROOK_REPO/releases/download/$TAG/$whl"
+    base="$GITHUB/$ROOK_REPO/releases/download/$TAG"
     say "downloading Rook $TAG"
-    if curl -fsSL --retry 3 -o "$TMP/$whl" "$url"; then
-      SPEC="$TMP/$whl"; SOURCE_DESC="release $TAG"
-    elif [ -n "$VERSION" ] && [ "$VERSION" != latest ]; then
-      die "could not download $url: is $TAG a Rook release?"
+    curl -fsSL --retry 3 -o "$TMP/$whl" "$base/$whl" \
+      || die "could not download $base/$whl: is $TAG a Rook release? (network or proxy?)"
+    curl -fsSL --retry 3 -o "$TMP/SHA256SUMS" "$base/SHA256SUMS" \
+      || die "could not download $base/SHA256SUMS to check the wheel"
+    want="$(awk -v f="$whl" '$2 == f || $2 == "*" f {print $1}' "$TMP/SHA256SUMS" | head -n1)"
+    got="$(sha256_of "$TMP/$whl")"
+    if [ -z "$want" ] || [ "$want" != "$got" ]; then
+      die "checksum mismatch for $whl (SHA256SUMS: ${want:-none}, file: $got)"
     fi
-  fi
-  if [ -z "$SPEC" ]; then
-    warn "no Rook release wheel found: installing from source (master) with git instead"
+    SPEC="$TMP/$whl"; SOURCE_DESC="release $TAG"
+  else
+    warn "$ROOK_REPO has no release yet: installing from source (master) with git instead"
     ensure_git
     SPEC="rook @ git+$GITHUB/$ROOK_REPO@master"; SOURCE_DESC="git master"
   fi
@@ -456,22 +561,21 @@ say "Rook $ROOK_VERSION${ROOK_BUILD:+ (build $ROOK_BUILD)} installed"
 # ---- the relay -------------------------------------------------------------------------------
 RELAY_DEST="$APP_DIR/bin/telesthete-hub"
 RELAY_STAMP="$APP_DIR/bin/telesthete-hub.version"
-if [ -z "$RELAY_VERSION" ]; then
-  RELAY_VERSION="$("$VENV/bin/python" -c 'import rook._release as r; print(r.RELAY)' 2>/dev/null || true)"
-  RELAY_VERSION="${RELAY_VERSION:-latest}"
-fi
-
-sha256_of() {
-  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
-  else "$PY" -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$1"; fi
+# The relay this Rook pins (rook/_release.py: RELAY and the sha256 of each
+# archive), checked against that committed hash rather than a checksum file
+# from the same release page.
+PINNED_RELAY="$("$VENV/bin/python" -c 'import rook._release as r; print(getattr(r, "RELAY", ""))' 2>/dev/null || true)"
+RELAY_VERSION="${RELAY_VERSION:-${PINNED_RELAY:-latest}}"
+pinned_relay_sha() {   # pinned_relay_sha arch
+  [ "$RELAY_VERSION" = "$PINNED_RELAY" ] || return 0
+  "$VENV/bin/python" -c 'import sys, rook._release as r; print(getattr(r, "RELAY_SHA256", {}).get(sys.argv[1], ""))' "$1" 2>/dev/null || true
 }
 
 fetch_relay() {   # download + verify the prebuilt relay into $TMP/relay/telesthete-hub
   [ -n "$ARCH" ] || { say "no prebuilt relay for $(uname -m)"; return 1; }
   local asset="telesthete-hub-$ARCH-linux.tar.gz" base want got
   if [ "$RELAY_VERSION" = latest ]; then
-    RELAY_VERSION="$(latest_tag "$TELESTHETE_REPO" || true)"
-    [ -n "$RELAY_VERSION" ] || { say "no telesthete release found"; return 1; }
+    RELAY_VERSION="$(latest_tag "$TELESTHETE_REPO")" || { say "no telesthete release found"; RELAY_VERSION=latest; return 1; }
   fi
   if [ -x "$RELAY_DEST" ] && [ "$(cat "$RELAY_STAMP" 2>/dev/null || true)" = "$RELAY_VERSION $ARCH" ]; then
     say "relay telesthete $RELAY_VERSION already installed"
@@ -480,8 +584,12 @@ fetch_relay() {   # download + verify the prebuilt relay into $TMP/relay/telesth
   base="$GITHUB/$TELESTHETE_REPO/releases/download/$RELAY_VERSION"
   say "downloading the relay (telesthete $RELAY_VERSION, $ARCH)"
   curl -fsSL --retry 3 -o "$TMP/$asset" "$base/$asset" || { say "could not download $base/$asset"; return 1; }
-  curl -fsSL --retry 3 -o "$TMP/$asset.sha256" "$base/$asset.sha256" || { say "no checksum file for $asset"; return 1; }
-  want="$(awk '{print $1}' "$TMP/$asset.sha256")"
+  want="$(pinned_relay_sha "$ARCH")"
+  if [ -z "$want" ]; then
+    warn "no pinned sha256 for telesthete $RELAY_VERSION ($ARCH): checking the release's own .sha256"
+    curl -fsSL --retry 3 -o "$TMP/$asset.sha256" "$base/$asset.sha256" || { say "no checksum file for $asset"; return 1; }
+    want="$(awk '{print $1}' "$TMP/$asset.sha256")"
+  fi
   got="$(sha256_of "$TMP/$asset")"
   if [ -z "$want" ] || [ "$want" != "$got" ]; then
     die "checksum mismatch for $asset (expected $want, got $got)"
@@ -600,6 +708,7 @@ fi
 DASHBOARD_PORT="$(read_kv "$HUB_ENV" ROOK_PORT)"
 MCP_PORT="$(read_kv "$HUB_ENV" ROOK_MCP_BIND)"; MCP_PORT="${MCP_PORT##*:}"
 DOMAIN="$(read_kv "$HUB_ENV" ROOK_DOMAIN)"
+RELAY_PORT="$(read_kv "$HUB_ENV" HUB_BIND)"; RELAY_PORT="${RELAY_PORT##*:}"
 BIND_NOW="$(read_kv "$HUB_ENV" ROOK_BIND)"
 case "$BIND_NOW" in 0.0.0.0|::|'[::]'|"") LOCAL_HOST=127.0.0.1 ;; *) LOCAL_HOST="$BIND_NOW" ;; esac
 
@@ -690,7 +799,7 @@ write_units() {   # write_units layout: install this layout's units, drop the ot
   "${SYSTEMCTL[@]}" daemon-reload
   for svc in $SERVICES; do
     u="$(unit_name "$svc").service"
-    "${SYSTEMCTL[@]}" enable "$u" >/dev/null 2>&1
+    "${SYSTEMCTL[@]}" enable --quiet "$u"
     "${SYSTEMCTL[@]}" restart "$u"
   done
 }
@@ -748,13 +857,15 @@ service_running() {
     [ -n "$pid" ] && as_app kill -0 "$pid" 2>/dev/null
   fi
 }
-MCP_TOKEN="$(read_kv "$SECRETS_ENV" ROOK_MCP_STATIC_TOKEN)"
+# The bearer header goes to curl from a file (mode 600 in $TMP), never in
+# argv where any local user can read it from ps.
+( umask 077; printf 'Authorization: Bearer %s\n' "$(read_kv "$SECRETS_ENV" ROOK_MCP_STATIC_TOKEN)" > "$TMP/mcp-auth" )
 http_ok() { curl -fsS --noproxy '*' -m 5 "$@" >/dev/null 2>&1; }
 healthy() {   # healthy svc
   case "$1" in
     relay) service_running relay ;;
     dashboard|hub) http_ok "http://$LOCAL_HOST:$DASHBOARD_PORT/health" ;;
-    mcp) http_ok -H "Authorization: Bearer $MCP_TOKEN" "http://$LOCAL_HOST:$MCP_PORT/healthz" ;;
+    mcp) http_ok -H "@$TMP/mcp-auth" "http://$LOCAL_HOST:$MCP_PORT/healthz" ;;
   esac
 }
 
@@ -795,8 +906,9 @@ cat <<EOF
 
 Next: open $DOMAIN, sign in with the password above, go to
 "Install a worker" and click "Get a pairing code". Run the command it shows on
-each machine you want to add. (Allow TCP $DASHBOARD_PORT and $MCP_PORT through this
-machine's firewall for other machines to reach it.)
+each machine you want to add. For other machines to reach this one, allow TCP
+$DASHBOARD_PORT and $MCP_PORT through its firewall (and UDP $RELAY_PORT for workers
+that join the relay directly with --hub <this-ip>:$RELAY_PORT).
 
   Manage      $MANAGE
   Settings    $HUB_ENV    (secrets: $SECRETS_ENV)
@@ -812,3 +924,6 @@ if [ "$MODE" = user ] && [ "$USE_SYSTEMD" = 1 ] && command -v loginctl >/dev/nul
 EOF
   fi
 fi
+}
+
+main "$@"
