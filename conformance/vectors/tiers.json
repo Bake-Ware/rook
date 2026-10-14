@@ -534,6 +534,12 @@
   "hub.plugins": {
    "tier": "read"
   },
+  "huddle.read": {
+   "tier": "read"
+  },
+  "huddle.write": {
+   "tier": "write"
+  },
   "identity.whoami": {
    "tier": "read"
   },

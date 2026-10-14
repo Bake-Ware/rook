@@ -6,6 +6,7 @@ rook/remote/upstream.py: HTTP when the MCP server is its own process, an
 in-memory call when ``rook hub serve`` runs both in one.
 """
 import os
+import re
 from pathlib import Path
 from aiohttp import web
 from . import upstream
@@ -15,7 +16,7 @@ from .account_web import COOKIE, NO_STORE
 class KnowledgeWeb:
     PATH = '/account/knowledge'
     UPSTREAM = ('ROOK_KNOWLEDGE_ADMIN_URL', 'http://127.0.0.1:8765/knowledge/account-api')
-    ASSETS = ('knowledge.js', 'knowledge.css')
+    ASSETS = ('knowledge.js', 'knowledge.css', 'workviews.js', 'workviews.css')
     UNAVAILABLE = 'Knowledge service is unavailable.'
     ADMIN_ONLY = True
     FORBIDDEN = 'This requires the operator account.'
@@ -100,3 +101,50 @@ class PluginsWeb(KnowledgeWeb):
     ASSETS = ('plugins.js',)
     UNAVAILABLE = 'The plugins service is unavailable (is the MCP server running?).'
     TIMEOUT = 60   # a band-wide switch waits on every worker it touches
+
+
+class HuddleWeb(KnowledgeWeb):
+    """Work > Huddle: agents' status strip, pinned questions and answers.
+    Operator account only, like the upstream (rook/hub/plugins/huddle/web.py)."""
+    PATH = '/account/huddle'
+    UPSTREAM = ('ROOK_HUDDLE_ADMIN_URL', 'http://127.0.0.1:8765/huddle/account-api')
+    ASSETS = ('huddle.js', 'huddle.css')
+    UNAVAILABLE = 'Huddles are unavailable (is the MCP server running?).'
+
+
+class UiWeb(KnowledgeWeb):
+    """Overview, start page and themes (the ``ui`` hub plugin). Any signed-in
+    account: each has its own theme and start page; the upstream keeps the
+    knowledge half of the Overview to the operator account."""
+    PATH = '/account/ui'
+    UPSTREAM = ('ROOK_UI_ADMIN_URL', 'http://127.0.0.1:8765/ui/account-api')
+    ASSETS = ('overview.js', 'startpage.js', 'widgets.js', 'themes.js', 'theme-boot.js', 'ui.css')
+    UNAVAILABLE = 'The dashboard service is unavailable (is the MCP server running?).'
+    ADMIN_ONLY = False
+    TIMEOUT = 40   # a start page feed may take the hub's feed time limit, and redirects
+    THEME_NAME = re.compile(r'^[a-z0-9][a-z0-9-]{0,39}\.json$')
+
+    def install(self, app):
+        super().install(app)
+        # The theme files themselves (rook-theme/1 JSON), for other clients
+        # such as the desktop app; public like the other static assets.
+        app.router.add_get(self.PATH + '/themes/{name}', self.theme_file)
+
+    async def asset(self, request):
+        name = request.match_info['name']
+        if name not in self.ASSETS:
+            raise web.HTTPNotFound()
+        types = {'.js': 'application/javascript', '.css': 'text/css'}
+        path = Path(__file__).parent.parent / 'web' / name
+        return web.FileResponse(path, headers={'Cache-Control': 'no-cache',
+                                               'Content-Type': types[path.suffix],
+                                               'X-Content-Type-Options': 'nosniff'})
+
+    async def theme_file(self, request):
+        name = request.match_info['name']
+        path = Path(__file__).parent.parent / 'web' / 'themes' / name
+        if not self.THEME_NAME.match(name) or not path.is_file():
+            raise web.HTTPNotFound()
+        return web.FileResponse(path, headers={'Cache-Control': 'no-cache',
+                                               'Content-Type': 'application/json',
+                                               'X-Content-Type-Options': 'nosniff'})
