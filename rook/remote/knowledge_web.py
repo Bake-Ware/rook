@@ -107,5 +107,5 @@ class HuddleWeb(KnowledgeWeb):
     Operator account only, like the upstream (rook/hub/plugins/huddle/web.py)."""
     PATH = '/account/huddle'
     UPSTREAM = ('ROOK_HUDDLE_ADMIN_URL', 'http://127.0.0.1:8765/huddle/account-api')
-    ASSETS = ('huddle.js',)
+    ASSETS = ('huddle.js', 'huddle.css')
     UNAVAILABLE = 'Huddles are unavailable (is the MCP server running?).'
