@@ -85,10 +85,8 @@ class Manual(Plugin):
                      "knowledge base copy. Off: never ask (Help still shows the new manual)."),
     )
     GUIDANCE = {
-        "tool:rook_knowledge": (
-            "The Rook user manual is in this wiki: get page rook-manual for its contents (pages "
-            "manual-<topic>, tag rook-manual), or search it first for how a Rook feature works. "
-            "Without the wiki: rook_call(worker=\"rook\", cap=\"manual.get\", args={\"id\": \"<topic>\"})."),
+        "tool:rook_knowledge": ("The Rook user manual is page rook-manual (pages manual-<topic>): "
+                                "search it for how a Rook feature works."),
     }
     SKILL = ("### manual\n"
              "The Rook user manual (plain-language help for every feature). In the knowledge wiki it "
