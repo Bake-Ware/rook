@@ -262,7 +262,8 @@ cmd_start() {
                ROOK_SETTINGS_ADMIN_URL="http://127.0.0.1:$MCP_PORT/settings/account-api"
                ROOK_TOKEN_ADMIN_URL="http://127.0.0.1:$MCP_PORT/tokens/account-api"
                ROOK_VAULT_ADMIN_URL="http://127.0.0.1:$MCP_PORT/vault/account-api"
-               ROOK_GUIDANCE_ADMIN_URL="http://127.0.0.1:$MCP_PORT/guidance/account-api")
+               ROOK_GUIDANCE_ADMIN_URL="http://127.0.0.1:$MCP_PORT/guidance/account-api"
+               ROOK_UI_ADMIN_URL="http://127.0.0.1:$MCP_PORT/ui/account-api")
     spawn dashboard "$DATA/hub/home" "$PYTHON" -m rook.remote.bootstrap --bind "$BIND" \
         --port "$DASHBOARD_PORT" --hub-host 127.0.0.1 --hub-port "$RELAY_PORT" \
         --domain "$public:$DASHBOARD_PORT" --hub-public "$public:$MCP_PORT" --band-name test-hub

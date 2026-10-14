@@ -59,7 +59,7 @@
 .kn-history{margin-top:24px;font-size:12px}
 .kn-history pre{white-space:pre-wrap;font-size:11px;max-height:260px;overflow:auto}
 .kn-dialog{background:var(--panel);color:var(--fg);border:1px solid var(--line2);width:min(680px,92vw);max-height:88vh;overflow:auto}
-.kn-dialog::backdrop{background:#000a}
+.kn-dialog::backdrop{background:var(--backdrop)}
 .kn-fields{display:flex;flex-direction:column;gap:12px}
 .kn-fields label{display:flex;flex-direction:column;gap:6px;font-size:13px}
 .kn-fields input,.kn-fields select,.kn-fields textarea{padding:9px;background:var(--panel2);color:var(--fg);border:1px solid var(--line2);font:inherit}

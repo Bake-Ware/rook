@@ -632,6 +632,11 @@ def test_hub_tool_mapping():
     assert hub_cap_for_tool("rook_knowledge", {"action": "create"}) == "knowledge.write"
     assert hub_cap_for_tool("rook_task", {}) == "task.read"
     assert hub_cap_for_tool("rook_call", {"cap": "shell.exec"}) is None
+    assert hub_cap_for_tool("rook_task", {"action": "board"}) == "task.read"
+    assert hub_cap_for_tool("rook_huddle", {}) == "huddle.read"
+    assert hub_cap_for_tool("rook_huddle", {"action": "mine"}) == "huddle.read"
+    for action in ("status", "ask", "say", "withdraw", "bogus"):
+        assert hub_cap_for_tool("rook_huddle", {"action": action}) == "huddle.write", action
     assert authz.effective_tier(hub_cap_for_tool("rook_secret", {"action": "get"})) == "admin"
 
 
