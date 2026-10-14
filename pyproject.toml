@@ -28,6 +28,21 @@ dependencies = [
 desktop = [
     "mss>=9.0",
 ]
+# Speech on the hub itself (the voice plugin's engine "here": recognition,
+# spoken replies, turn detection). Large: leave it out of a hub that does not
+# serve voice, or that forwards voice to a GPU box (engine "remote").
+# services/voice/requirements.txt pins the versions the GPU host runs.
+voice = [
+    "fastapi>=0.110",
+    "httpx>=0.27",
+    "numpy>=1.26",
+    "webrtcvad>=2.0.10",
+    "setuptools<81",  # webrtcvad still imports pkg_resources
+    "faster-whisper>=1.1",
+    "kokoro-onnx>=0.4",
+    "onnxruntime>=1.18",
+    "ddgs>=9",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
@@ -62,6 +77,10 @@ packages = ["rook"]
 "skills/rook" = "rook/_skill/rook"
 # The Claude Code mod's manifest, for rook_install_claude_code's version check.
 "integrations/claude-code/.claude-plugin/plugin.json" = "rook/_claude_code/plugin.json"
+# The voice service, so an installed hub can run it in process (voice plugin,
+# engine "here"). services/voice stays where it is: the GPU host deploys it
+# from there (services/voice/deploy/release.sh).
+"services/voice" = "rook/_voice_engine"
 
 [tool.hatch.build.targets.sdist]
 include = ["rook", "skills", "integrations", ".claude-plugin", "tests", "conformance", "README.md", "LICENSE", "NOTICE", "CHANGELOG.md", "CONTRIBUTING.md", ".env.example"]

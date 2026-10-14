@@ -25,6 +25,8 @@ WORKDIR /src
 COPY pyproject.toml README.md ./
 COPY rook ./rook
 COPY skills ./skills
+# Packaged as rook/_voice_engine (voice plugin; its extras are not installed here).
+COPY services/voice ./services/voice
 # git is only needed to fetch the telesthete dependency.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git \

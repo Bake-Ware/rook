@@ -8,8 +8,8 @@ Sources, in the order they are merged:
 * worker plugins (``SETTINGS`` of every Plugin class under
   ``rook.worker.plugins``, whether or not it loads on the hub);
 * services that run beside the hub and fetch their settings with a scoped
-  token (voice, decision engine): declared here so the hub can store and
-  serve them without importing the service.
+  token (decision engine): declared here so the hub can store and serve them
+  without importing the service. (Voice was one; it is a hub plugin now.)
 
 Each entry also records which process reads it (``owner``): ``dashboard``,
 ``mcp``, ``watchdog``, ``worker`` or ``service:<name>``. The owner's
@@ -235,58 +235,8 @@ _CORE: list[tuple[Setting, str, dict]] = [
 
 # -- services beside the hub ------------------------------------------------
 
-_VOICE: list[Setting] = [
-    _s("bind", "str", "127.0.0.1", env="VOICE_BIND", bootstrap=True, apply="restart",
-       label="Listen address", group="Access"),
-    _s("port", int, 8900, env="VOICE_PORT", bootstrap=True, apply="restart", min=1,
-       max=65535, label="Port", group="Access"),
-    _s("token", "str", secret=True, env="VOICE_TOKEN", apply="restart",
-       label="Client bearer token", group="Access"),
-    _s("allow_anonymous", bool, False, env="VOICE_ALLOW_ANONYMOUS", apply="restart",
-       label="Allow clients without a token", group="Access"),
-    _s("whisper_model", "str", "small.en", env="WHISPER_MODEL", apply="reload",
-       label="Speech recognition model", group="Recognition"),
-    _s("whisper_device", "str", "cpu", env="WHISPER_DEVICE", apply="reload",
-       label="Recognition device", group="Recognition"),
-    _s("whisper_compute", "str", "int8", env="WHISPER_COMPUTE", apply="reload",
-       label="Compute type", group="Recognition"),
-    _s("min_speech_ms", int, 450, env="MIN_SPEECH_MS", min=0, label="Minimum speech (ms)",
-       group="Recognition", advanced=True),
-    _s("min_rms", float, 0.008, env="MIN_RMS", min=0.0, label="Energy floor",
-       group="Recognition", advanced=True),
-    _s("max_no_speech", float, 0.6, env="MAX_NO_SPEECH", min=0.0, max=1.0,
-       label="No-speech ceiling", group="Recognition", advanced=True),
-    _s("min_logprob", float, -1.0, env="MIN_LOGPROB", label="Minimum log-probability",
-       group="Recognition", advanced=True),
-    _s("default_voice", "str", "af_heart", env="VOICE", overridable=("user",),
-       label="Voice", group="Speech"),
-    _s("assistant_name", "str", "", env="ROOK_VOICE_ASSISTANT_NAME", overridable=("user",),
-       pattern=r"^.{0,60}$", label="Assistant name", group="Speech",
-       help="Blank: the name of the persona assigned to family 'voice' (persona plugin), "
-            "else 'Rook'."),
-    _s("owner", "str", "", env="ROOK_VOICE_OWNER", overridable=("user",),
-       pattern=r"^.{0,60}$", label="Whose assistant", group="Speech",
-       help="Name in 'your personal voice assistant'. Blank: the voice persona's owner, "
-            "else neutral wording."),
-    _s("show_thinking", bool, False, scope="user", label="Show thinking", group="Speech"),
-    _s("hotword_enabled", bool, True, scope="user", label="Wake word on this account",
-       group="Speech"),
-    _s("llm_url", "url", "http://127.0.0.1:1234/v1/chat/completions", env="VLLM_URL",
-       label="Language model URL", group="Agent"),
-    _s("llm_model", "str", "", env="VLLM_MODEL", label="Model id", group="Agent"),
-    _s("mcp_url", "url", "http://127.0.0.1:8765/mcp", env="ROOK_MCP_URL",
-       label="Rook MCP URL", group="Agent"),
-    _s("mcp_token", "str", secret=True, env="ROOK_MCP_TOKEN", label="Rook MCP token",
-       group="Agent"),
-    _s("acp_host", "str", "127.0.0.1", env="ACP_HOST", label="ACP host", group="Agent"),
-    _s("acp_port", int, 9200, env="ACP_PORT", min=1, max=65535, label="ACP port",
-       group="Agent"),
-    _s("acp_auto_approve", bool, True, env="ACP_AUTO_APPROVE",
-       label="Auto-approve ACP prompts", group="Agent",
-       help="Unattended tool permission for the voice agent."),
-    _s("direct_tool_budget", int, 1, env="DIRECT_TOOL_BUDGET", min=0,
-       label="Direct tool calls per turn", group="Agent", advanced=True),
-]
+# The voice settings moved to the voice hub plugin (rook/hub/plugins/voice),
+# same keys and variables: the hub serves voice itself now.
 
 _DECISION: list[Setting] = [
     _s("url", "str", "", env="DECISION_URL", label="Engine endpoint", group="General",
@@ -349,13 +299,13 @@ _RELAY: list[Setting] = [
 _SERVICES: list[tuple[str, str, str, list[Setting]]] = [
     ("relay", "relay", "Relay (display only)", _RELAY),
     # (namespace, owner, page title, settings)
-    ("voice", "service:voice", "Voice", _VOICE),
     ("decision", "service:decision", "Decision engine", _DECISION),
     ("watchdog", "watchdog", "Watchdog", _WATCHDOG),
 ]
 
 PLUGIN_TITLES = {ns: title for ns, _, title, _ in _SERVICES}
-PLUGIN_TITLES.update({"knowledge": "Knowledge", "task": "Tasks", "job": "Jobs", "hub": "Hub info",
+PLUGIN_TITLES.update({"voice": "Voice", "llm": "Model providers", "llmanifold": "llmanifold",
+                      "knowledge": "Knowledge", "task": "Tasks", "job": "Jobs", "hub": "Hub info",
                       "decide": "Decide (decision model)", "home": "Home agent",
                       "pikvm": "PiKVM", "cec": "HDMI-CEC", "agent": "Wake (agent.wake)"})
 

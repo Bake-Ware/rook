@@ -39,6 +39,22 @@ def _home(svc):
     return plugin
 
 
+def _voice(svc):
+    """The voice hub plugin behind Manage > Voice, or None when it is not
+    loaded (the page then says why)."""
+    node = getattr(svc, "node", None)
+    return node, (node.plugin("voice") if node is not None else None)
+
+
+def _llm(svc):
+    """The model providers hub plugin behind Manage > Model providers."""
+    node = getattr(svc, "node", None)
+    plugin = node.plugin("llm") if node is not None else None
+    if plugin is None:
+        raise SettingsError("The model providers plugin is not loaded on this hub.")
+    return plugin
+
+
 def routes(get_service, accounts):
     """``get_service()`` returns the live SettingsService (or None)."""
 
@@ -77,6 +93,12 @@ def routes(get_service, accounts):
                     data = _persona(svc).page()
                 elif view == "home":
                     data = _home(svc).page(svc)
+                elif view == "voice":
+                    from .plugins.voice import page_data
+                    node, plugin = _voice(svc)
+                    data = page_data(svc, node, plugin)
+                elif view == "llm":
+                    data = await _llm(svc).page(svc)
                 elif view == "search":
                     data = {"results": svc.search(q.get("q", ""))}
                 elif view == "history":
@@ -117,9 +139,18 @@ def routes(get_service, accounts):
                 res = _persona(svc).page_action(data, actor)
             elif action in ("home_save", "home_models", "home_test"):
                 res = await _home(svc).page_action(svc, data, actor)
+            elif action in ("voice_check", "voice_transcribe"):
+                node, plugin = _voice(svc)
+                if plugin is None:
+                    st = (getattr(getattr(node, "host", None), "status", {}) or {}).get("voice") or {}
+                    raise SettingsError("Voice is not running on this hub. "
+                                        + str(st.get("reason") or ""))
+                res = await plugin.page_action(svc, data, actor)
+            elif action in ("llm_save", "llm_delete", "llm_check", "llm_models"):
+                res = await _llm(svc).page_action(svc, data, actor)
             else:
                 return _json({"error": "Use set, dry_run, reset, apply_worker, plugin or "
-                                       "persona_* or home_*"}, 400)
+                                       "persona_*, home_*, voice_* or llm_*"}, 400)
             return _json(res)
         except PermissionError as e:
             return _json({"error": str(e)}, 403)
