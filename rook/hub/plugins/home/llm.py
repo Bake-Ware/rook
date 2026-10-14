@@ -112,6 +112,18 @@ class ChatClient:
         ids = {str(r.get("id")) for r in rows if isinstance(r, dict) and r.get("id")}
         return sorted(ids)
 
+    async def embeddings(self, texts: list[str], model: str,
+                         timeout: float | None = None) -> dict:
+        """One ``POST /embeddings`` (OpenAI shape): the raw reply, read by
+        the memory plugin's embedder (``{"data": [{"embedding": [...]}]}``)."""
+        if not model:
+            raise LLMError("no embedding model is set")
+        data = await self._call("POST", "/embeddings", {"model": model, "input": list(texts)},
+                                timeout)
+        if not isinstance(data, dict):
+            raise LLMError("embeddings: the reply is not an object")
+        return data
+
     async def chat(self, messages: list[dict], *, max_tokens: int | None = None,
                    temperature: float | None = None, tools: list[dict] | None = None,
                    timeout: float | None = None) -> dict:
