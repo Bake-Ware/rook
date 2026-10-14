@@ -29,11 +29,16 @@ BASE = "https://github.com/Bake-Ware/telesthete/releases"
 # Docker's TARGETARCH[/TARGETVARIANT] -> the asset's arch (uname -m spelling).
 DOCKER_ARCH = {"amd64": "x86_64", "arm64": "aarch64", "arm/v7": "armv7", "armv7": "armv7"}
 ARCHES = ("x86_64", "aarch64", "armv7")
-DEFAULT_PINS = Path(__file__).resolve().parents[1] / "rook" / "_release.py"
+# The checkout's pins when run from scripts/; the Dockerfile copies this script
+# to / (no parent directory) and passes --pins explicitly.
+_HERE = Path(__file__).resolve()
+DEFAULT_PINS = (_HERE.parents[1] / "rook" / "_release.py") if len(_HERE.parents) > 1 else None
 
 
-def read_pins(path: Path) -> tuple[str, dict]:
+def read_pins(path: Path | None) -> tuple[str, dict]:
     """(RELAY, RELAY_SHA256) from a rook/_release.py, without importing it."""
+    if path is None:
+        return "", {}
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"))
     except (OSError, SyntaxError):

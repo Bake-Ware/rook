@@ -61,3 +61,13 @@ def test_committed_pin_is_well_formed():
     relay, shas = fr.read_pins(fr.DEFAULT_PINS)
     assert relay.startswith("v") and isinstance(shas, dict)
     assert all(a in fr.ARCHES and len(h) == 64 for a, h in shas.items())
+
+
+def test_loads_when_copied_to_the_filesystem_root():
+    """The Dockerfile copies the script to /fetch-relay.py (no grandparent
+    directory) and passes --pins; loading it there must not fail."""
+    src = (ROOT / "scripts" / "fetch-relay.py").read_text(encoding="utf-8")
+    g = {"__name__": "fetch_relay_at_root", "__file__": "/fetch-relay.py"}
+    exec(compile(src, "/fetch-relay.py", "exec"), g)
+    assert g["DEFAULT_PINS"] is None
+    assert g["read_pins"](None) == ("", {})
