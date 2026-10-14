@@ -1373,7 +1373,8 @@ class CombinedServer:
     _BRIDGE_PATHS = ("/account", "/account/bands", "/account/bands/component",
                      "/account/bands/api", "/account/component", "/account/tokens/api",
                      "/account/session", "/account/settings/api", "/account/knowledge/api",
-                     "/account/guidance/api", "/account/vault/api", "/account/jobs/api")
+                     "/account/guidance/api", "/account/vault/api", "/account/jobs/api",
+                     "/account/plugins/api")
     # Set (never Secure, holds nothing secret) on the bridge's redirect: if it
     # comes back without the account cookie, the browser dropped that cookie
     # and redirecting again would loop forever.

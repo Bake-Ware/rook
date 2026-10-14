@@ -216,3 +216,9 @@ async def test_dashboard_proxies_the_plugins_api():
             assert (await client.post("/account/plugins/api", json={"csrf": "k", "action": "x"})).status == 200
             assert (await client.get("/account/plugins/assets/plugins.js")).status == 200
     assert seen == [{"view": "matrix"}, {"csrf": "k", "action": "x"}]
+
+
+def test_a_dashboard_login_carries_over_to_the_plugins_api():
+    # The Plugins page and the onboarding presets open with a GET on it.
+    from rook.remote.bootstrap import CombinedServer
+    assert "/account/plugins/api" in CombinedServer._BRIDGE_PATHS

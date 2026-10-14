@@ -413,7 +413,7 @@
       <div class="first-worker" id="first-worker" hidden>
         <h2>Add your first worker</h2>
         <p>Only the hub is on this band so far. Choose what Rook may do, then get a pairing code and run one command on the machine you want to add.</p>
-        <details class="pair-presets" id="first-worker-presets" open ontoggle="loadPresetStep(this)"><summary>1. What do you want Rook to do?</summary><div class="preset-host"></div></details>
+        <details class="pair-presets" id="first-worker-presets" open ontoggle="window.loadPresetStep&&loadPresetStep(this)"><summary>1. What do you want Rook to do?</summary><div class="preset-host"></div></details>
         <div class="pair-start"><span class="pair-step">2.</span><button class="iconbtn" id="first-worker-pairing-btn" onclick="startPairing('first-worker-pairing',this)">Get a pairing code</button><span class="pair-msg" id="first-worker-pairing-msg" role="status"></span></div>
         <div class="mg pairing-host" id="first-worker-pairing"></div>
         <a href="#install">More ways to install</a>
@@ -486,7 +486,7 @@
       <div class="install">
         <h2>Add a worker</h2>
         <p>Get a pairing code, then run the command for the new machine's system. A code lasts five minutes and renews itself while this page is open.</p>
-        <details class="pair-presets" id="install-presets" ontoggle="loadPresetStep(this)"><summary>1. What should new workers do? (optional: your band's defaults apply otherwise)</summary><div class="preset-host"></div></details>
+        <details class="pair-presets" id="install-presets" ontoggle="window.loadPresetStep&&loadPresetStep(this)"><summary>1. What should new workers do? (optional: your band's defaults apply otherwise)</summary><div class="preset-host"></div></details>
         <div class="pair-start"><span class="pair-step">2.</span><button class="iconbtn" id="install-pairing-btn" onclick="startPairing('install-pairing',this)">Get a pairing code</button><span class="pair-msg" id="install-pairing-msg" role="status"></span></div>
         <div class="mg pairing-host" id="install-pairing"></div>
         <details class="pair-manual"><summary>Commands with a placeholder code</summary>

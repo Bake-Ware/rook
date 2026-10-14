@@ -41,7 +41,7 @@ const CSS=`
 .pl .pl-cell.na,.pl .pl-cell.absent{border-color:transparent}
 .pl .pl-cell.can{cursor:pointer}.pl .pl-cell.can:hover{border-color:var(--accent);color:var(--accent)}
 .pl .pl-cell.busy{opacity:.5;cursor:progress}
-.pl-sum{display:none;font:11px var(--mono);color:var(--dim)}
+.pl-r>div.pl-sum{display:none;font:11px var(--mono);color:var(--dim);justify-content:flex-start}
 .pl-def input{width:18px;height:18px}
 .pl-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
 .pl-card{border:1px solid var(--line);background:var(--panel);padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
@@ -57,9 +57,11 @@ const CSS=`
 .pl-caps{display:flex;flex-direction:column;gap:6px;max-height:260px;overflow:auto;font-size:12px}
 .pl-caps div{display:grid;grid-template-columns:minmax(0,max-content) auto;gap:2px 8px;align-items:baseline}
 .pl-caps code{font:12px var(--mono);color:var(--fg)}
+.pl-caps .pl-risk{justify-self:start}
+.pl>.mg-status{position:sticky;top:0;z-index:3;background:var(--bg);padding:6px 0}
 .pl-caps span.doc{grid-column:1/-1;color:var(--dim)}
 .pl-banner{padding:10px 14px;border:1px solid var(--accent-dim);background:#1f1c12;font-size:13px;line-height:1.5}
-@media(max-width:760px){.pl-grid .pl-r{grid-template-columns:minmax(0,1fr) 120px}.pl-grid .pl-c{display:none}.pl-grid .pl-sum{display:flex}.pl-grid>div{min-width:0}}
+@media(max-width:760px){.pl-grid .pl-r{grid-template-columns:minmax(0,1fr) 120px}.pl-grid .pl-r>div.pl-c{display:none}.pl-grid .pl-r>div.pl-sum{display:flex}.pl-grid>div{min-width:0}}
 .pp{display:flex;flex-direction:column;gap:10px}
 .pp-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:8px}
 .pp-item{display:grid;grid-template-columns:20px minmax(0,1fr);gap:4px 10px;align-items:start;padding:10px 12px;border:1px solid var(--line);background:var(--panel);cursor:pointer;font-size:13px}
@@ -136,8 +138,8 @@ export function presetPicker(opts={}){
       finally{apply.disabled=false;}
     });
     const bar=h('div',{class:'mg-actions'},(data.bands||[]).length>1?band:null,apply,opts.skip||null);
-    node.replaceChildren(opts.intro?h('p',{class:'mg-sub',text:opts.intro}):null,list,
-      h('p',{class:'mg-sub',text:'Unchecked groups are turned off on new workers (and their hub plugins on the hub). Red tags mark plugins that can run code, control input or capture the screen.'}),bar,status);
+    node.replaceChildren(...[opts.intro?h('p',{class:'mg-sub',text:opts.intro}):null,list,
+      h('p',{class:'mg-sub',text:'Unchecked groups are turned off on new workers (and their hub plugins on the hub). Red tags mark plugins that can run code, control input or capture the screen.'}),bar,status].filter(Boolean));
   }
   refresh();
   return {node,refresh};
@@ -259,7 +261,7 @@ export async function mountPlugins(root){
       h('dt',{text:'settings'}),h('dd',null,r.settings_link?h('a',{href:'#'+r.settings_link,text:r.settings+' setting'+(r.settings===1?'':'s')+' →',onclick:e=>{e.preventDefault();d.close();history.pushState(null,'','#'+r.settings_link);window.showView?.('settings');}}):h('span',{text:'none'})));
     const bulk=h('div',{class:'mg-actions'});
     if(r.side==='worker'&&!r.protected){
-      const all=on=>btn(on?'Turn on on all eligible workers':'Turn off on all workers',on?'soft':'danger',async()=>{
+      const all=on=>btn(on?'On for every eligible worker':'Off on every worker',on?'soft':'danger',async()=>{
         if(!on&&!confirm('Turn '+r.module+' off on every online worker that has it?'))return;
         d.close();say((on?'Turning on ':'Turning off ')+r.module+' everywhere…');
         try{const x=await post({action:'toggle_all',module:r.module,enable:on});await load(true);render();
@@ -339,7 +341,7 @@ export async function mountPlugins(root){
     const bar=h('div',{class:'mg-bar'},h('h1',{text:'Plugins'}));
     const tabs=h('div',{class:'mg-tabs',role:'tablist'});
     for(const [id,label] of [['installed','Installed'],['presets','Presets'],['marketplace','Marketplace']]){
-      tabs.append(h('button',{type:'button',class:id===tab?'on':'',text:label,role:'tab','aria-selected':String(id===tab),onclick:()=>{tab=id;render().catch(e=>say(e.message,true));}}));
+      tabs.append(h('button',{type:'button',class:id===tab?'on':'',text:label,role:'tab','aria-selected':String(id===tab),onclick:()=>{tab=id;say('');render().catch(e=>say(e.message,true));}}));
     }
     const refresh=btn('Refresh','',async()=>{refresh.disabled=true;try{if(tab==='marketplace'){catalog=await get({view:'catalog',refresh:'1'});}else await load(true);await render();say('Refreshed.');}catch(e){say(e.message,true);}finally{refresh.disabled=false;}});
     bar.append(h('span',{class:'mg-grow'}),refresh);
