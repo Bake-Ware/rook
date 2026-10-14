@@ -59,6 +59,15 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | Cap | Args | Risk | Does |
 |---|---|---|---|
 | `caps.describe` | prefix='' | read | Arg schema, docstring and declared risk/limit/fields for every hub cap. |
+| `ccmod.activity` | limit=50 | read | What the rules did recently: posts, notifications, capability runs. |
+| `ccmod.delete` | id, note='' | write | Delete a rule (push afterwards to take it off the workers). |
+| `ccmod.get` | id | read | One rule. |
+| `ccmod.history` | id='', limit=20 | read | Attributed changes to the rules, newest first (`id`: one rule). |
+| `ccmod.list` | — | read | Every Claude Code rule, with a one-line summary and its risk tier. |
+| `ccmod.preview` | worker, remove=false | read | What a push would write on `worker`: per settings file, the action and a unified diff (nothing is written). |
+| `ccmod.push` | worker='', remove=false | admin | Send the rules to `worker` (default: every online worker). |
+| `ccmod.set` | rule, note='', dry_run=false, expect_rev? | write | Create or replace a rule. |
+| `ccmod.status` | — | read | Each worker: whether it can take rules, what was last pushed and whether that is still current. |
 | `chat.delete` | room | write | Delete a room and all its messages (participants only; final). |
 | `chat.presence` | — | read | Identities seen recently, newest first, with online flags. |
 | `chat.read` | action='rooms', room?, since_seq=0, limit=200, mark=true | read | Read chat rooms: action=rooms (yours, newest first, unread counts) or read (room, since_seq). |
@@ -114,6 +123,9 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `task.write` | action, kind='task', band?, id?, data?, request_id? | write | Write tasks/projects/concepts: create\|update\|link\|retract\|claim\|release\|note\|batch. |
 | `telegram.send` | text, chat? | write | Post a message to the configured Telegram chat. |
 | `telegram.status` | — | read | Telegram integration status: connected, chat and token configured (never the token), bridged rooms, counters… |
+
+### Claude Code rules
+Hub-managed triggers and actions for Claude Code on the workers (dashboard: Manage > Claude Code). `rook_call(worker="rook", cap="ccmod.list")` lists them; `ccmod.status` shows what each worker holds. Changing or pushing rules writes people's Claude Code settings: ask the user first.
 
 ### chat rooms
 Persistent rooms shared by agents, people and workers. MCP: `rook_chat_*`. Over the band, on worker `rook`: `chat.read` (action rooms|read), `chat.write` (action start|send), `chat.delete`, `chat.presence`. Band callers are recorded as `band:<identity>`; posting over the band needs `ROOK_HUB_BAND_MAX_RISK=write`.
@@ -193,6 +205,15 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 |---|---|---|
 | `camera.list` | — | List the cameras on this worker (use one as the `camera` arg to snap). |
 | `camera.snap` | camera=0, quality=85, resolution='1280x720' | Capture a still JPEG from a camera. |
+
+**ccmod**
+
+| Cap | Args | Does |
+|---|---|---|
+| `ccmod.apply` | config, dry_run=false | Put the hub's Claude Code rules into effect here (the hub pushes them). |
+| `ccmod.events` | after=0, wait=0, boot='' | Hook events for the hub's remote actions, those after `after` (from this `boot`; a different boot starts over… |
+| `ccmod.remove` | dry_run=false | Take Rook's managed hooks and status line out of every Claude Code installation here and delete the rules (th… |
+| `ccmod.status` | — | Which Claude Code installations here carry Rook's managed hooks, and the revision of the rules this worker ho… |
 
 **cec**
 
