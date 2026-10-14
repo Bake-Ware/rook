@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ask Rook</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body class="overlay">
+<div class="ov">
+  <form id="f" autocomplete="off">
+    <input id="q" type="text" placeholder="Ask the home agent…" aria-label="Question" spellcheck="true">
+    <button class="mic" id="mic" type="button" title="Talk (press again to send)" aria-label="Talk">&#127908;</button>
+  </form>
+  <div class="out" id="out" aria-live="polite">
+    <div class="q" id="asked" hidden></div>
+    <div class="status" id="status"></div>
+    <div id="answer"></div>
+  </div>
+  <div class="foot">
+    <span><kbd>Enter</kbd> ask</span><span><kbd>Esc</kbd> close</span><span id="ptt-hint"></span>
+    <a id="open-chat" hidden>Open in Chat</a>
+    <a id="settings">Settings</a>
+  </div>
+</div>
+<script src="common.js"></script>
+<script src="overlay.js"></script>
+</body>
+</html>

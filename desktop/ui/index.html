@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rook settings</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<main class="page">
+  <header class="top">
+    <img src="rook.svg" alt="">
+    <div>
+      <h1>Rook on this computer</h1>
+      <p class="muted small">Your hub's dashboard, a hotkey for the home agent, and notifications.</p>
+    </div>
+    <span class="ver" id="version"></span>
+  </header>
+
+  <section class="card" id="hub">
+    <div class="card-head">
+      <div>
+        <h2>Your hub</h2>
+        <p class="muted small">The address you open your Rook dashboard at.</p>
+      </div>
+      <span class="pill" id="signin-pill">Not signed in</span>
+    </div>
+    <label class="field"><span>Hub address</span>
+      <input type="url" id="hub_url" placeholder="https://rook.example.com" autocomplete="url" spellcheck="false"></label>
+    <p class="note" id="signin-note"></p>
+    <div class="actions">
+      <button class="primary" id="signin-window">Sign in</button>
+      <button id="signin-password-toggle">Use a password instead</button>
+      <button id="open-dashboard">Open dashboard</button>
+      <button class="danger" id="signout" hidden>Sign out</button>
+    </div>
+    <form id="password-form" hidden>
+      <div class="row2">
+        <label class="field"><span>User name</span><input type="text" id="username" autocomplete="username" value="admin"></label>
+        <label class="field"><span>Password</span><input type="password" id="password" autocomplete="current-password"></label>
+      </div>
+      <p class="note">Your account's login, or the dashboard password (any user name).</p>
+      <div class="actions"><button class="primary" type="submit">Sign in</button></div>
+    </form>
+    <p class="msg" id="hub-msg"></p>
+  </section>
+
+  <section class="card" id="ask">
+    <h2>Quick ask</h2>
+    <p class="muted small">Press the shortcut anywhere to ask your hub's home agent a question.</p>
+    <label class="field"><span>Shortcut</span>
+      <span class="shortcut"><input type="text" id="ask_shortcut" spellcheck="false"><button type="button" data-record="ask_shortcut">Change</button></span></label>
+    <div class="actions"><button id="try-ask">Try it</button></div>
+    <details>
+      <summary>Advanced</summary>
+      <label class="field"><span>Agent token (optional)</span>
+        <input type="password" id="agent_token" placeholder="Leave empty to ask in a private chat" autocomplete="off"></label>
+      <p class="note">Without a token, questions go to the home agent in a private chat room (you'll find it in Chat). With a token from the dashboard's Tokens page, the app asks it directly, the way agents do.</p>
+      <div class="actions"><button type="button" id="clear-token" hidden>Remove the saved token</button></div>
+    </details>
+  </section>
+
+  <section class="card" id="notify">
+    <h2>Notifications</h2>
+    <label class="check"><input type="checkbox" id="notifications"> Tell me about new messages and things that need me</label>
+    <label class="field"><span>Check every</span>
+      <select id="poll_seconds">
+        <option value="15">15 seconds</option><option value="30">30 seconds</option>
+        <option value="60">minute</option><option value="300">5 minutes</option>
+      </select></label>
+    <div class="actions"><button id="test-notify">Send a test notification</button></div>
+  </section>
+
+  <section class="card" id="voice">
+    <div class="card-head">
+      <div>
+        <h2>Voice</h2>
+        <p class="muted small">Talk to the home agent. Speech is turned into text by your voice server.</p>
+      </div>
+      <span class="pill" id="mic-pill">No microphone</span>
+    </div>
+    <div class="row2">
+      <label class="field"><span>Voice server</span><input type="url" id="voice_url" placeholder="https://voice.example.com" spellcheck="false"></label>
+      <label class="field"><span>Voice key</span><input type="password" id="voice_key" placeholder="Not set" autocomplete="off"></label>
+    </div>
+    <label class="field"><span>Hold to talk</span>
+      <span class="shortcut"><input type="text" id="ptt_shortcut" spellcheck="false" placeholder="Off"><button type="button" data-record="ptt_shortcut">Change</button></span></label>
+    <div id="wake-box">
+      <label class="check"><input type="checkbox" id="wake_word"> Listen for a wake word</label>
+      <p class="note" id="wake-note">The microphone stays on while this is on. Speech is only sent after the wake word.</p>
+      <div class="row2">
+        <label class="field"><span>Wake word model (.onnx)</span><input type="text" id="wake_model" placeholder="/home/you/hey_rook.onnx" spellcheck="false"></label>
+        <label class="field"><span>Sensitivity <b id="wake-val"></b></span><input type="range" id="wake_threshold" min="0.2" max="0.9" step="0.05"></label>
+      </div>
+    </div>
+  </section>
+
+  <section class="card" id="worker">
+    <div class="card-head">
+      <div>
+        <h2>This computer's worker</h2>
+        <p class="muted small">A worker lets your hub and its agents use this computer.</p>
+      </div>
+      <span class="pill" id="worker-pill"></span>
+    </div>
+    <p class="note" id="worker-detail"></p>
+    <div class="actions">
+      <button class="primary" id="worker-start">Start</button>
+      <button id="worker-stop">Stop</button>
+      <button id="worker-add">Add this computer…</button>
+    </div>
+    <label class="check" id="autostart-box"><input type="checkbox" id="worker_autostart"> Start it when Rook starts</label>
+  </section>
+
+  <section class="card" id="install-hub">
+    <h2>No hub yet?</h2>
+    <p class="muted small">Set one up on this computer in a few minutes.</p>
+    <div class="actions"><button id="open-install">Install a hub on this computer…</button></div>
+  </section>
+</main>
+<div class="savebar">
+  <p class="msg" id="save-msg"></p>
+  <button class="primary" id="save">Save changes</button>
+</div>
+<script src="common.js"></script>
+<script src="settings.js"></script>
+</body>
+</html>

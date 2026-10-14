@@ -34,6 +34,33 @@ Preparation for public use.
   docs/web/themes.md.
 - New hub plugin `ui` (Settings > Dashboard) behind `/ui/account-api`,
   proxied as `/account/ui/api` (`ROOK_UI_ADMIN_URL` for a split hub).
+### Desktop app
+- A first desktop app (preview), in `desktop/`: a Tauri 2 tray app for
+  Windows, macOS and Linux. It shows the hub's dashboard in a window, opens a
+  quick-ask box for the home agent on a global hotkey (default
+  `Ctrl+Alt+Space`), shows notifications for new chat messages, and offers
+  push-to-talk (`Ctrl+Alt+V`) through the voice server's `/api/transcribe`.
+  Sign-in uses the hub's existing login (in the dashboard window, or user name
+  and password); nothing changes on the hub. Quick ask goes to a private chat
+  room with the home agent, or, with an agent token, to `home.ask` over MCP.
+  docs/desktop-app.md; why Tauri over Electron: desktop/README.md.
+- Wake word behind the `wake-word` build feature and an off-by-default
+  setting: openWakeWord's pipeline on tract (pure Rust), with the user's own
+  wake model (openWakeWord's ready-made ones are non-commercial). Design:
+  docs/design/desktop-voice.md.
+- Start and stop this computer's worker from the tray, and an "Install a hub
+  on this computer" wizard that runs `scripts/install-hub.sh` on Linux (and
+  explains Docker or WSL on macOS and Windows). It finds a hub the installer
+  already put here (its `rook-hub` service) and offers to connect or update.
+- The dashboard window stays on the hub (other links open in the browser),
+  and an ACL manifest limits each app page to the commands it uses. A wake
+  model that can't load is refused when saved, or switches the wake word off
+  with a notification, instead of crashing the app.
+- Notifications also read `GET /api/attention` (huddle questions, tasks that
+  need you) on hubs that serve it; the contract is in docs/desktop-app.md.
+- CI: `.github/workflows/desktop.yml` tests on Linux and builds unsigned
+  bundles on Linux, macOS and Windows (actions pinned by commit, cargo
+  `--locked`).
 
 ### Hub merge
 - One hub process: `rook hub serve` (console script `rook-hub`) runs the

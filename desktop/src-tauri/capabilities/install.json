@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "install",
+  "description": "The hub installer wizard.",
+  "windows": ["install"],
+  "permissions": [
+    "core:default",
+    "allow-install-plan",
+    "allow-install-run",
+    "allow-install-connect",
+    "allow-open-dashboard-cmd"
+  ]
+}
