@@ -1,0 +1,68 @@
+{
+  "format": "rook-plugin-catalog/1",
+  "name": "Example catalog (not real plugins)",
+  "example": true,
+  "plugins": [
+    {
+      "id": "com.example.weather",
+      "name": "Weather (example)",
+      "version": "1.0.0",
+      "description": "EXAMPLE ENTRY, not a real package. Current conditions and a short forecast for a configured location, as weather.now and weather.forecast.",
+      "author": "Example Author",
+      "homepage": "https://example.com/rook-weather",
+      "license": "MIT",
+      "namespace": "weather",
+      "placement": "is_hub",
+      "caps": [
+        {"cap": "weather.now", "risk": "read", "description": "Current conditions."},
+        {"cap": "weather.forecast", "risk": "read", "description": "Hourly forecast for the next day."}
+      ],
+      "package": {"kind": "pip", "requirement": "rook-weather-example==1.0.0"},
+      "signature": null,
+      "min_core_api": "1.0",
+      "entry_point": "weather = rook_weather_example:PLUGIN"
+    },
+    {
+      "id": "org.example.backups",
+      "name": "Backups (example)",
+      "version": "0.3.1",
+      "description": "EXAMPLE ENTRY, not a real package. Run and list restic snapshots on a worker; backups.run starts a snapshot of the configured paths.",
+      "author": "Example Org",
+      "homepage": "https://example.org/rook-backups",
+      "license": "Apache-2.0",
+      "namespace": "backups",
+      "placement": "not is_hub and os == 'linux'",
+      "caps": [
+        {"cap": "backups.list", "risk": "read", "description": "Snapshots in the repository."},
+        {"cap": "backups.run", "risk": "exec", "description": "Start a snapshot now."}
+      ],
+      "package": {
+        "kind": "wheel",
+        "url": "https://example.org/dist/rook_backups_example-0.3.1-py3-none-any.whl",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "signature": {"scheme": "placeholder", "key_id": "", "value": ""},
+      "min_core_api": "1.1",
+      "entry_point": "backups = rook_backups_example:PLUGIN"
+    },
+    {
+      "id": "net.example.lights",
+      "name": "Smart lights (example)",
+      "version": "2.1.0",
+      "description": "EXAMPLE ENTRY, not a real package. Switch and dim lights on a local bridge from the band.",
+      "author": "Example Net",
+      "homepage": "https://example.net/rook-lights",
+      "license": "GPL-3.0-or-later",
+      "namespace": "lights",
+      "placement": "not is_hub",
+      "caps": [
+        {"cap": "lights.list", "risk": "read", "description": "Lights the bridge knows."},
+        {"cap": "lights.set", "risk": "write", "description": "On, off or a brightness."}
+      ],
+      "package": {"kind": "pip", "requirement": "rook-lights-example==2.1.0"},
+      "signature": null,
+      "min_core_api": "1.0",
+      "entry_point": "lights = rook_lights_example:PLUGIN"
+    }
+  ]
+}
