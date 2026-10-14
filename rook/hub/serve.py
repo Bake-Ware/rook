@@ -13,6 +13,9 @@ in one process:
   ``/skill/*``, ``/healthz``) are handed to the FastMCP ASGI app through
   rook/hub/asgi_bridge.py before any dashboard middleware sees them, so one
   port serves the whole site with the same split a reverse proxy made.
+* paths a hub plugin serves on the site (rook/hub/site.py: the voice
+  plugin's ``/voice/*``) go to that plugin the same way, before dashboard
+  middleware: they bring their own auth.
 * optionally (``--mcp-bind``, default ``127.0.0.1:8765``, ``off`` to drop it)
   the old MCP port too, serving exactly what ``rook-mcp`` served there, so
   Cloudflare routes, LAN workers dialing ``ws://<hub>:8765/band`` and agent
@@ -240,6 +243,11 @@ class Hub:
         self._unregister = None
         self._uninstall = None
 
+    def hub_node(self):
+        """The hub node (worker ``rook``) the MCP side built, or None."""
+        mcp = getattr(self.mcp, "mcp", None) if self.mcp is not None else None
+        return getattr(mcp, "_rook_hub", None) if mcp is not None else None
+
     def upstream_origins(self) -> list[str]:
         """Loopback origins the dashboard's proxies may name for the MCP
         side: the default ``ROOK_*_ADMIN_URL`` port and ``--mcp-bind``'s."""
@@ -302,6 +310,7 @@ class Hub:
         self._unregister = upstream.register_local(self.upstream_origins(), self.mcp.app)
 
         bridge = self.bridge
+        hub_node = self.hub_node
 
         @web.middleware
         async def mcp_paths(request: web.Request, handler):
@@ -309,6 +318,13 @@ class Hub:
             # (bearer tokens, OAuth), never the dashboard login.
             if is_mcp_path(request.path):
                 return await bridge.handle(request)
+            # Paths a hub plugin serves (rook/hub/site.py: /voice/*) bring
+            # their own auth too (voice keys), so they skip the dashboard's.
+            node = hub_node()
+            site = getattr(node, "site", None) if node is not None else None
+            served = site.match(request.path) if site is not None else None
+            if served is not None:
+                return await served(request)
             return await handler(request)
 
         self.server._app.middlewares.insert(0, mcp_paths)
