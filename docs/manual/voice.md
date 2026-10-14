@@ -66,12 +66,35 @@ Everything is on the Settings page, under **Voice**:
   machine" mode the hub also uses it for the microphone check) and whether
   clients without a token may connect (conversation and web search only).
 - **Recognition**: the speech model and how sensitive it is.
-- **Speech**: the voice, the assistant's name and whose assistant it is, and
-  per-account choices such as the wake word.
+- **Speech**: the voice, the voice to start with (from either engine, cloned
+  voices included), the assistant's name and whose assistant it is, and
+  per-account choices such as the wake word. Advanced: how loud replies are
+  and how many processor threads the standard voices use.
+- **Chatterbox**: cloned voices on a graphics card. Set the card (for example
+  `cuda:0`), the Python of a separate environment with Chatterbox installed,
+  and a folder of voice recordings: each `<name>.wav` (5 to 20 seconds of
+  clean speech) becomes a voice called `<name>`. Left blank, Chatterbox stays
+  off and the standard voices speak.
 - **Agent**: the language model and the Rook agent token the voice agent
-  uses.
+  uses (advanced: how hard it thinks and how long it may work).
+- **Models**: for Front/Background conversations, a separate model for the
+  quick spoken reply and one for the work behind it (blank uses the Agent
+  model), and an optional hosted model tried first, with its API key; if the
+  hosted model fails, voice falls back to the Agent model.
+- **Home**: your Home Assistant address and token (lights, switches, scenes
+  and media players), and the Rook worker that plays music (pianobar).
+- **Location**: your home's latitude and longitude for the weather when the
+  phone's location is not available, the time zone for timers like "at 7pm",
+  and Celsius or Fahrenheit.
 - **Standalone server** (advanced): the address and port the separate voice
   service listens on.
+
+Tokens and API keys are kept in the hub's secret store and never shown again
+after you save them.
+
+These settings take effect when speech runs **on this hub**. When the hub
+passes voice on to **another machine**, that voice server uses its own
+configuration, so set Chatterbox, Home Assistant and the rest there.
 
 ## The separate voice service
 
