@@ -630,9 +630,16 @@ export async function mountSessions(root, boot, toClassic) {
   $('#sx-agent').addEventListener('change', renderList);
   $('#sx-host').addEventListener('change', renderList);
   $('#sx-classic')?.addEventListener('click', () => toClassic());
-  await refresh(); schedule();
+  // #sessions?key=<worker/agent/native id>: the Overview links straight to a session.
+  function openFromHash() {
+    const [view, query] = location.hash.slice(1).split('?');
+    const key = view === 'sessions' && query ? new URLSearchParams(query).get('key') : null;
+    const rec = key && data.sessions.find(r => r.key === key);
+    if (rec) { history.replaceState(null, '', '#sessions'); select(rec); }
+  }
+  await refresh(); openFromHash(); schedule();
   return {
-    activate() { if (!active) { active = true; refresh(); schedule(); } },
+    activate() { if (!active) { active = true; refresh().then(openFromHash, () => {}); schedule(); } },
     deactivate() { active = false; clearTimeout(timer); closeDetail(); }
   };
 }

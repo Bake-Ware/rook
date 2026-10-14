@@ -11,7 +11,7 @@ const CSS=`
 .st-page h1{margin:0 8px 0 0;font:500 20px var(--sans);color:var(--accent)}
 .st-page h2{font:500 15px var(--sans);margin:10px 0 0}
 .st-group{border:1px solid var(--line);background:var(--panel);--cols:minmax(0,1.2fr) minmax(0,1.2fr) 130px 84px;min-width:0}
-.st-row{display:grid;grid-template-columns:var(--cols);gap:4px 12px;align-items:center;min-height:56px;padding:6px 18px;border-bottom:1px solid #20261d}
+.st-row{display:grid;grid-template-columns:var(--cols);gap:4px 12px;align-items:center;min-height:56px;padding:6px 18px;border-bottom:1px solid var(--line-soft)}
 .st-row:last-child{border-bottom:0}
 .st-label{display:flex;flex-direction:column;min-width:0;font-size:13px;cursor:pointer}.st-label strong{font-weight:500}
 .st-label small{font:11px var(--mono);color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -26,7 +26,7 @@ const CSS=`
 .st-more:empty{display:none}
 .st-more .st-help{display:none}.st-row:focus-within .st-help,.st-row.dirty .st-help,.st-row.open .st-help{display:block}
 .st-conflict{font-size:12px;color:var(--warn);border-left:2px solid var(--warn);padding-left:8px}
-.st-banner{border:1px solid var(--accent-dim);background:#1f1c12;padding:10px 14px;font-size:13px}
+.st-banner{border:1px solid var(--accent-dim);background:var(--banner-bg);padding:10px 14px;font-size:13px}
 .st-banner li{margin:4px 0}
 .st-page[data-filter=here] .st-row:not([data-here]),.st-page[data-filter=out] .st-row:not([data-out]),.st-page[data-filter=restart] .st-row:not([data-restart]){display:none}
 .st-page[data-filter=here] .st-group:not(:has(.st-row[data-here])),.st-page[data-filter=out] .st-group:not(:has(.st-row[data-out])),.st-page[data-filter=restart] .st-group:not(:has(.st-row[data-restart])){display:none}
@@ -197,7 +197,7 @@ export async function mountSettings(root){
       page.append(...groups(d,{scope:'hub',target:'',onSaved:render}));
       if(d.scoped&&d.scoped.length){page.append(el('h2','Set per band, worker or user'));const t=el('table',undefined,'kn-table');const h=el('tr');for(const c of ['Setting','Home scope','Overrides'])h.append(el('th',c));t.append(h);for(const s of d.scoped){const tr=el('tr');tr.append(el('td',s.label+' ('+s.key+')'),el('td',s.scope),el('td',Object.entries(s.overrides).map(([k,v])=>v+' '+k).join(', ')||'—'));t.append(tr);}page.append(t);}
       finish(d.history);return;}
-    if(view==='user'){d=await get({view:'user'});compose('My preferences','','Yours on every device that signs in with this account. A device can still keep its own value.');page.append(...groups(d,{scope:'user',target:d.user,onSaved:render}));finish(d.history);return;}
+    if(view==='user'){d=await get({view:'user'});compose('My preferences','','Yours on every device that signs in with this account. A device can still keep its own value.');const look=el('div','','st-theme');page.append(look);import('/account/ui/assets/themes.js'+new URL(import.meta.url).search).then(m=>m.mountThemePicker(look)).catch(()=>look.remove());page.append(...groups(d,{scope:'user',target:d.user,onSaved:render}));finish(d.history);return;}
     if(view==='worker'){d=await get({view,target});const live=d.live||{};
       compose('Worker: '+d.title,(live.online?'● online':'○ offline')+(live.version?' · '+live.version:'')+(live.band?' · band '+live.band:''));
       if(live.online&&!live.typed_settings)page.append(el('div','This worker runs an older build: it takes plain settings, but secrets are not pushed to it (they would land on its disk). Update it to push secrets, which it then fetches at use.','st-banner'));

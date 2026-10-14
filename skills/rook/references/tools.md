@@ -39,6 +39,7 @@ The tables are generated from the code by `tools/gen_skill_reference.py`; don't 
 | `rook_handoff_get` | thread_id | A thread's current handoff plus history. |
 | `rook_handoff_list` | limit=20, active_only=true | Recent handoff threads (latest per thread) with goal and freshness. |
 | `rook_handoff_save` | goal?, thread_id?, state?, decisions?, next_steps?, artifacts?, supersedes?, transcript_ref?, task?, status='active' | Save a handoff (state, not a transcript) so another agent can continue without asking: goal, state, decisions… |
+| `rook_huddle` | action='read', project?, text?, data? | Huddle: a project's group room the person watches (project=; none: the band's). status data {working_on, bloc… |
 | `rook_install_claude_code` | installed? | Install or update the Rook mod for Claude Code. installed= the output of `claude plugin list --json`; returns… |
 | `rook_jobs` | action='list', id?, data?, query? | Scheduled hub jobs. |
 | `rook_journal` | call_id?, worker?, cap_prefix?, since_secs?, only_failures?, limit=30 | Recorded rook_call replies. call_id=<reply id> returns that call's full output (recover lost or timed-out out… |
@@ -79,6 +80,8 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `hub.plugin.enable` | module | admin | Load a hub plugin module now (placement, settings, available(), bind_host, start). |
 | `hub.plugin.reload` | module | admin | Restart one hub plugin with its current settings (stop, load again, start). |
 | `hub.plugins` | limit=50, fields? | read | Full manifests of the hub's loaded plugins (placement, settings schema, guidance slots, source). |
+| `huddle.read` | action='read', room?, project?, band?, since_seq=0, limit=30 | read | Read huddles: read (room\|project\|band: statuses, questions, messages after since_seq), list, mine. |
+| `huddle.write` | action, room?, project?, band?, text?, data?, mention? | write | Post in a huddle: status (data {working_on, blocked_on?, needs_decision?, task?}), ask (text, data {options?,… |
 | `job.read` | action='list', id?, query='', data? | read | Read jobs and runs: list\|get\|runs\|run_get\|next\|validate\|guardrails_preview\|describe_schema. |
 | `job.write` | action, id?, data? | write | Write jobs: create\|update\|delete\|enable\|disable\|run\|cancel\|set_guardrails\|settings. |
 | `knowledge.read` | action='search', band?, id?, query='', data? | read | Read the shared wiki: search\|get\|list\|context\|status\|bands\|deck. |
@@ -134,6 +137,9 @@ The hub's own LLM (when the operator has set one up). Ask it with `rook_call(wor
 
 ### hub
 `rook_call(cap="hub.info", worker="rook")` returns the hub's version, core API, roles, facts and plugins. `hub.plugins` lists full plugin manifests; pass `fields="*"` for every key.
+
+### huddles
+A huddle is a project's (or band's) group room in the person's view. `rook_huddle(action="status", project=..., data={working_on, blocked_on?, needs_decision?, task?})` when you start, get stuck or finish; `action="ask"` with `text` (and `data.options`) for a decision only the person can make: it stays pinned until answered, and the answer comes back as a chat message (and wakes you if your worker can be woken). `read` shows the status strip, questions and recent messages.
 
 ### jobs
 Scheduled, branching work the hub runs. `rook_jobs(action="describe_schema")` gives the job JSON schema; `validate` checks a draft (`data` = the job); `create` saves it (you are its owner and runs act as you). A job is `steps` (cap, fanout, tool, wait, notify, ask, agent, join, noop) wired by `on: {success, failure, hang}` from `entry`, fired by `triggers` (cron in the hub zone unless `tz`, at, after, manual). `run` starts one now; `runs` / `run_get` show masked step output; `next` lists fire times. Over the band: `job.read` / `job.write` on worker `rook`. Use `{{secret:name}}` in step args, never values. Guardrails block admin-tier, update, deauth, policy and delete caps in job steps (`blocked_by_guardrail` on a job; `guardrails_preview` shows what a change would block); editing someone else's job makes it yours and resets its identity.

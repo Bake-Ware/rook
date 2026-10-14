@@ -130,7 +130,8 @@ class Tasks(Plugin):
 handoff, blocked, paused, todo, recently done; rows have revision, unblocked. deck data {states,
 done_days, fields, handoffs:true}. claim id before you work: your calls, consoles and handoffs
 link to it.
-create data {title, body, parent: project or task, attrs:{criteria, workers, dependencies}}.
+create data {title, body, parent: project or task, attrs:{criteria, workers, dependencies, start, due
+(YYYY-MM-DD), tags}}.
 update data {revision, patch:{state?, attrs?, title?, body?}}; states todo|in_progress|blocked|
 paused|done|closed|cancelled|archived. done needs attrs.outcome + evidence link; closed (a person
 said so) needs data.closed_by {who, quote, session}; blocked needs
