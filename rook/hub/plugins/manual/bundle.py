@@ -52,6 +52,7 @@ class Page:
     features: list = field(default_factory=list)
     since: str = ""
     deprecated: bool = False
+    preview: bool = False           # a feature not in a release yet (front matter preview: true)
 
     @property
     def slug(self) -> str:
@@ -66,7 +67,8 @@ class Page:
     def meta(self) -> dict:
         return {"id": self.id, "title": self.title, "file": self.file, "order": self.order,
                 "features": list(self.features), "since": self.since,
-                "deprecated": self.deprecated, "slug": self.slug, "sha256": self.hash}
+                "deprecated": self.deprecated, "preview": self.preview, "slug": self.slug,
+                "sha256": self.hash}
 
 
 def content_hash(title: str, body: str) -> str:
@@ -131,6 +133,8 @@ def parse_page(path: Path) -> Page:
         raise ManualError(f"{path.name}: features must be a list of feature ids")
     if not isinstance(meta["deprecated"], bool):
         raise ManualError(f"{path.name}: deprecated must be true or false")
+    if not isinstance(meta.get("preview", False), bool):
+        raise ManualError(f"{path.name}: preview must be true or false")
     since = str(meta["since"])
     if not VERSION.match(since):
         raise ManualError(f"{path.name}: since must be a version such as 0.1.0")
@@ -141,7 +145,7 @@ def parse_page(path: Path) -> Page:
     order = meta.get("order", 1000)
     return Page(id=pid, title=title, body=body.rstrip() + "\n", file=path.name,
                 order=order if isinstance(order, int) else 1000, features=list(features),
-                since=since, deprecated=meta["deprecated"])
+                since=since, deprecated=meta["deprecated"], preview=meta.get("preview", False))
 
 
 def find_dir() -> Path | None:
@@ -167,7 +171,7 @@ class Bundle:
         """One hash for the whole manual: page ids and content, in order."""
         h = hashlib.sha256()
         for p in self.pages:
-            h.update(f"{p.id}\0{p.hash}\0{int(p.deprecated)}\n".encode())
+            h.update(f"{p.id}\0{p.hash}\0{int(p.deprecated)}{int(p.preview)}\n".encode())
         return h.hexdigest()
 
     def page(self, pid: str) -> Page | None:

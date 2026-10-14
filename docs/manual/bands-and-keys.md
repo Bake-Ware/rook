@@ -34,22 +34,29 @@ rarely need to handle the key itself.
 
 ## The Bands page
 
-Open **Bands** in the sidebar to see every band you can use. As a band's owner
-you can:
+Open **Bands** in the sidebar to see every band you can use, how many of its
+machines are online and your role. Pick a band to see its tabs:
 
-- **Rename** a band or **delete** it (the main band cannot be deleted; deleting
-  hides the band and stops new machines joining it, but cannot erase the key
-  from machines that already have it).
-- **Migrate all** moves every machine in the band to another band.
-- **Migrate PSK** gives the band a new key and moves every machine onto it,
-  without re-installing anything.
+- **Workers**: the band's machines. **Move…** moves one machine;
+  **Move all…** moves every machine in the band to another band.
+- **Members** (owners only): who may use the band, their role, and
+  **Invite a person** (a single-use link that lasts seven days).
+- **Key** (owners only): the key's fingerprint and version, **Pairing code**,
+  **Revoke pairing code**, **Rotate key…**, **Download configuration**, and the
+  machines enrolled with their own certificates (each with **Revoke**).
+
+As a band's owner you can also **Rename** a band or **Delete…** it. The
+default band cannot be deleted. Deleting stops new machines joining and
+revokes its pairing codes and certificates, but cannot erase the key from
+machines that already have it.
 
 ## Moving one machine
 
-On the Workers page, open a machine's **⋯** menu and choose **Move to band…**.
-Pick the destination, or **Create new band…** in the same dialog. You must own
-the band the machine is in now; being a member of the destination is enough.
-Machines need a recent worker to move; older ones say an update is needed.
+On the Workers page, open a machine's **⋯** menu and choose **Move to band…**
+(or use **Move…** on the Bands page). Pick the destination, or
+**＋ Create new band…** in the same dialog. You must own the band the machine
+is in now; being a member of the destination is enough. Machines need a recent
+worker to move; older ones say an update is needed.
 
 ## How moves and key changes work
 
@@ -60,17 +67,20 @@ Bands page open while this runs. If you close it or the hub restarts, the move
 is remembered: use **Resume** to continue. A move that has not started can be
 cancelled; once it starts it must finish.
 
-Every machine in the band must be online for **Migrate all** and
-**Migrate PSK**. Bring missing machines online first, or remove them under
+Every machine in the band must be online for **Move all…** and
+**Rotate key…**. Bring missing machines online first, or remove them under
 **Account & access**.
 
-## Replacing or revoking a key
+## Rotating, replacing or revoking a key
 
-Under **Tokens** (API tokens) a band owner can also **Replace PSK** (type a new
-key or generate one) or **Revoke band** (stop all new joins until a new key is
-set). Both cancel outstanding pairing codes, and the hub moves to the new key
-within a couple of seconds. The new key is never sent over the old band:
-re-pair your trusted machines afterwards.
+- **Rotate key…** (Key tab) is the everyday way to change a key: every
+  enrolled machine gets the new key, and the old one is retired once all of
+  them have checked in on it.
+- **Replace key now…** and **Revoke key…** are under **Compromised key** on
+  the same tab, for a key you think someone else has. Replacing switches to a
+  new key at once and shows it one time; every machine must then be enrolled
+  again. Revoking stops all new joins until a new key is set. Both cancel
+  outstanding pairing codes, and the new key is never sent over the old band.
 
 **Important:** changing a key cannot reach into a machine that still has the
 old one. A machine you do not trust any more can keep using the old key until

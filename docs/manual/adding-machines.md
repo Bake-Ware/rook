@@ -35,7 +35,8 @@ join your band without you typing the band key.
 5. The machine appears on the Workers page when it finishes.
 
 A code lasts five minutes and keeps renewing while the page is open. One code
-can add several machines. **Revoke code** cancels it at once. A code only lets a
+can add several machines. **Revoke pairing code** (on the Bands page, Key tab)
+cancels it at once. A code only lets a
 machine join that one band; it never gives access to the dashboard or to your
 agents' tools.
 
@@ -72,8 +73,9 @@ different hub, too.
 
 ## Removing a machine
 
-On the Workers page open the machine's **⋯** menu and choose **deauth**. The
-worker leaves the band and the hub ignores it from then on. To stop a machine
-from ever joining with its old certificate, revoke the device under
-**Account & access**. See [[manual-security]] for what removing can and cannot
+On the Workers page open the machine's **⋯** menu and choose
+**Deauth / ban…**. The worker leaves the band and the hub ignores it from then
+on (**Remove ban** undoes it). To stop a machine from fetching its settings
+with its certificate, **Revoke** it in the band's enrolled devices (Bands page,
+Key tab, or **Account & access**). See [[manual-security]] for what removing can and cannot
 do.

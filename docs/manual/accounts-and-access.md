@@ -23,8 +23,13 @@ first start, with a Google account, or with a local Rook account. Open
 - **Connected logins**: link a Google login and a local login to the same
   account. Rook asks you to prove both; matching email addresses are never
   merged on their own.
-- **Band access**: invite people to a band, give them a role (owner or member)
-  and see the machines that joined with their own certificates.
+- **Your bands**: the bands you belong to and your role. Members, keys and
+  machine moves are managed on the Bands page ([[manual-bands-and-keys]]).
+- **Devices**: the machines enrolled with their own certificates, for bands
+  you own.
+- **Accept an invitation**, **Approve an installer** (a terminal installer
+  that signed in with your account shows a code to approve here) and
+  **Pair a device**.
 
 The **operator** is the hub's administrator account. Some pages, such as
 Plugins, Secrets and Agent instructions, are only for the operator.
@@ -38,7 +43,8 @@ Plugins, Secrets and Agent instructions, are only for the operator.
 ## Devices
 
 Machines that joined with a pairing code or a sign-in have a device
-certificate. Under **Account & access** you can see them and **revoke** one.
+certificate. Under **Account & access** (or the band's Key tab) you can see
+them and **Revoke certificate…**.
 Revoking stops that device from renewing its certificate and fetching settings.
 It cannot stop a machine that already knows the band key from using it; see
 [[manual-security]].

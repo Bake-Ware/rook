@@ -66,11 +66,14 @@ command. Custom commands stay on that machine across restarts.
 
 ## The machine menu (⋯)
 
+- **Screenshot**, **Shell** and **Device info**: quick actions, where the
+  machine supports them.
 - **Rename…**: give the machine a new name; it restarts to apply it.
-- **Edit description**: a short note about what the machine is for (up to 280
+- **Edit description…**: a short note about what the machine is for (up to 280
   characters). Agents see it too.
 - **Move to band…**: see [[manual-bands-and-keys]].
-- **deauth** and **remove ban**: remove a machine from the band, or let it back.
+- **Deauth / ban…** and **Remove ban**: remove a machine from the band, or let
+  it back.
 
 ## The hub itself
 

@@ -44,12 +44,16 @@ has its own firmware updates ([[manual-hardware]]).
 - **Agent connections are limited.** If too many agents are connected, the one
   that has been idle longest is disconnected (it reconnects by itself), so one
   misbehaving agent cannot lock everyone out.
-- **The watchdog** checks the hub every minute: that agents can connect, that
-  its services run, how many machines are online and how much memory is free.
-  A second copy can run on another machine and check the hub from outside.
-  Problems are sent to you once on Telegram (or through the hub's
-  notifications), with an hourly reminder while they last and a message when
-  they are fixed. Its settings are under **Watchdog** on the Settings page.
+- **The watchdog** (optional) checks the hub every minute: that agents can
+  connect, that its services run, how many machines are online and how much
+  memory is free. A second copy can run on another machine and check the hub
+  from outside. Problems are sent to you once on Telegram (or through the
+  hub's notifications), with an hourly reminder while they last and a message
+  when they are fixed. **It is not set up for you:** neither the installer nor
+  Docker runs it. An administrator schedules
+  `python3 -m rook.band_mcp.watchdog --mode hub` once a minute (a systemd
+  timer) with its settings in an environment file. Its settings are listed
+  under **Watchdog** on the Settings page.
 
 ## Updating the hub
 

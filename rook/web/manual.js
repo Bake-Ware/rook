@@ -52,6 +52,7 @@ function diffList(title,items,note,boxes){
       const box=i.local_edit&&boxes?h('input',{type:'checkbox',value:i.id}):null;if(box)boxes.push(box);
       return h('li',{},h('span',{class:'mn-diff-title',text:i.title}),
         i.deprecated?h('span',{class:'mn-badge',text:'deprecated'}):null,
+        i.preview?h('span',{class:'mn-badge',text:'preview'}):null,
         i.local_edit?h('span',{class:'mn-badge warn',text:note}):null,
         box?h('label',{class:'mn-keep'},box,' Replace my edits'):null);})));
 }
@@ -128,6 +129,7 @@ export async function mountManual(root){
         p.source==='knowledge'?h('span',{class:'mn-badge ok',text:p.edited?'Your knowledge base copy (edited)':'Your knowledge base copy'})
                               :h('span',{class:'mn-badge',text:'Bundled with Rook '+(status?.version||'')}),
         p.deprecated?h('span',{class:'mn-badge warn',text:'deprecated'}):null,
+        p.preview?h('span',{class:'mn-badge warn',text:'preview'}):null,
         p.since?h('span',{class:'mn-dim',text:'since '+p.since}):null,
         p.source==='knowledge'?h('a',{href:'#knowledge?p='+encodeURIComponent(p.slug),text:'Open in Knowledge'}):null);
       const body=renderMarkdown(p.body,id=>go(id),id=>(pages.find(x=>x.id===id)||{}).title||id);
@@ -140,7 +142,7 @@ export async function mountManual(root){
   const go=id=>{const target='#help'+(id?'?page='+encodeURIComponent(id):'');if(location.hash!==target)history.pushState(null,'',target);open(id);};
 
   const drawToc=list=>{
-    toc.replaceChildren(...list.map(p=>{const a=h('a',{href:'#help?page='+encodeURIComponent(p.id),text:p.title,class:(p.id===current?'on':'')+(p.deprecated?' old':'')});a.dataset.id=p.id;
+    toc.replaceChildren(...list.map(p=>{const a=h('a',{href:'#help?page='+encodeURIComponent(p.id),text:p.title+(p.preview?' (preview)':''),class:(p.id===current?'on':'')+(p.deprecated?' old':'')});a.dataset.id=p.id;
       a.onclick=e=>{e.preventDefault();go(p.id);};return a;}));
     if(!list.length)toc.append(h('p',{class:'mn-dim',text:'No page matches.'}));
   };

@@ -13,7 +13,8 @@ deprecated: false
 
 Open **Help** at the bottom of the dashboard's sidebar to read this manual.
 Pick a page on the left, or search. Links between pages work like the
-knowledge wiki's links.
+knowledge wiki's links. Pages marked **preview** describe something that is
+not in a release yet.
 
 ## The manual in your knowledge base
 
@@ -28,7 +29,13 @@ manual is there.
 - The pages are marked with the Rook version they came from.
 
 You can edit the copy like any other page, for example to add notes about your
-own setup. Help then shows your edited copy.
+own setup, or tag pages. An edited page is marked **unverified** in the
+knowledge base (it may no longer match the manual), and Help shows it to you as
+**your knowledge base copy (edited)**. People other than the operator always
+see the manual as it came with Rook.
+
+If your knowledge base already has a page called `rook-manual`, Rook leaves it
+alone and names its contents page `rook-manual-2` instead.
 
 ## When Rook updates
 
@@ -41,9 +48,10 @@ message:
 Click **Review changes** to see which pages were added, changed and removed,
 then choose:
 
-- **Update**: bring the copy up to date. Pages you edited yourself are kept
-  unless you tick **Replace my edits** next to them. Removed pages are
-  archived, not deleted.
+- **Update**: bring the copy up to date. Pages you edited yourself, including
+  the contents page, are kept unless you tick **Replace my edits** next to
+  them, and tags you added are kept either way. Removed pages are archived,
+  not deleted.
 - **Not now**: ask again tomorrow.
 - **Never for this version**: do not ask again until the next manual change.
 
