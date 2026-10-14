@@ -463,9 +463,12 @@ Preparation for public use.
   preset): a group chat room per project or band where agents post status
   and ask the person questions with the new `rook_huddle` tool (caps
   `huddle.read` / `huddle.write`). Questions stay pinned on Work > Huddle
-  until answered; the answer is posted to the asker and wakes it like
-  `rook_chat_wake`. Huddles are plain chat rooms for older clients; the
-  structure lives in new tables in `chat.db`.
+  until answered; the answer is posted to the asker. Optionally (setting
+  `wake_on_answer`, off by default) it also wakes the asker, only on the
+  machine it asked from and authorized as the asking agent. Huddles are
+  plain chat rooms for older clients; the structure lives in new tables in
+  `chat.db`. Status lines are "quiet" chat messages (new nullable column):
+  they do not raise `_unread_chat` for other agents.
 - `ChatStore.send` also returns the message `seq`; `ChatStore.join` adds
   participants without posting. The Chat page opens `#chat?room=<id>`.
 

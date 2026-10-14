@@ -510,6 +510,12 @@ def build_server(client: "BandClient | MultiBandClient",
         if mcp._rook_hygiene is not None:
             mcp._rook_hygiene.knowledge = knowledge
 
+    def _bind_huddle(plugin):
+        # Huddle questions record the asker's attributed host, so an answer
+        # can only wake the machine the agent asked from.
+        if plugin.NAMESPACE == "huddle":
+            plugin.attribution = _principal
+
     def _unbind_knowledge(plugin):
         if plugin.NAMESPACE == "knowledge" and mcp._rook_knowledge is plugin.service:
             mcp._rook_knowledge = None
@@ -519,6 +525,7 @@ def build_server(client: "BandClient | MultiBandClient",
     if mcp._rook_hub is not None:
         try:
             mcp._rook_hub.host.add_bind_hook(_bind_knowledge, _unbind_knowledge)
+            mcp._rook_hub.host.add_bind_hook(_bind_huddle)
             if mcp._rook_knowledge is not None:
                 from .hygiene import Hygiene
                 mcp._rook_hygiene = Hygiene(mcp._rook_knowledge, client, chat,

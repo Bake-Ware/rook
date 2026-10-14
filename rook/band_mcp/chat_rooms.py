@@ -32,7 +32,7 @@ import threading
 import time
 import uuid
 
-from ..core.db import open_db
+from ..core.db import add_columns, open_db
 from .secret_mask import scrub
 
 log = logging.getLogger("rook.band_mcp.chat_rooms")
@@ -70,6 +70,10 @@ class ChatStore:
                     identity TEXT PRIMARY KEY, mime TEXT, data BLOB, updated REAL
                 );
             """)
+            # quiet: a message that does not count as unread (a huddle's
+            # status lines). Additive, so an older release still reads and
+            # writes the table (its inserts name their columns).
+            add_columns(self._db, "messages", {"quiet": "INTEGER"})
             self._db.commit()
         except Exception:
             log.exception("chat store init failed; chat disabled")
@@ -223,6 +227,9 @@ class ChatStore:
         return {"id": r[0], "title": r[1], "created": r[2],
                 "last_activity": r[3], "participants": json.loads(r[4] or "[]")}
 
+    def exists(self, rid: str) -> bool:
+        return self._db is not None and self._room(rid) is not None
+
     def join(self, rid: str, identities: list[str]) -> dict:
         """Add participants to a room without posting (a huddle adds whoever
         opens it, so their unread notices start then)."""
@@ -244,7 +251,7 @@ class ChatStore:
                          (json.dumps(parts), rid))
 
     def send(self, rid: str, sender: str, text: str, mentions: list[str],
-             expects_reply: bool) -> dict:
+             expects_reply: bool, quiet: bool = False) -> dict:
         """Post a message. Mentioning a non-participant auto-invites them.
         Returns the new participant list, the mentioned set, and which of them
         are offline (⇒ will get voicemail; a mention of an offline agent whose
@@ -273,10 +280,10 @@ class ChatStore:
         try:
             with self._lock:
                 cur = self._db.execute(
-                    "INSERT INTO messages (room_id,ts,sender,text,mentions,expects_reply) "
-                    "VALUES (?,?,?,?,?,?)",
+                    "INSERT INTO messages (room_id,ts,sender,text,mentions,expects_reply,quiet) "
+                    "VALUES (?,?,?,?,?,?,?)",
                     (rid, now, sender, text[:8000], json.dumps(ment),
-                     1 if expects_reply else 0))
+                     1 if expects_reply else 0, 1 if quiet else None))
                 seq = cur.lastrowid
                 self._set_participants(rid, parts)
                 self._db.execute("UPDATE rooms SET last_activity=? WHERE id=?", (now, rid))
@@ -384,7 +391,8 @@ class ChatStore:
                         (identity, rid)).fetchone()
                     watermark = wr[0] if wr else 0
                     cnt = self._db.execute(
-                        "SELECT COUNT(*) FROM messages WHERE room_id=? AND seq>? AND sender!=?",
+                        "SELECT COUNT(*) FROM messages WHERE room_id=? AND seq>? AND sender!=? "
+                        "AND quiet IS NULL",
                         (rid, watermark, identity)).fetchone()[0]
                 last = self._db.execute(
                     "SELECT sender,text FROM messages WHERE room_id=? ORDER BY seq DESC LIMIT 1",

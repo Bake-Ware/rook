@@ -51,6 +51,8 @@
 .hd-send{background:#343322!important;border:1px solid var(--accent-dim)!important;color:var(--accent)!important;font:11px var(--mono)!important;letter-spacing:.05em;padding:8px 16px!important;cursor:pointer;text-transform:uppercase}
 .hd-send:hover{background:#403e27!important}
 .hd-send:disabled{opacity:.5}
+.hd-target{margin:6px 0 0;font:11px var(--mono);color:var(--dim)}
+.hd-target-on{color:var(--green)}
 .hd-wake{margin:6px 0 0;font-size:11.5px;min-height:0}
 .hd-wake:empty{display:none}
 .hd-answered{font-size:12.5px}

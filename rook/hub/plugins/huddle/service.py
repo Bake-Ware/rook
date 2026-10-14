@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from ....band_mcp.chat_wake import find_worker, wake
+from ....band_mcp.chat_wake import wake, worker_for_host
 from ....band_mcp.secret_mask import scrub
 from ....core.db import open_db
 
@@ -122,10 +122,23 @@ class HuddleStore:
         self._x("INSERT INTO huddle_questions(seq,room,asker,text,data,asked) VALUES(?,?,?,?,?,?)",
                 (seq, room, asker, text, json.dumps(data), time.time()))
 
+    def drop(self, room: str) -> None:
+        """Forget a huddle whose chat room was deleted."""
+        with self._lock:
+            for table in ("huddles", "huddle_posts", "huddle_status", "huddle_questions"):
+                self._db.execute(f"DELETE FROM {table} WHERE room=?", (room,))
+            self._db.commit()
+
     @staticmethod
     def _question(r: dict) -> dict:
+        data = json.loads(r["data"] or "{}")
+        origin = data.pop("origin", None) or {}
         out = {"id": r["seq"], "room": r["room"], "asker": r["asker"], "text": r["text"],
-               "state": r["state"], "asked": r["asked"], **json.loads(r["data"] or "{}")}
+               "state": r["state"], "asked": r["asked"], **data}
+        # Where the asker was asking from (recorded at ask time, never
+        # chosen by the agent); the principal itself stays internal.
+        if origin.get("worker") or origin.get("host"):
+            out["from_worker"] = (origin.get("worker") or {}).get("name") or origin.get("host")
         if r["state"] == "answered":
             out.update(answer=r["answer"], answered_by=r["answered_label"] or r["answered_by"],
                        answered=r["answered"], answer_seq=r["answer_seq"])
@@ -136,6 +149,11 @@ class HuddleStore:
     def question(self, seq: int) -> dict | None:
         rows = self._q("SELECT * FROM huddle_questions WHERE seq=?", (int(seq),))
         return self._question(rows[0]) if rows else None
+
+    def origin(self, seq: int) -> dict:
+        """The asker's recorded principal and worker (see HuddleService.ask)."""
+        rows = self._q("SELECT data FROM huddle_questions WHERE seq=?", (int(seq),))
+        return (json.loads(rows[0]["data"] or "{}").get("origin") or {}) if rows else {}
 
     def questions(self, room: str | None = None, asker: str | None = None, since: float | None = None) -> list[dict]:
         """Open questions, then those answered (or withdrawn) after ``since``."""
@@ -169,11 +187,15 @@ class HuddleService:
     ``project(ref)`` -> ``{id, slug, title, band}`` (raises if unknown, None
     when the knowledge plugin is off); ``bands()`` -> ``[{id, name,
     primary}]``; ``link(project, band, room)`` records the room on the
-    project (best effort); ``client()`` -> the band client or None."""
+    project (best effort); ``client()`` -> the band client or None;
+    ``origin()`` -> the current caller's verified principal and host
+    (``{principal: {id, kind, role, groups, verified, label}, host}``), or
+    None when there is none to trust (a band caller, in-process code)."""
 
     def __init__(self, chat: Any, store: HuddleStore, *, project: Callable, bands: Callable,
                  link: Callable | None = None, client: Callable | None = None,
-                 wake_on_answer: Callable[[], bool] = lambda: True) -> None:
+                 origin: Callable[[], dict | None] = lambda: None,
+                 wake_on_answer: Callable[[], bool] = lambda: False) -> None:
         self.chat = chat
         self.store = store
         self._project = project
@@ -181,6 +203,7 @@ class HuddleService:
         self._link = link
         self._client = client or (lambda: None)
         self._wake_on_answer = wake_on_answer
+        self._origin = origin
         self.wakes: set[asyncio.Task] = set()   # running wake-ups (tests await them)
 
     # -- which huddle ----------------------------------------------------
@@ -194,30 +217,40 @@ class HuddleService:
             raise ValueError(f"unknown band {ref!r}")
         return match[0]
 
+    def _live(self, h: dict | None) -> dict | None:
+        """``h``, or None (and its rows dropped) when its chat room was
+        deleted: the next post makes a fresh huddle instead of failing."""
+        if h is not None and not self.chat.exists(h["room"]):
+            log.info("huddle %s: its chat room is gone; dropping it", h["room"])
+            self.store.drop(h["room"])
+            return None
+        return h
+
     async def resolve(self, identity: str, room: str | None = None, project: str | None = None,
                       band: str | None = None, create: bool = True) -> dict:
         """The huddle a call means: ``room`` (an existing huddle), else the
-        ``project``'s, else the ``band``'s (default: the primary band). Made
-        on first use; ``identity`` joins it."""
+        ``project``'s, else the ``band``'s (default: the primary band).
+        ``create``: made on first use and ``identity`` joins it; reads pass
+        False and change nothing."""
         if room:
-            h = self.store.get(room)
+            h = self._live(self.store.get(room))
             if h is None:
                 raise ValueError(f"{room!r} is not a huddle; open one with project= or band=")
         elif project:
             p = self._project(project)
             if p is None:
                 raise ValueError("project huddles need the knowledge plugin; use band=")
-            h = self.store.by_scope("project", p["id"]) or (
+            h = self._live(self.store.by_scope("project", p["id"])) or (
                 await self._create("project", p["id"], p["band"], "Huddle: " + p["title"], identity, p)
                 if create else None)
         else:
             b = self._band(band)
-            h = self.store.by_scope("band", b["id"]) or (
+            h = self._live(self.store.by_scope("band", b["id"])) or (
                 await self._create("band", b["id"], b["id"], "Huddle: " + (b.get("name") or b["id"]), identity)
                 if create else None)
         if h is None:
-            raise ValueError("no huddle there yet")
-        if identity and identity != PERSON:
+            raise ValueError("no huddle there yet: post a status or ask to start it")
+        if create and identity and identity != PERSON:
             self.chat.join(h["room"], [identity])
         return h
 
@@ -243,8 +276,9 @@ class HuddleService:
         return self.store.get(started["room"])
 
     # -- agents ------------------------------------------------------------
-    def _send(self, room: str, sender: str, text: str, mentions=(), expects_reply=False) -> dict:
-        sent = self.chat.send(room, sender, text, list(mentions), expects_reply)
+    def _send(self, room: str, sender: str, text: str, mentions=(), expects_reply=False,
+              quiet=False) -> dict:
+        sent = self.chat.send(room, sender, text, list(mentions), expects_reply, quiet=quiet)
         if not sent.get("ok"):
             raise ValueError(sent.get("error") or "post failed")
         return sent
@@ -269,7 +303,9 @@ class HuddleService:
         if decision:
             parts.append("Needs a decision: " + decision)
         text = scrub(" | ".join(parts) + (f" (task {task})" if task else ""))
-        sent = self._send(h["room"], identity, text, [PERSON] if decision else [], bool(decision))
+        # Quiet: another agent's status line is no reason to notify everyone
+        # in the room (_unread_chat); a decision is pinned for the person.
+        sent = self._send(h["room"], identity, text, [PERSON] if decision else [], bool(decision), quiet=True)
         body = {k: v for k, v in (("working_on", working), ("blocked_on", blocked),
                                   ("needs_decision", decision), ("task", task)) if v}
         body = scrub(body)
@@ -278,7 +314,7 @@ class HuddleService:
         out = {"room": h["room"], "seq": sent["seq"], "state": state}
         if decision:
             self.store.ask(sent["seq"], h["room"], identity, scrub(decision),
-                           self._question_data(data, task))
+                           {**self._question_data(data, task), **self._asked_from()})
             out["question"] = sent["seq"]
         return out
 
@@ -291,10 +327,31 @@ class HuddleService:
         out = {"options": scrub(options)} if options else {}
         if task:
             out["task"] = task
-        worker = _text(data.get("worker"), "worker", 100)
-        if worker:
-            out["worker"] = worker
         return out
+
+    def _asked_from(self) -> dict:
+        """The asker's verified principal and the worker it called from, at
+        ask time, so an answer can only wake that worker, as that principal.
+        Nothing for callers that cannot be trusted (over the band,
+        unverified): their questions are answered without a wake-up."""
+        try:
+            o = self._origin() or {}
+        except Exception:
+            log.exception("huddle: caller lookup failed")
+            return {}
+        p = o.get("principal") or {}
+        if not p.get("id") or not p.get("verified", True) or p.get("kind") in ("band", "unverified") \
+                or p["id"] == "unverified":
+            return {}
+        origin = {"principal": p}
+        host = o.get("host")
+        if host:
+            origin["host"] = host
+            client = self._client()
+            wid = worker_for_host(client.workers, host) if client is not None else None
+            if wid:
+                origin["worker"] = {"id": wid, "name": client.workers[wid].get("name") or wid}
+        return {"origin": origin}
 
     async def ask(self, identity: str, text: str, data: dict | None = None, **where) -> dict:
         """Ask the person: pinned in the huddle until answered."""
@@ -307,7 +364,7 @@ class HuddleService:
         sent = self._send(h["room"], identity, "Question: " + question
                           + (" (options: " + " / ".join(opts) + ")" if opts else ""), [PERSON], True)
         self.store.post(sent["seq"], h["room"], identity, "question", extra)
-        self.store.ask(sent["seq"], h["room"], identity, question, extra)
+        self.store.ask(sent["seq"], h["room"], identity, question, {**extra, **self._asked_from()})
         return {"room": h["room"], "question": sent["seq"], "state": "open"}
 
     async def say(self, identity: str, text: str, mention=None, **where) -> dict:
@@ -322,10 +379,12 @@ class HuddleService:
 
     # -- reading -----------------------------------------------------------
     async def view(self, reader: str, since_seq: int = 0, limit: int = 50, mark: bool = True,
-                   **where) -> dict:
+                   create: bool = False, targets: bool = False, **where) -> dict:
         """A huddle's status strip, questions and messages after
-        ``since_seq`` (the last ``limit`` when since_seq is 0)."""
-        h = await self.resolve(reader, **where)
+        ``since_seq`` (the last ``limit`` when since_seq is 0). ``create``
+        (the dashboard): open the huddle if there is none yet. ``targets``:
+        say on each open question which worker an answer would wake."""
+        h = await self.resolve(reader, create=create, **where)
         room = h["room"]
         if not since_seq:
             since_seq = max(0, self.chat.last_seq(room) - max(1, int(limit)))
@@ -337,13 +396,20 @@ class HuddleService:
         for m in msgs:
             if m["seq"] in posts:
                 m.update(posts[m["seq"]])
+        questions = self.store.questions(room)
+        if targets:
+            for q in questions:
+                if q["state"] == "open":
+                    q["wake_target"] = self.wake_target(q["id"])
         return {"room": room, "title": h["title"], "scope": h["scope"], "ref": h["ref"], "band": h["band"],
                 "participants": read["participants"], "statuses": self.store.statuses(room),
-                "questions": self.store.questions(room), "messages": msgs, "last_seq": read["last_seq"]}
+                "questions": questions, "messages": msgs, "last_seq": read["last_seq"]}
 
     def huddles(self) -> list[dict]:
         out = []
         for h in self.store.all():
+            if self._live(h) is None:
+                continue
             last = self.chat.tail(h["room"], 1)
             out.append({**h, "last": last[0] if last else None,
                         "agents": len(self.store.statuses(h["room"]))})
@@ -364,6 +430,8 @@ class HuddleService:
             raise ValueError("no such question")
         if q["state"] != "open":
             raise ValueError(f"that question is already {q['state']}")
+        if self._live(self.store.get(q["room"])) is None:
+            raise ValueError("that huddle's chat room was deleted")
         answer = scrub(_text(text, "answer", TEXT_MAX, required=True))
         sent = self._send(q["room"], PERSON, f"Answer for {q['asker']}: {answer}", [q["asker"]])
         if not self.store.answer(q["id"], answer, by, label, sent["seq"]):
@@ -373,23 +441,50 @@ class HuddleService:
         self.store.set_wake(q["id"], wake_state)
         return {"question": q["id"], "seq": sent["seq"], "wake": wake_state}
 
-    def _start_wake(self, q: dict, answer: str) -> dict:
+    def wake_target(self, question: int) -> dict:
+        """Which worker answering ``question`` would wake, and whether it
+        can: ``{state: "ready"|"off"|"notice", worker?, reason?}``. Only the
+        worker recorded when the question was asked, as the asker."""
         if not self._wake_on_answer():
-            return {"state": "off"}
+            return {"state": "off", "reason": "waking agents on an answer is off (Plugins > huddle)"}
         client = self._client()
         if client is None:
             return {"state": "notice", "reason": "no band connection here"}
-        wid = find_worker(client.workers, q["asker"], q.get("worker"))
+        origin = self.store.origin(question)
+        if not origin.get("principal"):
+            return {"state": "notice", "reason": "the asker could not be verified"}
+        rec = origin.get("worker") or {}
+        wid = rec.get("id") if rec.get("id") in client.workers else None
+        if wid is None and origin.get("host"):
+            wid = worker_for_host(client.workers, origin["host"])
         if wid is None:
-            return {"state": "notice", "reason": "its worker is not on the band"}
-        caps = (client.workers.get(wid) or {}).get("caps", []) or []
-        name = (client.workers.get(wid) or {}).get("name") or wid
+            return {"state": "notice", "worker": rec.get("name") or origin.get("host"),
+                    "reason": "the agent's machine is not on the band"}
+        w = client.workers.get(wid) or {}
+        name = w.get("name") or wid
+        caps = w.get("caps", []) or []
         if "hermes.chat" not in caps and "agent.wake" not in caps:
-            return {"state": "notice", "worker": name, "reason": f"{name} cannot be woken"}
-        note = f"You asked in this huddle: {q['text']}\nThe answer: {answer}"
+            return {"state": "notice", "worker": name, "reason": f"{name} cannot start an agent"}
+        return {"state": "ready", "worker": name, "worker_id": wid}
+
+    def _start_wake(self, q: dict, answer: str) -> dict:
+        target = self.wake_target(q["id"])
+        if target["state"] != "ready":
+            return target
+        client, wid, name = self._client(), target["worker_id"], target["worker"]
+        p = self.store.origin(q["id"])["principal"]
+        from ...policy import Principal
+        principal = Principal(str(p["id"]), str(p.get("kind") or ""), str(p.get("role") or ""),
+                              tuple(p.get("groups") or ()), verified=bool(p.get("verified", True)),
+                              label=str(p.get("label") or ""))
+        # The person's words are the answer; the question is the agent's own,
+        # quoted and labelled as such, never presented as the person's note.
+        note = f'The person answered the question you asked in this huddle. Their answer: "{answer}"'
+        quoted = q["text"]
 
         async def run() -> None:
-            result = await wake(client, self.chat, q["room"], wid, PERSON, note)
+            result = await wake(client, self.chat, q["room"], wid, q["asker"], note,
+                                principal=principal, quoted=quoted)
             result["state"] = "woken" if result.get("ok") else "failed"
             result["at"] = time.time()
             self.store.set_wake(q["id"], result)

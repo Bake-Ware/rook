@@ -77,6 +77,8 @@ export async function mountHuddle(root,{onPins}={}){
       const form=el('form',undefined,'hd-answer');const ta=el('textarea');ta.rows=2;ta.placeholder='Your answer';ta.setAttribute('aria-label','Answer to '+name(q.asker));ta.value=drafts[q.id]||'';ta.oninput=()=>{drafts[q.id]=ta.value;};
       if(q.options&&q.options.length){const opts=el('div',undefined,'hd-opts');for(const o of q.options)opts.append(button(o,()=>{ta.value=o;drafts[q.id]=o;ta.focus();},'hd-opt'));form.append(opts);}
       const go=el('button','Answer','hd-send');go.type='submit';const row=el('div',undefined,'hd-answer-row');row.append(ta,go);form.append(row);
+      const t=q.wake_target||{};const target=el('p',t.state==='ready'?'Answering wakes the agent on '+t.worker+', with its own permissions.'
+        :'The agent sees your answer on its next call'+(t.reason?' ('+t.reason+')':'')+'.','hd-target'+(t.state==='ready'?' hd-target-on':''));form.append(target);
       const note=el('p','','hd-wake kn-dim');form.append(note);
       form.onsubmit=async e=>{e.preventDefault();if(!ta.value.trim())return ta.focus();go.disabled=true;note.textContent='';
         try{const r=await api('answer',{question:q.id,text:ta.value});delete drafts[q.id];

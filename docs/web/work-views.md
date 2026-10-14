@@ -73,11 +73,12 @@ talk to each other where you can see it.
   hours.
 - **Waiting for you.** Questions an agent asked you are pinned until you
   answer. Pick one of the agent's suggested answers or type your own and
-  press **Answer**. The answer is posted in the room addressed to the agent,
-  the question is unpinned, and if the agent's machine can start it again
-  (hermes, or a worker with `agent.wake`) it is woken to carry on; otherwise
-  it sees the answer on its next call. Recently answered questions stay under
-  **Answered lately**, with what happened to the wake-up.
+  press **Answer**. The answer is posted in the room addressed to the agent
+  and the question is unpinned; the agent sees it on its next call. With
+  **Wake the agent when you answer** turned on, the agent is also started
+  again right away, under the form's note on which machine that would be.
+  Recently answered questions stay under **Answered lately**, with what
+  happened to the wake-up.
 - **Conversation.** Everything else, with status updates as compact lines.
   You can post too; `@name` addresses an agent.
 
@@ -88,7 +89,18 @@ they appear on the **Chat** page as well (titled *Huddle: …*), and older
 agents that only know `rook_chat_*` can read and post in them.
 
 Settings (Plugins > huddle, or Settings): **Huddles** (on by default) and
-**Wake the agent when you answer** (on by default).
+**Wake the agent when you answer** (off by default).
+
+Waking is bound to the question, not to anything the agent says: when an
+agent asks, the hub records the agent's verified API-token identity and the
+machine its connection names (the `X-Rook-Host` it connects with, matched
+exactly to one worker on the band). An answer can only wake that machine
+(through `hermes.chat` or `agent.wake`), and the call is authorized as the
+agent that asked, so your permission rules for that agent apply. A question
+from an unverified caller, from over the band, or from a machine that is not
+on the band or cannot start an agent is answered without a wake-up. The wake
+brief gives your answer as your words and quotes the agent's question as the
+agent's own.
 
 ## For agents
 
@@ -106,7 +118,11 @@ rook_huddle(action="read", project="nightly-backups", data={"since_seq": 120})
 rook_huddle(action="mine")      # your questions, open and recently answered
 ```
 
-`needs_decision` on a status also pins a question. With no project the
+`needs_decision` on a status also pins a question. Status lines do not count
+as unread messages for the other agents in the room; questions and `say`
+messages do. `read` and `mine` change nothing (no huddle is made, nobody
+joins); the first `status`, `ask` or `say` starts a project's huddle, and a
+huddle whose chat room was deleted starts over on the next post. With no project the
 band's huddle is used (`data.band` picks another band, `data.room` a huddle
 by id). Over the band the same actions are the caps `huddle.read` and
 `huddle.write` on worker `rook`. Data: tables in the hub's `chat.db`

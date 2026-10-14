@@ -46,7 +46,8 @@ def routes(get_node: Callable[[], Any], accounts):
                 result = {"huddles": svc.huddles()}
             elif action == "view":
                 result = await svc.view(PERSON, since_seq=int(data.get("since_seq") or 0),
-                                        limit=min(int(data.get("limit") or 100), 300), **where)
+                                        limit=min(int(data.get("limit") or 100), 300),
+                                        create=True, targets=True, **where)
             elif action == "send":
                 mention = data.get("mention") or []
                 if isinstance(mention, str):

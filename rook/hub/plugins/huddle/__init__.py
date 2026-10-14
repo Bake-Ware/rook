@@ -45,9 +45,10 @@ class Huddle(Plugin):
                 label="Huddles",
                 help="Group rooms where agents post status and ask you questions, shown on Work > "
                      "Huddle. Read at start: restart the hub to apply."),
-        setting("wake_on_answer", bool, default=True, label="Wake the agent when you answer",
-                help="After you answer a question, start the asking agent again if its machine "
-                     "can (hermes or agent.wake). Off: it sees the answer on its next call."),
+        setting("wake_on_answer", bool, default=False, label="Wake the agent when you answer",
+                help="After you answer a question, start the asking agent again on the machine it "
+                     "asked from (hermes or agent.wake), with the agent's own permissions. Off: it "
+                     "sees the answer on its next call."),
     )
     GUIDANCE = {
         "tool:rook_huddle": "",
@@ -65,6 +66,9 @@ class Huddle(Plugin):
         super().__init__()
         self.service: HuddleService | None = None
         self._node = None
+        # Set by the MCP bridge: callable() -> the attributed caller (audit
+        # dict, with ``host``) of the current MCP tool call, or None.
+        self.attribution = None
 
     def available(self) -> bool:
         return bool(self.settings.get("enabled", True))
@@ -85,7 +89,8 @@ class Huddle(Plugin):
             return
         self.service = HuddleService(chat, store, project=self._project, bands=self._bands,
                                      link=self._link, client=lambda: getattr(node, "client", None),
-                                     wake_on_answer=lambda: bool(self.settings.get("wake_on_answer", True)))
+                                     origin=self._origin,
+                                     wake_on_answer=lambda: bool(self.settings.get("wake_on_answer", False)))
 
     async def stop(self) -> None:
         if self.service is not None:
@@ -134,6 +139,22 @@ class Huddle(Plugin):
                            {"kind": "chat", "ref": room, "relation": "discussed_in", "note": "Huddle"},
                            f"huddle-link:{room}", actor=SYSTEM)
 
+    def _origin(self):
+        """The current caller's authenticated principal (the MCP wrapper's)
+        and the host its attribution names. Band callers have none."""
+        from ...authz import current_principal
+        p = current_principal.get()
+        if p is None or getattr(p, "kind", "") == "band":
+            return None
+        host = None
+        if self.attribution is not None:
+            try:
+                host = (self.attribution() or {}).get("host")
+            except Exception:
+                log.exception("huddle: attribution lookup failed")
+        return {"principal": {"id": p.id, "kind": p.kind, "role": p.role, "groups": list(p.groups),
+                              "verified": bool(p.verified), "label": p.label}, "host": host}
+
     def _svc(self) -> HuddleService:
         if self.service is None:
             raise ValueError("huddles are off on this hub (the chat store is not open)")
@@ -153,15 +174,16 @@ class Huddle(Plugin):
         if action == "mine":
             return {"questions": svc.mine(me)}
         if action == "read":
+            # A read changes nothing: no huddle is made, nobody joins.
             return await svc.view(me, since_seq=int(since_seq or 0), limit=max(1, min(int(limit), 200)),
-                                  room=room, project=project, band=band)
+                                  create=False, room=room, project=project, band=band)
         raise ValueError("action must be one of " + ", ".join(READS))
 
     @capability("write", risk="write")
     async def write(self, action: str, room: str | None = None, project: str | None = None,
                     band: str | None = None, text: str | None = None, data: dict | None = None,
                     mention=None) -> dict:
-        """Post in a huddle: status (data {working_on, blocked_on?, needs_decision?, task?}), ask (text, data {options?, task?, worker?}), say (text, mention?), withdraw (data {question}).
+        """Post in a huddle: status (data {working_on, blocked_on?, needs_decision?, task?}), ask (text, data {options?, task?}), say (text, mention?), withdraw (data {question}).
 
         The huddle is room=, else project='s, else band='s (default: the
         primary band's); it is made on first use and you join it."""
