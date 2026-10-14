@@ -223,6 +223,8 @@ async def test_seed_on_a_fresh_knowledge_base(tmp_path):
     assert res["written"] == ["start", "chat", "old"] and not res["errors"]
     root = s.store.get("default", "rook-manual")
     assert root["title"] == "Rook manual" and "[[manual-start]] Start" in root["body"]
+    assert root["attrs"]["verification"] == "verified"
+    assert any(l["ref"] == "docs/manual/manifest.json" for l in root["links"])
     got = s.store.get("default", "manual-start")
     assert got["parent"] == root["id"] and got["body"].startswith("# Start")
     assert got["attrs"]["tags"] == ["rook-manual", "rook-0.1.0"]
@@ -403,6 +405,11 @@ async def test_dashboard_proxies_the_manual_api():
             assert r.status == 200 and seen["query"] == {"view": "pages"}   # members may read
             assert (await c.get("/account/manual/assets/manual.js")).status == 200
             assert (await c.get("/account/manual/assets/other.js")).status == 404
+
+
+def test_a_dashboard_login_carries_over_to_the_manual_api():
+    from rook.remote.bootstrap import CombinedServer
+    assert "/account/manual/api" in CombinedServer._BRIDGE_PATHS
 
 
 def test_guidance_defaults_prefer_text_over_an_empty_slot():

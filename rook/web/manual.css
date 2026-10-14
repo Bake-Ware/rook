@@ -34,7 +34,7 @@
 .mn-md a{color:var(--accent)}
 .mn-ref{text-decoration:underline dotted;text-transform:none}
 /* Banner above the views, operator only. */
-.mn-banner{display:flex;flex-wrap:wrap;gap:12px 18px;align-items:center;justify-content:space-between;border:1px solid var(--accent-dim);background:#1f1c12;padding:12px 16px;margin:0 0 18px}
+.mg.mn-banner{display:flex;flex-direction:row;max-width:none;flex-wrap:wrap;gap:12px 18px;align-items:center;justify-content:space-between;border:1px solid var(--accent-dim);background:#1f1c12;padding:12px 16px;margin:0 0 18px}
 .mn-banner-text{font-size:13.5px;line-height:1.5;flex:1 1 320px}
 .mn-banner-text span{color:var(--dim)}
 .mn-banner-actions{display:flex;gap:8px;flex-wrap:wrap}

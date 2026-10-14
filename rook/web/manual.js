@@ -20,11 +20,11 @@ async function post(csrf,body){
 
 // Markdown the manual uses: #..### headings, - and 1. lists, ``` code, `code`,
 // **bold**, [[manual-<id>]] page links and http(s) links.
-export function renderMarkdown(text,onPage){
+export function renderMarkdown(text,onPage,title=id=>id.replace(/-/g,' ')){
   const out=h('div',{class:'mn-md'});let list=null,sub=null,para=[],code=null;
   const inline=(s,into)=>{for(const part of s.split(/(\[\[[a-z0-9][a-z0-9-]{0,79}\]\]|`[^`]+`|\*\*[^*]+\*\*|https?:\/\/[^\s)<>"]+)/)){if(!part)continue;let m;
     if((m=part.match(/^\[\[(.+)\]\]$/))){const slug=m[1];const id=slug==='rook-manual'?'':slug.replace(/^manual-/,'');
-      if(slug.startsWith('manual-')||slug==='rook-manual'){const a=h('a',{href:'#help'+(id?'?page='+encodeURIComponent(id):''),class:'mn-ref',text:slug==='rook-manual'?'Rook manual':id.replace(/-/g,' ')});a.onclick=e=>{e.preventDefault();onPage(id);};into.append(a);}
+      if(slug.startsWith('manual-')||slug==='rook-manual'){const a=h('a',{href:'#help'+(id?'?page='+encodeURIComponent(id):''),class:'mn-ref',text:slug==='rook-manual'?'Rook manual':title(id)});a.onclick=e=>{e.preventDefault();onPage(id);};into.append(a);}
       else into.append(h('a',{href:'#knowledge?p='+encodeURIComponent(slug),class:'mn-ref',text:slug}));}
     else if(part.startsWith('`')&&part.endsWith('`')&&part.length>1)into.append(h('code',{text:part.slice(1,-1)}));
     else if(/^\*\*[^*]+\*\*$/.test(part))into.append(h('strong',{text:part.slice(2,-2)}));
@@ -130,7 +130,7 @@ export async function mountManual(root){
         p.deprecated?h('span',{class:'mn-badge warn',text:'deprecated'}):null,
         p.since?h('span',{class:'mn-dim',text:'since '+p.since}):null,
         p.source==='knowledge'?h('a',{href:'#knowledge?p='+encodeURIComponent(p.slug),text:'Open in Knowledge'}):null);
-      const body=renderMarkdown(p.body,id=>go(id));
+      const body=renderMarkdown(p.body,id=>go(id),id=>(pages.find(x=>x.id===id)||{}).title||id);
       // The page's own first heading is its title: show it once.
       const first=body.firstElementChild;if(first&&first.tagName==='H2'&&first.textContent.trim()===p.title.trim())first.remove();
       page.replaceChildren(h('h1',{text:p.title}),meta,body);

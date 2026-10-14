@@ -242,7 +242,8 @@ class ManualSync:
         if root is not None and root["kind"] != "knowledge":
             raise ValueError(f"The slug {manual_bundle.ROOT_SLUG!r} is taken by a {root['kind']}")
         root = await self._upsert(service, band, None, ROOT_TITLE, self._root_body(b),
-                                  manual_bundle.ROOT_SLUG, self._attrs(), None, stamp + ":root", root)
+                                  manual_bundle.ROOT_SLUG, self._attrs(), manual_bundle.MANIFEST,
+                                  stamp + ":root", root)
 
         for p in b.pages:
             entry = pages.get(p.id)
