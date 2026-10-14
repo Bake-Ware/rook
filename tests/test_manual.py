@@ -240,7 +240,7 @@ async def test_seed_on_a_fresh_knowledge_base(tmp_path):
     root = s.store.get("default", "rook-manual")
     assert root["title"] == "Rook manual" and "[[manual-start]] Start" in root["body"]
     assert root["attrs"]["verification"] == "verified"
-    assert any(l["ref"] == "docs/manual/manifest.json" for l in root["links"])
+    assert any(l["ref"] == "docs/manual/README.md" for l in root["links"])  # committed, unlike manifest.json
     got = s.store.get("default", "manual-start")
     assert got["parent"] == root["id"] and got["body"].startswith("# Start")
     assert got["attrs"]["tags"] == ["rook-manual", "rook-0.1.0"]

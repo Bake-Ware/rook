@@ -41,6 +41,9 @@ ROOT_TITLE = "Rook manual"
 #: The contents page's id in diffs and ``overwrite`` (not a valid page id).
 ROOT_ID = "_root"
 ROOT_LABEL = "Contents page (Rook manual)"
+#: The contents page's evidence: the manual folder's README (manifest.json is
+#: built, not committed, so it is not a stable reference).
+ROOT_EVIDENCE = "README.md"
 TAG = "rook-manual"
 VERSION_TAG = re.compile(r"^rook-\d")
 VERIFIED_FROM = {"actor": ACTOR["id"], "label": "the Rook manual"}
@@ -299,7 +302,7 @@ class ManualSync:
         rec = self._record(service, band, entry.get("record")) if entry else None
         if entry is None or rec is None:
             rec = await self._upsert(service, band, None, ROOT_TITLE, body, self._free_root_slug(service, band),
-                                     None, manual_bundle.MANIFEST, stamp + ":root", None)
+                                     None, ROOT_EVIDENCE, stamp + ":root", None)
             return rec, self._entry(rec, source)
         if entry.get("source") == source:
             return rec, entry            # unchanged upstream (an operator's edit stays)
@@ -307,7 +310,7 @@ class ManualSync:
             kept.append({"id": ROOT_ID, "why": "edited in the knowledge base"})
             return rec, {**entry, "source": source}
         rec = await self._upsert(service, band, None, ROOT_TITLE, body, rec["slug"], None,
-                                 manual_bundle.MANIFEST, stamp + ":root", rec)
+                                 ROOT_EVIDENCE, stamp + ":root", rec)
         return rec, self._entry(rec, source)
 
     async def apply(self, service, *, overwrite: set | list | tuple = (), reason: str = "update",
