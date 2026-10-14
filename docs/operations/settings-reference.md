@@ -366,6 +366,26 @@ are set only in the environment or on the command line.
 | `telegram.rate_in` | Inbound messages per user per minute | hub | int | `10` | `ROOK_TELEGRAM_RATE_IN` | restart |
 | `telegram.api_base` | API base URL | hub | url | `https://api.telegram.org` | `ROOK_TELEGRAM_API`, `ROOK_TELEGRAM_API_BASE` | restart |
 
+## Updates (hub plugin, runs in mcp)
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `updates.mode` | Updates | hub | str | `notify` | `ROOK_UPDATES_MODE` | live |
+| `updates.channel` | Release channel | hub | str | `stable` | `ROOK_UPDATES_CHANNEL` | live |
+| `updates.window` | Maintenance window | hub | str | `02:00-05:00` | `ROOK_UPDATES_WINDOW` | live |
+| `updates.canary` | Canary workers | hub | str |  | `ROOK_UPDATES_CANARY` | live |
+| `updates.batch` | Workers at a time | hub | int | `2` | `ROOK_UPDATES_BATCH` | live |
+| `updates.gate_secs` | Health check window (s) | hub | int | `300` | `ROOK_UPDATES_GATE_SECS` | live |
+| `updates.settle_secs` | Settle time (s) | hub | int | `30` | `ROOK_UPDATES_SETTLE_SECS` | live |
+| `updates.notify_chat` | Announce new releases in chat | hub | bool | on | `ROOK_UPDATES_NOTIFY_CHAT` | live |
+| `updates.check_hours` | Check every (hours) | hub | int | `6` | `ROOK_UPDATES_CHECK_HOURS` | live |
+| `updates.repo` | Rook repository | hub | str | `Bake-Ware/rook` | `ROOK_UPDATES_REPO` | live |
+| `updates.relay_repo` | Relay repository | hub | str | `Bake-Ware/telesthete` | `ROOK_UPDATES_RELAY_REPO` | live |
+| `updates.api_base` | GitHub API URL | hub | str |  | `ROOK_UPDATES_API`, `ROOK_UPDATES_API_BASE` | live |
+| `updates.token` | GitHub token (secret) | hub | str |  | `ROOK_UPDATES_GITHUB_TOKEN`, `ROOK_UPDATES_TOKEN` | live |
+| `updates.verify_attestations` | Check build provenance | hub | bool | off | `ROOK_UPDATES_VERIFY_ATTESTATIONS` | live |
+| `updates.auto_min_age_hours` | Auto: wait after a release (hours) | hub | int | `24` | `ROOK_UPDATES_AUTO_MIN_AGE_HOURS` | live |
+
 ## Voice (hub plugin, runs in mcp)
 
 | Key | Label | Scope | Type | Default | Env / flag | Apply |

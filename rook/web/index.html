@@ -113,6 +113,9 @@
   button.danger.sm{padding:5px 11px;font-size:.72rem;border-radius:6px;cursor:pointer;
     background:var(--bad-bg);border:1px solid var(--bad-line);color:var(--bad)}
   button.danger.sm:hover{background:color-mix(in srgb,var(--bad) 18%,transparent);border-color:var(--bad)}
+  .tagold{margin-left:8px;padding:1px 6px;border:1px solid var(--bad-line);color:var(--bad);font-size:.62rem;letter-spacing:.5px;text-transform:uppercase;white-space:nowrap}
+  .update-note{margin:6px 0;padding:8px 10px;border:1px solid var(--bad-line);background:var(--bad-bg);color:var(--fg);font-size:.78rem;line-height:1.45}
+  .update-note a{color:var(--accent)}
   .banbadge{display:inline-block;margin-right:10px;font-size:.72rem;font-weight:600;color:var(--bad);
     letter-spacing:.03em;vertical-align:middle}
   .item.banned{opacity:.6} .item.banned .row{border-left:2px solid var(--bad)}
@@ -351,6 +354,7 @@
       <a id="tab-settings" href="#settings" onclick="showView('settings');return false">Settings</a>
       <a id="tab-plugins" href="#plugins" onclick="showView('plugins');return false">Plugins</a>
       <a id="tab-ccmod" href="#ccmod" onclick="showView('ccmod');return false">Claude Code</a>
+      <a id="tab-updates" href="#updates" onclick="showView('updates');return false">Updates</a>
       <a id="tab-account" href="#account" onclick="showView('account');return false">Account & access</a>
       <a id="tab-tokens" href="#tokens" onclick="showView('tokens');return false">API tokens</a>
       <a id="tab-guidance" href="#guidance" onclick="showView('guidance');return false">Agent instructions</a>
@@ -443,6 +447,7 @@
     <div id="view-settings" hidden></div>
     <div id="view-plugins" hidden></div>
     <div id="view-ccmod" hidden></div>
+    <div id="view-updates" hidden></div>
     <div id="view-account" hidden></div>
     <div id="view-tokens" hidden></div>
     <div id="view-bands" hidden><p class="empty">Loading bands…</p></div>
@@ -793,7 +798,7 @@ function updateMeta(m,w){
   // What it hosts (hand-written on the hub): links on expand.
   const hsig=JSON.stringify(w.serves||null);
   if(hsig!==m.hostingSig){ m.hostingSig=hsig; m.hosting.replaceChildren(hostingBox(w)); }
-  m.wrap.querySelector('.name').innerHTML=deviceIcon(w)+`<span class="n">${esc(w.name||w.worker_id)}</span><span class="id">${esc(w.worker_id.slice(0,8))}</span>`+(fw?'<span class="tagfw">firmware</span>':'')+(w.description?'<span class="worker-description">'+esc(w.description)+'</span>':'');
+  m.wrap.querySelector('.name').innerHTML=deviceIcon(w)+`<span class="n">${esc(w.name||w.worker_id)}</span><span class="id">${esc(w.worker_id.slice(0,8))}</span>`+(fw?'<span class="tagfw">firmware</span>':'')+(w.update_note?'<span class="tagold" title="'+esc(w.update_note)+'">update needed</span>':'')+(w.description?'<span class="worker-description">'+esc(w.description)+'</span>':'');
   const caps=w.caps||[], has=c=>caps.includes(c);
   if(!m.acts.firstChild){
     const button=document.createElement('button');button.className='worker-menu-button';button.textContent='⋯';
@@ -808,6 +813,15 @@ function updateMeta(m,w){
   if(!!w.banned!==m.bannedSig){ m.bannedSig=!!w.banned;
     m.wrap.classList.toggle('banned',!!w.banned);
     m.banrow.innerHTML = w.banned?'<span class="banbadge">⛔ deauthed</span>':'';
+  }
+  // Too old for this hub, or for a pending breaking update (rook/hub/update_feed.py):
+  // a tag by the name, the full sentence (with a link to Updates) when expanded.
+  if((w.update_note||'')!==m.noteSig){ m.noteSig=w.update_note||'';
+    m.wrap.classList.toggle('too-old',!!w.update_note);
+    let n=m.banrow.parentNode.querySelector('.update-note');
+    if(w.update_note){ if(!n){n=document.createElement('div');n.className='update-note';m.banrow.before(n);}
+      n.innerHTML=esc(w.update_note).replace('Manage &gt; Updates','<a href="#updates" onclick="event.stopPropagation();showView(\'updates\');return false">Manage &gt; Updates</a>'); }
+    else if(n) n.remove();
   }
   m.bar.title=w.name||w.worker_id;
 }
@@ -1124,6 +1138,7 @@ const viewInfo={
  settings:['Settings','Hub, band, worker, plugin and personal settings, with where each value comes from.'],
  plugins:['Plugins','What Rook can do on the hub and on each worker: switch plugins live, set defaults for new workers.'],
  ccmod:['Claude Code','Rules for Claude Code on your workers: when something happens in a session, do something.'],
+ updates:['Updates','New Rook releases for the hub, your workers, apps and devices: what each one runs, and updating them safely.'],
  work:['Work','Projects and tasks on a board, a list and a timeline, and the huddle where agents check in with you.'],
  sessions:['Sessions','Start, watch, steer and resume agent and terminal sessions on every worker.'],
  install:['Install a worker','Connect another machine to your workspace.'],
@@ -1201,6 +1216,12 @@ async function ensureCcmod(){
  if(ccmodUI)return ccmodUI;
  if(!ccmodLoading)ccmodLoading=import('/account/ccmod/assets/ccmod.js').then(m=>m.mountCcmod($('#view-ccmod'))).then(ui=>ccmodUI=ui).finally(()=>{ccmodLoading=null;});
  return ccmodLoading;
+ }
+let updatesUI=null, updatesLoading=null;
+async function ensureUpdates(){
+ if(updatesUI)return updatesUI;
+ if(!updatesLoading)updatesLoading=import('/account/updates/assets/updates.js').then(m=>m.mountUpdates($('#view-updates'))).then(ui=>updatesUI=ui).finally(()=>{updatesLoading=null;});
+ return updatesLoading;
 }
 function settingsQuery(){const [view,query]=location.hash.slice(1).split('?');return view==='settings'?(query||''):'';}
 async function ensureGuidance(){
@@ -1273,6 +1294,7 @@ function showView(v,updateHistory=true){
  if(activeView==='memory')memoryUI?.deactivate();
  if(activeView==='plugins')pluginsUI?.deactivate();
  if(activeView==='ccmod')ccmodUI?.deactivate();
+ if(activeView==='updates')updatesUI?.deactivate();
  if(activeView==='overview')overviewUI?.deactivate();
  if(activeView==='start')startUI?.deactivate();
  activeView=v;document.body.dataset.view=v;
@@ -1285,6 +1307,7 @@ function showView(v,updateHistory=true){
  if(v==='chat'){startChat();}else{stopChat();}
  if(v==='settings')ensureSettingsArea().then(ui=>{if(activeView==='settings')return ui.activate(settingsQuery());}).catch(e=>{$('#view-settings').textContent=e.message;});
  if(v==='ccmod')ensureCcmod().then(ui=>{if(activeView==='ccmod')return ui.activate();}).catch(e=>{$('#view-ccmod').textContent=e.message;});
+ if(v==='updates')ensureUpdates().then(ui=>{if(activeView==='updates')return ui.activate();}).catch(e=>{$('#view-updates').textContent=e.message;});
  if(v==='plugins')ensurePlugins().then(ui=>{if(activeView==='plugins')return ui.activate();}).catch(e=>{$('#view-plugins').textContent=e.message;});
  if(v==='vault')ensureVault().then(ui=>{if(activeView==='vault')ui.activate();}).catch(e=>{$('#view-vault').textContent=e.message;});
  if(v==='voice')ensureVoice().then(ui=>{if(activeView==='voice')ui.activate();}).catch(e=>{$('#view-voice').textContent=e.message;});

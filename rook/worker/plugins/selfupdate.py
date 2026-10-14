@@ -172,6 +172,13 @@ class SelfUpdatePlugin(Plugin):
         self._worker = None
         self._ota_rx = None          # active OtaDropReceiver, if a push is running
         self._ota_manifest: dict = {}
+        # One bundle install at a time (download -> verify -> swap): a second
+        # worker.apply/check/update, or an in-band push finishing, while one
+        # runs or after one swapped in (restart pending) is refused, never
+        # interleaved: a second swap would overwrite .prev, the rollback
+        # copy, with the unverified build.
+        self._applying = False
+        self._swapped_to = 0
 
     # -- in-band OTA over telesthete Drop ------------------------------------
 
@@ -248,6 +255,44 @@ class SelfUpdatePlugin(Plugin):
         return {"ok": True, "action": "receiving", "drop_id": int(drop_id),
                 "from_build": BUILD, "to_build": target}
 
+    # -- one install at a time -------------------------------------------------
+
+    def _apply_busy(self) -> dict | None:
+        """The refusal for a second install, or None (and the caller may go)."""
+        if self._applying:
+            return {"ok": False, "error": "an update is already in progress"}
+        if self._swapped_to:
+            return {"ok": False, "error": f"update to build {self._swapped_to} already "
+                                          "installed; restarting"}
+        return None
+
+    async def _exclusive(self, coro_fn, *args, **kwargs) -> dict:
+        """Run one install exclusively. The check and the claim have no await
+        between them, so two calls on the event loop cannot both get in."""
+        busy = self._apply_busy()
+        if busy:
+            return busy
+        self._applying = True
+        try:
+            return await coro_fn(*args, **kwargs)
+        finally:
+            self._applying = False
+
+    @staticmethod
+    def _stage(data: bytes) -> Path:
+        """Write a downloaded bundle to a file of its own beside the
+        installed one (same filesystem, so the swap is an atomic rename)."""
+        import tempfile
+        _WORKER_DIR.mkdir(parents=True, exist_ok=True)
+        fd, name = tempfile.mkstemp(prefix="band-worker.", suffix=".pyz.dl", dir=str(_WORKER_DIR))
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(data)
+        except BaseException:
+            Path(name).unlink(missing_ok=True)
+            raise
+        return Path(name)
+
     def _on_ota_complete(self, data: bytes, sha_ok: bool) -> None:
         # Called from the Drop receiver when the file is whole + self-consistent.
         asyncio.ensure_future(self._finish_inband(data, sha_ok))
@@ -276,7 +321,9 @@ class SelfUpdatePlugin(Plugin):
             tmp.unlink(missing_ok=True)
             log.warning("in-band OTA: sha256 mismatch vs signed manifest; discarding")
             return
-        res = await self._swap_and_restart(tmp, target, BUILD)
+        res = await self._exclusive(self._swap_and_restart, tmp, target, BUILD)
+        if not res.get("ok"):
+            tmp.unlink(missing_ok=True)
         log.info("in-band OTA result: %s", res)
 
     # -- lifecycle: OTA convergence ------------------------------------------
@@ -498,36 +545,44 @@ class SelfUpdatePlugin(Plugin):
             src = url or manifest.get("url")
             if not src:
                 return {"ok": False, "error": "no download url (pass url= or a manifest with url)"}
-            _WORKER_DIR.mkdir(parents=True, exist_ok=True)
-            tmp = _WORKER_DIR / "band-worker.pyz.dl"
-            try:
-                tmp.write_bytes(await self._http_get(src, timeout=120))
-            except Exception as e:
-                tmp.unlink(missing_ok=True)
-                return {"ok": False, "error": f"download failed: {type(e).__name__}: {e}"}
-            if sha256_file(tmp) != manifest.get("sha256"):
-                tmp.unlink(missing_ok=True)
-                return {"ok": False, "error": "sha256 mismatch vs signed manifest (fail-closed)"}
-            if not await self._smoke_test(tmp):
-                tmp.unlink(missing_ok=True)
-                return {"ok": False, "error": "bundle failed --selftest; not installing"}
-            try:
-                import shutil
-                if _PYZ.exists():
-                    shutil.copy2(_PYZ, _PREV)
-                # chmod before the swap: the new bundle is never in place
-                # without its execute bit.
-                os.chmod(tmp, 0o755)
-                os.replace(tmp, _PYZ)
-            except Exception as e:
-                tmp.unlink(missing_ok=True)
-                return {"ok": False, "error": f"swap failed: {type(e).__name__}: {e}"}
+            res = await self._exclusive(self._install_for_update, manifest, src, target)
+            if not res.get("ok"):
+                return res
             notes.append(f"bundle build {target} installed from {src}")
         new_argv = self._current_argv(hub=hub, psk=psk, name=name)
         persisted = self._persist(new_argv)
         self._schedule_restart(new_argv)
         return {"ok": True, "supervisor": _supervisor(), "notes": notes,
                 "persisted_unit": persisted, "restarting": True}
+
+    async def _install_for_update(self, manifest: dict, src: str, target: int) -> dict:
+        """worker.update's install: download, sha256 against the signed
+        manifest, --selftest, swap (keeping .prev). Run via _exclusive."""
+        from .._update_verify import sha256_file
+        try:
+            data = await self._http_get(src, timeout=120)
+        except Exception as e:
+            return {"ok": False, "error": f"download failed: {type(e).__name__}: {e}"}
+        tmp = self._stage(data)
+        if sha256_file(tmp) != manifest.get("sha256"):
+            tmp.unlink(missing_ok=True)
+            return {"ok": False, "error": "sha256 mismatch vs signed manifest (fail-closed)"}
+        if not await self._smoke_test(tmp):
+            tmp.unlink(missing_ok=True)
+            return {"ok": False, "error": "bundle failed --selftest; not installing"}
+        try:
+            import shutil
+            if _PYZ.exists():
+                shutil.copy2(_PYZ, _PREV)
+            # chmod before the swap: the new bundle is never in place
+            # without its execute bit.
+            os.chmod(tmp, 0o755)
+            os.replace(tmp, _PYZ)
+        except Exception as e:
+            tmp.unlink(missing_ok=True)
+            return {"ok": False, "error": f"swap failed: {type(e).__name__}: {e}"}
+        self._swapped_to = target
+        return {"ok": True}
 
     # -- OTA convergence internals -------------------------------------------
 
@@ -576,7 +631,13 @@ class SelfUpdatePlugin(Plugin):
                               base_url: str | None = None) -> dict:
         """Apply a signed manifest — from the poll loop OR pushed in-band via
         worker.apply. Verifies signature + hash + selftest before swapping, so
-        the delivery channel is untrusted; only the signature grants the swap."""
+        the delivery channel is untrusted; only the signature grants the swap.
+        One at a time (:meth:`_exclusive`)."""
+        return await self._exclusive(self._apply_manifest_now, manifest, force=force,
+                                     base_url=base_url)
+
+    async def _apply_manifest_now(self, manifest: dict, *, force: bool = False,
+                                  base_url: str | None = None) -> dict:
         from .._build_info import BUILD
         from .._update_verify import verify_manifest, sha256_file
 
@@ -603,12 +664,11 @@ class SelfUpdatePlugin(Plugin):
                 pyz_url = urljoin(base, manifest.get("filename", "band-worker.pyz"))
         if not pyz_url:
             return {"ok": False, "error": "no download url (manifest lacks url and ROOK_UPDATE_URL unset)"}
-        _WORKER_DIR.mkdir(parents=True, exist_ok=True)
-        tmp = _WORKER_DIR / "band-worker.pyz.dl"
         try:
-            tmp.write_bytes(await self._http_get(pyz_url, timeout=120))
+            data = await self._http_get(pyz_url, timeout=120)
         except Exception as e:
             return {"ok": False, "error": f"bundle download failed: {type(e).__name__}: {e}"}
+        tmp = self._stage(data)
         if sha256_file(tmp) != manifest.get("sha256"):
             tmp.unlink(missing_ok=True)
             return {"ok": False, "error": "sha256 mismatch (fail-closed)"}
@@ -631,6 +691,7 @@ class SelfUpdatePlugin(Plugin):
         except Exception as e:
             tmp.unlink(missing_ok=True)
             return {"ok": False, "error": f"swap failed: {type(e).__name__}: {e}"}
+        self._swapped_to = target
 
         self._write_state({"stage": "swapped", "target_build": target,
                            "prev_build": from_build, "attempts": 0, "at": int(time.time()),

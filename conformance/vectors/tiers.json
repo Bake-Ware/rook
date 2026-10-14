@@ -1048,6 +1048,27 @@
     "sensitive"
    ]
   },
+  "updates.apply_hub": {
+   "tier": "admin",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "updates.check": {
+   "tier": "admin"
+  },
+  "updates.history": {
+   "tier": "read"
+  },
+  "updates.rollout": {
+   "tier": "admin",
+   "tags": [
+    "destructive"
+   ]
+  },
+  "updates.status": {
+   "tier": "read"
+  },
   "voice.replies": {
    "tier": "read"
   },

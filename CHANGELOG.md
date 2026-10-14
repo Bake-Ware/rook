@@ -254,6 +254,56 @@ Manual: claude-code-rules
   and capability actions run as `system:ccmod:<rule>`; the Claude Code page
   uses the theme colours.
 
+### Autoupdate
+Manual: updates
+- Manage > Updates (new hub plugin `updates`): the hub checks Rook's GitHub
+  releases (ETag, backoff; prereleases only on the prerelease channel),
+  verifies downloads against `SHA256SUMS` and, where required, build
+  provenance of the files and `release.json` (`gh attestation verify` scoped
+  to the release workflow, the release tag and GitHub-hosted runners; fails
+  closed), re-reads a tag that was published again, and shows the hub,
+  workers, apps and firmware against what is available, with release notes,
+  progress and history.
+- Hub self-update through `rook hub deploy` (the release sdist repacked and
+  signed by the hub; dead-man rollback applies; the hub's key is passed
+  explicitly unless the operator pinned one, and a pin to another key
+  refuses the update) or by re-running the release's `install-hub.sh` with the wheel
+  the hub verified (`--package`) on a `--user` install; other installs get the
+  command to run. Refused, not run inside the hub's own service, when
+  `systemd-run` cannot start it. Rollback from the History tab.
+- Staged worker rollouts: test worker first, then batches, stopping at the
+  first failed health check (new build announced, answers the hub, stays on
+  it). Behaviour change: with the updates plugin on, a new worker bundle is
+  no longer pushed to every worker at once; `/band-worker.json` and the push
+  loop serve the *released* build (`/updates/worker/<build>/band-worker.pyz`)
+  until a rollout releases the next one, and new builds are announced in
+  chat. The first run releases the bundle the hub already has. Switching the
+  plugin off, or the update service not running for 15 minutes, restores the
+  old behaviour. The push loop leaves a running rollout's workers alone, and
+  the feed keeps only bundles signed by the hub's own key.
+- Breaking releases: each release publishes `release.json` (compat floors,
+  breaking flag and reasons, relay pin, app and firmware versions) and
+  `install-hub.sh`; a breaking or unknown update (cumulative over every
+  release since the hub's own; a missing or mistyped floor counts as unknown)
+  needs the operator's acknowledgement, and the devices it cuts off updated
+  or acknowledged; the Workers page tags devices too old for this hub or for
+  a pending breaking update.
+- Settings `updates.mode` (off / notify, the default / auto), `channel`,
+  `window`, `canary`, `batch`, `gate_secs`, `auto_min_age_hours`. Auto mode
+  updates the hub only to a stable patch release of its own minor version,
+  stable for 24 hours, crossing no breaking or unknown release, whose
+  provenance verifies (needs the `gh` CLI). New releases are announced once
+  through `notify.send`.
+- Android: publish a release's APK through `/apk` and ask phones to update
+  (`device.update`). Desktop: `GET /updates/desktop.json`. Firmware versions
+  are shown (ESP32 announce, RP2040 `dongle.status`); flashing stays manual.
+- Workers install one update at a time: a second `worker.apply`,
+  `worker.check`, `worker.update` or in-band push while one is downloading,
+  or after one was swapped in and the restart is pending, is refused ("an
+  update is already in progress") instead of interleaving, so the rollback
+  copy (`band-worker.pyz.prev`) is never overwritten by an unverified build.
+  Each download goes to its own temporary file, removed on failure.
+
 ### Hub merge
 - One hub process: `rook hub serve` (console script `rook-hub`) runs the
   dashboard and the MCP server together on the dashboard port (7005): the MCP

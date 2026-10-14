@@ -19,6 +19,16 @@ log = logging.getLogger(__name__)
 WEB_DIR = Path(__file__).resolve().parents[1] / "web"
 
 
+def _update_note(row: dict, pending: dict | None) -> str:
+    """The Workers page's "too old" message for a row (rook/hub/update_feed.py)."""
+    try:
+        from ..hub.update_feed import worker_note
+        return worker_note(row, pending=pending)
+    except Exception:
+        log.debug("update note failed", exc_info=True)
+        return ""
+
+
 def _versioned_assets(html: str, web_dir) -> str:
     """Append ?v=<content version> to dashboard asset URLs. Cloudflare rewrites
     asset caching to hours, so without this a deploy keeps serving browsers the
@@ -1579,6 +1589,9 @@ class CombinedServer:
         # The bundle installers download: operator-built, else built here.
         from .worker_bundle import WorkerBundle
         self._bundle = WorkerBundle(lambda: self.public_base)
+        from ..hub.update_feed import WorkerFeed
+        self._feed = WorkerFeed()
+        self._started_at = time.time()
         from .band_overview import BandOverview
         self._overview = BandOverview(self._band_worker_rows, self._overview_call)
         # Known bands for the dashboard selector. PSKs stay server-side; the UI
@@ -1619,6 +1632,10 @@ class CombinedServer:
         self._app.router.add_get("/band-worker.pyz", self._band_worker_pyz)
         self._app.router.add_get("/band-worker-enrollment.pyz", self._band_worker_pyz)
         self._app.router.add_get("/band-worker.json", self._band_worker_manifest)
+        # The update service's worker feed (rook/hub/update_feed.py): every
+        # build it keeps, by number, and the desktop app's update check.
+        self._app.router.add_get("/updates/worker/{build}/band-worker.pyz", self._feed_pyz)
+        self._app.router.add_get("/updates/desktop.json", self._desktop_update)
         self._app.router.add_get("/apk", self._worker_apk)
         self._app.router.add_get("/apk.json", self._worker_apk_manifest)
         self._app.router.add_get("/install", self._installer)    # unified installer (worker | cli | both)
@@ -1727,7 +1744,8 @@ class CombinedServer:
         return passwd == self.web_pass
 
     _AUTH_EXEMPT = ("/health", "/worker", "/band-worker.pyz",
-                    "/band-worker-enrollment.pyz", "/band-worker.json", "/enroll", "/install",
+                    "/band-worker-enrollment.pyz", "/band-worker.json", "/updates/worker",
+                    "/updates/desktop.json", "/enroll", "/install",
                     "/rook", "/rook.py", "/hub", "/telesthete-hub")
 
     @classmethod
@@ -2089,10 +2107,20 @@ class CombinedServer:
                 await asyncio.sleep(20.0)
                 if self._band is None:
                     continue
-                try:
-                    manifest = json.loads(self._bundle.path("band-worker.json").read_text())
-                except Exception:
-                    continue
+                # The update service's released build when it runs the
+                # feed (new builds go out by staged rollout), else the bundle.
+                manifest = self._feed_manifest()
+                # Workers in a running staged rollout are the rollout's: a
+                # push of the released build would race its pushes.
+                busy: set = set()
+                if manifest is None:
+                    try:
+                        manifest = json.loads(self._bundle.path("band-worker.json").read_text())
+                    except Exception:
+                        continue
+                else:
+                    from ..hub.update_feed import rollout_targets
+                    busy = rollout_targets(self._feed.root)
                 if not manifest.get("sig"):
                     continue  # unsigned -> workers would reject; don't bother
                 target = int(manifest.get("build", 0))
@@ -2104,6 +2132,8 @@ class CombinedServer:
                         continue  # deauthed — never feed a banned node updates
                     if "worker.apply" not in (w.get("caps") or []):
                         continue  # can't receive an in-band push yet
+                    if wid in busy:
+                        continue  # the staged rollout is updating it
                     b = w.get("build")
                     if not isinstance(b, int) or b <= 0 or b >= target:
                         continue
@@ -2314,7 +2344,13 @@ class CombinedServer:
 
     async def _band_worker_manifest(self, request: web.Request) -> web.Response:
         """Serve the signed OTA manifest (band-worker.json) next to the pyz.
-        Public + no-cache so converging workers always see the current build."""
+        Public + no-cache so converging workers always see the current build.
+
+        When the update service runs the worker feed, this is its *released*
+        build: a newer bundle reaches workers through a staged rollout first."""
+        released = self._feed_manifest()
+        if released is not None:
+            return web.json_response(released, headers={"Cache-Control": "no-store"})
         manifest_path = self._bundle.path("band-worker.json")
         if manifest_path is None:
             return self._bundle_missing("band-worker.json")
@@ -2324,14 +2360,77 @@ class CombinedServer:
             headers={"Cache-Control": "no-store"},
         )
 
+    def _feed_manifest(self) -> dict | None:
+        """The update service's released worker manifest, or None when the
+        service is off (hub plugins off, or its plugin switched off on the
+        Plugins page) or not running (its summary.json has gone stale while
+        this dashboard has been up long enough to see a fresh one): then the
+        bundle is served and pushed as before, and a feed left behind pins
+        nobody."""
+        if os.environ.get("ROOK_HUB_PLUGINS", "1") == "0":
+            return None
+        try:
+            from ..hub.plugin_profiles import hub_disabled
+            if "updates" in hub_disabled(self._settings_store):
+                return None
+        except Exception:
+            log.debug("reading the hub plugin switches failed", exc_info=True)
+        from ..hub.update_feed import SERVICE_STALE_SECS, service_alive
+        now = time.time()
+        if now - self._started_at > SERVICE_STALE_SECS and not service_alive(self._feed.root, now):
+            return None
+        return self._feed.released_manifest()
+
+    async def _feed_pyz(self, request: web.Request) -> web.Response:
+        """A worker bundle kept in the update feed, by build. Public like
+        /band-worker.pyz: the signed manifest that names it is the trust."""
+        path = self._feed.pyz_for(request.match_info.get("build", ""))
+        if path is None:
+            return web.Response(status=404, text="no such worker build on this hub\n",
+                                headers={"Cache-Control": "no-store"})
+        return web.FileResponse(path, headers={
+            "Content-Type": "application/octet-stream",
+            "Content-Disposition": "attachment; filename=band-worker.pyz"})
+
+    async def _desktop_update(self, request: web.Request) -> web.Response:
+        """The desktop app's update check (docs/operations/updates.md):
+        ``?version=0.1.0&platform=linux|macos|windows``. Public, and only
+        what the GitHub release page shows anyway."""
+        from ..hub.update_feed import summary
+        from ..hub.release_meta import version_lt
+        latest = (summary() or {}).get("latest") or {}
+        version = request.query.get("version", "")[:40]
+        plat = request.query.get("platform", "").lower()[:20]
+        patterns = {"linux": (".AppImage", ".deb"), "macos": (".dmg",), "windows": ("-setup.exe", ".msi")}
+        downloads = [{"name": n, "url": u} for n, u in (latest.get("assets") or {}).items()
+                     if n.lower().startswith("rook-desktop") and n.endswith(patterns.get(plat, ()))]
+        return web.json_response({
+            "current": version, "latest": latest.get("version"),
+            "update_available": bool(latest.get("version") and version
+                                     and version_lt(version, latest["version"])),
+            "notes_url": latest.get("html_url"), "published_at": latest.get("published_at"),
+            "downloads": downloads,
+        }, headers={"Cache-Control": "no-store"})
+
+    def _apk_files(self) -> tuple[Path, Path, str]:
+        """(apk, manifest, approved sha256): the APK the update service
+        published from a release (approved by its verified manifest), else the
+        operator's rook/remote copy with ``ROOK_PUBLIC_APK_SHA256``."""
+        env_hash = os.environ.get("ROOK_PUBLIC_APK_SHA256", "")
+        from ..hub.update_feed import published_apk, updates_dir
+        pub = published_apk()
+        if pub is not None and (not env_hash or env_hash == pub[1].get("sha256")):
+            return pub[0], updates_dir() / "apk" / "rook-worker-apk.json", pub[1]["sha256"]
+        here = Path(__file__).parent
+        return here / "rook-worker.apk", here / "rook-worker-apk.json", env_hash
+
     async def _worker_apk(self, request: web.Request) -> web.Response:
         """Serve the native Android worker APK (built by android/, dropped here)."""
         # Legacy APK builds may contain a default PSK. Keep them behind login
         # until the Google enrollment work supplies a verified generic APK.
-        expected_hash = os.environ.get("ROOK_PUBLIC_APK_SHA256", "")
+        apk_path, _, expected_hash = self._apk_files()
         if not self.web_pass and not expected_hash:
             return web.Response(status=503, text="Configure dashboard login before downloading the APK.")
-        apk_path = Path(__file__).parent / "rook-worker.apk"
         if not apk_path.exists():
             return web.Response(
                 status=404,
@@ -2364,9 +2463,8 @@ class CombinedServer:
         if not isinstance(response, web.FileResponse):
             return response
         try:
-            manifest = json.loads((Path(__file__).parent / "rook-worker-apk.json").read_text())
-            expected = os.environ.get("ROOK_PUBLIC_APK_SHA256", "")
-            apk = Path(__file__).parent / "rook-worker.apk"
+            apk, manifest_path, expected = self._apk_files()
+            manifest = json.loads(manifest_path.read_text())
             if (not expected or manifest.get("sha256") != expected
                     or manifest.get("package") != "systems.bake.rook"
                     or type(manifest.get("version_code")) is not int
@@ -2479,6 +2577,8 @@ class CombinedServer:
             return []
         now = time.time()
         out = []
+        from ..hub.update_feed import summary
+        pending = summary().get("pending_floors")
         for w in self._band.workers.values():
             band = w.get("band")
             if want and band not in (want, "*"):
@@ -2502,6 +2602,7 @@ class CombinedServer:
                 # flag any still lingering (not yet parked / uncooperative).
                 "banned": self._ban_match(w.get("name"), w.get("worker_id")),
             })
+            out[-1]["update_note"] = _update_note(out[-1], pending)
         out.sort(key=lambda x: x["name"] or "")
         return out
 

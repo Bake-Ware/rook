@@ -54,6 +54,12 @@ are available for isolated upgrade tests; never publish their test artifacts.
 Desktop worker update artifacts are independent and need not change for APK-only
 releases.
 
+When a Rook release carries the APK (`rook-worker.apk` and
+`rook-worker-apk.json`), Manage > Updates > Phones and apps can publish it
+instead: the hub checks both against the release's `SHA256SUMS`, serves them
+at `/apk` and `/apk.json`, and asks phones that are behind to check now
+(docs/operations/updates.md).
+
 ## Verification
 
 On an isolated Android 14 emulator, version code 5 accepted a same-signer test
