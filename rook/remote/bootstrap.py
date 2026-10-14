@@ -1558,7 +1558,8 @@ class CombinedServer:
         primary = next((b for b in self._enrollment.bands(secrets_visible=True) if b["is_primary"]), None)
         current_key = (primary["psk"] if primary["active"] else "") if primary else s.get("band_psk")
         err = f'<p class="error" role="alert">{_html.escape(error)}</p>' if error else ""
-        return render("setup.html", error=err, csrf=self._setup_csrf,
+        from ..hub.plugin_profiles import setup_presets_html
+        return render("setup.html", error=err, csrf=self._setup_csrf, presets=setup_presets_html(),
                       band_name=s.get("band_name") or self.band_name,
                       hub_public=s.get("hub_public") or "",
                       pyz_domain=s.get("pyz_domain") or "",
@@ -1599,8 +1600,24 @@ class CombinedServer:
         self._apply_domain(saved["pyz_domain"])
         self._enrollment.import_config(hub=self.hub_public)
         await self._sync_enrollment()
+        if data.get("presets_shown"):
+            self._setup_presets(data.getall("preset", []))
         log.info("Setup wizard: band '%s' configured (hub=%s)", self.band_name, self.hub_public)
         raise web.HTTPFound("/")
+
+    def _setup_presets(self, selected: list) -> None:
+        """Store the wizard's "What do you want Rook to do?" choice: the hub's
+        plugin switches and the primary band's defaults for new workers
+        (rook.hub.plugin_profiles; the MCP applies the hub part when the
+        Plugins page next loads, or at its next start)."""
+        from ..hub.plugin_profiles import PRESET_IDS, apply_presets_to_store
+        try:
+            primary = next((b for b in self._enrollment.bands() if b["is_primary"]), None)
+            apply_presets_to_store(self._settings_store, [p for p in selected if p in PRESET_IDS],
+                                   primary["id"] if primary else None, actor="human:setup",
+                                   source="setup")
+        except Exception:
+            log.exception("Setup wizard: storing the plugin presets failed")
 
     async def start(self) -> None:
         self._runner = web.AppRunner(self._app, access_log_class=InstallerAccessLogger,
