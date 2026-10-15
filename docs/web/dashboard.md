@@ -59,6 +59,17 @@ callable over the band. The dashboard forwards the admitted caller (a
 dashboard human, owner or member) to the bridge with the bridge's internal
 `mask.token`.
 
+The cap panel's **run** button and the `rook band` terminal call
+`POST /api/band/call`. The dashboard does not put that call on the band
+itself: it forwards it to the bridge's `POST /internal/band-call`
+(rook/band_mcp/dashboard_call.py) with the same internal token and the
+admitted person in `X-Rook-Principal`, and the bridge runs it the way it runs
+an agent's `rook_call` (the hub's own caps in-process, policy for that person,
+vault values masked in the reply, a journal row). Only a `human:*` principal
+is accepted there. When the bridge can't be reached (or predates the route),
+calls to workers fall back to a direct band call; calls to the hub's own caps
+answer that the MCP server isn't reachable.
+
 The editor's schedule helper calls `job.read` `next` with
 `data.trigger` (an unsaved trigger) for the next fire times. The Guardrails
 tab sends the draft `{deny, allow}` to `guardrails_preview` and lists
