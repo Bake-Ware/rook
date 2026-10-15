@@ -90,6 +90,24 @@ it was held. The number next to **Approvals** in the sidebar counts them.
 Only the operator or a band owner can approve. Agents have no way to approve
 anything, and secret values are never shown on the page.
 
+Two things are held that agents can do on their own, so the approvals can't be
+worked around:
+
+- An agent's own calls are held, so are calls to a worker running on the hub's
+  own machine (that worker could edit the hub's files directly). Rook detects
+  those workers; the Approvals page shows which, or says it couldn't tell. Set
+  the worker names under *Workers on the hub's own machine* if detection finds
+  nothing, or set it to `off`.
+- A sign-in made with a password that is also stored as a band secret can't
+  approve held calls, because an agent could use that password too. The page
+  shows a warning and the buttons are disabled. Change the password (or remove
+  the secret) and sign in again. If you keep your dashboard password in the
+  vault so an agent can log in as you, that is exactly this case.
+
+An agent tidying up after itself is not held: stopping or closing a console it
+opened, or deleting its own chat. Secret reads and writes, memory deletions
+and update checks are still held.
+
 **Being told.** Settings > Hub > Approvals > *How to contact you* lists where
 the hub tells you about a held call, tried in order: `telegram` (your Telegram
 or Discord integration, [[manual-integrations]]), `notify` (a notification on

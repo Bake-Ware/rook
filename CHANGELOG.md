@@ -30,6 +30,18 @@ version was `0.1.0`.
   `rook_config_apply`, integration commands and job steps all wait the same way, and a job
   an agent sets up to run as someone else keeps the agent in its on-behalf-of chain.
   Worker-to-worker calls do not pass the hub (known limit).
+- A sign-in made with a password that is stored as a band secret can't approve held calls:
+  an agent could use that password too (vault substitution, `secret.use`). Checked at
+  sign-in against the vault over a new internal `POST /internal/is-secret` endpoint (returns
+  only a boolean), or directly in `rook hub serve`; the session is flagged and the Approvals
+  page explains why the buttons are disabled. Fails closed if the vault can't be reached.
+- Built-in holds now also cover exec-tier and admin calls to a worker that runs on the hub's
+  own machine (it could edit `approvals.db`, `policy.json` and settings directly). Detected
+  by a hashed machine-id fact workers announce (`approvals.hub_host_workers`: `auto`, a list
+  of names, or `off`); an operator allow rule naming the worker is an exception.
+- An agent tidying up after itself is not held: signalling or closing a console it opened, or
+  deleting a chat room it belongs to. Operator hold rules and the spread limit still apply;
+  `rook_secret` get/set, memory forget and `updates.check` stay held.
 
 ### Added
 Manual: accounts-and-access, security, agents-and-mcp
@@ -49,6 +61,11 @@ Manual: accounts-and-access, security, agents-and-mcp
   dashboard.
 - Agent instructions and the Rook skill explain holds: tell the user, retry the same call
   after approval, never work around a hold.
+- The Approvals page shows the workers treated as running on the hub's machine, and warns
+  when the sign-in can't approve because its password is a band secret.
+- A hashed `host_id` fact (`rook/core/facts.py`): a stable per-machine id the hub and workers
+  announce, so the hub can tell which workers share its machine. The raw machine id never
+  rides the band.
 
 ### Fixed
 - `MultiBandClient.call` accepts the decision an integration command already made

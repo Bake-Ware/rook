@@ -55,8 +55,14 @@ Anyone who knows a band's key can join that band and control its machines.
 - Anyone who can run commands on a worker has the rights of the user the worker
   runs as. Install workers as an ordinary user where you can.
 - Approval holds work at the hub. Calls one worker sends straight to another
-  do not pass the hub and are not held. A worker on the hub machine itself,
-  running as the hub's user, can change the hub's files, approvals included:
-  do not give agents commands there.
+  do not pass the hub and are not held.
+- A worker on the hub machine itself can change the hub's files, approvals
+  included. Rook holds commands to such a worker by default, but it needs to
+  recognise the machine; if it can't (the Approvals page says so), name those
+  workers under Settings. A person with a login on the hub box is trusted
+  either way.
+- A dashboard or account password that you also keep as a band secret can't be
+  used to approve held calls, because an agent could sign in with it. The
+  Approvals page warns you and disables the buttons.
 - Approving by voice is weaker than the dashboard: anyone near the phone can
   answer. It is off unless you choose it.

@@ -35,6 +35,7 @@ are set only in the environment or on the command line.
 | `core.approvals.contact_worker` | Phone worker | hub | str |  | `ROOK_APPROVALS_CONTACT_WORKER` | live |
 | `core.approvals.voice_max_tier` | Highest tier a spoken yes may approve | hub | str | `admin` |  | live |
 | `core.approvals.notify_every_secs` | At most one message per (s) | hub | int | `60` |  | live |
+| `core.approvals.hub_host_workers` | Workers on the hub's own machine | hub | list | `['auto']` | `ROOK_APPROVALS_HUB_HOST_WORKERS` | live |
 
 ## Core: Features
 

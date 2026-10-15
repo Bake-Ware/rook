@@ -742,15 +742,56 @@ settings, tokens, secrets) always need the dashboard. Voice is weaker than
 the dashboard: anyone near the phone can answer, and a band PSK holder could
 in principle forge the phone's reply (§6.3 item 2).
 
+**Agent-usable credentials cannot approve.** An agent can put any vault
+secret into call arguments as `{{secret:name}}`, and the hub substitutes it
+before the call. So a dashboard or account password kept in the vault is a
+credential the agent can use: it could `curl` the Approvals API (or POST
+`/login`) with it and approve its own hold. To stop that, a sign-in made with
+a value the vault knows cannot decide holds.
+
+- At sign-in (the dashboard `/login` form, HTTP Basic auth, and account local
+  login) the submitted password, and the `user:pass` pair, are checked
+  against the vault while the plaintext is in hand. The vault lives in the MCP
+  process, so the dashboard asks it over the internal endpoint it already uses
+  for masking: `POST /internal/is-secret` (Bearer `mask.token`) returns only
+  `{"secret": true|false}` — never a name or a value — comparing the string
+  and its known encoded forms (`|b64`, …) in constant time per form. In
+  `rook hub serve` (one process) the vault is called directly.
+- A cookie session opened with such a credential is flagged (a `weak_session`
+  row keyed by the session token's digest; no plaintext stored). Basic auth
+  is checked per request. The session still uses the dashboard normally, but
+  `/api/approvals` decisions return 403 and the Approvals page shows a warning
+  and disables the buttons.
+- If the vault can't be reached, approvals fail **closed** (the sign-in is
+  treated as weak); signing in still works.
+
+**Workers on the hub's own machine.** A worker that runs on the hub box as
+the hub's user can rewrite `approvals.db`, `policy.json` and the settings
+directly, and `shell.exec` is not held by default. So built-in holds also
+cover **exec-tier and above** calls to such a worker. They are detected by a
+`host_id` fact (a hashed machine id both the hub and workers announce;
+`rook/core/facts.py`), configurable with `approvals.hub_host_workers`
+(`auto`, the default; an explicit list of worker names; or `off`). The
+Approvals page lists the matched workers, or says the hub announced no machine
+id. An operator `allow` rule naming the worker and cap is an exception, as for
+other built-in holds.
+
+**An agent's own clean-up is not held.** Signalling or closing a console the
+same principal opened, and deleting a chat room it belongs to, are exempt from
+the built-in destructive hold (the MCP server sets a per-call flag the
+approval layer reads). Operator `hold` rules and the spread limit still apply,
+and `rook_secret` get/set, memory forget and `updates.check` stay held.
+
 **Known limits.**
 
 - Worker-to-worker calls do not pass the hub and are not held.
-- An agent with commands on a worker that runs on the hub machine as the
-  hub's user can edit `approvals.db` (and every other hub file). Hold or deny
-  `shell.*` there, or don't run such a worker.
-- Arguments are not inspected: `shell.exec` is exec and not held by default;
-  the spread limit stops fan-out. Add `hold` rules for commands you want to
-  see first.
+- The hub-host hold needs the hub to announce a machine id; where it can't
+  (no `/etc/machine-id`, nothing announced), name the co-located workers in
+  `approvals.hub_host_workers`. A root user on the hub box is still trusted by
+  definition (§6.4).
+- Arguments are not inspected: `shell.exec` is exec and not held by default
+  except on a hub-host worker; the spread limit stops fan-out. Add `hold`
+  rules for commands you want to see first.
 - In enforce mode, a cap a plugin tool calls in process is checked for holds
   but not for denials (as before); the tool's own cap is checked for both.
 - Spread counters are per process and reset when it restarts.
