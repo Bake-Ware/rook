@@ -107,7 +107,13 @@ class BandHTTP:
             return reply
         error = str(reply.get("error") or "")
         denied = reply.get("denied")
-        if isinstance(denied, dict):
+        if reply.get("held"):
+            # People are never held; this login is acting for an agent somehow.
+            reply.setdefault("hint", f"held for approval (hold {reply.get('hold')}): approve it "
+                                     "on the dashboard's Approvals page, then repeat the call")
+        elif isinstance(denied, dict) and denied.get("hold"):
+            reply.setdefault("hint", f"{denied.get('by') or 'a person'} denied this held call")
+        elif isinstance(denied, dict):
             who = denied.get("principal") or "this login"
             reply.setdefault("hint", f"the hub's policy does not allow {who} to make this call; "
                                      "an owner can change it on the Permissions page")

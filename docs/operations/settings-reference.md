@@ -19,6 +19,24 @@ overridden there). **Apply**: `live` (next read), `reload` (plugin reload),
 are set only in the environment or on the command line.
 
 
+## Core: Approvals
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `core.approvals.enabled` | Hold risky agent calls | hub | bool | on | `ROOK_APPROVALS` | live |
+| `core.approvals.hold` | Caps that are held | hub | list | `['tier:admin', 'tag:destructive']` | `ROOK_APPROVALS_HOLD` | live |
+| `core.approvals.principals` | Who is held | hub | list | `['token:*', 'unverified', 'integration:*', '…` |  | live |
+| `core.approvals.wait_secs` | Wait for a decision (s) | hub | int | `45` | `ROOK_APPROVALS_WAIT_SECS` | live |
+| `core.approvals.approval_secs` | An approval covers a retry for (s) | hub | int | `600` |  | live |
+| `core.approvals.spread_max` | Machines an agent may reach | hub | int | `5` | `ROOK_APPROVALS_SPREAD_MAX` | live |
+| `core.approvals.spread_window_secs` | Spread window (s) | hub | int | `600` |  | live |
+| `core.approvals.spread_grant_secs` | Spread grant (s) | hub | int | `900` |  | live |
+| `core.approvals.contact` | How to contact you | hub | list | `['telegram']` | `ROOK_APPROVALS_CONTACT` | live |
+| `core.approvals.contact_worker` | Phone worker | hub | str |  | `ROOK_APPROVALS_CONTACT_WORKER` | live |
+| `core.approvals.voice_max_tier` | Highest tier a spoken yes may approve | hub | str | `admin` |  | live |
+| `core.approvals.notify_every_secs` | At most one message per (s) | hub | int | `60` |  | live |
+| `core.approvals.hub_host_workers` | Workers on the hub's own machine | hub | list | `['auto']` | `ROOK_APPROVALS_HUB_HOST_WORKERS` | live |
+
 ## Core: Features
 
 | Key | Label | Scope | Type | Default | Env / flag | Apply |

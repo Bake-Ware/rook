@@ -60,6 +60,21 @@ def _authorize(authz, cap: str, target: str | None, entry: dict | None,
     return authz.check(cap, target, entry, identity=identity, principal=principal, local=local)
 
 
+async def _settle(authz, decision, args: dict | None, target: str | None):
+    """Wait out an approval hold before anything is sent (permissions 3.11).
+    Returns ``(decision, reply)``: ``reply`` is set when the call must not be
+    sent (a person denied it, or it is still held when the wait ends). The
+    wait comes before the call's own timeout starts."""
+    if authz is None or decision is None or not decision.held:
+        return decision, None
+    out = await authz.resolve(decision, args or {})
+    if isinstance(out, dict):
+        return None, {"id": uuid.uuid4().hex, "from": target or "rook", **out}
+    if out.denied:
+        return out, _denial(out, target)
+    return out, None
+
+
 async def _call_local(node, cap: str, args: dict | None, identity: str | None,
                       timeout: float) -> dict:
     """In-process call to the hub node: same reply shape as a band reply."""
@@ -226,7 +241,13 @@ class BandClient:
             decision = _authorize(self.authz, msg.get("cap") or "", node.worker_id,
                                   node.entry(), msg.get("identity"), BAND_UNAUTHENTICATED,
                                   local=True)
-        if decision is not None and decision.denied:
+        refused = None
+        if decision is not None and not decision.denied:
+            decision, refused = await _settle(self.authz, decision, msg.get("args", {}),
+                                              node.worker_id)
+        if refused is not None:
+            body = {k: v for k, v in refused.items() if k not in ("id", "from")}
+        elif decision is not None and decision.denied:
             body = decision.denial()
         else:
             body = await node.dispatch(msg.get("cap"), msg.get("args", {}),
@@ -469,6 +490,9 @@ class BandClient:
             decision = _authorize(self.authz, cap, target, entry, identity, principal, local=local)
         if decision is not None and decision.denied:
             return _denial(decision, target)
+        decision, refused = await _settle(self.authz, decision, args, target)
+        if refused is not None:
+            return refused
         if local:
             return await _call_local(self._local, cap, args, identity, timeout)
         if len(self._pending) >= 512:
@@ -745,6 +769,9 @@ class MultiBandClient:
         self._authz = value
         for c in self._clients:
             c.authz = value
+        attach = getattr(value, "attach_client", None)
+        if callable(attach):
+            attach(self)  # the approval contact reaches the operator through us
 
     def attach_local(self, node) -> None:
         """Serve the hub node on every band (current and later-added)."""
@@ -841,12 +868,18 @@ class MultiBandClient:
 
     async def call(self, cap: str, args: dict | None = None,
                    target: str | None = None, timeout: float = 15.0,
-                   identity: str | None = None, principal=None) -> dict:
+                   identity: str | None = None, principal=None, _decision=None) -> dict:
         local = self._local is not None and target == self._local.worker_id
         entry = self._local.entry() if local else self.workers.get(target) if target else None
-        decision = _authorize(self._authz, cap, target, entry, identity, principal, local=local)
+        decision = _decision
+        if decision is None:
+            decision = _authorize(self._authz, cap, target, entry, identity, principal,
+                                  local=local)
         if decision is not None and decision.denied:
             return _denial(decision, target)
+        decision, refused = await _settle(self._authz, decision, args, target)
+        if refused is not None:
+            return refused
         if local:
             return await _call_local(self._local, cap, args, identity, timeout)
         kw = {"timeout": timeout, "identity": identity, "_decision": decision}

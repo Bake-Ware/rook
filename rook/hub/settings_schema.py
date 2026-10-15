@@ -143,6 +143,68 @@ _CORE: list[tuple[Setting, str, dict]] = [
     (_s("auth.login_lockout_max_secs", int, 900, env="ROOK_LOGIN_LOCKOUT_MAX_SECS",
         bootstrap=True, apply="restart", min=1, label="Longest lockout (s)", group="Sign-in",
         advanced=True), "dashboard", {}),
+    # Approval holds and the spread limit (rook/hub/approvals.py,
+    # docs/design/permissions.md 3.11). Read live by the process that
+    # authorizes agent calls (the MCP side; `rook hub serve` is one process).
+    (_s("approvals.enabled", bool, True, env="ROOK_APPROVALS", label="Hold risky agent calls",
+        group="Approvals", order=1,
+        help="Agent and integration calls that are admin tier or destructive, or that reach "
+             "too many machines, wait until a person approves them on the Approvals page. "
+             "Off keeps only the permission policy."), "mcp", {}),
+    (_s("approvals.hold", list, ["tier:admin", "tag:destructive"], env="ROOK_APPROVALS_HOLD",
+        label="Caps that are held", group="Approvals", order=2,
+        help="Cap selectors as in the policy: tier:admin, tag:destructive, shell.*, "
+             "worker.update. Empty holds nothing by default (hold rules in the policy "
+             "still apply)."), "mcp", {}),
+    (_s("approvals.principals", list,
+        ["token:*", "unverified", "integration:*", "agent:*", "role:agent", "role:integration"],
+        label="Who is held", group="Approvals", order=3, advanced=True,
+        help="Principal selectors (token:*, token:<agent_id>, integration:*, agent:*, "
+             "role:agent, unverified). People (human:*) and hub code (system:*) are never "
+             "held."), "mcp", {}),
+    (_s("approvals.wait_secs", int, 45, env="ROOK_APPROVALS_WAIT_SECS", min=0, max=300,
+        label="Wait for a decision (s)", group="Approvals", order=4,
+        help="How long a held call waits before it returns 'held' to the agent. Comes "
+             "before the call's own timeout. Many MCP clients give up near 60 s."),
+     "mcp", {}),
+    (_s("approvals.approval_secs", int, 600, min=30, max=86400,
+        label="An approval covers a retry for (s)", group="Approvals", order=5,
+        advanced=True,
+        help="An approved call can be repeated once (same cap, worker and args) within "
+             "this time. Pending holds expire after the same time."), "mcp", {}),
+    (_s("approvals.spread_max", int, 5, env="ROOK_APPROVALS_SPREAD_MAX", min=0, max=1000,
+        label="Machines an agent may reach", group="Approvals", order=6,
+        help="Distinct workers one agent may send exec, admin or destructive calls to "
+             "within the window before the next machine is held. 0 turns the spread "
+             "limit off."), "mcp", {}),
+    (_s("approvals.spread_window_secs", int, 600, min=10, max=86400,
+        label="Spread window (s)", group="Approvals", order=7), "mcp", {}),
+    (_s("approvals.spread_grant_secs", int, 900, min=60, max=86400,
+        label="Spread grant (s)", group="Approvals", order=8, advanced=True,
+        help="How long 'let this agent reach more machines' lasts when you approve a "
+             "spread hold that way."), "mcp", {}),
+    (_s("approvals.contact", list, ["telegram"], env="ROOK_APPROVALS_CONTACT",
+        label="How to contact you", group="Approvals", order=9,
+        help="Tried in order when a call is held: off, telegram (the hub's Telegram or "
+             "Discord integration), notify (a notification on your phone), voice (spoken "
+             "on your phone), ask (spoken question you can answer yes or no). Example: "
+             "ask, telegram."), "mcp", {}),
+    (_s("approvals.contact_worker", "str", "", env="ROOK_APPROVALS_CONTACT_WORKER",
+        label="Phone worker", group="Approvals", order=10,
+        help="Worker name of your phone, for notify, voice and ask."), "mcp", {}),
+    (_s("approvals.voice_max_tier", "str", "admin", choices=("off",) + TIERS,
+        label="Highest tier a spoken yes may approve", group="Approvals", order=11,
+        help="ask only. off: voice never approves (it only tells you). Admin calls to the "
+             "hub itself (policy, settings, tokens, secrets) always need the dashboard."),
+     "mcp", {}),
+    (_s("approvals.notify_every_secs", int, 60, min=5, max=3600,
+        label="At most one message per (s)", group="Approvals", order=12, advanced=True),
+     "mcp", {}),
+    (_s("approvals.hub_host_workers", list, ["auto"], env="ROOK_APPROVALS_HUB_HOST_WORKERS",
+        label="Workers on the hub's own machine", group="Approvals", order=13,
+        help="A worker on the hub's machine can edit the hub's files, so its exec and admin "
+             "calls are held. 'auto' detects them by machine id, or list worker names, or "
+             "'off'. The Approvals page shows which workers it matched."), "mcp", {}),
     (_s("auth.google_client_file", "path", "", env="ROOK_GOOGLE_CLIENT_FILE", bootstrap=True,
         apply="restart", label="Google OAuth client file", group="Sign-in", advanced=True),
      "dashboard", {}),

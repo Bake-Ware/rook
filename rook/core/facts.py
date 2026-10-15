@@ -34,11 +34,13 @@ from __future__ import annotations
 
 import ast
 import glob
+import hashlib
 import json
 import logging
 import os
 import platform
 import shutil
+import socket
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -175,6 +177,32 @@ def _gpus() -> list[dict]:
     return gpus[:8]
 
 
+def _host_id() -> str | None:
+    """A stable per-machine id, so the hub can tell which workers run on its
+    own box (permissions 3.11: those workers can edit the hub's files, so
+    exec-tier calls to them are held). The OS machine id where there is one,
+    else a hash of the hostname; hashed either way so the raw id never rides
+    the band. Best-effort: ``None`` when nothing is available."""
+    raw = ""
+    for path in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
+        try:
+            with open(path, encoding="ascii") as f:
+                raw = f.read().strip()
+            if raw:
+                break
+        except OSError:
+            continue
+    if not raw and os.name == "nt":
+        raw = os.environ.get("COMPUTERNAME", "")
+    if not raw:
+        try:
+            raw = socket.gethostname()
+        except Exception:
+            return None
+    raw = raw.strip()
+    return hashlib.sha256(("rook-host\n" + raw).encode("utf-8")).hexdigest()[:16] if raw else None
+
+
 def _has_conpty() -> bool:
     """Windows 10 1809+ pseudoconsoles (what ``work.stream`` needs there)."""
     try:
@@ -213,6 +241,7 @@ def detect_facts() -> dict:
         gpus = _gpus()
         if gpus:
             facts["gpu"] = gpus
+        facts["host_id"] = _host_id()
     except Exception:
         log.debug("fact detection failed", exc_info=True)
     raw = os.environ.get("ROOK_NODE_FACTS", "").strip()

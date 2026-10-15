@@ -54,6 +54,15 @@ save it there with `rook login --token`, then use `rook ask` or `rook chat`
 - Use secrets without seeing them (`rook_secret`), see [[manual-secrets]].
 - Look back at what happened (`rook_journal`, every call with its answer).
 
+## When a call waits for you
+
+An agent's admin or destructive calls, and calls that reach many machines in a
+short time, wait for your approval on the **Approvals** page. If you don't
+answer within 45 seconds the agent gets a "held for approval" reply with an
+id; it should tell you, and repeat the same call once you have approved it.
+See [[manual-accounts-and-access]] for how approving works, exceptions for a
+trusted agent, and how to turn it off.
+
 ## The Rook skill
 
 `rook skill` installs Rook's instructions for agents (a "skill") into Claude

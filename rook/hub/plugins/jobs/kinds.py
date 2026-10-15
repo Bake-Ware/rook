@@ -10,6 +10,7 @@ import asyncio
 import json
 from typing import Any
 
+from ...approvals import shown_args
 from .cron import parse_duration, parse_instant
 from .expr import compile_expr
 from .steps import (StepContext, StepResult, apply_success_rules, exit_code_of,
@@ -112,12 +113,15 @@ async def call_cap(ctx: StepContext, cap: str, raw_args: dict, spec: Any) -> Ste
     args = ctx.render(raw_args, via=f"job {ctx.job.get('name')} step {ctx.step_id}: {cap} on {name}")
     remaining = deadline - loop.time()
     wait = max(0.01, remaining - min(CALL_MARGIN, remaining / 10))
+    stok = shown_args.set(shown)   # an approval hold shows placeholders, never values
     try:
         reply = await rt.call(cap, args, wid, wait, ctx.identity)
     except asyncio.TimeoutError:
         rt.journal(cap, name, ctx.identity, shown, {"ok": False, "timeout": True,
                                                    "error": f"no reply within {wait:.0f}s"})
         raise
+    finally:
+        shown_args.reset(stok)
     reply = rt.mask(reply, ctx.used)
     rt.journal(cap, name, ctx.identity, shown, reply)
     res = result_from_reply(reply)
@@ -301,13 +305,42 @@ def check_notify(step: dict) -> list:
     return errs
 
 
+def notify_call(via: str, text: str, title: str = "Rook",
+                channel: str = "telegram") -> tuple[str, dict]:
+    """``(cap, args)`` of a one-way message over ``via`` (:data:`VIAS`):
+    ``telegram`` is the hub's ``notify.send`` (on worker ``rook``), the others
+    run on a phone worker. Shared with the approval contact
+    (rook/hub/approval_contact.py)."""
+    cap = VIAS[via]
+    if via == "telegram":
+        return cap, {"text": text, "channel": channel}
+    if via == "notify":
+        return cap, {"title": title, "text": text}
+    return cap, {"text": text, "wait": False}
+
+
+def ask_args(text: str, timeout: float, reply_timeout: int = 20) -> dict:
+    """``voice.speak`` args that speak a question and wait for the spoken (or
+    typed) answer (the Android app; see its speak plugin)."""
+    return {"text": text, "reply": True, "wait": True,
+            "timeout": int(max(5, min(600, timeout))), "reply_timeout": int(reply_timeout)}
+
+
+def heard(result: Any) -> tuple[str, str, Any]:
+    """``(answer text, reply_state, via)`` from a ``voice.speak`` result with
+    ``reply``; the text is empty when nobody answered."""
+    out = result if isinstance(result, dict) else {}
+    reply = out.get("reply") if isinstance(out.get("reply"), dict) else {}
+    text = str(reply.get("text") or "").strip()
+    return text, str(out.get("reply_state") or ("answered" if text else "none")), reply.get("via")
+
+
 async def run_notify(ctx: StepContext, step: dict) -> StepResult:
     via = step.get("via", "notify")
-    cap = VIAS[via]
     title = step.get("title") or f"Rook job {ctx.job.get('name')}"
+    cap, args = notify_call(via, step["text"], title)
     if via == "telegram":
-        return await call_cap(ctx, cap, {"text": step["text"], "channel": "telegram"}, "rook")
-    args = {"title": title, "text": step["text"]} if via == "notify" else {"text": step["text"], "wait": False}
+        return await call_cap(ctx, cap, args, "rook")
     spec = step.get("worker") or ctx.settings("notify_worker") or {"any_with_cap": True}
     return await call_cap(ctx, cap, args, spec)
 

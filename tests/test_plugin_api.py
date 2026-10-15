@@ -144,6 +144,15 @@ def test_self_reported_facts_can_never_be_roles(monkeypatch):
     assert "is_hub" not in detected and detected["camera"] is True
 
 
+def test_host_id_is_stable_hashed_and_wire_safe():
+    a = facts_mod._host_id()
+    assert a is None or (isinstance(a, str) and len(a) == 16 and a == facts_mod._host_id())
+    facts = facts_mod.detect_facts()
+    if a is not None:
+        # The raw machine id never rides the band; a 16-hex digest does.
+        assert facts["host_id"] == a and len(wire_facts(facts)["host_id"]) == 16
+
+
 def test_build_167_announce_has_empty_facts():
     nf = NodeFacts.from_announce({"worker_id": "w1", "name": "old", "caps": ["shell.exec"]})
     assert nf.hw == {} and nf.roles == frozenset()

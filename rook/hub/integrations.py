@@ -593,7 +593,8 @@ class ChatIntegration(Plugin):
             return named[0], roster[named[0]], False
         return None, None, False
 
-    def authorize(self, cap: str, worker: str, user: Inbound | None = None):
+    def authorize(self, cap: str, worker: str, user: Inbound | None = None, *,
+                  wait_ok: bool = False):
         """``(decision, target_id, error)``. Fails closed: anything but an
         ``allow`` (or ``off`` for read/write) is refused, so a ``would_deny``
         in audit mode is still a no for an integration."""
@@ -604,7 +605,10 @@ class ChatIntegration(Plugin):
         if wid is None:
             return None, None, f"no live worker named {worker!r}"
         d = authz.check(cap, wid, entry, principal=self.principal(user), local=local)
-        ok = d.decision == "allow" or (d.decision == "off" and d.tier in ("read", "write"))
+        # A held call goes on to the band client, which waits for a person to
+        # approve it (permissions 3.11) before sending anything.
+        ok = d.decision == "allow" or (wait_ok and d.held) \
+            or (d.decision == "off" and d.tier in ("read", "write"))
         if not ok:
             self.state["denied"] += 1
             return d, wid, (f"denied: {self.principal_id} may not call {cap} ({d.tier}) on "
@@ -617,8 +621,8 @@ class ChatIntegration(Plugin):
         With no permissions layer the bridge runs (commands still refuse)."""
         if self._authz() is None or self._node is None:
             return True
-        _d, _wid, err = self.authorize(cap, "rook")
-        return err is None
+        d, _wid, err = self.authorize(cap, "rook")
+        return err is None and not (d is not None and d.held)  # nobody waits on the bridge
 
     # -- commands ----------------------------------------------------------------------
     def _commands(self) -> list[str]:
@@ -687,7 +691,7 @@ class ChatIntegration(Plugin):
             return "args must be a JSON object"
         if not isinstance(cargs, dict):
             return "args must be a JSON object"
-        d, wid, err = self.authorize(cap, worker, m)
+        d, wid, err = self.authorize(cap, worker, m, wait_ok=True)
         if err:
             return err
         client = self._node.client

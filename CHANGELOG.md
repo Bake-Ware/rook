@@ -14,6 +14,63 @@ version was `0.1.0`.
   `/token` endpoint), the address gets 429 with `Retry-After` for 30 s, doubling up to
   15 min, without the credential being checked (`ROOK_LOGIN_*` settings). The dashboard
   password is now compared in constant time.
+- Approval holds, on by default and independent of the policy mode: an agent's or
+  integration's admin-tier or destructive call (worker updates and config pushes, secret,
+  settings and policy writes, closing a console, deleting chat) waits up to 45 s
+  (`approvals.wait_secs`) for a person to approve it. Not answered in time, the agent gets
+  `{"ok": false, "held": true, "hold": "<id>"}` and is told to ask the user and repeat the
+  same call; one approval covers one identical call (same cap, worker and args) for 10
+  minutes. A deny always wins; a policy `allow` rule at least as specific as the built-in
+  hold is an exception; people (`human:*`) and hub code are never held. Settings
+  `core.approvals.*`, `ROOK_APPROVALS=0` turns it off.
+- Spread limit: an agent's 6th distinct machine within 10 minutes for exec, admin or
+  destructive calls is held (`approvals.spread_max`, `approvals.spread_window_secs`). When
+  approving you can let that agent reach more machines for 15 minutes.
+- No way around a hold: hub tools on `rook`, hub plugin tools, consoles, chat wake,
+  `rook_config_apply`, integration commands and job steps all wait the same way, and a job
+  an agent sets up to run as someone else keeps the agent in its on-behalf-of chain.
+  Worker-to-worker calls do not pass the hub (known limit).
+- A sign-in made with a password that is stored as a band secret can't approve held calls:
+  an agent could use that password too (vault substitution, `secret.use`). Checked at
+  sign-in against the vault over a new internal `POST /internal/is-secret` endpoint (returns
+  only a boolean), or directly in `rook hub serve`; the session is flagged and the Approvals
+  page explains why the buttons are disabled. Fails closed if the vault can't be reached.
+- Built-in holds now also cover exec-tier and admin calls to a worker that runs on the hub's
+  own machine (it could edit `approvals.db`, `policy.json` and settings directly). Detected
+  by a hashed machine-id fact workers announce (`approvals.hub_host_workers`: `auto`, a list
+  of names, or `off`); an operator allow rule naming the worker is an exception.
+- An agent tidying up after itself is not held: signalling or closing a console it opened, or
+  deleting a chat room it started with no people in it. Operator hold rules and the spread limit still apply;
+  `rook_secret` get/set, memory forget and `updates.check` stay held.
+
+### Added
+Manual: accounts-and-access, security, agents-and-mcp
+- **Approvals** page on the dashboard (Workspace), with a count in the sidebar: pending
+  holds (who, call, worker, arguments with secrets hidden, why, how long) with Approve /
+  Deny, recent decisions and active spread grants. API: `GET /api/approvals`,
+  `POST /api/approvals/<id>`; only a signed-in band owner or admin can decide.
+- Policy rules and default cells can say `hold` (`{"who": "role:agent", "hold": "shell.*",
+  "on": "nas"}`).
+- The hub tells the operator about held calls (`approvals.contact`, tried in order):
+  `telegram` (the Telegram/Discord integrations' `notify.send`, the default), `notify` or
+  `voice` on `approvals.contact_worker`, at most one message a minute, never with arguments.
+- Opt-in voice approval (`ask`): the phone asks "Rook: claude code wants to run worker
+  update on nas. Approve?"; a clear yes approves that one call, a clear no denies it,
+  anything else leaves it on the dashboard and tries the next channel.
+  `approvals.voice_max_tier` limits it; admin calls to the hub itself always need the
+  dashboard.
+- Agent instructions and the Rook skill explain holds: tell the user, retry the same call
+  after approval, never work around a hold.
+- The Approvals page shows the workers treated as running on the hub's machine, and warns
+  when the sign-in can't approve because its password is a band secret.
+- A hashed `host_id` fact (`rook/core/facts.py`): a stable per-machine id the hub and workers
+  announce, so the hub can tell which workers share its machine. The raw machine id never
+  rides the band.
+
+### Fixed
+- `MultiBandClient.call` accepts the decision an integration command already made
+  (`_decision`), so `/call` from Telegram or Discord no longer fails with a TypeError on a
+  hub serving bands through the multi-band client.
 
 ### Dashboard
 Manual: overview-and-start-page

@@ -17,6 +17,13 @@ on-behalf-of chain the most specific matching rule by
 ``(target, cap, principal)`` specificity (file order breaks exact ties
 only), else the principal's tier default. The call is allowed only if every
 principal in the chain is.
+
+A rule or cell may also say ``hold``: the call waits for a person's approval
+(3.11, :mod:`rook.hub.approvals`). Across the chain, deny beats hold, hold
+beats audit, audit beats allow. The built-in approval holds (admin and
+destructive calls by agents, the spread limit) are added by the authorizer,
+not here; :meth:`Policy.best_rule` tells it whether an operator rule is more
+specific than them.
 """
 
 from __future__ import annotations
@@ -40,7 +47,9 @@ from ..core.facts import NodeFacts, compile_placement, evaluate_placement
 log = logging.getLogger("rook.hub.policy")
 
 MODES = ("off", "audit", "enforce")
-CELLS = ("allow", "deny", "audit")
+CELLS = ("allow", "deny", "audit", "hold")
+#: Rule actions: a rule names exactly one of these keys.
+ACTIONS = ("allow", "deny", "hold")
 _ALL = {"read": "allow", "write": "allow", "exec": "allow", "admin": "allow"}
 
 #: The compatibility policy (permissions 5.2): behaviour matches today's until
@@ -137,7 +146,8 @@ class Target:
 
 @dataclass
 class Decision:
-    decision: str                   # allow | deny | would_deny | error_allow | error_deny | off
+    # allow | deny | would_deny | error_allow | error_deny | off | hold
+    decision: str
     cap: str
     tier: str
     principal: str
@@ -149,10 +159,28 @@ class Decision:
     reason: str = ""
     runner_up: str | None = None
     tags: tuple = ()
+    #: Set when the call is held for a person's approval (permissions 3.11):
+    #: ``hold_kind`` is ``rule`` (an operator hold rule or cell), ``default``
+    #: (approvals.hold) or ``spread``; ``hold_reason`` is shown to people.
+    hold_kind: str = ""
+    hold_reason: str = ""
+    #: Set on a held call once a person decided it: the hold id and who.
+    hold_id: str = ""
+    decided_by: str = ""
+    #: The worker this call counts against the spread limit once it proceeds
+    #: (set by the approval layer), and whether the target is the hub itself.
+    spread_target: str = ""
+    target_is_hub: bool = False
+    label: str = ""                 # the principal's display label (holds show it)
 
     @property
     def denied(self) -> bool:
         return self.decision in ("deny", "error_deny")
+
+    @property
+    def held(self) -> bool:
+        """The call waits for a person (see :mod:`rook.hub.approvals`)."""
+        return self.decision == "hold"
 
     def journal(self) -> dict:
         return {"principal": self.principal, "decision": self.decision, "rule": self.rule,
@@ -165,10 +193,20 @@ class Decision:
                "target": self.target_name or self.target, "reason": self.reason}
         if self.tags:
             out["tags"] = list(self.tags)
+        if self.hold_kind:
+            out["hold"] = {"kind": self.hold_kind, "reason": self.hold_reason}
         return out
 
     def denial(self) -> dict:
         where = self.target_name or self.target or "the band"
+        if self.hold_id and self.decided_by:
+            # A person denied this held call (Approvals page, or by voice).
+            return {"ok": False,
+                    "error": (f"denied: {self.decided_by} denied {self.cap} on {where} "
+                              f"(hold {self.hold_id}). Do not retry it; ask the user."),
+                    "denied": {"tier": self.tier, "rule": self.rule, "rev": self.rev,
+                               "principal": self.principal, "via": list(self.via),
+                               "hold": self.hold_id, "by": self.decided_by}}
         return {"ok": False,
                 "error": (f"denied: {self.principal} may not call {self.cap} "
                           f"({self.tier}) on {where}"),
@@ -426,9 +464,10 @@ class Policy:
             if rid in seen:
                 raise PolicyError(f"duplicate rule id {rid!r}")
             seen.add(rid)
-            if ("allow" in r) == ("deny" in r):
-                raise PolicyError(f"rule {rid!r} needs exactly one of allow / deny")
-            action = "allow" if "allow" in r else "deny"
+            named = [a for a in ACTIONS if a in r]
+            if len(named) != 1:
+                raise PolicyError(f"rule {rid!r} needs exactly one of allow / deny / hold")
+            action = named[0]
             try:
                 self.rules.append(_Rule(rid, i, action, _WhoSel(r.get("who"), pgroups),
                                         _CapSel(r[action]), _TargetSel(r.get("on", "*"), groups),
@@ -483,6 +522,27 @@ class Policy:
         return self.mode
 
     # -- evaluation ----------------------------------------------------------------
+    def best_rule(self, p: Principal, cap: str, tier: str, tags: tuple,
+                  t: Target) -> "tuple[tuple, _Rule] | None":
+        """The most specific rule matching ``p``, with its ``(target, cap,
+        principal)`` specificity, or None. Used to decide whether an operator
+        rule overrides a built-in approval hold (permissions 3.11)."""
+        best = None
+        for r in self.rules:
+            ps = r.who.match(p)
+            if ps is None:
+                continue
+            cs = r.caps.match(cap, tier, tags)
+            if cs is None:
+                continue
+            ts = r.on.match(t)
+            if ts is None:
+                continue
+            key = (ts, cs, ps, -r.index)
+            if best is None or key > best[0]:
+                best = (key, r)
+        return (best[0][:3], best[1]) if best else None
+
     def _one(self, p: Principal, cap: str, tier: str, tags: tuple,
              t: Target) -> tuple[str, str, str | None]:
         """(cell, rule_id, runner_up) for one principal."""
@@ -533,6 +593,11 @@ class Policy:
             d.decision = "allow"
         elif cell == "audit":
             d.decision = "would_deny"
+        elif cell == "hold":
+            # An operator hold rule or cell: the call waits for a person in
+            # audit and enforce mode alike (a hold denies nothing).
+            d.decision = "hold"
+            d.hold_kind, d.hold_reason = "rule", f"rule {rule}"
         else:
             d.decision = "deny" if mode == "enforce" else "would_deny"
         return d
@@ -545,13 +610,18 @@ class Policy:
             return "deny", "invariant:rook-impostor", None, "target claims 'rook' without a valid is_hub grant"
         if t.id is None and authz.tier_rank(tier) > authz.tier_rank("read"):
             return "deny", "invariant:broadcast", None, "untargeted call above read"
-        audit_hit = None
+        audit_hit = hold_hit = None
         for p in chain:
             cell, rule, runner = self._one(p, cap, tier, tags, t)
             if cell == "deny":
                 return "deny", rule, runner, f"{p.id}: {rule}"
+            if cell == "hold" and hold_hit is None:
+                hold_hit = ("hold", rule, runner, f"{p.id}: {rule} (hold)")
             if cell == "audit" and audit_hit is None:
                 audit_hit = ("audit", rule, runner, f"{p.id}: {rule} (audit)")
+        # deny > hold > audit > allow
+        if hold_hit:
+            return hold_hit
         if audit_hit:
             return audit_hit
         cell, rule, runner = self._one(chain[0], cap, tier, tags, t)
@@ -561,6 +631,10 @@ class Policy:
     def lint(self) -> list[str]:
         out = []
         for i, a in enumerate(self.rules):
+            if a.action == "hold" and a.who.kind in ("exact", "kind", "builtin") \
+                    and a.who.value.split(":", 1)[0] in ("human", "system"):
+                out.append(f"rule {a.id!r}: people and hub-internal code are never held; "
+                           f"this hold has no effect")
             if a.action == "allow" and a.on.fact_only():
                 tier_sel = a.caps
                 risky = tier_sel.kind != "tier" or authz.tier_rank(tier_sel.value) > authz.tier_rank("write")

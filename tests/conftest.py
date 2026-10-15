@@ -42,7 +42,23 @@ def _fresh_login_throttle():
     throttle.shared().clear()
 
 
+@pytest.fixture(autouse=True)
+def _approvals_off_unless_asked(request, monkeypatch):
+    """Approval holds (rook/hub/approvals.py) are on by default and make an
+    agent's admin or destructive call wait up to 45 s for a person. Tests
+    that are not about them run with them off, as the hub did before; tests
+    marked ``approvals`` (tests/test_approvals.py) get the shipped default."""
+    if request.node.get_closest_marker("approvals") is None:
+        monkeypatch.setenv("ROOK_APPROVALS", "0")
+    else:
+        monkeypatch.delenv("ROOK_APPROVALS", raising=False)
+
+
 def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "approvals: run with approval holds on (the shipped default); every other test "
+        "runs with ROOK_APPROVALS=0")
     config.addinivalue_line(
         "markers",
         "integration: needs a running test hub (scripts/test-hub.sh); opt-in "

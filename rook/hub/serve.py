@@ -99,14 +99,20 @@ class DashboardBand:
         if node is None or target != node.worker_id:
             return await self._client.call(cap=cap, args=args, target=target, timeout=timeout,
                                            identity=identity, principal=principal)
-        from ..band_mcp.client import _authorize, _denial
+        from ..band_mcp.client import _authorize, _denial, _settle
         from .authz import BAND_UNAUTHENTICATED
         authz = getattr(self._client, "authz", None)
         sent = _authorize(authz, cap, target, node.entry(), identity, principal, local=False)
         if sent is not None and sent.denied:
             return _denial(sent, target)
+        sent, refused = await _settle(authz, sent, args, target)
+        if refused is not None:
+            return refused
         got = _authorize(authz, cap or "", node.worker_id, node.entry(), identity,
                          BAND_UNAUTHENTICATED, local=True)
+        got, refused = await _settle(authz, got, args, target)
+        if refused is not None:
+            return refused
         if got is not None and got.denied:
             body = got.denial()
         else:

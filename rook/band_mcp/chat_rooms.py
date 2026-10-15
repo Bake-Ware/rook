@@ -230,6 +230,11 @@ class ChatStore:
     def exists(self, rid: str) -> bool:
         return self._db is not None and self._room(rid) is not None
 
+    def room(self, rid: str) -> dict | None:
+        """Public read of a room (id, title, participants), or None. Used by
+        the approval holds to tell whether a caller owns a room it is deleting."""
+        return self._room(rid) if self._db is not None else None
+
     def join(self, rid: str, identities: list[str]) -> dict:
         """Add participants to a room without posting (a huddle adds whoever
         opens it, so their unread notices start then)."""

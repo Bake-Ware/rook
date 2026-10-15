@@ -63,3 +63,35 @@ def route(token: str) -> Route:
             return JSONResponse({"error": "masking failed"}, 500)
         return JSONResponse({"ok": True, "obj": out}, headers={"Cache-Control": "no-store"})
     return Route("/internal/mask", mask, methods=["POST"])
+
+
+def is_secret_route(token: str) -> Route:
+    """``POST /internal/is-secret`` -> ``{"secret": bool}``: whether the given
+    string is a stored vault value (or an encoded form the masker knows). The
+    dashboard asks this at sign-in so a login made with a value agents can
+    inject (``{{secret:name}}``) cannot approve held calls (permissions 3.11).
+    It returns only a boolean — never a name or a value."""
+    async def is_secret(request):
+        got = request.headers.get("authorization", "")
+        if not token or not hmac.compare_digest(got.encode(), f"Bearer {token}".encode()):
+            return JSONResponse({"error": "unauthorized"}, 401)
+        body = await request.body()
+        if len(body) > MAX_BODY:
+            return JSONResponse({"error": "too large"}, 413)
+        try:
+            data = json.loads(body)
+            value = data["value"] if isinstance(data, dict) else None
+            if not isinstance(value, str):
+                raise ValueError
+        except (ValueError, KeyError, TypeError):
+            return JSONResponse({"error": "expected {\"value\": \"...\"}"}, 400)
+        masker = secret_mask.installed()
+        if masker is None:
+            return JSONResponse({"error": "no vault on this hub"}, 503)
+        try:
+            hit = masker.contains(value)
+        except Exception:  # noqa: BLE001 — never log the payload
+            log.exception("is-secret check failed")
+            return JSONResponse({"error": "check failed"}, 500)
+        return JSONResponse({"secret": bool(hit)}, headers={"Cache-Control": "no-store"})
+    return Route("/internal/is-secret", is_secret, methods=["POST"])

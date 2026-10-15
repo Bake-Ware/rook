@@ -48,6 +48,50 @@ class BridgeMask:
             log.error("secret masking unavailable in the dashboard (%s); "
                       "content is stored/shown unmasked", why)
 
+    async def is_secret(self, value: str) -> "bool | None":
+        """Whether ``value`` is a stored vault secret (or an encoded form the
+        masker knows), so a sign-in with it can't approve held calls
+        (permissions 3.11). ``None`` when the vault can't be reached: the
+        caller fails closed (refuses approvals). Never sends names.
+
+        Fast path: in one-process ``rook hub serve`` the vault is installed in
+        this process, so ask it directly."""
+        if not isinstance(value, str) or not value:
+            return False
+        try:
+            from ..band_mcp import secret_mask
+            masker = secret_mask.installed()
+            if masker is not None:
+                return bool(masker.contains(value))
+        except Exception:  # noqa: BLE001
+            log.debug("direct vault is-secret failed; trying the bridge", exc_info=True)
+        url = self.url.replace("/internal/mask", "/internal/is-secret")
+        for attempt in (0, 1):
+            if self._token is None:
+                self._token = self._read_token()
+            if not self._token:
+                self._error("no mask token from the MCP bridge")
+                return None
+            try:
+                status, data = await upstream.request_json(
+                    "POST", url, json={"value": value}, timeout=self.TIMEOUT,
+                    headers={"Authorization": f"Bearer {self._token}"})
+                if status == 401 and attempt == 0:
+                    self._token = None
+                    continue
+                if status != 200:
+                    self._error(f"bridge answered {status}")
+                    return None
+                return bool(data.get("secret"))
+            except upstream.Unavailable as e:
+                self._error(str(e) or "unavailable")
+                return None
+            except (KeyError, TypeError) as e:
+                self._error(type(e).__name__)
+                return None
+        self._error("bridge rejected the mask token")
+        return None
+
     async def mask(self, obj):
         """``obj`` with known vault values as {{secret:name}} stubs; ``obj``
         unchanged (and an error logged) if the bridge cannot do it."""

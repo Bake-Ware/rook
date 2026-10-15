@@ -40,6 +40,7 @@ from __future__ import annotations
 import base64
 import bisect
 import codecs
+import hmac
 import json
 import logging
 import re
@@ -384,6 +385,24 @@ class SecretMasker:
 
     def stream(self, extra: "Callable[[], dict[str, str] | None] | None" = None) -> StreamMasker:
         return StreamMasker(lambda: self.matcher_with(extra() if extra else None))
+
+    def contains(self, candidate: str) -> bool:
+        """Whether ``candidate`` is exactly one of the vault's values, or one
+        of the encoded forms this masker would recognise (permissions 3.11:
+        a sign-in made with a value agents can inject must not approve holds).
+        Constant-time per stored form; never logs or returns the value."""
+        if not isinstance(candidate, str) or not candidate:
+            return False
+        self.matcher()  # refresh _values
+        with self._lock:
+            values = list(self._values.values())
+        probe = candidate.encode("utf-8", "surrogateescape")
+        hit = False
+        for value in values:
+            for form in forms_for(value):
+                if hmac.compare_digest(probe, form.encode("utf-8", "surrogateescape")):
+                    hit = True  # keep scanning: constant work regardless of a match
+        return hit
 
 
 # -- process default ---------------------------------------------------------------

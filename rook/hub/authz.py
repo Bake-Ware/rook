@@ -13,9 +13,15 @@ plugins. It
    ``system:*`` principal. The envelope ``identity`` stays a display string;
 2. evaluates the policy (:mod:`rook.hub.policy`) - in ``audit`` mode (the
    shipped default) nothing is denied, would-be denials are journaled;
-3. signs a **call ticket** (3.6) for targeted calls when this hub holds the
+3. adds **approval holds** (3.11, :mod:`rook.hub.approvals`): admin and
+   destructive calls by agents, operator ``hold`` rules and the spread limit
+   make a call wait for a person. :meth:`Authorizer.check` only decides that a
+   call is held (``decision == "hold"``); the band client then awaits
+   :meth:`Authorizer.resolve` before it sends anything. Holds apply whatever
+   the policy mode; ``approvals.enabled`` turns them off;
+4. signs a **call ticket** (3.6) for targeted calls when this hub holds the
    root key, so ticket-verifying workers can check the decision themselves;
-4. journals non-allow decisions (coalesced) and exposes the last decision so
+5. journals non-allow decisions (coalesced) and exposes the last decision so
    ``rook_call`` can put it on its own journal row.
 
 A crash while evaluating fails open for owner/operator/system principals and
@@ -25,7 +31,9 @@ closed for everyone else, and only in ``enforce`` mode (3.8).
 from __future__ import annotations
 
 import contextvars
+import dataclasses
 import logging
+import os
 import time
 from typing import Any, Callable
 
@@ -110,12 +118,22 @@ def target_from_entry(target_id: str | None, entry: dict | None, *,
 class Authorizer:
     def __init__(self, store: PolicyStore, signer: Any = None,
                  record: Callable[..., Any] | None = None,
-                 banned: Callable[[str | None, str | None], bool] | None = None) -> None:
+                 banned: Callable[[str | None, str | None], bool] | None = None,
+                 approvals: Any = None) -> None:
         self.store = store
         self.signer = signer
         self._record = record
         self._banned = banned
         self._recent: dict[tuple, list] = {}
+        #: :class:`rook.hub.approvals.Approvals`, or None (no data dir): then
+        #: an operator hold rule refuses the call, since nobody could approve it.
+        self.approvals = approvals
+
+    def attach_client(self, client: Any) -> None:
+        """The band client this authorizer guards (the approval contact
+        reaches the operator through it)."""
+        if self.approvals is not None:
+            self.approvals.attach_client(client)
 
     # -- principal ---------------------------------------------------------
     @staticmethod
@@ -137,11 +155,13 @@ class Authorizer:
               local: bool = False) -> Decision:
         p = self.principal(principal, identity)
         chain = [p]
+        target = None
         try:
             policy = self.store.current()
             banned = bool(self._banned and self._banned((entry or {}).get("name"), target_id))
-            d = policy.evaluate(chain, cap, target_from_entry(target_id, entry, local=local,
-                                                              banned=banned))
+            target = target_from_entry(target_id, entry, local=local, banned=banned)
+            d = policy.evaluate(chain, cap, target)
+            d = self._approvals(d, p, policy, target)
         except Exception as e:  # 3.8: owners never locked out; others fail closed
             policy = self.store.policy
             enforce = policy.mode_for(p) == "enforce"
@@ -151,10 +171,51 @@ class Authorizer:
                          target=target_id, target_name=str((entry or {}).get("name") or ""),
                          reason=f"authorize failed: {type(e).__name__}: {e}")
             log.exception("ROOK AUTHZ ALERT: authorize() failed for %s %s", p.id, cap)
+            if d.decision == "error_allow" and target is not None:
+                # Failing open for an operator token must not skip the holds.
+                d = self._approvals(d, p, policy, target)
+        d.label = p.label
         last_decision.set(d)
-        if d.decision not in ("allow", "off"):
-            self._journal(d)
+        if d.decision not in ("allow", "off", "hold"):
+            self._journal(d)  # holds are journaled when the hold is created
         return d
+
+    def _approvals(self, d: Decision, p: Principal, policy: Any, target: Any) -> Decision:
+        if self.approvals is None:
+            if d.held:
+                return dataclasses.replace(d, decision="deny", rule=d.rule,
+                                           reason="held, but this hub has no approval queue")
+            return d
+        try:
+            return self.approvals.apply(d, p, policy, target)
+        except Exception as e:  # noqa: BLE001
+            log.exception("ROOK AUTHZ ALERT: approval check failed for %s %s", p.id, d.cap)
+            if p.kind in ("human", "system"):
+                return d
+            return dataclasses.replace(d, decision="error_deny",
+                                       reason=f"approval check failed: {type(e).__name__}")
+
+    async def resolve(self, d: Decision, args: Any) -> "Decision | dict":
+        """Settle a held decision before the call is sent (3.11): an allow
+        (approved), a deny (a person denied it) or the ``held`` reply dict.
+        Anything else is returned unchanged."""
+        if d is None or not d.held:
+            return d
+        if self.approvals is None:
+            out: Any = dataclasses.replace(d, decision="deny",
+                                           reason="held, but this hub has no approval queue")
+        else:
+            try:
+                out = await self.approvals.resolve(d, args, label=d.label)
+            except Exception as e:  # noqa: BLE001 - a broken queue holds nothing open
+                log.exception("ROOK AUTHZ ALERT: resolving hold for %s %s failed",
+                              d.principal, d.cap)
+                out = dataclasses.replace(d, decision="error_deny",
+                                          reason=f"approval queue failed: {type(e).__name__}")
+        last_decision.set(out if isinstance(out, Decision) else d)
+        if isinstance(out, Decision) and out.denied and not out.hold_id:
+            self._journal(out)
+        return out
 
     def _journal(self, d: Decision) -> None:
         if d.decision == "would_deny":
@@ -288,10 +349,20 @@ def hub_cap_for_tool(name: str, arguments: Any) -> str | None:
 
 def build_authorizer(data_dir: str | None, *, record: Callable[..., Any] | None = None,
                      banned: Callable[[str | None, str | None], bool] | None = None,
-                     signer: Any = None) -> Authorizer:
-    """Policy store from ``data_dir`` plus a signer over the hub's keys.
-    Never raises: a broken signer just means no tickets."""
+                     signer: Any = None, settings_store: Any = None) -> Authorizer:
+    """Policy store from ``data_dir`` plus a signer over the hub's keys, and
+    the approval queue (``approvals.db``) in the same directory, so the two
+    hub processes share it as they share ``policy.json``. Never raises: a
+    broken signer just means no tickets."""
     store = PolicyStore(PolicyStore.default_path(data_dir))
+    approvals = None
+    if data_dir:
+        try:
+            from .approvals import Approvals, ConfigSource
+            approvals = Approvals(os.path.join(data_dir, "approvals.db"),
+                                  ConfigSource(store=settings_store), record=record)
+        except Exception:
+            log.exception("ROOK AUTHZ ALERT: approval queue unavailable; hold rules refuse")
     if signer is None:
         try:
             from .keys import HubSigner
@@ -299,4 +370,4 @@ def build_authorizer(data_dir: str | None, *, record: Callable[..., Any] | None 
         except Exception:
             log.exception("ROOK AUTHZ ALERT: hub signer unavailable; no tickets")
             signer = None
-    return Authorizer(store, signer, record=record, banned=banned)
+    return Authorizer(store, signer, record=record, banned=banned, approvals=approvals)
