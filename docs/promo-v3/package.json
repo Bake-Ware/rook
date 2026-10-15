@@ -1,0 +1,8 @@
+{
+  "name": "rook-promo-v3",
+  "private": true,
+  "description": "Sources for the Rook film \"Give your agents agency\"",
+  "dependencies": {
+    "three": "0.186.0"
+  }
+}

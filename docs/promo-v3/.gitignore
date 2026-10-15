@@ -1,0 +1,7 @@
+node_modules/
+package-lock.json
+frames/
+seg/
+*.wav
+*.mp4
+*.jpg

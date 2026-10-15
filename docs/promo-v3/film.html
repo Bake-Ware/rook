@@ -1,0 +1,729 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Rook promo v3</title>
+<script type="importmap">{"imports":{"three":"./node_modules/three/build/three.module.js"}}</script>
+<style>
+:root{--bg:#0e110e;--fg:#e2e3d9;--soft:#cfd3bd;--dim:#92998c;--acc:#d8ad6d;--acc-hi:#f0c98c;--ok:#8fc79a;--ag:#79d2c8;--line:#2b322a;--red:#e0675c}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:#000;overflow:hidden}
+#stage{position:relative;overflow:hidden;width:1920px;height:1080px;background:var(--bg);font-family:"Inter Display",Inter,sans-serif;color:var(--fg)}
+.layer{position:absolute;inset:0}
+.mono{font-family:"DejaVu Sans Mono",monospace}
+#grid{background-image:linear-gradient(rgba(216,173,109,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(216,173,109,.05) 1px,transparent 1px);background-size:64px 64px}
+#glow{background:radial-gradient(ellipse at 50% 55%,rgba(216,173,109,.14),transparent 60%)}
+/* scene 1 */
+#chatbox{position:absolute;left:510px;top:330px;width:900px;height:420px;border-radius:14px;background:#141813;border:2px solid #3b4232;box-shadow:0 30px 120px rgba(0,0,0,.8);overflow:hidden}
+#chatbox .hd{height:56px;border-bottom:1px solid #2b322a;display:flex;align-items:center;gap:12px;padding:0 22px;font-family:"DejaVu Sans Mono",monospace;font-size:22px;color:var(--dim)}
+#chatbox .hd i{width:12px;height:12px;border-radius:50%;background:#3b4232;display:inline-block}
+#chatbox .msgs{padding:26px 34px;display:flex;flex-direction:column;gap:22px}
+.amsg{font-family:"DejaVu Sans Mono",monospace;font-size:34px;color:var(--fg)}
+.amsg .who{color:var(--ag);font-size:22px;display:block;margin-bottom:6px}
+.cur{display:inline-block;width:.55em;height:1em;background:var(--acc);vertical-align:-.12em;margin-left:.06em}
+.wall{position:absolute;background:#070907;border:0 solid #514b35}
+#cracks{position:absolute;left:510px;top:330px;width:900px;height:420px;overflow:visible}
+/* rook + door */
+#rookscene{transform-origin:0 0}
+#rookwrap{position:absolute}
+#rookwrap img{position:absolute;inset:0;width:100%;height:100%}
+#rookwrap svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+#white{background:#fff7e6}
+/* world */
+#world{position:absolute;left:0;top:0;transform-origin:0 0}
+#labels .dl{position:absolute;transform:translate(-50%,0);white-space:nowrap;font-family:"DejaVu Sans Mono",monospace;color:#cfd3bd;text-shadow:0 2px 8px rgba(0,0,0,.9)}
+#labels .dl.ag{font-weight:bold}
+#labels .dl small{display:block;text-align:center;color:#92998c;font-weight:normal}
+#shatimg,#rookimg{position:absolute;inset:0;width:1920px;height:1080px}
+#wsvg{position:absolute;left:-4000px;top:-4000px;width:8000px;height:8000px;overflow:visible}
+.card{position:absolute;width:640px;background:rgba(9,12,9,.95);border:2px solid #514b35;border-radius:12px;padding:18px 22px 20px;font-family:"DejaVu Sans Mono",monospace;font-size:24px;line-height:1.45;color:var(--soft);box-shadow:0 24px 80px rgba(0,0,0,.75),0 0 40px rgba(121,210,200,.08)}
+.card .ch{color:var(--acc);font-size:21px;margin-bottom:10px;letter-spacing:.03em}
+.card .ch b{color:var(--ag);font-weight:normal}
+.card .cmd{color:var(--fg)}
+.card .cmd::before{content:"› ";color:var(--ag)}
+.card .arg{color:var(--acc-hi);padding-left:1.2em}
+.card .out{color:var(--dim)}
+.card .ok{color:var(--ok)}
+.card .err{color:#fff;background:rgba(224,103,92,.22);border:1.5px solid var(--red);border-radius:8px;padding:8px 12px;margin-top:8px}
+.card .hand{border-left:3px solid var(--acc);padding-left:14px;margin:6px 0;color:var(--soft)}
+.chip{position:absolute;transform:translate(-50%,-100%);white-space:nowrap;font-family:"DejaVu Sans Mono",monospace;font-size:30px;color:var(--ok);background:rgba(9,12,9,.92);border:1.5px solid rgba(143,199,154,.5);border-radius:8px;padding:4px 12px}
+.bubble{position:absolute;width:max-content;white-space:nowrap;font-size:34px;font-weight:600;line-height:1.25;color:var(--fg);background:rgba(20,24,19,.96);border:2px solid var(--acc);border-radius:18px;padding:18px 24px;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+.bubble.tg{border-color:#3aa6dd;background:rgba(14,30,40,.96)}
+.bubble .bt{font-family:"DejaVu Sans Mono",monospace;font-size:20px;font-weight:normal;color:var(--dim);display:block;margin-bottom:6px}
+/* hud */
+#hud{overflow:visible}
+#hudlabel{left:56px;top:48px;right:auto;bottom:auto;font-family:"DejaVu Sans Mono",monospace;font-size:28px;color:var(--ag)}
+#hudlabel span{color:var(--dim)}
+#fleet{left:50%;top:auto;bottom:70px;right:auto;width:900px;transform:translateX(-50%)}
+#fleet .card{position:relative;width:900px}
+.bar{height:14px;border-radius:7px;background:#20261d;margin-top:12px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--ok)}
+/* chat panel */
+#chat{left:auto;right:60px;top:110px;bottom:110px;width:760px;background:rgba(14,17,14,.96);border:2px solid #3b4232;border-radius:16px;box-shadow:0 30px 100px rgba(0,0,0,.8);overflow:hidden}
+#chat .hd{height:70px;border-bottom:1px solid #2b322a;display:flex;align-items:center;padding:0 26px;font-family:"DejaVu Sans Mono",monospace;font-size:26px;color:var(--fg)}
+#chat .hd span{color:var(--dim);margin-left:14px;font-size:20px}
+#chat .body{padding:26px;display:flex;flex-direction:column;gap:26px}
+.cm{display:flex;gap:16px;align-items:flex-start}
+.cm .av{flex:none;width:54px;height:54px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-family:"DejaVu Sans Mono",monospace;font-weight:bold;font-size:22px;color:#0e110e}
+.cm .nm{font-family:"DejaVu Sans Mono",monospace;font-size:21px;color:var(--dim);margin-bottom:6px}
+.cm .nm b{font-weight:normal}
+.cm .tx{font-size:31px;line-height:1.3;color:var(--fg)}
+.cm .tx em{font-style:normal;color:var(--acc-hi)}
+.dots i{display:inline-block;width:12px;height:12px;border-radius:50%;background:var(--dim);margin-right:8px}
+/* captions */
+#title{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;font-weight:900;text-transform:uppercase;letter-spacing:-.02em;line-height:.95}
+#title .l1{font-size:150px}
+#title .l2{font-size:250px;color:var(--acc)}
+#capwrap{left:96px;right:96px;top:auto;bottom:86px}
+#cap{font-weight:900;font-size:120px;line-height:.95;letter-spacing:-.02em;text-transform:uppercase;white-space:nowrap;transform-origin:0 100%}
+#cap b{color:var(--acc)}
+#sub{margin-top:16px;font-family:"DejaVu Sans Mono",monospace;font-size:32px;color:var(--acc-hi);min-height:1.3em}
+#shade{background:linear-gradient(to top,rgba(5,7,5,.9) 0%,rgba(5,7,5,.6) 22%,transparent 42%)}
+#end{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding-bottom:120px;text-align:center}
+#endtitle{font-weight:900;font-size:104px;letter-spacing:-.02em;text-transform:uppercase;line-height:1}
+#endtitle b{color:var(--acc)}
+#endbrand{margin-top:26px;font-weight:900;font-size:64px;letter-spacing:.35em;margin-right:-.35em}
+#cta1{margin-top:18px;font-family:"DejaVu Sans Mono",monospace;font-size:38px;color:var(--acc-hi)}
+#cta2{margin-top:12px;font-family:"DejaVu Sans Mono",monospace;font-size:24px;color:var(--dim);letter-spacing:.06em}
+#flash{background:#fff3dc;mix-blend-mode:screen}
+#vig{background:radial-gradient(ellipse at 50% 50%,transparent 55%,rgba(0,0,0,.72) 100%)}
+#scan{background:repeating-linear-gradient(0deg,rgba(0,0,0,.10) 0 2px,transparent 2px 4px);opacity:.3}
+#grain{width:100%;height:100%;opacity:.06;mix-blend-mode:screen}
+#black{background:#000}
+</style></head>
+<body>
+<div id="stage">
+  <div class="layer" id="grid"></div>
+  <div class="layer" id="glow"></div>
+  <div class="layer" id="s1">
+    <div class="wall" id="wl"></div><div class="wall" id="wr"></div><div class="wall" id="wt"></div><div class="wall" id="wb"></div>
+    <div id="chatbox"><div class="hd"><i></i><i></i><i></i>&nbsp; agent · session</div><div class="msgs" id="msgs"></div></div>
+    <svg id="cracks" viewBox="0 0 900 420"></svg>
+  </div>
+  <svg class="layer" id="shards" viewBox="0 0 1920 1080" style="display:none"></svg>
+  <div class="layer" id="rookscene" style="display:none"><div id="rookwrap"><svg id="door" viewBox="0 0 540 740"></svg></div></div>
+  <img id="rookimg" alt="">
+  <img id="shatimg" alt="">
+  <div class="layer" id="worldlayer"><canvas id="w3d" class="layer" width="1920" height="1080"></canvas><div id="world" style="display:none"><svg id="wsvg" viewBox="-4000 -4000 8000 8000"></svg></div><div id="labels" class="layer"></div><div id="wcards" class="layer"></div></div>
+  <svg class="layer" id="hud" viewBox="0 0 1920 1080"></svg>
+  <div class="layer" id="hudlabel"></div>
+  <div class="layer" id="fleet"></div>
+  <div class="layer" id="chat"><div class="hd"># release <span>3 members · 2 agents</span></div><div class="body" id="chatbody"></div></div>
+  <div class="layer" id="shade"></div>
+  <div class="layer" id="title"></div>
+  <div class="layer" id="capwrap"><div id="cap"></div><div id="sub"></div></div>
+  <div class="layer" id="end"><div id="endtitle"></div><div id="endbrand"></div><div id="cta1"></div><div id="cta2"></div></div>
+  <div class="layer" id="white"></div>
+  <div class="layer" id="flash"></div>
+  <div class="layer" id="vig"></div>
+  <div class="layer" id="scan"></div>
+  <canvas class="layer" id="grain" width="480" height="270"></canvas>
+  <div class="layer" id="black"></div>
+</div>
+<script type="module">
+import { makeWorld } from './world3d.js';
+const SW = 1920, SH = 1080, BEAT = 60 / 128;
+const $ = id => document.getElementById(id);
+const NS = 'http://www.w3.org/2000/svg';
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const lerp = (a, b, t) => a + (b - a) * t;
+const inv = (a, b, x) => clamp((x - a) / (b - a));
+const eOutC = t => 1 - Math.pow(1 - t, 3);
+const eOutE = t => t >= 1 ? 1 : 1 - Math.pow(2, -10 * t);
+const eInOut = t => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const eInC = t => t * t * t;
+const eInE = t => t <= 0 ? 0 : Math.pow(2, 10 * t - 10);
+function rnd(seed) { let a = (seed >>> 0) + 0x6D2B79F5; let t = a; t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61); return ((t ^ t >>> 14) >>> 0) / 4294967296; }
+const show = (el, on) => { el.style.display = on ? '' : 'none'; };
+const typed = (s, p) => s.slice(0, Math.floor(clamp(p) * s.length + 1e-6));
+const since = (tb, step) => tb - Math.floor(tb / step) * step;
+function mk(tag, attrs, parent) { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; }
+const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+
+// ================================================================== world model
+const DEV = [
+  ['my laptop', 'laptop', -950, -350], ['work laptop', 'laptop', 1850, -650], ['my phone', 'phone', 700, 420],
+  ['my desktop', 'desktop', -650, 640], ['tablet', 'tablet', -900, 980], ['build box', 'box', 950, -560],
+  ['home server', 'rack', 120, -760], ['gpu box', 'box', 1600, 120], ['media box', 'box', 1350, 900],
+  ['nas', 'nas', -1600, 180], ['pi', 'pi', -1350, -900], ['game server', 'rack', -2000, -380],
+].map(([name, type, x, y]) => ({ name, type, x, y }));
+const D = Object.fromEntries(DEV.map(d => [d.name, d]));
+const AG = [
+  ['claude code', 0, 0, '#79d2c8'], ['codex', -520, -1000, '#a9b8f0'], ['home agent', -1750, 760, '#e8a0c0'],
+  ['voice agent', 1150, 470, '#f0c98c'], ['ops agent', 1000, -170, '#9fd37c'], ['claude code ', -880, -1220, '#79d2c8'],
+].map(([name, x, y, col]) => ({ name: name.trim(), key: name, x, y, col }));
+const A = Object.fromEntries(AG.map(a => [a.key, a]));
+const TG = { name: 'telegram', x: 100, y: 760 };
+const MESH = [[0, 3], [0, 10], [0, 6], [6, 5], [5, 1], [5, 7], [7, 2], [2, 8], [2, 3], [3, 4], [4, 9], [9, 11], [11, 10], [10, 6], [9, 0], [7, 8], [1, 7], [6, 0]];
+
+const ICON = {
+  laptop: `<rect x="-58" y="-48" width="116" height="74" rx="6"/><rect x="-48" y="-38" width="96" height="54" rx="2" class="in"/><path d="M-74 30 H74 L86 44 H-86 Z"/>`,
+  phone: `<rect x="-28" y="-54" width="56" height="108" rx="11"/><rect x="-20" y="-40" width="40" height="72" rx="2" class="in"/><circle cx="0" cy="44" r="4"/>`,
+  desktop: `<rect x="-70" y="-56" width="140" height="88" rx="6"/><rect x="-60" y="-46" width="120" height="68" rx="2" class="in"/><path d="M-10 32 H10 V46 H-10 Z M-36 46 H36 V52 H-36 Z"/>`,
+  tablet: `<rect x="-66" y="-46" width="132" height="92" rx="10"/><rect x="-56" y="-36" width="112" height="72" rx="2" class="in"/>`,
+  box: `<rect x="-52" y="-58" width="104" height="116" rx="8"/><circle cx="0" cy="-12" r="30"/><path d="M0 -12 L0 -40 M0 -12 L26 2 M0 -12 L-26 2" /><path d="M-34 36 H34 M-34 46 H34"/>`,
+  rack: `<rect x="-56" y="-56" width="112" height="32" rx="4"/><rect x="-56" y="-16" width="112" height="32" rx="4"/><rect x="-56" y="24" width="112" height="32" rx="4"/><circle cx="38" cy="-40" r="4" class="led"/><circle cx="38" cy="0" r="4" class="led"/><circle cx="38" cy="40" r="4" class="led"/><path d="M-42 -40 H10 M-42 0 H10 M-42 40 H10"/>`,
+  nas: `<rect x="-50" y="-58" width="100" height="116" rx="8"/><path d="M-34 -32 H26 M-34 -8 H26 M-34 16 H26 M-34 40 H26"/><circle cx="36" cy="-32" r="3.5" class="led"/><circle cx="36" cy="-8" r="3.5" class="led"/><circle cx="36" cy="16" r="3.5" class="led"/><circle cx="36" cy="40" r="3.5" class="led"/>`,
+  pi: `<rect x="-60" y="-42" width="120" height="84" rx="8"/><rect x="-22" y="-18" width="44" height="36" rx="3"/><path d="M-50 -32 H50" stroke-dasharray="4 5"/><rect x="38" y="4" width="22" height="26" rx="2"/>`,
+  tg: `<circle cx="0" cy="0" r="56"/><path d="M-30 0 L32 -24 L20 30 L4 12 L-6 26 L-6 8 L22 -16 L-12 4 Z" class="fillp"/>`,
+};
+const wsvg = $('wsvg');
+const gMesh = mk('g', {}, wsvg), gBeam = mk('g', {}, wsvg), gDev = mk('g', {}, wsvg), gAg = mk('g', {}, wsvg), gFx = mk('g', {}, wsvg);
+const defs = mk('defs', {}, wsvg);
+defs.innerHTML = `<filter id="blur8" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="8"/></filter>
+<radialGradient id="devglow"><stop offset="0" stop-color="#d8ad6d" stop-opacity=".35"/><stop offset="1" stop-color="#d8ad6d" stop-opacity="0"/></radialGradient>
+<radialGradient id="agglow"><stop offset="0" stop-color="#79d2c8" stop-opacity=".45"/><stop offset="1" stop-color="#79d2c8" stop-opacity="0"/></radialGradient>`;
+const css = mk('style', {}, wsvg);
+css.textContent = `.dev path,.dev rect,.dev circle{fill:rgba(216,173,109,.07);stroke:#d8ad6d;stroke-width:3.5;stroke-linejoin:round}
+.dev .in{fill:rgba(216,173,109,.12);stroke-width:2}.dev .led{fill:#8fc79a;stroke:none}.dev .fillp{fill:#3aa6dd;stroke:none}
+.lbl{font-family:"DejaVu Sans Mono",monospace;font-size:34px;fill:#cfd3bd;text-anchor:middle}
+.albl{font-family:"DejaVu Sans Mono",monospace;font-size:36px;text-anchor:middle}`;
+const meshEls = MESH.map(([a, b]) => mk('line', { x1: DEV[a].x, y1: DEV[a].y, x2: DEV[b].x, y2: DEV[b].y, stroke: '#d8ad6d', 'stroke-width': 2, 'stroke-dasharray': '6 14', opacity: .25 }, gMesh));
+function addNode(obj, type, cls) {
+  const g = mk('g', { class: 'dev', transform: `translate(${obj.x},${obj.y})` }, gDev);
+  const glow = mk('circle', { r: 150, fill: 'url(#devglow)', opacity: 0 }, g);
+  const ic = mk('g', {}, g); ic.innerHTML = ICON[type];
+  const lb = mk('text', { class: 'lbl', y: 106 }, g); lb.textContent = obj.name;
+  obj.g = g; obj.glow = glow; obj.icon = ic;
+}
+DEV.forEach(d => addNode(d, d.type));
+addNode(TG, 'tg');
+AG.forEach(a => {
+  const g = mk('g', { transform: `translate(${a.x},${a.y})` }, gAg);
+  const glow = mk('circle', { r: 130, fill: 'url(#agglow)' }, g);
+  const ring = mk('circle', { r: 60, fill: 'none', stroke: a.col, 'stroke-width': 3 }, g);
+  const hex = mk('path', { d: hexPath(48), fill: 'rgba(121,210,200,.14)', stroke: a.col, 'stroke-width': 4 }, g);
+  const core = mk('circle', { r: 13, fill: a.col }, g);
+  const lb = mk('text', { class: 'albl', y: 104, fill: a.col }, g); lb.textContent = a.name;
+  const sl = mk('text', { class: 'albl', y: 140, fill: '#92998c', 'font-size': 26 }, g); sl.textContent = 'agent';
+  Object.assign(a, { g, glow, ring, hex, core, lb });
+});
+function hexPath(r) { let d = ''; for (let i = 0; i < 6; i++) { const t = Math.PI / 3 * i - Math.PI / 6; d += (i ? 'L' : 'M') + (r * Math.cos(t)).toFixed(1) + ' ' + (r * Math.sin(t)).toFixed(1); } return d + 'Z'; }
+
+const W3 = makeWorld($('w3d'), SW, SH, DEV, AG, TG, MESH);
+// beams pool (world)
+const beamPool = [];
+function beam(i) {
+  while (beamPool.length <= i) {
+    const g = mk('g', {}, gBeam);
+    const glow = mk('line', { 'stroke-width': 16, opacity: .35, filter: 'url(#blur8)' }, g);
+    const ln = mk('line', { 'stroke-width': 4 }, g);
+    const pk = mk('circle', { r: 11 }, g);
+    beamPool.push({ g, glow, ln, pk });
+  }
+  return beamPool[i];
+}
+let beamN = 0;
+const BEAMS3 = [], RINGS3 = [];
+function drawBeam(a, b, grow, col, packet, op = 1, w = 1) {
+  BEAMS3.push({ a, b, grow, col, packet, op, w }); beamN++; return;
+  const B = beam(beamN++); B.g.style.display = '';
+  const x2 = lerp(a.x, b.x, grow), y2 = lerp(a.y, b.y, grow);
+  for (const l of [B.glow, B.ln]) { l.setAttribute('x1', a.x); l.setAttribute('y1', a.y); l.setAttribute('x2', x2); l.setAttribute('y2', y2); l.setAttribute('stroke', col); }
+  B.ln.setAttribute('stroke-width', 4 * w); B.glow.setAttribute('stroke-width', 16 * w);
+  B.g.setAttribute('opacity', op);
+  if (packet != null && packet >= 0 && packet <= 1) { B.pk.style.display = ''; B.pk.setAttribute('cx', lerp(a.x, b.x, packet)); B.pk.setAttribute('cy', lerp(a.y, b.y, packet)); B.pk.setAttribute('fill', '#fff'); }
+  else B.pk.style.display = 'none';
+}
+// fx rings pool
+const ringPool = [];
+let ringN = 0;
+function ringAt(x, y, r, col, op, w = 4) {
+  RINGS3.push({ x, y, r, col, op }); ringN++; return;
+  while (ringPool.length <= ringN) ringPool.push(mk('circle', { fill: 'none' }, gFx));
+  const c = ringPool[ringN++]; c.style.display = '';
+  c.setAttribute('cx', x); c.setAttribute('cy', y); c.setAttribute('r', r); c.setAttribute('stroke', col); c.setAttribute('stroke-width', w); c.setAttribute('opacity', op);
+}
+// html cards in world
+const wcards = $('wcards');
+const cardPool = {};
+function card(id, x, y, html, op, scale = 1, cls = 'card') {
+  let c = cardPool[id];
+  if (!c && op <= 0) return;
+  if (!c) { c = document.createElement('div'); wcards.appendChild(c); cardPool[id] = c; }
+  if (c.className !== cls) c.className = cls;
+  c.style.display = op > 0 ? '' : 'none';
+  if (op <= 0) return;
+  const [sx, sy, k] = W3.project(x, 150, y);
+  c.style.left = sx + 'px'; c.style.top = sy + 'px'; c.style.opacity = op;
+  c.style.transform = (cls === 'chip' ? 'translate(-50%,-100%) ' : '') + `scale(${scale * k})`;
+  c.style.transformOrigin = '0 0';
+  if (c._h !== html) { c.innerHTML = html; c._h = html; }
+}
+
+// ================================================================== camera
+// keyframes: [beat, cx, cy, zoom, rot, ease]
+const CAM = [
+  [32, 0, 0, 2.8, -10], [34, 0, 0, .44, 0, 'out'], [39.6, 90, -40, .5, 3],
+  [40.7, 1230, -600, 1.2, 0, 'out'], [45.9, 1250, -610, 1.27, 1],
+  [46.7, 400, -800, 1.2, -1, 'out'], [51.9, 420, -815, 1.27, 0],
+  [52.7, -670, -390, 1.2, 1, 'out'], [57.9, -650, -400, 1.27, 0],
+  [58.7, -1320, 140, 1.2, -1, 'out'], [63.9, -1300, 130, 1.27, 0],
+  [65.2, 0, -60, .43, 0, 'out'], [71.8, 0, -60, .47, 2],
+  [72.6, 0, 0, .34, -3, 'out'], [87.9, 0, 0, .37, 4],
+  [89.8, -250, -1040, 1.3, 0, 'out'], [91.9, -240, -1040, 1.33, 0],
+  [100.5, -760, -1040, .74, -2], [103.9, -740, -1020, .78, -1],
+  [104.8, 330, 470, .82, 0, 'out'], [113.2, 340, 480, .86, 1],
+  [114.6, 1230, -100, .9, 0, 'out'], [127.9, 1240, -110, .95, 0],
+  [130.5, 0, 0, .12, 0, 'in'],
+];
+function camAt(tb) {
+  if (tb <= CAM[0][0]) return CAM[0].slice(1, 5);
+  for (let i = 1; i < CAM.length; i++) {
+    if (tb <= CAM[i][0]) {
+      const a = CAM[i - 1], b = CAM[i];
+      let p = inv(a[0], b[0], tb);
+      p = b[5] === 'out' ? eOutC(p) : b[5] === 'in' ? eInC(p) : eInOut(p);
+      if (b[5] === 'in') return [lerp(a[1], b[1], p), lerp(a[2], b[2], p), Math.exp(lerp(Math.log(a[3]), Math.log(b[3]), p)), lerp(a[4], b[4], p)];
+      return [lerp(a[1], b[1], p), lerp(a[2], b[2], p), Math.exp(lerp(Math.log(a[3]), Math.log(b[3]), p)), lerp(a[4], b[4], p)];
+    }
+  }
+  return CAM[CAM.length - 1].slice(1, 5);
+}
+let CAMV = [0, 0, 1, 0];
+function project(x, y) { return W3.project(x, 70, y); }
+
+// ================================================================== scene 1 setup
+const MSGS = [[1.5, 4.3, "I can't reach that machine."], [5, 7.8, "I don't remember yesterday."], [8.5, 11.3, "I can't tell you when it's done."]];
+const msgEls = MSGS.map(() => { const d = document.createElement('div'); d.className = 'amsg'; $('msgs').appendChild(d); return d; });
+const CRACKS = [];
+for (let i = 0; i < 9; i++) {
+  let x = 450 + (rnd(i * 7) - .5) * 200, y = 210 + (rnd(i * 7 + 1) - .5) * 120, d = `M${x} ${y}`;
+  const ang = rnd(i * 7 + 2) * Math.PI * 2;
+  for (let k = 0; k < 6; k++) { const a = ang + (rnd(i * 50 + k) - .5) * 1.2; x += Math.cos(a) * 60; y += Math.sin(a) * 60; d += ` L${x.toFixed(0)} ${y.toFixed(0)}`; }
+  const p = mk('path', { d, fill: 'none', stroke: '#f0c98c', 'stroke-width': 3, opacity: .9 }, $('cracks'));
+  p.setAttribute('pathLength', 1); p.setAttribute('stroke-dasharray', 1); CRACKS.push(p);
+}
+// shards: jittered grid triangles over the chat box
+const SHARDS = [];
+{ const X0 = 510, Y0 = 330, W = 900, H = 420, nx = 7, ny = 4; const P = [];
+  for (let j = 0; j <= ny; j++) for (let i = 0; i <= nx; i++) {
+    const edge = i === 0 || j === 0 || i === nx || j === ny;
+    P.push([X0 + W * i / nx + (edge ? 0 : (rnd(i * 13 + j) - .5) * 70), Y0 + H * j / ny + (edge ? 0 : (rnd(i * 17 + j * 3) - .5) * 60)]);
+  }
+  const id = (i, j) => j * (nx + 1) + i;
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+    for (const tri of [[id(i, j), id(i + 1, j), id(i + 1, j + 1)], [id(i, j), id(i + 1, j + 1), id(i, j + 1)]]) {
+      const pts = tri.map(k => P[k]); const cx = (pts[0][0] + pts[1][0] + pts[2][0]) / 3, cy = (pts[0][1] + pts[1][1] + pts[2][1]) / 3;
+      const el = mk('polygon', { points: pts.map(p => p.join(',')).join(' '), fill: '#151a14', stroke: '#d8ad6d', 'stroke-width': 2 }, $('shards'));
+      const n = SHARDS.length;
+      SHARDS.push({ el, cx, cy, vx: (cx - 960) * (1.2 + rnd(n) * 1.5), vy: (cy - 540) * (1.2 + rnd(n + 99) * 1.5) - 80, vr: (rnd(n + 7) - .5) * 400 });
+    }
+  }
+}
+
+// ================================================================== door
+const RK = 860 / 740; // rook image scale
+const rw = $('rookwrap'); rw.style.width = 540 * RK + 'px'; rw.style.height = 740 * RK + 'px';
+const RL = SW / 2 - 270 * RK, RT = (SH - 740 * RK) / 2 + 10;
+rw.style.left = RL + 'px'; rw.style.top = RT + 'px';
+const DOOR = { x: 270, y: 640, w: 64, h: 132 }; // image coords: door centre and size
+const DCX = RL + DOOR.x * RK, DCY = RT + DOOR.y * RK; // screen coords of the door centre
+const door = $('door');
+door.innerHTML = `<defs>
+ <radialGradient id="dl" cx="50%" cy="70%" r="70%"><stop offset="0" stop-color="#fffdf5"/><stop offset=".45" stop-color="#ffe7b0"/><stop offset="1" stop-color="#e2a85a"/></radialGradient>
+ <linearGradient id="ray" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe9b8" stop-opacity=".55"/><stop offset="1" stop-color="#ffe9b8" stop-opacity="0"/></linearGradient>
+ <radialGradient id="floor"><stop offset="0" stop-color="#ffdca0" stop-opacity=".7"/><stop offset="1" stop-color="#ffdca0" stop-opacity="0"/></radialGradient>
+ <clipPath id="dclip"><path id="dpathc"/></clipPath></defs>
+ <g id="rays" style="mix-blend-mode:screen"></g>
+ <ellipse id="floorglow" cx="270" cy="712" rx="260" ry="40" fill="url(#floor)"/>
+ <path id="dhole" fill="#030403"/>
+ <path id="dlight" fill="url(#dl)"/>
+ <g id="dpanel"><path id="dwood" fill="#a88f5c" stroke="#5c4b2c" stroke-width="2"/><path id="dplanks" fill="none" stroke="#6e5a34" stroke-width="1.4"/><circle id="dknob" r="2.6" fill="#3a2f1c"/></g>
+ <rect id="dseam" width="2.2" fill="#fff4d8"/>`;
+const x0 = DOOR.x - DOOR.w / 2, x1 = DOOR.x + DOOR.w / 2, yb = DOOR.y + DOOR.h / 2, yt = DOOR.y - DOOR.h / 2 + DOOR.w / 2;
+const DP = `M${x0} ${yb} L${x0} ${yt} A${DOOR.w / 2} ${DOOR.w / 2} 0 0 1 ${x1} ${yt} L${x1} ${yb} Z`;
+for (const id of ['dhole', 'dlight', 'dwood', 'dpathc']) $(id).setAttribute('d', DP);
+let pl = ''; for (let i = 1; i < 4; i++) { const x = x0 + DOOR.w * i / 4; pl += `M${x} ${yb} L${x} ${yt - Math.sqrt(Math.max(0, (DOOR.w / 2) ** 2 - (x - DOOR.x) ** 2)) + 2} `; }
+$('dplanks').setAttribute('d', pl);
+$('dknob').setAttribute('cx', x1 - 9); $('dknob').setAttribute('cy', DOOR.y + 18);
+$('dseam').setAttribute('x', x1 - 1.1); $('dseam').setAttribute('y', yt - 24); $('dseam').setAttribute('height', yb - yt + 24);
+const RAYS = [];
+for (let i = 0; i < 9; i++) {
+  const p = mk('polygon', { fill: 'url(#ray)' }, $('rays')); RAYS.push({ p, a: -70 + i * 17.5, w: 4 + rnd(i) * 7 });
+}
+
+// ================================================================== grain
+const gctx = $('grain').getContext('2d'), gimg = gctx.createImageData(480, 270);
+function grain(f) { let s = f * 9973 + 1; const d = gimg.data; for (let i = 0; i < d.length; i += 4) { s = (s * 1103515245 + 12345) >>> 0; d[i] = d[i + 1] = d[i + 2] = s >>> 24; d[i + 3] = 255; } gctx.putImageData(gimg, 0, 0); }
+
+// ================================================================== content
+const TOUR = [ // first person, beats
+  { b: 40, dev: 'build box', lines: [['cmd', 'rook_call build-box shell.exec'], ['arg', 'docker build -t app:0.3 .'], ['out', 'step 12/12 · exporting layers'], ['ok', '✓ built in 41s']] },
+  { b: 46, dev: 'home server', lines: [['cmd', 'rook_call home-server hub.deploy'], ['arg', 'release v0.3 · signature ✓'], ['out', 'health: dashboard ✓  mcp ✓'], ['ok', '✓ live · rollback armed']] },
+  { b: 52, dev: 'my laptop', lines: [['cmd', 'rook_call my-laptop shell.exec'], ['arg', 'pytest -q'], ['out', '........................ 100%'], ['ok', '✓ 418 passed in 9.2s']] },
+  { b: 58, dev: 'nas', lines: [['cmd', 'rook_call nas shell.exec'], ['arg', 'restic backup /data'], ['out', 'processed 18,204 files'], ['ok', '✓ snapshot 4f2a · 2.1 GB']] },
+];
+function cardHTML(head, lines, p) { // p in beats since card start; reveal lines in sequence
+  let h = `<div class="ch">${head}</div>`;
+  let t = .15;
+  for (const [k, txt] of lines) {
+    const dur = k === 'cmd' ? 1.0 : k === 'arg' ? .7 : k === 'hand' ? .5 : .25;
+    if (p < t) break;
+    const shown = (k === 'cmd' || k === 'arg') ? typed(txt, (p - t) / dur) : txt;
+    h += `<div class="${k}">${esc(shown)}${(k === 'cmd' || k === 'arg') && p < t + dur ? '<span class="cur"></span>' : ''}</div>`;
+    t += dur + (k === 'arg' ? .55 : .35);
+  }
+  return h;
+}
+const CHIPS = { 'claude code': ['build ✓', 'PR #42 ✓', 'tests ✓'], 'codex': ['lint ✓', 'deploy ✓', 'tests ✓'], 'home agent': ['lights off ✓', 'grocery list ✓', 'thermostat 20° ✓'], 'voice agent': ['timer 10m ✓', 'weather ✓', 'playing jazz ✓'], 'ops agent': ['backup ✓', 'disk 61% ✓', 'cert renewed ✓'] };
+const TRAFFIC = [];
+['claude code', 'codex', 'home agent', 'voice agent', 'ops agent'].forEach((ak, i) => {
+  for (let k = 0; k < 12; k++) TRAFFIC.push({ ag: ak, b: 72.4 + i * .37 + k * 1.33, dev: DEV[(i * 5 + k * 7 + (k > 3 ? i : 0)) % 12], chip: CHIPS[ak][k % 3] });
+});
+
+// ================================================================== render
+function render(t, frame) {
+  const tb = t / BEAT;
+  beamN = 0; ringN = 0; BEAMS3.length = 0; RINGS3.length = 0;
+  let flash = 0, black = 0, white = 0, shake = 0, gridOp = .35, glowOp = .5;
+  for (const id of ['s1', 'shards', 'rookscene', 'worldlayer', 'hud', 'hudlabel', 'fleet', 'chat', 'shade', 'title', 'capwrap', 'end']) show($(id), false);
+  $('hud').innerHTML = '';
+
+  // ---------------------------------------------------------- scene 1: the box (0-16) + shatter
+  if (tb < 16) {
+    show($('s1'), true);
+    MSGS.forEach(([a, b, s], i) => {
+      const p = inv(a, b, tb);
+      msgEls[i].style.display = tb >= a ? '' : 'none';
+      msgEls[i].innerHTML = `<span class="who">agent</span>${esc(typed(s, p))}${tb >= a && (p < 1 || (i === 2 && Math.floor(tb * 2) % 2 === 0)) ? '<span class="cur"></span>' : ''}`;
+    });
+    // walls close in 11-16
+    const c = eInC(inv(10.5, 16, tb));
+    const gapX = lerp(960, 480, c), gapY = lerp(560, 245, c); // half sizes of the free region
+    const pulse = tb > 10.5 ? 8 * Math.exp(-since(tb, tb > 14 ? .5 : 1) / .12) : 0;
+    const L = 960 - gapX + pulse, R = 960 + gapX - pulse, T = 540 - gapY + pulse * .6, Bt = 540 + gapY - pulse * .6;
+    const W = (el, l, tp, w, h, edge) => { el.style.left = l + 'px'; el.style.top = tp + 'px'; el.style.width = w + 'px'; el.style.height = h + 'px'; el.style.borderWidth = '0'; el.style[edge] = '4px solid #514b35'; };
+    W($('wl'), 0, 0, Math.max(0, L), SH, 'borderRight'); W($('wr'), R, 0, Math.max(0, SW - R), SH, 'borderLeft');
+    W($('wt'), 0, 0, SW, Math.max(0, T), 'borderBottom'); W($('wb'), 0, Bt, SW, Math.max(0, SH - Bt), 'borderTop');
+    CRACKS.forEach(p => p.style.display = 'none');
+    $('chatbox').style.visibility = tb >= 11.95 ? 'hidden' : 'visible';
+    shake = tb > 11 ? 2 + 8 * inv(11, 16, tb) : 0;
+    $('s1').style.transform = shake ? `translate(${(rnd(Math.floor(tb * 8)) - .5) * shake * Math.exp(-since(tb, 1) / .2) * 2}px,${(rnd(Math.floor(tb * 8) + 5) - .5) * shake}px)` : '';
+    if (tb < 1.2) black = 1 - inv(0, 1.2, tb);
+    gridOp = .15; glowOp = .25 + .4 * Math.exp(-since(tb, 2) / .3);
+  }
+  if (false) {
+    show($('shards'), true);
+    const p = (tb - 16) * BEAT; // seconds
+    SHARDS.forEach(s => {
+      const k = 1 - Math.exp(-p * 2.2);
+      s.el.setAttribute('transform', `translate(${s.vx * k * .9},${s.vy * k * .9 + 300 * p * p}) rotate(${s.vr * k} ${s.cx} ${s.cy})`);
+      s.el.setAttribute('opacity', 1 - inv(.6, 1.4, p));
+    });
+    flash = .9 * Math.exp(-(tb - 16) / .35);
+  }
+
+  // ---------------------------------------------------------- scene 2: rook + door (17-32)
+  if (tb >= 16 && tb < 19) flash = Math.max(flash, .9 * Math.exp(-(tb - 16) / .35));
+  if (tb >= 16.5 && tb < 32) {
+    const op = eInOut(inv(17, 20.5, tb)); $('rookimg').style.opacity = op;
+    rw.style.opacity = op;
+    const open = eInOut(inv(22.2, 25.5, tb));
+    // door panel swings on the left hinge
+    $('dpanel').setAttribute('transform', `translate(${x0} 0) matrix(${Math.max(.04, 1 - open)} ${-.18 * open} 0 1 0 0) translate(${-x0} 0)`);
+    $('dwood').setAttribute('fill', `rgb(${lerp(168, 70, open)},${lerp(143, 58, open)},${lerp(92, 36, open)})`);
+    $('dseam').setAttribute('opacity', tb > 21.3 && open < .15 ? inv(21.3, 22.2, tb) : 0);
+    $('dlight').setAttribute('opacity', inv(22.2, 23.2, tb) * (1 + .08 * Math.sin(tb * 7)));
+    $('floorglow').setAttribute('opacity', open * .9);
+    RAYS.forEach((r, i) => {
+      const a = (r.a + 90 + Math.sin(tb * .7 + i) * 3) * Math.PI / 180, w = r.w * Math.PI / 180, L = 900;
+      const ox = DOOR.x, oy = DOOR.y + 10;
+      r.p.setAttribute('points', `${ox},${oy} ${ox + Math.cos(a - w) * L},${oy + Math.sin(a - w) * L * .45} ${ox + Math.cos(a + w) * L},${oy + Math.sin(a + w) * L * .45}`);
+      r.p.setAttribute('opacity', open * (.55 + .3 * Math.sin(tb * 1.3 + i * 2)));
+    });
+    // zoom into the doorway 27.5-31.5
+    const z = Math.exp(lerp(0, Math.log(46), eInE(inv(27.3, 31.5, tb)))) * (1 + .03 * inv(17, 27.3, tb));
+    $('rookscene').style.transform = `translate(${DCX}px,${DCY}px) scale(${z}) translate(${-DCX}px,${-DCY}px)`;
+    white = eInC(inv(30.2, 31.5, tb));
+    if (tb >= 31.5) white = 1;
+    gridOp = .12 * op; glowOp = .2 + .6 * open;
+  }
+
+  // ---------------------------------------------------------- the world (32-130)
+  if (tb >= 32 && tb < 131) {
+    show($('worldlayer'), true);
+    CAMV = camAt(tb);
+    W3.setCamera(CAMV);
+    const [cx, cy, z, r] = CAMV;
+    const KZ = clamp(.5 / z, 1, 1.6), CS = clamp(.95 / z, 1, 3);
+    $('world').style.transform = `translate(${SW / 2}px,${SH / 2}px) rotate(${r}deg) scale(${z}) translate(${-cx}px,${-cy}px)`;
+    // devices pop in at 32-34
+    DEV.forEach((d, i) => {
+      const a = 32.15 + rnd(i * 3) * 1.6;
+      const s = eOutE(inv(a, a + .5, tb));
+      d.g.setAttribute('transform', `translate(${d.x},${d.y}) scale(${(.4 + .6 * s) * KZ})`);
+      d.g.setAttribute('opacity', s);
+      d.glow.setAttribute('opacity', 0);
+    });
+    TG.g.setAttribute('transform', `translate(${TG.x},${TG.y}) scale(${KZ})`); TG.g.setAttribute('opacity', eOutC(inv(104.3, 105, tb)) * (tb < 129 ? 1 : 0));
+    meshEls.forEach((m, i) => m.setAttribute('opacity', .22 * inv(33, 35, tb) * (tb >= 40 && tb < 72 ? .5 : 1)));
+    // agents
+    AG.forEach((a, i) => {
+      let s = 0, dimA = 1;
+      if (tb >= 72) { const ap = 72 + i * .25; s = eOutE(inv(ap, ap + .5, tb)); }
+      if (a.key === 'claude code ') s = eOutE(inv(97, 97.8, tb));
+      if (a.key === 'codex' && tb >= 91.5) dimA = lerp(1, .28, inv(91.5, 93, tb));
+      a.g.setAttribute('opacity', s * dimA);
+      a.g.setAttribute('transform', `translate(${a.x},${a.y}) scale(${(.5 + .5 * s) * KZ})`);
+      const pulse = 1 + .06 * Math.exp(-since(tb, 1) / .15);
+      a.ring.setAttribute('r', 60 * pulse);
+      const dead = a.key === 'codex' && tb >= 91.5;
+      a.hex.setAttribute('stroke', dead ? '#5a5f55' : a.col); a.core.setAttribute('fill', dead ? '#5a5f55' : a.col); a.ring.setAttribute('stroke', dead ? '#5a5f55' : a.col);
+      a.lb.setAttribute('fill', dead ? '#6b7064' : a.col);
+      a.glow.setAttribute('opacity', dead ? 0 : 1);
+    });
+    if (tb >= 97 && tb < 99) ringAt(A['claude code '].x, A['claude code '].y, 60 + 260 * eOutC(inv(97, 98.5, tb)), '#79d2c8', 1 - inv(97, 98.5, tb), 5);
+
+    // ----- title (32-40)
+    if (tb < 40) {
+      show($('title'), true);
+      const s1 = eOutE(inv(32.1, 32.5, tb)), s2 = eOutE(inv(33, 33.4, tb));
+      $('title').innerHTML = `<div class="l1" style="opacity:${s1};transform:scale(${lerp(1.5, 1, s1)})">GIVE YOUR AGENTS</div><div class="l2" style="opacity:${s2};transform:scale(${lerp(1.6, 1, s2)})">AGENCY.</div>`;
+      $('title').style.opacity = 1 - inv(39, 39.8, tb);
+      $('title').style.textShadow = '0 0 60px rgba(0,0,0,.9),0 0 20px rgba(0,0,0,.8)';
+      flash = Math.max(flash, .95 * Math.exp(-(tb - 32) / .35));
+      white = 0;
+      // light mesh packets
+      MESH.forEach(([a, b], i) => { const p = since(tb + rnd(i) * 3, 3) / 3; if (tb > 34) ringAt(lerp(DEV[a].x, DEV[b].x, p), lerp(DEV[a].y, DEV[b].y, p), 7, '#f0c98c', .9, 6); });
+      shake = 6 * Math.exp(-(tb - 32) / .8);
+    }
+
+    // ----- first person tour (40-72)
+    if (tb >= 40 && tb < 72) {
+      show($('hud'), true); show($('hudlabel'), true);
+      $('hudlabel').innerHTML = `◉ agent · claude code <span>· running in the cloud</span>`;
+      const hud = $('hud');
+      // corner brackets
+      const br = (x, y, sx, sy) => mk('path', { d: `M${x} ${y + 60 * sy} L${x} ${y} L${x + 60 * sx} ${y}`, fill: 'none', stroke: '#79d2c8', 'stroke-width': 4, opacity: .7 }, hud);
+      br(30, 30, 1, 1); br(SW - 30, 30, -1, 1); br(30, SH - 30, 1, -1); br(SW - 30, SH - 30, -1, -1);
+      const tour = TOUR.filter(x => x.b <= tb).pop();
+      if (tb < 64.5 && tour) {
+        const d = D[tour.dev], u = tb - tour.b;
+        const [px, py, pk] = project(d.x, d.y);
+        const grow = eOutC(clamp((u - .5) / .5));
+        // beam from the viewer to the device
+        const sx = SW / 2 - 120, sy = SH + 40;
+        const ex = lerp(sx, px, grow), ey = lerp(sy, py + 40, grow);
+        mk('line', { x1: sx, y1: sy, x2: ex, y2: ey, stroke: '#79d2c8', 'stroke-width': 18, opacity: .3, filter: 'url(#hblur)' }, hud);
+        mk('line', { x1: sx, y1: sy, x2: ex, y2: ey, stroke: '#79d2c8', 'stroke-width': 5 }, hud);
+        for (let k = 0; k < 3; k++) { const pp = since(u * 1.3 + k / 3, 1); if (grow >= 1) mk('circle', { cx: lerp(sx, px, pp), cy: lerp(sy, py + 40, pp), r: 9, fill: '#fff' }, hud); }
+        // reticle
+        const rs = 120 * pk * (1 + .25 * Math.exp(-u / .2)), ro = grow;
+        for (const [qx, qy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) mk('path', { d: `M${px + qx * rs} ${py + qy * rs + -qy * 34} L${px + qx * rs} ${py + qy * rs} L${px + qx * rs - qx * 34} ${py + qy * rs}`, fill: 'none', stroke: '#79d2c8', 'stroke-width': 4, opacity: ro }, hud);
+        d.glow.setAttribute('opacity', grow);
+        const html = cardHTML(`<b>claude code</b> → ${tour.dev}`, tour.lines, u - .9);
+        card('tour' + tour.b, d.x + 150, d.y - 230, html, eOutC(inv(.8, 1.1, u)) * (1 - inv(5.6, 6, u)));
+        TOUR.forEach(x => { if (x !== tour) card('tour' + x.b, 0, 0, '', 0); });
+      } else TOUR.forEach(x => card('tour' + x.b, 0, 0, '', 0));
+      // the fleet (64-72)
+      if (tb >= 64.5) {
+        show($('fleet'), true);
+        const sx = SW / 2, sy = SH + 40;
+        let done = 0;
+        DEV.forEach((d, i) => {
+          const a = 65.2 + i * .5;
+          const g = eOutC(inv(a, a + .35, tb));
+          if (g <= 0) return;
+          const [px, py] = project(d.x, d.y);
+          mk('line', { x1: sx, y1: sy, x2: lerp(sx, px, g), y2: lerp(sy, py, g), stroke: '#79d2c8', 'stroke-width': 3, opacity: .75 }, hud);
+          if (g >= 1) { done++; d.glow.setAttribute('opacity', .8); card('fl' + i, d.x, d.y - 140 * KZ, '✓ 0.3', 1, CS, 'chip'); }
+        });
+        const frac = done / 12;
+        $('fleet').innerHTML = `<div class="card"><div class="ch"><b>claude code</b> → all 12 machines</div><div class="cmd">rook_call --all worker.update</div><div class="arg">build 0.3 · signed</div><div class="${done === 12 ? 'ok' : 'out'}">${done === 12 ? '✓ 12/12 updated · 0 ports opened' : `updating ${done}/12 …`}</div><div class="bar"><i style="width:${frac * 100}%"></i></div></div>`;
+        $('fleet').style.opacity = eOutC(inv(64.5, 65, tb)) * (1 - inv(71.6, 72, tb));
+      }
+      for (let i = 0; i < 12; i++) if (!(tb >= 64.5 && tb >= 65.2 + i * .5 + .35)) card('fl' + i, 0, 0, '', 0);
+      if (tb < 40.6) flash = Math.max(flash, .2 * Math.exp(-(tb - 40) / .15));
+      shake = 2.5;
+    } else { TOUR.forEach(x => card('tour' + x.b, 0, 0, '', 0)); for (let i = 0; i < 12; i++) card('fl' + i, 0, 0, '', 0); }
+
+    // ----- one layer: traffic (72-131, dimmed after 88)
+    if (tb >= 72) {
+      const traffOp = tb < 88 ? 1 : tb < 104 ? .25 : tb < 128 ? .18 : .4;
+      TRAFFIC.forEach((tr, i) => {
+        const a = A[tr.ag]; const d = tr.dev;
+        let b0 = tr.b; while (b0 + 16 < tb) b0 += 16; // keep the band busy after 88
+        const u = tb - b0;
+        if (u < 0 || u > 2.2) { card('tr' + i, 0, 0, '', 0); return; }
+        if (tr.ag === 'codex' && tb >= 91.5) { card('tr' + i, 0, 0, '', 0); return; }
+        const g = eOutC(clamp(u / .45));
+        const fade = 1 - inv(1.6, 2.2, u);
+        drawBeam(a, d, g, a.col, g >= 1 ? since(u * 1.5, 1) : null, traffOp * fade * .9, 1.6);
+        if (g >= 1) { d.glow.setAttribute('opacity', Math.max(+d.glow.getAttribute('opacity'), .7 * fade * traffOp)); }
+        card('tr' + i, d.x, d.y - 140 * KZ, tr.chip, g >= 1 && tb < 88 ? fade : 0, CS, 'chip');
+      });
+      if (tb < 88) {
+        show($('capwrap'), true); show($('shade'), true);
+        const parts = [[72, 'ONE LAYER.'], [76, 'EVERY AGENT.'], [80, 'EVERY DEVICE.']];
+        const cur = parts.filter(p => p[0] <= tb);
+        $('cap').innerHTML = cur.map((p, i) => i === cur.length - 1 ? `<b>${p[1]}</b>` : p[1]).join(' ');
+        $('cap').style.fontSize = '104px';
+        const last = cur[cur.length - 1][0], sl = eOutE(inv(last, last + .3, tb));
+        $('cap').style.transform = `scale(${lerp(1.08, 1, sl)})`;
+        $('sub').textContent = typed(tb < 80 ? 'claude code · codex · your home agent · your voice agent · ops' : 'laptops · phones · servers · a pi in the closet', inv(last + .3, last + 2, tb));
+        if (tb < 73) flash = Math.max(flash, .7 * Math.exp(-(tb - 72) / .3));
+        shake = 5;
+      }
+    } else TRAFFIC.forEach((tr, i) => card('tr' + i, 0, 0, '', 0));
+
+    // ----- limit reached + handoff (88-104)
+    {
+      const cA = A['codex'], hs = D['home server'];
+      const u = tb - 88.6;
+      const lines = [['out', 'release v0.3 · step 4 of 6'], ['cmd', 'rook_call home-server hub.deploy'], ['out', 'uploading release …']];
+      let html = cardHTML('<b>codex</b> → home server', lines, u);
+      if (tb >= 91.5) html += `<div class="err">⛔ usage limit reached · session ended</div>`;
+      card('codex', cA.x + 140, cA.y - 330, html, tb >= 88.6 && tb < 104 ? eOutC(inv(88.6, 89, tb)) * (tb < 93 ? 1 : lerp(1, .35, inv(93, 96, tb))) * (1 - inv(103, 104, tb)) : 0);
+      if (tb >= 89.6 && tb < 91.5) drawBeam(cA, hs, eOutC(inv(89.6, 90, tb)), cA.col, since(tb * 1.5, 1), 1, 1.5);
+      if (tb >= 91.5 && tb < 92.3) drawBeam(cA, hs, 1, '#e0675c', null, 1 - inv(91.5, 92.3, tb), 1.5);
+      if (tb >= 91.5 && tb < 92) flash = Math.max(flash, .25 * (1 - inv(91.5, 92, tb)));
+      // new agent reads the handoff
+      const nA = A['claude code '];
+      const u2 = tb - 98.2;
+      const hl = [['cmd', 'rook_handoff_get release-v0.3'], ['hand', 'step 4 of 6: deploy the hub'], ['hand', 'next: roll out the workers'], ['hand', 'note: rollback is armed'], ['cmd', 'resume']];
+      let h2 = cardHTML('<b>claude code</b> · new session', hl, u2);
+      if (tb >= 102.6) h2 += `<div class="ok">✓ hub live · on to step 5 of 6</div>`;
+      card('handoff', nA.x - 1000, nA.y - 160, h2, tb >= 98.2 && tb < 104 ? eOutC(inv(98.2, 98.6, tb)) * (1 - inv(103.4, 104, tb)) : 0, 1.35);
+      if (tb >= 101.8 && tb < 104) { drawBeam(nA, hs, eOutC(inv(101.8, 102.3, tb)), nA.col, since(tb * 1.5, 1), 1 - inv(103.4, 104, tb), 1.5); hs.glow.setAttribute('opacity', 1); }
+      if (tb >= 99.8 && tb < 104) {
+        show($('capwrap'), true); show($('shade'), true);
+        $('cap').style.fontSize = '104px';
+        $('cap').innerHTML = tb < 101.8 ? 'THE SESSION ENDS.' : 'THE SESSION ENDS. <b>THE WORK DOESN\'T.</b>';
+        const sl = eOutE(inv(tb < 101.8 ? 99.8 : 101.8, (tb < 101.8 ? 99.8 : 101.8) + .3, tb));
+        $('cap').style.transform = `scale(${lerp(1.08, 1, sl)})`;
+        $('sub').textContent = typed('handoffs, tasks and knowledge live on the band, not in the chat', inv(102, 103.6, tb));
+      }
+      if (tb >= 92 && tb < 100) black = .0;
+    }
+
+    // ----- tools + agents talking (104-128)
+    {
+      const cc = A['claude code'], ph = D['my phone'], ops = A['ops agent'];
+      if (tb >= 104 && tb < 114) {
+        // voice to the phone
+        if (tb >= 104.6) {
+          drawBeam(cc, ph, eOutC(inv(104.6, 105.1, tb)), cc.col, since(tb * 1.5, 1), 1 - inv(113, 114, tb), 1.5);
+          ph.glow.setAttribute('opacity', 1);
+          for (let k = 0; k < 3; k++) { const p = since(tb + k * .5, 1.5) / 1.5; if (tb > 105.2) ringAt(ph.x, ph.y, 70 + 160 * p, '#f0c98c', (1 - p) * (1 - inv(113, 114, tb)), 4); }
+          card('vchip', (cc.x + ph.x) / 2 - 40, (cc.y + ph.y) / 2 - 30, 'voice.speak', eOutC(inv(104.8, 105.2, tb)) * (1 - inv(113, 114, tb)), 1.5, 'chip');
+          card('vbub', ph.x - 200, ph.y - 440, `<span class="bt">🔊 my phone, out loud</span>“${esc(typed('PR #42 is merged. v0.3 is live.', inv(105.4, 107.4, tb)))}”`, eOutC(inv(105.2, 105.6, tb)) * (1 - inv(113, 114, tb)), 1.4, 'bubble');
+        }
+        if (tb >= 108.6) {
+          drawBeam(cc, TG, eOutC(inv(108.6, 109.1, tb)), cc.col, since(tb * 1.5, 1), 1 - inv(113, 114, tb), 1.5);
+          card('tchip', (cc.x + TG.x) / 2 - 320, (cc.y + TG.y) / 2, 'telegram.send', eOutC(inv(108.8, 109.2, tb)) * (1 - inv(113, 114, tb)), 1.5, 'chip');
+          card('tbub', TG.x + 130, TG.y - 120, `<span class="bt">✈ telegram</span>✓ PR #42 merged · v0.3 deployed`, eOutC(inv(109.3, 109.7, tb)) * (1 - inv(113, 114, tb)), 1.3, 'bubble tg');
+        }
+        show($('capwrap'), true); show($('shade'), true);
+        $('cap').style.fontSize = '104px';
+        $('cap').innerHTML = 'TOOLS TO <b>TALK TO YOU</b>';
+        const sl = eOutE(inv(104, 104.3, tb)); $('cap').style.transform = `scale(${lerp(1.3, 1, sl)})`; $('cap').style.opacity = sl;
+        $('sub').textContent = typed('voice on your phone · telegram · notifications', inv(104.4, 106, tb));
+        if (tb < 104.6) flash = Math.max(flash, .7 * Math.exp(-(tb - 104) / .3));
+        shake = 4;
+      } else { for (const id of ['vchip', 'vbub', 'tchip', 'tbub']) card(id, 0, 0, '', 0); }
+      if (tb >= 113.6 && tb < 128.5) {
+        show($('chat'), true);
+        const ci = eOutC(inv(113.6, 114.2, tb));
+        $('chat').style.transform = `translateX(${(1 - ci) * 900}px)`;
+        const m1 = 'notified the user as requested: voice and telegram. <em>PR #42</em> is merged.';
+        const m2 = 'ok. updating the knowledge docs and assigning the blocked task.';
+        let h = '';
+        const msg = (av, col, nm, txt, a, typingAt) => {
+          if (tb < typingAt) return '';
+          if (tb < a) return `<div class="cm"><div class="av" style="background:${col}">${av}</div><div><div class="nm"><b style="color:${col}">${nm}</b></div><div class="dots"><i></i><i></i><i style="opacity:${.4 + .6 * (Math.floor(tb * 4) % 2)}"></i></div></div></div>`;
+          const sl = eOutC(inv(a, a + .3, tb));
+          return `<div class="cm" style="opacity:${sl};transform:translateY(${(1 - sl) * 30}px)"><div class="av" style="background:${col}">${av}</div><div><div class="nm"><b style="color:${col}">${nm}</b> · agent</div><div class="tx">${txt}</div></div></div>`;
+        };
+        h += msg('CC', '#79d2c8', 'claude code', '<em>@ops-agent</em> ' + m1, 115, 114.2);
+        h += msg('OA', '#9fd37c', 'ops agent', m2, 118.6, 117.2);
+        $('chatbody').innerHTML = h;
+        $('chat').style.opacity = 1 - inv(127.6, 128.4, tb);
+        // ops agent actually does it
+        const u = tb - 119.6;
+        const ol = [['cmd', 'rook_knowledge update release-v0.3'], ['ok', '✓ knowledge page updated'], ['cmd', 'rook_task assign "rotate backup key"'], ['ok', '✓ blocked task → home agent']];
+        card('ops', ops.x - 360, ops.y - 520, cardHTML('<b>ops agent</b>', ol, u), tb >= 119.6 ? eOutC(inv(119.6, 120, tb)) * (1 - inv(127.6, 128.4, tb)) : 0);
+        if (tb >= 125.6) drawBeam(ops, A['home agent'], eOutC(inv(125.6, 126.6, tb)), ops.col, since(tb * 1.5, 1), 1 - inv(127.6, 128.4, tb), 1.5);
+        show($('capwrap'), true); show($('shade'), true);
+        $('cap').style.fontSize = '96px';
+        $('cap').innerHTML = 'AGENTS THAT <b>WORK TOGETHER</b>';
+        const sl = eOutE(inv(114, 114.3, tb)); $('cap').style.transform = `scale(${lerp(1.2, 1, sl)})`; $('cap').style.opacity = sl * (1 - inv(127.6, 128.2, tb));
+        $('sub').textContent = typed('shared chat · tasks · knowledge · handoffs', inv(114.4, 116, tb));
+        $('capwrap').style.right = '900px';
+        shake = 3;
+      } else { card('ops', 0, 0, '', 0); $('capwrap').style.right = ''; }
+    }
+    if (tb >= 128) { white = Math.max(white, eInC(inv(129.4, 131, tb))); shake = 3; }
+    gridOp = .3; glowOp = .6;
+  }
+  if (tb < 104 || tb >= 128.5) $('capwrap').style.right = '';
+
+  // ---------------------------------------------------------- end (131-142): back out through the door
+  if (tb >= 130.5) {
+    $('rookimg').style.opacity = 1;
+    rw.style.opacity = 1;
+    $('dpanel').setAttribute('transform', `translate(${x0} 0) matrix(.04 -.18 0 1 0 0) translate(${-x0} 0)`);
+    $('dwood').setAttribute('fill', 'rgb(70,58,36)'); $('dseam').setAttribute('opacity', 0);
+    $('dlight').setAttribute('opacity', 1); $('floorglow').setAttribute('opacity', .9);
+    RAYS.forEach((r, i) => r.p.setAttribute('opacity', .55 + .3 * Math.sin(tb * 1.3 + i * 2)));
+    const z = Math.exp(lerp(Math.log(46), 0, eOutE(inv(130.5, 133.2, tb)))) * lerp(1, .6, eOutC(inv(131.5, 135, tb)));
+    const lift = lerp(0, -250, eOutC(inv(131.5, 135, tb)));
+    $('rookscene').style.transform = `translate(0,${lift}px) translate(${DCX}px,${DCY}px) scale(${z}) translate(${-DCX}px,${-DCY}px)`;
+    white = tb < 131 ? 1 : 1 - eOutC(inv(131, 132, tb));
+    show($('end'), true);
+    const s = eOutE(inv(133, 133.4, tb));
+    $('endtitle').innerHTML = 'GIVE YOUR AGENTS <b>AGENCY.</b>';
+    $('endtitle').style.opacity = s; $('endtitle').style.transform = `scale(${lerp(1.3, 1, s)})`;
+    $('endbrand').textContent = tb >= 134 ? '♜ ROOK' : ''; $('endbrand').style.opacity = inv(134, 134.6, tb);
+    $('cta1').textContent = typed('github.com/Bake-Ware/rook', inv(135, 136.4, tb));
+    $('cta2').textContent = tb >= 136.6 ? 'open source · self-hosted · end-to-end encrypted' : '';
+    $('cta2').style.opacity = inv(136.6, 137.2, tb);
+    if (tb >= 136) shake = 5 * Math.exp(-(tb - 136) / .3);
+    black = eInC(inv(139, 142, tb));
+    gridOp = .1; glowOp = .6;
+  }
+
+  // ---------------------------------------------------------- 3D world draw
+  if ($('worldlayer').style.display !== 'none') {
+    const num = (el, k, d = 1) => { const v = el.getAttribute(k); return v == null ? d : +v; };
+    const sc = el => { const m = /scale\(([-\d.e]+)\)/.exec(el.getAttribute('transform') || ''); return m ? +m[1] : 1; };
+    const devState = DEV.map(d => ({ op: num(d.g, 'opacity'), scale: sc(d.g), glow: num(d.glow, 'opacity', 0) }));
+    const agState = AG.map(a => ({ op: num(a.g, 'opacity', 0), scale: sc(a.g), dead: a.hex.getAttribute('stroke') === '#5a5f55', pulse: num(a.ring, 'r', 60) / 60, spin: tb * .35 + a.x }));
+    const tgState = { op: num(TG.g, 'opacity', 0), scale: sc(TG.g) };
+    W3.draw({ devState, agState, tgState, meshOp: meshEls.map(m => num(m, 'opacity', 0)), beams: BEAMS3, rings: RINGS3 });
+    let lh = '';
+    DEV.forEach((d, i) => { const st = devState[i]; if (st.op < .02) return; const [x, y, k] = W3.project(d.x, 0, d.y + 120 * st.scale); lh += `<div class="dl" style="left:${x}px;top:${y}px;font-size:${Math.min(40, 30 * k * st.scale)}px;opacity:${st.op}">${d.name}</div>`; });
+    AG.forEach((a, i) => { const st = agState[i]; if (st.op < .02) return; const [x, y, k] = W3.project(a.x, 0, a.y + 105 * st.scale); lh += `<div class="dl ag" style="left:${x}px;top:${y}px;font-size:${Math.min(42, 32 * k * st.scale)}px;opacity:${st.op};color:${st.dead ? '#6b7064' : a.col}">${a.name}<small style="font-size:.72em">agent</small></div>`; });
+    if (tgState.op > .02) { const [x, y, k] = W3.project(TG.x, 0, TG.y + 90 * tgState.scale); lh += `<div class="dl" style="left:${x}px;top:${y}px;font-size:${Math.min(40, 30 * k * tgState.scale)}px;opacity:${tgState.op}">telegram</div>`; }
+    $('labels').innerHTML = lh;
+  }
+  // ---------------------------------------------------------- global
+  if ($('capwrap').style.display !== 'none') {
+    const c = $('cap'); const base = parseFloat(c.style.fontSize) || 120; c.style.fontSize = base + 'px';
+    const mw = $('capwrap').clientWidth; if (c.scrollWidth > mw) c.style.fontSize = Math.floor(base * mw / c.scrollWidth) + 'px';
+  }
+  for (let i = beamN; i < beamPool.length; i++) beamPool[i].g.style.display = 'none';
+  for (let i = ringN; i < ringPool.length; i++) ringPool[i].style.display = 'none';
+  if (shake > 0) {
+    const e = Math.exp(-since(tb, 1) / .16) * shake, n = Math.floor(tb);
+    $('worldlayer').style.translate = `${(rnd(n * 2 + 1) - .5) * 2 * e}px ${(rnd(n * 2 + 7) - .5) * 2 * e}px`;
+  } else $('worldlayer').style.translate = '0 0';
+  $('flash').style.opacity = clamp(flash, 0, .95);
+  $('white').style.opacity = clamp(white);
+  $('black').style.opacity = clamp(black);
+  $('grid').style.opacity = gridOp; $('glow').style.opacity = glowOp;
+  grain(frame || Math.floor(t * 30));
+}
+// hud blur filter
+$('hud').insertAdjacentHTML('beforebegin', '');
+const hdefs = `<defs><filter id="hblur" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="8"/></filter></defs>`;
+const _render = render;
+const pad4 = n => String(n).padStart(4, '0');
+async function setImg(img, src) { if (img._src === src) return; img._src = src; if (!src) { img.removeAttribute('src'); img.style.display = 'none'; return; } img.style.display = ''; img.src = src; await img.decode().catch(() => 0); }
+window.render = async (t, f) => {
+  f = f ?? Math.round(t * 30); const tb = t / BEAT;
+  await setImg($('shatimg'), tb >= 11.95 && f >= 169 && f <= 275 ? `frames/shatter/f${pad4(Math.min(275, Math.max(169, f)))}.png` : '');
+  const rookF = (tb >= 16.5 && tb < 32) ? Math.min(450, Math.max(232, f)) : (tb >= 130.5 ? Math.min(1997, Math.max(1835, f)) : 0);
+  await setImg($('rookimg'), rookF ? `frames/rook/f${pad4(rookF)}.jpg` : '');
+  _render(t, f); $('hud').insertAdjacentHTML('afterbegin', hdefs);
+};
+(async () => { await Promise.all([...document.images].map(i => i.decode().catch(() => 0))); await document.fonts.ready; window.render(0, 0); window.READY = true; })();
+</script>
+</body></html>

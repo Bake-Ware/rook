@@ -1,0 +1,285 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>rook 3d</title>
+<style>html,body{margin:0;background:transparent;overflow:hidden}canvas{display:block}</style>
+<script type="importmap">{"imports":{"three":"./node_modules/three/build/three.module.js"}}</script>
+</head><body>
+<script type="module">
+import * as THREE from 'three';
+const Q = new URLSearchParams(location.search);
+const MODE = Q.get('mode') || 'rook';
+const W = 1920, H = 1080, BEAT = 60 / 128;
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const inv = (a, b, x) => clamp((x - a) / (b - a));
+const lerp = (a, b, t) => a + (b - a) * t;
+const eInOut = t => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const eOutC = t => 1 - Math.pow(1 - t, 3);
+const eOutE = t => t >= 1 ? 1 : 1 - Math.pow(2, -10 * t);
+const eInE = t => t <= 0 ? 0 : Math.pow(2, 10 * t - 10);
+function rnd(seed) { let a = (seed >>> 0) + 0x6D2B79F5; let t = a; t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61); return ((t ^ t >>> 14) >>> 0) / 4294967296; }
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(1); renderer.setSize(W, H); renderer.setClearColor(0x000000, 0);
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+
+// ====================================================================== the rook
+let setTime;
+if (MODE === 'rook') {
+  renderer.setClearColor(0x0e110e, 1);
+  const camera = new THREE.PerspectiveCamera(18, W / H, .05, 200);
+  const study = new THREE.Group(); scene.add(study);
+  const pencil = new THREE.LineBasicMaterial({ color: 0x080a08, transparent: true, opacity: .94 });
+  const retraced = new THREE.LineBasicMaterial({ color: 0x11150f, transparent: true, opacity: .38 });
+  const guide = new THREE.LineBasicMaterial({ color: 0x9ca880, transparent: true, opacity: .27 });
+  const ghost = new THREE.LineBasicMaterial({ color: 0xc5af87, transparent: true, opacity: .14 });
+  const dashed = new THREE.LineDashedMaterial({ color: 0x9da77c, transparent: true, opacity: .29, dashSize: .065, gapSize: .055 });
+  scene.add(new THREE.HemisphereLight(0xe3d8ad, 0x35402b, 2.));
+  const key = new THREE.DirectionalLight(0xffedc4, 3.);
+  key.position.set(-3, 6, 5); key.castShadow = true;
+  key.shadow.mapSize.set(2048, 2048); Object.assign(key.shadow.camera, { left: -3, right: 3, top: 3, bottom: -3, near: .5, far: 18 });
+  key.shadow.bias = -.0003; key.shadow.normalBias = .015; scene.add(key);
+  const ramp = new THREE.DataTexture(new Uint8Array([65, 65, 65, 255, 135, 135, 135, 255, 210, 210, 210, 255, 255, 255, 255, 255]), 4, 1, THREE.RGBAFormat);
+  ramp.minFilter = ramp.magFilter = THREE.NearestFilter; ramp.needsUpdate = true;
+  const toon = c => new THREE.MeshToonMaterial({ color: c, gradientMap: ramp, flatShading: true, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+  const pigment = toon(0xaaa17d), stone = toon(0x9d9473), wood = toon(0x7a6440), iron = toon(0x2d2a22);
+  function ink(geometry, parent, thresh = 1) {
+    const edges = new THREE.EdgesGeometry(geometry, thresh), positions = edges.getAttribute('position');
+    for (let pass = 0; pass < 2; pass++) {
+      const strokes = [];
+      for (let i = 0; i < positions.count; i += 2) {
+        const a = new THREE.Vector3().fromBufferAttribute(positions, i), b = new THREE.Vector3().fromBufferAttribute(positions, i + 1);
+        const length = a.distanceTo(b), steps = Math.max(3, Math.ceil(length / .075));
+        const axis = b.clone().sub(a).normalize();
+        const side = new THREE.Vector3().crossVectors(axis, Math.abs(axis.y) < .9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0)).normalize();
+        const other = new THREE.Vector3().crossVectors(axis, side); let last;
+        for (let j = 0; j <= steps; j++) {
+          const t = j / steps, seed = i * 7.13 + pass * 31.;
+          const envelope = Math.sin(t * Math.PI), amplitude = pass ? .008 : .004;
+          const point = a.clone().lerp(b, t);
+          point.addScaledVector(side, (Math.sin(t * 19. + seed) + .45 * Math.sin(t * 47. + seed)) * amplitude * envelope);
+          point.addScaledVector(other, Math.sin(t * 27. + seed) * amplitude * .5 * envelope);
+          if (pass) point.addScaledVector(side, .006);
+          if (last) strokes.push(last.x, last.y, last.z, point.x, point.y, point.z);
+          last = point;
+        }
+      }
+      const traced = new THREE.BufferGeometry(); traced.setAttribute('position', new THREE.Float32BufferAttribute(strokes, 3));
+      parent.add(new THREE.LineSegments(traced, pass ? retraced : pencil));
+    }
+  }
+  function solid(source, mat = pigment, parent = study) {
+    const geometry = source.index ? source.toNonIndexed() : source; geometry.computeVertexNormals();
+    const mesh = new THREE.Mesh(geometry, mat); mesh.castShadow = mesh.receiveShadow = true; parent.add(mesh);
+    ink(geometry, parent); return mesh;
+  }
+  const profile = [[0, -2.15], [1.08, -2.15], [1.12, -2.06], [1.12, -1.91], [.98, -1.79], [.96, -1.67], [.81, -1.61], [.78, -1.44], [.67, -1.35],
+    [.53, -.93], [.46, .46], [.52, .76], [.70, .98], [.73, 1.09], [.90, 1.14], [.90, 1.31], [.86, 1.39], [.86, 1.58], [.59, 1.58], [.59, 1.22], [0, 1.22]].map(([r, y]) => new THREE.Vector2(r, y));
+  solid(new THREE.LatheGeometry(profile, 16));
+  for (let i = 0; i < 6; i++) {
+    const center = i * Math.PI / 3, a = center - .34, b = center + .34, shape = new THREE.Shape();
+    shape.moveTo(.88 * Math.cos(a), .88 * Math.sin(a)); shape.absarc(0, 0, .88, a, b, false);
+    shape.lineTo(.58 * Math.cos(b), .58 * Math.sin(b)); shape.absarc(0, 0, .58, b, a, true); shape.closePath();
+    const g = new THREE.ExtrudeGeometry(shape, { depth: .53, bevelEnabled: false, curveSegments: 3, steps: 1 });
+    g.setIndex(Array.from({ length: g.getAttribute('position').count }, (_, n) => n));
+    g.rotateX(-Math.PI / 2); g.translate(0, 1.54, 0); solid(g);
+  }
+  // ---- the door: a stone gate set into the base, facing +Z
+  const DW = .5, DH = .82, FW = .82, FH = 1.06, Y0 = -2.15, ZF = 1.18, DEPTH = 1.0;
+  function arch(w, h, x0 = 0, y0 = 0, seg = 10) { // arched opening outline (bottom-left start, counter-clockwise)
+    const s = new THREE.Shape(), r = w / 2;
+    s.moveTo(x0 - r, y0); s.lineTo(x0 + r, y0); s.lineTo(x0 + r, y0 + h - r);
+    s.absarc(x0, y0 + h - r, r, 0, Math.PI, false); s.lineTo(x0 - r, y0); return s;
+  }
+  const gate = new THREE.Group(); study.add(gate);
+  const frameShape = arch(FW, FH, 0, 0); frameShape.holes.push(arch(DW, DH, 0, 0));
+  const frameGeo = new THREE.ExtrudeGeometry(frameShape, { depth: DEPTH, bevelEnabled: false, curveSegments: 10, steps: 1 });
+  frameGeo.setIndex(Array.from({ length: frameGeo.getAttribute('position').count }, (_, n) => n));
+  frameGeo.translate(0, Y0, ZF - DEPTH);
+  solid(frameGeo, stone, gate);
+  // keystone + voussoir lines drawn on the arch face
+  { const pts = []; const r0 = DW / 2, r1 = FW / 2, cy = Y0 + DH - r0;
+    for (let k = 0; k <= 6; k++) { const a = k / 6 * Math.PI; pts.push(new THREE.Vector3(Math.cos(a) * r0, cy + Math.sin(a) * r0, ZF + .002), new THREE.Vector3(Math.cos(a) * r1, cy + Math.sin(a) * r1 * (FH - FW / 2) / (FW / 2) * .0 + Math.sin(a) * r1, ZF + .002)); }
+    for (const y of [Y0 + .22, Y0 + .44]) { pts.push(new THREE.Vector3(-r1, y, ZF + .002), new THREE.Vector3(-r0, y, ZF + .002), new THREE.Vector3(r0, y, ZF + .002), new THREE.Vector3(r1, y, ZF + .002)); }
+    const g = new THREE.BufferGeometry().setFromPoints(pts); gate.add(new THREE.LineSegments(g, pencil)); }
+  // the light inside: a glowing back wall and a warm point light
+  const glowMat = new THREE.MeshBasicMaterial({ color: 0xfff3d6 });
+  const back = new THREE.Mesh(new THREE.ShapeGeometry(arch(DW + .02, DH + .01, 0, 0), 10), glowMat);
+  back.position.set(0, Y0, ZF - DEPTH + .25); gate.add(back);
+  const inner = new THREE.PointLight(0xffc979, 0, 1.3, 2); inner.position.set(0, Y0 + .38, ZF - .15); gate.add(inner);
+  const spill = new THREE.PointLight(0xffd59a, 0, 2.2, 2); spill.position.set(0, Y0 + .18, ZF + .45); gate.add(spill);
+  // the door leaf, hinged on its left edge
+  const hinge = new THREE.Group(); hinge.position.set(-DW / 2, Y0, ZF - .03); gate.add(hinge);
+  const leafShape = arch(DW - .012, DH - .006, DW / 2, 0);
+  const leafGeo = new THREE.ExtrudeGeometry(leafShape, { depth: .05, bevelEnabled: false, curveSegments: 10, steps: 1 });
+  leafGeo.setIndex(Array.from({ length: leafGeo.getAttribute('position').count }, (_, n) => n));
+  solid(leafGeo, wood, hinge);
+  { const pts = []; // planks and iron straps
+    for (let k = 1; k < 4; k++) { const x = DW * k / 4; const top = DH - DW / 2 + Math.sqrt(Math.max(0, (DW / 2) ** 2 - (x - DW / 2) ** 2)) - .02; pts.push(new THREE.Vector3(x, .02, .052), new THREE.Vector3(x, top, .052)); }
+    const g = new THREE.BufferGeometry().setFromPoints(pts); hinge.add(new THREE.LineSegments(g, pencil));
+    for (const y of [.16, .54]) { const s = new THREE.Mesh(new THREE.BoxGeometry(DW - .04, .035, .012), iron); s.position.set(DW / 2, y, .057); hinge.add(s); }
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(.03, .007, 6, 16), iron); ring.position.set(DW - .09, .36, .062); hinge.add(ring); }
+  // light shafts and floor spill (additive)
+  function gradTex(stops) { const c = document.createElement('canvas'); c.width = c.height = 256; const x = c.getContext('2d'); const g = x.createRadialGradient(128, 128, 0, 128, 128, 128); stops.forEach(([o, col]) => g.addColorStop(o, col)); x.fillStyle = g; x.fillRect(0, 0, 256, 256); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t; }
+  const spillMat = new THREE.MeshBasicMaterial({ map: gradTex([[0, 'rgba(255,214,150,1)'], [.35, 'rgba(255,190,110,.45)'], [1, 'rgba(255,170,80,0)']]), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0 });
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 4.2), spillMat); floor.rotation.x = -Math.PI / 2; floor.position.set(0, Y0 - .075, ZF + 1.7); gate.add(floor);
+  const glowSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: gradTex([[0, 'rgba(255,240,205,1)'], [.3, 'rgba(255,205,130,.5)'], [1, 'rgba(255,180,90,0)']]), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0 }));
+  glowSprite.position.set(0, Y0 + .4, ZF + .08); glowSprite.scale.set(1.6, 1.6, 1); gate.add(glowSprite);
+  const shaftMat = new THREE.ShaderMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+    uniforms: { uOp: { value: 0 } },
+    vertexShader: 'varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.); }',
+    fragmentShader: 'uniform float uOp; varying vec2 vUv; void main(){ float a=(1.-vUv.y)*(1.-vUv.y)*smoothstep(0.,.35,vUv.x)*smoothstep(1.,.65,vUv.x); gl_FragColor=vec4(1.,.86,.6,a*uOp*.55); }' });
+  const shafts = [];
+  for (let i = 0; i < 7; i++) { // tilted quads fanning out of the doorway onto the floor
+    const g = new THREE.PlaneGeometry(.42, 3.4, 1, 1); g.translate(0, -1.7, 0);
+    const m = new THREE.Mesh(g, shaftMat); m.position.set(0, Y0 + .55, ZF + .02);
+    m.rotation.set(-1.15 - rnd(i) * .2, 0, (i - 3) * .22); gate.add(m); shafts.push(m);
+  }
+  // drafting guides from the original artwork
+  const P = (x, y, z) => new THREE.Vector3(x, y, z);
+  function line(points, material = guide, closed = false) { const g = new THREE.BufferGeometry().setFromPoints(points); const r = closed ? new THREE.LineLoop(g, material) : new THREE.Line(g, material); if (material.isLineDashedMaterial) r.computeLineDistances(); scene.add(r); return r; }
+  const ring = (radius, y, m = guide) => line(Array.from({ length: 96 }, (_, i) => P(Math.cos(i / 96 * Math.PI * 2) * radius, y, Math.sin(i / 96 * Math.PI * 2) * radius)), m, true);
+  ring(1.42, -2.23); ring(1.78, -2.23, dashed); ring(2.15, -2.23, ghost);
+  for (let i = 0; i < 36; i++) { const a = i / 36 * Math.PI * 2, r = i % 3 === 0 ? 2.29 : 2.21; line([P(Math.cos(a) * 2.15, -2.23, Math.sin(a) * 2.15), P(Math.cos(a) * r, -2.23, Math.sin(a) * r)], ghost); }
+  line([P(-2.65, -2.23, 0), P(2.65, -2.23, 0)], dashed); line([P(0, -2.23, -2.65), P(0, -2.23, 2.65)], dashed); line([P(0, -2.5, 0), P(0, 2.75, 0)], dashed);
+  // ground that catches the door light and the rook's shadow
+  const ground = new THREE.Mesh(new THREE.CircleGeometry(6, 64), new THREE.ShadowMaterial({ opacity: .35 }));
+  ground.rotation.x = -Math.PI / 2; ground.position.y = -2.151; ground.receiveShadow = true; scene.add(ground);
+
+  const AZ0 = Math.atan2(5, 8), ELEV = .2, DIST = 17.2;
+  const doorC = new THREE.Vector3(), tmp = new THREE.Vector3();
+  setTime = (tb) => {
+    const end = tb >= 120;
+    // the door faces the camera; a slow drift gives the 3D away
+    const drift = end ? lerp(.05, -.04, inv(130.5, 142, tb)) : lerp(-.07, .03, inv(16.5, 27.3, tb));
+    study.rotation.y = AZ0 + .0;
+    const az = AZ0 + drift;
+    const open = end ? 1 : eInOut(inv(22.2, 25.5, tb));
+    const crack = end ? 0 : inv(21.3, 22.2, tb) * (1 - inv(22.2, 22.6, tb));
+    hinge.rotation.y = -(open * 1.85 + crack * .05);
+    const L = end ? 1 : inv(21.4, 23.4, tb);
+    const flick = 1 + .05 * Math.sin(tb * 9.1) + .03 * Math.sin(tb * 23.7);
+    inner.intensity = 3 * L * flick; spill.intensity = 2.2 * open * flick;
+    glowMat.color.setRGB(1, .95, .84).multiplyScalar(.25 + .75 * L);
+    spillMat.opacity = .85 * open * flick; glowSprite.material.opacity = .9 * Math.max(open, crack * .6) * flick;
+    shaftMat.uniforms.uOp.value = open * flick;
+    shafts.forEach((m, i) => { m.rotation.z = (i - 3) * .22 + Math.sin(tb * .6 + i) * .02; });
+    // door centre in world space
+    gate.updateMatrixWorld(true); doorC.set(0, Y0 + .36, ZF).applyMatrix4(gate.matrixWorld);
+    // camera rig
+    const base = new THREE.Vector3(Math.sin(az) * Math.cos(ELEV), Math.sin(ELEV), Math.cos(az) * Math.cos(ELEV)).multiplyScalar(DIST);
+    let target = new THREE.Vector3(0, .05, 0), fov = 18, pos = base.clone();
+    if (!end) {
+      const z = eInE(inv(27.3, 31.5, tb));                // the rush into the doorway
+      const inside = doorC.clone().add(tmp.copy(doorC).sub(base).normalize().multiplyScalar(.5));
+      pos = base.clone().lerp(inside, z);
+      target = target.clone().lerp(doorC.clone().add(tmp.copy(doorC).sub(base).normalize()), eOutC(inv(27.3, 30, tb)));
+      fov = lerp(18, 34, inv(.55, 1, z));
+      pos.y += Math.sin(tb * 1.7) * .02 * (1 - z);
+    } else {
+      const out = eOutE(inv(130.5, 133.2, tb));               // back out through the door
+      const settle = eOutC(inv(131.5, 135, tb));
+      const wide = base.clone().multiplyScalar(lerp(1, 1.55, settle));
+      const inside = doorC.clone().add(tmp.copy(doorC).sub(base).normalize().multiplyScalar(.5));
+      pos = inside.clone().lerp(wide, out);
+      const endTarget = new THREE.Vector3(0, lerp(.05, -1.52, settle), 0);
+      target = doorC.clone().add(tmp.copy(doorC).sub(base).normalize()).lerp(endTarget, eOutC(inv(130.5, 132.6, tb)));
+      fov = lerp(34, 18, out);
+    }
+    camera.fov = fov; camera.position.copy(pos); camera.lookAt(target); camera.updateProjectionMatrix();
+    renderer.render(scene, camera);
+  };
+}
+
+// ====================================================================== the glass
+if (MODE === 'shatter') {
+  const FOV = 30, CZ = (H / 2) / Math.tan(FOV * Math.PI / 360);
+  const camera = new THREE.PerspectiveCamera(FOV, W / H, 10, 6000); camera.position.set(0, 0, CZ); camera.lookAt(0, 0, 0);
+  scene.add(new THREE.AmbientLight(0xffffff, 1.2));
+  const key = new THREE.DirectionalLight(0xfff0d8, 2.4); key.position.set(-600, 900, 1400); scene.add(key);
+  const flashL = new THREE.PointLight(0xffd59a, 0, 0, 0);
+  renderer.toneMapping = THREE.NoToneMapping; scene.add(flashL);
+  const BW = 900, BH = 420, X0 = -BW / 2, Y0 = -BH / 2;
+  const tex = await new THREE.TextureLoader().loadAsync(Q.get('tex') || 'chat.png'); tex.colorSpace = THREE.SRGBColorSpace;
+  const IMP = new THREE.Vector2(610, 150); // impact point, pane coords
+  // ---- crack network: jagged radial lines + concentric rings
+  const NR = 15, rays = [];
+  for (let i = 0; i < NR; i++) {
+    const a = i / NR * Math.PI * 2 + (rnd(i * 3) - .5) * .35; const pts = [IMP.clone()]; let r = 0, ang = a;
+    while (r < 1300) { r += 26 + rnd(i * 97 + r) * 40; ang = a + (rnd(i * 31 + r) - .5) * .16; pts.push(new THREE.Vector2(IMP.x + Math.cos(ang) * r, IMP.y + Math.sin(ang) * r)); }
+    rays.push(pts);
+  }
+  const RINGS = [34, 78, 140, 230, 360, 540, 800, 1200];
+  const pointAt = (i, R) => { const pts = rays[(i + NR) % NR]; for (let k = 1; k < pts.length; k++) if (pts[k].distanceTo(IMP) >= R) { const a = pts[k - 1], b = pts[k]; const da = a.distanceTo(IMP), db = b.distanceTo(IMP); return a.clone().lerp(b, (R - da) / (db - da)); } return pts[pts.length - 1].clone(); };
+  // crack strips revealed over time: each strip has a reveal time
+  const crackPos = [], crackT = [];
+  function strip(a, b, t, w) { const d = b.clone().sub(a); const n = new THREE.Vector2(-d.y, d.x).normalize().multiplyScalar(w / 2); const q = [a.clone().add(n), a.clone().sub(n), b.clone().add(n), b.clone().sub(n)];
+    for (const k of [0, 1, 2, 2, 1, 3]) { crackPos.push(q[k].x, q[k].y, 1.5); crackT.push(t); } }
+  const T0 = 13.6; // first crack (beats)
+  rays.forEach((pts, i) => { for (let k = 1; k < pts.length; k++) { const r = pts[k].distanceTo(IMP); const stage = r < 120 ? 0 : r < 300 ? 1 : r < 520 ? 2 : 3; strip(pts[k - 1], pts[k], T0 + stage * .55 + r / 1800 + rnd(i) * .15, stage === 0 ? 3.2 : 2.2); } });
+  RINGS.slice(0, 6).forEach((R, ri) => { for (let i = 0; i < NR; i++) { if (rnd(ri * 50 + i) < .3) continue; const a = pointAt(i, R), b = pointAt(i + 1, R * (1 + (rnd(ri + i * 7) - .5) * .25)); strip(a, b, T0 + .3 + ri * .38 + rnd(i * ri) * .2, 1.6); } });
+  const cg = new THREE.BufferGeometry(); cg.setAttribute('position', new THREE.Float32BufferAttribute(crackPos, 3)); cg.setAttribute('aT', new THREE.Float32BufferAttribute(crackT, 1));
+  const crackMat = new THREE.ShaderMaterial({ transparent: true, depthWrite: false, uniforms: { uT: { value: 0 } },
+    vertexShader: 'attribute float aT; uniform float uT; varying float vA; varying vec2 vP; void main(){ vA=clamp((uT-aT)*8.,0.,1.); vP=position.xy; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.); }',
+    fragmentShader: 'varying float vA; varying vec2 vP; void main(){ if(vA<=0. || vP.x<2. || vP.y<2. || vP.x>' + (BW - 2).toFixed(1) + ' || vP.y>' + (BH - 2).toFixed(1) + ') discard; gl_FragColor=vec4(1.,.97,.9,vA*.92); }' });
+  const clipRect = new THREE.Group(); scene.add(clipRect);
+  const cracks = new THREE.Mesh(cg, crackMat); cracks.position.set(X0, Y0, 0); clipRect.add(cracks);
+  // the intact pane (shown until the break)
+  const paneMat = new THREE.MeshBasicMaterial({ map: tex });
+  const shardMat = new THREE.MeshStandardMaterial({ map: tex, emissiveMap: tex, emissive: 0xffffff, emissiveIntensity: .8, roughness: .18, metalness: 0 });
+  const pane = new THREE.Mesh(new THREE.PlaneGeometry(BW, BH), paneMat); scene.add(pane);
+  // ---- shards: cells between rays and rings, clipped to the pane
+  function clip(poly) { // Sutherland–Hodgman against [0,BW]x[0,BH]
+    const edges = [[p => p.x >= 0, (a, b) => a.clone().lerp(b, (0 - a.x) / (b.x - a.x))], [p => p.x <= BW, (a, b) => a.clone().lerp(b, (BW - a.x) / (b.x - a.x))],
+      [p => p.y >= 0, (a, b) => a.clone().lerp(b, (0 - a.y) / (b.y - a.y))], [p => p.y <= BH, (a, b) => a.clone().lerp(b, (BH - a.y) / (b.y - a.y))]];
+    let out = poly;
+    for (const [inside, cut] of edges) { const inp = out; out = []; for (let i = 0; i < inp.length; i++) { const cur = inp[i], prev = inp[(i + inp.length - 1) % inp.length]; if (inside(cur)) { if (!inside(prev)) out.push(cut(prev, cur)); out.push(cur); } else if (inside(prev)) out.push(cut(prev, cur)); } if (!out.length) break; }
+    return out;
+  }
+  const shards = [];
+  const sideMat = new THREE.MeshStandardMaterial({ color: 0xf6e3b8, emissive: 0x5a4320, roughness: .2, metalness: .3 });
+  const ringsAll = [0, ...RINGS];
+  for (let ri = 0; ri < ringsAll.length - 1; ri++) for (let i = 0; i < NR; i++) {
+    const r0 = ringsAll[ri], r1 = ringsAll[ri + 1];
+    const poly = r0 === 0 ? [IMP.clone(), pointAt(i, r1), pointAt(i + 1, r1)] : [pointAt(i, r0), pointAt(i, r1), pointAt(i + 1, r1), pointAt(i + 1, r0)];
+    // split big outer cells once more along the middle for smaller pieces
+    const polys = (r1 > 300) ? [[poly[0], poly[1], poly[1].clone().lerp(poly[2], .5), poly[0].clone().lerp(poly[3], .5)], [poly[0].clone().lerp(poly[3], .5), poly[1].clone().lerp(poly[2], .5), poly[2], poly[3]]] : [poly];
+    for (const p0 of polys) {
+      let c = clip(p0); if (c.length < 3) continue;
+      const cx = c.reduce((s, p) => s + p.x, 0) / c.length, cy = c.reduce((s, p) => s + p.y, 0) / c.length;
+      const shape = new THREE.Shape(c.map(p => new THREE.Vector2(p.x - cx, p.y - cy)));
+      const g = new THREE.ExtrudeGeometry(shape, { depth: 6, bevelEnabled: false });
+      const uv = g.getAttribute('uv'), pos = g.getAttribute('position');
+      for (let k = 0; k < pos.count; k++) uv.setXY(k, (pos.getX(k) + cx) / BW, (pos.getY(k) + cy) / BH);
+      g.translate(0, 0, -6);
+      const m = new THREE.Mesh(g, [shardMat, sideMat]); m.position.set(X0 + cx, Y0 + cy, 0); m.visible = false; scene.add(m);
+      const n = shards.length, dir = new THREE.Vector2(cx - IMP.x, cy - IMP.y), dist = dir.length(); dir.normalize();
+      shards.push({ m, cx: X0 + cx, cy: Y0 + cy, dir, dist, sp: 350 + rnd(n) * 700 - dist * .2, vz: 300 + rnd(n + 9) * 1500 * Math.exp(-dist / 500), ax: new THREE.Vector3(rnd(n + 1) - .5, rnd(n + 2) - .5, rnd(n + 3) - .5).normalize(), w: (rnd(n + 4) - .5) * 14, delay: dist / 2600 });
+    }
+  }
+  setTime = (tb) => {
+    const s = (tb - 16) * BEAT; // seconds after the break
+    crackMat.uniforms.uT.value = tb;
+    const shake = tb > 13.6 && tb < 16 ? Math.exp(-((tb - 13.6) % .5) / .08) * 3 : 0;
+    camera.position.set((rnd(Math.floor(tb * 8)) - .5) * shake, (rnd(Math.floor(tb * 8) + 3) - .5) * shake, CZ); camera.lookAt(0, 0, 0);
+    if (s < 0) { pane.visible = true; cracks.visible = true; shards.forEach(x => x.m.visible = false); flashL.intensity = 0; }
+    else {
+      pane.visible = false; cracks.visible = false;
+      flashL.position.set(X0 + IMP.x, Y0 + IMP.y, 300); flashL.intensity = 3 * Math.exp(-s / .25);
+      shards.forEach(x => {
+        const t = Math.max(0, s - x.delay); x.m.visible = true;
+        const sp = x.sp * (1 - Math.exp(-t * 3)) / 3 * 3;
+        x.m.position.set(x.cx + x.dir.x * sp * t * .9, x.cy + x.dir.y * sp * t * .9 - 520 * t * t, x.vz * t * (1 - .25 * t));
+        x.m.setRotationFromAxisAngle(x.ax, x.w * t * .35);
+        const fade = 1 - inv(1.2, 1.7, s);
+        x.m.visible = fade > 0;
+        x.m.scale.setScalar(1);
+      });
+    }
+    renderer.render(scene, camera);
+  };
+}
+window.setTime = setTime;
+window.READY = true;
+</script>
+</body></html>
