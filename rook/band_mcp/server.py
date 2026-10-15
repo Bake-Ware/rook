@@ -1873,6 +1873,10 @@ class McpService:
         if args.public_url:
             from .oauth_shim import OAuthShim
             app = OAuthShim(app, store, args.public_url)
+        # Outermost: failed token checks from one address lock it out for a
+        # while (429 before any token is looked at). See auth_throttle.
+        from .auth_throttle import ThrottleMiddleware
+        app = ThrottleMiddleware(app)
         self.app = app
 
     async def stop(self) -> None:

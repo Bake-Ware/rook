@@ -78,6 +78,10 @@ are set only in the environment or on the command line.
 | `core.auth.web_pass` | Operator bootstrap password (secret) | hub | str |  | `ROOK_WEB_PASS`, `--web-pass` | restart · bootstrap |
 | `core.mcp.admin_password` | MCP /tokens page password (secret) — deprecated: use the dashboard API tokens page | hub | str |  | `ROOK_MCP_AUTH_PASSWORD`, `--admin-password` | restart · bootstrap |
 | `core.mcp.static_token` | Shared static token (secret) | hub | str |  | `ROOK_MCP_STATIC_TOKEN`, `--static-token` | restart · bootstrap |
+| `core.auth.login_max_failures` | Failed sign-ins before a lockout | hub | int | `5` | `ROOK_LOGIN_MAX_FAILURES` | restart · bootstrap |
+| `core.auth.login_window_secs` | Failed sign-in window (s) | hub | int | `600` | `ROOK_LOGIN_WINDOW_SECS` | restart · bootstrap |
+| `core.auth.login_lockout_secs` | First lockout (s) | hub | int | `30` | `ROOK_LOGIN_LOCKOUT_SECS` | restart · bootstrap |
+| `core.auth.login_lockout_max_secs` | Longest lockout (s) | hub | int | `900` | `ROOK_LOGIN_LOCKOUT_MAX_SECS` | restart · bootstrap |
 | `core.auth.google_client_file` | Google OAuth client file | hub | path |  | `ROOK_GOOGLE_CLIENT_FILE` | restart · bootstrap |
 | `core.auth.google_web_login` | Google sign-in on the web | hub | bool | on | `ROOK_GOOGLE_WEB_LOGIN` | restart · bootstrap |
 

@@ -32,6 +32,16 @@ def _isolated_hub_keys(tmp_path, monkeypatch):
         monkeypatch.setenv("ROOK_UPDATES_API", "http://127.0.0.1:9")
 
 
+@pytest.fixture(autouse=True)
+def _fresh_login_throttle():
+    """Test clients all come from 127.0.0.1: one test's failed logins must
+    not lock the next one out (rook.core.throttle)."""
+    from rook.core import throttle
+    throttle.shared().clear()
+    yield
+    throttle.shared().clear()
+
+
 def pytest_configure(config):
     config.addinivalue_line(
         "markers",

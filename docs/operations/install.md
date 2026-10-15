@@ -101,6 +101,20 @@ behind HTTPS set `ROOK_DOMAIN`, `ROOK_HUB_PUBLIC`, `ROOK_MCP_PUBLIC_URL` and
 `ROOK_ALLOWED_HOSTS` there as the [README](../../README.md#going-beyond-localhost)
 describes.
 
+A hub reachable from the internet should sit behind a TLS reverse proxy or tunnel
+(Caddy, nginx, Cloudflare Tunnel) running on the same machine, with the hub bound to
+`127.0.0.1`. Failed sign-ins are throttled per client address: after 5 wrong passwords or
+tokens in 10 minutes the address gets `429` with `Retry-After`, for 30 seconds doubling up to
+15 minutes (`ROOK_LOGIN_MAX_FAILURES`, `ROOK_LOGIN_WINDOW_SECS`, `ROOK_LOGIN_LOCKOUT_SECS`,
+`ROOK_LOGIN_LOCKOUT_MAX_SECS`; `ROOK_LOGIN_MAX_FAILURES=0` turns it off). The client address
+comes from `CF-Connecting-IP` or `X-Forwarded-For` only when the connection is from
+loopback, so a local proxy must set one of them (Caddy, nginx with
+`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for` and cloudflared all do), or every
+client counts as `127.0.0.1`. A proxy other than Cloudflare's should also drop any
+`CF-Connecting-IP` header a client sends. Lockouts are logged as warnings
+(`login throttle: … locked out`). The dashboard and the MCP server share one count in
+`rook-hub`; the older two-process layout counts in each process separately.
+
 ### Service layout
 
 Two units: `rook-relay` and `rook-hub` (After/Wants the relay), which runs `rook-hub`

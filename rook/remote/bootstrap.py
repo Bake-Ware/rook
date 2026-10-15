@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import html as _html
 import json
 import logging
@@ -13,6 +14,8 @@ import time
 from pathlib import Path
 
 from aiohttp import web
+
+from ..core.throttle import client_keys, message as throttle_message, shared as shared_throttle
 
 log = logging.getLogger(__name__)
 
@@ -1582,6 +1585,8 @@ class CombinedServer:
         # Hidden in the setup form: a page on another site can POST to a
         # password-less loopback hub, but it cannot read this value first.
         self._setup_csrf = secrets.token_urlsafe(24)
+        # Failed sign-ins, shared with the MCP side in `rook hub serve`.
+        self._login_throttle = shared_throttle()
 
         # Domain, relay address and band label: environment/flag > Settings
         # page (settings store) > first-run setup.json > default. ``explicit``
@@ -1786,10 +1791,29 @@ class CombinedServer:
 
     def _check_creds(self, user: str, passwd: str) -> bool:
         """Validate login. Username is enforced only when one is configured,
-        so a bare password still works for password-only setups."""
+        so a bare password still works for password-only setups. Constant
+        time: both fields are always compared."""
+        def same(given, expected) -> bool:
+            return hmac.compare_digest(str(given).encode("utf-8"),
+                                       str(expected).encode("utf-8"))
+        pass_ok = same(passwd, self.web_pass)
         if self.web_user:
-            return user == self.web_user and passwd == self.web_pass
-        return passwd == self.web_pass
+            return same(user, self.web_user) & pass_ok
+        return pass_ok
+
+    def _throttle_keys(self, request: web.Request) -> tuple:
+        """The login throttle's keys for this request (rook.core.throttle)."""
+        return client_keys(request.remote, request.headers)
+
+    def _throttled_login_page(self, seconds: int) -> web.Response:
+        return web.Response(text=self._login_page(throttle_message(seconds)),
+                            status=429, content_type="text/html",
+                            headers={"Retry-After": str(seconds), "Cache-Control": "no-store"})
+
+    @staticmethod
+    def _throttled_text(seconds: int) -> web.Response:
+        return web.Response(text=throttle_message(seconds), status=429,
+                            headers={"Retry-After": str(seconds), "Cache-Control": "no-store"})
 
     _AUTH_EXEMPT = ("/health", "/worker", "/band-worker.pyz",
                     "/band-worker-enrollment.pyz", "/band-worker.json", "/updates/worker",
@@ -1881,16 +1905,25 @@ class CombinedServer:
         if account_user and request.path == "/":
             raise web.HTTPFound("/account")
 
-        # Login endpoint — username + password.
+        # Login endpoint — username + password. A locked-out address gets
+        # 429 before the password is looked at (rook.core.throttle).
         if request.path == "/login" and request.method == "POST":
+            keys = self._throttle_keys(request)
+            wait = self._login_throttle.retry_after(keys)
+            if wait:
+                return self._throttled_login_page(wait)
             try:
                 data = await request.post()
                 if self._check_creds(data.get("user", ""), data.get("pass", "")):
+                    self._login_throttle.success(keys)
                     raise self._signed_in("/setup" if unconfigured else "/", request)
             except web.HTTPFound:
                 raise
             except Exception:
                 pass
+            wait = self._login_throttle.failure(keys, "dashboard login")
+            if wait:
+                return self._throttled_login_page(wait)
             return web.Response(text=self._login_page(
                 "That password is not right." if not self.web_user
                 else "That username and password are not right."), content_type="text/html")
@@ -1910,6 +1943,10 @@ class CombinedServer:
         # Check basic auth (for API/curl): password in either field.
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Basic "):
+            keys = self._throttle_keys(request)
+            wait = self._login_throttle.retry_after(keys)
+            if wait:
+                return self._throttled_text(wait)
             # Only the credential parsing is guarded — the handler runs outside
             # the try so a handler's own HTTP exceptions (404, 400, redirects)
             # reach the client instead of being swallowed into a bogus 401.
@@ -1921,9 +1958,13 @@ class CombinedServer:
             except Exception:
                 creds_ok = False
             if creds_ok:
+                self._login_throttle.success(keys)
                 # No cookie: headless callers resend Basic auth each request,
                 # and minting a session per call would pile up stored grants.
                 return await admit()
+            wait = self._login_throttle.failure(keys, "dashboard basic-auth")
+            if wait:
+                return self._throttled_text(wait)
 
         # No valid auth — redirect to login page for browsers, 401 for API
         accept = request.headers.get("Accept", "")

@@ -127,6 +127,22 @@ _CORE: list[tuple[Setting, str, dict]] = [
         flag="--static-token", bootstrap=True, apply="restart", label="Shared static token",
         group="Sign-in", help="Kept for compatibility; mint per-agent tokens instead."),
      "mcp", {}),
+    # Failed-login throttle (rook/core/throttle.py). Every hub process reads
+    # these: the dashboard and, under `rook hub serve`, the MCP side with it.
+    (_s("auth.login_max_failures", int, 5, env="ROOK_LOGIN_MAX_FAILURES", bootstrap=True,
+        apply="restart", min=0, label="Failed sign-ins before a lockout", group="Sign-in",
+        help="Failed passwords or tokens from one address within the window before it "
+             "gets 429 for a while (dashboard, accounts, MCP tokens). 0 turns this off."),
+     "dashboard", {}),
+    (_s("auth.login_window_secs", int, 600, env="ROOK_LOGIN_WINDOW_SECS", bootstrap=True,
+        apply="restart", min=1, label="Failed sign-in window (s)", group="Sign-in",
+        advanced=True), "dashboard", {}),
+    (_s("auth.login_lockout_secs", int, 30, env="ROOK_LOGIN_LOCKOUT_SECS", bootstrap=True,
+        apply="restart", min=1, label="First lockout (s)", group="Sign-in", advanced=True,
+        help="Doubles with each further lockout, up to the maximum."), "dashboard", {}),
+    (_s("auth.login_lockout_max_secs", int, 900, env="ROOK_LOGIN_LOCKOUT_MAX_SECS",
+        bootstrap=True, apply="restart", min=1, label="Longest lockout (s)", group="Sign-in",
+        advanced=True), "dashboard", {}),
     (_s("auth.google_client_file", "path", "", env="ROOK_GOOGLE_CLIENT_FILE", bootstrap=True,
         apply="restart", label="Google OAuth client file", group="Sign-in", advanced=True),
      "dashboard", {}),
