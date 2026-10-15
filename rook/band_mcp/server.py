@@ -259,8 +259,13 @@ def build_server(client: "BandClient | MultiBandClient",
                 r = console.get(str(args.get("room") or ""))
                 return bool(r and r.get("opened_by") and r["opened_by"] == who)
             if name == "rook_chat_delete":
+                # Only a room the caller started (the creator is listed
+                # first) with no person in it: deleting a room shared with a
+                # person removes their messages too, so that stays held.
                 room = chat.room(str(args.get("room") or "")) if hasattr(chat, "room") else None
-                return bool(room and who in (room.get("participants") or []))
+                parts = list((room or {}).get("participants") or [])
+                return bool(parts and parts[0] == who and not any(
+                    str(p).startswith(("user:", "human:")) for p in parts))
         except Exception:  # noqa: BLE001 — err toward holding
             log.debug("own-resource check failed", exc_info=True)
         return False

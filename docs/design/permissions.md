@@ -777,7 +777,8 @@ id. An operator `allow` rule naming the worker and cap is an exception, as for
 other built-in holds.
 
 **An agent's own clean-up is not held.** Signalling or closing a console the
-same principal opened, and deleting a chat room it belongs to, are exempt from
+same principal opened, and deleting a chat room it started (the first
+participant) with no `user:`/`human:` participant, are exempt from
 the built-in destructive hold (the MCP server sets a per-call flag the
 approval layer reads). Operator `hold` rules and the spread limit still apply,
 and `rook_secret` get/set, memory forget and `updates.check` stay held.

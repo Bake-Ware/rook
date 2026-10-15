@@ -40,7 +40,7 @@ version was `0.1.0`.
   by a hashed machine-id fact workers announce (`approvals.hub_host_workers`: `auto`, a list
   of names, or `off`); an operator allow rule naming the worker is an exception.
 - An agent tidying up after itself is not held: signalling or closing a console it opened, or
-  deleting a chat room it belongs to. Operator hold rules and the spread limit still apply;
+  deleting a chat room it started with no people in it. Operator hold rules and the spread limit still apply;
   `rook_secret` get/set, memory forget and `updates.check` stay held.
 
 ### Added

@@ -1050,3 +1050,23 @@ def test_own_resource_check_in_the_server(tmp_path, monkeypatch):
     assert "_own_resource(name, arguments)" in src
     assert 'name in ("rook_console_signal", "rook_console_close")' in src
     assert 'name == "rook_chat_delete"' in src
+
+
+def test_own_chat_room_means_started_by_the_caller_with_no_people(tmp_path, monkeypatch):
+    # Deleting a room shared with a person removes their messages: held.
+    from rook.band_mcp.chat_rooms import ChatStore
+    store = ChatStore(str(tmp_path / "chat.db"))
+    mine = store.start("tidy", "agent:alpha", [])["room"]
+    shared = store.start("ops", "agent:alpha", ["user:op"])["room"]
+    theirs = store.start("other", "agent:beta", ["agent:alpha"])["room"]
+
+    def own(rid, who):
+        parts = list((store.room(rid) or {}).get("participants") or [])
+        return bool(parts and parts[0] == who and not any(
+            str(p).startswith(("user:", "human:")) for p in parts))
+    assert own(mine, "agent:alpha")
+    assert not own(shared, "agent:alpha")
+    assert not own(theirs, "agent:alpha")
+    import inspect
+    import rook.band_mcp.server as srv
+    assert 'parts[0] == who' in inspect.getsource(srv)

@@ -105,7 +105,7 @@ worked around:
   vault so an agent can log in as you, that is exactly this case.
 
 An agent tidying up after itself is not held: stopping or closing a console it
-opened, or deleting its own chat. Secret reads and writes, memory deletions
+opened, or deleting a chat room it started that has no people in it. Secret reads and writes, memory deletions
 and update checks are still held.
 
 **Being told.** Settings > Hub > Approvals > *How to contact you* lists where
