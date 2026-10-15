@@ -219,25 +219,28 @@ class AccountStore:
         if token:
             with self.db() as db:
                 db.execute("DELETE FROM account_grants WHERE hash=? AND kind='dashboard_session'", (digest(token),))
-                db.execute("DELETE FROM account_grants WHERE hash=? AND kind='weak_session'", (digest(token),))
+                db.execute("DELETE FROM account_grants WHERE hash=? AND kind='weak_session'",
+                           (digest('weak:' + token),))
 
     def mark_weak_session(self, token, ttl=30 * 86400):
         """Remember that this sign-in used a credential agents can also use (a
         vault value), so it can't approve held calls (permissions 3.11). Keyed
-        by the session token's digest; the plaintext is never stored."""
+        by a digest of the session token (``weak:`` prefixed so it never
+        collides with the session grant's own row); the plaintext is never
+        stored."""
         if not token:
             return
         with self.db() as db:
             db.execute('DELETE FROM account_grants WHERE expires<?', (time.time(),))
             db.execute("INSERT OR REPLACE INTO account_grants VALUES(?,?,?,?)",
-                       (digest(token), 'weak_session', '{}', time.time() + ttl))
+                       (digest('weak:' + token), 'weak_session', '{}', time.time() + ttl))
 
     def session_weak(self, token):
         if not token:
             return False
         with self.db() as db:
             return db.execute("SELECT 1 FROM account_grants WHERE hash=? AND kind='weak_session' "
-                              "AND expires>?", (digest(token), time.time())).fetchone() is not None
+                              "AND expires>?", (digest('weak:' + token), time.time())).fetchone() is not None
 
     def grant(self, kind, payload, ttl=600):
         token = secrets.token_urlsafe(32)
