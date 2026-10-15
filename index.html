@@ -96,6 +96,10 @@ nav.top .links a:hover{color:var(--fg)}
 .film .cap{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px 24px;align-items:baseline}
 .film .cap .fig{letter-spacing:.2em}
 .film video{display:block;width:100%;height:auto;aspect-ratio:16/9;background:#0b0d0b;border:1px solid var(--line2);border-radius:12px;box-shadow:0 30px 80px #000a}
+.film .more{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr);gap:28px;align-items:center;margin-top:40px;padding-top:36px;border-top:1px solid var(--line)}
+.film .more .txt{display:grid;gap:10px}
+.film .more p:not(.label):not(.fig){color:var(--dim)}
+@media (max-width:760px){.film .more{grid-template-columns:minmax(0,1fr)}}
 
 /* sections */
 section{padding-block:88px;border-bottom:1px solid var(--line)}
@@ -193,7 +197,7 @@ footer a{color:var(--dim)}
       <p class="pitch">Run things on all your machines from one place: a web dashboard, a terminal UI, or any AI agent that speaks MCP.</p>
       <div class="btns">
         <a class="btn primary" href="#start">Run a hub in ten minutes</a>
-        <a class="btn" href="#tour">Watch the tour</a>
+        <a class="btn" href="#film">Watch the film</a>
         <a class="btn" href="https://github.com/Bake-Ware/rook"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.19 1.76 1.19 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.78 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.7 5.4-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>View on GitHub</a>
       </div>
       <div class="meta"><span>Open source, Apache 2.0</span><span>Self-hosted</span><span>End-to-end encrypted</span></div>
@@ -205,13 +209,24 @@ footer a{color:var(--dim)}
 </header>
 
 <main>
-<div class="film" id="tour">
+<div class="film" id="film">
   <div class="wrap">
-    <div class="cap"><p class="label">The 48-second tour</p><p class="fig">Sound on</p></div>
-    <video controls playsinline preload="metadata" poster="img/rook-promo-poster.webp" width="1920" height="1080">
-      <source src="img/rook-promo.mp4" type="video/mp4">
-      Your browser can't play this video. <a href="https://github.com/Bake-Ware/rook">See the screenshots on GitHub.</a>
+    <div class="cap"><p class="label">Give your agents agency</p><p class="fig">66-second film · Sound on</p></div>
+    <video controls playsinline preload="metadata" poster="img/rook-agency-poster.webp" width="1920" height="1080">
+      <source src="img/rook-agency.mp4" type="video/mp4">
+      Your browser can't play this video. <a href="https://github.com/Bake-Ware/rook">See Rook on GitHub.</a>
     </video>
+    <div class="more" id="tour">
+      <video controls playsinline preload="none" poster="img/rook-promo-poster.webp" width="1920" height="1080">
+        <source src="img/rook-promo.mp4" type="video/mp4">
+        Your browser can't play this video. <a href="https://github.com/Bake-Ware/rook">See the screenshots on GitHub.</a>
+      </video>
+      <div class="txt">
+        <p class="label">The 48-second tour</p>
+        <p>The original tour: one encrypted band of machines, agents with a shared wiki you verify, the USB dongle and your phone on the band.</p>
+        <p class="fig">Sound on</p>
+      </div>
+    </div>
   </div>
 </div>
 <section id="band">
