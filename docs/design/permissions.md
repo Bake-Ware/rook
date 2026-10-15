@@ -29,6 +29,7 @@ call `rook.hub.authz.require_hub_admin("settings.set")` the same way.
 | Signed hub announce, `rook` resolution, impostor quarantine | `BandClient._announce_local`, `_handle_announce`, `core.facts.roles_from_announce` | Replaces the reject-all stub. A remote announce naming `rook` without a held grant is listed as `rook~<id8>`, flagged `quarantined`, and journaled once as `audit.impostor`. |
 | E2: worker ticket checks | `rook/worker/authz_guard.py`, `Worker._on_message` | All five modes; default `audit` (`ROOK_AUTHZ_MODE`). Keys learned from signed hub announces or inlined in the ticket; `authz` readiness in the announce; `audit.jsonl` gains `ticket` and `decision`. |
 | Dashboard | `/permissions`, `/api/policy`, `/api/policy/explain` (`rook/remote/policy_web.py`); caps `policy.explain/get/set/status` on `rook` | A minimal page: mode, revision, lint, JSON editor, explain, recent non-allow decisions. The full editor (matrix, pickers, dry run, history) waits for the settings framework. |
+| Approval holds and the spread limit (3.11) | `rook/hub/approvals.py`, `rook/hub/approval_contact.py`, `/api/approvals` (`rook/remote/approvals_web.py`), Approvals page (`rook/web/approvals.js`) | On by default, independent of the policy mode: agents' admin and destructive calls, operator `hold` rules and a 6th machine within 10 minutes wait for a person. Queue in `approvals.db` beside `policy.json`. Settings `core.approvals.*`. |
 | `rook band` TUI | `rook/cli/band_tui.py` (`BandHTTP`), `GET /api/band/whoami` | The TUI has no band path of its own: every call is `POST /api/band/call` (and `/api/band/ban`, `/unban`) with the dashboard login, so the dashboard principal middleware, the band client's policy check, ticket signing and journaling all apply. `whoami` reports the principal, the hub policy mode for it and whether the hub signs tickets. On a hub without it (404) the TUI warns that the hub predates permissions, and it adds a `hint` to refusals from hub policy or from ticket-enforcing workers. |
 
 **Current-code gaps (6.3), fixed.**
@@ -339,6 +340,9 @@ cond       := field op value      # e.g. has(gpu, vram_gb>=8)
 
 The input is `(principal chain, cap, target worker)`. The output is
 `allow | deny`, plus the rule id (or `default:<table>`) and the policy `rev`.
+A rule or cell may also say `hold` (wait for a person, §3.11); across the
+chain deny beats hold, hold beats audit. The built-in approval holds are
+added after this evaluation (§3.11).
 
 1. **Hard invariants.** Policy cannot override these:
    - unknown or unauthenticated principal on an authenticated surface → deny;
@@ -514,6 +518,10 @@ agents need no new handling:
 
 - The reply names the rule id and the policy revision. It never includes the
   full policy or other principals' rules.
+- A held call that a person denied uses the same shape; `error` names the
+  person and the hold, and `denied` adds `hold` and `by`. A held call still
+  waiting is `{"ok": false, "held": true, "hold": "<id>", "error": …}`
+  (§3.11).
 - A worker-side refusal comes back as
   `{"ok": false, "error": "denied by worker: exec requires a hub ticket (mode enforce-exec)"}`.
 - **Journal (hub):** the `calls` table gains `principal`, `decision`
@@ -595,6 +603,157 @@ A **Permissions** page, available to owners and operator accounts only:
   `rook`.
 - **Token mint:** the Tokens page gets a role picker (agent, operator,
   readonly, integration, custom), so new tokens start least-privileged.
+
+### 3.11 Approval holds and the spread limit
+
+Policy answers "may this principal call this cap here". It does not stop a
+prompt-injected agent that is allowed to do something from doing it, or from
+doing it on every machine one call at a time. Holds add a person to the loop.
+They are on by default and independent of the policy mode.
+
+**A held call waits for a person.** Code: `rook/hub/approvals.py` (queue,
+settings, spread), `rook/hub/approval_contact.py` (telling the operator,
+voice), `rook/remote/approvals_web.py` and `rook/web/approvals.js` (the
+Approvals page).
+
+**Who can be held.** `approvals.principals`, default `token:*`,
+`unverified`, `integration:*`, `agent:*`, `role:agent`, `role:integration`.
+A principal is holdable when it, or any principal in its on-behalf-of chain,
+matches; a `!selector` entry excludes a principal. `human:*` and `system:*`
+at the head of the chain are held only when an agent is in the chain (a job
+an agent created that runs as someone else; the house agent, `agent:home`).
+People approve; hub code is the hub. `band:unauthenticated` is not in the
+default set (the band risk ceiling already limits it to `read`).
+
+**Why a call is held** (evaluated in `Authorizer.check`, after the policy):
+
+1. **Deny beats hold.** A call the policy denies (enforce mode) is denied,
+   never held. In audit mode a would-be denial is not a denial, so the
+   rules below still apply.
+2. **Operator `hold`.** A rule may say `hold` instead of `allow`/`deny`
+   (`{"who": "role:agent", "hold": "shell.*", "on": "nas"}`), and a
+   principal's default table may use the cell `hold`. Across the chain:
+   deny > hold > audit > allow. Holds apply in `audit` and `enforce` mode
+   (a hold denies nothing); in `off` mode the policy is not evaluated, so
+   only the built-in holds below apply.
+3. **Built-in hold.** `approvals.hold` (default `tier:admin`,
+   `tag:destructive`), cap selectors as in rules. It acts as a virtual rule
+   with specificity `(target 0, cap = the best matching selector's score,
+   principal 0)`. If the most specific policy rule matching the head
+   principal is an `allow` whose `(target, cap, principal)` specificity is
+   **at least** that, the operator exception wins and the call is not held.
+   So `{"who": "token:ci", "allow": "worker.update", "on": "nas"}` (4, 4, 4)
+   exempts that agent on that machine; `{"who": "role:agent", "allow": "*"}`
+   (0, 0, 2) does not; `{"who": "role:agent", "allow": "tier:admin"}`
+   (0, 1, 2) exempts admin calls held for their tier but not
+   `worker.update`, which is also `tag:destructive` (cap score 2).
+   Principal default tables are not rules and never exempt a call
+   (`token:static`'s all-allow table does not).
+4. **Spread limit.** Per principal, the distinct workers that received an
+   exec/admin or destructive call within `approvals.spread_window_secs`
+   (600). A call that would make it `approvals.spread_max + 1` (default the
+   6th) is held with reason `spread: 6th machine in 10 minutes`, unless a
+   spread grant is active for that principal. Calls to the hub (`rook`) and
+   read/write calls do not count; operator exceptions do not exempt from
+   it. `spread_max: 0` turns it off.
+
+`approvals.enabled: false` turns every hold off, operator hold rules
+included (they count as allow). Without a data directory (no queue) an
+operator hold rule refuses the call, since nobody could approve it.
+
+**Waiting.** `check()` only marks the decision `hold`; the band client
+(`BandClient.call`, `MultiBandClient.call`, the hub node's band path and
+`rook hub serve`'s `DashboardBand`) awaits `Authorizer.resolve()` before it
+sends anything, and before the call's own timeout starts:
+
+- An unconsumed approval for an identical call (same principal, cap, target
+  id and sha256 of the canonical args *as given*, i.e. with
+  `{{secret:name}}` placeholders, never the values) lets it through at once
+  and is used up.
+- Otherwise the hold is created, or joined when an identical one is
+  pending, and the call polls it for up to `approvals.wait_secs` (45; many
+  MCP clients give up near 60 s). Approved: the call proceeds normally
+  (ticket, journal) and the approval is consumed. Denied: the usual denial
+  reply (`decision.denial()`) naming the person and the hold. Still
+  pending: `{"ok": false, "held": true, "hold": "<id>", "error": "Held for
+  approval (hold <id>): <cap> on <worker> (<reason>). Ask the user to approve
+  it on the dashboard's Approvals page, then repeat the same call; an
+  approval covers one identical call (same cap, worker and args) for 10
+  minutes. …"}`.
+- The hub never runs a held call later on its own. An approval made after
+  the agent stopped waiting covers its next identical call within
+  `approvals.approval_secs` (600); pending holds expire after the same time.
+
+Hub tools authorized as caps on `rook` (`_authorize_tool`), in-process caps
+a hub plugin's MCP tool calls (`register_plugin_tools`), the house agent's
+hub tools in jobs (`agent_kinds._policy`) and integration commands go
+through the same `resolve()`; a held hub tool returns the held message as a
+tool error.
+
+**The queue** is `approvals.db` (SQLite, WAL, one short transaction per
+operation) beside `policy.json` in the hub data directory. In two-process
+mode the MCP side and the dashboard open the same file, so the Approvals
+page shows every hold whichever process created it; `rook hub serve` is one
+process. A hold records an unguessable id, the principal, its label and
+on-behalf-of chain, cap, tier, tags, target id and name, the args for
+display (known vault values masked, password/token-like fields hidden, long
+values cut), the args hash, the reason and rule, created/expires, state
+(`pending`, `approved`, `denied`, `expired`, `consumed`), decided_by,
+decided_at, scope and the approval's validity. The newest 500 finished holds
+are kept. Spread counters live in memory in the process that authorizes
+agent calls (the MCP side; they reset on restart); spread grants are rows in
+the file, so a grant made on the dashboard reaches the MCP side. Hold
+creation (`approval.hold`) and decisions (`approval.decide`, `approval.voice`)
+are journal rows.
+
+**Approving** is for people only: `GET /api/approvals`, `POST
+/api/approvals/<id>` (`{"decision": "approve"|"deny", "scope":
+"call"|"spread"}`), behind the dashboard login, for a `human:*` principal
+that passes `require_hub_admin`, same-origin JSON only. There is no MCP tool,
+cap or hub tool to approve or list holds. `scope: "spread"` (spread holds
+only) also grants the principal `approvals.spread_grant_secs` (900) without
+spread holds; its other holds still apply.
+
+**Telling the operator.** `approvals.contact` lists channels tried in order:
+`telegram` (`notify.send` on the hub, every Telegram/Discord integration),
+`notify` (`notify.post` on `approvals.contact_worker`), `voice`
+(`voice.speak`), `ask` (below). Default `telegram`, which does nothing when
+no chat integration is configured. Messages go out as `system:approvals` in
+background tasks, at most one per channel per `approvals.notify_every_secs`
+(later holds are summarised in one deferred message), name the agent, cap
+and worker and the Approvals URL when the hub knows its domain, and never
+carry args. A failure is logged and never reaches the held call.
+
+**Approving by voice (`ask`, opt-in).** The phone (`voice.speak` with
+`reply` and `wait`) asks one question per hold, one at a time: "Rook:
+claude code wants to run worker update on nas. Approve?". The answer
+(`result.reply.text`) approves only if it contains an affirmative ("yes",
+"approve", "approved", "allow", "do it", "go ahead", "ok", "okay") and no
+negation or hesitation ("no", "nope", "deny", "don't", "do not", "stop",
+"cancel", "never", "not", "wait", "hold on", "later"), after lowercasing and
+stripping punctuation. A clear negative denies. Anything else, no answer or
+an offline phone leaves the hold pending and moves on to the next channel.
+A voice decision resolves only the hold id named in that question, with
+scope `call` (a spread grant needs the dashboard), recorded as
+`decided_by: voice:<worker>` with the heard text in the journal.
+`approvals.voice_max_tier` (default `admin`; `off` disables voice approval)
+caps the tier voice may approve, and admin calls to the hub itself (policy,
+settings, tokens, secrets) always need the dashboard. Voice is weaker than
+the dashboard: anyone near the phone can answer, and a band PSK holder could
+in principle forge the phone's reply (§6.3 item 2).
+
+**Known limits.**
+
+- Worker-to-worker calls do not pass the hub and are not held.
+- An agent with commands on a worker that runs on the hub machine as the
+  hub's user can edit `approvals.db` (and every other hub file). Hold or deny
+  `shell.*` there, or don't run such a worker.
+- Arguments are not inspected: `shell.exec` is exec and not held by default;
+  the spread limit stops fan-out. Add `hold` rules for commands you want to
+  see first.
+- In enforce mode, a cap a plugin tool calls in process is checked for holds
+  but not for denials (as before); the tool's own cap is checked for both.
+- Spread counters are per process and reset when it restarts.
 
 ---
 

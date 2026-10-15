@@ -335,6 +335,12 @@ alerts are optional; see the [feature tour](docs/FEATURES.md) and `services/`.
   and worker, and signs a short-lived ticket for each call. It ships in audit mode (would-be
   denials are journaled, nothing is refused) until you set `"mode": "enforce"` in `policy.json`
   or on the dashboard's **/permissions** page. Give tokens the least role they need at mint.
+- **Risky agent calls wait for a person.** Whatever the policy mode, an agent's (or
+  integration's) admin-tier or destructive call, and its 6th distinct machine within 10
+  minutes, are held until the operator approves them on the dashboard's **Approvals** page
+  (or, opt-in, says yes on their phone). People are never held. Exceptions are policy `allow`
+  rules; `hold` rules add more; `ROOK_APPROVALS=0` turns it off. See
+  `docs/design/permissions.md` 3.11.
 - **The dashboard and MCP server are the admin surface.** Put them behind HTTPS and strong
   passwords, and give each agent its own MCP token so the journal shows who did what.
 - **Failed sign-ins are throttled.** After 5 wrong passwords or tokens from one address in 10

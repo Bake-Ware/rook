@@ -32,6 +32,12 @@ Anyone who knows a band's key can join that band and control its machines.
 - **Tokens per agent.** Each agent has its own token, every call is recorded
   under its name, and you can revoke a token at any time
   ([[manual-agents-and-mcp]]).
+- **Risky agent calls wait for you.** When an agent wants to do something
+  admin-level or destructive (update or restart a machine, push config, change
+  secrets or settings), or starts reaching more than 5 machines in 10 minutes,
+  the call is held until you approve it on the **Approvals** page. A
+  prompt-injected agent cannot run one bad command on every machine at once.
+  People are never held. See [[manual-accounts-and-access]].
 - **Permissions and guardrails** limit what agents and jobs may do
   ([[manual-accounts-and-access]], [[manual-jobs]]).
 - **Secrets** keep passwords out of agents' sight and out of logs
@@ -48,3 +54,9 @@ Anyone who knows a band's key can join that band and control its machines.
   Per-machine identity that can shut out a hostile machine is planned.
 - Anyone who can run commands on a worker has the rights of the user the worker
   runs as. Install workers as an ordinary user where you can.
+- Approval holds work at the hub. Calls one worker sends straight to another
+  do not pass the hub and are not held. A worker on the hub machine itself,
+  running as the hub's user, can change the hub's files, approvals included:
+  do not give agents commands there.
+- Approving by voice is weaker than the dashboard: anyone near the phone can
+  answer. It is off unless you choose it.

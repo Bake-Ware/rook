@@ -5,6 +5,7 @@ order: 5
 features:
   - features/google-accounts-and-enrolled-workers
   - settings/core/sign-in
+  - settings/core/approvals
   - settings/core/identity
   - plugin/hub/policy
 since: 0.1.0
@@ -61,9 +62,63 @@ unverified identities from running programs. The policy lives in `policy.json`
 in the hub's data folder and can be read and changed with the `policy.*`
 capabilities on the hub (worker `rook`).
 
+## Approving agent calls
+
+Some agent calls wait for a person before they run. This is on from the start,
+whatever the policy mode:
+
+- **Admin or destructive calls**: updating, restarting or reconfiguring a
+  machine, changing secrets, settings or the policy, closing a terminal,
+  deleting chat.
+- **Reaching many machines**: an agent's sixth different machine within 10
+  minutes for anything that runs programs or changes Rook.
+
+It applies to agents (API tokens), integrations such as Telegram, and the home
+agent. You and other people are never held.
+
+A held call waits up to 45 seconds. The **Approvals** page (under Workspace)
+lists what is waiting: who asked, the call, the machine, its arguments and why
+it was held. The number next to **Approvals** in the sidebar counts them.
+
+- **Approve**: the waiting call runs. If the agent already gave up waiting, it
+  was told to ask you and try again: one approval covers the same call (same
+  capability, machine and arguments) once, for 10 minutes.
+- **Deny**: the agent is told that a person said no.
+- For a call held for reaching too many machines you can also choose
+  **Approve, and let it reach more machines for 15 min**.
+
+Only the operator or a band owner can approve. Agents have no way to approve
+anything, and secret values are never shown on the page.
+
+**Being told.** Settings > Hub > Approvals > *How to contact you* lists where
+the hub tells you about a held call, tried in order: `telegram` (your Telegram
+or Discord integration, [[manual-integrations]]), `notify` (a notification on
+your phone), `voice` (spoken on your phone) or `ask`. Set *Phone worker* to your
+phone's name for the last three. At most one message a minute.
+
+**Answering by voice.** With `ask`, the phone asks a short question ("Rook:
+claude code wants to run worker update on nas. Approve?"). Say "yes",
+"approve" or "go ahead" to approve that one call, or "no" to deny it. Anything
+less clear, or no answer, leaves it waiting on the Approvals page and the hub
+tries the next channel, for example `ask, telegram`. Anyone near the phone can
+answer, so voice is off unless you pick it; *Highest tier a spoken yes may
+approve* limits it further, and changes to the hub itself (policy, settings,
+tokens, secrets) always need the dashboard.
+
+**Exceptions.** To let one agent do one thing without asking, add an `allow`
+rule to the policy that names the agent, the capability and the machine, for
+example `{"who": "token:<agent id>", "allow": "worker.update", "on": "nas"}`.
+A rule as specific as the built-in hold wins over it. To hold more, add a
+`hold` rule, for example `{"who": "role:agent", "hold": "shell.*", "on": "nas"}`.
+*Caps that are held* and *Machines an agent may reach* change the defaults.
+
+**Turning it off.** Switch off *Hold risky agent calls* in Settings > Hub >
+Approvals (or set `ROOK_APPROVALS=0`). The policy still applies.
+
 ## Related settings
 
 - **Sign-in**: Google sign-in and session settings.
+- **Approvals**: what is held, how long a call waits and how you are told.
 - **Identity**: how the hub names itself and its workers.
 
-Both groups are on the Settings page, see [[manual-settings]].
+These groups are on the Settings page, see [[manual-settings]].
