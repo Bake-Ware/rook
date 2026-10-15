@@ -59,6 +59,21 @@ callable over the band. The dashboard forwards the admitted caller (a
 dashboard human, owner or member) to the bridge with the bridge's internal
 `mask.token`.
 
+The cap panel's **run** button and the `rook band` terminal call
+`POST /api/band/call`. The dashboard does not put that call on the band
+itself: it forwards it to the bridge's `POST /internal/band-call`
+(rook/band_mcp/dashboard_call.py) with the same internal token and the
+admitted person in `X-Rook-Principal`, and the bridge runs it the way it runs
+an agent's `rook_call` (the hub's own caps in-process, policy for that person,
+vault values masked in the reply, a journal row). Only a `human:*` principal
+is accepted there; hub caps tagged `sensitive` reach the caller unmasked and
+are not journaled, as with `rook_call`. Only when the request certainly never
+ran there (no connection could be made, or the bridge predates the route)
+does the dashboard send it over the band itself, where only read-only hub caps
+work; a hub refusal is then worded as "the MCP server isn't reachable". A
+bridge that was reached but gave no usable answer gets a 504 ("the call may
+have run, check the journal"), never a second attempt over the band.
+
 The editor's schedule helper calls `job.read` `next` with
 `data.trigger` (an unsaved trigger) for the next fire times. The Guardrails
 tab sends the draft `{deny, allow}` to `guardrails_preview` and lists

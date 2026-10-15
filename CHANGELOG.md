@@ -68,6 +68,12 @@ Manual: accounts-and-access, security, agents-and-mcp
   rides the band.
 
 ### Fixed
+- The dashboard's cap buttons (and `rook band` calls) now run on the MCP side as the signed-in
+  person (`POST /internal/band-call`, gated by the internal `mask.token`), like an agent's
+  `rook_call`: the hub's own caps above `read` work from the dashboard of a two-process hub
+  instead of failing with "not callable over the band", replies are masked and every call is
+  journaled. Only a call that never reached the MCP side (no connection, or an MCP side without
+  the route) falls back to the band, so a call can't run twice.
 - `MultiBandClient.call` accepts the decision an integration command already made
   (`_decision`), so `/call` from Telegram or Discord no longer fails with a TypeError on a
   hub serving bands through the multi-band client.

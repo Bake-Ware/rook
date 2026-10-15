@@ -2883,14 +2883,77 @@ class CombinedServer:
             timeout = float(data.get("timeout", 15.0))
         except (TypeError, ValueError):
             timeout = 15.0
+        identity = self._dashboard_identity(request)
+        # The cap buttons are a front end for the MCP side: it runs the call as
+        # the signed-in person (hub caps in-process, policy, masking, journal),
+        # in one process or two (upstream.request_json).
+        forwarded = await self._forward_band_call(cap, args, target, timeout, identity)
+        if forwarded is not None:
+            return forwarded
         try:
             reply = await self._band.call(cap=cap, args=args, target=target, timeout=timeout,
-                                          identity=self._dashboard_identity(request))
-            return web.json_response(reply)
+                                          identity=identity)
         except asyncio.TimeoutError:
             return web.json_response({"ok": False, "error": "timeout waiting for reply"}, status=504)
         except Exception as e:
             return web.json_response({"ok": False, "error": f"{type(e).__name__}: {e}"}, status=500)
+        if (target and self._is_hub_target(target) and isinstance(reply, dict)
+                and "not callable over the band" in str(reply.get("error") or "")):
+            reply = {**reply, "error": "The MCP server isn't reachable, so the dashboard can't "
+                                       "run this hub action right now (only read-only hub "
+                                       "actions work without it)."}
+        return web.json_response(reply)
+
+    def _is_hub_target(self, target: str) -> bool:
+        w = (self._band.workers.get(target) if self._band else None) or {}
+        return target == "rook" or w.get("name") == "rook" or "is_hub" in (w.get("roles") or [])
+
+    def _band_call_url(self) -> str:
+        """The bridge's /internal/band-call, beside the /internal/mask the
+        dashboard is configured for (ROOK_MASK_URL)."""
+        return self._bridge.url.replace("/internal/mask", "/internal/band-call")
+
+    async def _forward_band_call(self, cap: str, args: dict, target: str | None,
+                                 timeout: float, identity: str) -> web.Response | None:
+        """Run a dashboard cap call on the MCP side (dashboard_call.py) as the
+        admitted person. None only when the request certainly never ran there
+        (no person in context, no internal token, no connection, or an MCP
+        side without the route): the caller then sends it over the band."""
+        from ..hub.authz import current_principal
+        from . import upstream
+        p = current_principal.get()
+        bridge = getattr(self, "_bridge", None)
+        if p is None or p.kind != "human" or bridge is None:
+            return None
+        who = json.dumps({"id": p.id, "role": "owner" if p.fail_open() else "member",
+                          "label": p.label or identity})
+        body = {"cap": cap, "args": args, "target": target, "timeout": timeout,
+                "identity": identity}
+        for attempt in (0, 1):
+            if bridge._token is None:
+                bridge._token = await asyncio.to_thread(bridge._read_token)
+            if not bridge._token:
+                return None
+            try:
+                status, reply = await upstream.request_json(
+                    "POST", self._band_call_url(), json=body, timeout=timeout + 10,
+                    headers={"Authorization": f"Bearer {bridge._token}", "X-Rook-Principal": who})
+            except upstream.NotConnected:
+                return None  # nothing reached the MCP side
+            except upstream.Unavailable:
+                # Reached but no usable answer: the call may have run there, so
+                # it is not sent a second time over the band.
+                return web.json_response(
+                    {"ok": False, "timeout": True,
+                     "error": "no usable reply from the MCP server; the call may have run, "
+                              "check the journal before retrying"}, status=504)
+            if status == 401 and attempt == 0:
+                bridge._token = None  # rotated token: read it again once
+                continue
+            if status in (401, 404):
+                return None  # an MCP side without this route (or the token): not run
+            return web.json_response(reply, status=status)
+        return None
 
     # -- deauth / ban --------------------------------------------------------
 
