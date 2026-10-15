@@ -9,11 +9,16 @@ import time
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from .auth_throttle import note
+
 
 def route(manager, client, token: str) -> Route:
     async def healthz(request):
         got = request.headers.get('authorization', '')
-        if not token or not hmac.compare_digest(got.encode(), f'Bearer {token}'.encode()):
+        ok = bool(token) and hmac.compare_digest(got.encode(), f'Bearer {token}'.encode())
+        if got:
+            note(ok, 'healthz token')   # login throttle (auth_throttle)
+        if not ok:
             return JSONResponse({'error': 'unauthorized'}, 401)
         now = time.time()
         workers = getattr(client, 'workers', {}) or {}

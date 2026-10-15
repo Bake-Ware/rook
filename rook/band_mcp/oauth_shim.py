@@ -38,6 +38,8 @@ from urllib.parse import unquote, urlencode, urlsplit
 from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 
+from .auth_throttle import note
+
 if TYPE_CHECKING:
     from .tokens import TokenStore
 
@@ -174,7 +176,9 @@ class OAuthShim:
             if calc != rec["challenge"]:
                 return self._err("invalid_grant", "PKCE verification failed")
             # The client secret must be a real rook bearer token.
-            if not csecret or self.store.verify_bearer(csecret) is None:
+            ok = bool(csecret) and self.store.verify_bearer(csecret) is not None
+            note(ok, "OAuth client secret")
+            if not ok:
                 return self._err("invalid_client",
                                  "client_secret is not a valid rook token", 401)
             self._codes.pop(code, None)
@@ -183,7 +187,9 @@ class OAuthShim:
 
         if grant == "refresh_token":
             rtok = str(form.get("refresh_token", ""))
-            if not rtok or self.store.verify_bearer(rtok) is None:
+            ok = bool(rtok) and self.store.verify_bearer(rtok) is not None
+            note(ok, "OAuth refresh token")
+            if not ok:
                 return self._err("invalid_grant", "invalid refresh token")
             return self._issue(rtok)
 

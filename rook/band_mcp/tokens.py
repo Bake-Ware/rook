@@ -265,4 +265,10 @@ class StoreTokenVerifier(TokenVerifier):
         self._store = store
 
     async def verify_token(self, token: str) -> AccessToken | None:
-        return self._store.verify_bearer(token)
+        result = self._store.verify_bearer(token)
+        if token:
+            # Counts toward the login throttle when the request is one the
+            # throttle guards (/mcp, see auth_throttle); a no-op otherwise.
+            from .auth_throttle import note
+            note(result is not None)
+        return result

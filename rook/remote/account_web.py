@@ -18,6 +18,7 @@ from .psk import generate_psk
 from .public_url import set_cookie
 from .web_pages import render
 from .enrollment import JoinDenied, JoinLimited
+from ..core.throttle import client_keys, message as throttle_message, shared as shared_throttle
 
 log=logging.getLogger(__name__)
 COOKIE='rook_account'
@@ -214,10 +215,24 @@ class AccountWeb:
             return self.response('Sign in','<p>Reload the sign-in form and try again.</p>',403)
         if not self.store.rate_limit(request.remote or 'unknown'):
             return self.response('Try again shortly','<p>Too many attempts. Wait a minute.</p>',429)
+        keys=client_keys(request.remote,request.headers)
+        wait=shared_throttle().retry_after(keys)
+        if wait:
+            return self.throttled(wait)
         uid=await asyncio.to_thread(self.store.login,data.get('username',''),data.get('password',''))
         if not uid:
+            wait=shared_throttle().failure(keys,'account sign-in')
+            if wait:
+                return self.throttled(wait)
             return self.response('Sign in','<p>Invalid credentials. <a href="/account/login">Try again</a>.</p>',401)
+        shared_throttle().success(keys)
         return self.signed_in(uid,request)
+
+    def throttled(self,seconds):
+        """429 for an address the login throttle locked out (rook.core.throttle)."""
+        response=self.response('Try again shortly','<p>'+esc(throttle_message(seconds))+'</p>',429)
+        response.headers['Retry-After']=str(seconds)
+        return response
 
     async def register(self,request):
         data=await request.post()
@@ -597,8 +612,16 @@ class AccountWeb:
             elif op=='password':
                 if uid==self.bootstrap_id:
                     raise ValueError('Change the operator password in the server configuration; this recovery login is managed there.')
+                keys=client_keys(request.remote,request.headers)
+                wait=shared_throttle().retry_after(keys)
+                if wait:
+                    return self.throttled(wait)
                 if await asyncio.to_thread(self.store.login,user['username'],data.get('current_password',''))!=uid:
+                    wait=shared_throttle().failure(keys,'account password change')
+                    if wait:
+                        return self.throttled(wait)
                     raise ValueError('Current password did not match.')
+                shared_throttle().success(keys)
                 await asyncio.to_thread(self.store.set_password,uid,data.get('password',''))
                 return self.signed_in(uid,request)
             elif op=='unlink':

@@ -170,9 +170,12 @@ def register(mcp, store=None, knowledge_getter: Callable[[], object] | None = No
         if not got.lower().startswith("bearer ") or store is None:
             return False
         try:
-            return store.verify_bearer(got[7:].strip()) is not None
+            ok = store.verify_bearer(got[7:].strip()) is not None
         except Exception:  # noqa: BLE001
             return False
+        from .auth_throttle import note
+        note(ok, "skill download token")
+        return ok
 
     def _current(request) -> dict[str, str]:
         return files(site_notes(kget(), pget()) if _authed(request) else None)
