@@ -337,6 +337,13 @@ alerts are optional; see the [feature tour](docs/FEATURES.md) and `services/`.
   or on the dashboard's **/permissions** page. Give tokens the least role they need at mint.
 - **The dashboard and MCP server are the admin surface.** Put them behind HTTPS and strong
   passwords, and give each agent its own MCP token so the journal shows who did what.
+- **Failed sign-ins are throttled.** After 5 wrong passwords or tokens from one address in 10
+  minutes (dashboard login, account sign-in, MCP tokens, the OAuth `/token` endpoint), that
+  address gets `429 Too Many Requests` for 30 seconds, doubling up to 15 minutes; the limits
+  are the `ROOK_LOGIN_*` settings. The hub trusts `CF-Connecting-IP` / `X-Forwarded-For`
+  only from a proxy on the same machine, so run a public hub behind a TLS reverse proxy or
+  tunnel on 127.0.0.1 (see [Going beyond localhost](#going-beyond-localhost)), not exposed
+  directly.
 - **Known gaps:** there is no per-worker identity on the band yet, so a hostile peer that holds
   the PSK can't be cut off without rotating the key; deauth stops only cooperative workers; the
   ESP32 dongle's firmware OTA is not signed. See [Security](docs/FEATURES.md#security).

@@ -36,6 +36,10 @@ Anyone who knows a band's key can join that band and control its machines.
   ([[manual-accounts-and-access]], [[manual-jobs]]).
 - **Secrets** keep passwords out of agents' sight and out of logs
   ([[manual-secrets]]).
+- **Password guessing is slowed down.** After a few wrong passwords or tokens
+  from one address, the hub refuses that address for a while ("Too many
+  attempts, try again in N seconds"), longer each time. A hub you reach from
+  the internet should still sit behind HTTPS (a reverse proxy or tunnel).
 
 ## What Rook cannot do yet
 

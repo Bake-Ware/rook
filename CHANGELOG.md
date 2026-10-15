@@ -8,6 +8,13 @@ version was `0.1.0`.
 
 ## Unreleased
 
+### Security
+- Failed sign-ins are throttled per client address: after 5 wrong passwords or tokens in
+  10 minutes (dashboard login and Basic auth, account sign-in, MCP bearer tokens, the OAuth
+  `/token` endpoint), the address gets 429 with `Retry-After` for 30 s, doubling up to
+  15 min, without the credential being checked (`ROOK_LOGIN_*` settings). The dashboard
+  password is now compared in constant time.
+
 ### Dashboard
 Manual: overview-and-start-page
 - The sidebar scrolls when the window is too short for every entry (the
