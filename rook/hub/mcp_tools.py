@@ -112,12 +112,36 @@ def register_cap_tools(mcp: Any, node: Any, call: CallFn) -> list[str]:
     return added
 
 
+async def _hold_gate(node: Any, cap: str, args: Any) -> None:
+    """Raise PermissionError when ``cap`` (on the hub, for the current MCP
+    caller) is held and not approved within the wait, or a person denied it."""
+    from . import approvals
+    from .authz import current_principal
+    authz = getattr(getattr(node, "client", None), "authz", None)
+    p = current_principal.get()
+    if authz is None or p is None or cap in approvals.gated_caps.get():
+        return
+    d = authz.check(cap, node.worker_id, node.entry(), principal=p, local=True)
+    if not d.held:
+        return
+    out = await authz.resolve(d, args if isinstance(args, dict) else {})
+    if isinstance(out, dict):
+        raise PermissionError(out["error"])
+    if out.denied:
+        raise PermissionError(out.denial()["error"])
+
+
 def register_plugin_tools(mcp: Any, node: Any,
                           identity: Callable[[], "str | None"] = lambda: None) -> list[str]:
     """Add the tools hub plugins return from ``mcp_tools(invoke)``. Each tool
     is an async function whose ``__name__`` is the tool name and whose
-    docstring is its description. Existing tool names win."""
+    docstring is its description. Existing tool names win.
+
+    Each in-process cap call is checked for an approval hold (permissions
+    3.11) unless it is the cap the tool itself was authorized and held as,
+    so a plugin tool cannot carry an agent past a hold."""
     async def invoke(cap: str, args: dict) -> Any:
+        await _hold_gate(node, cap, args)
         return await node.invoke(cap, args, identity())
 
     added: list[str] = []

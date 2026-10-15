@@ -113,7 +113,11 @@ Put `{{secret:name}}` in `rook_call` args or `rook_console_write` text; the hub 
 
 ## Ask the user first
 
-No approval workflow exists: you act only on what your user asked in this conversation. Get their explicit go-ahead before band-wide or hard-to-undo changes: worker updates (`worker.apply`, `worker.update`), re-banding, `worker.deauth`, PSK changes, restarting or deploying hub services (restarting the MCP drops every agent, you included), policy, settings or persona writes, deleting data, pushing to shared branches, and anything that spends money. Propose with the exact command and the rollback; let them say go. A `denied:` reply is final: don't retry it, ask.
+You act only on what your user asked in this conversation. Get their explicit go-ahead before band-wide or hard-to-undo changes: worker updates (`worker.apply`, `worker.update`), re-banding, `worker.deauth`, PSK changes, restarting or deploying hub services (restarting the MCP drops every agent, you included), policy, settings or persona writes, deleting data, pushing to shared branches, and anything that spends money. Propose with the exact command and the rollback; let them say go. A `denied:` reply is final: don't retry it, ask.
+
+## Approval holds
+
+The hub may hold a call until a person approves it: admin-tier or destructive calls (worker updates, config pushes, secret writes, closing a console, deleting chat), and calls that would reach more machines than the hub allows in a short time (5 in 10 minutes by default). A held call waits up to about 45 s. If nobody answers, the reply is `{"ok": false, "held": true, "hold": "<id>", "error": "Held for approval …"}` and nothing ran. Tell the user what you want to do and the hold id, ask them to approve it on the dashboard's **Approvals** page, then repeat the **same** call (same cap, worker and args): one approval covers one identical call for 10 minutes. Changed args need a new approval. A reply saying a person denied the hold is final. Never try to get around a hold: no other tool, worker, job, console or chat wake for the same action, and no splitting the work across machines.
 
 ## Reaching the user
 

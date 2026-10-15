@@ -45,7 +45,7 @@ from typing import Any
 from . import guardrails
 from .cron import parse_duration
 from .executor import clip
-from .kinds import VIAS, _check_worker, call_cap, resolve_worker, run_notify
+from .kinds import VIAS, _check_worker, ask_args, call_cap, heard, resolve_worker, run_notify
 from .steps import StepContext, StepResult, register_step_kind, step_kind
 
 log = logging.getLogger("rook.hub.plugins.jobs.agent_kinds")
@@ -317,9 +317,10 @@ class JobAgentBackend:
         self.rt.journal(cap, worker, self.identity, args, {"ok": False, "denied": why, "error": why})
         return {"ok": False, "state": "blocked", "error": why}
 
-    def _policy(self, cap: str) -> str:
+    async def _policy(self, cap: str, cargs: dict | None = None) -> str:
         """The band's permission policy for an in-process hub cap (the band
-        client applies it to every other call)."""
+        client applies it to every other call), approval holds included: a
+        held cap waits for a person like any other call (permissions 3.11)."""
         node = getattr(self.rt, "node", None)
         authz = getattr(getattr(node, "client", None), "authz", None)
         if authz is None:
@@ -327,9 +328,16 @@ class JobAgentBackend:
         try:
             d = authz.check(cap, getattr(node, "worker_id", None), node.entry(),
                             identity=self.identity.display, principal=self.identity.principal, local=True)
+            if d.held:
+                out = await authz.resolve(d, cargs or {})
+                if isinstance(out, dict):
+                    return str(out.get("error") or "held for approval")
+                d = out
         except Exception:  # noqa: BLE001
             log.exception("jobs: policy check failed for %s", cap)
             return f"policy check failed for {cap}"
+        if d.denied and d.hold_id:
+            return d.denial()["error"]
         return f"denied by policy ({d.rule})" if d.denied else ""
 
     def _out(self, res: StepResult) -> dict:
@@ -429,7 +437,7 @@ class JobAgentBackend:
         async def invoke(cap: str, cargs: dict) -> Any:
             why = (self.scope_refusal(cap) or self.guard(
                 {"kind": "cap", "worker": "rook", "cap": cap, "args": cargs})
-                or per_call(cap, cargs) or self._policy(cap))
+                or per_call(cap, cargs) or await self._policy(cap, cargs))
             if why:
                 self._refuse(cap, "rook", cargs, why)
                 raise PermissionError(why)
@@ -682,22 +690,17 @@ async def run_ask(ctx: StepContext, step: dict) -> StepResult:
     """``voice.speak`` with ``reply`` and ``wait`` on the step's worker, else
     ``job.notify_worker``, else the first live worker with the cap."""
     margin = min(5.0, ctx.timeout / 10)
-    args = {"text": step["text"], "reply": True, "wait": True,
-            "timeout": int(max(5, min(600, ctx.timeout - 2 * margin))),
-            "reply_timeout": int(step.get("reply_timeout") or 20)}
+    args = ask_args(step["text"], ctx.timeout - 2 * margin, int(step.get("reply_timeout") or 20))
     spec = step.get("worker") or ctx.settings("notify_worker") or {"any_with_cap": True}
     res = await call_cap(ctx, "voice.speak", args, spec)
     if not res.ok:
         return res
-    out = res.output if isinstance(res.output, dict) else {}
-    reply = out.get("reply") if isinstance(out.get("reply"), dict) else None
-    text = str((reply or {}).get("text") or "").strip()
+    text, state, via = heard(res.output)
     worker = res.extra.get("worker")
     if not text:
-        state = out.get("reply_state") or "none"
         return StepResult("failure", output={"reply_state": state, "worker": worker},
                           error=f"no answer (reply_state {state})", extra={"worker": worker})
-    return StepResult("success", output={"reply": text, "via": reply.get("via"), "worker": worker},
+    return StepResult("success", output={"reply": text, "via": via, "worker": worker},
                       text=text, extra={"reply": text, "worker": worker})
 
 

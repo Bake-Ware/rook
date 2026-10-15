@@ -211,7 +211,8 @@ class SettingsService:
             rows.append(r)
         return rows
 
-    GROUP_ORDER = ("General", "Identity", "Access", "Network", "Sign-in", "Updates", "Features",
+    GROUP_ORDER = ("General", "Identity", "Access", "Network", "Sign-in", "Approvals", "Updates",
+                   "Features",
                    "Recognition", "Speech", "Chatterbox", "Agent", "Models", "Search", "Timing",
                    "Data", "Storage", "Plugins", "Keys & access", "Worker defaults", "Probe",
                    "Thresholds", "Alerts")

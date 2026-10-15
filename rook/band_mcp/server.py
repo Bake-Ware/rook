@@ -140,6 +140,7 @@ def build_server(client: "BandClient | MultiBandClient",
     # here looks at bands, workers or capabilities.
     from mcp.server.fastmcp.exceptions import ToolError
     from . import attribution as _attr
+    from ..hub import approvals as _approvals
     from ..hub import authz as _hub_authz
     from ..hub.node import HUB_WORKER_NAME
     _alert = _attr.Alerter()
@@ -233,18 +234,21 @@ def build_server(client: "BandClient | MultiBandClient",
         # only, never from X-Rook-Host or the envelope identity.
         principal = _hub_authz.principal_for_token(att, att.role)
         preset = _hub_authz.current_principal.set(principal)
+        gtok = _approvals.gated_caps.set(frozenset())
         try:
-            _authorize_tool(name, arguments, principal)
+            await _authorize_tool(name, arguments, principal)
             result = await _run_tool(name, arguments, context=context,
                                      convert_result=convert_result)
             return _with_hygiene(name, result, context)
         finally:
+            _approvals.gated_caps.reset(gtok)
             _hub_authz.current_principal.reset(preset)
             _attr.current.reset(reset)
 
-    def _authorize_tool(name, arguments, principal) -> None:
+    async def _authorize_tool(name, arguments, principal) -> None:
         """Hub tools are caps on `rook` (permissions 3.5, Appendix A.2).
-        Raises ToolError only for a denial in enforce mode."""
+        Raises ToolError for a denial in enforce mode, and for a call that is
+        held for approval (3.11) and not approved within the wait."""
         authz = getattr(client, "authz", None)
         cap = _hub_authz.hub_cap_for_tool(name, arguments)
         if authz is None or cap is None:
@@ -253,6 +257,12 @@ def build_server(client: "BandClient | MultiBandClient",
         entry = node.entry() if node is not None else {"name": HUB_WORKER_NAME, "roles": ["is_hub"]}
         d = authz.check(cap, node.worker_id if node is not None else HUB_WORKER_NAME, entry,
                         principal=principal, local=True)
+        if d.held:
+            out = await authz.resolve(d, arguments if isinstance(arguments, dict) else {})
+            if isinstance(out, dict):
+                raise ToolError(out["error"])
+            d = out
+            _approvals.gated_caps.set(frozenset({cap}))
         if d.denied:
             raise ToolError(d.denial()["error"] + f" (rule {d.rule}, policy rev {d.rev})")
 
@@ -439,7 +449,7 @@ def build_server(client: "BandClient | MultiBandClient",
     # sets mode: enforce in policy.json.
     try:
         client.authz = _hub_authz.build_authorizer(_store_dir, record=journal.record,
-                                                   banned=banned)
+                                                   banned=banned, settings_store=settings_store)
     except Exception:
         log.exception("ROOK AUTHZ ALERT: authorizer unavailable; calls are not evaluated")
     mcp._rook_authz = getattr(client, "authz", None)
@@ -920,6 +930,9 @@ def build_server(client: "BandClient | MultiBandClient",
         wait = min(max(floor, float(timeout or 0)), _MAX_WAIT)
         _hub_authz.last_decision.set(None)
         jtok = _hub_authz.caller_journals.set(True)
+        # An approval hold shows (and matches retries by) the args as given,
+        # placeholders and all, never the substituted values.
+        stok = _approvals.shown_args.set(args if args is not None else {})
         try:
             reply = await client.call(cap=cap, args=send_args, target=target,
                                       timeout=wait, identity=identity)
@@ -943,6 +956,7 @@ def build_server(client: "BandClient | MultiBandClient",
                          f"args.timeout (if the cap takes one) or pass timeout=; "
                          f"for long jobs use rook_console_open.")
         finally:
+            _approvals.shown_args.reset(stok)
             _hub_authz.caller_journals.reset(jtok)
         hub = getattr(mcp, "_rook_hub", None)
         sensitive = (hub is not None and target == hub.worker_id and isinstance(reply, dict)
@@ -1530,11 +1544,14 @@ def build_server(client: "BandClient | MultiBandClient",
             for name in used:
                 _auto_link("secret", name, f"typed into console {room}")
             console.remember_typed(room, used)
+        stok = _approvals.shown_args.set({"data": text, "newline": newline})
         try:
             reply = await _room_call(r, "write",
                                      {"data": data, "newline": newline})
         except asyncio.TimeoutError:
             return _fail(f"worker {r['worker_name']!r} did not confirm the write")
+        finally:
+            _approvals.shown_args.reset(stok)
         result = reply.get("result") or {}
         if result.get("ok"):
             # Echo it into the transcript so the room shows who typed what.
@@ -1583,9 +1600,13 @@ def build_server(client: "BandClient | MultiBandClient",
                              f"running). Pass kill=True to stop it and freeze "
                              f"the room, or wait for it to exit.")
             try:
-                await _room_call(r, "close", {})
+                reply = await _room_call(r, "close", {})
             except Exception:
-                pass
+                reply = None
+            if isinstance(reply, dict) and (reply.get("held") or reply.get("denied")):
+                # Held for approval or denied (permissions 3.11): the process
+                # still runs, so the room stays live.
+                return json.dumps(reply, indent=2)
             console.mark_closing(room, None)
         if not summary:
             return _fail(f"room {room} is ready to freeze but needs a summary — "

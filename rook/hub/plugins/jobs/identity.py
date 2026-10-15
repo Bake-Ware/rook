@@ -225,7 +225,11 @@ def resolve_identity(job: dict, owner_info: dict | None, *, directory: Directory
         raise IdentityUnavailable(str(e)) from None
     pid = str(info.get("id") or SYSTEM_OWNER["id"])
     jid = f"job:{job.get('id')}"
-    principal = principal_of(info, via=(jid,))
+    # The job's owner joins the chain when the run acts as someone else, so
+    # an agent cannot shed approval holds (permissions 3.11) by giving its job
+    # another identity.
+    owner = str((owner_info or {}).get("id") or "")
+    principal = principal_of(info, via=(jid,) + ((owner,) if owner and owner != pid else ()))
     guard = None
     if guardrails is not None:
         from .guardrails import JobGuard
