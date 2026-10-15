@@ -1633,11 +1633,12 @@ class CombinedServer:
         # its stores.
         from ..paths import data_path
         from .mask_client import BridgeMask
-        self._bridge_mask = BridgeMask([
+        self._bridge = BridgeMask([
             os.environ.get("ROOK_MASK_TOKEN_FILE"),
             os.path.join(os.path.dirname(getattr(self, "_chat_db", "") or ""), "mask.token")
             if getattr(self, "_chat_db", None) else None,
-            data_path("mask.token", "/var/lib/rook-band-mcp/mask.token")]).mask
+            data_path("mask.token", "/var/lib/rook-band-mcp/mask.token")])
+        self._bridge_mask = self._bridge.mask
         self._push_task = None  # background: push signed manifest to behind workers
         # The bundle installers download: operator-built, else built here.
         from .worker_bundle import WorkerBundle
@@ -1748,17 +1749,40 @@ class CombinedServer:
     def _session_ok(self, request: web.Request) -> bool:
         return self._accounts.store.dashboard_session_ok(request.cookies.get("rook_session", ""))
 
-    def _signed_in(self, location: str, request: web.Request) -> web.HTTPFound:
-        """Redirect that starts a new random dashboard session."""
+    def _signed_in(self, location: str, request: web.Request,
+                   weak: bool = False) -> web.HTTPFound:
+        """Redirect that starts a new random dashboard session. ``weak`` marks
+        a session whose password is a vault value, so it can't approve held
+        calls (permissions 3.11)."""
         from .public_url import set_cookie
         resp = web.HTTPFound(location)
+        token = self._accounts.store.dashboard_session()
+        if weak:
+            self._accounts.store.mark_weak_session(token)
         # No configured floor (base ""): this cookie was never Secure, and
         # requiring it from the https:// setting would lock operators out of
         # an https hub they open by its raw http://<ip>:<port>. It is Secure
         # whenever the request itself came over HTTPS (directly or via a proxy).
-        set_cookie(resp, request, "", "rook_session",
-                   self._accounts.store.dashboard_session(), max_age=30 * 86400)
+        set_cookie(resp, request, "", "rook_session", token, max_age=30 * 86400)
         return resp
+
+    async def credential_is_vaulted(self, *values: str) -> "bool | None":
+        """Whether any of ``values`` (a password, or ``user:pass``) is a stored
+        vault secret, so agents could use it to sign in. ``None`` when the
+        vault can't be reached (callers fail closed for approvals)."""
+        bridge = getattr(self, "_bridge", None)
+        if bridge is None:
+            return None
+        unknown = False
+        for v in values:
+            if not v:
+                continue
+            got = await bridge.is_secret(v)
+            if got is True:
+                return True
+            if got is None:
+                unknown = True
+        return None if unknown else False
 
     # GET paths where a dashboard (shared password) login is carried over to
     # the operator's account session: the account pages and the JSON the
@@ -1919,7 +1943,11 @@ class CombinedServer:
                 data = await request.post()
                 if self._check_creds(data.get("user", ""), data.get("pass", "")):
                     self._login_throttle.success(keys)
-                    raise self._signed_in("/setup" if unconfigured else "/", request)
+                    pw = data.get("pass", "")
+                    weak = await self.credential_is_vaulted(
+                        pw, f"{data.get('user', '')}:{pw}" if data.get("user") else "")
+                    raise self._signed_in("/setup" if unconfigured else "/", request,
+                                          weak=weak is not False)
             except web.HTTPFound:
                 raise
             except Exception:

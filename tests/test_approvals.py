@@ -475,10 +475,17 @@ async def test_agent_hub_tool_call_is_held_through_mcp(tmp_path, monkeypatch):
 
 # -- the dashboard API ------------------------------------------------------------------
 
-def dashboard(tmp_path, principal):
+def dashboard(tmp_path, principal, *, weak_sessions=(), vaulted=lambda *v: False):
     from rook.remote.approvals_web import ApprovalsWeb
     az = authorizer(tmp_path)
-    server = SimpleNamespace(_band=SimpleNamespace(authz=az), _authz=az)
+
+    async def credential_is_vaulted(*values):
+        return vaulted(*values)
+
+    store = SimpleNamespace(session_weak=lambda tok: tok in set(weak_sessions))
+    server = SimpleNamespace(_band=SimpleNamespace(authz=az), _authz=az,
+                             _accounts=SimpleNamespace(store=store),
+                             credential_is_vaulted=credential_is_vaulted)
 
     @web.middleware
     async def who(request, handler):
@@ -829,3 +836,217 @@ async def test_integration_commands_are_held(tmp_path):
     assert "Held for approval" in out and not sent             # admin + destructive: held
     out = await p.run_command('call nas customcap.add {"name": "x"}', m)
     assert "Held for approval" not in out and sent[-1]["cap"] == "customcap.add"  # the rule
+
+
+
+# -- an agent-usable sign-in can't approve (permissions 3.11, bypass 1) --------------------
+
+def _vault(tmp_path):
+    from rook.band_mcp import secret_mask
+    from rook.band_mcp.vault import Vault
+    v = Vault(str(tmp_path / "vault.db"), key_path=str(tmp_path / "vault.key"))
+    masker = secret_mask.install(v)
+    return v, masker
+
+
+def test_secret_masker_contains_value_and_encoded_forms(tmp_path):
+    import base64
+    from rook.band_mcp import secret_mask
+    v, masker = _vault(tmp_path)
+    try:
+        v.set("dash-pass", "correct horse battery", "the dashboard password", "human:u1")
+        assert masker.contains("correct horse battery")
+        assert masker.contains(base64.b64encode(b"correct horse battery").decode())
+        assert not masker.contains("correct horse batter")
+        assert not masker.contains("")
+    finally:
+        secret_mask.install(None)
+
+
+@pytest.mark.asyncio
+async def test_is_secret_route_returns_only_a_boolean(tmp_path):
+    from starlette.applications import Starlette
+    from starlette.testclient import TestClient
+    from rook.band_mcp import secret_mask
+    from rook.band_mcp.mask_web import is_secret_route
+    v, _ = _vault(tmp_path)
+    try:
+        v.set("dash-pass", "correct horse battery", "", "human:u1")
+        app = Starlette(routes=[is_secret_route("tok")])
+        c = TestClient(app)
+        hdr = {"Authorization": "Bearer tok"}
+        assert c.post("/internal/is-secret", json={"value": "nope"}, headers=hdr).json() == {"secret": False}
+        r = c.post("/internal/is-secret", json={"value": "correct horse battery"}, headers=hdr)
+        assert r.json() == {"secret": True}                 # only a boolean: no names, no values
+        assert c.post("/internal/is-secret", json={"value": "x"}).status_code == 401
+    finally:
+        secret_mask.install(None)
+
+
+@pytest.mark.asyncio
+async def test_basic_auth_with_a_vaulted_password_cannot_approve(tmp_path):
+    import base64
+    principal = [OWNER]
+    app, az = dashboard(tmp_path, principal, vaulted=lambda *v: "s3cret-pass" in v)
+    az.approvals.config_source.fixed = cfg(wait_secs=0)
+    async with TestClient(TestServer(app)) as http:
+        held = await az.resolve(check(az, "worker.update"), {})
+        good = {"Authorization": "Basic " + base64.b64encode(b"op:other-pass").decode()}
+        bad = {"Authorization": "Basic " + base64.b64encode(b"op:s3cret-pass").decode()}
+        d = await (await http.get("/api/approvals", headers=bad)).json()
+        assert d["can_decide"] is False and d["weak_credential"] and d["weak_message"]
+        r = await http.post(f"/api/approvals/{held['hold']}", json={"decision": "approve"}, headers=bad)
+        assert r.status == 403 and (await r.json())["weak_credential"]
+        assert az.approvals.queue.get(held["hold"])["state"] == "pending"
+        r = await http.post(f"/api/approvals/{held['hold']}", json={"decision": "approve"}, headers=good)
+        assert r.status == 200
+        assert (await (await http.get("/api/approvals", headers=good)).json())["can_decide"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_flagged_session_cookie_cannot_approve(tmp_path):
+    principal = [OWNER]
+    app, az = dashboard(tmp_path, principal, weak_sessions=["weaktok"])
+    az.approvals.config_source.fixed = cfg(wait_secs=0)
+    async with TestClient(TestServer(app)) as http:
+        held = await az.resolve(check(az, "worker.update"), {})
+        http.session.cookie_jar.update_cookies({"rook_account": "weaktok"})
+        r = await http.post(f"/api/approvals/{held['hold']}", json={"decision": "approve"})
+        assert r.status == 403 and az.approvals.queue.get(held["hold"])["state"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_approvals_fail_closed_when_the_vault_is_unreachable(tmp_path):
+    import base64
+    principal = [OWNER]
+    app, az = dashboard(tmp_path, principal, vaulted=lambda *v: None)  # None = can't tell
+    az.approvals.config_source.fixed = cfg(wait_secs=0)
+    async with TestClient(TestServer(app)) as http:
+        held = await az.resolve(check(az, "worker.update"), {})
+        hdr = {"Authorization": "Basic " + base64.b64encode(b"op:any").decode()}
+        r = await http.post(f"/api/approvals/{held['hold']}", json={"decision": "approve"}, headers=hdr)
+        assert r.status == 403
+
+
+def test_weak_session_flag_round_trips(tmp_path, monkeypatch):
+    from rook.remote.accounts import AccountStore
+    from rook.remote.enrollment import EnrollmentStore
+    monkeypatch.setenv("ROOK_ENROLLMENT_DB", str(tmp_path / "enroll.db"))
+    store = AccountStore(EnrollmentStore())
+    tok = store.dashboard_session()
+    store.mark_weak_session(tok)
+    assert store.session_weak(tok)
+    assert not store.session_weak(store.dashboard_session())
+    store.dashboard_logout(tok)
+    assert not store.session_weak(tok)
+
+
+# -- shell on the hub's own machine (permissions 3.11, bypass 2) ---------------------------
+
+def _hub_host_band(tmp_path, host_id="hub-abc", worker_host=None, hub_host_workers=("auto",)):
+    client = BandClient("test-band")
+    sent = []
+
+    async def send(data, route=0):
+        msg = json.loads(data)
+        sent.append(msg)
+        if msg.get("cap"):
+            asyncio.get_running_loop().call_soon(client._handle_reply, {
+                "id": msg["id"], "from": msg.get("target"), "ok": True, "result": "done"})
+    client.transport.send = send
+    client._local = SimpleNamespace(
+        worker_id="hub1",
+        facts=SimpleNamespace(hw={"host_id": host_id} if host_id else {}))
+    client.workers["hub1"] = {"name": "rook", "roles": ["is_hub"], "facts": {"host_id": host_id}}
+    client.workers["nas"] = entry("nas", facts={"host_id": worker_host if worker_host is not None else host_id})
+    client.workers["remote"] = entry("remote", facts={"host_id": "elsewhere"})
+    client.authz = authorizer(tmp_path, config=cfg(hub_host_workers=hub_host_workers))
+    client.authz.attach_client(client)
+    return client, sent
+
+
+def test_hub_host_detection(tmp_path):
+    client, _ = _hub_host_band(tmp_path)
+    ap = client.authz.approvals
+    hh = ap.hub_host_workers()
+    assert hh["mode"] == "auto" and [w["worker"] for w in hh["workers"]] == ["nas"]
+    assert hh["detected"]
+    # No machine id announced: can't detect, says so.
+    client2, _ = _hub_host_band(tmp_path / "b" if (tmp_path / "b").mkdir() is None else tmp_path, host_id="")
+    assert client2.authz.approvals.hub_host_workers()["note"]
+
+
+@pytest.mark.asyncio
+async def test_exec_on_a_hub_host_worker_is_held(tmp_path):
+    client, sent = _hub_host_band(tmp_path)
+    held = await as_agent(client.call("shell.exec", {"cmd": "echo x"}, target="nas", timeout=0.5))
+    assert held["held"] and not sent
+    row = client.authz.approvals.queue.get(held["hold"])
+    assert row["kind"] == "hub-host" and row["reason"] == "runs on the hub's machine"
+    # A worker on another machine is not held for this reason.
+    ok = await as_agent(client.call("shell.exec", {"cmd": "echo x"}, target="remote", timeout=0.5))
+    assert ok["ok"]
+    # read tier on the hub-host worker is fine.
+    assert (await as_agent(client.call("info.ping", {}, target="nas", timeout=0.5)))["ok"]
+
+
+@pytest.mark.asyncio
+async def test_hub_host_hold_respects_an_operator_allow_and_off(tmp_path):
+    doc = {**DEFAULT_POLICY, "rules": [{"id": "nas-shell", "who": "role:agent",
+                                        "allow": "shell.exec", "on": "nas"}]}
+    client = BandClient("test-band")
+    sent = []
+
+    async def send(data, route=0):
+        msg = json.loads(data)
+        sent.append(msg)
+        asyncio.get_running_loop().call_soon(client._handle_reply,
+                                             {"id": msg["id"], "from": msg.get("target"), "ok": True, "result": "x"})
+    client.transport.send = send
+    client._local = SimpleNamespace(worker_id="hub1", facts=SimpleNamespace(hw={"host_id": "h"}))
+    client.workers["nas"] = entry("nas", facts={"host_id": "h"})
+    client.authz = authorizer(tmp_path, doc, config=cfg())
+    client.authz.attach_client(client)
+    assert (await as_agent(client.call("shell.exec", {}, target="nas", timeout=0.5)))["ok"]  # allow rule names it
+    # off: not held even without a rule.
+    client.authz.approvals.config_source.fixed = cfg(hub_host_workers=("off",))
+    client2, sent2 = _hub_host_band(tmp_path / "c" if (tmp_path / "c").mkdir() is None else tmp_path,
+                                    hub_host_workers=("off",))
+    assert (await as_agent(client2.call("shell.exec", {}, target="nas", timeout=0.5)))["ok"]
+
+
+# -- an agent's own console/chat is not held by the built-in hold (noise, item 3) ----------
+
+@pytest.mark.asyncio
+async def test_own_console_signal_is_not_held_but_anothers_is(tmp_path):
+    client, sent = band(tmp_path)
+    ap = client.authz.approvals
+    # proc.close is exec + destructive, held by default for an agent.
+    assert (await as_agent(client.call("proc.close", {"handle": "h"}, target="nas", timeout=0.5)))["held"]
+    # With own_resource set (the server sets it for the caller's own console), it proceeds.
+    tok = A.own_resource.set(True)
+    try:
+        ok = await as_agent(client.call("proc.close", {"handle": "h"}, target="nas", timeout=0.5))
+    finally:
+        A.own_resource.reset(tok)
+    assert ok["ok"]
+    # Operator hold rules still apply even to your own console.
+    client2, sent2 = band(tmp_path / "d" if (tmp_path / "d").mkdir() is None else tmp_path,
+                          {**DEFAULT_POLICY, "rules": [{"id": "hold-proc", "who": "role:agent",
+                                                        "hold": "proc.close", "on": "*"}]})
+    tok = A.own_resource.set(True)
+    try:
+        assert (await as_agent(client2.call("proc.close", {"handle": "h"}, target="nas", timeout=0.5)))["held"]
+    finally:
+        A.own_resource.reset(tok)
+
+
+def test_own_resource_check_in_the_server(tmp_path, monkeypatch):
+    # The server marks own_resource for the caller's own console/chat only.
+    from types import SimpleNamespace as NS
+    import rook.band_mcp.server as srv
+    import inspect
+    src = inspect.getsource(srv)
+    assert "_own_resource(name, arguments)" in src
+    assert 'name in ("rook_console_signal", "rook_console_close")' in src
+    assert 'name == "rook_chat_delete"' in src

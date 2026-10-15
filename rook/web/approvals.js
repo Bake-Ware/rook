@@ -8,13 +8,15 @@ export async function mountApprovals(root, opts = {}){
   useCss();
   let data = {pending: [], recent: [], grants: [], settings: {}}, timer = null, busy = false;
   const status = h('p', {class: 'mg-status', role: 'status'});
+  const warn = h('p', {class: 'mg-box mg-pad mg-bad', role: 'alert', hidden: true});
   const note = h('p', {class: 'mg-sub'});
   const waiting = h('div', {style: 'display:flex;flex-direction:column;gap:10px'});
   const recent = h('div', {class: 'mg-box'});
   const grants = h('div');
+  const hubhost = h('p', {class: 'mg-sub'});
   root.replaceChildren(h('div', {class: 'mg'},
     h('div', {class: 'mg-bar'}, h('h2', {text: 'Waiting for you'}), btn('Refresh', '', () => refresh().catch(fail))),
-    note, status, waiting, grants,
+    warn, note, status, waiting, grants, hubhost,
     h('div', {class: 'mg-bar', style: 'margin-top:18px'}, h('h2', {text: 'Recent decisions'})), recent));
 
   function fail(e){ status.textContent = e.message; }
@@ -47,12 +49,13 @@ export async function mountApprovals(root, opts = {}){
       text: JSON.stringify(x.args ?? {}, null, 2)}));
 
   function card(x, s){
-    const ok = btn('Approve', 'primary', e => decide(x, 'approve', 'call', e.currentTarget));
-    const no = btn('Deny', 'danger', e => decide(x, 'deny', 'call', e.currentTarget));
+    const can = data.can_decide !== false;
+    const ok = btn('Approve', 'primary', e => decide(x, 'approve', 'call', e.currentTarget), {disabled: !can});
+    const no = btn('Deny', 'danger', e => decide(x, 'deny', 'call', e.currentTarget), {disabled: !can});
     const minutes = Math.round((s.spread_grant_secs || 900) / 60);
     const more = x.kind === 'spread'
       ? btn('Approve, and allow more machines for ' + minutes + ' min', 'soft', e => decide(x, 'approve', 'spread', e.currentTarget),
-        {title: 'Approves this call and lets ' + (x.principal_label || x.principal) + ' reach more machines for ' + minutes + ' minutes'})
+        {disabled: !can, title: 'Approves this call and lets ' + (x.principal_label || x.principal) + ' reach more machines for ' + minutes + ' minutes'})
       : null;
     return h('div', {class: 'mg-box mg-pad', style: 'gap:8px'},
       h('div', {style: 'display:flex;flex-wrap:wrap;gap:6px 16px;align-items:baseline;justify-content:space-between'},
@@ -65,6 +68,12 @@ export async function mountApprovals(root, opts = {}){
 
   function draw(){
     const s = data.settings || {};
+    warn.hidden = !data.weak_message;
+    warn.textContent = data.weak_message || '';
+    const hh = data.hub_host || {};
+    if(hh.mode === 'off') hubhost.textContent = 'Holding calls to the hub’s own machine is off.';
+    else if((hh.workers || []).length) hubhost.textContent = 'Treated as running on the hub’s machine (exec calls there are held): ' + hh.workers.map(w => w.worker).join(', ') + '.';
+    else hubhost.textContent = hh.note ? 'Hub-machine workers: ' + hh.note + '.' : '';
     note.textContent = s.enabled === false
       ? 'Approval holds are off (Settings > Hub > Approvals). Only the permission policy applies.'
       : 'Agents wait up to ' + Math.round(s.wait_secs || 0) + ' s for your answer, then are told to ask you and retry. ' +

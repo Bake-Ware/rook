@@ -200,6 +200,11 @@ _CORE: list[tuple[Setting, str, dict]] = [
     (_s("approvals.notify_every_secs", int, 60, min=5, max=3600,
         label="At most one message per (s)", group="Approvals", order=12, advanced=True),
      "mcp", {}),
+    (_s("approvals.hub_host_workers", list, ["auto"], env="ROOK_APPROVALS_HUB_HOST_WORKERS",
+        label="Workers on the hub's own machine", group="Approvals", order=13,
+        help="A worker on the hub's machine can edit the hub's files, so its exec and admin "
+             "calls are held. 'auto' detects them by machine id, or list worker names, or "
+             "'off'. The Approvals page shows which workers it matched."), "mcp", {}),
     (_s("auth.google_client_file", "path", "", env="ROOK_GOOGLE_CLIENT_FILE", bootstrap=True,
         apply="restart", label="Google OAuth client file", group="Sign-in", advanced=True),
      "dashboard", {}),

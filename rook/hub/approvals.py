@@ -81,6 +81,11 @@ shown_args: contextvars.ContextVar[Any] = contextvars.ContextVar("rook_hold_show
 #: cap), so a plugin tool's in-process call to the same cap is not held twice.
 gated_caps: contextvars.ContextVar[frozenset] = contextvars.ContextVar("rook_hold_gated",
                                                                        default=frozenset())
+#: Set by a tool acting on a resource (a console room, a chat message) the
+#: caller owns, so tidying up after itself is not held by the built-in
+#: destructive hold (operator hold rules and the spread limit still apply).
+own_resource: contextvars.ContextVar[bool] = contextvars.ContextVar("rook_hold_own_resource",
+                                                                    default=False)
 
 
 class HoldError(ValueError):
@@ -104,6 +109,7 @@ class Config:
     contact_worker: str = ""
     voice_max_tier: str = "admin"
     notify_every_secs: float = 60.0
+    hub_host_workers: tuple = ("auto",)
     dashboard_url: str = ""
 
 
@@ -190,6 +196,8 @@ def load_config(store: Any = None, environ: Any = None) -> Config:
         contact_worker=str(values.get("contact_worker") or "").strip(),
         voice_max_tier=str(values.get("voice_max_tier") or "admin"),
         notify_every_secs=float(values.get("notify_every_secs", 60)),
+        hub_host_workers=tuple(str(x).strip() for x in values.get("hub_host_workers") or ()
+                               if str(x).strip()),
         dashboard_url=_dashboard_url(store, environ))
 
 
@@ -625,8 +633,70 @@ class Approvals:
         return self.config_source.get()
 
     def attach_client(self, client: Any) -> None:
-        """The band client the operator is contacted through."""
+        """The band client the operator is contacted through, and the roster
+        the hub-host detection reads."""
         self.contact.client = client
+
+    # -- hub-host workers (permissions 3.11) -------------------------------------
+    def _client(self) -> Any:
+        return self.contact.client
+
+    def _hub_host_id(self) -> str | None:
+        """The host id fact of the hub's own node, so we can spot workers that
+        run on the hub's machine (they can edit approvals.db, policy.json and
+        settings directly, so their exec+ calls are held)."""
+        client = self._client()
+        node = getattr(client, "_local", None)
+        facts = getattr(getattr(node, "facts", None), "hw", None) or {}
+        hid = facts.get("host_id")
+        return str(hid) if hid else None
+
+    def hub_host_workers(self, cfg: "Config | None" = None) -> dict:
+        """What the Approvals page shows: the live workers treated as running
+        on the hub's machine, how each was decided, and any detection gap."""
+        cfg = cfg or self.config()
+        sel = [s.lower() for s in cfg.hub_host_workers]
+        if "off" in sel:
+            return {"mode": "off", "workers": [], "note": "hub-host holds are off"}
+        explicit = {s for s in sel if s and s != "auto"}
+        auto = "auto" in sel or not explicit
+        client = self._client()
+        roster = getattr(client, "workers", {}) or {}
+        hub_id = self._hub_host_id() if auto else None
+        out = []
+        for wid, w in roster.items():
+            name = str(w.get("name") or wid)
+            if "is_hub" in (w.get("roles") or ()):
+                continue
+            why = None
+            if name.lower() in explicit or wid.lower() in explicit:
+                why = "named in approvals.hub_host_workers"
+            elif auto and hub_id and (w.get("facts") or {}).get("host_id") == hub_id:
+                why = "same machine id as the hub"
+            if why:
+                out.append({"worker": name, "id": wid, "why": why})
+        note = None
+        if auto and hub_id is None:
+            note = ("the hub announces no machine id, so co-located workers can't be "
+                    "detected; name them in approvals.hub_host_workers")
+        elif auto and hub_id and not out:
+            note = "no live worker runs on the hub's machine"
+        return {"mode": "auto" if auto else "list", "workers": out, "note": note,
+                "detected": hub_id is not None}
+
+    def _is_hub_host(self, target: Any, cfg: Config) -> bool:
+        sel = [s.lower() for s in cfg.hub_host_workers]
+        if "off" in sel or target is None or getattr(target, "is_rook", False):
+            return False
+        explicit = {s for s in sel if s and s != "auto"}
+        name = str(getattr(target, "name", "") or "").lower()
+        tid = str(getattr(target, "id", "") or "").lower()
+        if name in explicit or tid in explicit:
+            return True
+        if "auto" in sel or not explicit:
+            hub_id = self._hub_host_id()
+            return bool(hub_id and (getattr(target, "facts", {}) or {}).get("host_id") == hub_id)
+        return False
 
     # -- deciding to hold (synchronous, on the call path) ------------------------
     def apply(self, d: Any, p: Any, policy: Any, target: Any) -> Any:
@@ -648,11 +718,20 @@ class Approvals:
         if d.held:
             return d  # an operator hold rule or cell
         best = default_score(cfg.hold, d.cap, d.tier, d.tags)
-        if best is not None:
+        if best is not None and not own_resource.get():
             rule = policy.best_rule(p, d.cap, d.tier, d.tags, target)
             if not (rule is not None and rule[1].action == "allow" and rule[0] >= (0, best[0], 0)):
                 return dataclasses.replace(d, decision="hold", hold_kind="default",
                                            hold_reason=_reason(best[1]))
+        # Exec and above on a worker that runs on the hub's own machine: that
+        # worker can rewrite the hub's files (approvals.db, policy.json,
+        # settings), so it is a hold unless an operator allow rule names it.
+        if core_authz.tier_rank(d.tier) >= core_authz.tier_rank("exec") \
+                and not own_resource.get() and self._is_hub_host(target, cfg):
+            rule = policy.best_rule(p, d.cap, d.tier, d.tags, target)
+            if not (rule is not None and rule[1].action == "allow" and rule[0] >= (4, 0, 0)):
+                return dataclasses.replace(d, decision="hold", hold_kind="hub-host",
+                                           hold_reason="runs on the hub's machine")
         if count and cfg.spread_max > 0:
             n = self.spread.count_with(p.id, str(target.id), cfg.spread_window_secs)
             if n > cfg.spread_max and self.queue.active_grant(p.id) is None:

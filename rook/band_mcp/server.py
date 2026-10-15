@@ -235,15 +235,35 @@ def build_server(client: "BandClient | MultiBandClient",
         principal = _hub_authz.principal_for_token(att, att.role)
         preset = _hub_authz.current_principal.set(principal)
         gtok = _approvals.gated_caps.set(frozenset())
+        rtok = _approvals.own_resource.set(_own_resource(name, arguments))
         try:
             await _authorize_tool(name, arguments, principal)
             result = await _run_tool(name, arguments, context=context,
                                      convert_result=convert_result)
             return _with_hygiene(name, result, context)
         finally:
+            _approvals.own_resource.reset(rtok)
             _approvals.gated_caps.reset(gtok)
             _hub_authz.current_principal.reset(preset)
             _attr.current.reset(reset)
+
+    def _own_resource(name, arguments) -> bool:
+        """True when the caller is tidying up a console room or chat room it
+        owns: cleaning up after yourself is not held by the built-in
+        destructive hold (permissions 3.11). Operator hold rules and the
+        spread limit still apply; secrets, memory and updates stay held."""
+        args = arguments if isinstance(arguments, dict) else {}
+        try:
+            who = _caller_identity()
+            if name in ("rook_console_signal", "rook_console_close"):
+                r = console.get(str(args.get("room") or ""))
+                return bool(r and r.get("opened_by") and r["opened_by"] == who)
+            if name == "rook_chat_delete":
+                room = chat.room(str(args.get("room") or "")) if hasattr(chat, "room") else None
+                return bool(room and who in (room.get("participants") or []))
+        except Exception:  # noqa: BLE001 — err toward holding
+            log.debug("own-resource check failed", exc_info=True)
+        return False
 
     async def _authorize_tool(name, arguments, principal) -> None:
         """Hub tools are caps on `rook` (permissions 3.5, Appendix A.2).
@@ -1875,8 +1895,13 @@ class McpService:
         # /internal/mask: the dashboard masks vault values through this process
         # (it holds no vault key itself). Token file beside the stores.
         try:
-            from .mask_web import ensure_token as _mask_token, route as _mask_route
-            app.router.routes.insert(0, _mask_route(_mask_token(mcp._rook_store_dir)))
+            from .mask_web import (ensure_token as _mask_token, is_secret_route as _is_secret,
+                                   route as _mask_route)
+            _mtok = _mask_token(mcp._rook_store_dir)
+            app.router.routes.insert(0, _mask_route(_mtok))
+            # /internal/is-secret: the dashboard asks whether a sign-in password
+            # is a vault value, so it can't approve holds (permissions 3.11).
+            app.router.routes.insert(0, _is_secret(_mtok))
         except Exception:
             log.exception("secret mask endpoint unavailable; dashboard writes will not be masked")
 

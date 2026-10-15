@@ -56,6 +56,10 @@ class ApprovalsWeb:
                 authz = None
         return getattr(authz, "approvals", None)
 
+    WEAK_MSG = ("This sign-in uses a password that is stored as a band secret, so agents "
+                "could sign in as you with it. It can't approve held calls. Change the "
+                "password (or remove that secret) and sign in again.")
+
     @staticmethod
     def _person():
         """The signed-in person allowed to decide holds, or None."""
@@ -66,6 +70,33 @@ class ApprovalsWeb:
         if require_hub_admin("approving held calls") is not None:
             return None
         return p
+
+    async def _weak(self, request: web.Request) -> bool:
+        """Whether this sign-in used a credential agents can also use (a vault
+        value), so it must not approve held calls (permissions 3.11). A cookie
+        session was flagged at login; Basic auth is checked live. The vault
+        being unreachable counts as weak (fail closed)."""
+        try:
+            store = self.server._accounts.store
+            for name in ("rook_session", "rook_account"):
+                if store.session_weak(request.cookies.get(name, "")):
+                    return True
+        except Exception:
+            log.exception("approvals: weak-session check failed")
+            return True
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Basic "):
+            import base64
+            try:
+                user, _, pw = base64.b64decode(auth[6:]).decode("utf-8").partition(":")
+            except Exception:
+                return True
+            check = getattr(self.server, "credential_is_vaulted", None)
+            if check is None:
+                return True
+            got = await check(pw, f"{user}:{pw}" if user else "")
+            return got is not False
+        return False
 
     @staticmethod
     def _same_origin(request: web.Request) -> bool:
@@ -95,17 +126,23 @@ class ApprovalsWeb:
             return web.json_response({"pending": ap.queue.count_pending()}, headers=NO_STORE)
         from ..hub.approvals import public
         cfg = ap.config()
+        weak = await self._weak(request)
         return web.json_response({
             "pending": [public(h, cfg) for h in ap.queue.pending()],
             "recent": [public(h, cfg) for h in ap.queue.recent(50)],
             "grants": ap.queue.grants(),
+            "can_decide": not weak,
+            "weak_credential": weak,
+            "weak_message": self.WEAK_MSG if weak else None,
+            "hub_host": ap.hub_host_workers(cfg),
             "settings": {"enabled": cfg.enabled, "hold": list(cfg.hold),
                          "wait_secs": cfg.wait_secs, "approval_secs": cfg.approval_secs,
                          "spread_max": cfg.spread_max,
                          "spread_window_secs": cfg.spread_window_secs,
                          "spread_grant_secs": cfg.spread_grant_secs,
                          "contact": list(cfg.contact), "contact_worker": cfg.contact_worker,
-                         "voice_max_tier": cfg.voice_max_tier},
+                         "voice_max_tier": cfg.voice_max_tier,
+                         "hub_host_workers": list(cfg.hub_host_workers)},
         }, headers=NO_STORE)
 
     async def decide(self, request: web.Request) -> web.Response:
@@ -117,6 +154,9 @@ class ApprovalsWeb:
         if person is None:
             return web.json_response({"error": "Only a band owner or admin can approve or "
                                                "deny held calls."}, status=403, headers=NO_STORE)
+        if await self._weak(request):
+            return web.json_response({"error": self.WEAK_MSG, "weak_credential": True},
+                                     status=403, headers=NO_STORE)
         if request.content_type != "application/json":
             return web.json_response({"error": "send JSON"}, status=415, headers=NO_STORE)
         ap = self._approvals()
