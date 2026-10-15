@@ -99,10 +99,8 @@ This runs `ghcr.io/bake-ware/rook` (amd64 and arm64; `ROOK_VERSION=0.2.0` in `.e
 release) as two containers: the hub (dashboard, `/mcp` and `/band`) on 7005, also serving
 the MCP server alone on 8765 for older setups, and the relay on 7474/udp, with state in the
 `rook-data` volume. From a clone, build the image yourself with
-`docker compose -f compose.yaml -f compose.build.yaml up -d --build`. (The image is
-published by the release workflow; before the first release, build it from a clone.
-Maintainers: GitHub creates the GHCR package private on its first push; make it public
-once in its package settings, or `docker compose pull` needs a login.)
+`docker compose -f compose.yaml -f compose.build.yaml up -d --build`. The image is
+public and published by the release workflow for every tagged release.
 
 ### C. From source
 
@@ -343,7 +341,10 @@ alerts are optional; see the [feature tour](docs/FEATURES.md) and `services/`.
   the PSK can't be cut off without rotating the key; deauth stops only cooperative workers; the
   ESP32 dongle's firmware OTA is not signed. See [Security](docs/FEATURES.md#security).
 
-Please report vulnerabilities privately to the maintainer rather than in a public issue.
+Please report vulnerabilities privately, not in a public issue: use
+[Report a vulnerability](https://github.com/Bake-Ware/rook/security/advisories/new) on the
+repository's Security tab (GitHub private vulnerability reporting). Only the maintainers see the
+report, and you can follow the fix and the advisory there.
 
 ## Repository layout
 
