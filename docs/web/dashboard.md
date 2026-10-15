@@ -66,9 +66,13 @@ itself: it forwards it to the bridge's `POST /internal/band-call`
 admitted person in `X-Rook-Principal`, and the bridge runs it the way it runs
 an agent's `rook_call` (the hub's own caps in-process, policy for that person,
 vault values masked in the reply, a journal row). Only a `human:*` principal
-is accepted there. When the bridge can't be reached (or predates the route),
-calls to workers fall back to a direct band call; calls to the hub's own caps
-answer that the MCP server isn't reachable.
+is accepted there; hub caps tagged `sensitive` reach the caller unmasked and
+are not journaled, as with `rook_call`. Only when the request certainly never
+ran there (no connection could be made, or the bridge predates the route)
+does the dashboard send it over the band itself, where only read-only hub caps
+work; a hub refusal is then worded as "the MCP server isn't reachable". A
+bridge that was reached but gave no usable answer gets a 504 ("the call may
+have run, check the journal"), never a second attempt over the band.
 
 The editor's schedule helper calls `job.read` `next` with
 `data.trigger` (an unsaved trigger) for the next fire times. The Guardrails

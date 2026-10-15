@@ -2890,62 +2890,70 @@ class CombinedServer:
         forwarded = await self._forward_band_call(cap, args, target, timeout, identity)
         if forwarded is not None:
             return forwarded
-        if target and self._is_hub_target(target):
-            return web.json_response(
-                {"ok": False, "error": "The MCP server isn't reachable, so the dashboard can't "
-                                       "run the hub's own actions right now."}, status=503)
         try:
             reply = await self._band.call(cap=cap, args=args, target=target, timeout=timeout,
                                           identity=identity)
-            return web.json_response(reply)
         except asyncio.TimeoutError:
             return web.json_response({"ok": False, "error": "timeout waiting for reply"}, status=504)
         except Exception as e:
             return web.json_response({"ok": False, "error": f"{type(e).__name__}: {e}"}, status=500)
-
-    BAND_CALL_URL = ("ROOK_BAND_CALL_URL", "http://127.0.0.1:8765/internal/band-call")
-    FORWARD_FAST_FAIL = 3.0   # seconds: a failure this quick means nothing was delivered
+        if (target and self._is_hub_target(target) and isinstance(reply, dict)
+                and "not callable over the band" in str(reply.get("error") or "")):
+            reply = {**reply, "error": "The MCP server isn't reachable, so the dashboard can't "
+                                       "run this hub action right now (only read-only hub "
+                                       "actions work without it)."}
+        return web.json_response(reply)
 
     def _is_hub_target(self, target: str) -> bool:
         w = (self._band.workers.get(target) if self._band else None) or {}
         return target == "rook" or w.get("name") == "rook" or "is_hub" in (w.get("roles") or [])
 
+    def _band_call_url(self) -> str:
+        """The bridge's /internal/band-call, beside the /internal/mask the
+        dashboard is configured for (ROOK_MASK_URL)."""
+        return self._bridge.url.replace("/internal/mask", "/internal/band-call")
+
     async def _forward_band_call(self, cap: str, args: dict, target: str | None,
                                  timeout: float, identity: str) -> web.Response | None:
         """Run a dashboard cap call on the MCP side (dashboard_call.py) as the
-        admitted person. None when it can't be forwarded (no person in
-        context, no internal token, MCP unreachable): the caller then falls
-        back to a direct band call for workers."""
+        admitted person. None only when the request certainly never ran there
+        (no person in context, no internal token, no connection, or an MCP
+        side without the route): the caller then sends it over the band."""
         from ..hub.authz import current_principal
         from . import upstream
         p = current_principal.get()
-        if p is None or p.kind != "human":
-            return None
-        token = self._bridge._read_token() if getattr(self, "_bridge", None) else None
-        if not token:
+        bridge = getattr(self, "_bridge", None)
+        if p is None or p.kind != "human" or bridge is None:
             return None
         who = json.dumps({"id": p.id, "role": "owner" if p.fail_open() else "member",
                           "label": p.label or identity})
         body = {"cap": cap, "args": args, "target": target, "timeout": timeout,
                 "identity": identity}
-        started = time.monotonic()
-        try:
-            status, reply = await upstream.request_json(
-                "POST", os.environ.get(*self.BAND_CALL_URL), json=body, timeout=timeout + 10,
-                headers={"Authorization": f"Bearer {token}", "X-Rook-Principal": who})
-        except upstream.Unavailable:
-            if time.monotonic() - started < self.FORWARD_FAST_FAIL:
-                return None  # not reachable: nothing was run there
-            # Reached but no answer: the call may be running there, so don't
-            # send it a second time over the band.
-            return web.json_response(
-                {"ok": False, "timeout": True,
-                 "error": "no reply from the MCP server in time; the call may still be "
-                          "running, check the journal before retrying"}, status=504)
-        if status in (401, 404):
-            # An older MCP side without this route, or a rotated token.
-            return None
-        return web.json_response(reply, status=status)
+        for attempt in (0, 1):
+            if bridge._token is None:
+                bridge._token = await asyncio.to_thread(bridge._read_token)
+            if not bridge._token:
+                return None
+            try:
+                status, reply = await upstream.request_json(
+                    "POST", self._band_call_url(), json=body, timeout=timeout + 10,
+                    headers={"Authorization": f"Bearer {bridge._token}", "X-Rook-Principal": who})
+            except upstream.NotConnected:
+                return None  # nothing reached the MCP side
+            except upstream.Unavailable:
+                # Reached but no usable answer: the call may have run there, so
+                # it is not sent a second time over the band.
+                return web.json_response(
+                    {"ok": False, "timeout": True,
+                     "error": "no usable reply from the MCP server; the call may have run, "
+                              "check the journal before retrying"}, status=504)
+            if status == 401 and attempt == 0:
+                bridge._token = None  # rotated token: read it again once
+                continue
+            if status in (401, 404):
+                return None  # an MCP side without this route (or the token): not run
+            return web.json_response(reply, status=status)
+        return None
 
     # -- deauth / ban --------------------------------------------------------
 

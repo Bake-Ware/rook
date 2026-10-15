@@ -1911,7 +1911,8 @@ class McpService:
             # signed-in person, instead of going out on the band themselves.
             from .dashboard_call import route as _band_call_route
             app.router.routes.insert(0, _band_call_route(
-                _mtok, lambda: self.client, lambda: getattr(mcp, "_rook_journal", None)))
+                _mtok, lambda: self.client, lambda: getattr(mcp, "_rook_journal", None),
+                lambda: getattr(mcp, "_rook_hub", None)))
         except Exception:
             log.exception("secret mask endpoint unavailable; dashboard writes will not be masked")
 

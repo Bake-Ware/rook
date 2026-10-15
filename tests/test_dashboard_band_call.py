@@ -82,10 +82,10 @@ def test_needs_the_internal_token_and_a_person():
     assert client.calls == [] and journal.rows == []
 
 
-def test_runs_as_the_person_by_name_masks_and_journals(monkeypatch):
+def test_runs_as_the_person_masks_and_journals(monkeypatch):
     monkeypatch.setattr(secret_mask, "installed", lambda: _Masker())
     client, journal = _FakeClient(), _FakeJournal()
-    r = _post(_mcp(client, journal), {"cap": "shell.exec", "target": "nas",
+    r = _post(_mcp(client, journal), {"cap": "shell.exec", "target": "w1",
                                       "args": {"cmd": "echo hi"}, "timeout": 20,
                                       "identity": "dashboard"})
     assert r.status_code == 200
@@ -168,15 +168,19 @@ async def test_unreachable_mcp_falls_back_for_workers_not_for_the_hub(dashboard,
     server, band = dashboard
 
     async def down(*a, **kw):
-        raise upstream.Unavailable("connection refused")
+        raise upstream.NotConnected("ClientConnectorError")
     monkeypatch.setattr(upstream, "request_json", down)
     status, reply = await _call(server, {"cap": "shell.exec", "worker_id": "nas",
                                          "args": {"cmd": "true"}})
     assert status == 200 and reply["result"] == "direct"
     assert band.calls[0]["target"] == "w1"
+    # A hub cap falls back too (read-only ones still work over the band); a
+    # refusal above read is reworded into something a person can act on.
+    band.reply = {"ok": False, "error": "updates.check is not callable over the band on the "
+                                         "hub (risk above 'read'); call it through the MCP bridge"}
     status, reply = await _call(server, {"cap": "updates.check", "worker_id": "rook"})
-    assert status == 503 and "MCP server isn't reachable" in reply["error"]
-    assert len(band.calls) == 1
+    assert status == 200 and "MCP server isn't reachable" in reply["error"]
+    assert band.calls[-1]["target"] == "hub1"
 
 
 @pytest.mark.asyncio
@@ -195,11 +199,97 @@ async def test_slow_mcp_is_not_retried_over_the_band(dashboard, monkeypatch):
     # The MCP side was reached but didn't answer in time: the call may be
     # running there, so the dashboard must not send it a second time.
     server, band = dashboard
-    monkeypatch.setattr(CombinedServer, "FORWARD_FAST_FAIL", -1.0)
-
-    async def slow(*a, **kw):
-        raise upstream.Unavailable("timed out")
-    monkeypatch.setattr(upstream, "request_json", slow)
-    status, reply = await _call(server, {"cap": "shell.exec", "worker_id": "w1"})
-    assert status == 504 and "may still be running" in reply["error"]
+    for error in ("TimeoutError", "ContentTypeError", "bad JSON"):
+        async def reached(*a, error=error, **kw):
+            raise upstream.Unavailable(error)
+        monkeypatch.setattr(upstream, "request_json", reached)
+        status, reply = await _call(server, {"cap": "shell.exec", "worker_id": "w1"})
+        assert status == 504 and "may have run" in reply["error"]
     assert band.calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_rotated_token_is_read_again_once(dashboard, monkeypatch, tmp_path):
+    server, band = dashboard
+    tokens = []
+
+    async def fake_request(method, url, json=None, timeout=None, headers=None):
+        tokens.append(headers["Authorization"])
+        if len(tokens) == 1:
+            (tmp_path / "mask.token").write_text("n" * 64)
+            return 401, {"error": "unauthorized"}
+        return 200, {"ok": True, "result": "via mcp"}
+    monkeypatch.setattr(upstream, "request_json", fake_request)
+    server._bridge._token = "o" * 64
+    status, reply = await _call(server, {"cap": "shell.exec", "worker_id": "w1"})
+    assert status == 200 and reply["result"] == "via mcp"
+    assert tokens == ["Bearer " + "o" * 64, "Bearer " + "n" * 64] and band.calls == []
+
+
+class _Hub:
+    worker_id = "hub1"
+
+    class host:
+        class registry:
+            @staticmethod
+            def meta(cap):
+                from types import SimpleNamespace
+                return SimpleNamespace(tags=("sensitive",) if cap == "settings.fetch" else ())
+
+
+def test_sensitive_hub_caps_are_not_masked_or_journaled(monkeypatch):
+    monkeypatch.setattr(secret_mask, "installed", lambda: _Masker())
+    client = _FakeClient(reply={"ok": True, "result": "s3cr3t-value"})
+    journal = _FakeJournal()
+    http = StarletteClient(Starlette(routes=[
+        dashboard_call.route(TOKEN, lambda: client, lambda: journal, lambda: _Hub())]))
+    r = _post(http, {"cap": "settings.fetch", "target": "hub1"})
+    assert r.json()["result"] == "s3cr3t-value"  # the caller asked for the value
+    assert journal.rows[0]["reply"] == {"ok": True, "result": "[sensitive: not journaled]"}
+    r = _post(http, {"cap": "hub.info", "target": "hub1"})
+    assert r.json()["result"] == "{{secret:demo}}"
+
+
+def test_a_masking_failure_withholds_the_reply(monkeypatch):
+    class Broken:
+        def mask(self, obj):
+            raise RuntimeError("boom")
+    monkeypatch.setattr(secret_mask, "installed", lambda: Broken())
+    client, journal = _FakeClient(), _FakeJournal()
+    body = _post(_mcp(client, journal), {"cap": "shell.exec", "target": "w1"}).json()
+    assert body["ok"] is False and "withheld" in body["error"]
+    assert "s3cr3t-value" not in json.dumps(body) + json.dumps(journal.rows)
+
+
+def test_replies_json_cannot_encode_still_answer(monkeypatch):
+    # Raising after the call ran would look like "unavailable" to the
+    # dashboard; the reply must always encode.
+    monkeypatch.setattr(secret_mask, "installed", lambda: None)
+    client = _FakeClient(reply={"ok": True, "result": {"temp": float("nan"), "when": object()}})
+    r = _post(_mcp(client, _FakeJournal()), {"cap": "sensor.read", "target": "w1"})
+    assert r.status_code == 200 and r.json()["ok"] is True
+
+
+def test_with_no_journal_the_authorizer_keeps_its_record(monkeypatch):
+    seen = []
+
+    class C(_FakeClient):
+        async def call(self, **kw):
+            from rook.hub.authz import caller_journals
+            seen.append(caller_journals.get())
+            return {"ok": True}
+    _post(_mcp(C(), None), {"cap": "shell.exec", "target": "w1"})
+    _post(_mcp(C(), _FakeJournal()), {"cap": "shell.exec", "target": "w1"})
+    assert seen == [False, True]
+
+
+@pytest.mark.asyncio
+async def test_upstream_reports_a_refused_connection_as_not_connected():
+    import socket
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()  # nothing listens there now
+    with pytest.raises(upstream.NotConnected):
+        await upstream.request_json("POST", f"http://127.0.0.1:{port}/internal/band-call",
+                                    json={}, timeout=5)

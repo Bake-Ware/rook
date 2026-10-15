@@ -35,6 +35,17 @@ class Unavailable(Exception):
     """The upstream could not be reached, timed out, or did not answer JSON."""
 
 
+class NotConnected(Unavailable):
+    """No connection was made (refused, DNS, connect timeout): the request
+    certainly never reached the upstream. Every other :class:`Unavailable`
+    may have been delivered and acted on."""
+
+
+#: aiohttp errors raised before any byte of the request is sent.
+_CONNECT_ERRORS = tuple(e for e in (getattr(aiohttp, "ClientConnectorError", None),
+                                    getattr(aiohttp, "ConnectionTimeoutError", None)) if e)
+
+
 def _origin(url: str) -> str | None:
     try:
         parts = urlsplit(url)
@@ -84,6 +95,8 @@ async def request_json(method: str, url: str, *, params=None, json: Any = None,
             async with http.request(method, url, params=params, json=json, cookies=cookies,
                                     headers=headers, allow_redirects=False) as response:
                 return response.status, await response.json()
+    except _CONNECT_ERRORS as error:
+        raise NotConnected(type(error).__name__) from error
     except (aiohttp.ClientError, TimeoutError, ValueError) as error:
         raise Unavailable(type(error).__name__) from error
 
