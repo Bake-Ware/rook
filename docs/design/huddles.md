@@ -29,6 +29,12 @@ the lead developer fronts), [jobs.md](jobs.md) (guardrails, agent steps).
 - First pass runs Claude Code on **cachyrig**, with settings to move it to
   another worker.
 
+Status update: section 3 (Claude Code as the house agent) is built first, as
+H1, and is documented in [home-agent.md](home-agent.md) 1.6 as it is. A
+`huddle` hub plugin already exists on master (agents post status and ask the
+person questions in a group room, Work > Huddle; docs/manual/huddles.md). H3
+builds on it rather than starting a second store.
+
 ## 2. Names
 
 The persona plugin already exists and means *how an agent talks* (voice,

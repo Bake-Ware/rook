@@ -30,7 +30,7 @@ export async function mountHome(root){
   const val=k=>d.settings[k]?.value;
   function state(s){
     if(!s.enabled)return ['Off','mg-dimtext'];
-    if(s.missing.length)return ['Needs '+s.missing.join(' and ').replace('base_url','a base URL').replace('llm_provider','its model provider back'),'mg-warn'];
+    if(s.missing.length)return ['Needs '+s.missing.join(' and ').replace('base_url','a base URL').replace('llm_provider','its model provider back').replace('claude_worker','an agent host'),'mg-warn'];
     if(s.last_error)return ['On · last error','mg-bad'];
     return ['On','mg-good'];
   }
@@ -40,7 +40,7 @@ export async function mountHome(root){
   function drawList(){
     const s=d.status,[label,cls]=state(s);
     summary.textContent='The home agent is an LLM that lives at the hub. People reach it in Chat as @'+s.name+'; agents ask it with home.ask on worker rook. It acts as '+s.identity+' and everything it does is journaled under that name.';
-    const row=h('div',{class:'mg-row sel'},two(s.name,s.identity,true),two(s.model||'no model',s.endpoint_host||'no endpoint',true),h('span',{text:label,class:cls}),h('span',{class:'mg-dimtext',text:s.tools?'knowledge search':'no tools'}));
+    const row=h('div',{class:'mg-row sel'},two(s.name,s.identity,true),two(s.model||'no model',s.backend==='claude-code'?'Claude Code on '+(s.claude.worker||'no host'):(s.endpoint_host||'no endpoint'),true),h('span',{text:label,class:cls}),h('span',{class:'mg-dimtext',text:s.tools?'knowledge search':'no tools'}));
     const rows=d.activity.map(a=>h('div',{class:'mg-row',title:a.error||''},
       h('span',{class:'mg-dimtext',text:ago(a.ts)}),h('span',{text:VIA[a.via]||a.via}),
       two(a.sender||'',a.room||'',false),
@@ -77,7 +77,33 @@ export async function mountHome(root){
     const memory=h('input',{type:'checkbox',checked:val('memory')!==false});
     const num=(k,step)=>h('input',{type:'number',step:step||'1',value:val(k)??'',style:'font-family:var(--mono)'});
     const timeout=num('timeout_s','1'),maxTok=num('max_tokens'),temp=num('temperature','0.05'),ctx=num('context_messages');
-    const values=()=>({enabled:enabled.checked,name:name.value.trim().toLowerCase(),llm_provider:llmProvider.value,provider:provider.value,base_url:base.value.trim(),model:model.value.trim(),
+    // Claude Code on an agent host (a worker with the agenthost plugin).
+    const backend=h('select',null,(d.backends||['openai']).map(b=>h('option',{value:b,text:b==='claude-code'?'Claude Code on an agent host':'OpenAI-compatible endpoint',selected:b===(val('backend')||'openai')})));
+    const hosts=d.claude_hosts||[],cw=val('claude_worker')||'';
+    const hostLabel=x=>x.name+' · '+(x.online?'online':'offline')+(x.claude?' · claude '+x.claude:'')+(x.logged_in===false?' · not logged in':'');
+    const ccHost=h('select',null,h('option',{value:'',text:hosts.length?'Pick a host':'No worker has the agenthost plugin'}),hosts.map(x=>h('option',{value:x.name,text:hostLabel(x),selected:x.name===cw||x.worker_id===cw})),cw&&!hosts.some(x=>x.name===cw||x.worker_id===cw)?h('option',{value:cw,text:cw+' (not available now)',selected:true}):null);
+    const ccFallbacks=h('input',{value:(val('claude_fallback_workers')||[]).join(', '),placeholder:'worker names, comma separated',autocomplete:'off',spellcheck:'false',style:'font-family:var(--mono)'});
+    const ccUnavail=h('select',null,[['fallback_backend','Use the OpenAI-compatible endpoint'],['fail','Say it is unavailable']].map(([v,t])=>h('option',{value:v,text:t,selected:v===val('claude_on_unavailable')})));
+    const ccModels=h('datalist',{id:'home-cc-models'},(d.claude_models||[]).map(m=>h('option',{value:m})));
+    const ccModel=h('input',{value:val('claude_model')||'haiku',list:'home-cc-models',autocomplete:'off',spellcheck:'false',style:'font-family:var(--mono)'});
+    const ccEffort=h('select',null,['','low','medium','high','xhigh','max'].map(v=>h('option',{value:v,text:v||'Default',selected:v===(val('claude_effort')||'')})));
+    const ccAuth=h('select',null,[['login','The host\'s own claude login'],['token','A setup-token from Secrets']].map(([v,t])=>h('option',{value:v,text:t,selected:v===val('claude_auth')})));
+    const ctRef=String(val('claude_token')||''),ctName=(ctRef.match(/^\{\{secret:(.+)\}\}$/)||[])[1]||'';
+    const ccToken=h('select',null,h('option',{value:'',text:'None'}),d.secrets.map(n=>h('option',{value:n,text:n,selected:n===ctName})),ctName&&!d.secrets.includes(ctName)?h('option',{value:ctName,text:ctName+' (missing from the vault)',selected:true}):null);
+    const ccTimeout=num('claude_timeout_s','1');
+    const ccTokenField=field('Token',ccToken,'claude_token','A long-lived token from `claude setup-token` on any machine, saved in Secrets.');
+    const cc=h('div',{style:'display:flex;flex-direction:column;gap:14px'},
+      field('Agent host',ccHost,'claude_worker','The worker that runs Claude Code for the home agent. Change it to move the agent; memory stays at the hub.'),
+      field('Fallback hosts',ccFallbacks,'claude_fallback_workers'),
+      field('When no host is available',ccUnavail,'claude_on_unavailable'),
+      field('Model',ccModel,'claude_model','haiku, sonnet or opus (the current model of that family), or a full model id.'),ccModels,
+      field('Effort',ccEffort,'claude_effort'),
+      field('Sign-in',ccAuth,'claude_auth'),ccTokenField,
+      field('Turn timeout (s)',ccTimeout,'claude_timeout_s'));
+    const values=()=>({enabled:enabled.checked,backend:backend.value,claude_worker:ccHost.value,
+      claude_fallback_workers:ccFallbacks.value.split(',').map(x=>x.trim()).filter(Boolean),claude_on_unavailable:ccUnavail.value,
+      claude_model:ccModel.value.trim()||'haiku',claude_effort:ccEffort.value,claude_auth:ccAuth.value,
+      claude_token:ccToken.value?'{{secret:'+ccToken.value+'}}':'',claude_timeout_s:Number(ccTimeout.value||180),name:name.value.trim().toLowerCase(),llm_provider:llmProvider.value,provider:provider.value,base_url:base.value.trim(),model:model.value.trim(),
       api_key:key.value?'{{secret:'+key.value+'}}':'',persona:persona.value,system_prompt:prompt.value,tools:tools.checked,memory:memory.checked,
       timeout_s:Number(timeout.value||90),max_tokens:Number(maxTok.value||1024),temperature:temp.value===''?null:Number(temp.value),context_messages:Number(ctx.value||20)});
     const run=async(b,work)=>{if(busy)return;busy=true;b.disabled=true;err.textContent='';try{await work();}catch(e){err.textContent=e.message;}finally{busy=false;b.disabled=false;}};
@@ -89,7 +115,7 @@ export async function mountHome(root){
     const test=btn('Test','soft',()=>run(test,async()=>{
       out.hidden=false;out.textContent='Asking '+(model.value||'the model')+'…';
       const r=await post({action:'home_test',values:values()});
-      out.textContent=(r.ok?r.model+' answered in '+(r.latency_ms/1000).toFixed(1)+' s:\n\n'+r.reply:'Test failed: '+r.error)+(r.note?'\n\n'+r.note:'');
+      out.textContent=(r.ok?r.model+(r.worker?' on '+r.worker:'')+' answered in '+(r.latency_ms/1000).toFixed(1)+' s:\n\n'+r.reply:'Test failed: '+r.error)+(r.note?'\n\n'+r.note:'');
       out.className=r.ok?'':'mg-bad';refresh().catch(()=>{});}));
     const save=btn('Save','primary',()=>run(save,async()=>{
       const r=await post({action:'home_save',values:values()});
@@ -100,15 +126,22 @@ export async function mountHome(root){
       field('API key',key,'api_key','A secret from Secrets, used as {{secret:name}}. Add the key there first; it is never shown or stored here.'));
     const syncEndpoint=()=>{endpoint.hidden=!!llmProvider.value;};
     llmProvider.addEventListener('change',syncEndpoint);syncEndpoint();
+    const oai=h('div',{style:'display:flex;flex-direction:column;gap:14px'},
+      field('Model provider',llmProvider,'llm_provider','From Model providers (llmanifold, or one you added there). Its address and key are used.'),
+      endpoint,
+      field('Model',h('div',{class:'mg-actions',style:'flex-wrap:nowrap'},model,fetchModels),'model','List models reads /v1/models with the values on this form.'),dl);
+    // Claude Code: its own group first; the endpoint becomes the fallback.
+    const oaiHead=h('div',{class:'mg-label',text:'Fallback endpoint (OpenAI-compatible)'});
+    const syncBackend=()=>{const c=backend.value==='claude-code';cc.hidden=!c;oaiHead.hidden=!c;ccTokenField.hidden=ccAuth.value!=='token';};
+    backend.addEventListener('change',syncBackend);ccAuth.addEventListener('change',syncBackend);syncBackend();
     const hist=d.history.slice(0,10);
     panel.replaceChildren(
       h('div',{class:'mg-panel-head'},h('div',{class:'mg-two'},h('h2',{text:'Home agent'}),h('small',{text:'Stored as home.* in Settings · hub-wide'}))),
       h('div',{class:'mg-pad'},
         h('label',{class:'mg-actions'},enabled,'Enabled: answer in chat and to home.ask'),
         field('Name',name,'name','Chat identity agent:<name>; people write @'+(val('name')||'home')+'.'),
-        field('Model provider',llmProvider,'llm_provider','From Model providers (llmanifold, or one you added there). Its address and key are used.'),
-        endpoint,
-        field('Model',h('div',{class:'mg-actions',style:'flex-wrap:nowrap'},model,fetchModels),'model','List models reads /v1/models with the values on this form.'),dl,
+        field('Backend',backend,'backend'),
+        cc,oaiHead,oai,
         field('Persona',persona,'persona'),
         field('System prompt addition',prompt,'system_prompt'),
         h('label',{class:'mg-actions',style:'flex-wrap:nowrap;align-items:flex-start'},memory,h('span',null,'Memory: remember people, facts and past conversations (',h('a',{href:'#memory',text:'see what it remembers'}),')')),

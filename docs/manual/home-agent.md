@@ -38,6 +38,29 @@ before answering. Jobs can use it as a step too ([[manual-jobs]]).
 It remembers people, facts, earlier conversations and skills between
 conversations; see [[manual-home-agent-memory]].
 
+## Running it on Claude Code
+
+The home agent can also run on Claude Code, using the Claude subscription of a
+machine you choose (the **agent host**). The hub keeps its memory, persona and
+tools; each answer is one Claude Code run on that machine.
+
+1. On the machine, install Claude Code and sign in (`claude`, then `/login`).
+   Its Rook worker needs a build with the **agenthost** plugin.
+2. On **Home agent**, set **Backend** to *Claude Code on an agent host*.
+3. Pick the **Agent host** and a **Model** (`haiku` is quick and cheap; `sonnet`
+   and `opus` think harder). **Test** shows the answer, the host and the time.
+4. Optionally list **Fallback hosts**, and choose what happens when no host is
+   online: answer with the OpenAI-style endpoint below, or say it is
+   unavailable.
+
+To move the agent, pick another host. Nothing is lost: memory stays on the
+hub. Usage counts against the subscription signed in on the host, or against
+a token from `claude setup-token` saved in Secrets (**Sign-in**).
+
+Claude Code runs with its own tools, settings and MCP servers switched off;
+the only tools it gets are the home agent's, served by the hub for that one
+answer.
+
 ## Decide (preview)
 
 The **Decide** plugin connects Rook to a fast decision model: a model that

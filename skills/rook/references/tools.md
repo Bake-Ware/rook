@@ -233,6 +233,14 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 | `worker.plugin.list` | — | List every plugin module and whether it's currently loaded, with the caps each loaded plugin provides. |
 | `worker.plugin.reload` | module | Restart one loaded plugin with its current settings. |
 
+**agenthost**
+
+| Cap | Args | Does |
+|---|---|---|
+| `agenthost.cancel` | turn_id | Stop a running turn. |
+| `agenthost.status` | — | Claude Code on this host: version, login state and running turns. |
+| `agenthost.turn` | turn_id, prompt, system, mcp_url, mcp_token, model='haiku', timeout_s=180.0, max_tool_calls=20, effort?, oauth_token? | Run one house agent turn with Claude Code; returns its reply. |
+
 **battery**
 
 | Cap | Args | Does |
