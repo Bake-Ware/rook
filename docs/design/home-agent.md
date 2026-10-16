@@ -22,6 +22,7 @@ environment variable (`ROOK_HOME_<NAME>`):
 |---|---|
 | `home.enabled` | Off by default. On: it answers in chat and to `home.ask`. |
 | `home.name` | Slug, default `home`. Its identity is `agent:<name>`; people write `@<name>`. |
+| `home.backend` | `openai` (the endpoint below) or `claude-code` (Claude Code on an agent host; section 1.6). |
 | `home.provider` | `openai` (any OpenAI-compatible `/v1` endpoint). The only provider so far. |
 | `home.base_url` | The `/v1` base, e.g. `http://llm.example:1234/v1`. |
 | `home.model` | A model id. The page's **List models** reads `GET /v1/models` with the values on the form. |
@@ -157,6 +158,51 @@ and the policy all apply, so it never exceeds what the job may do) and is
 journaled as `agent:<name>/job:<id>/<principal>`; `home.job_step` records
 each step's verdict. Settings: `home.job_steps` (on; off refuses job
 steps) and `home.job_max_tool_calls` (20).
+
+### 1.6 Claude Code backend
+
+With `home.backend = claude-code` every model call (chat replies, `home.ask`,
+job steps, memory summaries, Test) runs as one headless `claude -p` on an
+*agent host*: a worker with the `agenthost` plugin
+(`rook/worker/plugins/agenthost.py`), switched on for that worker
+(`agenthost.enabled`, worker scope, or `ROOK_AGENTHOST=1`; off by default),
+and a logged-in `claude`. Design:
+[huddles.md](huddles.md) section 3.
+
+- **Host.** `home.claude_worker`, then `home.claude_fallback_workers`; the
+  first online one offering `agenthost.turn` whose heartbeat
+  (`hb.agenthost`) does not say "not logged in". None:
+  `home.claude_on_unavailable` = `fallback_backend` (the OpenAI-compatible
+  settings, when complete) or `fail`.
+- **Tools stay at the hub.** Each turn registers its tool set (the same one
+  the OpenAI path would offer: knowledge and memory tools for chat and
+  `home.ask`, the job tool set for job steps) on `/home/turn-mcp`
+  (`rook/hub/plugins/home/turn_mcp.py`) under a random bearer token that is
+  dropped when the turn ends (and expires `timeout + 60 s` after it began).
+  The agent host writes the token into a 0600 MCP config in a private temp
+  dir, removed after the run; it never appears in argv, and the worker audit
+  trail redacts the `*_token` args. Tool calls run in the hub exactly as on
+  the OpenAI path: as the home agent, journaled, policy-checked; job tools
+  through the jobs backend with the job's guardrails and budget.
+- **Locked down.** `--tools ""` (no built-in tools), `--setting-sources ""`,
+  `--strict-mcp-config`, `--allowedTools mcp__home`, `--permission-mode
+  dontAsk`, `--no-session-persistence`, `--disable-slash-commands`, and a
+  full `--system-prompt` (never Claude Code's own). The prompt goes in on
+  stdin. The host counts tool calls in the stream and stops the run past
+  `max_tool_calls`, and at the timeout.
+- **The call.** `agenthost.turn` (risk exec) is called by the hub as system
+  code (`system:home.<name>`), not as whoever asked: the asker's permissions
+  are applied to the tools, not to the transport. Idempotent on `turn_id`;
+  a job step cancelled by its own timeout also sends `agenthost.cancel`.
+- **Stateless.** The conversation is flattened into one prompt each time
+  (the hub already sends the room context and memory), so moving the agent
+  to another host loses nothing.
+- **Sign-in.** `home.claude_auth = login` uses the host's own login;
+  `token` passes the vault secret named by `home.claude_token` (a
+  `claude setup-token` token) as `CLAUDE_CODE_OAUTH_TOKEN`.
+- **Settings.** `home.claude_model` (default `haiku`), `home.claude_effort`,
+  `home.claude_timeout_s` (180; job steps may use their whole step timeout),
+  `home.claude_callback_url` (blank: `core.mcp.public_url`).
 
 ## 2. Path to replacing Hermes
 

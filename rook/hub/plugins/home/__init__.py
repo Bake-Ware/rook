@@ -44,7 +44,8 @@ from ....core import context
 from ....core.db import atomic_write_json
 from ....core.plugin import Plugin, capability, place, setting
 from ....core.settings import SECRET_REF
-from . import job_agent
+from . import claude_code, job_agent
+from .claude_code import ClaudeCodeBackend, TurnFailed, Unavailable
 from .llm import PROVIDERS, ChatClient, LLMError, aiohttp_request, base_url
 
 log = logging.getLogger("rook.hub.plugins.home")
@@ -77,6 +78,9 @@ KNOWLEDGE_TOOL = {"type": "function", "function": {
     "description": "Search the band's shared knowledge wiki. Returns up to 5 excerpts with slugs.",
     "parameters": {"type": "object", "properties": {"query": {"type": "string"}},
                    "required": ["query"]}}}
+
+
+BACKENDS = ("openai", "claude-code")
 
 
 class HomeError(ValueError):
@@ -121,6 +125,11 @@ class HomeAgent(Plugin):
         setting("name", str, "home", pattern=NAME_RE.pattern, group="Home agent", order=2,
                 label="Name",
                 help="Chat identity agent:<name>; people address it as @<name>."),
+        setting("backend", str, "openai", choices=BACKENDS, group="Model", order=-1,
+                label="Backend",
+                help="openai: an OpenAI-compatible endpoint (below). claude-code: Claude Code on "
+                     "an agent host (a worker with the agenthost plugin and a logged-in claude); "
+                     "see the Claude Code group."),
         setting("llm_provider", str, "", pattern=r"^([a-z0-9][a-z0-9_-]{0,31})?$", group="Model",
                 order=0, label="Model provider",
                 help="A provider from Manage > Model providers (llmanifold, or one added there). "
@@ -142,6 +151,38 @@ class HomeAgent(Plugin):
                 label="Longest reply (tokens)"),
         setting("temperature", float, None, min=0.0, max=2.0, group="Model", order=7,
                 advanced=True, label="Temperature", help="Blank: the endpoint's default."),
+        setting("claude_worker", str, "", group="Claude Code", order=1, label="Agent host",
+                help="The worker that runs the home agent's Claude Code turns (name or id). "
+                     "Change it to move the agent; nothing is lost (memory stays at the hub)."),
+        setting("claude_fallback_workers", list, [], group="Claude Code", order=2,
+                label="Fallback hosts",
+                help="Tried in order when the agent host is offline or not logged in."),
+        setting("claude_on_unavailable", str, "fallback_backend",
+                choices=claude_code.ON_UNAVAILABLE, group="Claude Code", order=3,
+                label="When no host is available",
+                help="fallback_backend: answer with the OpenAI-compatible endpoint when one is "
+                     "set. fail: say the agent is unavailable."),
+        setting("claude_model", str, "haiku", pattern=r"^[A-Za-z0-9_.:\[\]-]{1,80}$",
+                group="Claude Code", order=4, label="Model",
+                help="haiku, sonnet or opus (the current model of that family), or a full "
+                     "model id."),
+        setting("claude_effort", str, "", choices=("", "low", "medium", "high", "xhigh", "max"),
+                group="Claude Code", order=5, label="Effort",
+                help="Blank: Claude Code's default for the model."),
+        setting("claude_auth", str, "login", choices=claude_code.AUTH, group="Claude Code",
+                order=6, label="Sign-in",
+                help="login: the host's own claude login (its subscription). token: a long-lived "
+                     "token from `claude setup-token`, kept in the vault."),
+        setting("claude_token", str, "", pattern=KEY_REF, group="Claude Code", order=7,
+                label="Token (vault reference)",
+                help="{{secret:<vault name>}} holding a `claude setup-token` token; used when "
+                     "sign-in is token."),
+        setting("claude_timeout_s", float, 180.0, min=10.0, max=1800.0, group="Claude Code",
+                order=8, label="Turn timeout (s)"),
+        setting("claude_callback_url", "url", "", group="Claude Code", order=9, advanced=True,
+                label="Hub URL for tools",
+                help="Where the agent host reaches the hub's per-turn tool server. Blank: the "
+                     "hub's public MCP URL."),
         setting("persona", str, "", group="Behaviour", order=1, label="Persona profile",
                 help="A persona profile id. Blank: the persona assigned to family 'home' "
                      "(or the default one)."),
@@ -196,6 +237,7 @@ class HomeAgent(Plugin):
         self.activity: collections.deque = collections.deque(maxlen=50)
         self.last_error = ""
         self._http = aiohttp_request          # tests swap in a fake endpoint
+        self.claude = ClaudeCodeBackend(self)
 
     # -- wiring ------------------------------------------------------------
     def bind_host(self, node) -> None:
@@ -260,6 +302,11 @@ class HomeAgent(Plugin):
 
     def missing(self, cfg: dict | None = None) -> list[str]:
         cfg = cfg or self.config()
+        if cfg.get("backend") == "claude-code":
+            return [] if str(cfg.get("claude_worker") or "").strip() else ["claude_worker"]
+        return self._openai_missing(cfg)
+
+    def _openai_missing(self, cfg: dict) -> list[str]:
         if cfg.get("_provider") and not cfg.get("base_url"):
             return ["llm_provider"] + (["model"] if not str(cfg.get("model") or "").strip() else [])
         return [k for k in ("base_url", "model") if not str(cfg.get(k) or "").strip()]
@@ -334,7 +381,6 @@ class HomeAgent(Plugin):
         ``may_search`` is False when whoever asked may not read the knowledge
         wiki themselves; the tool is then not offered. ``memory`` (``{person,
         room}``) offers the memory tools, acting for that person."""
-        cli = cli or self.client(cfg)
         tools = ([KNOWLEDGE_TOOL] if cfg.get("tools") and may_search and self._has_knowledge()
                  else [])
         # Memory tools ride the same switch as knowledge search: some local
@@ -342,6 +388,20 @@ class HomeAgent(Plugin):
         mem = self._memory() if memory is not None and cfg.get("tools") else None
         if mem is not None:
             tools += mem.tools(save=bool(memory.get("save")))
+        if cli is None and self.use_claude(cfg):
+            async def handler(name: str, args: dict) -> str:
+                return await self._run_tool(name, args, thread,
+                                            memory if mem is not None else None)
+            try:
+                return await self.claude.run(cfg, messages, tools=tools, handler=handler,
+                                             via=via or "turn", max_tool_calls=MAX_TOOL_ROUNDS * 2)
+            except Unavailable as e:
+                if not self._may_fall_back(cfg):
+                    raise HomeError(f"the home agent is unavailable: {e}") from None
+                log.warning("home agent: %s; answering with the OpenAI-compatible endpoint", e)
+            except TurnFailed as e:
+                raise LLMError(str(e)) from None
+        cli = cli or self.client(cfg)
         tools = tools or None
         used: list[str] = []
         total = 0
@@ -365,6 +425,13 @@ class HomeAgent(Plugin):
                 msgs.append({"role": "tool", "tool_call_id": str(call.get("id") or ""),
                              "content": out})
         raise LLMError("the model kept calling tools")  # pragma: no cover - loop bound
+
+    def use_claude(self, cfg: dict) -> bool:
+        return cfg.get("backend") == "claude-code"
+
+    def _may_fall_back(self, cfg: dict) -> bool:
+        return (cfg.get("claude_on_unavailable") == "fallback_backend"
+                and not self._openai_missing(cfg))
 
     def _has_knowledge(self) -> bool:
         return self._node is not None and self._node.plugin("knowledge") is not None
@@ -818,10 +885,22 @@ class HomeAgent(Plugin):
         args = {"job": job, "run": run, "step": step}
         try:
             async with self._job_sem:
-                cli = self.client(cfg)
-                out = await job_agent.run_loop(cli, msgs, backend, max_calls=limit,
-                                               max_tokens=cfg.get("max_tokens"),
-                                               temperature=cfg.get("temperature"))
+                out = None
+                if self.use_claude(cfg):
+                    try:
+                        out = await self._claude_job_step(cfg, msgs, backend, limit)
+                    except Unavailable as e:
+                        if not self._may_fall_back(cfg):
+                            raise HomeError(f"the home agent is unavailable: {e}") from None
+                        log.warning("home agent: %s; job step uses the OpenAI-compatible "
+                                    "endpoint", e)
+                    except TurnFailed as e:
+                        raise LLMError(str(e)) from None
+                if out is None:
+                    cli = self.client(cfg)
+                    out = await job_agent.run_loop(cli, msgs, backend, max_calls=limit,
+                                                   max_tokens=cfg.get("max_tokens"),
+                                                   temperature=cfg.get("temperature"))
         except (LLMError, HomeError) as e:
             self._note("job", False, sender=f"job:{job}", error=str(e)[:300])
             self.journal("home.job_step", args, {"ok": False, "error": str(e)[:300]}, run or None)
@@ -840,6 +919,48 @@ class HomeAgent(Plugin):
                                              "tools": out["tools_used"], "model": out["model"]}},
                      run or None)
         return out
+
+    async def _claude_job_step(self, cfg: dict, msgs: list[dict], backend: Any,
+                               limit: int) -> dict:
+        """A job step on Claude Code: the job tool set served from the hub's
+        per-turn tool server, every call carried out by the jobs ``backend``
+        under the same budget as :func:`job_agent.run_loop`."""
+        names = [n for n in backend.tool_names() if n in job_agent.TOOLS and n != "finish"]
+        tools = [job_agent.TOOLS[n] for n in names] + [job_agent.TOOLS["finish"]]
+        state: dict = {"calls": 0, "used": [], "finish": None}
+
+        async def handler(name: str, args: dict) -> str:
+            if name == "finish":
+                verdict = str(args.get("verdict") or "").lower()
+                state["finish"] = (verdict if verdict in job_agent.VERDICTS else "failed",
+                                   str(args.get("text") or "")[:2000])
+                return json.dumps({"ok": True, "note": "Finished. Stop here; reply with one "
+                                                       "short line."})
+            if state["calls"] >= limit:
+                return json.dumps({"ok": False, "error": f"tool budget used up ({limit} calls); "
+                                                         "call finish"})
+            state["calls"] += 1
+            state["used"].append(name)
+            try:
+                out = await job_agent.dispatch(backend, name, args)
+            except Exception as e:  # noqa: BLE001 - a tool error goes back to the model
+                out = {"ok": False, "error": f"{type(e).__name__}: {e}"[:300]}
+            return job_agent._dump(out)
+
+        first = dict(msgs[-1])
+        first["content"] = (str(first.get("content") or "") + "\n\nYour tools are the "
+                            "mcp__home__* tools. End by calling finish.")
+        # The jobs plugin bounds the step's time; the turn may use all of it.
+        cfg = {**cfg, "claude_timeout_s": 1800.0}
+        res = await self.claude.run(cfg, msgs[:-1] + [first], tools=tools, handler=handler,
+                                    via="job", max_tool_calls=limit + 2)
+        if state["finish"] is not None:
+            verdict, text = state["finish"]
+        else:
+            verdict, text = job_agent.parse_verdict(res["content"])
+        return {"verdict": verdict, "text": text, "calls": state["calls"],
+                "tools_used": state["used"], "model": res["model"], "rounds": 1,
+                "worker": res.get("worker")}
 
     # -- caps ----------------------------------------------------------------
     @capability("ask", risk="write", timeout=None)
@@ -899,10 +1020,17 @@ class HomeAgent(Plugin):
         with contextlib.suppress(Exception):
             from .llm import url_host
             host = url_host(str(cfg.get("base_url") or ""))
+        claude = {}
+        if self.use_claude(cfg):
+            claude = {"worker": cfg.get("claude_worker") or "", "model": cfg.get("claude_model"),
+                      "fallbacks": list(cfg.get("claude_fallback_workers") or []),
+                      "hosts": self.claude.hosts()}
         return {"enabled": self.enabled(), "identity": self.identity, "name": self.agent_name,
+                "backend": cfg.get("backend") or "openai", "claude": claude,
                 "provider": cfg.get("provider"), "llm_provider": cfg.get("_provider") or "",
                 "endpoint_host": host,
-                "model": cfg.get("model") or "", "missing": self.missing(cfg),
+                "model": (cfg.get("claude_model") if self.use_claude(cfg) else cfg.get("model"))
+                or "", "missing": self.missing(cfg),
                 "tools": bool(cfg.get("tools")), "key_set": bool(cfg.get("api_key")),
                 "chat": self._store() is not None, "memory": self._memory() is not None,
                 "last_error": self.last_error}
@@ -950,6 +1078,8 @@ class HomeAgent(Plugin):
         return {"view": "home", "settings": rows, "status": self.status(),
                 "personas": personas, "secrets": secrets, "activity": list(self.activity),
                 "providers": list(PROVIDERS), "llm_providers": llm_providers,
+                "backends": list(BACKENDS), "claude_models": list(claude_code.MODELS),
+                "claude_hosts": self.claude.hosts(),
                 "history": svc.store.history(key="home.", limit=30)}
 
     def _form(self, data: dict) -> dict:
@@ -984,6 +1114,8 @@ class HomeAgent(Plugin):
             return {"ok": True, "saved": saved, **self.page(svc)}
         if action not in ("home_models", "home_test"):
             raise HomeError("use home_save, home_models or home_test")
+        if self.use_claude(self.config(self._form(data))):
+            return await self._claude_probe(action, self._form(data), actor)
         cfg, note = self._probe_config(self._form(data))
         extra = {"note": note} if note else {}
         try:
@@ -1012,6 +1144,30 @@ class HomeAgent(Plugin):
                    latency_ms=res["latency_ms"])
         return {"ok": True, "reply": res["content"], "model": res["model"],
                 "latency_ms": res["latency_ms"], **extra}
+
+    async def _claude_probe(self, action: str, form: dict, actor: str) -> dict:
+        """Models and Test for the Claude Code backend: the form's values
+        (unsaved), except the sign-in token, which is only ever the saved one."""
+        if action == "home_models":
+            return {"ok": True, "models": list(claude_code.MODELS), "hosts": self.claude.hosts()}
+        cfg = self.config(form)
+        cfg["claude_token"] = self.config().get("claude_token")
+        cfg["tools"] = False
+        cfg["claude_timeout_s"] = min(float(cfg.get("claude_timeout_s") or 60), 60.0)
+        cfg["claude_on_unavailable"] = "fail"
+        msgs = [{"role": "system", "content": self.system_prompt(
+                    cfg, "This is a connection test from the hub's settings page.")},
+                {"role": "user", "content": "Say hello in one short sentence."}]
+        try:
+            res = await self.complete(msgs, cfg, via="test")
+        except (LLMError, HomeError) as e:
+            self._note("test", False, sender=actor, error=str(e)[:300])
+            return {"ok": False, "error": str(e)}
+        self._note("test", True, sender=actor, model=res["model"], latency_ms=res["latency_ms"],
+                   worker=res.get("worker"))
+        return {"ok": True, "reply": res["content"], "model": res["model"],
+                "latency_ms": res["latency_ms"], "worker": res.get("worker"),
+                "usage": res.get("usage"), "cost_usd": res.get("cost_usd")}
 
     def _probe_config(self, form: dict) -> tuple[dict, str]:
         """The settings for a models/test probe from unsaved form values, with

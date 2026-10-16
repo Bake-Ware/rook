@@ -1867,6 +1867,18 @@ class McpService:
         from ..hub.plugins.huddle.web import routes as huddle_routes
         for route in huddle_routes(lambda: mcp._rook_hub, accounts):
             app.router.routes.insert(0, route)
+        # Per-turn tool server for the home agent's Claude Code backend.
+        from ..hub.plugins.home.turn_mcp import routes as home_turn_routes
+
+        def _home_turns():
+            home = mcp._rook_hub.plugin("home") if mcp._rook_hub is not None else None
+            backend = getattr(home, "claude", None)
+            if backend is not None and args.public_url and not backend.public_url:
+                backend.public_url = args.public_url
+            return getattr(backend, "registry", None)
+        _home_turns()
+        for route in home_turn_routes(_home_turns):
+            app.router.routes.insert(0, route)
         # Overview, start page and themes (the ui hub plugin).
         from ..hub.plugins.ui.web import routes as ui_routes
         for route in ui_routes(lambda: mcp._rook_hub, accounts):
