@@ -38,31 +38,39 @@ before answering. Jobs can use it as a step too ([[manual-jobs]]).
 It remembers people, facts, earlier conversations and skills between
 conversations; see [[manual-home-agent-memory]].
 
-## Running it on Claude Code
+## Running it on Claude Code, Codex or OpenCode
 
-The home agent can also run on Claude Code, using the Claude subscription of a
-machine you choose (the **agent host**). The hub keeps its memory, persona and
-tools; each answer is one Claude Code run on that machine.
+The home agent can also run on an agent harness you already use: Claude Code,
+Codex or OpenCode, on a machine you choose (the **agent host**), with that
+machine's own sign-in (your Claude or ChatGPT subscription, or OpenCode's
+model providers). The hub keeps its memory, persona and tools; each answer is
+one run of the harness on that machine.
 
-1. On the machine, install Claude Code and sign in (`claude`, then `/login`).
-   Then allow it to host: **Settings > Workers**, that machine, **House agent
-   host** on (off by default, so a machine with Claude Code installed is never
-   used unless you say so). Its Rook worker needs a build with the
-   **agenthost** plugin.
-2. On **Home agent**, set **Backend** to *Claude Code on an agent host*.
-3. Pick the **Agent host** and a **Model** (`haiku` is quick and cheap; `sonnet`
-   and `opus` think harder). **Test** shows the answer, the host and the time.
+1. On the machine, install the harness and sign in (`claude` then `/login`;
+   `codex login`; or set up a provider in OpenCode). A worker with a recent
+   build offers itself as a host as soon as it finds one installed; nothing
+   runs there until you pick it. To keep a machine out, switch **House agent
+   host** off for it under **Settings > Workers**.
+2. On **Home agent**, set **Backend** to *Claude Code*, *Codex* or *OpenCode on
+   an agent host*.
+3. Pick the **Agent host** (the list shows each machine's harnesses, their
+   versions and whether they are signed in) and a **Model**: **List models**
+   asks that machine. For Claude Code, `haiku` is quick and cheap; `sonnet`
+   and `opus` think harder. Blank uses the harness's own default.
+   **Test** shows the answer, the host and the time.
 4. Optionally list **Fallback hosts**, and choose what happens when no host is
-   online: answer with the OpenAI-style endpoint below, or say it is
+   available: answer with the OpenAI-style endpoint below, or say it is
    unavailable.
 
 To move the agent, pick another host. Nothing is lost: memory stays on the
-hub. Usage counts against the subscription signed in on the host, or against
-a token from `claude setup-token` saved in Secrets (**Sign-in**).
+hub. Usage counts against the sign-in on the host (for Claude Code, optionally
+a token from `claude setup-token` saved in Secrets: **Sign-in**). OpenCode's
+free models refuse to run with a custom agent, so use one of your own
+providers there.
 
-Claude Code runs with its own tools, settings and MCP servers switched off;
-the only tools it gets are the home agent's, served by the hub for that one
-answer.
+The harness runs with its own tools, settings, plugins and MCP servers
+switched off; the only tools it gets are the home agent's, served by the hub
+for that one answer.
 
 ## Decide (preview)
 

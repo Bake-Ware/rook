@@ -1,21 +1,22 @@
-"""The home agent's Claude Code backend (``home.backend = claude-code``).
+"""The home agent on an agent harness: ``home.backend`` = ``claude-code``,
+``codex`` or ``opencode``.
 
-A turn runs on an *agent host*: a worker with the ``agenthost`` plugin and a
-logged-in ``claude`` (docs/design/huddles.md 3). The hub keeps everything
+A turn runs on an *agent host*: a worker whose ``agenthost`` plugin found
+that harness installed (docs/design/huddles.md 3). The hub keeps everything
 else: the prompt, memory, persona and tools. For each turn it
 
-1. picks the host (``home.claude_worker``, then ``home.claude_fallback_workers``,
-   the first that is online and offers ``agenthost.turn``);
+1. picks the host (``home.agent_host``, then ``home.agent_fallback_hosts``:
+   the first that is online, has the harness, and does not report it logged
+   out);
 2. registers the turn's tools on ``/home/turn-mcp`` under a fresh token
    (:mod:`.turn_mcp`), so the model's tool calls come back here and run as the
    home agent exactly as with the OpenAI-compatible backend;
 3. calls ``agenthost.turn`` on the host as hub system code (the host's exec cap
    is the hub's to use, not whoever asked), and drops the token afterwards.
 
-The conversation is flattened into one prompt: Claude Code turns are
-stateless here (``--no-session-persistence``), because the hub already sends
-the room context and memory every time, and a move to another host loses
-nothing.
+The conversation is flattened into one prompt: turns are stateless here (no
+session files), because the hub already sends the room context and memory
+every time, and a move to another host loses nothing.
 """
 
 from __future__ import annotations
@@ -29,13 +30,17 @@ from typing import Any, Awaitable, Callable
 
 from .turn_mcp import PATH, Registry
 
-log = logging.getLogger("rook.hub.plugins.home.claude_code")
+log = logging.getLogger("rook.hub.plugins.home.agent_host")
 
-#: Model aliases offered on the page (Claude Code resolves them to the
-#: current model of that family); any full model id is accepted too.
-MODELS = ("haiku", "sonnet", "opus")
+#: home.backend value -> the worker's harness name.
+HARNESS = {"claude-code": "claude", "codex": "codex", "opencode": "opencode"}
+LABELS = {"claude-code": "Claude Code", "codex": "Codex", "opencode": "OpenCode"}
+#: Model suggestions before a host is asked (claude: aliases for the current
+#: model of each family). Any model id the harness accepts works.
+CLAUDE_MODELS = ("haiku", "sonnet", "opus")
 ON_UNAVAILABLE = ("fallback_backend", "fail")
 AUTH = ("login", "token")
+EFFORTS = ("", "low", "medium", "high", "xhigh", "max")
 #: A worker counts as online when it was heard from this recently.
 ONLINE_S = 120.0
 #: Extra time the band call waits beyond the turn's own timeout.
@@ -51,7 +56,7 @@ class TurnFailed(RuntimeError):
 
 
 def flatten(messages: list[dict]) -> tuple[str, str]:
-    """OpenAI-style messages as ``(system, prompt)`` for one ``claude -p``.
+    """OpenAI-style messages as ``(system, prompt)`` for one headless run.
 
     System messages join into the system prompt. A single user message is the
     prompt as is; a conversation becomes a transcript with the last message
@@ -61,11 +66,8 @@ def flatten(messages: list[dict]) -> tuple[str, str]:
     rest = [m for m in messages if m.get("role") in ("user", "assistant") and m.get("content")]
     if len(rest) == 1 and rest[0]["role"] == "user":
         return system, str(rest[0]["content"])
-    lines = []
-    for m in rest[:-1]:
-        who = "You" if m["role"] == "assistant" else "Them"
-        lines.append(f"{who}: {m['content']}" if m["role"] == "assistant"
-                     else str(m["content"]))
+    lines = [f"You: {m['content']}" if m["role"] == "assistant" else str(m["content"])
+             for m in rest[:-1]]
     last = rest[-1]["content"] if rest else ""
     prompt = ("Conversation so far (your own earlier replies are marked 'You:'):\n\n"
               + "\n".join(lines) + "\n\nThe message to answer now:\n" + str(last)
@@ -73,7 +75,24 @@ def flatten(messages: list[dict]) -> tuple[str, str]:
     return system, prompt
 
 
-class ClaudeCodeBackend:
+def harness_of(cfg: dict) -> str | None:
+    return HARNESS.get(str(cfg.get("backend") or ""))
+
+
+def model_of(cfg: dict) -> str:
+    """The model setting for the configured harness ("" = its default)."""
+    h = harness_of(cfg)
+    key = {"claude": "claude_model", "codex": "codex_model", "opencode": "opencode_model"}.get(h)
+    return str(cfg.get(key) or "").strip() if key else ""
+
+
+def effort_of(cfg: dict) -> str:
+    h = harness_of(cfg)
+    key = {"claude": "claude_effort", "codex": "codex_effort"}.get(h)
+    return str(cfg.get(key) or "").strip() if key else ""
+
+
+class AgentHostBackend:
     def __init__(self, plugin: Any) -> None:
         self.plugin = plugin
         self.registry = Registry()
@@ -89,56 +108,58 @@ class ClaudeCodeBackend:
             return {}
 
     def hosts(self) -> list[dict]:
-        """Workers that can host turns: ``{worker_id, name, online, claude,
-        logged_in, running}``, for the page's host picker."""
+        """Workers that can host turns, for the page's picker: ``{worker_id,
+        name, online, harnesses: {name: {version, logged_in}}, running}``."""
         now = time.time()
         out = []
         for wid, e in self._roster().items():
             if "agenthost.turn" not in (e.get("caps") or []):
                 continue
             hb = (e.get("hb") or {}).get("agenthost") or {}
+            harnesses = hb.get("harnesses") if isinstance(hb.get("harnesses"), dict) else {}
+            if not harnesses and hb.get("claude"):          # a build 772 worker
+                harnesses = {"claude": {"version": hb.get("claude"),
+                                        "logged_in": hb.get("logged_in")}}
             out.append({"worker_id": wid, "name": e.get("name") or wid,
                         "online": now - float(e.get("last_seen") or 0) <= ONLINE_S,
-                        "claude": hb.get("claude"), "logged_in": hb.get("logged_in"),
-                        "running": hb.get("running")})
+                        "harnesses": harnesses, "running": hb.get("running")})
         return sorted(out, key=lambda h: h["name"])
 
-    def pick(self, cfg: dict) -> tuple[str, str]:
+    def pick(self, cfg: dict, harness: str) -> tuple[str, str]:
         """``(worker_id, name)`` of the first usable host, or Unavailable."""
-        wanted = [str(cfg.get("claude_worker") or "").strip()]
-        wanted += [str(w).strip() for w in (cfg.get("claude_fallback_workers") or [])]
+        wanted = [str(cfg.get("agent_host") or "").strip()]
+        wanted += [str(w).strip() for w in (cfg.get("agent_fallback_hosts") or [])]
         wanted = [w for w in wanted if w]
         if not wanted:
-            raise Unavailable("no agent host is set (home.claude_worker)")
+            raise Unavailable("no agent host is set (home.agent_host)")
         hosts = self.hosts()
         tried = []
         for w in wanted:
             h = next((h for h in hosts if w in (h["worker_id"], h["name"])), None)
             if h is None:
-                tried.append(f"{w}: no agenthost plugin (or not in the band)")
-            elif not h["online"]:
+                tried.append(f"{w}: no agent harness (or not in the band)")
+                continue
+            info = h["harnesses"].get(harness)
+            if not h["online"]:
                 tried.append(f"{w}: offline")
-            elif h["logged_in"] is False and cfg.get("claude_auth") != "token":
-                tried.append(f"{w}: claude is not logged in")
+            elif info is None and h["harnesses"]:
+                tried.append(f"{w}: {harness} is not installed")
+            elif (info or {}).get("logged_in") is False and not (
+                    harness == "claude" and cfg.get("claude_auth") == "token"):
+                tried.append(f"{w}: {harness} is not logged in")
             else:
                 return h["worker_id"], h["name"]
         raise Unavailable("no agent host is available (" + "; ".join(tried) + ")")
 
     def turn_url(self, cfg: dict) -> str:
-        base = (str(cfg.get("claude_callback_url") or "").strip() or self.public_url
+        base = (str(cfg.get("agent_callback_url") or "").strip() or self.public_url
                 or self._setting("core.mcp.public_url"))
         if not base:
-            raise Unavailable("the hub's public URL is unknown; set home.claude_callback_url")
+            raise Unavailable("the hub's public URL is unknown; set home.agent_callback_url")
         base = base.rstrip("/")
         if base.endswith("/mcp"):
             base = base[:-4]
         return base + PATH
-
-    @staticmethod
-    async def _cancel(client: Any, wid: str, turn_id: str, who: dict) -> None:
-        with contextlib.suppress(Exception):
-            await client.call(cap="agenthost.cancel", args={"turn_id": turn_id}, target=wid,
-                              timeout=15.0, **who)
 
     def _setting(self, key: str) -> str:
         svc = getattr(self.plugin._node, "settings", None)
@@ -146,36 +167,66 @@ class ClaudeCodeBackend:
             return str((svc.resolve(key) or {}).get("value") or "")
         return ""
 
+    def _who(self) -> dict:
+        from ...authz import system as system_principal
+        name = self.plugin.agent_name
+        return {"identity": f"system:home.{name}",
+                "principal": system_principal(f"home.{name}")}
+
+    async def models(self, cfg: dict) -> dict:
+        """Model ids for the configured harness, asked of the chosen host."""
+        harness = harness_of(cfg) or "claude"
+        try:
+            wid, name = self.pick(cfg, harness)
+        except Unavailable as e:
+            return {"ok": True, "models": list(CLAUDE_MODELS) if harness == "claude" else [],
+                    "note": str(e)}
+        reply = await self.plugin._node.client.call(
+            cap="agenthost.models", args={"harness": harness}, target=wid, timeout=45.0,
+            **self._who())
+        res = reply.get("result") if isinstance(reply.get("result"), dict) else {}
+        if not res.get("ok"):
+            return {"ok": False, "error": f"{name}: {reply.get('error') or res.get('error')}"}
+        return {"ok": True, "models": list(res.get("models") or []), "host": name}
+
+    @staticmethod
+    async def _cancel(client: Any, wid: str, turn_id: str, who: dict) -> None:
+        with contextlib.suppress(Exception):
+            await client.call(cap="agenthost.cancel", args={"turn_id": turn_id}, target=wid,
+                              timeout=15.0, **who)
+
     # -- a turn ------------------------------------------------------------
     async def run(self, cfg: dict, messages: list[dict], *, tools: list[dict],
                   handler: Callable[[str, dict], Awaitable[str]], via: str,
                   max_tool_calls: int = 10) -> dict:
         """One turn. Returns ``{content, model, latency_ms, tools_used, worker,
-        usage, cost_usd}``; raises Unavailable or TurnFailed."""
-        wid, name = self.pick(cfg)
+        harness, usage, cost_usd}``; raises Unavailable or TurnFailed."""
+        harness = harness_of(cfg)
+        if harness is None:
+            raise Unavailable(f"home.backend {cfg.get('backend')!r} is not an agent harness")
+        wid, name = self.pick(cfg, harness)
         url = self.turn_url(cfg)
         system, prompt = flatten(messages)
-        timeout = float(cfg.get("claude_timeout_s") or 180.0)
+        timeout = float(cfg.get("agent_timeout_s") or 180.0)
         oauth = None
-        if cfg.get("claude_auth") == "token":
+        if harness == "claude" and cfg.get("claude_auth") == "token":
             oauth = self.plugin._api_key(cfg.get("claude_token"), via="home agent (claude token)")
             if not oauth:
                 raise Unavailable("home.claude_auth is token but home.claude_token is not set")
         token, turn = self.registry.open(tools, handler, timeout)
         turn_id = f"{via}-{uuid.uuid4().hex[:16]}"
-        args = {"turn_id": turn_id, "prompt": prompt, "system": system or "You are a helpful agent.",
-                "mcp_url": url, "mcp_token": token, "model": str(cfg.get("claude_model") or "haiku"),
-                "timeout_s": timeout, "max_tool_calls": int(max_tool_calls)}
-        effort = str(cfg.get("claude_effort") or "").strip()
-        if effort:
-            args["effort"] = effort
+        model = model_of(cfg)
+        args = {"turn_id": turn_id, "harness": harness, "prompt": prompt,
+                "system": system or "You are a helpful agent.", "mcp_url": url,
+                "mcp_token": token, "model": model, "timeout_s": timeout,
+                "max_tool_calls": int(max_tool_calls)}
+        if effort_of(cfg):
+            args["effort"] = effort_of(cfg)
         if oauth:
             args["oauth_token"] = oauth
-        from ...authz import system as system_principal
-        t0 = time.monotonic()
-        who = {"identity": f"system:home.{self.plugin.agent_name}",
-               "principal": system_principal(f"home.{self.plugin.agent_name}")}
+        who = self._who()
         client = self.plugin._node.client
+        t0 = time.monotonic()
         try:
             reply = await client.call(cap="agenthost.turn", args=args, target=wid,
                                       timeout=timeout + CALL_SLACK_S, **who)
@@ -193,7 +244,7 @@ class ClaudeCodeBackend:
         if not res.get("ok"):
             raise TurnFailed(f"{name}: {res.get('error') or 'the turn failed'}")
         return {"content": str(res.get("text") or "").strip(),
-                "model": str(res.get("model") or args["model"]),
+                "model": str(res.get("model") or model or f"{LABELS[cfg['backend']]} default"),
                 "latency_ms": round((time.monotonic() - t0) * 1000),
-                "tools_used": list(turn.used), "worker": name,
+                "tools_used": list(turn.used), "worker": name, "harness": harness,
                 "usage": res.get("usage") or {}, "cost_usd": res.get("cost_usd")}

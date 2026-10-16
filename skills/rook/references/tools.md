@@ -238,8 +238,9 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 | Cap | Args | Does |
 |---|---|---|
 | `agenthost.cancel` | turn_id | Stop a running turn. |
-| `agenthost.status` | — | Claude Code on this host: version, login state and running turns. |
-| `agenthost.turn` | turn_id, prompt, system, mcp_url, mcp_token, model='haiku', timeout_s=180.0, max_tool_calls=20, effort?, oauth_token? | Run one house agent turn with Claude Code; returns its reply. |
+| `agenthost.models` | harness='claude' | Models a harness here can use (claude: aliases; codex: its catalog; opencode: `opencode models`). |
+| `agenthost.status` | — | The agent harnesses on this host (claude, codex, opencode): version and login, re-read now; and the running t… |
+| `agenthost.turn` | turn_id, prompt, system, mcp_url, mcp_token, harness='claude', model='', timeout_s=180.0, max_tool_calls=20, effort?, oauth_token? | Run one house agent turn with a local harness; returns its reply. |
 
 **battery**
 

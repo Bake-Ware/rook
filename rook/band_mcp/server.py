@@ -1872,7 +1872,7 @@ class McpService:
 
         def _home_turns():
             home = mcp._rook_hub.plugin("home") if mcp._rook_hub is not None else None
-            backend = getattr(home, "claude", None)
+            backend = getattr(home, "agents", None)
             if backend is not None and args.public_url and not backend.public_url:
                 backend.public_url = args.public_url
             return getattr(backend, "registry", None)

@@ -44,8 +44,8 @@ from ....core import context
 from ....core.db import atomic_write_json
 from ....core.plugin import Plugin, capability, place, setting
 from ....core.settings import SECRET_REF
-from . import claude_code, job_agent
-from .claude_code import ClaudeCodeBackend, TurnFailed, Unavailable
+from . import agent_host, job_agent
+from .agent_host import AgentHostBackend, TurnFailed, Unavailable
 from .llm import PROVIDERS, ChatClient, LLMError, aiohttp_request, base_url
 
 log = logging.getLogger("rook.hub.plugins.home")
@@ -80,7 +80,7 @@ KNOWLEDGE_TOOL = {"type": "function", "function": {
                    "required": ["query"]}}}
 
 
-BACKENDS = ("openai", "claude-code")
+BACKENDS = ("openai", "claude-code", "codex", "opencode")
 
 
 class HomeError(ValueError):
@@ -127,9 +127,9 @@ class HomeAgent(Plugin):
                 help="Chat identity agent:<name>; people address it as @<name>."),
         setting("backend", str, "openai", choices=BACKENDS, group="Model", order=-1,
                 label="Backend",
-                help="openai: an OpenAI-compatible endpoint (below). claude-code: Claude Code on "
-                     "an agent host (a worker with the agenthost plugin and a logged-in claude); "
-                     "see the Claude Code group."),
+                help="openai: an OpenAI-compatible endpoint (below). claude-code, codex, "
+                     "opencode: that agent harness on an agent host (a worker where it is "
+                     "installed and signed in); see the Agent host group."),
         setting("llm_provider", str, "", pattern=r"^([a-z0-9][a-z0-9_-]{0,31})?$", group="Model",
                 order=0, label="Model provider",
                 help="A provider from Manage > Model providers (llmanifold, or one added there). "
@@ -151,38 +151,50 @@ class HomeAgent(Plugin):
                 label="Longest reply (tokens)"),
         setting("temperature", float, None, min=0.0, max=2.0, group="Model", order=7,
                 advanced=True, label="Temperature", help="Blank: the endpoint's default."),
-        setting("claude_worker", str, "", group="Claude Code", order=1, label="Agent host",
-                help="The worker that runs the home agent's Claude Code turns (name or id). "
-                     "Change it to move the agent; nothing is lost (memory stays at the hub)."),
-        setting("claude_fallback_workers", list, [], group="Claude Code", order=2,
+        setting("agent_host", str, "", group="Agent host", order=1, label="Agent host",
+                help="The worker that runs the home agent's turns with its Claude Code, Codex or "
+                     "OpenCode (name or id). Change it to move the agent; nothing is lost "
+                     "(memory stays at the hub)."),
+        setting("agent_fallback_hosts", list, [], group="Agent host", order=2,
                 label="Fallback hosts",
-                help="Tried in order when the agent host is offline or not logged in."),
-        setting("claude_on_unavailable", str, "fallback_backend",
-                choices=claude_code.ON_UNAVAILABLE, group="Claude Code", order=3,
+                help="Tried in order when the agent host is offline, lacks the harness or is "
+                     "not logged in."),
+        setting("agent_on_unavailable", str, "fallback_backend",
+                choices=agent_host.ON_UNAVAILABLE, group="Agent host", order=3,
                 label="When no host is available",
                 help="fallback_backend: answer with the OpenAI-compatible endpoint when one is "
                      "set. fail: say the agent is unavailable."),
-        setting("claude_model", str, "haiku", pattern=r"^[A-Za-z0-9_.:\[\]-]{1,80}$",
-                group="Claude Code", order=4, label="Model",
-                help="haiku, sonnet or opus (the current model of that family), or a full "
-                     "model id."),
-        setting("claude_effort", str, "", choices=("", "low", "medium", "high", "xhigh", "max"),
-                group="Claude Code", order=5, label="Effort",
-                help="Blank: Claude Code's default for the model."),
-        setting("claude_auth", str, "login", choices=claude_code.AUTH, group="Claude Code",
-                order=6, label="Sign-in",
-                help="login: the host's own claude login (its subscription). token: a long-lived "
-                     "token from `claude setup-token`, kept in the vault."),
-        setting("claude_token", str, "", pattern=KEY_REF, group="Claude Code", order=7,
-                label="Token (vault reference)",
-                help="{{secret:<vault name>}} holding a `claude setup-token` token; used when "
-                     "sign-in is token."),
-        setting("claude_timeout_s", float, 180.0, min=10.0, max=1800.0, group="Claude Code",
-                order=8, label="Turn timeout (s)"),
-        setting("claude_callback_url", "url", "", group="Claude Code", order=9, advanced=True,
+        setting("agent_timeout_s", float, 180.0, min=10.0, max=1800.0, group="Agent host",
+                order=4, label="Turn timeout (s)"),
+        setting("agent_callback_url", "url", "", group="Agent host", order=5, advanced=True,
                 label="Hub URL for tools",
                 help="Where the agent host reaches the hub's per-turn tool server. Blank: the "
                      "hub's public MCP URL."),
+        setting("claude_model", str, "haiku", pattern=r"^([A-Za-z0-9_.:\[\]-]{1,80})?$",
+                group="Agent host", order=10, label="Claude Code model",
+                help="haiku, sonnet or opus (the current model of that family), or a full "
+                     "model id."),
+        setting("claude_effort", str, "", choices=agent_host.EFFORTS, group="Agent host",
+                order=11, label="Claude Code effort",
+                help="Blank: Claude Code's default for the model."),
+        setting("claude_auth", str, "login", choices=agent_host.AUTH, group="Agent host",
+                order=12, label="Claude Code sign-in",
+                help="login: the host's own claude login (its subscription). token: a long-lived "
+                     "token from `claude setup-token`, kept in the vault."),
+        setting("claude_token", str, "", pattern=KEY_REF, group="Agent host", order=13,
+                label="Claude Code token (vault reference)",
+                help="{{secret:<vault name>}} holding a `claude setup-token` token; used when "
+                     "sign-in is token."),
+        setting("codex_model", str, "", pattern=r"^([A-Za-z0-9_.:-]{1,80})?$",
+                group="Agent host", order=20, label="Codex model",
+                help="Blank: Codex's default. List models asks the host's Codex."),
+        setting("codex_effort", str, "", choices=agent_host.EFFORTS, group="Agent host",
+                order=21, label="Codex reasoning effort", help="Blank: the model's default."),
+        setting("opencode_model", str, "", pattern=r"^([A-Za-z0-9_.:/-]{1,120})?$",
+                group="Agent host", order=30, label="OpenCode model",
+                help="provider/model from the host's OpenCode providers. Blank: its default "
+                     "model. OpenCode's free tier refuses custom agents; use your own "
+                     "provider."),
         setting("persona", str, "", group="Behaviour", order=1, label="Persona profile",
                 help="A persona profile id. Blank: the persona assigned to family 'home' "
                      "(or the default one)."),
@@ -237,7 +249,7 @@ class HomeAgent(Plugin):
         self.activity: collections.deque = collections.deque(maxlen=50)
         self.last_error = ""
         self._http = aiohttp_request          # tests swap in a fake endpoint
-        self.claude = ClaudeCodeBackend(self)
+        self.agents = AgentHostBackend(self)
 
     # -- wiring ------------------------------------------------------------
     def bind_host(self, node) -> None:
@@ -302,8 +314,8 @@ class HomeAgent(Plugin):
 
     def missing(self, cfg: dict | None = None) -> list[str]:
         cfg = cfg or self.config()
-        if cfg.get("backend") == "claude-code":
-            return [] if str(cfg.get("claude_worker") or "").strip() else ["claude_worker"]
+        if self.use_agent_host(cfg):
+            return [] if str(cfg.get("agent_host") or "").strip() else ["agent_host"]
         return self._openai_missing(cfg)
 
     def _openai_missing(self, cfg: dict) -> list[str]:
@@ -388,12 +400,12 @@ class HomeAgent(Plugin):
         mem = self._memory() if memory is not None and cfg.get("tools") else None
         if mem is not None:
             tools += mem.tools(save=bool(memory.get("save")))
-        if cli is None and self.use_claude(cfg):
+        if cli is None and self.use_agent_host(cfg):
             async def handler(name: str, args: dict) -> str:
                 return await self._run_tool(name, args, thread,
                                             memory if mem is not None else None)
             try:
-                return await self.claude.run(cfg, messages, tools=tools, handler=handler,
+                return await self.agents.run(cfg, messages, tools=tools, handler=handler,
                                              via=via or "turn", max_tool_calls=MAX_TOOL_ROUNDS * 2)
             except Unavailable as e:
                 if not self._may_fall_back(cfg):
@@ -426,11 +438,11 @@ class HomeAgent(Plugin):
                              "content": out})
         raise LLMError("the model kept calling tools")  # pragma: no cover - loop bound
 
-    def use_claude(self, cfg: dict) -> bool:
-        return cfg.get("backend") == "claude-code"
+    def use_agent_host(self, cfg: dict) -> bool:
+        return agent_host.harness_of(cfg) is not None
 
     def _may_fall_back(self, cfg: dict) -> bool:
-        return (cfg.get("claude_on_unavailable") == "fallback_backend"
+        return (cfg.get("agent_on_unavailable") == "fallback_backend"
                 and not self._openai_missing(cfg))
 
     def _has_knowledge(self) -> bool:
@@ -886,9 +898,9 @@ class HomeAgent(Plugin):
         try:
             async with self._job_sem:
                 out = None
-                if self.use_claude(cfg):
+                if self.use_agent_host(cfg):
                     try:
-                        out = await self._claude_job_step(cfg, msgs, backend, limit)
+                        out = await self._agent_job_step(cfg, msgs, backend, limit)
                     except Unavailable as e:
                         if not self._may_fall_back(cfg):
                             raise HomeError(f"the home agent is unavailable: {e}") from None
@@ -920,7 +932,7 @@ class HomeAgent(Plugin):
                      run or None)
         return out
 
-    async def _claude_job_step(self, cfg: dict, msgs: list[dict], backend: Any,
+    async def _agent_job_step(self, cfg: dict, msgs: list[dict], backend: Any,
                                limit: int) -> dict:
         """A job step on Claude Code: the job tool set served from the hub's
         per-turn tool server, every call carried out by the jobs ``backend``
@@ -951,8 +963,8 @@ class HomeAgent(Plugin):
         first["content"] = (str(first.get("content") or "") + "\n\nYour tools are the "
                             "mcp__home__* tools. End by calling finish.")
         # The jobs plugin bounds the step's time; the turn may use all of it.
-        cfg = {**cfg, "claude_timeout_s": 1800.0}
-        res = await self.claude.run(cfg, msgs[:-1] + [first], tools=tools, handler=handler,
+        cfg = {**cfg, "agent_timeout_s": 1800.0}
+        res = await self.agents.run(cfg, msgs[:-1] + [first], tools=tools, handler=handler,
                                     via="job", max_tool_calls=limit + 2)
         if state["finish"] is not None:
             verdict, text = state["finish"]
@@ -1020,17 +1032,18 @@ class HomeAgent(Plugin):
         with contextlib.suppress(Exception):
             from .llm import url_host
             host = url_host(str(cfg.get("base_url") or ""))
-        claude = {}
-        if self.use_claude(cfg):
-            claude = {"worker": cfg.get("claude_worker") or "", "model": cfg.get("claude_model"),
-                      "fallbacks": list(cfg.get("claude_fallback_workers") or []),
-                      "hosts": self.claude.hosts()}
+        agents = {}
+        if self.use_agent_host(cfg):
+            agents = {"host": cfg.get("agent_host") or "",
+                      "harness": agent_host.harness_of(cfg),
+                      "fallbacks": list(cfg.get("agent_fallback_hosts") or []),
+                      "hosts": self.agents.hosts()}
         return {"enabled": self.enabled(), "identity": self.identity, "name": self.agent_name,
-                "backend": cfg.get("backend") or "openai", "claude": claude,
+                "backend": cfg.get("backend") or "openai", "agent_host": agents,
                 "provider": cfg.get("provider"), "llm_provider": cfg.get("_provider") or "",
                 "endpoint_host": host,
-                "model": (cfg.get("claude_model") if self.use_claude(cfg) else cfg.get("model"))
-                or "", "missing": self.missing(cfg),
+                "model": ((agent_host.model_of(cfg) or "default") if self.use_agent_host(cfg)
+                          else cfg.get("model")) or "", "missing": self.missing(cfg),
                 "tools": bool(cfg.get("tools")), "key_set": bool(cfg.get("api_key")),
                 "chat": self._store() is not None, "memory": self._memory() is not None,
                 "last_error": self.last_error}
@@ -1078,8 +1091,8 @@ class HomeAgent(Plugin):
         return {"view": "home", "settings": rows, "status": self.status(),
                 "personas": personas, "secrets": secrets, "activity": list(self.activity),
                 "providers": list(PROVIDERS), "llm_providers": llm_providers,
-                "backends": list(BACKENDS), "claude_models": list(claude_code.MODELS),
-                "claude_hosts": self.claude.hosts(),
+                "backends": list(BACKENDS), "claude_models": list(agent_host.CLAUDE_MODELS),
+                "agent_hosts": self.agents.hosts(),
                 "history": svc.store.history(key="home.", limit=30)}
 
     def _form(self, data: dict) -> dict:
@@ -1114,8 +1127,8 @@ class HomeAgent(Plugin):
             return {"ok": True, "saved": saved, **self.page(svc)}
         if action not in ("home_models", "home_test"):
             raise HomeError("use home_save, home_models or home_test")
-        if self.use_claude(self.config(self._form(data))):
-            return await self._claude_probe(action, self._form(data), actor)
+        if self.use_agent_host(self.config(self._form(data))):
+            return await self._agent_probe(action, self._form(data), actor)
         cfg, note = self._probe_config(self._form(data))
         extra = {"note": note} if note else {}
         try:
@@ -1145,16 +1158,18 @@ class HomeAgent(Plugin):
         return {"ok": True, "reply": res["content"], "model": res["model"],
                 "latency_ms": res["latency_ms"], **extra}
 
-    async def _claude_probe(self, action: str, form: dict, actor: str) -> dict:
-        """Models and Test for the Claude Code backend: the form's values
-        (unsaved), except the sign-in token, which is only ever the saved one."""
-        if action == "home_models":
-            return {"ok": True, "models": list(claude_code.MODELS), "hosts": self.claude.hosts()}
+    async def _agent_probe(self, action: str, form: dict, actor: str) -> dict:
+        """Models and Test for an agent harness backend: the form's values
+        (unsaved), except the Claude sign-in token, which is only ever the
+        saved one. Models asks the chosen host's harness."""
         cfg = self.config(form)
+        if action == "home_models":
+            out = await self.agents.models(cfg)
+            return {**out, "hosts": self.agents.hosts()}
         cfg["claude_token"] = self.config().get("claude_token")
         cfg["tools"] = False
-        cfg["claude_timeout_s"] = min(float(cfg.get("claude_timeout_s") or 60), 60.0)
-        cfg["claude_on_unavailable"] = "fail"
+        cfg["agent_timeout_s"] = min(float(cfg.get("agent_timeout_s") or 90), 90.0)
+        cfg["agent_on_unavailable"] = "fail"
         msgs = [{"role": "system", "content": self.system_prompt(
                     cfg, "This is a connection test from the hub's settings page.")},
                 {"role": "user", "content": "Say hello in one short sentence."}]
@@ -1164,7 +1179,7 @@ class HomeAgent(Plugin):
             self._note("test", False, sender=actor, error=str(e)[:300])
             return {"ok": False, "error": str(e)}
         self._note("test", True, sender=actor, model=res["model"], latency_ms=res["latency_ms"],
-                   worker=res.get("worker"))
+                   worker=res.get("worker"), harness=res.get("harness"))
         return {"ok": True, "reply": res["content"], "model": res["model"],
                 "latency_ms": res["latency_ms"], "worker": res.get("worker"),
                 "usage": res.get("usage"), "cost_usd": res.get("cost_usd")}
