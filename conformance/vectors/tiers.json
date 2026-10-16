@@ -9,6 +9,15 @@
   "agent.wake_info": {
    "tier": "read"
   },
+  "agenthost.cancel": {
+   "tier": "exec"
+  },
+  "agenthost.status": {
+   "tier": "read"
+  },
+  "agenthost.turn": {
+   "tier": "exec"
+  },
   "band.admin": {
    "tier": "admin",
    "tags": [
