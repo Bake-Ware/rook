@@ -137,7 +137,7 @@ are set only in the environment or on the command line.
 
 | Key | Label | Scope | Type | Default | Env / flag | Apply |
 |---|---|---|---|---|---|---|
-| `agenthost.enabled` | House agent host | worker | bool | off | `ROOK_AGENTHOST` | restart |
+| `agenthost.enabled` | House agent host | worker | bool | on | `ROOK_AGENTHOST` | restart |
 
 ## Claude Code rules (hub plugin, runs in mcp)
 
@@ -241,15 +241,18 @@ are set only in the environment or on the command line.
 | `home.timeout_s` | Request timeout (s) | hub | float | `90.0` | `ROOK_HOME_TIMEOUT_S` | live |
 | `home.max_tokens` | Longest reply (tokens) | hub | int | `1024` | `ROOK_HOME_MAX_TOKENS` | live |
 | `home.temperature` | Temperature | hub | float |  | `ROOK_HOME_TEMPERATURE` | live |
-| `home.claude_worker` | Agent host | hub | str |  | `ROOK_HOME_CLAUDE_WORKER` | live |
-| `home.claude_fallback_workers` | Fallback hosts | hub | list |  | `ROOK_HOME_CLAUDE_FALLBACK_WORKERS` | live |
-| `home.claude_on_unavailable` | When no host is available | hub | str | `fallback_backend` | `ROOK_HOME_CLAUDE_ON_UNAVAILABLE` | live |
-| `home.claude_model` | Model | hub | str | `haiku` | `ROOK_HOME_CLAUDE_MODEL` | live |
-| `home.claude_effort` | Effort | hub | str |  | `ROOK_HOME_CLAUDE_EFFORT` | live |
-| `home.claude_auth` | Sign-in | hub | str | `login` | `ROOK_HOME_CLAUDE_AUTH` | live |
-| `home.claude_token` | Token (vault reference) | hub | str |  | `ROOK_HOME_CLAUDE_TOKEN` | live |
-| `home.claude_timeout_s` | Turn timeout (s) | hub | float | `180.0` | `ROOK_HOME_CLAUDE_TIMEOUT_S` | live |
-| `home.claude_callback_url` | Hub URL for tools | hub | url |  | `ROOK_HOME_CLAUDE_CALLBACK_URL` | live |
+| `home.agent_host` | Agent host | hub | str |  | `ROOK_HOME_AGENT_HOST` | live |
+| `home.agent_fallback_hosts` | Fallback hosts | hub | list |  | `ROOK_HOME_AGENT_FALLBACK_HOSTS` | live |
+| `home.agent_on_unavailable` | When no host is available | hub | str | `fallback_backend` | `ROOK_HOME_AGENT_ON_UNAVAILABLE` | live |
+| `home.agent_timeout_s` | Turn timeout (s) | hub | float | `180.0` | `ROOK_HOME_AGENT_TIMEOUT_S` | live |
+| `home.agent_callback_url` | Hub URL for tools | hub | url |  | `ROOK_HOME_AGENT_CALLBACK_URL` | live |
+| `home.claude_model` | Claude Code model | hub | str | `haiku` | `ROOK_HOME_CLAUDE_MODEL` | live |
+| `home.claude_effort` | Claude Code effort | hub | str |  | `ROOK_HOME_CLAUDE_EFFORT` | live |
+| `home.claude_auth` | Claude Code sign-in | hub | str | `login` | `ROOK_HOME_CLAUDE_AUTH` | live |
+| `home.claude_token` | Claude Code token (vault reference) | hub | str |  | `ROOK_HOME_CLAUDE_TOKEN` | live |
+| `home.codex_model` | Codex model | hub | str |  | `ROOK_HOME_CODEX_MODEL` | live |
+| `home.codex_effort` | Codex reasoning effort | hub | str |  | `ROOK_HOME_CODEX_EFFORT` | live |
+| `home.opencode_model` | OpenCode model | hub | str |  | `ROOK_HOME_OPENCODE_MODEL` | live |
 | `home.persona` | Persona profile | hub | str |  | `ROOK_HOME_PERSONA` | live |
 | `home.system_prompt` | System prompt addition | hub | str |  | `ROOK_HOME_SYSTEM_PROMPT` | live |
 | `home.context_messages` | Room messages sent as context | hub | int | `20` | `ROOK_HOME_CONTEXT_MESSAGES` | live |

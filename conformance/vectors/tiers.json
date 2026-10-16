@@ -12,6 +12,9 @@
   "agenthost.cancel": {
    "tier": "exec"
   },
+  "agenthost.models": {
+   "tier": "read"
+  },
   "agenthost.status": {
    "tier": "read"
   },

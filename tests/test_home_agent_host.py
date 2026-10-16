@@ -1,7 +1,8 @@
-"""The home agent's Claude Code backend (docs/design/huddles.md 3): the
-per-turn tool server, the worker plugin ``agenthost`` against a fake
-``claude`` binary, and the home plugin routing chat, home.ask, job steps and
-the page's Test through an agent host."""
+"""The home agent on an agent harness (docs/design/huddles.md 3): the
+per-turn tool server, the worker plugin ``agenthost`` against fake
+``claude``, ``codex`` and ``opencode`` binaries, and the home plugin routing
+chat, home.ask, job steps and the page's Test and models through an agent
+host."""
 
 from __future__ import annotations
 
@@ -15,8 +16,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from rook.hub.plugins.home import claude_code, turn_mcp
-from rook.hub.plugins.home.claude_code import flatten
+from rook.hub.plugins.home import agent_host, turn_mcp
+from rook.hub.plugins.home.agent_host import flatten
 from rook.worker.plugins import agenthost
 from tests.test_home_agent import FakeLLM, FakeVault  # noqa: F401 - shared fakes
 
@@ -115,7 +116,8 @@ cfg = json.load(open(args[args.index("--mcp-config") + 1]))
 log = os.environ["FAKE_CLAUDE_LOG"]
 with open(log, "a") as f:
     f.write(json.dumps({{"argv": args, "prompt": prompt, "mcp": cfg,
-                        "oauth": os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")}}) + "\n")
+                        "oauth": os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"),
+                        "token": os.environ.get("ROOK_TURN_TOKEN")}}) + "\n")
 def out(ev):
     print(json.dumps(ev), flush=True)
 out({{"type": "system", "subtype": "init", "model": "claude-haiku-test", "session_id": "s1"}})
@@ -146,8 +148,6 @@ def host(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("FAKE_CLAUDE_LOG", str(tmp_path / "claude.log"))
     plugin = agenthost.AgentHost()
-    assert not plugin.available()                         # opt-in per worker
-    monkeypatch.setenv("ROOK_AGENTHOST", "1")
     plugin.__dict__["_data_root"] = str(tmp_path / "state")
     plugin.log = tmp_path / "claude.log"
     return plugin
@@ -176,7 +176,8 @@ async def test_agenthost_runs_a_locked_down_turn(host):
     assert seen["prompt"] == "hi" and "hi" not in argv              # stdin, not argv
     assert seen["mcp"]["mcpServers"]["home"] == {
         "type": "http", "url": "https://hub.example/home/turn-mcp",
-        "headers": {"Authorization": "Bearer tok-123"}}
+        "headers": {"Authorization": "Bearer ${ROOK_TURN_TOKEN}"}}
+    assert seen["token"] == "tok-123"                      # from the environment only
     assert "tok-123" not in " ".join(argv) and seen["oauth"] == "oat-secret"
     # The token file is gone after the turn.
     assert not list(host.data_dir.glob("turn-*"))
@@ -184,7 +185,8 @@ async def test_agenthost_runs_a_locked_down_turn(host):
     again = await host._turn(**_turn())
     assert again == out and len(host.log.read_text().splitlines()) == 1
     st = await host._status()
-    assert st["claude"] == "9.9.9" and st["logged_in"] is True
+    assert st["harnesses"]["claude"] == {"version": "9.9.9", "logged_in": True}
+    assert host.heartbeat()["harnesses"]["claude"]["version"] == "9.9.9"
 
 
 @pytest.mark.asyncio
@@ -211,7 +213,9 @@ class FakeAgentHost:
     def __init__(self, home, name="cachyrig", script=None):
         self.home = home
         self.workers = {"w-cachy": {"name": name, "caps": ["agenthost.turn"],
-                                    "hb": {"agenthost": {"claude": "2.1", "logged_in": True}},
+                                    "hb": {"agenthost": {"harnesses": {
+                                        "claude": {"version": "2.1", "logged_in": True},
+                                        "codex": {"version": "0.1", "logged_in": False}}}},
                                     "last_seen": time.time()}}
         self.script = list(script or [])
         self.calls = []
@@ -220,9 +224,12 @@ class FakeAgentHost:
                    principal=None):
         self.calls.append(SimpleNamespace(cap=cap, args=args, target=target, identity=identity,
                                           principal=principal, timeout=timeout))
+        if cap == "agenthost.models":
+            return {"ok": True, "result": {"ok": True, "harness": args["harness"],
+                                           "models": ["haiku", "sonnet"]}}
         if cap != "agenthost.turn":
             return {"ok": True, "result": {"ok": True}}
-        turn = self.home.claude.registry.get(args["mcp_token"])
+        turn = self.home.agents.registry.get(args["mcp_token"])
         assert turn is not None, "the turn's tools must be registered during the call"
         step = self.script.pop(0) if self.script else {"text": "hi from claude"}
         for name, targs in step.get("tools", []):
@@ -253,8 +260,8 @@ def cenv(tmp_path, monkeypatch):
     home._http = FakeLLM(["from the openai endpoint"])
     band = FakeAgentHost(home)
     monkeypatch.setattr(node, "client", band, raising=False)
-    home.claude.public_url = "https://mcp.example.com"
-    for k, v in {"enabled": True, "backend": "claude-code", "claude_worker": "cachyrig"}.items():
+    home.agents.public_url = "https://mcp.example.com"
+    for k, v in {"enabled": True, "backend": "claude-code", "agent_host": "cachyrig"}.items():
         node.settings.set(f"home.{k}", v, actor="human:op")
     return SimpleNamespace(node=node, home=home, band=band, svc=node.settings)
 
@@ -263,19 +270,21 @@ def cenv(tmp_path, monkeypatch):
 async def test_home_ask_runs_on_the_agent_host(cenv):
     st = cenv.home.status()
     assert st["backend"] == "claude-code" and st["missing"] == [] and st["model"] == "haiku"
-    assert st["claude"]["hosts"][0]["name"] == "cachyrig"
+    assert st["agent_host"]["hosts"][0]["name"] == "cachyrig"
+    assert st["agent_host"]["harness"] == "claude"
     res = await cenv.node.dispatch("home.ask", {"question": "hello?"}, "agent:claude")
     assert res["ok"], res
     assert res["result"]["answer"] == "hi from claude"
     assert res["result"]["model"] == "claude-haiku-test"
     (call,) = cenv.band.calls
     assert call.cap == "agenthost.turn" and call.target == "w-cachy"
+    assert call.args["harness"] == "claude"
     assert call.args["model"] == "haiku" and call.args["mcp_url"] == \
         "https://mcp.example.com/home/turn-mcp"
     assert call.principal.kind == "system" and call.identity == "system:home.home"
     assert "hello?" in call.args["prompt"] and "home agent" in call.args["system"]
     assert "oauth_token" not in call.args
-    assert len(cenv.home.claude.registry) == 0           # the token died with the turn
+    assert len(cenv.home.agents.registry) == 0           # the token died with the turn
 
 
 @pytest.mark.asyncio
@@ -314,13 +323,13 @@ async def test_no_host_falls_back_or_fails(cenv):
         cenv.svc.set(f"home.{k}", v, actor="human:op")
     res = await cenv.node.dispatch("home.ask", {"question": "x"}, "agent:claude")
     assert res["ok"] and res["result"]["answer"] == "from the openai endpoint"
-    cenv.svc.set("home.claude_on_unavailable", "fail", actor="human:op")
+    cenv.svc.set("home.agent_on_unavailable", "fail", actor="human:op")
     res = await cenv.node.dispatch("home.ask", {"question": "x"}, "agent:claude")
     assert not res["ok"]
     # A fallback host takes over.
     cenv.band.workers["w-other"] = {"name": "sojourn", "caps": ["agenthost.turn"], "hb": {},
                                     "last_seen": time.time()}
-    cenv.svc.set("home.claude_fallback_workers", ["sojourn"], actor="human:op")
+    cenv.svc.set("home.agent_fallback_hosts", ["sojourn"], actor="human:op")
     res = await cenv.node.dispatch("home.ask", {"question": "x"}, "agent:claude")
     assert res["ok"] and cenv.band.calls[-1].target == "w-other"
 
@@ -371,7 +380,8 @@ async def test_job_step_on_claude_code(cenv):
 async def test_page_test_and_models_for_claude_code(cenv):
     svc = cenv.svc
     models = await cenv.home.page_action(svc, {"action": "home_models", "values": {}}, "human:op")
-    assert models["models"] == list(claude_code.MODELS) and models["hosts"][0]["name"] == "cachyrig"
+    assert models["models"] == ["haiku", "sonnet"] and models["hosts"][0]["name"] == "cachyrig"
+    assert cenv.band.calls[-1].cap == "agenthost.models"
     res = await cenv.home.page_action(svc, {"action": "home_test",
                                             "values": {"claude_model": "sonnet"}}, "human:op")
     assert res["ok"] and res["reply"] == "hi from claude" and res["worker"] == "cachyrig"
@@ -381,7 +391,7 @@ async def test_page_test_and_models_for_claude_code(cenv):
         "claude_auth": "token", "claude_token": "{{secret:cc-token}}"}}, "human:op")
     assert "oauth_token" not in cenv.band.calls[-1].args
     page = cenv.home.page(svc)
-    assert "claude-code" in page["backends"] and page["claude_hosts"]
+    assert "claude-code" in page["backends"] and page["agent_hosts"]
 
 
 @pytest.mark.asyncio
@@ -395,3 +405,135 @@ async def test_chat_reply_on_claude_code(cenv):
     msgs = store.read(room, "user:operator")["messages"]
     assert msgs[-1]["sender"] == "agent:home" and msgs[-1]["text"] == "hi from claude"
     assert "hello home" in cenv.band.calls[-1].args["prompt"]
+
+
+# -- codex and opencode ------------------------------------------------------------------
+
+FAKE_HARNESS = r"""#!{python}
+import json, os, sys
+args = sys.argv[1:]
+name = os.path.basename(sys.argv[0])
+if args[:1] == ["--version"]:
+    print(name + " 1.2.3"); sys.exit(0)
+if args[:2] == ["login", "status"]:
+    print("Logged in using ChatGPT"); sys.exit(0)
+if args[:2] == ["debug", "models"]:
+    print(json.dumps({{"models": [{{"slug": "gpt-a", "visibility": "list"}},
+                                 {{"slug": "gpt-hidden", "visibility": "hide"}}]}})); sys.exit(0)
+if args[:1] == ["models"]:
+    print("kaiju/qwopus\nopencode/big-pickle"); sys.exit(0)
+prompt = sys.stdin.read()
+cfg = None
+if name == "opencode":
+    cfg = json.load(open(os.path.join(os.environ["XDG_CONFIG_HOME"], "opencode", "opencode.json")))
+with open(os.environ["FAKE_CLAUDE_LOG"], "a") as f:
+    f.write(json.dumps({{"name": name, "argv": args, "prompt": prompt, "cfg": cfg,
+                        "token": os.environ.get("ROOK_TURN_TOKEN")}}) + "\n")
+def out(ev):
+    print(json.dumps(ev), flush=True)
+if name == "codex":
+    out({{"type": "thread.started", "thread_id": "t"}})
+    out({{"type": "item.started", "item": {{"type": "mcp_tool_call", "server": "home",
+                                          "tool": "knowledge_search"}}}})
+    out({{"type": "item.completed", "item": {{"type": "agent_message", "text": "codex says hi"}}}})
+    out({{"type": "turn.completed", "usage": {{"input_tokens": 10, "output_tokens": 2}}}})
+else:
+    out({{"type": "tool_use", "part": {{"tool": "home_knowledge_search"}}}})
+    out({{"type": "text", "part": {{"text": "summary", "synthetic": True}}}})
+    out({{"type": "text", "part": {{"text": "opencode says hi"}}}})
+    out({{"type": "step_finish", "part": {{"reason": "stop", "tokens": {{"input": 5, "output": 3}},
+                                         "cost": 0}}}})
+"""
+
+
+@pytest.fixture
+def harnesses(host, tmp_path):
+    for name in ("codex", "opencode"):
+        exe = tmp_path / "bin" / name
+        exe.write_text(FAKE_HARNESS.format(python=sys.executable))
+        exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
+    conf = tmp_path / "home" / ".config" / "opencode"
+    conf.mkdir(parents=True)
+    (conf / "opencode.jsonc").write_text("""{
+      // my setup
+      "model": "kaiju/qwopus",
+      "provider": {"kaiju": {"options": {"baseURL": "http://kaiju:1234/v1"}}},
+      "mcp": {"rook": {"type": "remote", "url": "https://x/mcp", "headers": {"Authorization": "Bearer SECRET"}}},
+      "plugin": ["something"],
+    }""")
+    return host
+
+
+@pytest.mark.asyncio
+async def test_codex_turn_is_locked_down(harnesses):
+    host = harnesses
+    assert set(host.installed()) == {"claude", "codex", "opencode"}
+    out = await host._turn(**_turn(turn_id="c1", harness="codex", model="gpt-a", effort="low"))
+    assert out["ok"], out
+    assert out["text"] == "codex says hi" and out["tools_used"] == ["knowledge_search"]
+    assert out["harness"] == "codex" and out["usage"]["input_tokens"] == 10
+    seen = json.loads(host.log.read_text().splitlines()[-1])
+    argv = seen["argv"]
+    assert argv[:2] == ["exec", "--json"] and argv[-1] == "-"
+    for flag in ("--ephemeral", "--ignore-user-config", "--ignore-rules"):
+        assert flag in argv
+    assert argv[argv.index("-s") + 1] == "read-only"
+    joined = " ".join(argv)
+    for c in ('approval_policy="never"', "features.shell_tool=false", "include_apply_patch_tool=false",
+              'mcp_servers.home.bearer_token_env_var="ROOK_TURN_TOKEN"',
+              'mcp_servers.home.default_tools_approval_mode="approve"',
+              'model_reasoning_effort="low"', 'developer_instructions="You are home."'):
+        assert c in joined, c
+    assert "tok-123" not in joined and seen["token"] == "tok-123" and seen["prompt"] == "hi"
+    assert (await host._models("codex"))["models"] == ["gpt-a"]
+
+
+@pytest.mark.asyncio
+async def test_opencode_turn_gets_only_its_providers(harnesses):
+    host = harnesses
+    out = await host._turn(**_turn(turn_id="o1", harness="opencode", model="kaiju/qwopus"))
+    assert out["ok"], out
+    assert out["text"] == "opencode says hi" and out["tools_used"] == ["knowledge_search"]
+    seen = json.loads(host.log.read_text().splitlines()[-1])
+    cfg = seen["cfg"]
+    assert cfg["provider"] == {"kaiju": {"options": {"baseURL": "http://kaiju:1234/v1"}}}
+    assert list(cfg["mcp"]) == ["home"] and "plugin" not in cfg        # never the user's
+    assert cfg["mcp"]["home"]["headers"]["Authorization"] == "Bearer {env:ROOK_TURN_TOKEN}"
+    assert cfg["tools"] == {"*": False, "home_*": True}
+    assert cfg["agent"]["rookhome"]["prompt"] == "You are home."
+    assert cfg["permission"]["bash"] == "deny"
+    assert seen["argv"][:5] == ["run", "--format", "json", "--pure", "--agent"]
+    assert "SECRET" not in json.dumps(seen) and seen["token"] == "tok-123"
+    assert (await host._models("opencode"))["models"] == ["kaiju/qwopus", "opencode/big-pickle"]
+
+
+def test_agenthost_turns_itself_on_when_a_harness_is_installed(host, monkeypatch):
+    monkeypatch.delenv("ROOK_AGENTHOST", raising=False)
+    plugin = agenthost.AgentHost()
+    assert plugin.available()                                # claude is on PATH
+    monkeypatch.setenv("ROOK_AGENTHOST", "0")
+    assert not plugin.available()
+
+
+def test_strip_jsonc():
+    assert json.loads(agenthost.strip_jsonc('{"a": "x // not a comment", /* c */ "b": [1,],}')) \
+        == {"a": "x // not a comment", "b": [1]}
+
+
+@pytest.mark.asyncio
+async def test_codex_backend_needs_a_host_with_codex_signed_in(cenv):
+    cenv.svc.set("home.backend", "codex", actor="human:op")
+    cenv.svc.set("home.codex_model", "gpt-a", actor="human:op")
+    cenv.svc.set("home.agent_on_unavailable", "fail", actor="human:op")
+    res = await cenv.node.dispatch("home.ask", {"question": "x"}, "agent:claude")
+    assert not res["ok"]                                       # codex is signed out there
+    cenv.band.workers["w-cachy"]["hb"]["agenthost"]["harnesses"]["codex"]["logged_in"] = True
+    res = await cenv.node.dispatch("home.ask", {"question": "x"}, "agent:claude")
+    assert res["ok"], res
+    call = cenv.band.calls[-1]
+    assert call.args["harness"] == "codex" and call.args["model"] == "gpt-a"
+    st = cenv.home.status()
+    assert st["agent_host"]["harness"] == "codex" and st["model"] == "gpt-a"
+    cenv.svc.set("home.backend", "opencode", actor="human:op")
+    res = await cenv.node.dispatch("home.ask", {"question": "x"}, "agent:claude")
+    assert not res["ok"]                                       # no opencode on that host
