@@ -164,7 +164,9 @@ steps) and `home.job_max_tool_calls` (20).
 With `home.backend = claude-code` every model call (chat replies, `home.ask`,
 job steps, memory summaries, Test) runs as one headless `claude -p` on an
 *agent host*: a worker with the `agenthost` plugin
-(`rook/worker/plugins/agenthost.py`) and a logged-in `claude`. Design:
+(`rook/worker/plugins/agenthost.py`), switched on for that worker
+(`agenthost.enabled`, worker scope, or `ROOK_AGENTHOST=1`; off by default),
+and a logged-in `claude`. Design:
 [huddles.md](huddles.md) section 3.
 
 - **Host.** `home.claude_worker`, then `home.claude_fallback_workers`; the

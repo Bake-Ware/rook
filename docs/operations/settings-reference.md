@@ -133,6 +133,12 @@ are set only in the environment or on the command line.
 | `core.worker.authz_mode` | Worker permission checks | band+worker | str | `audit` | `ROOK_AUTHZ_MODE` | restart |
 | `core.worker.authz_allow_unsigned_repoint` | Allow unsigned hub/PSK changes | band+worker | bool | off | `ROOK_AUTHZ_ALLOW_UNSIGNED_REPOINT` | restart |
 
+## Agenthost (worker plugin, runs in worker)
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `agenthost.enabled` | House agent host | worker | bool | off | `ROOK_AGENTHOST` | restart |
+
 ## Claude Code rules (hub plugin, runs in mcp)
 
 | Key | Label | Scope | Type | Default | Env / flag | Apply |

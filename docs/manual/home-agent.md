@@ -45,7 +45,10 @@ machine you choose (the **agent host**). The hub keeps its memory, persona and
 tools; each answer is one Claude Code run on that machine.
 
 1. On the machine, install Claude Code and sign in (`claude`, then `/login`).
-   Its Rook worker needs a build with the **agenthost** plugin.
+   Then allow it to host: **Settings > Workers**, that machine, **House agent
+   host** on (off by default, so a machine with Claude Code installed is never
+   used unless you say so). Its Rook worker needs a build with the
+   **agenthost** plugin.
 2. On **Home agent**, set **Backend** to *Claude Code on an agent host*.
 3. Pick the **Agent host** and a **Model** (`haiku` is quick and cheap; `sonnet`
    and `opus` think harder). **Test** shows the answer, the host and the time.

@@ -146,6 +146,8 @@ def host(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("FAKE_CLAUDE_LOG", str(tmp_path / "claude.log"))
     plugin = agenthost.AgentHost()
+    assert not plugin.available()                         # opt-in per worker
+    monkeypatch.setenv("ROOK_AGENTHOST", "1")
     plugin.__dict__["_data_root"] = str(tmp_path / "state")
     plugin.log = tmp_path / "claude.log"
     return plugin

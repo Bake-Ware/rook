@@ -17,7 +17,9 @@ The prompt goes in on stdin. Auth is the host's own ``claude`` login, or a
 long-lived token from ``claude setup-token`` (``oauth_token``, passed as
 ``CLAUDE_CODE_OAUTH_TOKEN``; the hub resolves it from its vault).
 
-Only active where a ``claude`` binary is on PATH.
+Off unless the worker opts in (``agenthost.enabled``, or ``ROOK_AGENTHOST=1``):
+a machine with Claude Code installed is not a house agent host until someone
+says so. Then only active where a ``claude`` binary is found.
 """
 
 from __future__ import annotations
@@ -35,7 +37,7 @@ import time
 from pathlib import Path
 
 from ...core.pluginkit import fail, which
-from ..plugin import Plugin, capability
+from ..plugin import Plugin, capability, setting
 
 log = logging.getLogger("rook.worker.plugins.agenthost")
 
@@ -143,6 +145,12 @@ class Turn:
 
 class AgentHost(Plugin):
     NAMESPACE = "agenthost"
+    SETTINGS = (
+        setting("enabled", bool, default=False, scope="worker", env="ROOK_AGENTHOST",
+                apply="restart", label="House agent host",
+                help="On: this worker may run the hub's home agent turns with its local, "
+                     "logged-in Claude Code (Manage > Home agent > Agent host). Off by default."),
+    )
 
     def __init__(self) -> None:
         super().__init__()
@@ -155,7 +163,7 @@ class AgentHost(Plugin):
         self._probe: asyncio.Task | None = None
 
     def available(self) -> bool:
-        return _claude() is not None
+        return bool(self.settings.get("enabled")) and _claude() is not None
 
     async def start(self) -> None:
         self._probe = asyncio.create_task(self._refresh())
