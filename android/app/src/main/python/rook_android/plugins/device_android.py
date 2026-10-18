@@ -1,21 +1,65 @@
 """device.* — grab-bag device controls that need no special service.
 
-info, vibrate, torch (flashlight), clipboard get/set, open a URL, launch an app.
-Most need no permission; VIBRATE is a normal (auto-granted) permission. Clipboard
+info, vibrate, torch (flashlight), clipboard get/set, open a URL, launch an app,
+wake/unlock, and keep-awake (device.keep_awake; passive mode is in
+rook_android.keepawake). Most need no permission; VIBRATE is a normal (auto-granted) permission. Clipboard
 *read* is blocked in the background on Android 10+, so device.clipboard_get is
 best-effort.
 """
 
 from __future__ import annotations
 
+import json
+import os
 import time
 
-from rook.worker.plugin import Plugin, capability
+from rook.worker.plugin import Plugin, capability, setting
 from rook_android.androidctx import app_context, jclass, cast
+
+ENV_KEEP_AWAKE_AUTO = "ROOK_KEEP_AWAKE_AUTO"
+ENV_KEEP_AWAKE_IDLE = "ROOK_KEEP_AWAKE_IDLE_MINUTES"
+
+
+def _ka(name: str):
+    return jclass(f"systems.bake.rook.{name}")
+
+
+def _flag(v) -> bool:
+    if isinstance(v, str):
+        return v.strip().lower() in ("1", "true", "yes", "on")
+    return bool(v)
 
 
 class AndroidDevicePlugin(Plugin):
     NAMESPACE = "device"
+    # Passive keep-awake lives in the app's Settings screen; a value pushed with
+    # worker.config_apply (env) is copied there when it changes (last change wins).
+    SETTINGS = (
+        setting("keep_awake_auto", bool, default=True, scope="worker", env=ENV_KEEP_AWAKE_AUTO,
+                label="Keep phone awake while agent is working",
+                help="Screen-driving caps (ui.*, hid.*, screenshot.*, device.launch) wake the "
+                     "phone and keep it awake until it has been idle for the timeout."),
+        setting("keep_awake_idle_minutes", int, default=10, scope="worker",
+                env=ENV_KEEP_AWAKE_IDLE, min=1, max=1440,
+                label="Keep-awake idle timeout (minutes)"),
+    )
+
+    async def start(self) -> None:
+        ctx = app_context()
+        if ctx is None:
+            return
+        auto, idle = os.environ.get(ENV_KEEP_AWAKE_AUTO), os.environ.get(ENV_KEEP_AWAKE_IDLE)
+        if auto is not None or idle is not None:
+            _ka("KeepAwake").applyPushed(ctx, auto, idle)
+
+    def setting_values(self) -> dict:
+        """Current values of SETTINGS (the app's preferences), for worker.settings_report."""
+        ctx = app_context()
+        if ctx is None:
+            return {}
+        ka = _ka("KeepAwake")
+        return {"keep_awake_auto": bool(ka.autoEnabled(ctx)),
+                "keep_awake_idle_minutes": int(ka.idleMinutes(ctx))}
 
     @capability("update")
     def _update(self) -> dict:
@@ -25,13 +69,11 @@ class AndroidDevicePlugin(Plugin):
         Android may require install permission or notification confirmation.
         Poll device.update_status; the worker reconnects after APK replacement.
         """
-        import json
         return json.loads(str(jclass("systems.bake.rook.ApkUpdater").request(app_context(), False)))
 
     @capability("update_status")
     def _update_status(self) -> dict:
         """APK updater progress, installed/target versions, and required action."""
-        import json
         return json.loads(str(jclass("systems.bake.rook.ApkUpdater").status(app_context())))
 
     @capability("find")
@@ -40,7 +82,6 @@ class AndroidDevicePlugin(Plugin):
 
         Use device.find_stop to stop early. Device DND policy applies.
         """
-        import json
         try:
             return json.loads(str(jclass("systems.bake.rook.FindDeviceBridge").ring(app_context(), max(1, min(int(seconds), 120)))))
         except Exception as e:
@@ -49,7 +90,6 @@ class AndroidDevicePlugin(Plugin):
     @capability("find_stop")
     def _find_stop(self) -> dict:
         """Stop the find-device ring and restore the previous alarm volume."""
-        import json
         return json.loads(str(jclass("systems.bake.rook.FindDeviceBridge").stop()))
 
     @capability("info")
@@ -113,75 +153,76 @@ class AndroidDevicePlugin(Plugin):
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
     @capability("unlock")
-    async def _unlock(self, pin: str, hold_ms: int = 9000, pre_swipe: bool = True) -> dict:
+    async def _unlock(self, pin: str = "", hold_ms: int = 9000, pre_swipe: bool = True) -> dict:
         """Unlock a PIN-secured screen: wake, surface the PIN bouncer, and tap
         the digits at keypad positions computed from the live screen size.
 
-        ``pin`` is digits only, passed per-call (never stored in the app). This
-        does NOT bypass anything — it enters the real PIN the way a finger would,
-        so it only works with the correct PIN and where the OS lets the
-        accessibility service inject taps on the keyguard (verified on Samsung /
-        One UI). Standard 4/6-digit PINs auto-submit; a variable-length PIN may
-        need an explicit OK/enter the phone shows.
+        ``pin`` is digits only. Leave it out to use the PIN saved in the app
+        (Settings > App > Device unlock PIN): that PIN stays on the phone and the
+        reply carries no digits or tap positions. This does NOT bypass anything:
+        it enters the real PIN the way a finger would, where the OS lets the
+        accessibility service tap on the keyguard (verified on Samsung / One UI).
+        Standard 4/6-digit PINs auto-submit; ``unlocked`` says whether the lock
+        screen went away.
         """
-        import asyncio
+        from rook_android.unlock import unlock
+        given = None if pin is None or not str(pin).strip() else str(pin)
+        return await unlock(given, hold_ms=int(hold_ms), pre_swipe=_flag(pre_swipe))
+
+    @capability("unlock_status")
+    def _unlock_status(self) -> dict:
+        """Whether an unlock PIN is saved in the app (never the PIN itself), and
+        whether passive keep-awake may use it (paused after a failed automatic try)."""
         ctx = app_context()
         if ctx is None:
             return {"ok": False, "error": "not an Android host"}
-        pin = str(pin).strip()
-        if not pin or not pin.isdigit():
-            return {"ok": False, "error": "pin must be digits only"}
+        return json.loads(str(_ka("UnlockPin").status(ctx)))
+
+    @capability("keep_awake")
+    def _keep_awake(self, on: bool, minutes: int = 30) -> dict:
+        """Keep the screen on (so it never locks) for ``minutes`` (1–1440), then
+        release; on=false releases now. Wakes the screen if it is off. Holds an
+        invisible keep-screen-on window plus a screen wake lock and pokes user
+        activity every minute, so a screen-timeout policy can't lock it. Returns
+        the state (see device.keep_awake_status)."""
+        ctx = app_context()
+        if ctx is None:
+            return {"ok": False, "error": "not an Android host"}
         try:
-            Hid = jclass("systems.bake.rook.HidAccessibilityService")
-            if not Hid.isEnabled():
-                return {"ok": False, "error": "accessibility (HID) not enabled — grant it in the app"}
-            Settings = jclass("android.provider.Settings")
-            if not Settings.canDrawOverlays(ctx):
-                return {"ok": False, "error": "grant 'Display over other apps' first"}
+            ka = _ka("KeepAwake")
+            raw = ka.engage(ctx, int(minutes)) if _flag(on) else ka.release(ctx)
+            return json.loads(str(raw))
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-            # Live screen size → keypad coordinate model.
-            Context = jclass("android.content.Context")
-            wm = cast(jclass("android.view.WindowManager"), ctx.getSystemService(Context.WINDOW_SERVICE))
-            DisplayMetrics = jclass("android.util.DisplayMetrics")
-            m = DisplayMetrics()
-            wm.getDefaultDisplay().getRealMetrics(m)
-            w, h = int(m.widthPixels), int(m.heightPixels)
+    @capability("keep_awake_status")
+    def _keep_awake_status(self) -> dict:
+        """Keep-awake state: on, mode (manual|auto), until (epoch s), remaining_s,
+        overlay/wake_lock in use, screen_on, locked, the passive setting, whether
+        an unlock PIN is saved, and the device's screen timeout / policy cap."""
+        ctx = app_context()
+        if ctx is None:
+            return {"ok": False, "error": "not an Android host"}
+        try:
+            return json.loads(str(_ka("KeepAwake").status(ctx)))
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-            # Wake + surface the PIN bouncer (requestDismissKeyguard).
-            Intent = jclass("android.content.Intent")
-            ComponentName = jclass("android.content.ComponentName")
-            i = Intent()
-            i.setComponent(ComponentName(ctx, "systems.bake.rook.WakeActivity"))
-            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            i.putExtra("dismiss", True)
-            i.putExtra("hold_ms", int(hold_ms))
-            ctx.startActivity(i)
-            await asyncio.sleep(1.3)  # let the screen wake + bouncer come up
-
-            # A nudge swipe helps on setups that show the clock before the pad.
-            if pre_swipe:
-                try:
-                    Hid.swipe(int(w * 0.5), int(h * 0.85), int(w * 0.5), int(h * 0.2), 200)
-                    await asyncio.sleep(0.5)
-                except Exception:
-                    pass
-
-            # Samsung/One UI portrait PIN bouncer: 3 cols, rows for 1-9 then 0.
-            colx = [round(0.25 * w), round(0.5 * w), round(0.75 * w)]
-            rowy = [round(0.641 * h), round(0.718 * h), round(0.795 * h), round(0.872 * h)]
-            pos = {str(d): (colx[(d - 1) % 3], rowy[(d - 1) // 3]) for d in range(1, 10)}
-            pos["0"] = (colx[1], rowy[3])
-
-            taps = []
-            for ch in pin:
-                x, y = pos[ch]
-                ok = bool(Hid.tap(int(x), int(y)))
-                taps.append({"d": ch, "x": x, "y": y, "ok": ok})
-                await asyncio.sleep(0.28)
-
-            return {"ok": True, "screen": {"w": w, "h": h}, "digits": len(pin),
-                    "taps": taps,
-                    "note": "4/6-digit PINs auto-submit; verify with ui.text"}
+    @capability("keep_awake_settings")
+    def _keep_awake_settings(self, auto: bool | None = None, idle_minutes: int | None = None) -> dict:
+        """Change the passive setting now (same as the app's Settings screen):
+        auto = "Keep phone awake while agent is working" (screen-driving caps wake
+        the phone and hold it), idle_minutes = release after this long without
+        one (1–1440). Omit a field to leave it. Returns the state."""
+        ctx = app_context()
+        if ctx is None:
+            return {"ok": False, "error": "not an Android host"}
+        try:
+            Bool = jclass("java.lang.Boolean")
+            Int = jclass("java.lang.Integer")
+            a = None if auto is None or auto == "" else Bool(_flag(auto))
+            m = None if idle_minutes is None or idle_minutes == "" else Int(int(idle_minutes))
+            return json.loads(str(_ka("KeepAwake").configure(ctx, a, m)))
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 

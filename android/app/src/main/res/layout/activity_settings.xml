@@ -83,6 +83,23 @@
           <Button android:id="@+id/btnUpdate" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Download APK in browser ↗" style="@style/RookOutlinedButton" />
         </LinearLayout>
         <LinearLayout style="@style/RookPanel">
+          <TextView style="@style/RookSectionLabel" android:text="AGENT CONTROL" />
+          <CheckBox android:id="@+id/keepAwakeAuto" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Keep phone awake while agent is working" />
+          <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:orientation="horizontal">
+            <TextView android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:textColor="@color/rook_fg" android:text="Release after this many idle minutes" />
+            <EditText android:id="@+id/keepAwakeMinutes" android:layout_width="72dp" android:layout_height="wrap_content" android:gravity="end" android:inputType="number" android:maxLength="4" android:hint="10" />
+          </LinearLayout>
+          <TextView style="@style/RookHelp" android:text="When an agent taps, reads or screenshots the screen, the phone wakes and the screen stays on until it has been idle this long." />
+          <TextView style="@style/RookFieldLabel" android:text="Device unlock PIN" />
+          <EditText android:id="@+id/unlockPin" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Device unlock PIN" android:inputType="numberPassword" android:maxLength="16" android:importantForAutofill="no" />
+          <TextView android:id="@+id/unlockPinStatus" style="@style/RookHelp" />
+          <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+            <Button android:id="@+id/btnSavePin" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:layout_marginEnd="6dp" android:text="Save PIN" />
+            <Button android:id="@+id/btnClearPin" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:layout_marginStart="6dp" android:text="Clear PIN" style="@style/RookOutlinedButton" />
+          </LinearLayout>
+          <TextView style="@style/RookHelp" android:text="Lets device.unlock and keep-awake unlock the phone for an agent. Stored encrypted on this phone only; never sent to the hub. Anyone who can call this phone's caps on the band can then unlock it." />
+        </LinearLayout>
+        <LinearLayout style="@style/RookPanel">
           <TextView style="@style/RookSectionLabel" android:text="ADVANCED · VOICE CONNECTION" />
           <TextView style="@style/RookFieldLabel" android:text="@string/hint_voice_url" />
           <EditText android:id="@+id/voiceUrl" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="@string/hint_voice_url" android:inputType="textUri" />

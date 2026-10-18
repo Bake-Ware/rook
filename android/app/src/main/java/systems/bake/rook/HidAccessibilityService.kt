@@ -31,10 +31,12 @@ class HidAccessibilityService : AccessibilityService() {
         // the XML so a service bound before the XML change still reports them.
         serviceInfo = serviceInfo?.apply { flags = flags or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS }
         instance = this
+        KeepAwake.accessibilityChanged()
     }
 
     override fun onDestroy() {
         if (instance === this) instance = null
+        KeepAwake.accessibilityChanged()
         super.onDestroy()
     }
 
@@ -270,6 +272,9 @@ class HidAccessibilityService : AccessibilityService() {
         @Volatile private var instance: HidAccessibilityService? = null
 
         @JvmStatic fun isEnabled(): Boolean = instance != null
+
+        /** Context for TYPE_ACCESSIBILITY_OVERLAY windows (keep-awake), or null if not enabled. */
+        fun overlayContext(): android.content.Context? = instance
 
         // Gesture dispatch is API 24+. On Android 6/7-without-N it's unavailable;
         // callers get false (text input + global actions still work).

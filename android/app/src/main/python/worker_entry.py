@@ -77,6 +77,10 @@ def _attach_native_plugins(worker) -> None:
         worker.plugins.append(plugin)
         log.info("attached native plugin ns=%s caps=%d",
                  plugin.NAMESPACE, len(plugin.caps()))
+    # Passive keep-awake: screen-driving caps wake the phone and hold it awake.
+    from rook_android.keepawake import wrap_registry
+    wrapped = wrap_registry(worker.registry)
+    log.info("keep-awake wraps %d screen caps", len(wrapped))
 
 
 def _setup_logging() -> None:
