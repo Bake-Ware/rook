@@ -31,7 +31,7 @@ import java.util.concurrent.TimeUnit
  *    shows over the keyguard), else an app overlay with "Display over other apps";
  *  - a SCREEN_BRIGHT wake lock with a timeout just past the hold, so it lapses
  *    by itself even if this process stops managing it;
- *  - a user-activity poke every minute (a short ON_AFTER_RELEASE screen lock;
+ *  - a user-activity poke every 20 seconds (a short ON_AFTER_RELEASE screen lock;
  *    releasing it counts as user activity), which also resets attentive timeouts.
  * The power button still turns the screen off.
  *
@@ -45,7 +45,7 @@ object KeepAwake {
     const val DEFAULT_IDLE_MINUTES = 10
     private const val PREF_ENV_AUTO = "keep_awake_env_auto"
     private const val PREF_ENV_IDLE = "keep_awake_env_idle"
-    private const val POKE_MS = 60_000L
+    private const val POKE_MS = 20_000L
 
     private val main = Handler(Looper.getMainLooper())
     private val policy = KeepAwakePolicy()

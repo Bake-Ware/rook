@@ -183,7 +183,7 @@ class AndroidDevicePlugin(Plugin):
         """Keep the screen on (so it never locks) for ``minutes`` (1–1440), then
         release; on=false releases now. Wakes the screen if it is off. Holds an
         invisible keep-screen-on window plus a screen wake lock and pokes user
-        activity every minute, so a screen-timeout policy can't lock it. Returns
+        activity every 20 seconds, so a screen-timeout policy can't lock it. Returns
         the state (see device.keep_awake_status)."""
         ctx = app_context()
         if ctx is None:
