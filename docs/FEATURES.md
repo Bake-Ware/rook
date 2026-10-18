@@ -184,6 +184,7 @@ On top of the usual `shell.*`, `file.*` and `info.*`, the app adds what only a p
 |---|---|
 | `screenshot.capture` | The real screen, via Android's screen capture |
 | `hid.type` · `hid.key_combo` · `hid.mouse.click` · `hid.mouse.drag` · `ui.text` | Type, tap and swipe, and read all the text on screen, through an accessibility service (**no root**) |
+| `ui.nodes` · `ui.click` · `ui.scroll` · `ui.back` | List what's on screen with labels, ids and bounds, then tap, scroll or go back by label instead of by pixel. Works in apps that block screenshots |
 | `sms.list` · `sms.send` · `calllog.list` · `contacts.search` | Texts, call history and contacts |
 | `notify.list` · `notify.dismiss` · `notify.post` | Read, clear and post notifications |
 | `location.get` | Where the device is, with accuracy and a map link |
