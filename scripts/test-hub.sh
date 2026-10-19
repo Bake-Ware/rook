@@ -275,7 +275,8 @@ cmd_start() {
                ROOK_JOBS_ADMIN_URL="http://127.0.0.1:$MCP_PORT/jobs/account-api"
                ROOK_CCMOD_ADMIN_URL="http://127.0.0.1:$MCP_PORT/ccmod/account-api"
                ROOK_PLUGINS_ADMIN_URL="http://127.0.0.1:$MCP_PORT/plugins/account-api"
-               ROOK_UPDATES_ADMIN_URL="http://127.0.0.1:$MCP_PORT/updates/account-api")
+               ROOK_UPDATES_ADMIN_URL="http://127.0.0.1:$MCP_PORT/updates/account-api"
+               ROOK_MASK_URL="http://127.0.0.1:$MCP_PORT/internal/mask")
     spawn dashboard "$DATA/hub/home" "$PYTHON" -m rook.remote.bootstrap --bind "$BIND" \
         --port "$DASHBOARD_PORT" --hub-host 127.0.0.1 --hub-port "$RELAY_PORT" \
         --domain "$public:$DASHBOARD_PORT" --hub-public "$public:$MCP_PORT" --band-name test-hub
