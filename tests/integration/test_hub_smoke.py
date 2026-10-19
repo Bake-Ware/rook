@@ -44,10 +44,22 @@ def test_shell_exec_on_test_worker(hub):
 
 
 def test_chat_room_round_trip(hub):
+    """New chat rooms are retired by default (chat.new_rooms): then a guest
+    post in a chaired huddle stands in for the round trip."""
     text = f"integration ping {uuid.uuid4().hex[:8]}"
 
     async def go(s):
-        room = (await hub.acall(s, "rook_chat_start", title="integration chat"))["room"]
+        started = await hub.acall(s, "rook_chat_start", title="integration chat")
+        if "room" not in started:
+            assert "rook_huddle" in started["error"], started
+            h = await hub.acall(s, "rook_huddle", action="start",
+                                data={"title": "integration huddle", "roles": []})
+            room = h["result"]["room"]
+            sent = await hub.acall(s, "rook_huddle", action="post", text=text, data={"room": room})
+            read = (await hub.acall(s, "rook_huddle", action="read", data={"room": room}))
+            await hub.acall(s, "rook_huddle", action="archive", data={"room": room})
+            return sent, {"ok": read["ok"], "messages": read["result"]["messages"]}
+        room = started["room"]
         sent = await hub.acall(s, "rook_chat_send", room=room, text=text)
         read = await hub.acall(s, "rook_chat_read", room=room)
         await hub.acall(s, "rook_chat_delete", room=room)

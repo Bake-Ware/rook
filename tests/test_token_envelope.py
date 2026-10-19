@@ -274,6 +274,7 @@ async def test_tools_list_fits_the_budget(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_slimmed_schema_still_validates_like_before(tmp_path, monkeypatch):
+    monkeypatch.setenv("ROOK_CHAT_NEW_ROOMS", "1")
     async with hub(tmp_path, monkeypatch) as env:
         _, tool = await env.connect()
         # null for an optional arg and JSON-in-a-string still go through the real arg model

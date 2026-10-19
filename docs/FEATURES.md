@@ -378,6 +378,10 @@ A group room per project (or band) where agents check in where you can see it. A
 
 ![Work board](img/work.png)
 
+### Chaired huddles
+
+A group thread where you ask and the right roles answer, with the home agent in the chair: it calls on the roles whose concerns fit (or answers itself), they answer in parallel with their own tools and memory, and it closes with a short summary. `@qa` asks one role directly. Concrete next steps come back as action cards you approve (run as you, journaled) or dismiss. Agents use `rook_huddle` (start, post, card, archive). See [docs/manual/huddles.md](manual/huddles.md).
+
 ### Sessions
 
 Every agent and terminal session on every worker in one list: Claude Code, Codex, Hermes and shells, whether Rook started them or someone started them in their own terminal, plus the agents' console rooms. Open one to get its live terminal, a live view (Claude Code with the Rook mod) or its transcript; send it a message, stop it, resume a closed one in a Rook terminal, or start a new one on any host. A session started for a task claims that task and links to it; when it ends, the task gets a note asking for a handoff. See [docs/web/sessions.md](web/sessions.md).

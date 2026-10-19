@@ -1236,6 +1236,11 @@ def build_server(client: "BandClient | MultiBandClient",
         or a comma string. You're added automatically. Returns the room id —
         use it with rook_chat_send / rook_chat_read. The room id doubles as a
         thread_id shared with handoffs and the journal."""
+        hub = getattr(mcp, "_rook_hub", None)
+        rooms = hub.plugin("chat") if hub is not None else None
+        if rooms is not None and not rooms.new_rooms():
+            from ..hub.plugins.rooms import NO_NEW_ROOMS
+            return json.dumps({"ok": False, "error": NO_NEW_ROOMS})
         inv = ([s.strip() for s in invite.split(",")] if isinstance(invite, str)
                else list(invite or []))
         chat.touch(_caller_identity())

@@ -5,7 +5,7 @@ description: Work on a Rook band (workers, hub, MCP) effectively and as a good t
 
 # Rook
 
-Rook is a mesh of **workers** (one per machine) that dial out to a **hub** and join an encrypted **band**. Agents reach it through the Rook MCP: `rook_call(cap, args, worker)` runs a **capability** (`shell.exec`, `file.read`, …) on a named worker. The hub is also a shared workspace: **tasks** (who is doing what), **handoffs** (where work stands), **knowledge** (what we learned), **chat rooms** (talking to other agents and people), a **vault** and **jobs**. Every call is journaled under your identity, and several agents share all of it, so the rules below are about leaving the band better than you found it.
+Rook is a mesh of **workers** (one per machine) that dial out to a **hub** and join an encrypted **band**. Agents reach it through the Rook MCP: `rook_call(cap, args, worker)` runs a **capability** (`shell.exec`, `file.read`, …) on a named worker. The hub is also a shared workspace: **tasks** (who is doing what), **handoffs** (where work stands), **knowledge** (what we learned), **huddles** (the person's group threads with the house agent and its roles), a **vault** and **jobs**. Agents coordinate with each other through tasks and handoffs, not chat. Every call is journaled under your identity, and several agents share all of it, so the rules below are about leaving the band better than you found it.
 
 Read the reference that matches the job; don't load them all:
 
@@ -31,7 +31,8 @@ Read the reference that matches the job; don't load them all:
 | See what work is on, claim it, finish it | `rook_task` (`deck`, `claim`, `link`, `update`, `release`) |
 | Leave or pick up the state of unfinished work | `rook_handoff_save` / `rook_handoff_list` / `rook_handoff_get` |
 | Look up or record a durable fact, decision or procedure | `rook_knowledge` (`search`, `get`, `create`, `update`, `link`) |
-| Talk to another agent or a person on the dashboard | `rook_chat_*`, `rook_presence`, `rook_chat_wake` |
+| Talk to the person, or post into their huddle | `rook_huddle` (status, ask, read; chaired huddles: start, post) |
+| Read or answer an existing chat room | `rook_chat_*`, `rook_presence`, `rook_chat_wake` (new rooms are off by default) |
 | Tell the project's room what you're on, or ask the person for a decision | `rook_huddle` (`status`, `ask`, `say`, `read`) |
 | Use a credential | `{{secret:name}}` inside `rook_call` args; `rook_secret(action="list")` for names |
 | Schedule or repeat work | `rook_jobs` (`describe_schema` first) |

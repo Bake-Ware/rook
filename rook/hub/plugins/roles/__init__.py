@@ -360,7 +360,11 @@ class RolesPlugin(Plugin):
         return "\n\n".join(p for p in [persona, "\n\n".join(lines)] if p)
 
     async def turn(self, role: dict, question: str, context_text: str = "",
-                   asker: str = "") -> dict:
+                   asker: str = "", *, extra_tools: list[dict] | None = None,
+                   extra_handler: Any = None, guide: str = "", via: str = "") -> dict:
+        """One turn of ``role``. ``extra_tools`` (with ``extra_handler(role,
+        name, args) -> str``) are offered next to the role's own (a huddle's
+        ``propose``); ``guide`` is appended to the system prompt."""
         home = self._home()
         user = (f"[{asker}] " if asker else "") + question
         if context_text:
@@ -372,17 +376,23 @@ class RolesPlugin(Plugin):
             if not role.get("enabled", True):
                 raise RoleError(f"role {role['id']} is off")
             cfg = self.config_for(role)
-            msgs = [{"role": "system", "content": self.system_prompt(role, cfg)},
+            system = self.system_prompt(role, cfg)
+            if guide:
+                system += "\n\n" + guide
+            msgs = [{"role": "system", "content": system},
                     {"role": "user", "content": user[:ASK_CHARS]}]
-            tools = self.tools_for(role)
+            tools = self.tools_for(role) + list(extra_tools or [])
+            extra = {(t.get("function") or t)["name"] for t in extra_tools or []}
 
             async def handler(name: str, args: dict, role: dict = role) -> str:
+                if name in extra and extra_handler is not None:
+                    return await extra_handler(role, name, args)
                 return await self.run_tool(role, name, args)
 
             try:
                 res = await home.agents.run(cfg, msgs, tools=tools, handler=handler,
-                                            via=f"role-{role['id']}", max_tool_calls=limit,
-                                            role=role)
+                                            via=via or f"role-{role['id']}",
+                                            max_tool_calls=limit, role=role)
             except (Unavailable, TurnFailed) as e:
                 self.journal(role, "role.turn", "rook", {"role": role["id"]},
                              {"ok": False, "error": str(e)[:300]})
