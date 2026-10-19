@@ -212,8 +212,13 @@ One document per role:
 | Field | Meaning |
 |---|---|
 | `id`, `name` | `qa`, "QA engineer". Identity `role:<id>`; people write `@qa`. |
-| `charter` | One paragraph: what the role is for. |
+| `description` | One line: what it is for. The chair routes on it (with `concerns` and `examples`) instead of the whole charter. |
+| `category` | Optional preset category id (4.2). |
+| `charter` | What it owns, what it never does, how it decides, when it asks a person (up to 2000 characters). In every turn's system prompt. |
 | `concerns` | List: what it watches and is expected to raise unprompted. |
+| `checklist` | List: what it works through on every turn (in the system prompt). |
+| `examples` | Up to 5 questions it answers well (the chair sees 3). |
+| `seed_memory` | List: what it knows to start with. In the system prompt until its home exists, then written into its memory once (`agenthost.role_memory_edit`, by `system:roles`) right after the first turn (or by `role.move` when a role is moved before it has a home). |
 | `sources` | What it reads before answering (deck, jobs runs, journal, sessions, knowledge folders), as Rook caps with args. In H2 they are listed in its system prompt and it reads them with `rook_call`; H3 may pre-read them. |
 | `tools` | Cap scope, the Jobs format (`allow`/`deny` patterns). Default `knowledge.read` only. `role.ask`, `role.move`, `role.memory_edit` and `agenthost.*` are never callable by a role. |
 | `autonomy` | `propose` (default: only action cards) or `act` (may call `tools` directly). |
@@ -227,10 +232,38 @@ One document per role:
 Stored by the hub plugin `roles` (namespace `role`, `<state>/plugins/role/roles.db`),
 with revisions and an attributed history like persona profiles.
 
-### 4.2 Starting roster (editable presets)
+### 4.2 Starting roster (editable presets, by category)
 
 Offered by `role.presets` (and on the Roles tab in H4); nothing exists until
-someone saves one with `role.set`. As shipped, all three only propose.
+someone saves one with `role.set`. As shipped, every preset only proposes.
+
+**Presets are data.** `rook/hub/plugins/roles/presets/` holds
+`categories.toml` (`[[category]]`: stable `id`, display `name`, sort
+`order`, `description`, optional `guard`) and one `<id>.toml` per preset (a
+role document plus its `order` inside its `category`). `model.load_presets`
+validates them all at first use; a bad file is an error naming it. A
+category's `guard` applies to every preset in it: `autonomy` is required (a
+preset that says otherwise fails to load, never silently changed) and `deny`
+patterns are added to each preset's `tools.deny`. A denied cap can still be
+proposed as an action card; approving runs it as the person.
+
+`role.presets` returns `{categories: [{id, name, order, description, guard?,
+presets: [{id, name, description, category, autonomy, saved}]}]}` in sort
+order (`full: true` for whole documents, `category` to narrow), or
+`{preset, saved}` for one `id`. The Roles page shows them as one `<select>`
+with an `<optgroup>` per category and the picked preset's description under
+it, and fetches the picked preset whole.
+
+The categories as shipped: Product and planning (`pm`, `product`, `analyst`,
+`style`), Software engineering (`lead`, `qa`, `architect`, `security`),
+Operations (`release`, `sre`), Hardware and fabrication (`cad`, `pcb`,
+`firmware`, `fab`), Writing (`writer`, `editor`), Research (`research`,
+`ml`), Media and promotion (`social`, `launch`, `community`, `content`,
+`comms`; guard: propose, and posting, publishing, sending, shell and input
+caps denied), Critique (`skeptic`; guard: propose) and Home and family
+(`household`; guard: propose, and messages, voice, wake, camera and input
+denied). The manual's table (manual/huddles.md, Presets by category) lists
+them. The three the roster started with:
 
 - **Project manager (`pm`)**: concerns: the task deck, what is blocked and why,
   priorities and scope creep, what is on deck next, deadlines Bake mentioned.
@@ -250,7 +283,7 @@ someone saves one with `role.set`. As shipped, all three only propose.
   does not write code itself. Shipped tools: `sessions.list`,
   `sessions.follow`, `task.read`, `knowledge.read`.
 
-Anything else (ops, reviewer) is added from the page.
+Anything else is a new preset file, or a role added from the page.
 
 ### 4.3 Reaching one role
 

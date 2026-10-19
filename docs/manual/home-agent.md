@@ -98,11 +98,11 @@ say exactly which tools it may use. Every answer the role gives runs inside
 that folder. To move a role to another machine, Rook moves the folder; the old
 copy is renamed and kept, never deleted.
 
-Manage roles on the **Roles** page (under Manage): add them from the starting
-roster or from scratch, change what each watches and may use, move one to
+Manage roles on the **Roles** page (under Manage): add them from the presets
+(grouped by category) or from scratch, change what each watches and may use, move one to
 another host, and see its history; **What it remembers** shows its memory on
 the Memory page ([[manual-huddles]] has the details). Agents and scripts use
-worker `rook`: `role.presets` shows the starting roster, `role.set` saves a
+worker `rook`: `role.presets` lists the presets by category, `role.set` saves a
 role (admin), `role.ask` asks one a question, `role.memory` shows what it
 remembers and `role.move` moves it (admin). **Tool calls per role turn**
 (Settings, `role.max_tool_calls`) bounds one answer; **Role homes directory**

@@ -390,6 +390,14 @@ class RolesPlugin(Plugin):
         if role.get("concerns"):
             lines.append("What you watch and raise without being asked:\n"
                          + "\n".join(f"- {c}" for c in role["concerns"]))
+        if role.get("checklist"):
+            lines.append("Your checklist (work through what applies to the question):\n"
+                         + "\n".join(f"- {c}" for c in role["checklist"]))
+        if role.get("seed_memory") and not role.get("host") and role.get("memory") != "off":
+            # The first turn, before its home (and so its memory) exists:
+            # what it starts with, saved into its memory after this turn.
+            lines.append("What you know to start with:\n"
+                         + "\n".join(f"- {c}" for c in role["seed_memory"]))
         if role.get("sources"):
             lines.append("Where you look before answering (with rook_call):\n" + "\n".join(
                 f"- {s['cap']} on {s.get('worker') or 'the worker that has it'}"
@@ -401,6 +409,10 @@ class RolesPlugin(Plugin):
             lines.append("You read and you propose; you do not act. When something should be "
                          "done, say exactly what (which cap on which worker, with what) so the "
                          "person can approve it.")
+        deny = ((role.get("tools") or {}).get("deny")) or []
+        if deny:
+            lines.append("Never call these yourself, whatever your autonomy; when one is needed, "
+                         "propose it for a person to approve: " + ", ".join(deny))
         if role.get("memory") != "off":
             lines.append("Your memory is yours alone (role:" + role["id"] + "). Keep durable "
                          "facts and procedures that worked with memory_remember; never secrets.")
@@ -456,6 +468,7 @@ class RolesPlugin(Plugin):
                 # someone moves it (role.move), whatever home.agent_host says.
                 self.store.update(role["id"], "system:roles", f"home created on {res['worker']}",
                                   host=res["worker"])
+                await self.seed(self.role(role["id"]))
         self.journal(role, "role.turn", "rook", {"role": role["id"]},
                      {"ok": True, "result": {"worker": res["worker"], "model": res["model"],
                                              "tools": res["tools_used"]}})
@@ -464,6 +477,23 @@ class RolesPlugin(Plugin):
                 "tools_used": res["tools_used"], "harness_tools": res.get("harness_tools", []),
                 "latency_ms": res["latency_ms"], "usage": res.get("usage") or {},
                 "cost_usd": res.get("cost_usd")}
+
+    async def seed(self, role: dict) -> int:
+        """Write the role's ``seed_memory`` into its new home's memory (once,
+        right after its first turn made the home). Failures are logged: the
+        role still answers, and the seed stays in its document."""
+        if role.get("memory") == "off" or not role.get("seed_memory"):
+            return 0
+        done = 0
+        for text in role["seed_memory"]:
+            try:
+                await self.host_call(role, "agenthost.role_memory_edit",
+                                     {"role": role["id"], "action": "remember", "text": text,
+                                      "kind": "fact", "id": "", "by": "system:roles"})
+                done += 1
+            except Exception:  # noqa: BLE001 - bookkeeping, never fails the turn
+                log.exception("roles: seeding %s's memory failed", role["id"])
+        return done
 
     # -- the role's host -------------------------------------------------------------
     async def host_call(self, role: dict, cap: str, args: dict, timeout: float = 60.0) -> dict:
@@ -496,7 +526,8 @@ class RolesPlugin(Plugin):
 
     @capability("get", risk="read")
     def get(self, id: str) -> dict:
-        """A role document: charter, concerns, sources, tools, builtin, autonomy,
+        """A role document: name, description, category, charter, concerns,
+        checklist, examples, seed_memory, sources, tools, builtin, autonomy,
         memory, backend, model, effort, host, persona, enabled, rev."""
         return {"role": self.role(id), "identity": f"role:{id}"}
 
@@ -506,12 +537,28 @@ class RolesPlugin(Plugin):
         return self.store.history(id, limit=200)
 
     @capability("presets", risk="read")
-    def presets(self) -> dict:
-        """The starting roster (project manager, QA engineer, lead developer)
-        as role documents to save with ``role.set``; nothing is created by
+    def presets(self, id: str = "", category: str = "", full: bool = False) -> dict:
+        """The starting roles, grouped by category (product and planning,
+        software engineering, operations, ...): ``categories`` in their sort
+        order, each {id, name, description, presets}. A preset is brief (id,
+        name, description, autonomy, saved) unless ``full``; ``category``
+        narrows to one category; ``id`` returns that one preset as a whole
+        role document to save with ``role.set``. Nothing is created by
         reading them."""
         saved = {r["id"] for r in self.store.list()}
-        return {"presets": [{**p, "saved": p["id"] in saved} for p in model.presets()]}
+        if id:
+            doc = model.preset(str(id))
+            if doc is None:
+                raise RoleError(f"no preset {id!r} (role.presets lists them)")
+            return {"preset": doc, "saved": doc["id"] in saved}
+        cats = model.grouped(full=bool(full))
+        if category:
+            cats = [c for c in cats if c["id"] == category]
+            if not cats:
+                raise RoleError(f"no preset category {category!r}")
+        for c in cats:
+            c["presets"] = [{**p, "saved": p["id"] in saved} for p in c["presets"]]
+        return {"categories": cats}
 
     @capability("memory", risk="read")
     async def memory(self, id: str, query: str = "", limit: int = 50) -> dict:
@@ -540,7 +587,8 @@ class RolesPlugin(Plugin):
     def set(self, role: dict, note: str = "", dry_run: bool = False,
             expect_rev: int | None = None) -> dict:
         """Create or replace a role (band owners and operator tokens). ``role``:
-        {id, name, charter, concerns[], sources[{cap, args, worker}],
+        {id, name, description, category, charter, concerns[], checklist[],
+        examples[], seed_memory[], sources[{cap, args, worker}],
         tools{allow[], deny[]}, builtin[], autonomy, memory, backend, model,
         effort, host, persona, enabled}. ``host`` is kept from the saved role
         when left out (use ``role.move`` to change it)."""
@@ -610,6 +658,12 @@ class RolesPlugin(Plugin):
                     out["warning"] = f"the old home was left in place: {e}"
             self.store.update(role["id"], _actor(), note or f"moved to {dst['name']}",
                               host=dst["name"])
+            if not src:
+                # No home yet: its first turn will not be the one that makes it,
+                # so the starting memory goes there now (remembering makes the home).
+                seeded = await self.seed(self.role(role["id"]))
+                if seeded:
+                    out["seeded"] = seeded
         return out
 
 

@@ -16,8 +16,8 @@ team members answer, the way a standup works. The **home agent chairs**: it
 reads your message, decides which roles should answer (or answers itself),
 and closes with a short summary of what matters and what should happen next.
 The roles are the ones on your hub (a project manager, a QA engineer, a lead
-developer, or any you add on the Roles page, below), each answering with its
-own concerns, tools and memory.
+developer, or any you add on the Roles page from the presets or from
+scratch, below), each answering with its own concerns, tools and memory.
 
 This is different from a project's status huddle ([[manual-work]]), where
 agents check in on their own and nobody chairs.
@@ -112,9 +112,14 @@ keeps its folder (its host) and whether it only proposes or acts.
 Pick a role to change it:
 
 - **Id** and **Name**: people write `@id` to ask it directly.
+- **Description**: one line on what it is for. The chair reads this (with
+  the concerns and example questions) to decide whom to call on.
+- **Category**: where it sits among the presets' categories (optional).
 - **Enabled**: a switched-off role is never called on.
-- **Charter**: one paragraph on what the role is for.
+- **Charter**: what the role owns, what it never does, how it decides and
+  when it asks a person. The role reads it on every turn.
 - **Concerns**: one per line, what it watches and raises without being asked.
+- **Checklist**: one per line, what it works through on every turn.
 - **Sources**: where it looks before answering, as capabilities it calls,
   optionally on one machine and with arguments.
 - **Tools it may call** and **Never**: one capability or pattern per line
@@ -125,6 +130,10 @@ Pick a role to change it:
   tools*.
 - **Memory**: whether it remembers, only reads what it remembers, or has no
   memory.
+- **Examples and starting memory**: questions it answers well (shown to the
+  chair), and what it knows to start with: saved into its memory when its
+  folder is made (after its first answer, or when you move it before then). Changing the starting memory later
+  does not change what it already remembers.
 - **Model**: which agent harness and model it runs on, how hard it thinks,
   and its persona. Blank uses the home agent's.
 
@@ -137,8 +146,11 @@ first time it answers, on the home agent's host. To move it, pick another
 host and **Move**: its folder, with its memory, is copied there and the old
 copy is set aside, never deleted.
 
-**Add from presets** starts a new role from the starting roster (project
-manager, QA engineer, lead developer); change anything, then **Create**.
+**Add from presets** is a dropdown of every preset, grouped under its
+category's name (below). Pick one and its one-line description shows under
+the dropdown while the form fills with the preset; change anything, then
+**Create**. Presets you already added are listed greyed out. Nothing exists
+until you create it.
 
 **What it remembers** opens the role's memory on the **Memory** page, where
 the menu at the top switches between the home agent's memory and each
@@ -149,6 +161,55 @@ passwords, keys or code.
 Agents and scripts can do the same through worker `rook`: `role.list`,
 `role.presets`, `role.set`, `role.move`, `role.memory` and
 `role.memory_edit`.
+
+## Presets by category
+
+Every preset is a full starting role: a charter, concerns, a checklist,
+example questions, starting memory, the sources it reads before each turn,
+and a tool scope of read-only caps. All of them only propose: anything that
+changes something is an action card you approve.
+
+| Category | Preset | What it is for |
+|---|---|---|
+| Product and planning | Project manager (`@pm`) | Keeps the work moving: what is on deck, what is blocked and why, and what should happen next. |
+|  | Product owner (`@product`) | Decides what matters most and what done means: priorities, acceptance and the value of each piece of work. |
+|  | Analyst / task steward (`@analyst`) | Grooms the task deck: dedupes, writes acceptance criteria, splits big tasks, flags stale claims and asks for clarity. |
+|  | Style owner (`@style`) | Keeps UI, copy, naming, visuals and voice consistent across everything that ships. |
+| Software engineering | Lead developer (`@lead`) | Fronts the coding agent sessions: what each is doing, whether it is stuck, and the technical decisions and debt. |
+|  | QA engineer (`@qa`) | Watches quality: failing or flaky jobs, regressions after deploys, stale workers and anything shipped without evidence. |
+|  | Architect (`@architect`) | Reviews changes against the design docs and catches design drift before it lands. |
+|  | Security reviewer (`@security`) | Looks for secrets in plain text, loose permissions, missing approvals and public-repo hygiene; reads and proposes only. |
+| Operations | Release manager (`@release`) | Plans and checks releases: checklists, rollback plans, staged rollouts and fleet health after a deploy. |
+|  | SRE / homelab admin (`@sre`) | Keeps hosts, VMs, services, backups and monitoring healthy, and says what needs attention first. |
+| Hardware and fabrication | CAD / mechanical engineer (`@cad`) | Parametric CAD, tolerances, printability, fasteners, clearances and interference. |
+|  | Electronics / PCB engineer (`@pcb`) | Schematics, BOM, power budgets, layout and design for manufacture. |
+|  | Embedded / firmware engineer (`@firmware`) | Microcontrollers, USB HID, pin maps, flashing and the code that runs on the device. |
+|  | Fabrication tech (`@fab`) | 3D printer health and maintenance, slicing, print failures and error codes. |
+| Writing | Technical writer (`@writer`) | Keeps the manual, changelog and knowledge pages true to what actually merged. |
+|  | Editor (`@editor`) | Edits any prose for clarity, structure, tone and length: says what to cut and what to fix. |
+| Research | Deep research expert (`@research`) | Multi-source research with judged sources and citations, stating its confidence and the open questions. |
+|  | ML research engineer (`@ml`) | Experiment design, pre-registration, ablations, evals and compute budgets for machine learning work. |
+| Media and promotion | Social media manager (`@social`) | Drafts per-platform posts and threads, plans when they go out and reads engagement; never posts without a person's approval. |
+|  | Marketing / launch strategist (`@launch`) | Positioning, audience, launch plans and release announcements, and measuring what worked; drafts only. |
+|  | Community manager (`@community`) | Issues, discussions and community spaces: triage, contributor onboarding and the tone of every reply; drafts only. |
+|  | Content producer (`@content`) | Demo videos, screenshots, scripts, blog posts, thumbnails and captions; drafts and shot lists only. |
+|  | PR / communications (`@comms`) | Press and blog announcements, consistent messaging, and calm responses to criticism; drafts only. |
+| Critique | Skeptic / red team (`@skeptic`) | Argues against the proposal on the table and looks for the ways it fails; never acts. |
+| Home and family | Household coordinator (`@household`) | Family schedules, chores and reminders; never acts on family devices without a person's approval. |
+
+**Media and promotion** roles draft posts, announcements and replies and put
+each one on a card. Nothing is posted, published or sent unless a person
+approves that card, even if the role is later set to act: the category
+adds the posting, publishing, sending and shell caps to every media role's
+**Never** list. **Critique** and **Home and family** presets also ship
+propose-only (their categories require it), and the household coordinator's
+**Never** list keeps it off family devices (no messages, voice, wake, camera
+or input) without your approval.
+
+Presets and their categories are plain files in the Rook source
+(`rook/hub/plugins/roles/presets/`): one per preset, and `categories.toml`
+for the category names and order. A new preset or category is a new file or
+entry there.
 
 ## Huddles from jobs
 
