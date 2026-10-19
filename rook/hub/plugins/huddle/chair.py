@@ -79,6 +79,8 @@ CALL_ON = _fn(
     {"calls": {"type": "array", "items": {"type": "object", "properties": {
         "role": {"type": "string"}, "ask": {"type": "string"}}, "required": ["role", "ask"]}}},
     ["calls"])
+KNOWLEDGE = _fn("knowledge_search", "Search the band's shared knowledge wiki (excerpts with slugs).",
+                {"query": {"type": "string"}}, ["query"])
 ANSWER = _fn("answer", "Answer the person yourself (when no role is needed).",
              {"text": {"type": "string"}}, ["text"])
 
@@ -301,7 +303,7 @@ class Chair:
         self.store.round_set(rid, state="done", ended=time.time())
 
     def _chair_messages(self, home: Any, cfg: dict, roster: list[dict], room: str,
-                        rules: str, extra: str = "") -> list[dict]:
+                        rules: str, extra: str = "", memory: str = "") -> list[dict]:
         if roster:
             lines = ["Roles in this huddle (people write @<id>):"]
             for r in roster:
@@ -310,7 +312,8 @@ class Chair:
                     lines.append("  concerns: " + "; ".join(r["concerns"][:8]))
         else:
             lines = ["No roles are in this huddle: you answer the person yourself."]
-        system = home.system_prompt(cfg, CHAIR_WHERE) + "\n\n" + "\n".join(lines) + "\n\n" + rules
+        system = home.system_prompt(cfg, CHAIR_WHERE, memory) + "\n\n" + "\n".join(lines) \
+            + "\n\n" + rules
         user = "The huddle so far, oldest first:\n" + self._transcript(room)
         if extra:
             user += "\n\n" + extra
@@ -349,11 +352,25 @@ class Chair:
                 return json.dumps({"ok": True})
             if name == "propose":
                 return json.dumps(await self._propose(rid, room, self.chair_identity(), args))
+            if name == "knowledge_search":
+                return await home._run_tool(name, args, room)
             return json.dumps({"ok": False, "error": f"unknown tool {name!r}"})
 
         tools = ([CALL_ON] if roster else []) + [ANSWER, PROPOSE]
+        # The chair is the house agent: what it remembers about the asker and
+        # the shared facts, and (with home.tools) the knowledge search, as in
+        # its chat replies.
+        asker = (self.store.round(rid) or {}).get("asker")
+        memory = ""
+        with contextlib.suppress(Exception):
+            if home.may_use_memory(home.chat_principal(asker)):
+                memory = (await home.recall_for(text, home.person_of(asker), room))["text"]
+        search = bool(home.settings.get("tools")) and home._has_knowledge() and \
+            home.may_read_knowledge(home.chat_principal(asker))
+        if search:
+            tools.append(KNOWLEDGE)
         msgs = self._chair_messages(home, cfg, roster, room, CHAIR_RULES,
-                                    "Respond to the newest message.")
+                                    "Respond to the newest message.", memory)
         res = await home.tool_turn(msgs, cfg, tools, handler, via="huddle-chair", max_calls=6)
         self.journal("huddle.chair", {"round": rid}, {"ok": True, "result": {
             "model": res.get("model"), "called": [c["role"] for c in state["calls"]],

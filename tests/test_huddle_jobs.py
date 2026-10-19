@@ -114,3 +114,24 @@ def test_session_cards_are_checked():
                              "cap": "work.stream.open",
                              "args": {"harness": "claude", "cwd": "/src/app", "task": "t_1"}})
     assert ok_card["call"]["cap"] == "work.stream.open"
+
+
+@pytest.mark.asyncio
+async def test_the_chair_remembers_and_searches_like_the_house_agent(hub, monkeypatch):
+    home = hub.node.plugin("home")
+    seen = {}
+
+    async def recall(query, person, room=None, people=True):
+        seen.update(query=query, person=person, room=room)
+        return {"text": "Memory: the person prefers short answers.", "ids": ["m1"]}
+    monkeypatch.setattr(home, "recall_for", recall)
+    monkeypatch.setattr(home, "_has_knowledge", lambda: True)
+    hub.node.settings.set("home.tools", True, actor="human:op")
+    one = await _call(hub, "huddle.start", {"title": "home", "roles": []})
+    await _call(hub, "huddle.post", {"huddle": one["room"], "text": "what do you know about backups?"})
+    await _settle(hub)
+    chair = hub.band.turns[-1]
+    assert chair["listed"] == ["answer", "propose", "knowledge_search"]
+    assert "the person prefers short answers" in chair["args"]["system"]
+    assert seen == {"query": "what do you know about backups?", "person": "user:operator",
+                    "room": one["room"]}
