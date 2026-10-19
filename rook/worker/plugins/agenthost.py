@@ -25,6 +25,15 @@ files switched off as far as it allows:
 The prompt goes in on stdin. Auth is the harness's own login on this host
 (for claude, optionally a ``claude setup-token`` token passed by the hub).
 
+**Role turns** (``role`` set; docs/design/huddles.md 4.4) run differently: the
+working directory is the role's home (:mod:`rook.worker.rolehome`, under
+``agenthost.roles_dir``), and the harness loads its tools from the config
+files there, which this plugin renders from the role's tool list sent with
+the turn: the hub's tools (server ``rook``) and the role's own memory
+(server ``memory``, :mod:`rook.worker.rolemem`). The role's memory digest is
+appended to the system prompt. Caps for the homes: ``agenthost.roles``,
+``role_memory``, ``role_memory_edit``, ``role_export``, ``role_import``.
+
 The plugin is on wherever one of the harnesses is installed (the hub offers
 the host in Manage > Home agent; nothing runs here until someone picks it).
 Switch it off for a worker with ``agenthost.enabled`` or ``ROOK_AGENTHOST=0``.
@@ -46,6 +55,7 @@ from pathlib import Path
 from typing import Any
 
 from ...core.pluginkit import fail, which
+from .. import rolehome, rolemem
 from ..plugin import Plugin, capability, setting
 
 log = logging.getLogger("rook.worker.plugins.agenthost")
@@ -148,10 +158,17 @@ class Turn:
                 "is_error": bool(self.error) or not self.done}
 
 
+#: MCP server names a turn's tools come from (house agent turns; role turns).
+SERVERS = (SERVER, rolehome.HUB, rolehome.MEMORY)
+
+
 def _tool_name(name: str) -> str:
-    for prefix in (f"mcp__{SERVER}__", f"{SERVER}_", f"{SERVER}."):
-        if name.startswith(prefix):
-            return name[len(prefix):]
+    """A tool's own name from a harness's ``mcp__<server>__<tool>`` (claude)
+    or ``<server>_<tool>`` (opencode) name."""
+    for server in SERVERS:
+        for prefix in (f"mcp__{server}__", f"{server}_", f"{server}."):
+            if name.startswith(prefix):
+                return name[len(prefix):]
     return name
 
 
@@ -173,6 +190,12 @@ class Harness:
 
     def prepare(self, tmp: Path, cwd: str, *, model: str, system: str, mcp_url: str,
                 effort: str | None) -> tuple[list[str], dict]:
+        raise NotImplementedError
+
+    def prepare_role(self, tmp: Path, home: Path, *, model: str, system: str,
+                     effort: str | None, builtin: list[str]) -> tuple[list[str], dict]:
+        """argv and environment for a role turn in ``home``, whose config files
+        (rolehome.render) declare the tools."""
         raise NotImplementedError
 
     def feed(self, turn: Turn, ev: dict) -> None:
@@ -202,6 +225,22 @@ class ClaudeHarness(Harness):
                 "--tools", "", "--setting-sources", "",
                 "--strict-mcp-config", "--mcp-config", str(cfg),
                 "--allowedTools", f"mcp__{SERVER}",
+                "--permission-mode", "dontAsk",
+                "--no-session-persistence", "--disable-slash-commands"]
+        if effort:
+            argv += ["--effort", effort]
+        return argv, {"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1", "DISABLE_AUTOUPDATER": "1"}
+
+    def prepare_role(self, tmp, home, *, model, system, effort, builtin):
+        # The home's settings file as flag settings: Claude Code ignores
+        # permissions.allow from an untrusted project folder, and trusting it
+        # would mean editing the host's ~/.claude.json.
+        native = [t for b in builtin for t in rolehome.BUILTIN[b]["claude"]]
+        argv = [self.exe(), "-p", "--output-format", "stream-json", "--verbose",
+                "--model", model or "haiku", "--system-prompt", system,
+                "--tools", ",".join(native),
+                "--setting-sources", "", "--settings", str(home / ".claude" / "settings.json"),
+                "--strict-mcp-config", "--mcp-config", str(home / ".mcp.json"),
                 "--permission-mode", "dontAsk",
                 "--no-session-persistence", "--disable-slash-commands"]
         if effort:
@@ -243,10 +282,7 @@ class ClaudeHarness(Harness):
 #: Codex built-in tool features turned off for house agent turns (unknown
 #: names are ignored by this Codex version, so this list may run ahead).
 #: ``code_mode_host`` stays on: Codex calls MCP tools through it.
-CODEX_OFF = ("shell_tool", "unified_exec", "multi_agent", "image_generation",
-             "browser_use", "browser_use_external", "computer_use", "plugins", "apps",
-             "view_image", "hooks", "skill_search", "tool_suggest", "sleep_tool", "goals",
-             "memories", "in_app_browser", "in_app_local_automation", "workspace_dependencies")
+CODEX_OFF = rolehome.CODEX_OFF
 
 
 class CodexHarness(Harness):
@@ -277,12 +313,29 @@ class CodexHarness(Harness):
             argv += ["-c", f'model_reasoning_effort="{effort}"']
         return argv + ["-"], {}
 
+    def prepare_role(self, tmp, home, *, model, system, effort, builtin):
+        # The home's .codex/config.toml is project config, which Codex loads
+        # for a trusted project; the trust is given here, not in the host's
+        # own config (which is not loaded at all). Sign-in stays in CODEX_HOME.
+        trust = "projects={%s={trust_level=\"trusted\"}}" % _toml_str(str(home))
+        argv = [self.exe(), "exec", "--json", "--ephemeral", "--skip-git-repo-check",
+                "--ignore-user-config", "--ignore-rules", "-s", "read-only", "-C", str(home),
+                "-c", trust, "-c", f"developer_instructions={_toml_str(system)}",
+                # Ignored in project config, so given here as well.
+                "-c", "include_apply_patch_tool=false"]
+        if model:
+            argv += ["-m", model]
+        if effort:
+            argv += ["-c", f'model_reasoning_effort="{effort}"']
+        return argv + ["-"], {}
+
     def feed(self, turn, ev):
         kind = ev.get("type")
         item = ev.get("item") if isinstance(ev.get("item"), dict) else {}
         if kind == "item.started" and item.get("type") in ("mcp_tool_call", "command_execution"):
+            # Codex names MCP tools bare (the server is a separate field).
             name = str(item.get("tool") or item.get("command") or item.get("type"))
-            turn.tools.append(_tool_name(name))
+            turn.tools.append(name)
         elif kind == "item.completed" and item.get("type") == "agent_message":
             if item.get("text"):
                 turn.texts.append(str(item["text"]))
@@ -345,6 +398,35 @@ class OpenCodeHarness(Harness):
             argv += ["--variant", effort]
         return argv, {"XDG_CONFIG_HOME": str(tmp / "config"), "OPENCODE_DISABLE_AUTOUPDATE": "1"}
 
+    def provider_config(self, tmp: Path) -> Path:
+        """A global config dir holding only this host's model providers (never
+        the user's MCP servers, plugins, agents or instructions)."""
+        user = self.user_config()
+        cfg: dict[str, Any] = {"$schema": "https://opencode.ai/config.json", "autoupdate": False}
+        for key in ("provider", "model", "small_model", "enabled_providers",
+                    "disabled_providers"):
+            if key in user:
+                cfg[key] = user[key]
+        d = tmp / "config" / "opencode"
+        d.mkdir(parents=True)
+        (d / "opencode.json").write_text(json.dumps(cfg), encoding="utf-8")
+        return tmp / "config"
+
+    def prepare_role(self, tmp, home, *, model, system, effort, builtin):
+        # The home's .config/opencode/opencode.json, as OpenCode's custom config
+        # (over a global config dir holding only this host's providers); its
+        # agent reads the turn's system prompt from the home's scratch dir.
+        (home / rolehome.SCRATCH / "system.md").write_text(system, encoding="utf-8")
+        conf = self.provider_config(tmp)
+        argv = [self.exe(), "run", "--format", "json", "--pure", "--agent",
+                rolehome.OPENCODE_AGENT]
+        if model:
+            argv += ["-m", model]
+        if effort:
+            argv += ["--variant", effort]
+        return argv, {"XDG_CONFIG_HOME": str(conf), "OPENCODE_DISABLE_AUTOUPDATE": "1",
+                      "OPENCODE_CONFIG": str(home / rolehome.OPENCODE_CONFIG)}
+
     def feed(self, turn, ev):
         kind = ev.get("type")
         part = ev.get("part") if isinstance(ev.get("part"), dict) else {}
@@ -383,6 +465,11 @@ class AgentHost(Plugin):
                 help="On (default): when Claude Code, Codex or OpenCode is installed, this "
                      "worker offers to run the hub's home agent turns with it (picked on Manage "
                      "> Home agent; nothing runs here until someone picks it). Off: never."),
+        setting("roles_dir", str, default="", scope="worker", env="ROOK_AGENTHOST_ROLES_DIR",
+                label="Role homes directory",
+                help="Where the home directories of huddle roles live on this host (one folder "
+                     "per role: its memory and harness config). Blank: roles/ in the agent "
+                     "host's data directory."),
     )
 
     def __init__(self) -> None:
@@ -393,6 +480,13 @@ class AgentHost(Plugin):
         self._inflight: dict[str, asyncio.Future] = {}
         self._found: dict[str, dict] = {}
         self._probe_task: asyncio.Task | None = None
+
+    @property
+    def roles_base(self) -> Path:
+        configured = str(self.settings.get("roles_dir") or "").strip()
+        base = Path(os.path.expanduser(configured)) if configured else self.data_dir / "roles"
+        base.mkdir(parents=True, exist_ok=True)
+        return base
 
     def installed(self) -> list[str]:
         return [n for n, h in HARNESSES.items() if h.exe()]
@@ -475,7 +569,10 @@ class AgentHost(Plugin):
     async def _turn(self, turn_id: str, prompt: str, system: str, mcp_url: str,
                     mcp_token: str, harness: str = "claude", model: str = "",
                     timeout_s: float = 180.0, max_tool_calls: int = 20,
-                    effort: str | None = None, oauth_token: str | None = None) -> dict:
+                    effort: str | None = None, oauth_token: str | None = None,
+                    role: str | None = None, role_name: str = "", role_rev: int = 0,
+                    tools: list | None = None, builtin: list | None = None,
+                    memory: str = "write") -> dict:
         """Run one house agent turn with a local harness; returns its reply.
 
         ``harness``: claude, codex or opencode. ``prompt`` (stdin) and ``system``
@@ -484,8 +581,16 @@ class AgentHost(Plugin):
         or ``timeout_s``. ``model``: blank for the harness's default.
         ``oauth_token`` (claude only): a ``claude setup-token`` token instead of
         this host's login. A retry with the same ``turn_id`` gets the first
-        run's reply. Returns {ok, text, model, tools_used, num_turns, usage,
-        cost_usd, api_ms, latency_ms, harness} or {ok: false, error}."""
+        run's reply.
+
+        ``role`` makes it a role turn: it runs in that role's home directory
+        (created on first use), whose harness config is rendered from
+        ``tools`` (the hub tool names the turn may call), ``builtin`` (read,
+        search) and ``memory`` (write, read, off), and the role's memory digest
+        is added to ``system``.
+
+        Returns {ok, text, model, tools_used, num_turns, usage, cost_usd,
+        api_ms, latency_ms, harness, role?, home?} or {ok: false, error}."""
         h = HARNESSES.get(str(harness or ""))
         if h is None:
             fail(f"harness: one of {', '.join(HARNESSES)}")
@@ -505,6 +610,20 @@ class AgentHost(Plugin):
             fail("system is empty (an empty one would load the harness's own)")
         if not str(mcp_url or "").startswith(("https://", "http://")) or not mcp_token:
             fail("mcp_url and mcp_token are required")
+        spec = None
+        if role is not None:
+            try:
+                rolehome.check_id(role)
+                if memory not in rolehome.MEMORY_MODES:
+                    raise rolehome.RoleHomeError(
+                        f"memory: one of {', '.join(rolehome.MEMORY_MODES)}")
+                spec = {"role": role, "name": str(role_name or role)[:80],
+                        "rev": int(role_rev or 0), "tools": list(tools or []),
+                        "builtin": list(builtin or []), "memory": memory}
+                rolehome.files(Path("/nonexistent"), mcp_url=mcp_url,
+                               **{k: v for k, v in spec.items() if k != "role"}, role=role)
+            except (rolehome.RoleHomeError, TypeError, ValueError) as e:
+                fail(str(e))
         if turn_id in self._done:
             return self._done[turn_id]
         if turn_id in self._inflight:
@@ -514,7 +633,8 @@ class AgentHost(Plugin):
         try:
             out = await self._run(h, turn_id, prompt, system, mcp_url, mcp_token, model,
                                   max(5.0, min(float(timeout_s), 1800.0)),
-                                  max(0, min(int(max_tool_calls), 100)), effort, oauth_token)
+                                  max(0, min(int(max_tool_calls), 100)), effort, oauth_token,
+                                  spec)
         except Exception as e:  # noqa: BLE001 - a failed turn is a reply, not a crash
             out = {"ok": False, "error": f"{type(e).__name__}: {e}"[:300]}
         finally:
@@ -532,23 +652,39 @@ class AgentHost(Plugin):
 
     async def _run(self, h: Harness, turn_id: str, prompt: str, system: str, mcp_url: str,
                    mcp_token: str, model: str, timeout_s: float, max_calls: int,
-                   effort: str | None, oauth_token: str | None) -> dict:
+                   effort: str | None, oauth_token: str | None,
+                   spec: dict | None = None) -> dict:
         base = self.data_dir
         cwd = base / "work"
-        cwd.mkdir(parents=True, exist_ok=True)
         tmp = Path(tempfile.mkdtemp(prefix="turn-", dir=base))
         os.chmod(tmp, 0o700)
         try:
-            argv, extra = h.prepare(tmp, str(cwd), model=model, system=system,
-                                    mcp_url=mcp_url, effort=effort)
+            if spec is not None:
+                cwd = rolehome.ensure(self.roles_base, spec["role"])
+                rolehome.render(cwd, role=spec["role"], name=spec["name"], rev=spec["rev"],
+                                mcp_url=mcp_url, tools=spec["tools"], builtin=spec["builtin"],
+                                memory=spec["memory"])
+                if spec["memory"] != "off":
+                    digest = rolemem.MemoryDir(cwd, spec["role"]).digest(prompt)
+                    if digest:
+                        system = f"{system}\n\n{digest}"
+                argv, extra = h.prepare_role(tmp, cwd, model=model, system=system,
+                                             effort=effort, builtin=spec["builtin"])
+            else:
+                cwd.mkdir(parents=True, exist_ok=True)
+                argv, extra = h.prepare(tmp, str(cwd), model=model, system=system,
+                                        mcp_url=mcp_url, effort=effort)
             env = {**os.environ, "HOME": _home(), **extra, TOKEN_ENV: mcp_token}
             env.pop("ANTHROPIC_API_KEY", None)
             env.pop("OPENAI_API_KEY", None)
             if oauth_token and h.name == "claude":
                 env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
             async with self._sem:
-                return await self._spawn(h, turn_id, argv, env, str(cwd), prompt, timeout_s,
-                                         max_calls)
+                out = await self._spawn(h, turn_id, argv, env, str(cwd), prompt, timeout_s,
+                                        max_calls)
+            if spec is not None:
+                out.update(role=spec["role"], home=str(cwd))
+            return out
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
@@ -626,6 +762,79 @@ class AgentHost(Plugin):
         with contextlib.suppress(ProcessLookupError):
             proc.terminate()
         return {"ok": True, "stopped": True}
+
+    # -- role homes (docs/design/huddles.md 4.4) --------------------------------------
+    def _role_home(self, role: str, create: bool = False) -> Path:
+        try:
+            home = (rolehome.ensure(self.roles_base, role) if create
+                    else rolehome.home_of(self.roles_base, role))
+        except rolehome.RoleHomeError as e:
+            fail(str(e))
+        if not home.is_dir():
+            fail(f"no home for role {role!r} on this host")
+        return home
+
+    @capability("roles", risk="read")
+    async def _roles(self) -> dict:
+        """The role homes on this host: {ok, base, roles: [{role, path, rev,
+        tools, memory_mode, memories, bytes}]}."""
+        return {"ok": True, "base": str(self.roles_base), "roles": rolehome.homes(self.roles_base)}
+
+    @capability("role_memory", risk="read")
+    async def _role_memory(self, role: str, query: str = "", limit: int = 50) -> dict:
+        """A role's memory (scope role:<id>, in its home): the memories that
+        match ``query``, or the newest. Returns {ok, role, memories: [{id, kind,
+        text, created, by}], total}."""
+        mem = rolemem.MemoryDir(self._role_home(role), role)
+        return {"ok": True, "role": role, "memories": mem.recall(query, limit),
+                "total": len(mem.items())}
+
+    @capability("role_memory_edit", risk="write")
+    async def _role_memory_edit(self, role: str, action: str, text: str = "",
+                                kind: str = "fact", id: str = "", by: str = "") -> dict:
+        """Change a role's memory: ``action`` remember (``text``, ``kind`` fact,
+        procedure or episode) or forget (``id``). Writes pass the memory write
+        rules (no secrets, no code). Returns {ok, id, ...}."""
+        mem = rolemem.MemoryDir(self._role_home(role, create=action == "remember"), role)
+        try:
+            if action == "remember":
+                return mem.remember(text, kind, by=by)
+            if action == "forget":
+                return mem.forget(id)
+        except rolemem.MemoryError_ as e:
+            fail(str(e))
+        fail("action: remember or forget")
+
+    @capability("role_export", risk="admin")
+    async def _role_export(self, role: str) -> dict:
+        """Pack a role's home (memory and config, not host-local scratch) to
+        move it to another host. Returns {ok, role, archive (base64 tar.gz),
+        sha256, bytes}."""
+        try:
+            return {"ok": True, **rolehome.export(self.roles_base, role)}
+        except rolehome.RoleHomeError as e:
+            fail(str(e))
+
+    @capability("role_import", risk="admin")
+    async def _role_import(self, role: str, archive: str, sha256: str,
+                           replace: bool = False) -> dict:
+        """Unpack a role's home exported from another host. An existing home is
+        refused unless ``replace``, which sets it aside (never deletes it).
+        Returns {ok, role, path, memories, set_aside?}."""
+        try:
+            return {"ok": True, **rolehome.import_(self.roles_base, role, archive, sha256,
+                                                   replace)}
+        except rolehome.RoleHomeError as e:
+            fail(str(e))
+
+    @capability("role_set_aside", risk="admin")
+    async def _role_set_aside(self, role: str) -> dict:
+        """Move a role's home out of the way on this host (after a move to
+        another host); it is renamed, never deleted. Returns {ok, set_aside}."""
+        try:
+            return {"ok": True, "set_aside": rolehome.set_aside(self.roles_base, role, "moved")}
+        except rolehome.RoleHomeError as e:
+            fail(str(e))
 
 
 PLUGIN = AgentHost
