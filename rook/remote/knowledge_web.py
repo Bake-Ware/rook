@@ -124,12 +124,14 @@ class ManualWeb(KnowledgeWeb):
 
 
 class HuddleWeb(KnowledgeWeb):
-    """Work > Huddle: agents' status strip, pinned questions and answers.
+    """Huddles (chaired huddles, old chat rooms read-only), Work > Huddle
+    (agents' status strip, pinned questions and answers) and Manage > Roles.
     Operator account only, like the upstream (rook/hub/plugins/huddle/web.py)."""
     PATH = '/account/huddle'
     UPSTREAM = ('ROOK_HUDDLE_ADMIN_URL', 'http://127.0.0.1:8765/huddle/account-api')
-    ASSETS = ('huddle.js', 'huddle.css')
+    ASSETS = ('huddle.js', 'huddle.css', 'huddles.js', 'roles.js')
     UNAVAILABLE = 'Huddles are unavailable (is the MCP server running?).'
+    TIMEOUT = 150   # moving a role packs its home on one host and unpacks it on another
 
 
 class UiWeb(KnowledgeWeb):

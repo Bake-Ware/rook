@@ -55,7 +55,7 @@ export async function mountHuddle(root,{onPins}={}){
   function drawHead(){head.replaceChildren();const t=el('div');t.append(el('h1',view.title.replace(/^Huddle: /,'')));
     const sub=el('p',undefined,'kn-meta');sub.append(document.createTextNode((view.scope==='project'?'Project huddle':'Band huddle')+' · '+view.participants.filter(p=>p!==YOU).length+' agents · '));
     if(view.scope==='project'){const a=el('a','Project page');a.href='#work?p='+encodeURIComponent(view.ref);sub.append(a,document.createTextNode(' · '));}
-    const c=el('a','Open in Chat');c.href='#chat?room='+encodeURIComponent(view.room);sub.append(c);t.append(sub);head.append(t);}
+    const c=el('a','Open in Huddles');c.href='#huddles?room='+encodeURIComponent(view.room);sub.append(c);t.append(sub);head.append(t);}
 
   function drawStrip(){strip.replaceChildren();
     if(!view.statuses.length){strip.append(el('p','No agent has reported in yet. Agents post here with rook_huddle when they start, get stuck or finish.','kn-dim hd-empty'));return;}

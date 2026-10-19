@@ -16,17 +16,18 @@ deprecated: false
 ---
 # The home agent
 
-The **home agent** is an AI assistant that lives on the hub itself. It answers
-when you mention it in a chat room and when other parts of Rook ask it a
-question. It uses a language model you choose: any service that speaks the
-OpenAI-style API, including one you run at home.
+The **home agent** is an AI assistant that lives on the hub itself. It chairs
+your huddles ([[manual-huddles]]), talks with you on its own page, and answers
+when other parts of Rook ask it a question. It uses a language model you
+choose: any service that speaks the OpenAI-style API, including one you run
+at home.
 
 ## Setting it up
 
 Open **Home agent** (under Manage).
 
 1. Switch it on (**Enabled**).
-2. Give it a **Name**. People write `@name` in chat to talk to it.
+2. Give it a **Name**. People write `@name` to address it.
 3. Fill in the model: the service's **Base URL**, the **Model** name and, if the
    service needs one, an **API key**. Store the key under Secrets and enter its
    name; the page never shows the key itself. Or pick a saved **Model
@@ -34,6 +35,11 @@ Open **Home agent** (under Manage).
    ([[manual-model-providers]]).
 4. Optionally choose a **Persona** ([[manual-agents-and-mcp]]) and add your own
    instructions.
+
+The chat panel on the page is your one-to-one huddle with the home agent: the
+first message you send starts it, and it is also listed on the Huddles page.
+While the agent works the panel says it is thinking; if it cannot answer, the
+panel says why and points at the form.
 
 The page also shows its recent activity, so you can see what it was asked and
 what it said. With **Read-only tools** on, it can search the knowledge wiki
@@ -67,7 +73,9 @@ one run of the harness on that machine.
    unavailable.
 
 To move the agent, pick another host. Nothing is lost: memory stays on the
-hub. Usage counts against the sign-in on the host (for Claude Code, optionally
+hub. Under its recent activity the page shows the last 24 hours of answers on
+agent hosts and the tokens they used, for the home agent and for each role,
+so you can see what huddles cost. Usage counts against the sign-in on the host (for Claude Code, optionally
 a token from `claude setup-token` saved in Secrets: **Sign-in**). OpenCode's
 free models refuse to run with a custom agent, so use one of your own
 providers there.
@@ -90,10 +98,13 @@ say exactly which tools it may use. Every answer the role gives runs inside
 that folder. To move a role to another machine, Rook moves the folder; the old
 copy is renamed and kept, never deleted.
 
-There is no Roles page yet. Until there is, agents and scripts manage roles
-through worker `rook`: `role.presets` shows the starting roster, `role.set`
-saves a role (admin), `role.ask` asks one a question, `role.memory` shows what
-it remembers and `role.move` moves it (admin). **Tool calls per role turn**
+Manage roles on the **Roles** page (under Manage): add them from the starting
+roster or from scratch, change what each watches and may use, move one to
+another host, and see its history; **What it remembers** shows its memory on
+the Memory page ([[manual-huddles]] has the details). Agents and scripts use
+worker `rook`: `role.presets` shows the starting roster, `role.set` saves a
+role (admin), `role.ask` asks one a question, `role.memory` shows what it
+remembers and `role.move` moves it (admin). **Tool calls per role turn**
 (Settings, `role.max_tool_calls`) bounds one answer; **Role homes directory**
 (per worker, `agenthost.roles_dir`) says where a host keeps the folders. A role that only proposes (the
 default) can read with its tools but not change anything; it tells you what

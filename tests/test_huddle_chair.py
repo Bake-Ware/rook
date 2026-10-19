@@ -22,6 +22,8 @@ from rook.hub.plugins.huddle.service import PERSON
 from rook.hub.plugins.huddle.web import routes
 from tests.test_home_agent import FakeVault
 
+from rook.hub.plugins.roles import _admin_gate as REAL_ROLE_GATE
+
 GUEST = "agent:claude_laptop"
 
 
@@ -64,7 +66,15 @@ class FakeBand:
             if step.get("fail"):
                 return {"ok": True, "result": {"ok": False, "error": step["fail"]}}
             return {"ok": True, "result": {"ok": True, "text": step.get("text", ""),
-                                           "model": "claude-test"}}
+                                           "model": "claude-test",
+                                           "usage": step.get("usage", {}),
+                                           "cost_usd": step.get("cost_usd")}}
+        if cap == "agenthost.role_memory":
+            return {"ok": True, "result": {"ok": True, "total": 1, "memories": [
+                {"id": "m_0a1b2c3d4e", "kind": "fact", "text": "CI runs at night",
+                 "created": "2026-10-19T08:00:00Z", "by": "role:qa"}]}}
+        if cap == "agenthost.role_memory_edit":
+            return {"ok": True, "result": {"ok": True, "id": args.get("id"), "forgotten": True}}
         return {"ok": True, "result": {"pong": True, "via": target, "as": identity}}
 
 
@@ -325,6 +335,146 @@ async def test_rook_huddle_tool_and_the_dashboard_api(hub):
         assert [c_.identity for c_ in hub.band.calls if c_.cap == "info.ping"][-1] == "human:1"
         code, body = await api(action="list")
         assert {h_["room"] for h_ in body["result"]["huddles"]} >= {room, web_room}
+
+
+class _Accounts:
+    def session(self, token):
+        return {"id": "1", "username": "op", "name": "Operator", "admin": True,
+                "csrf": "tok"} if token == "s" else None
+
+
+def _client(hub):
+    app = Starlette(routes=routes(lambda: hub.node, _Accounts()))
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t",
+                             cookies={"rook_account": "s"})
+
+
+@pytest.mark.asyncio
+async def test_the_roles_page_api_acts_as_the_operator_account(hub, monkeypatch):
+    """Manage > Roles and the Memory page's role filter use role.* through
+    /huddle/account-api as the operator account: its principal passes the
+    roles plugin's real admin gate, and its name is the actor in the history."""
+    import rook.hub.plugins.roles as roles_plugin
+    monkeypatch.setattr(roles_plugin, "_admin_gate", REAL_ROLE_GATE)
+    with pytest.raises(PermissionError):            # no principal: refused
+        await hub.node.invoke("role.set", {"role": {"id": "qa"}}, "agent:x")
+    async with _client(hub) as c:
+        async def api(**body):
+            r = await c.post("/huddle/account-api", json={"csrf": "tok", **body})
+            return r.status_code, r.json()
+        code, body = await api(action="role_list")
+        assert code == 200 and body["result"]["roles"] == []
+        assert [p["id"] for p in body["result"]["presets"]] == ["pm", "qa", "lead"]
+        assert [h["name"] for h in body["result"]["hosts"]] == ["hosta"]
+        assert body["result"]["chair"] == "agent:home"
+        qa = {k: v for k, v in body["result"]["presets"][1].items() if k != "saved"}
+        code, body = await api(action="role_set", role=qa, expect_rev=0)
+        assert code == 200 and body["result"]["rev"] == 1, body
+        code, body = await api(action="role_set", role=qa, expect_rev=0)   # create, not overwrite
+        assert code == 400 and "changed" in body["error"]
+        code, body = await api(action="role_set", role={**qa, "name": "QA"}, expect_rev=1,
+                               note="shorter name")
+        assert code == 200 and body["result"]["changed"] == ["name"]
+        code, body = await api(action="role_get", id="qa")
+        assert body["result"]["role"]["name"] == "QA" and body["result"]["role"]["rev"] == 2
+        code, body = await api(action="role_history", id="qa")
+        assert [(e["rev"], e["actor"], e["note"]) for e in body["result"]] == [
+            (2, "human:op", "shorter name"), (1, "human:op", "")]
+        code, body = await api(action="role_list")
+        assert [p["saved"] for p in body["result"]["presets"]] == [False, True, False]
+        code, body = await api(action="role_set", role={"id": "Bad Id"})
+        assert code == 400
+        # Memory needs a home; moving a role without one just pins the host.
+        code, body = await api(action="role_memory", id="qa")
+        assert code == 400 and "no home yet" in body["error"]
+        code, body = await api(action="role_move", id="qa", host="nowhere")
+        assert code == 400 and "not an agent host" in body["error"]
+        code, body = await api(action="role_move", id="qa", host="hosta")
+        assert code == 200 and body["result"]["host"] == "hosta"
+        code, body = await api(action="role_memory", id="qa", query="CI")
+        assert code == 200 and body["result"]["memories"][0]["text"] == "CI runs at night"
+        assert hub.band.calls[-1].args == {"role": "qa", "query": "CI", "limit": 50}
+        code, body = await api(action="role_memory_edit", id="qa", op="forget",
+                               memory_id="m_0a1b2c3d4e")
+        assert code == 200 and body["result"]["forgotten"]
+        edit = hub.band.calls[-1]
+        assert edit.cap == "agenthost.role_memory_edit" and edit.target == "w-hosta"
+        assert edit.args["action"] == "forget" and edit.args["id"] == "m_0a1b2c3d4e" \
+            and edit.args["by"] == "human:op"
+        code, body = await api(action="role_memory_edit", id="qa", op="rename")
+        assert code == 400
+        code, body = await api(action="roles")
+        assert body["result"]["default_roles"] == ["pm", "qa", "lead"]
+        assert [r["id"] for r in body["result"]["roles"]] == ["qa"]
+        code, body = await api(action="role_delete", id="qa")
+        assert code == 200 and body["result"]["deleted"]
+        code, body = await api(action="nope")
+        assert code == 400 and "role_list" in body["error"]
+    assert hub.roles.store.get("qa") is None
+
+
+@pytest.mark.asyncio
+async def test_old_chat_rooms_stay_readable_and_huddles_list_with_activity(hub):
+    """The Huddles page lists every huddle (chaired ones with roles, status
+    huddles too, archived ones on request) with its last message; a plain
+    chat room is not a huddle (the page reads it, read-only, from /api/chat)."""
+    await _roles(hub)
+    old = hub.svc.chat.start("Old room", PERSON, ["agent:claude"])["room"]
+    hub.svc.chat.send(old, "agent:claude", "from before", [], False)
+    one = await _call(hub, "huddle.start", {"title": "home", "roles": []})
+    team = await _call(hub, "huddle.start", {"title": "Team", "roles": ["qa"]})
+    async with _client(hub) as c:
+        async def api(**body):
+            r = await c.post("/huddle/account-api", json={"csrf": "tok", **body})
+            return r.status_code, r.json()
+        code, body = await api(action="view", room=old)
+        assert code == 400 and "not a huddle" in body["error"]
+        code, body = await api(action="send", room=team["room"], text="@qa hi", mention=["role:qa"])
+        assert code == 200 and body["result"]["round"]
+        await _settle(hub)
+        code, body = await api(action="list")
+        rows = {x["room"]: x for x in body["result"]["huddles"]}
+        assert old not in rows and rows[one["room"]]["roles"] == [] and rows[one["room"]]["chaired"]
+        assert rows[team["room"]]["last"]["sender"] == "role:qa"
+        await api(action="archive", room=one["room"], archived=True)
+        code, body = await api(action="list")
+        assert one["room"] not in {x["room"] for x in body["result"]["huddles"]}
+        code, body = await api(action="list", archived=True)
+        assert {x["room"]: bool(x["archived"]) for x in body["result"]["huddles"]} == {
+            one["room"]: True, team["room"]: False}
+        code, body = await api(action="send", room=one["room"], text="x")
+        assert code == 400 and "archived" in body["error"]
+
+
+@pytest.mark.asyncio
+async def test_the_home_page_shows_turns_and_tokens_per_role(hub):
+    """Manage > Home agent: the last 24 h of agent host turns and their token
+    usage per role (the house agent's own, chairing included, as role "")."""
+    await _roles(hub)
+    h = await _call(hub, "huddle.start", {"title": "Standup", "roles": ["qa", "pm"]})
+    hub.band.script = {
+        "huddle-chair": [{"tools": [("call_on", {"calls": [{"role": "qa", "ask": "a"},
+                                                           {"role": "pm", "ask": "b"}]})],
+                          "usage": {"input_tokens": 100, "output_tokens": 10}}],
+        "huddle-qa": [{"text": "QA.", "usage": {"input_tokens": 50, "output_tokens": 5,
+                                                "cache_read_input_tokens": 1000},
+                       "cost_usd": 0.01}],
+        "huddle-pm": [{"fail": "model refused", "usage": {}}],
+        "huddle-close": [{"text": "Done.", "usage": {"input_tokens": 7, "output_tokens": 3}}]}
+    await _call(hub, "huddle.post", {"huddle": h["room"], "text": "status?"})
+    await _settle(hub)
+    page = hub.node.plugin("home").page(hub.node.settings)
+    usage = {u["role"]: u for u in page["usage"]}
+    assert usage[""]["turns"] == 1 and usage[""]["tokens"] == {"input_tokens": 100,
+                                                              "output_tokens": 10}
+    assert usage["qa"]["tokens"]["cache_read_input_tokens"] == 1000 and usage["qa"]["cost_usd"] == 0.01
+    assert usage["pm"]["turns"] == 1 and usage["pm"]["failed"] == 1
+    # One answer only, so no close; the chair's turn is in Recent activity.
+    vias = [a["via"] for a in page["activity"]]
+    assert vias == ["huddle-chair"] and page["activity"][0]["ok"]
+    old = hub.node.plugin("home").agents
+    old.ledger[0]["ts"] -= 25 * 3600                     # out of the window
+    assert {u["role"] for u in old.usage(24.0)} == {"qa", "pm"}
 
 
 def test_cards_are_validated():
