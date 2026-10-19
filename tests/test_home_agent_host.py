@@ -146,6 +146,7 @@ def host(tmp_path, monkeypatch):
     exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
     monkeypatch.setenv("PATH", f"{exe.parent}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)   # CI runners set it
     monkeypatch.setenv("FAKE_CLAUDE_LOG", str(tmp_path / "claude.log"))
     plugin = agenthost.AgentHost()
     plugin.__dict__["_data_root"] = str(tmp_path / "state")
