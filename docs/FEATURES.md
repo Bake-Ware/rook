@@ -184,6 +184,7 @@ On top of the usual `shell.*`, `file.*` and `info.*`, the app adds what only a p
 |---|---|
 | `screenshot.capture` | The real screen, via Android's screen capture |
 | `hid.type` · `hid.key_combo` · `hid.mouse.click` · `hid.mouse.drag` · `ui.text` | Type, tap and swipe, and read all the text on screen, through an accessibility service (**no root**) |
+| `ui.nodes` · `ui.click` · `ui.scroll` · `ui.back` | List what's on screen with labels, ids and bounds, then tap, scroll or go back by label instead of by pixel. Works in apps that block screenshots |
 | `sms.list` · `sms.send` · `calllog.list` · `contacts.search` | Texts, call history and contacts |
 | `notify.list` · `notify.dismiss` · `notify.post` | Read, clear and post notifications |
 | `location.get` | Where the device is, with accuracy and a map link |
@@ -191,6 +192,8 @@ On top of the usual `shell.*`, `file.*` and `info.*`, the app adds what only a p
 | `device.find` | Ring at full volume to find a lost phone, even when it's silenced |
 | `voice.speak` · `voice.speak_stop` · `voice.speak_voices` | Say something out loud from the phone (on-device text-to-speech), so any agent or job on the band can talk to you; it waits for a voice reply in progress and shows the line in the app's chat |
 | `device.wake` · `device.unlock` · `device.launch` · `device.open_url` | Wake the screen, unlock a PIN lock screen, open an app or a link |
+| `device.keep_awake` · `device.keep_awake_status` · `device.keep_awake_settings` | Keep the screen on for N minutes, even under a work-profile screen-timeout policy. With **Keep phone awake while agent is working** (app Settings, on by default; also `worker.settings_report` / `worker.config_apply`), any `ui.*`, `hid.*`, `screenshot.*` or `device.launch`/`open_url` call wakes the phone and keeps it awake until 10 idle minutes pass |
+| `device.unlock_status` | Whether an unlock PIN is saved in the app. Save the PIN in the app's Settings (encrypted with an Android Keystore key, never sent to the hub or returned by a cap); then `device.unlock` with no `pin` uses it, and keep-awake unlocks the lock screen when it wakes the phone (paused after a failed try) |
 | `device.torch` · `device.vibrate` · `device.clipboard_get` · `device.clipboard_set` | Flashlight, vibration and clipboard |
 
 **Voice assistant.** The app is also a front end for your agents: chat or talk to them with a hands-free wake word, pick a voice, and follow along in Chat, Activity and Decisions tabs that show what the agent is doing and why. It can be set as Android's default assistant.

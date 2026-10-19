@@ -66,6 +66,16 @@ Manual: accounts-and-access, security, agents-and-mcp
 - A hashed `host_id` fact (`rook/core/facts.py`): a stable per-machine id the hub and workers
   announce, so the hub can tell which workers share its machine. The raw machine id never
   rides the band.
+- Android app 0.4.19 (23): `ui.nodes`, `ui.click`, `ui.scroll` and `ui.back` find and
+  drive what's on screen by label, id or description (works in apps that block
+  screenshots). `device.keep_awake`, `device.keep_awake_status` and
+  `device.keep_awake_settings` keep the screen on; with **Keep phone awake while agent is
+  working** (app Settings, on by default) any `ui.*`, `hid.*`, `screenshot.*`,
+  `device.launch` or `device.open_url` call wakes the phone and holds it awake until 10
+  idle minutes pass. An unlock PIN can be saved in the app (Android Keystore, never sent
+  to the hub); `device.unlock` with no `pin` uses it, `device.unlock_status` says whether
+  one is saved. All eight new caps are `exec` (`ui.nodes` sensitive, `device.keep_awake`
+  physical), with hub-side floors in `authz.CORE`.
 
 ### Fixed
 - The dashboard's cap buttons (and `rook band` calls) now run on the MCP side as the signed-in

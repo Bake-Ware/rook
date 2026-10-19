@@ -216,16 +216,28 @@ class Worker:
         """Settings view of this worker: declared plugin settings with the env
         variable that sets each (values of secrets never shown), keys a pushed
         config set, secret references and whether they were fetched, and the
-        plugins --enable leaves out."""
+        plugins --enable leaves out. Plugins with a ``setting_values()`` hook
+        also report each non-secret setting's current value."""
         from . import wconfig
         import os as _os
         declared = []
         for p in self.plugins:
+            # A plugin whose settings live outside env (the Android app's own
+            # preferences) reports their current values; never for secrets.
+            values = {}
+            if callable(getattr(p, "setting_values", None)):
+                try:
+                    values = p.setting_values() or {}
+                except Exception:
+                    log.exception("%s: setting_values failed", p.NAMESPACE)
             for st in getattr(p, "SETTINGS", ()):
                 var = next((v for v in st.env_names() if _os.environ.get(v) is not None), None)
-                declared.append({"key": f"{p.NAMESPACE}.{st.name}", "env": var,
-                                 "pushed": bool(var and var in wconfig.load().get("env", {})),
-                                 "secret": st.secret})
+                entry = {"key": f"{p.NAMESPACE}.{st.name}", "env": var,
+                         "pushed": bool(var and var in wconfig.load().get("env", {})),
+                         "secret": st.secret}
+                if st.name in values and not st.secret:
+                    entry["value"] = values[st.name]
+                declared.append(entry)
         refs = wconfig.secret_refs()
         missing = wconfig.unresolved()
         return {"ok": True, "features": ["secret_refs", "masked_config", "enable_persist"],

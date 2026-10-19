@@ -427,9 +427,47 @@ class SettingsActivity : AppCompatActivity() {
 
     // ---- app --------------------------------------------------------------
 
+    private fun setupAgentControl() {
+        b.keepAwakeAuto.isChecked = KeepAwake.autoEnabled(this)
+        b.keepAwakeAuto.setOnCheckedChangeListener { _, enabled ->
+            prefs.edit().putBoolean(KeepAwake.PREF_AUTO, enabled).apply()
+            KeepAwake.settingChanged(this)
+        }
+        b.keepAwakeMinutes.setText(KeepAwake.idleMinutes(this).toString())
+        b.keepAwakeMinutes.setOnFocusChangeListener { _, focused -> if (!focused) saveKeepAwakeMinutes() }
+        b.keepAwakeMinutes.setOnEditorActionListener { _, _, _ -> saveKeepAwakeMinutes(); false }
+        showPinStatus()
+        b.btnSavePin.setOnClickListener {
+            val pin = b.unlockPin.text.toString().trim()
+            val saved = UnlockPin.valid(pin) && try { UnlockPin.save(this, pin) } catch (_: Exception) { false }
+            b.unlockPin.text.clear()
+            showPinStatus(if (saved) null else "Not saved: the PIN must be 4 to 16 digits.")
+        }
+        b.btnClearPin.setOnClickListener {
+            UnlockPin.clear(this)
+            b.unlockPin.text.clear()
+            showPinStatus()
+        }
+    }
+
+    private fun saveKeepAwakeMinutes() {
+        val minutes = KeepAwakePolicy.clampMinutes(b.keepAwakeMinutes.text.toString().trim().toIntOrNull()
+            ?: KeepAwake.DEFAULT_IDLE_MINUTES)
+        b.keepAwakeMinutes.setText(minutes.toString())
+        if (minutes != KeepAwake.idleMinutes(this)) {
+            prefs.edit().putInt(KeepAwake.PREF_IDLE_MINUTES, minutes).apply()
+            KeepAwake.settingChanged(this)
+        }
+    }
+
+    private fun showPinStatus(error: String? = null) {
+        b.unlockPinStatus.text = error ?: if (UnlockPin.isSet(this)) "A PIN is saved." else "No PIN saved."
+    }
+
     private fun setupApp() {
         b.autoUpdates.isChecked = prefs.getBoolean("apk_auto_update", true)
         b.autoUpdates.setOnCheckedChangeListener { _, enabled -> prefs.edit().putBoolean("apk_auto_update", enabled).apply() }
+        setupAgentControl()
         b.btnAllowUpdates.setOnClickListener { startActivity(Intent(this, ApkUpdatePermissionActivity::class.java)) }
         b.btnUpdate.setOnClickListener {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(BuildConfig.ROOK_SERVER.trimEnd('/') + "/apk")))
@@ -454,6 +492,7 @@ class SettingsActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         saveModePrompt()   // keep prompt edits even when leaving without tapping Save
+        if (b.keepAwakeMinutes.hasFocus()) saveKeepAwakeMinutes()
     }
 
     override fun onResume() {
