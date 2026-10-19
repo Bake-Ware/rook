@@ -8,6 +8,14 @@ version was `0.1.0`.
 
 ## Unreleased
 
+### Added
+- Huddle roles (beta, huddles H2): a `roles` hub plugin (`role.*` caps: store with history,
+  presets for project manager, QA and lead developer, `role.ask`, `role.memory`,
+  `role.move`). Each role has a home directory on its agent host holding its memory
+  (`role:<id>`) and the Claude Code, Codex and OpenCode config that declares exactly its
+  tools; every role turn runs there. Worker setting `agenthost.roles_dir`.
+  (manual: home-agent)
+
 ### Security
 - Failed sign-ins are throttled per client address: after 5 wrong passwords or tokens in
   10 minutes (dashboard login and Basic auth, account sign-in, MCP bearer tokens, the OAuth

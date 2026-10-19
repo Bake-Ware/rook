@@ -7,6 +7,10 @@ features:
   - settings/home
   - plugin/hub/decide
   - settings/decide
+  - plugin/worker/agenthost
+  - settings/agenthost
+  - plugin/hub/roles
+  - settings/role
 since: 0.1.0
 deprecated: false
 ---
@@ -71,6 +75,29 @@ providers there.
 The harness runs with its own tools, settings, plugins and MCP servers
 switched off; the only tools it gets are the home agent's, served by the hub
 for that one answer.
+
+## Roles (preview)
+
+Roles are team members the home agent will chair in huddles: a project
+manager, a QA engineer, a lead developer, or any role you add. Each role has
+a charter (what it is for), the things it watches, the tools it may use, and
+its own memory. Roles run on an agent harness (Claude Code, Codex or
+OpenCode), on the home agent's host unless you give the role its own.
+
+Each role gets its own folder on its host, like a home folder: its memory
+(one small text file per thing it remembers) and the harness settings that
+say exactly which tools it may use. Every answer the role gives runs inside
+that folder. To move a role to another machine, Rook moves the folder; the old
+copy is renamed and kept, never deleted.
+
+There is no Roles page yet. Until there is, agents and scripts manage roles
+through worker `rook`: `role.presets` shows the starting roster, `role.set`
+saves a role (admin), `role.ask` asks one a question, `role.memory` shows what
+it remembers and `role.move` moves it (admin). **Tool calls per role turn**
+(Settings, `role.max_tool_calls`) bounds one answer; **Role homes directory**
+(per worker, `agenthost.roles_dir`) says where a host keeps the folders. A role that only proposes (the
+default) can read with its tools but not change anything; it tells you what
+it would do instead.
 
 ## Decide (preview)
 

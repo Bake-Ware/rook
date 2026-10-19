@@ -219,6 +219,11 @@ section 3. Hub side: `rook/hub/plugins/home/agent_host.py`.
 - **Stateless.** The conversation is flattened into one prompt each time
   (the hub already sends the room context and memory), so moving the agent
   to another host loses nothing.
+- **Role turns** (huddles H2, the `roles` plugin) use the same path with a
+  role: the turn runs on the host that keeps the role's home directory, with
+  that directory as its working directory, and the harness loads the role's
+  tools from the config files there instead of from a generated file; the
+  role's memory lives in the home. See [huddles.md](huddles.md) 3.3 and 4.4.
 - **Sign-in.** The host's own. For Claude Code, `home.claude_auth = token`
   passes the vault secret named by `home.claude_token` (a `claude
   setup-token` token) as `CLAUDE_CODE_OAUTH_TOKEN`.
