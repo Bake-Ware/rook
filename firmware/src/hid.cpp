@@ -1,7 +1,85 @@
 #include "hid.h"
+#include "device_mode.h"
+#include <string.h>
 
 USBHIDKeyboard Keyboard;
 USBHIDConsumerControl Consumer;
+RookMouse Mouse;
+
+static_assert(sizeof(RookMouseReport) == 7, "RookMouseReport must be 7 bytes");
+
+// 8-button relative mouse: buttons(8x1b) + X/Y(16b rel) + wheel(8b) + AC Pan(8b).
+// Hand-rolled because TUD_HID_REPORT_DESC_MOUSE carries only 5 buttons and no
+// independent horizontal wheel.
+static const uint8_t rook_mouse_desc[] = {
+    0x05, 0x01,               // Usage Page (Generic Desktop)
+    0x09, 0x02,               // Usage (Mouse)
+    0xA1, 0x01,               // Collection (Application)
+    0x85, ROOK_HID_RPT_MOUSE, //   Report ID (2)
+    0x09, 0x01,               //   Usage (Pointer)
+    0xA1, 0x00,               //   Collection (Physical)
+    0x05, 0x09,               //     Usage Page (Button)
+    0x19, 0x01,               //     Usage Minimum (Button 1)
+    0x29, 0x08,               //     Usage Maximum (Button 8)
+    0x15, 0x00,               //     Logical Minimum (0)
+    0x25, 0x01,               //     Logical Maximum (1)
+    0x95, 0x08,               //     Report Count (8)
+    0x75, 0x01,               //     Report Size (1)
+    0x81, 0x02,               //     Input (Data,Var,Abs)
+    0x05, 0x01,               //     Usage Page (Generic Desktop)
+    0x09, 0x30,               //     Usage (X)
+    0x09, 0x31,               //     Usage (Y)
+    0x16, 0x01, 0x80,         //     Logical Minimum (-32767)
+    0x26, 0xFF, 0x7F,         //     Logical Maximum (32767)
+    0x75, 0x10,               //     Report Size (16)
+    0x95, 0x02,               //     Report Count (2)
+    0x81, 0x06,               //     Input (Data,Var,Rel)
+    0x09, 0x38,               //     Usage (Wheel)
+    0x15, 0x81,               //     Logical Minimum (-127)
+    0x25, 0x7F,               //     Logical Maximum (127)
+    0x75, 0x08,               //     Report Size (8)
+    0x95, 0x01,               //     Report Count (1)
+    0x81, 0x06,               //     Input (Data,Var,Rel)
+    0x05, 0x0C,               //     Usage Page (Consumer)
+    0x0A, 0x38, 0x02,         //     Usage (AC Pan)
+    0x15, 0x81,               //     Logical Minimum (-127)
+    0x25, 0x7F,               //     Logical Maximum (127)
+    0x75, 0x08,               //     Report Size (8)
+    0x95, 0x01,               //     Report Count (1)
+    0x81, 0x06,               //     Input (Data,Var,Rel)
+    0xC0,                     //   End Collection
+    0xC0,                     // End Collection
+};
+
+RookMouse::RookMouse() : hid() {
+    static bool initialized = false;
+    if (!initialized) {
+        initialized = true;
+        hid.addDevice(this, sizeof(rook_mouse_desc));
+    }
+}
+
+uint16_t RookMouse::_onGetDescriptor(uint8_t* dst) {
+    memcpy(dst, rook_mouse_desc, sizeof(rook_mouse_desc));
+    return sizeof(rook_mouse_desc);
+}
+
+void RookMouse::begin() { hid.begin(); }
+
+bool RookMouse::sendRaw(const uint8_t* data, size_t len) {
+    if (len != sizeof(RookMouseReport)) return false;
+    return hid.SendReport(ROOK_HID_RPT_MOUSE, data, len);
+}
+
+bool RookMouse::sendReportId(uint8_t report_id, const void* data, size_t len) {
+    return hid.SendReport(report_id, data, len);
+}
+
+bool RookMouse::move(uint8_t buttons, int16_t dx, int16_t dy, int8_t wheel, int8_t pan) {
+    RookMouseReport r;
+    r.buttons = buttons; r.x = dx; r.y = dy; r.wheel = wheel; r.pan = pan;
+    return hid.SendReport(ROOK_HID_RPT_MOUSE, &r, sizeof(r));
+}
 
 struct KeyMapping { const char* name; uint8_t code; };
 struct ConsumerMapping { const char* name; uint16_t code; };
@@ -58,4 +136,30 @@ uint16_t lookupConsumerKey(const char* name) {
     for (int i = 0; CONSUMER_KEYS[i].name; i++)
         if (strcasecmp(CONSUMER_KEYS[i].name, name) == 0) return CONSUMER_KEYS[i].code;
     return 0;
+}
+
+// ---- realtime raw report streaming -------------------------------------
+
+bool hidStreamReport(uint8_t report_id, const uint8_t* data, size_t len) {
+    if (!hidEnabled()) return false;
+    switch (report_id) {
+        case ROOK_HID_RPT_KEYBOARD:
+            if (len != 8) return false;
+            Keyboard.sendReport((KeyReport*)data);  // 8-byte boot report
+            return true;
+        case ROOK_HID_RPT_MOUSE:
+            return Mouse.sendRaw(data, len);        // 7-byte RookMouseReport
+        case ROOK_HID_RPT_CONSUMER:
+            if (len != 2) return false;
+            return Mouse.sendReportId(ROOK_HID_RPT_CONSUMER, data, len);
+        default:
+            return false;
+    }
+}
+
+void hidReleaseAll() {
+    uint8_t zero_kb[8] = {0};
+    RookMouseReport zero_m = {0, 0, 0, 0, 0};
+    Keyboard.sendReport((KeyReport*)zero_kb);
+    Mouse.sendRaw((const uint8_t*)&zero_m, sizeof(zero_m));
 }

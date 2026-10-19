@@ -7,6 +7,12 @@
 // ---- Server ----
 #define HTTP_PORT 80
 
+// ---- Realtime HID stream (LAN-direct UDP) ----
+// Separate socket + separate derived key from the band hub traffic. The source
+// (CachyOS) and the dongle are always on the same LAN, so this never traverses
+// NAT — the band/hub path stays for RPC and cross-network reach.
+#define HID_STREAM_PORT 7475
+
 // ---- Serial Buffer ----
 #define SERIAL_BUF_SIZE 16384
 
@@ -19,7 +25,7 @@
 #define BUTTON_HOLD_IGNORE_MS 1500   // ignore continuous holds (prevent repeat fires)
 
 // ---- Firmware version ----
-#define ROOK_FW_VERSION "0.5.0"
+#define ROOK_FW_VERSION "0.6.2"
 
 // ---- TF Card (SD_MMC 4-bit) ----
 #define SDMMC_CLK   12

@@ -34,6 +34,7 @@ void setup() {
     CDCSerial.begin(115200);
     Keyboard.begin();
     Consumer.begin();
+    Mouse.begin();
 
     if (mode == STORAGE_MODE_MSC) {
         bool ok = initMSC();

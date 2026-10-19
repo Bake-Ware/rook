@@ -47,6 +47,11 @@ static String g_worker_name;
 static String g_hub_host_cached;
 static bool g_inited = false;
 
+// ---- realtime HID stream: separate socket + separate derived key ----
+static WiFiUDP g_hid_udp;
+static uint8_t g_hid_key[32];
+static volatile uint64_t g_last_hid_seq = 0;
+
 // Forward decls for endian helpers defined below in the Salsa20 section.
 static inline uint32_t load32_le(const uint8_t* s);
 static inline void store32_le(uint8_t* d, uint32_t v);
@@ -373,6 +378,31 @@ static void derive_band_id_and_key(const String& psk) {
     mbedtls_md_free(&hmac);
 }
 
+// Realtime HID lane gets its own AEAD key so its (random) nonces can never
+// collide with the band's seq-derived nonces under the shared PSK.
+// HKDF-SHA256, salt = "telesthete-v1", info = "hid-stream".
+static void derive_hid_stream_key(const String& psk) {
+    const uint8_t salt[] = "telesthete-v1";
+    const uint8_t info[] = "hid-stream";
+    uint8_t prk[32];
+
+    const mbedtls_md_info_t* md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    mbedtls_md_context_t hmac;
+    mbedtls_md_init(&hmac);
+    mbedtls_md_setup(&hmac, md, 1);
+
+    mbedtls_md_hmac_starts(&hmac, salt, sizeof(salt) - 1);
+    mbedtls_md_hmac_update(&hmac, (const uint8_t*)psk.c_str(), psk.length());
+    mbedtls_md_hmac_finish(&hmac, prk);
+
+    mbedtls_md_hmac_starts(&hmac, prk, 32);
+    mbedtls_md_hmac_update(&hmac, info, sizeof(info) - 1);
+    uint8_t one = 0x01;
+    mbedtls_md_hmac_update(&hmac, &one, 1);
+    mbedtls_md_hmac_finish(&hmac, g_hid_key);
+    mbedtls_md_free(&hmac);
+}
+
 // ---- header + fragmentation --------------------------------------------
 
 // 27-byte header per SPEC: band_id[16] || channel_type[1] || channel_id[2 BE]
@@ -490,7 +520,7 @@ static void send_keepalive() {
 
 static const char* CAPS_LIST[] = {
     "info.host", "info.uptime", "info.ping",
-    "kvm.type", "kvm.key", "kvm.consumer",
+    "kvm.type", "kvm.key", "kvm.consumer", "kvm.mouse", "kvm.stream",
     "kvm.hid.set", "kvm.hid.get",
     "bthid.type", "bthid.key", "bthid.consumer", "bthid.status",
 };
@@ -547,6 +577,7 @@ static void cap_info_host(const char* msg_id) {
     r["ssid"] = WiFi.SSID();
     r["ip"] = WiFi.localIP().toString();
     r["free_heap"] = ESP.getFreeHeap();
+    r["hid_stream_port"] = HID_STREAM_PORT;
     reply_ok(msg_id, r);
 }
 
@@ -616,6 +647,21 @@ static void cap_kvm_consumer(const char* msg_id, JsonVariant args) {
     Consumer.release();
     JsonDocument r;
     r["code"] = code;
+    reply_ok(msg_id, r);
+}
+
+static void cap_kvm_mouse(const char* msg_id, JsonVariant args) {
+    if (!hidEnabled()) { reply_err(msg_id, "hid_disabled"); return; }
+    int dx    = args["dx"]    | 0;
+    int dy    = args["dy"]    | 0;
+    int wheel = args["wheel"] | 0;
+    int pan   = args["pan"]   | 0;
+    uint8_t buttons = (uint8_t)(args["buttons"] | 0);
+    bool ok = Mouse.move(buttons, (int16_t)dx, (int16_t)dy,
+                         (int8_t)wheel, (int8_t)pan);
+    if (!ok) { reply_err(msg_id, "send_failed"); return; }
+    JsonDocument r;
+    r["ok"] = true;
     reply_ok(msg_id, r);
 }
 
@@ -712,6 +758,7 @@ static void dispatch(const uint8_t* payload, size_t len) {
     else if (strcmp(cap, "kvm.type")      == 0) cap_kvm_type(msg_id, args);
     else if (strcmp(cap, "kvm.key")       == 0) cap_kvm_key(msg_id, args);
     else if (strcmp(cap, "kvm.consumer")  == 0) cap_kvm_consumer(msg_id, args);
+    else if (strcmp(cap, "kvm.mouse")     == 0) cap_kvm_mouse(msg_id, args);
     else if (strcmp(cap, "kvm.hid.set")   == 0) cap_kvm_hid_set(msg_id, args);
     else if (strcmp(cap, "kvm.hid.get")   == 0) cap_kvm_hid_get(msg_id);
     else if (strcmp(cap, "bthid.status")  == 0) cap_bthid_status(msg_id);
@@ -758,6 +805,54 @@ static void recv_one(uint8_t* udp_buf, size_t udp_len) {
     free(assembled);
 }
 
+// ---- realtime HID stream ----------------------------------------------
+
+// Lean wire frame (no band header, no fragmentation — reports never fragment):
+//     'R' 'H' || nonce[24] || secretbox(tag[16] || ciphertext)
+// plaintext = seq[8 BE] || report_id[1] || report_body[N]
+// Decrypts with g_hid_key; applies straight to USB HID via hidStreamReport().
+// Fire-and-forget: no reply, no allocation on the hot path.
+static void recv_hid_stream(const uint8_t* buf, size_t len) {
+    const size_t PREAMBLE = 2 + 24;            // magic + nonce
+    if (len < PREAMBLE + 16 + 9) return;       // box tag + seq(8) + id(1) min
+    if (buf[0] != 'R' || buf[1] != 'H') return;
+
+    const uint8_t* nonce = buf + 2;
+    const uint8_t* box   = buf + PREAMBLE;
+    size_t box_len = len - PREAMBLE;
+    size_t pt_len  = box_len - 16;
+
+    uint8_t pt[64];
+    if (pt_len > sizeof(pt)) return;
+    if (!secretbox_decrypt(pt, g_hid_key, nonce, box, box_len)) return;
+
+    uint64_t seq = 0;
+    for (int i = 0; i < 8; i++) seq = (seq << 8) | pt[i];
+
+    // Drop stale/duplicate/reordered reports so an old delta never lands after
+    // a newer one. Tolerate a large backward jump as a client restart.
+    uint64_t last = g_last_hid_seq;
+    if (seq <= last && (last - seq) < 4096) return;
+    g_last_hid_seq = seq;
+
+    uint8_t report_id = pt[8];
+    hidStreamReport(report_id, pt + 9, pt_len - 9);
+}
+
+static void hidStreamTask(void* arg) {
+    uint8_t buf[256];
+    for (;;) {
+        int n = g_hid_udp.parsePacket();
+        if (n > 0 && n <= (int)sizeof(buf)) {
+            int got = g_hid_udp.read(buf, n);
+            if (got > 0) recv_hid_stream(buf, (size_t)got);
+            // loop again immediately to drain bursts without a tick delay
+        } else {
+            vTaskDelay(1);  // ~1ms at the Arduino-ESP32 1kHz tick
+        }
+    }
+}
+
 // ---- task --------------------------------------------------------------
 
 static void telestheteTask(void* arg) {
@@ -772,6 +867,7 @@ static void telestheteTask(void* arg) {
     g_worker_id = String(hex);
 
     derive_band_id_and_key(s.band_psk);
+    derive_hid_stream_key(s.band_psk);
     g_hub_port = s.hub_port;
     g_hub_host_cached = s.hub_host;
 
@@ -796,6 +892,13 @@ static void telestheteTask(void* arg) {
 
     g_udp.begin(0);  // ephemeral port
     g_inited = true;
+
+    // Realtime HID listener on a fixed port, own task pinned to core 1 (off the
+    // WiFi/display core) at higher priority than the band task for low jitter.
+    g_hid_udp.begin(HID_STREAM_PORT);
+    xTaskCreatePinnedToCore(hidStreamTask, "hidrt", 4096, NULL, 2, NULL, 1);
+    Serial.printf("telesthete: realtime HID listener on UDP :%u\n",
+                  (unsigned)HID_STREAM_PORT);
 
     // Implicit registration: keepalive frame teaches the hub our (NAT'd) addr.
     send_keepalive();
