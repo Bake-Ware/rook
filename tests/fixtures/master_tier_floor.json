@@ -903,6 +903,20 @@
    "tier": "exec",
    "tags": []
   },
+  "device.keep_awake": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "device.keep_awake_settings": {
+   "tier": "exec",
+   "tags": []
+  },
+  "device.keep_awake_status": {
+   "tier": "exec",
+   "tags": []
+  },
   "device.launch": {
    "tier": "exec",
    "tags": []
@@ -916,6 +930,10 @@
    "tags": []
   },
   "device.unlock": {
+   "tier": "exec",
+   "tags": []
+  },
+  "device.unlock_status": {
    "tier": "exec",
    "tags": []
   },
@@ -996,6 +1014,24 @@
    "tags": []
   },
   "sms.send": {
+   "tier": "exec",
+   "tags": []
+  },
+  "ui.back": {
+   "tier": "exec",
+   "tags": []
+  },
+  "ui.click": {
+   "tier": "exec",
+   "tags": []
+  },
+  "ui.nodes": {
+   "tier": "exec",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "ui.scroll": {
    "tier": "exec",
    "tags": []
   },

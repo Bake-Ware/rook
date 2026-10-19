@@ -121,6 +121,9 @@ _CORE_SPEC = {
     "device.vibrate": "X p", "device.torch": "X p", "device.unlock": "X s,p",
     "device.clipboard_set": "X", "device.clipboard_get": "X s",
     "device.open_url": "X", "device.launch": "X",
+    "device.unlock_status": "X", "device.keep_awake": "X p",
+    "device.keep_awake_status": "X", "device.keep_awake_settings": "X",
+    "ui.nodes": "X s", "ui.click": "X", "ui.scroll": "X", "ui.back": "X",
     "voice.speak": "W p", "voice.speak_status": "R", "voice.replies": "R",
     "voice.speak_stop": "W", "voice.speak_voices": "R",
 }

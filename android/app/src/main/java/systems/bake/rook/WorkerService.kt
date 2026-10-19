@@ -126,6 +126,7 @@ class WorkerService : Service() {
         updateHandler.removeCallbacks(updateTick)
         ScreenCaptureBridge.stopSession()
         FindDeviceBridge.stop()
+        KeepAwake.shutdown()
         stopWorker()
         wakeLock?.let { if (it.isHeld) it.release() }
         super.onDestroy()
