@@ -340,7 +340,7 @@ async def test_a_settled_single_answer_posts_no_close(hub):
 async def test_a_direct_question_that_fails_is_retried_then_closed(hub):
     await _roles(hub)
     h = await _call(hub, "huddle.start", {"title": "Direct", "roles": ["qa"]})
-    hub.band.script = {"huddle-qa": [{"fail": "cachyrig: stopped after 34 tool calls"},
+    hub.band.script = {"huddle-qa": [{"fail": "agent: stopped after 34 tool calls"},
                                      {"fail": "still stuck"}],
                        "huddle-close": [{"text": "QA could not finish; I need you to say "
                                                  "which job to look at."}]}
