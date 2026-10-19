@@ -146,6 +146,7 @@ def host(tmp_path, monkeypatch):
     exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
     monkeypatch.setenv("PATH", f"{exe.parent}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)   # CI runners set it
     monkeypatch.setenv("FAKE_CLAUDE_LOG", str(tmp_path / "claude.log"))
     plugin = agenthost.AgentHost()
     plugin.__dict__["_data_root"] = str(tmp_path / "state")
@@ -202,6 +203,7 @@ async def test_agenthost_bounds_tools_time_and_errors(host):
                     (dict(turn_id="../x"), "turn_id"), (dict(mcp_url="file:///x"), "mcp_url")):
         with pytest.raises(Exception, match=msg):
             await host._turn(**_turn(**kw))
+    await host.stop()           # the re-read a failed turn starts must end inside the test
 
 
 # -- the home plugin on the Claude Code backend ----------------------------------------

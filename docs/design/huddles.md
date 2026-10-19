@@ -1,6 +1,7 @@
 # Huddles: roles, a chair, and Claude Code as the house agent
 
-Status: design. Nothing here is built yet. Related: [home-agent.md](home-agent.md)
+Status: H1 (section 3, the agent host) is built; H2 (roles, role homes and
+role memory: 3.3, 4) is built as decided here; H3 to H5 are design. Related: [home-agent.md](home-agent.md)
 (the house agent this extends), [memory.md](memory.md) (where role memory
 lives), [persona.md](persona.md) (how agents talk, which is not the same as
 what they care about), [sessions.md](sessions.md) (the Claude Code sessions
@@ -30,7 +31,10 @@ the lead developer fronts), [jobs.md](jobs.md) (guardrails, agent steps).
   another worker.
 
 Status update: section 3 (Claude Code as the house agent) is built first, as
-H1, and is documented in [home-agent.md](home-agent.md) 1.6 as it is. A
+H1, and is documented in [home-agent.md](home-agent.md) 1.6 as it is. H2
+follows the operator's decision of 2026-10-19: every role has its own home directory
+on its agent host (4.4), which holds its memory (3.3) and the harness
+configuration that declares its tools. A
 `huddle` hub plugin already exists on master (agents post status and ask the
 person questions in a group room, Work > Huddle; docs/manual/huddles.md). H3
 builds on it rather than starting a second store.
@@ -48,6 +52,7 @@ its voice; it never replaces one.
 | Backend | What runs a model turn: `openai` (today) or `claude-code` (new). |
 | Agent host | The worker that runs Claude Code turns (first pass: cachyrig). |
 | Role | A charter (concerns, tools, model) plus its own memory. `role:<id>`. |
+| Role home | The role's own directory on its agent host: memory and harness config (4.4). |
 | Huddle | A thread with Bake, the chair and one or more roles. |
 | Action card | A concrete proposal from a huddle (task, job, session) that Bake approves. |
 
@@ -60,51 +65,64 @@ agent host as a headless process and streams back to the hub:
 
 ```
 hub (home plugin)  --band-->  agent host (worker plugin agenthost)
-                                 claude -p <prompt>
+                                 claude -p  (prompt on stdin)
                                    --model <model>
-                                   --resume <session> | (new session)
                                    --output-format stream-json --verbose
-                                   --mcp-config <generated, Rook only>
-                                   --strict-mcp-config --restricted
-                                   --allowedTools <from settings/role>
-                                   --permission-mode <setting>
-                                 cwd = <agenthost dir>/<agent>/<role>/
+                                   --setting-sources "" --settings .claude/settings.json
+                                   --mcp-config .mcp.json --strict-mcp-config
+                                   --tools <the role's built-ins, usually none>
+                                   --permission-mode dontAsk
+                                 cwd = the role's home (4.4)
 ```
+
+That is the role turn (H2). The house agent's own turns (H1) run the same
+way but in an empty scratch directory with a generated config, as described
+in [home-agent.md](home-agent.md) 1.6.
 
 The worker plugin `agenthost` (`rook/worker/plugins/agenthost.py`) owns the
 process. Caps:
 
 | Cap | Risk | Does |
 |---|---|---|
-| `agenthost.status()` | read | Claude Code found? version, login state, running turns. Also in the heartbeat (`hb.agenthost`). |
-| `agenthost.turn(agent, role, prompt, model, session?, system?, mcp_token_ref, allowed_tools, permission_mode, max_turns, timeout_s, turn_id)` | exec | Runs one turn; returns `{ok, session, text, events_cursor, usage, cost?, exit}`. Idempotent on `turn_id`. |
-| `agenthost.events(turn_id, cursor, wait)` | read | Long-poll the turn's stream-json events for live display. |
-| `agenthost.cancel(turn_id)` | exec | Stops a running turn (SIGINT, then SIGTERM after 5 s). |
-| `agenthost.reset(agent, role)` | exec | Forgets the session id for that role on this host. |
+| `agenthost.status()` | read | Harnesses found (claude, codex, opencode), versions, sign-in, running turns. Also in the heartbeat (`hb.agenthost`). |
+| `agenthost.models(harness)` | read | Models the harness offers on that host. |
+| `agenthost.turn(turn_id, prompt, system, mcp_url, mcp_token, harness, model, timeout_s, max_tool_calls, effort?, oauth_token?, role?, role_name, role_rev, tools?, builtin?, memory)` | exec | Runs one turn; returns `{ok, text, model, tools_used, usage, cost_usd, latency_ms, harness, role?, home?}`. Idempotent on `turn_id`. With `role`, it runs in that role's home (4.4). |
+| `agenthost.cancel(turn_id)` | exec | Stops a running turn. |
+| `agenthost.roles`, `role_memory`, `role_memory_edit`, `role_export`, `role_import`, `role_set_aside` | read to admin | The role homes on that host (4.4). |
+
+Turns are stateless (no harness session files): the hub sends the context and
+the agent host adds the role's memory each time, so there is no session to
+resume, stream or reset. Live streaming of a turn (`agenthost.events`) is left
+for H3/H4.
 
 Rules:
 
-- **One turn per role at a time.** `--resume` on a session that is already
-  running corrupts it, so turns for the same role queue (on the hub, not the
-  worker). Different roles run in parallel. A per-host cap (`agenthost.max_parallel`, default 3) bounds it.
-- **The working directory is rendered, not kept.** Before each turn the hub
-  sends the role's charter, persona text and a memory digest; the worker writes
-  them to `CLAUDE.md` in the role's directory. Nothing durable lives only on the
-  agent host (3.3).
-- **MCP is Rook only.** The generated MCP config points at the hub's MCP
-  endpoint with `Authorization: Bearer ${ROOK_AGENT_TOKEN}`; the token is
-  resolved from the vault by the worker at spawn time and passed in the
-  environment, never written to disk. Claude Code's own user and project MCP
-  servers are not loaded (`--strict-mcp-config`), and `--restricted` drops
-  the code-running tools and the host's user/project settings files. (`--bare`
-  is not used: it requires API-key auth and ignores the subscription login.)
+- **One turn per role at a time.** Turns for the same role queue on the hub
+  (they share one home and one memory); different roles run in parallel. A
+  per-host cap (3 turns at once) bounds it.
+- **A role turn runs in the role's home.** The working directory is the
+  role's home directory (4.4), and the harness loads its tools from the
+  config files there, never from the request. The hub sends the role's
+  charter and persona as the system prompt with each turn; the agent host adds
+  the role's memory digest from the home (3.3).
+- **MCP is Rook plus the role's own memory.** The home's config names two
+  servers: `rook`, the hub's per-turn tool server (`/home/turn-mcp`, bearer
+  from `ROOK_TURN_TOKEN` in the environment, never on disk), and `memory`, a
+  local stdio server over the home's `memory/` directory. The host's own user
+  MCP servers, plugins and settings are not loaded (`--strict-mcp-config`,
+  `--setting-sources ""`; Codex `--ignore-user-config`; OpenCode with
+  its config dir pointed away). (`--bare` is not used: it requires API-key
+  auth and ignores the subscription login.)
 - **Turn limits are enforced by the agent host.** The CLI has no turn cap
-  flag in 2.1.x, so `agenthost` counts `tool_use` events in the stream and
-  cancels the turn past `max_turns`, and kills it at `timeout_s`.
-- **Built-in tools are off unless a role needs them.** Default
-  `allowed_tools` is the Rook MCP tools only. A role that needs to read code
-  (the lead developer) can be given `Read`, `Grep`, `Glob` in a working copy;
-  `Bash`/`Edit`/`Write` are never on by default.
+  flag in 2.1.x, so `agenthost` counts tool calls in the stream and stops
+  the turn past `max_tool_calls` (`role.max_tool_calls`, 12, for role
+  turns), and kills it at `timeout_s`.
+- **Built-in tools are off unless a role needs them.** Default is the Rook
+  and memory MCP tools only. A role that needs to read files can be given
+  `builtin: ["read", "search"]` (Claude Code `Read`, `Grep`, `Glob`; OpenCode
+  `read`, `grep`, `glob`, `list`; Codex has no file tools without its shell,
+  which stays off, so it gets none). Shell, edit and write tools are never
+  offered to a role.
 - **Everything is journaled** as the house agent (`agent:home`, auth kind
   `home`) or, for a role turn, `agent:home/role:<id>`, with the agent host and
   turn id. The MCP calls the turn makes are journaled by the hub as usual under
@@ -127,85 +145,173 @@ Rules:
 | `home.claude.max_turns` | `12` | Agentic turns per call. |
 | `home.claude.timeout_s` | `180` | Per call. |
 
-**Moving the house agent** is changing `home.claude.worker`. The next turn
-goes to the new host. Role sessions on the old host are not carried over: the
-first turn on the new host starts a fresh session seeded from the role's
-memory and the huddle's recent messages (3.3), so nothing is lost but the
-model's scratch context. **Test** on the page runs one turn on the chosen host
+**Moving the house agent** is changing `home.agent_host` (as built). The next
+turn goes to the new host; its own turns are stateless, so nothing is lost.
+Roles do not follow it silently: a role's first turn creates its home on the
+host it ran on and pins that host on the role (`host`), and a role moves only
+with `role.move`, which carries its home (4.4). **Test** on the page runs one turn on the chosen host
 with the form's values and shows the reply, model, latency and usage.
 
 Usage counts against the subscription that is logged in on the agent host.
 The page shows the last 24 h of turns and their token usage per role so Bake
 can see what huddles cost.
 
-### 3.3 Memory that survives a move
+### 3.3 Memory that survives a move (decided)
 
-Claude Code's own memory files live on the agent host, so they would be lost
-when the house agent moves. Role memory therefore lives at the hub, in the
-existing `memory` plugin, under scope `role:<id>` (the chair uses `shared`
-and the person scopes as today):
+Claude Code's own memory files live wherever the harness keeps them, so they
+would not follow a role to another host. Role memory therefore lives **in the
+role's home** (4.4), in `memory/`, and moves with it. This is the memory
+scope `role:<id>`. (The chair keeps using the hub's `memory` plugin, scope
+`shared` and the person scopes, as today.)
 
-- Before a turn the hub builds the role's memory digest (the same budgeted
-  recall the home agent already uses) into the rendered `CLAUDE.md`.
-- The role writes memory through a Rook MCP tool, `rook_memory`
-  (`remember`/`forget`/`recall`), limited to its own scope plus read access to
-  `shared`. The memory plugin's write rules (vault values become references,
-  deny patterns) apply unchanged.
-- Claude Code's auto-memory is turned off in the role directory so there is
-  one source of truth.
-- The Memory page gets a scope filter for roles, so Bake can read and edit
-  what QA remembers.
+- **Format.** One Markdown file per memory (`memory/<id>.md`, a small header
+  with id, kind, created and author, then the text) and a generated
+  `memory/MEMORY.md` index, so a person can read the folder directly. Kinds:
+  `fact`, `procedure`, `episode`.
+- **Writes** go through the home's `memory` MCP server (stdio,
+  `python -m rook.worker.rolemem <home>`): `memory_recall(query)`,
+  `memory_remember(text, kind)`, `memory_forget(id)`. Every write passes the
+  memory plugin's write rules (rook/hub/plugins/memory/rules.py: secrets,
+  prompt-injection phrases, invisible characters and code are refused).
+- **Reads.** Before each turn the agent host appends a budgeted digest to the
+  system prompt: memories that share words with the prompt first, then the
+  newest, up to 4000 characters.
+- **One source of truth.** Claude Code's auto-memory is off
+  (`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` and `autoMemoryEnabled: false` in the
+  home's settings) and Codex's memories feature is off.
+- **Per role:** `memory` = `write` (default), `read` (recall only) or `off`.
+- **People read and edit it** through `role.memory` (read) and
+  `role.memory_edit` (remember/forget, admin) on worker `rook`, which call the
+  role's host. The Memory page's role filter (H4) is built on them.
 
 ### 3.4 Identity
 
-The house agent needs its own Rook API token for MCP (`agent_id`
-`home:<name>`), stored in the vault and named by `home.claude.agent_token`.
-The permissions policy sees it as the home agent, so the policy and the Jobs
-guardrail model apply to what the turns can call. Role turns add the role's
-own tool scope (4.1) on top: the hub refuses MCP calls outside it, keyed by a
-per-turn header (`X-Rook-Role`) that the token alone cannot raise.
+As built in H1, a turn does not use a long-lived Rook API token: its tools
+are served by the hub's per-turn tool server under a random token that dies
+with the turn (home-agent.md 1.6). For a role turn that server offers exactly
+the role's tools (4.1), and its `rook_call` refuses any cap outside the role's
+`tools` patterns (and, for a role that only proposes, anything above
+`read`), so the scope is fixed by the token itself and nothing in the request
+can raise it. (This replaces the `X-Rook-Role` header idea.) The calls are
+policy-checked as an agent principal `home:<name>/role:<id>` and journaled as
+`agent:<name>/role:<id>`.
 
 ## 4. Roles
 
 ### 4.1 A role
 
-Stored by a new hub plugin `roles` (or inside `huddle`, 5), one document per
-role, versioned with history like persona profiles:
+One document per role:
 
 | Field | Meaning |
 |---|---|
 | `id`, `name` | `qa`, "QA engineer". Identity `role:<id>`; people write `@qa`. |
 | `charter` | One paragraph: what the role is for. |
 | `concerns` | List: what it watches and is expected to raise unprompted. |
-| `sources` | What it reads before answering (deck, jobs runs, journal, sessions, knowledge folders), as Rook caps with args. |
-| `tools` | Cap scope, the Jobs format (`allow`/`deny` patterns). Default read-only. |
+| `sources` | What it reads before answering (deck, jobs runs, journal, sessions, knowledge folders), as Rook caps with args. In H2 they are listed in its system prompt and it reads them with `rook_call`; H3 may pre-read them. |
+| `tools` | Cap scope, the Jobs format (`allow`/`deny` patterns). Default `knowledge.read` only. `role.ask`, `role.move`, `role.memory_edit` and `agenthost.*` are never callable by a role. |
 | `autonomy` | `propose` (default: only action cards) or `act` (may call `tools` directly). |
-| `backend`, `model` | Blank: the house agent's. Otherwise per-role override (the lead developer on Sonnet). |
+| `builtin` | Harness built-in tools: none (default), `read`, `search` (3.1). |
+| `memory` | `write` (default), `read` or `off` (3.3). |
+| `backend`, `model`, `effort` | Blank: the house agent's. Otherwise per-role override (the lead developer on Sonnet). Roles run on an agent harness (`claude-code`, `codex`, `opencode`); with the house agent on `openai`, a role names its own. |
+| `host` | The agent host that keeps the role's home. Blank until the first turn, which runs on `home.agent_host` and pins that host here; changed only by `role.move`. |
 | `persona` | Optional persona profile for voice. |
 | `enabled` | Off roles are not called on. |
 
-### 4.2 Starting roster (editable, shipped as defaults on the page, not code)
+Stored by the hub plugin `roles` (namespace `role`, `<state>/plugins/role/roles.db`),
+with revisions and an attributed history like persona profiles.
+
+### 4.2 Starting roster (editable presets)
+
+Offered by `role.presets` (and on the Roles tab in H4); nothing exists until
+someone saves one with `role.set`. As shipped, all three only propose.
 
 - **Project manager (`pm`)**: concerns: the task deck, what is blocked and why,
   priorities and scope creep, what is on deck next, deadlines Bake mentioned.
   Sources: `task` deck, handoffs, recent huddle decisions. Tools: read, plus
-  propose task create/assign/reprioritise.
+  propose task create/assign/reprioritise. Shipped tools: `task.read`,
+  `huddle.read`, `job.read`, `knowledge.read`.
 - **QA engineer (`qa`)**: concerns: failing or flaky jobs, test results on
   recent PRs, regressions after deploys, workers out of date or offline,
   anything shipped without evidence. Sources: Jobs runs, journal errors, PR
-  checks, worker status. Tools: read, plus propose jobs and tasks.
+  checks, worker status. Tools: read, plus propose jobs and tasks. Shipped
+  tools: `job.read`, `task.read`, `info.*`, `knowledge.read`.
 - **Lead developer (`lead`)**: concerns: open PRs and branches, what every
   Claude Code session is doing and whether it is stuck, technical decisions
   and debt. Sources: `sessions.list` across workers, `sessions.follow` tails,
   GitHub PRs. Tools: read, plus propose `sessions.send` (nudge a session) and
   `work.stream.open` (start one with a task). The lead fronts the sessions; it
-  does not write code itself.
+  does not write code itself. Shipped tools: `sessions.list`,
+  `sessions.follow`, `task.read`, `knowledge.read`.
 
 Anything else (ops, reviewer) is added from the page.
 
 ### 4.3 Reaching one role
 
-A 1:1 is a huddle with one role. Jobs can call a role directly (6).
+A 1:1 is a huddle with one role. Jobs can call a role directly (6). Under
+both is `role.ask(id, question, context?)` on worker `rook` (H2): one turn of
+that role on its host, in its home, with its tools and memory. Turns of the
+same role queue at the hub (one at a time); different roles run in parallel.
+
+### 4.4 Role homes (decided)
+
+Every role has its own home directory on its agent host, like a user's home
+directory. The reasons: Claude Code used as a plain model provider works
+for text, but answers 403 when MCP tools are injected through the request;
+letting each CLI load its own tools from config files in its working
+directory avoids that, and Codex and OpenCode stay supported the same way.
+
+```
+<roles dir>/<id>/           mode 0700. Roles dir: agenthost.roles_dir, default <agenthost data>/roles
+  role.json                 what the files below were rendered from (id, name, rev, tools, memory)
+  memory/                   the role's memory, scope role:<id> (3.3)
+  .mcp.json                 Claude Code: the rook and memory MCP servers
+  .claude/settings.json     Claude Code: permissions allow exactly the role's tools; deny shell/edit/web; auto-memory off
+  .codex/config.toml        Codex: the two servers with enabled_tools, built-in tool features off, approvals never
+  .config/opencode/opencode.json
+                            OpenCode: the two servers, tools {"*": false, <the role's>: true}, edit/bash/webfetch denied
+  .rook/                    host-local scratch (the per-turn system prompt for OpenCode); not part of the role
+```
+
+- **It is the working directory.** Every turn of the role runs with the home
+  as its cwd, whichever harness runs it.
+- **Each harness loads its tools from the home:**
+  - Claude Code: `--settings .claude/settings.json` with
+    `--setting-sources ""` (the home's settings file and nothing of the
+    host's), `--mcp-config .mcp.json --strict-mcp-config`,
+    `--permission-mode dontAsk` (only what the settings allow runs), `--tools`
+    limited to the role's built-ins. (Loading the same file as *project*
+    settings does not work: Claude Code ignores `permissions.allow` from a
+    project folder nobody has accepted the trust dialog for, and marking it
+    trusted would mean editing the host's `~/.claude.json`. Checked with
+    Claude Code 2.1.301.)
+  - Codex: `--ignore-user-config` plus
+    `-c projects={"<home>"={trust_level="trusted"}}`, so Codex loads the
+    home's `.codex/config.toml` as project config while its sign-in stays
+    in `CODEX_HOME`.
+  - OpenCode: `OPENCODE_CONFIG` names the home's
+    `.config/opencode/opencode.json`; its global config dir points at a
+    per-turn temp directory holding only the host's model providers (never
+    written into the home). (As *project* config, `opencode.json` in the
+    home, OpenCode 1.18.35 fails every turn with "Unexpected server error"
+    once the remote MCP server answers; the same file as custom config
+    works.)
+- **Rendered from the role, kept in the home.** The hub sends the role's tool
+  list with each turn and the agent host rewrites a file only when it differs.
+  The hub stays the authority: the files never name more than the turn's tool
+  server serves, and a role is changed on the hub (`role.set`, the Roles tab),
+  not by editing the files.
+- **Moving a role is moving the folder.** `role.move(id, host)` packs the home
+  on the old host (`agenthost.role_export`: a tar.gz without `.rook/`),
+  unpacks it on the new one (`agenthost.role_import`), points the role at the
+  new host and sets the old copy aside (`<id>.moved-<time>`, never deleted).
+  The next turn re-renders the host-specific parts (the memory server's
+  Python path).
+- **No secrets in the home.** The turn token is only in the harness's
+  environment; sign-ins stay the host's own.
+- Caps on the agent host: `agenthost.roles` (homes here), `agenthost.role_memory`
+  (read), `agenthost.role_memory_edit` (write), `agenthost.role_export`,
+  `agenthost.role_import` and `agenthost.role_set_aside` (admin). The hub calls
+  them as system code; people use the `role.*` caps on worker `rook`.
 
 ## 5. Huddles
 
@@ -245,7 +351,8 @@ already `done`. Guardrails (jobs.md 7) apply to both.
 
 On worker `rook`: `huddle.list`, `huddle.read`, `huddle.start(title, roles)`,
 `huddle.post(huddle, text, mention?)`, `huddle.card(huddle, card, action)`,
-`huddle.archive`; `role.list/get/set/delete/history`. One MCP tool,
+`huddle.archive`; the role caps from H2: `role.list/get/history/presets`,
+`role.set/delete/move/memory_edit` (admin), `role.ask`, `role.memory`. One MCP tool,
 `rook_huddle`, action-style like `rook_jobs`. External agents (Claude Code,
 Claude web) can read a huddle and post into it as guests, but are never
 called on.
@@ -295,9 +402,12 @@ Minimal, per Bake's standing rule (no chatty status, only actionable notices):
   The house agent's chat replies, `home.ask` and job steps work on either
   backend. Tests use a fake `claude` executable that emits recorded
   stream-json.
-- **H2 Roles and role memory.** Role store and caps, `role:<id>` memory scope,
-  `rook_memory` scoped tool, rendered `CLAUDE.md`, per-turn tool scope
-  enforcement (`X-Rook-Role`). Ships the three default roles as page presets.
+- **H2 Roles, role homes and role memory.** Role store and caps (`roles`
+  plugin), a home directory per role on its agent host (4.4) with each
+  harness's config rendered from the role's tool allowlist, the turn run with
+  cwd = the home, `role:<id>` memory in the home with its stdio memory server
+  (3.3), per-turn tool scope (3.4), `role.ask` and `role.move`. Ships the
+  three default roles as presets (`role.presets`).
 - **H3 Huddles.** Store, chair flow (call_on / answer / propose), parallel role
   turns, action cards and approval, caps, `rook_huddle`, chat migration.
 - **H4 Web.** Huddles view replacing Chat, Roles tab, Home agent settings

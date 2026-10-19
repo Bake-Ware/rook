@@ -126,6 +126,16 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `policy.get` | — | read | The current policy document with its revision, source, mode, lint and last load error (if the file on disk is… |
 | `policy.set` | policy, note='' | admin | Replace the policy document (band owners and operator tokens only). |
 | `policy.status` | — | read | Hub permission status: policy mode/revision, whether calls carry tickets (root key present), the op-key id an… |
+| `role.ask` | id, question, context='' | write | One turn of a role: it answers `question` (with `context`) on its agent host, in its home directory, with its… |
+| `role.delete` | id, note='' | admin | Delete a role (its history stays; its home on the agent host is left in place). |
+| `role.get` | id | read | A role document: charter, concerns, sources, tools, builtin, autonomy, memory, backend, model, effort, host,… |
+| `role.history` | id='', limit=20 | read | Attributed changes to one role (or all), newest first. |
+| `role.list` | — | read | Every role (id, name, rev, enabled, host, backend, autonomy). |
+| `role.memory` | id, query='', limit=50 | read | A role's memory (scope role:<id>), read from its home on its agent host: the memories matching `query`, or th… |
+| `role.memory_edit` | id, action, text='', kind='fact', memory_id='' | admin | Change a role's memory on its host: `action` remember (`text`, `kind` fact, procedure or episode) or forget (… |
+| `role.move` | id, host, note='' | admin | Move a role to another agent host: its home directory (memory and config) is packed on the old host, unpacked… |
+| `role.presets` | — | read | The starting roster (project manager, QA engineer, lead developer) as role documents to save with `role.set`;… |
+| `role.set` | role, note='', dry_run=false, expect_rev? | admin | Create or replace a role (band owners and operator tokens). |
 | `serves.clear` | worker | write | Remove a worker's hosting entry. |
 | `serves.list` | worker='' | read | What workers host: `{worker: {sites, services, updated, by}}`. |
 | `serves.set` | worker, sites?, services?, by='' | write | Write what a worker hosts. |
@@ -197,6 +207,9 @@ One persona for every harness. `rook_call(cap="persona.get", worker="rook", args
 ### policy
 `rook_call(cap="policy.explain", worker="rook", args={"principal": "role:agent", "cap": "shell.exec", "worker": "<name>"})` shows whether a call would be allowed and which rule decides it. `policy.get` returns the document; changing it (`policy.set`) is for band owners and operator tokens.
 
+### roles
+Huddle roles (project manager, QA, lead developer, ...) each have a charter, a tool scope and their own memory, kept in the role's home directory on its agent host. `rook_call(worker="rook", cap="role.list")` lists them; `role.ask` with `{"id": "qa", "question": ...}` runs one turn of a role. `role.set`, `role.move` and `role.memory_edit` are admin: ask the user first.
+
 ### serves
 What each worker hosts: `serves` on a `rook_workers` row is `{sites: [{name, url}], services: [{name, url}]}`, written by hand. `rook_call(worker="rook", cap="serves.list")` returns all of it; `serves.set(worker, sites?, services?)` replaces the lists it is given; `serves.clear(worker)` removes the entry.
 
@@ -239,8 +252,14 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 |---|---|---|
 | `agenthost.cancel` | turn_id | Stop a running turn. |
 | `agenthost.models` | harness='claude' | Models a harness here can use (claude: aliases; codex: its catalog; opencode: `opencode models`). |
+| `agenthost.role_export` | role | Pack a role's home (memory and config, not host-local scratch) to move it to another host. |
+| `agenthost.role_import` | role, archive, sha256, replace=false | Unpack a role's home exported from another host. |
+| `agenthost.role_memory` | role, query='', limit=50 | A role's memory (scope role:<id>, in its home): the memories that match `query`, or the newest. |
+| `agenthost.role_memory_edit` | role, action, text='', kind='fact', id='', by='' | Change a role's memory: `action` remember (`text`, `kind` fact, procedure or episode) or forget (`id`). |
+| `agenthost.role_set_aside` | role | Move a role's home out of the way on this host (after a move to another host); it is renamed, never deleted. |
+| `agenthost.roles` | — | The role homes on this host: {ok, base, roles: [{role, path, rev, tools, memory_mode, memories, bytes}]}. |
 | `agenthost.status` | — | The agent harnesses on this host (claude, codex, opencode): version and login, re-read now; and the running t… |
-| `agenthost.turn` | turn_id, prompt, system, mcp_url, mcp_token, harness='claude', model='', timeout_s=180.0, max_tool_calls=20, effort?, oauth_token? | Run one house agent turn with a local harness; returns its reply. |
+| `agenthost.turn` | turn_id, prompt, system, mcp_url, mcp_token, harness='claude', model='', timeout_s=180.0, max_tool_calls=20, effort?, oauth_token?, role?, role_name='', role_rev=0, tools?, builtin?, memory='write' | Run one house agent turn with a local harness; returns its reply. |
 
 **battery**
 

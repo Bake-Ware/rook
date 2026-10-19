@@ -138,6 +138,7 @@ are set only in the environment or on the command line.
 | Key | Label | Scope | Type | Default | Env / flag | Apply |
 |---|---|---|---|---|---|---|
 | `agenthost.enabled` | House agent host | worker | bool | on | `ROOK_AGENTHOST` | restart |
+| `agenthost.roles_dir` | Role homes directory | worker | str |  | `ROOK_AGENTHOST_ROLES_DIR` | live |
 
 ## Claude Code rules (hub plugin, runs in mcp)
 
@@ -384,6 +385,12 @@ are set only in the environment or on the command line.
 | `relay.bind` | Relay listen address | hub | hostport | `0.0.0.0:7474` | `HUB_BIND` | restart · bootstrap |
 | `relay.peer_ttl` | Peer TTL (s) | hub | int | `60` | `HUB_PEER_TTL_SECS` | restart · bootstrap |
 | `relay.prune` | Prune interval (s) | hub | int | `10` | `HUB_PRUNE_SECS` | restart · bootstrap |
+
+## Role (hub plugin, runs in mcp)
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `role.max_tool_calls` | Tool calls per role turn | hub | int | `12` | `ROOK_ROLE_MAX_TOOL_CALLS` | live |
 
 ## Tasks (hub plugin, runs in mcp)
 
