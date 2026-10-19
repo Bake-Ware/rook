@@ -480,6 +480,7 @@ class AgentHost(Plugin):
         self._inflight: dict[str, asyncio.Future] = {}
         self._found: dict[str, dict] = {}
         self._probe_task: asyncio.Task | None = None
+        self._refreshing: asyncio.Task | None = None
 
     @property
     def roles_base(self) -> Path:
@@ -498,6 +499,11 @@ class AgentHost(Plugin):
         self._probe_task = asyncio.create_task(self._probe_loop())
 
     async def stop(self) -> None:
+        if self._refreshing is not None and not self._refreshing.done():
+            # Let a re-read finish: cancelling a probe mid-communicate() can
+            # leave its pipe readers stuck on Python 3.11/3.12.
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(asyncio.shield(self._refreshing), 10)
         if self._probe_task is not None:
             self._probe_task.cancel()
             await asyncio.gather(self._probe_task, return_exceptions=True)
@@ -641,8 +647,10 @@ class AgentHost(Plugin):
             self._inflight.pop(turn_id, None)
         out["harness"] = h.name
         if not out.get("ok"):
-            # A login may have lapsed: re-read before the next heartbeat.
-            asyncio.get_running_loop().create_task(self.refresh())
+            # A login may have lapsed: re-read before the next heartbeat (one
+            # re-read at a time; stop() waits for it).
+            if self._refreshing is None or self._refreshing.done():
+                self._refreshing = asyncio.get_running_loop().create_task(self.refresh())
         self._done[turn_id] = out
         while len(self._done) > KEEP_RESULTS:
             self._done.popitem(last=False)

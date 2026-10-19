@@ -202,6 +202,7 @@ async def test_agenthost_bounds_tools_time_and_errors(host):
                     (dict(turn_id="../x"), "turn_id"), (dict(mcp_url="file:///x"), "mcp_url")):
         with pytest.raises(Exception, match=msg):
             await host._turn(**_turn(**kw))
+    await host.stop()           # the re-read a failed turn starts must end inside the test
 
 
 # -- the home plugin on the Claude Code backend ----------------------------------------
