@@ -132,7 +132,7 @@ Pick a role to change it:
   memory.
 - **Examples and starting memory**: questions it answers well (shown to the
   chair), and what it knows to start with: saved into its memory when its
-  folder is made, after its first answer. Changing the starting memory later
+  folder is made (after its first answer, or when you move it before then). Changing the starting memory later
   does not change what it already remembers.
 - **Model**: which agent harness and model it runs on, how hard it thinks,
   and its persona. Blank uses the home agent's.

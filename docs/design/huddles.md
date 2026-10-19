@@ -218,7 +218,7 @@ One document per role:
 | `concerns` | List: what it watches and is expected to raise unprompted. |
 | `checklist` | List: what it works through on every turn (in the system prompt). |
 | `examples` | Up to 5 questions it answers well (the chair sees 3). |
-| `seed_memory` | List: what it knows to start with. In the system prompt until its home exists, then written into its memory once (`agenthost.role_memory_edit`, by `system:roles`) right after the first turn. |
+| `seed_memory` | List: what it knows to start with. In the system prompt until its home exists, then written into its memory once (`agenthost.role_memory_edit`, by `system:roles`) right after the first turn (or by `role.move` when a role is moved before it has a home). |
 | `sources` | What it reads before answering (deck, jobs runs, journal, sessions, knowledge folders), as Rook caps with args. In H2 they are listed in its system prompt and it reads them with `rook_call`; H3 may pre-read them. |
 | `tools` | Cap scope, the Jobs format (`allow`/`deny` patterns). Default `knowledge.read` only. `role.ask`, `role.move`, `role.memory_edit` and `agenthost.*` are never callable by a role. |
 | `autonomy` | `propose` (default: only action cards) or `act` (may call `tools` directly). |

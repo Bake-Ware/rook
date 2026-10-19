@@ -658,6 +658,12 @@ class RolesPlugin(Plugin):
                     out["warning"] = f"the old home was left in place: {e}"
             self.store.update(role["id"], _actor(), note or f"moved to {dst['name']}",
                               host=dst["name"])
+            if not src:
+                # No home yet: its first turn will not be the one that makes it,
+                # so the starting memory goes there now (remembering makes the home).
+                seeded = await self.seed(self.role(role["id"]))
+                if seeded:
+                    out["seeded"] = seeded
         return out
 
 

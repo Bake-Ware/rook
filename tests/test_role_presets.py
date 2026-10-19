@@ -281,6 +281,14 @@ async def test_a_presets_checklist_and_seed_memory_reach_its_turns(hub):  # noqa
     assert len([c for c in hub.band.calls if c.cap == "agenthost.role_memory_edit"]) == \
         len(doc["seed_memory"])                              # seeded once
 
+    # Moved before its first answer: the starting memory goes with the move.
+    doc = (await _call(hub, "role.presets", {"id": "sre"}))["preset"]
+    await _call(hub, "role.set", {"role": doc})
+    moved = await _call(hub, "role.move", {"id": "sre", "host": "otherhost"})
+    assert moved["seeded"] == len(doc["seed_memory"]) and moved["host"] == "otherhost"
+    assert [c.args["text"] for c in hub.band.calls[-len(doc["seed_memory"]):]] == doc["seed_memory"]
+    assert hub.band.calls[-1].target == "w-other"
+
 
 # -- the Roles page's dropdown ---------------------------------------------------------
 
