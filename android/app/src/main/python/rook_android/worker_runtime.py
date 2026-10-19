@@ -83,6 +83,13 @@ def start(hub,psk,name):
                 host,port=address.rsplit(':',1)
                 transport=TelestheteHubTransport(psk=key,hub_host=host,hub_port=int(port),use_ws=port in ('443','8443'))
                 worker=Worker(transport=transport,name=worker_name,**worker_kwargs())
+                # Passive keep-awake: screen-driving caps wake the phone and hold
+                # it awake. It must never keep the worker off the band.
+                try:
+                    from rook_android.keepawake import wrap_registry
+                    log.info('keep-awake wraps %d screen caps',len(wrap_registry(worker.registry)))
+                except Exception:
+                    log.exception('keep-awake wrap failed')
                 package=context.getPackageManager().getPackageInfo(context.getPackageName(),0) if context else None
                 worker.app_release = {'platform':'android', 'version':str(package.versionName),
                                       'code':int(package.versionCode)} if package else {}
