@@ -249,6 +249,7 @@ def ahost(tmp_path, monkeypatch):
         exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
     monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)   # CI runners set it
     monkeypatch.setenv("FAKE_LOG", str(tmp_path / "fake.log"))
     conf = tmp_path / "home" / ".config" / "opencode"
     conf.mkdir(parents=True)

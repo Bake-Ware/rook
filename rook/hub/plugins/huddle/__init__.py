@@ -326,9 +326,8 @@ class Huddle(Plugin):
             status data {working_on, blocked_on?, needs_decision?, task?}: when you start, stall or
             finish. ask text, data {options?}: a decision only the person can make; pinned until
             answered; the answer comes back as chat and wakes you. say text. read (data.since_seq,
-            data.room), mine, list. Chaired huddles (the person, the house agent, roles): start
-            data {title, roles}; post text, data {room}; card data {room, card, action
-            approve|dismiss|propose}; archive data {room}."""
+            data.room), mine, list. Chaired (person, house agent, roles): start data {title,
+            roles}; post text data {room}; card data {room, card, action}; archive data {room}."""
             d = dict(data or {})
             if action in CHAIRED:
                 room = d.pop("room", None)
