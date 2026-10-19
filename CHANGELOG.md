@@ -10,6 +10,7 @@ releases yet: workers identify themselves by build number (for example
 Preparation for public use.
 
 ### Added
+- OpenCode integration with bearer-authenticated Rook MCP setup and native slash commands for bands, the work deck and safe grooming; unlike the Claude Code mod, it has no persistent pane or live session mirroring.
 - Sessions catalog (docs/design/sessions.md, workstream A): worker caps
   `sessions.list`, `sessions.follow`, `sessions.send` and `sessions.stop`
   give one record per agent session (state live/idle/closed, origin, view,

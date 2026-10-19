@@ -114,7 +114,9 @@ bearer header works the same way.
 
 In Claude Code you can also install the Rook mod, a pane showing your bands,
 sessions across the band and its open tasks (the Deck). See
-[integrations/claude-code](integrations/claude-code/README.md).
+[integrations/claude-code](integrations/claude-code/README.md). For OpenCode, see
+[integrations/opencode](integrations/opencode/README.md) for MCP setup and native
+slash commands for bands and the task deck.
 
 **In the terminal UI:** run `rook` (or `rook band`). It connects to `http://127.0.0.1:7005`
 by default (`--url` for another hub) and prompts for the dashboard password.
