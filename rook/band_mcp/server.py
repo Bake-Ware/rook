@@ -1236,6 +1236,11 @@ def build_server(client: "BandClient | MultiBandClient",
         or a comma string. You're added automatically. Returns the room id —
         use it with rook_chat_send / rook_chat_read. The room id doubles as a
         thread_id shared with handoffs and the journal."""
+        hub = getattr(mcp, "_rook_hub", None)
+        rooms = hub.plugin("chat") if hub is not None else None
+        if rooms is not None and not rooms.new_rooms():
+            from ..hub.plugins.rooms import NO_NEW_ROOMS
+            return json.dumps({"ok": False, "error": NO_NEW_ROOMS})
         inv = ([s.strip() for s in invite.split(",")] if isinstance(invite, str)
                else list(invite or []))
         chat.touch(_caller_identity())
@@ -1866,6 +1871,18 @@ class McpService:
         # Huddle view API (Work > Huddle; proxied by the dashboard).
         from ..hub.plugins.huddle.web import routes as huddle_routes
         for route in huddle_routes(lambda: mcp._rook_hub, accounts):
+            app.router.routes.insert(0, route)
+        # Per-turn tool server for the home agent's Claude Code backend.
+        from ..hub.plugins.home.turn_mcp import routes as home_turn_routes
+
+        def _home_turns():
+            home = mcp._rook_hub.plugin("home") if mcp._rook_hub is not None else None
+            backend = getattr(home, "agents", None)
+            if backend is not None and args.public_url and not backend.public_url:
+                backend.public_url = args.public_url
+            return getattr(backend, "registry", None)
+        _home_turns()
+        for route in home_turn_routes(_home_turns):
             app.router.routes.insert(0, route)
         # Overview, start page and themes (the ui hub plugin).
         from ..hub.plugins.ui.web import routes as ui_routes

@@ -133,6 +133,20 @@ are set only in the environment or on the command line.
 | `core.worker.authz_mode` | Worker permission checks | band+worker | str | `audit` | `ROOK_AUTHZ_MODE` | restart |
 | `core.worker.authz_allow_unsigned_repoint` | Allow unsigned hub/PSK changes | band+worker | bool | off | `ROOK_AUTHZ_ALLOW_UNSIGNED_REPOINT` | restart |
 
+## Agenthost (worker plugin, runs in worker)
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `agenthost.enabled` | House agent host | worker | bool | on | `ROOK_AGENTHOST` | restart |
+| `agenthost.roles_dir` | Role homes directory | worker | str |  | `ROOK_AGENTHOST_ROLES_DIR` | live |
+| `agenthost.harness_home` | Harness home | worker | str |  | `ROOK_AGENTHOST_HARNESS_HOME` | restart |
+
+## Chat (hub plugin, runs in mcp)
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `chat.new_rooms` | New rooms from agents | hub | bool | off | `ROOK_CHAT_NEW_ROOMS` | live |
+
 ## Claude Code rules (hub plugin, runs in mcp)
 
 | Key | Label | Scope | Type | Default | Env / flag | Apply |
@@ -226,6 +240,7 @@ are set only in the environment or on the command line.
 |---|---|---|---|---|---|---|
 | `home.enabled` | Enabled | hub | bool | off | `ROOK_HOME_ENABLED` | live |
 | `home.name` | Name | hub | str | `home` | `ROOK_HOME_NAME` | live |
+| `home.backend` | Backend | hub | str | `openai` | `ROOK_HOME_BACKEND` | live |
 | `home.llm_provider` | Model provider | hub | str |  | `ROOK_HOME_LLM_PROVIDER` | live |
 | `home.provider` | Provider | hub | str | `openai` | `ROOK_HOME_PROVIDER` | live |
 | `home.base_url` | Base URL | hub | url |  | `ROOK_HOME_BASE_URL` | live |
@@ -234,6 +249,18 @@ are set only in the environment or on the command line.
 | `home.timeout_s` | Request timeout (s) | hub | float | `90.0` | `ROOK_HOME_TIMEOUT_S` | live |
 | `home.max_tokens` | Longest reply (tokens) | hub | int | `1024` | `ROOK_HOME_MAX_TOKENS` | live |
 | `home.temperature` | Temperature | hub | float |  | `ROOK_HOME_TEMPERATURE` | live |
+| `home.agent_host` | Agent host | hub | str |  | `ROOK_HOME_AGENT_HOST` | live |
+| `home.agent_fallback_hosts` | Fallback hosts | hub | list |  | `ROOK_HOME_AGENT_FALLBACK_HOSTS` | live |
+| `home.agent_on_unavailable` | When no host is available | hub | str | `fallback_backend` | `ROOK_HOME_AGENT_ON_UNAVAILABLE` | live |
+| `home.agent_timeout_s` | Turn timeout (s) | hub | float | `180.0` | `ROOK_HOME_AGENT_TIMEOUT_S` | live |
+| `home.agent_callback_url` | Hub URL for tools | hub | url |  | `ROOK_HOME_AGENT_CALLBACK_URL` | live |
+| `home.claude_model` | Claude Code model | hub | str | `haiku` | `ROOK_HOME_CLAUDE_MODEL` | live |
+| `home.claude_effort` | Claude Code effort | hub | str |  | `ROOK_HOME_CLAUDE_EFFORT` | live |
+| `home.claude_auth` | Claude Code sign-in | hub | str | `login` | `ROOK_HOME_CLAUDE_AUTH` | live |
+| `home.claude_token` | Claude Code token (vault reference) | hub | str |  | `ROOK_HOME_CLAUDE_TOKEN` | live |
+| `home.codex_model` | Codex model | hub | str |  | `ROOK_HOME_CODEX_MODEL` | live |
+| `home.codex_effort` | Codex reasoning effort | hub | str |  | `ROOK_HOME_CODEX_EFFORT` | live |
+| `home.opencode_model` | OpenCode model | hub | str |  | `ROOK_HOME_OPENCODE_MODEL` | live |
 | `home.persona` | Persona profile | hub | str |  | `ROOK_HOME_PERSONA` | live |
 | `home.system_prompt` | System prompt addition | hub | str |  | `ROOK_HOME_SYSTEM_PROMPT` | live |
 | `home.context_messages` | Room messages sent as context | hub | int | `20` | `ROOK_HOME_CONTEXT_MESSAGES` | live |
@@ -254,6 +281,10 @@ are set only in the environment or on the command line.
 |---|---|---|---|---|---|---|
 | `huddle.enabled` | Huddles | hub | bool | on | `ROOK_HUDDLE`, `ROOK_HUDDLE_ENABLED` | restart |
 | `huddle.wake_on_answer` | Wake the agent when you answer | hub | bool | off | `ROOK_HUDDLE_WAKE_ON_ANSWER` | live |
+| `huddle.reply_chars` | Role reply length | hub | int | `1200` | `ROOK_HUDDLE_REPLY_CHARS` | live |
+| `huddle.max_role_turns` | Role turns per round | hub | int | `6` | `ROOK_HUDDLE_MAX_ROLE_TURNS` | live |
+| `huddle.retention_days` | Keep archived huddles (days) | hub | int | `90` | `ROOK_HUDDLE_RETENTION_DAYS` | live |
+| `huddle.default_roles` | Default roles | hub | list | `['pm', 'qa', 'lead']` | `ROOK_HUDDLE_DEFAULT_ROLES` | live |
 
 ## Jobs (hub plugin, runs in mcp)
 
@@ -365,6 +396,12 @@ are set only in the environment or on the command line.
 | `relay.bind` | Relay listen address | hub | hostport | `0.0.0.0:7474` | `HUB_BIND` | restart · bootstrap |
 | `relay.peer_ttl` | Peer TTL (s) | hub | int | `60` | `HUB_PEER_TTL_SECS` | restart · bootstrap |
 | `relay.prune` | Prune interval (s) | hub | int | `10` | `HUB_PRUNE_SECS` | restart · bootstrap |
+
+## Role (hub plugin, runs in mcp)
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `role.max_tool_calls` | Tool calls per role turn | hub | int | `12` | `ROOK_ROLE_MAX_TOOL_CALLS` | live |
 
 ## Tasks (hub plugin, runs in mcp)
 

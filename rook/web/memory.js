@@ -30,24 +30,88 @@ export async function mountMemory(root){
   const search=h('input',{type:'search',placeholder:'Search what it remembers',autocomplete:'off','aria-label':'Search memories',class:'mg-grow'});
   const state=h('select',{'aria-label':'Show'},STATES.map(([v,l])=>h('option',{value:v,text:l})));
   let timer=null;
-  search.oninput=()=>{clearTimeout(timer);timer=setTimeout(()=>{f.query=search.value.trim();load();},250);};
+  search.oninput=()=>{clearTimeout(timer);timer=setTimeout(()=>{f.query=search.value.trim();role?roleLoad():load();},250);};
   state.onchange=()=>{f.state=state.value;load();};
   const add=btn('Add a memory','primary',()=>{sel={new:true};drawList();drawPanel();});
+  // Whose memory: the home agent's (the memory plugin), or a huddle role's
+  // (kept in the role's home on its agent host; role.memory / role.memory_edit
+  // through the huddle API). Shown only when there are roles.
+  let role='',roles=[],hapi=null;
+  const whose=h('select',{'aria-label':'Whose memory',hidden:true},h('option',{value:'',text:'The home agent'}));
+  whose.onchange=()=>{history.replaceState(null,'',whose.value?'#memory?role='+encodeURIComponent(whose.value):'#memory');
+    refresh().catch(e=>{status.textContent=e.message;status.classList.add('bad');});};
+  async function loadRoles(){
+    try{if(!hapi)hapi=(await import('/account/huddle/assets/huddles.js'+new URL(import.meta.url).search)).hapi;
+      roles=(await hapi('role_list')).roles||[];}catch{roles=[];}
+    whose.replaceChildren(h('option',{value:'',text:'The home agent'}),...roles.map(r=>h('option',{value:r.id,text:(r.name||r.id)+' (@'+r.id+')'})));
+    if(role&&!roles.some(r=>r.id===role))whose.append(h('option',{value:role,text:'@'+role}));
+    whose.value=role;whose.hidden=!roles.length&&!role;
+  }
   const tidy=btn('Tidy up now','',()=>run(tidy,async()=>{
     const r=await post({action:'memory_consolidate'});
     const s=r.stats;status.textContent='Tidied up: '+[s.episodes&&s.episodes+' conversation'+(s.episodes>1?'s':'')+' summarised',s.rolled_up&&s.rolled_up+' rolled up by week',s.merged&&s.merged+' duplicate'+(s.merged>1?'s':'')+' merged',s.faded&&s.faded+' faded',s.indexed&&s.indexed+' indexed'].filter(Boolean).join(', ')||'Tidied up: nothing to do.';
     await reload();}));
-  bar.append(search,state,tidy,add);
+  bar.append(whose,search,state,tidy,add);
   const main=h('div',{class:'mg-main'},kinds,bar,list,more,foot);
   root.replaceChildren(h('div',{class:'mg'},summary,note,status,h('div',{class:'mg-split'},main,panel)));
 
   async function get(){const r=await fetch(API+'?view=memory');const j=await r.json().catch(()=>({error:'Bad response'}));if(j.csrf)csrf=j.csrf;if(!r.ok||j.error)throw Error(j.error||'Sign in with your operator account to see what the home agent remembers.');return j;}
   async function post(body){const r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({csrf,...body})});const j=await r.json().catch(()=>({error:'Bad response'}));if(!r.ok||j.error||j.ok===false)throw Error(j.error||'Request failed');return j;}
   async function run(b,work){if(busy)return;busy=true;b.disabled=true;status.classList.remove('bad');try{await work();}catch(e){status.textContent=e.message;status.classList.add('bad');}finally{busy=false;b.disabled=false;}}
-  async function refresh(){d=await get();items=d.items||[];total=d.total||0;drawTop();drawList();drawPanel();}
+  async function refresh(){
+    const want=new URLSearchParams(location.hash.split('?')[1]||'').get('role')||'';
+    if(want!==role){role=want;sel=null;items=[];total=0;}
+    state.hidden=tidy.hidden=!!role;
+    await loadRoles();
+    if(role)return roleLoad();
+    d=await get();items=d.items||[];total=d.total||0;drawTop();drawList();drawPanel();}
   // After a change: counts and status again, the list with the current filters.
-  async function reload(){d=await get();drawTop();if(d.enabled)await load();}
+  async function reload(){if(role)return roleLoad();d=await get();drawTop();if(d.enabled)await load();}
+
+  // -- a role's memory ---------------------------------------------------------
+  const ROLE_KINDS=[['fact','Fact'],['procedure','Skill'],['episode','Conversation']];
+  const roleKind=k=>(ROLE_KINDS.find(x=>x[0]===k)||[k,k])[1];
+  const roleDoc=()=>roles.find(r=>r.id===role)||{id:role,name:role};
+  async function roleLoad(){
+    const r=roleDoc();
+    summary.textContent='What '+(r.name||role)+' (@'+role+') remembers. It is kept in the role\'s own folder on its agent host and read before each of its answers. Forget anything here, or add something it should know.';
+    note.replaceChildren();kinds.replaceChildren();foot.textContent='';
+    try{const res=await hapi('role_memory',{id:role,query:f.query,limit:200});items=res.memories||[];total=items.length;
+      if(sel&&!sel.new)sel=items.find(m=>m.id===sel.id)||null;}
+    catch(e){items=[];total=0;note.append(h('div',{class:'mg-banner'},h('span',{text:e.message})));}
+    drawList();drawPanel();
+  }
+  function roleList(){
+    const rows=items.map(m=>{
+      const r=h('div',{class:'mg-row pick'+(sel&&sel.id===m.id?' sel':''),tabindex:'0',role:'button','aria-label':m.text},
+        h('span',{class:'mg-two'},h('b',{text:m.text,style:'white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical'}),
+          h('small',{class:'mem-meta',text:[roleKind(m.kind),(m.created||'').slice(0,10)].join(' · ')}),m.by?h('small',{text:'by '+who(m.by)}):null),
+        h('span',{class:'mg-dimtext mem-c',text:roleKind(m.kind)}),
+        h('span',{class:'mg-sub mem-c',text:(m.created||'').slice(0,10)}));
+      const open=()=>{sel=m;drawList();drawPanel();};r.onclick=open;r.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();open();}};
+      return r;});
+    const empty=f.query?'Nothing matches "'+f.query+'".':'Nothing remembered yet.';
+    list.replaceChildren(h('div',{class:'mg-box mem-tbl'},table('minmax(0,1fr) 120px 100px',['What it remembers','Kind','Noted'],rows.length?rows:[h('div',{class:'mg-empty',text:empty})],420)));
+    more.replaceChildren(h('span',{class:'mg-sub',text:total?total+' shown':''}));
+  }
+  function rolePanel(){
+    if(!sel){panel.replaceChildren(h('div',{class:'mg-pad'},h('p',{class:'mg-sub',style:'white-space:normal',text:'Pick a memory to forget it, or add one. The same rules as the home agent\'s memory apply: no passwords, keys or code.'}),
+      h('a',{href:'#roles',text:'Manage roles'})));return;}
+    const err=h('small',{class:'mg-error',role:'alert'}),close=btn('×','icon',()=>{sel=null;drawList();drawPanel();},{'aria-label':'Close'});
+    const act=(b,body,done)=>run(b,async()=>{err.textContent='';try{await hapi('role_memory_edit',{id:role,...body});status.textContent=done;sel=null;await roleLoad();}catch(e){err.textContent=e.message;throw e;}});
+    if(sel.new){
+      const text=h('textarea',{rows:'4','aria-label':'Memory text'}),kind=h('select',null,ROLE_KINDS.map(([v,l])=>h('option',{value:v,text:l})));
+      const save=btn('Remember','primary',()=>act(save,{op:'remember',text:text.value,kind:kind.value},'Remembered.'));
+      panel.replaceChildren(h('div',{class:'mg-panel-head'},h('div',{class:'mg-two'},h('h2',{text:'Add a memory'}),h('small',{text:'For @'+role})),close),
+        h('div',{class:'mg-pad'},h('label',{class:'mg-field'},'What it should remember',text),h('label',{class:'mg-field'},'Kind',kind),h('div',{class:'mg-actions end'},err,save)));
+      return;}
+    const forget=btn('Forget','danger',()=>act(forget,{op:'forget',memory_id:sel.id},'Forgotten.'));
+    panel.replaceChildren(h('div',{class:'mg-panel-head'},h('div',{class:'mg-two'},h('h2',{text:roleKind(sel.kind)}),h('small',{text:sel.id})),close),
+      h('div',{class:'mg-pad'},h('p',{style:'margin:0;white-space:pre-wrap;overflow-wrap:anywhere',text:sel.text}),
+        kv('Noted',(sel.created||'').replace('T',' ').replace('Z',' UTC')),sel.by?kv('By',sel.by):null,h('div',{class:'mg-actions end'},err,forget)));
+  }
   async function load(offset=0){
+    if(role)return roleLoad();
     const r=await post({action:'memory_list',kind:f.kind,state:f.state,query:f.query,limit:50,offset});
     items=offset?items.concat(r.items):r.items;total=r.total;drawList();
   }
@@ -65,6 +129,7 @@ export async function mountMemory(root){
       +' Last tidy-up: '+(last?ago(last.ts):'not yet')+'.'+(s.waiting_turns?' '+s.waiting_turns+' message'+(s.waiting_turns>1?'s':'')+' waiting to be summarised.':'');
   }
   function drawList(){
+    if(role)return roleList();
     const rows=items.map(m=>{
       const r=h('div',{class:'mg-row pick'+(sel&&sel.id===m.id?' sel':''),tabindex:'0',role:'button','aria-label':m.text},
         h('span',{class:'mg-two'},h('b',{text:m.text,style:'white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical'}),
@@ -85,6 +150,7 @@ export async function mountMemory(root){
     catch(e){status.textContent=e.message;status.classList.add('bad');}
   }
   function drawPanel(){
+    if(role)return rolePanel();
     if(!sel){panel.replaceChildren(h('div',{class:'mg-pad'},h('p',{class:'mg-sub',text:'Pick a memory to see where it came from, correct it or forget it.'}),
       h('div',null,h('div',{class:'mg-label',style:'margin-bottom:8px',text:'How it remembers'}),
         h('p',{class:'mg-sub',style:'white-space:normal;line-height:1.6',text:'About people: names and preferences people tell it. Facts: things about your home and setup. Conversations: short summaries, rolled up by week. Skills: ways of doing things that worked. Memories it does not use fade over time; keep one to stop that.'}))));return;}

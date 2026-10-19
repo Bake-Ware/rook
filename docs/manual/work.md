@@ -85,8 +85,8 @@ counts the questions waiting for you.
   agent.
 
 A project's huddle starts the first time an agent reports in for it, or when
-you open it from the project page. Huddles are ordinary chat rooms, so they
-also appear on the Chat page as *Huddle: ...* ([[manual-chat]]).
+you open it from the project page. Project and band huddles are also listed
+on the Huddles page ([[manual-huddles]]).
 
 Two settings (Settings, or the huddle plugin on the Plugins page):
 **Huddles** (on by default) and **Wake the agent when you answer** (off by

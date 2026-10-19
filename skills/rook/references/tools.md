@@ -90,7 +90,12 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `hub.plugin.enable` | module | admin | Load a hub plugin module now (placement, settings, available(), bind_host, start). |
 | `hub.plugin.reload` | module | admin | Restart one hub plugin with its current settings (stop, load again, start). |
 | `hub.plugins` | limit=50, fields? | read | Full manifests of the hub's loaded plugins (placement, settings schema, guidance slots, source). |
+| `huddle.archive` | huddle, archived=true | write | Archive a huddle (hidden from the list, kept; deleted after huddle.retention_days) or unarchive it. |
+| `huddle.card` | huddle, card='', action='approve', data? | write | An action card: approve (runs its call as you, under the band's policy) or dismiss; people only. propose (dat… |
+| `huddle.list` | archived=false | read | Every huddle: chaired ones (roles, open cards) and project/band status huddles; archived ones with archived=t… |
+| `huddle.post` | huddle, text, mention?, wait=false | write | Post in a chaired huddle. |
 | `huddle.read` | action='read', room?, project?, band?, since_seq=0, limit=30 | read | Read huddles: read (room\|project\|band: statuses, questions, messages after since_seq), list, mine. |
+| `huddle.start` | title='', roles?, band? | write | Start a chaired huddle: you, the house agent in the chair and roles (ids; default huddle.default_roles; [] fo… |
 | `huddle.write` | action, room?, project?, band?, text?, data?, mention? | write | Post in a huddle: status (data {working_on, blocked_on?, needs_decision?, task?}), ask (text, data {options?,… |
 | `job.read` | action='list', id?, query='', data? | read | Read jobs and runs: list\|get\|runs\|run_get\|next\|validate\|guardrails_preview\|describe_schema. |
 | `job.write` | action, id?, data? | write | Write jobs: create\|update\|delete\|enable\|disable\|run\|cancel\|set_guardrails\|settings. |
@@ -126,6 +131,16 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `policy.get` | — | read | The current policy document with its revision, source, mode, lint and last load error (if the file on disk is… |
 | `policy.set` | policy, note='' | admin | Replace the policy document (band owners and operator tokens only). |
 | `policy.status` | — | read | Hub permission status: policy mode/revision, whether calls carry tickets (root key present), the op-key id an… |
+| `role.ask` | id, question, context='' | write | One turn of a role: it answers `question` (with `context`) on its agent host, in its home directory, with its… |
+| `role.delete` | id, note='' | admin | Delete a role (its history stays; its home on the agent host is left in place). |
+| `role.get` | id | read | A role document: charter, concerns, sources, tools, builtin, autonomy, memory, backend, model, effort, host,… |
+| `role.history` | id='', limit=20 | read | Attributed changes to one role (or all), newest first. |
+| `role.list` | — | read | Every role (id, name, rev, enabled, host, backend, autonomy). |
+| `role.memory` | id, query='', limit=50 | read | A role's memory (scope role:<id>), read from its home on its agent host: the memories matching `query`, or th… |
+| `role.memory_edit` | id, action, text='', kind='fact', memory_id='' | admin | Change a role's memory on its host: `action` remember (`text`, `kind` fact, procedure or episode) or forget (… |
+| `role.move` | id, host, note='' | admin | Move a role to another agent host: its home directory (memory and config) is packed on the old host, unpacked… |
+| `role.presets` | — | read | The starting roster (project manager, QA engineer, lead developer) as role documents to save with `role.set`;… |
+| `role.set` | role, note='', dry_run=false, expect_rev? | admin | Create or replace a role (band owners and operator tokens). |
 | `serves.clear` | worker | write | Remove a worker's hosting entry. |
 | `serves.list` | worker='' | read | What workers host: `{worker: {sites, services, updated, by}}`. |
 | `serves.set` | worker, sites?, services?, by='' | write | Write what a worker hosts. |
@@ -169,6 +184,7 @@ The hub's own LLM (when the operator has set one up). Ask it with `rook_call(wor
 
 ### huddles
 A huddle is a project's (or band's) group room in the person's view. `rook_huddle(action="status", project=..., data={working_on, blocked_on?, needs_decision?, task?})` when you start, get stuck or finish; `action="ask"` with `text` (and `data.options`) for a decision only the person can make: it stays pinned until answered, and the answer comes back as a chat message (and wakes you if your worker can be woken). `read` shows the status strip, questions and recent messages.
+A *chaired* huddle (`action="start"`, data {title, roles}) is the person's standup with the house agent in the chair and roles (pm, qa, lead): your posts there are a guest's and start a round only when they mention @<role> or the chair. You are never called on. Action cards are approved by the person, not by agents.
 
 ### jobs
 Scheduled, branching work the hub runs. `rook_jobs(action="describe_schema")` gives the job JSON schema; `validate` checks a draft (`data` = the job); `create` saves it (you are its owner and runs act as you). A job is `steps` (cap, fanout, tool, wait, notify, ask, agent, join, noop) wired by `on: {success, failure, hang}` from `entry`, fired by `triggers` (cron in the hub zone unless `tz`, at, after, manual). `run` starts one now; `runs` / `run_get` show masked step output; `next` lists fire times. Over the band: `job.read` / `job.write` on worker `rook`. Use `{{secret:name}}` in step args, never values. Guardrails block admin-tier, update, deauth, policy and delete caps in job steps (`blocked_by_guardrail` on a job; `guardrails_preview` shows what a change would block); editing someone else's job makes it yours and resets its identity.
@@ -196,6 +212,9 @@ One persona for every harness. `rook_call(cap="persona.get", worker="rook", args
 
 ### policy
 `rook_call(cap="policy.explain", worker="rook", args={"principal": "role:agent", "cap": "shell.exec", "worker": "<name>"})` shows whether a call would be allowed and which rule decides it. `policy.get` returns the document; changing it (`policy.set`) is for band owners and operator tokens.
+
+### roles
+Huddle roles (project manager, QA, lead developer, ...) each have a charter, a tool scope and their own memory, kept in the role's home directory on its agent host. `rook_call(worker="rook", cap="role.list")` lists them; `role.ask` with `{"id": "qa", "question": ...}` runs one turn of a role. `role.set`, `role.move` and `role.memory_edit` are admin: ask the user first.
 
 ### serves
 What each worker hosts: `serves` on a `rook_workers` row is `{sites: [{name, url}], services: [{name, url}]}`, written by hand. `rook_call(worker="rook", cap="serves.list")` returns all of it; `serves.set(worker, sites?, services?)` replaces the lists it is given; `serves.clear(worker)` removes the entry.
@@ -232,6 +251,21 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 | `worker.plugin.enable` | module | Load a plugin now and keep it loaded across restarts. |
 | `worker.plugin.list` | — | List every plugin module and whether it's currently loaded, with the caps each loaded plugin provides. |
 | `worker.plugin.reload` | module | Restart one loaded plugin with its current settings. |
+
+**agenthost**
+
+| Cap | Args | Does |
+|---|---|---|
+| `agenthost.cancel` | turn_id | Stop a running turn. |
+| `agenthost.models` | harness='claude' | Models a harness here can use (claude: aliases; codex: its catalog; opencode: `opencode models`). |
+| `agenthost.role_export` | role | Pack a role's home (memory and config, not host-local scratch) to move it to another host. |
+| `agenthost.role_import` | role, archive, sha256, replace=false | Unpack a role's home exported from another host. |
+| `agenthost.role_memory` | role, query='', limit=50 | A role's memory (scope role:<id>, in its home): the memories that match `query`, or the newest. |
+| `agenthost.role_memory_edit` | role, action, text='', kind='fact', id='', by='' | Change a role's memory: `action` remember (`text`, `kind` fact, procedure or episode) or forget (`id`). |
+| `agenthost.role_set_aside` | role | Move a role's home out of the way on this host (after a move to another host); it is renamed, never deleted. |
+| `agenthost.roles` | — | The role homes on this host: {ok, base, roles: [{role, path, rev, tools, memory_mode, memories, bytes}]}. |
+| `agenthost.status` | — | The agent harnesses on this host (claude, codex, opencode): version and login, re-read now; and the running t… |
+| `agenthost.turn` | turn_id, prompt, system, mcp_url, mcp_token, harness='claude', model='', timeout_s=180.0, max_tool_calls=20, effort?, oauth_token?, role?, role_name='', role_rev=0, tools?, builtin?, memory='write' | Run one house agent turn with a local harness; returns its reply. |
 
 **battery**
 

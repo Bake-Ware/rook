@@ -150,7 +150,7 @@ function summary(j, d) {
     tile(d.workers.error ? '—' : up + '/' + workers.length, 'workers online', '#workers', up < workers.length ? 'warn' : ''),
     tile(String(live + idle), idle ? 'sessions running, ' + idle + ' waiting for you' : 'sessions running', '#sessions', idle ? 'warn' : ''),
     tile(j.k ? String(doing) : '—', blocked ? 'tasks in progress, ' + blocked + ' blocked' : 'tasks in progress', '#work', blocked ? 'bad' : ''),
-    tile(String(unread), 'unread chat messages', '#chat', unread ? 'warn' : ''));
+    tile(String(unread), 'unread chat messages', '#huddles', unread ? 'warn' : ''));
 }
 
 export async function mountOverview(root) {

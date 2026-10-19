@@ -7,22 +7,27 @@ features:
   - settings/home
   - plugin/hub/decide
   - settings/decide
+  - plugin/worker/agenthost
+  - settings/agenthost
+  - plugin/hub/roles
+  - settings/role
 since: 0.1.0
 deprecated: false
 ---
 # The home agent
 
-The **home agent** is an AI assistant that lives on the hub itself. It answers
-when you mention it in a chat room and when other parts of Rook ask it a
-question. It uses a language model you choose: any service that speaks the
-OpenAI-style API, including one you run at home.
+The **home agent** is an AI assistant that lives on the hub itself. It chairs
+your huddles ([[manual-huddles]]), talks with you on its own page, and answers
+when other parts of Rook ask it a question. It uses a language model you
+choose: any service that speaks the OpenAI-style API, including one you run
+at home.
 
 ## Setting it up
 
 Open **Home agent** (under Manage).
 
 1. Switch it on (**Enabled**).
-2. Give it a **Name**. People write `@name` in chat to talk to it.
+2. Give it a **Name**. People write `@name` to address it.
 3. Fill in the model: the service's **Base URL**, the **Model** name and, if the
    service needs one, an **API key**. Store the key under Secrets and enter its
    name; the page never shows the key itself. Or pick a saved **Model
@@ -31,12 +36,81 @@ Open **Home agent** (under Manage).
 4. Optionally choose a **Persona** ([[manual-agents-and-mcp]]) and add your own
    instructions.
 
+The chat panel on the page is your one-to-one huddle with the home agent: the
+first message you send starts it, and it is also listed on the Huddles page.
+While the agent works the panel says it is thinking; if it cannot answer, the
+panel says why and points at the form.
+
 The page also shows its recent activity, so you can see what it was asked and
 what it said. With **Read-only tools** on, it can search the knowledge wiki
 before answering. Jobs can use it as a step too ([[manual-jobs]]).
 
 It remembers people, facts, earlier conversations and skills between
 conversations; see [[manual-home-agent-memory]].
+
+## Running it on Claude Code, Codex or OpenCode
+
+The home agent can also run on an agent harness you already use: Claude Code,
+Codex or OpenCode, on a machine you choose (the **agent host**), with that
+machine's own sign-in (your Claude or ChatGPT subscription, or OpenCode's
+model providers). The hub keeps its memory, persona and tools; each answer is
+one run of the harness on that machine.
+
+1. On the machine, install the harness and sign in (`claude` then `/login`;
+   `codex login`; or set up a provider in OpenCode). A worker with a recent
+   build offers itself as a host as soon as it finds one installed; nothing
+   runs there until you pick it. To keep a machine out, switch **House agent
+   host** off for it under **Settings > Workers**.
+2. On **Home agent**, set **Backend** to *Claude Code*, *Codex* or *OpenCode on
+   an agent host*.
+3. Pick the **Agent host** (the list shows each machine's harnesses, their
+   versions and whether they are signed in) and a **Model**: **List models**
+   asks that machine. For Claude Code, `haiku` is quick and cheap; `sonnet`
+   and `opus` think harder. Blank uses the harness's own default.
+   **Test** shows the answer, the host and the time.
+4. Optionally list **Fallback hosts**, and choose what happens when no host is
+   available: answer with the OpenAI-style endpoint below, or say it is
+   unavailable.
+
+To move the agent, pick another host. Nothing is lost: memory stays on the
+hub. Under its recent activity the page shows the last 24 hours of answers on
+agent hosts and the tokens they used, for the home agent and for each role,
+so you can see what huddles cost. Usage counts against the sign-in on the host (for Claude Code, optionally
+a token from `claude setup-token` saved in Secrets: **Sign-in**). OpenCode's
+free models refuse to run with a custom agent, so use one of your own
+providers there.
+
+The harness runs with its own tools, settings, plugins and MCP servers
+switched off; the only tools it gets are the home agent's, served by the hub
+for that one answer.
+
+## Roles (preview)
+
+Roles are team members the home agent will chair in huddles: a project
+manager, a QA engineer, a lead developer, or any role you add. Each role has
+a charter (what it is for), the things it watches, the tools it may use, and
+its own memory. Roles run on an agent harness (Claude Code, Codex or
+OpenCode), on the home agent's host unless you give the role its own.
+
+Each role gets its own folder on its host, like a home folder: its memory
+(one small text file per thing it remembers) and the harness settings that
+say exactly which tools it may use. Every answer the role gives runs inside
+that folder. To move a role to another machine, Rook moves the folder; the old
+copy is renamed and kept, never deleted.
+
+Manage roles on the **Roles** page (under Manage): add them from the starting
+roster or from scratch, change what each watches and may use, move one to
+another host, and see its history; **What it remembers** shows its memory on
+the Memory page ([[manual-huddles]] has the details). Agents and scripts use
+worker `rook`: `role.presets` shows the starting roster, `role.set` saves a
+role (admin), `role.ask` asks one a question, `role.memory` shows what it
+remembers and `role.move` moves it (admin). **Tool calls per role turn**
+(Settings, `role.max_tool_calls`) bounds one answer; **Role homes directory**
+(per worker, `agenthost.roles_dir`) says where a host keeps the folders, and
+**Harness home** (per worker, `agenthost.harness_home`) lets a worker whose
+own home has no sign-in run the harnesses with another home's sign-in. A role that only proposes (the
+default) can read with its tools but not change anything; it tells you what
+it would do instead.
 
 ## Decide (preview)
 

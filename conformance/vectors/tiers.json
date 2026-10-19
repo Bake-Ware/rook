@@ -9,6 +9,36 @@
   "agent.wake_info": {
    "tier": "read"
   },
+  "agenthost.cancel": {
+   "tier": "exec"
+  },
+  "agenthost.models": {
+   "tier": "read"
+  },
+  "agenthost.role_export": {
+   "tier": "admin"
+  },
+  "agenthost.role_import": {
+   "tier": "admin"
+  },
+  "agenthost.role_memory": {
+   "tier": "read"
+  },
+  "agenthost.role_memory_edit": {
+   "tier": "write"
+  },
+  "agenthost.role_set_aside": {
+   "tier": "admin"
+  },
+  "agenthost.roles": {
+   "tier": "read"
+  },
+  "agenthost.status": {
+   "tier": "read"
+  },
+  "agenthost.turn": {
+   "tier": "exec"
+  },
   "band.admin": {
    "tier": "admin",
    "tags": [
@@ -588,8 +618,23 @@
   "hub.plugins": {
    "tier": "read"
   },
+  "huddle.archive": {
+   "tier": "write"
+  },
+  "huddle.card": {
+   "tier": "write"
+  },
+  "huddle.list": {
+   "tier": "read"
+  },
+  "huddle.post": {
+   "tier": "write"
+  },
   "huddle.read": {
    "tier": "read"
+  },
+  "huddle.start": {
+   "tier": "write"
   },
   "huddle.write": {
    "tier": "write"
@@ -888,6 +933,36 @@
   },
   "proc.write": {
    "tier": "exec"
+  },
+  "role.ask": {
+   "tier": "write"
+  },
+  "role.delete": {
+   "tier": "admin"
+  },
+  "role.get": {
+   "tier": "read"
+  },
+  "role.history": {
+   "tier": "read"
+  },
+  "role.list": {
+   "tier": "read"
+  },
+  "role.memory": {
+   "tier": "read"
+  },
+  "role.memory_edit": {
+   "tier": "admin"
+  },
+  "role.move": {
+   "tier": "admin"
+  },
+  "role.presets": {
+   "tier": "read"
+  },
+  "role.set": {
+   "tier": "admin"
   },
   "screenshot.capture": {
    "tier": "read",

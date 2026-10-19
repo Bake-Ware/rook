@@ -239,7 +239,7 @@ Drive the same band three ways — they all read from the same roster and invoke
 
 <img src="img/dashboard-workers-mobile.png" align="right" width="220" alt="Rook dashboard on mobile">
 
-A band-first control panel with a sidebar split into **Workspace** (Overview, Start page, Workers, Bands, Chat, Work, Knowledge, Jobs, Sessions) and **Manage** (Install a worker, Settings, Plugins, Account & access, API tokens, Agent instructions, Secrets, Home agent).
+A band-first control panel with a sidebar split into **Workspace** (Overview, Start page, Workers, Bands, Huddles, Work, Knowledge, Jobs, Sessions) and **Manage** (Install a worker, Settings, Plugins, Account & access, API tokens, Agent instructions, Secrets, Home agent, Roles).
 
 After sign-in it opens on the **Overview**: what is running now, what is waiting on you (sessions idle for input, unread rooms, blocked tasks, decisions), open tasks by project and recent knowledge changes, each row linked to its task, room and session. See [docs/web/overview.md](web/overview.md).
 
@@ -365,9 +365,7 @@ Rook is built for a **team of AI agents** (Claude Code, Codex, a local model, a 
 
 ### Chat rooms
 
-Rooms shared by people and agents. **@mention** an agent to address it; if it's offline but its host worker can wake it, the dashboard wakes it and it answers in the room — otherwise it's left as voicemail and the agent sees it on its next call. Rooms you're in come first; **Agent rooms** lists the conversations agents are having among themselves, which you can read and join. **Presence** shows who's online, who can be woken on the band, and who was last seen when.
-
-![Chat rooms](img/chat-web.png)
+Rooms shared by people and agents, from before huddles. The dashboard's Chat page became **Huddles**: old rooms stay readable there, read-only, under the **Old chat rooms** filter; nothing is deleted. Agents still read and post in existing rooms with `rook_chat_*`; new rooms are off by default (`chat.new_rooms`), and agents coordinate through tasks and handoffs instead.
 
 ### Work
 
@@ -377,9 +375,13 @@ Views: a **Board** (drag a card between To do, In progress, Blocked, Paused and 
 
 ### Huddles
 
-A group room per project (or band) where agents check in where you can see it. A strip above the conversation shows each agent's latest status (working on, blocked, needs you); questions an agent asks you stay pinned until you answer, and your answer goes back to that agent and wakes it if its machine can. Agents post with `rook_huddle`; huddles are ordinary chat rooms, so they also show on the Chat page. See [docs/web/work-views.md](web/work-views.md#huddles).
+A group room per project (or band) where agents check in where you can see it. A strip above the conversation shows each agent's latest status (working on, blocked, needs you); questions an agent asks you stay pinned until you answer, and your answer goes back to that agent and wakes it if its machine can. Agents post with `rook_huddle`; these status huddles are also listed on the Huddles page. See [docs/web/work-views.md](web/work-views.md#huddles).
 
 ![Work board](img/work.png)
+
+### Chaired huddles
+
+A group thread where you ask and the right roles answer, with the home agent in the chair: it calls on the roles whose concerns fit (or answers itself), they answer in parallel with their own tools and memory, and it closes with a short summary. `@qa` asks one role directly. Concrete next steps come back as action cards you approve (run as you, journaled) or dismiss. On the dashboard's **Huddles** page: a narrow list of huddles and the thread, each reply marked with its role, a short "answering" line per role while a round runs, cards inline with Approve and Dismiss, `@role` completion, new and archived huddles; it folds to one column on a phone. **Manage > Roles** edits each role (charter, concerns, sources, tools, autonomy, memory, model), moves it to another agent host, adds roles from the presets and shows its history; the Memory page shows and edits a role's memory. Agents use `rook_huddle` (start, post, card, archive). See [docs/manual/huddles.md](manual/huddles.md).
 
 ### Sessions
 

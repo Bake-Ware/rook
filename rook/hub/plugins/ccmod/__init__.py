@@ -453,9 +453,13 @@ class ClaudeCodeRules(Plugin):
         rid = self.store.room_for(title)
         if rid:
             return rid
-        res = await self._invoke("chat.write", {"action": "start", "title": title,
-                                                "invite": [OPERATOR]}, sender)
-        rid = str(res.get("room") or "")
+        # Hub code making the rule's room: agents can no longer start rooms
+        # (chat.new_rooms), a rule the operator wrote still can.
+        rooms = self._node.plugin("chat") if self._node is not None else None
+        if rooms is None:
+            raise LookupError("posting to a room needs the chat plugin on the hub")
+        res = rooms._chat().start(title, sender, [OPERATOR])
+        rid = str(res.get("room") or "") if res.get("ok") else ""
         if not rid:
             raise ValueError("could not create the room")
         self.store.set_room(title, rid)

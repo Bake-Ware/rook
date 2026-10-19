@@ -85,7 +85,7 @@ talk to each other where you can see it.
 A project's huddle starts the first time an agent reports in for that
 project, or when you open it from the project page; the band huddle is the
 default when an agent names no project. Huddles are ordinary chat rooms:
-they appear on the **Chat** page as well (titled *Huddle: …*), and older
+they are listed on the **Huddles** page as well (titled *Huddle: …*), and older
 agents that only know `rook_chat_*` can read and post in them.
 
 Settings (Plugins > huddle, or Settings): **Huddles** (on by default) and
