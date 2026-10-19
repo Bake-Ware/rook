@@ -10,7 +10,8 @@ the per-role "answering" line while a round runs; an action card inline under
 its message, approved; @role completion; a new huddle with the default roles
 checked; a 1:1 with the chair; archive; the old chat rooms, read-only, under
 the filter (a room whose title has quotes, and an agent-only room); the phone
-layout (list, then thread, back); the Roles page (edit, add from presets);
+layout (list, then thread, back); the Roles page (edit, add from the
+presets dropdown grouped by category);
 the Memory page's role filter.
 """
 import asyncio
@@ -219,8 +220,14 @@ async def main():
         await page.wait_for_selector('#view-roles .mg-status:has-text("revision 2")')
         assert roles.store.get('qa')['name'] == 'QA lead'
         assert roles.store.history('qa')[0]['actor'] == 'human:op'
-        await page.click('#view-roles button:has-text("Add from presets")')
-        await page.click('.mg-menu button:has-text("Lead developer")')
+        # One dropdown, the presets grouped under their categories' names.
+        pick = '#view-roles select[aria-label="Add from presets"]'
+        labels = await page.eval_on_selector_all(pick + ' optgroup', 'gs => gs.map(g => g.label)')
+        assert labels[:2] == ['Product and planning', 'Software engineering'], labels
+        assert await page.locator(pick + ' optgroup[label="Software engineering"] option[value="qa"]').is_disabled()
+        await page.select_option(pick, 'lead')
+        await page.wait_for_selector('#view-roles .mg-panel-head h2:has-text("New role")')
+        assert 'coding agent sessions' in await page.inner_text('#view-roles .rl-pick small')
         await page.click('#view-roles .mg-side button:has-text("Create")')
         await page.wait_for_selector('#view-roles .mg-row:has-text("Lead developer")')
         assert roles.store.get('lead')['tools']['allow'][0] == 'sessions.list'

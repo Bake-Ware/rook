@@ -9,6 +9,20 @@ version was `0.1.0`.
 ## Unreleased
 
 ### Added
+- Huddle role presets by category: 25 starting roles in nine categories (product and
+  planning, software engineering, operations, hardware and fabrication, writing, research,
+  media and promotion, critique, home and family), each with a charter (what it owns, what
+  it never does, how it decides, when it asks a person), concerns, a checklist, example
+  questions, starting memory, sources and a read-only tool scope. Categories and presets are
+  data (one TOML file each under `rook/hub/plugins/roles/presets/`); a category can require
+  every preset in it to only propose and add patterns its roles never call. Media and
+  promotion roles draft and propose: nothing is posted, published or sent unless a person
+  approves that card. `role.presets` returns the presets grouped by category (`id` for
+  one whole preset, `category`, `full`). Roles gain `description`, `category`, `checklist`,
+  `examples` and `seed_memory`; the chair routes on the description and examples, the
+  checklist is in every turn, and the starting memory is saved into the role's memory when
+  its home is created. **Manage > Roles** picks a preset from one dropdown grouped under
+  category headings and shows the picked preset's one-line description. (manual: huddles)
 - Huddle roles (beta, huddles H2): a `roles` hub plugin (`role.*` caps: store with history,
   presets for project manager, QA and lead developer, `role.ask`, `role.memory`,
   `role.move`). Each role has a home directory on its agent host holding its memory

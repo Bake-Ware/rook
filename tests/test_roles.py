@@ -381,7 +381,7 @@ def test_role_documents_are_validated():
                                                  "deny": ["job.write"]}})
     assert model.in_scope(role, "job.read") and model.in_scope(role, "info.ping")
     assert not model.in_scope(role, "job.write") and not model.in_scope(role, "shell.exec")
-    assert [p["id"] for p in model.presets()] == ["pm", "qa", "lead"]
+    assert [p["id"] for p in model.presets()][:2] == ["pm", "product"]   # tests/test_role_presets.py
 
 
 # -- the hub plugin --------------------------------------------------------------------
@@ -473,10 +473,9 @@ async def _call(hub, cap, args, who="human:op"):
 
 @pytest.mark.asyncio
 async def test_roles_are_stored_with_history(hub):
-    presets = (await _call(hub, "role.presets", {}))["presets"]
-    qa = next(p for p in presets if p["id"] == "qa")
-    assert not qa["saved"]
-    qa.pop("saved")
+    got = await _call(hub, "role.presets", {"id": "qa"})
+    qa = got["preset"]
+    assert not got["saved"]
     assert (await _call(hub, "role.set", {"role": qa}))["rev"] == 1
     assert (await _call(hub, "role.set", {"role": qa}))["unchanged"]
     qa["charter"] = "Watches quality."
@@ -485,7 +484,7 @@ async def test_roles_are_stored_with_history(hub):
     assert [r["id"] for r in (await _call(hub, "role.list", {}))["roles"]] == ["qa"]
     hist = await _call(hub, "role.history", {"id": "qa"})
     assert [h["rev"] for h in hist] == [2, 1] and hist[0]["note"] == "shorter"
-    assert (await _call(hub, "role.presets", {}))["presets"][1]["saved"]
+    assert (await _call(hub, "role.presets", {"id": "qa"}))["saved"]
     assert (await _call(hub, "role.delete", {"id": "qa"}))["deleted"]
     res = await hub.node.dispatch("role.get", {"id": "qa"}, "human:op")
     assert not res["ok"]

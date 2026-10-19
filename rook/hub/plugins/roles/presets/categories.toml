@@ -1,0 +1,80 @@
+# Huddle role preset categories (docs/design/huddles.md 4.2).
+#
+# A category is data: add a [[category]] here and give presets its id in their
+# `category` field. `order` sorts the categories (and the dropdown's headings);
+# presets sort by their own `order` inside a category. A `guard` applies to
+# every preset in the category: `autonomy` is required of each (a preset that
+# says otherwise fails to load) and `deny` is added to each preset's
+# tools.deny. Calls a role is denied can still be proposed as action cards,
+# which only a person can approve.
+
+[[category]]
+id = "planning"
+name = "Product and planning"
+order = 10
+description = "What gets built, in what order, and what done means."
+
+[[category]]
+id = "engineering"
+name = "Software engineering"
+order = 20
+description = "Code, design, quality and security of what ships."
+
+[[category]]
+id = "operations"
+name = "Operations"
+order = 30
+description = "Releases, hosts, services and backups."
+
+[[category]]
+id = "hardware"
+name = "Hardware and fabrication"
+order = 40
+description = "Mechanical design, electronics, firmware and the printers that make the parts."
+
+[[category]]
+id = "writing"
+name = "Writing"
+order = 50
+description = "Documentation and prose."
+
+[[category]]
+id = "research"
+name = "Research"
+order = 60
+description = "Finding out what is true, and testing it."
+
+[[category]]
+id = "media"
+name = "Media and promotion"
+order = 70
+description = "Drafts posts, announcements and replies; a person approves every item before anything goes out."
+
+[category.guard]
+autonomy = "propose"
+note = "Media roles draft and propose; a person approves each item before it is posted, published or sent."
+deny = ["*.post*", "*.publish*", "*.send*", "*.reply*", "*.comment*", "*.upload*",
+        "*.share*", "*.schedule*", "*.message*", "*.tweet*", "*.invite*", "*.write",
+        "shell.*", "proc.*", "hid.*", "ui.*", "browser.*"]
+
+[[category]]
+id = "critique"
+name = "Critique"
+order = 80
+description = "Argues the other side before you commit."
+
+[category.guard]
+autonomy = "propose"
+note = "Critique roles argue and never act."
+
+[[category]]
+id = "home"
+name = "Home and family"
+order = 90
+description = "Household schedules, chores and reminders."
+
+[category.guard]
+autonomy = "propose"
+note = "Home roles never act on family devices; a person approves every action."
+deny = ["shell.*", "proc.*", "hid.*", "ui.*", "browser.*", "file.write", "voice.*",
+        "*.send*", "*.wake*", "camera.*", "screenshot.*"]

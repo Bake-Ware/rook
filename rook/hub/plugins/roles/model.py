@@ -4,8 +4,13 @@
 A role is what an agent is responsible for (a persona is how it talks)::
 
     {"id": "qa", "name": "QA engineer",
-     "charter": "One paragraph: what the role is for.",
+     "description": "One line: what it is for (the chair reads this).",
+     "category": "engineering",     # a preset category id (presets/categories.toml)
+     "charter": "What it owns, what it never does, how it decides, when it asks a person.",
      "concerns": ["what it watches and raises unprompted", ...],
+     "checklist": ["what it works through on every turn", ...],
+     "examples": ["a question it answers well", ...],
+     "seed_memory": ["a fact it starts with", ...],   # written once, when its home is made
      "sources": [{"cap": "job.read", "args": {...}, "worker": "rook"}, ...],
      "tools": {"allow": ["job.read", "info.*"], "deny": []},
      "builtin": [],                 # harness built-ins: read, search
@@ -17,6 +22,10 @@ A role is what an agent is responsible for (a persona is how it talks)::
 
 Roles are versioned like persona profiles: every change bumps ``rev`` and
 lands in the history with its actor.
+
+The presets (starting roles, grouped into categories) are data: one TOML
+file per preset in ``presets/`` and the category list in
+``presets/categories.toml`` (:func:`load_presets`).
 """
 
 from __future__ import annotations
@@ -27,6 +36,7 @@ import json
 import re
 import threading
 import time
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -40,8 +50,10 @@ AUTONOMY = ("propose", "act")
 MEMORY = ("write", "read", "off")
 BUILTIN = ("read", "search")
 EFFORTS = ("", "low", "medium", "high", "xhigh", "max")
-TEXT_LIMITS = {"name": 80, "charter": 2000, "persona": 48, "host": 64}
+TEXT_LIMITS = {"name": 80, "description": 160, "category": 32, "charter": 2000, "persona": 48,
+               "host": 64}
 MAX_ITEMS = 20
+MAX_EXAMPLES = 5
 MAX_ITEM = 300
 DEFAULT_TOOLS = {"allow": ["knowledge.read"], "deny": []}
 
@@ -87,8 +99,9 @@ def validate(doc: Any) -> dict:
     """A clean role document, or RoleError."""
     if not isinstance(doc, dict):
         raise RoleError("role must be an object")
-    known = {"id", "name", "charter", "concerns", "sources", "tools", "builtin", "autonomy",
-             "memory", "backend", "model", "effort", "host", "persona", "enabled", "rev"}
+    known = {"id", "name", "description", "category", "charter", "concerns", "checklist",
+             "examples", "seed_memory", "sources", "tools", "builtin", "autonomy", "memory",
+             "backend", "model", "effort", "host", "persona", "enabled", "rev"}
     extra = sorted(set(doc) - known)
     if extra:
         raise RoleError(f"unknown field {extra[0]!r}")
@@ -96,8 +109,17 @@ def validate(doc: Any) -> dict:
     if not isinstance(rid, str) or not ID.match(rid):
         raise RoleError("id: 1-32 of a-z 0-9 _ -, starting with a letter")
     out: dict[str, Any] = {"id": rid, "name": _text(doc, "name") or rid,
+                           "description": " ".join(_text(doc, "description").split()),
+                           "category": _text(doc, "category"),
                            "charter": _text(doc, "charter"),
-                           "concerns": _strings(doc.get("concerns"), "concerns")}
+                           "concerns": _strings(doc.get("concerns"), "concerns"),
+                           "checklist": _strings(doc.get("checklist"), "checklist"),
+                           "examples": _strings(doc.get("examples"), "examples"),
+                           "seed_memory": _strings(doc.get("seed_memory"), "seed_memory")}
+    if out["category"] and not ID.match(out["category"]):
+        raise RoleError("category: a category id (a-z 0-9 _ -, starting with a letter)")
+    if len(out["examples"]) > MAX_EXAMPLES:
+        raise RoleError(f"examples: at most {MAX_EXAMPLES}")
     sources = doc.get("sources") or []
     if not isinstance(sources, list) or len(sources) > MAX_ITEMS:
         raise RoleError(f"sources: a list of at most {MAX_ITEMS} {{cap, args?, worker?}}")
@@ -155,42 +177,137 @@ def in_scope(role: dict, cap: str) -> bool:
     return any(fnmatch.fnmatchcase(cap, p) for p in tools.get("allow") or [])
 
 
-#: The starting roster (docs/design/huddles.md 4.2), offered on the page and by
-#: ``role.presets``; nothing is created until someone saves one.
-PRESETS: tuple[dict, ...] = (
-    {"id": "pm", "name": "Project manager",
-     "charter": "Keeps the work moving: knows what is on deck, what is blocked and why, and "
-                "what should happen next.",
-     "concerns": ["the task deck and its priorities", "what is blocked and why",
-                  "scope creep", "what is on deck next", "deadlines the person mentioned"],
-     "sources": [{"cap": "task.read", "args": {"action": "deck"}, "worker": "rook"}],
-     "tools": {"allow": ["task.read", "huddle.read", "job.read", "knowledge.read"], "deny": []},
-     "autonomy": "propose"},
-    {"id": "qa", "name": "QA engineer",
-     "charter": "Watches quality: failing or flaky jobs, regressions after deploys, workers "
-                "out of date or offline, and anything shipped without evidence.",
-     "concerns": ["failing or flaky jobs", "test results on recent changes",
-                  "regressions after deploys", "workers out of date or offline",
-                  "anything shipped without evidence"],
-     "sources": [{"cap": "job.read", "args": {"action": "runs"}, "worker": "rook"}],
-     "tools": {"allow": ["job.read", "task.read", "info.*", "knowledge.read"], "deny": []},
-     "autonomy": "propose"},
-    {"id": "lead", "name": "Lead developer",
-     "charter": "Fronts the coding agent sessions: knows what each session is doing and "
-                "whether it is stuck, and the technical decisions and debt. Does not write "
-                "code itself: it proposes a nudge to a session (session.send) or a new "
-                "session for a task (session.start) as an action card.",
-     "concerns": ["open branches and pull requests", "what every coding session is doing",
-                  "sessions that look stuck", "technical decisions and debt"],
-     "sources": [{"cap": "sessions.list", "args": {"live_only": True, "limit": 15}}],
-     "tools": {"allow": ["sessions.list", "sessions.follow", "task.read", "knowledge.read"],
-               "deny": []},
-     "autonomy": "propose"},
-)
+# -- presets ----------------------------------------------------------------------------
+
+#: Where the presets live: ``categories.toml`` and one ``<id>.toml`` per preset.
+PRESETS_DIR = Path(__file__).with_name("presets")
+#: Keys a preset file may have besides the role fields: its place in its category.
+PRESET_ONLY = ("order",)
+CATEGORY_KEYS = {"id", "name", "order", "description", "guard"}
+GUARD_KEYS = {"autonomy", "deny", "note"}
+
+
+def _category(raw: Any) -> dict:
+    if not isinstance(raw, dict) or set(raw) - CATEGORY_KEYS:
+        raise RoleError(f"a category is {{{', '.join(sorted(CATEGORY_KEYS))}}}")
+    cid = raw.get("id")
+    if not isinstance(cid, str) or not ID.match(cid):
+        raise RoleError(f"category id {cid!r}: a-z 0-9 _ -, starting with a letter")
+    name, desc = raw.get("name"), raw.get("description", "")
+    if not isinstance(name, str) or not name.strip() or len(name) > 60:
+        raise RoleError(f"category {cid}: a name of at most 60 characters")
+    if not isinstance(desc, str) or len(desc) > 200:
+        raise RoleError(f"category {cid}: a description of at most 200 characters")
+    order = raw.get("order", 1000)
+    if not isinstance(order, int) or isinstance(order, bool):
+        raise RoleError(f"category {cid}: order is a whole number")
+    guard = raw.get("guard") or {}
+    if not isinstance(guard, dict) or set(guard) - GUARD_KEYS:
+        raise RoleError(f"category {cid}: guard is {{autonomy, deny, note}}")
+    if guard.get("autonomy") not in (None, *AUTONOMY):
+        raise RoleError(f"category {cid}: guard.autonomy is one of {', '.join(AUTONOMY)}")
+    deny = _strings(guard.get("deny"), f"category {cid}: guard.deny", 80)
+    if any(not PATTERN.match(p) for p in deny):
+        raise RoleError(f"category {cid}: guard.deny takes cap patterns")
+    out = {"id": cid, "name": name.strip(), "order": order, "description": desc.strip()}
+    if guard:
+        out["guard"] = {"autonomy": guard.get("autonomy") or "", "deny": deny,
+                        "note": str(guard.get("note") or "").strip()}
+    return out
+
+
+def _guarded(doc: dict, cat: dict) -> dict:
+    """A preset with its category's guard applied: the guard's autonomy is
+    required (a preset that says otherwise is an error, never silently
+    changed) and its deny patterns are added to the preset's own."""
+    guard = cat.get("guard")
+    if not guard:
+        return doc
+    if guard["autonomy"] and doc.get("autonomy", "propose") != guard["autonomy"]:
+        raise RoleError(f"preset {doc['id']}: the {cat['id']} category needs autonomy "
+                        f"{guard['autonomy']}")
+    tools = dict(doc.get("tools") or DEFAULT_TOOLS)
+    deny = list(tools.get("deny") or [])
+    tools["deny"] = deny + [p for p in guard["deny"] if p not in deny]
+    return {**doc, "tools": tools}
+
+
+def load_presets(root: str | Path = PRESETS_DIR) -> tuple[list[dict], list[dict]]:
+    """``(categories, presets)`` from ``root``: the categories in their sort
+    order, each preset a clean role document (plus ``order``) in its
+    category's order. Any bad file is a RoleError naming it."""
+    root = Path(root)
+    try:
+        raw = tomllib.loads((root / "categories.toml").read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as e:
+        raise RoleError(f"presets: categories.toml: {e}") from None
+    cats = [_category(c) for c in raw.get("category") or []]
+    by_id = {c["id"]: c for c in cats}
+    if len(by_id) != len(cats):
+        raise RoleError("presets: two categories share an id")
+    presets: list[dict] = []
+    for path in sorted(root.glob("*.toml")):
+        if path.name == "categories.toml":
+            continue
+        try:
+            doc = tomllib.loads(path.read_text(encoding="utf-8"))
+            order = doc.pop("order", 1000)
+            if not isinstance(order, int) or isinstance(order, bool):
+                raise RoleError("order is a whole number")
+            if doc.get("id") != path.stem:
+                raise RoleError(f"id must be {path.stem!r}, the file's name")
+            cat = by_id.get(doc.get("category") or "")
+            if cat is None:
+                raise RoleError(f"category {doc.get('category')!r} is not in categories.toml")
+            if not str(doc.get("description") or "").strip():
+                raise RoleError("a preset needs a one-line description")
+            clean = validate(_guarded(doc, cat))
+        except (RoleError, tomllib.TOMLDecodeError) as e:
+            raise RoleError(f"presets: {path.name}: {e}") from None
+        presets.append({**clean, "order": order})
+    rank = {c["id"]: i for i, c in enumerate(sorted(cats, key=lambda c: (c["order"], c["id"])))}
+    presets.sort(key=lambda p: (rank[p["category"]], p["order"], p["name"]))
+    return sorted(cats, key=lambda c: (c["order"], c["id"])), presets
+
+
+_LOADED: tuple[list[dict], list[dict]] | None = None
+
+
+def _loaded() -> tuple[list[dict], list[dict]]:
+    global _LOADED
+    if _LOADED is None:
+        _LOADED = load_presets()
+    return _LOADED
+
+
+def categories() -> list[dict]:
+    """The preset categories in sort order: {id, name, order, description, guard?}."""
+    return copy.deepcopy(_loaded()[0])
 
 
 def presets() -> list[dict]:
-    return [validate(copy.deepcopy(p)) for p in PRESETS]
+    """Every preset as a role document to save with ``role.set``, grouped by
+    category (in the categories' order) and in each category's order."""
+    return [{k: v for k, v in p.items() if k not in PRESET_ONLY}
+            for p in copy.deepcopy(_loaded()[1])]
+
+
+def preset(pid: str) -> dict | None:
+    return next((p for p in presets() if p["id"] == pid), None)
+
+
+def grouped(full: bool = False) -> list[dict]:
+    """The categories, each with its presets (``full``: whole role documents;
+    otherwise id, name, description and autonomy), empty categories left out."""
+    docs = presets()
+    out = []
+    for c in categories():
+        mine = [p if full else {k: p[k] for k in ("id", "name", "description", "category",
+                                                    "autonomy")}
+                for p in docs if p["category"] == c["id"]]
+        if mine:
+            out.append({**c, "presets": mine})
+    return out
 
 
 class RoleStore:

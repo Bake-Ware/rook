@@ -244,6 +244,47 @@ async def test_a_role_that_acts_runs_cards_in_its_scope_itself(hub):
 
 
 @pytest.mark.asyncio
+async def test_a_media_role_that_acts_still_leaves_publishing_to_a_person(hub):
+    """A media preset switched to act, even with every cap allowed, cannot run
+    a publishing call itself: its card waits for a person, who runs it."""
+    doc = (await _call(hub, "role.presets", {"id": "social"}))["preset"]
+    await _call(hub, "role.set", {"role": {**doc, "autonomy": "act",
+                                           "tools": {"allow": ["*"], "deny": doc["tools"]["deny"]}}})
+    h = await _call(hub, "huddle.start", {"title": "Launch", "roles": ["social"]})
+    hub.band.script = {"huddle-social": [{"text": "Drafted the thread.", "tools": [
+        ("propose", {"kind": "job.run", "summary": "Post the thread", "worker": "box",
+                     "cap": "shell.exec", "args": {"argv": ["post", "hello"]}}),
+        ("propose", {"kind": "note", "summary": "Draft: Rook 1.0 is out."}),
+        ("propose", {"kind": "job.run", "summary": "Ping", "worker": "box", "cap": "info.ping"})]}]}
+    await _call(hub, "huddle.post", {"huddle": h["room"], "text": "@social draft the launch"})
+    await _settle(hub)
+    post, note, ping = (await _call(hub, "huddle.read", {"room": h["room"]}))["cards"]
+    assert post["state"] == "proposed" and note["state"] == "proposed"
+    assert ping["state"] == "done"                             # a read in its scope: fine
+    assert not [c for c in hub.band.calls if c.cap == "shell.exec"]
+    turn = next(t for t in hub.band.turns if t["kind"] == "huddle-social")
+    assert "Never call these yourself" in turn["args"]["system"]
+    await _call(hub, "huddle.card", {"huddle": h["room"], "card": post["id"], "action": "approve"})
+    ran = [c for c in hub.band.calls if c.cap == "shell.exec"]
+    assert len(ran) == 1 and ran[0].identity == PERSON          # the person's call, not the role's
+
+
+@pytest.mark.asyncio
+async def test_the_chair_routes_on_descriptions_and_examples(hub):
+    for pid in ("qa", "skeptic"):
+        doc = (await _call(hub, "role.presets", {"id": pid}))["preset"]
+        await _call(hub, "role.set", {"role": doc})
+    h = await _call(hub, "huddle.start", {"title": "Review", "roles": ["qa", "skeptic"]})
+    await _call(hub, "huddle.post", {"huddle": h["room"], "text": "Is this plan sound?"})
+    await _settle(hub)
+    chair = next(t for t in hub.band.turns if t["kind"] == "huddle-chair")["args"]["system"]
+    skeptic = hub.roles.role("skeptic")
+    assert f"@skeptic (Skeptic / red team): {skeptic['description']}" in chair
+    assert "good at: " + skeptic["examples"][0] in chair
+    assert skeptic["charter"] not in chair                     # the charter is the role's own
+
+
+@pytest.mark.asyncio
 async def test_guests_rounds_limits_and_failures(hub):
     await _roles(hub)
     h = await _call(hub, "huddle.start", {"title": "Mixed", "roles": ["qa", "pm"]})
@@ -364,10 +405,16 @@ async def test_the_roles_page_api_acts_as_the_operator_account(hub, monkeypatch)
             return r.status_code, r.json()
         code, body = await api(action="role_list")
         assert code == 200 and body["result"]["roles"] == []
-        assert [p["id"] for p in body["result"]["presets"]] == ["pm", "qa", "lead"]
+        cats = body["result"]["preset_categories"]
+        assert [c["id"] for c in cats][:2] == ["planning", "engineering"]
+        assert [p["id"] for p in cats[1]["presets"]] == ["lead", "qa", "architect", "security"]
+        assert "charter" not in cats[1]["presets"][1]               # brief: the dropdown's needs
         assert [h["name"] for h in body["result"]["hosts"]] == ["hosta"]
         assert body["result"]["chair"] == "agent:home"
-        qa = {k: v for k, v in body["result"]["presets"][1].items() if k != "saved"}
+        code, body = await api(action="role_presets", id="qa")
+        assert code == 200 and not body["result"]["saved"]
+        qa = body["result"]["preset"]
+        assert qa["category"] == "engineering" and qa["checklist"] and qa["description"]
         code, body = await api(action="role_set", role=qa, expect_rev=0)
         assert code == 200 and body["result"]["rev"] == 1, body
         code, body = await api(action="role_set", role=qa, expect_rev=0)   # create, not overwrite
@@ -381,7 +428,8 @@ async def test_the_roles_page_api_acts_as_the_operator_account(hub, monkeypatch)
         assert [(e["rev"], e["actor"], e["note"]) for e in body["result"]] == [
             (2, "human:op", "shorter name"), (1, "human:op", "")]
         code, body = await api(action="role_list")
-        assert [p["saved"] for p in body["result"]["presets"]] == [False, True, False]
+        eng = body["result"]["preset_categories"][1]["presets"]
+        assert [p["saved"] for p in eng] == [False, True, False, False]
         code, body = await api(action="role_set", role={"id": "Bad Id"})
         assert code == 400
         # Memory needs a home; moving a role without one just pins the host.

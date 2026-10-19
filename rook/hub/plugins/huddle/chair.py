@@ -307,9 +307,13 @@ class Chair:
         if roster:
             lines = ["Roles in this huddle (people write @<id>):"]
             for r in roster:
-                lines.append(f"- @{r['id']} ({r['name']}): {r.get('charter') or ''}".rstrip())
+                # The one-line description routes; the full charter is the role's own.
+                about = r.get("description") or r.get("charter") or ""
+                lines.append(f"- @{r['id']} ({r['name']}): {about}".rstrip())
                 if r.get("concerns"):
                     lines.append("  concerns: " + "; ".join(r["concerns"][:8]))
+                if r.get("examples"):
+                    lines.append("  good at: " + "; ".join(r["examples"][:3]))
         else:
             lines = ["No roles are in this huddle: you answer the person yourself."]
         system = home.system_prompt(cfg, CHAIR_WHERE, memory) + "\n\n" + "\n".join(lines) \

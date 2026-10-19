@@ -27,8 +27,9 @@ The Roles page and the Memory page's role filter (huddles.md 8, 3.3) use the
 ``role.*`` caps through here, as this operator account (a band owner, so the
 roles plugin's admin gate lets it change roles):
 
-* ``role_list`` (roles, presets, agent hosts, persona profiles),
-  ``role_get`` {id}, ``role_history`` {id}, ``role_presets``,
+* ``role_list`` (roles, the presets by category, agent hosts, persona
+  profiles), ``role_get`` {id}, ``role_history`` {id}, ``role_presets``
+  {id?, category?, full?} (one preset's whole document with ``id``),
   ``role_memory`` {id, query?, limit?};
 * ``role_set`` {role, note?, expect_rev?, dry_run?}, ``role_delete`` {id},
   ``role_move`` {id, host}, ``role_memory_edit`` {id, op: remember|forget,
@@ -55,6 +56,9 @@ def _role_args(action: str, data: dict) -> dict:
     rid = str(data.get("id") or "")
     if action in ("role_get", "role_history"):
         return {"id": rid}
+    if action == "role_presets":
+        return {"id": rid, "category": str(data.get("category") or ""),
+                "full": bool(data.get("full"))}
     if action == "role_memory":
         return {"id": rid, "query": str(data.get("query") or ""),
                 "limit": max(1, min(int(data.get("limit") or 50), 200))}
@@ -114,7 +118,7 @@ def routes(get_node: Callable[[], Any], accounts):
             with contextlib.suppress(Exception):
                 personas = [{"id": p["id"], "name": p.get("name") or p["id"]}
                             for p in pp.store.profiles()] if pp is not None else []
-            result = {**result, "presets": rp.presets()["presets"], "hosts": hosts,
+            result = {**result, "preset_categories": rp.presets()["categories"], "hosts": hosts,
                       "personas": personas,
                       "chair": home.identity if home is not None else None}
         return result

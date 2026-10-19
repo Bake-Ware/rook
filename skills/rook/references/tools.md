@@ -133,13 +133,13 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `policy.status` | — | read | Hub permission status: policy mode/revision, whether calls carry tickets (root key present), the op-key id an… |
 | `role.ask` | id, question, context='' | write | One turn of a role: it answers `question` (with `context`) on its agent host, in its home directory, with its… |
 | `role.delete` | id, note='' | admin | Delete a role (its history stays; its home on the agent host is left in place). |
-| `role.get` | id | read | A role document: charter, concerns, sources, tools, builtin, autonomy, memory, backend, model, effort, host,… |
+| `role.get` | id | read | A role document: name, description, category, charter, concerns, checklist, examples, seed_memory, sources, t… |
 | `role.history` | id='', limit=20 | read | Attributed changes to one role (or all), newest first. |
 | `role.list` | — | read | Every role (id, name, rev, enabled, host, backend, autonomy). |
 | `role.memory` | id, query='', limit=50 | read | A role's memory (scope role:<id>), read from its home on its agent host: the memories matching `query`, or th… |
 | `role.memory_edit` | id, action, text='', kind='fact', memory_id='' | admin | Change a role's memory on its host: `action` remember (`text`, `kind` fact, procedure or episode) or forget (… |
 | `role.move` | id, host, note='' | admin | Move a role to another agent host: its home directory (memory and config) is packed on the old host, unpacked… |
-| `role.presets` | — | read | The starting roster (project manager, QA engineer, lead developer) as role documents to save with `role.set`;… |
+| `role.presets` | id='', category='', full=false | read | The starting roles, grouped by category (product and planning, software engineering, operations, ...): `categ… |
 | `role.set` | role, note='', dry_run=false, expect_rev? | admin | Create or replace a role (band owners and operator tokens). |
 | `serves.clear` | worker | write | Remove a worker's hosting entry. |
 | `serves.list` | worker='' | read | What workers host: `{worker: {sites, services, updated, by}}`. |
