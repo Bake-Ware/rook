@@ -78,8 +78,23 @@ SERVER = "home"
 TOKEN_ENV = "ROOK_TURN_TOKEN"
 
 
+#: ``agenthost.harness_home``: the home the harnesses run with (their sign-in
+#: lives there), when it is not this worker's own HOME. Set by the plugin.
+HARNESS_HOME = ""
+
+
+def _harness_env() -> dict:
+    """HOME (and XDG_CONFIG_HOME, when a harness home is set) for a harness."""
+    if HARNESS_HOME:
+        return {"HOME": HARNESS_HOME, "XDG_CONFIG_HOME": os.path.join(HARNESS_HOME, ".config")}
+    return {"HOME": _home()}
+
+
 def _home() -> str:
-    """The service user's home (systemd units sometimes leave HOME unset)."""
+    """The home the harnesses use: ``agenthost.harness_home``, else the
+    service user's (systemd units sometimes leave HOME unset)."""
+    if HARNESS_HOME:
+        return HARNESS_HOME
     h = os.environ.get("HOME")
     if h:
         return h
@@ -363,7 +378,8 @@ class OpenCodeHarness(Harness):
 
     @staticmethod
     def user_config() -> dict:
-        base = Path(os.environ.get("XDG_CONFIG_HOME") or Path(_home()) / ".config") / "opencode"
+        base = Path((None if HARNESS_HOME else os.environ.get("XDG_CONFIG_HOME"))
+                    or Path(_home()) / ".config") / "opencode"
         for name in ("opencode.json", "opencode.jsonc", "config.json"):
             p = base / name
             if p.is_file():
@@ -470,6 +486,11 @@ class AgentHost(Plugin):
                 help="Where the home directories of huddle roles live on this host (one folder "
                      "per role: its memory and harness config). Blank: roles/ in the agent "
                      "host's data directory."),
+        setting("harness_home", str, default="", scope="worker", env="ROOK_AGENTHOST_HARNESS_HOME",
+                apply="restart", advanced=True, label="Harness home",
+                help="The home directory Claude Code, Codex and OpenCode run with, where their "
+                     "sign-in lives. Blank: this worker's own home. For a worker whose service "
+                     "account has no sign-in of its own (a test worker with a scratch home)."),
     )
 
     def __init__(self) -> None:
@@ -492,10 +513,17 @@ class AgentHost(Plugin):
     def installed(self) -> list[str]:
         return [n for n, h in HARNESSES.items() if h.exe()]
 
+    def _apply_harness_home(self) -> None:
+        global HARNESS_HOME
+        with contextlib.suppress(Exception):
+            HARNESS_HOME = os.path.expanduser(str(self.settings.get("harness_home") or "").strip())
+
     def available(self) -> bool:
+        self._apply_harness_home()
         return bool(self.settings.get("enabled", True)) and bool(self.installed())
 
     async def start(self) -> None:
+        self._apply_harness_home()
         self._probe_task = asyncio.create_task(self._probe_loop())
 
     async def stop(self) -> None:
@@ -518,7 +546,7 @@ class AgentHost(Plugin):
         try:
             proc = await asyncio.create_subprocess_exec(
                 *argv, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT, env={**os.environ, "HOME": _home()})
+                stderr=asyncio.subprocess.STDOUT, env={**os.environ, **_harness_env()})
         except OSError:
             return 127, ""
         try:
@@ -682,7 +710,7 @@ class AgentHost(Plugin):
                 cwd.mkdir(parents=True, exist_ok=True)
                 argv, extra = h.prepare(tmp, str(cwd), model=model, system=system,
                                         mcp_url=mcp_url, effort=effort)
-            env = {**os.environ, "HOME": _home(), **extra, TOKEN_ENV: mcp_token}
+            env = {**os.environ, **_harness_env(), **extra, TOKEN_ENV: mcp_token}
             env.pop("ANTHROPIC_API_KEY", None)
             env.pop("OPENAI_API_KEY", None)
             if oauth_token and h.name == "claude":

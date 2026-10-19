@@ -1,7 +1,14 @@
 # Huddles: roles, a chair, and Claude Code as the house agent
 
 Status: H1 (section 3, the agent host) is built; H2 (roles, role homes and
-role memory: 3.3, 4) is built as decided here; H3 (chaired huddles, 5) and H4 (the web, 8) are built; H5 is design. Related: [home-agent.md](home-agent.md)
+role memory: 3.3, 4) is built as decided here; H3 (chaired huddles: 5, 7), H4
+(the web: 8) and H5 (jobs and the lead developer: 6, 4.2) are built.
+Built choices where this document left room: a round starts on a person's or
+a job's post, or a guest agent's that names the chair or a role; the chair
+closes only when two or more roles answered; a role's sources are read at the
+hub before each huddle or job turn (4.1); `rook_chat_start` and `chat.write`
+start are off unless `chat.new_rooms` is on; replies are posted whole
+(per-role progress, no token streaming). Related: [home-agent.md](home-agent.md)
 (the house agent this extends), [memory.md](memory.md) (where role memory
 lives), [persona.md](persona.md) (how agents talk, which is not the same as
 what they care about), [sessions.md](sessions.md) (the Claude Code sessions

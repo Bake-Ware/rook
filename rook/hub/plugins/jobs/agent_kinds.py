@@ -171,11 +171,16 @@ def find_verdict(text: str) -> tuple[str, str] | None:
 
 # -- agent: validation -----------------------------------------------------------------
 
+ROLE_SPEC = re.compile(r"^role:([a-z][a-z0-9_-]{0,31})$")
+
+
 def check_agent_spec(spec: Any) -> list:
     if spec in (None, "home"):
         return []
     if isinstance(spec, str):
-        return [f'agent must be "home" or {{"session": {{...}}}}, not {spec!r}']
+        if ROLE_SPEC.match(spec):
+            return []
+        return [f'agent must be "home", "role:<id>" or {{"session": {{...}}}}, not {spec!r}']
     if not isinstance(spec, dict) or set(spec) != {"session"} or not isinstance(spec["session"], dict):
         return ['agent must be "home" or {"session": {"worker": ..., "agent": "claude", ...}}']
     s = spec["session"]
@@ -502,7 +507,65 @@ async def run_agent(ctx: StepContext, step: dict) -> StepResult:
     context = build_context(ctx, step.get("context", ["run"]))
     if spec in (None, "home"):
         return await _run_home(ctx, step, mode, prompt, context)
+    if isinstance(spec, str) and ROLE_SPEC.match(spec):
+        return await _run_role(ctx, step, ROLE_SPEC.match(spec).group(1), mode, prompt, context)
     return await _run_session(ctx, step, spec["session"], mode, prompt, context)
+
+
+def roles_plugin(ctx: StepContext) -> Any:
+    """The ``roles`` plugin, or None (tests set ``runtime.roles``)."""
+    found = getattr(ctx.runtime, "roles", None)
+    if found is not None:
+        return found
+    node = getattr(ctx.runtime, "node", None)
+    plugin = getattr(node, "plugin", None)
+    return plugin("role") if callable(plugin) else None
+
+
+async def _run_role(ctx: StepContext, step: dict, rid: str, mode: str, prompt: str,
+                    context: dict) -> StepResult:
+    """A role works the step (docs/design/huddles.md 6): one turn on its host,
+    in its home, with its own tools, sources (read first) and memory. The
+    role's scope is its own, never the job's: a role that only proposes
+    reads. The answer is the step's text; the step fails only when the turn
+    does."""
+    roles = roles_plugin(ctx)
+    if roles is None:
+        return StepResult("failure", error="roles need the roles plugin on this hub")
+    try:
+        role = roles.role(rid)
+    except ValueError as e:
+        return StepResult("failure", error=str(e))
+    ident = roles.identity(role)
+    asker = f"job:{ctx.job.get('id') or ctx.job.get('name') or '?'}"
+    work = roles.turn(role, prompt, json.dumps(context, default=str)[:CONTEXT_MAX], asker,
+                      via=f"job-{rid}", preread=True)
+    if mode == "delegate":
+        budget = parse_duration(step.get("budget") or DEFAULT_BUDGET)
+        task = asyncio.get_running_loop().create_task(_background_role(work, budget, ctx))
+        _BACKGROUND.add(task)
+        task.add_done_callback(_BACKGROUND.discard)
+        return StepResult("success", output={"agent": ident, "mode": "delegate",
+                                             "budget_s": round(budget)}, extra={"agent": ident})
+    try:
+        out = await work
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:  # noqa: BLE001 - RoleError: the role could not run
+        return StepResult("failure", error=str(e)[:500], extra={"agent": ident})
+    text = out.get("answer") or ""
+    return StepResult("success", output={"agent": ident, "text": text, "model": out.get("model"),
+                                         "worker": out.get("worker"), "tools": out.get("tools_used")},
+                      text=text, extra={"agent": ident})
+
+
+async def _background_role(work, budget: float, ctx: StepContext) -> None:
+    try:
+        await asyncio.wait_for(work, budget)
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001
+        log.exception("jobs: delegated role work for %s/%s failed", ctx.run.get("id"), ctx.step_id)
 
 
 async def _run_home(ctx: StepContext, step: dict, mode: str, prompt: str, context: dict) -> StepResult:
@@ -709,6 +772,8 @@ async def run_ask(ctx: StepContext, step: dict) -> StepResult:
 AGENT_SCHEMA = {
     "agent": {"oneOf": [
         {"const": "home", "description": "the house agent (default: the hub setting job.default_agent)"},
+        {"type": "string", "pattern": "^role:[a-z][a-z0-9_-]{0,31}$",
+         "description": "a huddle role: answers with its own sources, tools and memory"},
         {"type": "object", "required": ["session"], "properties": {"session": {
             "type": "object", "required": ["worker"], "properties": {
                 "worker": {"$ref": "#/$defs/worker"}, "agent": {"enum": list(SESSION_AGENTS)},

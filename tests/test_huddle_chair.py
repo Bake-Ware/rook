@@ -480,8 +480,8 @@ async def test_the_home_page_shows_turns_and_tokens_per_role(hub):
 def test_cards_are_validated():
     assert validate_card({"kind": "note", "summary": " x "}) == {"kind": "note", "summary": "x"}
     c = validate_card({"kind": "session.send", "summary": "nudge", "call": {
-        "worker": "w", "cap": "sessions.send", "args": {"text": "hi"}}})
-    assert c["call"] == {"worker": "w", "cap": "sessions.send", "args": {"text": "hi"}}
+        "worker": "w", "cap": "sessions.send", "args": {"native_id": "s1", "text": "hi"}}})
+    assert c["call"] == {"worker": "w", "cap": "sessions.send", "args": {"native_id": "s1", "text": "hi"}}
     for bad in ({"kind": "rm -rf", "summary": "x"}, {"kind": "note"}, "x",
                 {"kind": "job.run", "summary": "x", "worker": "w"}):
         with pytest.raises(CardError):

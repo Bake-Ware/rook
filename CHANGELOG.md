@@ -31,6 +31,12 @@ version was `0.1.0`.
   Home agent page's chat panel is the 1:1 huddle with the house agent, and the page shows
   the last 24 hours of agent host turns and tokens per role. Phone layout for all of it.
   (manual: huddles, home-agent, chat, work, desktop-app)
+- Jobs and huddles (beta, huddles H5): agent steps take `agent: "role:<id>"` (a role works
+  the step with its own sources, tools and memory), and a new `huddle` step kind holds one
+  round and delivers the chair's synthesis with the cards waiting (Telegram, voice or
+  notification). A role's sources are read at the hub before its huddle and job turns; the
+  lead developer reads live sessions on every host and proposes `session.send` /
+  `session.start` cards. (manual: jobs, huddles)
 
 ### Changed
 - New chat rooms are off by default (`chat.new_rooms`): `rook_chat_start` and `chat.write`

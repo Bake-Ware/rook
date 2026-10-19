@@ -114,9 +114,9 @@ person is `user:operator`; the chair is `agent:<name>`.
   points at Recent activity. Chair turns are rows there (`huddle-chair`,
   `huddle-close`, from `HomeAgent.tool_turn`). API failures (huddles off,
   signed out) are shown in the panel.
-- Chair turns do not read the home agent's memory or search knowledge (the
-  chair's own tool set is call_on/answer/propose); the 1:1 with the house
-  agent before H4 did. Follow-up: give the chair memory recall.
+- The chair's first turn reads the house agent's memory for the asker (as a
+  chat reply does, when the asker may use memory) and, with `home.tools` on,
+  gets `knowledge_search` next to call_on/answer/propose (H5).
 
 Tests: `tests/browser_home_chat.py` (real home and huddle plugins and the
 huddle account API, fake model endpoint, real chat store; desktop and phone

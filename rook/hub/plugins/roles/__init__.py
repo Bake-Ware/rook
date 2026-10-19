@@ -44,6 +44,12 @@ TOOL_RESULT_CHARS = 6000
 NEVER = ("role.ask", "role.move", "role.memory_edit", "agenthost.*")
 CALL_TIMEOUT = 60.0
 ASK_CHARS = 20000
+#: Pre-reading a role's sources (docs/design/huddles.md 4.1): per result, in
+#: total, workers per source, and the time for all of them.
+SOURCE_CHARS = 1500
+SOURCES_CHARS = 8000
+SOURCE_WORKERS = 8
+SOURCES_TIMEOUT = 30.0
 
 
 def _actor() -> str:
@@ -310,6 +316,48 @@ class RolesPlugin(Plugin):
             out = {"ok": False, "error": f"unknown tool {name!r}"}
         return json.dumps(out, default=str)[:TOOL_RESULT_CHARS]
 
+    # -- sources ------------------------------------------------------------------
+    async def preread(self, role: dict) -> str:
+        """What the role's ``sources`` say now, read at the hub before its
+        turn (so the answer does not hang on the model calling tools). Each
+        source runs through :meth:`role_call` (the role's scope, read tier
+        unless it acts, policy, journal); one without a worker runs on every
+        live worker that has the cap (``sessions.list`` across hosts)."""
+        sources = list(role.get("sources") or [])
+        if not sources:
+            return ""
+        roster = self._roster()
+        hub_id = getattr(self._node, "worker_id", None)
+        jobs = []
+        for src in sources:
+            cap, args = src["cap"], dict(src.get("args") or {})
+            if src.get("worker"):
+                jobs.append((src["worker"], cap, args))
+                continue
+            names = []
+            for wid, e in roster.items():
+                if cap in (e.get("caps") or []):
+                    names.append("rook" if wid == hub_id else str(e.get("name") or wid))
+            jobs += [(n, cap, args) for n in sorted(names)[:SOURCE_WORKERS]]
+        if not jobs:
+            return ""
+
+        async def one(worker: str, cap: str, args: dict) -> str:
+            reply = await self.role_call(role, worker, cap, args)
+            if not reply.get("ok", True) or reply.get("error"):
+                return f"{cap} on {worker}: unavailable ({str(reply.get('error'))[:200]})"
+            body = json.dumps(reply.get("result", reply), default=str, separators=(",", ":"))
+            if len(body) > SOURCE_CHARS:
+                body = body[:SOURCE_CHARS] + "…"
+            return f"{cap} on {worker}: {body}"
+
+        try:
+            got = await asyncio.wait_for(asyncio.gather(*(one(*j) for j in jobs)), SOURCES_TIMEOUT)
+        except asyncio.TimeoutError:
+            return "(your sources did not answer in time; read them with rook_call if you need them)"
+        text = "\n".join(got)
+        return text[:SOURCES_CHARS]
+
     # -- a role turn ---------------------------------------------------------------
     def config_for(self, role: dict) -> dict:
         """The house agent's settings with the role's backend/model/effort."""
@@ -361,10 +409,12 @@ class RolesPlugin(Plugin):
 
     async def turn(self, role: dict, question: str, context_text: str = "",
                    asker: str = "", *, extra_tools: list[dict] | None = None,
-                   extra_handler: Any = None, guide: str = "", via: str = "") -> dict:
+                   extra_handler: Any = None, guide: str = "", via: str = "",
+                   preread: bool = False) -> dict:
         """One turn of ``role``. ``extra_tools`` (with ``extra_handler(role,
         name, args) -> str``) are offered next to the role's own (a huddle's
-        ``propose``); ``guide`` is appended to the system prompt."""
+        ``propose``); ``guide`` is appended to the system prompt; ``preread``
+        reads the role's sources first and adds them to the context."""
         home = self._home()
         user = (f"[{asker}] " if asker else "") + question
         if context_text:
@@ -376,6 +426,10 @@ class RolesPlugin(Plugin):
             if not role.get("enabled", True):
                 raise RoleError(f"role {role['id']} is off")
             cfg = self.config_for(role)
+            if preread:
+                seen = await self.preread(role)
+                if seen:
+                    user += "\n\nWhat your sources say now (read for you just before this turn):\n" + seen
             system = self.system_prompt(role, cfg)
             if guide:
                 system += "\n\n" + guide
