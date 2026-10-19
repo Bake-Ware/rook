@@ -68,12 +68,18 @@ Every message you send starts a **round**:
    each with a focused question. It may answer you itself when no role is
    needed.
 2. The roles it called answer at the same time, each in its own folder on
-   its host, each in a few sentences.
-3. When two or more roles answered, the chair writes a short summary.
+   its host, each in a few sentences. A long answer is shown whole.
+3. A role that fails or runs out of tool calls is asked once more, with a
+   narrower question (you see a short grey line saying so).
+4. The chair checks whether the thread is settled. If a role still owes
+   an answer, it asks that role again (up to twice a round); if it needs
+   you, it says what for; otherwise it writes a short summary. When only
+   one role answered and nothing is left open, it adds nothing.
 
-Write `@qa` (any role's id) to skip the chair and ask that role directly.
-A round ends there: roles never talk among themselves, and an agent's
-message only starts a round when it names a role or the chair.
+Write `@qa` (any role's id) to skip the chair and ask that role directly;
+the chair then only steps in when the role could not answer. Roles never
+talk among themselves, and an agent's message only starts a round when it
+names a role or the chair.
 
 A huddle with no roles is a one-to-one conversation with the home agent.
 
@@ -97,8 +103,17 @@ call on which machine. It waits for you:
 
 - **Approve** runs it as you, with your permissions, and records it in the
   call journal with the card and the huddle. The card then shows the result,
-  or the error if it failed.
+  or, if it failed, **Failed:** and the reason, and the chair says so in
+  the huddle.
 - **Dismiss** drops it.
+
+Rook checks a card when it is proposed: the machine must be on the band
+and have the capability, a task card must name the project it goes under,
+and a new coding session must start in one of the code locations (below).
+A card that fails these checks never appears; the role or the chair is
+told why and can fix it. A card that says the same as one still waiting
+is not added twice: the one who proposed it updates theirs instead. The
+chair's message lists the cards it actually made, by id.
 
 Only people approve or dismiss cards. A role you set to act on its own
 (autonomy *act*) runs calls inside its tools directly; its card shows up
@@ -135,7 +150,11 @@ Pick a role to change it:
   folder is made (after its first answer, or when you move it before then). Changing the starting memory later
   does not change what it already remembers.
 - **Model**: which agent harness and model it runs on, how hard it thinks,
-  and its persona. Blank uses the home agent's.
+  how many tool calls it may make per answer (blank: 30 for software
+  engineering roles, 24 for operations, else the setting below), and its
+  persona. Blank uses the home agent's. A role is told its budget, and
+  told again near the end, so it answers with what it has instead of being
+  cut off.
 
 **Save** keeps the change as a new revision; the **History** at the bottom
 lists every change and who made it. **Delete** removes the role (its
@@ -211,6 +230,17 @@ Presets and their categories are plain files in the Rook source
 for the category names and order. A new preset or category is a new file or
 entry there.
 
+## Where code lives
+
+Roles never guess where your code is. In **Settings**, group **roles**,
+**Where code lives** (`role.code_locations`) takes one line per
+repository: its name, the machine, the folder of the main checkout, and
+where new worktrees go, for example
+`myapp: worker devbox, /srv/src/myapp (main checkout; worktrees next to it)`.
+Every role is given these lines on every turn; with none set, a role says
+so instead of searching. A card that starts a coding session must use one
+of these folders.
+
 ## Huddles from jobs
 
 A job step of kind `huddle` holds one round on a schedule: it posts the
@@ -229,14 +259,22 @@ period.
 
 Settings, group **Chaired huddles** (the huddle plugin):
 
-- **Role reply length** (`huddle.reply_chars`, 1200): each role's answer
-  stays under this many characters.
+- **Role reply length** (`huddle.reply_chars`, 1200): each role is asked to
+  keep its answer under this many characters. Answers are never cut there.
+- **Retries for a role that fails** (`huddle.role_retries`, 1).
+- **Follow-ups per round** (`huddle.max_followups`, 2): how many times the
+  chair may go back to roles before it closes and says what is still open.
 - **Role turns per round** (`huddle.max_role_turns`, 6): at most this many
   roles answer in one round.
 - **Keep archived huddles** (`huddle.retention_days`, 90): days an archived
   huddle is kept (0: forever).
 - **Default roles** (`huddle.default_roles`, pm, qa, lead): the roles a new
   huddle starts with, of those that exist.
+
+Group **roles**: **Tool calls per role turn** (`role.max_tool_calls`,
+12), **Role tool result length** (`role.tool_result_chars`, 12000) and
+**Where code lives** (above). Anything Rook shortens for a role or for you
+ends with `[truncated: N of M chars]`, so a cut is never silent.
 
 The home agent must be on (Manage > Home agent) to chair; the Huddles page
 says so, with a link, when it is off. Roles run on an agent harness (Claude

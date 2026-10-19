@@ -55,6 +55,7 @@ from pathlib import Path
 from typing import Any
 
 from ...core.pluginkit import fail, which
+from ...core.text import clip
 from .. import rolehome, rolemem
 from ..plugin import Plugin, capability, setting
 
@@ -167,7 +168,7 @@ class Turn:
 
     def reply(self) -> dict:
         text = self.final if self.final is not None else (self.texts[-1] if self.texts else "")
-        return {"text": (text or "")[:TEXT_CHARS], "model": self.model,
+        return {"text": clip(text or "", TEXT_CHARS), "model": self.model,
                 "tools_used": list(self.tools), "num_turns": self.num_turns,
                 "usage": self.usage, "cost_usd": self.cost, "api_ms": self.api_ms,
                 "is_error": bool(self.error) or not self.done}

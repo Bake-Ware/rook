@@ -27,6 +27,8 @@ export async function hapi(action,body={},retry=true){
 
 function loadCss(){if(document.querySelector('link[data-hd]'))return;const l=document.createElement('link');l.rel='stylesheet';l.href='/account/huddle/assets/huddle.css'+search;l.dataset.hd='1';document.head.append(l);}
 
+/** Text cut to n characters with a visible marker, as the hub cuts. */
+export const clip=(t,n)=>{t=String(t??'');return t.length<=n?t:t.slice(0,n)+'\n[truncated: '+n+' of '+t.length+' chars]';};
 export const short=id=>{id=String(id||'');return id.includes(':')?id.split(':').slice(1).join(':'):id;};
 const RUNNING=['chair','roles','closing'];
 const FILTERS=[['active','Huddles'],['archived','Archived'],['chat','Old chat rooms']];
@@ -240,12 +242,14 @@ export async function mountHuddles(root){
       const ok=h('button',{type:'button',class:'hx-btn primary',text:'Approve'}),no=h('button',{type:'button',class:'hx-btn',text:'Dismiss'});
       ok.onclick=()=>decide(c,'approve',ok,no);no.onclick=()=>decide(c,'dismiss',ok,no);
       b.append(h('div',{class:'hx-card-acts'},ok,no));
-    }else if(c.result){
-      const res=c.result,bad=res.error||res.denied||(res.ok===false&&'failed');
-      if(bad)b.append(el('p',String(bad),'hx-card-err'));
+    }else if(c.state==='failed'||c.result){
+      // A failed card says why (the hub's c.error, else the reply's own).
+      const res=c.result||{},inner=(res.result&&typeof res.result==='object')?res.result:{};
+      const bad=c.error||res.denied||res.error||inner.error||((c.state==='failed'||res.ok===false)&&'the call failed');
+      if(bad)b.append(el('p','Failed: '+String(bad),'hx-card-err'));
       else if(res.result!==undefined||res.truncated){
         const d=h('details',{class:'hx-card-res'});
-        d.append(h('summary',{text:'Result'}),el('pre',(typeof res.result==='string'?res.result:JSON.stringify(res.result??res.truncated,null,2)).slice(0,4000)));
+        d.append(h('summary',{text:'Result'}),el('pre',clip(typeof res.result==='string'?res.result:JSON.stringify(res.result??res.truncated,null,2),4000)));
         b.append(d);
       }
     }

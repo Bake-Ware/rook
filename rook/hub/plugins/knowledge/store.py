@@ -820,62 +820,119 @@ class KnowledgeStore:
         return {'band': band, 'worker': worker, 'open_tasks': [self.brief(r) for r in tasks],
                 'recent_knowledge': [self.brief(r) for r in recent], 'generated_at': time.time()}
 
+    DECK_LISTS = ('in_progress', 'blocked', 'paused', 'todo', 'recently_done')
+
     def deck(self, bands, project=None, done_days=7, states=None, outcome_chars=None):
         """What's on deck, per project, across ``bands``: in progress (with
         claimants and latest handoff), blocked, paused, todo, recently done.
         ``states`` keeps only those lists (``done`` = recently done);
-        ``done_days=0`` drops finished work; ``outcome_chars`` shortens outcomes."""
+        ``done_days=0`` drops finished work; ``outcome_chars`` shortens outcomes.
+        Just the per-project entries of ``deck_page``."""
+        return self.deck_page(bands, project, done_days, states, outcome_chars, loose=False)['deck']
+
+    def deck_page(self, bands, project=None, done_days=7, states=None, outcome_chars=None,
+                  offset=0, limit=None, loose=True):
+        """``deck``, paged over projects (newest first): ``deck`` holds the
+        entries from ``offset``, at most ``limit`` (None = all), with
+        ``total_projects`` and ``total_tasks`` (listed tasks over every
+        matching project, before paging). ``loose``: also the open and
+        recently done tasks under no project (``loose_tasks`` counts them,
+        in ``total_tasks`` too; the lists ride ``loose`` on the first page
+        only). With no ``project`` filter only. A fixed handful of queries
+        plus the rows on the page, whatever the size of the tree."""
         since = time.time() - float(done_days) * 86400
         wanted = {'recently_done' if s == 'done' else s for s in states} if states else None
-        lists = ('in_progress', 'blocked', 'paused', 'todo', 'recently_done')
+        lists = self.DECK_LISTS
         if wanted is not None and wanted - set(lists):
             raise ValueError('states are in_progress, blocked, paused, todo and done')
-        out = []
+        offset = max(0, int(offset or 0))
+
+        def listed(t):
+            key = 'recently_done' if t['state'] in CLOSED else t['state']
+            if key not in lists or (wanted is not None and key not in wanted):
+                return None
+            return None if key == 'recently_done' and t['updated'] < since else key
+
         with self.db(False) as db:
             marks = ','.join('?' * len(bands))
             projects = db.execute(f"SELECT * FROM records WHERE kind='project' AND band IN ({marks}) AND state<>'archived'"
                                   + (' AND (id=? OR slug=?)' if project else '') + ' ORDER BY updated DESC',
                                   (*bands, *((project, project) if project else ()))).fetchall()
-            for p in projects:
-                tasks, todo = [], [p['id']]
+            tasks = db.execute(f"SELECT id,parent,state,updated FROM records WHERE kind='task' AND band IN ({marks})",
+                               tuple(bands)).fetchall()
+            children = {}
+            for t in tasks:
+                children.setdefault(t['parent'], []).append(t)
+
+            def under(root):
+                out, todo, seen = [], [root], {root}
                 while todo:
-                    kids = db.execute("SELECT * FROM records WHERE parent=? AND kind='task'", (todo.pop(),)).fetchall()
-                    tasks += kids
-                    todo += [k['id'] for k in kids]
-                entry = {'band': p['band'], 'project': self.brief(self.record(p)),
-                         **{k: [] for k in lists if wanted is None or k in wanted}}
-                for t in sorted(tasks, key=lambda t: -t['updated']):
-                    key = 'recently_done' if t['state'] in ('done', 'closed', 'cancelled') else t['state']
-                    if key not in entry or (key == 'recently_done' and t['updated'] < since):
-                        continue
-                    rec = self.record(t)
-                    item = self.brief(rec)
-                    if t['state'] == 'in_progress':
-                        item['claimants'] = [dict(c) for c in db.execute(
-                            'SELECT actor,started,last_active,dirty FROM claims WHERE task=? AND released IS NULL', (t['id'],))]
-                        item['needs_hygiene'] = any(c['dirty'] for c in item['claimants'])
-                    if t['state'] in ('in_progress', 'paused', 'blocked'):
-                        handoffs = [l for l in self._live_links(db, t['id']) if l['kind'] == 'handoff']
-                        item['latest_handoff'] = {'ref': handoffs[-1]['ref'], 'ts': handoffs[-1]['ts']} if handoffs else None
-                        if item.get('needs_hygiene'):
-                            # Why: who went quiet, since when, and the handoff they last left.
-                            item['hygiene'] = [{'actor': c['actor'], 'idle_since': c['last_active'], 'marked': c['dirty'],
-                                                'last_handoff': item['latest_handoff'] and item['latest_handoff']['ts']}
-                                               for c in item['claimants'] if c['dirty']]
-                    if t['state'] in OPEN_TASK and rec['attrs'].get('dependencies'):
-                        item['dependencies'], item['unblocked'] = self._dependencies(db, t['band'], rec['attrs'])
-                    if t['state'] == 'blocked':
-                        item['blocked_reason'] = rec['attrs'].get('blocked_reason')
-                    if key == 'recently_done':
-                        outcome = rec['attrs'].get('outcome')
-                        if outcome_chars and outcome and len(outcome) > outcome_chars:
-                            outcome = outcome[:outcome_chars] + '…'
-                        item['outcome'] = outcome
-                        if rec['attrs'].get('closed_by'):
-                            item['closed_by'] = {k: rec['attrs']['closed_by'].get(k) for k in ('who', 'quote', 'session')}
-                    entry[key].append(item)
-                out.append(entry)
+                    for k in children.get(todo.pop(), []):
+                        if k['id'] not in seen:
+                            seen.add(k['id'])
+                            out.append(k)
+                            todo.append(k['id'])
+                return out
+
+            per = [(p, [t for t in under(p['id']) if listed(t)]) for p in projects]
+            out = {'total_projects': len(per), 'total_tasks': sum(len(ts) for _, ts in per)}
+            stray = []
+            if loose and not project:
+                # Under no project: every task not reached from a project
+                # (archived ones included: their tasks are not loose).
+                reached = set()
+                for row in db.execute(f"SELECT id FROM records WHERE kind='project' AND band IN ({marks})", tuple(bands)):
+                    reached.update(t['id'] for t in under(row['id']))
+                stray = [t for t in tasks if t['id'] not in reached and listed(t)]
+                out['loose_tasks'] = len(stray)
+                out['total_tasks'] += len(stray)
+            page = per[offset:] if limit is None else per[offset:offset + limit]
+            ids = [t['id'] for _, ts in page for t in ts] + ([t['id'] for t in stray] if offset == 0 else [])
+            full = {}
+            for n in range(0, len(ids), 500):  # under SQLite's parameter limit
+                part = ids[n:n + 500]
+                full |= {r['id']: r for r in db.execute(
+                    'SELECT * FROM records WHERE id IN (%s)' % ','.join('?' * len(part)), part)}
+
+            def entry(ts):
+                e = {k: [] for k in lists if wanted is None or k in wanted}
+                for t in sorted(ts, key=lambda t: -t['updated']):
+                    e[listed(t)].append(self._deck_item(db, full[t['id']], outcome_chars))
+                return e
+
+            out['deck'] = [{'band': p['band'], 'project': self.brief(self.record(p)), **entry(ts)} for p, ts in page]
+            if stray and offset == 0:
+                out['loose'] = entry(stray)
         return out
+
+    def _deck_item(self, db, t, outcome_chars):
+        """One task row on the deck: its brief plus what the deck shows for its state."""
+        rec = self.record(t)
+        item = self.brief(rec)
+        if t['state'] == 'in_progress':
+            item['claimants'] = [dict(c) for c in db.execute(
+                'SELECT actor,started,last_active,dirty FROM claims WHERE task=? AND released IS NULL', (t['id'],))]
+            item['needs_hygiene'] = any(c['dirty'] for c in item['claimants'])
+        if t['state'] in ('in_progress', 'paused', 'blocked'):
+            handoffs = [l for l in self._live_links(db, t['id']) if l['kind'] == 'handoff']
+            item['latest_handoff'] = {'ref': handoffs[-1]['ref'], 'ts': handoffs[-1]['ts']} if handoffs else None
+            if item.get('needs_hygiene'):
+                # Why: who went quiet, since when, and the handoff they last left.
+                item['hygiene'] = [{'actor': c['actor'], 'idle_since': c['last_active'], 'marked': c['dirty'],
+                                    'last_handoff': item['latest_handoff'] and item['latest_handoff']['ts']}
+                                   for c in item['claimants'] if c['dirty']]
+        if t['state'] in OPEN_TASK and rec['attrs'].get('dependencies'):
+            item['dependencies'], item['unblocked'] = self._dependencies(db, t['band'], rec['attrs'])
+        if t['state'] == 'blocked':
+            item['blocked_reason'] = rec['attrs'].get('blocked_reason')
+        if t['state'] in CLOSED:
+            outcome = rec['attrs'].get('outcome')
+            if outcome_chars and outcome and len(outcome) > outcome_chars:
+                outcome = outcome[:outcome_chars] + '…'
+            item['outcome'] = outcome
+            if rec['attrs'].get('closed_by'):
+                item['closed_by'] = {k: rec['attrs']['closed_by'].get(k) for k in ('who', 'quote', 'session')}
+        return item
 
     def handoff_tasks(self, bands):
         """Handoff thread id -> the open tasks linked to it (id, slug, state)."""

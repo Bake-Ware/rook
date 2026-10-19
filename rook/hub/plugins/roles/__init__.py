@@ -33,12 +33,21 @@ from typing import Any
 
 from ....core import context
 from ....core.plugin import Plugin, capability, place, setting
+from ....core.text import clip
 from . import model
 from .model import RoleError
 
 log = logging.getLogger("rook.hub.plugins.roles")
 
-TOOL_RESULT_CHARS = 6000
+#: A role's tool result is cut to this many characters (``role.tool_result_chars``),
+#: with a ``[truncated: N of M chars]`` marker at the cut.
+TOOL_RESULT_CHARS = 12000
+#: How many tool calls before a role's limit its results start saying how
+#: many are left, and the slack the agent host allows past the limit (the
+#: role's own memory tools count there, and a role told its budget is spent
+#: still needs a call or two to stop).
+BUDGET_WARN = 3
+BUDGET_SLACK = 4
 #: Caps no role may call, whatever its tools say: another role's turn (no
 #: loops) and the agent host's own caps (role homes, turns).
 NEVER = ("role.ask", "role.move", "role.memory_edit", "agenthost.*")
@@ -93,8 +102,19 @@ class RolesPlugin(Plugin):
     MIGRATIONS = "migrations"
     SETTINGS = (
         setting("max_tool_calls", int, 12, min=1, max=100, label="Tool calls per role turn",
-                help="A role turn stops after this many tool calls (the hub's tools and its "
-                     "own memory together)."),
+                help="How many tool calls a role turn may make when neither the role nor its "
+                     "preset category sets its own (engineering roles default to 30). Near the "
+                     "limit the role is told how many are left; past it, its tools answer "
+                     "\"answer now with what you have\"."),
+        setting("tool_result_chars", int, TOOL_RESULT_CHARS, min=2000, max=60000,
+                label="Role tool result length",
+                help="A role's tool result is cut to this many characters, with a "
+                     "[truncated: N of M chars] marker at the cut."),
+        setting("code_locations", list, [], label="Where code lives",
+                help="One line per repository: its name, the worker and the folder of its main "
+                     "checkout (and where new worktrees go). Every role turn is told these, so "
+                     "roles never guess folders; a session.start card's folder must be under "
+                     "one of them when any are set."),
     )
     SKILL = ("### roles\n"
              "Huddle roles (project manager, QA, lead developer, ...) each have a charter, a "
@@ -314,7 +334,8 @@ class RolesPlugin(Plugin):
                                        args.get("args"))
         else:
             out = {"ok": False, "error": f"unknown tool {name!r}"}
-        return json.dumps(out, default=str)[:TOOL_RESULT_CHARS]
+        limit = int(self.settings.get("tool_result_chars") or TOOL_RESULT_CHARS)
+        return clip(json.dumps(out, default=str), limit)
 
     # -- sources ------------------------------------------------------------------
     async def preread(self, role: dict) -> str:
@@ -347,16 +368,14 @@ class RolesPlugin(Plugin):
             if not reply.get("ok", True) or reply.get("error"):
                 return f"{cap} on {worker}: unavailable ({str(reply.get('error'))[:200]})"
             body = json.dumps(reply.get("result", reply), default=str, separators=(",", ":"))
-            if len(body) > SOURCE_CHARS:
-                body = body[:SOURCE_CHARS] + "…"
-            return f"{cap} on {worker}: {body}"
+            # Cut visibly: the role reads the rest itself with rook_call.
+            return f"{cap} on {worker}: {clip(body, SOURCE_CHARS)}"
 
         try:
             got = await asyncio.wait_for(asyncio.gather(*(one(*j) for j in jobs)), SOURCES_TIMEOUT)
         except asyncio.TimeoutError:
             return "(your sources did not answer in time; read them with rook_call if you need them)"
-        text = "\n".join(got)
-        return text[:SOURCES_CHARS]
+        return clip("\n".join(got), SOURCES_CHARS)
 
     # -- a role turn ---------------------------------------------------------------
     def config_for(self, role: dict) -> dict:
@@ -416,8 +435,50 @@ class RolesPlugin(Plugin):
         if role.get("memory") != "off":
             lines.append("Your memory is yours alone (role:" + role["id"] + "). Keep durable "
                          "facts and procedures that worked with memory_remember; never secrets.")
+        lines.append(self.code_locations_text())
+        limit = self.tool_limit(role)
+        lines.append(f"You have at most {limit} tool calls this turn (your memory tools count "
+                     "too). When a tool result says only a few are left, stop calling tools and "
+                     "answer with what you have, saying what you could not check.")
         lines.append("Answer plainly and briefly; say when you do not know.")
         return "\n\n".join(p for p in [persona, "\n\n".join(lines)] if p)
+
+    def code_locations(self) -> list[str]:
+        """``role.code_locations``: one line per repository (band data, set on
+        the hub; never shipped in presets)."""
+        raw = self.settings.get("code_locations") or []
+        if isinstance(raw, str):
+            raw = raw.splitlines()
+        return [str(x).strip() for x in raw if str(x).strip()][:40]
+
+    def code_locations_text(self) -> str:
+        where = self.code_locations()
+        if not where:
+            return ("Where code lives: no code locations are set on this hub (Settings, "
+                    "role.code_locations). When you need a repository's folder, say it is not "
+                    "configured; never guess or search other folders for it.")
+        return ("Where code lives on this band (Settings, role.code_locations). Use these "
+                "folders, and never guess or search others; a coding session starts in one of "
+                "them:\n" + "\n".join(f"- {w}" for w in where))
+
+    def tool_limit(self, role: dict) -> int:
+        """A role turn's tool-call budget: the role's own ``max_tool_calls``,
+        else its preset category's (by the role's category, or the preset of
+        the same id for roles saved before categories), else
+        ``role.max_tool_calls``."""
+        own = int(role.get("max_tool_calls") or 0)
+        if own > 0:
+            return own
+        cat = role.get("category") or ""
+        if not cat:
+            with contextlib.suppress(Exception):
+                cat = (model.preset(role["id"]) or {}).get("category") or ""
+        if cat:
+            with contextlib.suppress(Exception):
+                for c in model.categories():
+                    if c["id"] == cat and c.get("max_tool_calls"):
+                        return int(c["max_tool_calls"])
+        return int(self.settings.get("max_tool_calls") or 12)
 
     async def turn(self, role: dict, question: str, context_text: str = "",
                    asker: str = "", *, extra_tools: list[dict] | None = None,
@@ -431,7 +492,6 @@ class RolesPlugin(Plugin):
         user = (f"[{asker}] " if asker else "") + question
         if context_text:
             user += f"\n\nContext:\n{context_text}"
-        limit = int(self.settings.get("max_tool_calls") or 12)
         from ..home.agent_host import TurnFailed, Unavailable
         async with self._lock(role["id"]):
             role = self.role(role["id"])           # the newest revision, after the queue
@@ -446,19 +506,38 @@ class RolesPlugin(Plugin):
             if guide:
                 system += "\n\n" + guide
             msgs = [{"role": "system", "content": system},
-                    {"role": "user", "content": user[:ASK_CHARS]}]
+                    {"role": "user", "content": clip(user, ASK_CHARS)}]
             tools = self.tools_for(role) + list(extra_tools or [])
             extra = {(t.get("function") or t)["name"] for t in extra_tools or []}
+            limit = self.tool_limit(role)
+            used = 0
 
             async def handler(name: str, args: dict, role: dict = role) -> str:
+                # The budget is kept here, at the hub's tools, so the role is
+                # told before the agent host would stop it: a few calls before
+                # the end each result says how many are left, and past it the
+                # tools refuse and ask for the answer.
+                nonlocal used
+                used += 1
+                if used > limit:
+                    return json.dumps({"ok": False, "error": (
+                        f"tool budget spent ({limit} calls): call no more tools; answer now with "
+                        "what you have and say what you could not check")})
                 if name in extra and extra_handler is not None:
-                    return await extra_handler(role, name, args)
-                return await self.run_tool(role, name, args)
+                    out = await extra_handler(role, name, args)
+                else:
+                    out = await self.run_tool(role, name, args)
+                left = limit - used
+                if left <= BUDGET_WARN:
+                    out += (f"\n[budget: {left} of {limit} tool calls left; "
+                            + ("answer now with what you have]" if left == 0 else
+                               "answer with what you have soon]"))
+                return out
 
             try:
                 res = await home.agents.run(cfg, msgs, tools=tools, handler=handler,
                                             via=via or f"role-{role['id']}",
-                                            max_tool_calls=limit, role=role)
+                                            max_tool_calls=limit + BUDGET_SLACK, role=role)
             except (Unavailable, TurnFailed) as e:
                 self.journal(role, "role.turn", "rook", {"role": role["id"]},
                              {"ok": False, "error": str(e)[:300]})

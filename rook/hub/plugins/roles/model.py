@@ -17,6 +17,7 @@ A role is what an agent is responsible for (a persona is how it talks)::
      "autonomy": "propose",         # propose | act
      "memory": "write",             # write | read | off
      "backend": "", "model": "", "effort": "",   # blank: the house agent's
+     "max_tool_calls": 30,          # optional: tool calls per turn (else the category's, else role.max_tool_calls)
      "host": "",                    # agent host keeping its home; blank: home.agent_host
      "persona": "", "enabled": true}
 
@@ -55,6 +56,7 @@ TEXT_LIMITS = {"name": 80, "description": 160, "category": 32, "charter": 2000, 
 MAX_ITEMS = 20
 MAX_EXAMPLES = 5
 MAX_ITEM = 300
+MAX_TOOL_CALLS = 100
 DEFAULT_TOOLS = {"allow": ["knowledge.read"], "deny": []}
 
 
@@ -95,13 +97,24 @@ def _choice(doc: dict, key: str, choices: tuple, default: str) -> str:
     return v
 
 
+def _tool_calls(value: Any, what: str) -> int:
+    if value in (None, "", 0):
+        return 0
+    if isinstance(value, str) and value.strip().isdigit():
+        value = int(value.strip())
+    if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= MAX_TOOL_CALLS:
+        raise RoleError(f"{what}: a whole number from 1 to {MAX_TOOL_CALLS} (blank: the default)")
+    return value
+
+
 def validate(doc: Any) -> dict:
     """A clean role document, or RoleError."""
     if not isinstance(doc, dict):
         raise RoleError("role must be an object")
     known = {"id", "name", "description", "category", "charter", "concerns", "checklist",
              "examples", "seed_memory", "sources", "tools", "builtin", "autonomy", "memory",
-             "backend", "model", "effort", "host", "persona", "enabled", "rev"}
+             "backend", "model", "effort", "max_tool_calls", "host", "persona", "enabled",
+             "rev"}
     extra = sorted(set(doc) - known)
     if extra:
         raise RoleError(f"unknown field {extra[0]!r}")
@@ -160,6 +173,9 @@ def validate(doc: Any) -> dict:
     if not isinstance(model, str) or not MODEL.match(model):
         raise RoleError("model: an alias or a model id")
     out["model"] = model
+    calls = _tool_calls(doc.get("max_tool_calls"), "max_tool_calls")
+    if calls:                          # blank or 0: the category's, else the setting
+        out["max_tool_calls"] = calls
     out["host"] = _text(doc, "host")
     out["persona"] = _text(doc, "persona")
     enabled = doc.get("enabled", True)
@@ -183,7 +199,7 @@ def in_scope(role: dict, cap: str) -> bool:
 PRESETS_DIR = Path(__file__).with_name("presets")
 #: Keys a preset file may have besides the role fields: its place in its category.
 PRESET_ONLY = ("order",)
-CATEGORY_KEYS = {"id", "name", "order", "description", "guard"}
+CATEGORY_KEYS = {"id", "name", "order", "description", "guard", "max_tool_calls"}
 GUARD_KEYS = {"autonomy", "deny", "note"}
 
 
@@ -210,6 +226,9 @@ def _category(raw: Any) -> dict:
     if any(not PATTERN.match(p) for p in deny):
         raise RoleError(f"category {cid}: guard.deny takes cap patterns")
     out = {"id": cid, "name": name.strip(), "order": order, "description": desc.strip()}
+    calls = _tool_calls(raw.get("max_tool_calls"), f"category {cid}: max_tool_calls")
+    if calls:
+        out["max_tool_calls"] = calls
     if guard:
         out["guard"] = {"autonomy": guard.get("autonomy") or "", "deny": deny,
                         "note": str(guard.get("note") or "").strip()}

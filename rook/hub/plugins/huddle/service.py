@@ -182,10 +182,10 @@ class HuddleStore:
     def card_set(self, cid: str, *, expect: tuple[str, ...] | None = None, **fields) -> bool:
         sets, args = [], []
         for k, v in fields.items():
-            if k not in ("state", "result", "seq", "decided_by", "decided"):
+            if k not in ("state", "result", "seq", "decided_by", "decided", "summary", "call"):
                 raise KeyError(k)
             sets.append(f"{k}=?")
-            args.append(json.dumps(v) if k == "result" else v)
+            args.append(json.dumps(v) if k in ("result", "call") and v is not None else v)
         where, wargs = "id=?", [cid]
         if expect:
             where += f" AND state IN ({','.join('?' * len(expect))})"
@@ -198,6 +198,9 @@ class HuddleStore:
                                  "created", "decided_by", "decided")}
         out["call"] = json.loads(r["call"]) if r["call"] else None
         out["result"] = json.loads(r["result"]) if r["result"] else None
+        if out["state"] == "failed":
+            from .chair import card_error
+            out["error"] = card_error(out)
         return out
 
     def card(self, cid: str) -> dict | None:

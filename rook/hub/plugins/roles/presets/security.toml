@@ -22,6 +22,7 @@ concerns = [
   "policy changes and who made them",
 ]
 checklist = [
+  "Look for code only in the code locations listed in your prompt (role.code_locations); if the repository you need is not listed, say so instead of searching other folders.",
   "Read the policy status before answering.",
   "Never quote a secret: say where it is and what kind it looks like.",
   "Rank each finding by impact, exposure and ease of fix.",

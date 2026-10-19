@@ -128,7 +128,8 @@ class Tasks(Plugin):
             return await call('task', action, band, id, query, data, request_id)
         rook_task.__doc__ = """Tasks. deck (id=project narrows): in progress with claimants and latest
 handoff, blocked, paused, todo, recently done; rows have revision, unblocked. deck data {states,
-done_days, fields, handoffs:true}. claim id before you work: your calls, consoles and handoffs
+done_days, fields, project_fields, project, offset, limit, handoffs:true}; page to next_offset
+null. claim id before you work: your calls, consoles and handoffs
 link to it.
 create data {title, body, parent: project or task, attrs:{criteria, workers, dependencies, start, due
 (YYYY-MM-DD), tags}}.

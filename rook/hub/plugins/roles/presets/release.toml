@@ -22,6 +22,7 @@ concerns = [
   "changes waiting to be released",
 ]
 checklist = [
+  "Look for code only in the code locations listed in your prompt (role.code_locations); if the repository you need is not listed, say so instead of searching other folders.",
   "Before a release: changes listed, tests green, backup taken, rollback written and dry-run.",
   "Stage it: a test hub or one worker first, then a few, then all.",
   "After each stage, compare workers online and builds with before.",
