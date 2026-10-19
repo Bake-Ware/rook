@@ -39,6 +39,16 @@ message only starts a round when it names a role or the chair.
 
 A huddle with no roles is a one-to-one conversation with the home agent.
 
+## What roles look at
+
+Before a role answers, Rook reads the role's **sources** for it (for
+example the task board, recent job runs or the coding sessions on every
+machine) and hands it what they say, so the answer starts from what is true
+now. The lead developer's source is the live coding sessions on every machine
+that has them; it fronts those sessions without writing code itself, and
+when one looks stuck it proposes a card to nudge it, or to start a new
+session for a task.
+
 ## Action cards
 
 When something should be done (create a task, run a job, nudge a session),
@@ -52,6 +62,12 @@ says what it would do and why, and waits for you:
 Only people approve or dismiss cards. A role you set to act on its own
 (autonomy *act*) runs calls inside its tools directly; its card shows up
 already done. Anything outside its tools still waits for you.
+
+## Huddles from jobs
+
+A job step of kind `huddle` holds one round on a schedule: it posts the
+step's question as the job, waits for the summary and sends it to you, with
+the number of cards waiting. See [[manual-jobs]].
 
 ## Starting and archiving
 

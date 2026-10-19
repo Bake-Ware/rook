@@ -43,6 +43,8 @@ CARD_KINDS = ("task.create", "task.update", "job.run", "job.create", "session.se
               "session.start", "note", "ask_bake")
 #: Kinds that carry a call; ``note`` and ``ask_bake`` never run anything.
 NO_CALL = ("note", "ask_bake")
+#: The caps a session card may run (the lead developer fronts the sessions).
+SESSION_CAPS = {"session.send": ("sessions.send",), "session.start": ("work.stream.open",)}
 CARD_STATES = ("proposed", "approved", "dismissed", "done", "failed")
 SUMMARY_MAX = 300
 ARGS_MAX = 4000
@@ -63,7 +65,9 @@ PROPOSE = _fn(
     "propose",
     "Propose an action card for the person to approve: kind is one of " + ", ".join(CARD_KINDS)
     + ". summary says what and why in one line. For every kind but note and ask_bake give the "
-      "call to run on approval: worker (\"rook\" is the hub), cap and args.",
+      "call to run on approval: worker (\"rook\" is the hub), cap and args. session.send nudges a "
+      "coding session: cap sessions.send on its worker, args {agent, native_id, text}. "
+      "session.start starts one: cap work.stream.open, args {harness, cwd, title?, task?}.",
     {"kind": {"type": "string", "enum": list(CARD_KINDS)},
      "summary": {"type": "string"},
      "worker": {"type": "string"}, "cap": {"type": "string"}, "args": {"type": "object"}},
@@ -113,6 +117,12 @@ def validate_card(raw: Any) -> dict:
         if not worker or not cap:
             raise CardError(f"a {kind} card needs the call to run: worker and cap")
         args = call.get("args") if isinstance(call.get("args"), dict) else {}
+        if kind in SESSION_CAPS and cap not in SESSION_CAPS[kind]:
+            raise CardError(f"a {kind} card runs {' or '.join(SESSION_CAPS[kind])}, not {cap}")
+        if kind == "session.send" and not (args.get("native_id") and args.get("text")):
+            raise CardError("a session.send card needs args {agent, native_id, text}")
+        if kind == "session.start" and not args.get("cwd"):
+            raise CardError("a session.start card needs args {harness, cwd}")
         if len(json.dumps(args, default=str)) > ARGS_MAX:
             raise CardError(f"a card's args: at most {ARGS_MAX} characters as JSON")
         out["call"] = {"worker": worker[:64], "cap": cap[:80], "args": args}
@@ -369,7 +379,8 @@ class Chair:
         try:
             res = await roles.turn(role, ask, "The huddle so far:\n" + transcript,
                                    self.chair_identity(), extra_tools=[PROPOSE],
-                                   extra_handler=extra, guide=guide, via=f"huddle-{role['id']}")
+                                   extra_handler=extra, guide=guide, via=f"huddle-{role['id']}",
+                                   preread=True)
             text = (res.get("answer") or "").strip() or "(no answer)"
             if len(text) > chars:
                 text = text[:chars - 1].rstrip() + "…"

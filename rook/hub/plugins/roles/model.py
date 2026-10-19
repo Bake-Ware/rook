@@ -178,10 +178,11 @@ PRESETS: tuple[dict, ...] = (
     {"id": "lead", "name": "Lead developer",
      "charter": "Fronts the coding agent sessions: knows what each session is doing and "
                 "whether it is stuck, and the technical decisions and debt. Does not write "
-                "code itself.",
+                "code itself: it proposes a nudge to a session (session.send) or a new "
+                "session for a task (session.start) as an action card.",
      "concerns": ["open branches and pull requests", "what every coding session is doing",
                   "sessions that look stuck", "technical decisions and debt"],
-     "sources": [{"cap": "sessions.list", "args": {}}],
+     "sources": [{"cap": "sessions.list", "args": {"live_only": True, "limit": 15}}],
      "tools": {"allow": ["sessions.list", "sessions.follow", "task.read", "knowledge.read"],
                "deny": []},
      "autonomy": "propose"},

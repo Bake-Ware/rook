@@ -22,7 +22,14 @@ A job is a short list of **steps**. A step can:
 - run a capability on a machine (or on the hub);
 - run the same capability on every machine that matches a filter;
 - wait;
-- send you a phone notification, a voice message or a Telegram message.
+- send you a phone notification, a voice message or a Telegram message;
+- hand a task to an agent: the home agent, a huddle role (`agent: "role:qa"`,
+  which answers with its own sources, tools and memory) or a coding session;
+- hold a **huddle** round: the step posts a question into a huddle with roles,
+  waits for the home agent's summary and sends it to you (Telegram, voice or
+  notification), with the action cards left in the huddle for you to approve.
+  A weekday 08:30 standup is a scheduled job with one such step; see
+  [[manual-huddles]].
 
 Each step has a time limit and can retry. After a step, the job can go one way
 on **success**, another on **failure**, and another if it **hangs**. Branches can

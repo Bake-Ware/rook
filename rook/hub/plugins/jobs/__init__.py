@@ -34,6 +34,7 @@ from pathlib import Path
 
 from ....core.plugin import Plugin, capability, place, setting
 from . import agent_kinds  # registers the agent and ask step kinds
+from . import huddle_kind  # noqa: F401 - registers the huddle step kind
 from .cron import DEFAULT_TZ
 from .executor import DEFAULT_MAX_EXECUTIONS, Executor
 from .guardrails import DEFAULT_GUARDRAILS, Guardrails
