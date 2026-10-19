@@ -150,6 +150,20 @@ Task states: `todo` → `in_progress` → `done`, plus `blocked`, `paused`,
   - todo: in priority order;
   - recently done: with outcomes.
 
+  Tasks under no project (legacy rows whose parent is a concept, or none)
+  ride a top-level `loose` entry with the same lists, on the first page and
+  only without a project filter. `data` narrows it: `states`, `done_days`
+  (default 7; 0 drops finished work), `fields` (task row keys),
+  `project_fields` (project header keys; `id` always kept, `["all"]` or
+  absent = the full header), `project` (an id or slug, like `id=`; an
+  unknown one is an error) and `offset` / `limit` (1..100), which page over
+  projects, newest first. Every reply leads with a header: `total_projects`
+  and `total_tasks` (all matching projects and listed tasks before paging,
+  loose ones included), `loose_tasks`, the `filters` applied, `offset`,
+  `limit` (null when not paging) and `next_offset` (null on the last page).
+  A reader with a small reply budget pages with compact fields until
+  `next_offset` is null.
+
 ## 5. Hygiene trigger (a deterministic nudge for a nondeterministic process)
 
 Most real work happens on workers, where the hub can see activity stop.

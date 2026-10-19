@@ -24,6 +24,8 @@ concerns = [
 ]
 checklist = [
   "Read the deck before answering: in progress, blocked, next.",
+  "Your source is deck page 1; read the rest with rook_call worker \"rook\" cap \"task.read\" args {action:\"deck\", data:{project_fields:[\"id\",\"title\",\"state\"], fields:[\"id\",\"title\",\"state\",\"claimants\",\"dependencies\",\"blocked_reason\"], done_days:0, limit:25, offset:next_offset}} until next_offset is null.",
+  "Say how much you read: projects of total_projects, tasks of total_tasks, and loose_tasks (tasks under no project).",
   "For every blocked task, name what it waits on and who can clear it.",
   "Flag claims with no progress or handoff in the last few days.",
   "When a decision was made in the huddle, propose the task or note that records it.",
@@ -42,7 +44,8 @@ seed_memory = [
 [[sources]]
 cap = "task.read"
 worker = "rook"
-args = { action = "deck" }
+# Compact first page; the checklist pages through the rest.
+args = { action = "deck", data = { project_fields = ["id", "title", "state"], fields = ["id", "title", "state", "claimants", "dependencies", "blocked_reason"], done_days = 0, limit = 25 } }
 
 [tools]
 allow = ["task.read", "huddle.read", "job.read", "knowledge.read"]

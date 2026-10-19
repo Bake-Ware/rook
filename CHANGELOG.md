@@ -9,6 +9,15 @@ version was `0.1.0`.
 ## Unreleased
 
 ### Added
+- Task deck paging: `rook_task`/`task.read` deck takes `project_fields` (trim project
+  headers), `project` (one project) and `offset`/`limit` over projects. Every deck reply
+  starts with `total_projects`, `total_tasks`, `loose_tasks`, the filters applied and
+  `next_offset`; tasks under no project are listed as `loose`. A plain deck read returns the
+  same `deck` as before. The PM preset reads the deck page by page. (manual: work)
+- Huddle roles are told where code lives: the `role.code_locations` setting (one line per
+  repository) is in every role turn, and a session card must start in one of those folders.
+  Per-role `max_tool_calls` (engineering presets 30, operations 24, others the setting), with
+  the remaining budget shown on a role's last tool results. (manual: huddles)
 - Huddle role presets by category: 25 starting roles in nine categories (product and
   planning, software engineering, operations, hardware and fabrication, writing, research,
   media and promotion, critique, home and family), each with a charter (what it owns, what
@@ -53,6 +62,19 @@ version was `0.1.0`.
   `session.start` cards. (manual: jobs, huddles)
 
 ### Changed
+- Huddles: the chair asks a failed role again (`huddle.role_retries`) and follows up with
+  roles until the thread is settled or needs you (`huddle.max_followups`); a single settled
+  answer gets no extra summary. Role answers are posted whole instead of being cut at
+  `huddle.reply_chars` with "…". (manual: huddles)
+- Huddle cards are checked when proposed (the worker has the cap; task cards run
+  `task.write` with a parent project; a session card's task is a task id), a near-identical
+  waiting card is revised instead of added again, the chair lists the cards it actually made,
+  and a failed card shows its reason on the card, in the room and on the web.
+  (manual: huddles)
+- Every place that shortens text for an agent or a person marks the cut with
+  `[truncated: N of M chars]` (role tool results, now 12000 characters
+  (`role.tool_result_chars`) instead of a silent 6000, sources, chat messages, the agent
+  host's final text, card results). (manual: huddles)
 - New chat rooms are off by default (`chat.new_rooms`): `rook_chat_start` and `chat.write`
   start point agents at huddles, tasks and handoffs; existing rooms keep working.
   (manual: huddles)

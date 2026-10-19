@@ -5,7 +5,9 @@ role memory: 3.3, 4) is built as decided here; H3 (chaired huddles: 5, 7), H4
 (the web: 8) and H5 (jobs and the lead developer: 6, 4.2) are built.
 Built choices where this document left room: a round starts on a person's or
 a job's post, or a guest agent's that names the chair or a role; the chair
-closes only when two or more roles answered; a role's sources are read at the
+closes every round it routed (and a direct one where a role failed or two
+answered), retrying failed roles and following up until the thread is
+settled (5.1, as amended 2026-10-19); a role's sources are read at the
 hub before each huddle or job turn (4.1); `rook_chat_start` and `chat.write`
 start are off unless `chat.new_rooms` is on; replies are posted whole
 (per-role progress, no token streaming). Related: [home-agent.md](home-agent.md)
@@ -120,10 +122,28 @@ Rules:
   `--setting-sources ""`; Codex `--ignore-user-config`; OpenCode with
   its config dir pointed away). (`--bare` is not used: it requires API-key
   auth and ignores the subscription login.)
-- **Turn limits are enforced by the agent host.** The CLI has no turn cap
-  flag in 2.1.x, so `agenthost` counts tool calls in the stream and stops
-  the turn past `max_tool_calls` (`role.max_tool_calls`, 12, for role
-  turns), and kills it at `timeout_s`.
+- **Turn limits.** The CLI has no turn cap flag in 2.1.x, so `agenthost`
+  counts tool calls in the stream and stops the turn past `max_tool_calls`,
+  and kills it at `timeout_s`. For a role turn the budget is kept first at
+  the hub (amended 2026-10-19): the role's own `max_tool_calls`, else its
+  preset category's (`max_tool_calls` in categories.toml: engineering 30,
+  operations 24; a role saved without a category uses the category of the
+  preset with its id), else `role.max_tool_calls` (12). The system prompt
+  states the budget; the last three hub tool results carry
+  `[budget: N of M tool calls left; ...]`; past the budget the hub's tools
+  answer "tool budget spent: answer now with what you have". The agent host
+  gets the budget plus 4 (the role's memory tools count there too), so a
+  role is told before it is stopped, and answers with what it has.
+- **Every cut is marked.** Wherever text an agent or a person reads is
+  shortened, the cut ends with `[truncated: N of M chars]`
+  (`rook/core/text.py` `clip`): a role's tool results
+  (`role.tool_result_chars`, 12000; it was a silent 6000, the "~9,000"
+  cut the first all-hands huddle hit), its pre-read sources (1500 each, 8000
+  in all), the house agent's own tool results (4000), the turn's final text
+  on the agent host (40000), the chair's transcript (the oldest part,
+  12000), a card's summary (300) and stored reply (2000), and a chat message
+  (8000, in the chat store). Claude Code's own MCP output limit is the
+  harness's and marks its own cut.
 - **Built-in tools are off unless a role needs them.** Default is the Rook
   and memory MCP tools only. A role that needs to read files can be given
   `builtin: ["read", "search"]` (Claude Code `Read`, `Grep`, `Glob`; OpenCode
@@ -225,6 +245,7 @@ One document per role:
 | `builtin` | Harness built-in tools: none (default), `read`, `search` (3.1). |
 | `memory` | `write` (default), `read` or `off` (3.3). |
 | `backend`, `model`, `effort` | Blank: the house agent's. Otherwise per-role override (the lead developer on Sonnet). Roles run on an agent harness (`claude-code`, `codex`, `opencode`); with the house agent on `openai`, a role names its own. |
+| `max_tool_calls` | Optional, 1-100: the role's tool-call budget per turn. Blank: its category's, else `role.max_tool_calls` (3.1). |
 | `host` | The agent host that keeps the role's home. Blank until the first turn, which runs on `home.agent_host` and pins that host here; changed only by `role.move`. |
 | `persona` | Optional persona profile for voice. |
 | `enabled` | Off roles are not called on. |
@@ -284,6 +305,17 @@ them. The three the roster started with:
   `sessions.follow`, `task.read`, `knowledge.read`.
 
 Anything else is a new preset file, or a role added from the page.
+
+**Where code lives** (added 2026-10-19). Presets never name folders or
+hosts (the repository is public). The hub setting `role.code_locations`
+(one line per repository: its name, the worker and the folder of its main
+checkout, and where worktrees go) is band data, and every role turn's
+system prompt lists it, or says none are set and that the role must say so
+rather than search. The engineering, operations, writing and firmware
+presets' checklists point at it, and a `session.start` card's `cwd` must be
+one of the folders named there (or inside one) when any are set. This
+replaces guessing: the first all-hands huddle's lead searched two stale
+copies and proposed a session in one of them.
 
 ### 4.3 Reaching one role
 
@@ -366,12 +398,21 @@ Hub plugin `huddle` (namespace `huddle`, runs in rook-band-mcp, store
    `answer(text)` (it answers itself when no role is needed), and
    `propose(card)`. Bake's `@qa` skips routing and calls that role directly.
 3. Called roles answer **in parallel**, each with its sources read and its
-   memory loaded, each under a length budget (`huddle.reply_chars`, 1200).
-   Roles may `propose` action cards.
-4. The chair closes the round: a short synthesis and the action cards,
-   de-duplicated. Rounds end there; roles do not talk among themselves
-   unless Bake or the chair asks again (no loops; at most
-   `huddle.max_role_turns` (6) role turns per round).
+   memory loaded, each asked to stay under a length budget
+   (`huddle.reply_chars`, 1200; the answer is posted whole, not cut there).
+   Roles may `propose` action cards. A role whose turn fails or runs out of
+   tool calls is asked again (`huddle.role_retries`, 1) with a narrower
+   question that quotes why it stopped.
+4. The chair closes the round, and decides there whether the thread is
+   settled: a role failed or a question a role can answer is still open:
+   it calls on that role again with a narrower question (`call_on` in the
+   close, at most `huddle.max_followups` (2) times a round), and closes
+   again after; the person is needed: it says what for; else a short
+   synthesis. With one role answered and nothing open it replies `SETTLED`
+   and nothing is posted. It closes every round it routed; a direct
+   `@role` round only when a role failed or two answered. Roles do not talk
+   among themselves (no loops; at most `huddle.max_role_turns` (6) roles per
+   pass).
 5. After a round each role may write to its own memory (3.3). The huddle's
    decisions are recorded on the huddle.
 
@@ -387,6 +428,38 @@ one of `task.create`, `task.update`, `job.run`, `job.create`, `session.send`,
 `autonomy: act` runs calls within its tools directly and posts the card
 already `done`. Guardrails (jobs.md 7) apply to both.
 
+As amended 2026-10-19, after the first all-hands huddle's three approved
+cards all failed (two `task.create` cards called a cap that does not exist,
+"unknown capability: task.create"; a `session.start` card put its
+instructions in `work.stream.open`'s `task`, "invalid task (a Rook task id
+or slug)"), and its house agent proposed two versions of each task card:
+
+- **Checked when proposed.** The worker must be on the band and have the
+  cap (the refusal lists its caps of the same family). Task cards run
+  `task.write`: a `task.create`/`task.update` cap and flat `{title, body,
+  parent}` args are normalised to `{action, kind, data}`; `create` needs
+  `data.title` and `data.parent`, `update` needs `id`. A `session.start`
+  card's `task` must be a task id or slug, and its `cwd` one of
+  `role.code_locations` when set (4.2). A refused card goes back to its
+  proposer as the tool's error, so it can fix it.
+- **One card per proposal.** A new card the same as one still `proposed`
+  in the huddle (same kind, and the same call, or summaries alike by
+  characters (0.85) and words (0.6), or call titles alike (0.8)) is not
+  added: the proposer's own waiting card is revised in place, anyone
+  else's is returned as the duplicate. `propose` takes `revise: <card id>`
+  for the proposer's own waiting card, and the chair is shown the waiting
+  cards in every turn.
+- **Claims follow results.** The chair's message ends with a `Cards:`
+  list made from what its propose calls returned (the card id and state, or
+  why it was refused); its rules say never to claim a card, task or call
+  before its tool call returned ok.
+- **Failures say why.** A failed card keeps the reply as `result` and gets
+  `error` (the denial or error, the reply's or its result's); the chair
+  posts "Card <id> (<kind>: <summary>) failed: <error> [<cap> on
+  <worker>]" in the room; `rook_huddle` read and the web show it. A
+  `task.write` card runs with `request_id` `huddle-card:<id>`, so a retried
+  approval never makes two tasks.
+
 ### 5.3 Caps and MCP
 
 On worker `rook`: `huddle.list`, `huddle.read`, `huddle.start(title, roles)`,
@@ -400,7 +473,10 @@ called on.
 ### 5.4 Settings
 
 `huddle.reply_chars`, `huddle.max_role_turns`, `huddle.retention_days`
-(default 90), `huddle.default_roles` (`["pm","qa","lead"]`).
+(default 90), `huddle.default_roles` (`["pm","qa","lead"]`),
+`huddle.role_retries` (1), `huddle.max_followups` (2). On the roles plugin:
+`role.max_tool_calls` (12), `role.tool_result_chars` (12000),
+`role.code_locations` (`[]`).
 
 ## 6. Jobs
 
@@ -454,7 +530,8 @@ As built (H4):
 - Cards attach to their `seq`; a card without one goes after the last message
   of its round; cards older than the loaded messages go first. The only
   notices: the house agent is off (link to Manage > Home agent), and open
-  questions in a status huddle (link to answer them).
+  questions in a status huddle (link to answer them). A failed card shows
+  "Failed: <why>" (the card's `error`).
 - New huddle: title and role checkboxes; checked are `huddle.default_roles`
   that exist and are on, else every role that is on (the `roles` action
   returns `default_roles`).

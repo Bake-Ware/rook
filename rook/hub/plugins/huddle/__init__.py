@@ -68,7 +68,18 @@ class Huddle(Plugin):
                      "it sees the answer on its next call."),
         setting("reply_chars", int, 1200, min=200, max=8000, group="Chaired huddles",
                 label="Role reply length",
-                help="Each role's answer in a round is kept under this many characters."),
+                help="Each role is asked to keep its answer under this many characters. Its "
+                     "answer is posted whole (a chat post past 8000 characters is cut, with a "
+                     "[truncated: N of M chars] marker)."),
+        setting("role_retries", int, 1, min=0, max=3, group="Chaired huddles",
+                label="Retries for a role that fails",
+                help="A role whose turn failed or ran out of tool calls is asked again this many "
+                     "times in a round, with a narrower question, before the chair closes."),
+        setting("max_followups", int, 2, min=0, max=5, group="Chaired huddles",
+                label="Follow-ups per round",
+                help="How many times in one round the chair may call on roles again when the "
+                     "thread is not settled (a role failed, or a question is still open), before "
+                     "it closes and says what is still open."),
         setting("max_role_turns", int, 6, min=1, max=20, group="Chaired huddles",
                 label="Role turns per round",
                 help="At most this many roles answer in one round (the chair picks them; "
@@ -132,7 +143,7 @@ class Huddle(Plugin):
 
     def _chair_settings(self) -> dict:
         return {k: self.settings.get(k) for k in ("reply_chars", "max_role_turns", "retention_days",
-                                                  "default_roles")}
+                                                  "default_roles", "role_retries", "max_followups")}
 
     async def start(self) -> None:
         if self.service is None:
@@ -375,8 +386,8 @@ def lean_view(view: dict) -> dict:
     extra = {}
     if view.get("roles") is not None:
         extra = {"roles": view["roles"],
-                 "cards": [{k: c[k] for k in ("id", "kind", "by", "summary", "state", "seq")}
-                           for c in view.get("cards") or []]}
+                 "cards": [{k: c[k] for k in ("id", "kind", "by", "summary", "state", "seq", "error")
+                            if c.get(k) is not None} for c in view.get("cards") or []]}
     return {"room": view["room"], "title": view["title"], **extra,
             "statuses": [{k: s[k] for k in ("identity", "state", "working_on", "blocked_on", "needs_decision",
                                             "task", "ts") if s.get(k)} for s in view["statuses"]],

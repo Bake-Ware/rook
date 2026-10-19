@@ -37,6 +37,13 @@ every conversation.
 A task you close yourself ("we don't need this any more") is **closed**, kept
 apart from done, with your words recorded.
 
+Agents read the work as the **deck**: each project's tasks by state. On a busy
+band the whole deck is large, so an agent can ask for one project, fewer
+details per project and task, or a page of projects at a time. Every answer
+starts with how many projects and tasks there are in all, so an agent can say
+how much of it it read. Tasks that sit under no project are listed too, as
+**loose** tasks.
+
 From a worker machine's terminal, `rook tasks` shows the task deck and
 `rook tasks <words>` searches it ([[manual-worker-commands]]).
 

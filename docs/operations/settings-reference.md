@@ -282,6 +282,8 @@ are set only in the environment or on the command line.
 | `huddle.enabled` | Huddles | hub | bool | on | `ROOK_HUDDLE`, `ROOK_HUDDLE_ENABLED` | restart |
 | `huddle.wake_on_answer` | Wake the agent when you answer | hub | bool | off | `ROOK_HUDDLE_WAKE_ON_ANSWER` | live |
 | `huddle.reply_chars` | Role reply length | hub | int | `1200` | `ROOK_HUDDLE_REPLY_CHARS` | live |
+| `huddle.role_retries` | Retries for a role that fails | hub | int | `1` | `ROOK_HUDDLE_ROLE_RETRIES` | live |
+| `huddle.max_followups` | Follow-ups per round | hub | int | `2` | `ROOK_HUDDLE_MAX_FOLLOWUPS` | live |
 | `huddle.max_role_turns` | Role turns per round | hub | int | `6` | `ROOK_HUDDLE_MAX_ROLE_TURNS` | live |
 | `huddle.retention_days` | Keep archived huddles (days) | hub | int | `90` | `ROOK_HUDDLE_RETENTION_DAYS` | live |
 | `huddle.default_roles` | Default roles | hub | list | `['pm', 'qa', 'lead']` | `ROOK_HUDDLE_DEFAULT_ROLES` | live |
@@ -402,6 +404,8 @@ are set only in the environment or on the command line.
 | Key | Label | Scope | Type | Default | Env / flag | Apply |
 |---|---|---|---|---|---|---|
 | `role.max_tool_calls` | Tool calls per role turn | hub | int | `12` | `ROOK_ROLE_MAX_TOOL_CALLS` | live |
+| `role.tool_result_chars` | Role tool result length | hub | int | `12000` | `ROOK_ROLE_TOOL_RESULT_CHARS` | live |
+| `role.code_locations` | Where code lives | hub | list |  | `ROOK_ROLE_CODE_LOCATIONS` | live |
 
 ## Tasks (hub plugin, runs in mcp)
 

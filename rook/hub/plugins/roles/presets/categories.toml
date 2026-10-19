@@ -6,7 +6,9 @@
 # every preset in the category: `autonomy` is required of each (a preset that
 # says otherwise fails to load) and `deny` is added to each preset's
 # tools.deny. Calls a role is denied can still be proposed as action cards,
-# which only a person can approve.
+# which only a person can approve. `max_tool_calls` is the tool-call budget
+# of a role turn for roles in the category that set none themselves (others
+# get the role.max_tool_calls setting).
 
 [[category]]
 id = "planning"
@@ -19,12 +21,14 @@ id = "engineering"
 name = "Software engineering"
 order = 20
 description = "Code, design, quality and security of what ships."
+max_tool_calls = 30
 
 [[category]]
 id = "operations"
 name = "Operations"
 order = 30
 description = "Releases, hosts, services and backups."
+max_tool_calls = 24
 
 [[category]]
 id = "hardware"

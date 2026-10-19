@@ -22,6 +22,7 @@ concerns = [
   "workers that dropped off the band",
 ]
 checklist = [
+  "Look for code only in the code locations listed in your prompt (role.code_locations); if the repository you need is not listed, say so instead of searching other folders.",
   "Read host status and recent job runs before answering.",
   "List problems by who is affected now, then data at risk, then what will fail soon.",
   "For every fix, give the undo.",

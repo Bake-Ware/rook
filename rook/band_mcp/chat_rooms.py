@@ -33,9 +33,21 @@ import time
 import uuid
 
 from ..core.db import add_columns, open_db
+from ..core.text import clip, marker
 from .secret_mask import scrub
 
 log = logging.getLogger("rook.band_mcp.chat_rooms")
+
+#: A message is stored up to this many characters; a longer one is cut with
+#: a ``[truncated: N of M chars]`` marker (inside the limit), never silently.
+TEXT_MAX = 8000
+
+
+def _fit(text: str) -> str:
+    text = str(text or "")
+    if len(text) <= TEXT_MAX:
+        return text
+    return clip(text, TEXT_MAX - len(marker(TEXT_MAX, len(text))) - 1)
 
 _PRESENCE_ONLINE_SECS = 90.0     # seen within this window ⇒ "online"
 
@@ -287,7 +299,7 @@ class ChatStore:
                 cur = self._db.execute(
                     "INSERT INTO messages (room_id,ts,sender,text,mentions,expects_reply,quiet) "
                     "VALUES (?,?,?,?,?,?,?)",
-                    (rid, now, sender, text[:8000], json.dumps(ment),
+                    (rid, now, sender, _fit(text), json.dumps(ment),
                      1 if expects_reply else 0, 1 if quiet else None))
                 seq = cur.lastrowid
                 self._set_participants(rid, parts)

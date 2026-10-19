@@ -39,6 +39,8 @@ MCP_GET_EVENTS = 10
 # scored; data.related = 0..MCP_GET_STUBS, default search.RELATED_MAX).
 MCP_GET_STUBS = 10
 MCP_OUTCOME_CHARS = 240
+# Deck paging (data.limit): projects per page.
+DECK_LIMIT = 100
 
 
 def _fields(value):
@@ -160,23 +162,50 @@ class KnowledgeService:
                                   'note': 'inline handoff'})
 
     def _deck(self, band, rid, data, fields, lean):
+        """The deck, led by its totals: ``total_projects`` / ``total_tasks``
+        (before paging), ``loose_tasks``, the ``filters`` applied, and
+        ``offset`` / ``limit`` / ``next_offset`` (null on the last page).
+        data {states, done_days, fields, project_fields, project, offset,
+        limit (1..DECK_LIMIT), handoffs, outcome}."""
         bands = [b['id'] for b in self.bands()] if not band else [self.band(band)]
         full = data.get('outcome') == 'full'
-        deck = self.store.deck(bands, project=rid or data.get('project'),
-                               done_days=data.get('done_days', 7), states=data.get('states'),
-                               outcome_chars=None if full or not lean else MCP_OUTCOME_CHARS)
-        wanted = _fields(fields)
+        project = rid or data.get('project')
+        done_days = data.get('done_days', 7)
+        offset = max(0, int(data.get('offset') or 0))
+        limit = None if data.get('limit') is None else max(1, min(int(data['limit']), DECK_LIMIT))
+        states = _fields(data.get('states'))
+        got = self.store.deck_page(bands, project=project, done_days=done_days, states=states,
+                                   outcome_chars=None if full or not lean else MCP_OUTCOME_CHARS,
+                                   offset=offset, limit=limit)
+        if project and not got['total_projects']:
+            raise ValueError(f'Project {project!r} not found')
+        deck, loose = got['deck'], got.get('loose')
+        wanted, heads = _fields(fields), _fields(data.get('project_fields'))
+        filters = {'done_days': done_days}
+        for key, value in (('states', states), ('project', project),
+                           ('fields', wanted), ('project_fields', heads)):
+            if value:
+                filters[key] = value
         if wanted and 'all' not in wanted:
             keep = set(wanted) | {'id'}
-            for entry in deck:
+            for entry in deck + ([loose] if loose else []):
                 for key, items in entry.items():
                     if isinstance(items, list):
                         entry[key] = [{k: v for k, v in i.items() if k in keep} for i in items]
-        out = {'deck': deck}
+        if heads and 'all' not in heads:
+            keep = set(heads) | {'id'}
+            for entry in deck:
+                entry['project'] = {k: v for k, v in entry['project'].items() if k in keep}
+        total = got['total_projects']
+        out = {'total_projects': total, 'total_tasks': got['total_tasks'],
+               'loose_tasks': got.get('loose_tasks', 0),
+               'filters': filters, 'offset': offset, 'limit': limit,
+               'next_offset': offset + limit if limit and offset + limit < total else None,
+               'deck': deck, **({'loose': loose} if loose else {})}
         flags = self._hook('flags', bands) or {}
         if flags:
-            for entry in deck:
-                if entry['project']['id'] in flags:
+            for entry in deck + ([loose] if loose else []):
+                if 'project' in entry and entry['project']['id'] in flags:
                     entry['project']['hygiene'] = flags[entry['project']['id']]
                 for items in entry.values():
                     if isinstance(items, list):

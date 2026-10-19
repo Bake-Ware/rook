@@ -43,6 +43,7 @@ from typing import Any
 from ....core import context
 from ....core.db import atomic_write_json
 from ....core.plugin import Plugin, capability, place, setting
+from ....core.text import clip
 from ....core.settings import SECRET_REF
 from . import agent_host, job_agent
 from .agent_host import AgentHostBackend, TurnFailed, Unavailable
@@ -610,8 +611,8 @@ class HomeAgent(Plugin):
             except Exception as e:  # noqa: BLE001 - a tool error goes back to the model
                 reply = {"ok": False, "error": f"{type(e).__name__}: {e}"[:300]}
         self.journal("knowledge.read", cap_args, reply, thread)
-        return json.dumps(reply.get("result") if reply["ok"] else {"error": reply["error"]},
-                          default=str)[:TOOL_RESULT_CHARS]
+        return clip(json.dumps(reply.get("result") if reply["ok"] else {"error": reply["error"]},
+                               default=str), TOOL_RESULT_CHARS)
 
     # -- memory (rook/hub/plugins/memory; docs/design/memory.md) ----------------
     def _memory(self):
@@ -664,8 +665,8 @@ class HomeAgent(Plugin):
             jreply = {"ok": reply["ok"], "result": {"results": len(
                 (reply.get("result") or {}).get("results") or [])}}
         self.journal(cap, {"tool": name, **logged}, jreply, thread)
-        return json.dumps(reply.get("result") if reply["ok"] else {"error": reply.get("error")},
-                          default=str)[:TOOL_RESULT_CHARS]
+        return clip(json.dumps(reply.get("result") if reply["ok"] else {"error": reply.get("error")},
+                               default=str), TOOL_RESULT_CHARS)
 
     async def summarise_for_memory(self, what: str, lines: list[str]) -> str | None:
         """A short summary for the memory plugin's consolidation (no tools),

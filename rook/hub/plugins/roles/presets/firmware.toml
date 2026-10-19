@@ -22,6 +22,7 @@ concerns = [
   "timing, interrupts and power modes",
 ]
 checklist = [
+  "Look for code only in the code locations listed in your prompt (role.code_locations); if the repository you need is not listed, say so instead of searching other folders.",
   "Check the pin map against both the datasheet and the schematic.",
   "Name the recovery path before any flash is proposed.",
   "Check flash and RAM use against the part's limits.",

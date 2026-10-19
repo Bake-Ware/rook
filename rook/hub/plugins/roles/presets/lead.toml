@@ -22,6 +22,8 @@ concerns = [
   "technical decisions and debt",
 ]
 checklist = [
+  "Look for code only in the code locations listed in your prompt (role.code_locations); if the repository you need is not listed, say so instead of searching other folders.",
+  "A session.start card starts in one of those code locations, and its task is a Rook task id or slug (propose the task.create card first); never put instructions in task.",
   "Read the live sessions before answering; name each one and what it is on.",
   "For a stuck session, say why it looks stuck and propose the nudge.",
   "Check that each session has a task, and that the task matches what it is doing.",

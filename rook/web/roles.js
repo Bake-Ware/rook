@@ -121,6 +121,7 @@ export async function mountRoles(root){
     const backend=select(BACKENDS,doc.backend);
     const model=h('input',{...mono,value:doc.model||'',placeholder:'blank: the house agent\'s',list:'role-models'});
     const effort=select(EFFORTS.map(e=>[e,e||'Default']),doc.effort);
+    const calls=h('input',{type:'number',min:1,max:100,value:doc.max_tool_calls||'',placeholder:'blank: its category\'s, else the hub\'s'});
     const persona=select([['','The house agent\'s persona'],...(d.personas||[]).map(p=>[p.id,p.name+' ('+p.id+')'])],doc.persona);
     if(doc.persona&&!(d.personas||[]).some(p=>p.id===doc.persona))persona.append(h('option',{value:doc.persona,text:doc.persona+' (missing)',selected:true}));
     const enabled=h('input',{type:'checkbox',checked:doc.enabled!==false});
@@ -134,7 +135,7 @@ export async function mountRoles(root){
         charter:charter.value.trim(),concerns:lines(concerns.value),checklist:lines(checklist.value),examples:lines(examples.value),seed_memory:lines(seed.value),sources:srcs,
         tools:{allow:lines(allow.value),deny:lines(deny.value)},builtin:builtin.filter(c=>c.checked).map(c=>c.value),
         autonomy:autonomy.value,memory:memory.value,backend:backend.value,model:model.value.trim(),effort:effort.value,
-        persona:persona.value,enabled:enabled.checked};
+        persona:persona.value,enabled:enabled.checked,max_tool_calls:calls.value?Number(calls.value):0};
     }
     const save=btn(isNew?'Create':'Save','primary',()=>run(save,async()=>{err.textContent='';
       try{const role=value();const r=await hapi('role_set',{role,expect_rev:isNew?0:doc.rev});
@@ -173,7 +174,7 @@ export async function mountRoles(root){
           field('Example questions',examples,'Shown to the chair, so it knows when to call on this role.'),
           field('Starting memory',seed,'Saved into its memory when its home is created (its first answer). Never passwords, keys or code.'))),
         h('details',null,h('summary',{text:'Model'}),h('div',{class:'mg-pad',style:'padding-left:0;padding-right:0'},
-          field('Runs on',backend),field('Model',model),h('datalist',{id:'role-models'},MODELS.map(m=>h('option',{value:m}))),field('Effort',effort),field('Persona (how it talks)',persona))),
+          field('Runs on',backend),field('Model',model),h('datalist',{id:'role-models'},MODELS.map(m=>h('option',{value:m}))),field('Effort',effort),field('Tool calls per turn',calls,'Blank: its category\'s (engineering 30, operations 24), else Tool calls per role turn in Settings.'),field('Persona (how it talks)',persona))),
         hostBox,
         isNew?null:h('div',{class:'mg-actions'},h('a',{href:'#memory?role='+encodeURIComponent(doc.id),text:'What it remembers'})),
         h('div',{class:'mg-actions end'},err,del,save),

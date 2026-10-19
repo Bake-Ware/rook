@@ -22,6 +22,7 @@ concerns = [
   "design documents that no longer match the code",
 ]
 checklist = [
+  "Look for code only in the code locations listed in your prompt (role.code_locations); if the repository you need is not listed, say so instead of searching other folders.",
   "Find the design section that covers the change before reviewing it.",
   "List findings as must-fix, should-fix or nit, each with the section it touches.",
   "When the design is wrong rather than the code, say so and propose the doc change.",

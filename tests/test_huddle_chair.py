@@ -61,7 +61,11 @@ class FakeBand:
             for name, targs in step.get("tools", []):
                 r = await turn_mcp.handle(turn, {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                                                  "params": {"name": name, "arguments": targs}})
-                seen.append(json.loads(r["result"]["content"][0]["text"]))
+                text = r["result"]["content"][0]["text"]
+                try:
+                    seen.append(json.loads(text))
+                except ValueError:            # a result with a note or a cut marker after it
+                    seen.append(text)
             self.turns.append({"kind": kind, "listed": listed, "seen": seen, "args": args})
             if step.get("fail"):
                 return {"ok": True, "result": {"ok": False, "error": step["fail"]}}
@@ -298,13 +302,15 @@ async def test_guests_rounds_limits_and_failures(hub):
     hub.node.settings.set("huddle.max_role_turns", 1, actor="human:op")
     hub.band.script = {"huddle-chair": [{"tools": [("call_on", {"calls": [
         {"role": "qa", "ask": "a"}, {"role": "pm", "ask": "b"}]})]}],
-        "huddle-qa": [{"fail": "model refused"}]}
+        "huddle-qa": [{"fail": "model refused"}, {"fail": "model refused"}]}
     await _call(hub, "huddle.post", {"huddle": h["room"], "text": "status?"})
     await _settle(hub)
     r = (await _call(hub, "huddle.read", {"room": h["room"]}))["rounds"][-1]
     assert [x["role"] for x in r["replies"]] == ["qa"] and r["replies"][0]["state"] == "failed"
-    assert r["state"] == "done"
-    assert "could not answer" in _texts(hub, h["room"])[-1][1]
+    assert r["state"] == "done" and r["replies"][0]["attempts"] == 2     # asked again once
+    said = [t for _, t in _texts(hub, h["room"])]
+    assert any("stopped: " in t and "asks again" in t for t in said)
+    assert any("could not answer" in t for t in said)
     # Status huddles have no chair.
     res = await hub.node.dispatch("huddle.write", {"action": "status", "data": {"working_on": "x"}},
                                   GUEST)
@@ -513,15 +519,19 @@ async def test_the_home_page_shows_turns_and_tokens_per_role(hub):
     await _settle(hub)
     page = hub.node.plugin("home").page(hub.node.settings)
     usage = {u["role"]: u for u in page["usage"]}
-    assert usage[""]["turns"] == 1 and usage[""]["tokens"] == {"input_tokens": 100,
-                                                              "output_tokens": 10}
+    # The house agent's own turns: the chair's routing and its close.
+    assert usage[""]["turns"] == 2 and usage[""]["tokens"] == {"input_tokens": 107,
+                                                              "output_tokens": 13}
     assert usage["qa"]["tokens"]["cache_read_input_tokens"] == 1000 and usage["qa"]["cost_usd"] == 0.01
-    assert usage["pm"]["turns"] == 1 and usage["pm"]["failed"] == 1
-    # One answer only, so no close; the chair's turn is in Recent activity.
+    # PM failed and was asked again (huddle.role_retries): two turns, one failed.
+    assert usage["pm"]["turns"] == 2 and usage["pm"]["failed"] == 1
+    # The chair's turns are in Recent activity: routing, then the close.
     vias = [a["via"] for a in page["activity"]]
-    assert vias == ["huddle-chair"] and page["activity"][0]["ok"]
+    assert sorted(vias) == ["huddle-chair", "huddle-close"] and all(a["ok"] for a in page["activity"])
     old = hub.node.plugin("home").agents
-    old.ledger[0]["ts"] -= 25 * 3600                     # out of the window
+    for row in old.ledger:
+        if not row.get("role"):
+            row["ts"] -= 25 * 3600                       # the house agent's turns: out of the window
     assert {u["role"] for u in old.usage(24.0)} == {"qa", "pm"}
 
 
