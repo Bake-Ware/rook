@@ -2,7 +2,7 @@
 # Disposable Rook hub + throwaway workers for tests. Never touches a live install.
 #
 #   scripts/test-hub.sh start  [--workers N] [--data DIR] [--port-base P] [--bind ADDR]
-#                              [--band-max-risk read|write|exec|admin]
+#                              [--band-max-risk read|write|exec|admin] [--harness-home DIR]
 #   scripts/test-hub.sh stop   [--data DIR]
 #   scripts/test-hub.sh status [--data DIR]
 #   scripts/test-hub.sh reset  [--data DIR]      # stop + delete the data dir
@@ -17,6 +17,10 @@
 #     data dir, so none of them reads or writes a real ~/.rook-band-worker,
 #     ~/.config/rook or an enrollment; workers get explicit --hub/--psk/--name
 #     and no OTA update URL
+#   * --harness-home DIR: the workers' agent harnesses (Claude Code, Codex,
+#     OpenCode; worker plugin agenthost) run with that home's sign-in, so a
+#     worker can host the house agent and huddle roles; the workers' own
+#     state stays in their scratch homes (agenthost.harness_home)
 #   * PID files in DIR/run, logs in DIR/logs, connection details in
 #     DIR/test-hub.env (mode 600) for the integration tests
 #
@@ -44,6 +48,7 @@ NAME_PREFIX="${ROOK_TEST_HUB_WORKER_PREFIX:-testw}"
 KNOWLEDGE=1
 DASHBOARD=1
 BAND_MAX_RISK="read"
+HARNESS_HOME=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --workers)   WORKERS="$2"; shift 2 ;;
@@ -54,6 +59,7 @@ while [ $# -gt 0 ]; do
     --no-knowledge)  KNOWLEDGE=0; shift ;;
     --no-dashboard)  DASHBOARD=0; shift ;;
     --band-max-risk) BAND_MAX_RISK="$2"; shift 2 ;;
+    --harness-home)  HARNESS_HOME="$2"; shift 2 ;;
     -h|--help) usage 0 ;;
     *) echo "unknown option: $1" >&2; usage ;;
   esac
@@ -280,6 +286,7 @@ cmd_start() {
     local wname="$NAME_PREFIX-$i"
     SPAWN_ENV=()
     [ -n "$root_pub" ] && SPAWN_ENV=(ROOK_UPDATE_PUBKEY="$root_pub")
+    [ -n "$HARNESS_HOME" ] && SPAWN_ENV+=(ROOK_AGENTHOST_HARNESS_HOME="$HARNESS_HOME")
     spawn "worker-$i" "$DATA/workers/$wname/home" "$PYTHON" -m rook.worker \
         --hub "127.0.0.1:$RELAY_PORT" --psk "$ROOK_BAND_PSK" --name "$wname" --update-url "" -v
     names="${names:+$names,}$wname"

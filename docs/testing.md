@@ -41,7 +41,7 @@ are manual browser scripts, not part of the suite.
 
 ```sh
 scripts/test-hub.sh start  [--workers N] [--data DIR] [--port-base P] [--bind ADDR]
-                           [--band-max-risk read|write|exec|admin]
+                           [--band-max-risk read|write|exec|admin] [--harness-home DIR]
 scripts/test-hub.sh status [--data DIR]
 scripts/test-hub.sh stop   [--data DIR]
 scripts/test-hub.sh reset  [--data DIR]    # stop, then delete DIR
@@ -51,7 +51,10 @@ Defaults: `--data ./test-hub-data` (git-ignored), `--port-base 17470`,
 `--workers 2`, `--bind 127.0.0.1`. Other options: `--worker-prefix NAME`
 (workers are `NAME-1..N`, default `testw`), `--no-knowledge`, `--no-dashboard`,
 `--band-max-risk` (the hub's `ROOK_HUB_BAND_MAX_RISK`, default `read`; the
-conformance run uses `write` so band peers can post to chat rooms).
+conformance run uses `write` so band peers can post to chat rooms),
+`--harness-home DIR` (the workers' Claude Code, Codex and OpenCode run with
+that home's sign-in, `agenthost.harness_home`, so a worker can host the house
+agent and huddle roles; the workers' own state stays in their scratch homes).
 The same defaults can come from `ROOK_TEST_HUB_DATA`, `ROOK_TEST_HUB_PORT_BASE`
 and `ROOK_TEST_HUB_WORKER_PREFIX`. `PYTHON` selects the interpreter (default:
 the repo's `.venv/bin/python`, else `python3`).
