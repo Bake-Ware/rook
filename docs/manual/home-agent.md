@@ -95,7 +95,9 @@ through worker `rook`: `role.presets` shows the starting roster, `role.set`
 saves a role (admin), `role.ask` asks one a question, `role.memory` shows what
 it remembers and `role.move` moves it (admin). **Tool calls per role turn**
 (Settings, `role.max_tool_calls`) bounds one answer; **Role homes directory**
-(per worker, `agenthost.roles_dir`) says where a host keeps the folders. A role that only proposes (the
+(per worker, `agenthost.roles_dir`) says where a host keeps the folders, and
+**Harness home** (per worker, `agenthost.harness_home`) lets a worker whose
+own home has no sign-in run the harnesses with another home's sign-in. A role that only proposes (the
 default) can read with its tools but not change anything; it tells you what
 it would do instead.
 

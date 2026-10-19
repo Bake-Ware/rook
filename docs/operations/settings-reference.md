@@ -139,6 +139,7 @@ are set only in the environment or on the command line.
 |---|---|---|---|---|---|---|
 | `agenthost.enabled` | House agent host | worker | bool | on | `ROOK_AGENTHOST` | restart |
 | `agenthost.roles_dir` | Role homes directory | worker | str |  | `ROOK_AGENTHOST_ROLES_DIR` | live |
+| `agenthost.harness_home` | Harness home | worker | str |  | `ROOK_AGENTHOST_HARNESS_HOME` | restart |
 
 ## Chat (hub plugin, runs in mcp)
 

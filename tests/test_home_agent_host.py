@@ -516,6 +516,16 @@ def test_agenthost_turns_itself_on_when_a_harness_is_installed(host, monkeypatch
     assert not plugin.available()
 
 
+def test_harness_home_is_where_the_sign_in_lives(host, monkeypatch, tmp_path):
+    monkeypatch.setattr(agenthost, "HARNESS_HOME", "")
+    assert agenthost._harness_env() == {"HOME": os.environ["HOME"]}
+    monkeypatch.setenv("ROOK_AGENTHOST_HARNESS_HOME", str(tmp_path / "signed-in"))
+    agenthost.AgentHost().available()
+    env = agenthost._harness_env()
+    assert env == {"HOME": str(tmp_path / "signed-in"),
+                   "XDG_CONFIG_HOME": str(tmp_path / "signed-in" / ".config")}
+
+
 def test_strip_jsonc():
     assert json.loads(agenthost.strip_jsonc('{"a": "x // not a comment", /* c */ "b": [1,],}')) \
         == {"a": "x // not a comment", "b": [1]}
