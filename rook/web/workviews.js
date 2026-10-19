@@ -306,7 +306,7 @@ export function renderProject(kit,page,opts){
   if(!page.activity.length)feed.append(el('li','Nothing yet.','kn-dim'));act.append(feed);
   const rooms=el('section',undefined,'wv-psec');rooms.append(el('h2','Rooms'));const rl=el('ul',undefined,'wv-links');
   for(const r of page.rooms){const li=el('li');const huddle=r.note==='Huddle';const a=el('a',huddle?'Huddle':(r.note||'Chat room'));
-    a.href=huddle?'#work?v=huddle&h='+encodeURIComponent(r.room):'#chat?room='+encodeURIComponent(r.room);li.append(a,el('small',r.records.includes(p.slug)?'this project':'from '+r.records.join(', '),'kn-dim'));rl.append(li);}
+    a.href=huddle?'#work?v=huddle&h='+encodeURIComponent(r.room):'#huddles?room='+encodeURIComponent(r.room);li.append(a,el('small',r.records.includes(p.slug)?'this project':'from '+r.records.join(', '),'kn-dim'));rl.append(li);}
   if(!page.rooms.length){const li=el('li');li.append(el('span','No rooms yet. ','kn-dim'));const a=el('a','Start the huddle');a.href='#work?v=huddle&hp='+encodeURIComponent(p.id);li.append(a);rl.append(li);}
   rooms.append(rl);
   const kn=el('section',undefined,'wv-psec');kn.append(el('h2','Knowledge'));const kl=el('ul',undefined,'wv-links');

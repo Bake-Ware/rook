@@ -27,6 +27,7 @@ mode, from which the agent host renders the harness config in the home.
 from __future__ import annotations
 
 import asyncio
+import collections
 import contextlib
 import logging
 import time
@@ -50,6 +51,12 @@ EFFORTS = ("", "low", "medium", "high", "xhigh", "max")
 ONLINE_S = 120.0
 #: Extra time the band call waits beyond the turn's own timeout.
 CALL_SLACK_S = 30.0
+#: Turns kept for the page's usage summary (in memory, since the MCP server
+#: started; a busy day of huddles is a few hundred).
+LEDGER_TURNS = 5000
+#: Token counters summed per role, as the harnesses report them.
+TOKEN_KEYS = ("input_tokens", "output_tokens", "cache_creation_input_tokens",
+              "cache_read_input_tokens", "cached_input_tokens", "reasoning_tokens")
 
 
 class Unavailable(RuntimeError):
@@ -103,6 +110,38 @@ class AgentHostBackend:
         self.registry = Registry()
         #: The hub's public base URL (set by the MCP server from --public-url).
         self.public_url = ""
+        #: One row per turn that reached a host: {ts, role, via, worker, model,
+        #: ok, usage, cost_usd} (:meth:`usage`).
+        self.ledger: collections.deque = collections.deque(maxlen=LEDGER_TURNS)
+
+    def _book(self, role: dict | None, via: str, worker: str, model: str, ok: bool,
+              usage: dict | None = None, cost: Any = None) -> None:
+        self.ledger.append({"ts": time.time(), "role": (role or {}).get("id") or "",
+                            "via": via, "worker": worker, "model": model, "ok": ok,
+                            "usage": dict(usage or {}), "cost_usd": cost})
+
+    def usage(self, hours: float = 24.0) -> list[dict]:
+        """Turns and token usage per role over the last ``hours`` (role
+        ``""``: the house agent's own turns, chairing included), most turns
+        first: ``{role, turns, failed, tokens: {key: n}, cost_usd, models}``."""
+        since = time.time() - hours * 3600
+        out: dict[str, dict] = {}
+        for row in list(self.ledger):
+            if row["ts"] < since:
+                continue
+            r = out.setdefault(row["role"], {"role": row["role"], "turns": 0, "failed": 0,
+                                             "tokens": {}, "cost_usd": 0.0, "models": []})
+            r["turns"] += 1
+            r["failed"] += 0 if row["ok"] else 1
+            for k in TOKEN_KEYS:
+                v = row["usage"].get(k)
+                if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    r["tokens"][k] = r["tokens"].get(k, 0) + int(v)
+            if isinstance(row["cost_usd"], (int, float)) and not isinstance(row["cost_usd"], bool):
+                r["cost_usd"] = round(r["cost_usd"] + float(row["cost_usd"]), 6)
+            if row["model"] and row["model"] not in r["models"]:
+                r["models"].append(row["model"])
+        return sorted(out.values(), key=lambda r: (-r["turns"], r["role"]))
 
     # -- hosts -------------------------------------------------------------
     def _roster(self) -> dict[str, dict]:
@@ -253,12 +292,18 @@ class AgentHostBackend:
         finally:
             self.registry.close(token)
         if not reply.get("ok", True) and "result" not in reply:
+            self._book(role, via, name, model, False)
             raise TurnFailed(f"{name}: {reply.get('error') or 'the agent host refused the turn'}")
         res = reply.get("result", reply)
         if not isinstance(res, dict):
+            self._book(role, via, name, model, False)
             raise TurnFailed(f"{name}: unexpected reply")
+        usage = res.get("usage") if isinstance(res.get("usage"), dict) else {}
         if not res.get("ok"):
+            self._book(role, via, name, model, False, usage, res.get("cost_usd"))
             raise TurnFailed(f"{name}: {res.get('error') or 'the turn failed'}")
+        self._book(role, via, name, str(res.get("model") or model), True, usage,
+                   res.get("cost_usd"))
         return {"content": str(res.get("text") or "").strip(),
                 "model": str(res.get("model") or model or f"{LABELS[cfg['backend']]} default"),
                 "latency_ms": round((time.monotonic() - t0) * 1000),

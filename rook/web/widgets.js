@@ -57,7 +57,7 @@ export const link = {
   task: t => '#work?' + new URLSearchParams({t: t.slug || t.id, ...(t.band ? {b: t.band} : {})}),
   project: p => '#work?' + new URLSearchParams({p: p.slug || p.id, ...(p.band ? {b: p.band} : {})}),
   page: p => '#knowledge?' + new URLSearchParams({p: p.slug || p.id, ...(p.band ? {b: p.band} : {})}),
-  room: id => '#chat?' + new URLSearchParams({room: id}),
+  room: id => '#huddles?' + new URLSearchParams({room: id}),
   session: s => '#sessions?' + new URLSearchParams({key: s.key}),
 };
 export const shortName = id => {
@@ -172,7 +172,7 @@ register('rooms', {
     body.append(h('ul', {class: 'w-rows'}, list.slice(0, limitOf(w)).map(r => h('li', null,
       a(link.room(r.room), r.title || r.room), r.unread ? h('span', {class: 'w-badge', text: String(r.unread)}) : null,
       h('small', {text: (r.last_sender ? shortName(r.last_sender) + ' · ' : '') + ago(Date.now() / 1000 - r.last_activity_age_secs)})))));
-    body.append(a('#chat', 'Open chat', 'w-more'));
+    body.append(a('#huddles', 'Open huddles', 'w-more'));
   },
 });
 

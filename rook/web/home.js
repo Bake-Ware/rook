@@ -1,15 +1,17 @@
 // Home agent: the hub's own LLM. Configured here, stored through the settings
 // service (keys home.*), answered by the "home" hub plugin. The API key is only
 // ever a vault reference ({{secret:name}}); this page never sees a key.
-// The chat panel talks to the agent through the dashboard's chat API
-// (/api/chat/*), in the same two-person room the Chat view uses, so the
-// conversation shows in both places.
+// The chat panel is the 1:1 huddle with the agent (a chaired huddle with no
+// roles, through /account/huddle/api), so the conversation is also on the
+// Huddles page.
 // Versioned like this module (?v=...), so a stale edge cache cannot pair it
 // with an old manage.js.
 const {h, ago, useCss, btn, table, two} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
+const {hapi} = await import('/account/huddle/assets/huddles.js' + new URL(import.meta.url).search);
 
 const API='/account/settings/api';
-const VIA={chat:'Chat',ask:'home.ask',test:'Test'};
+const VIA={chat:'Chat',ask:'home.ask',test:'Test','huddle-chair':'Huddle','huddle-close':'Huddle summary',job:'Job'};
+const fmtN=n=>n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e4?Math.round(n/1e3)+'k':n>=1e3?(n/1e3).toFixed(1)+'k':String(n);
 
 export async function mountHome(root){
   useCss();
@@ -19,7 +21,7 @@ export async function mountHome(root){
   const panel=h('div',{class:'mg-box strong mg-side'});
   const chat=homeChat({
     toForm(){panel.scrollIntoView({behavior:'smooth',block:'start'});panel.querySelector('input,select')?.focus({preventScroll:true});},
-    async status(){const j=await get();d.status=j.status;d.activity=j.activity;drawList();return j;}});
+    async status(){const j=await get();d.status=j.status;d.activity=j.activity;d.usage=j.usage;drawList();return j;}});
   const list=h('div',{class:'mg-main'},top,chat.el,acts);
   root.replaceChildren(h('div',{class:'mg'},summary,status,h('div',{class:'mg-split'},list,panel)));
 
@@ -39,7 +41,7 @@ export async function mountHome(root){
   // what the operator is typing.
   function drawList(){
     const s=d.status,[label,cls]=state(s);
-    summary.textContent='The home agent is an LLM that lives at the hub. People reach it in Chat as @'+s.name+'; agents ask it with home.ask on worker rook. It acts as '+s.identity+' and everything it does is journaled under that name.';
+    summary.textContent='The home agent is an LLM that lives at the hub. It chairs your huddles and talks with you below; agents ask it with home.ask on worker rook. It acts as '+s.identity+' and everything it does is journaled under that name.';
     const row=h('div',{class:'mg-row sel'},two(s.name,s.identity,true),two(s.model||'no model',s.agent_host&&s.agent_host.harness?s.agent_host.harness+' on '+(s.agent_host.host||'no host'):(s.endpoint_host||'no endpoint'),true),h('span',{text:label,class:cls}),h('span',{class:'mg-dimtext',text:s.tools?'knowledge search':'no tools'}));
     const rows=d.activity.map(a=>h('div',{class:'mg-row',title:a.error||''},
       h('span',{class:'mg-dimtext',text:ago(a.ts)}),h('span',{text:VIA[a.via]||a.via}),
@@ -48,7 +50,21 @@ export async function mountHome(root){
     top.replaceChildren(table('minmax(0,1fr) minmax(0,1.2fr) 150px 120px',['Agent','Model · endpoint','State','Tools'],[row]));
     acts.replaceChildren(
       h('div',{class:'mg-label',style:'margin-top:6px',text:'Recent activity (since the MCP server started)'}),
-      table('90px 80px minmax(0,1fr) minmax(0,1fr)',['When','Via','From · room','Result'],rows.length?rows:[h('div',{class:'mg-empty',text:'Nothing yet. Use Test, or say hello in the chat above.'})]));
+      table('90px 80px minmax(0,1fr) minmax(0,1fr)',['When','Via','From · room','Result'],rows.length?rows:[h('div',{class:'mg-empty',text:'Nothing yet. Use Test, or say hello in the chat above.'})]),
+      ...usage());
+  }
+  // Turns on agent hosts in the last 24 hours, per role (what huddles cost the
+  // subscription signed in there). Only when there were any.
+  function usage(){
+    const u=d.usage||[];if(!u.length)return [];
+    const t=(r,k)=>r.tokens[k]||0;
+    const rows=u.map(r=>h('div',{class:'mg-row'},
+      two(r.role?'@'+r.role:'House agent',r.models.join(', '),!!r.role),
+      h('span',{text:r.turns+(r.failed?' ('+r.failed+' failed)':'')}),
+      h('span',{class:'mg-dimtext',text:fmtN(t(r,'input_tokens')+t(r,'cache_creation_input_tokens')+t(r,'cache_read_input_tokens'))+' in · '+fmtN(t(r,'output_tokens'))+' out'}),
+      h('span',{class:'mg-dimtext',text:r.cost_usd?'$'+r.cost_usd.toFixed(2):'—'})));
+    return [h('div',{class:'mg-label',style:'margin-top:6px',text:'Last 24 hours on agent hosts'}),
+      table('minmax(0,1fr) 110px minmax(0,1fr) 80px',['Who','Turns','Tokens','Cost'],rows)];
   }
   // What memory did for one answer: "· 3 recalled · 1 remembered".
   function memo(m){if(!m)return '';return [m.recalled&&m.recalled+' recalled',m.remembered&&m.remembered+' remembered',m.forgotten&&m.forgotten+' forgotten'].filter(Boolean).map(x=>' · '+x).join('');}
@@ -180,21 +196,16 @@ export async function mountHome(root){
 }
 
 // -- chat with the home agent ------------------------------------------------
-// The dashboard chats as user:operator (see /api/chat/* in the hub). The room is
-// the newest two-person room between that identity and agent:<name>, which is
-// what the Chat view opens when you click the agent in Presence; it is created
-// on the first message, not by visiting the page. The plugin posts whole
-// replies (no streaming), so the panel polls the room like the Chat view does.
+// The conversation is the 1:1 huddle with the agent: the newest chaired huddle
+// that is not archived, has no roles and is titled with the agent's name, which
+// the Huddles page lists too. It is started on the first message, not by
+// visiting the page. Each message starts a round in which the agent (the chair)
+// answers; replies are posted whole, so the panel polls the huddle: every
+// 1.5 s while a round runs, every 4 s otherwise, never while the page is hidden.
 const OP='user:operator';
-const UNAVAILABLE='The home agent is unavailable right now.',BUSY='(Busy: I will answer shortly.)';
-async function cj(url,body){
-  const r=await fetch(url,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{headers:{Accept:'application/json'}});
-  const j=await r.json().catch(()=>null);
-  if(r.status===503)throw Error('Chat is not available on this hub (no chat store).');
-  if(r.status===401||r.status===403||!j)throw Error('Chat needs the dashboard admin login; sign in again.');
-  if(!r.ok||j.ok===false||j.error)throw Error(j.error||'Chat request failed');
-  return j;
-}
+// What the chair posts when its turn fails (rook/hub/plugins/huddle/chair.py).
+const FAILED=/^\(The chair could not finish this round: /;
+const RUNNING=['chair','roles','closing'];
 export function homeChat({toForm,status}){
   let ident='',name='home',on=false,timeout=90,room=null,seq=0,timer=null,live=false,waiting=null,ticks=0,loaded=false,sending=false;
   const note=h('div',{class:'hc-note',role:'status',hidden:true});
@@ -223,8 +234,8 @@ export function homeChat({toForm,status}){
   // Called whenever the page has fresh settings (load, Save).
   function update(s,t){
     timeout=t;title.textContent='Chat with @'+s.name;
-    sub.textContent='The same conversation is in Chat, in the room "'+s.name+'".';
-    if(s.identity!==ident){ident=s.identity;name=s.name;room=null;seq=0;loaded=false;stopWaiting();log.replaceChildren();}
+    sub.replaceChildren('Also on ',h('a',{href:room?'#huddles?room='+encodeURIComponent(room):'#huddles',text:'Huddles'}),'.');
+    if(s.identity!==ident||s.name!==name){ident=s.identity;name=s.name;room=null;seq=0;loaded=false;stopWaiting();log.replaceChildren();}
     const why=blocked(s);on=!why;
     box.disabled=send.disabled=!on;
     if(why){say(why,'warn',s.enabled&&s.missing.length||!s.enabled?formBtn():null);stopWaiting();}
@@ -236,81 +247,81 @@ export function homeChat({toForm,status}){
     const atBottom=log.scrollHeight-log.scrollTop-log.clientHeight<60;
     for(const m of msgs){
       if(m.seq<=seq)continue;seq=m.seq;
-      const me=m.sender===OP,quiet=m.sender===ident&&(m.text===BUSY||m.text===UNAVAILABLE);
+      const me=m.sender===OP,quiet=m.sender===ident&&FAILED.test(m.text);
       log.append(h('div',{class:'hc-msg'+(me?' me':'')+(quiet?' quiet':'')},
         h('div',{class:'hc-who'},h('b',{text:me?'You':m.sender===ident?name:m.sender.replace(/^[a-z]+:/,'')}),
           h('span',{text:new Date(m.ts*1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})})),
         h('div',{class:'hc-text',text:m.text})));
-      if(waiting&&m.sender===ident&&m.seq>waiting.after){
-        if(m.text===UNAVAILABLE)failed('');
-        else if(m.text!==BUSY)stopWaiting();
-      }
     }
     if(!log.children.length)empty();
     if(msgs.length&&(atBottom||waiting))log.scrollTop=log.scrollHeight;
   }
   async function findRoom(){
-    const rooms=(await cj('/api/chat/rooms')).rooms||[];
-    const r=rooms.find(r=>r.participants&&r.participants.length===2&&r.participants.includes(OP)&&r.participants.includes(ident));
-    return r?r.room:null;
+    const all=(await hapi('list')).huddles||[];
+    const mine=all.filter(x=>x.chaired&&Array.isArray(x.roles)&&!x.roles.length&&!x.archived&&x.title===name)
+      .sort((a,b)=>(b.created||0)-(a.created||0));
+    return mine.length?mine[0].room:null;
   }
-  const read=()=>cj('/api/chat/read?room='+encodeURIComponent(room)+'&since='+seq);
+  const read=()=>hapi('view',{room,since_seq:seq,limit:100});
+  // The round a message of ours started: done ends the wait, failed says why.
+  function settle(v){
+    if(!waiting)return;
+    const r=(v.rounds||[]).find(x=>x.trigger_seq===waiting.after);
+    if(!r)return;
+    if(r.state==='failed')failed(r.error||'');
+    else if(!RUNNING.includes(r.state)){stopWaiting();status().catch(()=>{});}
+  }
   async function load(){
     room=await findRoom();seq=0;loaded=true;
     if(!room){empty();return;}
-    const got=await read(),msgs=got.messages||[];
-    render(msgs);log.scrollTop=log.scrollHeight;
-    // Opened while a question is still out: keep showing that it is working.
-    const last=msgs.at(-1);
-    if(on&&!waiting&&last&&last.sender===OP&&Date.now()/1000-last.ts<limit())wait(last.seq,last.ts*1000);
+    const v=await read();
+    render(v.messages||[]);log.scrollTop=log.scrollHeight;
+    // Opened while a round is still running: keep showing that it is working.
+    const r=(v.rounds||[]).at(-1);
+    if(on&&!waiting&&r&&RUNNING.includes(r.state))wait(r.trigger_seq,r.started*1000);
   }
   async function poll(){
     if(!live||!ident)return schedule();
     try{
       if(!loaded)await load();
-      else if(room)render((await read()).messages||[]);
-      else if(++ticks%3===0&&await findRoom())loaded=false;   // started from the Chat view
-      if(waiting)await watch();
+      else if(room){const v=await read();render(v.messages||[]);settle(v);}
+      else if(++ticks%3===0&&await findRoom())loaded=false;   // started from the Huddles page
+      if(waiting)watch();
       if(note.classList.contains('lost'))say('');
     }catch(e){if(on)say(e.message,'bad lost');}
     schedule();
   }
-  function schedule(){clearTimeout(timer);if(live)timer=setTimeout(poll,waiting?1500:4000);}
+  function schedule(){clearTimeout(timer);if(live&&!document.hidden)timer=setTimeout(poll,waiting?1500:4000);}
+  document.addEventListener('visibilitychange',()=>{if(live&&!document.hidden)poll();});
   const limit=()=>timeout*2+30;
-  function wait(after,since){waiting={after,since,checks:0};typing.hidden=false;tick();}
+  function wait(after,since){waiting={after,since};typing.hidden=false;tick();}
   function tick(){
     if(!waiting)return;
     const s=Math.round((Date.now()-waiting.since)/1000);
     typing.textContent=name+' is thinking'+(s>=3?' · '+s+' s':'')+'…';
   }
   function stopWaiting(){waiting=null;typing.hidden=true;}
-  // While it works: every few polls, look at the agent's activity for a failed
-  // reply to the operator (the room only gets a generic line, at most once per
-  // ten minutes), and stop waiting after the timeout.
-  async function watch(){
+  function watch(){
     tick();
     const age=(Date.now()-waiting.since)/1000;
-    if(age>limit()){stopWaiting();say('No reply after '+Math.round(age)+' s. Check Recent activity below; the home agent runs in the hub\'s MCP server and only answers while that is up.','warn');return;}
-    if(++waiting.checks%3)return;
-    const j=await status();
-    const bad=(j.activity||[]).find(a=>a.via==='chat'&&!a.ok&&a.sender===OP&&a.ts*1000>=waiting.since-2000);
-    if(bad)failed(j.status.last_error);
+    if(age>limit()){stopWaiting();say('No reply after '+Math.round(age)+' s. Check Recent activity below; the home agent runs in the hub\'s MCP server and only answers while that is up.','warn');}
   }
   function failed(err){
     stopWaiting();
     say('The home agent could not answer'+(err?': '+err:'')+'. Check the endpoint, model and key in the form, then use Test.','bad',formBtn());
+    status().catch(()=>{});
   }
   async function submit(){
     const text=box.value.trim();if(!text||!on||sending)return;
     sending=true;send.disabled=true;say('');
     try{
-      if(!room){room=(await cj('/api/chat/start',{title:name,invite:[ident]})).room;seq=0;loaded=true;}
+      if(!room){room=(await hapi('start',{title:name,roles:[]})).room;seq=0;loaded=true;
+        sub.replaceChildren('Also on ',h('a',{href:'#huddles?room='+encodeURIComponent(room),text:'Huddles'}),'.');}
       const t0=Date.now();
-      await cj('/api/chat/send',{room,text,mention:[ident],expects_reply:true});
+      const sent=await hapi('send',{room,text});
       box.value='';box.style.height='';
-      // Wait from our own message, then render: a reply already in this batch ends the wait.
-      const msgs=(await read()).messages||[],mine=msgs.filter(m=>m.sender===OP).at(-1);
-      wait(mine?mine.seq:seq,t0);render(msgs);log.scrollTop=log.scrollHeight;schedule();
+      wait(sent.seq,t0);
+      const v=await read();render(v.messages||[]);settle(v);log.scrollTop=log.scrollHeight;schedule();
     }catch(e){say('Not sent: '+e.message,'bad');}
     finally{sending=false;send.disabled=!on;box.focus();}
   }
@@ -318,3 +329,4 @@ export function homeChat({toForm,status}){
     start(){if(live)return;live=true;loaded=false;poll();},
     stop(){live=false;clearTimeout(timer);}};
 }
+
