@@ -17,6 +17,11 @@ else: the prompt, memory, persona and tools. For each turn it
 The conversation is flattened into one prompt: turns are stateless here (no
 session files), because the hub already sends the room context and memory
 every time, and a move to another host loses nothing.
+
+A **role turn** (``role=``, from the ``roles`` plugin; docs/design/huddles.md
+4.4) runs on the host that keeps the role's home (no fallback: the home and
+its memory are there) and sends the role's tool names, built-ins and memory
+mode, from which the agent host renders the harness config in the home.
 """
 
 from __future__ import annotations
@@ -125,10 +130,14 @@ class AgentHostBackend:
                         "harnesses": harnesses, "running": hb.get("running")})
         return sorted(out, key=lambda h: h["name"])
 
-    def pick(self, cfg: dict, harness: str) -> tuple[str, str]:
-        """``(worker_id, name)`` of the first usable host, or Unavailable."""
-        wanted = [str(cfg.get("agent_host") or "").strip()]
-        wanted += [str(w).strip() for w in (cfg.get("agent_fallback_hosts") or [])]
+    def pick(self, cfg: dict, harness: str, only: str | None = None) -> tuple[str, str]:
+        """``(worker_id, name)`` of the first usable host, or Unavailable.
+        ``only``: that host or nothing (a role whose home is there)."""
+        if only:
+            wanted = [only]
+        else:
+            wanted = [str(cfg.get("agent_host") or "").strip()]
+            wanted += [str(w).strip() for w in (cfg.get("agent_fallback_hosts") or [])]
         wanted = [w for w in wanted if w]
         if not wanted:
             raise Unavailable("no agent host is set (home.agent_host)")
@@ -198,13 +207,14 @@ class AgentHostBackend:
     # -- a turn ------------------------------------------------------------
     async def run(self, cfg: dict, messages: list[dict], *, tools: list[dict],
                   handler: Callable[[str, dict], Awaitable[str]], via: str,
-                  max_tool_calls: int = 10) -> dict:
+                  max_tool_calls: int = 10, role: dict | None = None) -> dict:
         """One turn. Returns ``{content, model, latency_ms, tools_used, worker,
-        harness, usage, cost_usd}``; raises Unavailable or TurnFailed."""
+        worker_id, harness, usage, cost_usd}``; raises Unavailable or TurnFailed.
+        ``role`` (a role document) makes it a role turn in the role's home."""
         harness = harness_of(cfg)
         if harness is None:
             raise Unavailable(f"home.backend {cfg.get('backend')!r} is not an agent harness")
-        wid, name = self.pick(cfg, harness)
+        wid, name = self.pick(cfg, harness, only=(role or {}).get("host") or None)
         url = self.turn_url(cfg)
         system, prompt = flatten(messages)
         timeout = float(cfg.get("agent_timeout_s") or 180.0)
@@ -224,6 +234,12 @@ class AgentHostBackend:
             args["effort"] = effort_of(cfg)
         if oauth:
             args["oauth_token"] = oauth
+        if role is not None:
+            args.update(role=role["id"], role_name=role.get("name") or role["id"],
+                        role_rev=int(role.get("rev") or 0),
+                        tools=[(t.get("function") or t)["name"] for t in tools],
+                        builtin=list(role.get("builtin") or []),
+                        memory=role.get("memory") or "write")
         who = self._who()
         client = self.plugin._node.client
         t0 = time.monotonic()
@@ -246,5 +262,6 @@ class AgentHostBackend:
         return {"content": str(res.get("text") or "").strip(),
                 "model": str(res.get("model") or model or f"{LABELS[cfg['backend']]} default"),
                 "latency_ms": round((time.monotonic() - t0) * 1000),
-                "tools_used": list(turn.used), "worker": name, "harness": harness,
-                "usage": res.get("usage") or {}, "cost_usd": res.get("cost_usd")}
+                "tools_used": list(turn.used), "worker": name, "worker_id": wid,
+                "harness": harness, "usage": res.get("usage") or {},
+                "cost_usd": res.get("cost_usd"), "harness_tools": list(res.get("tools_used") or [])}
