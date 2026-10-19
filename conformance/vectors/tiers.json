@@ -603,8 +603,23 @@
   "hub.plugins": {
    "tier": "read"
   },
+  "huddle.archive": {
+   "tier": "write"
+  },
+  "huddle.card": {
+   "tier": "write"
+  },
+  "huddle.list": {
+   "tier": "read"
+  },
+  "huddle.post": {
+   "tier": "write"
+  },
   "huddle.read": {
    "tier": "read"
+  },
+  "huddle.start": {
+   "tier": "write"
   },
   "huddle.write": {
    "tier": "write"

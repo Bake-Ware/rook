@@ -438,6 +438,51 @@ class HomeAgent(Plugin):
                              "content": out})
         raise LLMError("the model kept calling tools")  # pragma: no cover - loop bound
 
+    async def tool_turn(self, messages: list[dict], cfg: dict, tools: list[dict],
+                        handler: Any, *, via: str, max_calls: int = 8) -> dict:
+        """One turn with a caller's own tool set (the huddle chair's
+        ``call_on``/``answer``/``propose``), on either backend. ``handler(name,
+        args) -> str`` runs each call. Returns ``{content, model, latency_ms,
+        tools_used}``; raises HomeError/LLMError."""
+        if self.use_agent_host(cfg):
+            try:
+                return await self.agents.run(cfg, messages, tools=tools, handler=handler,
+                                             via=via, max_tool_calls=max_calls)
+            except Unavailable as e:
+                if not self._may_fall_back(cfg):
+                    raise HomeError(f"the home agent is unavailable: {e}") from None
+                log.warning("home agent: %s; answering with the OpenAI-compatible endpoint", e)
+            except TurnFailed as e:
+                raise LLMError(str(e)) from None
+        cli = self.client(cfg)
+        used: list[str] = []
+        total = 0
+        msgs = list(messages)
+        for _round in range(max_calls + 1):
+            res = await cli.chat(msgs, max_tokens=cfg.get("max_tokens"),
+                                 temperature=cfg.get("temperature"),
+                                 tools=tools if _round < max_calls else None)
+            total += res["latency_ms"]
+            if not res["tool_calls"]:
+                return {"content": cli._scrub(res["content"] or ""),
+                        "model": cli._scrub(res["model"] or ""),
+                        "latency_ms": total, "tools_used": used}
+            msgs.append({"role": "assistant", "content": res["content"] or None,
+                         "tool_calls": res["tool_calls"]})
+            for call in res["tool_calls"]:
+                fn = (call.get("function") or {}) if isinstance(call, dict) else {}
+                raw = fn.get("arguments")
+                try:
+                    args = json.loads(raw) if isinstance(raw, str) else dict(raw or {})
+                except (ValueError, TypeError):
+                    args = {}
+                name = str(fn.get("name") or "")
+                used.append(name or "?")
+                out = await handler(name, args)
+                msgs.append({"role": "tool", "tool_call_id": str(call.get("id") or ""),
+                             "content": out})
+        raise LLMError("the model kept calling tools")  # pragma: no cover - loop bound
+
     def use_agent_host(self, cfg: dict) -> bool:
         return agent_host.harness_of(cfg) is not None
 
@@ -728,7 +773,12 @@ class HomeAgent(Plugin):
             cur = self._cursor[rid]
             if last <= cur:
                 continue
-            if last - cur > READ_LIMIT:           # only the newest can be answered anyway
+            if self._chaired(rid):
+                # A huddle the agent chairs: the huddle plugin runs its rounds.
+                self._cursor[rid] = last
+                dirty = True
+                continue
+            if last - cur > READ_LIMIT:          # only the newest can be answered anyway
                 cur = last - READ_LIMIT
             got = store.read(rid, self.identity, since_seq=cur, mark=True, limit=READ_LIMIT)
             if not got.get("ok"):
@@ -773,6 +823,13 @@ class HomeAgent(Plugin):
         if dirty:
             self._save_cursor()
         return started
+
+    def _chaired(self, rid: str) -> bool:
+        hp = self._node.plugin("huddle") if self._node is not None else None
+        try:
+            return bool(hp is not None and hp.chaired(rid))
+        except Exception:  # noqa: BLE001 - a broken huddle store never stops chat
+            return False
 
     @staticmethod
     def _allow(buckets: dict, key: str, limit: int, window: float = 60.0) -> bool:

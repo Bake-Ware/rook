@@ -33,7 +33,7 @@ import logging
 import os
 
 from ...core.context import current_identity
-from ...core.plugin import Plugin, capability, place
+from ...core.plugin import Plugin, capability, place, setting
 
 log = logging.getLogger("rook.hub.plugins.rooms")
 
@@ -66,11 +66,23 @@ def _names(value) -> list[str]:
     return [str(v).strip() for v in value if str(v).strip()]
 
 
+#: Why an agent cannot start a room (docs/design/huddles.md 7).
+NO_NEW_ROOMS = ("new chat rooms are retired: to talk with the person and the roles, start a huddle "
+                "(rook_huddle action=start); to coordinate with other agents, use tasks and handoffs "
+                "(rook_task, rook_handoff_save). Existing rooms keep working.")
+
+
 class ChatRooms(Plugin):
     NAMESPACE = "chat"
     NAME = "chat-rooms"
     CORE_API = ">=1.1,<2"
     PLACEMENT = place("is_hub", run="one")
+    SETTINGS = (
+        setting("new_rooms", bool, False, env="ROOK_CHAT_NEW_ROOMS", label="New rooms from agents",
+                help="Off (the default): agents can no longer start chat rooms (rook_chat_start, "
+                     "chat.write start); existing rooms keep working. Group threads with the "
+                     "person are huddles; agents coordinate through tasks and handoffs."),
+    )
     GUIDANCE = {"cap:chat.": ("chat.read/chat.write on worker 'rook' are the band side of the "
                               "rook_chat_* tools; band callers post as band:<identity>.")}
     SKILL = ("### chat rooms\n"
@@ -100,6 +112,9 @@ class ChatRooms(Plugin):
         if self._owned and self._store is not None:
             self._store.close()
         self._store = None
+
+    def new_rooms(self) -> bool:
+        return bool(self.settings.get("new_rooms"))
 
     def _chat(self):
         if self._store is None or not getattr(self._store, "enabled", False):
@@ -142,6 +157,8 @@ class ChatRooms(Plugin):
         store, me = self._chat(), caller()
         store.touch(me)
         if action == "start":
+            if not self.new_rooms():
+                raise ValueError(NO_NEW_ROOMS)
             return self._checked(store.start(title or "chat", me, _names(invite)))
         if action == "send":
             if not room:

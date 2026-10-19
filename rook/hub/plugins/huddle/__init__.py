@@ -7,12 +7,22 @@ ordinary hub chat room (the ``chat`` plugin's store), so every chat client
 reads it; the structure (status strip, pinned questions) lives beside it, see
 :mod:`.service`.
 
+A **chaired** huddle (``huddle.start``, docs/design/huddles.md 5) is a
+thread with the person, the house agent in the chair and a set of roles:
+each post from the person starts a round (:mod:`.chair`): the chair calls on
+roles, they answer in parallel, the chair closes, and action cards wait for
+the person's approval.
+
 Caps (the ``rook_huddle`` MCP tool routes to them):
 
 * ``huddle.read`` (risk ``read``): ``read`` a huddle (statuses, questions,
-  messages since a seq), ``list`` every huddle, ``mine`` (your questions).
+  messages since a seq; for a chaired one also its rounds and cards),
+  ``list`` every huddle, ``mine`` (your questions). ``huddle.list``: the
+  huddles (``archived`` too on request).
 * ``huddle.write`` (risk ``write``): ``status``, ``ask``, ``say``,
   ``withdraw`` (your own open question).
+* ``huddle.start``, ``huddle.post``, ``huddle.card``, ``huddle.archive``
+  (risk ``write``): chaired huddles. Only people approve or dismiss cards.
 
 Answering is for the person, from the dashboard (``/huddle/account-api``,
 :mod:`.web`): an answer is posted to the room, unpins the question and wakes
@@ -23,15 +33,22 @@ from __future__ import annotations
 import json
 import logging
 
+import asyncio
+import contextlib
+import time
+
 from ....core.plugin import Plugin, capability, place, setting
 from ..rooms import caller
+from .chair import Chair, CardError
 from .service import SYSTEM, HuddleService, HuddleStore
 
 log = logging.getLogger("rook.hub.plugins.huddle")
 
 READS = ("read", "list", "mine")
 WRITES = ("status", "ask", "say", "withdraw")
+CHAIRED = ("start", "post", "card", "archive")
 ERRORS = (ValueError, KeyError, TypeError, PermissionError)
+SWEEP_S = 3600.0
 
 
 class Huddle(Plugin):
@@ -49,10 +66,26 @@ class Huddle(Plugin):
                 help="After you answer a question, start the asking agent again on the machine it "
                      "says it runs on (hermes or agent.wake), with the agent's own permissions. Off: "
                      "it sees the answer on its next call."),
+        setting("reply_chars", int, 1200, min=200, max=8000, group="Chaired huddles",
+                label="Role reply length",
+                help="Each role's answer in a round is kept under this many characters."),
+        setting("max_role_turns", int, 6, min=1, max=20, group="Chaired huddles",
+                label="Role turns per round",
+                help="At most this many roles answer in one round (the chair picks them; "
+                     "roles never call each other)."),
+        setting("retention_days", int, 90, min=0, max=3650, group="Chaired huddles",
+                label="Keep archived huddles (days)",
+                help="Archived chaired huddles are deleted this many days after they were "
+                     "archived (0: kept forever). Huddles that are not archived are kept."),
+        setting("default_roles", list, ["pm", "qa", "lead"], group="Chaired huddles",
+                label="Default roles",
+                help="Roles a new huddle starts with when none are named (only those that "
+                     "exist on the Roles tab)."),
     )
     GUIDANCE = {
         "tool:rook_huddle": "",
-        "cap:huddle.": "huddle.read/huddle.write take rook_huddle's action, room/project/band, text and data.",
+        "cap:huddle.": "huddle.read/huddle.write take rook_huddle's action, room/project/band, text and "
+                       "data; huddle.start/post/card/archive are chaired huddles (room = huddle).",
     }
     SKILL = ("### huddles\n"
              "A huddle is a project's (or band's) group room in the person's view. `rook_huddle(action="
@@ -60,7 +93,11 @@ class Huddle(Plugin):
              "start, get stuck or finish; `action=\"ask\"` with `text` (and `data.options`) for a "
              "decision only the person can make: it stays pinned until answered, and the answer comes "
              "back as a chat message (and wakes you if your worker can be woken). `read` shows the "
-             "status strip, questions and recent messages.\n")
+             "status strip, questions and recent messages.\n"
+             "A *chaired* huddle (`action=\"start\"`, data {title, roles}) is the person's standup "
+             "with the house agent in the chair and roles (pm, qa, lead): your posts there are a "
+             "guest's and start a round only when they mention @<role> or the chair. You are never "
+             "called on. Action cards are approved by the person, not by agents.\n")
 
     def __init__(self) -> None:
         super().__init__()
@@ -91,10 +128,49 @@ class Huddle(Plugin):
                                      link=self._link, client=lambda: getattr(node, "client", None),
                                      origin=self._origin,
                                      wake_on_answer=lambda: bool(self.settings.get("wake_on_answer", False)))
+        self.service.chair = Chair(self.service, lambda: self._node, self._chair_settings)
+
+    def _chair_settings(self) -> dict:
+        return {k: self.settings.get(k) for k in ("reply_chars", "max_role_turns", "retention_days",
+                                                  "default_roles")}
+
+    async def start(self) -> None:
+        if self.service is None:
+            return
+        with contextlib.suppress(Exception):
+            self.service.chair.resume()
+        self._sweeper = asyncio.get_running_loop().create_task(self._sweep_loop())
+
+    async def _sweep_loop(self) -> None:
+        while True:
+            with contextlib.suppress(Exception):
+                self.sweep()
+            await asyncio.sleep(SWEEP_S)
+
+    def sweep(self, now: float | None = None) -> list[str]:
+        """Delete archived chaired huddles past ``huddle.retention_days``."""
+        days = int(self.settings.get("retention_days") or 0)
+        if self.service is None or days <= 0:
+            return []
+        gone = []
+        for room in self.service.store.expired((now or time.time()) - days * 86400):
+            self.service.chat.delete(room, None)
+            self.service.store.drop(room)
+            gone.append(room)
+        if gone:
+            log.info("huddle: deleted %d archived huddles past retention", len(gone))
+        return gone
+
+    def chaired(self, room: str) -> bool:
+        """Is ``room`` a huddle the house agent chairs (its chat loop leaves it alone)?"""
+        return self.service is not None and self.service.store.chaired(room)
 
     async def stop(self) -> None:
+        sweeper = getattr(self, "_sweeper", None)
+        if sweeper is not None:
+            sweeper.cancel()
         if self.service is not None:
-            for task in list(self.service.wakes):
+            for task in list(self.service.wakes) + list(self.service.chair.tasks):
                 task.cancel()
             self.service.store.close()
             self.service = None
@@ -201,6 +277,47 @@ class Huddle(Plugin):
             return svc.withdraw(me, int((data or {}).get("question") or 0))
         raise ValueError("action must be one of " + ", ".join(WRITES))
 
+    # -- chaired huddles ------------------------------------------------------
+    @capability("list", risk="read")
+    def list_(self, archived: bool = False) -> dict:
+        """Every huddle: chaired ones (roles, open cards) and project/band status huddles; archived ones with archived=true."""
+        return {"huddles": self._svc().huddles(archived=bool(archived))}
+
+    @capability("start", risk="write")
+    async def start_(self, title: str = "", roles=None, band: str | None = None) -> dict:
+        """Start a chaired huddle: you, the house agent in the chair and roles (ids; default huddle.default_roles; [] for a 1:1 with the chair). Returns {room, title, roles}."""
+        return await self._svc().start(caller(), title, roles, band)
+
+    @capability("post", risk="write")
+    async def post(self, huddle: str, text: str, mention=None, wait: bool = False) -> dict:
+        """Post in a chaired huddle. A person's post starts a round (the chair calls on roles; @role calls one directly); an agent's only when it mentions @<role> or the chair. wait: return when the round ends."""
+        if isinstance(mention, str):
+            mention = [m.strip() for m in mention.split(",") if m.strip()]
+        svc = self._svc()
+        out = await svc.post(caller(), huddle, text, mention)
+        if wait and out.get("round"):
+            r = await svc.chair.wait(out["round"], 600.0)
+            out["state"] = r.get("state")
+            out["messages"] = [m for m in svc.chat.tail(huddle, 30) if m["seq"] > out["seq"]]
+            out["cards"] = svc.store.cards(huddle, out["round"])
+        return out
+
+    @capability("card", risk="write")
+    async def card(self, huddle: str, card: str = "", action: str = "approve",
+                   data: dict | None = None) -> dict:
+        """An action card: approve (runs its call as you, under the band's policy) or dismiss; people only. propose (data {kind, summary, worker?, cap?, args?}) adds one."""
+        from ...authz import current_principal
+        try:
+            return await self._svc().card(huddle, card, action, caller(), current_principal.get(),
+                                          data)
+        except CardError as e:
+            raise ValueError(str(e)) from None
+
+    @capability("archive", risk="write")
+    def archive(self, huddle: str, archived: bool = True) -> dict:
+        """Archive a huddle (hidden from the list, kept; deleted after huddle.retention_days) or unarchive it."""
+        return self._svc().archive(huddle, archived)
+
     # -- MCP -----------------------------------------------------------------
     def mcp_tools(self, invoke):
         async def rook_huddle(action: str = "read", project: str | None = None, text: str | None = None,
@@ -208,9 +325,32 @@ class Huddle(Plugin):
             """Huddle: a project's group room the person watches (project=; none: the band's).
             status data {working_on, blocked_on?, needs_decision?, task?}: when you start, stall or
             finish. ask text, data {options?}: a decision only the person can make; pinned until
-            answered; the answer comes back as chat and wakes you. say text. read (data.since_seq),
-            mine."""
+            answered; the answer comes back as chat and wakes you. say text. read (data.since_seq,
+            data.room), mine, list. Chaired (person, house agent, roles): start data {title,
+            roles}; post text data {room}; card data {room, card, action}; archive data {room}."""
             d = dict(data or {})
+            if action in CHAIRED:
+                room = d.pop("room", None)
+                if action == "start":
+                    cap, args = "huddle.start", {"title": text or d.get("title") or "",
+                                                 "roles": d.get("roles"), "band": d.get("band")}
+                elif action == "post":
+                    cap, args = "huddle.post", {"huddle": room, "text": text,
+                                                "mention": d.get("mention")}
+                elif action == "card":
+                    cap, args = "huddle.card", {"huddle": room, "card": d.get("card") or "",
+                                                "action": d.get("action") or "approve",
+                                                "data": d.get("card_data")}
+                else:
+                    cap, args = "huddle.archive", {"huddle": room,
+                                                   "archived": d.get("archived", True)}
+                try:
+                    result = await invoke(cap, {k: v for k, v in args.items() if v is not None})
+                    return json.dumps({"ok": True, "result": result}, separators=(",", ":"),
+                                      ensure_ascii=False)
+                except ERRORS as error:
+                    return json.dumps({"ok": False, "error": str(error), "code": type(error).__name__},
+                                      separators=(",", ":"))
             where = {"room": d.pop("room", None), "project": project, "band": d.pop("band", None)}
             if action in READS:
                 cap, args = "huddle.read", {"action": action, **where, "since_seq": d.get("since_seq")}
@@ -232,7 +372,12 @@ def lean_view(view: dict) -> dict:
     """What an agent needs from a read, in fewer tokens: no participants,
     no read receipts, compact messages and statuses."""
     msgs = [{k: m[k] for k in ("seq", "sender", "text", "kind") if m.get(k) is not None} for m in view["messages"]]
-    return {"room": view["room"], "title": view["title"],
+    extra = {}
+    if view.get("roles") is not None:
+        extra = {"roles": view["roles"],
+                 "cards": [{k: c[k] for k in ("id", "kind", "by", "summary", "state", "seq")}
+                           for c in view.get("cards") or []]}
+    return {"room": view["room"], "title": view["title"], **extra,
             "statuses": [{k: s[k] for k in ("identity", "state", "working_on", "blocked_on", "needs_decision",
                                             "task", "ts") if s.get(k)} for s in view["statuses"]],
             "questions": [{k: q[k] for k in ("id", "asker", "text", "state", "options", "answer", "answered_by")

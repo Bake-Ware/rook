@@ -90,7 +90,12 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `hub.plugin.enable` | module | admin | Load a hub plugin module now (placement, settings, available(), bind_host, start). |
 | `hub.plugin.reload` | module | admin | Restart one hub plugin with its current settings (stop, load again, start). |
 | `hub.plugins` | limit=50, fields? | read | Full manifests of the hub's loaded plugins (placement, settings schema, guidance slots, source). |
+| `huddle.archive` | huddle, archived=true | write | Archive a huddle (hidden from the list, kept; deleted after huddle.retention_days) or unarchive it. |
+| `huddle.card` | huddle, card='', action='approve', data? | write | An action card: approve (runs its call as you, under the band's policy) or dismiss; people only. propose (dat… |
+| `huddle.list` | archived=false | read | Every huddle: chaired ones (roles, open cards) and project/band status huddles; archived ones with archived=t… |
+| `huddle.post` | huddle, text, mention?, wait=false | write | Post in a chaired huddle. |
 | `huddle.read` | action='read', room?, project?, band?, since_seq=0, limit=30 | read | Read huddles: read (room\|project\|band: statuses, questions, messages after since_seq), list, mine. |
+| `huddle.start` | title='', roles?, band? | write | Start a chaired huddle: you, the house agent in the chair and roles (ids; default huddle.default_roles; [] fo… |
 | `huddle.write` | action, room?, project?, band?, text?, data?, mention? | write | Post in a huddle: status (data {working_on, blocked_on?, needs_decision?, task?}), ask (text, data {options?,… |
 | `job.read` | action='list', id?, query='', data? | read | Read jobs and runs: list\|get\|runs\|run_get\|next\|validate\|guardrails_preview\|describe_schema. |
 | `job.write` | action, id?, data? | write | Write jobs: create\|update\|delete\|enable\|disable\|run\|cancel\|set_guardrails\|settings. |
@@ -179,6 +184,7 @@ The hub's own LLM (when the operator has set one up). Ask it with `rook_call(wor
 
 ### huddles
 A huddle is a project's (or band's) group room in the person's view. `rook_huddle(action="status", project=..., data={working_on, blocked_on?, needs_decision?, task?})` when you start, get stuck or finish; `action="ask"` with `text` (and `data.options`) for a decision only the person can make: it stays pinned until answered, and the answer comes back as a chat message (and wakes you if your worker can be woken). `read` shows the status strip, questions and recent messages.
+A *chaired* huddle (`action="start"`, data {title, roles}) is the person's standup with the house agent in the chair and roles (pm, qa, lead): your posts there are a guest's and start a round only when they mention @<role> or the chair. You are never called on. Action cards are approved by the person, not by agents.
 
 ### jobs
 Scheduled, branching work the hub runs. `rook_jobs(action="describe_schema")` gives the job JSON schema; `validate` checks a draft (`data` = the job); `create` saves it (you are its owner and runs act as you). A job is `steps` (cap, fanout, tool, wait, notify, ask, agent, join, noop) wired by `on: {success, failure, hang}` from `entry`, fired by `triggers` (cron in the hub zone unless `tz`, at, after, manual). `run` starts one now; `runs` / `run_get` show masked step output; `next` lists fire times. Over the band: `job.read` / `job.write` on worker `rook`. Use `{{secret:name}}` in step args, never values. Guardrails block admin-tier, update, deauth, policy and delete caps in job steps (`blocked_by_guardrail` on a job; `guardrails_preview` shows what a change would block); editing someone else's job makes it yours and resets its identity.

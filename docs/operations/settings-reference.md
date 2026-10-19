@@ -140,6 +140,12 @@ are set only in the environment or on the command line.
 | `agenthost.enabled` | House agent host | worker | bool | on | `ROOK_AGENTHOST` | restart |
 | `agenthost.roles_dir` | Role homes directory | worker | str |  | `ROOK_AGENTHOST_ROLES_DIR` | live |
 
+## Chat (hub plugin, runs in mcp)
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `chat.new_rooms` | New rooms from agents | hub | bool | off | `ROOK_CHAT_NEW_ROOMS` | live |
+
 ## Claude Code rules (hub plugin, runs in mcp)
 
 | Key | Label | Scope | Type | Default | Env / flag | Apply |
@@ -274,6 +280,10 @@ are set only in the environment or on the command line.
 |---|---|---|---|---|---|---|
 | `huddle.enabled` | Huddles | hub | bool | on | `ROOK_HUDDLE`, `ROOK_HUDDLE_ENABLED` | restart |
 | `huddle.wake_on_answer` | Wake the agent when you answer | hub | bool | off | `ROOK_HUDDLE_WAKE_ON_ANSWER` | live |
+| `huddle.reply_chars` | Role reply length | hub | int | `1200` | `ROOK_HUDDLE_REPLY_CHARS` | live |
+| `huddle.max_role_turns` | Role turns per round | hub | int | `6` | `ROOK_HUDDLE_MAX_ROLE_TURNS` | live |
+| `huddle.retention_days` | Keep archived huddles (days) | hub | int | `90` | `ROOK_HUDDLE_RETENTION_DAYS` | live |
+| `huddle.default_roles` | Default roles | hub | list | `['pm', 'qa', 'lead']` | `ROOK_HUDDLE_DEFAULT_ROLES` | live |
 
 ## Jobs (hub plugin, runs in mcp)
 

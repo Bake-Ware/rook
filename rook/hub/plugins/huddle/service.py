@@ -122,10 +122,101 @@ class HuddleStore:
         self._x("INSERT INTO huddle_questions(seq,room,asker,text,data,asked) VALUES(?,?,?,?,?,?)",
                 (seq, room, asker, text, json.dumps(data), time.time()))
 
+    # chaired huddles (migrations/002_chair.sql)
+    def set_roles(self, room: str, roles: list[str]) -> None:
+        self._x("UPDATE huddles SET roles=? WHERE room=?", (json.dumps(list(roles)), room))
+
+    def set_archived(self, room: str, archived: bool) -> bool:
+        return self._x("UPDATE huddles SET archived=? WHERE room=?",
+                       (time.time() if archived else None, room)) == 1
+
+    def chaired(self, room: str) -> bool:
+        rows = self._q("SELECT roles FROM huddles WHERE room=?", (room,))
+        return bool(rows) and rows[0]["roles"] is not None
+
+    def expired(self, before: float) -> list[str]:
+        """Archived chaired huddles archived before ``before``."""
+        return [r["room"] for r in self._q(
+            "SELECT room FROM huddles WHERE roles IS NOT NULL AND archived IS NOT NULL "
+            "AND archived<?", (before,))]
+
+    def round_add(self, rid: str, room: str, trigger_seq: int, asker: str, plan: dict) -> None:
+        self._x("INSERT INTO huddle_rounds(id,room,trigger_seq,asker,state,plan,started) "
+                "VALUES(?,?,?,?,?,?,?)", (rid, room, trigger_seq, asker, "chair",
+                                          json.dumps(plan), time.time()))
+
+    def round_set(self, rid: str, **fields) -> None:
+        sets, args = [], []
+        for k, v in fields.items():
+            if k not in ("state", "plan", "replies", "close_seq", "error", "ended"):
+                raise KeyError(k)
+            sets.append(f"{k}=?")
+            args.append(json.dumps(v) if k in ("plan", "replies") else v)
+        self._x(f"UPDATE huddle_rounds SET {','.join(sets)} WHERE id=?", (*args, rid))
+
+    @staticmethod
+    def _round(r: dict) -> dict:
+        return {**r, "plan": json.loads(r["plan"] or "{}"), "replies": json.loads(r["replies"] or "[]")}
+
+    def round(self, rid: str) -> dict | None:
+        rows = self._q("SELECT * FROM huddle_rounds WHERE id=?", (rid,))
+        return self._round(rows[0]) if rows else None
+
+    def rounds(self, room: str, limit: int = 20) -> list[dict]:
+        return [self._round(r) for r in reversed(self._q(
+            "SELECT * FROM huddle_rounds WHERE room=? ORDER BY started DESC LIMIT ?",
+            (room, int(limit))))]
+
+    def unfinished_rounds(self) -> list[dict]:
+        return [self._round(r) for r in self._q(
+            "SELECT * FROM huddle_rounds WHERE state NOT IN ('done','failed')")]
+
+    def card_add(self, card: dict) -> None:
+        self._x("INSERT INTO huddle_cards(id,room,round,seq,kind,by,summary,call,state,result,created)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (card["id"], card["room"], card.get("round"), card.get("seq"), card["kind"],
+                 card["by"], card["summary"], json.dumps(card["call"]) if card.get("call") else None,
+                 card["state"], json.dumps(card["result"]) if card.get("result") is not None else None,
+                 time.time()))
+
+    def card_set(self, cid: str, *, expect: tuple[str, ...] | None = None, **fields) -> bool:
+        sets, args = [], []
+        for k, v in fields.items():
+            if k not in ("state", "result", "seq", "decided_by", "decided"):
+                raise KeyError(k)
+            sets.append(f"{k}=?")
+            args.append(json.dumps(v) if k == "result" else v)
+        where, wargs = "id=?", [cid]
+        if expect:
+            where += f" AND state IN ({','.join('?' * len(expect))})"
+            wargs += list(expect)
+        return self._x(f"UPDATE huddle_cards SET {','.join(sets)} WHERE {where}", (*args, *wargs)) == 1
+
+    @staticmethod
+    def _card(r: dict) -> dict:
+        out = {k: r[k] for k in ("id", "room", "round", "seq", "kind", "by", "summary", "state",
+                                 "created", "decided_by", "decided")}
+        out["call"] = json.loads(r["call"]) if r["call"] else None
+        out["result"] = json.loads(r["result"]) if r["result"] else None
+        return out
+
+    def card(self, cid: str) -> dict | None:
+        rows = self._q("SELECT * FROM huddle_cards WHERE id=?", (cid,))
+        return self._card(rows[0]) if rows else None
+
+    def cards(self, room: str, round: str | None = None) -> list[dict]:
+        if round:
+            rows = self._q("SELECT * FROM huddle_cards WHERE room=? AND round=? ORDER BY created",
+                           (room, round))
+        else:
+            rows = self._q("SELECT * FROM huddle_cards WHERE room=? ORDER BY created", (room,))
+        return [self._card(r) for r in rows]
+
     def drop(self, room: str) -> None:
         """Forget a huddle whose chat room was deleted."""
         with self._lock:
-            for table in ("huddles", "huddle_posts", "huddle_status", "huddle_questions"):
+            for table in ("huddles", "huddle_posts", "huddle_status", "huddle_questions",
+                          "huddle_rounds", "huddle_cards"):
                 self._db.execute(f"DELETE FROM {table} WHERE room=?", (room,))
             self._db.commit()
 
@@ -206,6 +297,8 @@ class HuddleService:
         self._wake_on_answer = wake_on_answer
         self._origin = origin
         self.wakes: set[asyncio.Task] = set()   # running wake-ups (tests await them)
+        #: The chair (rounds, cards: :mod:`.chair`), set by the plugin.
+        self.chair: Any = None
 
     # -- which huddle ----------------------------------------------------
     def _band(self, ref: str | None) -> dict:
@@ -379,6 +472,80 @@ class HuddleService:
             raise ValueError("no open question of yours with that id")
         return {"question": int(question), "state": "withdrawn"}
 
+    # -- chaired huddles (docs/design/huddles.md 5) -------------------------
+    def _chair(self):
+        if self.chair is None:
+            raise ValueError("the chair is not available on this hub")
+        return self.chair
+
+    async def start(self, identity: str, title: str, roles: list[str] | None = None,
+                    band: str | None = None) -> dict:
+        """Start a chaired huddle: the person, the house agent in the chair
+        and ``roles`` (role ids; None: ``huddle.default_roles`` that exist;
+        []: a 1:1 with the chair)."""
+        chair = self._chair()
+        title = _text(title, "title", 200) or "Huddle"
+        known = {r["id"] for r in (chair.roles().store.list() if chair._plugin("role") else [])}
+        if roles is None:
+            roles = [r for r in chair.setting("default_roles", []) if r in known]
+        if isinstance(roles, str):
+            roles = [r.strip() for r in roles.split(",") if r.strip()]
+        roles = [str(r).lstrip("@").strip().lower() for r in roles or []]
+        unknown = [r for r in roles if r not in known]
+        if unknown:
+            raise ValueError(f"no role {unknown[0]!r} (role.list; save one from role.presets)")
+        roles = list(dict.fromkeys(roles))
+        b = self._band(band)
+        members = [PERSON] + ([identity] if identity and identity != PERSON else [])
+        started = self.chat.start(title, identity or PERSON, members)
+        if not started.get("ok"):
+            raise ValueError(started.get("error") or "could not start the huddle room")
+        room = started["room"]
+        self.store.add(room, "talk", room, b["id"], title, identity or PERSON)
+        self.store.set_roles(room, roles)
+        return {"room": room, "title": title, "roles": roles}
+
+    def _chaired(self, room: str) -> dict:
+        h = self._live(self.store.get(room)) if room else None
+        if h is None:
+            raise ValueError(f"{room!r} is not a huddle")
+        if h.get("roles") is None:
+            raise ValueError("that huddle has no chair (a project's or band's status huddle); "
+                             "post with huddle.write say")
+        return h
+
+    async def post(self, identity: str, room: str, text: str, mention=None) -> dict:
+        """Post in a chaired huddle. A person's (or a job's) post starts a
+        round: the chair routes it, roles answer. ``@<role>`` calls that
+        role directly."""
+        h = self._chaired(room)
+        if h.get("archived"):
+            raise ValueError("that huddle is archived; unarchive it to post")
+        text = _text(text, "text", 8000, required=True)
+        sent = self._send(room, identity, text, mention or [])
+        rid = self._chair().on_post(h, sent["seq"], identity, text)
+        return {"room": room, "seq": sent["seq"], "round": rid}
+
+    def archive(self, room: str, archived: bool = True) -> dict:
+        h = self._live(self.store.get(room)) if room else None
+        if h is None:
+            raise ValueError(f"{room!r} is not a huddle")
+        self.store.set_archived(room, bool(archived))
+        return {"room": room, "archived": bool(archived)}
+
+    async def card(self, room: str, card: str, action: str, by: str, principal=None,
+                   data: dict | None = None) -> dict:
+        """``approve`` / ``dismiss`` a card (people only), or ``propose`` one
+        (``data`` {kind, summary, worker?, cap?, args?}) as ``by``."""
+        chair = self._chair()
+        h = self._chaired(room)
+        if action == "propose":
+            return await chair._propose(None, h["room"], by, data or {})
+        c = self.store.card(card)
+        if c is None or c["room"] != h["room"]:
+            raise ValueError("no such card in that huddle")
+        return await chair.decide(card, action, by, principal)
+
     # -- reading -----------------------------------------------------------
     async def view(self, reader: str, since_seq: int = 0, limit: int = 50, mark: bool = True,
                    create: bool = False, targets: bool = False, **where) -> dict:
@@ -403,18 +570,33 @@ class HuddleService:
             for q in questions:
                 if q["state"] == "open":
                     q["wake_target"] = self.wake_target(q["id"])
-        return {"room": room, "title": h["title"], "scope": h["scope"], "ref": h["ref"], "band": h["band"],
-                "participants": read["participants"], "statuses": self.store.statuses(room),
-                "questions": questions, "messages": msgs, "last_seq": read["last_seq"]}
+        out = {"room": room, "title": h["title"], "scope": h["scope"], "ref": h["ref"], "band": h["band"],
+               "participants": read["participants"], "statuses": self.store.statuses(room),
+               "questions": questions, "messages": msgs, "last_seq": read["last_seq"]}
+        if h.get("roles") is not None:
+            out.update(roles=json.loads(h["roles"]), archived=h.get("archived"),
+                       chair=self.chair.chair_identity() if self.chair is not None else None,
+                       rounds=self.store.rounds(room, 10), cards=self.store.cards(room))
+        return out
 
-    def huddles(self) -> list[dict]:
+    def huddles(self, archived: bool = False) -> list[dict]:
+        """Every huddle (archived ones only with ``archived``), newest
+        activity first for chaired ones."""
         out = []
         for h in self.store.all():
             if self._live(h) is None:
                 continue
+            if h.get("archived") and not archived:
+                continue
             last = self.chat.tail(h["room"], 1)
-            out.append({**h, "last": last[0] if last else None,
-                        "agents": len(self.store.statuses(h["room"]))})
+            row = {**h, "last": last[0] if last else None,
+                   "agents": len(self.store.statuses(h["room"]))}
+            row["roles"] = json.loads(h["roles"]) if h.get("roles") is not None else None
+            row["chaired"] = h.get("roles") is not None
+            if row["chaired"]:
+                row["open_cards"] = sum(1 for c in self.store.cards(h["room"])
+                                        if c["state"] == "proposed")
+            out.append(row)
         return out
 
     def mine(self, identity: str) -> list[dict]:

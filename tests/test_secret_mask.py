@@ -394,6 +394,7 @@ def leaked(tmp_path):
 
 @pytest.mark.asyncio
 async def test_forward_path_still_works_and_everything_else_is_masked(tmp_path, monkeypatch):
+    monkeypatch.setenv("ROOK_CHAT_NEW_ROOMS", "1")
     async with mcp_session(tmp_path, monkeypatch) as env:
         assert (await env.tool('rook_secret', action='set', name='pw', value=PW))['ok']
         assert (await env.tool('rook_secret', action='set', name='tok', value=TOKEN))['ok']

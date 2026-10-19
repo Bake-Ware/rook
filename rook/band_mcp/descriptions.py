@@ -30,7 +30,7 @@ TOOLS: dict[str, str] = {
 
     "rook_handoff_list": "Recent handoff threads (latest per thread) with goal and freshness.",
 
-    "rook_chat_start": "Start a chat room; invite = identities (list or comma string). Returns the room id, which is also a thread_id.",
+    "rook_chat_start": "Start a chat room; invite = identities (list or comma string). Returns the room id, which is also a thread_id. Off unless chat.new_rooms: use rook_huddle, tasks, handoffs.",
 
     "rook_chat_send": "Post to a room. mention (list/comma): in rooms of 3+ only mentioned participants are expected to reply; a mentioned non-member is invited. The reply lists who is offline (rook_chat_wake makes one answer now).",
 

@@ -15,6 +15,18 @@ version was `0.1.0`.
   (`role:<id>`) and the Claude Code, Codex and OpenCode config that declares exactly its
   tools; every role turn runs there. Worker setting `agenthost.roles_dir`.
   (manual: home-agent)
+- Chaired huddles (beta, huddles H3): `huddle.start`, `huddle.post`, `huddle.card`,
+  `huddle.archive` and `huddle.list`, and the same actions on `rook_huddle`. The home agent
+  chairs (call_on, answer, propose), called roles answer in parallel in their homes, the
+  chair closes the round; `@role` asks one directly. Action cards are approved by people and
+  run as the approver, or run directly by roles with autonomy `act`. Settings
+  `huddle.reply_chars`, `huddle.max_role_turns`, `huddle.retention_days`,
+  `huddle.default_roles`. (manual: huddles)
+
+### Changed
+- New chat rooms are off by default (`chat.new_rooms`): `rook_chat_start` and `chat.write`
+  start point agents at huddles, tasks and handoffs; existing rooms keep working.
+  (manual: huddles)
 
 ### Security
 - Failed sign-ins are throttled per client address: after 5 wrong passwords or tokens in

@@ -10,7 +10,8 @@ from rook.hub.node import HubNode
 
 
 @pytest.fixture
-def node(tmp_path):
+def node(tmp_path, monkeypatch):
+    monkeypatch.setenv("ROOK_CHAT_NEW_ROOMS", "1")      # rooms are retired by default
     return HubNode(str(tmp_path), entry_points=False, band_max_risk="write",
                    chat=ChatStore(str(tmp_path / "chat.db")))
 
@@ -72,7 +73,20 @@ async def test_errors_and_delete(node):
 
 
 @pytest.mark.asyncio
-async def test_band_write_needs_the_ceiling_raised(tmp_path):
+async def test_new_rooms_are_retired_by_default(tmp_path, monkeypatch):
+    monkeypatch.delenv("ROOK_CHAT_NEW_ROOMS", raising=False)
+    node = HubNode(str(tmp_path), entry_points=False, chat=ChatStore(str(tmp_path / "chat.db")))
+    body = await node.dispatch("chat.write", {"action": "start", "title": "t"}, "agent:x")
+    assert not body["ok"] and "rook_huddle" in body["error"]
+    room = node.chat.start("old", "agent:x", [])["room"]           # rooms made before still work
+    sent = await node.dispatch("chat.write", {"action": "send", "room": room, "text": "hi"}, "agent:x")
+    assert sent["ok"]
+    await node.stop()
+
+
+@pytest.mark.asyncio
+async def test_band_write_needs_the_ceiling_raised(tmp_path, monkeypatch):
+    monkeypatch.setenv("ROOK_CHAT_NEW_ROOMS", "1")
     node = HubNode(str(tmp_path), entry_points=False)  # default ceiling: read
     body = await node.dispatch("chat.write", {"action": "start"}, "agent:x", source="band")
     assert not body["ok"] and "not callable over the band" in body["error"]
