@@ -443,7 +443,20 @@ class HomeAgent(Plugin):
         """One turn with a caller's own tool set (the huddle chair's
         ``call_on``/``answer``/``propose``), on either backend. ``handler(name,
         args) -> str`` runs each call. Returns ``{content, model, latency_ms,
-        tools_used}``; raises HomeError/LLMError."""
+        tools_used}``; raises HomeError/LLMError. Each turn is a row in the
+        page's Recent activity (``via``: huddle-chair, huddle-close)."""
+        try:
+            res = await self._tool_turn(messages, cfg, tools, handler, via=via,
+                                        max_calls=max_calls)
+        except (HomeError, LLMError) as e:
+            self._note(via, False, error=str(e)[:300])
+            raise
+        self._note(via, True, model=res.get("model"), latency_ms=res.get("latency_ms"),
+                   tools=list(res.get("tools_used") or []), worker=res.get("worker"))
+        return res
+
+    async def _tool_turn(self, messages: list[dict], cfg: dict, tools: list[dict],
+                         handler: Any, *, via: str, max_calls: int = 8) -> dict:
         if self.use_agent_host(cfg):
             try:
                 return await self.agents.run(cfg, messages, tools=tools, handler=handler,
@@ -1149,7 +1162,7 @@ class HomeAgent(Plugin):
                 "personas": personas, "secrets": secrets, "activity": list(self.activity),
                 "providers": list(PROVIDERS), "llm_providers": llm_providers,
                 "backends": list(BACKENDS), "claude_models": list(agent_host.CLAUDE_MODELS),
-                "agent_hosts": self.agents.hosts(),
+                "agent_hosts": self.agents.hosts(), "usage": self.agents.usage(24.0),
                 "history": svc.store.history(key="home.", limit=30)}
 
     def _form(self, data: dict) -> dict:

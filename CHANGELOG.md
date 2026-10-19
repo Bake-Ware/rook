@@ -22,6 +22,15 @@ version was `0.1.0`.
   run as the approver, or run directly by roles with autonomy `act`. Settings
   `huddle.reply_chars`, `huddle.max_role_turns`, `huddle.retention_days`,
   `huddle.default_roles`. (manual: huddles)
+- Huddles on the dashboard (beta, huddles H4): the Chat tab is now **Huddles**: a list of
+  huddles and the thread, role and chair markers, "answering" lines while a round runs,
+  action cards inline with Approve and Dismiss, `@role` completion, new huddles with the
+  default roles, archive, and the old chat rooms read-only under a filter (`#chat` links
+  land there). **Manage > Roles** edits, moves and deletes roles, adds them from the
+  presets and shows their history; the Memory page shows and edits a role's memory. The
+  Home agent page's chat panel is the 1:1 huddle with the house agent, and the page shows
+  the last 24 hours of agent host turns and tokens per role. Phone layout for all of it.
+  (manual: huddles, home-agent, chat, work, desktop-app)
 
 ### Changed
 - New chat rooms are off by default (`chat.new_rooms`): `rook_chat_start` and `chat.write`

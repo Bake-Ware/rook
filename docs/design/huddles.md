@@ -1,7 +1,7 @@
 # Huddles: roles, a chair, and Claude Code as the house agent
 
 Status: H1 (section 3, the agent host) is built; H2 (roles, role homes and
-role memory: 3.3, 4) is built as decided here; H3 to H5 are design. Related: [home-agent.md](home-agent.md)
+role memory: 3.3, 4) is built as decided here; H3 (chaired huddles, 5) and H4 (the web, 8) are built; H5 is design. Related: [home-agent.md](home-agent.md)
 (the house agent this extends), [memory.md](memory.md) (where role memory
 lives), [persona.md](persona.md) (how agents talk, which is not the same as
 what they care about), [sessions.md](sessions.md) (the Claude Code sessions
@@ -393,6 +393,47 @@ Minimal, per Bake's standing rule (no chatty status, only actionable notices):
   the role's memory on the Memory page; history.
 - **Manage > Home agent**: the backend switch and the Claude Code group (3.2),
   host picker with status, Test.
+
+As built (H4):
+
+- **Huddles** (`rook/web/huddles.js`, styles in `huddle.css`, served by the
+  dashboard's `HuddleWeb` proxy) replaces the Chat tab; `#chat` and
+  `#chat?room=<id>` redirect to `#huddles` (`?room=` opens that huddle, or
+  that old chat room). The list: chaired huddles by last activity, then
+  project and band status huddles; a filter for **Archived** and **Old chat
+  rooms** (the dashboard's `/api/chat/rooms` minus every huddle's room, read
+  with `/api/chat/read`, no composer). Badges count open cards (chaired) or
+  open questions (status huddles). Status huddles open as a plain thread
+  with a link to Work > Huddle (statuses, answering questions).
+- The thread polls `view` (`since_seq`): 1.5 s while the newest round is
+  `chair`/`roles`/`closing`, 6 s otherwise, never while the view or the page
+  is hidden, and redraws only when something changed. Running rounds show one
+  "answering" line per reply still `running` (from `rounds[-1].replies`), or
+  "thinking"/"summing up" for the chair. Live token streaming is not built:
+  replies appear whole (`agenthost.events` stays future work).
+- Cards attach to their `seq`; a card without one goes after the last message
+  of its round; cards older than the loaded messages go first. The only
+  notices: the house agent is off (link to Manage > Home agent), and open
+  questions in a status huddle (link to answer them).
+- New huddle: title and role checkboxes; checked are `huddle.default_roles`
+  that exist and are on, else every role that is on (the `roles` action
+  returns `default_roles`).
+- **Manage > Roles** (`rook/web/roles.js`): list, form for every role field,
+  Move (agent hosts with harness and sign-in status), history, presets,
+  delete, a link to `#memory?role=<id>`. The **Memory** page has a "whose
+  memory" menu: a role's memory through `role.memory` / `role.memory_edit`.
+  Both use `/huddle/account-api` role actions (`role_list`, `role_get`,
+  `role_history`, `role_presets`, `role_set`, `role_delete`, `role_move`,
+  `role_memory`, `role_memory_edit`), which call the `role.*` caps with the
+  operator account's principal (a band owner, so the roles plugin's admin
+  gate passes) and `human:<username>` as the actor.
+- **Manage > Home agent** adds "Last 24 hours on agent hosts": turns, failed
+  turns, tokens and cost per role (`""` = the house agent, chair included),
+  from an in-memory ledger in `AgentHostBackend` (since the MCP server
+  started; `home` page `usage`). Its chat panel is the 1:1 huddle
+  ([home-agent.md](home-agent.md) 1.3).
+- Phone (under 760 px): one column; the list, then the thread with a back
+  button.
 
 ## 9. Workstreams (each one PR into `beta-huddles`)
 

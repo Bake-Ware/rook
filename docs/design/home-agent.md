@@ -85,40 +85,42 @@ plugin reads its settings on every use.
 ### 1.3 Chat on the page
 
 Manage > Home agent has a chat panel under the agent table (`homeChat` in
-`rook/web/home.js`). It adds no endpoint: it uses the dashboard's own chat
-API (`/api/chat/rooms`, `read`, `start`, `send`), the same calls and the same
-admin login as the Chat view, so it chats as the dashboard's chat identity
-`user:operator`.
+`rook/web/home.js`). Since huddles H4 it is the **1:1 huddle with the house
+agent** ([huddles.md](huddles.md) 5, 7): a chaired huddle with roles `[]`,
+through the huddle account API (`/account/huddle/api`: `list`, `start`,
+`send`, `view`), the same API and operator login as the Huddles page. The
+person is `user:operator`; the chair is `agent:<name>`.
 
-- **One room, shared with Chat.** The conversation is the newest two-person
-  room between `user:operator` and `agent:<name>`, which is also the room
-  the Chat view opens when you click the agent in Presence. Visiting the page
-  creates nothing; the first message creates the room (titled with the
-  agent's name). Renaming the agent switches the panel to the new identity's
-  room.
-- **Sending.** Enter sends (Shift+Enter for a newline). The message mentions
-  the agent explicitly, so it is still answered if someone later joins the
-  room.
-- **Working state.** "<name> is thinking · N s" from the send until a reply
-  from the agent lands. Reopening the page while the last message is still
-  the operator's (and recent) shows it again. Replies are posted whole, so
-  the panel polls the room: every 1.5 s while waiting, every 4 s otherwise,
-  and not at all while another view is open.
+- **One huddle, shared with the Huddles page.** The newest chaired huddle
+  that is not archived, has no roles and is titled with the agent's name.
+  Visiting the page creates nothing; the first message starts it
+  (`start {title: <name>, roles: []}`). Renaming the agent switches the
+  panel to the new name's huddle. The panel header links to it on Huddles.
+- **Sending.** Enter sends (Shift+Enter for a newline). Each message is a
+  post that starts a round; with no roles the chair answers itself (the
+  home agent's chat loop leaves chaired rooms alone, so it is answered
+  once).
+- **Working state.** "<name> is thinking · N s" from the send until the
+  round the message started (`view.rounds`, matched by `trigger_seq`) is
+  `done` or `failed`. Reopening the page while the newest round still runs
+  shows it again. Replies are posted whole, so the panel polls the huddle:
+  every 1.5 s while waiting, every 4 s otherwise, and not at all while the
+  page is hidden or another view is open.
 - **Errors.** Off or missing a base URL/model: the panel says so, disables
   the box and offers **Go to the form** (on a phone the form is below). A
-  failed reply ends the wait with an error and the status summary
-  (`last_error`): from the room's generic "unavailable" line, or, since that
-  line is posted at most once per room per 10 minutes, from a failed `chat`
-  row for `user:operator` in the agent's activity (checked every third poll
-  while waiting). No reply after `2 × timeout_s + 30` seconds says so and
-  points at Recent activity. Chat API failures (no chat store, signed out)
-  are shown in the panel.
-- Status lines the agent posts (busy, unavailable) are shown dimmed; the
-  busy note does not end the wait.
+  failed round ends the wait with an error naming the round's reason (its
+  `error`); the chair's "(The chair could not finish this round: …)" line is
+  shown dimmed. No reply after `2 × timeout_s + 30` seconds says so and
+  points at Recent activity. Chair turns are rows there (`huddle-chair`,
+  `huddle-close`, from `HomeAgent.tool_turn`). API failures (huddles off,
+  signed out) are shown in the panel.
+- Chair turns do not read the home agent's memory or search knowledge (the
+  chair's own tool set is call_on/answer/propose); the 1:1 with the house
+  agent before H4 did. Follow-up: give the chair memory recall.
 
-Tests: `tests/browser_home_chat.py` (real plugin, fake model endpoint, real
-chat store; desktop and phone width) and `test_the_home_page_chat_contract`
-in `tests/test_home_agent.py`.
+Tests: `tests/browser_home_chat.py` (real home and huddle plugins and the
+huddle account API, fake model endpoint, real chat store; desktop and phone
+width) and `test_the_home_page_chat_contract` in `tests/test_home_agent.py`.
 
 ### 1.4 Identity and the journal
 
