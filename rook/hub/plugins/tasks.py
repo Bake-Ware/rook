@@ -54,8 +54,9 @@ class Tasks(Plugin):
              "(create/update/link/retract/claim/release) on worker `rook`, with "
              "`kind=task|project|concept`. Hygiene nudges ride replies as `_hygiene` and show on "
              "the deck; `rook_task(action=\"hygiene\")` lists open ones (`data {mine: true}`). A commit "
-             "message with `rook: <task id or slug>` links the commit to that task as evidence "
-             "when you hold a claim on it.\n")
+             "message with `rook: <task id, slug or name>` links the commit to that task as evidence "
+             "when you hold a claim on it. Tasks and projects have speakable names "
+             "(`brave-otter-lamp`): any `id` takes one; a write needs it exact.\n")
 
     def available(self) -> bool:
         return bool(self.settings.get("enabled", True))
@@ -78,7 +79,8 @@ class Tasks(Plugin):
         """Read tasks/projects/concepts: deck|search|list|get|context|status|hygiene.
 
         Same arguments and result as rook_task's read actions; kind picks
-        task (default), project or concept. deck: id=project narrows."""
+        task (default), project or concept. deck: id=project narrows. id: an
+        id, slug or speakable name."""
         return await self._knowledge().run('task', False, action, self._kind(kind), band, id, query,
                                            data, None)
 
@@ -140,7 +142,8 @@ attrs.blocked_reason or a blocked_by link; release/stopping needs data.handoff {
 note data {text, evidence?}. batch data {ops:[{action, id, data}]}.
 release data {actor}: free a stale claim. get data {links:"all"}: + auto links.
 """ + LINKS_HELP + """
-search/list: 5/20 excerpts (data {limit, fields}). Writes need request_id."""
+search/list: 5/20 excerpts (data {limit, fields}). Writes need request_id.
+id: id|slug|name."""
         return [rook_concept, rook_project, rook_task]
 
 

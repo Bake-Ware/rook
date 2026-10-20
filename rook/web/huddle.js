@@ -44,7 +44,7 @@ export async function mountHuddle(root,{onPins}={}){
     const r=await api('list');huddles=r.huddles;list.replaceChildren(el('h3','Huddles'));
     const total=huddles.reduce((n,x)=>n+(x.open_questions||0),0);onPins&&onPins(total);
     for(const x of huddles.slice().sort((a,b)=>(b.open_questions-a.open_questions)||((b.last?.ts||0)-(a.last?.ts||0)))){
-      const a=el('a',undefined,'hd-item'+(cur&&x.room===cur.room?' hd-current':''));a.href='#work?v=huddle&h='+encodeURIComponent(x.room);
+      const a=el('a',undefined,'hd-item'+(cur&&x.room===cur.room?' hd-current':''));a.href='#work?v=huddle&h='+encodeURIComponent(x.name||x.room);
       const top=el('div',undefined,'hd-item-top');top.append(el('strong',x.title.replace(/^Huddle: /,'')));if(x.open_questions)top.append(el('span',String(x.open_questions),'hd-badge'));
       a.append(top,el('small',(x.scope==='project'?'Project':'Band')+' · '+(x.agents||0)+' agent'+(x.agents===1?'':'s')+(x.last?' · '+ago(x.last.ts,''):''),'kn-dim'));
       if(x.last)a.append(el('span',name(x.last.sender)+': '+x.last.text,'hd-item-last'));
@@ -55,7 +55,7 @@ export async function mountHuddle(root,{onPins}={}){
   function drawHead(){head.replaceChildren();const t=el('div');t.append(el('h1',view.title.replace(/^Huddle: /,'')));
     const sub=el('p',undefined,'kn-meta');sub.append(document.createTextNode((view.scope==='project'?'Project huddle':'Band huddle')+' · '+view.participants.filter(p=>p!==YOU).length+' agents · '));
     if(view.scope==='project'){const a=el('a','Project page');a.href='#work?p='+encodeURIComponent(view.ref);sub.append(a,document.createTextNode(' · '));}
-    const c=el('a','Open in Huddles');c.href='#huddles?room='+encodeURIComponent(view.room);sub.append(c);t.append(sub);head.append(t);}
+    const c=el('a','Open in Huddles');c.href='#huddles?room='+encodeURIComponent(view.name||view.room);sub.append(c);t.append(sub);head.append(t);}
 
   function drawStrip(){strip.replaceChildren();
     if(!view.statuses.length){strip.append(el('p','No agent has reported in yet.','kn-dim hd-empty'));return;}

@@ -38,6 +38,10 @@ function dueChip(t){if(!t.due)return null;const s=dueState(t);const n=daysBetwee
   const txt=s==='overdue'?'Overdue · '+fmtDay(t.due):n===0?'Due today':n===1?'Due tomorrow':'Due '+fmtDay(t.due);
   return el('span',txt,'wv-due'+(s?' wv-'+s:''));}
 function stateChip(state){return el('span',LABEL[state]||state,'wv-state wv-s-'+state);}
+// A task's or project's handle in links: its speakable name (brave-otter-lamp), else its slug.
+export const ref=r=>r.name||r.slug;
+// The name to say or paste (tap copies it); the id stays one tap away beside it.
+export function nameChips(r){return r.name?[copyChip(r.name,r.name,'wv-name'),copyChip(r.id,r.id.slice(0,8)+'…','wv-id')]:[copyChip(r.id,r.id.slice(0,8)+'…','wv-id')];}
 function button(label,fn,cls,title){const b=h('button',{type:'button',class:cls||'',text:label,title});b.onclick=e=>{e.preventDefault();e.stopPropagation();Promise.resolve().then(fn).catch(err=>console.warn(err));};return b;}
 
 // A small modal form: fields [{name,label,type:'input'|'textarea'|'date'|'select',value,options,placeholder,required}].
@@ -79,7 +83,7 @@ export async function moveTask(kit,t,to){
         if(ev){await kit.api('link',{id:t.id,band:t.band,request_id:crypto.randomUUID(),data:{...ev,relation:'evidence',note:'Added when finishing from the Work board'}});
           const cur=await kit.api('get',{id:t.id,band:t.band});
           await kit.api('update',{id:t.id,band:t.band,request_id:crypto.randomUUID(),data:{revision:cur.revision,patch:{state:'done',attrs:{outcome}}}});}
-        else await upd({state:'closed',attrs:{outcome}},{closed_by:{who:kit.me(),quote:outcome,session:location.origin+'/#work?t='+encodeURIComponent(t.slug)}});
+        else await upd({state:'closed',attrs:{outcome}},{closed_by:{who:kit.me(),quote:outcome,session:location.origin+'/#work?t='+encodeURIComponent(ref(t))}});
         res(true);}));}
   if(to==='blocked'){
     return new Promise(res=>ask(host,{title:'Blocked: “'+t.title+'”',submit:'Mark blocked',
@@ -110,7 +114,7 @@ export function applyFilters(data,f){
     &&(!f.state||COLUMN[t.state]===f.state||t.state===f.state)
     &&(!f.label||(t.tags||[]).includes(f.label))
     &&(!f.due||(f.due==='overdue'?dueState(t)==='overdue':f.due==='week'?(t.due&&!FINISHED.has(t.state)&&daysBetween(t0,t.due)>=0&&daysBetween(t0,t.due)<=7):f.due==='none'?!t.due&&!t.start:f.due==='dated'?!!(t.due||t.start):true))
-    &&(!q||(t.title+' '+t.slug+' '+(t.excerpt||'')).toLowerCase().includes(q)));}
+    &&(!q||(t.title+' '+t.slug+' '+(t.name||'')+' '+(t.name||'').replace(/-/g,' ')+' '+(t.excerpt||'')).toLowerCase().includes(q.replace(/_/g,' '))));}
 // On phones the selects fold behind "Filters (n)"; the bar is redrawn on every
 // change, so whether it is open is kept here.
 let filtersOpen=false;
@@ -140,9 +144,10 @@ function projectName(data,id){return (data.projects.find(p=>p.id===id)||{}).titl
 function card(kit,data,t,{showProject}){
   const c=el('article',undefined,'wv-card wv-c-'+t.state);c.draggable=true;c.dataset.id=t.id;c.tabIndex=0;
   c.setAttribute('aria-label',t.title+', '+(LABEL[t.state]||t.state));
-  const top=el('div',undefined,'wv-card-top');const title=el('a',t.title,'wv-card-title');title.href='#work?t='+encodeURIComponent(t.slug)+'&b='+encodeURIComponent(t.band);
+  const top=el('div',undefined,'wv-card-top');const title=el('a',t.title,'wv-card-title');title.href='#work?t='+encodeURIComponent(ref(t))+'&b='+encodeURIComponent(t.band);
   top.append(title);const menuBtn=button('⋯',()=>moveMenu(kit,t,menuBtn),'wv-more','Move to…');menuBtn.setAttribute('aria-label','Move '+t.title);top.append(menuBtn);c.append(top);
   if(showProject){const p=projectName(data,t.project);if(p)c.append(el('div',p,'wv-card-project'));}
+  if(t.name)c.append(el('div',t.name,'wv-card-name'));
   if(t.state==='blocked'&&t.blocked_reason)c.append(el('div','Waiting on: '+t.blocked_reason,'wv-card-note wv-bad'));
   if(t.state==='cancelled')c.append(el('div','Cancelled','wv-card-note'));
   if(t.needs_hygiene)c.append(el('div','Gone quiet with unrecorded work','wv-card-note wv-warn'));
@@ -195,9 +200,9 @@ export function renderList(kit,data,tasks,sort,onSort){
   for(const [k,label] of [['title','Task'],['project','Project'],['state','Status'],['owner','Owner'],[null,'Labels'],['due','Due'],['updated','Updated']]){
     const th=el('th');if(k){const b=button(label+(k===key?(dir==='-1'?' ↓':' ↑'):''),()=>onSort(k+':'+(k===key&&dir!=='-1'?'-1':'1')),'wv-sort');th.append(b);th.setAttribute('aria-sort',k===key?(dir==='-1'?'descending':'ascending'):'none');}else th.textContent=label;head.append(th);}
   t.append(el('thead'));t.firstChild.append(head);const body=el('tbody');
-  for(const x of rows){const tr=el('tr');const a=el('a',x.title);a.href='#work?t='+encodeURIComponent(x.slug)+'&b='+encodeURIComponent(x.band);
-    const c1=el('td',undefined,'wv-td-title');c1.append(a);if(x.state==='blocked'&&x.blocked_reason)c1.append(el('small',x.blocked_reason,'wv-bad'));
-    const pr=el('td');const pa=el('a',projectName(data,x.project));pa.href='#work?p='+encodeURIComponent((data.projects.find(p=>p.id===x.project)||{}).slug||'')+'&b='+encodeURIComponent(x.band);pr.append(pa);
+  for(const x of rows){const tr=el('tr');const a=el('a',x.title);a.href='#work?t='+encodeURIComponent(ref(x))+'&b='+encodeURIComponent(x.band);
+    const c1=el('td',undefined,'wv-td-title');c1.append(a);if(x.name)c1.append(el('small',x.name,'wv-name'));if(x.state==='blocked'&&x.blocked_reason)c1.append(el('small',x.blocked_reason,'wv-bad'));
+    const pr=el('td');const pa=el('a',projectName(data,x.project));pa.href='#work?p='+encodeURIComponent(ref(data.projects.find(p=>p.id===x.project)||{})||'')+'&b='+encodeURIComponent(x.band);pr.append(pa);
     const st=el('td');st.append(stateChip(x.state));
     const ow=el('td',undefined,'wv-td-owner');const owIn=el('span',undefined,'wv-cell');for(const o of (x.owner||[]).slice(0,2)){const s=el('span',undefined,'wv-owner');s.append(avatar(o,'sm'),el('span',who(o)));owIn.append(s);}ow.append(owIn);
     const lb=el('td');const lbIn=el('span',undefined,'wv-cell');for(const g of x.tags||[])lbIn.append(el('span',g,'wv-tag'));lb.append(lbIn);
@@ -244,12 +249,12 @@ export function renderTimeline(kit,data,tasks,{phone=false,width:avail=0}={}){
     const grid=el('div',undefined,'wv-tl-grid');grid.style.left=LBL+'px';grid.style.backgroundSize=(dayW*7)+'px 100%';
     grid.style.backgroundPosition=(((8-parseDay(from).getDay())%7)*dayW)+'px 0';rowsBox.append(grid);
     for(const [p,sched] of groups){
-      const pr=el('div',undefined,'wv-tl-row wv-tl-project');const lab=el('a',p.title,'wv-tl-label');lab.href='#work?p='+encodeURIComponent(p.slug)+'&b='+encodeURIComponent(p.band);pr.append(lab);
+      const pr=el('div',undefined,'wv-tl-row wv-tl-project');const lab=el('a',p.title,'wv-tl-label');lab.href='#work?p='+encodeURIComponent(ref(p))+'&b='+encodeURIComponent(p.band);pr.append(lab);
       const ps=p.start||(sched[0]&&sched[0][1].s),pe=p.due||(sched.length&&sched.map(([,s])=>s.e).reduce((a,b)=>a>b?a:b));
       if(ps&&pe){const bar=el('div',undefined,'wv-tl-pbar');bar.style.left=x(ps)+'px';bar.style.width=Math.max(dayW,x(addDays(pe,1))-x(ps))+'px';
         const prog=el('i');prog.style.width=Math.round((p.progress||0)*100)+'%';bar.append(prog);bar.title=p.title+': '+fmtDay(ps)+' – '+fmtDay(pe)+' · '+Math.round((p.progress||0)*100)+'% done';pr.append(bar);}
       rowsBox.append(pr);row++;
-      for(const [t,s] of sched){const r=el('div',undefined,'wv-tl-row');const a=el('a',t.title,'wv-tl-label wv-tl-task');a.href='#work?t='+encodeURIComponent(t.slug)+'&b='+encodeURIComponent(t.band);a.title=t.title;r.append(a);
+      for(const [t,s] of sched){const r=el('div',undefined,'wv-tl-row');const a=el('a',t.title,'wv-tl-label wv-tl-task');a.href='#work?t='+encodeURIComponent(ref(t))+'&b='+encodeURIComponent(t.band);a.title=t.title+(t.name?' · '+t.name:'');r.append(a);
         const bar=el('a',undefined,'wv-tl-bar wv-s-'+t.state+(s.open?' wv-open':'')+(dueState(t)==='overdue'?' wv-overdue':''));bar.href=a.href;
         const left=x(s.s),w=Math.max(dayW-2,x(addDays(s.e,1))-left-2);bar.style.left=left+'px';bar.style.width=w+'px';
         bar.title=t.title+' · '+(LABEL[t.state]||t.state)+' · '+fmtDay(s.s)+(t.due?' → due '+fmtDay(t.due):' → no due date');
@@ -265,12 +270,12 @@ export function renderTimeline(kit,data,tasks,{phone=false,width:avail=0}={}){
       // Straight across when the dependent starts after; otherwise around, between the rows.
       const route=x2>=x1+16?`M${x1} ${y1}H${x1+8}V${y2}H${x2-1}`:`M${x1} ${y1}H${x1+8}V${y2-ROW/2+1}H${x2-10}V${y2}H${x2-1}`;
       const path=document.createElementNS(ns,'path');path.setAttribute("d",route);path.setAttribute('marker-end','url(#wv-arrow)');
-      path.setAttribute('class',d.state==='done'?'wv-dep-done':x2<x1?'wv-dep-late':'');const tt=document.createElementNS(ns,'title');tt.textContent=t.title+' waits for '+(d.slug||d.id);path.append(tt);svg.append(path);}
+      path.setAttribute('class',d.state==='done'?'wv-dep-done':x2<x1?'wv-dep-late':'');const tt=document.createElementNS(ns,'title');tt.textContent=t.title+' waits for '+(d.name||d.slug||d.id);path.append(tt);svg.append(path);}
     rowsBox.append(svg);inner.append(rowsBox);scroller.append(inner);wrap.append(scroller);
     requestAnimationFrame(()=>{scroller.scrollLeft=Math.max(0,x(today())-LBL-(phone?40:200));});
     const legend=el('p',undefined,'wv-legend');for(const [k,l] of COLUMNS){const s=el('span',l,'wv-leg wv-s-'+k);legend.append(s);}legend.append(el('span','Waits for','wv-leg wv-leg-dep'));wrap.append(legend);}
   if(unscheduled.length){const d=el('details',undefined,'wv-unscheduled');d.append(el('summary','Not scheduled ('+unscheduled.length+')'));const ul=el('ul',undefined,'kn-list');
-    for(const t of unscheduled){const li=el('li');const a=el('a',t.title);a.href='#work?t='+encodeURIComponent(t.slug)+'&b='+encodeURIComponent(t.band);li.append(a,el('span',' · '+projectName(data,t.project)+' · '+(LABEL[t.state]||t.state),'kn-dim'),button('Plan',()=>planTask(kit,t,kit.reload),'kn-linkish wv-plan'));ul.append(li);}
+    for(const t of unscheduled){const li=el('li');const a=el('a',t.title);a.href='#work?t='+encodeURIComponent(ref(t))+'&b='+encodeURIComponent(t.band);li.append(a,el('span',' · '+projectName(data,t.project)+' · '+(LABEL[t.state]||t.state),'kn-dim'),button('Plan',()=>planTask(kit,t,kit.reload),'kn-linkish wv-plan'));ul.append(li);}
     d.append(ul);wrap.append(d);}
   return wrap;}
 
@@ -289,12 +294,12 @@ export function renderProject(kit,page,opts){
   const crumbs=el('nav',undefined,'kn-crumbs');crumbs.setAttribute('aria-label','Breadcrumbs');const back=el('a','Work','kn-crumb');back.href='#work';crumbs.append(back);
   for(const x of [p.concept,p.title].filter(Boolean)){crumbs.append(el('span','/','kn-sep'));const t=el('span',x,'kn-crumb kn-here');t.title=x;crumbs.append(t);}
   const head=el('header',undefined,'wv-phead');const left=el('div',undefined,'wv-ptitle');left.append(el('h1',p.title));
-  const meta=el('p',undefined,'kn-meta');meta.append(stateChip(p.state==='active'?'in_progress':p.state),el('span',kit.bandName(p.band)),copyChip('[['+p.slug+']]'));
+  const meta=el('p',undefined,'kn-meta');meta.append(stateChip(p.state==='active'?'in_progress':p.state),...nameChips(p),el('span',kit.bandName(p.band)),copyChip('[['+p.slug+']]'));
   if(p.start||p.due)meta.append(el('span',(p.start?fmtDay(p.start):'…')+' → '+(p.due?fmtDay(p.due):'…')));left.append(meta);
   const acts=el('div',undefined,'wv-pacts');const go=h=>()=>{location.hash=h;};
   acts.append(button('+ Task',()=>opts.create({parent:p.slug,band:p.band,kind:'task'}),'wv-btn wv-btn-accent','New task in this project'),
     more([{label:'Huddle',run:go('#work?v=huddle&hp='+encodeURIComponent(p.id))},{label:'Board',run:go('#work?v=board&project='+encodeURIComponent(p.id))},
-      {label:'Timeline',run:go('#work?v=timeline&project='+encodeURIComponent(p.id))},{label:'Details',run:go('#work?t='+encodeURIComponent(p.slug)+'&b='+encodeURIComponent(p.band))}],'More for this project','wv-btn'));
+      {label:'Timeline',run:go('#work?v=timeline&project='+encodeURIComponent(p.id))},{label:'Details',run:go('#work?t='+encodeURIComponent(ref(p))+'&b='+encodeURIComponent(p.band))}],'More for this project','wv-btn'));
   head.append(left,acts);out.append(crumbs,head);
   if(p.excerpt)out.append(kit.renderBody(p.excerpt,s=>kit.refOpen(s,p.band)));
   // Progress and counts.
@@ -317,7 +322,7 @@ export function renderProject(kit,page,opts){
   // Side: activity, rooms, knowledge.
   const act=el('section',undefined,'wv-psec');act.append(el('h2','Activity'));const feed=el('ol',undefined,'wv-feed');
   for(const e of page.activity.slice(0,14)){const li=el('li');li.append(avatar(e.actor,'sm'));const txt=el('div');
-    const a=el('a',e.title);a.href='#work?t='+encodeURIComponent(e.slug)+'&b='+encodeURIComponent(p.band);
+    const a=el('a',e.title);a.href='#work?t='+encodeURIComponent(ref(e))+'&b='+encodeURIComponent(p.band);
     const [pre,post]=describe(e).split('{t}');txt.append(el('b',who(e.actor)),document.createTextNode(' '+pre),a,document.createTextNode(post||''),el('small',ago(e.ts,''),'kn-dim'));li.append(txt);feed.append(li);}
   if(!page.activity.length)feed.append(el('li','Nothing yet.','kn-dim'));act.append(feed);
   const rooms=el('section',undefined,'wv-psec');rooms.append(el('h2','Rooms'));const rl=el('ul',undefined,'wv-links');

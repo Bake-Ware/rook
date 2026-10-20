@@ -120,7 +120,7 @@ export async function mountJobs(root){
   const fail=e=>{notice.textContent=e.message;};
   const clear=()=>{notice.textContent='';};
   // Shared between tabs.
-  const ed={id:null,revision:null,text:JSON.stringify(TEMPLATE,null,2)};
+  const ed={id:null,spoken:'',revision:null,text:JSON.stringify(TEMPLATE,null,2)};
   const runFilter={job:'',state:'',from:'',to:'',open:null};
 
   function drawTabs(){
@@ -181,7 +181,7 @@ export async function mountJobs(root){
     function draw(){
       const off=list.jobs.filter(j=>!j.enabled).length;
       chipHost.replaceChildren(seg([['all','All '+list.jobs.length],['on','On '+(list.jobs.length-off),'Enabled'],['off','Off '+off,'Disabled']],jobChip,id=>{jobChip=id;draw();},'Show jobs'));
-      const shown=list.jobs.filter(j=>(jobChip==='all'||(jobChip==='on')===j.enabled)&&(!jobQuery||(j.name+' '+(j.description||'')).toLowerCase().includes(jobQuery)));
+      const shown=list.jobs.filter(j=>(jobChip==='all'||(jobChip==='on')===j.enabled)&&(!jobQuery||(j.name+' '+(j.description||'')).toLowerCase().includes(jobQuery)||(j.spoken||'').includes(jobQuery.replace(/[\s_.]+/g,'-'))));
       const rows=shown.map(j=>{
         const toggle=h('input',{type:'checkbox',checked:j.enabled,'aria-label':(j.enabled?'Disable ':'Enable ')+j.name,onchange:()=>act(()=>api.call(j.enabled?'disable':'enable',{id:j.id}))});
         const menuBtn=more([
@@ -214,7 +214,7 @@ export async function mountJobs(root){
     const text=h('textarea',{class:'jb-json',spellcheck:'false','aria-label':'Job JSON',autocomplete:'off'});text.value=ed.text;
     const problems=h('div',{class:'jb-problems',role:'alert'});
     const title=h('span',{class:'mg-mono jb-ellipsis'});
-    const label=()=>title.replaceChildren(...[ed.id&&ed.job?lockMark(ed.job):null,ed.id?ed.id+' · rev '+ed.revision:'new job (unsaved)'].filter(Boolean));
+    const label=()=>{title.replaceChildren(...[ed.id&&ed.job?lockMark(ed.job):null,ed.id?((ed.job&&ed.job.spoken)||ed.id)+' · rev '+ed.revision:'new job (unsaved)'].filter(Boolean));title.title=ed.id||'';};
     label();
     const lock=async()=>{try{const j=await api.call(ed.job.locked?'unlock':'lock',{id:ed.id});ed.job=j;ed.revision=j.revision;label();}catch(e){showProblems([e.message],[]);}};
     text.addEventListener('input',()=>{ed.text=text.value;syncTriggers();});
@@ -323,7 +323,7 @@ export async function mountJobs(root){
       for(const r of rs){
         const open=runFilter.open===r.id;
         rows.push(h('div',{class:'mg-row pick jb-runrow'+(open?' sel':''),onclick:()=>{runFilter.open=open?null:r.id;load().catch(fail);}},
-          h('span',{class:'mg-two'},h('b',{text:r.job}),h('small',{class:'copy-chip',text:r.id+(r.missed?' · missed':''),title:r.id+' (tap to copy)','data-copy':r.id})),
+          h('span',{class:'mg-two'},h('b',{text:r.job}),h('small',{class:'copy-chip',text:(r.spoken||r.id)+(r.missed?' · missed':''),title:r.id+' (tap to copy)','data-copy':r.id})),
           h('span',{class:'jb-state '+r.state,text:r.state}),
           h('span',{class:'mg-mono',text:r.trigger}),
           h('span',{class:'mg-dimtext',text:fmt(r.started||r.created,api.tz)}),

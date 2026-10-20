@@ -26,5 +26,7 @@ def routes(service, accounts):
         except PermissionError as error:
             return json_error(str(error), 403)
         except (ValueError, KeyError, TypeError) as error:
+            if getattr(error, 'candidates', None):   # a name that was not exactly one record's
+                return json_reply(error.payload(), 400)
             return json_error(str(error), 409 if type(error).__name__ == 'Conflict' else 400)
     return [Route('/knowledge/account-api', api, methods=['GET', 'POST'])]

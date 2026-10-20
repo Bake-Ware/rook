@@ -236,7 +236,7 @@ async def test_mcp_tool_shape(node):
     assert st["ok"] and st["result"]["state"] == "working"
     await tool(action="say", text="Anyone touching the README?", data={"mention": OTHER})
     read = json.loads(await tool())["result"]
-    assert set(read) == {"room", "title", "statuses", "questions", "messages", "last_seq"}
+    assert set(read) == {"room", "name", "title", "statuses", "questions", "messages", "last_seq"}
     assert read["messages"][-1] == {"seq": read["last_seq"], "sender": AGENT, "text": "Anyone touching the README?"}
     assert read["statuses"][0]["working_on"] == "Docs"
     bad = json.loads(await tool(action="bogus"))

@@ -10,7 +10,7 @@
 // Stored text is only ever rendered as text.
 
 const search=new URL(import.meta.url).search;
-const {h,el,more}=await import('/account/bands/assets/manage.js'+search);
+const {h,el,more,copyChip}=await import('/account/bands/assets/manage.js'+search);
 
 const API='/account/huddle/api';
 export const YOU='user:operator';
@@ -42,6 +42,8 @@ const NARROW=760;
 function when(ts){const d=new Date(ts*1000),now=new Date();const t=d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
   return d.toDateString()===now.toDateString()?t:d.toLocaleDateString([],{month:'short',day:'numeric'})+' '+t;}
 const chip=(text,cls)=>el('span',text,'hx-chip'+(cls?' '+cls:''));
+// "Brave otter_lamp" -> "brave-otter-lamp": a speakable name as the hub stores it.
+const norm=s=>String(s||'').trim().toLowerCase().split(/[\s_.-]+/).filter(Boolean).join('-');
 
 export async function mountHuddles(root){
   loadCss();
@@ -94,8 +96,8 @@ export async function mountHuddles(root){
     }
     drawList();
   }
-  function item(room,kind,title,meta,last,badge){
-    const a=h('a',{href:'#huddles?room='+encodeURIComponent(room),class:'hx-item'+(cur&&cur.room===room?' on':'')});
+  function item(room,kind,title,meta,last,badge,name){
+    const a=h('a',{href:'#huddles?room='+encodeURIComponent(name||room),class:'hx-item'+(cur&&cur.room===room?' on':'')});
     const top=el('div',undefined,'hx-item-top');top.append(el('b',title));if(badge)top.append(h('span',{class:'hx-badge',text:String(badge),title:kind==='chat'?'':'Waiting for you'}));
     a.append(top,el('small',meta,'hx-item-meta'));if(last)a.append(el('span',last,'hx-item-last'));
     a.onclick=e=>{e.preventDefault();open(room,kind).catch(showErr);};
@@ -104,23 +106,24 @@ export async function mountHuddles(root){
   function drawList(){
     list.replaceChildren();
     if(filter==='chat'){
-      for(const r of rooms)list.append(item(r.room,'chat',r.title,'read-only',r.last_sender?short(r.last_sender)+': '+(r.last_text||''):'',0));
+      for(const r of rooms)list.append(item(r.room,'chat',r.title||r.name,r.name?r.name+' · read-only':'read-only',r.last_sender?short(r.last_sender)+': '+(r.last_text||''):'',0));
       if(!rooms.length)list.append(el('p','No old chat rooms.','hx-empty'));
       return;
     }
     for(const x of huddles){
       const kind=x.chaired?(x.roles.length?x.roles.map(roleName).join(', '):'with '+short(chairId)):(x.scope==='project'?'Project status':'Band status');
       const last=x.last?nameOf(x.last.sender)+': '+x.last.text:'';
-      list.append(item(x.room,'huddle',x.title.replace(/^Huddle: /,''),kind,last,x.chaired?x.open_cards:x.open_questions));
+      list.append(item(x.room,'huddle',x.title.replace(/^Huddle: /,''),kind,last,x.chaired?x.open_cards:x.open_questions,x.name));
     }
     if(!huddles.length)list.append(el('p',filter==='archived'?'Nothing archived.':'No huddles yet.','hx-empty'));
   }
 
   // -- a thread ----------------------------------------------------------------
-  async function open(room,kind){
+  async function open(room,kind,name){
+    name=name||(huddles.find(x=>x.room===room)||rooms.find(x=>x.room===room)||{}).name;
     cur={room,kind};view=null;msgs=[];lastSeq=0;sig='';err.textContent='';
     wrap.classList.add('hx-open');drawList();
-    history.replaceState(null,'','#huddles?room='+encodeURIComponent(room));
+    history.replaceState(null,'','#huddles?room='+encodeURIComponent(name||room));
     head.replaceChildren();notice.replaceChildren();log.replaceChildren();
     main.replaceChildren(head,notice,log,...(kind==='chat'?[]:[compose]),err);
     box.value='';grow();closePop();
@@ -139,7 +142,7 @@ export async function mountHuddles(root){
         const r=await fetch('/api/chat/read?room='+encodeURIComponent(want.room)+'&since='+lastSeq,{headers:{Accept:'application/json'}});
         const d=await r.json().catch(()=>null);
         if(!r.ok||!d||d.ok===false)throw Error((d&&d.error)||'Could not read that room.');
-        v={room:want.room,title:d.title,chat:true,messages:d.messages,last_seq:d.last_seq};
+        v={room:d.room||want.room,name:d.name,title:d.title,chat:true,messages:d.messages,last_seq:d.last_seq};
       }else v=await hapi('view',{room:want.room,since_seq:lastSeq,limit:150});
       if(cur!==want)return;
       view=v;add(v.messages);lastSeq=Math.max(lastSeq,v.last_seq||0);
@@ -160,6 +163,7 @@ export async function mountHuddles(root){
     back.onclick=()=>{wrap.classList.remove('hx-open');history.replaceState(null,'','#huddles');};
     const t=el('div',undefined,'hx-title');t.append(el('h2',(view.title||'').replace(/^Huddle: /,'')));
     const meta=el('div',undefined,'hx-meta');
+    if(view.name)meta.append(copyChip(view.name,view.name,'hx-name'));
     if(view.chat)meta.append(el('span','Old chat · read-only','hx-dim'));
     else if(view.roles){meta.append(chip(short(chairOf())+' · chair','hx-chair'));for(const id of view.roles)meta.append(chip(roleName(id),'hx-role'));}
     else meta.append(el('span',view.scope==='project'?'Project status':'Band status','hx-dim'));
@@ -232,6 +236,7 @@ export async function mountHuddles(root){
     const b=el('div',undefined,'hx-card hx-c-'+c.state);b.dataset.card=c.id;
     const top=el('div',undefined,'hx-card-top');
     top.append(el('span',KIND[c.kind]||c.kind,'hx-card-kind'),el('span',nameOf(c.by),'hx-dim'),el('span',CARD_STATE[c.state]||c.state,'hx-card-state'));
+    if(c.name)top.append(copyChip(c.name,c.name,'hx-card-name'));
     b.append(top,el('p',c.summary,'hx-card-sum'));
     if(c.call){
       const call=el('div',undefined,'hx-card-call');const what=c.call.worker+' · '+c.call.cap;
@@ -356,17 +361,20 @@ export async function mountHuddles(root){
   document.addEventListener('visibilitychange',()=>{if(active&&cur&&!document.hidden){clearTimeout(timer);tick();}});
 
   return {root:wrap,
-    /** ``query``: the hash's query (room=<id>: open that huddle, or that old chat room). */
+    /** ``query``: the hash's query (room=<id or name>: open that huddle, or that old chat room). */
     async activate(query){
       active=true;
       await loadRoles();
       const room=new URLSearchParams(query||'').get('room');
-      if(room&&(!cur||cur.room!==room)){
+      const same=cur&&(cur.room===room||(view&&view.name&&view.name===norm(room)));
+      if(room&&!same){
         const all=(await hapi('list',{archived:true}).catch(()=>({huddles:[]}))).huddles;
-        const hit=all.find(x=>x.room===room);
+        let hit=all.find(x=>x.room===room||x.name===norm(room));
+        // A near-miss name: the hub resolves it for a read.
+        if(!hit){const v=await hapi('view',{room}).catch(()=>null);if(v)hit=all.find(x=>x.room===v.room);}
         filter=hit?(hit.archived?'archived':'active'):'chat';filterSel.value=filter;
         await loadList().catch(showErr);
-        await open(room,hit?'huddle':'chat');
+        await open(hit?hit.room:room,hit?'huddle':'chat',hit&&hit.name);
         return;
       }
       await loadList().catch(e=>list.replaceChildren(el('p',e.message,'hx-err')));

@@ -42,6 +42,10 @@ Read the reference that matches the job; don't load them all:
 
 Hubs may also have (check your tool list; ignore if absent): `rook_memory` for the home agent's memory, the "Rook manual" seeded as knowledge pages (`manual.*` caps), and Claude Code rules that block or inject instructions through hooks (obey them; they come from the operator). `rook_huddle` and `rook_home_ask` are listed only where the operator has them on.
 
+## Names
+
+Tasks, projects, console rooms, handoff threads, jobs, job runs, huddles, huddle cards and chat rooms have a three-word name beside the id (`brave-otter-lamp`); replies carry both (`name`, or `spoken` for jobs and runs). Pass either wherever an id goes, in any case, with spaces or hyphens. Use the name when talking to people (voice, chat, handoffs, notifications); use the id in links and evidence. A read may resolve one clear near miss and says so (`resolved.via: "fuzzy"`); a write needs the exact name or id, and a near miss comes back as `candidates`: pick one and repeat, never guess.
+
 ## Start of session
 
 1. **`rook_whoami`.** Note your `actor`. If `kind` is `shared` (the static token), your work is attributed to "static": say so to the user and ask for an own token for anything long-lived.

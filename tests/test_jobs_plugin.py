@@ -134,7 +134,8 @@ async def test_tool_lifecycle(tmp_path):
 
     queued = (await jobs(action="run", id="info"))["result"]
     cancelled = (await jobs(action="cancel", id=queued["id"]))["result"]["cancelled"]
-    assert cancelled == [{"id": queued["id"], "state": "cancelled", "cancel_requested": False}]
+    assert cancelled == [{"id": queued["id"], "spoken": queued["spoken"], "state": "cancelled",
+                          "cancel_requested": False}]
 
     gone = await jobs(action="delete", id="info")
     assert gone["ok"] and (await jobs(action="get", id="info"))["code"] == "KeyError"

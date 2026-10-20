@@ -49,7 +49,7 @@ function join(d) {
 
 // Small link chips: "room: deploy", "session: claude on build", "task: …".
 const chip = (href, kind, text, title) => h('a', {class: 'ov-chip', href, title: title || text}, h('i', {text: kind}), h('span', {text}));
-const roomChip = r => chip(link.room(r.room), 'room', r.title || r.room);
+const roomChip = r => chip(link.room(r.room), 'room', r.title || r.name || r.room, r.name ? (r.title ? r.title + ' · ' : '') + r.name : undefined);
 const sessionChip = s => chip(link.session(s), s.state === 'idle' ? 'waiting' : s.state === 'live' ? 'live' : 'session', (s.title || s.agent) + ' · ' + (s.worker || ''), s.agent + ' on ' + s.worker);
 const taskChip = t => chip(link.task(t), 'task', t.title);
 
@@ -68,7 +68,7 @@ function waiting(j) {
       h('div', {class: 'ov-chips'}, s.links?.task && j.tasks.get(s.links.task) ? taskChip(j.tasks.get(s.links.task).task) : null))});
   for (const r of j.rooms.filter(r => r.member && r.unread > 0))
     items.push({ts: now() - r.last_activity_age_secs, row: h('li', null, h('span', {class: 'ov-why', text: plural(r.unread, 'unread message')}),
-      a(link.room(r.room), r.title || r.room), h('small', {text: (r.last_sender ? shortName(r.last_sender) + ': ' : '') + (r.last_text || '')}),
+      a(link.room(r.room), r.title || r.name || r.room), h('small', {text: (r.last_sender ? shortName(r.last_sender) + ': ' : '') + (r.last_text || '')}),
       h('div', {class: 'ov-chips'}, (j.tasksByRoom.get(r.room) || []).map(taskChip)))});
   for (const p of j.k?.projects || []) for (const t of p.blocked)
     items.push({ts: t.updated, row: h('li', null, h('span', {class: 'ov-why bad', text: 'Blocked'}),
@@ -99,7 +99,7 @@ function active(j, d) {
     a(link.task(t), t.title), h('small', {text: (t.claimants?.length ? t.claimants.map(shortName).join(', ') : 'unclaimed') + ' · ' + p.project.title}),
     h('div', {class: 'ov-chips'}, (j.roomsByTask.get(t.id) || []).map(roomChip), (j.sessionsByTask.get(t.id) || []).map(sessionChip))));
   for (const r of rooms.slice(0, 6)) rows.push(h('li', null, h('span', {class: 'ov-state room', text: 'chat'}),
-    a(link.room(r.room), r.title || r.room), h('small', {text: (r.last_sender ? shortName(r.last_sender) + ' · ' : '') + ago(now() - r.last_activity_age_secs)}),
+    a(link.room(r.room), r.title || r.name || r.room), h('small', {text: (r.last_sender ? shortName(r.last_sender) + ' · ' : '') + ago(now() - r.last_activity_age_secs)}),
     h('div', {class: 'ov-chips'}, (j.tasksByRoom.get(r.room) || []).map(taskChip))));
   const notes = [d.sessions.error && 'sessions: ' + d.sessions.error, d.rooms.error && 'chat: ' + d.rooms.error].filter(Boolean);
   return card('Active now', '', rows.length ? h('ul', {class: 'ov-list'}, rows) : empty('Nothing running.'),

@@ -156,7 +156,8 @@ class Hygiene:
                         "transcript": [{"sender": SYSTEM["id"], "text": text}],
                         "woken_by": SYSTEM["id"], "note": "hygiene check for an idle claimed task"}, wid)
                     if reply.get("ok") and (reply.get("result") or {}).get("ok", True):
-                        return {"action": "woke_agent", "worker": w.get("name"), "room": rid}
+                        return {"action": "woke_agent", "worker": w.get("name"), "room": rid,
+                                **({"room_name": room["name"]} if room.get("name") else {})}
         except Exception as e:  # noqa: BLE001 — fall through to marking dirty
             log.warning("hygiene nudge for %s failed: %s", c["task"], e)
         return {"action": "marked_dirty", "reason": "no way to reach an agent on " + repr(w.get("name"))}

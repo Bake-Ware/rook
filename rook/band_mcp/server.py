@@ -29,6 +29,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import AnyHttpUrl
 
+from ..core import names as _names
 from .client import BandClient, MultiBandClient
 from .tokens import StoreTokenVerifier, TokenStore
 
@@ -256,13 +257,14 @@ def build_server(client: "BandClient | MultiBandClient",
         try:
             who = _caller_identity()
             if name in ("rook_console_signal", "rook_console_close"):
-                r = console.get(str(args.get("room") or ""))
+                r = console.get(console.resolve_ref(args.get("room"), write=True).id)
                 return bool(r and r.get("opened_by") and r["opened_by"] == who)
             if name == "rook_chat_delete":
                 # Only a room the caller started (the creator is listed
                 # first) with no person in it: deleting a room shared with a
                 # person removes their messages too, so that stays held.
-                room = chat.room(str(args.get("room") or "")) if hasattr(chat, "room") else None
+                room = (chat.room(chat.resolve_room(args.get("room"), write=True).id)
+                        if hasattr(chat, "room") else None)
                 parts = list((room or {}).get("participants") or [])
                 return bool(parts and parts[0] == who and not any(
                     str(p).startswith(("user:", "human:")) for p in parts))
@@ -621,6 +623,17 @@ def build_server(client: "BandClient | MultiBandClient",
 
     def _fail(msg: str) -> str:
         return _env.dumps({"ok": False, "error": msg})
+
+    def _ref(resolve, ref, *, write: bool):
+        """``(id, extra, None)`` for a console room / chat room ref (its id
+        or speakable name), or ``(None, None, error json)`` with candidates.
+        ``extra`` marks a read that took a near miss: merge it into the reply."""
+        try:
+            got = resolve(ref, write=write)
+        except _names.NameError_ as e:
+            return None, None, _env.dumps({"ok": False, **e.payload()})
+        extra = {"resolved": {"from": ref, "via": "fuzzy"}} if got.via == "fuzzy" else {}
+        return got.id, extra, None
 
     import re as _re
     _ANSI = _re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
@@ -1263,8 +1276,11 @@ def build_server(client: "BandClient | MultiBandClient",
                 else list(mention or []))
         ident = _caller_identity()
         chat.touch(ident)
+        rid, _, err = _ref(chat.resolve_room, room, write=True)
+        if err:
+            return err
         sender = ident if ident not in ("anonymous", "unverified") else "MCP"
-        return json.dumps(chat.send(room, sender, text, ment, expects_reply), indent=2)
+        return json.dumps(chat.send(rid, sender, text, ment, expects_reply), indent=2)
 
     @mcp.tool()
     async def rook_chat_read(room: str, since_seq: int = 0) -> str:
@@ -1273,7 +1289,10 @@ def build_server(client: "BandClient | MultiBandClient",
         ``last_seq`` back as ``since_seq`` next time to page forward."""
         ident = _caller_identity()
         chat.touch(ident)
-        return json.dumps(chat.read(room, ident, since_seq=since_seq), indent=2)
+        rid, extra, err = _ref(chat.resolve_room, room, write=False)
+        if err:
+            return err
+        return json.dumps({**chat.read(rid, ident, since_seq=since_seq), **extra}, indent=2)
 
     @mcp.tool()
     async def rook_chat_rooms() -> str:
@@ -1288,7 +1307,10 @@ def build_server(client: "BandClient | MultiBandClient",
         final (rooms are threads, there's no archive)."""
         ident = _caller_identity()
         chat.touch(ident)
-        return json.dumps(chat.delete(room, ident), indent=2)
+        rid, _, err = _ref(chat.resolve_room, room, write=True)
+        if err:
+            return err
+        return json.dumps(chat.delete(rid, ident), indent=2)
 
     @mcp.tool()
     async def rook_presence() -> str:
@@ -1318,6 +1340,9 @@ def build_server(client: "BandClient | MultiBandClient",
             agent session with the transcript as its brief.
         A worker with neither can't be woken — the mention/voicemail notice
         still reaches it on its next call."""
+        room, _, err = _ref(chat.resolve_room, room, write=True)
+        if err:
+            return err
         target, err = _resolve_target(worker)
         if err:
             return _fail(err)
@@ -1535,8 +1560,11 @@ def build_server(client: "BandClient | MultiBandClient",
         Works identically for live and frozen rooms; ``state`` tells you which.
         """
         chat.touch(_caller_identity())
-        return json.dumps(console.read(room, since_seq=since_seq, tail=tail,
-                                       limit=limit), indent=2)
+        rid, extra, err = _ref(console.resolve_ref, room, write=False)
+        if err:
+            return err
+        return json.dumps({**console.read(rid, since_seq=since_seq, tail=tail,
+                                          limit=limit), **extra}, indent=2)
 
     @mcp.tool()
     async def rook_console_write(room: str, text: str, newline: bool = True,
@@ -1551,12 +1579,15 @@ def build_server(client: "BandClient | MultiBandClient",
         the placeholder); an unknown name fails. literal=True sends it as
         written.
         """
+        room, _, err = _ref(console.resolve_ref, room, write=True)
+        if err:
+            return err
         r = console.get(room)
         if r is None:
             return _fail(f"no such console room: {room}")
         if r["state"] != "live":
-            return _fail(f"room {room} is {r['state']} — its process has exited, "
-                         f"nothing is listening. Open a new console.")
+            return _fail(f"room {_names.label(r.get('name'), room)} is {r['state']} — its "
+                         f"process has exited, nothing is listening. Open a new console.")
         ident = _caller_identity()
         chat.touch(ident)
         # {{secret:name}} types the value (a password prompt) without the
@@ -1592,11 +1623,15 @@ def build_server(client: "BandClient | MultiBandClient",
     async def rook_console_signal(room: str, sig: str = "TERM") -> str:
         """Signal a live session's process group: TERM (polite), KILL (hard),
         INT (ctrl-C), HUP. The room and its transcript survive."""
+        room, _, err = _ref(console.resolve_ref, room, write=True)
+        if err:
+            return err
         r = console.get(room)
         if r is None:
             return _fail(f"no such console room: {room}")
         if r["state"] != "live":
-            return _fail(f"room {room} is {r['state']} — process already gone.")
+            return _fail(f"room {_names.label(r.get('name'), room)} is {r['state']} — "
+                         f"process already gone.")
         chat.touch(_caller_identity())
         try:
             reply = await _room_call(r, "signal", {"sig": sig})
@@ -1619,14 +1654,18 @@ def build_server(client: "BandClient | MultiBandClient",
         If the process is still running, pass ``kill=True`` to stop it; without
         that a live session is left alone and the room stays live.
         """
+        room, _, err = _ref(console.resolve_ref, room, write=True)
+        if err:
+            return err
         r = console.get(room)
         if r is None:
             return _fail(f"no such console room: {room}")
+        label = _names.label(r.get("name"), room)
         ident = _caller_identity()
         chat.touch(ident)
         if r["state"] == "live":
             if not kill:
-                return _fail(f"room {room} is still live (its process is "
+                return _fail(f"room {label} is still live (its process is "
                              f"running). Pass kill=True to stop it and freeze "
                              f"the room, or wait for it to exit.")
             try:
@@ -1639,7 +1678,7 @@ def build_server(client: "BandClient | MultiBandClient",
                 return json.dumps(reply, indent=2)
             console.mark_closing(room, None)
         if not summary:
-            return _fail(f"room {room} is ready to freeze but needs a summary — "
+            return _fail(f"room {label} is ready to freeze but needs a summary — "
                          f"call again with summary='what this session did and "
                          f"what came of it'. That text is what makes it findable "
                          f"later; the raw transcript is not.")
