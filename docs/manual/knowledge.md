@@ -43,8 +43,14 @@ Nothing an agent writes is trusted by default. Every new page is
 
 If an agent later changes a page you verified, it goes back to unverified for
 you to look at again. Coloured dots in the page tree show each page's state.
-**Review mode** walks you through every unverified page: **Verify & next**,
-**Dispute…** or **Skip**.
+**Review** (next to the search box, with the number of unverified pages) walks
+you through every unverified page: **✓ Verify** (then the next one),
+**Dispute** or **Skip**; **✕** leaves review.
+
+On a page, **Edit** changes it; its **⋯** menu has **New subpage**, **Move…**
+and **Archive**. **+** next to the search box starts a new page. Tap the
+`[[slug]]` under a page title to copy it. On a phone the page tree folds
+behind **Pages**; tap it to open the tree.
 
 ## The Rook manual in your wiki
 

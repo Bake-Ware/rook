@@ -2,7 +2,7 @@
 // update. Pages come from the knowledge base's copy when the hub imported one
 // (with the operator's edits), else from the manual bundled with this release.
 // All page text is rendered as text nodes, never as HTML.
-const {h, btn, dialog, useCss} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
+const {h, btn, dialog, useCss, info} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
 const API='/account/manual/api';
 
 function loadCss(){if(document.querySelector('link[data-manual]'))return;const css=document.createElement('link');css.rel='stylesheet';css.href='/account/manual/assets/manual.css'+new URL(import.meta.url).search;css.dataset.manual='1';document.head.append(css);}
@@ -66,19 +66,18 @@ export function reviewDialog(status,csrf,done){
     catch(e){msg.textContent=e.message;busy(false);}};
   const edited=[...d.changed,...d.removed,...d.added].some(i=>i.local_edit);
   const dlg=dialog('The Rook manual changed',
-    h('p',{text:`Rook ${status.version} comes with an updated user manual. Your knowledge base has the copy from `+
-      (status.imported?`Rook ${status.imported.version}`:'no earlier version')+'. Update it so you and your agents read the current one?'}),
+    h('p',{class:'mn-dim',text:`Rook ${status.version} · your copy: `+(status.imported?`Rook ${status.imported.version}`:'none')+'. Update it?'}),
     h('div',{class:'mn-diff-wrap'},
       diffList('Added',d.added,'name already used',boxes),
       diffList('Changed',d.changed,'you edited this',boxes),
       diffList('Removed',d.removed,'you edited this',boxes)),
-    edited?h('p',{class:'mn-dim',text:'Pages you edited in the knowledge base are kept as they are unless you tick Replace my edits. Removed pages are archived, not deleted.'})
-          :h('p',{class:'mn-dim',text:'Removed pages are archived, not deleted.'}),
+    h('div',{class:'mn-dim mn-line'},h('span',{text:edited?'Your edits are kept unless ticked.':'Removed pages are archived.'}),
+      info((edited?'Pages you edited in the knowledge base are kept as they are unless you tick Replace my edits. ':'')+'Removed pages are archived, not deleted. Not now asks again tomorrow; Skip version waits for the next manual change.','About updating the manual')),
     msg,
     h('div',{class:'mg-bar mn-actions'},
       btn('Update','primary',()=>act('update',{overwrite:boxes.filter(b=>b.checked).map(b=>b.value)})),
       btn('Not now','',()=>act('snooze')),
-      btn('Never for this version','',()=>act('decline'))));
+      btn('Skip version','',()=>act('decline'),{title:'Never for this version'})));
   dlg.classList.add('mn-dialog');
   return dlg;
 }
@@ -97,12 +96,12 @@ export async function checkManualUpdate(host){
   const old=document.getElementById('manual-banner');if(old)old.remove();
   const close=()=>bar.remove();
   const bar=h('div',{class:'mg mn-banner',id:'manual-banner',role:'region','aria-label':'Manual update'},
-    h('div',{class:'mn-banner-text'},h('strong',{text:s.imported?'The Rook manual changed in this update: update your knowledge base copy?'
-                                                              :'Rook now comes with a user manual: copy it into your knowledge base?'}),
-      h('span',{text:` Pages ${summary(s.diff)}.`})),
+    h('div',{class:'mn-banner-text',title:s.imported?'The Rook manual changed in this update: update your knowledge base copy?'
+                                                    :'Rook now comes with a user manual: copy it into your knowledge base?'},
+      h('strong',{text:s.imported?'Manual updated':'Manual available'}),h('span',{text:` · ${summary(s.diff)}`})),
     h('div',{class:'mn-banner-actions'},
-      btn('Review changes','primary',()=>reviewDialog(s,s.csrf,()=>close())),
-      btn('Not now','',async()=>{try{await post(s.csrf,{action:'snooze'});}catch(e){console.warn(e.message);}close();})));
+      btn('Review','primary',()=>reviewDialog(s,s.csrf,()=>close())),
+      btn('×','icon',async()=>{try{await post(s.csrf,{action:'snooze'});}catch(e){console.warn(e.message);}close();},{'aria-label':'Not now',title:'Not now'})));
   host.prepend(bar);return bar;
 }
 
@@ -114,24 +113,30 @@ export async function mountManual(root){
   const search=h('input',{type:'search',placeholder:'Search the manual',class:'mn-search','aria-label':'Search the manual'});
   const toc=h('div',{class:'mn-toc'});
   const note=h('div',{class:'mn-note'});
-  side.append(search,toc,note);
+  // Phones: the page list folds into a picker that names the open page (desktop keeps it open).
+  const wide=matchMedia('(min-width:761px)');
+  const pickLabel=h('span',{text:'Pages'});
+  const picker=h('details',{class:'mn-picker',open:wide.matches},h('summary',null,pickLabel,h('small',{text:'Pages'})),search,toc,note);
+  wide.addEventListener('change',()=>{picker.open=wide.matches;});
+  side.append(picker);
   root.replaceChildren(h('div',{class:'mn-layout'},side,page));
   let pages=[],full=null,current='',status=null,csrf='';
 
   const open=async id=>{
     current=id||(pages[0]&&pages[0].id)||'';
     for(const a of toc.querySelectorAll('a'))a.classList.toggle('on',a.dataset.id===current);
+    pickLabel.textContent=(pages.find(x=>x.id===current)||{}).title||'Pages';if(!wide.matches)picker.open=false;
     if(!current){page.replaceChildren(h('p',{class:'mn-dim',text:'The manual has no pages.'}));return;}
     page.replaceChildren(h('p',{class:'mn-dim',text:'Loading…'}));
     try{
       const p=await get({view:'page',id:current});
       const meta=h('div',{class:'mn-meta'},
-        p.source==='knowledge'?h('span',{class:'mn-badge ok',text:p.edited?'Your knowledge base copy (edited)':'Your knowledge base copy'})
-                              :h('span',{class:'mn-badge',text:'Bundled with Rook '+(status?.version||'')}),
+        p.source==='knowledge'?h('span',{class:'mn-badge ok',text:p.edited?'Your copy (edited)':'Your copy',title:p.edited?'Your knowledge base copy (edited)':'Your knowledge base copy'})
+                              :h('span',{class:'mn-badge',text:'Rook '+(status?.version||'')}),
         p.deprecated?h('span',{class:'mn-badge warn',text:'deprecated'}):null,
         p.preview?h('span',{class:'mn-badge warn',text:'preview'}):null,
         p.since?h('span',{class:'mn-dim',text:'since '+p.since}):null,
-        p.source==='knowledge'?h('a',{href:'#knowledge?p='+encodeURIComponent(p.slug),text:'Open in Knowledge'}):null);
+        p.source==='knowledge'?h('a',{href:'#knowledge?p='+encodeURIComponent(p.slug),text:'In Knowledge',title:'Open in Knowledge'}):null);
       const body=renderMarkdown(p.body,id=>go(id),id=>(pages.find(x=>x.id===id)||{}).title||id);
       // The page's own first heading is its title: show it once.
       const first=body.firstElementChild;if(first&&first.tagName==='H2'&&first.textContent.trim()===p.title.trim())first.remove();
@@ -156,14 +161,11 @@ export async function mountManual(root){
 
   const drawNote=()=>{
     note.replaceChildren();if(!status)return;
-    const lines=[h('p',{text:`Rook ${status.version} · ${status.pages} pages`})];
-    if(status.knowledge==='on'&&status.imported)lines.push(h('p',{text:'Shown from your knowledge base copy (Rook '+status.imported.version+').'}));
-    else if(status.knowledge==='on')lines.push(h('p',{text:'Not copied into your knowledge base yet.'}));
-    else lines.push(h('p',{text:'The knowledge base is off, so this is the manual bundled with Rook.'}));
-    note.append(...lines);
+    const src=status.knowledge==='on'&&status.imported?'your copy ('+status.imported.version+')':status.knowledge==='on'?'not copied yet':'bundled (knowledge off)';
+    note.append(h('p',{text:`Rook ${status.version} · ${status.pages} pages · `+src}));
     if(status.admin&&status.pending){
-      note.append(h('div',{class:'mn-callout'},h('p',{text:status.imported?'This version of the manual differs from your copy: '+summary(status.diff)+'.':'Copy the manual into your knowledge base?'}),
-        btn(status.imported?'Review changes':'Review and copy','soft',()=>reviewDialog(status,csrf,async()=>{await refresh();open(current);}))));
+      note.append(h('div',{class:'mn-callout'},h('span',{text:status.imported?summary(status.diff):'Not in your knowledge base'}),
+        btn(status.imported?'Review':'Copy','soft',()=>reviewDialog(status,csrf,async()=>{await refresh();open(current);}),{title:status.imported?'Review changes':'Review and copy'})));
     }
   };
   const refresh=async()=>{

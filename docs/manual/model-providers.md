@@ -25,8 +25,7 @@ so does everything that uses the home agent's model, such as its memory
 
 ## Adding a provider
 
-Open **Manage > Model providers** (operator account) and choose **Add a
-provider**.
+Open **Manage > Model providers** (operator account) and choose **+ Add**.
 
 1. Give it an id: lowercase letters, digits, `-` or `_` (for example
    `lab-gpu`). This is the name other pages use. A **Label** is optional.

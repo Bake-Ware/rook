@@ -2,13 +2,13 @@
 // and the devices enrolled in them on the right.
 // Versioned like this module (?v=...), so a stale edge cache cannot pair it
 // with an old manage.js.
-const {h, ago, day, useCss, btn, table, two, dialog, menu, accountAction, reveal, pairing} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
+const {h, ago, day, useCss, btn, table, two, dialog, menu, more, info, accountAction, reveal, pairing} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
 
 export async function mountAccount(root, {onChange = () => {}} = {}) {
   useCss();
   let csrf='',user=null,bands=[],tab='bands',asked='';
   const status=h('p',{class:'mg-status settings-status',role:'status','aria-live':'polite'});
-  const left=h('div',{class:'mg-side',style:'display:flex;flex-direction:column;gap:18px;flex:1 1 340px'}),right=h('div',{class:'mg-box mg-main',style:'flex:2 1 520px;gap:0'});
+  const left=h('div',{class:'mg-side',style:'display:flex;flex-direction:column;gap:12px;flex:1 1 340px'}),right=h('div',{class:'mg-box mg-main mg-cards-sm',style:'flex:2 1 520px;gap:0'});
   root.replaceChildren(h('div',{class:'mg'},status,h('div',{class:'mg-split'},left,right)));
 
   async function act(fields,done){
@@ -35,20 +35,21 @@ export async function mountAccount(root, {onChange = () => {}} = {}) {
   function draw(){
     const avatar=user.avatar?h('img',{class:'mg-avatar big',src:'/account/avatar/'+encodeURIComponent(user.id)+'?v='+user.avatar_updated,alt:''}):h('span',{class:'mg-avatar big',text:(user.name||'?').slice(0,2).toUpperCase()});
     const upload=h('input',{type:'file',name:'image',accept:'image/png,image/jpeg,image/webp',hidden:true,onchange:()=>{if(!upload.files[0])return;const fd={op:'avatar_upload',image:upload.files[0]};act(fd);}});
-    const profile=h('div',{class:'mg-box mg-pad'},h('div',{class:'mg-label',text:'Profile'}),
-      h('div',{class:'mg-actions',style:'gap:14px;flex-wrap:nowrap'},avatar,h('div',{class:'mg-two'},h('b',{class:'profile-name',style:'font-size:18px',text:user.name}),h('small',{text:user.email||user.username||''}))),
-      form({op:'profile'},f=>act(f,()=>{status.textContent='Name saved.';}),h('div',{class:'mg-actions',style:'align-items:flex-end'},h('label',{class:'mg-field mg-grow'},'Display name',h('input',{name:'name',value:user.name,maxlength:'100',required:true})),h('button',{class:'mg-btn soft',text:'Save name'}))),
-      h('div',{class:'mg-actions'},h('span',{class:'mg-sub mg-grow',style:'font-size:12px',text:'Picture: '+(!user.avatar?'initials':user.avatar_source==='custom'?'uploaded':'Google photo')}),
-        btn('Upload…','',()=>upload.click()),
-        user.google_enabled&&user.avatar_source!=='google'?btn('Use Google photo','',()=>act({op:'avatar',source:'google'})):null,
-        user.avatar?btn('Use initials','',()=>act({op:'avatar',source:'initials'})):null,upload),
-      h('div',{class:'mg-actions'},btn('Sign out','',()=>act({op:'logout'}))));
+    const pic='Picture: '+(!user.avatar?'initials':user.avatar_source==='custom'?'uploaded':'Google photo');
+    const profileMenu=more(()=>[
+      {label:'Upload picture…',run:()=>upload.click()},
+      user.google_enabled&&user.avatar_source!=='google'&&{label:'Use Google photo',run:()=>act({op:'avatar',source:'google'})},
+      user.avatar&&{label:'Use initials',run:()=>act({op:'avatar',source:'initials'})},
+      {label:'Sign out',run:()=>act({op:'logout'})}],'Profile actions');
+    const profile=h('div',{class:'mg-box mg-pad'},
+      h('div',{class:'mg-actions',style:'gap:14px;flex-wrap:nowrap'},avatar,h('div',{class:'mg-two mg-grow'},h('b',{class:'profile-name',style:'font-size:18px',text:user.name}),h('small',{text:[user.email||user.username||'',pic].filter(Boolean).join(' · ')})),profileMenu,upload),
+      form({op:'profile'},f=>act(f,()=>{status.textContent='Name saved.';}),h('div',{class:'mg-actions',style:'align-items:flex-end;flex-wrap:nowrap'},h('label',{class:'mg-field mg-grow'},'Display name',h('input',{name:'name',value:user.name,maxlength:'100',required:true})),h('button',{class:'mg-btn soft',text:'Save','aria-label':'Save name'}))));
     const login=(name,detail,action)=>h('div',{class:'mg-row',style:'grid-template-columns:minmax(0,1fr) auto;min-height:52px'},two(name,detail),action||h('span'));
     const signin=h('div',{class:'mg-box'},h('div',{class:'mg-label mg-navlabel',text:'Sign-in'}),
       user.google_enabled?login('Google',user.google_connected?'Connected':'Not connected',user.google_connected?btn('Disconnect','',()=>{if(confirm('Disconnect Google from this account?'))act({op:'unlink'});}):h('a',{class:'mg-btn',href:'/auth/google?link=1',text:'Connect'})):null,
       user.managed_login?login('Password','Managed in the server configuration'):user.has_password?login('Password','Set for '+user.username,btn('Change','',passwordDialog)):login('Password','No local login',btn('Add','',localDialog)));
-    const installer=h('div',{class:'mg-box callout mg-pad'},h('div',{class:'mg-label mg-warn',text:'Approve an installer'}),
-      h('p',{class:'mg-sub',style:'font-size:13px;color:var(--fg)',text:'An installer you started shows a code. Approving it lets that installer fetch your band configurations once.'}),
+    const installer=h('div',{class:'mg-box callout mg-pad'},h('div',{class:'mg-actions',style:'justify-content:space-between'},h('span',{class:'mg-label mg-warn',text:'Approve an installer'}),
+      info('An installer you started shows a code. Approving it lets that installer fetch your band configurations once.','About installer codes')),
       form({op:'device_approve'},f=>act(f,()=>{status.textContent='Installer approved.';}),h('div',{class:'mg-actions'},h('input',{name:'user_code',maxlength:'8',required:true,placeholder:'ABCD1234','aria-label':'Installer code',class:'mg-grow',style:'font:500 16px var(--mono);letter-spacing:2px'}),h('button',{class:'mg-btn primary',text:'Approve'}))));
     left.replaceChildren(profile,signin,installer);
     drawRight();
@@ -58,7 +59,7 @@ export async function mountAccount(root, {onChange = () => {}} = {}) {
     const owned=bands.filter(b=>b.role==='owner');
     const devices=owned.flatMap(b=>(b.devices||[]).map(d=>({...d,band:b})));
     const tabs=[['bands','Your bands · '+bands.length],['devices','Devices · '+devices.filter(d=>d.active).length]];
-    const add=tab==='bands'?btn('Accept an invitation','soft',()=>acceptDialog('')):btn('Pair a device','soft',pairDialog,{disabled:!owned.some(b=>b.active)});
+    const add=tab==='bands'?btn('Accept invite','soft',()=>acceptDialog(''),{title:'Accept an invitation'}):btn('Pair device','soft',pairDialog,{disabled:!owned.some(b=>b.active),title:'Pair a device'});
     let body,foot;
     if(tab==='bands'){
       body=table('minmax(0,1.4fr) minmax(0,1fr) 90px 44px',['Band','Workers','Your role',''],bands.length?bands.map(b=>{
@@ -68,16 +69,16 @@ export async function mountAccount(root, {onChange = () => {}} = {}) {
           b.role==='owner'&&b.active&&{label:'Pairing code for a device',run:()=>act({op:'pair',band_id:b.id})},
           b.role==='owner'&&b.active&&{label:'Invite a person',run:()=>act({op:'invite',band_id:b.id},d=>reveal('Invite a person','Share this single-use link. It expires in seven days.',d.text))}]),{'aria-label':'More actions for '+b.name});
         return h('div',{class:'mg-row'},two(b.name,(b.primary?'Default band · ':'')+(b.active?'key v'+b.epoch:'revoked')),h('span',{class:'mg-mono mg-dimtext',text:on+' of '+b.workers.length+' online'}),h('span',{class:'mg-mono '+(b.role==='owner'?'mg-good':'mg-dimtext'),text:b.role}),more);
-      }):[h('div',{class:'mg-empty',text:'You are not in any band yet. Accept an invitation to join one.'})],520);
-      foot=h('span',null,'Members, keys and worker moves are on the ',h('a',{href:'#bands',text:'Bands page'}),'. ',h('a',{href:'/account/configurations',text:'Download all configurations'}),'.');
+      }):[h('div',{class:'mg-empty',text:'No bands yet: accept an invite.'})],520);
+      foot=h('span',null,h('a',{href:'#bands',text:'Members, keys, moves'}),' · ',h('a',{href:'/account/configurations',text:'All configurations'}));
     }else{
       body=table('minmax(0,1.4fr) minmax(0,1fr) 110px 44px',['Device','Band','Last seen',''],devices.length?devices.map(d=>{
         const more=d.active?btn('⋯','icon',()=>menu(more,[{label:'Revoke certificate…',danger:true,run:()=>{if(confirm('Revoke the certificate for '+d.name+'? It can no longer fetch its configuration.'))act({op:'device_revoke',band_id:d.band.id,device_id:d.id},()=>{status.textContent='Device certificate revoked.';});}}]),{'aria-label':'More actions for '+d.name}):h('span');
         return h('div',{class:'mg-row'},two(d.name,'enrolled '+day(d.created)),h('span',{class:'mg-mono mg-dimtext',text:d.band.name}),h('span',{class:'mg-mono '+(d.active?'mg-dimtext':'mg-bad'),text:d.active?ago(d.last_seen):'revoked'}),more);
       }):[h('div',{class:'mg-empty',text:owned.length?'No enrolled devices.':'Devices show here for bands you own.'})],520);
-      foot='Each device holds its own certificate. Revoking one stops only that device from fetching its configuration.';
+      foot='Revoking a device stops only that device.';
     }
-    right.replaceChildren(h('div',{class:'mg-bar',style:'justify-content:space-between;padding-right:18px;border-bottom:1px solid var(--line)'},
+    right.replaceChildren(h('div',{class:'mg-bar',style:'justify-content:space-between;flex-wrap:nowrap;padding-right:12px;border-bottom:1px solid var(--line)'},
       h('div',{class:'mg-tabs',role:'tablist',style:'border:0'},tabs.map(([id,text])=>h('button',{type:'button',role:'tab',class:id===tab?'on':'','aria-selected':String(id===tab),'data-section-tab':id,text,onclick:()=>{tab=id;drawRight();}}))),add),
       body,h('div',{class:'mg-sub',style:'padding:12px 18px;font-size:12px'},foot));
   }

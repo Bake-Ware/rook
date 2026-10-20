@@ -8,6 +8,21 @@ version was `0.1.0`.
 
 ## Unreleased
 
+### Changed
+- The dashboard works on a phone. At 800px wide or less the sidebar becomes a drawer (☰, or
+  More in a new bottom bar with Home, Huddles, Work and Sessions). The header is compact and
+  stays at the top. Inputs are 16px so iOS does not zoom, tap targets are at least 44px, and
+  safe-area insets are respected. Tables stack into labelled rows, every dialog opens as a
+  full-screen sheet, and long ids and paths are shortened with "…" and copy when tapped. Each
+  page's description moved behind an i next to its title. Pages were condensed on every size:
+  secondary actions sit in ⋯ menus, there is one primary button per view, rows of buttons
+  became segmented controls, and labels, empty states and toasts are shorter. Explanations
+  moved behind i toggles, and the manual-update notice is one line. A Playwright test
+  (tests/test_mobile_layout.py) checks every page at 390px for sideways scrolling; it skips
+  where Playwright is not installed. (manual:
+  overview-and-start-page, workers, work, knowledge, huddles, home-agent, jobs, sessions,
+  updates, bands-and-keys, help)
+
 ### Added
 - Task deck paging: `rook_task`/`task.read` deck takes `project_fields` (trim project
   headers), `project` (one project) and `offset`/`limit` over projects. Every deck reply

@@ -37,7 +37,8 @@ Open **Home agent** (under Manage).
    instructions.
 
 The chat panel on the page is your one-to-one huddle with the home agent: the
-first message you send starts it, and it is also listed on the Huddles page.
+first message you send starts it, and it is also listed on the Huddles page
+(**In Huddles ↗** opens it there).
 While the agent works the panel says it is thinking; if it cannot answer, the
 panel says why and points at the form.
 
@@ -100,7 +101,7 @@ copy is renamed and kept, never deleted.
 
 Manage roles on the **Roles** page (under Manage): add them from the presets
 (grouped by category) or from scratch, change what each watches and may use, move one to
-another host, and see its history; **What it remembers** shows its memory on
+another host, and see its history; **Memory** in a role's **⋯** menu shows its memory on
 the Memory page ([[manual-huddles]] has the details). Agents and scripts use
 worker `rook`: `role.presets` lists the presets by category, `role.set` saves a
 role (admin), `role.ask` asks one a question, `role.memory` shows what it

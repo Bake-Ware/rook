@@ -63,7 +63,7 @@ function tile(value, label, href, tone) {
 function waiting(j) {
   const items = [];
   for (const s of j.sessions.filter(s => s.state === 'idle'))
-    items.push({ts: s.updated, row: h('li', null, h('span', {class: 'ov-why', text: 'Session waiting for input'}),
+    items.push({ts: s.updated, row: h('li', null, h('span', {class: 'ov-why', text: 'Waiting'}),
       a(link.session(s), s.title || s.agent), h('small', {text: s.agent + ' on ' + s.worker + ' · ' + ago(s.updated)}),
       h('div', {class: 'ov-chips'}, s.links?.task && j.tasks.get(s.links.task) ? taskChip(j.tasks.get(s.links.task).task) : null))});
   for (const r of j.rooms.filter(r => r.member && r.unread > 0))
@@ -82,7 +82,7 @@ function waiting(j) {
   }
   items.sort((x, y) => (y.ts || 0) - (x.ts || 0));
   return card('Waiting on you', items.length ? plural(items.length, 'item') : '',
-    items.length ? h('ul', {class: 'ov-list'}, items.slice(0, 12).map(i => i.row)) : empty('Nothing needs you right now.'));
+    items.length ? h('ul', {class: 'ov-list'}, items.slice(0, 12).map(i => i.row)) : empty('Nothing needs you.'));
 }
 
 function active(j, d) {
@@ -102,16 +102,16 @@ function active(j, d) {
     a(link.room(r.room), r.title || r.room), h('small', {text: (r.last_sender ? shortName(r.last_sender) + ' · ' : '') + ago(now() - r.last_activity_age_secs)}),
     h('div', {class: 'ov-chips'}, (j.tasksByRoom.get(r.room) || []).map(taskChip))));
   const notes = [d.sessions.error && 'sessions: ' + d.sessions.error, d.rooms.error && 'chat: ' + d.rooms.error].filter(Boolean);
-  return card('Active now', '', rows.length ? h('ul', {class: 'ov-list'}, rows) : empty('Nothing is running right now.'),
+  return card('Active now', '', rows.length ? h('ul', {class: 'ov-list'}, rows) : empty('Nothing running.'),
     notes.length ? failed('Could not load ' + notes.join('; ')) : null);
 }
 
 function recent(j, d) {
-  if (!j.k) return card('Recent knowledge changes', '', empty(knowledgeNote(d)));
-  return card('Recent knowledge changes', '', j.k.recent.length ? h('ul', {class: 'ov-list compact'}, j.k.recent.map(p => h('li', null,
+  if (!j.k) return card('Knowledge changes', '', empty(knowledgeNote(d)));
+  return card('Knowledge changes', '', j.k.recent.length ? h('ul', {class: 'ov-list compact'}, j.k.recent.map(p => h('li', {class: 'ov-plain'},
     a(link.page(p), p.title), h('small', {text: shortName(p.actor) + ' ' + verb(p.action) + ' · ' + ago(p.ts)}),
     p.verification === 'disputed' ? h('span', {class: 'ov-why bad', text: 'disputed'}) : null))) : empty('No pages yet.'),
-    a('#knowledge', 'Open knowledge', 'ov-more'));
+    a('#knowledge', 'All pages', 'ov-more'));
 }
 const verb = a => ({created: 'created', updated: 'edited', linked: 'linked', reviewed: 'reviewed', retracted: 'retracted'}[a] || a || 'changed');
 function knowledgeNote(d) {
@@ -120,14 +120,14 @@ function knowledgeNote(d) {
 }
 
 function projects(j, d) {
-  if (!j.k) return card('Open tasks by project', '', empty(knowledgeNote(d)));
+  if (!j.k) return card('Open tasks', '', empty(knowledgeNote(d)));
   const open = j.k.projects.filter(p => p.counts.in_progress + p.counts.blocked + p.counts.todo > 0);
-  if (!open.length) return card('Open tasks by project', '', empty('No open tasks.'));
+  if (!open.length) return card('Open tasks', '', empty('No open tasks.'));
   const taskRow = (t, key) => h('li', null, h('span', {class: 'ov-state ' + key, text: {in_progress: 'doing', blocked: 'blocked', todo: 'to do'}[key]}),
     a(link.task(t), t.title),
     h('div', {class: 'ov-chips'}, (j.roomsByTask.get(t.id) || []).map(roomChip), (j.sessionsByTask.get(t.id) || []).map(sessionChip),
       t.claimants?.length ? h('span', {class: 'ov-who', text: t.claimants.map(shortName).join(', ')}) : null));
-  return card('Open tasks by project', plural(open.length, 'project'), h('div', {class: 'ov-projects'}, open.map(p => {
+  return card('Open tasks', plural(open.length, 'project'), h('div', {class: 'ov-projects'}, open.map(p => {
     const c = p.counts;
     const more = c.in_progress + c.blocked + c.todo - (p.in_progress.length + p.blocked.length + p.todo.length);
     return h('article', {class: 'ov-project'},
@@ -147,10 +147,10 @@ function summary(j, d) {
   for (const p of j.k?.projects || []) { doing += p.counts.in_progress; blocked += p.counts.blocked; }
   const unread = j.rooms.reduce((n, r) => n + (r.member ? r.unread || 0 : 0), 0);
   return h('div', {class: 'ov-tiles'},
-    tile(d.workers.error ? '—' : up + '/' + workers.length, 'workers online', '#workers', up < workers.length ? 'warn' : ''),
-    tile(String(live + idle), idle ? 'sessions running, ' + idle + ' waiting for you' : 'sessions running', '#sessions', idle ? 'warn' : ''),
-    tile(j.k ? String(doing) : '—', blocked ? 'tasks in progress, ' + blocked + ' blocked' : 'tasks in progress', '#work', blocked ? 'bad' : ''),
-    tile(String(unread), 'unread chat messages', '#huddles', unread ? 'warn' : ''));
+    tile(d.workers.error ? '—' : up + '/' + workers.length, 'workers', '#workers', up < workers.length ? 'warn' : ''),
+    tile(String(live + idle), idle ? 'sessions · ' + idle + ' wait' : 'sessions', '#sessions', idle ? 'warn' : ''),
+    tile(j.k ? String(doing) : '—', blocked ? 'active · ' + blocked + ' blocked' : 'active tasks', '#work', blocked ? 'bad' : ''),
+    tile(String(unread), 'unread', '#huddles', unread ? 'warn' : ''));
 }
 
 export async function mountOverview(root) {

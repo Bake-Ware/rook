@@ -12,7 +12,7 @@ deprecated: false
 # Help and this manual
 
 Open **Help** at the bottom of the dashboard's sidebar to read this manual.
-Pick a page on the left, or search. Links between pages work like the
+Pick a page on the left (on a phone, tap the page name at the top to open the list), or search. Links between pages work like the
 knowledge wiki's links. Pages marked **preview** describe something that is
 not in a release yet.
 
@@ -43,17 +43,17 @@ Each Rook version ships its own manual. When the hub starts on a version whose
 manual differs from the copy in your knowledge base, the dashboard shows a
 message:
 
-**The Rook manual changed in this update: update your knowledge base copy?**
+**Manual updated** (with how many pages changed).
 
-Click **Review changes** to see which pages were added, changed and removed,
+Click **Review** to see which pages were added, changed and removed,
 then choose:
 
 - **Update**: bring the copy up to date. Pages you edited yourself, including
   the contents page, are kept unless you tick **Replace my edits** next to
   them, and tags you added are kept either way. Removed pages are archived,
   not deleted.
-- **Not now**: ask again tomorrow.
-- **Never for this version**: do not ask again until the next manual change.
+- **Not now** (or **×** on the message): ask again tomorrow.
+- **Skip version**: do not ask again until the next manual change.
 
 You can also update from the **Help** page at any time.
 

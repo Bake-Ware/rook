@@ -30,15 +30,14 @@ export async function mountSessions(root, boot, toClassic) {
   root.innerHTML = `
     <div class="sx">
       <header class="sx-bar">
-        <div class="sx-title"><h2>Sessions</h2><span id="sx-counts" class="sx-muted"></span></div>
-        <div class="sx-bar-actions"><span class="sx-act-wrap"><button type="button" id="sx-act" aria-expanded="false" aria-controls="sx-act-panel" title="Host warnings and the results of what you did here">Activity<span id="sx-act-badge" class="sx-act-badge" hidden></span></button><div id="sx-act-panel" class="sx-act-panel" role="log" aria-label="Activity" hidden><div class="sx-act-head"><span>Activity</span><button type="button" id="sx-act-clear" class="sx-link">Clear</button></div><ol id="sx-act-list"><li class="sx-muted">Nothing yet.</li></ol></div></span><button type="button" id="sx-new" class="sx-primary">+ New session</button>${toClassic ? '<button type="button" id="sx-classic" class="sx-link" title="The Codex app-server view">Classic view</button>' : ''}</div>
+        <div class="sx-title"><span id="sx-counts" class="sx-muted"></span><span id="sx-status" class="sx-muted"></span></div>
+        <div class="sx-bar-actions"><button type="button" id="sx-filter-toggle" class="sx-icon" aria-expanded="false" aria-controls="sx-filters" aria-label="Filters" title="Filters">⏷<span class="sx-lbl"> Filters</span><span id="sx-filter-badge" class="sx-act-badge" hidden></span></button><span class="sx-act-wrap"><button type="button" id="sx-act" class="sx-icon" aria-expanded="false" aria-controls="sx-act-panel" aria-label="Activity" title="Activity: host warnings and failed actions">≡<span class="sx-lbl"> Activity</span><span id="sx-act-badge" class="sx-act-badge" hidden></span></button><div id="sx-act-panel" class="sx-act-panel" role="log" aria-label="Activity" hidden><div class="sx-act-head"><span>Activity</span><button type="button" id="sx-act-clear" class="sx-link">Clear</button></div><ol id="sx-act-list"><li class="sx-muted">Nothing yet.</li></ol></div></span>${toClassic ? '<button type="button" id="sx-classic" class="sx-link" title="The Codex app-server view">Classic</button>' : ''}<button type="button" id="sx-new" class="sx-primary" title="New session">+ New</button></div>
       </header>
-      <div class="sx-filters">
-        <input id="sx-search" type="search" placeholder="Search title, folder or id…" aria-label="Search sessions" maxlength="200">
+      <div class="sx-filters" id="sx-filters">
+        <input id="sx-search" type="search" placeholder="Search" aria-label="Search sessions (title, folder or id)" maxlength="200">
         <select id="sx-agent" aria-label="Agent"><option value="">All agents</option>${AGENTS.map(a => `<option>${a}</option>`).join('')}</select>
         <select id="sx-host" aria-label="Host"><option value="">All hosts</option></select>
         <label class="sx-check"><input type="checkbox" id="sx-live"> Live only</label>
-        <span id="sx-status" class="sx-muted">Loading…</span>
       </div>
       <form id="sx-form" class="sx-form" hidden>
         <h3>New session</h3>
@@ -48,14 +47,14 @@ export async function mountSessions(root, boot, toClassic) {
           <label class="sx-wide">Folder<input name="cwd" list="sx-folders" placeholder="/path/to/project" required maxlength="2000" autocomplete="off"></label>
           <label>Model<input name="model" placeholder="Host default" maxlength="100"></label>
           <label>Persona<input name="persona" placeholder="Harness default" maxlength="100"></label>
-          <label>Title<input name="title" placeholder="What is this session for?" maxlength="160"></label>
-          <label>Task<input name="task" placeholder="Optional: t_… or slug" maxlength="120" title="The task this session is for: it is claimed for you, and gets a note when the session ends"></label>
-          <label class="sx-check sx-full"><input type="checkbox" name="mcp" checked> Give it a Rook MCP token scoped to this session</label>
+          <label>Title<input name="title" placeholder="Optional" maxlength="160"></label>
+          <label>Task<input name="task" placeholder="t_… or slug (optional)" maxlength="120" title="The task this session is for: it is claimed for you, and gets a note when the session ends"></label>
+          <label class="sx-check sx-full" title="A Rook MCP token scoped to this session: it expires after a day and is revoked when the session ends"><input type="checkbox" name="mcp" checked> Rook MCP token</label>
         </div>
         <datalist id="sx-folders"></datalist>
-        <p class="sx-muted">It runs in a real terminal on the host, with that host's own login for the harness. The token expires after a day and is revoked when the session ends. A task you name is claimed for you; when the session ends the task gets a note asking for a handoff.</p>
+        <details class="mg-info sx-info"><summary aria-label="About new sessions" title="About new sessions">i</summary><p>It runs in a real terminal on the host, with that host's own login for the harness. The token expires after a day and is revoked when the session ends. A task you name is claimed for you; when the session ends the task gets a note asking for a handoff.</p></details>
         <p class="sx-error" id="sx-form-error" role="alert"></p>
-        <div class="sx-row"><button type="submit" class="sx-primary">Start</button><button type="button" id="sx-form-cancel">Cancel</button></div>
+        <div class="sx-row"><button type="button" id="sx-form-cancel">Cancel</button><button type="submit" class="sx-primary">Start</button></div>
       </form>
       <div class="sx-body" id="sx-body">
         <div id="sx-list" role="navigation" aria-label="Sessions"><p class="sx-muted">Loading…</p></div>
@@ -138,7 +137,8 @@ export async function mountSessions(root, boot, toClassic) {
   function showStatus() {
     const waiting = data.workers.filter(w => asking.get(w.worker_id) === dataKey).map(w => w.name || w.worker_id);
     const st = $('#sx-status');
-    st.textContent = waiting.length ? 'Updating…' : 'Updated ' + new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+    // A quiet clock, not a sentence: it never changes width or wording mid-poll.
+    if (!waiting.length) { const t = new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}); st.textContent = t; st.title = 'Updated ' + t; }
     st.title = waiting.length ? 'Asking ' + waiting.join(', ') : '';
   }
   async function askHost(id, q, key) {
@@ -241,7 +241,7 @@ export async function mountSessions(root, boot, toClassic) {
   function renderList() {
     const list = visible(), selected = open?.rec.key;
     if (!list.length) {
-      $('#sx-list').innerHTML = `<p class="sx-muted sx-empty">${data.sessions.length ? 'No sessions match these filters.' : data.workers.length ? 'No sessions on your hosts yet. Start one with New session.' : 'No connected hosts report sessions.'}</p>`;
+      $('#sx-list').innerHTML = `<p class="sx-muted sx-empty">${data.sessions.length ? 'No matches.' : data.workers.length ? 'No sessions yet.' : 'No hosts report sessions.'}</p>`;
       return;
     }
     $('#sx-list').innerHTML = groups(list).map(h => {
@@ -322,19 +322,19 @@ export async function mountSessions(root, boot, toClassic) {
     const el = $('#sx-detail'); el.hidden = false; $('#sx-body').classList.add('has-detail');
     el.innerHTML = `
       <header class="sx-d-head">
-        <button type="button" class="sx-back" data-act="back">← All sessions</button>
+        <button type="button" class="sx-back" data-act="back" aria-label="All sessions" title="All sessions">←</button>
         <div class="sx-d-title"><h3></h3><div class="sx-muted sx-d-meta"></div></div>
         <div class="sx-d-actions">
-          <form class="sx-d-link"><input name="task" placeholder="Task: t_… or slug" maxlength="120" aria-label="Task"><button type="submit">Link</button></form>
-          <button type="button" data-act="resume" hidden>Resume in a Rook terminal</button>
+          <form class="sx-d-link"><input name="task" placeholder="Task" maxlength="120" aria-label="Task (t_… or slug)" title="Task: t_… or slug"><button type="submit">Link</button></form>
+          <button type="button" data-act="resume" class="sx-primary" title="Resume in a Rook terminal" hidden>Resume</button>
           <button type="button" data-act="stop" hidden>Stop</button>
-          <button type="button" data-act="close" class="sx-link" aria-label="Close this session's view">Close</button>
+          <button type="button" data-act="close" class="sx-icon sx-close" aria-label="Close this session's view" title="Close">✕</button>
         </div>
       </header>
       <p class="sx-hint" hidden></p>
       <div class="sx-view"></div>
       <form class="sx-send" hidden>
-        <textarea id="sx-send-text" rows="1" maxlength="24000" placeholder="Send to this session…" aria-label="Send to this session"></textarea>
+        <textarea id="sx-send-text" rows="1" maxlength="24000" placeholder="Send…" aria-label="Send to this session"></textarea>
         <button type="submit" class="sx-primary">Send</button>
       </form>`;
     open = {rec, mode: null, view: null, el};
@@ -364,9 +364,9 @@ export async function mountSessions(root, boot, toClassic) {
     const host = rec.worker || 'its host';
     hint.hidden = !(rec.possibly_live || (!live && rec.links?.task));
     hint.textContent = rec.possibly_live === 'recent_write'
-      ? `Rook sees no process holding this session, but its transcript changed in the last 2 minutes, so it may still be running on ${host}. Resume is offered once it has been quiet for 2 minutes.`
-      : rec.possibly_live ? `A Claude Code on ${host} is running in this folder, but its session marker could not be read. This is the folder's newest session, so Rook treats it as running and does not offer Resume. End it on ${host} first.`
-      : `This session worked on task ${rec.links?.task}. It has ended: leave a handoff on the task (Work page) or set its state.`;
+      ? `May still be running on ${host}: its transcript changed under 2 min ago. Resume unlocks after 2 quiet minutes.`
+      : rec.possibly_live ? `A Claude Code is running in this folder on ${host} (marker unreadable), so this newest session counts as running: no Resume. End it on ${host} first.`
+      : `Ended. Leave a handoff on task ${rec.links?.task} (Work) or set its state.`;
     el.querySelector('.sx-send').hidden = !(live && rec.input && rec.input !== 'none');
     const mode = modeOf(rec);
     if (mode !== open.mode) {
@@ -375,7 +375,7 @@ export async function mountSessions(root, boot, toClassic) {
       if (mode.startsWith('terminal:')) open.view = new TermCard(host, rec);
       else if (mode === 'mirror') open.view = new LiveLog(host, rec);
       else if (mode === 'transcript') open.view = new Transcript(host, rec);
-      else host.innerHTML = '<p class="sx-muted">This session has nothing to show: no Rook terminal, mirror or transcript.</p>';
+      else host.innerHTML = '<p class="sx-muted">Nothing to show (no terminal, mirror or transcript).</p>';
     } else open.view?.update?.(rec);
   }
   $('#sx-detail').addEventListener('click', async e => {
@@ -394,7 +394,7 @@ export async function mountSessions(root, boot, toClassic) {
         select({...rec, key: 'resume:' + res.session, state: 'live', origin: 'rook', input: 'pty',
           view: {...rec.view, terminal: res.terminal}, links: {...rec.links, work_session: res.session}});
         refresh();
-      } catch (err) { note(err.message, true); b.disabled = false; b.textContent = 'Resume in a Rook terminal'; }
+      } catch (err) { note(err.message, true); b.disabled = false; b.textContent = 'Resume'; }
     }
   });
   // Only failures (and held messages, below) reach Activity; successes are silent.
@@ -432,7 +432,7 @@ export async function mountSessions(root, boot, toClassic) {
   class TermCard {
     constructor(host, rec) {
       this.rec = rec; this.disposed = false;
-      host.innerHTML = `<article class="sx-term"><header><span class="sx-holder sx-muted"></span><span class="sx-term-actions"><button type="button" data-t="take">Take control</button><button type="button" data-t="release">Release</button><select data-t="handoff" aria-label="Hand off control"></select><button type="button" data-t="int" title="Send Ctrl-C">Ctrl-C</button></span></header><div class="sx-xterm"></div></article>`;
+      host.innerHTML = `<article class="sx-term"><header><span class="sx-holder sx-muted"></span><span class="sx-term-actions"><button type="button" data-t="take" title="Take control">Take</button><button type="button" data-t="release" title="Release control">Release</button><select data-t="handoff" aria-label="Hand off control"></select><button type="button" data-t="int" title="Send Ctrl-C">^C</button></span></header><div class="sx-xterm"></div></article>`;
       this.card = host.firstElementChild;
       this.card.addEventListener('click', e => {
         const b = e.target.closest('[data-t]'); if (!b || !this.term) return;
@@ -454,13 +454,13 @@ export async function mountSessions(root, boot, toClassic) {
     }
     paint(view) {
       const st = view.state, me = view.me, holder = st.holder, others = (st.viewers || []).filter(x => x.id !== me);
-      const text = holder ? (holder === me ? 'You have control' : ((st.viewers || []).find(x => x.id === holder)?.label || 'Someone') + ' has control') : 'Nobody has control: type to take it';
+      const text = holder ? (holder === me ? 'You have control' : ((st.viewers || []).find(x => x.id === holder)?.label || 'Someone') + ' has control') : 'No one in control';
       this.card.querySelector('.sx-holder').textContent = text + (others.length ? ` · ${others.length + 1} watching` : '');
       this.card.querySelector('[data-t=take]').hidden = holder === me;
       this.card.querySelector('[data-t=release]').hidden = holder !== me;
       const hand = this.card.querySelector('[data-t=handoff]');
       hand.hidden = holder !== me || !others.length;
-      hand.innerHTML = '<option value="">Hand off to…</option>' + others.map(x => `<option value="${esc(x.id)}">${esc(x.label)}</option>`).join('');
+      hand.innerHTML = '<option value="">Hand off…</option>' + others.map(x => `<option value="${esc(x.id)}">${esc(x.label)}</option>`).join('');
       // A lost terminal is worth a line; a normal exit shows in the terminal itself.
       if (st.lost && st.lost !== this.said) act((this.rec.title ? this.rec.title + ': ' : '') + st.lost, 'warn');
       this.said = st.lost || '';
@@ -626,9 +626,18 @@ export async function mountSessions(root, boot, toClassic) {
     const rec = data.sessions.find(r => r.key === b.dataset.key); if (rec) select(rec);
   });
   $('#sx-search').addEventListener('input', () => { renderList(); clearTimeout(typing); typing = setTimeout(refresh, 350); });
-  $('#sx-live').addEventListener('change', () => { renderList(); refresh(); });
-  $('#sx-agent').addEventListener('change', renderList);
-  $('#sx-host').addEventListener('change', renderList);
+  // Phones fold the agent/host/live filters behind one button that counts the active ones.
+  function filterBadge() {
+    const n = [$('#sx-agent').value, $('#sx-host').value, $('#sx-live').checked].filter(Boolean).length;
+    const b = $('#sx-filter-badge'); b.textContent = String(n); b.hidden = !n;
+  }
+  $('#sx-filter-toggle').onclick = () => {
+    const on = root.querySelector('.sx').classList.toggle('filters-open');
+    $('#sx-filter-toggle').setAttribute('aria-expanded', String(on));
+  };
+  $('#sx-live').addEventListener('change', () => { filterBadge(); renderList(); refresh(); });
+  $('#sx-agent').addEventListener('change', () => { filterBadge(); renderList(); });
+  $('#sx-host').addEventListener('change', () => { filterBadge(); renderList(); });
   $('#sx-classic')?.addEventListener('click', () => toClassic());
   // #sessions?key=<worker/agent/native id>: the Overview links straight to a session.
   function openFromHash() {

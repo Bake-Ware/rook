@@ -19,7 +19,6 @@
 .sx-filters input[type=search]{flex:1 1 220px;padding:8px}
 .sx-filters select{padding:7px;max-width:180px}
 .sx-check{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--dim)}
-#sx-status{margin-left:auto;white-space:nowrap;min-width:9em;text-align:right}
 .sx-form{padding:16px;border-bottom:1px solid var(--line);background:var(--panel2)}
 .sx-form h3{margin:0 0 12px;font-weight:500}
 .sx-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px 14px}
@@ -85,10 +84,48 @@
   #sx-list{border-right:0;max-height:none}
   .sx .sx-back{display:inline-block}
   .sx-filters select{flex:1 1 40%;max-width:none}
-  #sx-status{margin-left:0;flex-basis:100%}
-  .sx-xterm{height:360px}
-  .sx-xterm.sx-screen{height:62vh;padding:6px}
   .sx-project{margin-left:10px}
+}
+/* Compact header: counts and a quiet clock on the left, icon buttons + one primary on the right. */
+.sx-title{align-items:center}
+#sx-status{margin-left:0;min-width:0;text-align:left;font:11px var(--mono);color:var(--dim2)}
+.sx .sx-icon{min-width:36px;display:inline-flex;align-items:center;justify-content:center;gap:2px}
+.sx #sx-filter-toggle{display:none}
+.sx-info{align-self:flex-start;margin:4px 0 0}
+.sx-form .sx-info>p{max-width:72ch}
+.sx .sx-close{min-width:36px}
+@media(max-width:800px){
+  .sx-bar{padding:8px 12px;gap:8px;flex-wrap:nowrap}
+  .sx-title{flex:1 1 0;min-width:0;gap:2px 8px}
+  #sx-counts{font-size:11px}
+  #sx-status{display:none}
+  .sx-bar-actions .sx-link{padding:0 4px}
+  .sx-bar-actions{gap:6px;margin-left:auto}
+  .sx .sx-lbl{display:none}
+  .sx #sx-filter-toggle{display:inline-flex}
+  .sx .sx-icon{min-width:44px;font-size:15px}
+  .sx-filters{padding:8px 12px;gap:6px}
+  .sx-filters input[type=search]{flex:1 1 100%}
+  .sx:not(.filters-open) .sx-filters select,.sx:not(.filters-open) .sx-filters .sx-check{display:none}
+  .sx-filters .sx-check{min-height:44px}
+  .sx-form{padding:12px}
+  .sx-row{justify-content:flex-end}
+  /* an open session gets the screen: no filters, terminal fills the height left */
+  .sx:has(.sx-body.has-detail) .sx-filters{display:none}
+  .sx-body{min-height:0}
+  #sx-detail{padding:8px 0 0;gap:6px;scroll-margin-top:calc(64px + env(safe-area-inset-top))}
+  .sx-d-head{gap:6px;align-items:center}
+  .sx-d-title{flex:1 1 0}
+  .sx-d-title h3{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sx-d-meta{font-size:11px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .sx-d-actions{flex:1 1 100%;gap:6px}
+  .sx-d-link{flex:1 1 auto}.sx-d-link input{flex:1 1 auto;width:auto;max-width:none}
+  .sx .sx-back{min-width:44px}
+  .sx-term>header{padding:4px 6px}
+  .sx-term-actions button,.sx-term-actions select{min-height:40px}
+  .sx-xterm{height:calc(100dvh - 300px - env(safe-area-inset-bottom));min-height:240px;resize:none}
+  .sx-xterm.sx-screen{height:calc(100dvh - 270px - env(safe-area-inset-bottom));min-height:240px;resize:none}
+  .sx-send textarea{min-height:44px}
 }
 /* Activity: warnings and action results, in a panel over the page (no layout shift). */
 .sx-act-wrap{position:relative}

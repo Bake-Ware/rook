@@ -1,7 +1,7 @@
 // Bands: a table of bands and a panel for the selected one (workers, members, key).
 // Versioned like this module (?v=...), so a stale edge cache cannot pair it
 // with an old manage.js.
-const {h, esc, ago, day, useCss, btn, table, two, dialog, accountAction, reveal, pairing} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
+const {h, esc, ago, day, useCss, btn, table, two, dialog, more, info, accountAction, reveal, pairing} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
 
 const ACTIVE=['prepared','active'];
 
@@ -33,8 +33,8 @@ function render(){
    h('button',{type:'button',style:'all:unset;cursor:pointer;min-width:0','aria-current':b.id===picked?'true':null},h('span',{class:'mg-two'},h('b',null,b.name,b.primary?h('span',{class:'mg-tag',text:'DEFAULT'}):null,b.active?null:h('span',{class:'mg-tag line',text:'REVOKED'})))),
    h('span',{class:'mg-mono mg-dimtext',text:b.label+' · v'+b.epoch}),
    h('span',null,h('span',{class:on?'mg-good':'mg-dimtext',text:String(on)}),h('span',{class:'mg-sub',text:' of '+b.workers.length+' online'})),
-   h('span',{class:'mg-dimtext',text:String(b.enrolled_devices)}),h('span',{class:'mg-mono '+(b.role==='owner'?'mg-good':'mg-dimtext'),text:b.role}));
- }):[h('div',{class:'mg-empty'},'You have no bands yet. Create one, or ',h('a',{href:'/#account',text:'accept an invitation'}),'.')],600));
+   h('span',{class:'mg-dimtext',title:plural(b.enrolled_devices,'enrolled device')},String(b.enrolled_devices),h('span',{class:'sm-only',text:' devices'})),h('span',{class:'mg-mono '+(b.role==='owner'?'mg-good':'mg-dimtext'),text:b.role}));
+ }):[h('div',{class:'mg-empty'},'No bands yet. Create one or ',h('a',{href:'/#account',text:'accept an invite'}),'.')],600));
  panel(bands.find(b=>b.id===picked));
  $('migration-list').replaceChildren(...live.map(banner));
  const past=state.migrations.filter(m=>!ACTIVE.includes(m.phase));
@@ -49,7 +49,7 @@ function banner(m){
  const resume=btn(on?'Running…':'Resume','soft',async()=>{try{running.add(m.id);await tick();}catch(err){message(err.message,true);}},{disabled:on});
  const cancel=m.phase==='prepared'?btn('Cancel','',async()=>{if(!confirm('Cancel this migration before workers switch bands?'))return;try{await api({op:'abort',migration_id:m.id});running.delete(m.id);await reload();}catch(err){message(err.message,true);}}):null;
  return h('div',{class:'mg-banner'},h('span',{class:'mg-label mg-warn',text:m.target_band_id?'Worker move':'Key rotation'}),
-  h('span',{class:'mg-grow',title:ws.map(w=>w.worker_id+': '+(w.confirmed?'verified':w.staged?'saved config':'waiting for config')).join('\n')},label(m).split(' · ').slice(1).join(' · ')+': '+staged+' of '+ws.length+' saved the new config, '+confirmed+' verified.'+(m.overdue?' The migration window expired; review before continuing.':on?' Keep this page open; workers refresh within about 30 seconds.':' Resume to continue verification.')+(m.error?' '+m.error:'')),
+  h('span',{class:'mg-grow',title:ws.map(w=>w.worker_id+': '+(w.confirmed?'verified':w.staged?'saved config':'waiting for config')).join('\n')},label(m).split(' · ').slice(1).join(' · ')+': '+staged+'/'+ws.length+' saved, '+confirmed+' verified.'+(m.overdue?' Window expired: review first.':on?' Keep this page open (~30 s).':'')+(m.error?' '+m.error:'')),
   ws.length?h('progress',{value:String(staged+confirmed),max:String(ws.length*2),'aria-label':'Migration progress'}):null,resume,cancel);
 }
 function panel(b){
@@ -64,7 +64,7 @@ function panel(b){
    h('span',{class:'mg-mono '+(w.online?'mg-good':'mg-dimtext'),title:w.can_move?'':'This worker needs an update before it can move.',text:(w.online?'online':'offline')+(w.can_move?'':' · update')}),
    owner?btn('Move…','',()=>openDialog('move',b.id,w.id),{disabled:!w.online||!w.can_move||open||!b.active}):null)));
   if(!b.workers.length)body.append(h('div',{class:'mg-empty',text:'No workers on this band right now.'}));
-  if(owner)body.append(h('div',{class:'mg-pad'},h('div',{class:'mg-actions'},btn('Move all…','soft',()=>openDialog('move_all',b.id),{disabled:!b.active||open||!b.workers.length}),h('span',{class:'mg-sub',style:'font-size:12px',text:open?'Finish the running migration first.':'A move needs the worker online and up to date.'}))));
+  if(owner)body.append(h('div',{class:'mg-pad'},h('div',{class:'mg-actions'},btn('Move all…','soft',()=>openDialog('move_all',b.id),{disabled:!b.active||open||!b.workers.length}),open?h('span',{class:'mg-sub',style:'font-size:12px',text:'Migration running.'}):info('A move needs the worker online and up to date.','About moves'))));
  }else if(tab==='members'){
   body.append(...b.members.map(p=>{
    const role=h('select',{'aria-label':'Role for '+p.name},[['member','Member'],['owner','Owner'],['remove','Remove…']].map(([v,t])=>h('option',{value:v,text:t,selected:v===p.role})));
@@ -78,23 +78,24 @@ function panel(b){
    h('div',{style:'display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 16px;align-items:baseline'},fact('Fingerprint',b.label),fact('Key version',String(b.epoch)),fact('Hub',b.hub||'—'),fact('Status',b.active?'active':'revoked')),
    h('div',{class:'mg-actions'},
     btn('Pairing code','soft',()=>account({op:'pair',band_id:b.id},d=>{if(d.pairing)pairing(d);}),{disabled:!b.active}),
-    btn('Revoke pairing code','',()=>account({op:'pair_revoke',band_id:b.id},()=>message('Pairing code revoked.'))),
-    btn('Rotate key…','',()=>openDialog('psk',b.id),{disabled:!b.active||open}),
-    b.active?h('a',{class:'mg-btn',href:'/account/configurations?band='+encodeURIComponent(b.id),text:'Download configuration'}):null),
-   h('p',{class:'mg-sub',style:'font-size:12px',text:'Rotating hands every enrolled worker the new key, then retires the old one once all are verified.'}),
+    btn('Rotate key…','',()=>openDialog('psk',b.id),{disabled:!b.active||open,title:'Rotating hands every enrolled worker the new key, then retires the old one once all are verified.'}),
+    more([{label:'Revoke pairing code',run:()=>account({op:'pair_revoke',band_id:b.id},()=>message('Pairing code revoked.'))},
+      b.active&&{label:'Download configuration',href:'/account/configurations?band='+encodeURIComponent(b.id)}],'More key actions'),
+    info('Rotating hands every enrolled worker the new key, then retires the old one once all are verified.','About rotation')),
    h('div',null,h('div',{class:'mg-label',style:'margin-bottom:6px',text:'Enrolled devices · '+devices.filter(d=>d.active).length}),
     devices.length?devices.map(d=>h('div',{class:'mg-log',style:'grid-template-columns:minmax(0,1fr) auto auto;align-items:center'},h('span',{text:d.name}),
      h('span',{class:'mg-sub',style:'font-size:12px',text:d.active?'seen '+ago(d.last_seen)+' · enrolled '+day(d.created):'revoked'}),
      d.active?btn('Revoke','danger',()=>{if(confirm('Revoke the certificate for '+d.name+'? It can no longer fetch its configuration.'))account({op:'device_revoke',band_id:b.id,device_id:d.id},()=>message('Device certificate revoked.'));},{style:'min-height:32px'}):h('span'))):h('p',{class:'mg-sub',text:'No enrolled devices.'})),
    h('details',null,h('summary',{text:'Compromised key'}),h('div',{class:'mg-pad',style:'padding:12px 0 0'},
-    h('p',{class:'mg-sub',style:'font-size:12px',text:'Replacing at once cuts off every worker on the old key until it is enrolled again. Never send a replacement key over a compromised band.'}),
+    h('p',{class:'mg-sub',style:'font-size:12px',text:'Replacing cuts off every worker on the old key until re-enrolled. Never send a new key over a compromised band.'}),
     h('div',{class:'mg-actions'},
      btn('Replace key now…','danger',()=>{if(confirm('Replace the key for '+b.name+' now? Existing workers must be enrolled again.'))account({op:'rotate',band_id:b.id,confirm:'yes'},d=>reveal('New permanent key','Shown once. Re-enroll devices with this key or a new pairing code.',d.text));}),
      btn('Revoke key…','danger',()=>{if(confirm('Revoke the current key for '+b.name+'?'))account({op:'revoke',band_id:b.id,confirm:'yes'},()=>message('Band key revoked.'));},{disabled:!b.active}))))));
  }
  host.replaceChildren(
   h('div',{class:'mg-panel-head'},h('div',{class:'mg-two'},h('h2',{text:b.name}),h('small',{text:b.role+' · key '+b.label+' v'+b.epoch+' · '+plural(b.enrolled_devices,'enrolled device')})),
-   owner?h('div',{class:'mg-actions'},btn('Rename','',()=>openDialog('rename',b.id)),btn('Delete…','danger',()=>openDialog('delete',b.id),{disabled:b.primary||open,title:b.primary?'The default band cannot be deleted.':open?'Finish the running migration first.':'Delete the band and revoke its enrollment.'})):null),
+   owner?more(()=>[{label:'Rename…',run:()=>openDialog('rename',b.id)},
+     !(b.primary||open)&&{label:'Delete…',danger:true,run:()=>openDialog('delete',b.id)}],'Band actions'):null),
   h('div',{class:'mg-tabs',role:'tablist'},tabs.map(([id,text])=>h('button',{type:'button',role:'tab',class:id===tab?'on':'','aria-selected':String(id===tab),text,onclick:()=>{tab=id;render();}}))),body);
 }
 async function reload(){const next=await api(),same=JSON.stringify(next)===JSON.stringify(state);state=next;if(!same||!root.querySelector('#bands-list .mg-head')){render();onChange(state);}}

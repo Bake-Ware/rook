@@ -4,7 +4,7 @@
 // rook/hub/plugins/ccmod/web.py). Stored text is rendered as text.
 // Versioned like this module (?v=...), so a stale cache cannot pair it with
 // an old manage.js.
-const {h, useCss, btn, chips, dialog, ago} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
+const {h, useCss, btn, chips, dialog, ago, info, more} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
 
 const API='/account/ccmod/api';
 const RISK_NOTE={read:'reads only',write:'changes data',exec:'runs code or controls a machine',admin:'administers the band'};
@@ -43,6 +43,7 @@ const CSS=`
 .cc-row>.mg-field{flex:1 1 180px;min-width:0}
 .cc-act{display:flex;flex-direction:column;gap:10px;padding:12px;border:1px solid var(--line);background:var(--panel2)}
 .cc-act-head{display:flex;gap:8px;align-items:center}
+.cc-act-head select{flex:1 1 auto;min-width:0}.cc-act{min-width:0}.cc-act select,.cc-act input,.cc-act textarea{max-width:100%}
 .cc-act-head select{flex:1 1 auto}
 .cc-sentence{padding:10px 12px;border-left:2px solid var(--accent);background:var(--banner-bg);font-size:13px;line-height:1.5}
 .cc-help{color:var(--dim);font-size:12px;line-height:1.45;margin:0}
@@ -69,9 +70,12 @@ dialog.cc-wide{width:min(760px,calc(100vw - 32px))}
 .cc-log>div:last-child{border-bottom:0}
 .cc-log small{color:var(--dim);font-size:12px;overflow-wrap:anywhere}
 .cc-log .bad{color:var(--bad)}
+.cc-racts{display:flex;gap:6px;flex-wrap:nowrap}.cc-tabs{flex-wrap:nowrap;align-items:center;overflow-x:auto;scrollbar-width:none}.cc-tabs .mg-btn{min-height:36px}
+.cc .mg-bar .mg-info{align-self:center}
 @media(max-width:760px){
- .cc-rule{grid-template-columns:auto minmax(0,1fr)}.cc-rule>.mg-actions{grid-column:1/-1}
- .cc-w{grid-template-columns:minmax(0,1fr) auto}.cc-w .hide{display:none}.cc-w .acts{grid-column:1/-1;justify-content:flex-start;flex-wrap:wrap}
+ .cc-rule{grid-template-columns:auto minmax(0,1fr) auto;padding:10px 12px}.cc-rule p{font-size:12px}
+ .cc-tabs{padding:0}
+ .cc-w{grid-template-columns:minmax(0,1fr) auto}.cc-w .hide{display:none}.cc-w .acts{justify-content:flex-end;flex-wrap:nowrap}
  .cc-w.head{display:none}
  .cc-log>div{grid-template-columns:minmax(0,1fr)}
 }
@@ -119,23 +123,23 @@ export async function mountCcmod(root){
   // -- rules -------------------------------------------------------------------------
   function ruleRow(r){
     const sw=h('input',{type:'checkbox',class:'cc-switch',checked:r.enabled,'aria-label':(r.enabled?'Switch off ':'Switch on ')+r.name,title:r.enabled?'On':'Off'});
-    sw.onchange=async()=>{sw.disabled=true;try{await post({action:'toggle',id:r.id,enabled:sw.checked});await load();render();say(r.name+(sw.checked?' is on.':' is off.')+' Push to workers to put the change into effect.');}catch(e){sw.checked=!sw.checked;sw.disabled=false;say(e.message,true);}};
+    sw.onchange=async()=>{sw.disabled=true;try{await post({action:'toggle',id:r.id,enabled:sw.checked});await load();render();say(r.name+(sw.checked?' on':' off')+' · push to apply.');}catch(e){sw.checked=!sw.checked;sw.disabled=false;say(e.message,true);}};
     const tags=h('div',{class:'cc-tags'},
       h('span',{class:'cc-tag '+r.risk,text:r.risk,title:RISK_NOTE[r.risk]||''}),
       h('span',{class:'cc-tag',text:SCOPE_LABEL[r.scope.kind]+(r.scope.target?': '+r.scope.target:'')}),
       r.actions.map(a=>h('span',{class:'cc-tag'+(['post','notify','cap'].includes(a.type)?' hub':''),text:a.type==='cap'?'runs '+a.cap:(d.choices.actions.find(x=>x.id===a.type)||{}).label||a.type})));
     return h('div',{class:'cc-rule'+(r.enabled?'':' off')},sw,
       h('div',null,h('h3',null,h('span',{text:r.name})),h('p',{text:r.summary}),tags),
-      h('div',{class:'mg-actions',style:'display:flex;gap:6px'},btn('Edit','',()=>editor(r)),
-        btn('Delete','danger',async()=>{if(!confirm('Delete the rule "'+r.name+'"? Push afterwards to take it off the workers.'))return;try{await post({action:'delete',id:r.id});await load();render();say('Deleted. Push to workers to take it off them.');}catch(e){say(e.message,true);}})));
+      h('div',{class:'mg-actions cc-racts'},btn('Edit','',()=>editor(r)),
+        more([{label:'Delete…',danger:true,run:async()=>{if(!confirm('Delete the rule "'+r.name+'"? Push afterwards to take it off the workers.'))return;try{await post({action:'delete',id:r.id});await load();render();say('Deleted · push to apply.');}catch(e){say(e.message,true);}}}],'More for '+r.name)));
   }
   function rulesTab(body){
-    body.append(h('p',{class:'mg-sub',text:'A rule says: when something happens in a Claude Code session, do something. Rook adds its own hooks to Claude Code\'s settings on each worker you push to, next to your own (they are never replaced), and keeps a backup. Posts, notifications and capabilities run on the hub; blocking, extra instructions and the status line happen inside Claude Code.'}));
-    const bar=h('div',{class:'mg-bar'},btn('New rule','primary',()=>editor(null)),h('span',{class:'mg-grow'}),
-      btn('Push to all workers','soft',()=>pushAll()));
+    const bar=h('div',{class:'mg-bar'},btn('+ New rule','primary',()=>editor(null)),
+      info('A rule says: when something happens in a Claude Code session, do something. Rook adds its own hooks to Claude Code\'s settings on each worker you push to, next to your own (they are never replaced), and keeps a backup. Posts, notifications and capabilities run on the hub; blocking, extra instructions and the status line happen inside Claude Code.','About rules'),
+      h('span',{class:'mg-grow'}),btn('Push all','soft',()=>pushAll(),{title:'Push to all workers'}));
     body.append(bar);
     if(!d.rules.length){
-      body.append(h('div',{class:'mg-box mg-pad'},h('b',{text:'No rules yet.'}),h('p',{class:'mg-sub',text:'Start from one of these, or write your own.'}),
+      body.append(h('div',{class:'mg-box mg-pad'},h('b',{text:'No rules yet. Start from an example:'}),
         h('div',{class:'cc-ex'},EXAMPLES.map(x=>h('button',{type:'button',onclick:()=>editor(null,x)},h('b',{text:x.name}),h('small',{text:exampleNote(x)}))))));
       return;
     }
@@ -290,8 +294,8 @@ export async function mountCcmod(root){
     return w.current?['ok','up to date · rev '+w.push.rev]:['stale','out of date: push again'];
   }
   function workersTab(body){
-    body.append(h('p',{class:'mg-sub',text:'Each worker gets the rules that apply to it. Preview shows exactly what would change in each Claude Code settings file there before anything is written. Workers that cannot take rules (older builds, or no Claude Code) are left alone.'}));
-    body.append(h('div',{class:'mg-bar'},btn('Push to all workers','primary',()=>pushAll()),h('span',{class:'mg-grow'})));
+    body.append(h('div',{class:'mg-bar'},btn('Push all','primary',()=>pushAll(),{title:'Push to all workers'}),
+      info('Each worker gets the rules that apply to it. Preview shows exactly what would change in each Claude Code settings file there before anything is written. Workers that cannot take rules (older builds, or no Claude Code) are left alone.','About pushing'),h('span',{class:'mg-grow'})));
     const box=h('div',{class:'cc-workers'},h('div',{class:'cc-w head'},h('div',{text:'Worker'}),h('div',{class:'hide',text:'Status'}),h('div',{class:'hide',text:'Last push'}),h('div')));
     for(const w of d.workers){
       const [cls,label]=state(w);
@@ -301,9 +305,8 @@ export async function mountCcmod(root){
         h('div',{class:'hide'},h('span',{class:'cc-dot '+cls}),h('span',{text:label})),
         h('div',{class:'hide'},h('span',{text:w.push&&w.push.at?ago(w.push.at):'never'}),w.push&&(w.push.installations||[]).length?h('small',{text:w.push.installations.map(i=>i.action).join(', ')}):null),
         h('div',{class:'acts'},
-          btn('Preview','',()=>preview(w),{disabled:!can}),
           btn('Push','soft',()=>pushOne(w),{disabled:!can}),
-          btn('Remove','danger',()=>removeFrom(w),{disabled:!can||!w.push||!w.push.ok,title:'Take Rook\'s hooks off this worker\'s Claude Code'}))));
+          can?more(()=>[{label:'Preview',run:()=>preview(w)},w.push&&w.push.ok?{label:'Remove…',danger:true,run:()=>removeFrom(w)}:null],'More for '+w.name):null)));
     }
     if(!d.workers.length)box.append(h('div',{class:'mg-empty',text:'No workers online.'}));
     body.append(box);
@@ -342,7 +345,7 @@ export async function mountCcmod(root){
 
   // -- activity ----------------------------------------------------------------------------
   function activityTab(body){
-    body.append(h('p',{class:'mg-sub',text:'What the rules did on the hub: posts, notifications and capabilities (blocking and instructions happen inside Claude Code and are not listed here).'}));
+    body.append(h('div',{class:'mg-bar'},info('What the rules did on the hub: posts, notifications and capabilities (blocking and instructions happen inside Claude Code and are not listed here).','About activity')));
     const box=h('div',{class:'cc-log'});
     for(const a of d.activity)box.append(h('div',null,h('small',{text:ago(a.ts)}),
       h('span',null,h('b',{text:a.rule_name||a.rule}),h('small',{text:' · '+a.worker+' · '+a.event})),
@@ -352,14 +355,14 @@ export async function mountCcmod(root){
   }
 
   async function render(){
-    const bar=h('div',{class:'mg-bar'},h('h1',{text:'Claude Code'}));
-    const tabs=h('div',{class:'mg-tabs',role:'tablist'});
+    // The shell's header already says "Claude Code": tabs and refresh share one row.
+    const tabs=h('div',{class:'mg-tabs cc-tabs',role:'tablist'});
     for(const [id,label] of [['rules','Rules'],['workers','Workers'],['activity','Activity']])
       tabs.append(h('button',{type:'button',class:id===tab?'on':'',text:label,role:'tab','aria-selected':String(id===tab),onclick:()=>{tab=id;say('');render();}}));
-    const refresh=btn('Refresh','',async()=>{refresh.disabled=true;try{await load();render();}catch(e){say(e.message,true);}finally{refresh.disabled=false;}});
-    bar.append(h('span',{class:'mg-grow'}),refresh);
+    const refresh=btn('↻','icon',async()=>{refresh.disabled=true;try{await load();render();}catch(e){say(e.message,true);}finally{refresh.disabled=false;}},{'aria-label':'Refresh',title:'Refresh'});
+    tabs.append(h('span',{class:'mg-grow'}),refresh);
     const body=h('div',{class:'mg',style:'gap:12px'});
-    page.replaceChildren(bar,tabs,status,body);
+    page.replaceChildren(tabs,status,body);
     if(tab==='rules')rulesTab(body);else if(tab==='workers')workersTab(body);else activityTab(body);
   }
   function tick(){

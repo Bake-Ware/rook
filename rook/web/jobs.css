@@ -1,13 +1,13 @@
 /* Jobs page: the manage kit (manage.css) plus cards, the JSON editor and run
    details. Dense, no decoration beyond state colour. */
 .jb{max-width:none;gap:14px}
-.jb .jb-tabs{padding:0}
+.jb .jb-tabs{padding:0;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}.jb .jb-tabs::-webkit-scrollbar{display:none}.jb .jb-tabs button{flex:0 0 auto}
 .jb-body{display:flex;flex-direction:column;gap:14px;min-width:0}
-.jb-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.jb-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;align-items:start}
 .jb-card{display:flex;flex-direction:column;min-width:0}
-.jb-card-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:12px 14px 6px}
-.jb-big{font:500 24px var(--mono)}
-.jb-items{display:flex;flex-direction:column;padding:0 14px 12px;gap:2px;min-width:0}
+.jb-card-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 12px}
+.jb-big{font:500 20px var(--mono)}
+.jb-items{display:flex;flex-direction:column;padding:0 12px 8px;gap:2px;min-width:0}
 .jb .jb-item{all:unset;display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-top:1px solid var(--line-soft);font-size:13px;min-width:0}
 .jb .jb-item span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .jb .jb-item small{color:var(--dim);font-size:12px;white-space:nowrap}
@@ -39,3 +39,37 @@
 .jb-settings{max-width:720px}
 .mg-dialog .jb-schema{max-height:70vh;min-width:min(760px,80vw)}
 @media (max-width:640px){.jb-step-row{grid-template-columns:1fr 1fr}.jb .jb-json{min-height:50vh}}
+/* Compact toolbars */
+.jb-seg{display:inline-flex}
+.jb .jb-seg .seg button{min-height:40px}
+.jb-acts{justify-content:flex-end;flex-wrap:nowrap}
+.jb-dates{display:inline-flex;align-items:center;gap:6px}
+.jb-edbar .jb-ellipsis{min-width:0;flex:0 1 auto}
+/* Phones: one row of tabs, small tiles for empty cards, job and run rows as cards. */
+@media (max-width:800px){
+ .jb{gap:10px}
+ .jb .jb-tabs button{min-height:44px}
+ .jb-cards{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+ .jb-card.has-items{grid-column:1/-1}
+ .jb-card-head{padding:8px 10px}
+ .jb .mg-bar{gap:6px}
+ .jb .mg-bar input[type=search]{flex:1 1 100%}
+ .jb-runbar select{flex:1 1 40%;min-width:0}
+ .jb-dates{flex:1 1 auto;min-width:0}.jb-dates input{flex:1 1 0;min-width:0}
+ .jb-edbar .jb-ellipsis{flex:1 1 100%}
+ .jb-edbar .mg-grow{display:none}
+ .jb-dates{flex-basis:calc(100% - 50px)}
+ .jb-helper{flex-basis:100%}
+}
+@media (max-width:640px){
+ .jb .mg-table>div{min-width:0}
+ .jb .mg-head{display:none}
+ .jb .mg-row.jb-jobrow{grid-template-columns:minmax(0,1fr) auto auto;grid-template-areas:"name on acts" "trig trig trig" "next next last";gap:2px 10px;padding:8px 12px}
+ .jb-jobrow>:nth-child(1){grid-area:name}.jb-jobrow>:nth-child(2){grid-area:on;width:22px;height:22px}.jb-jobrow>:nth-child(3){grid-area:trig;font-size:11px}
+ .jb-jobrow>:nth-child(4){grid-area:next;font-size:12px}.jb-jobrow>:nth-child(5){grid-area:last;justify-self:end}.jb-jobrow>:nth-child(6){grid-area:acts}
+ .jb .jb-acts .mg-btn{min-width:44px}
+ .jb .mg-row.jb-runrow{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"run state" "trig took" "start x";gap:2px 10px;padding:8px 12px}
+ .jb-runrow>:nth-child(1){grid-area:run}.jb-runrow>:nth-child(2){grid-area:state;justify-self:end}.jb-runrow>:nth-child(3){grid-area:trig;font-size:11px}
+ .jb-runrow>:nth-child(4){grid-area:start;font-size:12px}.jb-runrow>:nth-child(5){grid-area:took;justify-self:end}.jb-runrow>:nth-child(6){grid-area:x;justify-self:end}
+ .jb-detail{padding:8px 12px}
+}

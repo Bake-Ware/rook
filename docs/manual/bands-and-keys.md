@@ -22,10 +22,10 @@ A band key is five ordinary words joined with hyphens, such as
 `maple-orbit-cactus-lantern-ripple` (that one is only an example). Words are
 easier to read out and type than random characters.
 
-- To make a new band, open the **Join with key** button on the Workers page,
-  choose **generate five-word key**, write the key down somewhere safe, then
-  click **add**. Generating alone changes nothing.
-- **show key** lets you check what you typed.
+- To make a new band, click **+ Join band** on the Workers page (just **+** on
+  a phone), choose **New key**, write the key down somewhere safe, then click
+  **Join**. Generating alone changes nothing.
+- **Show** lets you check what you typed.
 - Keys are case-sensitive and include the hyphens.
 
 **Keep band keys secret.** Anyone who knows a band's key can join it and run
@@ -42,10 +42,12 @@ machines are online and your role. Pick a band to see its tabs:
 - **Members** (owners only): who may use the band, their role, and
   **Invite a person** (a single-use link that lasts seven days).
 - **Key** (owners only): the key's fingerprint and version, **Pairing code**,
-  **Revoke pairing code**, **Rotate key…**, **Download configuration**, and the
-  machines enrolled with their own certificates (each with **Revoke**).
+  **Rotate key…**, the **⋯** menu (**Revoke pairing code**, **Download
+  configuration**), and the machines enrolled with their own certificates
+  (each with **Revoke**).
 
-As a band's owner you can also **Rename** a band or **Delete…** it. The
+As a band's owner you can also **Rename…** a band or **Delete…** it from the
+**⋯** menu next to its name. The
 default band cannot be deleted. Deleting stops new machines joining and
 revokes its pairing codes and certificates, but cannot erase the key from
 machines that already have it.

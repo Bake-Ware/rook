@@ -42,7 +42,7 @@ run side by side and meet again.
   shows the next five run times in plain English.
 - **At** a set time, once.
 - **After** the previous run finished, with a gap.
-- Only when you press **Run now**.
+- Only when you press **Run now** (▶ on the Jobs tab, or in the editor's ⋯ menu).
 
 Times use the hub's time zone unless the job sets its own. Daylight saving
 changes are handled so a job runs once, not twice or never. If the hub was off
@@ -52,10 +52,13 @@ job's grace period.
 ## The Jobs page
 
 - **Overview**: what is running, what is next, recent failures and blocked jobs.
-- **Jobs**: every job; switch one on or off, run it now, edit or delete it.
+- **Jobs**: every job; switch one on or off, run it now (▶), and edit, see runs
+  or delete it from its ⋯ menu. **+ New** starts a new job; **All / On / Off**
+  filters the list.
 - **Editor**: the job itself. **Validate** checks it, **Save** (or Ctrl+S)
-  stores it.
-- **Runs**: the history of every run, with each step's output. Runs are kept
+  stores it; the ⋯ menu has **Format**, **Run now** and the job **Schema**.
+- **Runs**: the history of every run, with each step's output (tap a run to open
+  it; tap its id to copy it; ↻ refreshes). Runs are kept
   for 30 days by default.
 - **Guardrails**: what jobs may never do (see below).
 - **Settings**: the jobs time zone, history length and other defaults (operator

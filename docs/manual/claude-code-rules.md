@@ -84,11 +84,11 @@ even when the hub is out of reach.
 The **Workers** tab shows every online worker: whether it can take rules,
 when they were last pushed, by whom, and whether that is still up to date.
 
-- **Preview** shows exactly what a push would change in each Claude Code
+- **Preview** (in the worker's ⋯ menu) shows exactly what a push would change in each Claude Code
   settings file on that worker, as a diff, before anything is written.
-- **Push** sends the rules to that worker; **Push to all workers** sends them
+- **Push** sends the rules to that worker; **Push all** sends them
   everywhere.
-- **Remove** takes Rook's entries out of that worker's Claude Code settings,
+- **Remove** (in the worker's ⋯ menu) takes Rook's entries out of that worker's Claude Code settings,
   after a preview. A settings file nobody changed since Rook last wrote it
   comes back exactly as it was before Rook went in.
 

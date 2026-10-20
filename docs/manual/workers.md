@@ -33,8 +33,8 @@ deprecated: false
   while charging; amber, then red, as it runs low).
 - The tiles at the top count machines online and stale, and show which Rook
   versions are in use.
-- **Group by** (operating system, band, or none), **Sort**, and the filter box
-  help on a big fleet.
+- **Group** (operating system, band, or none), **Sort**, and the filter box
+  help on a big fleet. On a phone, **⇅** next to the filter shows them.
 - Switch between **List**, **Grid** and **3D** views. In 3D, the hub is the
   rook and each machine a pawn; a quiet machine's pawn tips over.
 

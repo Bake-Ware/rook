@@ -38,13 +38,13 @@ async function mountClassic(root, boot, toSessions) {
       <section class="work-main">
         <div id="work-connection" role="status">Connecting…</div>
         <form id="work-create" class="work-create">
-          <h2>Start work</h2><p>Choose where your agent will work. You can leave this page while it runs.</p>
+          <h2>Start work</h2>
           <label>Title<input name="title" placeholder="What are we working on?" maxlength="160" required></label>
           <label>Host<select name="worker" required><option value="">Choose a host</option></select></label>
           <label>Working directory<input name="cwd" placeholder="/home/you/project" required></label>
           <label>Agent<select name="agent"><option>Codex</option></select></label>
           <label>Model<input name="model" placeholder="Use the host’s default model" maxlength="100"></label>
-          <p class="work-muted">The directory must exist on the selected host. Codex uses that host’s login, with workspace writes and approval prompts for additional access.</p>
+          <details class="mg-info"><summary aria-label="About starting work" title="About starting work">i</summary><p>The directory must exist on the selected host. Codex uses that host’s login, with workspace writes and approval prompts for additional access. You can leave this page while it runs.</p></details>
           <button type="submit">Create session</button>
         </form>
         <div id="work-session" hidden>

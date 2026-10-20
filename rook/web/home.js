@@ -6,7 +6,7 @@
 // Huddles page.
 // Versioned like this module (?v=...), so a stale edge cache cannot pair it
 // with an old manage.js.
-const {h, ago, useCss, btn, table, two} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
+const {h, ago, useCss, btn, table, two, info} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
 const {hapi} = await import('/account/huddle/assets/huddles.js' + new URL(import.meta.url).search);
 
 const API='/account/settings/api';
@@ -16,14 +16,14 @@ const fmtN=n=>n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e4?Math.round(n/1e3)+'k':n>=1e3?
 export async function mountHome(root){
   useCss();
   let csrf='',d=null,models=[],busy=false;
-  const status=h('p',{class:'mg-status',role:'status'}),summary=h('p',{class:'mg-sub'});
+  const status=h('p',{class:'mg-status',role:'status'});
   const top=h('div'),acts=h('div',{style:'display:flex;flex-direction:column;gap:6px'});
   const panel=h('div',{class:'mg-box strong mg-side'});
   const chat=homeChat({
     toForm(){panel.scrollIntoView({behavior:'smooth',block:'start'});panel.querySelector('input,select')?.focus({preventScroll:true});},
     async status(){const j=await get();d.status=j.status;d.activity=j.activity;d.usage=j.usage;drawList();return j;}});
   const list=h('div',{class:'mg-main'},top,chat.el,acts);
-  root.replaceChildren(h('div',{class:'mg'},summary,status,h('div',{class:'mg-split'},list,panel)));
+  root.replaceChildren(h('div',{class:'mg'},status,h('div',{class:'mg-split'},list,panel)));
 
   async function get(){const r=await fetch(API+'?view=home');const j=await r.json().catch(()=>({error:'Bad response'}));if(j.csrf)csrf=j.csrf;if(!r.ok||j.error)throw Error(j.error||'Sign in with your operator account to set up the home agent.');return j;}
   async function post(body){const r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({csrf,...body})});const j=await r.json().catch(()=>({error:'Bad response'}));if(!r.ok||j.error)throw Error(j.error||'Request failed');return j;}
@@ -41,7 +41,6 @@ export async function mountHome(root){
   // what the operator is typing.
   function drawList(){
     const s=d.status,[label,cls]=state(s);
-    summary.textContent='The home agent is an LLM that lives at the hub. It chairs your huddles and talks with you below; agents ask it with home.ask on worker rook. It acts as '+s.identity+' and everything it does is journaled under that name.';
     const row=h('div',{class:'mg-row sel'},two(s.name,s.identity,true),two(s.model||'no model',s.agent_host&&s.agent_host.harness?s.agent_host.harness+' on '+(s.agent_host.host||'no host'):(s.endpoint_host||'no endpoint'),true),h('span',{text:label,class:cls}),h('span',{class:'mg-dimtext',text:s.tools?'knowledge search':'no tools'}));
     const rows=d.activity.map(a=>h('div',{class:'mg-row',title:a.error||''},
       h('span',{class:'mg-dimtext',text:ago(a.ts)}),h('span',{text:VIA[a.via]||a.via}),
@@ -49,8 +48,8 @@ export async function mountHome(root){
       h('span',{class:a.ok?'mg-good':'mg-bad',text:a.ok?(a.latency_ms!=null?(a.latency_ms/1000).toFixed(1)+' s':'ok')+(a.tools&&a.tools.length?' · '+a.tools.length+' tool call'+(a.tools.length>1?'s':''):'')+memo(a.memory):(a.error||'failed').slice(0,80)})));
     top.replaceChildren(table('minmax(0,1fr) minmax(0,1.2fr) 150px 120px',['Agent','Model · endpoint','State','Tools'],[row]));
     acts.replaceChildren(
-      h('div',{class:'mg-label',style:'margin-top:6px',text:'Recent activity (since the MCP server started)'}),
-      table('90px 80px minmax(0,1fr) minmax(0,1fr)',['When','Via','From · room','Result'],rows.length?rows:[h('div',{class:'mg-empty',text:'Nothing yet. Use Test, or say hello in the chat above.'})]),
+      h('div',{class:'mg-label',style:'margin-top:6px',title:'Since the MCP server started',text:'Recent activity'}),
+      table('90px 80px minmax(0,1fr) minmax(0,1fr)',['When','Via','From · room','Result'],rows.length?rows:[h('div',{class:'mg-empty',text:'Nothing yet.'})]),
       ...usage());
   }
   // Turns on agent hosts in the last 24 hours, per role (what huddles cost the
@@ -63,7 +62,7 @@ export async function mountHome(root){
       h('span',{text:r.turns+(r.failed?' ('+r.failed+' failed)':'')}),
       h('span',{class:'mg-dimtext',text:fmtN(t(r,'input_tokens')+t(r,'cache_creation_input_tokens')+t(r,'cache_read_input_tokens'))+' in · '+fmtN(t(r,'output_tokens'))+' out'}),
       h('span',{class:'mg-dimtext',text:r.cost_usd?'$'+r.cost_usd.toFixed(2):'—'})));
-    return [h('div',{class:'mg-label',style:'margin-top:6px',text:'Last 24 hours on agent hosts'}),
+    return [h('div',{class:'mg-label',style:'margin-top:6px',text:'Agent hosts · 24 h'}),
       table('minmax(0,1fr) 110px minmax(0,1fr) 80px',['Who','Turns','Tokens','Cost'],rows)];
   }
   // What memory did for one answer: "· 3 recalled · 1 remembered".
@@ -71,8 +70,9 @@ export async function mountHome(root){
   function field(label,ctl,k,note){
     const r=d.settings[k]||{};
     if(r.locked){ctl.disabled=true;}
-    const help=r.locked?'Set by '+(r.env||'the environment')+' on the MCP server; change it there.':(note||r.help||'');
-    return h('label',{class:'mg-field'},label,ctl,help?h('small',{class:'mg-sub',style:'white-space:normal',text:help}):null);
+    const help=note||r.help||'';
+    return h('label',{class:'mg-field'},help?h('span',{class:'mg-flabel'},label,info(help,'About '+label)):label,ctl,
+      r.locked?h('small',{class:'mg-sub mg-warn',style:'white-space:normal',text:'Set by '+(r.env||'the environment')+' on the MCP server.'}):null);
   }
   function drawPanel(){
     const err=h('small',{class:'mg-error',role:'alert'}),out=h('pre',{hidden:true,style:'white-space:pre-wrap'});
@@ -153,7 +153,7 @@ export async function mountHome(root){
       out.className=r.ok?'':'mg-bad';refresh().catch(()=>{});}));
     const save=btn('Save','primary',()=>run(save,async()=>{
       const r=await post({action:'home_save',values:values()});
-      d=r;draw();status.textContent=r.saved.length?'Saved '+r.saved.map(k=>k.slice(5)).join(', ')+'. It takes effect now.':'No changes.';}));
+      d=r;draw();status.textContent=r.saved.length?'Saved '+r.saved.map(k=>k.slice(5)).join(', ')+'.':'No changes.';}));
     const endpoint=h('div',{style:'display:flex;flex-direction:column;gap:14px'},
       field('Provider',provider,'provider'),
       field('Base URL',base,'base_url','The endpoint\'s /v1 base. Any OpenAI-compatible server works.'),
@@ -172,20 +172,21 @@ export async function mountHome(root){
     backend.addEventListener('change',syncBackend);ccAuth.addEventListener('change',syncBackend);syncBackend();
     const hist=d.history.slice(0,10);
     panel.replaceChildren(
-      h('div',{class:'mg-panel-head'},h('div',{class:'mg-two'},h('h2',{text:'Home agent'}),h('small',{text:'Stored as home.* in Settings · hub-wide'}))),
+      h('div',{class:'mg-panel-head'},h('div',{class:'mg-two'},h('h2',{text:'Home agent'}),h('small',{text:'home.* · hub-wide'})),
+        info('It chairs your huddles and talks with you here; agents ask it with home.ask on worker rook. It acts as '+d.status.identity+' and everything it does is journaled under that name.','About the home agent')),
       h('div',{class:'mg-pad'},
-        h('label',{class:'mg-actions'},enabled,'Enabled: answer in chat and to home.ask'),
+        h('label',{class:'mg-actions',title:'Answer in chat and to home.ask'},enabled,'Enabled'),
         field('Name',name,'name','Chat identity agent:<name>; people write @'+(val('name')||'home')+'.'),
         field('Backend',backend,'backend'),
         cc,oaiHead,oai,
         field('Persona',persona,'persona'),
         field('System prompt addition',prompt,'system_prompt'),
-        h('label',{class:'mg-actions',style:'flex-wrap:nowrap;align-items:flex-start'},memory,h('span',null,'Memory: remember people, facts and past conversations (',h('a',{href:'#memory',text:'see what it remembers'}),')')),
-        h('label',{class:'mg-actions',style:'flex-wrap:nowrap;align-items:flex-start'},tools,h('span',null,'Tools: let it search the knowledge wiki, and save and search its memory (each call is journaled as '+d.status.identity+')')),
+        h('div',{class:'mg-actions'},h('label',{class:'mg-actions',title:'Remember people, facts and past conversations'},memory,'Memory'),h('a',{href:'#memory',text:'View'})),
+        h('div',{class:'mg-actions'},h('label',{class:'mg-actions'},tools,'Tools'),info('Search the knowledge wiki, and save and search its memory. Each call is journaled as '+d.status.identity+'.','About tools')),
         h('details',null,h('summary',{text:'Limits'}),h('div',{class:'mg-pad',style:'padding-left:0;padding-right:0'},
           field('Request timeout (s)',timeout,'timeout_s'),field('Longest reply (tokens)',maxTok,'max_tokens'),
           field('Temperature',temp,'temperature','Blank: the endpoint\'s default.'),field('Room messages sent as context',ctx,'context_messages'))),
-        h('div',{class:'mg-actions end'},err,test,save),out,
+        h('div',{class:'mg-actions end rl-save'},err,test,save),out,
         d.status.last_error?h('p',{class:'mg-sub mg-bad',style:'white-space:normal',text:'Last error: '+d.status.last_error}):null,
         h('div',null,h('div',{class:'mg-label',style:'margin-bottom:8px',text:'Changes'}),
           hist.length?hist.map(e=>h('div',{class:'mg-log'},h('span',{class:'mg-mono',text:e.key.slice(5)}),h('span',{text:(e.actor||e.actor_label||'')}),h('span',{class:'mg-sub',style:'font-size:12px',text:ago(e.at||e.ts)}))):h('p',{class:'mg-sub',text:'Not configured yet.'}))));
@@ -213,9 +214,9 @@ export function homeChat({toForm,status}){
   const typing=h('div',{class:'hc-typing',hidden:true});
   const box=h('textarea',{rows:'1',placeholder:'Message the home agent',autocomplete:'off','aria-label':'Message'});
   const send=btn('Send','primary',()=>submit());
-  const title=h('h2'),sub=h('small');
+  const title=h('h2'),sub=h('span',{class:'mg-sub'});
   const el=h('section',{class:'mg-box strong hc','aria-label':'Chat with the home agent'},
-    h('div',{class:'mg-panel-head'},h('div',{class:'mg-two'},title,sub)),
+    h('div',{class:'mg-panel-head'},title,sub),
     note,log,typing,h('div',{class:'hc-input'},box,send));
   box.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();submit();}});
   box.addEventListener('input',()=>{box.style.height='auto';box.style.height=Math.min(box.scrollHeight,160)+'px';});
@@ -224,24 +225,24 @@ export function homeChat({toForm,status}){
     note.hidden=!text;note.className='hc-note'+(cls?' '+cls:'');
     note.replaceChildren(...(text?[h('span',{text}),action||null].filter(Boolean):[]));
   }
-  const formBtn=()=>btn('Go to the form','soft',toForm);
+  const formBtn=()=>btn('Set up','soft',toForm);
   function blocked(s){
-    if(!s.enabled)return 'The home agent is off. Turn on Enabled in the form and Save to chat with it.';
-    if(s.missing.length)return 'The home agent needs '+s.missing.join(' and ').replace('base_url','a base URL')+' before it can answer. Fill in the form and Save.';
-    if(!s.chat)return 'The home agent cannot reach the hub\'s chat store, so it cannot answer here.';
+    if(!s.enabled)return 'Off.';
+    if(s.missing.length)return 'Needs '+s.missing.join(' and ').replace('base_url','a base URL')+'.';
+    if(!s.chat)return 'No chat store at the hub.';
     return '';
   }
   // Called whenever the page has fresh settings (load, Save).
   function update(s,t){
     timeout=t;title.textContent='Chat with @'+s.name;
-    sub.replaceChildren('Also on ',h('a',{href:room?'#huddles?room='+encodeURIComponent(room):'#huddles',text:'Huddles'}),'.');
+    sub.replaceChildren(h('a',{href:room?'#huddles?room='+encodeURIComponent(room):'#huddles',text:'In Huddles ↗'}));
     if(s.identity!==ident||s.name!==name){ident=s.identity;name=s.name;room=null;seq=0;loaded=false;stopWaiting();log.replaceChildren();}
     const why=blocked(s);on=!why;
     box.disabled=send.disabled=!on;
     if(why){say(why,'warn',s.enabled&&s.missing.length||!s.enabled?formBtn():null);stopWaiting();}
     else if(note.classList.contains('warn'))say('');
   }
-  function empty(){log.replaceChildren(h('div',{class:'mg-empty',text:'No conversation yet. Say hello to @'+name+'.'}));}
+  function empty(){log.replaceChildren(h('div',{class:'mg-empty',text:'No conversation yet.'}));}
   function render(msgs){
     if(seq===0)log.replaceChildren();
     const atBottom=log.scrollHeight-log.scrollTop-log.clientHeight<60;
@@ -304,11 +305,11 @@ export function homeChat({toForm,status}){
   function watch(){
     tick();
     const age=(Date.now()-waiting.since)/1000;
-    if(age>limit()){stopWaiting();say('No reply after '+Math.round(age)+' s. Check Recent activity below; the home agent runs in the hub\'s MCP server and only answers while that is up.','warn');}
+    if(age>limit()){stopWaiting();say('No reply after '+Math.round(age)+' s. See Recent activity.','warn');}
   }
   function failed(err){
     stopWaiting();
-    say('The home agent could not answer'+(err?': '+err:'')+'. Check the endpoint, model and key in the form, then use Test.','bad',formBtn());
+    say('No answer'+(err?': '+err:'')+'. Check the form, then Test.','bad',formBtn());
     status().catch(()=>{});
   }
   async function submit(){
@@ -316,7 +317,7 @@ export function homeChat({toForm,status}){
     sending=true;send.disabled=true;say('');
     try{
       if(!room){room=(await hapi('start',{title:name,roles:[]})).room;seq=0;loaded=true;
-        sub.replaceChildren('Also on ',h('a',{href:'#huddles?room='+encodeURIComponent(room),text:'Huddles'}),'.');}
+        sub.replaceChildren(h('a',{href:'#huddles?room='+encodeURIComponent(room),text:'In Huddles ↗'}));}
       const t0=Date.now();
       const sent=await hapi('send',{room,text});
       box.value='';box.style.height='';

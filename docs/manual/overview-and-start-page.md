@@ -21,17 +21,17 @@ have to visit Sessions, Chat, Work and Knowledge one by one to find out what
 needs you. It refreshes by itself every 20 seconds and only reads: it changes
 nothing.
 
-- **Tiles** at the top: workers online, sessions running (and how many wait
-  for you), tasks in progress (and how many are blocked) and unread chat
-  messages. Each tile opens its page.
+- **Tiles** at the top: workers online, sessions (and how many wait for
+  you), active tasks (and how many are blocked) and unread chat messages.
+  Each tile opens its page.
 - **Waiting on you**: an agent session that is idle and waiting for input, a
   chat room you are in with unread messages, a blocked task with its reason,
   and decisions Rook's hygiene check asks a person to make (release a claim
   that went quiet, close a project whose tasks are all finished).
 - **Active now**: sessions running, tasks in progress and who holds them, and
   chat rooms active in the last hour.
-- **Open tasks by project**, busiest first.
-- **Recent knowledge changes**: the wiki pages changed most recently, and who
+- **Open tasks**, by project, busiest first.
+- **Knowledge changes**: the wiki pages changed most recently, and who
   changed them. Disputed pages are marked.
 
 Rows carry small links to what they relate to: a task to its chat room and
@@ -61,7 +61,7 @@ It is made of **widgets**:
 A new account starts with workers, open tasks, chat rooms and recently
 changed pages, a few links around the dashboard and a note.
 
-To change it, choose **Edit page**:
+To change it, choose **✎ Edit**:
 
 1. Drag a widget by its handle to another place or column, or use its arrow
    buttons (they also work with a keyboard and on phones).
@@ -69,8 +69,8 @@ To change it, choose **Edit page**:
    per line, written as `Name | https://address`.
 3. **+ Add widget** at the foot of a column adds one there, and **Layout**
    sets 1 to 4 columns.
-4. **Save** keeps the page, **Cancel** drops your changes and **Reset to
-   default** puts the starting widgets back.
+4. **Save** keeps the page, **Cancel** drops your changes and **Reset**
+   puts the starting widgets back.
 
 Links must start with `http://`, `https://` or `#` (a dashboard page).
 
@@ -110,7 +110,12 @@ Click **WORKSPACE** or **MANAGE** in the sidebar to fold that group away or
 open it again; this browser remembers each group's choice. A folded group
 still shows the page you are on. When the window is too short for every
 entry, the sidebar scrolls on its own and **Sign out** stays at the bottom.
-On a phone the groups are always open, as rows you swipe sideways.
+On a phone (or any window narrower than about 800 pixels) the sidebar is a
+drawer: open it with **☰** at the top left or **More** in the bar along the
+bottom, which also has **Home** (the Overview), **Huddles**, **Work** and
+**Sessions**. The number of held approvals shows on **More**.
+
+Each page's one-line description sits behind the **i** next to its title.
 
 ## Behind the scenes
 

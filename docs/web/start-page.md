@@ -24,7 +24,7 @@ around the dashboard and a note.
 
 ## Editing
 
-Choose **Edit page**:
+Choose **✎ Edit**:
 
 - drag a widget by its handle (⠿) to another place or column, or use its
   arrow buttons (they also work with a keyboard and on phones);
@@ -33,7 +33,7 @@ Choose **Edit page**:
 - **+ Add widget** at the foot of a column adds one there;
 - **Layout** sets 1 to 4 columns (widgets of a removed column move to the
   last one kept);
-- **Save** keeps the page; **Cancel** drops the changes; **Reset to default**
+- **Save** keeps the page; **Cancel** drops the changes; **Reset**
   puts the starting widgets back.
 
 Links must start with `http://`, `https://` or `#` (a dashboard page).

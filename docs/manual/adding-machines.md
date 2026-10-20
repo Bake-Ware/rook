@@ -35,7 +35,7 @@ join your band without you typing the band key.
 5. The machine appears on the Workers page when it finishes.
 
 A code lasts five minutes and keeps renewing while the page is open. One code
-can add several machines. **Revoke pairing code** (on the Bands page, Key tab)
+can add several machines. **Revoke pairing code** (on the Bands page, Key tab, **⋯** menu)
 cancels it at once. A code only lets a
 machine join that one band; it never gives access to the dashboard or to your
 agents' tools.

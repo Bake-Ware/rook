@@ -163,7 +163,7 @@ async def main():
         await page.fill('.hx-compose textarea', '')
 
         # A new huddle: the default roles are checked.
-        await page.click('button:has-text("New huddle")')
+        await page.click('button[aria-label="New huddle"]')
         await page.wait_for_selector('.hx-form')
         assert await page.is_checked('.hx-check input[value=qa]')
         assert not await page.is_checked('.hx-check input[value=pm]')
@@ -185,8 +185,12 @@ async def main():
 
         # Archive the standup: off the list, under Archived, read-only.
         await page.click('.hx-item:has-text("Standup")')
-        await page.click('.hx-acts button:has-text("Archive")')
-        await page.wait_for_selector('.hx-acts button:has-text("Unarchive")')
+        await page.click('.hx-acts .hx-more')
+        await page.click('.mg-menu button:has-text("Archive")')
+        await page.wait_for_selector('.hx-compose textarea[placeholder="Archived"]')
+        await page.click('.hx-acts .hx-more')
+        await page.wait_for_selector('.mg-menu button:has-text("Unarchive")')
+        await page.keyboard.press('Escape')
         assert await page.is_disabled('.hx-compose textarea')
         await page.wait_for_selector('.hx-list .hx-item:has-text("Standup")', state='detached')
         await page.select_option('.hx-side-head select', 'archived')
@@ -227,15 +231,16 @@ async def main():
         assert await page.locator(pick + ' optgroup[label="Software engineering"] option[value="qa"]').is_disabled()
         await page.select_option(pick, 'lead')
         await page.wait_for_selector('#view-roles .mg-panel-head h2:has-text("New role")')
-        assert 'coding agent sessions' in await page.inner_text('#view-roles .rl-pick small')
+        assert 'coding agent sessions' in await page.input_value('#view-roles .mg-side label:has-text("Description") input')
         await page.click('#view-roles .mg-side button:has-text("Create")')
         await page.wait_for_selector('#view-roles .mg-row:has-text("Lead developer")')
         assert roles.store.get('lead')['tools']['allow'][0] == 'sessions.list'
-        assert await page.get_attribute('#view-roles a:has-text("What it remembers")', 'href') == '#memory?role=lead'
+        await page.click('#view-roles .mg-panel-head .more-btn')
+        assert await page.get_attribute('.mg-menu a:has-text("Memory")', 'href') == '#memory?role=lead'
         await shot(page, 'roles')
 
         # Memory page, role filter: a role without a home yet says so.
-        await page.click('#view-roles a:has-text("What it remembers")')
+        await page.click('.mg-menu a:has-text("Memory")')
         await page.wait_for_selector('#view-memory select[aria-label="Whose memory"]')
         assert await page.input_value('#view-memory select[aria-label="Whose memory"]') == 'lead'
         await page.wait_for_selector('#view-memory .mg-banner:has-text("no home yet")')

@@ -100,13 +100,13 @@ export async function mountStartPage(root) {
   function bar() {
     if (!editing) return h('div', {class: 'sp-bar'},
       h('span', {class: 'sp-hint'}),
-      h('button', {type: 'button', class: 'sp-btn', text: 'Edit page', onclick: () => { editing = true; render(); }}));
+      h('button', {type: 'button', class: 'sp-btn', text: '✎ Edit', title: 'Edit this page', 'aria-label': 'Edit this page', onclick: () => { editing = true; render(); }}));
     const cols = h('select', {'aria-label': 'Columns', onchange: e => setColumns(+e.target.value)},
       [1, 2, 3, 4].map(n => h('option', {value: String(n), text: n + (n === 1 ? ' column' : ' columns'), selected: n === layout.columns.length})));
     return h('div', {class: 'sp-bar editing'},
-      h('span', {class: 'sp-hint', text: 'Drag widgets by ⠿ or use the arrows. Changes are kept when you save.'}),
+      h('span', {class: 'sp-hint', text: 'Drag ⠿ or use the arrows.'}),
       h('label', {class: 'sp-cols'}, 'Layout ', cols),
-      h('button', {type: 'button', class: 'sp-btn', text: 'Reset to default', onclick: reset}),
+      h('button', {type: 'button', class: 'sp-btn', text: 'Reset', title: 'Put the default widgets back', onclick: reset}),
       h('button', {type: 'button', class: 'sp-btn', text: 'Cancel', onclick: () => { layout = clone(saved); editing = false; render(); }}),
       h('button', {type: 'button', class: 'sp-btn primary', text: 'Save', onclick: save}),
       h('span', {class: 'sp-status', role: 'status'}));

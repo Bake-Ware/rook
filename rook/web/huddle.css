@@ -92,6 +92,10 @@
   .hd-agent{flex:0 0 78%;scroll-snap-align:start}
   .hd-answer-row{flex-direction:column}
   .hd-log{max-height:none}
+  .hd-item{min-height:44px}
+  .hd-compose{position:sticky;bottom:calc(56px + env(safe-area-inset-bottom));background:var(--panel);z-index:3;padding-bottom:8px}
+  .hd-compose input{min-height:44px}
+  .hd-send,.hd-opt{min-height:44px}
 }
 /* Huddles (huddles.js): the list of huddles and the thread, sized to the window. */
 .hx{display:grid;grid-template-columns:260px minmax(0,1fr);border:1px solid var(--line);background:var(--panel);height:max(440px,calc(100vh - 190px))}
@@ -179,8 +183,29 @@
 .hx-check code{font:11px var(--mono);color:var(--dim)}
 .hx-form-acts{display:flex;gap:8px;justify-content:flex-end}
 .hx-form .hx-err{padding:0}
+.hx-btn.quiet{background:transparent;border-color:var(--line);color:var(--dim)}
+.hx-more{font-size:16px;line-height:1;padding:4px 10px;min-width:34px}
+.hx-card-call code{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media(max-width:760px){
-  .hx{grid-template-columns:minmax(0,1fr);height:max(420px,calc(100dvh - 270px))}
+  /* fills the space between the shell's sticky header and its tab bar */
+  .hx{grid-template-columns:minmax(0,1fr);height:max(380px,calc(100dvh - 150px - env(safe-area-inset-top) - env(safe-area-inset-bottom)));border-left:0;border-right:0;margin:0 -12px}
+  .hx-side-head{padding:8px 10px}
+  .hx-item{padding:10px;min-height:56px}
+  .hx-head{padding:6px 8px 6px 4px;gap:6px}
+  .hx-back{border:0;font-size:24px;min-width:44px;min-height:44px;padding:0}
+  .hx-title h2{font-size:15px}
+  .hx-meta{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;margin-top:2px}
+  .hx-meta::-webkit-scrollbar{display:none}
+  .hx-more,.hx-acts .hx-btn{min-width:44px;min-height:44px}
+  /* the composer stays above the tab bar even when the page scrolls */
+  .hx-compose{position:sticky;bottom:calc(56px + env(safe-area-inset-bottom));background:var(--panel);z-index:3;padding-top:8px;padding-bottom:8px}
+  .hx-compose textarea{min-height:44px}
+  .hx-send{min-width:64px}
+  .hx-card-acts .hx-btn{flex:1 1 0;min-height:44px}
+  .hx-card-acts .hx-btn.quiet{flex:0 0 auto}
+  .hx-card summary{min-height:32px}
+  .hx-check{min-height:44px}
+  .hx-form-acts .hx-btn{min-height:44px;min-width:88px}
   .hx-side{border-right:0}
   .hx.hx-open .hx-side{display:none}
   .hx:not(.hx-open) .hx-main{display:none}

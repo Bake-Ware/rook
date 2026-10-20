@@ -3,7 +3,7 @@
 // as the signed-in account. Stored text is rendered as text, never as HTML.
 // Versioned like this module (?v=...), so a stale edge cache cannot pair it
 // with an old manage.js.
-const {h, ago, useCss, btn, chips, table, two, dialog, menu} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
+const {h, ago, useCss, btn, table, two, dialog, menu, more, seg} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
 
 const API='/account/jobs/api';
 const FINAL=['success','failure','hang','interrupted','dropped','blocked','cancelled'];
@@ -144,21 +144,22 @@ export async function mountJobs(root){
     const blocked=list.jobs.filter(j=>j.paused_reason||j.blocked_by_guardrail||(j.last_run&&j.last_run.state==='blocked'));
     const upcoming=next.upcoming.slice().sort((a,b)=>secs(a.at)-secs(b.at)).slice(0,6);
     const item=(main,sub,cls,onclick)=>h(onclick?'button':'div',{type:onclick?'button':null,class:'jb-item'+(onclick?' link':''),onclick},h('span',{text:main,class:cls||''}),h('small',{text:sub}));
-    const card=(label,big,cls,items,empty)=>h('section',{class:'mg-box jb-card'},
+    // A card with nothing in it is a small tile: its count says it all.
+    const card=(label,big,cls,items)=>h('section',{class:'mg-box jb-card'+(items.length?' has-items':'')},
       h('div',{class:'jb-card-head'},h('span',{class:'mg-label',text:label}),h('b',{class:'jb-big '+(cls||''),text:String(big)})),
-      h('div',{class:'jb-items'},items.length?items:h('small',{class:'mg-sub',text:empty})));
+      items.length?h('div',{class:'jb-items'},items):null);
     body.replaceChildren(h('div',{class:'jb-cards'},
       card('Running now',running.runs.length,running.runs.length?'mg-warn':'',
-        running.runs.slice(0,6).map(r=>item(r.job,'started '+fmt(r.started,tz)+' · '+dur(r.started),'',()=>openRuns(r.job_id,r.id))),'Nothing running.'),
-      card('Next runs',upcoming.length,'',upcoming.map(u=>item(u.job,fmt(u.at,tz)+' · '+u.kind,'',()=>openJob(u.job_id))),'Nothing scheduled.'),
+        running.runs.slice(0,6).map(r=>item(r.job,'started '+fmt(r.started,tz)+' · '+dur(r.started),'',()=>openRuns(r.job_id,r.id))),),
+      card('Next runs',upcoming.length,'',upcoming.map(u=>item(u.job,fmt(u.at,tz)+' · '+u.kind,'',()=>openJob(u.job_id))),),
       card('Recent failures',bad.runs.length,bad.runs.length?'mg-bad':'',
-        bad.runs.slice(0,6).map(r=>item(r.job,r.state+' · '+fmt(r.finished||r.created,tz),'mg-bad',()=>openRuns(r.job_id,r.id))),'No failures.'),
+        bad.runs.slice(0,6).map(r=>item(r.job,r.state+' · '+fmt(r.finished||r.created,tz),'mg-bad',()=>openRuns(r.job_id,r.id))),),
       card('Blocked',blocked.length,blocked.length?'mg-bad':'',
-        blocked.map(j=>item(j.name,j.paused_reason?'paused: '+j.paused_reason:j.blocked_by_guardrail?'blocked by a guardrail: '+(j.guardrail_blocks||[]).map(b=>b.step).join(', '):'last run blocked by a guardrail','mg-bad',()=>openJob(j.id))),'No blocked jobs.'),
-      card('Success, 7 days',done.length?Math.round(100*ok/done.length)+'%':'—',done.length&&ok<done.length?'mg-warn':'mg-good',
-        [item(ok+' of '+done.length+' finished runs','since '+fmt(weekAgo,tz))],''),
+        blocked.map(j=>item(j.name,j.paused_reason?'paused: '+j.paused_reason:j.blocked_by_guardrail?'guardrail: '+(j.guardrail_blocks||[]).map(b=>b.step).join(', '):'last run: guardrail','mg-bad',()=>openJob(j.id))),),
+      card('Success 7d',done.length?Math.round(100*ok/done.length)+'%':'—',done.length&&ok<done.length?'mg-warn':'mg-good',
+        done.length?[item(ok+' of '+done.length+' runs','since '+fmt(weekAgo,tz))]:[]),
       card('Queue',queued.runs.length,'',
-        Object.entries(queued.runs.reduce((m,r)=>(m[r.job]=(m[r.job]||0)+1,m),{})).slice(0,6).map(([n,c])=>item(n,c+' waiting')),'Nothing waiting.')));
+        Object.entries(queued.runs.reduce((m,r)=>(m[r.job]=(m[r.job]||0)+1,m),{})).slice(0,6).map(([n,c])=>item(n,c+' waiting')))));
   }
 
   // ---- jobs list ----
@@ -166,31 +167,31 @@ export async function mountJobs(root){
   async function jobsTab(){
     const list=await api.call('list',{data:{limit:500}});
     const search=h('input',{type:'search',class:'mg-grow',placeholder:'Filter jobs','aria-label':'Filter jobs',value:jobQuery,oninput:()=>{jobQuery=search.value.trim().toLowerCase();draw();}});
-    const chipHost=h('span',{class:'mg-actions'});
+    const chipHost=h('span',{class:'jb-seg'});
     const host=h('div',{class:'mg-box'});
-    body.replaceChildren(h('div',{class:'mg-bar'},search,chipHost,btn('New job','primary',()=>{ed.id=null;ed.revision=null;ed.text=JSON.stringify(TEMPLATE,null,2);show('editor');})),host);
+    body.replaceChildren(h('div',{class:'mg-bar'},search,chipHost,btn('+ New','primary',()=>{ed.id=null;ed.revision=null;ed.text=JSON.stringify(TEMPLATE,null,2);show('editor');})),host);
     const act=async(work)=>{clear();try{await work();await jobsTab();}catch(e){fail(e);}};
     function draw(){
       const off=list.jobs.filter(j=>!j.enabled).length;
-      chipHost.replaceChildren(...chips([['all','All '+list.jobs.length],['on','Enabled '+(list.jobs.length-off)],['off','Disabled '+off]],jobChip,id=>{jobChip=id;draw();}));
+      chipHost.replaceChildren(seg([['all','All '+list.jobs.length],['on','On '+(list.jobs.length-off),'Enabled'],['off','Off '+off,'Disabled']],jobChip,id=>{jobChip=id;draw();},'Show jobs'));
       const shown=list.jobs.filter(j=>(jobChip==='all'||(jobChip==='on')===j.enabled)&&(!jobQuery||(j.name+' '+(j.description||'')).toLowerCase().includes(jobQuery)));
       const rows=shown.map(j=>{
         const toggle=h('input',{type:'checkbox',checked:j.enabled,'aria-label':(j.enabled?'Disable ':'Enable ')+j.name,onchange:()=>act(()=>api.call(j.enabled?'disable':'enable',{id:j.id}))});
-        const more=btn('⋯','icon',()=>menu(more,[
+        const menuBtn=more([
           {label:'Edit',run:()=>openJob(j.id).catch(fail)},
           {label:'Runs',run:()=>openRuns(j.id)},
-          {label:'Delete…',danger:true,run:()=>confirmDelete(j)}]),{'aria-label':'More for '+j.name});
+          {label:'Delete…',danger:true,run:()=>confirmDelete(j)}],'More for '+j.name);
         const last=j.last_run;
-        return h('div',{class:'mg-row'},
+        return h('div',{class:'mg-row jb-jobrow'},
           h('button',{type:'button',class:'jb-plain',onclick:()=>openJob(j.id).catch(fail)},two(j.name,j.paused_reason?'paused: '+j.paused_reason:(j.description||''),true)),
           toggle,
           h('span',{class:'mg-mono jb-ellipsis',title:j.triggers.join('\n'),text:j.triggers.join(' · ')||'manual'}),
-          h('span',{class:'mg-dimtext',text:j.next?fmt(j.next,api.tz):'—'}),
+          h('span',{class:'mg-dimtext jb-next',title:'Next run',text:j.next?fmt(j.next,api.tz):'—'}),
           last?h('button',{type:'button',class:'jb-plain jb-state '+last.state,text:last.state,title:fmt(last.finished,api.tz),onclick:()=>openRuns(j.id,last.id)}):h('span',{class:'mg-sub',text:'never run'}),
-          h('span',{class:'mg-actions'},btn('Run','',()=>act(()=>api.call('run',{id:j.id})),{disabled:!j.enabled,title:j.enabled?'Run now':'Enable the job to run it'}),more));
+          h('span',{class:'mg-actions jb-acts'},btn('▶','icon',()=>act(()=>api.call('run',{id:j.id})),{disabled:!j.enabled,title:j.enabled?'Run now':'Enable the job to run it','aria-label':'Run '+j.name+' now'}),menuBtn));
       });
-      host.replaceChildren(table('minmax(0,1.6fr) 44px minmax(0,1.4fr) 150px 110px 112px',['Job','On','Triggers','Next run','Last result',''],
-        rows.length?rows:[h('div',{class:'mg-empty',text:list.jobs.length?'Nothing matches.':'No jobs yet.'})],820));
+      host.replaceChildren(table('minmax(0,1.6fr) 44px minmax(0,1.4fr) 150px 100px 92px',['Job','On','Triggers','Next run','Last',''],
+        rows.length?rows:[h('div',{class:'mg-empty',text:list.jobs.length?'No matches.':'No jobs yet.'})],800));
     }
     function confirmDelete(j){
       const err=h('small',{class:'mg-error',role:'alert'});
@@ -204,7 +205,7 @@ export async function mountJobs(root){
   async function editor(){
     const text=h('textarea',{class:'jb-json',spellcheck:'false','aria-label':'Job JSON',autocomplete:'off'});text.value=ed.text;
     const problems=h('div',{class:'jb-problems',role:'alert'});
-    const title=h('span',{class:'mg-mono',text:ed.id?ed.id+' · revision '+ed.revision:'new job (unsaved)'});
+    const title=h('span',{class:'mg-mono jb-ellipsis',text:ed.id?ed.id+' · rev '+ed.revision:'new job (unsaved)'});
     text.addEventListener('input',()=>{ed.text=text.value;syncTriggers();});
     text.addEventListener('keydown',e=>{if(e.key==='Tab'&&!e.shiftKey){e.preventDefault();text.setRangeText('  ',text.selectionStart,text.selectionEnd,'end');ed.text=text.value;}
       if((e.ctrlKey||e.metaKey)&&e.key==='s'){e.preventDefault();save();}});
@@ -218,7 +219,7 @@ export async function mountJobs(root){
       try{
         const j=ed.id?await api.call('update',{id:ed.id,data:{...doc,revision:ed.revision}}):await api.call('create',{data:doc});
         ed.id=j.id;ed.revision=j.revision;ed.text=text.value=JSON.stringify(j.definition,null,2);
-        title.textContent=j.id+' · revision '+j.revision;runNow.disabled=false;showProblems([],j.warnings||[],'Saved.');syncTriggers();
+        title.textContent=j.id+' · rev '+j.revision;runNow.disabled=false;showProblems([],j.warnings||[],'Saved.');syncTriggers();
       }catch(e){showProblems(e.errors||[e.message],[]);}}
     const format=()=>{const doc=parse();if(doc){ed.text=text.value=JSON.stringify(doc,null,2);showProblems([],[]);}};
     const schema=async()=>{try{const s=await api.call('describe_schema');dialog('Job schema',h('pre',{class:'jb-schema',text:JSON.stringify(s,null,2),tabindex:'0'}));}catch(e){fail(e);}};
@@ -276,9 +277,9 @@ export async function mountJobs(root){
     drawBuilder();
     body.replaceChildren(h('div',{class:'mg-split jb-editor'},
       h('div',{class:'mg-main'},
-        h('div',{class:'mg-bar'},title,h('span',{class:'mg-grow'}),
-          h('a',{href:'#',class:'jb-link',text:'schema',onclick:e=>{e.preventDefault();schema();}}),
-          btn('Format','',format),btn('Validate','',validate),runNow,btn('Save','primary',save)),
+        h('div',{class:'mg-bar jb-edbar'},title,h('span',{class:'mg-grow'}),
+          btn('Validate','',validate),btn('Save','primary',save),
+          more(()=>[{label:'Format',run:format},{label:ed.id?'Run now':'Run now (save first)',run:()=>{if(!runNow.disabled)runNow.click();}},{label:'Schema',run:schema}],'More editor actions')),
         text,problems),
       h('aside',{class:'mg-box mg-side jb-helper'},
         h('div',{class:'mg-pad'},
@@ -299,7 +300,7 @@ export async function mountJobs(root){
     const host=h('div',{class:'mg-box'});
     const apply=()=>{Object.assign(runFilter,{job:jobSel.value,state:stateSel.value,from:from.value,to:to.value});load().catch(fail);};
     for(const c of [jobSel,stateSel,from,to])c.onchange=apply;
-    body.replaceChildren(h('div',{class:'mg-bar'},jobSel,stateSel,h('span',{class:'mg-sub',text:'from'}),from,h('span',{class:'mg-sub',text:'to'}),to,h('span',{class:'mg-grow'}),btn('Refresh','',apply)),host);
+    body.replaceChildren(h('div',{class:'mg-bar jb-runbar'},jobSel,stateSel,h('span',{class:'jb-dates'},from,h('span',{class:'mg-sub',text:'–'}),to),btn('↻','icon',apply,{'aria-label':'Refresh',title:'Refresh'})),host);
     async function load(){
       const data={limit:200,steps:true};
       if(runFilter.state)data.states=runFilter.state.split(',');
@@ -309,8 +310,8 @@ export async function mountJobs(root){
       const rows=[];
       for(const r of rs){
         const open=runFilter.open===r.id;
-        rows.push(h('div',{class:'mg-row pick'+(open?' sel':''),onclick:()=>{runFilter.open=open?null:r.id;load().catch(fail);}},
-          two(r.job,r.id+(r.missed?' · missed':''),false),
+        rows.push(h('div',{class:'mg-row pick jb-runrow'+(open?' sel':''),onclick:()=>{runFilter.open=open?null:r.id;load().catch(fail);}},
+          h('span',{class:'mg-two'},h('b',{text:r.job}),h('small',{class:'copy-chip',text:r.id+(r.missed?' · missed':''),title:r.id+' (tap to copy)','data-copy':r.id})),
           h('span',{class:'jb-state '+r.state,text:r.state}),
           h('span',{class:'mg-mono',text:r.trigger}),
           h('span',{class:'mg-dimtext',text:fmt(r.started||r.created,api.tz)}),
@@ -319,7 +320,7 @@ export async function mountJobs(root){
         if(open)rows.push(runDetail(r));
       }
       host.replaceChildren(table('minmax(0,1.4fr) 100px minmax(0,1fr) 160px 90px 90px',['Run','State','Trigger','Started','Took',''],
-        rows.length?rows:[h('div',{class:'mg-empty',text:'No runs match.'})],760));
+        rows.length?rows:[h('div',{class:'mg-empty',text:'No runs.'})],760));
     }
     await load();
   }

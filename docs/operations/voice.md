@@ -139,7 +139,7 @@ To put it behind the hub's address:
 
 1. On the hub: Manage > Voice > "On another machine", the voice server's
    address, Save (or `ROOK_VOICE_ENGINE=remote` and
-   `ROOK_VOICE_REMOTE_URL=...`). Use Check connection.
+   `ROOK_VOICE_REMOTE_URL=...`). Use **Check** on the Voice page.
 2. In the Rook app: set the voice server to `wss://<hub>/voice/ws`. Keys are
    unchanged (they belong to the voice server).
 3. Once nothing uses the voice server's own public address, stop exposing it

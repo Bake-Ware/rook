@@ -5,7 +5,7 @@
 // ever rendered as text.
 
 const search=new URL(import.meta.url).search;
-const {h,el,ago}=await import('/account/bands/assets/manage.js'+search);
+const {h,el,ago,info,more,copyChip}=await import('/account/bands/assets/manage.js'+search);
 
 export const COLUMNS=[['todo','To do'],['in_progress','In progress'],['blocked','Blocked'],['paused','Paused'],['done','Done']];
 const COLUMN={todo:'todo',in_progress:'in_progress',blocked:'blocked',paused:'paused',done:'done',closed:'done',cancelled:'done'};
@@ -111,17 +111,27 @@ export function applyFilters(data,f){
     &&(!f.label||(t.tags||[]).includes(f.label))
     &&(!f.due||(f.due==='overdue'?dueState(t)==='overdue':f.due==='week'?(t.due&&!FINISHED.has(t.state)&&daysBetween(t0,t.due)>=0&&daysBetween(t0,t.due)<=7):f.due==='none'?!t.due&&!t.start:f.due==='dated'?!!(t.due||t.start):true))
     &&(!q||(t.title+' '+t.slug+' '+(t.excerpt||'')).toLowerCase().includes(q)));}
-export function filterBar(data,f,onChange,{state=true}={}){
-  const bar=el('div',undefined,'wv-filters');const sel=(key,label,opts)=>{const s=el('select');s.setAttribute('aria-label',label);s.name=key;
+// On phones the selects fold behind "Filters (n)"; the bar is redrawn on every
+// change, so whether it is open is kept here.
+let filtersOpen=false;
+const SORT_LABELS=[['due:1','Due'],['updated:1','Recently updated'],['title:1','Task A–Z'],['project:1','Project'],['state:1','Status'],['owner:1','Owner']];
+export function filterBar(data,f,onChange,{state=true,help='',sort=null}={}){
+  const bar=el('div',undefined,'wv-filters'+(filtersOpen?' wv-open':''));const box=el('div',undefined,'wv-filter-box');const sel=(key,label,opts)=>{const s=el('select');s.setAttribute('aria-label',label);s.name=key;
     const all=el('option',label);all.value='';s.append(all);for(const [v,t] of opts){const o=el('option',t);o.value=v;s.append(o);}s.value=f[key]||'';s.onchange=()=>onChange({...f,[key]:s.value});if(f[key])s.classList.add('wv-on');return s;};
   const owners=new Map();for(const t of data.tasks)for(const o of [...(t.owner||[])])owners.set(o,who(o));
   const labels=[...new Set(data.tasks.flatMap(t=>t.tags||[]))].sort();
   const q=el('input');q.type='search';q.placeholder='Search tasks';q.value=f.q||'';q.setAttribute('aria-label','Search tasks');
   let timer=null;q.oninput=()=>{clearTimeout(timer);timer=setTimeout(()=>onChange({...f,q:q.value}),250);};
-  bar.append(q,sel('project','All projects',data.projects.map(p=>[p.id,p.title])),sel('owner','Anyone',[...owners].sort((a,b)=>a[1].localeCompare(b[1]))));
-  if(state)bar.append(sel('state','Any status',COLUMNS.concat([['cancelled','Cancelled']])));
-  bar.append(sel('label','Any label',labels.map(x=>[x,x])),sel('due','Any date',[['overdue','Overdue'],['week','Due this week'],['dated','Has dates'],['none','No dates']]));
-  if(FILTER_KEYS.some(k=>f[k]))bar.append(button('Clear',()=>onChange({}),'kn-linkish'));
+  box.append(sel('project','All projects',data.projects.map(p=>[p.id,p.title])),sel('owner','Anyone',[...owners].sort((a,b)=>a[1].localeCompare(b[1]))));
+  if(state)box.append(sel('state','Any status',COLUMNS.concat([['cancelled','Cancelled']])));
+  box.append(sel('label','Any label',labels.map(x=>[x,x])),sel('due','Any date',[['overdue','Overdue'],['week','Due this week'],['dated','Has dates'],['none','No dates']]));
+  if(sort){const s=el('select','', 'wv-sort-sel');s.setAttribute('aria-label','Sort');for(const [v,t] of SORT_LABELS){const o=el('option','Sort: '+t);o.value=v;s.append(o);}
+    s.value=SORT_LABELS.some(x=>x[0]===sort.value)?sort.value:'due:1';s.onchange=()=>sort.set(s.value);box.append(s);}
+  const n=FILTER_KEYS.filter(k=>k!=='q'&&f[k]).length;
+  if(FILTER_KEYS.some(k=>f[k]))box.append(button('Clear',()=>onChange({}),'kn-linkish'));
+  const tog=button(n?'Filters · '+n:'Filters',()=>{filtersOpen=!filtersOpen;bar.classList.toggle('wv-open',filtersOpen);tog.setAttribute('aria-expanded',String(filtersOpen));},'wv-filter-toggle'+(n?' wv-on':''));
+  tog.setAttribute('aria-expanded',String(filtersOpen));
+  bar.append(q,tog);if(help)bar.append(info(help,'How this view works'));bar.append(box);
   return bar;}
 
 function projectName(data,id){return (data.projects.find(p=>p.id===id)||{}).title||'';}
@@ -189,10 +199,13 @@ export function renderList(kit,data,tasks,sort,onSort){
     const c1=el('td',undefined,'wv-td-title');c1.append(a);if(x.state==='blocked'&&x.blocked_reason)c1.append(el('small',x.blocked_reason,'wv-bad'));
     const pr=el('td');const pa=el('a',projectName(data,x.project));pa.href='#work?p='+encodeURIComponent((data.projects.find(p=>p.id===x.project)||{}).slug||'')+'&b='+encodeURIComponent(x.band);pr.append(pa);
     const st=el('td');st.append(stateChip(x.state));
-    const ow=el('td',undefined,'wv-td-owner');for(const o of (x.owner||[]).slice(0,2)){const s=el('span',undefined,'wv-owner');s.append(avatar(o,'sm'),el('span',who(o)));ow.append(s);}
-    const lb=el('td');for(const g of x.tags||[])lb.append(el('span',g,'wv-tag'));
+    const ow=el('td',undefined,'wv-td-owner');const owIn=el('span',undefined,'wv-cell');for(const o of (x.owner||[]).slice(0,2)){const s=el('span',undefined,'wv-owner');s.append(avatar(o,'sm'),el('span',who(o)));owIn.append(s);}ow.append(owIn);
+    const lb=el('td');const lbIn=el('span',undefined,'wv-cell');for(const g of x.tags||[])lbIn.append(el('span',g,'wv-tag'));lb.append(lbIn);
     const du=el('td');const dc=dueChip(x);if(dc)du.append(dc);else du.append(el('span','—','kn-dim'));
-    tr.append(c1,pr,st,ow,lb,du,el('td',ago(x.updated,''),'kn-dim'));body.append(tr);}
+    const up=el('td',ago(x.updated,''),'kn-dim');
+    [[c1,''],[pr,'Project'],[st,'Status'],[ow,'Owner'],[lb,'Labels'],[du,'Due'],[up,'Updated']].forEach(([td,l])=>{td.dataset.label=l;});
+    if(!(x.tags||[]).length)lb.classList.add('wv-td-empty');if(!(x.owner||[]).length)ow.classList.add('wv-td-empty');
+    tr.append(c1,pr,st,ow,lb,du,up);body.append(tr);}
   t.append(body);const w=el('div',undefined,'wv-scroll');w.append(t);
   if(!rows.length)w.append(el('p','No tasks match.','wv-empty'));return w;}
 
@@ -210,7 +223,7 @@ export function renderTimeline(kit,data,tasks,{phone=false,width:avail=0}={}){
     for(const t of ts){const sp=span(t);if(sp)sched.push([t,sp]);else unscheduled.push(t);}
     sched.sort((a,b)=>a[1].s.localeCompare(b[1].s)||a[1].e.localeCompare(b[1].e));
     if(sched.length||p.start||p.due)groups.push([p,sched]);}
-  if(!groups.length){wrap.append(el('p','Nothing is scheduled yet. Give tasks a start or due date (open a task, then Plan) and they show up here.','wv-empty'));}
+  if(!groups.length){wrap.append(el('p','Nothing scheduled. Open a task, then Plan.','wv-empty'));}
   else{
     const all=groups.flatMap(([p,s])=>[...s.flatMap(([,x])=>[x.s,x.e]),p.start,p.due].filter(Boolean));all.push(today());
     let from=addDays(all.reduce((a,b)=>a<b?a:b),-2),to=addDays(all.reduce((a,b)=>a>b?a:b),4);
@@ -255,14 +268,14 @@ export function renderTimeline(kit,data,tasks,{phone=false,width:avail=0}={}){
       path.setAttribute('class',d.state==='done'?'wv-dep-done':x2<x1?'wv-dep-late':'');const tt=document.createElementNS(ns,'title');tt.textContent=t.title+' waits for '+(d.slug||d.id);path.append(tt);svg.append(path);}
     rowsBox.append(svg);inner.append(rowsBox);scroller.append(inner);wrap.append(scroller);
     requestAnimationFrame(()=>{scroller.scrollLeft=Math.max(0,x(today())-LBL-(phone?40:200));});
-    const legend=el('p',undefined,'wv-legend');for(const [k,l] of COLUMNS){const s=el('span',l,'wv-leg wv-s-'+k);legend.append(s);}legend.append(el('span','Arrows: waits for','wv-leg wv-leg-dep'));wrap.append(legend);}
+    const legend=el('p',undefined,'wv-legend');for(const [k,l] of COLUMNS){const s=el('span',l,'wv-leg wv-s-'+k);legend.append(s);}legend.append(el('span','Waits for','wv-leg wv-leg-dep'));wrap.append(legend);}
   if(unscheduled.length){const d=el('details',undefined,'wv-unscheduled');d.append(el('summary','Not scheduled ('+unscheduled.length+')'));const ul=el('ul',undefined,'kn-list');
     for(const t of unscheduled){const li=el('li');const a=el('a',t.title);a.href='#work?t='+encodeURIComponent(t.slug)+'&b='+encodeURIComponent(t.band);li.append(a,el('span',' · '+projectName(data,t.project)+' · '+(LABEL[t.state]||t.state),'kn-dim'),button('Plan',()=>planTask(kit,t,kit.reload),'kn-linkish wv-plan'));ul.append(li);}
     d.append(ul);wrap.append(d);}
   return wrap;}
 
 // -- project page --------------------------------------------------------------
-function stat(n,label,cls){const s=el('div',undefined,'wv-stat'+(cls?' '+cls:''));s.append(el('b',String(n)),el('span',label));return s;}
+function stat(n,label,cls){const s=el('span',undefined,'wv-stat'+(cls?' '+cls:''));s.append(el('b',String(n)),el('span',label));return s;}
 // One line per event: the actor, then a sentence around the task's title ({t}).
 function describe(e){const d=e.data||{};
   if(e.action==='updated'&&d.state)return 'moved {t} to '+(LABEL[d.state]||d.state);
@@ -273,33 +286,36 @@ function describe(e){const d=e.data||{};
     link_retracted:'retracted a link on {t}',superseded:'superseded {t}',reviewed:'reviewed {t}'})[e.action]||e.action+' {t}';}
 export function renderProject(kit,page,opts){
   const p=page.projects[0];const tasks=page.tasks;const out=el('div',undefined,'wv-project');
-  const crumbs=el('div',undefined,'kn-crumbs');const back=el('a','Work');back.href='#work';crumbs.append(back,document.createTextNode(' / '+(p.concept?p.concept+' / ':'')+p.title));
-  const head=el('header',undefined,'wv-phead');const left=el('div');left.append(el('h1',p.title));
-  const meta=el('p',undefined,'kn-meta');meta.append(stateChip(p.state==='active'?'in_progress':p.state),document.createTextNode(' '+kit.bandName(p.band)+' · [['+p.slug+']]'+(p.start||p.due?' · '+(p.start?fmtDay(p.start):'…')+' → '+(p.due?fmtDay(p.due):'…'):'')));left.append(meta);
-  const acts=el('div',undefined,'wv-pacts');
-  const link=(label,href,cls)=>{const a=el('a',label,'wv-btn'+(cls?' '+cls:''));a.href=href;return a;};
-  acts.append(link('Huddle','#work?v=huddle&hp='+encodeURIComponent(p.id),'wv-btn-accent'),link('Board','#work?v=board&project='+encodeURIComponent(p.id)),link('Timeline','#work?v=timeline&project='+encodeURIComponent(p.id)),
-    button('New task',()=>opts.create({parent:p.slug,band:p.band,kind:'task'}),'wv-btn'),button('Details',()=>{location.hash='#work?t='+encodeURIComponent(p.slug)+'&b='+encodeURIComponent(p.band);},'wv-btn'));
+  const crumbs=el('nav',undefined,'kn-crumbs');crumbs.setAttribute('aria-label','Breadcrumbs');const back=el('a','Work','kn-crumb');back.href='#work';crumbs.append(back);
+  for(const x of [p.concept,p.title].filter(Boolean)){crumbs.append(el('span','/','kn-sep'));const t=el('span',x,'kn-crumb kn-here');t.title=x;crumbs.append(t);}
+  const head=el('header',undefined,'wv-phead');const left=el('div',undefined,'wv-ptitle');left.append(el('h1',p.title));
+  const meta=el('p',undefined,'kn-meta');meta.append(stateChip(p.state==='active'?'in_progress':p.state),el('span',kit.bandName(p.band)),copyChip('[['+p.slug+']]'));
+  if(p.start||p.due)meta.append(el('span',(p.start?fmtDay(p.start):'…')+' → '+(p.due?fmtDay(p.due):'…')));left.append(meta);
+  const acts=el('div',undefined,'wv-pacts');const go=h=>()=>{location.hash=h;};
+  acts.append(button('+ Task',()=>opts.create({parent:p.slug,band:p.band,kind:'task'}),'wv-btn wv-btn-accent','New task in this project'),
+    more([{label:'Huddle',run:go('#work?v=huddle&hp='+encodeURIComponent(p.id))},{label:'Board',run:go('#work?v=board&project='+encodeURIComponent(p.id))},
+      {label:'Timeline',run:go('#work?v=timeline&project='+encodeURIComponent(p.id))},{label:'Details',run:go('#work?t='+encodeURIComponent(p.slug)+'&b='+encodeURIComponent(p.band))}],'More for this project','wv-btn'));
   head.append(left,acts);out.append(crumbs,head);
   if(p.excerpt)out.append(kit.renderBody(p.excerpt,s=>kit.refOpen(s,p.band)));
   // Progress and counts.
   const c=p.counts||{};const finished=(c.done||0)+(c.closed||0);const overdue=tasks.filter(t=>dueState(t)==='overdue').length;
   const prog=el('div',undefined,'wv-progress');const bar=el('div',undefined,'wv-progress-bar');const fill=el('i');fill.style.width=Math.round(p.progress*100)+'%';bar.append(fill);
   bar.setAttribute('role','progressbar');bar.setAttribute('aria-valuenow',String(Math.round(p.progress*100)));bar.setAttribute('aria-valuemin','0');bar.setAttribute('aria-valuemax','100');bar.setAttribute('aria-label','Project progress');
-  prog.append(el('div',finished+' of '+(p.total-(c.cancelled||0))+' tasks finished · '+Math.round(p.progress*100)+'%','wv-progress-label'),bar);
-  const stats=el('div',undefined,'wv-stats');stats.append(stat(p.open,'open'),stat(c.in_progress||0,'in progress','wv-st-acc'),stat(c.blocked||0,'blocked',c.blocked?'wv-st-bad':''),stat(overdue,'overdue',overdue?'wv-st-bad':''),stat(finished,'finished','wv-st-ok'));
-  out.append(prog,stats);
+  const stats=el('div',undefined,'wv-stats');stats.append(stat(p.open,'open'),stat(c.in_progress||0,'active','wv-st-acc'),stat(c.blocked||0,'blocked',c.blocked?'wv-st-bad':''),stat(overdue,'overdue',overdue?'wv-st-bad':''),stat(finished+'/'+(p.total-(c.cancelled||0)),'done','wv-st-ok'));
+  stats.append(el('span',Math.round(p.progress*100)+'%','wv-pct'));
+  prog.append(stats,bar);
+  out.append(prog);
   const grid=el('div',undefined,'wv-pgrid');const main=el('div',undefined,'wv-pmain');const side=el('aside',undefined,'wv-pside');
   const block=(title,items,empty)=>{const s=el('section',undefined,'wv-psec');s.append(el('h2',title+(items.length?' ('+items.length+')':'')));
     if(!items.length){s.append(el('p',empty,'kn-dim'));return s;}const l=el('div',undefined,'wv-plist');for(const t of items)l.append(card(kit,page,t,{showProject:false}));s.append(l);return s;};
   const by=s=>tasks.filter(t=>t.state===s);
   if(by('blocked').length)main.append(block('Blocked',by('blocked'),''));
-  main.append(block('In progress',by('in_progress'),'Nobody is on this project right now.'));
+  main.append(block('In progress',by('in_progress'),'Nobody on it.'));
   main.append(block('Up next',by('todo').concat(by('paused')).sort((a,b)=>(a.due||'9999').localeCompare(b.due||'9999')),'Nothing waiting.'));
   const done=tasks.filter(t=>['done','closed','cancelled'].includes(t.state)).sort((a,b)=>b.updated-a.updated);
-  if(done.length){const d=el('details',undefined,'wv-psec');d.append(el('summary','Finished recently ('+done.length+')'));const l=el('div',undefined,'wv-plist');for(const t of done)l.append(card(kit,page,t,{showProject:false}));d.append(l);main.append(d);}
+  if(done.length){const d=el('details',undefined,'wv-psec');d.append(el('summary','Finished ('+done.length+')'));const l=el('div',undefined,'wv-plist');for(const t of done)l.append(card(kit,page,t,{showProject:false}));d.append(l);main.append(d);}
   // Side: activity, rooms, knowledge.
-  const act=el('section',undefined,'wv-psec');act.append(el('h2','Recent activity'));const feed=el('ol',undefined,'wv-feed');
+  const act=el('section',undefined,'wv-psec');act.append(el('h2','Activity'));const feed=el('ol',undefined,'wv-feed');
   for(const e of page.activity.slice(0,14)){const li=el('li');li.append(avatar(e.actor,'sm'));const txt=el('div');
     const a=el('a',e.title);a.href='#work?t='+encodeURIComponent(e.slug)+'&b='+encodeURIComponent(p.band);
     const [pre,post]=describe(e).split('{t}');txt.append(el('b',who(e.actor)),document.createTextNode(' '+pre),a,document.createTextNode(post||''),el('small',ago(e.ts,''),'kn-dim'));li.append(txt);feed.append(li);}
@@ -307,10 +323,10 @@ export function renderProject(kit,page,opts){
   const rooms=el('section',undefined,'wv-psec');rooms.append(el('h2','Rooms'));const rl=el('ul',undefined,'wv-links');
   for(const r of page.rooms){const li=el('li');const huddle=r.note==='Huddle';const a=el('a',huddle?'Huddle':(r.note||'Chat room'));
     a.href=huddle?'#work?v=huddle&h='+encodeURIComponent(r.room):'#huddles?room='+encodeURIComponent(r.room);li.append(a,el('small',r.records.includes(p.slug)?'this project':'from '+r.records.join(', '),'kn-dim'));rl.append(li);}
-  if(!page.rooms.length){const li=el('li');li.append(el('span','No rooms yet. ','kn-dim'));const a=el('a','Start the huddle');a.href='#work?v=huddle&hp='+encodeURIComponent(p.id);li.append(a);rl.append(li);}
+  if(!page.rooms.length){const li=el('li');li.append(el('span','None · ','kn-dim'));const a=el('a','Start huddle');a.href='#work?v=huddle&hp='+encodeURIComponent(p.id);li.append(a);rl.append(li);}
   rooms.append(rl);
   const kn=el('section',undefined,'wv-psec');kn.append(el('h2','Knowledge'));const kl=el('ul',undefined,'wv-links');
   for(const k of page.knowledge){const li=el('li');const a=el('a',k.title);a.href='#knowledge?p='+encodeURIComponent(k.slug)+'&b='+encodeURIComponent(p.band);li.append(a,el('small',(k.via==='linked'?'linked from the project':'mentions it')+(k.gist?' · '+k.gist:''),'kn-dim'));kl.append(li);}
-  if(!page.knowledge.length)kl.append(el('li','No pages linked yet. Agents link pages with [[slug]].','kn-dim'));kn.append(kl);
+  if(!page.knowledge.length)kl.append(el('li','None linked.','kn-dim'));kn.append(kl);
   side.append(act,rooms,kn);grid.append(main,side);out.append(grid);
   return out;}

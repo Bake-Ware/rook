@@ -128,9 +128,9 @@ window.ui=await mountHome(document.getElementById('view-home'));window.ui.activa
         await page.goto(base); await page.wait_for_function('window.ready===true')
 
         # Off: say so, point at the form, no sending, no huddle made.
-        await page.wait_for_selector('.hc-note.warn:has-text("The home agent is off")')
+        await page.wait_for_selector('.hc-note.warn:has-text("Off.")')
         assert await page.is_disabled('.hc-input textarea')
-        await page.click('.hc-note button:has-text("Go to the form")')
+        await page.click('.hc-note button:has-text("Set up")')
         await page.wait_for_selector('.hc-log:has-text("No conversation yet")')
         await shot(page, 'off')
         assert one_to_ones() == []
@@ -140,7 +140,7 @@ window.ui=await mountHome(document.getElementById('view-home'));window.ui.activa
                      'api_key': '{{secret:llm-key}}'}.items():
             svc.set(f'home.{k}', v, actor='human:op')
         await page.reload(); await page.wait_for_function('window.ready===true')
-        await page.wait_for_selector('.hc-note.warn:has-text("needs model")')
+        await page.wait_for_selector('.hc-note.warn:has-text("Needs model")')
         svc.set('home.model', 'small-model', actor='human:op')
         await page.reload(); await page.wait_for_function('window.ready===true')
         await page.wait_for_selector('.hc h2:has-text("Chat with @home")')
@@ -172,7 +172,7 @@ window.ui=await mountHome(document.getElementById('view-home'));window.ui.activa
         llm.status = 401
         await page.fill('.hc-input textarea', 'still there?')
         await page.click('.hc-input button:has-text("Send")')
-        await page.wait_for_selector('.hc-note.bad:has-text("could not answer")', timeout=15000)
+        await page.wait_for_selector('.hc-note.bad:has-text("No answer")', timeout=15000)
         assert 'HTTP 401' in await page.inner_text('.hc-note')
         await page.wait_for_selector('.hc-typing', state='hidden')
         await page.wait_for_function("document.querySelectorAll('.hc-msg.quiet').length===1")

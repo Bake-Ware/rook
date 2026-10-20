@@ -3,7 +3,7 @@
 // rollouts; the breaking-update gate; history and rollback. Everything goes
 // through /account/updates/api (operator only; rook/hub/plugins/updates/web.py).
 // Release notes and names are rendered as text.
-const {h, useCss, btn, chips, dialog, copy, ago} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
+const {h, useCss, btn, chips, dialog, copy, ago, info} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
 
 const API='/account/updates/api';
 const CSS=`
@@ -16,31 +16,39 @@ const CSS=`
 .up-step{display:grid;grid-template-columns:32px minmax(0,1fr);gap:4px 12px;align-items:start}
 .up-step>.n{width:28px;height:28px;display:grid;place-items:center;border:1px solid var(--line2);font:500 12px var(--mono);color:var(--dim)}
 .up-step.now>.n{border-color:var(--accent);color:var(--accent)}
-.up-step.done>.n{border-color:#3d5a33;color:var(--green)}
+.up-step.done>.n{border-color:var(--good-line);color:var(--green)}
 .up-step>div{display:flex;flex-direction:column;gap:8px;min-width:0}
 .up-step h3{margin:4px 0 0;font:500 15px var(--sans)}
 .up-step p{margin:0;color:var(--dim);font-size:13px;line-height:1.5}
 .up-notes{max-height:240px}
-.up-warn{border:1px solid #6b4336;background:#211512;padding:14px 16px;display:flex;flex-direction:column;gap:10px}
+.up-warn{border:1px solid var(--bad-line);background:var(--bad-bg);padding:14px 16px;display:flex;flex-direction:column;gap:10px}
 .up-warn h3{margin:0;font:500 15px var(--sans);color:var(--bad)}
 .up-warn ul{margin:0;padding-left:18px;font-size:13px;line-height:1.55}
 .up-warn label{display:flex;gap:10px;align-items:flex-start;font-size:13px;line-height:1.45;cursor:pointer}
 .up-state{font:500 10px var(--mono);letter-spacing:1px;text-transform:uppercase;padding:2px 6px;border:1px solid var(--line2);color:var(--dim);white-space:nowrap}
-.up-state.current,.up-state.done{border-color:#3d5a33;color:var(--green)}
-.up-state.behind,.up-state.waiting,.up-state.pushing,.up-state.running{border-color:#514b35;color:var(--accent)}
-.up-state.cannot,.up-state.failed,.up-state.stopped,.up-state.old{border-color:#6b4336;color:var(--bad)}
+.up-state.current,.up-state.done{border-color:var(--good-line);color:var(--green)}
+.up-state.behind,.up-state.waiting,.up-state.pushing,.up-state.running{border-color:var(--accent-line);color:var(--accent)}
+.up-state.cannot,.up-state.failed,.up-state.stopped,.up-state.old{border-color:var(--bad-line);color:var(--bad)}
 .up-state.held,.up-state.skipped,.up-state.cancelled,.up-state.unknown{border-style:dashed}
 .up-note{color:var(--bad);font-size:12px;line-height:1.4;white-space:normal}
 .up-prog{display:flex;flex-direction:column;gap:10px}
 .up-bar{height:6px;background:var(--line);display:flex}.up-bar i{display:block;height:6px}
 .up-bar .d{background:var(--green)}.up-bar .f{background:var(--bad)}.up-bar .w{background:var(--accent)}
 .up-row-detail{color:var(--dim);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.up-hist{display:grid;grid-template-columns:110px 90px minmax(0,1fr);gap:4px 14px;padding:10px 0;border-top:1px solid #20261d;font-size:13px;align-items:baseline}
+.up-hist{display:grid;grid-template-columns:110px 90px minmax(0,1fr);gap:4px 14px;padding:10px 0;border-top:1px solid var(--line-soft);font-size:13px;align-items:baseline}
 .up-hist small{color:var(--dim);font:11px var(--mono)}
-.up-hist .d{color:#c9cdb8;line-height:1.45;overflow-wrap:anywhere}
+.up-hist .d{color:var(--fg-soft);line-height:1.45;overflow-wrap:anywhere}
 .up-sel{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .up-warn .mg-two small,.up .mg-two small.up-note{white-space:normal}
-@media(max-width:700px){.up-hist{grid-template-columns:1fr}.up-step{grid-template-columns:1fr}.up-step>.n{display:none}}
+.up-head{display:flex;align-items:center;gap:8px}
+.up-head .mg-sub{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.up-line{display:flex;gap:8px;align-items:flex-start}
+@media(max-width:700px){.up-hist{grid-template-columns:1fr}.up-step{grid-template-columns:1fr}.up-step>.n{display:none}
+ .up .mg-tabs{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;padding:0}
+ .up .mg-tabs button{flex:0 0 auto}
+ .up-cards{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+ .up-card{padding:10px 12px;gap:3px}.up-card .k{font-size:18px;overflow-wrap:anywhere}
+ .up-card small{font-size:11px}}
 `;
 function css(){
   useCss();
@@ -93,13 +101,13 @@ export async function mountUpdates(root){
 
   // ---- header -------------------------------------------------------------
   function header(){
-    const check=btn('Check now','',()=>act({action:'check'},'Checked for new releases.',check));
-    const set=btn('Settings','',settingsDialog);
+    const check=btn('Check','',()=>act({action:'check'},'Checked for new releases.',check),{title:'Check for new releases now'});
+    const set=btn('⚙','icon',settingsDialog,{'aria-label':'Update settings',title:'Update settings'});
     const ck=o.check||{};
     const line=(o.mode==='off'?'Checking is off':'Checked '+ago(ck.ok_at||ck.checked_at))+
       ' · '+({off:'Off',notify:'Tell me',auto:'Install automatically'}[o.mode])+' · '+(o.channel==='prerelease'?'Test releases too':'Stable releases')+
       (o.mode==='auto'?' · window '+(o.window||'any time'):'');
-    return [h('div',{class:'mg-bar'},h('h1',{text:'Updates'}),h('span',{class:'mg-sub',text:line}),h('span',{class:'mg-grow'}),set,check),
+    return [h('div',{class:'up-head'},h('span',{class:'mg-sub',text:line,title:line}),set,check),
       ck.error?h('p',{class:'mg-error',text:'Last check failed: '+ck.error+'. Rook tries again later on its own.'}):null];
   }
   function settingsDialog(){
@@ -110,7 +118,7 @@ export async function mountUpdates(root){
     const win=h('input',{value:o.window||'',placeholder:'02:00-05:00','aria-label':'Maintenance window'});
     const save=btn('Save','primary',async()=>{d.close();await act({action:'settings',mode,channel:ch.value,window:win.value.trim()},'Update settings saved.');});
     const d=dialog('Update settings',
-      h('p',{text:'Tell me: Rook checks for new releases and tells you here and in chat. Install automatically: Rook also installs them during the maintenance window, the hub first, then your workers one small group at a time. Updates that would cut off a device always wait for you.'}),
+      info('Tell me: Rook checks for new releases and tells you here and in chat. Install automatically: Rook also installs them during the maintenance window, the hub first, then your workers one small group at a time. Updates that would cut off a device always wait for you.','About update modes'),
       h('div',{class:'mg-field'},h('span',{class:'mg-label',text:'When a new release comes out'}),modeRow),
       h('label',{class:'mg-field'},h('span',{class:'mg-label',text:'Releases'}),ch),
       h('label',{class:'mg-field'},h('span',{class:'mg-label',text:'Maintenance window (hub time)'}),win),
@@ -128,9 +136,9 @@ export async function mountUpdates(root){
     return h('div',{class:'up-cards'},
       card('Hub',hub.version||hub.name||'dev build',o.hub.update_available?'warn':'good',o.hub.update_available?'Rook '+o.hub.latest.replace(/^v/,'')+' is available':'Up to date'+(hub.name?' · '+hub.name:'')),
       card('Workers',w.all?(w.all-w.behind)+' / '+w.all:'none',w.behind?'warn':'good',w.behind?w.behind+' can update to build '+o.feed.newest:(w.all?'All on the newest build':'No workers yet')),
-      card('Phones and apps',a.all?(a.all-a.behind)+' / '+a.all:'none',a.cannot?'bad':a.behind?'warn':'good',a.cannot?a.cannot+' too old for this hub':a.behind?a.behind+' can update':'Nothing to do'),
-      card('Firmware',f.all?(f.all-f.behind)+' / '+f.all:'none',f.behind?'warn':'good',f.behind?f.behind+' can be flashed with newer firmware':'Nothing to do'),
-      card('Relay',o.relay.pinned||'—','', o.relay.latest&&o.relay.latest!==o.relay.pinned?'telesthete '+o.relay.latest+' exists; it comes with the Rook release that pins it':'Pinned by this Rook release'));
+      card('Apps',a.all?(a.all-a.behind)+' / '+a.all:'none',a.cannot?'bad':a.behind?'warn':'good',a.cannot?a.cannot+' too old for this hub':a.behind?a.behind+' can update':'Nothing to do'),
+      card('Firmware',f.all?(f.all-f.behind)+' / '+f.all:'none',f.behind?'warn':'good',f.behind?f.behind+' can be flashed':'Nothing to do'),
+      card('Relay',o.relay.pinned||'—','', o.relay.latest&&o.relay.latest!==o.relay.pinned?'telesthete '+o.relay.latest+' comes with a later Rook':'Pinned by this release'));
   }
   function progressBanner(){
     const out=[];
@@ -138,7 +146,7 @@ export async function mountUpdates(root){
       const a=o.hub_apply;
       out.push(h('div',{class:'mg-box callout'},h('div',{class:'mg-pad'},
         h('div',{class:'mg-bar'},stateTag('running'),h('b',{text:'Updating the hub to '+a.version}),h('span',{class:'mg-sub',text:'started '+ago(a.started_at)+' by '+String(a.by||'').replace(/^human:/,'')})),
-        h('p',{class:'mg-sub',text:'The hub restarts during the update, so this page may lose its connection for a minute. If the new release does not come up healthy, the hub goes back to '+(a.from_version||'the previous release')+' on its own.'}),
+        h('p',{class:'mg-sub',text:'The page may drop for a minute. Unhealthy? It goes back to '+(a.from_version||'the previous release')+' on its own.'}),
         a.log?h('pre',{text:a.log}):null)));
     }
     if(o.rollout&&o.rollout.status==='running')out.push(rolloutPanel(o.rollout));
@@ -180,34 +188,34 @@ export async function mountUpdates(root){
     let action;
     if(o.hub_apply)action=h('p',{class:'mg-sub',text:'In progress.'});
     else if(rel.can_apply){
-      action=h('div',{class:'mg-actions'},btn('Update the hub to '+rel.version,'primary',e=>{
+      action=h('div',{class:'mg-actions'},btn('Update hub','primary',e=>{
         const d=dialog('Update the hub to '+rel.version+'?',h('p',{text:rel.apply_note}),
           h('div',{class:'mg-actions end'},btn('Cancel','',()=>d.close()),btn('Update now','primary',async()=>{d.close();await act({action:'apply_hub',tag:rel.tag},'The hub update has started.');})));
-      },{disabled:blocked}),blocked?h('span',{class:'mg-sub',text:'Update or acknowledge the devices above first.'}):null);
+      },{disabled:blocked,title:'Update the hub to '+rel.version}),blocked?h('span',{class:'mg-sub',text:'Fix or acknowledge the devices above first.'}):null);
     }else if(inst.kind==='rook-hub'&&inst.can_prepare){
       // The hub cannot switch its own system units: it prepares the signed
       // release and the operator runs the deploy on the hub machine.
       const prep=o.hub.prepared&&o.hub.prepared.tag===rel.tag?o.hub.prepared:null;
-      const prepare=btn((prep?'Prepare again':'Prepare the hub update to '+rel.version),prep?'':'primary',e=>act({action:'prepare_hub',tag:rel.tag},'Prepared. Run the command below on the hub machine.',e.target),{disabled:blocked});
+      const prepare=btn((prep?'Prepare again':'Prepare update'),prep?'':'primary',e=>act({action:'prepare_hub',tag:rel.tag},'Prepared. Run the command below on the hub machine.',e.target),{disabled:blocked,title:'Prepare the hub update to '+rel.version});
       action=h('div',{class:'mg',style:'gap:8px'},h('p',{class:'mg-sub',text:inst.why}),
         prep?h('div',{class:'mg',style:'gap:8px'},
-          h('p',{class:'mg-sub',text:'Ready: '+(prep.target_name||rel.version)+'. Run this on the hub machine. It checks the signature, backs up the databases, and rolls back by itself if the new release does not come up healthy.'}),
+          h('div',{class:'up-line'},h('p',{class:'mg-sub',text:'Ready: '+(prep.target_name||rel.version)+'. Run on the hub machine:'}),info('It checks the signature, backs up the databases, and rolls back by itself if the new release does not come up healthy.','What the command does')),
           h('div',{class:'mg-bar'},h('code',{class:'mg-code',style:'white-space:pre-wrap;overflow-wrap:anywhere',text:prep.command}),btn('Copy','',e=>copy(prep.command,e.target)))):null,
-        h('div',{class:'mg-actions'},prepare,blocked?h('span',{class:'mg-sub',text:'Update or acknowledge the devices above first.'}):null));
+        h('div',{class:'mg-actions'},prepare,blocked?h('span',{class:'mg-sub',text:'Fix or acknowledge the devices above first.'}):null));
     }else{
       const cmd=(inst.manual||'').replaceAll('{tag}',rel.tag).replaceAll('{version}',rel.version);
       action=h('div',{class:'mg',style:'gap:8px'},h('p',{class:'mg-sub',text:inst.why}),cmd?h('div',{class:'mg-bar'},h('code',{class:'mg-code',text:cmd}),btn('Copy','',e=>copy(cmd,e.target))):null);
     }
     return h('div',{class:'up-step now'},h('span',{class:'n',text:'1'}),h('div',null,
-      h('h3',{text:'Update the hub'}),h('p',{text:'This hub runs '+(o.hub.current.version||o.hub.current.name||'a development build')+'. Your workers get their updates from the hub, so it goes first.'}),action));
+      h('h3',{text:'Update the hub'}),h('p',{text:'Runs '+(o.hub.current.version||o.hub.current.name||'a development build')+'. Goes first: workers update from it.'}),action));
   }
   function workerStep(n){
     const w=counts('worker');
     const pending=o.feed.newest>o.feed.released;
     return h('div',{class:'up-step '+(pending||w.behind?'now':'done')},h('span',{class:'n',text:String(n)}),h('div',null,
       h('h3',{text:'Update your workers'}),
-      h('p',{text:w.behind?w.behind+' worker'+(w.behind===1?' is':'s are')+' behind the newest build on this hub ('+o.feed.newest+'). Rook updates one test worker first, then the rest a few at a time, and stops if one does not come back healthy.':'Every worker is on the newest build this hub has.'}),
-      w.behind?h('div',{class:'mg-actions'},btn('Choose workers…','soft',()=>{tab='workers';render();})):null));
+      h('p',{text:w.behind?w.behind+' behind build '+o.feed.newest+'.':'All on the newest build.'}),
+      w.behind?h('div',{class:'mg-actions'},btn('Choose workers','soft',()=>{tab='workers';render();})):null));
   }
   function overview(){
     const body=[summaryCards(),...progressBanner()];
@@ -222,7 +230,7 @@ export async function mountUpdates(root){
           breakingBox(rel),hubStep(rel),workerStep(2))));
     }else{
       body.push(h('div',{class:'mg-box'},h('div',{class:'mg-pad'},h('h3',{style:'margin:0;font:500 15px var(--sans)',text:'The hub is up to date'}),
-        h('p',{class:'mg-sub',text:o.mode==='off'?'Checking for new releases is off (Settings).':'Rook checks for new releases every few hours. Nothing newer than '+(o.hub.current.version||o.hub.current.name)+' is out.'}),
+        h('p',{class:'mg-sub',text:o.mode==='off'?'Checking is off (⚙).':'Nothing newer than '+(o.hub.current.version||o.hub.current.name)+'. Checked every few hours.'}),
         workerStep(1))));
     }
     return body;
@@ -246,7 +254,7 @@ export async function mountUpdates(root){
   function selection(){
     const ws=o.members.filter(m=>m.kind==='worker');
     const bands=[...new Set(ws.map(m=>m.band).filter(Boolean))], oses=[...new Set(ws.map(m=>m.os))];
-    const by=h('div',{class:'up-sel'},...chips([['all','All workers'],['band','By band'],['os','By system'],['ids','Pick']],sel.mode,m=>{sel={mode:m,value:m==='band'?bands[0]:m==='os'?oses[0]:''};render();}));
+    const by=h('div',{class:'up-sel'},...chips([['all','All'],['band','Band'],['os','System'],['ids','Pick']],sel.mode,m=>{sel={mode:m,value:m==='band'?bands[0]:m==='os'?oses[0]:''};render();}));
     if(sel.mode==='band')by.append(h('select',{'aria-label':'Band',onchange:e=>{sel.value=e.target.value;render();}},bands.map(b=>h('option',{value:b,text:'Band '+b,selected:b===sel.value}))));
     if(sel.mode==='os')by.append(h('select',{'aria-label':'System',onchange:e=>{sel.value=e.target.value;render();}},oses.map(x=>h('option',{value:x,text:osLabel(x),selected:x===sel.value}))));
     return by;
@@ -270,18 +278,18 @@ export async function mountUpdates(root){
     const ws=o.members.filter(m=>m.kind==='worker');
     const out=[];
     if(o.rollout)out.push(rolloutPanel(o.rollout));
-    out.push(h('p',{class:'mg-sub',text:'Workers that check in on their own get build '+o.feed.released+' (released to everyone). The newest build on this hub is '+o.feed.newest+'. Pick who gets it: Rook updates one test worker first, then the rest '+'a few at a time, and stops if any worker does not come back healthy. Each worker also undoes the update by itself if it cannot reach the band.'}));
+    out.push(h('div',{class:'up-line'},h('p',{class:'mg-sub',text:'Released: '+o.feed.released+' · newest: '+o.feed.newest}),info('Workers that check in on their own get the released build. Pick who gets the newest: Rook updates one test worker first, then the rest a few at a time, and stops if any worker does not come back healthy. Each worker also undoes the update by itself if it cannot reach the band.','About worker rollouts')));
     out.push(selection());
     const targets=chosen().filter(m=>m.state==='behind'&&m.can_push);
     const can=h('select',{'aria-label':'Test worker',onchange:e=>{canary=e.target.value;}},h('option',{value:'',text:'Test worker: picked for me'}),targets.map(t=>h('option',{value:t.worker_id,text:'Test worker: '+t.name,selected:t.worker_id===canary})));
     const running=o.rollout&&o.rollout.status==='running';
-    const start=btn(targets.length?'Update '+targets.length+' worker'+(targets.length===1?'':'s')+' to build '+o.feed.newest:'Nothing to update','primary',e=>act({action:'rollout',selection:sel.mode==='ids'?{mode:'ids',value:[...picked]}:sel,canaries:canary?[canary]:undefined},'Rollout started.',e.target),{disabled:!targets.length||running});
-    const release=o.feed.newest>o.feed.released?btn('Release build '+o.feed.newest+' to everyone','',e=>{
+    const start=btn(targets.length?'Update '+targets.length:'Up to date','primary',e=>act({action:'rollout',selection:sel.mode==='ids'?{mode:'ids',value:[...picked]}:sel,canaries:canary?[canary]:undefined},'Rollout started.',e.target),{disabled:!targets.length||running,title:targets.length?'Update '+targets.length+' worker'+(targets.length===1?'':'s')+' to build '+o.feed.newest:'Nothing to update'});
+    const release=o.feed.newest>o.feed.released?btn('Release to all','',e=>{
       const d=dialog('Release build '+o.feed.newest+' to everyone?',h('p',{text:'Every worker that checks in moves to it on its own, without a test worker first. Use this after a partial rollout went well.'}),
         h('div',{class:'mg-actions end'},btn('Cancel','',()=>d.close()),btn('Release','primary',async()=>{d.close();await act({action:'release',build:o.feed.newest},'Released to everyone.');})));
-    }):null;
+    },{title:'Release build '+o.feed.newest+' to everyone'}):null;
     out.push(h('div',{class:'mg-actions'},targets.length?can:null,start,release));
-    out.push(h('div',{class:'mg-box'},h('div',{class:'mg-table',style:'--min:620px'},h('div',null,
+    out.push(h('div',{class:'mg-box mg-cards-sm'},h('div',{class:'mg-table',style:'--min:620px'},h('div',null,
       h('div',{class:'mg-head',style:'--cols:28px minmax(0,1.4fr) 90px 120px 130px'},['','Worker','System','Version','Status'].map(x=>h('div',{text:x}))),
       ws.length?ws.map(workerRow):h('div',{class:'mg-empty',text:'No workers on the band.'})))));
     return out;
@@ -290,30 +298,30 @@ export async function mountUpdates(root){
   // ---- apps -----------------------------------------------------------------
   function appsTab(){
     const apps=o.members.filter(m=>m.kind==='app');
-    const out=[h('p',{class:'mg-sub',text:'The Android app updates itself from this hub\'s app page (/apk), with Android asking the owner to confirm when it has to. Rook can only tell the app an update is waiting. Phones on an app older than 0.4.1 must install the new app by hand once.'})];
-    out.push(h('div',{class:'mg-bar'},h('span',{class:'mg-sub',text:o.app?'Available here: Rook app '+o.app.version_name+' ('+(o.app.source==='release'?'from a release':'uploaded on the hub')+')':'No app file is published on this hub yet.'}),h('span',{class:'mg-grow'}),
-      btn('Ask phones to update','soft',e=>act({action:'notify_apps'},r=>'Asked '+r.sent.length+' app'+(r.sent.length===1?'':'s')+' to update'+(r.skipped.length?'; not reached: '+r.skipped.join(', '):'')+'.',e.target),{disabled:!apps.some(a=>a.state==='behind'&&a.can_notify)})));
+    const out=[];
+    out.push(h('div',{class:'mg-bar'},h('span',{class:'mg-sub',text:o.app?'App '+o.app.version_name+' ('+(o.app.source==='release'?'release':'uploaded')+')':'No app published here.'}),
+      info('The Android app updates itself from this hub\'s app page (/apk), with Android asking the owner to confirm when it has to. Rook can only tell the app an update is waiting. Phones on an app older than 0.4.1 must install the new app by hand once. The desktop app asks this hub for updates at /updates/desktop.json.','About app updates'),h('span',{class:'mg-grow'}),
+      btn('Notify phones','soft',e=>act({action:'notify_apps'},r=>'Asked '+r.sent.length+' app'+(r.sent.length===1?'':'s')+' to update'+(r.skipped.length?'; not reached: '+r.skipped.join(', '):'')+'.',e.target),{disabled:!apps.some(a=>a.state==='behind'&&a.can_notify),title:'Ask phones to update'})));
     for(const r of o.releases.filter(r=>r.has_apk).slice(0,1))
-      out.push(h('div',{class:'mg-actions'},btn('Publish the app from '+r.tag,'',e=>act({action:'publish_apk',tag:r.tag,notify:true},'Published; phones were asked to update.',e.target))));
-    out.push(h('div',{class:'mg-box'},h('div',{class:'mg-table',style:'--min:560px'},h('div',null,
+      out.push(h('div',{class:'mg-actions'},btn('Publish '+r.tag,'',e=>act({action:'publish_apk',tag:r.tag,notify:true},'Published; phones were asked to update.',e.target))));
+    out.push(h('div',{class:'mg-box mg-cards-sm'},h('div',{class:'mg-table',style:'--min:560px'},h('div',null,
       h('div',{class:'mg-head',style:'--cols:minmax(0,1.4fr) 140px 120px 130px'},['Device','Installed','Available','Status'].map(x=>h('div',{text:x}))),
       apps.length?apps.map(m=>h('div',{class:'mg-row',style:'--cols:minmax(0,1.4fr) 140px 120px 130px'},
         h('span',{class:'mg-two'},h('b',{text:m.name+(m.online?'':' (offline)')}),h('small',{class:m.note||m.pending_note?'up-note':'',text:m.note?m.note+'. Install the new app on it by hand.':m.pending_note?'Update first: '+m.pending_note:osLabel(m.platform)})),
         h('span',{class:'mg-mono',text:verOf(m)}),h('span',{class:'mg-mono',text:m.target||'—'}),m.note?stateTag('old','Too old'):stateTag(m.state))):h('div',{class:'mg-empty',text:'No phones or apps on the band.'})))));
-    out.push(h('p',{class:'mg-sub',text:'Desktop app: it asks this hub for updates at /updates/desktop.json.'}));
     return out;
   }
 
   // ---- firmware -------------------------------------------------------------
   function firmwareTab(){
     const fw=o.members.filter(m=>m.kind==='firmware');
-    return [h('p',{class:'mg-sub',text:'Rook shows firmware versions but does not flash devices: firmware images are not part of Rook releases yet. Flash a device by hand when it is behind.'}),
-      h('div',{class:'mg-box'},h('div',{class:'mg-table',style:'--min:560px'},h('div',null,
+    return [h('div',{class:'up-line'},h('p',{class:'mg-sub',text:'Shown only; flash by hand.'}),info('Rook shows firmware versions but does not flash devices: firmware images are not part of Rook releases yet. Flash a device by hand when it is behind.','About firmware')),
+      h('div',{class:'mg-box mg-cards-sm'},h('div',{class:'mg-table',style:'--min:560px'},h('div',null,
         h('div',{class:'mg-head',style:'--cols:minmax(0,1.4fr) 110px 110px 130px'},['Device','Installed','Newest','Status'].map(x=>h('div',{text:x}))),
         fw.length?fw.map(m=>h('div',{class:'mg-row',style:'--cols:minmax(0,1.4fr) 110px 110px 130px'},
           h('span',{class:'mg-two'},h('b',{text:m.name}),h('small',{text:m.firmware==='rp2040'?'RP2040 USB dongle':'ESP32 KVM dongle'})),
           h('span',{class:'mg-mono',text:m.fw_version||'unknown'}),h('span',{class:'mg-mono',text:m.target||'—'}),stateTag(m.state))):h('div',{class:'mg-empty',text:'No firmware devices on the band.'})))),
-      h('details',null,h('summary',{text:'How to flash firmware by hand'}),h('div',{class:'mg-pad'},
+      h('details',null,h('summary',{text:'How to flash'}),h('div',{class:'mg-pad'},
         h('p',{class:'mg-sub',text:'ESP32 dongle: open the device\'s own page (http://<device address>/config, with its admin password) and upload firmware.bin, or connect it by USB and run: pio run -d firmware -t upload'}),
         h('p',{class:'mg-sub',text:'RP2040 dongle: hold BOOT while plugging it in, then copy firmware.uf2 (pio run -d firmware-rp2040) to the RPI-RP2 drive.'})))];
   }
@@ -326,24 +334,24 @@ export async function mountUpdates(root){
     const out=[];
     const inst=o.hub.install;
     if(inst.can_apply&&(inst.kind==='rook-hub'||ev.some(e=>e.kind==='hub'&&e.event==='finished'&&e.result==='ok'))){
-      out.push(h('div',{class:'mg-actions'},btn('Roll the hub back to its previous release','danger',e=>{
+      out.push(h('div',{class:'mg-actions'},btn('Roll back hub','danger',e=>{
         const d=dialog('Roll the hub back?',h('p',{text:'The hub goes back to the release it ran before the last update and restarts. Your data is kept.'}),
           h('div',{class:'mg-actions end'},btn('Cancel','',()=>d.close()),btn('Roll back','danger',async()=>{d.close();await act({action:'rollback_hub'},'Rollback started.');})));
-      })));
+      },{title:'Roll the hub back to its previous release'})));
     }
     out.push(h('div',{class:'mg-box'},h('div',{class:'mg-pad',style:'gap:0'},
       ev.length?ev.map(e=>h('div',{class:'up-hist'},h('small',{text:new Date(e.ts*1000).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}),
         h('span',null,h('b',{text:kinds[e.kind]||e.kind}),' ',e.result?stateTag(e.result==='ok'?'done':e.result):null),
         h('span',{class:'d',text:[words[e.event]||e.event,e.tag||(e.build?'build '+e.build:''),e.from&&e.to?e.from+' → '+e.to:'',e.detail,e.by?'('+String(e.by).replace(/^human:/,'')+')':''].filter(Boolean).join(' · ')}))):h('p',{class:'mg-sub',text:'No updates yet.'}))));
     const dh=o.hub.history||[];
-    if(dh.length)out.push(h('details',null,h('summary',{text:'Hub deploy log (rook hub history)'}),h('pre',{text:dh.map(x=>new Date(x.ts*1000).toISOString().slice(0,16)+'  '+x.event+' '+(x.result||'')+' '+Object.entries(x.services||{}).map(([n,c])=>n+' '+(c.from||'-')+'->'+(c.to||'-')).join(', ')).join('\n')})));
+    if(dh.length)out.push(h('details',null,h('summary',{text:'Deploy log'}),h('pre',{text:dh.map(x=>new Date(x.ts*1000).toISOString().slice(0,16)+'  '+x.event+' '+(x.result||'')+' '+Object.entries(x.services||{}).map(([n,c])=>n+' '+(c.from||'-')+'->'+(c.to||'-')).join(', ')).join('\n')})));
     return out;
   }
 
   async function render(){
     const tabs=h('div',{class:'mg-tabs',role:'tablist'});
     const w=counts('worker'),a=counts('app'),f=counts('firmware');
-    for(const [id,label] of [['overview','Overview'],['workers','Workers'+(w.behind?' ('+w.behind+')':'')],['apps','Phones and apps'+(a.behind+a.cannot?' ('+(a.behind+a.cannot)+')':'')],['firmware','Firmware'+(f.behind?' ('+f.behind+')':'')],['history','History']])
+    for(const [id,label] of [['overview','Overview'],['workers','Workers'+(w.behind?' ('+w.behind+')':'')],['apps','Apps'+(a.behind+a.cannot?' ('+(a.behind+a.cannot)+')':'')],['firmware','Firmware'+(f.behind?' ('+f.behind+')':'')],['history','History']])
       tabs.append(h('button',{type:'button',class:id===tab?'on':'',text:label,role:'tab','aria-selected':String(id===tab),onclick:()=>{tab=id;say('');render();}}));
     const body=h('div',{class:'mg',style:'gap:14px'});
     body.append(...({overview,workers:workersTab,apps:appsTab,firmware:firmwareTab,history:historyTab}[tab]()).filter(Boolean));
@@ -361,7 +369,7 @@ export async function mountUpdates(root){
   return {
     async activate(){
       try{await load(false);await render();}
-      catch(e){page.replaceChildren(h('h1',{text:'Updates'}),h('p',{class:'mg-error',text:e.message}));}
+      catch(e){page.replaceChildren(h('p',{class:'mg-error',text:e.message}));}
       clearInterval(timer);timer=setInterval(tick,4000);
     },
     deactivate(){clearInterval(timer);timer=null;},

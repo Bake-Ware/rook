@@ -97,7 +97,7 @@ def test_preset_picker_posts_the_choice(tmp_path):
     manage = (WEB / "manage.js").read_text(encoding="utf-8")
     (tmp_path / "manage.mjs").write_text(manage, encoding="utf-8")
     (tmp_path / "plugins.mjs").write_text(
-        "const {h, useCss: _u, btn, chips, dialog} = await import('./manage.mjs');const useCss=()=>{};"
+        "const {h, useCss: _u, btn, chips, dialog, info, seg} = await import('./manage.mjs');const useCss=()=>{};"
         + src[first:], encoding="utf-8")
     (tmp_path / "t.mjs").write_text(_HARNESS, encoding="utf-8")
     run = subprocess.run(["node", str(tmp_path / "t.mjs")], capture_output=True, text=True, timeout=30)

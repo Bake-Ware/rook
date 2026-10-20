@@ -44,7 +44,7 @@ apply and the task's history records you as the one who moved it:
 
 ## Dates and labels
 
-Open a task (or project) and choose **Plan dates & labels** to set a start
+Open a task (or project) and choose **Plan** to set a start
 date, a due date and labels. Agents set the same fields with
 `rook_task(action="update", data={revision, patch: {attrs: {start, due, tags}}})`;
 dates are `YYYY-MM-DD`, and an empty value clears one. Tasks without dates are

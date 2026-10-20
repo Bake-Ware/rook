@@ -30,8 +30,12 @@ started them yourself in your own terminal.
 - **Send** it a message, as if you typed it.
 - **Stop** it.
 - **Resume** a session that ended, in a new Rook terminal on the same machine.
-- **Start** a new session on any machine: pick the machine, the program and the
-  folder.
+- **Start** a new session on any machine with **+ New**: pick the machine, the
+  program and the folder.
+
+On a phone the agent, host and **Live only** filters fold behind the filter
+button next to **Activity**, and an open session's terminal fills the screen
+(← goes back to the list).
 
 A session started for a task claims that task and links to it. When the
 session ends, the task gets a note asking for a handoff

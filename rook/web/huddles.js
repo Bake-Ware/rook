@@ -10,7 +10,7 @@
 // Stored text is only ever rendered as text.
 
 const search=new URL(import.meta.url).search;
-const {h,el}=await import('/account/bands/assets/manage.js'+search);
+const {h,el,more}=await import('/account/bands/assets/manage.js'+search);
 
 const API='/account/huddle/api';
 export const YOU='user:operator';
@@ -31,12 +31,12 @@ function loadCss(){if(document.querySelector('link[data-hd]'))return;const l=doc
 export const clip=(t,n)=>{t=String(t??'');return t.length<=n?t:t.slice(0,n)+'\n[truncated: '+n+' of '+t.length+' chars]';};
 export const short=id=>{id=String(id||'');return id.includes(':')?id.split(':').slice(1).join(':'):id;};
 const RUNNING=['chair','roles','closing'];
-const FILTERS=[['active','Huddles'],['archived','Archived'],['chat','Old chat rooms']];
+const FILTERS=[['active','Huddles'],['archived','Archived'],['chat','Old chats']];
 // What the chair and the roles post when a turn fails (rook/hub/plugins/huddle/chair.py).
 const FAILED=/^\((?:The chair could not finish this round|.+ could not answer): /;
 const KIND={'task.create':'New task','task.update':'Task change','job.run':'Run a job','job.create':'New job',
   'session.send':'Nudge a session','session.start':'Start a session',note:'Note',ask_bake:'Question for you'};
-const CARD_STATE={proposed:'Waiting for you',approved:'Running',dismissed:'Dismissed',done:'Done',failed:'Failed'};
+const CARD_STATE={proposed:'Waiting',approved:'Running',dismissed:'Dismissed',done:'Done',failed:'Failed'};
 const NARROW=760;
 
 function when(ts){const d=new Date(ts*1000),now=new Date();const t=d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
@@ -52,7 +52,7 @@ export async function mountHuddles(root){
   const wrap=el('div',undefined,'hx');
   const side=el('aside',undefined,'hx-side');
   const filterSel=h('select',{'aria-label':'Show'},FILTERS.map(([v,l])=>h('option',{value:v,text:l})));
-  const newBtn=h('button',{type:'button',class:'hx-btn primary',text:'New huddle'});
+  const newBtn=h('button',{type:'button',class:'hx-btn primary',text:'+ New','aria-label':'New huddle',title:'New huddle'});
   const list=h('nav',{class:'hx-list','aria-label':'Huddles'});
   side.append(h('div',{class:'hx-side-head'},filterSel,newBtn),list);
   const main=el('section',undefined,'hx-main');
@@ -160,31 +160,31 @@ export async function mountHuddles(root){
     back.onclick=()=>{wrap.classList.remove('hx-open');history.replaceState(null,'','#huddles');};
     const t=el('div',undefined,'hx-title');t.append(el('h2',(view.title||'').replace(/^Huddle: /,'')));
     const meta=el('div',undefined,'hx-meta');
-    if(view.chat)meta.append(el('span','Old chat room, read-only','hx-dim'));
+    if(view.chat)meta.append(el('span','Old chat · read-only','hx-dim'));
     else if(view.roles){meta.append(chip(short(chairOf())+' · chair','hx-chair'));for(const id of view.roles)meta.append(chip(roleName(id),'hx-role'));}
-    else meta.append(el('span',view.scope==='project'?'Project status huddle':'Band status huddle','hx-dim'));
+    else meta.append(el('span',view.scope==='project'?'Project status':'Band status','hx-dim'));
     t.append(meta);
     const acts=el('div',undefined,'hx-acts');
     if(view.roles){
-      const b=h('button',{type:'button',class:'hx-btn',text:view.archived?'Unarchive':'Archive'});
-      b.onclick=()=>busyDo(b,async()=>{await hapi('archive',{room:view.room,archived:!view.archived});sig='';await refresh();await loadList();});
+      const room=view.room,archived=!!view.archived;
+      const b=more([{label:archived?'Unarchive':'Archive',run:()=>busyDo(b,async()=>{await hapi('archive',{room,archived:!archived});sig='';await refresh();await loadList();})}],'Huddle actions','hx-btn hx-more');
       acts.append(b);
-    }else if(!view.chat)acts.append(h('a',{class:'hx-btn',href:'#work?v=huddle&h='+encodeURIComponent(view.room),text:'Status board'}));
+    }else if(!view.chat)acts.append(h('a',{class:'hx-btn',href:'#work?v=huddle&h='+encodeURIComponent(view.room),text:'Board',title:'Status board'}));
     head.replaceChildren(back,t,acts);
   }
   // Only notices you can act on.
   function drawNotice(){
     notice.replaceChildren();
-    if(view.roles&&!chairOn)notice.append(el('span','The house agent is off; it chairs huddles.'),h('a',{href:'#home',text:'Set it up'}));
+    if(view.roles&&!chairOn)notice.append(el('span','Chair is off.'),h('a',{href:'#home',text:'Set up'}));
     const open=(view.questions||[]).filter(q=>q.state==='open').length;
-    if(!view.roles&&open)notice.append(el('span',open+' question'+(open===1?'':'s')+' wait'+(open===1?'s':'')+' for your answer.'),
+    if(!view.roles&&open)notice.append(el('span',open+' question'+(open===1?'':'s')+' for you.'),
       h('a',{href:'#work?v=huddle&h='+encodeURIComponent(view.room),text:'Answer'}));
     notice.hidden=!notice.children.length;
   }
   function drawCompose(){
     if(view.chat)return;
     box.disabled=sendB.disabled=!!view.archived;
-    box.placeholder=view.archived?'Archived: unarchive it to post.':view.roles?(view.roles.length?'Ask the huddle (@role asks one directly)':'Message '+short(chairOf())):'Message the huddle';
+    box.placeholder=view.archived?'Archived':view.roles?(view.roles.length?'Ask… (@role for one)':'Message '+short(chairOf())):'Message';
   }
   // Cards attach to their message; a card without one goes after the last
   // message of its round (cards older than the loaded messages go first).
@@ -209,7 +209,7 @@ export async function mountHuddles(root){
     const at=view.chat?new Map():anchors();
     for(const c of at.get('top')||[])log.append(card(c));
     for(const m of msgs){log.append(message(m));for(const c of at.get(m.seq)||[])log.append(card(c));}
-    if(!msgs.length)log.append(el('p',view.chat?'Nothing in this room.':view.roles?(view.roles.length?'Ask something to start a round.':'Say something to '+short(chairOf())+'.'):'Nothing here yet.','hx-empty'));
+    if(!msgs.length)log.append(el('p',view.chat?'Empty.':view.roles?(view.roles.length?'Ask something.':'Say hi to '+short(chairOf())+'.'):'Nothing yet.','hx-empty'));
     const r=(view.rounds||[]).at(-1);
     if(r&&RUNNING.includes(r.state))log.append(pending(r));
     if(first||atBottom)log.scrollTop=log.scrollHeight;
@@ -234,13 +234,14 @@ export async function mountHuddles(root){
     top.append(el('span',KIND[c.kind]||c.kind,'hx-card-kind'),el('span',nameOf(c.by),'hx-dim'),el('span',CARD_STATE[c.state]||c.state,'hx-card-state'));
     b.append(top,el('p',c.summary,'hx-card-sum'));
     if(c.call){
-      const call=el('div',undefined,'hx-card-call');call.append(el('code',c.call.worker+' · '+c.call.cap));
-      if(c.call.args&&Object.keys(c.call.args).length){const d=h('details');d.append(h('summary',{text:'Arguments'}),el('pre',JSON.stringify(c.call.args,null,2)));call.append(d);}
+      const call=el('div',undefined,'hx-card-call');const what=c.call.worker+' · '+c.call.cap;
+      call.append(h('code',{text:what,title:what+' (tap to copy)','data-copy':what}));
+      if(c.call.args&&Object.keys(c.call.args).length){const d=h('details');d.append(h('summary',{text:'Args'}),el('pre',JSON.stringify(c.call.args,null,2)));call.append(d);}
       b.append(call);
     }
     if(c.state==='proposed'&&!view.archived){
       const ok=h('button',{type:'button',class:'hx-btn primary',text:'Approve'}),no=h('button',{type:'button',class:'hx-btn',text:'Dismiss'});
-      ok.onclick=()=>decide(c,'approve',ok,no);no.onclick=()=>decide(c,'dismiss',ok,no);
+      no.classList.add('quiet');ok.onclick=()=>decide(c,'approve',ok,no);no.onclick=()=>decide(c,'dismiss',ok,no);
       b.append(h('div',{class:'hx-card-acts'},ok,no));
     }else if(c.state==='failed'||c.result){
       // A failed card says why (the hub's c.error, else the reply's own).
@@ -320,7 +321,7 @@ export async function mountHuddles(root){
     const back=cur;cur=null;sig='';clearTimeout(timer);
     wrap.classList.add('hx-open');drawList();
     await loadRoles();
-    const title=h('input',{placeholder:'What it is about',autocomplete:'off',maxlength:'200'});
+    const title=h('input',{placeholder:'Topic',autocomplete:'off',maxlength:'200'});
     const all=Object.values(roles),want=new Set(defaults.filter(id=>roles[id]&&roles[id].enabled!==false));
     const checks=all.map(r=>{const on=r.enabled!==false;
       const c=h('input',{type:'checkbox',value:r.id,checked:on&&(!want.size||want.has(r.id)),disabled:!on});
@@ -330,9 +331,8 @@ export async function mountHuddles(root){
     const cancel=h('button',{type:'button',class:'hx-btn',text:'Cancel'});
     const form=h('form',{class:'hx-form'},h('h2',{text:'New huddle'}),
       h('label',{class:'hx-field'},'Title',title),
-      h('fieldset',{class:'hx-roles'},h('legend',{text:'Roles'}),
-        checks.length?checks:h('p',{class:'hx-dim'},'No roles yet, so this is a one-to-one with '+short(chairId)+'. ',h('a',{href:'#roles',text:'Add roles'}))),
-      checks.length?h('small',{class:'hx-dim',text:'None checked: a one-to-one with '+short(chairId)+'.'}):null,
+      h('fieldset',{class:'hx-roles'},h('legend',{text:checks.length?'Roles (none: just '+short(chairId)+')':'Roles'}),
+        checks.length?checks:h('p',{class:'hx-dim'},'No roles: just '+short(chairId)+'. ',h('a',{href:'#roles',text:'Add roles'}))),
       h('div',{class:'hx-form-acts'},cancel,go),fe);
     cancel.onclick=()=>{if(back)open(back.room,back.kind).catch(showErr);else{wrap.classList.remove('hx-open');empty();}};
     form.onsubmit=async e=>{e.preventDefault();go.disabled=true;fe.textContent='';
@@ -344,7 +344,7 @@ export async function mountHuddles(root){
     main.replaceChildren(h('header',{class:'hx-head'},h('button',{type:'button',class:'hx-back',text:'‹','aria-label':'Back to the list',onclick:()=>{wrap.classList.remove('hx-open');}})),form);
     title.focus();
   }
-  function empty(){main.replaceChildren(el('p',huddles.length?'Pick a huddle.':'Start a huddle: ask a question and the right roles answer.','hx-empty hx-pick'));}
+  function empty(){main.replaceChildren(el('p',huddles.length?'Pick a huddle.':'No huddles yet.','hx-empty hx-pick'));}
 
   // -- polling: 1.5 s while a round runs, slower otherwise, never while hidden
   function running(){const r=(view&&view.rounds||[]).at(-1);return !!r&&RUNNING.includes(r.state);}

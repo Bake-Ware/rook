@@ -1,7 +1,7 @@
 // API tokens: one row per token, with the picture its identity shows in chat.
 // Versioned like this module (?v=...), so a stale edge cache cannot pair it
 // with an old manage.js.
-const {h, ago, day, useCss, btn, chips, table, two, dialog, menu, copy} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
+const {h, ago, day, useCss, btn, chips, table, two, dialog, menu, more, info, copy} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
 
 const SOON=14*86400, IDLE=30*86400;
 
@@ -9,8 +9,8 @@ export async function mountTokens(root){
   useCss();
   let csrf='',data={tokens:[],avatars:{}},filter='all',query='',identity='',busy=false;
   const status=h('p',{class:'mg-status settings-status',role:'status','aria-live':'polite'});
-  const search=h('input',{type:'search',class:'mg-grow','aria-label':'Filter tokens',placeholder:'Filter by label or identity',oninput:()=>{query=search.value.trim().toLowerCase();draw();}});
-  const chipHost=h('span',{class:'mg-actions'}),list=h('div',{class:'mg-box'}),summary=h('span');
+  const search=h('input',{type:'search',class:'mg-grow','aria-label':'Filter tokens',placeholder:'Filter',oninput:()=>{query=search.value.trim().toLowerCase();draw();}});
+  const chipHost=h('span',{class:'mg-actions'}),list=h('div',{class:'mg-box mg-cards-sm'}),summary=h('span');
   const file=h('input',{type:'file',class:'avatar-file',accept:'image/png,image/jpeg,image/webp',hidden:true});
   const label=h('input',{name:'name',maxlength:'64',placeholder:'claude, codex, ci-runner',required:true,style:'font-family:var(--mono)'});
   const ttl=h('select',{name:'ttl'},[['2592000','30 days'],['86400','1 day'],['604800','7 days'],['7776000','90 days'],['31536000','1 year'],['','Never']].map(([v,t])=>h('option',{value:v,text:t})));
@@ -20,13 +20,13 @@ export async function mountTokens(root){
       label.value='';create.hidden=true;showSecret(made.token);await refresh();},formError);}},
     h('div',{class:'mg-bar',style:'align-items:flex-end'},
       h('label',{class:'mg-field',style:'flex:2 1 220px'},'Label',label),h('label',{class:'mg-field',style:'flex:1 1 140px'},'Expires',ttl),
-      h('button',{class:'mg-btn soft',text:'Create and show once'})),
-    h('small',{class:'mg-sub',text:'The label is the identity this token’s work is recorded under. It grants access to the operator’s MCP service.'}),formError);
+      h('button',{class:'mg-btn soft',text:'Create',title:'Create and show once'}),info('The label is the identity this token’s work is recorded under. It grants access to the operator’s MCP service. The secret is shown once.','About tokens')),
+    formError);
+  const otherPicture=()=>{const id=h('input',{placeholder:'agent:claude_laptop',maxlength:'200',required:true});const d=dialog('Picture for another identity',h('form',{onsubmit:e=>{e.preventDefault();identity=id.value.trim();d.close();file.click();}},h('label',{class:'mg-field'},'Identity',id),h('div',{class:'mg-actions end'},h('button',{class:'mg-btn primary',text:'Choose picture…'}))));id.focus();};
   root.replaceChildren(h('div',{class:'mg'},
-    h('div',{class:'mg-bar'},search,chipHost,btn('New token','primary',()=>{create.hidden=!create.hidden;if(!create.hidden)label.focus();},{'data-create':''})),
+    h('div',{class:'mg-bar'},search,chipHost,btn('New token','primary',()=>{create.hidden=!create.hidden;if(!create.hidden)label.focus();},{'data-create':''}),more([{label:'Picture for another identity…',run:otherPicture}],'More token actions')),
     create,status,list,
-    h('div',{class:'mg-bar mg-sub',style:'justify-content:space-between'},summary,
-      btn('Picture for another identity…','',()=>{const id=h('input',{placeholder:'agent:claude_laptop',maxlength:'200',required:true});const d=dialog('Picture for another identity',h('form',{onsubmit:e=>{e.preventDefault();identity=id.value.trim();d.close();file.click();}},h('label',{class:'mg-field'},'Identity',id),h('div',{class:'mg-actions end'},h('button',{class:'mg-btn primary',text:'Choose picture…'}))));id.focus();})),
+    h('div',{class:'mg-bar mg-sub',style:'gap:8px'},summary,info('The square is the picture shown in chat for that identity; tap it to change it.','About pictures')),
     file));
 
   async function api(body){
@@ -43,7 +43,7 @@ export async function mountTokens(root){
     csrf=(await session.json()).user.csrf;data=await api();draw();
   }
   function showSecret(token){
-    const c=btn('Copy token','soft',()=>copy(token,c),{'data-copy':''});
+    const c=btn('Copy token','soft',()=>copy(token,c),{'data-copy-token':''});
     dialog('Copy your new token',h('p',{text:'This secret is shown once. Copy it before closing.'}),h('pre',{class:'token-secret',tabindex:'0',text:token}),h('div',{class:'mg-actions end'},c));
   }
   function picture(id){
@@ -56,7 +56,7 @@ export async function mountTokens(root){
     const taken=new Set(rows.map(r=>r.id));
     for(const id of new Set(['user:operator','agent:static',...Object.keys(data.avatars)]))if(!taken.has(id))rows.push({id,label:id.split(':').pop(),soon:false,idle:false});
     const tokens=rows.filter(r=>r.token);
-    chipHost.replaceChildren(...chips([['all','All '+tokens.length],['soon','Expiring soon '+tokens.filter(r=>r.soon).length],['idle','Unused 30 days '+tokens.filter(r=>r.idle).length]],filter,id=>{filter=id;draw();}));
+    chipHost.replaceChildren(...chips([['all','All '+tokens.length],['soon','Expiring '+tokens.filter(r=>r.soon).length],['idle','Unused '+tokens.filter(r=>r.idle).length]],filter,id=>{filter=id;draw();}));
     const shown=rows.filter(r=>(filter==='all'||(r.token&&r[filter]))&&(!query||(r.label+' '+r.id).toLowerCase().includes(query)));
     const expires=t=>{if(!t.expires_at)return 'never';const d=Math.ceil((t.expires_at-now)/86400);return d<=0?'expired':d===1?'in 1 day':'in '+d+' days';};
     list.replaceChildren(table('44px minmax(0,1.5fr) 100px 110px 110px 44px',['','Label · identity','Created','Expires','Last used',''],shown.length?shown.map(r=>{
@@ -66,11 +66,11 @@ export async function mountTokens(root){
         t&&{label:'Revoke…',danger:true,run:()=>revoke(t)}]),{'aria-label':'More actions for '+r.label,'data-more':r.id});
       return h('div',{class:'mg-row'+(t?' token-row':'')},picture(r.id),
         two(r.label,t?r.id+' · '+t.preview:r.id+' · no token'),
-        h('span',{class:'mg-dimtext',text:t?day(t.created_at):'—'}),
-        h('span',{class:'mg-mono '+(t&&r.soon?'mg-warn':'mg-dimtext'),text:t?expires(t):'—'}),
-        h('span',{class:t&&!t.last_used_at?'mg-warn':'mg-dimtext',text:t?ago(t.last_used_at):'—'}),more);
-    }):[h('div',{class:'mg-empty',text:tokens.length?'Nothing matches.':'No named API tokens yet.'})],680));
-    summary.textContent=shown.filter(r=>r.token).length+' of '+tokens.length+' tokens shown. The square is the picture shown in chat; click it to change it.';
+        h('span',{class:'mg-dimtext'},t?h('span',{class:'sm-only',text:'created '}):null,t?day(t.created_at):'—'),
+        h('span',{class:'mg-mono '+(t&&r.soon?'mg-warn':'mg-dimtext')},t?h('span',{class:'sm-only',text:'expires '}):null,t?expires(t):'—'),
+        h('span',{class:t&&!t.last_used_at?'mg-warn':'mg-dimtext'},t?h('span',{class:'sm-only',text:'used '}):null,t?ago(t.last_used_at):'—'),more);
+    }):[h('div',{class:'mg-empty',text:tokens.length?'Nothing matches.':'No tokens yet.'})],680));
+    summary.textContent=shown.filter(r=>r.token).length+' of '+tokens.length+' tokens';
   }
   function revoke(t){
     const err=h('small',{class:'mg-error dialog-error',role:'alert'});
