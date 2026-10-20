@@ -11,7 +11,7 @@ import pytest
 
 from rook.core import names
 
-PRON = Path(__file__).parent / "data" / "name_words_pron.txt"
+PRON = Path(__file__).parent / "name_words_pron.txt"
 
 # Words that sound like an instruction to a voice assistant or a Rook command.
 COMMANDS = set("""

@@ -1,0 +1,2063 @@
+# Pronunciations (ARPAbet) of the record-name words, used only by tests/test_names.py
+# to check the list has no homophones. Taken from the CMU Pronouncing Dictionary,
+# Copyright (C) 1993-2015 Carnegie Mellon University (BSD-style licence; see NOTICE).
+aardvark AA1 R D V AA2 R K
+abacus AE1 B AH0 K AH0 S
+abbey AE1 B IY0
+able EY1 B AH0 L
+acorn EY1 K AO0 R N
+acre EY1 K ER0
+acrobat AE1 K R AH0 B AE2 T
+active AE1 K T IH0 V
+adder AE1 D ER0
+admiral AE1 D M ER0 AH0 L
+adobe AH0 D OW1 B IY0
+agate AE1 G AH0 T
+agile AE1 JH AH0 L
+airy EH1 R IY0
+album AE1 L B AH0 M
+alcove AE1 L K OW2 V
+alder AO1 L D ER0
+alert AH0 L ER1 T
+alley AE1 L IY0
+alloy AE1 L OY2
+almanac AA1 L M AH0 N AE2 K
+almond AA1 M AH0 N D
+alpaca AE0 L P AE1 K AH0
+amber AE1 M B ER0
+amethyst AE1 M IH0 TH IH0 S T
+ample AE1 M P AH0 L
+amulet AE1 M Y AH0 L AH0 T
+anchor AE1 NG K ER0
+anemone AE1 N IH0 M OW2 N
+angel EY1 N JH AH0 L
+angle AE1 NG G AH0 L
+ankle AE1 NG K AH0 L
+ant AE1 N T
+anthem AE1 N TH AH0 M
+anthill AE1 N T HH IH2 L
+antler AE1 N T L ER0
+anvil AE1 N V AH0 L
+apricot EY1 P R AH0 K AA2 T
+apron EY1 P R AH0 N
+apt AE1 P T
+arbor AA1 R B ER0
+arcade AA0 R K EY1 D
+arch AA1 R CH
+arctic AA1 R K T IH0 K
+arena ER0 IY1 N AH0
+armchair AA1 R M CH EH2 R
+aroma ER0 OW1 M AH0
+artichoke AA1 R T AH0 CH OW2 K
+artist AA1 R T AH0 S T
+ash AE1 SH
+ashen AE1 SH AH0 N
+aspen AE1 S P AH0 N
+aster AE1 S T ER0
+atlas AE1 T L AH0 S
+atom AE1 T AH0 M
+atrium EY1 T R IY0 AH0 M
+attic AE1 T IH0 K
+auction AA1 K SH AH0 N
+avenue AE1 V AH0 N UW2
+awake AH0 W EY1 K
+award AH0 W AO1 R D
+aware AH0 W EH1 R
+awning AA1 N IH0 NG
+axle AE1 K S AH0 L
+azure AE1 ZH ER0
+baboon B AH0 B UW1 N
+backpack B AE1 K P AE2 K
+backyard B AE1 K Y AA2 R D
+bacon B EY1 K AH0 N
+badge B AE1 JH
+badger B AE1 JH ER0
+badminton B AE1 D M IH2 N T AH0 N
+bagel B EY1 G AH0 L
+bagpipe B AE1 G P AY2 P
+baker B EY1 K ER0
+bakery B EY1 K ER0 IY0
+balcony B AE1 L K AH0 N IY0
+ball B AO1 L
+ballad B AE1 L AH0 D
+ballet B AE0 L EY1
+balloon B AH0 L UW1 N
+ballpark B AO1 L P AA2 R K
+ballroom B AO1 L R UW2 M
+balmy B AA1 M IY0
+bamboo B AE0 M B UW1
+banana B AH0 N AE1 N AH0
+bandana B AE2 N D AE1 N AH0
+bandstand B AE1 N D S T AE2 N D
+banjo B AE1 N JH OW2
+bank B AE1 NG K
+banner B AE1 N ER0
+bannister B AE1 N AH0 S T ER0
+banquet B AE1 NG K W AH0 T
+barber B AA1 R B ER0
+barge B AA1 R JH
+bark B AA1 R K
+barley B AA1 R L IY0
+barn B AA1 R N
+barnacle B AA1 R N AH0 K AH0 L
+barnyard B AA1 R N Y AA2 R D
+baron B AE1 R AH0 N
+barrel B AE1 R AH0 L
+basalt B AH0 S AO1 L T
+basic B EY1 S IH0 K
+basil B AE1 Z AH0 L
+basin B EY1 S AH0 N
+basket B AE1 S K AH0 T
+bassoon B AH0 S UW1 N
+bat B AE1 T
+bath B AE1 TH
+bathrobe B AE1 TH R OW2 B
+bathtub B AE1 TH T AH0 B
+baton B AH0 T AA1 N
+battery B AE1 T ER0 IY0
+bay B EY1
+bayou B AY1 UW0
+bazaar B AH0 Z AA1 R
+beach B IY1 CH
+beacon B IY1 K AH0 N
+bead B IY1 D
+beagle B IY1 G AH0 L
+beak B IY1 K
+beam B IY1 M
+bean B IY1 N
+bear B EH1 R
+beard B IH1 R D
+bed B EH1 D
+bedrock B EH1 D R AA2 K
+bee B IY1
+beehive B IY1 HH AY2 V
+beetle B IY1 T AH0 L
+beige B EY1 ZH
+bell B EH1 L
+bellhop B EH1 L HH AA2 P
+bellow B EH1 L OW0
+belt B EH1 L T
+bench B EH1 N CH
+beret B EH1 R AH0 T
+berry B EH1 R IY0
+best B EH1 S T
+bicycle B AY1 S IH0 K AH0 L
+big B IH1 G
+bike B AY1 K
+billboard B IH1 L B AO2 R D
+binder B AY1 N D ER0
+bingo B IH1 NG G OW0
+biplane B AY1 P L EY2 N
+birch B ER1 CH
+bird B ER1 D
+biscuit B IH1 S K AH0 T
+bison B AY1 S AH0 N
+blackbird B L AE1 K B ER0 D
+bland B L AE1 N D
+blanket B L AE1 NG K AH0 T
+blender B L EH1 N D ER0
+blimp B L IH1 M P
+blithe B L AY1 DH
+blizzard B L IH1 Z ER0 D
+blond B L AA1 N D
+bloom B L UW1 M
+blossom B L AA1 S AH0 M
+blouse B L AW1 S
+blowfish B L OW1 F IH0 SH
+blue B L UW1
+bluebell B L UW1 B EH2 L
+blueberry B L UW1 B EH2 R IY0
+bluejay B L UW1 JH EY2
+blueprint B L UW1 P R IH2 N T
+bluff B L AH1 F
+blunt B L AH1 N T
+boa B OW1 AH0
+board B AO1 R D
+boardwalk B AO1 R D W AO2 K
+boat B OW1 T
+bobbin B AA1 B AH0 N
+bobcat B AA1 B K AE2 T
+bobsled B AA1 B S L EH2 D
+bold B OW1 L D
+bollard B AA1 L ER0 D
+bongo B AA1 NG G OW2
+bonnet B AA1 N AH0 T
+bonsai B AA0 N S AY1
+bony B OW1 N IY0
+book B UH1 K
+bookcase B UH1 K K EY2 S
+bookmark B UH1 K M AA0 R K
+bookshelf B UH1 K SH EH2 L F
+boomerang B UW1 M ER0 AE2 NG
+boot B UW1 T
+border B AO1 R D ER0
+bossy B AO1 S IY0
+bottle B AA1 T AH0 L
+boulder B OW1 L D ER0
+bouncy B AW1 N S IY0
+bouquet B UW0 K EY1
+bowl B OW1 L
+box B AA1 K S
+boxcar B AA1 K S K AA2 R
+boxer B AA1 K S ER0
+boxwood B AA1 K S W UH2 D
+bracelet B R EY1 S L AH0 T
+bracket B R AE1 K IH0 T
+bramble B R AE1 M B AH0 L
+brass B R AE1 S
+brave B R EY1 V
+bread B R EH1 D
+breadbox B R EH1 D B AA2 K S
+breakfast B R EH1 K F AH0 S T
+breeze B R IY1 Z
+brew B R UW1
+brick B R IH1 K
+bridge B R IH1 JH
+bridle B R AY1 D AH0 L
+brief B R IY1 F
+bright B R AY1 T
+brisk B R IH1 S K
+brisket B R IH1 S K AH0 T
+broad B R AO1 D
+broccoli B R AA1 K AH0 L IY0
+bronze B R AA1 N Z
+brook B R UH1 K
+broom B R UW1 M
+brown B R AW1 N
+brownie B R AW1 N IY0
+brush B R AH1 SH
+bubble B AH1 B AH0 L
+bubbly B AH1 B L IY0
+bucket B AH1 K AH0 T
+buckeye B AH1 K AY2
+buckle B AH1 K AH0 L
+buckwheat B AH1 K W IY2 T
+bud B AH1 D
+buffalo B AH1 F AH0 L OW2
+buffet B AH1 F AH0 T
+bugle B Y UW1 G AH0 L
+bulb B AH1 L B
+bulky B AH1 L K IY0
+bulldog B UH1 L D AO2 G
+bulldozer B UH1 L D OW2 Z ER0
+bullfrog B UH1 L F R AO2 G
+bumblebee B AH1 M B AH0 L B IY2
+bumpy B AH1 M P IY0
+bun B AH1 N
+bundle B AH1 N D AH0 L
+bungalow B AH1 NG G AH0 L OW2
+bunker B AH1 NG K ER0
+bunny B AH1 N IY0
+burger B ER1 G ER0
+burlap B ER1 L AE2 P
+burrito B ER0 IY1 T OW0
+burrow B ER1 OW0
+bus B AH1 S
+bush B UH1 SH
+bushel B UH1 SH AH0 L
+busy B IH1 Z IY0
+butler B AH1 T L ER0
+butter B AH1 T ER0
+buttercup B AH1 T ER0 K AH2 P
+butterfly B AH1 T ER0 F L AY2
+button B AH1 T AH0 N
+buzzard B AH1 Z ER0 D
+cabana K AH0 B AE1 N AH0
+cabaret K AE2 B ER0 EY1
+cabbage K AE1 B AH0 JH
+cabin K AE1 B AH0 N
+cable K EY1 B AH0 L
+caboose K AH0 B UW1 S
+cactus K AE1 K T AH0 S
+cadet K AH0 D EH1 T
+cafe K AH0 F EY1
+cake K EY1 K
+calendar K AE1 L AH0 N D ER0
+calf K AE1 F
+calico K AE1 L AH0 K OW2
+calm K AA1 M
+calypso K AH0 L IH1 P S OW2
+camel K AE1 M AH0 L
+cameo K AE1 M IY0 OW2
+camera K AE1 M ER0 AH0
+camp K AE1 M P
+camper K AE1 M P ER0
+campfire K AE1 M P F AY2 ER0
+campsite K AE1 M P S AY2 T
+canal K AH0 N AE1 L
+canary K AH0 N EH1 R IY0
+candid K AE1 N D AH0 D
+candle K AE1 N D AH0 L
+candor K AE1 N D ER0
+candy K AE1 N D IY0
+cane K EY1 N
+canny K AE1 N IY0
+canoe K AH0 N UW1
+canopy K AE1 N AH0 P IY0
+canteen K AE0 N T IY1 N
+canvas K AE1 N V AH0 S
+canyon K AE1 N Y AH0 N
+cap K AE1 P
+cape K EY1 P
+capsule K AE1 P S AH0 L
+captain K AE1 P T AH0 N
+car K AA1 R
+caramel K EH1 R AH0 M AH0 L
+caravan K AE1 R AH0 V AE2 N
+cardboard K AA1 R D B AO2 R D
+cardigan K AA1 R D IH0 G AH0 N
+cardinal K AA1 R D AH0 N AH0 L
+carefree K EH1 R F R IY2
+careful K EH1 R F AH0 L
+cargo K AA1 R G OW2
+carnation K AA0 R N EY1 SH AH0 N
+carnival K AA1 R N AH0 V AH0 L
+carousel K EH1 R AH0 S EH2 L
+carp K AA1 R P
+carpenter K AA1 R P AH0 N T ER0
+carpet K AA1 R P AH0 T
+carrot K AE1 R AH0 T
+cart K AA1 R T
+cashew K AE1 SH UW2
+cashmere K AE1 ZH M IH0 R
+casserole K AE1 S ER0 OW2 L
+castle K AE1 S AH0 L
+casual K AE1 ZH AH0 W AH0 L
+cat K AE1 T
+catbird K AE1 T B ER2 D
+catfish K AE1 T F IH2 SH
+catnip K AE1 T N IH0 P
+cattle K AE1 T AH0 L
+cauldron K AA1 L D R AH0 N
+cave K EY1 V
+cavern K AE1 V ER0 N
+cedar S IY1 D ER0
+ceiling S IY1 L IH0 NG
+celery S EH1 L ER0 IY0
+celeste S AH0 L EH1 S T
+cellar S EH1 L ER0
+cello CH EH1 L OW0
+chair CH EH1 R
+chalet SH AE1 L EY2
+chalk CH AA1 K
+chamber CH EY1 M B ER0
+chapel CH AE1 P AH0 L
+chapter CH AE1 P T ER0
+charcoal CH AA1 R K OW2 L
+chariot CH EH1 R IY0 AH0 T
+charm CH AA1 R M
+chart CH AA1 R T
+chauffeur SH OW0 F ER1
+checkers CH EH1 K ER0 Z
+cheery CH IH1 R IY0
+cheese CH IY1 Z
+cheetah CH IY1 T AH0
+chef SH EH1 F
+cherry CH EH1 R IY0
+chess CH EH1 S
+chest CH EH1 S T
+chestnut CH EH1 S N AH2 T
+chick CH IH1 K
+chicken CH IH1 K AH0 N
+chiffon SH IH0 F AA1 N
+chilly CH IH1 L IY0
+chime CH AY1 M
+chimera CH IH0 M EH1 R AH0
+chimney CH IH1 M N IY0
+chin CH IH1 N
+chip CH IH1 P
+chipmunk CH IH1 P M AH0 NG K
+chisel CH IH1 Z AH0 L
+choir K W AY1 ER0
+chopstick CH AA1 P S T IH2 K
+chorus K AO1 R AH0 S
+chowder CH AW1 D ER0
+cider S AY1 D ER0
+cinder S IH1 N D ER0
+cinnamon S IH1 N AH0 M AH0 N
+circle S ER1 K AH0 L
+circus S ER1 K AH0 S
+citadel S IH1 T AH0 D EH2 L
+citrus S IH1 T R AH0 S
+city S IH1 T IY0
+clam K L AE1 M
+clarinet K L EH2 R AH0 N EH1 T
+classic K L AE1 S IH0 K
+classroom K L AE1 S R UW2 M
+claw K L AO1
+clay K L EY1
+clean K L IY1 N
+clever K L EH1 V ER0
+cliff K L IH1 F
+climber K L AY1 M ER0
+clipper K L IH1 P ER0
+cloak K L OW1 K
+clock K L AA1 K
+closet K L AA1 Z AH0 T
+cloud K L AW1 D
+cloudy K L AW1 D IY0
+clover K L OW1 V ER0
+clown K L AW1 N
+clubhouse K L AH1 B HH AW2 S
+clumsy K L AH1 M Z IY0
+coach K OW1 CH
+coast K OW1 S T
+coastal K OW1 S T AH0 L
+coastline K OW1 S T L AY2 N
+coat K OW1 T
+cobble K AA1 B AH0 L
+cobbler K AA1 B L ER0
+cobra K OW1 B R AH0
+cobweb K AA1 B W EH2 B
+cockatoo K AA1 K AH0 T UW2
+cocoa K OW1 K OW0
+coconut K OW1 K AH0 N AH2 T
+cocoon K AH0 K UW1 N
+cod K AA1 D
+coffee K AA1 F IY0
+coin K OY1 N
+colander K AA1 L AH0 N D ER0
+cold K OW1 L D
+collar K AA1 L ER0
+collie K AA1 L IY0
+column K AA1 L AH0 M
+comb K OW1 M
+comet K AA1 M AH0 T
+comfy K AH1 M F IY0
+comic K AA1 M IH0 K
+comma K AA1 M AH0
+common K AA1 M AH0 N
+compass K AH1 M P AH0 S
+compost K AA1 M P OW0 S T
+concert K AA1 N S ER0 T
+conch K AA1 N CH
+condor K AA1 N D ER0
+cone K OW1 N
+confetti K AH0 N F EH1 T IY0
+cookbook K UH1 K B UH2 K
+cookie K UH1 K IY0
+cookout K UH1 K AW2 T
+cool K UW1 L
+cooler K UW1 L ER0
+copper K AA1 P ER0
+coral K AO1 R AH0 L
+corduroy K AO1 R D ER0 OY2
+cork K AO1 R K
+corkscrew K AO1 R K S K R UW2
+corn K AO1 R N
+cornbread K AO1 R N B R EH2 D
+corner K AO1 R N ER0
+cornet K AO0 R N EH1 T
+cornfield K AO1 R N F IY2 L D
+cosmic K AA1 Z M IH0 K
+costume K AA0 S T UW1 M
+cosy K OW1 Z IY0
+cottage K AA1 T AH0 JH
+cotton K AA1 T AH0 N
+couch K AW1 CH
+courier K ER1 IY0 ER0
+courtyard K AO1 R T Y AA2 R D
+cousin K AH1 Z AH0 N
+cow K AW1
+cowbell K AW1 B EH2 L
+cowboy K AW1 B OY2
+cowlick K AW1 L IH0 K
+coyote K AY0 OW1 T IY0
+crab K R AE1 B
+cracker K R AE1 K ER0
+cradle K R EY1 D AH0 L
+crafty K R AE1 F T IY0
+cranberry K R AE1 N B EH2 R IY0
+crane K R EY1 N
+crate K R EY1 T
+crater K R EY1 T ER0
+crawfish K R AO1 F IH2 SH
+crayfish K R EY1 F IH0 SH
+crayon K R EY1 AA2 N
+cream K R IY1 M
+creamer K R IY1 M ER0
+creamy K R IY1 M IY0
+creek K R IY1 K
+crescent K R EH1 S AH0 N T
+crest K R EH1 S T
+cricket K R IH1 K AH0 T
+crisp K R IH1 S P
+crispy K R IH1 S P IY0
+crocus K R OW1 K AH0 S
+croissant K W AA2 S AA1 N T
+crossroad K R AO1 S R OW2 D
+crossword K R AO1 S W ER2 D
+crouton K R UW1 T AH0 N
+crow K R OW1
+crown K R AW1 N
+crumb K R AH1 M
+crust K R AH1 S T
+crystal K R IH1 S T AH0 L
+cub K AH1 B
+cube K Y UW1 B
+cubic K Y UW1 B IH0 K
+cuckoo K AH1 K UW2
+cucumber K Y UW1 K AH0 M B ER0
+cuddly K AH1 D L IY0
+cupboard K AH1 B ER0 D
+cupcake K AH1 P K EY2 K
+cupid K Y UW1 P IH0 D
+curious K Y UH1 R IY0 AH0 S
+curly K ER1 L IY0
+curtain K ER1 T AH0 N
+cushion K UH1 SH AH0 N
+custard K AH1 S T ER0 D
+cute K Y UW1 T
+cyclone S IH0 K L OW1 N
+cymbal S IH1 M B AH0 L
+cypress S AY1 P R AH0 S
+dachshund D AA1 K S HH UH2 N D
+daffodil D AE1 F AH0 D IH2 L
+dahlia D AE1 L Y AH0
+daily D EY1 L IY0
+dainty D EY1 N T IY0
+dairy D EH1 R IY0
+daisy D EY1 Z IY0
+dam D AE1 M
+damp D AE1 M P
+dancer D AE1 N S ER0
+dandy D AE1 N D IY0
+dapper D AE1 P ER0
+daring D EH1 R IH0 NG
+dark D AA1 R K
+dart D AA1 R T
+dawn D AO1 N
+daybreak D EY1 B R EY2 K
+dear D IH1 R
+decent D IY1 S AH0 N T
+decoy D AH0 K OY1
+deep D IY1 P
+deft D EH1 F T
+delta D EH1 L T AH0
+denim D EH1 N AH0 M
+dense D EH1 N S
+dentist D EH1 N T AH0 S T
+derby D ER1 B IY0
+desk D EH1 S K
+dessert D IH0 Z ER1 T
+dew D UW1
+dewy D UW1 IY0
+dial D AY1 AH0 L
+diamond D AY1 M AH0 N D
+diary D AY1 ER0 IY0
+dim D IH1 M
+dime D AY1 M
+diner D AY1 N ER0
+dinghy D IH1 NG IY0
+dingo D IH1 NG G OW0
+dinner D IH1 N ER0
+dinosaur D AY1 N AH0 S AO2 R
+diploma D IH0 P L OW1 M AA0
+dipper D IH1 P ER0
+direct D ER0 EH1 K T
+dish D IH1 SH
+diver D AY1 V ER0
+dizzy D IH1 Z IY0
+dock D AA1 K
+doctor D AA1 K T ER0
+doghouse D AO1 G HH AW2 S
+dogwood D AO1 G W UH2 D
+doll D AA1 L
+dolphin D AA1 L F AH0 N
+dome D OW1 M
+domino D AA1 M AH0 N OW2
+donkey D AA1 NG K IY0
+door D AO1 R
+doorbell D AO1 R B EH2 L
+doorknob D UW1 R N AA0 B
+doormat D AO1 R M AE2 T
+doorstep D AO1 R S T EH2 P
+dormouse D AO1 R M AW2 S
+dory D AO1 R IY0
+doughnut D OW1 N AH2 T
+dovetail D AH1 V T EY2 L
+downtown D AW1 N T AW1 N
+dragon D R AE1 G AH0 N
+drawer D R AO1 R
+dream D R IY1 M
+dreamy D R IY1 M IY0
+dress D R EH1 S
+driftwood D R IH1 F T W UH2 D
+drizzle D R IH1 Z AH0 L
+drover D R OW1 V ER0
+drum D R AH1 M
+drummer D R AH1 M ER0
+drumstick D R AH1 M S T IH0 K
+dry D R AY1
+dual D UW1 AH0 L
+duck D AH1 K
+duckling D AH1 K L IH0 NG
+dulcimer D AH1 L S IH0 M ER0
+dumpling D AH1 M P L IH0 NG
+dune D UW1 N
+dust D AH1 S T
+dusty D AH1 S T IY0
+dynamo D AY1 N AH0 M OW2
+eager IY1 G ER0
+eagle IY1 G AH0 L
+early ER1 L IY0
+earring IH1 R IH0 NG
+earthworm ER1 TH W ER2 M
+earthy ER1 TH IY0
+easel IY1 Z AH0 L
+easy IY1 Z IY0
+eclipse IH0 K L IH1 P S
+edgy EH1 JH IY0
+eel IY1 L
+egg EH1 G
+eggnog EH1 G N AO2 G
+eggplant EH1 G P L AE2 N T
+eggshell EH1 G SH EH2 L
+elbow EH1 L B OW2
+elder EH1 L D ER0
+elegant EH1 L AH0 G AH0 N T
+elf EH1 L F
+elk EH1 L K
+elkhorn EH1 L K HH AO2 R N
+elm EH1 L M
+embassy EH1 M B AH0 S IY0
+ember EH1 M B ER0
+emerald EH1 M R AH0 L D
+emperor EH1 M P ER0 ER0
+empress EH1 M P R EH0 S
+emu IY1 M Y UW2
+enamel IH0 N AE1 M AH0 L
+encore AA1 N K AO2 R
+engine EH1 N JH AH0 N
+engineer EH1 N JH AH0 N IH1 R
+envelope EH1 N V AH0 L OW2 P
+epic EH1 P IH0 K
+equal IY1 K W AH0 L
+era EH1 R AH0
+espresso EH2 S P R EH1 S OW0
+estate IH0 S T EY1 T
+even IY1 V IH0 N
+evening IY1 V N IH0 NG
+evergreen EH1 V ER0 G R IY2 N
+exact IH0 G Z AE1 K T
+extra EH1 K S T R AH0
+eyebrow AY1 B R AW2
+fable F EY1 B AH0 L
+fabric F AE1 B R IH0 K
+face F EY1 S
+faint F EY1 N T
+fair F EH1 R
+fairway F EH1 R W EY2
+falcon F AE1 L K AH0 N
+falconer F AE1 L K AH0 N ER0
+falls F AO1 L Z
+famous F EY1 M AH0 S
+fan F AE1 N
+fancy F AE1 N S IY0
+far F AA1 R
+farm F AA1 R M
+farmer F AA1 R M ER0
+farmhouse F AA1 R M HH AW2 S
+fast F AE1 S T
+fawn F AO1 N
+fearless F IH1 R L AH0 S
+feast F IY1 S T
+feather F EH1 DH ER0
+fence F EH1 N S
+fennel F EH1 N AH0 L
+fern F ER1 N
+ferret F EH1 R AH0 T
+ferris F EH1 R IH0 S
+ferry F EH1 R IY0
+ferryboat F EH1 R IY0 B OW2 T
+fertile F ER1 T AH0 L
+festival F EH1 S T AH0 V AH0 L
+festive F EH1 S T IH0 V
+few F Y UW1
+fiddle F IH1 D AH0 L
+fiddler F IH1 D AH0 L ER0
+field F IY1 L D
+fig F IH1 G
+figure F IH1 G Y ER0
+figurine F IH2 G Y ER0 IY1 N
+filament F IH1 L AH0 M AH0 N T
+filbert F IH1 L B ER0 T
+finch F IH1 N CH
+fine F AY1 N
+fingertip F IH1 NG G ER0 T IH2 P
+fir F ER1
+firefly F AY1 ER0 F L AY2
+fireplace F AY1 ER0 P L EY2 S
+firework F AY1 R W ER2 K
+firm F ER1 M
+fish F IH1 SH
+fishbowl F IH1 SH B OW2 L
+fit F IH1 T
+fjord F Y AO1 R D
+flag F L AE1 G
+flagpole F L AE1 G P OW2 L
+flagship F L AE1 G SH IH2 P
+flagstone F L AE1 G S T OW2 N
+flame F L EY1 M
+flamingo F L AH0 M IH1 NG G OW0
+flannel F L AE1 N AH0 L
+flapjack F L AE1 P JH AE2 K
+flask F L AE1 S K
+flat F L AE1 T
+fledgling F L EH1 JH L IH0 NG
+fleece F L IY1 S
+fleet F L IY1 T
+flint F L IH1 N T
+flipper F L IH1 P ER0
+floor F L AO1 R
+floral F L AO1 R AH0 L
+florist F L AA1 R IH0 S T
+flounder F L AW1 N D ER0
+flower F L AW1 ER0
+flowerpot F L AW1 ER0 P AA2 T
+fluffy F L AH1 F IY0
+flurry F L ER1 IY0
+flute F L UW1 T
+flying F L AY1 IH0 NG
+foal F OW1 L
+foam F OW1 M
+focal F OW1 K AH0 L
+fog F AA1 G
+foggy F AA1 G IY0
+folio F OW1 L IY2 OW0
+folksy F OW1 K S IY0
+fond F AA1 N D
+fondue F AA0 N D Y UW1
+footpath F UH1 T P AE2 TH
+footprint F UH1 T P R IH2 N T
+forecast F AO1 R K AE2 S T
+forest F AO1 R AH0 S T
+forge F AO1 R JH
+fork F AO1 R K
+formal F AO1 R M AH0 L
+fort F AO1 R T
+fossil F AA1 S AH0 L
+fountain F AW1 N T AH0 N
+fox F AA1 K S
+foxglove F AA1 K S G L AH2 V
+frame F R EY1 M
+frank F R AE1 NG K
+freckle F R EH1 K AH0 L
+free F R IY1
+freighter F R EY1 T ER0
+fresco F R EH1 S K OW0
+fresh F R EH1 SH
+friendly F R EH1 N D L IY0
+fringe F R IH1 N JH
+frog F R AA1 G
+frontier F R AH0 N T IH1 R
+frost F R AO1 S T
+frosting F R AO1 S T IH0 NG
+frosty F R AO1 S T IY0
+frugal F R UW1 G AH0 L
+fruit F R UW1 T
+fruitcake F R UW1 T K EY2 K
+fudge F AH1 JH
+full F UH1 L
+fungus F AH1 NG G AH0 S
+funnel F AH1 N AH0 L
+funny F AH1 N IY0
+fuzzy F AH1 Z IY0
+gable G EY1 B AH0 L
+gadget G AE1 JH AH0 T
+galleon G AE1 L IY0 AH0 N
+gallery G AE1 L ER0 IY0
+gander G AE1 N D ER0
+garden G AA1 R D AH0 N
+gardener G AA1 R D AH0 N ER0
+garland G AA1 R L AH0 N D
+garlic G AA1 R L IH0 K
+garnet G AA1 R N AH0 T
+garnish G AA1 R N IH0 SH
+gate G EY1 T
+gazebo G AH0 Z IY1 B OW0
+gazelle G AH0 Z EH1 L
+gazette G AH0 Z EH1 T
+gearbox G IH1 R B AA2 K S
+gecko G EH1 K OW0
+gem JH EH1 M
+gentle JH EH1 N T AH0 L
+gerbil JH ER1 B IH0 L
+geyser G AY1 Z ER0
+giant JH AY1 AH0 N T
+giddy G IH1 D IY0
+gifted G IH1 F T AH0 D
+ginger JH IH1 N JH ER0
+gingham G IH1 NG AH0 M
+giraffe JH ER0 AE1 F
+glacier G L EY1 SH ER0
+glad G L AE1 D
+glade G L EY1 D
+glass G L AE1 S
+gleeful G L IY1 F AH0 L
+glider G L AY1 D ER0
+globe G L OW1 B
+glossy G L AO1 S IY0
+glove G L AH1 V
+glow G L OW1
+gnome N OW1 M
+goalpost G OW1 L P OW2 S T
+goat G OW1 T
+goblet G AA1 B L AH0 T
+goblin G AA1 B L IH0 N
+goggles G AA1 G AH0 L Z
+golden G OW1 L D AH0 N
+goldenrod G OW1 L D AH0 N R AA2 D
+goldfinch G OW1 L D F IH2 N CH
+goldfish G OW1 L D F IH2 SH
+gondola G AA1 N D AH0 L AH0
+gong G AO1 NG
+good G UH1 D
+goose G UW1 S
+gopher G OW1 F ER0
+gorilla G ER0 IH1 L AH0
+goulash G UW1 L AA2 SH
+gourd G AO1 R D
+governor G AH1 V ER0 N ER0
+gown G AW1 N
+grackle G R AE1 K AH0 L
+grain G R EY1 N
+grand G R AE1 N D
+granite G R AE1 N AH0 T
+granola G R AH0 N OW1 L AH0
+grape G R EY1 P
+grass G R AE1 S
+grassland G R AE1 S L AE2 N D
+grassy G R AE1 S IY0
+gravel G R AE1 V AH0 L
+gravy G R EY1 V IY0
+great G R EY1 T
+green G R IY1 N
+grey G R EY1
+greyhound G R EY1 HH AW2 N D
+gritty G R IH1 T IY0
+grizzly G R IH1 Z L IY0
+grocer G R OW1 S ER0
+groovy G R UW1 V IY0
+grotto G R AA1 T OW2
+groundhog G R AW1 N D HH AA2 G
+grouse G R AW1 S
+grove G R OW1 V
+grumpy G R AH1 M P IY0
+guitar G IH0 T AA1 R
+gull G AH1 L
+gumbo G AH1 M B OW0
+guppy G AH1 P IY0
+gutter G AH1 T ER0
+gymnast JH IH1 M N AH0 S T
+haddock HH AE1 D AH0 K
+haiku HH AY1 K UW0
+hailstone HH EY1 L S T OW2 N
+halibut HH AE1 L AH0 B AH0 T
+hallway HH AO1 L W EY2
+halo HH EY1 L OW0
+hamlet HH AE1 M L AH0 T
+hammock HH AE1 M AH0 K
+hamster HH AE1 M S T ER0
+handbag HH AE1 N D B AE2 G
+handball HH AE1 N D B AO2 L
+handrail HH AE1 N D R EY2 L
+handy HH AE1 N D IY0
+hangar HH AE1 NG ER0
+happy HH AE1 P IY0
+harbor HH AA1 R B ER0
+hardy HH AA1 R D IY0
+hare HH EH1 R
+harness HH AA1 R N AH0 S
+harp HH AA1 R P
+harvest HH AA1 R V AH0 S T
+hasty HH EY1 S T IY0
+hat HH AE1 T
+hatchback HH AE1 CH B AE2 K
+hatchery HH AE1 CH ER0 IY0
+haven HH EY1 V AH0 N
+hawk HH AO1 K
+hawthorn HH AO1 TH AO2 R N
+haystack HH EY1 S T AE2 K
+hazel HH EY1 Z AH0 L
+hazelnut HH EY1 Z AH0 L N AH2 T
+hazy HH EY1 Z IY0
+headband HH EH1 D B AE2 N D
+healthy HH EH1 L TH IY0
+heart HH AA1 R T
+hearth HH AA1 R TH
+hearty HH AA1 R T IY0
+heather HH EH1 DH ER0
+heavy HH EH1 V IY0
+hedge HH EH1 JH
+hedgehog HH EH1 JH HH AA2 G
+heirloom EH1 R L UW2 M
+helmet HH EH1 L M AH0 T
+helpful HH EH1 L P F AH0 L
+hemlock HH EH1 M L AA2 K
+hemp HH EH1 M P
+hen HH EH1 N
+herb ER1 B
+hermit HH ER1 M AH0 T
+heron HH EH1 R AH0 N
+hickory HH IH1 K ER0 IY0
+hidden HH IH1 D AH0 N
+high HH AY1
+highland HH AY1 L AH0 N D
+highway HH AY1 W EY2
+hill HH IH1 L
+hillside HH IH1 L S AY2 D
+hilltop HH IH1 L T AA2 P
+hilly HH IH1 L IY0
+hippo HH IH1 P OW0
+hive HH AY1 V
+hobby HH AA1 B IY0
+hockey HH AA1 K IY0
+hollow HH AA1 L OW0
+holly HH AA1 L IY0
+homemade HH OW1 M M EY1 D
+homestead HH OW1 M S T EH2 D
+honest AA1 N AH0 S T
+honey HH AH1 N IY0
+honeybee HH AH1 N IY0 B IY2
+honeycomb HH AH1 N IY0 K OW2 M
+honeydew HH AH1 N IY0 D UW2
+hook HH UH1 K
+hoop HH UW1 P
+hopeful HH OW1 P F AH0 L
+hopper HH AA1 P ER0
+hopscotch HH AA1 P S K AA2 CH
+horizon HH ER0 AY1 Z AH0 N
+horn HH AO1 R N
+hornet HH AO1 R N IH0 T
+horse HH AO1 R S
+horseshoe HH AO1 R S SH UW2
+hotel HH OW0 T EH1 L
+hound HH AW1 N D
+hourglass AW1 ER0 G L AE2 S
+house HH AW1 S
+houseboat HH AW1 S B OW2 T
+humble HH AH1 M B AH0 L
+humid HH Y UW1 M AH0 D
+hummus HH UH1 M AH0 S
+hungry HH AH1 NG G R IY0
+husky HH AH1 S K IY0
+hut HH AH1 T
+hutch HH AH1 CH
+hyacinth HH AY1 AH0 S IH2 N TH
+ice AY1 S
+iceberg AY1 S B ER0 G
+icebox AY1 S B AA2 K S
+icicle AY1 S IH0 K AH0 L
+icy AY1 S IY0
+ideal AY0 D IY1 L
+idle AY1 D AH0 L
+igloo IH1 G L UW0
+iguana AY0 G W AA1 N AH0
+inch IH1 N CH
+ink IH1 NG K
+inlet IH1 N L EH2 T
+inner IH1 N ER0
+insect IH1 N S EH2 K T
+inventor IH2 N V EH1 N T ER0
+iris AY1 R AH0 S
+ironic AY0 R AA1 N IH0 K
+ironwood AY1 ER0 N W UH2 D
+island AY1 L AH0 N D
+islet AY1 L IH0 T
+isthmus IH1 S M AH0 S
+itchy IH1 CH IY0
+ivory AY1 V ER0 IY0
+ivy AY1 V IY0
+jackal JH AE1 K AH0 L
+jacket JH AE1 K AH0 T
+jackpot JH AE1 K P AA2 T
+jade JH EY1 D
+jam JH AE1 M
+janitor JH AE1 N AH0 T ER0
+jar JH AA1 R
+jasmine JH AE1 Z M AH0 N
+jasper JH AE1 S P ER0
+jaunty JH AO1 N T IY0
+jay JH EY1
+jazzy JH AE1 Z IY0
+jeans JH IY1 N Z
+jelly JH EH1 L IY0
+jellyfish JH EH1 L IY0 F IH2 SH
+jersey JH ER1 Z IY0
+jester JH EH1 S T ER0
+jetliner JH EH1 T L AY2 N ER0
+jetty JH EH1 T IY0
+jewel JH UW1 AH0 L
+jigsaw JH IH1 G S AO2
+jockey JH AA1 K IY0
+jolly JH AA1 L IY0
+journey JH ER1 N IY0
+jovial JH OW1 V IY0 AH0 L
+joyful JH OY1 F AH0 L
+judge JH AH1 JH
+juggler JH AH1 G AH0 L ER0
+juicy JH UW1 S IY0
+jukebox JH UW1 K B AA2 K S
+jumbo JH AH1 M B OW0
+jumper JH AH1 M P ER0
+jungle JH AH1 NG G AH0 L
+juniper JH UW1 N AH0 P ER0
+kale K EY1 L
+kangaroo K AE2 NG G ER0 UW1
+kayak K AY1 AE0 K
+kazoo K AH0 Z UW1
+keel K IY1 L
+keen K IY1 N
+keepsake K IY1 P S EY2 K
+kennel K EH1 N AH0 L
+kernel K ER1 N AH0 L
+ketchup K EH1 CH AH0 P
+kettle K EH1 T AH0 L
+keyboard K IY1 B AO2 R D
+keystone K IY1 S T OW2 N
+kilt K IH1 L T
+kind K AY1 N D
+kindling K IH1 N D L IH0 NG
+kingdom K IH1 NG D AH0 M
+kingly K IH1 NG L IY0
+kiosk K IY1 AO2 S K
+kitchen K IH1 CH AH0 N
+kite K AY1 T
+kitten K IH1 T AH0 N
+kiwi K IY1 W IY0
+knapsack N AE1 P S AE2 K
+knee N IY1
+knitting N IH1 T IH0 NG
+knot N AA1 T
+knotty N AA1 T IY0
+knuckle N AH1 K AH0 L
+koala K OW0 AA1 L AH0
+lace L EY1 S
+lacrosse L AH0 K R AO1 S
+lad L AE1 D
+ladder L AE1 D ER0
+ladle L EY1 D AH0 L
+ladybug L EY1 D IY0 B AH2 G
+lagoon L AH0 G UW1 N
+lake L EY1 K
+lakeside L EY1 K S AY2 D
+lamb L AE1 M
+lamp L AE1 M P
+lamppost L AE1 M P P OW2 S T
+landfall L AE1 N D F AO2 L
+landmark L AE1 N D M AA2 R K
+landscape L AE1 N D S K EY2 P
+lantern L AE1 N T ER0 N
+lanyard L AE1 N Y ER0 D
+lapel L AH0 P EH1 L
+larder L AA1 R D ER0
+large L AA1 R JH
+lark L AA1 R K
+larkspur L AA1 R K S P ER2
+laser L EY1 Z ER0
+lasso L AE1 S OW0
+latch L AE1 CH
+late L EY1 T
+lattice L AE1 T AH0 S
+laundry L AO1 N D R IY0
+laurel L AO1 R AH0 L
+lava L AA1 V AH0
+lavender L AE1 V AH0 N D ER0
+lavish L AE1 V IH0 SH
+lawn L AO1 N
+lawnmower L AO1 N M OW0 ER0
+lawyer L AO1 Y ER0
+lazy L EY1 Z IY0
+leader L IY1 D ER0
+leaf L IY1 F
+leafy L IY1 F IY0
+lean L IY1 N
+leapfrog L IY1 P F R AO2 G
+ledge L EH1 JH
+leeway L IY1 W EY2
+legal L IY1 G AH0 L
+legend L EH1 JH AH0 N D
+lemon L EH1 M AH0 N
+lemonade L EH1 M AH0 N EY1 D
+lemur L IY1 M ER0
+lens L EH1 N Z
+lentil L EH1 N T AH0 L
+leopard L EH1 P ER0 D
+letter L EH1 T ER0
+lettuce L EH1 T AH0 S
+levee L EH1 V IY0
+level L EH1 V AH0 L
+library L AY1 B R EH0 R IY2
+lichen L AY1 K AH0 N
+licorice L IH1 K ER0 IH0 SH
+lifeboat L AY1 F B OW2 T
+lifeguard L AY1 F G AA2 R D
+light L AY1 T
+lilac L AY1 L AE2 K
+lily L IH1 L IY0
+limber L IH1 M B ER0
+lime L AY1 M
+limelight L AY1 M L AY2 T
+limerick L IH1 M ER0 IH0 K
+limestone L AY1 M S T OW2 N
+limousine L IH1 M AH0 Z IY2 N
+linen L IH1 N AH0 N
+lineup L AY1 N AH2 P
+lion L AY1 AH0 N
+lipstick L IH1 P S T IH2 K
+little L IH1 T AH0 L
+lively L AY1 V L IY0
+lizard L IH1 Z ER0 D
+llama L AA1 M AH0
+loaf L OW1 F
+lobby L AA1 B IY0
+lobster L AA1 B S T ER0
+local L OW1 K AH0 L
+locket L AA1 K IH0 T
+locksmith L AA1 K S M IH2 TH
+locust L OW1 K AH0 S T
+lodestar L OW1 D S T AA2 R
+lodge L AA1 JH
+loft L AO1 F T
+lofty L AO1 F T IY0
+lollipop L AA1 L IY0 P AA2 P
+lone L OW1 N
+long L AO1 NG
+longhorn L AO1 NG HH AO2 R N
+lookout L UH1 K AW2 T
+loom L UW1 M
+lotus L OW1 T AH0 S
+loud L AW1 D
+lovely L AH1 V L IY0
+loyal L OY1 AH0 L
+lucid L UW1 S AH0 D
+lucky L AH1 K IY0
+lullaby L AH1 L AH0 B AY2
+lumber L AH1 M B ER0
+lumpy L AH1 M P IY0
+lunar L UW1 N ER0
+lunchroom L AH1 N CH R UW2 M
+lush L AH1 SH
+lute L UW1 T
+lynx L IH1 NG K S
+lyric L IH1 R IH0 K
+macaw M AH0 K AO1
+machine M AH0 SH IY1 N
+mackerel M AE1 K ER0 AH0 L
+madrigal M AE1 D R AH0 G AH0 L
+magic M AE1 JH IH0 K
+magician M AH0 JH IH1 SH AH0 N
+magnet M AE1 G N AH0 T
+magnolia M AE0 G N OW1 L Y AH0
+magpie M AE1 G P AY2
+mailbox M EY1 L B AA2 K S
+mailman M EY1 L M AE2 N
+mainland M EY1 N L AE2 N D
+major M EY1 JH ER0
+mallard M AE1 L ER0 D
+mammoth M AE1 M AH0 TH
+manatee M AE1 N AH0 T IY2
+mandarin M AE1 N D ER0 AH0 N
+mandolin M AE1 N D AH0 L IH2 N
+mango M AE1 NG G OW0
+mangrove M AE1 N G R OW2 V
+manor M AE1 N ER0
+mantis M AE1 N T IH0 S
+mantle M AE1 N T AH0 L
+map M AE1 P
+maple M EY1 P AH0 L
+marathon M EH1 R AH0 TH AA2 N
+marble M AA1 R B AH0 L
+marigold M EH1 R AH0 G OW2 L D
+marina M ER0 IY1 N AH0
+market M AA1 R K AH0 T
+marlin M AA1 R L AH0 N
+marmalade M AA1 R M AH0 L EY2 D
+marrow M EH1 R OW0
+marsh M AA1 R SH
+mascot M AE1 S K AH0 T
+mask M AE1 S K
+mason M EY1 S AH0 N
+masthead M AE1 S T HH EH2 D
+matinee M AE1 T IH0 N EY2
+mattress M AE1 T R AH0 S
+mayor M EY1 ER0
+meadow M EH1 D OW2
+meatball M IY1 T B AO2 L
+medal M EH1 D AH0 L
+medley M EH1 D L IY0
+megaphone M EH1 G AH0 F OW2 N
+mellow M EH1 L OW0
+melody M EH1 L AH0 D IY0
+melon M EH1 L AH0 N
+merchant M ER1 CH AH0 N T
+merlin M ER1 L IH0 N
+mermaid M ER1 M EY2 D
+merry M EH1 R IY0
+mesa M EY1 S AH0
+metal M EH1 T AH0 L
+meteor M IY1 T IY0 ER0
+midnight M IH1 D N AY2 T
+mighty M AY1 T IY0
+mild M AY1 L D
+milestone M AY1 L S T OW2 N
+milkshake M IH1 L K SH EY2 K
+milkweed M IH1 L K W IY2 D
+milky M IH1 L K IY0
+mill M IH1 L
+millet M IH1 L AH0 T
+mimosa M IH0 M OW1 S AH0
+minibus M IH1 N IY0 B AH2 S
+minnow M IH1 N OW0
+minor M AY1 N ER0
+minstrel M IH1 N S T R AH0 L
+mint M IH1 N T
+mirror M IH1 R ER0
+mistletoe M IH1 S AH0 L T OW2
+misty M IH1 S T IY0
+mitten M IH1 T AH0 N
+mixed M IH1 K S T
+moat M OW1 T
+moccasin M AA1 K AH0 S IH0 N
+mocha M OW1 K AH0
+modern M AA1 D ER0 N
+modest M AA1 D AH0 S T
+moist M OY1 S T
+molasses M AH0 L AE1 S AH0 Z
+mole M OW1 L
+monarch M AA1 N AA2 R K
+monkey M AH1 NG K IY0
+monocle M AA1 N AH0 K AH0 L
+monsoon M AA0 N S UW1 N
+moody M UW1 D IY0
+moon M UW1 N
+moonbeam M UW1 N B IY2 M
+moonlight M UW1 N L AY2 T
+moonstone M UW1 N S T OW2 N
+moose M UW1 S
+mosaic M OW0 Z EY1 IH0 K
+moss M AO1 S
+mossy M AO1 S IY0
+motel M OW0 T EH1 L
+moth M AO1 TH
+motor M OW1 T ER0
+mountain M AW1 N T AH0 N
+mouse M AW1 S
+muddy M AH1 D IY0
+muffin M AH1 F AH0 N
+muffler M AH1 F L ER0
+mug M AH1 G
+mulberry M AH1 L B EH2 R IY0
+mule M Y UW1 L
+mural M Y UH1 R AH0 L
+murky M ER1 K IY0
+museum M Y UW0 Z IY1 AH0 M
+mushroom M AH1 SH R UW0 M
+music M Y UW1 Z IH0 K
+muskrat M AH1 S K R AE2 T
+mussel M AH1 S AH0 L
+mustard M AH1 S T ER0 D
+musty M AH1 S T IY0
+mutual M Y UW1 CH UW0 AH0 L
+myrtle M ER1 T AH0 L
+nacho N AE1 CH OW2
+nail N EY1 L
+napkin N AE1 P K IH0 N
+narrow N EH1 R OW0
+nautilus N AO1 T AH0 L AH0 S
+near N IH1 R
+neat N IY1 T
+nectar N EH1 K T ER0
+needle N IY1 D AH0 L
+neighbor N EY1 B ER0
+nephew N EH1 F Y UW0
+nest N EH1 S T
+net N EH1 T
+nettle N EH1 T AH0 L
+newsprint N UW1 Z P R IH2 N T
+newt N UW1 T
+nickel N IH1 K AH0 L
+niece N IY1 S
+night N AY1 T
+nimble N IH1 M B AH0 L
+noble N OW1 B AH0 L
+noisy N OY1 Z IY0
+noodle N UW1 D AH0 L
+nook N UH1 K
+normal N AO1 R M AH0 L
+north N AO1 R TH
+nose N OW1 Z
+notebook N OW1 T B UH2 K
+novel N AA1 V AH0 L
+nugget N AH1 G IH0 T
+nursery N ER1 S ER0 IY0
+nut N AH1 T
+nutmeg N AH1 T M EH2 G
+nutshell N AH1 T SH EH2 L
+nutty N AH1 T IY0
+oak OW1 K
+oar AO1 R
+oarlock AO1 R L AA2 K
+oasis OW0 EY1 S IH0 S
+oatmeal OW1 T M IY2 L
+oboe OW1 B OW0
+ocean OW1 SH AH0 N
+octopus AA1 K T AH0 P UH2 S
+odd AA1 D
+odyssey AA1 D AH0 S IY0
+office AO1 F IH0 S
+okra OW1 K R AH0
+olden OW1 L D AH0 N
+olive AA1 L AH0 V
+omelet AA1 M L AH0 T
+onion AH1 N Y AH0 N
+opal OW1 P AH0 L
+opera AA1 P R AH0
+optic AA1 P T IH0 K
+orange AO1 R AH0 N JH
+orbit AO1 R B AH0 T
+orca AO1 R K AH0
+orchard AO1 R CH ER0 D
+orchestra AO1 R K AH0 S T R AH0
+orchid AO1 R K AH0 D
+organ AO1 R G AH0 N
+oriole AO1 R IY0 OW2 L
+osprey AO1 S P R IY0
+ostrich AO1 S T R IH0 CH
+otter AA1 T ER0
+ottoman AA1 T AH0 M AH0 N
+outfield AW1 T F IY2 L D
+outpost AW1 T P OW2 S T
+oval OW1 V AH0 L
+oven AH1 V AH0 N
+overall OW1 V ER0 AO2 L
+overcoat OW1 V ER0 K OW2 T
+owl AW1 L
+oyster OY1 S T ER0
+paddle P AE1 D AH0 L
+paddock P AE1 D AH0 K
+padlock P AE1 D L AA2 K
+pagoda P AH0 G OW1 D AH0
+painter P EY1 N T ER0
+pajamas P AH0 JH AA1 M AH0 Z
+palace P AE1 L AH0 S
+pale P EY1 L
+palette P AE1 L AH0 T
+palm P AA1 M
+pan P AE1 N
+pancake P AE1 N K EY2 K
+panda P AE1 N D AH0
+panther P AE1 N TH ER0
+pantry P AE1 N T R IY0
+papaya P AH0 P AY1 AH0
+paper P EY1 P ER0
+paperback P EY1 P ER0 B AE2 K
+paprika P AE0 P R IY1 K AH0
+parade P ER0 EY1 D
+parakeet P EH1 R AH0 K IY2 T
+parapet P EH1 R AH0 P EH2 T
+parcel P AA1 R S AH0 L
+park P AA1 R K
+parka P AA1 R K AH0
+parlor P AA1 R L ER0
+parrot P EH1 R AH0 T
+parsley P AA1 R S L IY0
+partner P AA1 R T N ER0
+partridge P AA1 R T R AH0 JH
+pasta P AA1 S T AH0
+pastel P AE0 S T EH1 L
+pastry P EY1 S T R IY0
+pasture P AE1 S CH ER0
+path P AE1 TH
+pathway P AE1 TH W EY2
+patio P AE1 T IY0 OW2
+pavilion P AH0 V IH1 L Y AH0 N
+peach P IY1 CH
+peachy P IY1 CH IY0
+peacock P IY1 K AA2 K
+peanut P IY1 N AH0 T
+peapod P IY1 P AO2 D
+pear P EH1 R
+pearl P ER1 L
+pearly P ER1 L IY0
+pebble P EH1 B AH0 L
+pecan P AH0 K AA1 N
+pedal P EH1 D AH0 L
+pelican P EH1 L AH0 K AH0 N
+pen P EH1 N
+pencil P EH1 N S AH0 L
+pendant P EH1 N D AH0 N T
+pendulum P EH1 N JH AH0 L AH0 M
+penguin P EH1 NG G W AH0 N
+peony P IY1 AH0 N IY0
+pepper P EH1 P ER0
+perch P ER1 CH
+periscope P EH1 R AH0 S K OW2 P
+perky P ER1 K IY0
+petal P EH1 T AH0 L
+petite P AH0 T IY1 T
+pewter P Y UW1 T ER0
+pheasant F EH1 Z AH0 N T
+piano P IY0 AE1 N OW0
+pickle P IH1 K AH0 L
+picnic P IH1 K N IH2 K
+pie P AY1
+pier P IH1 R
+pig P IH1 G
+pigeon P IH1 JH AH0 N
+pigment P IH1 G M AH0 N T
+pillow P IH1 L OW0
+pilot P AY1 L AH0 T
+pinball P IH1 N B AO2 L
+pine P AY1 N
+pinto P IH1 N T OW2
+pitcher P IH1 CH ER0
+pitchfork P IH1 CH F AO2 R K
+pizza P IY1 T S AH0
+placid P L AE1 S AH0 D
+plain P L EY1 N
+planet P L AE1 N AH0 T
+plank P L AE1 NG K
+plankton P L AE1 NG K T AH0 N
+plant P L AE1 N T
+plate P L EY1 T
+platypus P L AE1 T AH0 P UH2 S
+playhouse P L EY1 HH AW2 S
+plaza P L AA1 Z AH0
+plover P L AH1 V ER0
+plowshare P L AW1 SH EY2 R
+plucky P L AH1 K IY0
+plum P L AH1 M
+plump P L AH1 M P
+plush P L AH1 SH
+plywood P L AY1 W UH2 D
+pocket P AA1 K AH0 T
+podium P OW1 D IY0 AH0 M
+poem P OW1 AH0 M
+poet P OW1 AH0 T
+poised P OY1 Z D
+polar P OW1 L ER0
+polecat P OW1 L K AE2 T
+polite P AH0 L AY1 T
+polka P OW1 L K AA0
+pollen P AA1 L AH0 N
+poncho P AA1 N CH OW0
+pond P AA1 N D
+pony P OW1 N IY2
+poodle P UW1 D AH0 L
+popcorn P AA1 P K AO2 R N
+poppy P AA1 P IY0
+porch P AO1 R CH
+porcupine P AO1 R K Y AH0 P AY2 N
+porpoise P AO1 R P AH0 S
+porridge P AO1 R AH0 JH
+portrait P AO1 R T R AH0 T
+posh P AA1 SH
+possum P AA1 S AH0 M
+postcard P OW1 S T K AA2 R D
+postman P OW1 S T M AH0 N
+potato P AH0 T EY1 T OW2
+potpie P AA1 T P AY2
+pottery P AA1 T ER0 IY0
+pouch P AW1 CH
+prairie P R EH1 R IY0
+prawn P R AO1 N
+pretty P R IH1 T IY0
+pretzel P R EH1 T Z AH0 L
+prime P R AY1 M
+primrose P R IH1 M R OW2 Z
+prism P R IH1 Z AH0 M
+prompt P R AA1 M P T
+propeller P R AH0 P EH1 L ER0
+proper P R AA1 P ER0
+proud P R AW1 D
+pudding P UH1 D IH0 NG
+puddle P AH1 D AH0 L
+puffin P AH1 F IH2 N
+puffy P AH1 F IY0
+pulley P UH1 L IY0
+pumpkin P AH1 M P K IH0 N
+pupil P Y UW1 P AH0 L
+puppet P AH1 P AH0 T
+puppy P AH1 P IY0
+pure P Y UH1 R
+purple P ER1 P AH0 L
+puzzle P AH1 Z AH0 L
+quahog K W AA1 HH AO2 G
+quail K W EY1 L
+quaint K W EY1 N T
+quarry K W AO1 R IY0
+quarter K W AO1 R T ER0
+quartet K W AO0 R T EH1 T
+quartz K W AO1 R T S
+queen K W IY1 N
+quiche K IY1 SH
+quick K W IH1 K
+quicksand K W IH1 K S AE2 N D
+quiet K W AY1 AH0 T
+quill K W IH1 L
+quilt K W IH1 L T
+quilting K W IH1 L T IH0 NG
+quirky K W ER1 K IY0
+quiver K W IH1 V ER0
+rabbit R AE1 B AH0 T
+raccoon R AE0 K UW1 N
+radar R EY1 D AA2 R
+radio R EY1 D IY0 OW2
+radish R AE1 D IH0 SH
+raft R AE1 F T
+rafter R AE1 F T ER0
+ragtime R AE1 G T AY2 M
+railway R EY1 L W EY2
+rain R EY1 N
+rainbow R EY1 N B OW2
+raindrop R EY1 N D R AA2 P
+rainfall R EY1 N F AO2 L
+rainy R EY1 N IY0
+raisin R EY1 Z IH0 N
+ranch R AE1 N CH
+ranger R EY1 N JH ER0
+rapid R AE1 P AH0 D
+rare R EH1 R
+raspberry R AE1 Z B EH2 R IY0
+raspy R AE1 S P IY0
+rattan R AE0 T AE1 N
+rattle R AE1 T AH0 L
+raven R EY1 V AH0 N
+real R IY1 L
+recipe R EH1 S AH0 P IY0
+recorder R IH0 K AO1 R D ER0
+redbird R EH1 D B ER2 D
+redwood R EH1 D W UH2 D
+reef R IY1 F
+referee R EH2 F ER0 IY1
+regal R IY1 G AH0 L
+reindeer R EY1 N D IH2 R
+relic R EH1 L IH0 K
+retriever R IY0 T R IY1 V ER0
+rhubarb R UW1 B AA2 R B
+rhyme R AY1 M
+rhythm R IH1 DH AH0 M
+ribbon R IH1 B AH0 N
+rice R AY1 S
+rich R IH1 CH
+riddle R IH1 D AH0 L
+rider R AY1 D ER0
+rigid R IH1 JH AH0 D
+ripe R AY1 P
+rising R AY1 Z IH0 NG
+river R IH1 V ER0
+riverbank R IH1 V ER0 B AE2 NG K
+riverbed R IH1 V ER0 B EH2 D
+riverboat R IH1 V ER0 B OW2 T
+road R OW1 D
+roadmap R OW1 D M AE2 P
+roadster R OW1 D S T ER0
+robin R AA1 B AH0 N
+robot R OW1 B AA2 T
+robust R OW0 B AH1 S T
+rocket R AA1 K AH0 T
+rocking R AA1 K IH0 NG
+rocky R AA1 K IY0
+rodeo R OW1 D IY0 OW2
+rooftop R UW1 F T AA2 P
+rooster R UW1 S T ER0
+rope R OW1 P
+rose R OW1 Z
+rosebud R OW1 Z B AH0 D
+rosemary R OW1 Z M EH2 R IY0
+rosewood R OW1 Z W UH2 D
+rosy R OW1 Z IY0
+rotunda R OW0 T AH1 N D AH0
+rough R AH1 F
+round R AW1 N D
+rowboat R OW1 B OW2 T
+royal R OY1 AH0 L
+ruby R UW1 B IY0
+rudder R AH1 D ER0
+rug R AH1 G
+rugged R AH1 G AH0 D
+ruler R UW1 L ER0
+runner R AH1 N ER0
+rural R UH1 R AH0 L
+rustic R AH1 S T IH0 K
+rusty R AH1 S T IY0
+rye R AY1
+sacred S EY1 K R AH0 D
+saddle S AE1 D AH0 L
+saffron S AE1 F R AH0 N
+sage S EY1 JH
+sagebrush S EY1 JH B R AH2 SH
+sail S EY1 L
+sailboat S EY1 L B OW2 T
+sailor S EY1 L ER0
+salad S AE1 L AH0 D
+salmon S AE1 M AH0 N
+salty S AO1 L T IY0
+sand S AE1 N D
+sandal S AE1 N D AH0 L
+sandbar S AE1 N D B AA2 R
+sandbox S AE1 N D B AA2 K S
+sandstone S AE1 N D S T OW2 N
+sandy S AE1 N D IY0
+sapling S AE1 P L IH0 NG
+sapphire S AE1 F AY0 ER0
+sardine S AA0 R D IY1 N
+sassy S AE1 S IY0
+satellite S AE1 T AH0 L AY2 T
+satin S AE1 T AH0 N
+saucer S AO1 S ER0
+sauna S AO1 N AH0
+sausage S AO1 S AH0 JH
+savanna S AH0 V AE1 N AH0
+savvy S AE1 V IY0
+sawdust S AO1 D AH2 S T
+sawmill S AO1 M IH2 L
+saxophone S AE1 K S AH0 F OW2 N
+scallion S K AE1 L Y AH0 N
+scallop S K AE1 L AH0 P
+scarecrow S K AE1 R K R OW2
+scarf S K AA1 R F
+scenic S IY1 N IH0 K
+scholar S K AA1 L ER0
+school S K UW1 L
+schooner S K UW1 N ER0
+scone S K OW1 N
+scooter S K UW1 T ER0
+scrapbook S K R AE1 P B UH2 K
+scroll S K R OW1 L
+sculptor S K AH1 L P T ER0
+seagull S IY1 G AH2 L
+seal S IY1 L
+seashell S IY1 SH EH2 L
+seaside S IY1 S AY2 D
+season S IY1 Z AH0 N
+seed S IY1 D
+sequoia S IH0 K W OY1 AH0
+serene S ER0 IY1 N
+sesame S EH1 S AH0 M IY0
+shady SH EY1 D IY0
+shaggy SH AE1 G IY0
+shamrock SH AE1 M R AA2 K
+shark SH AA1 R K
+sharp SH AA1 R P
+sheep SH IY1 P
+shelf SH EH1 L F
+sherbet SH ER1 B AH0 T
+sheriff SH EH1 R AH0 F
+shingle SH IH1 NG G AH0 L
+shiny SH AY1 N IY0
+shipmate SH IH1 P M EY2 T
+shipyard SH IH1 P Y AA2 R D
+shoebox SH OW1 B AA0 K S
+shore SH AO1 R
+shoreline SH AO1 R L AY2 N
+short SH AO1 R T
+shortcake SH AO1 R T K EY2 K
+shovel SH AH1 V AH0 L
+showboat SH OW1 B OW2 T
+shrimp SH R IH1 M P
+shutter SH AH1 T ER0
+shy SH AY1
+sidewalk S AY1 D W AO2 K
+signpost S AY1 N P OW2 S T
+silent S AY1 L AH0 N T
+silk S IH1 L K
+silkworm S IH1 L K W ER0 M
+silky S IH1 L K IY0
+silly S IH1 L IY0
+silo S AY1 L OW0
+silver S IH1 L V ER0
+simple S IH1 M P AH0 L
+sincere S IH0 N S IH1 R
+singer S IH1 NG ER0
+single S IH1 NG G AH0 L
+sink S IH1 NG K
+siren S AY1 R AH0 N
+skate S K EY1 T
+sketch S K EH1 CH
+skiff S K IH1 F
+skillet S K IH1 L AH0 T
+skunk S K AH1 NG K
+sky S K AY1
+skylark S K AY1 L AA2 R K
+skyline S K AY1 L AY2 N
+skyway S K AY1 W EY2
+slate S L EY1 T
+sled S L EH1 D
+sleek S L IY1 K
+sleepy S L IY1 P IY0
+sleigh S L EY1
+slender S L EH1 N D ER0
+slim S L IH1 M
+slipper S L IH1 P ER0
+slope S L OW1 P
+sloth S L OW1 TH
+slow S L OW1
+small S M AO1 L
+smart S M AA1 R T
+smiley S M AY1 L IY0
+smoky S M OW1 K IY0
+smooth S M UW1 DH
+snail S N EY1 L
+snake S N EY1 K
+snapper S N AE1 P ER0
+snappy S N AE1 P IY0
+snowball S N OW1 B AO2 L
+snowflake S N OW1 F L EY2 K
+snowman S N OW1 M AE2 N
+snowshoe S N OW1 SH UW2
+snowy S N OW1 IY0
+snug S N AH1 G
+soccer S AA1 K ER0
+sock S AA1 K
+soda S OW1 D AH0
+sofa S OW1 F AH0
+soft S AA1 F T
+softball S AO1 F T B AO2 L
+solar S OW1 L ER0
+solid S AA1 L AH0 D
+songbird S AO1 NG B ER2 D
+songbook S AO1 N G B UH2 K
+sonnet S AA1 N IH0 T
+sorbet S AO2 R B EY1
+soup S UW1 P
+sour S AW1 ER0
+spaceship S P EY1 S SH IH2 P
+spade S P EY1 D
+spaniel S P AE1 N Y AH0 L
+spare S P EH1 R
+sparrow S P EH1 R OW0
+sparse S P AA1 R S
+spatula S P AE1 CH UH2 L AH0
+speedy S P IY1 D IY2
+spicy S P AY1 S IY0
+spider S P AY1 D ER0
+spiffy S P IH1 F IY0
+spinach S P IH1 N AH0 CH
+spindle S P IH1 N D AH0 L
+sponge S P AH1 N JH
+spoon S P UW1 N
+spotty S P AA1 T IY0
+spring S P R IH1 NG
+sprinkler S P R IH1 NG K L ER0
+sprout S P R AW1 T
+spruce S P R UW1 S
+spry S P R AY1
+square S K W EH1 R
+squash S K W AA1 SH
+squid S K W IH1 D
+squirrel S K W ER1 AH0 L
+stable S T EY1 B AH0 L
+stadium S T EY1 D IY0 AH0 M
+stairwell S T EH1 R W EH2 L
+stallion S T AE1 L Y AH0 N
+stamp S T AE1 M P
+stapler S T EY1 P AH0 L ER0
+star S T AA1 R
+stardust S T AA1 R D AH2 S T
+starfish S T AA1 R F IH2 SH
+starlight S T AA1 R L AY2 T
+starling S T AA1 R L IH0 NG
+station S T EY1 SH AH0 N
+statue S T AE1 CH UW2
+steady S T EH1 D IY0
+steamboat S T IY1 M B OW2 T
+steamer S T IY1 M ER0
+steep S T IY1 P
+steeple S T IY1 P AH0 L
+stem S T EH1 M
+stencil S T EH1 N S IH0 L
+stew S T UW1
+sticky S T IH1 K IY0
+stirrup S T ER1 AH0 P
+stocky S T AA1 K IY0
+stoic S T OW1 IH0 K
+stonewall S T OW1 N W AO2 L
+stony S T OW1 N IY0
+stool S T UW1 L
+stork S T AO1 R K
+storm S T AO1 R M
+story S T AO1 R IY0
+storybook S T AO1 R IY0 B UH2 K
+stout S T AW1 T
+stove S T OW1 V
+straw S T R AO1
+stream S T R IY1 M
+streamer S T R IY1 M ER0
+street S T R IY1 T
+streetcar S T R IY1 T K AA2 R
+studio S T UW1 D IY0 OW2
+sturdy S T ER1 D IY0
+submarine S AH1 B M ER0 IY2 N
+subtle S AH1 T AH0 L
+sudden S AH1 D AH0 N
+sugar SH UH1 G ER0
+sugary SH UH1 G ER0 IY0
+suitcase S UW1 T K EY2 S
+summer S AH1 M ER0
+summit S AH1 M AH0 T
+sun S AH1 N
+sunbeam S AH1 N B IY2 M
+sundae S AH1 N D EY0
+sundial S AH1 N D AY2 L
+sunflower S AH1 N F L AW2 ER0
+sunlight S AH1 N L AY2 T
+sunny S AH1 N IY0
+sunrise S AH1 N R AY2 Z
+sunroom S AH1 N R UW2 M
+sunset S AH1 N S EH2 T
+sunshine S AH1 N SH AY2 N
+super S UW1 P ER0
+supple S AH1 P AH0 L
+surfer S ER1 F ER0
+swallow S W AA1 L OW0
+swamp S W AA1 M P
+swan S W AA1 N
+sweater S W EH1 T ER0
+swift S W IH1 F T
+swing S W IH1 NG
+swordfish S AO1 R D F IH2 SH
+sycamore S IH1 K AH0 M AO2 R
+symphony S IH1 M F AH0 N IY0
+syrup S ER1 AH0 P
+table T EY1 B AH0 L
+tablet T AE1 B L AH0 T
+tabletop T EY1 B AH0 L T AA2 P
+taco T AA1 K OW0
+tadpole T AE1 D P OW2 L
+tailgate T EY1 L G EY2 T
+tailor T EY1 L ER0
+tall T AO1 L
+tame T EY1 M
+tandem T AE1 N D AH0 M
+tangerine T AE2 N JH ER0 IY1 N
+tango T AE1 NG G OW0
+tapestry T AE1 P AH0 S T R IY0
+tart T AA1 R T
+tavern T AE1 V ER0 N
+tawny T AA1 N IY0
+tea T IY1
+teacher T IY1 CH ER0
+teacup T IY1 K AH2 P
+teal T IY1 L
+teapot T IY1 P AA2 T
+teaspoon T IY1 S P UW2 N
+telescope T EH1 L AH0 S K OW2 P
+temple T EH1 M P AH0 L
+tender T EH1 N D ER0
+tenor T EH1 N ER0
+tense T EH1 N S
+tent T EH1 N T
+terrace T EH1 R AH0 S
+terrier T EH1 R IY0 ER0
+thick TH IH1 K
+thicket TH IH1 K IH0 T
+thimble TH IH1 M B AH0 L
+thin TH IH1 N
+thirsty TH ER1 S T IY0
+thistle TH IH1 S AH0 L
+thorn TH AO1 R N
+thrasher TH R AE1 SH ER0
+thread TH R EH1 D
+threshold TH R EH1 SH OW2 L D
+thrush TH R AH1 SH
+thumb TH AH1 M
+thunder TH AH1 N D ER0
+tiara T IY0 AA1 R AH0
+ticket T IH1 K AH0 T
+tidy T AY1 D IY0
+tiger T AY1 G ER0
+tile T AY1 L
+timber T IH1 M B ER0
+timepiece T AY1 M P IY2 S
+timpani T IH1 M P AH0 N IY2
+tinderbox T IH1 N D ER0 B AA2 K S
+tinsel T IH1 N S AH0 L
+tiny T AY1 N IY0
+tiptoe T IH1 P T OW2
+tired T AY1 ER0 D
+toad T OW1 D
+toast T OW1 S T
+toaster T OW1 S T ER0
+toboggan T AH0 B AA1 G AH0 N
+toffee T AA1 F IY0
+tollbooth T OW1 L B UW2 TH
+tomato T AH0 M EY1 T OW2
+tomcat T AA1 M K AE2 T
+toolbox T UW1 L B AO2 K S
+top T AA1 P
+topaz T OW1 P AE2 Z
+torch T AO1 R CH
+tortoise T AO1 R T AH0 S
+tough T AH1 F
+tourist T UH1 R AH0 S T
+tower T AW1 ER0
+town T AW1 N
+toy T OY1
+tractor T R AE1 K T ER0
+trail T R EY1 L
+train T R EY1 N
+tranquil T R AE1 NG K W AH0 L
+trapeze T R AH0 P IY1 Z
+trawler T R AO1 L ER0
+tray T R EY1
+treadmill T R EH1 D M IH2 L
+treasure T R EH1 ZH ER0
+tree T R IY1
+treetop T R IY1 T AO2 P
+trellis T R EH1 L AH0 S
+tricky T R IH1 K IY0
+tricycle T R IH1 S IH0 K AH0 L
+trim T R IH1 M
+trinket T R IH1 NG K AH0 T
+trolley T R AA1 L IY0
+trombone T R AA0 M B OW1 N
+trophy T R OW1 F IY0
+trout T R AW1 T
+trowel T R AW1 W EH0 L
+truck T R AH1 K
+true T R UW1
+trumpet T R AH1 M P AH0 T
+trusty T R AH1 S T IY0
+tuba T UW1 B AH0
+tugboat T AH1 G B OW2 T
+tulip T UW1 L AH0 P
+tumbler T AH1 M B L ER0
+tuna T UW1 N AH0
+tundra T AH1 N D R AH0
+tunnel T AH1 N AH0 L
+turkey T ER1 K IY0
+turnip T ER1 N AH0 P
+turnstile T ER1 N S T AY2 L
+turquoise T ER1 K W OY0 Z
+turtle T ER1 T AH0 L
+tuxedo T AH2 K S IY1 D OW0
+tweed T W IY1 D
+twig T W IH1 G
+ultra AH1 L T R AH0
+umbrella AH0 M B R EH1 L AH0
+underpass AH1 N D ER0 P AE2 S
+unicorn Y UW1 N IH0 K AO2 R N
+uniform Y UW1 N AH0 F AO2 R M
+universe Y UW1 N AH0 V ER2 S
+upbeat AH1 P B IY2 T
+upland AH1 P L AH0 N D
+upstairs AH0 P S T EH1 R Z
+urban ER1 B AH0 N
+useful Y UW1 S F AH0 L
+usual Y UW1 ZH AH0 W AH0 L
+vague V EY1 G
+valid V AE1 L IH0 D
+valley V AE1 L IY0
+van V AE1 N
+vanilla V AH0 N IH1 L AH0
+vase V EY1 S
+vast V AE1 S T
+velvet V EH1 L V AH0 T
+veranda V ER0 AE1 N D AH0
+verbena V ER0 B IY1 N AH0
+vestibule V EH1 S T IH0 B Y UW2 L
+viaduct V AY1 AH0 D AH0 K T
+village V IH1 L AH0 JH
+vine V AY1 N
+vinegar V IH1 N AH0 G ER0
+vineyard V IH1 N Y ER0 D
+viola V AY0 OW1 L AH0
+violet V AY1 AH0 L IH0 T
+violin V AY0 AH0 L IH1 N
+vista V IH1 S T AH0
+vivid V IH1 V AH0 D
+vocal V OW1 K AH0 L
+volcano V AA0 L K EY1 N OW0
+voyage V OY1 AH0 JH
+vulture V AH1 L CH ER0
+wacky W AE1 K IY0
+wafer W EY1 F ER0
+waffle W AA1 F AH0 L
+wagon W AE1 G AH0 N
+walkway W AO1 K W EY2
+wallaby W AA1 L AH0 B IY2
+wallet W AO1 L AH0 T
+walnut W AO1 L N AH2 T
+walrus W AO1 L R AH0 S
+wand W AA1 N D
+warbler W AO1 R B L ER0
+wardrobe W AO1 R D R OW2 B
+warm W AO1 R M
+washboard W AA1 SH B AO2 R D
+wasp W AA1 S P
+water W AO1 T ER0
+waterfall W AO1 T ER0 F AO2 L
+waterway W AO1 T ER0 W EY2
+wave W EY1 V
+wavy W EY1 V IY0
+waxy W AE1 K S IY0
+weary W IH1 R IY0
+weasel W IY1 Z AH0 L
+weaver W IY1 V ER0
+wedge W EH1 JH
+weekend W IY1 K EH2 N D
+welcome W EH1 L K AH0 M
+wet W EH1 T
+whale W EY1 L
+wheat W IY1 T
+wheel W IY1 L
+whirlpool W ER1 L P UW2 L
+whisker W IH1 S K ER0
+whistle W IH1 S AH0 L
+whole HH OW1 L
+wide W AY1 D
+wild W AY1 L D
+wildcat W AY1 L D K AE2 T
+willow W IH1 L OW2
+windchime W IH1 N D CH AY2 M
+windmill W IH1 N D M IH2 L
+window W IH1 N D OW0
+windy W IH1 N D IY0
+wing W IH1 NG
+wingspan W IH1 NG S P AE2 N
+winter W IH1 N T ER0
+wintry W IH1 N T R IY0
+wise W AY1 Z
+wishbone W IH1 SH B OW2 N
+witty W IH1 T IY0
+wizard W IH1 Z ER0 D
+wobbly W AA1 B AH0 L IY0
+wolf W UH1 L F
+wombat W AA1 M B AE2 T
+wood W UH1 D
+woodchuck W UH1 D CH AH2 K
+woodland W UH1 D L AE2 N D
+woodshed W UH1 D SH EH2 D
+woody W UH1 D IY0
+wool W UH1 L
+woolen W UH1 L AH0 N
+workbench W ER1 K B EH2 N CH
+workshop W ER1 K SH AA2 P
+worm W ER1 M
+worthy W ER1 DH IY0
+wreath R IY1 TH
+wren R EH1 N
+yacht Y AA1 T
+yak Y AE1 K
+yardstick Y AA1 R D S T IH2 K
+yarn Y AA1 R N
+yarrow Y AA1 R OW0
+yearbook Y IH1 R B UH2 K
+yearling Y ER1 L IH0 NG
+yodel Y OW1 D AH0 L
+yogurt Y OW1 G ER0 T
+young Y AH1 NG
+youthful Y UW1 TH F AH0 L
+yoyo Y OW1 Y OW0
+zany Z EY1 N IY0
+zebra Z IY1 B R AH0
+zephyr Z EH1 F ER0
+zeppelin Z EH1 P IH0 L IH0 N
+zinc Z IH1 NG K
+zinnia Z IH1 N IY0 AH0
+zipper Z IH1 P ER0
+zippy Z IH1 P IY0
+zucchini Z UW0 K IY1 N IY0
