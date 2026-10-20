@@ -1132,6 +1132,96 @@
   "token.admin": {
    "tier": "admin"
   },
+  "tv.apps": {
+   "tier": "read",
+   "tags": [
+    "physical"
+   ]
+  },
+  "tv.button": {
+   "tier": "write",
+   "tags": [
+    "physical"
+   ]
+  },
+  "tv.input": {
+   "tier": "write",
+   "tags": [
+    "physical"
+   ]
+  },
+  "tv.inputs": {
+   "tier": "read",
+   "tags": [
+    "physical"
+   ]
+  },
+  "tv.launch": {
+   "tier": "write",
+   "tags": [
+    "physical"
+   ]
+  },
+  "tv.media": {
+   "tier": "write",
+   "tags": [
+    "physical"
+   ]
+  },
+  "tv.mute": {
+   "tier": "write",
+   "tags": [
+    "physical"
+   ]
+  },
+  "tv.open_url": {
+   "tier": "write",
+   "tags": [
+    "physical"
+   ]
+  },
+  "tv.pair": {
+   "tier": "admin",
+   "tags": [
+    "physical"
+   ]
+  },
+  "tv.power_off": {
+   "tier": "write",
+   "tags": [
+    "physical"
+   ]
+  },
+  "tv.power_on": {
+   "tier": "write",
+   "tags": [
+    "physical"
+   ]
+  },
+  "tv.screen": {
+   "tier": "write",
+   "tags": [
+    "physical"
+   ]
+  },
+  "tv.status": {
+   "tier": "read",
+   "tags": [
+    "physical"
+   ]
+  },
+  "tv.toast": {
+   "tier": "write",
+   "tags": [
+    "physical"
+   ]
+  },
+  "tv.volume": {
+   "tier": "write",
+   "tags": [
+    "physical"
+   ]
+  },
   "ui.back": {
    "tier": "exec"
   },
@@ -1196,6 +1286,12 @@
    "tier": "read"
   },
   "voice.status": {
+   "tier": "read"
+  },
+  "webos.discover": {
+   "tier": "read"
+  },
+  "webos.list": {
    "tier": "read"
   },
   "work.adopt_page": {

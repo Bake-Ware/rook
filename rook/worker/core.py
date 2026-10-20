@@ -17,6 +17,7 @@ from ..core.host import PluginHost
 from ..core.paths import worker_state_path
 from . import audit, context
 from .authz_guard import Guard
+from .devices import DeviceTable
 from .plugin import Plugin
 from .registry import CapabilityRegistry
 from ..core.pluginkit import CapError
@@ -122,6 +123,9 @@ class Worker:
         band_id = getattr(transport, "band_id", None)
         self.guard = Guard(self.worker_id,
                            band_id.hex() if isinstance(band_id, (bytes, bytearray)) else None)
+        # Devices this worker stands in for (rook.core.devices): each answers
+        # on the band under a worker_id of its own.
+        self.devices = DeviceTable(self.worker_id)
         self._stopping = False
         self._announce_task: asyncio.Task | None = None
         # Binary sub-protocol handlers (e.g. in-band OTA over telesthete Drop).
@@ -359,12 +363,15 @@ class Worker:
             msg = json.loads(payload)
         except ValueError:
             return
-        if not isinstance(msg, dict) or msg.get("target") != self.worker_id:
+        if not isinstance(msg, dict):
+            return
+        target = msg.get("target")
+        if target != self.worker_id and self.devices.get(target) is None:
             return
         msg_id = msg.get("id")
         if msg_id is None:
             return
-        body = {"id": msg_id, "from": self.worker_id, "ok": False,
+        body = {"id": msg_id, "from": target, "ok": False,
                 "error": "busy: worker dispatch backlog full; retry later"}
         route = envelope.reply_opts(msg).route
         task = asyncio.get_running_loop().create_task(
@@ -450,12 +457,28 @@ class Worker:
             return  # not a request
 
         target = msg.get("target")
+        # A call aimed at one of our devices runs against that device's own
+        # registry and is answered in its name; open calls are ours alone.
+        device = None
         if target and target != self.worker_id:
-            return  # addressed to another worker
+            if self.devices.get(target) is not None:
+                # Re-read before use: its plugin may have been reloaded or
+                # disabled since the last announce built the table.
+                self.devices.refresh(self.plugins)
+            device = self.devices.get(target)
+            if device is None:
+                return  # addressed to another worker
+        me = device.worker_id if device is not None else self.worker_id
+        registry = device.registry if device is not None else self.registry
         # How the caller wants its reply (rr / accept, core spec 14); read by
         # _reply and by caps that answer over a side channel. Set for every
         # request so nothing carries over from a previous one.
-        envelope.current_reply_opts.set(envelope.reply_opts(msg))
+        opts = envelope.reply_opts(msg)
+        if device is not None:
+            # A device announces no extensions (14.6): its replies go plain.
+            # Drop in particular would serve under the delegate's reply id.
+            opts = opts._replace(z=False, drop=False, drop_native=False)
+        envelope.current_reply_opts.set(opts)
 
         msg_id = msg.get("id")
         # Caller identity carried in the envelope (band client stamps it from
@@ -465,27 +488,27 @@ class Worker:
 
         # If we don't own the cap and the request wasn't aimed at us, stay
         # silent so the band doesn't get spammed with one error per worker.
-        if not self.registry.has(cap):
-            if target == self.worker_id:
+        if not registry.has(cap):
+            if target == me:
                 audit.record(cap, identity, None, ok=False, msg_id=msg_id,
                              target=target, error="unknown capability")
                 await self._reply(msg_id, {"ok": False,
-                                            "error": f"unknown capability: {cap}"})
+                                            "error": f"unknown capability: {cap}"}, me)
             return
 
         args = msg.get("args", {}) or {}
         if not isinstance(args, dict):
             audit.record(cap, identity, None, ok=False, msg_id=msg_id,
                          target=target, error="args must be an object")
-            await self._reply(msg_id, {"ok": False, "error": "args must be an object"})
+            await self._reply(msg_id, {"ok": False, "error": "args must be an object"}, me)
             return
 
         # Defense in depth (permissions 3.5 E2): check the hub's call ticket
         # against this worker's own tier table. In the default ``audit`` mode
         # nothing is refused; the result is recorded in audit.jsonl.
         try:
-            tier = authz.effective_tier(cap, getattr(self.registry.meta(cap), "risk", None))
-            ticket = self.guard.check(msg, cap, tier, args)
+            tier = authz.effective_tier(cap, getattr(registry.meta(cap), "risk", None))
+            ticket = self.guard.check(msg, cap, tier, args, target=me)
         except Exception as e:  # a broken checker must not brick the worker
             log.exception("ticket check failed")
             ticket = {"verified": False, "reason": f"check failed: {type(e).__name__}"}
@@ -494,7 +517,7 @@ class Worker:
         if ticket.get("refuse"):
             audit.record(cap, identity, args, ok=False, msg_id=msg_id, target=target,
                          error=ticket["refuse"], ticket=ticket, decision="deny")
-            await self._reply(msg_id, {"ok": False, "error": ticket["refuse"]})
+            await self._reply(msg_id, {"ok": False, "error": ticket["refuse"]}, me)
             return
 
         # Expose the caller identity to the handler for its duration (memory
@@ -503,34 +526,34 @@ class Worker:
         tok = context.caller_identity.set(identity)
         ttok = context.call_ticket.set(ticket)
         try:
-            result = await self.registry.call(cap, **args)
+            result = await registry.call(cap, **args)
             audit.record(cap, identity, args, ok=True, msg_id=msg_id, target=target,
                          ticket=ticket, decision="allow")
-            await self._reply(msg_id, {"ok": True, "result": result})
+            await self._reply(msg_id, {"ok": True, "result": result}, me)
         except CapTimeout as e:
             audit.record(cap, identity, args, ok=False, msg_id=msg_id,
                          target=target, error=f"timeout: {e}", ticket=ticket,
                          decision="allow")
-            await self._reply(msg_id, {"ok": False, "error": f"timeout: {e}"})
+            await self._reply(msg_id, {"ok": False, "error": f"timeout: {e}"}, me)
         except TypeError as e:
             audit.record(cap, identity, args, ok=False, msg_id=msg_id,
                          target=target, error=f"bad args: {e}", ticket=ticket,
                          decision="allow")
-            await self._reply(msg_id, {"ok": False, "error": f"bad args: {e}"})
+            await self._reply(msg_id, {"ok": False, "error": f"bad args: {e}"}, me)
         except CapError as e:
             # A cap-authored failure (pluginkit.fail and friends): the message
             # is the error as-is, no type-name prefix and no traceback.
             audit.record(cap, identity, args, ok=False, msg_id=msg_id,
                          target=target, error=str(e), ticket=ticket,
                          decision="allow")
-            await self._reply(msg_id, {"ok": False, "error": str(e)})
+            await self._reply(msg_id, {"ok": False, "error": str(e)}, me)
         except Exception as e:
             log.exception("capability %s raised", cap)
             audit.record(cap, identity, args, ok=False, msg_id=msg_id,
                          target=target, error=f"{type(e).__name__}: {e}",
                          ticket=ticket, decision="allow")
             await self._reply(msg_id, {"ok": False,
-                                        "error": f"{type(e).__name__}: {e}"})
+                                        "error": f"{type(e).__name__}: {e}"}, me)
         finally:
             context.call_ticket.reset(ttok)
             context.caller_identity.reset(tok)
@@ -562,8 +585,11 @@ class Worker:
         ranked = sorted(self._band_peers.items(), key=lambda kv: (not kv[1][0], -kv[1][1]))
         return [wid for wid, _ in ranked]
 
-    async def _reply(self, msg_id: str | None, body: dict) -> None:
-        body = {"from": self.worker_id, **body}
+    async def _reply(self, msg_id: str | None, body: dict, sender: str | None = None) -> None:
+        """Send a reply ``from`` this worker, or from ``sender`` (one of our
+        devices) when the request was aimed at it."""
+        sender = sender or self.worker_id
+        body = {"from": sender, **body}
         if msg_id is not None:
             body = {"id": msg_id, **body}
         opts = envelope.current_reply_opts.get()
@@ -599,7 +625,7 @@ class Worker:
                           if opts.drop_native and not opts.route else None)
                 desc = self._reply_drops.serve(msg_id, blob, route=opts.route, native=native)
                 if desc is not None:
-                    payload = json.dumps({"id": msg_id, "from": self.worker_id,
+                    payload = json.dumps({"id": msg_id, "from": body.get("from", self.worker_id),
                                           "ok": body.get("ok"), "drop": desc}).encode()
         return envelope.compress(payload) if opts.z and self._wire else payload
 
@@ -650,6 +676,11 @@ class Worker:
         hb = self.host.heartbeats()
         if hb:
             msg["hb"] = hb
+        # Devices this worker is the delegate for (core spec 14.6): their ids
+        # here let the hub drop one the moment it is no longer listed.
+        devices = self.devices.refresh(self.plugins)
+        if devices:
+            msg["devices"] = [e.worker_id for e in devices]
         # Hash-only announces (opt-in): full caps on the first announce, on a
         # change, after a reconnect and every ANNOUNCE_FULL_EVERY-th one.
         if (envelope.caps_hash_announces() and not full
@@ -660,6 +691,14 @@ class Worker:
             self._full_caps_hash = chash
         self._announces += 1
         await self.transport.send(json.dumps(msg).encode())
+        if devices:
+            base = {"version": VERSION, "build": BUILD, "authz": msg["authz"]}
+            for entry in devices:
+                try:
+                    await self.transport.send(
+                        json.dumps(self.devices.announce(entry, base)).encode())
+                except Exception:
+                    log.exception("announce for device %s failed", entry.device.name)
 
     async def _announce_loop(self) -> None:
         import random

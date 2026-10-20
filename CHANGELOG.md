@@ -9,6 +9,22 @@ version was `0.1.0`.
 ## Unreleased
 
 ### Added
+- Device workers. A worker can be the *delegate* for things that run no worker of their
+  own, such as TVs and later light switches and thermostats. Each one joins the band as a
+  worker in its own right, with its own name, caps and live heartbeat, plus `delegate`
+  (the worker answering for it) and `device` (`type`, `driver`, `model`). Agents call it by
+  name (`rook_call(worker="office-tv", cap="tv.toast")`), `rook_workers` shows its state
+  in `hb`, and the Workers page shows it with a **via** tag and a status in place of the
+  battery. Devices stay out of updates, deauth, settings, ccmod and hygiene, and don't
+  count toward `rook_caps` `"*"`. A delegate lists its devices on its own announce so the
+  hub drops a removed one at once, and calls to a device are addressed to the delegate's
+  route. Core spec 14.6. (manual: devices, workers)
+- `webos` worker plugin: LG webOS TVs as device workers (`WEBOS_TVS="office-tv=192.0.2.10"`).
+  Each TV keeps live state over the TV's control API (on/off, app or input, volume) and
+  offers `tv.status`, `tv.apps`, `tv.inputs`, `tv.toast`, `tv.launch`, `tv.input`,
+  `tv.volume`, `tv.mute`, `tv.media`, `tv.button`, `tv.open_url`, `tv.screen`,
+  `tv.power_off`, `tv.power_on` (Wake-on-LAN) and `tv.pair`; the delegate adds
+  `webos.list` and `webos.discover`. (manual: devices)
 - Jobs end themselves. A step's `complete` (`success`, `failure`, `finish`) or an agent step's
   `finish(complete=true)` switches the job off for good when the run ends, and the hub does it,
   so the agent needs no `job.write` and no tool calls left. New `limits`: `complete_on`,

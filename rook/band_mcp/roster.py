@@ -10,17 +10,24 @@ from __future__ import annotations
 
 import time
 
+from ..core.devices import is_device
 from . import envelope
 
 ALL_FIELDS = ("worker_id", "name", "description", "serves", "band", "caps", "plugins", "version",
-              "build", "app_release", "hb", "last_seen_age_secs", "online")
-DEFAULT_FIELDS = ("name", "description", "serves", "build", "hb", "last_seen_age_secs")
+              "build", "app_release", "hb", "delegate", "device", "last_seen_age_secs", "online")
+# delegate/device are empty (and so omitted) on ordinary workers.
+DEFAULT_FIELDS = ("name", "description", "serves", "build", "hb", "delegate", "device",
+                  "last_seen_age_secs")
 # Workers announce every 30s (±20%); one missed announce still counts as online.
 ONLINE_SECS = 65.0
 
 
-def _row(w: dict, now: float, serves=None) -> dict:
+def _row(w: dict, now: float, serves=None, workers: dict | None = None) -> dict:
     age = round(now - w.get("last_seen", 0.0), 1)
+    # A device worker names its delegate (the worker answering for it).
+    delegate = w.get("delegate")
+    if delegate and workers is not None and delegate in workers:
+        delegate = workers[delegate].get("name") or delegate
     return {
         "worker_id": w["worker_id"],
         "name": w.get("name"),
@@ -34,6 +41,8 @@ def _row(w: dict, now: float, serves=None) -> dict:
         "build": w.get("build"),
         "app_release": w.get("app_release") or {},
         "hb": w.get("hb") or {},
+        "delegate": delegate or None,
+        "device": w.get("device") or None,
         "last_seen_age_secs": age,
         "online": age <= ONLINE_SECS,
     }
@@ -50,7 +59,7 @@ def workers_view(workers: dict, name: str | None = None, cap_prefix: str | None 
         unknown = [f for f in wanted if f not in ALL_FIELDS]
         if unknown:
             raise ValueError(f"unknown fields {unknown}; choose from {', '.join(ALL_FIELDS)} or 'all'")
-    rows = [_row(w, now, serves) for w in workers.values()]
+    rows = [_row(w, now, serves, workers) for w in workers.values()]
     if name:
         needles = [n.strip().lower() for n in name.split(",") if n.strip()]
         rows = [r for r in rows if any(n in (r["name"] or "").lower() or n == r["worker_id"]
@@ -63,7 +72,10 @@ def workers_view(workers: dict, name: str | None = None, cap_prefix: str | None 
         rows = [r for r in rows if r["online"] == bool(online)]
     rows.sort(key=lambda r: ((r["name"] or "").lower(), r["worker_id"]))
     if full:
-        return [{k: v for k, v in r.items() if k != "online"} for r in rows]
+        # The pre-beta row shape; delegate/device only on device workers.
+        return [{k: v for k, v in r.items()
+                 if k != "online" and not (k in ("delegate", "device") and v is None)}
+                for r in rows]
     keep = list(wanted) if wanted is not None else list(DEFAULT_FIELDS)
     if wanted is None and cap_prefix:
         keep.append("caps")  # the filter's point: which matching caps each has
@@ -84,7 +96,7 @@ def workers_view(workers: dict, name: str | None = None, cap_prefix: str | None 
 
 def caps_view(workers: dict, prefix: str | None = None, worker: str | None = None):
     """Caps → holders. Compact: ``"*"`` (every live worker; the hub node
-    ``rook`` is not counted), ``{"all_but": […]}``
+    ``rook`` and device workers are not counted), ``{"all_but": […]}``
     when most hold it, else the list of names. ``worker`` lists one worker's caps.
     Legacy: ``[{cap, workers}]``."""
     names = {wid: (w.get("name") or wid) for wid, w in workers.items()}
@@ -108,10 +120,13 @@ def caps_view(workers: dict, prefix: str | None = None, worker: str | None = Non
     # doesn't count toward "*"/all_but, so worker caps stay "*" and hub-only
     # caps read ["rook"].
     local = {names[wid] for wid, w in workers.items() if w.get("local")}
-    everyone = set(names.values()) - local
+    # Device workers (a TV, a switch) hold their own few caps; counting them
+    # would turn every worker cap from "*" into "all but the TVs".
+    devices = {names[wid] for wid, w in workers.items() if is_device(w)}
+    everyone = set(names.values()) - local - devices
     out: dict = {}
     for cap, holders in sorted(by_cap.items()):
-        held = holders - local
+        held = holders - local - devices
         if held and held == everyone:
             out[cap] = "*"
         elif len(everyone) >= 4 and len(held) > len(everyone) / 2:

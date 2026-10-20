@@ -520,6 +520,27 @@ class SettingsView:
 
 # -- the plugin base ---------------------------------------------------------
 
+def cap_methods(obj: Any, namespace: str) -> dict[str, Callable[..., Any]]:
+    """``{dotpath: method}`` for every ``@capability`` method of ``obj`` (an
+    instance: bound methods; a class: its functions), named under
+    ``namespace``. Shared by plugins and devices (rook.core.devices)."""
+    cls = obj if isinstance(obj, type) else type(obj)
+    out: dict[str, Callable[..., Any]] = {}
+    for name in dir(obj):
+        # Never evaluate properties here: some (data_dir) create state on
+        # access, and listing caps must have no side effects.
+        if isinstance(getattr(cls, name, None), property):
+            continue
+        attr = getattr(obj, name, None)
+        if attr is None or not callable(attr):
+            continue
+        suffix = getattr(attr, "_rook_cap_suffix", None)
+        if suffix is None:
+            continue
+        out[namespace if not suffix else f"{namespace}.{suffix}"] = attr
+    return out
+
+
 class Plugin:
     """Subclass and set :attr:`NAMESPACE`. Decorate methods with `@capability`.
 
@@ -548,38 +569,14 @@ class Plugin:
 
     # capabilities ------------------------------------------------------
     def caps(self) -> dict[str, Callable[..., Any]]:
-        out: dict[str, Callable[..., Any]] = {}
-        cls = type(self)
-        for name in dir(self):
-            # Never evaluate properties here: some (data_dir) create state on
-            # access, and listing caps must have no side effects.
-            if isinstance(getattr(cls, name, None), property):
-                continue
-            attr = getattr(self, name, None)
-            if attr is None or not callable(attr):
-                continue
-            suffix = getattr(attr, "_rook_cap_suffix", None)
-            if suffix is None:
-                continue
-            full = self.NAMESPACE if not suffix else f"{self.NAMESPACE}.{suffix}"
-            out[full] = attr
-        return out
+        return cap_methods(self, self.NAMESPACE)
 
     @classmethod
     def declared_caps(cls) -> dict[str, Callable[..., Any]]:
         """``{dotpath: function}`` for every cap the class declares, without
         constructing it (generators, schema scans, contract tests). Metadata
         is ``getattr(fn, "_rook_cap_meta", None)``."""
-        out: dict[str, Callable[..., Any]] = {}
-        for name in dir(cls):
-            attr = getattr(cls, name, None)
-            if isinstance(attr, property) or not callable(attr):
-                continue
-            suffix = getattr(attr, "_rook_cap_suffix", None)
-            if suffix is None:
-                continue
-            out[cls.NAMESPACE if not suffix else f"{cls.NAMESPACE}.{suffix}"] = attr
-        return out
+        return cap_methods(cls, cls.NAMESPACE)
 
     # host-provided context ---------------------------------------------
     @property

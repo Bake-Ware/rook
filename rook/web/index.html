@@ -98,6 +98,10 @@
   .batt .ico i{display:block;height:100%;border-radius:1px;background:currentColor}
   .batt.ok{color:var(--accent)} .batt.warn{color:var(--warn)} .batt.low{color:var(--bad)}
   .batt .bolt{font-size:.72rem;line-height:1}
+  .devstat{display:inline-flex;align-items:center;gap:5px;font-size:.7rem;color:var(--dim);flex:0 0 auto;white-space:nowrap;max-width:22ch;overflow:hidden;text-overflow:ellipsis}
+  .devstat::before{content:'';width:7px;height:7px;border-radius:50%;background:currentColor;flex:0 0 auto}
+  .devstat.on{color:var(--accent)}
+  .tagvia{margin-left:8px;font-size:.64rem;color:var(--dim);border:1px solid var(--line);border-radius:5px;padding:1px 6px;white-space:nowrap}
   .seen{width:150px;flex:0 0 auto;display:flex;align-items:center;gap:9px}
   .seenbar{flex:1;height:6px;border-radius:4px;background:var(--panel2);border:1px solid var(--line);overflow:hidden}
   .seenbar i{display:block;height:100%;width:60%;background:var(--accent);border-radius:4px}
@@ -497,10 +501,10 @@ function fleetCard(card,id){
   const w=workers.find(x=>x.worker_id===id);if(!w)return false;
   const add=(tag,text,cls)=>{const el=document.createElement(tag);if(cls)el.className=cls;el.textContent=text;card.append(el);return el;};
   const d=deviceDetails(w), age=w.last_seen_age_secs||0;
-  add('div',isHub(w)?'HUB · ROOK':d.type.toUpperCase()+' · PAWN','fleet-card-kind');
+  add('div',isHub(w)?'HUB · ROOK':d.type.toUpperCase()+(w.delegate?' · DEVICE':' · PAWN'),'fleet-card-kind');
   add('h3',w.name||w.worker_id);
   if(w.description)add('p',w.description,'fleet-card-note');
-  add('p',[versionLabel(w),bandName(w.band),w.banned?'deauthed':age>HB_WINDOW?'quiet for '+Math.round(age)+'s':'seen '+Math.round(age)+'s ago',
+  add('p',[w.delegate?devStatus(w).text:versionLabel(w),bandName(w.band),w.banned?'deauthed':age>HB_WINDOW?'quiet for '+Math.round(age)+'s':'seen '+Math.round(age)+'s ago',
     w.hb?.battery?.percent!=null?'battery '+w.hb.battery.percent+'%':'',d.detail].filter(Boolean).join(' · '),'fleet-card-facts');
   add('p','worker_id '+w.worker_id,'fleet-card-facts');
   const hosting=document.createElement('div');hosting.className='hosting';hosting.append(hostingBox(w));card.append(hosting);
@@ -556,7 +560,9 @@ function syncFleet(list,group){
     }).catch(()=>{host.dataset.mode='unavailable';});
     return;
   }
-  fleet.update(list.map(w=>({id:w.worker_id,name:w.name||w.worker_id,group:group(w)||'',kind:deviceDetails(w).type,hub:isHub(w),
+  // The scene draws computers, tablets, phones and chips; devices go as chips.
+  const sceneKind=t=>['computer','tablet','phone','chip'].includes(t)?t:'chip';
+  fleet.update(list.map(w=>({id:w.worker_id,name:w.name||w.worker_id,group:group(w)||'',kind:sceneKind(deviceDetails(w).type),hub:isHub(w),
     age:w.last_seen_age_secs||0,banned:!!w.banned,description:w.description||'',version:versionLabel(w).replace(/^v/,''),
     bandName:bandName(w.band),battery:w.hb?.battery?.percent??null,serves:w.serves||null,caps:w.caps||[]})));
   if(fleetEnter){fleetEnter=false;fleet.enter();}
@@ -611,6 +617,8 @@ const isHub=w=>(w.roles||[]).includes('is_hub');
 function deviceDetails(w){
  const d=w.hb?.info||deviceCache.get(w.worker_id)||(w.facts?.os?{system:w.facts.os,machine:w.facts.arch}:{});
  if(isHub(w))return {os:'HUB',type:'computer',detail:['Rook hub',d.system,d.machine].filter(Boolean).join(' · ')};
+ if(w.delegate){const t=w.device?.type||'device';
+  return {os:'Device',type:t==='tv'?'tv':'device',detail:[w.device?.model||t,w.device?.driver,'via '+(w.delegate_name||w.delegate)].filter(Boolean).join(' · ')};}
  if(d.android_release||String(d.system).toLowerCase()==='android'){
   const tablet=d.screen?.dpi&&Math.min(d.screen.w,d.screen.h)/d.screen.dpi*160>=600;
   return {os:'Android',type:tablet?'tablet':'phone',detail:[d.manufacturer,d.model,'Android '+(d.android_release||'')].filter(Boolean).join(' · ')};
@@ -620,7 +628,7 @@ function deviceDetails(w){
  return {os:embedded&&os==='Unknown OS'?'Embedded / KVM':os,type:embedded?'chip':'computer',detail:[os,d.machine,d.release].filter(Boolean).join(' · ')};
 }
 function deviceIcon(w){
- const d=deviceDetails(w),paths={computer:'<rect x="3" y="4" width="18" height="13" rx="1"/><path d="M8 21h8m-4-4v4"/>',phone:'<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M10 18h4"/>',tablet:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M18 10v4"/>',chip:'<rect x="6" y="6" width="12" height="12"/><path d="M9 2v4m6-4v4M9 18v4m6-4v4M2 9h4m-4 6h4m12-6h4m-4 6h4"/>'};
+ const d=deviceDetails(w),paths={computer:'<rect x="3" y="4" width="18" height="13" rx="1"/><path d="M8 21h8m-4-4v4"/>',phone:'<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M10 18h4"/>',tablet:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M18 10v4"/>',chip:'<rect x="6" y="6" width="12" height="12"/><path d="M9 2v4m6-4v4M9 18v4m6-4v4M2 9h4m-4 6h4m12-6h4m-4 6h4"/>',tv:'<rect x="2" y="7" width="20" height="13" rx="1.5"/><path d="M8 3l4 4 4-4"/>',device:'<circle cx="12" cy="12" r="4"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4"/>'};
  return '<span class="device-icon" title="'+esc(d.detail)+'" aria-label="'+esc(d.detail)+'"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">'+paths[d.type]+'</svg></span>';
 }
 async function discoverDevices(){
@@ -686,19 +694,31 @@ function battHTML(hb){ const b=hb&&hb.battery; if(!b||b.percent==null)return '';
   return `<span class="batt ${cls}" title="battery ${p}%${b.charging?' · charging':''}">`+
     `<span class="ico"><i style="width:${w}px"></i></span>`+
     (b.charging?'<span class="bolt">⚡</span>':'')+`<span>${p}%</span></span>`; }
+/* A device worker's live state (its hb under its type, e.g. hb.tv): "on · YouTube · vol 10" or "off". */
+function devStatus(w){
+  const hb=(w.hb||{})[w.device?.type]||Object.values(w.hb||{})[0]||{};
+  if(hb.paired===false)return {on:false,text:'not paired'};
+  if(!hb.on)return {on:false,text:'off'};
+  const vol=hb.volume!=null?'vol '+hb.volume+(hb.muted?' (muted)':''):hb.muted?'muted':'';
+  return {on:true,text:['on',hb.screen==='off'?'screen off':'',hb.app||'',vol].filter(Boolean).join(' · ')};
+}
+function devHTML(w){ const s=devStatus(w);
+  return `<span class="devstat ${s.on?'on':''}" title="${esc(s.text)}">${esc(s.text)}</span>`; }
 function updateMeta(m,w){
   m.w=w;
   m.bandEl.textContent=bandName(w.band);m.bandEl.title='Filter by band: '+bandName(w.band);
   m.bandEl.onclick=e=>{e.stopPropagation();$('#bandsel').value=w.band||'';onBandChange();};
-  m.battEl.innerHTML=battHTML(w.hb);
+  m.battEl.innerHTML=w.delegate?devHTML(w):battHTML(w.hb);
   const fw=(w.plugins||[]).some(p=>['kvm','bthid','serial'].includes(p));
   const vcls = w.version? (fw?'ver old':'ver') : 'ver none';
   m.verEl.title='Worker '+(w.version||'unknown')+' · build '+(w.build??'?');
   m.verEl.className=vcls; m.verEl.textContent = versionLabel(w)||'—';
+  if(w.delegate){ m.verEl.className='ver none'; m.verEl.textContent=w.device?.driver||'device';
+    m.verEl.title='Device worker, answered for by '+(w.delegate_name||w.delegate); }
   // What it hosts (hand-written on the hub): links on expand.
   const hsig=JSON.stringify(w.serves||null);
   if(hsig!==m.hostingSig){ m.hostingSig=hsig; m.hosting.replaceChildren(hostingBox(w)); }
-  m.wrap.querySelector('.name').innerHTML=deviceIcon(w)+`<span class="n">${esc(w.name||w.worker_id)}</span><span class="id">${esc(w.worker_id.slice(0,8))}</span>`+(fw?'<span class="tagfw">firmware</span>':'')+(w.update_note?'<span class="tagold" title="'+esc(w.update_note)+'">update needed</span>':'')+(w.description?'<span class="worker-description">'+esc(w.description)+'</span>':'');
+  m.wrap.querySelector('.name').innerHTML=deviceIcon(w)+`<span class="n">${esc(w.name||w.worker_id)}</span><span class="id">${esc(w.worker_id.slice(0,8))}</span>`+(fw?'<span class="tagfw">firmware</span>':'')+(w.delegate?'<span class="tagvia" title="A device worker: '+esc(w.delegate_name||w.delegate)+' answers for it">via '+esc(w.delegate_name||w.delegate)+'</span>':'')+(w.update_note?'<span class="tagold" title="'+esc(w.update_note)+'">update needed</span>':'')+(w.description?'<span class="worker-description">'+esc(w.description)+'</span>':'');
   const caps=w.caps||[], has=c=>caps.includes(c);
   if(!m.acts.firstChild){
     const button=document.createElement('button');button.className='worker-menu-button';button.textContent='⋯';

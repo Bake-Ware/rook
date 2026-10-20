@@ -29,6 +29,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
+from ..core.devices import is_device
 from ..core import authz as core_authz
 from ..core.context import caller_identity
 from ..core.facts import NodeFacts, local_facts, wire_facts
@@ -326,11 +327,15 @@ class HubNode:
             raise RuntimeError("hub node has no band client")
         roster = self.client.workers
         if target == "any":
-            holders = sorted((w.get("name") or wid, wid) for wid, w in roster.items()
+            # Ordinary workers first: a device worker only when nothing else
+            # has the cap (its common caps, caps.describe and info.ping, would
+            # otherwise win by name).
+            holders = sorted((is_device(w), w.get("name") or wid, wid)
+                             for wid, w in roster.items()
                              if cap in w.get("caps", []) and wid != self.worker_id)
             if not holders:
                 raise LookupError(f"no live worker has {cap!r}")
-            wid = holders[0][1]
+            wid = holders[0][2]
         elif target in roster:
             wid = target
         else:

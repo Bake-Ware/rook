@@ -183,7 +183,10 @@ def _describe(fns: dict) -> dict:
 
 
 def _package_caps(package: str) -> tuple[dict, dict]:
-    """({cap: fn}, {cap: module stem}) for every Plugin class in ``package``."""
+    """({cap: fn}, {cap: module stem}) for every Plugin class in ``package``,
+    and every Device class (``<stem> devices``: caps of the device workers a
+    delegate plugin announces, rook.core.devices)."""
+    from rook.core.devices import Device
     from rook.worker.plugin import Plugin
     pkg = importlib.import_module(package)
     fns: dict = {}
@@ -204,6 +207,13 @@ def _package_caps(package: str) -> tuple[dict, dict]:
             for full, fn in cls.declared_caps().items():
                 fns[full] = fn
                 source[full] = info.name
+        devices = {c for c in vars(mod).values()
+                   if inspect.isclass(c) and issubclass(c, Device) and c is not Device
+                   and c.__module__ == mod.__name__}
+        for cls in sorted(devices, key=lambda c: c.__name__):
+            for full, fn in cls.declared_caps().items():
+                fns[full] = fn
+                source[full] = f"{info.name} devices"
     if errors:
         raise ImportErrors("; ".join(errors))
     return fns, source

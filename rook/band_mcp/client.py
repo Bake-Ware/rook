@@ -14,6 +14,7 @@ import time
 import uuid
 
 from ..core.aiocompat import timeout as _timeout
+from ..core.devices import clean_device
 from ..core.facts import clean_facts
 from ..worker.transports.telesthete_hub import TelestheteHubTransport
 from ..worker.wire import envelope
@@ -391,10 +392,51 @@ class BandClient:
             "facts": clean_facts(facts),
             "last_seen": time.time(),
         })
+        # A device worker (rook.core.devices) is one its delegate answers for.
+        # Its claim is kept apart and only becomes ``delegate``/``device``
+        # once the delegate's own announce lists it (_link_device), so no
+        # worker can make itself a "device" (undeauthable, never updated) by
+        # saying so.
+        claim = msg.get("delegate")
+        entry["delegate_claim"] = (claim if isinstance(claim, str) and claim
+                                   and claim != wid else None)
+        entry["device_info"] = (clean_device(msg.get("device"))
+                                if entry["delegate_claim"] else None)
+        listed = msg.get("devices")
+        entry["devices"] = ([str(d) for d in listed[:1000]]
+                            if isinstance(listed, list) else [])
         if wid not in self.workers:
             log.info("worker joined: id=%s name=%s caps=%d",
                      wid, entry["name"], len(entry["caps"]))
         self.workers[wid] = entry
+        self._link_device(wid)
+        self._prune_devices(wid)
+        for cid in entry["devices"]:
+            self._link_device(cid)
+
+    def _link_device(self, cid: str) -> None:
+        """Set ``delegate``/``device`` on entry ``cid`` when the delegate it
+        claims is a live worker (not itself a device) whose own announce lists
+        it; clear them otherwise."""
+        e = self.workers.get(cid)
+        if e is None:
+            return
+        claim = e.get("delegate_claim")
+        d = self.workers.get(claim) if claim else None
+        ok = d is not None and not d.get("delegate") and cid in (d.get("devices") or ())
+        e["delegate"] = claim if ok else None
+        e["device"] = e.get("device_info") if ok else None
+
+    def _prune_devices(self, wid: str) -> None:
+        """Drop devices of delegate ``wid`` that its latest announce no longer
+        lists (``devices``, core spec 14.6), at once rather than 90 s later.
+        Only linked devices: a worker merely claiming ``wid`` stays a worker."""
+        keep = set(self.workers[wid].get("devices") or ())
+        for cid in [c for c, e in self.workers.items()
+                    if e.get("delegate") == wid and c not in keep]:
+            log.info("device dropped by its delegate: id=%s name=%s",
+                     cid, self.workers[cid].get("name", cid))
+            self.workers.pop(cid, None)
 
     def _announced_caps(self, wid: str, msg: dict, entry: dict) -> list:
         """The cap list for an announce. A full announce carries ``caps``. A
@@ -516,6 +558,8 @@ class BandClient:
         deadline = loop.time() + timeout
         try:
             payload, route = self._encode_request(msg, target, feats)
+            if not route:
+                route = self._delegate_route(entry)
             async with _timeout(timeout):
                 await self._send(payload, route)
                 reply = await fut
@@ -528,6 +572,18 @@ class BandClient:
         if "drop" in reply and "result" not in reply and "error" not in reply:
             reply = await self._pull_reply(reply, max(deadline - loop.time(), 0.0))
         return reply
+
+    def _delegate_route(self, entry: dict | None) -> int:
+        """A device declares no route of its own (its delegate answers for
+        it), so address the call to the delegate's route when it has one:
+        the delegate alone receives it instead of the whole band. 0 = send
+        it broadcast, as before."""
+        delegate = (entry or {}).get("delegate")
+        d = self.workers.get(delegate) if delegate else None
+        if d is None or not self.transport.route_id \
+                or envelope.F_ROUTE not in envelope.features_of(d):
+            return 0
+        return route_id_for(delegate)
 
     def _new_id(self, target: str | None) -> str:
         """A request id whose reply drop id from ``target`` (see
@@ -715,6 +771,11 @@ class BandClient:
                 for wid in stale:
                     name = self.workers[wid].get("name", wid)
                     log.info("worker stale, evicting: id=%s name=%s", wid, name)
+                    self.workers.pop(wid, None)
+                # A delegate gone takes its devices with it: nothing answers
+                # for them any more.
+                for wid in [c for c, e in self.workers.items()
+                            if e.get("delegate") and e["delegate"] not in self.workers]:
                     self.workers.pop(wid, None)
             except asyncio.CancelledError:
                 break

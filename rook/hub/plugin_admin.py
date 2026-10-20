@@ -27,6 +27,7 @@ import pkgutil
 import time
 from typing import Any
 
+from ..core.devices import is_device
 from ..core.authz import TIERS
 from . import plugin_profiles as pp
 from .plugin_catalog import NOT_IMPLEMENTED, CatalogCache
@@ -191,7 +192,7 @@ class PluginAdmin:
         hub_id = getattr(self.node, "worker_id", None)
         try:
             return {wid: w for wid, w in client.workers.items()
-                    if wid != hub_id and not w.get("local")}
+                    if wid != hub_id and not w.get("local") and not is_device(w)}
         except Exception:
             return {}
 

@@ -24,6 +24,7 @@ import logging
 import time
 import uuid
 
+from ..core.devices import is_device
 from .attribution import norm
 
 log = logging.getLogger("rook.band_mcp.hygiene")
@@ -84,7 +85,7 @@ class Hygiene:
         if not host or host == "web":
             return None
         for wid, w in self.client.workers.items():
-            if norm(w.get("name"), "") == host:
+            if norm(w.get("name"), "") == host and not is_device(w):
                 return wid, w
         return None
 
