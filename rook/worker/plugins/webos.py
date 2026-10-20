@@ -44,6 +44,7 @@ import socket
 import time
 from typing import Any
 
+from ...core.aiocompat import timeout as aio_timeout
 from ...core.db import atomic_write_json
 from ...core.devices import Device, valid_device_name
 from ...core.pluginkit import ArgError, fail, require_str
@@ -143,20 +144,20 @@ class WebOSTV(Device):
 
     async def stop(self) -> None:
         self._stopped = True   # a call still in flight must not reconnect
+        self._wake.set()
         task, self._task = self._task, None
         if task is not None:
             task.cancel()
-            try:
-                await task
-            except (asyncio.CancelledError, Exception):
-                pass
+            # Bounded: a loop that somehow missed the cancel still ends on
+            # _stopped, and stop() must never hang the plugin host.
+            await asyncio.wait({task}, timeout=5)
         if self.client is not None:
             await self.client.close()
             self.client = None
 
     async def _run(self) -> None:
         delay = RETRY_MIN
-        while True:
+        while not self._stopped:
             try:
                 client = await self._connect()
             except asyncio.CancelledError:
@@ -178,8 +179,11 @@ class WebOSTV(Device):
                 # as for a failed connect, not a tight reconnect loop.
             self._wake.clear()
             try:
-                await asyncio.wait_for(self._wake.wait(), delay)
-            except asyncio.TimeoutError:
+                # Not asyncio.wait_for: on 3.11 it can swallow stop()'s cancel
+                # when the wake lands at the same moment.
+                async with aio_timeout(delay):
+                    await self._wake.wait()
+            except (TimeoutError, asyncio.TimeoutError):
                 pass
             delay = min(delay * 2, RETRY_MAX)
 
@@ -470,7 +474,7 @@ class WebOSTV(Device):
                                        prompt_timeout=max(10, min(int(timeout), 110)))
         except ssap.NotPaired as e:
             fail(f"{self.name}: pairing refused ({e})")
-        except asyncio.TimeoutError:
+        except (TimeoutError, asyncio.TimeoutError):
             fail(f"{self.name}: nobody accepted the prompt in time")
         except Exception as e:
             fail(f"{self.name} is off or unreachable ({type(e).__name__}: {e})")

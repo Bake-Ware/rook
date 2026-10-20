@@ -22,6 +22,8 @@ import ssl
 import importlib.util
 from typing import Any, Awaitable, Callable
 
+from ...core.aiocompat import timeout as aio_timeout
+
 log = logging.getLogger("rook.worker.webos")
 
 PORT = 3000
@@ -152,7 +154,10 @@ class SSAPClient:
             await self._ws.send(json.dumps({"type": "register", "id": "register_0",
                                             "payload": payload}))
             wait = prompt_timeout if (prompt and not client_key) else self.request_timeout
-            key = await asyncio.wait_for(self._await_registered(), wait)
+            # Not asyncio.wait_for: on 3.11 it can swallow a cancellation
+            # that lands as the awaited thing finishes (aiocompat).
+            async with aio_timeout(wait):
+                key = await self._await_registered()
         except BaseException:
             await self.close()
             raise
@@ -216,7 +221,8 @@ class SSAPClient:
         await self._ws.send(json.dumps({"type": "request", "id": mid,
                                         "uri": f"ssap://{uri}", "payload": payload or {}}))
         try:
-            msg = await asyncio.wait_for(fut, timeout or self.request_timeout)
+            async with aio_timeout(timeout or self.request_timeout):
+                msg = await fut
         finally:
             self._pending.pop(mid, None)
         body = msg.get("payload") or {}
