@@ -156,11 +156,13 @@ def cue(m, e):
                (74, 1), (76, .5), (78, .5), (81, 1), (79, .5), (78, .5), (76, 1.5), (74, .5), (76, 2),
                (78, 1), (79, .5), (81, .5), (83, 1), (81, .5), (79, .5), (78, 1), (76, 1), (74, 2),
                (71, .5), (74, .5), (76, 1), (78, .5), (76, .5), (74, 1), (69, 1), (74, 2.5)]
-        tt = t
+        bars = int(e.get('bars', 8))
+        tt, beats = t, 0.0
         for note, d in mel:
+            if beats >= bars * 4: break
             m.add(tt, tone(hz(note), d * b + 1.2, 'piano', a=.002, d=.2, s=.5, r=.6) * .16, pan=.15)
-            tt += d * b
-        for i, root in enumerate([50, 48, 55, 50, 50, 48, 55, 50]):        # left hand
+            tt += d * b; beats += d
+        for i, root in enumerate([50, 48, 55, 50, 50, 48, 55, 50][:bars]):        # left hand
             for j, n in enumerate((root, root + 7, root + 12)):
                 m.add(t + i * 4 * b + j * b, tone(hz(n), 1.6, 'piano', a=.002) * .07, pan=-.2)
 
