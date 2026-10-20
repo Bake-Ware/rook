@@ -392,22 +392,46 @@ class BandClient:
             "facts": clean_facts(facts),
             "last_seen": time.time(),
         })
-        # A device worker (rook.core.devices): answered for by its delegate.
-        # Self-reported like facts; nothing here can verify it.
-        delegate = msg.get("delegate")
-        entry["delegate"] = (delegate if isinstance(delegate, str) and delegate
-                             and delegate != wid else None)
-        entry["device"] = clean_device(msg.get("device")) if entry["delegate"] else None
+        # A device worker (rook.core.devices) is one its delegate answers for.
+        # Its claim is kept apart and only becomes ``delegate``/``device``
+        # once the delegate's own announce lists it (_link_device), so no
+        # worker can make itself a "device" (undeauthable, never updated) by
+        # saying so.
+        claim = msg.get("delegate")
+        entry["delegate_claim"] = (claim if isinstance(claim, str) and claim
+                                   and claim != wid else None)
+        entry["device_info"] = (clean_device(msg.get("device"))
+                                if entry["delegate_claim"] else None)
+        listed = msg.get("devices")
+        entry["devices"] = ([str(d) for d in listed[:1000]]
+                            if isinstance(listed, list) else [])
         if wid not in self.workers:
             log.info("worker joined: id=%s name=%s caps=%d",
                      wid, entry["name"], len(entry["caps"]))
         self.workers[wid] = entry
-        self._prune_devices(wid, msg.get("devices"))
+        self._link_device(wid)
+        self._prune_devices(wid)
+        for cid in entry["devices"]:
+            self._link_device(cid)
 
-    def _prune_devices(self, wid: str, listed) -> None:
-        """Drop devices that delegate ``wid`` no longer lists in its announce
-        (``devices``, core spec 14.6), at once rather than 90 s later."""
-        keep = {str(d) for d in listed[:1000]} if isinstance(listed, list) else set()
+    def _link_device(self, cid: str) -> None:
+        """Set ``delegate``/``device`` on entry ``cid`` when the delegate it
+        claims is a live worker (not itself a device) whose own announce lists
+        it; clear them otherwise."""
+        e = self.workers.get(cid)
+        if e is None:
+            return
+        claim = e.get("delegate_claim")
+        d = self.workers.get(claim) if claim else None
+        ok = d is not None and not d.get("delegate") and cid in (d.get("devices") or ())
+        e["delegate"] = claim if ok else None
+        e["device"] = e.get("device_info") if ok else None
+
+    def _prune_devices(self, wid: str) -> None:
+        """Drop devices of delegate ``wid`` that its latest announce no longer
+        lists (``devices``, core spec 14.6), at once rather than 90 s later.
+        Only linked devices: a worker merely claiming ``wid`` stays a worker."""
+        keep = set(self.workers[wid].get("devices") or ())
         for cid in [c for c, e in self.workers.items()
                     if e.get("delegate") == wid and c not in keep]:
             log.info("device dropped by its delegate: id=%s name=%s",
@@ -747,6 +771,11 @@ class BandClient:
                 for wid in stale:
                     name = self.workers[wid].get("name", wid)
                     log.info("worker stale, evicting: id=%s name=%s", wid, name)
+                    self.workers.pop(wid, None)
+                # A delegate gone takes its devices with it: nothing answers
+                # for them any more.
+                for wid in [c for c, e in self.workers.items()
+                            if e.get("delegate") and e["delegate"] not in self.workers]:
                     self.workers.pop(wid, None)
             except asyncio.CancelledError:
                 break

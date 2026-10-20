@@ -9,6 +9,7 @@ import time
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from ..core.devices import is_device
 from .auth_throttle import note
 
 
@@ -22,7 +23,8 @@ def route(manager, client, token: str) -> Route:
             return JSONResponse({'error': 'unauthorized'}, 401)
         now = time.time()
         workers = getattr(client, 'workers', {}) or {}
-        live = [w for w in workers.values() if now - w.get('last_seen', 0.0) < 90]
+        live = [w for w in workers.values()
+                if now - w.get('last_seen', 0.0) < 90 and not is_device(w)]
         body = {'ok': True, 'workers': len(live), 'workers_known': len(workers)}
         if hasattr(manager, 'stats'):
             body['mcp'] = manager.stats()

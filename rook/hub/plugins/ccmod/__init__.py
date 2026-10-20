@@ -35,6 +35,7 @@ import re
 import time
 from typing import Any
 
+from ....core.devices import is_device
 from ....core import context
 from ....core.plugin import Plugin, capability, place, setting
 from ....worker import ccmod_hook as hook
@@ -169,7 +170,7 @@ class ClaudeCodeRules(Plugin):
         for wid, w in workers.items():
             if not include_hub and (wid == hub_id or w.get("local")):
                 continue
-            if w.get("delegate"):
+            if is_device(w):
                 continue  # a device worker runs no Claude Code and has no events
             out[wid] = {**w, "worker_id": wid}
         return out

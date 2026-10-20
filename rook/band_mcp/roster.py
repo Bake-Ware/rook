@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import time
 
+from ..core.devices import is_device
 from . import envelope
 
 ALL_FIELDS = ("worker_id", "name", "description", "serves", "band", "caps", "plugins", "version",
@@ -121,7 +122,7 @@ def caps_view(workers: dict, prefix: str | None = None, worker: str | None = Non
     local = {names[wid] for wid, w in workers.items() if w.get("local")}
     # Device workers (a TV, a switch) hold their own few caps; counting them
     # would turn every worker cap from "*" into "all but the TVs".
-    devices = {names[wid] for wid, w in workers.items() if w.get("delegate")}
+    devices = {names[wid] for wid, w in workers.items() if is_device(w)}
     everyone = set(names.values()) - local - devices
     out: dict = {}
     for cap, holders in sorted(by_cap.items()):

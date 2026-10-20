@@ -28,9 +28,14 @@ class FakeTV:
         self.app = "youtube.leanback.v4"
         self.power = "Active"
         self.volume = {"volume": 12, "muteStatus": False}
+        self.deny_apps = False
+        self.drop_at_once = False
+        self.registers = 0
 
     def payload(self, uri, body):
         uri = uri.removeprefix("ssap://")
+        if uri == ssap.LAUNCH_POINTS and self.deny_apps:
+            return {"returnValue": False, "errorText": "Denied method call"}
         if uri == ssap.LAUNCH_POINTS:
             return {"launchPoints": [{"id": "youtube.leanback.v4", "title": "YouTube"},
                                      {"id": "netflix", "title": "Netflix"},
@@ -71,6 +76,13 @@ class FakeTV:
         if ws.request.path == "/pointer":
             async for raw in ws:
                 self.buttons.append(raw)
+            return
+        if self.drop_at_once:
+            self.registers += 1
+            raw = json.loads(await ws.recv())
+            await ws.send(json.dumps({"type": "registered", "id": raw.get("id"),
+                                      "payload": {"client-key": "k1"}}))
+            await ws.close()
             return
         async for raw in ws:
             msg = json.loads(raw)
@@ -137,7 +149,8 @@ def test_tv_list_parsing():
     assert webos.parse_tvs("office-tv=192.0.2.10, den=tv.example.com@AA-BB-CC-DD-EE-FF\n") == [
         ("office-tv", "192.0.2.10", None), ("den", "tv.example.com", "aa:bb:cc:dd:ee:ff")]
     assert webos.parse_tvs("") == []
-    for bad in ("office-tv", "=192.0.2.1", "a=b@zz", "x=1,X=2", "bad/name=1"):
+    for bad in ("office-tv", "=192.0.2.1", "a=b@zz", "x=1,X=2", "bad/name=1",
+                "office-tv=@aa:bb:cc:dd:ee:ff"):
         with pytest.raises(ValueError):
             webos.parse_tvs(bad)
 
@@ -149,6 +162,12 @@ def test_plugin_is_off_without_tvs(tmp_path, monkeypatch):
     assert not p.available() and "webos.tvs" in p.unavailable_reason()
     monkeypatch.setenv("WEBOS_TVS", "nonsense")
     assert not p.available()
+
+
+def test_plugin_is_off_without_websockets(tmp_path, monkeypatch):
+    p = _plugin(tmp_path, monkeypatch)
+    monkeypatch.setattr(ssap, "supported", lambda: False)
+    assert not p.available() and "websockets" in p.unavailable_reason()
 
 
 def test_magic_packet():
@@ -165,7 +184,8 @@ async def test_tv_state_heartbeat_and_status(tv, tmp_path, monkeypatch):
     try:
         [dev] = p.devices()
         assert dev.name == "office-tv" and dev.NAMESPACE == "tv"
-        await _until(lambda: dev.state.get("power") == "Active" and dev.state.get("volume") == 12)
+        await _until(lambda: dev.state.get("power") == "Active" and dev.state.get("volume") == 12
+                     and dev.state.get("app") == "YouTube")
         assert dev.heartbeat() == {"on": True, "app": "YouTube", "volume": 12, "muted": False}
         assert dev.info() == {"type": "tv", "driver": "webos", "model": "OLED55CXAUA"}
         st = await dev._status()
@@ -347,3 +367,66 @@ async def test_tvs_become_device_workers_of_the_delegate(tv, tmp_path, monkeypat
                                         "result": {"ok": True}}
     finally:
         await w.host.stop()
+
+
+@pytest.mark.asyncio
+async def test_state_stays_live_when_a_catalogue_fails(tv, tmp_path, monkeypatch):
+    """Review #5: subscriptions come first, so a refused app list leaves the
+    TV on and its app known (by id)."""
+    tv.deny_apps = True
+    p = _plugin(tmp_path, monkeypatch)
+    await p.start()
+    [dev] = p.devices()
+    try:
+        await _until(lambda: dev.state.get("power") == "Active")
+        assert dev.heartbeat()["on"] is True and dev.heartbeat()["app"] == "youtube.leanback.v4"
+        assert (await dev._power_on()) == {"ok": True, "already_on": True}
+    finally:
+        await p.stop()
+
+
+@pytest.mark.asyncio
+async def test_pairing_does_not_hold_up_the_live_connection(tv, tmp_path, monkeypatch):
+    """Review #8: a pairing in progress or refused leaves the paired
+    connection serving."""
+    p = _plugin(tmp_path, monkeypatch)
+    await p.start()
+    [dev] = p.devices()
+    try:
+        await _until(lambda: dev.state.get("reachable"))
+        tv.accept_prompt = False
+        pairing = asyncio.ensure_future(dev._pair(timeout=10))
+        await asyncio.sleep(0.01)
+        assert await dev._toast("still here") == {"ok": True}   # not blocked by the prompt
+        with pytest.raises(CapError, match="pairing refused"):
+            await pairing
+        assert dev.state["reachable"] and await dev._toast("and after") == {"ok": True}
+        assert json.loads((tmp_path / "webos" / "keys.json").read_text()) == {"office-tv": "k1"}
+    finally:
+        await p.stop()
+
+
+@pytest.mark.asyncio
+async def test_a_stopped_tv_does_not_reconnect(tv, tmp_path, monkeypatch):
+    p = _plugin(tmp_path, monkeypatch)
+    await p.start()
+    [dev] = p.devices()
+    await _until(lambda: dev.state.get("reachable"))
+    await p.stop()
+    with pytest.raises(CapError, match="off or unreachable"):
+        await dev._toast("hi")
+    assert dev.client is None
+
+
+@pytest.mark.asyncio
+async def test_a_connection_that_drops_at_once_backs_off(tv, tmp_path, monkeypatch):
+    """Review #6: no tight reconnect loop when the TV keeps dropping us."""
+    p = _plugin(tmp_path, monkeypatch)
+    tv.drop_at_once = True
+    monkeypatch.setattr(webos, "RETRY_MIN", 0.2)
+    await p.start()
+    try:
+        await asyncio.sleep(1.0)
+        assert 1 <= tv.registers <= 4, tv.registers
+    finally:
+        await p.stop()

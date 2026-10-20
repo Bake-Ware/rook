@@ -461,6 +461,10 @@ class Worker:
         # registry and is answered in its name; open calls are ours alone.
         device = None
         if target and target != self.worker_id:
+            if self.devices.get(target) is not None:
+                # Re-read before use: its plugin may have been reloaded or
+                # disabled since the last announce built the table.
+                self.devices.refresh(self.plugins)
             device = self.devices.get(target)
             if device is None:
                 return  # addressed to another worker

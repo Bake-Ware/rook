@@ -75,8 +75,14 @@ class DeviceTable:
                                 p.NAMESPACE, dev.key)
                     continue
                 old = self._entries.get(wid)
-                fresh[wid] = old if old is not None and old.device is dev \
-                    else self._build(wid, p.NAMESPACE, dev)
+                if old is not None and old.device is dev:
+                    fresh[wid] = old
+                    continue
+                try:
+                    fresh[wid] = self._build(wid, p.NAMESPACE, dev)
+                except Exception:
+                    # One broken device must not stop the delegate announcing.
+                    log.exception("%s: device %r left out", p.NAMESPACE, dev.name)
         self._entries = fresh
         return self.entries()
 

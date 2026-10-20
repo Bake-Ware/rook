@@ -31,6 +31,7 @@ import shutil
 import time
 from pathlib import Path
 from typing import Any, Callable
+from ..core.devices import is_device
 
 log = logging.getLogger("rook.hub.update_feed")
 
@@ -334,7 +335,7 @@ def member_kind(w: dict) -> dict:
             "band": w.get("band"), "build": build, "version": w.get("version")}
     if "is_hub" in (w.get("roles") or ()):
         return {**base, "kind": "hub"}
-    if w.get("delegate"):
+    if is_device(w):
         return {**base, "kind": "device"}
     if app.get("platform"):
         return {**base, "kind": "app", "platform": str(app.get("platform")),

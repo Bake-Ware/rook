@@ -19,9 +19,8 @@ import itertools
 import json
 import logging
 import ssl
+import importlib.util
 from typing import Any, Awaitable, Callable
-
-import websockets
 
 log = logging.getLogger("rook.worker.webos")
 
@@ -75,6 +74,18 @@ MEDIA = {
 }
 
 
+def supported() -> bool:
+    """Whether ``websockets`` is importable here. A Rook dependency, but a
+    worker bundle on a bare system Python may lack it; then webos stays off
+    instead of failing to import."""
+    return importlib.util.find_spec("websockets") is not None
+
+
+def _ws():
+    import websockets   # deferred: see supported()
+    return websockets
+
+
 class SSAPError(Exception):
     """The TV refused or could not complete a request."""
 
@@ -106,6 +117,7 @@ class SSAPClient:
 
     async def _open(self):
         """``ws://:3000`` first; ``wss://:3001`` (self-signed) when refused."""
+        websockets = _ws()
         try:
             return await websockets.connect(
                 f"ws://{self.host}:{PORT}", open_timeout=self.connect_timeout,
@@ -230,6 +242,7 @@ class SSAPClient:
         sock = (await self.request(POINTER_SOCKET)).get("socketPath")
         if not sock:
             raise SSAPError("the TV gave no input socket")
+        websockets = _ws()
         kwargs: dict[str, Any] = {"open_timeout": self.connect_timeout}
         if sock.startswith("wss:"):
             ctx = ssl.create_default_context()

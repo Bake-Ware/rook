@@ -278,3 +278,84 @@ def test_devices_are_not_update_members():
     assert member_kind({"worker_id": "d", "name": "tv", "build": 900, "delegate": "w"})["kind"] \
         == "device"
     assert member_kind({"worker_id": "w", "name": "hub-box", "build": 900})["kind"] == "worker"
+
+
+@pytest.mark.asyncio
+async def test_a_device_claim_counts_only_when_the_delegate_lists_it(worker):
+    """Review #1: a worker can't make itself an undeauthable 'device' by
+    claiming a delegate; the delegate's own announce has to list it."""
+    from rook.core.devices import is_device
+    c = _client()
+    await worker.announce()
+    own, desk, porch = _announces(worker)[-3:]
+    # A device announce before its delegate's: not linked yet.
+    c._handle_announce(desk)
+    assert not is_device(c.workers[desk["worker_id"]])
+    c._handle_announce(own)                       # the delegate lists it: linked
+    assert is_device(c.workers[desk["worker_id"]])
+    # An impostor claiming the same delegate stays an ordinary worker.
+    c._handle_announce({"kind": "announce", "worker_id": "e" * 32, "name": "sneaky",
+                        "caps": ["shell.exec"], "delegate": worker.worker_id,
+                        "device": {"type": "tv"}})
+    sneaky = c.workers["e" * 32]
+    assert not is_device(sneaky) and sneaky["device"] is None
+    c._handle_announce({"kind": "announce", "worker_id": "f" * 32, "name": "ghost",
+                        "caps": [], "delegate": "0" * 32})     # delegate never seen
+    assert not is_device(c.workers["f" * 32])
+    c._handle_announce(own)                       # re-announce: the impostor is not pruned
+    assert "e" * 32 in c.workers and not is_device(c.workers["e" * 32])
+
+
+@pytest.mark.asyncio
+async def test_a_reloaded_plugin_never_answers_through_its_old_devices(worker):
+    """Review #2: calls re-read the table, so a device of a stopped plugin
+    object is not used between announces."""
+    await worker.announce()
+    desk = device_worker_id(worker.worker_id, "lamps", "desk")
+    old = worker.lamps.lamps[0]
+    fresh = Lamps(("desk",))
+    worker.plugins[worker.plugins.index(worker.lamps)] = fresh   # a reload
+    [reply] = await _call(worker, "lamp.set", target=desk, on=True)
+    assert reply["ok"] and fresh.lamps[0].on and not old.on
+    worker.plugins.remove(fresh)                                  # a disable
+    assert await _call(worker, "lamp.set", target=desk, on=False) == []
+
+
+@pytest.mark.asyncio
+async def test_one_broken_device_does_not_stop_the_delegate_announcing(worker):
+    """Review #3."""
+    class Broken(Lamp):
+        def caps(self):
+            raise RuntimeError("boom")
+    worker.lamps.lamps.append(Broken("bad", "bad"))
+    await worker.announce()
+    own = [m for m in _announces(worker) if m["worker_id"] == worker.worker_id][-1]
+    assert len(own["devices"]) == 2
+    assert {m["name"] for m in _announces(worker)} >= {"desk", "porch"}
+
+
+@pytest.mark.asyncio
+async def test_devices_leave_with_their_delegate(worker):
+    from rook.band_mcp import client as client_mod
+    c = _client()
+    await worker.announce()
+    for m in _announces(worker):
+        c._handle_announce(m)
+    c.workers[worker.worker_id]["last_seen"] = 0.0      # the delegate went quiet
+    for e in c.workers.values():
+        if e["worker_id"] != worker.worker_id:
+            e["last_seen"] = 10 ** 12                    # its devices look fresh
+    import asyncio
+    sleeps = []
+
+    async def fake_sleep(s):
+        sleeps.append(s)
+        if len(sleeps) > 1:
+            raise asyncio.CancelledError
+    orig = client_mod.asyncio.sleep
+    client_mod.asyncio.sleep = fake_sleep
+    try:
+        await c._gc_loop()
+    finally:
+        client_mod.asyncio.sleep = orig
+    assert c.workers == {}

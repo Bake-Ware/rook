@@ -29,6 +29,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
+from ..core.devices import is_device
 from ..core import authz as core_authz
 from ..core.context import caller_identity
 from ..core.facts import NodeFacts, local_facts, wire_facts
@@ -329,7 +330,7 @@ class HubNode:
             # Ordinary workers first: a device worker only when nothing else
             # has the cap (its common caps, caps.describe and info.ping, would
             # otherwise win by name).
-            holders = sorted((bool(w.get("delegate")), w.get("name") or wid, wid)
+            holders = sorted((is_device(w), w.get("name") or wid, wid)
                              for wid, w in roster.items()
                              if cap in w.get("caps", []) and wid != self.worker_id)
             if not holders:

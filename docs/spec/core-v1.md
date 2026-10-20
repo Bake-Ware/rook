@@ -1065,8 +1065,12 @@ the device by name like any worker. A device announce is a normal announce
   `"d"` + the first 31 hex digits of SHA-256 over `device`, the delegate's
   id, the delegating plugin's namespace and the device's key, NUL-separated)
   and send the device announces right after its own, at the same cadence.
-- The delegate's own announce lists the devices in `devices`; a client
-  SHOULD drop a device whose delegate's announce no longer lists it.
+- The delegate's own announce lists the devices in `devices`. A client
+  MUST treat a node as a device only while its claimed delegate is a live
+  node (not itself a device) whose announce lists it; until then it is an
+  ordinary node, so claiming a delegate can't take a worker out of deauth or
+  updates. A client SHOULD drop a device its delegate no longer lists, and
+  its devices when the delegate is evicted.
 - A device announce MUST NOT list `route` (or any feature) in `features`:
   the device declares no route id. Callers send it a broadcast CHANNEL
   request with `target` = the device's id, or address the request to the

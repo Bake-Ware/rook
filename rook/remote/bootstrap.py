@@ -15,6 +15,7 @@ from pathlib import Path
 
 from aiohttp import web
 
+from ..core.devices import is_device
 from ..core.throttle import client_keys, message as throttle_message, shared as shared_throttle
 
 log = logging.getLogger(__name__)
@@ -2250,7 +2251,7 @@ class CombinedServer:
                 for wid, w in list(self._band.workers.items()):
                     if self._entry_banned(w, wid):
                         continue  # deauthed — never feed a banned node updates
-                    if w.get("delegate"):
+                    if is_device(w):
                         continue  # a device worker updates with its delegate
                     if "worker.apply" not in (w.get("caps") or []):
                         continue  # can't receive an in-band push yet
@@ -3025,11 +3026,11 @@ class CombinedServer:
         # Fill in whichever of (name, worker_id) is missing from the live roster.
         live = self._band.workers.get(worker_id) if worker_id else None
         if live is None and name:
-            for w in self._band.workers.values():
-                if w.get("name") == name:
-                    live = w
-                    break
-        if live is not None and live.get("delegate"):
+            # A worker before a device of the same name: a ban by name is for
+            # the machine.
+            named = [w for w in self._band.workers.values() if w.get("name") == name]
+            live = next((w for w in named if not is_device(w)), named[0] if named else None)
+        if live is not None and is_device(live):
             # A device runs no worker of its own to park; deauthing its
             # delegate (or removing it from the delegate's config) is the way.
             return web.json_response(

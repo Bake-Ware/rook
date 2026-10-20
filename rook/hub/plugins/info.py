@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import time
 
+from ...core.devices import is_device
 from ...core.plugin import CORE_API_VERSION, Plugin, capability, place, setting
 
 
@@ -54,7 +55,7 @@ class HubInfo(Plugin):
         if node is not None and node.client is not None:
             try:
                 workers = sum(1 for wid, w in node.client.workers.items()
-                              if wid != node.worker_id and not w.get("delegate"))
+                              if wid != node.worker_id and not is_device(w))
             except Exception:
                 workers = 0
         return {

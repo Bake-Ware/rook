@@ -39,12 +39,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import re
 import socket
 import time
 from typing import Any
 
+from ...core.db import atomic_write_json
 from ...core.devices import Device, valid_device_name
 from ...core.pluginkit import ArgError, fail, require_str
 from ..plugin import Plugin, capability, setting
@@ -59,6 +59,7 @@ BUTTONS = ("HOME", "BACK", "UP", "DOWN", "LEFT", "RIGHT", "ENTER", "MENU", "EXIT
            "CHANNELDOWN", "DASH", "ASTERISK", "CC", "QMENU", "1", "2", "3", "4", "5",
            "6", "7", "8", "9", "0")
 RETRY_MIN, RETRY_MAX = 5.0, 30.0
+STABLE_SECS = 60.0   # a connection that lasted this long resets the backoff
 
 
 def parse_tvs(spec: str) -> list[tuple[str, str, str | None]]:
@@ -74,10 +75,12 @@ def parse_tvs(spec: str) -> list[tuple[str, str, str | None]]:
         if not sep or not rest or not valid_device_name(name):
             raise ValueError(f"bad TV entry {part!r}: expected name=host")
         host, _, mac = rest.partition("@")
-        mac = mac.strip() or None
+        host, mac = host.strip(), mac.strip() or None
+        if not host:
+            raise ValueError(f"bad TV entry {part!r}: no host")
         if mac and not _MAC.match(mac):
             raise ValueError(f"bad MAC address in {part!r}")
-        out.append((name, host.strip(), mac.lower().replace("-", ":") if mac else None))
+        out.append((name, host, mac.lower().replace("-", ":") if mac else None))
     names = [n.lower() for n, _, _ in out]
     if len(names) != len(set(names)):
         raise ValueError("TV names must be unique")
@@ -106,6 +109,7 @@ class WebOSTV(Device):
         self._lock = asyncio.Lock()
         self._wake = asyncio.Event()
         self._task: asyncio.Task | None = None
+        self._stopped = False
         self.state: dict[str, Any] = {"on": False, "reachable": False,
                                       "paired": bool(plugin.key_for(self))}
         self.apps: dict[str, str] = {}          # id -> title
@@ -138,6 +142,7 @@ class WebOSTV(Device):
             self._task = asyncio.get_running_loop().create_task(self._run())
 
     async def stop(self) -> None:
+        self._stopped = True   # a call still in flight must not reconnect
         task, self._task = self._task, None
         if task is not None:
             task.cancel()
@@ -163,10 +168,14 @@ class WebOSTV(Device):
                 self._down(error=f"{type(e).__name__}: {e}")
                 client = None
             if client is not None:
-                delay = RETRY_MIN
+                since = time.monotonic()
                 await client.closed.wait()
                 self._down(error="connection closed")
-                continue
+                if time.monotonic() - since >= STABLE_SECS:
+                    delay = RETRY_MIN
+                    continue
+                # Dropped soon after connecting (standby, flaky Wi-Fi): back off
+                # as for a failed connect, not a tight reconnect loop.
             self._wake.clear()
             try:
                 await asyncio.wait_for(self._wake.wait(), delay)
@@ -180,39 +189,47 @@ class WebOSTV(Device):
             self.state["paired"] = paired
         self.client = None
 
-    async def _connect(self, *, prompt: bool = False, key: str | None = None,
-                       prompt_timeout: float = 60.0) -> ssap.SSAPClient:
+    async def _connect(self) -> ssap.SSAPClient:
         """The live client, connecting (and registering) if needed."""
         async with self._lock:
-            if self.client is not None and self.client.connected and not prompt and key is None:
+            if self._stopped:
+                raise ssap.SSAPError("the webos plugin stopped driving this TV")
+            if self.client is not None and self.client.connected:
                 return self.client
-            if self.client is not None:
-                await self.client.close()
-                self.client = None
-            use_key = key or (None if prompt else self.plugin.key_for(self))
             client = ssap.SSAPClient(self.host)
-            got = await client.connect(use_key, prompt=prompt, prompt_timeout=prompt_timeout)
-            if got and got != self.plugin.key_for(self):
-                self.plugin.save_key(self, got)
-            self.client = client
-            self.state.update(reachable=True, paired=True, error=None, seen=time.time())
-            try:
-                await self._prime(client)
-            except Exception:
-                log.debug("%s: priming state failed", self.name, exc_info=True)
-            return client
+            await client.connect(self.plugin.key_for(self))
+            return await self._adopt(client)
+
+    async def _adopt(self, client: ssap.SSAPClient) -> ssap.SSAPClient:
+        """Make a registered client the live one (lock held)."""
+        if self.client is not None and self.client is not client:
+            await self.client.close()
+        self.client = client
+        self.state.update(reachable=True, paired=True, error=None, seen=time.time())
+        await self._prime(client)
+        return client
 
     async def _prime(self, c: ssap.SSAPClient) -> None:
-        """Fill the catalogues once, then let subscriptions keep state live."""
-        points = await c.request(ssap.LAUNCH_POINTS)
-        self.apps = {p["id"]: p.get("title") or p["id"]
-                     for p in points.get("launchPoints") or [] if p.get("id")}
+        """Subscribe first, so on/off, the app and the volume are live even if
+        a catalogue request fails; then fill the catalogues, each on its own."""
+        for uri, cb in ((ssap.POWER_STATE, self._on_power), (ssap.FOREGROUND_APP, self._on_app),
+                        ("audio/getVolume", self._on_volume)):
+            try:
+                await c.subscribe(uri, cb)
+            except Exception:
+                log.debug("%s: subscribing to %s failed", self.name, uri, exc_info=True)
+        try:
+            points = await c.request(ssap.LAUNCH_POINTS)
+            self.apps = {p["id"]: p.get("title") or p["id"]
+                         for p in points.get("launchPoints") or [] if p.get("id")}
+        except Exception:
+            log.debug("%s: listing apps failed", self.name, exc_info=True)
         try:
             self.inputs = [
                 {"id": d.get("id"), "label": d.get("label"), "app": d.get("appId"),
                  "connected": bool(d.get("connected"))}
                 for d in (await c.request(ssap.INPUTS)).get("devices") or []]
-        except ssap.SSAPError:
+        except Exception:
             self.inputs = []
         try:
             info = await c.request(ssap.CONNECTION_INFO)
@@ -221,15 +238,14 @@ class WebOSTV(Device):
             if mac and _MAC.match(mac) and mac.lower() != (self.mac or ""):
                 self.mac = mac.lower()
                 self.plugin.save_mac(self, self.mac)
-        except ssap.SSAPError:
+        except Exception:
             pass
         try:
             self.model = (await c.request(ssap.SYSTEM_INFO)).get("modelName") or self.model
-        except ssap.SSAPError:
+        except Exception:
             pass
-        await c.subscribe(ssap.FOREGROUND_APP, self._on_app)
-        await c.subscribe(ssap.POWER_STATE, self._on_power)
-        await c.subscribe("audio/getVolume", self._on_volume)
+        if self.state.get("app_id"):   # name it now that the catalogues are in
+            self.state["app"] = self.title(self.state["app_id"])
 
     def title(self, app_id: str) -> str:
         """An app's title; external inputs (``com.webos.app.hdmi1``) are not
@@ -446,15 +462,25 @@ class WebOSTV(Device):
         ``timeout`` seconds; with ``key``, install a key paired elsewhere."""
         if key is not None:
             key = require_str(key, "key", max_len=200)
+        # On a connection of its own: the TV's live one keeps serving other
+        # caps while someone walks to the TV, and stays if pairing fails.
+        client = ssap.SSAPClient(self.host)
         try:
-            await self._connect(prompt=key is None, key=key,
-                                prompt_timeout=max(10, min(int(timeout), 110)))
+            got = await client.connect(key, prompt=key is None,
+                                       prompt_timeout=max(10, min(int(timeout), 110)))
         except ssap.NotPaired as e:
             fail(f"{self.name}: pairing refused ({e})")
         except asyncio.TimeoutError:
             fail(f"{self.name}: nobody accepted the prompt in time")
         except Exception as e:
             fail(f"{self.name} is off or unreachable ({type(e).__name__}: {e})")
+        self.plugin.save_key(self, got or key)
+        async with self._lock:
+            if self._stopped:
+                await client.close()
+                fail("the webos plugin stopped driving this TV")
+            await self._adopt(client)
+        self._wake.set()
         return {"ok": True, "paired": True}
 
 
@@ -493,9 +519,11 @@ class WebOSPlugin(Plugin):
             return []
 
     def available(self) -> bool:
-        return bool(self._spec())
+        return bool(self._spec()) and ssap.supported()
 
     def unavailable_reason(self) -> str:
+        if not ssap.supported():
+            return "Needs the Python websockets package (pip install websockets)."
         return "No TVs configured: set webos.tvs (name=host pairs)."
 
     # -- persisted state ---------------------------------------------------
@@ -508,12 +536,7 @@ class WebOSPlugin(Plugin):
             return {}
 
     def _save(self, fname: str, data: dict) -> None:
-        path = self.data_dir / fname
-        tmp = path.with_suffix(".tmp")
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=1)
-        os.replace(tmp, path)
+        atomic_write_json(self.data_dir / fname, data, indent=1)
 
     def key_for(self, tv: WebOSTV) -> str | None:
         return self._load("keys.json").get(tv.key) or None

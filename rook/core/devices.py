@@ -22,7 +22,9 @@ import hashlib
 import re
 from typing import Any, Callable
 
-__all__ = ["Device", "clean_device", "device_worker_id", "valid_device_name"]
+from .plugin import cap_methods
+
+__all__ = ["Device", "clean_device", "device_worker_id", "is_device", "valid_device_name"]
 
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._-]{0,62}$")
 
@@ -31,6 +33,14 @@ def valid_device_name(name: str) -> bool:
     """Device names follow worker names: letters, digits, space, ``.``, ``_``
     and ``-``, starting with a letter or digit, at most 63 characters."""
     return isinstance(name, str) and bool(_NAME.match(name))
+
+
+def is_device(entry) -> bool:
+    """Whether a hub roster entry is a device worker. The hub sets
+    ``delegate`` only once the delegate itself lists the device in its own
+    announce (``BandClient._link_device``), so a worker can't opt itself out of
+    worker-only operations (deauth, updates) by claiming one."""
+    return bool(isinstance(entry, dict) and entry.get("delegate"))
 
 
 def clean_device(block) -> dict:
@@ -82,34 +92,13 @@ class Device:
     def caps(self) -> dict[str, Callable[..., Any]]:
         """``{dotpath: bound method}`` for every ``@capability`` method,
         named under :attr:`NAMESPACE` the same way plugin caps are."""
-        out: dict[str, Callable[..., Any]] = {}
-        cls = type(self)
-        for attr_name in dir(self):
-            if isinstance(getattr(cls, attr_name, None), property):
-                continue
-            attr = getattr(self, attr_name, None)
-            if attr is None or not callable(attr):
-                continue
-            suffix = getattr(attr, "_rook_cap_suffix", None)
-            if suffix is None:
-                continue
-            out[self.NAMESPACE if not suffix else f"{self.NAMESPACE}.{suffix}"] = attr
-        return out
+        return cap_methods(self, self.NAMESPACE)
 
     @classmethod
     def declared_caps(cls) -> dict[str, Callable[..., Any]]:
         """``{dotpath: function}`` for every cap the class declares, without
         constructing it (generators, contract tests); like ``Plugin``'s."""
-        out: dict[str, Callable[..., Any]] = {}
-        for attr_name in dir(cls):
-            attr = getattr(cls, attr_name, None)
-            if isinstance(attr, property) or not callable(attr):
-                continue
-            suffix = getattr(attr, "_rook_cap_suffix", None)
-            if suffix is None:
-                continue
-            out[cls.NAMESPACE if not suffix else f"{cls.NAMESPACE}.{suffix}"] = attr
-        return out
+        return cap_methods(cls, cls.NAMESPACE)
 
     def info(self) -> dict:
         """The announce ``device`` block: what this device is and how it is

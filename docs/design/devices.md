@@ -58,11 +58,16 @@ All additive (core spec 14.6):
 
 ## 4. Hub
 
-- `BandClient._handle_announce` keeps `delegate` (a string other than the
-  node's own id) and `device` (`clean_device`: at most 8 short scalars, `type`
-  always set). A delegate's announce drops any device of that delegate it no
-  longer lists (`_prune_devices`); otherwise devices age out after 90 s like
-  any node, which they do soon after their delegate goes away.
+- `BandClient._handle_announce` keeps a node's claim (`delegate_claim`,
+  `device_info`) apart from the fields everything else reads. `_link_device`
+  sets `delegate`/`device` only while the claimed delegate is a live
+  non-device worker whose own announce lists the node, and `rook.core.devices.is_device`
+  reads that. So a worker can't make itself a "device" (undeauthable, never
+  updated) just by claiming a delegate; until linked it is an ordinary worker.
+  `device` is `clean_device`: at most 8 short scalars, `type` always set.
+- A delegate's announce drops any linked device it no longer lists
+  (`_prune_devices`), and the GC drops a delegate's devices when it evicts the
+  delegate.
 - Roster: `rook_workers` rows carry `delegate` (the delegate's name) and
   `device`, empty (so omitted) on ordinary workers; the legacy `fields=all`
   shape is unchanged for them. `rook_caps` doesn't count devices toward `"*"`
@@ -91,9 +96,9 @@ rows carry `delegate`, `delegate_name` and `device`.
   TV app): the device worker takes over the same derived id, the delegate
   becomes its waker and fallback. The roster already has the shape for it
   (`delegate` names the waker).
-- **Per-device credentials**: today a delegate is trusted for what it
-  announces, like `facts`; anyone with the band PSK could announce a device.
-  When per-device identities land, the hub can accept `delegate` only from
-  workers allowed to delegate.
+- **Per-device credentials**: a delegate is trusted for the devices it
+  lists, like `facts`; anyone with the band PSK can run a delegate. When
+  per-device identities land, the hub can accept `devices` only from workers
+  allowed to delegate.
 - **More drivers**: Home Assistant (one device per HA *device*, not per
   entity: a thermostat is one worker with a few caps), HDMI-CEC, PiKVM.

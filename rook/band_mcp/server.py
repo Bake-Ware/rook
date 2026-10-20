@@ -29,6 +29,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import AnyHttpUrl
 
+from ..core.devices import is_device
 from ..core import names as _names
 from .client import BandClient, MultiBandClient
 from .tokens import StoreTokenVerifier, TokenStore
@@ -1322,7 +1323,7 @@ def build_server(client: "BandClient | MultiBandClient",
         now = _t.time()
         workers = [{"name": w.get("name"), "worker_id": wid,
                     "last_seen_age_secs": round(now - w.get("last_seen", 0.0), 1)}
-                   for wid, w in client.workers.items()]
+                   for wid, w in client.workers.items() if not is_device(w)]
         return json.dumps({"agents": chat.online(), "workers": workers}, indent=2)
 
     @mcp.tool()

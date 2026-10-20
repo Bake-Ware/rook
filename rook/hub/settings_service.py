@@ -24,6 +24,7 @@ import time
 import uuid
 from typing import Any, Callable
 
+from ..core.devices import is_device
 from ..core import settings as cs
 from .settings_schema import Entry, Schema
 from .settings_store import SCOPES, SettingsStore
@@ -261,7 +262,7 @@ class SettingsService:
         except Exception:
             return []
         for wid, w in roster.items():
-            if wid == hub_id or w.get("delegate"):
+            if wid == hub_id or is_device(w):
                 continue  # device workers have no settings of their own
             out.append({"worker_id": wid, "name": w.get("name") or wid[:8],
                         "band": w.get("band"), "version": w.get("version"),
@@ -276,7 +277,7 @@ class SettingsService:
             return None, None
         hub_id = getattr(self.node, "worker_id", None)
         for wid, w in client.workers.items():
-            if wid != hub_id and not w.get("delegate") \
+            if wid != hub_id and not is_device(w) \
                     and ((w.get("name") or "") == name or wid == name):
                 return wid, w
         return None, None
@@ -321,7 +322,7 @@ class SettingsService:
             try:
                 hub_id = getattr(self.node, "worker_id", None)
                 peers = [w for wid, w in client.workers.items()
-                         if wid != hub_id and not w.get("delegate")]
+                         if wid != hub_id and not is_device(w)]
                 out["peers"] = len(peers)
                 out["reachable"] = bool(peers)
             except Exception:
