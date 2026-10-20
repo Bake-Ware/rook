@@ -60,8 +60,8 @@ export default {
       const g = new THREE.Group(); S.add(g); rooms.bath = g;
       const c = kit.make('counter', { parent: g, at: V(-.2, -.9, -.15) });
       kit.node(c, 'mirror').visible = false; kit.node(c, 'mirror_frame').visible = false;
-      wall(g, 0x36403a, -2.2);
-      const f = figure(kit, V(-.6, -.9, -1.95), .2); g.add(f.obj); g.userData.fig = f;
+      wall(g, 0x36403a, -3.0);
+      const f = figure(kit, V(-.95, -.9, -2.7), .25); g.add(f.obj); g.userData.fig = f;
       const brush = new THREE.Mesh(new THREE.BoxGeometry(.02, .02, .18), kit.toon(0xd8ad6d)); f.foreR.add(brush); brush.position.set(0, .02, -.36);
     }
     { // car at a red light
@@ -182,7 +182,7 @@ export default {
 
       // board camera for the phone screen: a slow orbit, top-down
       const a = tau * .12;
-      bcam.position.set(Math.sin(a) * 2.2, 9.5, Math.cos(a) * 2.2 + 1.0); bcam.up.set(0, 0, -1); bcam.lookAt(0, 0, .5);
+      bcam.position.set(Math.sin(a) * 2.2, 14, Math.cos(a) * 2.2 + 1.0); bcam.up.set(0, 0, -1); bcam.lookAt(0, 0, .5);
       bcam.up.set(0, 1, 0);
 
       // the dive into the Board (29.9-37): the frame shows the board world directly
