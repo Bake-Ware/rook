@@ -24,11 +24,14 @@ soundtrack is synthesised with numpy.
   subtitles, captions, the opening sting and the end card).
 - `clips/c1.js` … `c7.js`: one timeline each. Every frame is a pure function of time.
 - `index.html?clip=N`: plays a clip; `render(t)` sets the frame for `t` seconds.
+- `director.py` + `index.html?clip=N&director=1`: scrub a clip, fly a free camera, add or
+  delete camera keys, save them to `clips/cN.keys.json` (used instead of the clip's own keys).
+- Scale: everything is real size in metres; a Board square is 1 m; pieces are tokens (`kit.piece`).
 - `render.py`: `meta`, `stills` and `video` modes (playwright + aiohttp).
 - `voices.py`: speaks the lines with the voice server (`VOICE_URL`, `VOICE_KEY`).
 - `score.py`: underscore, sound cues and voices, ducked under the voice.
-- `make.sh N…`: the whole chain for each clip; `publish.sh` copies finished clips
-  into a Jellyfin movies library with poster frames.
+- `make.sh N…`: the whole chain for each clip; `publish.sh` puts them in a Jellyfin
+  Shows library as the series "Rook" (Season 01 = these clips, Specials = the earlier films).
 
 ## Build
 
@@ -37,7 +40,7 @@ npm install
 python -m venv .venv && .venv/bin/pip install playwright aiohttp numpy
 .venv/bin/python -m playwright install chromium
 GL=gpu PY=.venv/bin/python DEST=out/final ./make.sh 1 2 3 4 5 6 7
-./publish.sh /srv/media/movies
+./publish.sh /srv/media/tv specials/   # specials/ holds the earlier films, optional
 ```
 
 `GL=gpu` uses ANGLE on the GPU (about 14 frames a second on an RTX 2070); without
