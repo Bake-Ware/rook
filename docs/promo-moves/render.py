@@ -27,7 +27,7 @@ def gl_args():
     if os.environ.get('GLARGS'):
         return os.environ['GLARGS'].split()
     if os.environ.get('GL') == 'gpu':
-        return ['--use-angle=vulkan', '--enable-features=Vulkan,VulkanFromANGLE', '--ignore-gpu-blocklist', '--enable-gpu-rasterization']
+        return ['--use-gl=angle', '--use-angle=default', '--ignore-gpu-blocklist']
     return ['--use-angle=swiftshader', '--enable-unsafe-swiftshader']
 
 

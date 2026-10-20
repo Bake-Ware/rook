@@ -4,6 +4,7 @@
 set -e
 cd "$(dirname "$0")"
 PY=${PY:-python3}
+[ -n "$VOICE_KEY" ] || export VOICE_KEY=$(cat ~/.config/rook-moves/voice-key 2>/dev/null)
 DEST=${DEST:-out}
 [ -d node_modules/three ] || npm install --no-audit --no-fund
 declare -A NAMES=([1]="Secretary" [2]="Build it, paint it, don't wait up" [3]="Team huddle" [4]="Security reporting" [5]="Research team" [6]="Comic, song, shed" [7]="Make and track the promo campaign")
