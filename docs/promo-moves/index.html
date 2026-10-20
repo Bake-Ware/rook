@@ -94,5 +94,5 @@ window.CLIP = { T: clip.T, title: clip.title, mood: clip.mood || {}, events: kit
   voice: kit.voice.map(v => ({ ...v, t: v.t + STING })) };
 window.kit = kit;
 window.ready = true;
-if (q.get('director')) import('./director.js').then(m => m.director(kit, clip));
+if (q.get('director')) import('./director.js?v=' + Date.now()).then(m => m.director(kit, clip));
 </script></body></html>
