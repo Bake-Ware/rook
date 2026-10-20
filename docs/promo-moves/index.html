@@ -90,5 +90,6 @@ window.render = t => {
 };
 window.CLIP = { T: clip.T, title: clip.title, mood: clip.mood || {}, events: kit.events.map(e => ({ ...e, t: e.g ? e.t : e.t + STING })),
   voice: kit.voice.map(v => ({ ...v, t: v.t + STING })) };
+window.kit = kit;
 window.ready = true;
 </script></body></html>

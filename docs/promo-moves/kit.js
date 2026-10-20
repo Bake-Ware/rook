@@ -59,6 +59,7 @@ export class Kit {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     root.querySelector('#gl').appendChild(this.renderer.domElement);
     this.scene = new THREE.Scene();
+    this.scene.background = new THREE.Color(COL.page);
     this.scene.fog = new THREE.Fog(COL.page, 14, 34);
     this.camera = new THREE.PerspectiveCamera(36, W / H, .05, 400);
     this.hemi = new THREE.HemisphereLight(0xe3d8ad, 0x2b3323, 1.6);
@@ -369,6 +370,7 @@ export function holoRook(kit, scale = .1) {
 // Opening sting: the gold rook turning, 2 s. End card: tagline, "Your machines, your move", repo.
 export function bookends(kit, clip) {
   const s = new THREE.Scene();
+  s.background = new THREE.Color(COL.page);
   s.add(new THREE.HemisphereLight(0xe3d8ad, 0x2b3323, 1.5));
   const k2 = new THREE.DirectionalLight(0xffedc4, 2.6); k2.position.set(-5, 8, 6); s.add(k2);
   const r = kit.make('rook', { parent: s, mats: { gold: kit.toon(COL.gold) } });
