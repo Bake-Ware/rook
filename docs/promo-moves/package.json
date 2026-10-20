@@ -1,0 +1,8 @@
+{
+  "name": "rook-moves",
+  "private": true,
+  "description": "Rook Moves: seven short three.js films of jobs Rook does for a person",
+  "dependencies": {
+    "three": "0.186.0"
+  }
+}

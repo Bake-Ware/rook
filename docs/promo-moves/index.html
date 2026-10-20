@@ -1,0 +1,93 @@
+<!doctype html>
+<!-- Rook Moves: one page plays any clip (?clip=1..7). render(t) sets the whole frame for t seconds. -->
+<html><head><meta charset="utf-8"><title>Rook Moves</title>
+<script type="importmap">{"imports":{"three":"./node_modules/three/build/three.module.js","three/addons/":"./node_modules/three/examples/jsm/"}}</script>
+<style>
+@font-face{font-family:'Inter Display';src:url(fonts/InterDisplay-Black.otf);font-weight:900}
+@font-face{font-family:'Inter Display';src:url(fonts/InterDisplay-SemiBold.otf);font-weight:600}
+@font-face{font-family:'Inter Display';src:url(fonts/InterDisplay-Regular.otf);font-weight:400}
+@font-face{font-family:'DejaVu Sans Mono';src:url(fonts/DejaVuSansMono.ttf);font-weight:400}
+@font-face{font-family:'DejaVu Sans Mono';src:url(fonts/DejaVuSansMono-Bold.ttf);font-weight:700}
+:root{--bg:#0e110e;--fg:#e2e3d9;--soft:#cfd3bd;--dim:#92998c;--acc:#d8ad6d;--hi:#f0c98c;--ok:#8fc79a;--ag:#79d2c8;--red:#e0675c;--line:#2b322a;
+  --mono:'DejaVu Sans Mono',monospace;--sans:'Inter Display',sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1920px;height:1080px;overflow:hidden;background:#000}
+#stage{position:relative;width:1920px;height:1080px;overflow:hidden;color:var(--fg);font-family:var(--sans);background:var(--bg)}
+#gl,#gl canvas{position:absolute;inset:0;width:1920px;height:1080px}
+#ui{position:absolute;inset:0}
+.ov{position:absolute;left:0;top:0;will-change:transform}
+#vig{position:absolute;inset:0;background:radial-gradient(ellipse at 50% 50%,transparent 58%,rgba(0,0,0,.62) 100%)}
+#grain{position:absolute;left:0;top:0;width:1920px;height:1080px;opacity:.07;mix-blend-mode:screen}
+#fade{position:absolute;inset:0;background:#000;opacity:0}
+#flash{position:absolute;inset:0;background:#fff3dc;mix-blend-mode:screen;opacity:0}
+.pane{background:rgba(9,12,9,.94);border:2px solid #514b35;border-radius:12px;box-shadow:0 24px 80px rgba(0,0,0,.75);overflow:hidden;font-family:var(--mono)}
+.pane-h{font:400 19px var(--mono);color:var(--acc);letter-spacing:.03em;padding:14px 20px 10px;border-bottom:1px solid var(--line)}
+.pane-h b{color:var(--ag);font-weight:400}
+.pane-b{padding:14px 20px 18px;font:400 22px/1.5 var(--mono);color:var(--soft)}
+.pane-b .ok{color:var(--ok)}.pane-b .dim{color:var(--dim)}.pane-b .hi{color:var(--hi)}.pane-b .red{color:var(--red)}.pane-b .ag{color:var(--ag)}
+.pane.red{border-color:var(--red)}.pane.ok{border-color:#4c6951}
+.chip{font:400 22px var(--mono);color:var(--fg);background:rgba(9,12,9,.92);border:1.5px solid #514b35;border-radius:8px;padding:5px 12px;white-space:nowrap}
+.chip i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:9px;vertical-align:-1px}
+.chip.ok{color:var(--ok);border-color:#4c6951}.chip.red{color:#fff;border-color:var(--red);background:rgba(56,32,27,.95)}
+.chip.job{color:var(--hi);border-color:var(--acc)}
+.subs{left:50%;top:auto;bottom:74px;transform:translateX(-50%);max-width:1500px;text-align:center;font:600 40px/1.25 var(--sans);color:var(--fg);
+  text-shadow:0 2px 14px rgba(0,0,0,.95),0 0 40px rgba(0,0,0,.8)}
+.subs .who{display:block;font:400 19px var(--mono);letter-spacing:.3em;color:var(--acc);margin-bottom:10px}
+.subs.you .who{color:var(--soft)}.subs.you .txt{font-style:italic;font-weight:400}
+.cap.stamp{left:96px;top:78px;font:400 30px var(--mono);letter-spacing:.12em;color:var(--hi)}
+.cap.label{left:50%;top:auto;bottom:190px;transform:translateX(-50%);font:400 26px var(--mono);color:var(--hi);letter-spacing:.05em;white-space:nowrap;
+  background:rgba(9,12,9,.85);border:1.5px solid #514b35;border-radius:10px;padding:10px 20px}
+.cap.title{left:0;width:1920px;top:430px;text-align:center;font:900 112px/1 var(--sans);letter-spacing:-.02em;text-transform:uppercase;
+  text-shadow:0 0 60px rgba(0,0,0,.9)}
+.cap.title b{color:var(--acc)}
+.cap.big{left:0;width:1920px;top:470px;text-align:center;font:900 84px/1.05 var(--sans);letter-spacing:-.02em;text-shadow:0 0 50px rgba(0,0,0,.9)}
+.cap.big b{color:var(--acc)}
+.sting-title{left:0;width:1920px;top:850px;text-align:center}
+.sting-title .ep{font:400 22px var(--mono);letter-spacing:.4em;color:var(--acc)}
+.sting-title .nm{margin-top:14px;font:900 64px var(--sans);letter-spacing:-.01em;text-transform:uppercase}
+.endcard{left:0;width:1920px;top:668px;text-align:center}
+.endcard .tag{font:900 92px/1 var(--sans);letter-spacing:-.02em;text-transform:uppercase}
+.endcard .move{margin-top:26px;font:400 40px var(--sans);color:var(--soft)}
+.endcard .move b{color:var(--acc);font-weight:600}
+.endcard .brand{margin-top:30px;font:900 44px var(--sans);letter-spacing:.35em;margin-right:-.35em;color:var(--fg)}
+.endcard .url{margin-top:12px;font:400 30px var(--mono);color:var(--hi)}
+</style></head>
+<body><div id="stage"><div id="gl"></div><div id="ui"></div><canvas id="grain" width="480" height="270"></canvas><div id="vig"></div><div id="flash"></div><div id="fade"></div></div>
+<script type="module">
+import { Kit, STING, ENDCARD, bookends, clamp } from './kit.js';
+const q = new URLSearchParams(location.search);
+const n = q.get('clip') || '1';
+try { window.VOICE_DUR = await (await fetch('voices/durations.json')).json(); } catch (e) { window.VOICE_DUR = {}; }
+const mod = await import(`./clips/c${n}.js`);
+const clip = mod.default;
+const kit = new Kit(document.getElementById('stage'));
+kit.clipNum = n;
+await kit.load(clip.assets);
+clip.T = STING + clip.body + ENDCARD;
+clip.num = n;
+const update = await clip.build(kit);
+const book = bookends(kit, clip);
+await document.fonts.ready;
+// static grain (paper tooth)
+{ const g = document.getElementById('grain').getContext('2d'), im = g.createImageData(480, 270); let s = 7;
+  for (let i = 0; i < im.data.length; i += 4) { s = (s * 1103515245 + 12345) >>> 0; const v = s >>> 24; im.data[i] = im.data[i + 1] = im.data[i + 2] = v; im.data[i + 3] = 255; }
+  g.putImageData(im, 0, 0); }
+const flashEl = document.getElementById('flash'), fadeEl = document.getElementById('fade');
+window.render = t => {
+  const tau = t - STING;
+  kit.renderPass.scene = kit.scene; kit.renderPass.camera = kit.camera; kit.dim = 1; kit.flash = 0;
+  for (const u of kit.updaters) u(tau);
+  if (update) update(tau);
+  const own = book.frame(t);
+  if (kit.boardU) kit.boardU.uCam.value.copy((kit.boardCam ? kit.boardCam() : kit.camera).position);
+  // cross-fade into the clip from the sting, and into the end card
+  let dim = kit.dim;
+  if (!own) dim *= clamp(tau / .4) * (1 - clamp((tau - (clip.body - .5)) / .5));
+  fadeEl.style.opacity = 1 - clamp(dim);
+  flashEl.style.opacity = clamp(kit.flash);
+  kit.composer.render();
+};
+window.CLIP = { T: clip.T, title: clip.title, mood: clip.mood || {}, events: kit.events.map(e => ({ ...e, t: e.g ? e.t : e.t + STING })),
+  voice: kit.voice.map(v => ({ ...v, t: v.t + STING })) };
+window.ready = true;
+</script></body></html>
