@@ -37,12 +37,12 @@ export default {
     goldRook(kit, V(-1, 0, -6), .55, .3);
     const team = [['Literature', COL.pink, V(-2.4, 0, .6)], ['Design', COL.teal, V(0, 0, -1)], ['Analysis', COL.green, V(2.4, 0, .6)]]
       .map(([n, c, p]) => ({ n, ...agent(kit, n, c, p, { scale: .36 }), p }));
-    const rig = kit.make('gpurig', { at: V(6.5, 0, -2.5), rot: -.6, scale: 1.4 });
+    const rig = kit.make('gpurig', { at: V(6, 0, -2), rot: -.6, scale: 1.4 });
     const rigGlow = kit.meshesOf(rig, 'light');
     // paper pages flying into a stack by the literature agent
     const pages = [];
     for (let i = 0; i < 12; i++) {
-      const p = new THREE.Mesh(new THREE.BoxGeometry(.42, .01, .56), kit.toon(0xe6dcc0));
+      const p = new THREE.Mesh(new THREE.BoxGeometry(.21, .004, .297), kit.toon(0xe6dcc0));
       p.add(new THREE.LineSegments(new THREE.EdgesGeometry(p.geometry), kit.inkMat));
       S.add(p); pages.push({ p, from: V(-2.4 + (rnd(i) - .5) * 8, 2.5 + rnd(i + 5) * 2, .6 + (rnd(i + 9) - .5) * 6), i });
     }
@@ -116,10 +116,11 @@ export default {
       }
     }
 
-    kit.pulse(V(0, 0, -1), V(6.5, 0, -2.5), 16.6, 1.4);
-    kit.pulse(V(2.4, 0, .6), V(6.5, 0, -2.5), 37.0, 1.0, { zFirst: true });
+    kit.pulse(V(0, 0, -1), V(6, 0, -2), 16.6, 1.4);
+    kit.pulse(V(2.4, 0, .6), V(6, 0, -2), 37.0, 1.0, { zFirst: true });
     kit.events.push({ t: 5.6, type: 'rush' }, { t: 6.0, type: 'shimmer' }, { t: 35.8, type: 'alarm' }, { t: 54.2, type: 'rush' }, { t: 55.4, type: 'shimmer' });
 
+    const rigBox = [V(5.6, 0, -2.4), V(6.4, .8, -1.6)];
     kit.camPath([
       { t: 0, pos: [-24 + 2.6, 2.6, 7.6], look: [-24, 2.2, 0], fov: 38 },
       { t: 3.6, pos: [-24 + 1.4, 2.5, 5.6], look: [-24, 2.3, 0], e: 'lin' },
@@ -127,14 +128,14 @@ export default {
       { t: 6.01, pos: [0, 9, 10], look: [0, .6, 0], e: 'cut' },
       { t: 8, pos: [-2.5, 4.0, 6.8], look: [0, .8, 0], e: 'outE' },
       { t: 16, pos: [4.5, 3.6, 5.8], look: [.6, .8, 0], e: 'lin' },
-      { t: 18, pos: [9.5, 3.0, 2.8], look: [6.4, 1.3, -2.5], e: 'io' },
-      { t: 26, pos: [9.0, 2.9, 2.0], look: [6.4, 1.4, -2.5], e: 'lin' },
-      { t: 27, pos: [7.4, 2.4, 3.2], look: [6.3, 1.6, -2.5], e: 'io' },
-      { t: 34, pos: [7.2, 2.4, 3.0], look: [6.3, 1.6, -2.5], e: 'lin' },
+      { t: 18, frame: { on: rigBox, yaw: 58, pitch: 16, fill: .5, look: [-.25, .15, 0] }, e: 'io' },
+      { t: 26, frame: { on: rigBox, yaw: 48, pitch: 15, fill: .55, look: [-.25, .15, 0] }, e: 'lin' },
+      { t: 27, frame: { on: rigBox, yaw: 30, pitch: 12, fill: .5, look: [-.42, .35, .24] }, e: 'io' },
+      { t: 34, frame: { on: rigBox, yaw: 26, pitch: 12, fill: .52, look: [-.42, .35, .22] }, e: 'lin' },
       { t: 35, pos: [3.2, 7.0, 10.5], look: [2.6, .8, -1], e: 'io' },
       { t: 46, pos: [2.4, 6.6, 10.0], look: [2.6, .8, -1], e: 'lin' },
-      { t: 47, pos: [4.6, 3.0, 5.0], look: [2.4, 1.2, .4], e: 'io' },
-      { t: 54, pos: [4.2, 3.0, 4.6], look: [2.4, 1.2, .4], e: 'lin' },
+      { t: 47, pos: [4.4, 2.2, 4.6], look: [2.4, .9, .4], e: 'io' },
+      { t: 54, pos: [4.0, 2.2, 4.3], look: [2.4, .9, .4], e: 'lin' },
       { t: 54.01, pos: [-24 + .02, 2.32, .3], look: [-24, 2.3, 0], e: 'cut' },
       { t: 57, pos: [-24 + 2.8, 2.8, 8.0], look: [-24, 2.2, 0], e: 'outE' },
       { t: 60, pos: [-24 + 3.2, 3.0, 8.6], look: [-24, 2.2, 0], e: 'lin' },
@@ -158,21 +159,21 @@ export default {
       // literature: pages fly into a stack
       pages.forEach(({ p, from, i }) => {
         const u = ease.io(inv(7 + i * .5, 8.2 + i * .5, tau));
-        p.position.copy(from.clone().lerp(V(-2.4 + 1.0, .1 + i * .02, .6 + .9), u));
+        p.position.copy(from.clone().lerp(V(-2.4 + 1.0, .01 + i * .006, .6 + .9), u));
         p.rotation.set((1 - u) * 1.5, (1 - u) * 3 + i, (1 - u) * .8);
         p.visible = tau > 6.2 && tau < 54;
       });
-      lit.place(V(-2.4, 1.6, .6), fade(tau, 7.4, 7.8, 15.6, 16), { ax: .8, ay: 1 });
+      lit.place(V(-2.4, 1.2, .6), fade(tau, 7.4, 7.8, 15.6, 16), { ax: .8, ay: 1 });
       litEl.innerHTML = LIT.slice(0, Math.floor(clamp((tau - 7.6) / 6) * LIT.length + .001)).map(s => `<div>› ${s}</div>`).join('');
-      cfg.place(V(0, 1.7, -1), fade(tau, 8, 8.4, 15.6, 16), { ay: 1 });
+      cfg.place(V(0, 1.2, -1), fade(tau, 8, 8.4, 15.6, 16), { ay: 1 });
       yamlEl.textContent = YAML.slice(0, Math.floor(clamp((tau - 8.4) / 5.5) * YAML.length));
       // the rig: glows, six runs, status
       const rigOn = inv(17.8, 18.4, tau) * (1 - inv(54, 54.1, tau));
       rigGlow.forEach(m => m.material.color.setHex(rigOn > .5 ? 0x9fffe0 : 0xffe2a8));
-      kit.glowSquare(6, -2, .7 * rigOn, 1); kit.glowSquare(7, -3, .7 * rigOn, 1);
+      kit.glowSquare(6, -2, .7 * rigOn, 1);
       const stA = fade(tau, 18.4, 18.8, 53.6, 54);
       const close = ease.io(fade(tau, 26.4, 27.2, 33.4, 34.2));
-      status.fixed(lerp(90, 640, close), lerp(130, 250, close), tau < 46 ? stA : 0, lerp(1, 1.2, close));
+      status.fixed(lerp(90, 110, close), lerp(130, 250, close), tau < 46 ? stA : 0, lerp(1, 1.2, close));
       stEl.innerHTML = STATUS.slice(0, Math.floor(clamp((tau - 19) / 4) * 4 + .001)).map(s => `<div class="dim">› ${s}</div>`).join('');
       barEls.forEach((b, i) => {
         b.querySelector('i').style.width = (runP(i, tau) * 100).toFixed(1) + '%';
@@ -191,9 +192,9 @@ export default {
       kit.boardU.uDim.value = lerp(1, .75, dusk * (tau < 54 ? 1 : 0));
       team[2].mat.emissiveIntensity += .5 * fade(tau, 36.6, 37, 38, 38.6);
       // results and the wiki
-      table.place(V(2.4, 1.9, .6), fade(tau, 46.6, 47, 53.6, 54), { ax: 1.02, ay: .5 });
+      table.place(V(2.4, 1.3, .6), fade(tau, 46.6, 47, 53.6, 54), { ax: 1.02, ay: .5 });
       rows.forEach((r, i) => { r.style.opacity = inv(47.4 + i * .8, 47.7 + i * .8, tau); });
-      wiki.place(V(2.4, 1.9, .6), fade(tau, 49.6, 50, 53.6, 54), { ax: -.02, ay: .5 });
+      wiki.place(V(2.4, 1.3, .6), fade(tau, 49.6, 50, 53.6, 54), { ax: -.02, ay: .5 });
       kit.glowSquare(2, 1, .6 * fade(tau, 47, 47.5, 53.6, 54));
     };
   },

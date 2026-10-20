@@ -21,27 +21,29 @@ export default {
     S.fog = new THREE.Fog(COL.page, 12, 30);
     goldRook(kit, V(0, 0, -7), .55, .3);
     // kitchen table corner
-    const K = V(-7, 0, 0);
-    kit.make('table', { at: K, scale: .8 });
-    kit.make('chair', { at: K.clone().add(V(0, 0, 1.25)), rot: Math.PI });
-    const f1 = figure(kit, K.clone().add(V(0, -.5, 1.2)), Math.PI);
-    f1.legL.rotation.x = f1.legR.rotation.x = -1.45; f1.armL.rotation.x = f1.armR.rotation.x = -1.0;
-    kit.make('tablet', { at: K.clone().add(V(.1, .64, .35)), rot: Math.PI, scale: .7 });
-    kit.make('coffee', { at: K.clone().add(V(-.45, .64, .3)) });
+    const K = V(-12, 0, 0);
+    const ktab = kit.make('table', { at: K }); ktab.scale.set(.45, 1, .45);       // a 1.2 m kitchen table
+    kit.make('chair', { at: K.clone().add(V(0, 0, .78)), rot: Math.PI });
+    const f1 = figure(kit, K.clone().add(V(0, -.47, .74)), Math.PI);
+    f1.legL.rotation.x = f1.legR.rotation.x = -1.5; f1.armL.rotation.x = f1.armR.rotation.x = -1.0; f1.foreL.rotation.x = f1.foreR.rotation.x = -.4;
+    kit.make('tablet', { at: K.clone().add(V(.05, .79, .2)), rot: Math.PI });
+    kit.make('coffee', { at: K.clone().add(V(-.32, .79, .22)) });
     // the car at a red light
     const C = V(0, 0, 0);
-    const car = kit.make('car', { at: C, rot: Math.PI / 2, scale: 1.7 });
-    const f2 = figure(kit, C.clone().add(V(-.35, -.2, -.05)), -Math.PI / 2, .82);
+    // the car body is drawn as glass so you can see the driver (x-ray, like the rest of the Board)
+    const carMat = new THREE.MeshToonMaterial({ color: 0x9a6a4a, gradientMap: kit.ramp, transparent: true, opacity: .32, depthWrite: false });
+    const car = kit.make('car', { at: C, rot: Math.PI / 2, mats: { body: carMat } });
+    const f2 = figure(kit, C.clone().add(V(.36, -.38, .25)), Math.PI);
     f2.legL.rotation.x = f2.legR.rotation.x = -1.45; f2.armL.rotation.x = f2.armR.rotation.x = -1.2;
-    const pole = new THREE.Mesh(new THREE.BoxGeometry(.08, 2.6, .08), kit.toon(0x3a3c32)); pole.position.set(1.7, 1.3, -1.6); S.add(pole);
-    const head = new THREE.Mesh(new THREE.BoxGeometry(.3, .8, .26), kit.toon(0x24261f)); head.position.set(1.7, 2.6, -1.6); S.add(head);
-    const red = new THREE.Mesh(new THREE.CircleGeometry(.09, 16), new THREE.MeshBasicMaterial({ color: 0xff5a48 })); red.position.set(1.7, 2.84, -1.46); S.add(red);
+    const pole = new THREE.Mesh(new THREE.BoxGeometry(.1, 3.2, .1), kit.toon(0x3a3c32)); pole.position.set(1.5, 1.6, -3.0); S.add(pole);
+    const head = new THREE.Mesh(new THREE.BoxGeometry(.32, .85, .28), kit.toon(0x24261f)); head.position.set(1.5, 3.1, -3.0); S.add(head);
+    const red = new THREE.Mesh(new THREE.CircleGeometry(.1, 16), new THREE.MeshBasicMaterial({ color: 0xff5a48 })); red.position.set(1.5, 3.36, -2.85); S.add(red);
     for (const o of [pole, head]) o.add(new THREE.LineSegments(new THREE.EdgesGeometry(o.geometry), kit.inkMat));
-    // the backyard and a shed in wireframe (1 unit = 4 ft: 10 x 12 ft -> 2.5 x 3)
-    const B = V(7.5, 0, 0);
-    const f3 = figure(kit, B.clone().add(V(-1.9, 0, 1.9)), -2.3);
+    // the backyard and a shed in wireframe, real size: 10 x 12 ft = 3.05 x 3.66 m
+    const B = V(12, 0, 0);
+    const f3 = figure(kit, B.clone().add(V(-2.3, 0, 2.5)), -2.3);
     const tape = new THREE.Mesh(new THREE.BoxGeometry(.12, .12, .06), kit.toon(0xe8c840)); f3.foreR.add(tape); tape.position.set(0, -.34, 0);
-    const W_ = 2.5, D_ = 3.0, H_ = 1.9, R_ = .7;
+    const W_ = 3.05, D_ = 3.66, H_ = 2.1, R_ = .76;
     const c = (x, y, z) => B.clone().add(V(x - W_ / 2, y, z - D_ / 2));
     const E = [];
     const seg = (a, b) => E.push(a, b);
@@ -53,13 +55,13 @@ export default {
     for (const z of [0, D_]) { seg(c(0, H_, z), c(W_ / 2, H_ + R_, z)); seg(c(W_, H_, z), c(W_ / 2, H_ + R_, z)); }
     seg(c(W_ / 2, H_ + R_, 0), c(W_ / 2, H_ + R_, D_));
     for (let k = 1; k < 4; k++) { const z = D_ * k / 4; seg(c(0, H_, z), c(W_ / 2, H_ + R_, z)); seg(c(W_, H_, z), c(W_ / 2, H_ + R_, z)); }
-    const dl = W_ / 2 - .4, dr = W_ / 2 + .4;
-    seg(c(dl, 0, D_), c(dl, 1.6, D_)); seg(c(dr, 0, D_), c(dr, 1.6, D_)); seg(c(dl, 1.6, D_), c(dr, 1.6, D_));
+    const dl = W_ / 2 - .46, dr = W_ / 2 + .46;
+    seg(c(dl, 0, D_), c(dl, 2.0, D_)); seg(c(dr, 0, D_), c(dr, 2.0, D_)); seg(c(dl, 2.0, D_), c(dr, 2.0, D_));
     const shedG = new THREE.BufferGeometry().setFromPoints(E);
     const shed = new THREE.LineSegments(shedG, new THREE.LineBasicMaterial({ color: COL.goldHi }));
     S.add(shed);
     const nSeg = E.length / 2;
-    const dims = [['10 ft', c(W_ / 2, 0, D_ + .35)], ['12 ft', c(W_ + .35, 0, D_ / 2)], ['6:12 pitch', c(W_ / 2, H_ + R_ + .3, 0)], ['door · 3 ft', c(W_ / 2, 1.85, D_ + .1)]]
+    const dims = [['10 ft', c(W_ / 2, 0, D_ + .35)], ['12 ft', c(W_ + .35, 0, D_ / 2)], ['6:12 pitch', c(W_ / 2, H_ + R_ + .3, 0)], ['door · 3 ft', c(W_ / 2, 2.2, D_ + .1)]]
       .map(([t, p], i) => ({ el: kit.el(t, 'dim' + (i === 3 ? ' door' : '')), p, i }));
     // notes riding out of the car speaker
     const notes = [];
@@ -92,20 +94,22 @@ export default {
       { t: 11.2, type: 'whoosh' }, { t: 15.0, type: 'melody', bpm: 132, bars: 4 }, { t: 21.4, type: 'whoosh' }, { t: 26.2, type: 'shimmer' }, { t: 33.2, type: 'rush' });
     kit.pulse(V(0, 0, -7), K.clone().setY(0).add(V(0, 0, 1)), .8, 1.6);
     kit.pulse(V(0, 0, -7), V(0, 0, 0), 12.4, 1.2);
-    kit.pulse(V(0, 0, -7), V(8, 0, 2), 24.4, 1.4);
+    kit.pulse(V(0, 0, -7), V(10, 0, 3), 24.4, 1.4);
 
+    const kit3 = [K.clone().add(V(-.7, 0, -.7)), K.clone().add(V(.7, 1.4, 1.2))], carB = [V(-.9, 0, -2.3), V(.9, 1.6, 2.2)];
+    const yard = [B.clone().add(V(-2.6, 0, 2.2)), B.clone().add(V(-2.0, 1.8, 2.8))], shedB = [B.clone().add(V(-1.6, 0, -1.9)), B.clone().add(V(1.6, 2.9, 1.9))];
     kit.camPath([
-      { t: 0, pos: [-7 + 5, 6.5, 9], look: [-7, .8, 0], fov: 38 },
-      { t: 2.6, pos: [-7 + 2.4, 2.6, 4.4], look: [-7, 1.6, 0], e: 'outE' },
-      { t: 10.9, pos: [-7 + 2.1, 2.7, 4.6], look: [-7, 1.9, 0], e: 'lin' },
-      { t: 11.6, pos: [2.8, 2.1, 5.2], look: [0, 1.4, 0], e: 'io' },
-      { t: 21.3, pos: [3.4, 2.4, 5.6], look: [0, 1.8, 0], e: 'lin' },
-      { t: 22.0, pos: [7.5 + 1.0, 2.3, 6.8], look: [7.5 - 1, 1.2, 1.4], e: 'io' },
-      { t: 25.6, pos: [7.5 + .6, 2.3, 6.6], look: [7.5 - 1, 1.2, 1.2], e: 'lin' },
-      { t: 28.5, pos: [7.5 + 6.2, 4.2, 3.2], look: [7.5, 1.2, 0], e: 'io' },
-      { t: 32.8, pos: [7.5 + 2.6, 4.6, -5.2], look: [7.5, 1.2, 0], e: 'lin' },
-      { t: 34.4, pos: [0, 9.5, 13], look: [0, 2.4, 0], e: 'io' },
-      { t: 38, pos: [0, 10.5, 14.5], look: [0, 2.4, 0], e: 'lin' },
+      { t: 0, pos: [-12 + 4, 6.5, 9], look: [-12, .8, 0], fov: 38 },
+      { t: 2.6, frame: { on: kit3, yaw: 205, pitch: 18, fill: .62, look: [.7, 0, -.3] }, e: 'outE' },
+      { t: 10.9, frame: { on: kit3, yaw: 198, pitch: 18, fill: .68, look: [.7, 0, -.28] }, e: 'lin' },
+      { t: 11.6, frame: { on: carB, yaw: 62, pitch: 14, fill: .72, look: [.6, 0, -1.0] }, e: 'io' },
+      { t: 21.3, frame: { on: carB, yaw: 52, pitch: 14, fill: .78, look: [.7, 0, -.9] }, e: 'lin' },
+      { t: 22.0, frame: { on: yard, yaw: 20, pitch: 10, fill: .55 }, e: 'io' },
+      { t: 25.6, frame: { on: yard, yaw: 12, pitch: 10, fill: .6 }, e: 'lin' },
+      { t: 28.5, frame: { on: shedB, yaw: 58, pitch: 20, fill: .78 }, e: 'io' },
+      { t: 32.8, frame: { on: shedB, yaw: 140, pitch: 24, fill: .78 }, e: 'lin' },
+      { t: 34.4, pos: [0, 12, 21], look: [0, 1.6, 0], e: 'io' },
+      { t: 38, pos: [0, 13, 23], look: [0, 1.6, 0], e: 'lin' },
     ]);
 
     return tau => {
@@ -117,7 +121,7 @@ export default {
         else p.fixed(110 + (i % 2) * 250, 120 + Math.floor(i / 2) * 220, fade(tau, 33.6 + i * .1, 34 + i * .1, 37.6, 38), .74);
       });
       f1.head.rotation.x = .25; f1.foreR.rotation.x = tau > .3 && tau < 3 ? -.6 + Math.sin(tau * 5) * .2 : 0;
-      kit.glowSquare(-7, 1, .6 * fade(tau, 2.4, 2.8, 10.6, 11));
+      kit.glowSquare(-12, 1, .6 * fade(tau, 2.4, 2.8, 10.6, 11));
       // the car: notes ride out of the speaker
       notes.forEach(({ el, i }) => {
         const t0 = 14.6 + i * .42, u = (tau - t0) / 3.4;
@@ -131,7 +135,7 @@ export default {
       kit.glowSquare(0, 0, .6 * fade(tau, 12.8, 13.2, 21, 21.4));
       f2.head.rotation.x = .1;
       // the backyard: tape measure, then the shed draws itself
-      f3.rest(); f3.armR.rotation.x = tau > 21.6 && tau < 26 ? -1.3 : -.1; f3.obj.rotation.y = -2.3;
+      f3.rest(); f3.armR.rotation.x = tau > 21.6 && tau < 26 ? -1.3 : -.1; f3.obj.rotation.y = -2.3; f3.foreR.rotation.x = tau > 21.6 && tau < 26 ? -.3 : 0;
       const b = ease.io(inv(25.8, 31.6, tau));
       shedG.setDrawRange(0, Math.floor(b * nSeg) * 2);
       shed.visible = tau > 25.8;
@@ -140,7 +144,7 @@ export default {
         kit.show(d.el, a); if (a > .003) kit.pin(d.el, d.p, { ay: .5 });
       });
       shedP.fixed(1360, 200, fade(tau, 33.8, 34.2, 37.6, 38), .9);
-      for (let x = 6; x <= 9; x++) for (let z = -1; z <= 1; z++) if (x === 6 || x === 9 || z === -1 || z === 1) kit.glowSquare(x, z, .45 * fade(tau, 24.6, 25.2, 32.6, 33), 1);
+      for (let x = 10; x <= 14; x++) for (let z = -2; z <= 2; z++) if (x === 10 || x === 14 || z === -2 || z === 2) kit.glowSquare(x, z, .45 * fade(tau, 24.6, 25.2, 32.6, 33), 1);
     };
   },
 };

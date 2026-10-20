@@ -25,11 +25,10 @@ export default {
     // little scenes that grow out of the storyboard cards on the table
     const minis = PIECES.map((name, i) => {
       const a = (i / 7) * Math.PI * 2;
-      const o = name === 'rook' ? goldRook(kit, V(0, 0, 0), .12).obj : kit.make(name, { scale: { phone: .5, printer: .22, table: .2, nas: .3, gpurig: .25, car: .25 }[name] });
-      o.position.set(2.4 + Math.cos(a) * .85, .79, 1.0 + Math.sin(a) * .85);
+      const o = kit.piece(name, V(2.4 + Math.cos(a) * .85, .79, 1.0 + Math.sin(a) * .85), { size: .22 });   // table-top miniatures
       o.userData.s = o.scale.x; return o;
     });
-    const fig = figure(kit, V(-4.4, 0, 2.6), Math.PI + .5);
+    const fig = figure(kit, V(-3.15, 0, 1.3), -1.71);
     // channel pieces on a calendar strip at the board's edge
     const chans = CHANNELS.map((c, i) => ({ name: c, p: V(-6 + i * 2, 0, 7.5) }));
     const strip = new THREE.Mesh(new THREE.BoxGeometry(14.6, .04, 1.2), kit.toon(0x3a3c32)); strip.position.set(0, .02, 7.5); S.add(strip);
@@ -81,15 +80,16 @@ export default {
     CLIPS.forEach((c, i) => kit.pulse(V(2, 0, 1), V(-4, 0, 1), 24.4 + i * .5, 1.0, { sound: i % 2 === 0 }));
     kit.events.push({ t: 2.2, type: 'tap' }, { t: 6.6, type: 'tap' }, { t: 15, type: 'shimmer' }, { t: 32.4, type: 'whoosh' }, { t: 40.2, type: 'rush' });
 
+    const desk7 = [V(-5.0, 0, .5), V(-2.9, 1.8, 2.0)], tbl7 = [V(.9, 0, -.5), V(3.9, 1.1, 2.5)];
     kit.camPath([
-      { t: 0, pos: [-3.88, 1.27, 1.78], look: [-4.315, 1.25, 1.0], fov: 36 },
-      { t: 1.2, pos: [-3.88, 1.27, 1.78], look: [-4.315, 1.25, 1.0], e: 'lin' },
-      { t: 6, pos: [-1.2, 3.6, 7.0], look: [-3.4, 1.0, 1.0], e: 'io' },
-      { t: 13.6, pos: [-.6, 3.4, 6.4], look: [-1.6, 1.0, 1.0], e: 'lin' },
-      { t: 15, pos: [5.6, 3.4, 4.6], look: [2.4, .9, 1.0], e: 'io' },
-      { t: 23.6, pos: [5.4, 3.6, -2.4], look: [2.4, .9, 1.0], e: 'lin' },
-      { t: 25, pos: [-.4, 3.2, 6.6], look: [-3.6, 1.1, 1.0], e: 'io' },
-      { t: 32, pos: [-1.0, 3.0, 6.0], look: [-3.6, 1.1, 1.0], e: 'lin' },
+      { t: 0, pos: [-4.04, 1.06, 1.499], look: [-4.281, 1.06, 1.057], fov: 36 },
+      { t: 1.2, pos: [-4.04, 1.06, 1.499], look: [-4.281, 1.06, 1.057], e: 'lin' },
+      { t: 6, frame: { on: desk7, yaw: 32, pitch: 14, fill: .8 }, e: 'io' },
+      { t: 13.6, frame: { on: desk7, yaw: 24, pitch: 14, fill: .86 }, e: 'lin' },
+      { t: 15, frame: { on: tbl7, yaw: 55, pitch: 26, fill: .85 }, e: 'io' },
+      { t: 23.6, frame: { on: tbl7, yaw: 115, pitch: 28, fill: .9 }, e: 'lin' },
+      { t: 25, frame: { on: desk7, yaw: 42, pitch: 15, fill: .75, look: [.5, 0, -.42] }, e: 'io' },
+      { t: 32, frame: { on: desk7, yaw: 34, pitch: 15, fill: .8, look: [.5, 0, -.38] }, e: 'lin' },
       { t: 33.4, pos: [0, 9.5, 17], look: [0, .5, 3.5], e: 'io' },
       { t: 40, pos: [0, 9.2, 16.4], look: [0, .5, 3.5], e: 'lin' },
       { t: 41, pos: [0, 2.6, -.6], look: [0, 1.7, -6.5], e: 'io' },
@@ -98,8 +98,8 @@ export default {
 
     return tau => {
       // 1: the end card is on the workstation monitor, mid-render (start full frame, pull back)
-      const MC = V(-4.315, 1.25, 1.0), RV = V(.88, 0, -.48);
-      const mon = kit.project(MC), mL = kit.project(MC.clone().addScaledVector(RV, -.52)), mR = kit.project(MC.clone().addScaledVector(RV, .52));
+      const MC = V(-4.281, 1.06, 1.057), RV = V(.878, 0, -.479);
+      const mon = kit.project(MC), mL = kit.project(MC.clone().addScaledVector(RV, -.29)), mR = kit.project(MC.clone().addScaledVector(RV, .29));
       const msc = Math.hypot(mR.x - mL.x, mR.y - mL.y) / 1920;
       const k = ease.io(inv(1.2, 4.2, tau));
       const sc = lerp(1, msc, k);

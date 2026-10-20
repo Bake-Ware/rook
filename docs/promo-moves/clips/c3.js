@@ -6,7 +6,7 @@ import { THREE, V, COL, clamp, lerp, inv, ease, fade, pane, chip, goldRook, agen
 export default {
   title: 'Team huddle', tagline: 'Focus on the results,<br>not the work.', body: 58,
   mood: { key: 'E', bpm: 104, minor: true, energy: .8 },
-  assets: ['rook', 'agent', 'table', 'gpurig', 'workstation', 'laptop', 'phone', 'figure'],
+  assets: ['rook', 'agent', 'table', 'gpurig', 'workstation', 'nas', 'phone', 'figure'],
   async build(kit) {
     const S = kit.scene;
     kit.board({ size: 70 });
@@ -18,14 +18,15 @@ export default {
       ['Reviewer', COL.pink, V(-1.3, 0, 1.3)], ['Ops', COL.blue, V(1.3, 0, 1.3)],
     ].map(([n, c, p]) => ({ n, ...agent(kit, n, c, p, { scale: .44 }), p }));
     const machines = [
-      { name: 'gpu rig', obj: kit.make('gpurig', { at: V(6, 0, -3), rot: -.7 }), at: V(6, 0, -3) },
-      { name: 'workstation', obj: kit.make('workstation', { at: V(-6.4, 0, -3.2), rot: .7 }), at: V(-6, 0, -3) },
-      { name: 'build box', obj: kit.make('laptop', { at: V(5, 0, 4), rot: -.4, scale: 1.3 }), at: V(5, 0, 4) },
+      { name: 'gpu rig', obj: kit.make('gpurig', { at: V(4, 0, -2), rot: -.7 }), at: V(4, 0, -2) },
+      { name: 'workstation', obj: kit.make('workstation', { at: V(-4.1, 0, -2.2), rot: .7 }), at: V(-4, 0, -2) },
+      { name: 'build box', obj: kit.make('nas', { at: V(4, 0, 3), rot: -.4 }), at: V(4, 0, 3) },
     ];
-    const workers = machines.map((m, i) => agent(kit, 'worker', [COL.green, COL.green, COL.green][i], m.at.clone().add(V(-1, 0, .3)), { scale: .2, chipText: 'worker · builder' }));
-    const phone = kit.make('phone', { at: V(-5, 0, 5), rot: .4, scale: 1.6 });
+    const workers = machines.map((m, i) => agent(kit, 'worker', [COL.green, COL.green, COL.green][i], m.at.clone().add(V(-.8, 0, .5)), { scale: .2, chipText: 'worker · builder' }));
+    const fig = figure(kit, V(-3, 0, 3), Math.PI * .8);
+    // the phone, real size, in the left hand
+    const phone = kit.make('phone', { parent: fig.foreL, at: V(0, -.33, .04) }); phone.rotation.set(-Math.PI / 2 + .3, 0, 0);
     const pscr = kit.meshesOf(phone, 'screen')[0]; pscr.material = new THREE.MeshBasicMaterial({ color: 0x1a2520 });
-    const fig = figure(kit, V(-6.6, 0, 6.2), Math.PI * .8);
 
     // ---------------------------------------------------------- overlays
     kit.caption('<b>HUDDLE</b>', .5, 5.8, 'title');
@@ -66,25 +67,26 @@ export default {
 
     // pulses
     machines.forEach((m, i) => kit.pulse(A[1].p, m.at, 22.6 + i * .6, 1.6, { zFirst: i === 2 }));
-    kit.pulse(V(1, 0, 1), V(-5, 0, 5), 44.0, 1.6);
-    kit.pulse(V(-5, 0, 5), V(1, 0, 1), 53.4, 1.4, { zFirst: true });
+    kit.pulse(V(1, 0, 1), V(-3, 0, 3), 44.0, 1.6);
+    kit.pulse(V(-3, 0, 3), V(1, 0, 1), 53.4, 1.4, { zFirst: true });
     kit.events.push({ t: 1.0, type: 'whoosh' }, { t: 7.4, type: 'tap' }, { t: 9.8, type: 'tap' }, { t: 35.8, type: 'alarm' },
       { t: 40.5, type: 'shimmer' }, { t: 45.4, type: 'buzz' }, { t: 53.2, type: 'tap' }, { t: 55.0, type: 'shimmer' });
 
+    const tbl = [V(-1.9, 0, -1.9), V(1.9, 1.1, 1.9)], room = [V(-4.6, 0, -2.8), V(4.4, 1.4, 3.6)], you = [V(-3.35, 0, 2.7), V(-2.65, 1.85, 3.3)];
     kit.camPath([
-      { t: 0, pos: [0, 13, .01], look: [0, 0, 0], fov: 40 },
-      { t: 6, pos: [0, 7.5, 5.5], look: [0, .6, 0], e: 'io' },
-      { t: 12, pos: [0, 5.2, 6.2], look: [0, .8, 0], e: 'lin' },
-      { t: 15, pos: [4.6, 3.6, 3.6], look: [0, .8, 0] },
-      { t: 20, pos: [5.2, 3.8, -2.6], look: [0, .8, 0], e: 'lin' },
-      { t: 23, pos: [0, 8.6, 9.6], look: [0, 0, .3], e: 'io' },
-      { t: 33.5, pos: [0, 8.0, 9.0], look: [0, 0, .5], e: 'lin' },
-      { t: 35, pos: [-4.2, 2.7, 3.8], look: [-.3, .9, .4], e: 'io' },
-      { t: 43.5, pos: [-3.6, 2.5, 3.4], look: [-.1, .9, .2], e: 'lin' },
-      { t: 45.5, pos: [-1.5, 4.2, 9.5], look: [-4.6, .4, 5], e: 'io' },
-      { t: 52.4, pos: [-1.8, 4.0, 9.2], look: [-4.6, .5, 5], e: 'lin' },
-      { t: 54, pos: [2.8, 4.6, 6.4], look: [0, .8, 0], e: 'io' },
-      { t: 58, pos: [3.4, 5.6, 7.6], look: [0, .8, 0], e: 'lin' },
+      { t: 0, frame: { on: tbl, yaw: 0, pitch: 84, fill: .55, fov: 40 } },
+      { t: 6, frame: { on: tbl, yaw: 0, pitch: 42, fill: .8 }, e: 'io' },
+      { t: 12, frame: { on: tbl, yaw: 8, pitch: 34, fill: .9 }, e: 'lin' },
+      { t: 15, frame: { on: tbl, yaw: 50, pitch: 26, fill: .85 } },
+      { t: 20, frame: { on: tbl, yaw: 115, pitch: 26, fill: .85 }, e: 'lin' },
+      { t: 23, frame: { on: room, yaw: 0, pitch: 42, fill: .95 }, e: 'io' },
+      { t: 33.5, frame: { on: room, yaw: 6, pitch: 40, fill: .98 }, e: 'lin' },
+      { t: 35, frame: { on: [V(-1.6, 0, -1.6), V(1.6, 1.3, 1.6)], yaw: 62, pitch: 24, fill: .85 }, e: 'io' },
+      { t: 43.5, frame: { on: [V(-1.6, 0, -1.6), V(1.6, 1.3, 1.6)], yaw: 50, pitch: 22, fill: .9 }, e: 'lin' },
+      { t: 45.5, frame: { on: you, yaw: 205, pitch: 8, fill: .62 }, e: 'io' },
+      { t: 52.4, frame: { on: you, yaw: 196, pitch: 8, fill: .68 }, e: 'lin' },
+      { t: 54, frame: { on: tbl, yaw: 35, pitch: 30, fill: .85 }, e: 'io' },
+      { t: 58, frame: { on: tbl, yaw: 48, pitch: 34, fill: .78 }, e: 'lin' },
     ]);
 
     return tau => {
@@ -112,11 +114,11 @@ export default {
         const t0 = 12.6 + i * .7;
         const p = ease.io(inv(t0, t0 + 1.4, tau));
         const owner = A[c.owner].p;
-        let pos = A[0].p.clone().lerp(V(0, 0, 0), .5).lerp(owner.clone().multiplyScalar(.82), p).setY(.8);
+        let pos = A[0].p.clone().lerp(V(0, 0, 0), .5).lerp(owner.clone().multiplyScalar(.55), p).setY(.8);
         // the reviewer sends the builder's card back with a red note
         if (c.owner === 1 && tau > 35.4 && tau < 41) {
           const q = ease.io(inv(35.6, 36.6, tau)) * (1 - ease.io(inv(39.6, 40.4, tau)));
-          pos = owner.clone().multiplyScalar(.82).lerp(A[2].p.clone().multiplyScalar(.82), q * .45).setY(.8);
+          pos = owner.clone().multiplyScalar(.55).lerp(A[2].p.clone().multiplyScalar(.55), q * .45).setY(.8);
         }
         const show = fade(tau, t0 - .1, t0 + .2, 57.4, 58) * (tau < 22.6 || (tau > 34.6 && tau < 44) || tau > 52.6 ? 1 : 0);
         kit.show(c.el, show);
@@ -136,21 +138,22 @@ export default {
         workers[i].chip.place(workers[i].top(), s * (tau < 34 ? 1 : 0));
         kit.glowSquare(Math.round(m.at.x), Math.round(m.at.z), .7 * s);
         const cp = consoles[i];
-        cp.place(m.at.clone().add(V(0, 2.1, 0)), fade(tau, t0 + .3, t0 + .7, 33.4, 34), { ay: 1, scale: .85 });
+        cp.place(m.at.clone().add(V(0, 1.4, 0)), fade(tau, t0 + .3, t0 + .7, 33.4, 34), { ay: 1, scale: .85 });
         const n = Math.floor(clamp((tau - t0 - .6) / 7) * LOG.length);
         const lines = LOG.slice(0, n).slice(-5).map(([l, c]) => `<div class="${c}">${l}</div>`).join('');
         cp.set(lines);
       });
       // the phone: a status summary with one question; you tap an answer
       const ph = fade(tau, 45.4, 45.8, 52.8, 53.4);
-      sum.place(V(-5, .8, 5), ph, { ay: 1, dy: -10 });
+      sum.place(V(-3, 1.2, 3), ph, { ax: -.45, ay: .5 });
       btn.className = tau > 52.2 ? 'btn on' : 'btn';
       pscr.material.color.setHex(tau > 45.4 && tau < 53.4 ? 0x557f6e : 0x1a2520);
-      kit.glowSquare(-5, 5, .7 * ph);
+      kit.glowSquare(-3, 3, .7 * ph);
       fig.rest();
       fig.obj.rotation.y = Math.PI * .8;
-      fig.armR.rotation.x = tau > 51.4 && tau < 53.2 ? -1.0 - .25 * Math.sin((tau - 51.4) * 6) : 0;
-      fig.head.rotation.x = .35;
+      fig.armL.rotation.x = -.45; fig.armL.rotation.z = .25; fig.foreL.rotation.x = -1.25;          // holding the phone up
+      fig.armR.rotation.x = tau > 51.4 && tau < 53.2 ? -.5 : 0; fig.foreR.rotation.x = tau > 51.4 && tau < 53.2 ? -1.1 - .12 * Math.sin((tau - 51.4) * 6) : 0;
+      fig.head.rotation.x = .4;
       kit.glowSquare(0, 0, .25 + .35 * fade(tau, 12, 12.5, 22, 23));
     };
   },
