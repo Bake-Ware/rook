@@ -80,6 +80,7 @@ window.render = t => {
   kit.renderPass.scene = kit.scene; kit.renderPass.camera = kit.camera; kit.dim = 1; kit.flash = 0;
   for (const u of kit.updaters) u(tau);
   if (update) update(tau);
+  if (kit.afterUpdate) kit.afterUpdate(tau);         // director: free camera overrides the clip's camera
   const own = book.frame(t);
   if (kit.boardU) kit.boardU.uCam.value.copy((kit.boardCam ? kit.boardCam() : kit.camera).position);
   // cross-fade into the clip from the sting, and into the end card

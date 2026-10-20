@@ -40,9 +40,22 @@ export function director(kit, clip) {
   };
   addEventListener('resize', fit); requestAnimationFrame(fit);
   const $ = id => document.getElementById(id);
-  const controls = new OrbitControls(kit.camera, document.getElementById('ui'));
-  document.getElementById('ui').style.pointerEvents = 'auto';
+  // a transparent layer over the whole stage catches the mouse for the free camera
+  const grab = document.createElement('div');
+  grab.style.cssText = 'position:absolute;inset:0;z-index:50;pointer-events:none;cursor:grab';
+  stage.appendChild(grab);
+  const controls = new OrbitControls(kit.camera, grab);
   controls.enabled = false;
+  // the clip sets its own camera every frame; while the free camera is on, put ours back before drawing
+  const fc = { pos: new THREE.Vector3(), fov: 36 };
+  const keepFree = () => { fc.pos.copy(kit.camera.position); fc.fov = kit.camera.fov; };
+  controls.addEventListener('change', keepFree);
+  kit.afterUpdate = () => {
+    if (!kit.freeCam) return;
+    kit.camera.position.copy(fc.pos); kit.camera.fov = fc.fov; kit.camera.up.set(0, 1, 0);
+    kit.camera.lookAt(controls.target); kit.camera.updateProjectionMatrix(); kit.camera.updateMatrixWorld();
+    kit.renderPass.scene = kit.scene; kit.renderPass.camera = kit.camera;
+  };
   let t = 0, playing = false, sel = -1, nsel = -1, last = performance.now();
   // notes: [{ t, text, cam: { pos, look, fov }, free }] at clip time
   let notes = [];
@@ -65,8 +78,9 @@ export function director(kit, clip) {
     fit();
     if (i >= 0) { $('nlbl').textContent = `note @ ${notes[i].t.toFixed(2)}s`; $('ntext').value = notes[i].text; if (create) $('ntext').focus(); }
   };
+  const frame = () => window.render(t);
   const draw = () => {
-    window.render(t);
+    frame();
     $('tt').textContent = `t ${t.toFixed(2)}s · clip ${(t - STING).toFixed(2)}s / ${(T - STING - 5).toFixed(1)}s`;
     // camera keys, plus notes that aren't on a key (dashed)
     const items = keys.map((k, i) => ({ t: k.t, i, key: true }))
@@ -84,8 +98,12 @@ export function director(kit, clip) {
   $('scrub').oninput = e => { t = +e.target.value; draw(); };
   $('play').onclick = () => { playing = !playing; $('play').textContent = playing ? '❚❚ pause' : '▶ play'; last = performance.now(); };
   $('free').onclick = () => {
-    kit.freeCam = !kit.freeCam; controls.enabled = kit.freeCam; $('free').classList.toggle('on', kit.freeCam);
-    if (kit.freeCam && kit.camLook) controls.target.copy(kit.camLook);
+    if (!kit.freeCam) {                      // start from wherever the clip's camera is now
+      frame(); controls.target.copy(kit.camLook ?? new THREE.Vector3(0, 0, -1).applyQuaternion(kit.camera.quaternion).add(kit.camera.position));
+      keepFree();
+    }
+    kit.freeCam = !kit.freeCam; controls.enabled = kit.freeCam; grab.style.pointerEvents = kit.freeCam ? 'auto' : 'none';
+    $('free').classList.toggle('on', kit.freeCam); frame();
   };
   $('key').onclick = () => {
     const tau = r(t - STING);
@@ -113,7 +131,7 @@ export function director(kit, clip) {
   }
   const loop = now => {
     if (playing) { t = Math.min(T, t + (now - last) / 1000); $('scrub').value = t; if (t >= T) playing = false; draw(); }
-    else if (kit.freeCam) { controls.update(); kit.composer.render(); }
+    else if (kit.freeCam) { controls.update(); frame(); }
     last = now; requestAnimationFrame(loop);
   };
   draw(); requestAnimationFrame(loop);
