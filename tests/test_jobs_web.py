@@ -349,7 +349,7 @@ def test_jobs_panel_lists_runs_now_and_toggles():
                       1,            # run now
                       2, 1,         # disable -> confirm yes
                       0, 0, None,   # runs -> the run -> back
-                      3,            # view JSON
+                      4,            # view JSON
                       None, None])  # back out of the menu and the list
         titles, popups = [], []
         ui.picker = lambda scr, title, items: (titles.append((title, items)), next(picks))[1]

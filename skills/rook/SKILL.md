@@ -126,6 +126,15 @@ When the user isn't in the conversation, send **one** short message per mileston
 
 A decision on project work can go in the project's huddle instead: `rook_huddle(action="ask", project=…, text=…, data={"options": […]})` pins it on the dashboard (Work > Huddle) until the person answers. The answer comes back as a chat message mentioning you (an `_unread_chat` notice on your next call); it wakes you only if the operator turned on wake-on-answer and your worker can be woken. Questions are for the person; ask other agents in chat.
 
+## Jobs: watchers and one-offs
+
+A job you leave behind must end on its own; never rely on a prompt that says "then disable this job".
+- `rook_jobs(action="describe_schema")` and `validate` before `create`.
+- Check the condition with a cap the hub can run (`shell.exec` on the worker: a file, a process, `git log`, a task's state). An agent step can call caps and hub tools such as `rook_task` and `rook_knowledge`, plus `notify_bake`, `ask_bake` and `finish`. It cannot read console rooms.
+- End it explicitly: put `"complete": "success"` on the step that reports, or let an agent step `finish` with `complete: true`. Also set `limits` as a backstop: `until` (an ISO time a few hours out), `max_runs`, `max_failures` (for example 3).
+- Report once: the hub drops the same text to the same target within `limits.notify_window` (6h by default), but write the job so it sends one message anyway. A failing job should fail, not message the person about failing.
+- A `locked` job (🔒) is the person's. Agents and tokens get `locked:` errors on update, enable, disable, delete and cancel. Ask the user; never work around a lock.
+
 ## Cost and token hygiene
 
 - Filter rosters (`rook_workers(name=…, fields=…)`, `rook_caps(prefix=…)`); `caps.describe` with a `prefix` on one worker, never unfiltered across the fleet or on a timer.
@@ -147,6 +156,8 @@ A decision on project work can go in the project's huddle instead: `rook_huddle(
 | Timed out, retried, it ran twice | Journal and effect check before any retry |
 | Huge replies (deck, console, `cat`) | Narrow at the source; see token hygiene |
 | Shared static token in the journal | Ask the user for a per-agent token |
+| A watcher job keeps running or messaging | It needs an end: a `complete` step or `finish(complete=true)`, plus `limits.until` / `max_runs`; check the condition with a cap, not console tools |
+| `locked:` from `rook_jobs` | A person locked the job; ask them, don't recreate it under another name |
 
 More in `references/troubleshooting.md`.
 

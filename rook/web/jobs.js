@@ -95,6 +95,13 @@ export function buildCron(o){
   return '';
 }
 
+// Locked jobs change only by a person's hand (docs/design/jobs.md 7.3).
+export function lockMark(j){
+  if(!j||!j.locked)return null;
+  const who='Locked'+(j.locked_by?' by '+j.locked_by:'')+': agents cannot change, switch off or delete it';
+  return h('span',{class:'jb-lock',role:'img','aria-label':who,title:who,text:'🔒'});
+}
+
 // ---- page ------------------------------------------------------------------
 const TEMPLATE={name:'new-job',description:'',enabled:true,
   triggers:[{kind:'cron',expr:'0 3 * * *'}],entry:'main',
@@ -125,7 +132,7 @@ export async function mountJobs(root){
     try{await view();}catch(e){fail(e);}
     if(tab==='overview'&&active)timer=setInterval(()=>{if(tab==='overview'&&!document.hidden)overview().catch(fail);},15000);
   }
-  const openJob=async ref=>{const j=await api.call('get',{id:ref});ed.id=j.id;ed.revision=j.revision;ed.text=JSON.stringify(j.definition,null,2);show('editor');};
+  const openJob=async ref=>{const j=await api.call('get',{id:ref});ed.id=j.id;ed.revision=j.revision;ed.job=j;ed.text=JSON.stringify(j.definition,null,2);show('editor');};
   const openRuns=(job,open)=>{runFilter.job=job||'';runFilter.open=open||null;show('runs');};
 
   // ---- overview ----
@@ -169,7 +176,7 @@ export async function mountJobs(root){
     const search=h('input',{type:'search',class:'mg-grow',placeholder:'Filter jobs','aria-label':'Filter jobs',value:jobQuery,oninput:()=>{jobQuery=search.value.trim().toLowerCase();draw();}});
     const chipHost=h('span',{class:'jb-seg'});
     const host=h('div',{class:'mg-box'});
-    body.replaceChildren(h('div',{class:'mg-bar'},search,chipHost,btn('+ New','primary',()=>{ed.id=null;ed.revision=null;ed.text=JSON.stringify(TEMPLATE,null,2);show('editor');})),host);
+    body.replaceChildren(h('div',{class:'mg-bar'},search,chipHost,btn('+ New','primary',()=>{ed.id=null;ed.revision=null;ed.job=null;ed.text=JSON.stringify(TEMPLATE,null,2);show('editor');})),host);
     const act=async(work)=>{clear();try{await work();await jobsTab();}catch(e){fail(e);}};
     function draw(){
       const off=list.jobs.filter(j=>!j.enabled).length;
@@ -180,10 +187,11 @@ export async function mountJobs(root){
         const menuBtn=more([
           {label:'Edit',run:()=>openJob(j.id).catch(fail)},
           {label:'Runs',run:()=>openRuns(j.id)},
+          j.can&&j.can.lock?{label:j.locked?'Unlock':'Lock',run:()=>act(()=>api.call(j.locked?'unlock':'lock',{id:j.id}))}:null,
           {label:'Delete…',danger:true,run:()=>confirmDelete(j)}],'More for '+j.name);
         const last=j.last_run;
         return h('div',{class:'mg-row jb-jobrow'},
-          h('button',{type:'button',class:'jb-plain',onclick:()=>openJob(j.id).catch(fail)},two(j.name,j.paused_reason?'paused: '+j.paused_reason:(j.description||''),true)),
+          h('button',{type:'button',class:'jb-plain jb-name',onclick:()=>openJob(j.id).catch(fail)},lockMark(j),two(j.name,j.paused_reason?'paused: '+j.paused_reason:(j.description||''),true)),
           toggle,
           h('span',{class:'mg-mono jb-ellipsis',title:j.triggers.join('\n'),text:j.triggers.join(' · ')||'manual'}),
           h('span',{class:'mg-dimtext jb-next',title:'Next run',text:j.next?fmt(j.next,api.tz):'—'}),
@@ -195,7 +203,7 @@ export async function mountJobs(root){
     }
     function confirmDelete(j){
       const err=h('small',{class:'mg-error',role:'alert'});
-      const go=btn('Delete '+j.name,'danger',async()=>{go.disabled=true;try{await api.call('delete',{id:j.id});d.close();if(ed.id===j.id){ed.id=null;ed.revision=null;}await jobsTab();}catch(e){err.textContent=e.message;go.disabled=false;}});
+      const go=btn('Delete '+j.name,'danger',async()=>{go.disabled=true;try{await api.call('delete',{id:j.id});d.close();if(ed.id===j.id){ed.id=null;ed.revision=null;ed.job=null;}await jobsTab();}catch(e){err.textContent=e.message;go.disabled=false;}});
       const d=dialog('Delete job',h('p',{text:'Delete '+j.name+' and its run history? Running runs are cancelled.'}),err,h('div',{class:'mg-actions end'},go));
     }
     draw();
@@ -205,7 +213,10 @@ export async function mountJobs(root){
   async function editor(){
     const text=h('textarea',{class:'jb-json',spellcheck:'false','aria-label':'Job JSON',autocomplete:'off'});text.value=ed.text;
     const problems=h('div',{class:'jb-problems',role:'alert'});
-    const title=h('span',{class:'mg-mono jb-ellipsis',text:ed.id?ed.id+' · rev '+ed.revision:'new job (unsaved)'});
+    const title=h('span',{class:'mg-mono jb-ellipsis'});
+    const label=()=>title.replaceChildren(...[ed.id&&ed.job?lockMark(ed.job):null,ed.id?ed.id+' · rev '+ed.revision:'new job (unsaved)'].filter(Boolean));
+    label();
+    const lock=async()=>{try{const j=await api.call(ed.job.locked?'unlock':'lock',{id:ed.id});ed.job=j;ed.revision=j.revision;label();}catch(e){showProblems([e.message],[]);}};
     text.addEventListener('input',()=>{ed.text=text.value;syncTriggers();});
     text.addEventListener('keydown',e=>{if(e.key==='Tab'&&!e.shiftKey){e.preventDefault();text.setRangeText('  ',text.selectionStart,text.selectionEnd,'end');ed.text=text.value;}
       if((e.ctrlKey||e.metaKey)&&e.key==='s'){e.preventDefault();save();}});
@@ -218,8 +229,8 @@ export async function mountJobs(root){
     async function save(){const doc=parse();if(!doc)return;
       try{
         const j=ed.id?await api.call('update',{id:ed.id,data:{...doc,revision:ed.revision}}):await api.call('create',{data:doc});
-        ed.id=j.id;ed.revision=j.revision;ed.text=text.value=JSON.stringify(j.definition,null,2);
-        title.textContent=j.id+' · rev '+j.revision;runNow.disabled=false;showProblems([],j.warnings||[],'Saved.');syncTriggers();
+        ed.id=j.id;ed.revision=j.revision;ed.job=j;ed.text=text.value=JSON.stringify(j.definition,null,2);
+        label();runNow.disabled=false;showProblems([],j.warnings||[],'Saved.');syncTriggers();
       }catch(e){showProblems(e.errors||[e.message],[]);}}
     const format=()=>{const doc=parse();if(doc){ed.text=text.value=JSON.stringify(doc,null,2);showProblems([],[]);}};
     const schema=async()=>{try{const s=await api.call('describe_schema');dialog('Job schema',h('pre',{class:'jb-schema',text:JSON.stringify(s,null,2),tabindex:'0'}));}catch(e){fail(e);}};
@@ -279,7 +290,8 @@ export async function mountJobs(root){
       h('div',{class:'mg-main'},
         h('div',{class:'mg-bar jb-edbar'},title,h('span',{class:'mg-grow'}),
           btn('Validate','',validate),btn('Save','primary',save),
-          more(()=>[{label:'Format',run:format},{label:ed.id?'Run now':'Run now (save first)',run:()=>{if(!runNow.disabled)runNow.click();}},{label:'Schema',run:schema}],'More editor actions')),
+          more(()=>[{label:'Format',run:format},{label:ed.id?'Run now':'Run now (save first)',run:()=>{if(!runNow.disabled)runNow.click();}},
+            ed.id&&ed.job&&ed.job.can&&ed.job.can.lock?{label:ed.job.locked?'Unlock':'Lock',run:lock}:null,{label:'Schema',run:schema}],'More editor actions')),
         text,problems),
       h('aside',{class:'mg-box mg-side jb-helper'},
         h('div',{class:'mg-pad'},

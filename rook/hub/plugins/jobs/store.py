@@ -58,8 +58,9 @@ def _row(r: sqlite3.Row | None) -> dict | None:
                 pass
     if "missed" in out:
         out["missed"] = bool(out["missed"])
-    if "enabled" in out:
-        out["enabled"] = bool(out["enabled"])
+    for k in ("enabled", "locked"):
+        if k in out:
+            out[k] = bool(out[k])
     return out
 
 
@@ -128,7 +129,7 @@ class JobStore:
         """Replace a job's definition. ``owner_info`` hands the job (and the
         identity its runs use) to a new owner. Each call adds a history row."""
         with self._tx() as db:
-            cur = db.execute("SELECT revision, owner FROM jobs WHERE id=?", (jid,)).fetchone()
+            cur = db.execute("SELECT revision, owner, enabled, definition FROM jobs WHERE id=?", (jid,)).fetchone()
             if cur is None:
                 raise KeyError(f"no job {jid!r}")
             if expect_revision is not None and cur["revision"] != expect_revision:
@@ -144,6 +145,9 @@ class JobStore:
                         _dumps(job), now, actor, jid))
             if owner_info:
                 db.execute("UPDATE jobs SET owner=?, owner_info=? WHERE id=?", (owner, _dumps(owner_info), jid))
+            old = json.loads(cur["definition"] or "{}")
+            if (job.get("enabled", True) and not cur["enabled"]) or old.get("limits") != job.get("limits"):
+                self._reset_counts(db, jid)  # switched back on, or new limits: count from now
             self._rebuild_triggers(db, job, now, tz)
             self._history(db, jid, cur["revision"] + 1, now, actor, action, detail or {})
         return self.get_job(jid)
@@ -166,10 +170,59 @@ class JobStore:
                 db.execute("UPDATE jobs SET owner=?, owner_info=? WHERE id=?", (owner, _dumps(owner_info), row["id"]))
             if enabled:  # schedules restart from now: nothing "missed" while it was off
                 self._rebuild_triggers(db, job, now, tz)
+                if not row["enabled"]:
+                    self._reset_counts(db, row["id"])
             rev = db.execute("SELECT revision FROM jobs WHERE id=?", (row["id"],)).fetchone()["revision"]
             self._history(db, row["id"], rev, now, actor, "enable" if enabled else "disable",
                           {**({"reason": reason} if reason and not enabled else {}), **(detail or {})})
         return self.get_job(row["id"])
+
+    @staticmethod
+    def _reset_counts(db: sqlite3.Connection, jid: str) -> None:
+        db.execute("UPDATE jobs SET run_count=0, fail_streak=0 WHERE id=?", (jid,))
+
+    def set_locked(self, jid: str, locked: bool, actor: str, now: float, detail: dict | None = None) -> dict:
+        """Lock or unlock a job (the caller checked that ``actor`` is a
+        person). The history row is the audit record."""
+        with self._tx() as db:
+            cur = db.execute("SELECT revision FROM jobs WHERE id=?", (jid,)).fetchone()
+            if cur is None:
+                raise KeyError(f"no job {jid!r}")
+            db.execute("UPDATE jobs SET locked=?, locked_by=?, locked_at=?, revision=revision+1, updated=?,"
+                       " updated_by=? WHERE id=?",
+                       (int(bool(locked)), actor if locked else None, now if locked else None, now, actor, jid))
+            self._history(db, jid, cur["revision"] + 1, now, actor, "lock" if locked else "unlock", detail or {})
+        return self.get_job(jid)
+
+    def count_run(self, jid: str, state: str) -> dict | None:
+        """Count a finished run toward the job's limits: every run but
+        cancelled, dropped and interrupted ones counts toward ``max_runs``;
+        failure, hang and blocked extend the failure streak, success ends it."""
+        if state in ("cancelled", "dropped", "interrupted"):
+            return self.get_job(jid)
+        failed = state in ("failure", "hang", "blocked")
+        with self._tx() as db:
+            db.execute("UPDATE jobs SET run_count=run_count+1,"
+                       " fail_streak=CASE WHEN ? THEN fail_streak+1 ELSE 0 END WHERE id=?", (int(failed), jid))
+        return self.get_job(jid)
+
+    def cancel_waiting(self, jid: str, now: float, reason: str) -> int:
+        """Cancel a job's queued and due runs (it was switched off by a limit)."""
+        with self._lock:
+            return self._db.execute("UPDATE runs SET state='cancelled', finished=?, error=? WHERE job_id=?"
+                                    " AND state IN ('queued','due')", (now, reason, jid)).rowcount
+
+    # -- notices -------------------------------------------------------------------
+    def notice_at(self, jid: str, target: str, digest: str, since: float) -> float | None:
+        """When this job last sent this text to this target, if after ``since``."""
+        row = self._one("SELECT at FROM notices WHERE job_id=? AND target=? AND digest=? AND at>=?",
+                        (jid, target, digest, since))
+        return row["at"] if row else None
+
+    def record_notice(self, jid: str, target: str, digest: str, now: float, run_id: str | None) -> None:
+        with self._lock:
+            self._db.execute("INSERT OR REPLACE INTO notices(job_id, target, digest, at, run_id) VALUES (?,?,?,?,?)",
+                             (jid, target, digest, now, run_id))
 
     # -- history -------------------------------------------------------------------
     @staticmethod
@@ -197,6 +250,7 @@ class JobStore:
             db.execute("DELETE FROM jobs WHERE id=?", (jid,))
             db.execute("DELETE FROM triggers WHERE job_id=?", (jid,))
             db.execute("DELETE FROM history WHERE job_id=?", (jid,))
+            db.execute("DELETE FROM notices WHERE job_id=?", (jid,))
             running = db.execute("UPDATE runs SET cancel=1 WHERE job_id=? AND state='running'", (jid,)).rowcount
             gone = db.execute("DELETE FROM runs WHERE job_id=? AND state<>'running'", (jid,)).rowcount
         return {"deleted": jid, "runs_deleted": gone, "runs_cancelling": running}
@@ -429,6 +483,7 @@ class JobStore:
             gone += db.execute("DELETE FROM runs WHERE finished IS NOT NULL AND finished<? AND job_id NOT IN (%s)"
                                % (",".join("?" * len(known)) or "''"),
                                (now - default_days * 86400, *known)).rowcount
+            db.execute("DELETE FROM notices WHERE at<?", (now - max(default_days, 30) * 86400,))
         return gone
 
 

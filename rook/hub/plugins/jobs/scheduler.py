@@ -10,6 +10,15 @@ on one database (see :mod:`.store`). Each :meth:`Scheduler.tick`:
 5. claims due runs and starts them;
 6. now and then, prunes run history past retention.
 
+Jobs switch themselves off (docs/design/jobs.md 4.1): a job past
+``limits.until`` stops before its next run (``expired``); after each run the
+job's counts are updated and it is switched off when a step completed it or
+``limits.complete_on`` matched (``completed``), it reached ``limits.max_runs``
+(``max_runs``), or it failed ``limits.max_failures`` runs in a row
+(``max_failures``; the hub setting ``job.max_failures`` when the job sets
+none, except on a locked job). Waiting runs are cancelled with it, and the
+job's history says which rule did it.
+
 The clock and sleep are injectable so tests can move time by hand.
 """
 from __future__ import annotations
@@ -19,9 +28,10 @@ import logging
 import time
 from typing import Any, Callable
 
-from .cron import Cron, parse_duration
+from .cron import Cron, parse_duration, parse_instant
 from .executor import Executor
 from .identity import PAUSE_REASON, IdentityRevoked, resolve_identity
+from .model import complete_matches
 from .store import AFTER_STATES, JobStore, grace_seconds
 
 log = logging.getLogger("rook.hub.plugins.jobs.scheduler")
@@ -31,6 +41,8 @@ ON_TIME = 90.0
 LEASE = 60.0
 PRUNE_EVERY = 3600.0
 MAX_FIRES = 1000
+DEFAULT_MAX_FAILURES = 10
+SYSTEM = "system:jobs"
 
 
 class Scheduler:
@@ -97,6 +109,7 @@ class Scheduler:
         """One pass; returns the ids of the runs it started."""
         now = self.clock()
         self.store.interrupt(now)
+        self.expire(now)
         self.arm_after(now)
         self.fire_due(now)
         self.store.promote()
@@ -115,6 +128,74 @@ class Scheduler:
     def prune(self, now: float | None = None) -> int:
         days = int(self.settings("retention_days") or 30)
         return self.store.prune(self.clock() if now is None else now, days)
+
+    # -- limits -----------------------------------------------------------------
+    @staticmethod
+    def expired(job: dict, now: float) -> float | None:
+        """``limits.until`` when it has passed, else None."""
+        until = (job.get("limits") or {}).get("until") if isinstance(job.get("limits"), dict) else None
+        if until is None:
+            return None
+        try:
+            t = parse_instant(until)
+        except ValueError:
+            return None
+        return t if t <= now else None
+
+    def expire(self, now: float) -> list[str]:
+        """Switch off enabled jobs whose ``limits.until`` has passed."""
+        out = []
+        for row in self.store.list_jobs():
+            if row["enabled"] and self.expired(row["definition"], now) is not None:
+                self.switch_off(row, "expired", {"until": row["definition"]["limits"]["until"]})
+                out.append(row["id"])
+        return out
+
+    def max_failures(self, row: dict) -> int:
+        """The job's own ``limits.max_failures``, else the hub setting (never
+        for a locked job: a person locked it to keep it running)."""
+        own = (row["definition"].get("limits") or {}).get("max_failures")
+        if own is not None:
+            return int(own)
+        if row.get("locked"):
+            return 0
+        try:
+            v = self.settings("max_failures")
+            return DEFAULT_MAX_FAILURES if v is None else max(0, int(v))
+        except (TypeError, ValueError):
+            return DEFAULT_MAX_FAILURES
+
+    def settle(self, jid: str, rid: str, result: dict) -> str | None:
+        """After a run: count it and switch the job off when a limit says so.
+        Returns the reason, or None."""
+        state = result.get("state") or ""
+        row = self.store.count_run(jid, state)
+        if row is None or not row["enabled"]:
+            return None
+        lim = row["definition"].get("limits") or {}
+        reason, detail = None, {"run": rid}
+        if result.get("complete"):
+            reason, detail = "completed", {**detail, **result["complete"]}
+        elif lim.get("complete_on") and complete_matches(lim["complete_on"], state):
+            reason, detail = "completed", {**detail, "complete_on": lim["complete_on"], "state": state}
+        elif lim.get("max_runs") and row.get("run_count", 0) >= int(lim["max_runs"]):
+            reason, detail = "max_runs", {**detail, "max_runs": lim["max_runs"]}
+        else:
+            n = self.max_failures(row)
+            if n and row.get("fail_streak", 0) >= n:
+                reason, detail = "max_failures", {**detail, "max_failures": n, "failed_in_a_row": row["fail_streak"]}
+        if reason:
+            self.switch_off(row, reason, detail)
+        return reason
+
+    def switch_off(self, row: dict, reason: str, detail: dict) -> None:
+        try:
+            self.store.set_enabled(row["id"], False, SYSTEM, self.clock(), self.tz(), reason=reason,
+                                   detail={"limit": reason, **detail})
+            self.store.cancel_waiting(row["id"], self.clock(), f"cancelled: the job switched off ({reason})")
+            log.info("jobs: %s switched off: %s", row["name"], reason)
+        except Exception:
+            log.exception("jobs: switching off %s failed", row.get("id"))
 
     # -- triggers ---------------------------------------------------------------
     def arm_after(self, now: float) -> None:
@@ -193,6 +274,10 @@ class Scheduler:
             self.store.finish(rid, self.owner, "cancelled", self.clock(), error="the job was deleted")
             return {"state": "cancelled"}
         job = row["definition"]
+        if self.expired(job, self.clock()) is not None:
+            self.store.finish(rid, self.owner, "cancelled", self.clock(),
+                              error=f"the job expired (limits.until {job['limits']['until']})")
+            return {"state": "cancelled"}
         try:
             identity = self.resolve(job, row["owner_info"])
         except PermissionError as e:
@@ -202,7 +287,8 @@ class Scheduler:
             return {"state": "blocked"}
         self.store.set_identity(rid, identity.id + (" (fallback)" if identity.mode == "fallback" else ""))
         ctx_run = {"id": rid, "started": run.get("started"), "missed": bool(run.get("missed")),
-                   "trigger": run.get("trigger"), "vars": run.get("vars") or {}}
+                   "trigger": run.get("trigger"), "vars": run.get("vars") or {},
+                   "locked": bool(row.get("locked"))}
 
         def progress(records: dict, executions: int) -> None:
             self.store.save_progress(rid, self.owner, records, executions)
@@ -230,8 +316,14 @@ class Scheduler:
                 alerts = await self.alerts(job, ctx_run, identity, result["state"])
             except Exception:
                 log.exception("jobs: alerts for run %s failed", rid)
-        self.store.finish(rid, self.owner, result["state"], self.clock(), steps=result.get("steps"),
-                          executions=result.get("executions"), error=result.get("error"), alerts=alerts)
+        finished = self.store.finish(rid, self.owner, result["state"], self.clock(), steps=result.get("steps"),
+                                     executions=result.get("executions"), error=result.get("error"),
+                                     alerts=alerts)
+        if finished and not self._stopping:
+            try:
+                self.settle(row["id"], rid, result)
+            except Exception:
+                log.exception("jobs: limits after run %s failed", rid)
         return result
 
     async def _hold(self, rid: str, work: asyncio.Task) -> None:

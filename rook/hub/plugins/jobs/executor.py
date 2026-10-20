@@ -13,6 +13,10 @@
   that was not reached is ``failure``. A join fires once per run.
 * The run's state is the worst final step state, ``blocked`` > ``hang`` >
   ``failure`` > ``success``, ignoring steps with ``allow_failure``.
+* A step whose outcome meets its ``complete`` rule (or an agent step whose
+  agent finished with ``complete``) is marked ``complete``; the result's
+  ``complete`` names it and the scheduler switches the job off for good when
+  the run ends (docs/design/jobs.md 4.1).
 
 Step outputs are masked (known vault values and the values the step used
 become ``{{secret:name}}``) and truncated before they are stored.
@@ -27,7 +31,7 @@ from typing import Any, Callable
 from .cron import parse_duration
 from .expr import compile_expr, evaluate
 from .guardrails import Blocked, GuardedRuntime, check_step
-from .model import incoming
+from .model import complete_matches, incoming
 from .steps import StepContext, StepResult, apply_success_rules, step_kind
 
 log = logging.getLogger("rook.hub.plugins.jobs.executor")
@@ -67,10 +71,27 @@ class RunCancelled(Exception):
     pass
 
 
+def completes(step: dict, state: str, agent_asked: bool, locked: bool) -> str:
+    """Why this step's outcome ends the job ("" when it does not): its
+    ``complete`` rule, or its agent asking to (always on an unlocked job; on
+    a locked one only when the step says ``complete: "agent"``, which only a
+    person could have saved)."""
+    rule = step.get("complete")
+    if rule is True:
+        rule = "success"
+    if rule in ("success", "failure", "finish") and complete_matches(rule, state):
+        return f"step complete: {rule}"
+    if agent_asked and (rule == "agent" or not locked):
+        return "the agent finished with complete"
+    return ""
+
+
 class Executor:
-    def __init__(self, runtime: Any, *, settings: Callable[[str], Any] = lambda _k: None) -> None:
+    def __init__(self, runtime: Any, *, settings: Callable[[str], Any] = lambda _k: None,
+                 notices: Any = None) -> None:
         self.runtime = runtime
         self.settings = settings
+        self.notices = notices          # .notices.Notices (None: no dedupe)
 
     def _max_executions(self) -> int:
         try:
@@ -107,7 +128,7 @@ class Executor:
             rec["attempts"] = attempt
             ctx = StepContext(job=job, run=run, step_id=sid, identity=identity, runtime=guarded,
                               settings=self.settings, timeout=timeout, attempt=attempt,
-                              records=records, used=used)
+                              records=records, used=used, notices=self.notices)
             try:
                 if kind is None:
                     raise LookupError(f"step kind {step.get('kind')!r} is not available on this hub")
@@ -125,7 +146,15 @@ class Executor:
                 break
             if delay:
                 await rt.sleep(delay)
-        return res, self._record(rec, res, used)
+        wants = bool(res.extra.pop("complete", False))
+        rec = self._record(rec, res, used)
+        why = completes(step, res.state, wants, bool(run.get("locked")))
+        if why:
+            rec["complete"] = why
+        elif wants:
+            rec["complete_ignored"] = ("the job is locked; an agent may end it only when its step has "
+                                       "complete: \"agent\"")
+        return res, rec
 
     def _record(self, rec: dict, res: StepResult, used: dict) -> dict:
         rt = self.runtime
@@ -280,8 +309,12 @@ class _Graph:
                     "error": "cancelled"}
         if self.error:
             await self._stop_tasks()
-        return {"state": self.final_state(), "steps": self.records, "executions": self.executions,
-                "error": self.error}
+        out = {"state": self.final_state(), "steps": self.records, "executions": self.executions,
+               "error": self.error}
+        done = [sid for sid, r in self.records.items() if r.get("complete")]
+        if done:
+            out["complete"] = {"step": done[0], "why": self.records[done[0]]["complete"]}
+        return out
 
     async def _stop_tasks(self) -> None:
         for t in self.tasks:

@@ -12,8 +12,11 @@ than the job itself could.
 
 The loop is bounded: at most ``max_calls`` tool calls (then only ``finish``
 is offered), a fixed number of model rounds, and the caller's time budget.
-The agent ends with ``finish(verdict, text)``; a final answer without it is
-read for a ``VERDICT: ok|failed`` line or a JSON ``{"verdict": ...}``.
+The agent ends with ``finish(verdict, text, complete?)``; a final answer
+without it is read for a ``VERDICT: ok|failed`` line or a JSON
+``{"verdict": ...}``. ``complete: true`` asks the hub to switch the job off
+for good once the run ends (a watcher whose event happened); the hub does it,
+so the agent needs no ``job.write`` and no tool calls left.
 """
 
 from __future__ import annotations
@@ -66,8 +69,11 @@ TOOLS: dict[str, dict] = {
         {"question": {"type": "string"}}, ["question"]),
     "finish": _fn(
         "finish", "End your work on this step with a verdict: ok (done, criteria met) or failed, "
-        "and a short summary.",
-        {"verdict": {"enum": list(VERDICTS)}, "text": {"type": "string"}}, ["verdict", "text"]),
+        "and a short summary. complete: true also ends the whole job for good (no more runs), for "
+        "example when what a watcher job waits for has happened and you have reported it. Never "
+        "disable the job yourself; use complete.",
+        {"verdict": {"enum": list(VERDICTS)}, "text": {"type": "string"},
+         "complete": {"type": "boolean"}}, ["verdict", "text"]),
 }
 
 
@@ -87,9 +93,13 @@ class JobBackend(Protocol):
 WHERE = ("You are working one step of a scheduled Rook job, not chatting. You act on behalf of "
          "the job: every tool call is checked against what the job may do, and journaled. "
          "Use the tools to do the work and check results; do not invent results. Reach Bake "
-         "only when the job needs him (a blocker, a decision, a result he asked for). "
+         "only when the job needs him (a blocker, a decision, a result he asked for), and never "
+         "with the same news twice: the hub drops repeats. If the job cannot do its work (a tool "
+         "it needs is missing, a check keeps failing), finish failed and say why; do not message "
+         "Bake about it, the job switches itself off after repeated failures. "
          "When you are done, call finish with verdict ok or failed and a one or two sentence "
-         "summary.")
+         "summary; add complete: true when the job has nothing left to do ever (its event "
+         "happened and you reported it).")
 
 
 def parse_verdict(text: str) -> tuple[str | None, str]:
@@ -180,7 +190,8 @@ async def run_loop(cli: Any, messages: list[dict], backend: JobBackend, *, max_c
                 verdict = str(args.get("verdict") or "").lower()
                 return {"verdict": verdict if verdict in VERDICTS else "failed",
                         "text": cli._scrub(str(args.get("text") or ""))[:2000], "calls": calls,
-                        "tools_used": used, "model": cli._scrub(model), "rounds": rounds}
+                        "tools_used": used, "model": cli._scrub(model), "rounds": rounds,
+                        "complete": args.get("complete") is True}
             if calls >= max_calls:
                 out: Any = {"ok": False, "error": f"tool budget used up ({max_calls} calls); call finish"}
             else:

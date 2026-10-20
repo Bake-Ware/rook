@@ -13,6 +13,7 @@ from typing import Any
 from ...approvals import shown_args
 from .cron import parse_duration, parse_instant
 from .expr import compile_expr
+from .notices import NOTICE_CAPS
 from .steps import (StepContext, StepResult, apply_success_rules, exit_code_of,
                     register_step_kind, step_kind)
 
@@ -111,6 +112,10 @@ async def call_cap(ctx: StepContext, cap: str, raw_args: dict, spec: Any) -> Ste
     wid, name = found
     shown = ctx.template(raw_args)
     args = ctx.render(raw_args, via=f"job {ctx.job.get('name')} step {ctx.step_id}: {cap} on {name}")
+    suppressed, record = notice_gate(ctx, cap, wid, shown)
+    if suppressed is not None:
+        rt.journal(cap, name, ctx.identity, shown, {"ok": True, "result": suppressed})
+        return suppressed_result(suppressed, shown, name)
     remaining = deadline - loop.time()
     wait = max(0.01, remaining - min(CALL_MARGIN, remaining / 10))
     stok = shown_args.set(shown)   # an approval hold shows placeholders, never values
@@ -126,7 +131,29 @@ async def call_cap(ctx: StepContext, cap: str, raw_args: dict, spec: Any) -> Ste
     rt.journal(cap, name, ctx.identity, shown, reply)
     res = result_from_reply(reply)
     res.extra["worker"] = name
+    if res.ok:
+        record(ctx.run.get("id"))
     return res
+
+
+def notice_gate(ctx: StepContext, cap: str, wid: str, shown: Any) -> tuple[dict | None, Any]:
+    """The notify dedupe (:mod:`.notices`) for one call: ``(suppressed
+    reply or None, record(run_id))``."""
+    gate = ctx.notices
+    if gate is None or cap not in NOTICE_CAPS:
+        return None, lambda _run_id=None: None
+    target = "rook:" + str((shown or {}).get("channel") or "") if cap == "notify.send" else wid
+    return gate.check(ctx.job, cap, target, shown)
+
+
+def suppressed_result(suppressed: dict, shown: Any, worker: str) -> StepResult:
+    """A send the dedupe held back: fine for a message, a failure for a
+    question (nobody was asked, so nobody answered)."""
+    if isinstance(shown, dict) and shown.get("reply"):
+        return StepResult("failure", output=suppressed, error="not asked again: the same question went to "
+                          f"{worker} at {suppressed.get('sent_at')} (limits.notify_window)",
+                          extra={"worker": worker, "suppressed": True})
+    return StepResult("success", output=suppressed, extra={"worker": worker, "suppressed": True})
 
 
 # -- cap ---------------------------------------------------------------------------
@@ -213,6 +240,10 @@ async def run_fanout(ctx: StepContext, step: dict) -> StepResult:
     wait = max(0.01, ctx.timeout - min(CALL_MARGIN, ctx.timeout / 10))
 
     async def one(name: str, wid: str) -> tuple[str, StepResult]:
+        suppressed, record = notice_gate(ctx, cap, wid, shown)
+        if suppressed is not None:
+            rt.journal(cap, name, ctx.identity, shown, {"ok": True, "result": suppressed})
+            return name, suppressed_result(suppressed, shown, name)
         try:
             reply = await rt.call(cap, args, wid, wait, ctx.identity)
         except asyncio.TimeoutError:
@@ -222,7 +253,10 @@ async def run_fanout(ctx: StepContext, step: dict) -> StepResult:
             return name, StepResult("failure", error=str(e))
         reply = rt.mask(reply, ctx.used)
         rt.journal(cap, name, ctx.identity, shown, reply)
-        return name, apply_success_rules(step, result_from_reply(reply))
+        res = apply_success_rules(step, result_from_reply(reply))
+        if res.ok:
+            record(ctx.run.get("id"))
+        return name, res
 
     results = await asyncio.gather(*(one(n, w) for n, w in targets))
     per = {n: {"state": r.state, "exit_code": r.exit_code,

@@ -73,3 +73,5 @@
  .jb-runrow>:nth-child(4){grid-area:start;font-size:12px}.jb-runrow>:nth-child(5){grid-area:took;justify-self:end}.jb-runrow>:nth-child(6){grid-area:x;justify-self:end}
  .jb-detail{padding:8px 12px}
 }
+.jb .jb-name{display:flex;align-items:center;gap:6px}
+.jb-lock{flex:0 0 auto;font-size:13px;line-height:1}
