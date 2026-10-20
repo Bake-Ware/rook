@@ -17,7 +17,8 @@ export function director(kit, clip) {
       #dir textarea{width:100%;min-height:54px;font:inherit;background:#141812;color:#e2e3d9;border:1px solid #514b35;border-radius:6px;padding:6px 8px;resize:vertical}
       #dir .k.n{border-style:dashed}#dir .k.hasn::after{content:' ✎';color:#f0c98c}
       #dir .k{display:inline-block;padding:2px 8px;border:1px solid #3b4232;border-radius:5px;margin:2px;cursor:pointer}#dir .k.cur{border-color:#f0c98c;color:#f0c98c}
-      html,body{overflow:auto;height:auto}
+      html,body{overflow:hidden!important;height:100%!important;width:100%!important}
+      #stage{position:absolute!important;left:0;top:0}
     </style>
     <div id="dir"><input id="scrub" type="range" min="0" max="${T}" step="0.0333" value="0">
       <div class="row"><b id="tt"></b>
@@ -33,7 +34,10 @@ export function director(kit, clip) {
   document.documentElement.style.width = document.body.style.width = '100%';
   document.documentElement.style.height = document.body.style.height = '100%';
   stage.style.transformOrigin = '0 0';
-  const fit = () => { stage.style.transform = `scale(${Math.min(innerWidth / 1920, (innerHeight - ui.offsetHeight) / 1080)})`; };
+  const fit = () => {                       // scale to fit, centred, with no page scroll
+    const dh = document.getElementById('dir').offsetHeight, s = Math.min(innerWidth / 1920, (innerHeight - dh) / 1080);
+    stage.style.transform = `translate(${(innerWidth - 1920 * s) / 2}px, ${Math.max(0, (innerHeight - dh - 1080 * s) / 2)}px) scale(${s})`;
+  };
   addEventListener('resize', fit); requestAnimationFrame(fit);
   const $ = id => document.getElementById(id);
   const controls = new OrbitControls(kit.camera, document.getElementById('ui'));
