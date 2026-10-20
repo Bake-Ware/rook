@@ -541,3 +541,9 @@ are set only in the environment or on the command line.
 | `watchdog.telegram_token` | Telegram bot token (secret) | hub | str |  | `ROOK_WATCHDOG_TELEGRAM_TOKEN` | live · bootstrap |
 | `watchdog.telegram_chat` | Telegram chat id | hub | str |  | `ROOK_WATCHDOG_TELEGRAM_CHAT` | live · bootstrap |
 | `watchdog.via_hub` | Alert through the hub's notify.send first | hub | bool | off | `ROOK_WATCHDOG_VIA_HUB` | live · bootstrap |
+
+## Webos (worker plugin, runs in worker)
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `webos.tvs` | TVs | worker | str |  | `WEBOS_TVS` | reload |

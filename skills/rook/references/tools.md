@@ -560,6 +560,33 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 | `agent.wake` | room, thread_id='', title='', transcript?, woken_by='', note='' | Spawn the configured local agent to attend `room`. |
 | `agent.wake_info` | — | Report whether this host can wake an agent and which one. |
 
+**webos**
+
+| Cap | Args | Does |
+|---|---|---|
+| `webos.discover` | timeout=3.0 | Find LG webOS TVs on this worker's network (SSDP), for adding to webos.tvs. |
+| `webos.list` | — | Every configured TV: `{items: [{name, host, on, app, reachable, paired}]}`. |
+
+**webos devices**
+
+| Cap | Args | Does |
+|---|---|---|
+| `tv.apps` | — | Installed apps the TV can launch: `{items: [{id, title}]}`. |
+| `tv.button` | name | Press a remote button: HOME, BACK, UP, DOWN, LEFT, RIGHT, ENTER, MENU, EXIT, digits… |
+| `tv.input` | input | Switch to an external input by id or label (`"HDMI 1"`, `"HDMI_2"`). |
+| `tv.inputs` | — | External inputs (HDMI…): `{items: [{id, label, connected}]}`. |
+| `tv.launch` | app, params? | Launch an app by id or title (`"YouTube"`, `"netflix"`), with optional launch `params`. |
+| `tv.media` | action | Playback control for the current app: play, pause, stop, rewind, fast_forward. |
+| `tv.mute` | on=true | Mute (`on=true`) or unmute (`on=false`). |
+| `tv.open_url` | url | Open an http(s) URL in the TV's web browser. |
+| `tv.pair` | key?, timeout=60 | Pair with the TV. |
+| `tv.power_off` | — | Turn the TV off. |
+| `tv.power_on` | — | Turn the TV on with Wake-on-LAN. |
+| `tv.screen` | on | Turn just the screen off (sound keeps playing) or back on. |
+| `tv.status` | — | Live state: `{on, power, app, app_id, volume, muted, screen, reachable, paired}`. |
+| `tv.toast` | message | Show a short notification on the TV screen. |
+| `tv.volume` | level?, step? | Set the volume to `level` (0-100), or move it by `step` (e.g. +3, -2). |
+
 **work**
 
 | Cap | Args | Does |

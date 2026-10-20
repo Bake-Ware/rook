@@ -14,7 +14,7 @@ import inspect
 TOOLS: dict[str, str] = {
     "rook_whoami": "Your identity as this hub records it (agent_id, key_id, kind, identity). Attribution only; never returns the token.",
 
-    "rook_workers": "Workers on the band. Filters: name (substring/comma list), cap_prefix (adds matching caps), online. Default fields: name, description, serves (hosting), build, hb, last_seen_age_secs (+worker_id if a name is shared). fields: any of worker_id, band, caps, plugins, version, app_release, online and the defaults, or \"all\".",
+    "rook_workers": "Workers on the band. Filters: name (substring/comma list), cap_prefix (adds matching caps), online. Default fields: name, description, serves (hosting), build, hb, last_seen_age_secs (+worker_id if a name is shared); device workers (TV, switch) add device and delegate, with live state in hb. fields: any of worker_id, band, caps, plugins, version, app_release, online and the defaults, or \"all\".",
 
     "rook_caps": "Caps and their holders: \"*\" = every worker, {all_but:[…]}, or names. prefix filters (e.g. \"shell.\"); worker= lists that worker's caps. Cap names are singular (file.read).",
 

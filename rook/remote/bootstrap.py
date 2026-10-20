@@ -2248,8 +2248,10 @@ class CombinedServer:
                     continue
                 now = time.time()
                 for wid, w in list(self._band.workers.items()):
-                    if self._ban_match(w.get("name"), wid):
+                    if self._entry_banned(w, wid):
                         continue  # deauthed — never feed a banned node updates
+                    if w.get("delegate"):
+                        continue  # a device worker updates with its delegate
                     if "worker.apply" not in (w.get("caps") or []):
                         continue  # can't receive an in-band push yet
                     if wid in busy:
@@ -2717,10 +2719,14 @@ class CombinedServer:
                 "build": w.get("build"),
                 "app_release": w.get("app_release") or {},
                 "hb": w.get("hb") or {},
+                # A device worker: the worker answering for it, and what it is.
+                "delegate": w.get("delegate"),
+                "delegate_name": self._delegate_name(w),
+                "device": w.get("device"),
                 "last_seen_age_secs": round(now - w.get("last_seen", 0.0), 2),
                 # deauthed nodes normally park off-band and vanish from the roster;
                 # flag any still lingering (not yet parked / uncooperative).
-                "banned": self._ban_match(w.get("name"), w.get("worker_id")),
+                "banned": self._entry_banned(w, w.get("worker_id")),
             })
             out[-1]["update_note"] = _update_note(out[-1], pending)
         out.sort(key=lambda x: x["name"] or "")
@@ -2876,7 +2882,7 @@ class CombinedServer:
         # Refuse to drive a deauthed worker (its name may persist across restarts).
         if target:
             tw = self._band.workers.get(target) if self._band else None
-            if self._ban_match(tw.get("name") if tw else None, target):
+            if self._entry_banned(tw or {}, target):
                 return web.json_response(
                     {"ok": False, "error": "worker is deauthed (banned)"}, status=403)
         try:
@@ -2967,6 +2973,24 @@ class CombinedServer:
                 return True
         return False
 
+    def _entry_banned(self, w: dict, worker_id: str | None) -> bool:
+        """``_ban_match`` for a roster entry; a device worker also counts as
+        banned when its delegate is (the delegate is what answers for it)."""
+        if self._ban_match(w.get("name"), worker_id):
+            return True
+        delegate = w.get("delegate")
+        if delegate and self._band is not None:
+            d = self._band.workers.get(delegate) or {}
+            return self._ban_match(d.get("name"), delegate)
+        return False
+
+    def _delegate_name(self, w: dict) -> str | None:
+        delegate = w.get("delegate")
+        if not delegate:
+            return None
+        d = self._band.workers.get(delegate) if self._band is not None else None
+        return (d or {}).get("name") or delegate
+
     def _sign_deauth(self, worker_id: str, name: str, reason: str) -> dict | None:
         """A signed worker.deauth payload: a deauth v2 order (own signature
         domain, bound to ``worker_id`` + ``issued_at``) nested in a legacy v1
@@ -3005,6 +3029,14 @@ class CombinedServer:
                 if w.get("name") == name:
                     live = w
                     break
+        if live is not None and live.get("delegate"):
+            # A device runs no worker of its own to park; deauthing its
+            # delegate (or removing it from the delegate's config) is the way.
+            return web.json_response(
+                {"ok": False, "error": (f"{live.get('name')} is a device worker answered for by "
+                                        f"{self._delegate_name(live)}; deauth that worker, or "
+                                        "remove the device from its configuration")},
+                status=400)
         if live is not None:
             name = name or (live.get("name") or "")
             worker_id = worker_id or (live.get("worker_id") or "")

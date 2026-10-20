@@ -288,8 +288,8 @@ class UpdateService:
         out = []
         for wid, w in self.roster().items():
             m = member_kind({**w, "worker_id": wid})
-            if m["kind"] == "hub":
-                continue
+            if m["kind"] in ("hub", "device"):
+                continue  # a device updates with its delegate
             facts = w.get("facts") if isinstance(w.get("facts"), dict) else {}
             m["os"] = (m.get("platform") if m["kind"] == "app"
                        else "firmware" if m["kind"] == "firmware"

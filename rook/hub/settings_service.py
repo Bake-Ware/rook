@@ -261,8 +261,8 @@ class SettingsService:
         except Exception:
             return []
         for wid, w in roster.items():
-            if wid == hub_id:
-                continue
+            if wid == hub_id or w.get("delegate"):
+                continue  # device workers have no settings of their own
             out.append({"worker_id": wid, "name": w.get("name") or wid[:8],
                         "band": w.get("band"), "version": w.get("version"),
                         "build": w.get("build"), "caps": len(w.get("caps", [])),
@@ -276,7 +276,8 @@ class SettingsService:
             return None, None
         hub_id = getattr(self.node, "worker_id", None)
         for wid, w in client.workers.items():
-            if wid != hub_id and ((w.get("name") or "") == name or wid == name):
+            if wid != hub_id and not w.get("delegate") \
+                    and ((w.get("name") or "") == name or wid == name):
                 return wid, w
         return None, None
 
@@ -319,7 +320,8 @@ class SettingsService:
         if client is not None:
             try:
                 hub_id = getattr(self.node, "worker_id", None)
-                peers = [w for wid, w in client.workers.items() if wid != hub_id]
+                peers = [w for wid, w in client.workers.items()
+                         if wid != hub_id and not w.get("delegate")]
                 out["peers"] = len(peers)
                 out["reachable"] = bool(peers)
             except Exception:

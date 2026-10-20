@@ -1143,3 +1143,27 @@ def test_bundle_builders_require_the_pinned_telesthete_checkout(tmp_path, monkey
     plain = tmp_path / "site" / "telesthete"
     shutil.copytree(pkg, plain)
     bbw.check_telesthete(plain, pin=first)
+
+
+# -- device workers (rook.core.devices) ----------------------------------------
+
+@pytest.mark.asyncio
+async def test_a_device_answers_over_the_band_through_its_delegate(band_factory, monkeypatch, tmp_path):
+    """End to end: the delegate announces a device, the client sees it as a
+    worker, a call to it is addressed to the delegate's route, and the reply
+    comes back in the device's name."""
+    from rook.core.devices import device_worker_id
+    from tests.test_devices import Lamps
+    band = await band_factory()
+    w = await band.worker(monkeypatch, tmp_path, "hub-box")
+    lamps = Lamps(("desk",))
+    w.plugins.append(lamps)
+    c = await band.client()
+    desk = device_worker_id(w.worker_id, "lamps", "desk")
+    await band.ready(c, w)
+    await _until(lambda: desk in c.workers)
+    assert c.workers[desk]["delegate"] == w.worker_id
+    assert c._delegate_route(c.workers[desk]) == route_id_for(w.worker_id)
+    reply = await c.call("lamp.set", {"on": True}, target=desk, timeout=5)
+    assert reply["ok"] and reply["from"] == desk and reply["result"] == {"on": True}
+    assert lamps.lamps[0].on

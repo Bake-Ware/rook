@@ -323,7 +323,9 @@ def worker_note(row: dict, floors: dict | None = None, pending: dict | None = No
 def member_kind(w: dict) -> dict:
     """Classify a roster entry for the update service: ``hub``, ``app``
     (Android/desktop app with a built-in worker), ``firmware`` (ESP32: no
-    build, firmware caps) or ``worker`` (a pyz worker)."""
+    build, firmware caps), ``device`` (a device worker its delegate answers
+    for: updated with the delegate, never on its own) or ``worker`` (a pyz
+    worker)."""
     app = w.get("app_release") if isinstance(w.get("app_release"), dict) else {}
     build = w.get("build") if isinstance(w.get("build"), int) else None
     plugins = set(w.get("plugins") or [])
@@ -332,6 +334,8 @@ def member_kind(w: dict) -> dict:
             "band": w.get("band"), "build": build, "version": w.get("version")}
     if "is_hub" in (w.get("roles") or ()):
         return {**base, "kind": "hub"}
+    if w.get("delegate"):
+        return {**base, "kind": "device"}
     if app.get("platform"):
         return {**base, "kind": "app", "platform": str(app.get("platform")),
                 "app_version": str(app.get("version") or ""), "app_code": app.get("code")}

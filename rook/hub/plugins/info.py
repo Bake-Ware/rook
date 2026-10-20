@@ -53,7 +53,8 @@ class HubInfo(Plugin):
         workers = 0
         if node is not None and node.client is not None:
             try:
-                workers = sum(1 for wid in node.client.workers if wid != node.worker_id)
+                workers = sum(1 for wid, w in node.client.workers.items()
+                              if wid != node.worker_id and not w.get("delegate"))
             except Exception:
                 workers = 0
         return {

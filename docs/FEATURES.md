@@ -168,7 +168,7 @@ On top of the generic caps, Rook ships purpose-built integrations for specific a
 - **Deluge** — `deluge.*`: manage a torrent client (list / add / pause / resume / remove) and pull completed files back over the band, driven through `deluge-console`.
 - **hermes** — `hermes.*`: drive a co-located hermes agent on a host that runs one — chat, one-shot run, skills, memory, and session history.
 - **Claude Code** — `claude-history.*`: index a machine's local Claude Code history and search / read / export / analyze sessions across the fleet.
-- **Hardware** — Android phones and tablets, a USB dongle, PiKVM and HDMI-CEC: see [Hardware integrations](#hardware-integrations).
+- **Hardware** — Android phones and tablets, a USB dongle, PiKVM, HDMI-CEC and TVs as device workers: see [Hardware integrations](#hardware-integrations).
 
 ## Hardware integrations
 
@@ -230,6 +230,12 @@ Together that's a full remote console: look at the screen, type, and power-cycle
 ### HDMI-CEC (Pico W)
 
 A Raspberry Pi Pico W running Wi-Fi-enabled Pico-CEC firmware sits on an HDMI port. A worker set up with `CEC_HOST` talks to it and gets `cec.send`, `cec.raw` and `cec.ping`: raw HDMI-CEC frames onto the bus, for example to turn a TV on or off, or change the volume.
+
+### Device workers (TVs and other devices)
+
+Things that can't run a worker — a TV, and later light switches and thermostats — still join the band as workers of their own. A worker on the same network is their *delegate*: it announces each one under its own name with its own caps and a live heartbeat, and answers calls aimed at it. Agents call `office-tv` directly (`rook_call(worker="office-tv", cap="tv.launch", args={"app": "YouTube"})`), and `rook_workers` shows each device's state in `hb` with `delegate` naming the worker in the middle. A device that's off stays listed with `on: false`; it leaves the roster when its delegate stops answering for it. See [docs/design/devices.md](design/devices.md).
+
+The first driver is **LG webOS TVs** (`webos` plugin, `WEBOS_TVS="office-tv=192.0.2.10"`): over the TV's own control API it keeps live state (on/off, current app or input, volume) and offers `tv.status` · `tv.apps` · `tv.inputs` · `tv.toast` · `tv.launch` · `tv.input` · `tv.volume` · `tv.mute` · `tv.media` · `tv.button` · `tv.open_url` · `tv.screen` · `tv.power_off` · `tv.power_on` (Wake-on-LAN) · `tv.pair`, plus `webos.list` and `webos.discover` on the delegate.
 
 ## Control planes
 

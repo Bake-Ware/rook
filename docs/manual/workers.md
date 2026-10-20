@@ -31,6 +31,9 @@ deprecated: false
 - Each row shows the machine's name, band, Rook version and a small heartbeat
   graph. Phones, tablets and laptops show a battery level (a lightning bolt
   while charging; amber, then red, as it runs low).
+- A row with a **via** tag is a device, such as a TV, that another worker
+  answers for. Its status (`on · YouTube`) stands where a battery would. See
+  [[manual-devices]].
 - The tiles at the top count machines online and stale, and show which Rook
   versions are in use.
 - **Group** (operating system, band, or none), **Sort**, and the filter box

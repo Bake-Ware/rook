@@ -142,12 +142,15 @@ _floor_loading = False
 
 
 def declared_floor(packages: Iterable[str]) -> dict[str, tuple[str, tuple[str, ...]]]:
-    """``{cap: (tier, tags)}`` from every Plugin class under ``packages``
-    (loaded or not). A cap declared by several classes gets the highest tier
-    and every tag. Packages or modules that do not import are skipped."""
+    """``{cap: (tier, tags)}`` from every Plugin and Device class under
+    ``packages`` (loaded or not; a Device's caps are those of the device
+    workers its delegate plugin announces). A cap declared by several classes
+    gets the highest tier and every tag. Packages or modules that do not
+    import are skipped."""
     import importlib
     import inspect
     import pkgutil
+    from .devices import Device
     from .plugin import Plugin
     out: dict[str, tuple[str, tuple[str, ...]]] = {}
     for package in packages:
@@ -163,7 +166,7 @@ def declared_floor(packages: Iterable[str]) -> dict[str, tuple[str, tuple[str, .
                             "what they announce", info.name)
                 continue
             for _, cls in inspect.getmembers(mod, inspect.isclass):
-                if not (issubclass(cls, Plugin) and cls is not Plugin
+                if not (issubclass(cls, (Plugin, Device)) and cls not in (Plugin, Device)
                         and cls.__module__ == mod.__name__ and cls.NAMESPACE):
                     continue
                 for cap, fn in cls.declared_caps().items():

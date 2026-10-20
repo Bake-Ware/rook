@@ -323,6 +323,8 @@ nodes started together de-phase.
 | `authz` | MAY | Ticket-verification readiness (6.6). |
 | `hb` | MAY | Tiny per-plugin live status keyed by namespace. |
 | `features`, `caps_hash` | MAY | Negotiated extensions the node speaks, and a digest of `caps` (section 14). |
+| `delegate`, `device` | MAY | On a device worker's announce: the `worker_id` of the worker answering for it, and what it is (14.6). |
+| `devices` | MAY | On a delegate's own announce: the `worker_id`s of the devices it currently answers for (14.6). |
 | `grants`, `asig`, `ts`, `seq`, `revocations`, `roles`, `core_api` | MAY | Hub announces (6.4, 6.5). |
 
 Announces SHOULD stay well under one datagram's worth of fragments; facts are
@@ -334,7 +336,8 @@ A client keeps a roster keyed by `worker_id`, updated from announces
 (`last_seen` = arrival time). Replies also count as signs of life. Clients
 SHOULD evict a node not heard from for 90 s (three missed announces).
 Clients MUST ignore their own announces echoed back and MUST resolve the
-name `rook` only as described in 6.1.
+name `rook` only as described in 6.1. A device worker (14.6) is evicted like
+any node, and also as soon as its delegate's announce no longer lists it.
 
 A peer may join several bands (one PSK each) over one relay; rosters are
 then per band, and a call goes to the band where its target was seen most
@@ -814,7 +817,8 @@ and stops the run; released files are never edited.
   treat anything with `cap` as a request) and SHOULD carry `kind`.
 - Keys added since build 167, all optional: request `ticket`, `rr`,
   `accept`; announce `facts`, `tiers`, `authz`, `grants`, `asig`, `ts`,
-  `seq`, `revocations`, `roles`, `core_api`, `features`, `caps_hash`; reply
+  `seq`, `revocations`, `roles`, `core_api`, `features`, `caps_hash`,
+  `delegate`, `device`, `devices`; reply
   `denied`, `drop`; deauth `v2`; `caps.describe` `prefix` argument and
   `risk/tags/limit/fields/tool` keys.
 - Relay and transport changes follow the telesthete protocol's own
@@ -1032,3 +1036,48 @@ client of the band (every hub — dashboard, MCP bridge, migration tools,
 other bands' hubs — and the APK); (2) only then enable
 `ROOK_ANNOUNCE_CAPS_HASH=1` on workers, e.g. with a pushed config. There is
 no negotiation: a worker can't tell which clients are listening.
+
+### 14.6 Device workers
+
+A *device* is something that runs no worker itself (a TV, a light switch, a
+thermostat) but that a worker on its network can drive. That worker, its
+*delegate*, announces each device as a node of its own, so callers address
+the device by name like any worker. A device announce is a normal announce
+(3.3) plus:
+
+| Key | Meaning |
+|---|---|
+| `delegate` | The delegate's `worker_id`. Self-reported, like `facts`. |
+| `device` | A few short scalar facts: `type` (`"tv"`, `"light"`…, `"device"` if absent), optionally `driver`, `model`. Receivers SHOULD keep at most 8 keys of scalars ≤ 64 characters. |
+
+```json
+{"kind": "announce", "worker_id": "d41c…", "name": "office-tv",
+ "description": "LG webOS TV at 192.0.2.10",
+ "caps": ["caps.describe", "info.ping", "tv.launch", "tv.status"],
+ "features": [], "plugins": [], "version": "830.brisk.otter", "build": 830,
+ "authz": {"v": 1, "mode": "audit", "anchors": ["<root kid>"], "kids": []},
+ "tiers": {"tv.launch": "w", "tv.status": "r"},
+ "delegate": "3f0a9c…", "device": {"type": "tv", "driver": "webos"},
+ "hb": {"tv": {"on": true, "app": "YouTube", "volume": 12}}}
+```
+
+- The delegate MUST derive each device's `worker_id` stably (the reference:
+  `"d"` + the first 31 hex digits of SHA-256 over `device`, the delegate's
+  id, the delegating plugin's namespace and the device's key, NUL-separated)
+  and send the device announces right after its own, at the same cadence.
+- The delegate's own announce lists the devices in `devices`; a client
+  SHOULD drop a device whose delegate's announce no longer lists it.
+- A device announce MUST NOT list `route` (or any feature) in `features`:
+  the device declares no route id. Callers send it a broadcast CHANNEL
+  request with `target` = the device's id, or address the request to the
+  delegate's route id when the delegate lists `route`. The delegate answers
+  requests targeted at its devices with `from` = the device's id, and
+  answers open requests (no `target`) only for itself.
+- Tickets (6.6) for a device are bound to the device's id; the delegate
+  verifies them with its own keys.
+- `hb` carries the device's live state under its caps namespace. A device
+  that is off but still driven stays listed, with its `hb` saying so; it
+  disappears when its delegate stops answering for it.
+- Hubs SHOULD keep devices out of worker-only operations: updates, deauth
+  (deauth the delegate instead) and settings pages.
+

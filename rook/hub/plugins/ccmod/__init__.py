@@ -169,6 +169,8 @@ class ClaudeCodeRules(Plugin):
         for wid, w in workers.items():
             if not include_hub and (wid == hub_id or w.get("local")):
                 continue
+            if w.get("delegate"):
+                continue  # a device worker runs no Claude Code and has no events
             out[wid] = {**w, "worker_id": wid}
         return out
 

@@ -14,6 +14,7 @@ import time
 import uuid
 
 from ..core.aiocompat import timeout as _timeout
+from ..core.devices import clean_device
 from ..core.facts import clean_facts
 from ..worker.transports.telesthete_hub import TelestheteHubTransport
 from ..worker.wire import envelope
@@ -391,10 +392,27 @@ class BandClient:
             "facts": clean_facts(facts),
             "last_seen": time.time(),
         })
+        # A device worker (rook.core.devices): answered for by its delegate.
+        # Self-reported like facts; nothing here can verify it.
+        delegate = msg.get("delegate")
+        entry["delegate"] = (delegate if isinstance(delegate, str) and delegate
+                             and delegate != wid else None)
+        entry["device"] = clean_device(msg.get("device")) if entry["delegate"] else None
         if wid not in self.workers:
             log.info("worker joined: id=%s name=%s caps=%d",
                      wid, entry["name"], len(entry["caps"]))
         self.workers[wid] = entry
+        self._prune_devices(wid, msg.get("devices"))
+
+    def _prune_devices(self, wid: str, listed) -> None:
+        """Drop devices that delegate ``wid`` no longer lists in its announce
+        (``devices``, core spec 14.6), at once rather than 90 s later."""
+        keep = {str(d) for d in listed[:1000]} if isinstance(listed, list) else set()
+        for cid in [c for c, e in self.workers.items()
+                    if e.get("delegate") == wid and c not in keep]:
+            log.info("device dropped by its delegate: id=%s name=%s",
+                     cid, self.workers[cid].get("name", cid))
+            self.workers.pop(cid, None)
 
     def _announced_caps(self, wid: str, msg: dict, entry: dict) -> list:
         """The cap list for an announce. A full announce carries ``caps``. A
@@ -516,6 +534,8 @@ class BandClient:
         deadline = loop.time() + timeout
         try:
             payload, route = self._encode_request(msg, target, feats)
+            if not route:
+                route = self._delegate_route(entry)
             async with _timeout(timeout):
                 await self._send(payload, route)
                 reply = await fut
@@ -528,6 +548,18 @@ class BandClient:
         if "drop" in reply and "result" not in reply and "error" not in reply:
             reply = await self._pull_reply(reply, max(deadline - loop.time(), 0.0))
         return reply
+
+    def _delegate_route(self, entry: dict | None) -> int:
+        """A device declares no route of its own (its delegate answers for
+        it), so address the call to the delegate's route when it has one:
+        the delegate alone receives it instead of the whole band. 0 = send
+        it broadcast, as before."""
+        delegate = (entry or {}).get("delegate")
+        d = self.workers.get(delegate) if delegate else None
+        if d is None or not self.transport.route_id \
+                or envelope.F_ROUTE not in envelope.features_of(d):
+            return 0
+        return route_id_for(delegate)
 
     def _new_id(self, target: str | None) -> str:
         """A request id whose reply drop id from ``target`` (see

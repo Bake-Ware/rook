@@ -123,11 +123,14 @@ class Guard:
 
     # -- checking calls ----------------------------------------------------
     def check(self, msg: dict, cap: str, tier: str, args: Any,
-              now: float | None = None) -> dict:
+              now: float | None = None, target: str | None = None) -> dict:
         """Verify the envelope's ticket. Returns ``{verified, reason, kid, p,
         via, tier, refuse}`` where ``refuse`` is an error string when the
-        mode requires a ticket this call does not validly carry."""
+        mode requires a ticket this call does not validly carry. ``target``
+        is the id the ticket must be bound to: this worker's own by default,
+        or one of its devices' (``rook.core.devices``) for a call aimed there."""
         now = now if now is not None else time.time()
+        target = target or self.worker_id
         ticket = msg.get("ticket")
         info: dict[str, Any] = {"verified": False, "reason": "no ticket", "tier": tier}
         if self.mode == "off":
@@ -145,7 +148,7 @@ class Guard:
                 info["reason"] = "no trust anchor"
             else:
                 ok, why = authz.verify_ticket(
-                    ticket, cap=cap, target=self.worker_id, msg_id=str(msg.get("id") or ""),
+                    ticket, cap=cap, target=target, msg_id=str(msg.get("id") or ""),
                     args=args, keys=self.keys, now=now, replay=self.replay)
                 info["verified"], info["reason"] = ok, why
                 # The ticket's tier is the hub's view; never trust it below ours.
