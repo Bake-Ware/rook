@@ -31,7 +31,15 @@ async def notes(req):
     return web.Response(text='ok')
 
 
-app = web.Application()
+@web.middleware
+async def no_cache(req, handler):
+    # the page is edited while you use it: never let the browser keep an old copy
+    res = await handler(req)
+    res.headers['Cache-Control'] = 'no-store'
+    return res
+
+
+app = web.Application(middlewares=[no_cache])
 app.router.add_route('POST', '/save/{n}', save)
 app.router.add_route('DELETE', '/save/{n}', save)
 app.router.add_route('GET', '/notes/{n}', notes)
