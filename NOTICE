@@ -6,6 +6,8 @@ This product is licensed under the Apache License, Version 2.0 (see LICENSE).
 Third-party components bundled in this repository keep their own licenses:
 
 - rook/remote/psk_words.txt: EFF large wordlist, see rook/remote/psk_words.LICENSE.md
+- tests/data/name_words_pron.txt: pronunciations from the CMU Pronouncing Dictionary,
+  Copyright (C) 1993-2015 Carnegie Mellon University, BSD-style license
 - rook/web/scene/: three.js, see THREE-LICENSE.txt in that directory
 - rook/web/vendor/xterm/: xterm.js 6.0.0 and @xterm/addon-fit 0.11.0 (MIT), see LICENSE in that directory
 - android/app/src/main/assets/wakeword/: Silero VAD, see SILERO-LICENSE.txt
