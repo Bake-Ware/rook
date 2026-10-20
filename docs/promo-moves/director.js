@@ -1,5 +1,6 @@
 // Director mode (index.html?clip=N&director=1, served by director.py): scrub a clip, fly the camera,
 // and save camera keys back to clips/cN.keys.json, which then replace the clip's own camera path.
+// Notes (clips/cN.notes.json) are comments for Claude at a clip time; they autosave and never change the camera.
 import { THREE, STING } from './kit.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
@@ -13,15 +14,18 @@ export function director(kit, clip) {
       #dir{position:fixed;left:0;right:0;bottom:0;background:rgba(9,12,9,.94);border-top:1px solid #514b35;font:14px 'DejaVu Sans Mono',monospace;color:#cfd3bd;padding:10px 16px;z-index:99}
       #dir input[type=range]{width:100%}#dir button{font:inherit;background:#20261d;color:#e2e3d9;border:1px solid #514b35;border-radius:6px;padding:4px 10px;margin-right:6px;cursor:pointer}
       #dir button.on{border-color:#8fc79a;color:#8fc79a}#dir .row{display:flex;gap:10px;align-items:center;margin-top:6px;flex-wrap:wrap}
+      #dir textarea{width:100%;min-height:54px;font:inherit;background:#141812;color:#e2e3d9;border:1px solid #514b35;border-radius:6px;padding:6px 8px;resize:vertical}
+      #dir .k.n{border-style:dashed}#dir .k.hasn::after{content:' ✎';color:#f0c98c}
       #dir .k{display:inline-block;padding:2px 8px;border:1px solid #3b4232;border-radius:5px;margin:2px;cursor:pointer}#dir .k.cur{border-color:#f0c98c;color:#f0c98c}
       html,body{overflow:auto;height:auto}
     </style>
     <div id="dir"><input id="scrub" type="range" min="0" max="${T}" step="0.0333" value="0">
       <div class="row"><b id="tt"></b>
         <button id="play">▶ play</button><button id="free">free camera</button><button id="key">＋ key at this time</button>
-        <button id="del">delete key</button><button id="cut">toggle cut</button><button id="save">save keys</button><button id="reset">use the clip's own keys</button>
+        <button id="del">delete key</button><button id="cut">toggle cut</button><button id="save">save keys</button><button id="reset">use the clip's own keys</button><button id="note">✎ note at this time</button>
         <span id="msg"></span></div>
       <div class="row" id="list"></div>
+      <div class="row" id="nrow" style="display:none"><span id="nlbl"></span><button id="ndel">delete note</button><textarea id="ntext" placeholder="Comment for Claude at this time (saves as you type)"></textarea></div>
       <div class="row" style="opacity:.7">Free camera: drag to orbit, right-drag to pan, wheel to zoom. Times are clip time (after the ${STING}s sting).</div></div>`;
   document.body.appendChild(ui);
   // fit the 1920x1080 stage into the window above the controls
@@ -35,12 +39,43 @@ export function director(kit, clip) {
   const controls = new OrbitControls(kit.camera, document.getElementById('ui'));
   document.getElementById('ui').style.pointerEvents = 'auto';
   controls.enabled = false;
-  let t = 0, playing = false, sel = -1, last = performance.now();
+  let t = 0, playing = false, sel = -1, nsel = -1, last = performance.now();
+  // notes: [{ t, text, cam: { pos, look, fov }, free }] at clip time
+  let notes = [];
+  fetch(`notes/${clip.num}`).then(r => r.ok ? r.json() : []).then(n => { notes = n || []; draw(); }).catch(() => {});
+  const near = (a, b) => Math.abs(a - b) < .02;
+  const noteAt = tau => notes.findIndex(n => near(n.t, tau));
+  let saveTimer = null;
+  const saveNotes = () => { clearTimeout(saveTimer); saveTimer = setTimeout(async () => {
+    const res = await fetch(`notes/${clip.num}`, { method: 'POST', body: JSON.stringify(notes.filter(n => n.text.trim()), null, 1) });
+    $('msg').textContent = res.ok ? `notes saved (${notes.filter(n => n.text.trim()).length})` : 'note save failed';
+  }, 500); };
+  const openNote = (tau, create) => {
+    let i = noteAt(tau);
+    if (i < 0 && create) {
+      notes.push({ t: tau, text: '', cam: { pos: kit.camera.position.toArray().map(r), look: (kit.freeCam ? controls.target : kit.camLook ?? controls.target).toArray().map(r), fov: r(kit.camera.fov) }, free: !!kit.freeCam });
+      notes.sort((a, b) => a.t - b.t); i = noteAt(tau);
+    }
+    nsel = i;
+    $('nrow').style.display = i >= 0 ? 'flex' : 'none';
+    fit();
+    if (i >= 0) { $('nlbl').textContent = `note @ ${notes[i].t.toFixed(2)}s`; $('ntext').value = notes[i].text; if (create) $('ntext').focus(); }
+  };
   const draw = () => {
     window.render(t);
     $('tt').textContent = `t ${t.toFixed(2)}s · clip ${(t - STING).toFixed(2)}s / ${(T - STING - 5).toFixed(1)}s`;
-    $('list').innerHTML = keys.map((k, i) => `<span class="k ${i === sel ? 'cur' : ''}" data-i="${i}">${k.t.toFixed(2)}${k.e === 'cut' ? ' ✂' : ''}</span>`).join('');
-    [...$('list').querySelectorAll('.k')].forEach(el => el.onclick = () => { sel = +el.dataset.i; t = keys[sel].t + STING; $('scrub').value = t; draw(); });
+    // camera keys, plus notes that aren't on a key (dashed)
+    const items = keys.map((k, i) => ({ t: k.t, i, key: true }))
+      .concat(notes.filter(n => !keys.some(k => near(k.t, n.t))).map(n => ({ t: n.t, key: false }))).sort((a, b) => a.t - b.t);
+    $('list').innerHTML = items.map(it => {
+      const hasN = noteAt(it.t) >= 0 && notes[noteAt(it.t)].text.trim();
+      const cur = it.key ? it.i === sel : nsel >= 0 && near(notes[nsel]?.t ?? -9, it.t);
+      return `<span class="k ${cur ? 'cur' : ''} ${it.key ? '' : 'n'} ${hasN ? 'hasn' : ''}" data-t="${it.t}" data-i="${it.key ? it.i : -1}" title="${hasN ? notes[noteAt(it.t)].text.replace(/"/g, '&quot;') : ''}">${it.t.toFixed(2)}${it.key && keys[it.i].e === 'cut' ? ' ✂' : ''}</span>`;
+    }).join('');
+    [...$('list').querySelectorAll('.k')].forEach(el => el.onclick = () => {
+      const tau = +el.dataset.t; sel = +el.dataset.i; t = tau + STING; $('scrub').value = t;
+      openNote(tau, sel >= 0); draw();             // clicking a key opens (or starts) its note
+    });
   };
   $('scrub').oninput = e => { t = +e.target.value; draw(); };
   $('play').onclick = () => { playing = !playing; $('play').textContent = playing ? '❚❚ pause' : '▶ play'; last = performance.now(); };
@@ -55,6 +90,10 @@ export function director(kit, clip) {
     if (i >= 0) keys[i] = { ...keys[i], ...k }; else keys.push(k);
     keys.sort((a, b) => a.t - b.t); sel = keys.findIndex(x => x.t === tau); apply(); draw();
   };
+  $('note').onclick = () => { openNote(r(t - STING), true); draw(); };
+  $('ntext').oninput = e => { if (nsel >= 0) { notes[nsel].text = e.target.value; saveNotes(); } };
+  $('ntext').onkeydown = e => e.stopPropagation();
+  $('ndel').onclick = () => { if (nsel >= 0) { notes.splice(nsel, 1); nsel = -1; $('nrow').style.display = 'none'; saveNotes(); draw(); } };
   $('del').onclick = () => { if (sel >= 0) { keys.splice(sel, 1); sel = -1; apply(); draw(); } };
   $('cut').onclick = () => { if (sel >= 0) { keys[sel].e = keys[sel].e === 'cut' ? undefined : 'cut'; apply(); draw(); } };
   $('save').onclick = async () => {
