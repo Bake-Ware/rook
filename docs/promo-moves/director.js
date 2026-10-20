@@ -24,7 +24,13 @@ export function director(kit, clip) {
       <div class="row" id="list"></div>
       <div class="row" style="opacity:.7">Free camera: drag to orbit, right-drag to pan, wheel to zoom. Times are clip time (after the ${STING}s sting).</div></div>`;
   document.body.appendChild(ui);
-  document.body.style.overflow = 'auto';
+  // fit the 1920x1080 stage into the window above the controls
+  const stage = document.getElementById('stage');
+  document.documentElement.style.width = document.body.style.width = '100%';
+  document.documentElement.style.height = document.body.style.height = '100%';
+  stage.style.transformOrigin = '0 0';
+  const fit = () => { stage.style.transform = `scale(${Math.min(innerWidth / 1920, (innerHeight - ui.offsetHeight) / 1080)})`; };
+  addEventListener('resize', fit); requestAnimationFrame(fit);
   const $ = id => document.getElementById(id);
   const controls = new OrbitControls(kit.camera, document.getElementById('ui'));
   document.getElementById('ui').style.pointerEvents = 'auto';
