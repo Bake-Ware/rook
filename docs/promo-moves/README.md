@@ -24,7 +24,8 @@ soundtrack is synthesised with numpy.
   subtitles, captions, the opening sting and the end card).
 - `clips/c1.js` … `c7.js`: one timeline each. Every frame is a pure function of time.
 - `index.html?clip=N`: plays a clip; `render(t)` sets the frame for `t` seconds.
-- `director.py` + `index.html?clip=N&director=1`: scrub a clip, fly a free camera, add or
+- `director.py` serves the review site: `/` lists every clip with its render and notes for Claude
+  (`clips/cN.notes.json`); `index.html?clip=N&director=1` is the director: scrub a clip, fly a free camera, add or
   delete camera keys, save them to `clips/cN.keys.json` (used instead of the clip's own keys).
 - Scale: everything is real size in metres; a Board square is 1 m; pieces are tokens (`kit.piece`).
 - `render.py`: `meta`, `stills` and `video` modes (playwright + aiohttp).

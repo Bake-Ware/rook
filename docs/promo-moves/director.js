@@ -22,7 +22,7 @@ export function director(kit, clip) {
     </style>
     <div id="dir"><input id="scrub" type="range" min="0" max="${T}" step="0.0333" value="0">
       <div class="row"><b id="tt"></b>
-        <button id="play">▶ play</button><button id="free">free camera</button><button id="key">＋ key at this time</button>
+        <a href="/" style="color:#f0c98c;text-decoration:none;margin-right:6px">← clips</a><button id="play">▶ play</button><button id="free">free camera</button><button id="key">＋ key at this time</button>
         <button id="del">delete key</button><button id="cut">toggle cut</button><button id="save">save keys</button><button id="reset">use the clip's own keys</button><button id="note">✎ note at this time</button>
         <span id="msg"></span></div>
       <div class="row" id="list"></div>
@@ -60,11 +60,14 @@ export function director(kit, clip) {
   // notes: [{ t, text, cam: { pos, look, fov }, free }] at clip time
   let notes = [];
   fetch(`notes/${clip.num}`).then(r => r.ok ? r.json() : []).then(n => { notes = n || []; draw(); }).catch(() => {});
-  const near = (a, b) => Math.abs(a - b) < .02;
+  const near = (a, b) => typeof a === 'number' && typeof b === 'number' && Math.abs(a - b) < .02;   // general notes have t: null
   const noteAt = tau => notes.findIndex(n => near(n.t, tau));
   let saveTimer = null;
   const saveNotes = () => { clearTimeout(saveTimer); saveTimer = setTimeout(async () => {
-    const res = await fetch(`notes/${clip.num}`, { method: 'POST', body: JSON.stringify(notes.filter(n => n.text.trim()), null, 1) });
+    // keep the clip-wide notes the clip list may have changed meanwhile; this page owns the timed ones
+    const cur = await fetch(`notes/${clip.num}`).then(r => r.json()).catch(() => []);
+    const body = cur.filter(n => typeof n.t !== 'number').concat(notes.filter(n => typeof n.t === 'number' && n.text.trim()));
+    const res = await fetch(`notes/${clip.num}`, { method: 'POST', body: JSON.stringify(body, null, 1) });
     $('msg').textContent = res.ok ? `notes saved (${notes.filter(n => n.text.trim()).length})` : 'note save failed';
   }, 500); };
   const openNote = (tau, create) => {
@@ -84,7 +87,7 @@ export function director(kit, clip) {
     $('tt').textContent = `t ${t.toFixed(2)}s · clip ${(t - STING).toFixed(2)}s / ${(T - STING - 5).toFixed(1)}s`;
     // camera keys, plus notes that aren't on a key (dashed)
     const items = keys.map((k, i) => ({ t: k.t, i, key: true }))
-      .concat(notes.filter(n => !keys.some(k => near(k.t, n.t))).map(n => ({ t: n.t, key: false }))).sort((a, b) => a.t - b.t);
+      .concat(notes.filter(n => typeof n.t === 'number' && !keys.some(k => near(k.t, n.t))).map(n => ({ t: n.t, key: false }))).sort((a, b) => a.t - b.t);
     $('list').innerHTML = items.map(it => {
       const hasN = noteAt(it.t) >= 0 && notes[noteAt(it.t)].text.trim();
       const cur = it.key ? it.i === sel : nsel >= 0 && near(notes[nsel]?.t ?? -9, it.t);
@@ -134,5 +137,8 @@ export function director(kit, clip) {
     else if (kit.freeCam) { controls.update(); frame(); }
     last = now; requestAnimationFrame(loop);
   };
+  // ?t= opens at a clip time (from the clip list); ?note=1 also opens the note there
+  const qs = new URLSearchParams(location.search);
+  if (qs.has('t')) { t = Math.min(T, +qs.get('t') + STING); $('scrub').value = t; fetch(`notes/${clip.num}`).then(() => setTimeout(() => { if (qs.has('note')) openNote(+qs.get('t'), false); draw(); }, 300)); }
   draw(); requestAnimationFrame(loop);
 }
