@@ -483,7 +483,7 @@ async def test_access_patterns(tmp_path, tokens):
     assert [r["job"] for r in (await b(action="runs"))["result"]["runs"]] == []
     assert len((await a(action="runs"))["result"]["runs"]) == 1
     # Shared: Bob reads and runs but cannot edit (or change access).
-    assert (await b(action="get", id="shared"))["result"]["can"] == {"edit": False, "run": True}
+    assert (await b(action="get", id="shared"))["result"]["can"] == {"edit": False, "run": True, "lock": False}
     assert (await b(action="run", id="shared"))["ok"]
     assert (await b(action="update", id="shared", data={"access": {"edit": "*"}}))["code"] == "PermissionError"
     # The operator always may.

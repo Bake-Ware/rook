@@ -8,6 +8,26 @@ version was `0.1.0`.
 
 ## Unreleased
 
+### Added
+- Jobs end themselves. A step's `complete` (`success`, `failure`, `finish`) or an agent step's
+  `finish(complete=true)` switches the job off for good when the run ends, and the hub does it,
+  so the agent needs no `job.write` and no tool calls left. New `limits`: `complete_on`,
+  `max_runs`, `until` (an expiry time) and `max_failures` (failed runs in a row; hub setting
+  `job.max_failures`, default 10). A job that switches off shows `paused_reason` `completed`,
+  `max_runs`, `expired` or `max_failures`, its waiting runs are cancelled, and its history
+  names the rule. Repeated messages are dropped: a job sends the same voice, notification or
+  Telegram text to the same target at most once per `limits.notify_window` (hub setting
+  `job.notify_window`, default 6h). This applies to notify and ask steps, alerts, cap and
+  fanout steps, and the agent's own sends. Texts are compared without case, punctuation or
+  numbers. (manual: jobs)
+- Locked jobs. A person can lock a job (🔒 in the Jobs page's ⋯ menus, or `lock` / `unlock`
+  in the `rook band` jobs panel). While it is locked, agents and every API token, the
+  operator token included, cannot edit, enable, disable, delete it or cancel its runs; they
+  get a `locked:` error. Its runs cannot change it either. Running it stays open. Only a
+  person signed in to the dashboard may lock or unlock, and each change is a history row.
+  A locked job keeps its own limits; the hub's default `max_failures` doesn't apply to it, and
+  an agent can complete it only from a step with `complete: "agent"`. (manual: jobs)
+
 ### Changed
 - The dashboard works on a phone. At 800px wide or less the sidebar becomes a drawer (☰, or
   More in a new bottom bar with Home, Huddles, Work and Sessions). The header is compact and

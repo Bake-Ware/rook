@@ -24,7 +24,13 @@ routes to them):
 * ``job.read`` (risk ``read``): list, get, runs, run_get, next, validate,
   guardrails_preview, describe_schema.
 * ``job.write`` (risk ``write``): create, update, delete, enable, disable,
-  run, cancel, set_guardrails, settings.
+  run, cancel, set_guardrails, settings, lock, unlock.
+
+Jobs switch themselves off by their ``limits`` (max_runs, until,
+max_failures, complete_on) or a step's ``complete``; repeated messages are
+dropped inside ``limits.notify_window`` (:mod:`.notices`); a ``locked`` job
+can be changed only by a person signed in to the dashboard (docs/design/jobs.md
+4.1, 4.2, 7.1).
 """
 from __future__ import annotations
 
@@ -39,9 +45,10 @@ from .cron import DEFAULT_TZ
 from .executor import DEFAULT_MAX_EXECUTIONS, Executor
 from .guardrails import DEFAULT_GUARDRAILS, Guardrails
 from .identity import resolve_identity
+from .notices import DEFAULT_WINDOW, Notices
 from .principals import Directory
 from .runtime import Runtime
-from .scheduler import Scheduler
+from .scheduler import DEFAULT_MAX_FAILURES, Scheduler
 from .service import DEFAULT_ACCESS, ERRORS, READS, WRITES, JobService, error_reply, reply, route
 from .store import JobStore
 
@@ -72,6 +79,15 @@ class Jobs(Plugin):
         setting("default_agent", str, default="home", group="Runs", label="Default agent",
                 help="Agent steps without their own agent go to this one: \"home\" (the house "
                      "agent) or a session spec as JSON, {\"session\": {\"worker\": ..., ...}}."),
+        setting("max_failures", int, default=DEFAULT_MAX_FAILURES, min=0, max=1000, group="Runs",
+                label="Switch off after failures",
+                help="A job that fails this many runs in a row switches itself off (paused_reason "
+                     "max_failures). A job's limits.max_failures overrides it; locked jobs use only "
+                     "their own. 0: never."),
+        setting("notify_window", str, default=DEFAULT_WINDOW, group="Runs", label="Repeat message window",
+                help="A job sends the same voice, notification or Telegram text to the same target at "
+                     "most once per window (e.g. 6h). A job's limits.notify_window overrides it. "
+                     "0: no limit."),
         setting("tick_seconds", int, default=5, min=1, max=300, group="Runs", advanced=True,
                 label="Scheduler tick (seconds)"),
         setting("db_path", "path", default="", env="ROOK_JOBS_DB", apply="restart", group="General",
@@ -103,7 +119,13 @@ class Jobs(Plugin):
              "`job.write` on worker `rook`. Use `{{secret:name}}` in step args, never values. "
              "Guardrails block admin-tier, update, deauth, policy and delete caps in job steps "
              "(`blocked_by_guardrail` on a job; `guardrails_preview` shows what a change would block); "
-             "editing someone else's job makes it yours and resets its identity.\n")
+             "editing someone else's job makes it yours and resets its identity.\n"
+             "Watchers and one-offs must end themselves: give the step that reports `complete: \"success\"` "
+             "(or let an agent step `finish` with `complete: true`) and set `limits` (`max_runs`, `until`, "
+             "`max_failures`). Never rely on a job disabling itself through `rook_jobs`. The same message "
+             "to the same target is sent at most once per `limits.notify_window`. A job with "
+             "`locked: true` can be changed only by a person on the dashboard; agents get `locked:` "
+             "errors and must ask the user.\n")
 
     def __init__(self) -> None:
         super().__init__()
@@ -144,8 +166,9 @@ class Jobs(Plugin):
     def wire(self, runtime: Runtime, *, owner: str = "hub", clock=None) -> None:
         """Build the executor, scheduler and service on the open store."""
         self.runtime = runtime
-        executor = Executor(runtime, settings=self._setting)
         kw = {"clock": clock} if clock is not None else {}
+        executor = Executor(runtime, settings=self._setting,
+                            notices=Notices(self.store, self._setting, clock or runtime.clock))
         self.scheduler = Scheduler(self.store, executor, owner=owner, settings=self._setting, **kw)
         self.guardrails = Guardrails(self._setting, hub_policy=self._hub_policy, roster=runtime.roster,
                                      hub_id=lambda: runtime.hub_id, hub_tier=self._hub_tier)
@@ -204,12 +227,14 @@ class Jobs(Plugin):
 
     @capability("write", risk="write")
     async def write(self, action: str, id: str | None = None, data: dict | None = None) -> dict:
-        """Write jobs: create|update|delete|enable|disable|run|cancel|set_guardrails|settings.
+        """Write jobs: create|update|delete|enable|disable|run|cancel|set_guardrails|settings|lock|unlock.
 
         Same arguments and result as rook_jobs' write actions. create data =
         the job; update id + data = fields to replace (data.revision checks
         for a concurrent edit); run id + data {vars}; cancel id = a run (or a
-        job: all its runs)."""
+        job: all its runs). lock / unlock (data {note}) are for a person
+        signed in to the dashboard; a locked job refuses every other change
+        from agents and tokens."""
         return await self.run(True, action, id, "", data)
 
     # -- MCP ---------------------------------------------------------------------------
@@ -228,8 +253,8 @@ class Jobs(Plugin):
                 return error_reply(error)
         rook_jobs.__doc__ = (
             "Scheduled hub jobs. Reads: list|get|runs|run_get|next|validate|guardrails_preview|"
-            "describe_schema. Writes: create|update|delete|enable|disable|run|cancel|set_guardrails. "
-            "describe_schema before writing "
+            "describe_schema. Writes: create|update|delete|enable|disable|run|cancel|set_guardrails|"
+            "lock|unlock. describe_schema before writing "
             "a job. id: job id/name (run id: run_get, cancel). data: the job (create/validate), "
             "fields to change (update) or options (runs {states, steps:true}, run {vars}).")
         return [rook_jobs]

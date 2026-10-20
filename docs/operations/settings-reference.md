@@ -298,6 +298,8 @@ are set only in the environment or on the command line.
 | `job.max_step_executions` | Step executions per run | hub | int | `100` | `ROOK_JOB_MAX_STEP_EXECUTIONS` | live |
 | `job.notify_worker` | Notify worker | hub | str |  | `ROOK_JOB_NOTIFY_WORKER` | live |
 | `job.default_agent` | Default agent | hub | str | `home` | `ROOK_JOB_DEFAULT_AGENT` | live |
+| `job.max_failures` | Switch off after failures | hub | int | `10` | `ROOK_JOB_MAX_FAILURES` | live |
+| `job.notify_window` | Repeat message window | hub | str | `6h` | `ROOK_JOB_NOTIFY_WINDOW` | live |
 | `job.tick_seconds` | Scheduler tick (seconds) | hub | int | `5` | `ROOK_JOB_TICK_SECONDS` | live |
 | `job.db_path` | Database file | hub | path |  | `ROOK_JOBS_DB`, `ROOK_JOB_DB_PATH` | restart |
 | `job.guardrails` | Default guardrails | hub | dict | `{'deny': ['tier:admin', 'worker.deauth', 'ba…` | `ROOK_JOB_GUARDRAILS` | live |

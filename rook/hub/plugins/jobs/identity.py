@@ -79,6 +79,23 @@ def caller() -> dict:
     return dict(SYSTEM_OWNER)
 
 
+def person() -> dict | None:
+    """The caller when it is a person: a verified human principal (a
+    dashboard sign-in, or the ``rook band`` panel the dashboard admitted)
+    acting for nobody else. None for agents and every token (the static and
+    operator ones too), job runs (their chain names the job), the house agent
+    and in-process hub code. Locked jobs (docs/design/jobs.md 7.1) are for
+    persons only."""
+    from ...authz import current_principal
+    p = current_principal.get()
+    if p is None or p.kind != "human" or not p.verified or p.via:
+        return None
+    ident = current_identity()
+    if ident and ident != p.id:
+        return None                      # something else is acting inside a person's request
+    return caller()
+
+
 def is_admin(info: dict | None) -> bool:
     """The operator / hub admin: band owners, operator-role tokens, the
     shared static token, the dashboard password and in-process hub code

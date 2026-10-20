@@ -45,7 +45,8 @@ from typing import Any
 from . import guardrails
 from .cron import parse_duration
 from .executor import clip
-from .kinds import VIAS, _check_worker, ask_args, call_cap, heard, resolve_worker, run_notify
+from .kinds import (VIAS, _check_worker, ask_args, call_cap, heard, notice_gate, resolve_worker,
+                    run_notify)
 from .steps import StepContext, StepResult, register_step_kind, step_kind
 
 log = logging.getLogger("rook.hub.plugins.jobs.agent_kinds")
@@ -446,11 +447,16 @@ class JobAgentBackend:
             if why:
                 self._refuse(cap, "rook", cargs, why)
                 raise PermissionError(why)
+            suppressed, record = notice_gate(self.ctx, cap, self.rt.hub_id, cargs)
+            if suppressed is not None:
+                return suppressed
             tok = current_principal.set(self.identity.principal)
             try:
-                return await node.invoke(cap, cargs, self.identity.display)
+                out = await node.invoke(cap, cargs, self.identity.display)
             finally:
                 current_principal.reset(tok)
+            record(self.ctx.run.get("id"))
+            return out
 
         for plugin in host.plugins:
             hook = getattr(plugin, "mcp_tools", None)
@@ -599,9 +605,12 @@ async def _run_home(ctx: StepContext, step: dict, mode: str, prompt: str, contex
     if verdict is None:
         return StepResult("failure", output=output, error="the agent gave no verdict",
                           text=out.get("text"), extra={"agent": home.identity})
+    extra = {"agent": home.identity, "verdict": verdict}
+    if out.get("complete") is True:
+        extra["complete"] = True       # the executor decides whether it may (completes())
     return StepResult("success" if verdict == "ok" else "failure", output=output,
                       error=None if verdict == "ok" else (out.get("text") or "the agent said failed")[:500],
-                      text=out.get("text") or "", extra={"agent": home.identity, "verdict": verdict})
+                      text=out.get("text") or "", extra=extra)
 
 
 async def _background(work, budget: float, ctx: StepContext) -> None:
@@ -781,7 +790,10 @@ AGENT_SCHEMA = {
                 "cwd": {"type": "string", "description": "start a new session here (no native_id)"},
                 "title": {"type": "string"}, "task": {"type": "string"},
                 "settle": {"$ref": "#/$defs/duration"}, "poll": {"$ref": "#/$defs/duration"}}}}}]},
-    "prompt": {"type": "string"},
+    "prompt": {"type": "string", "description": "what to do. The house agent has rook_workers, rook_call "
+                                                "(caps on workers), rook_tool (hub tools such as rook_task, "
+                                                "rook_knowledge, rook_jobs; not the console tools), job_run, "
+                                                "notify_bake, ask_bake and finish(verdict, text, complete)"},
     "context": {"type": "array", "items": {"type": "string"}, "default": ["run"],
                 "description": "run | job | vars | steps.<id>"},
     "mode": {"enum": list(MODES), "default": DEFAULT_MODE},

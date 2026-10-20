@@ -304,3 +304,23 @@ def test_desktop_keeps_the_sidebar(browser, hub):
     page.context.close()
     assert sidebar == 0 and not tabbar
     assert r["scrollWidth"] <= r["width"], r
+
+
+def test_jobs_lock_control_on_a_phone(phone, hub):
+    """Lock and unlock from the job's ⋯ menu: the 🔒 shows, the row still fits."""
+    _open(phone, hub, "#jobs")
+    phone.click(".jb-tabs button:has-text('Jobs')")
+    phone.wait_for_selector("[aria-label='More for nightly-health']")
+    phone.click("[aria-label='More for nightly-health']")
+    phone.click(".mg-menu [role=menuitem]:has-text('Lock')")
+    phone.wait_for_selector(".jb-lock")
+    label = phone.get_attribute(".jb-lock", "aria-label")
+    assert label.startswith("Locked by human:"), label
+    r = phone.evaluate(OVERFLOW_JS)
+    assert r["scrollWidth"] <= r["width"] and not r["wide"], r
+    if os.environ.get("ROOK_SHOT_DIR"):
+        phone.screenshot(path=os.path.join(os.environ["ROOK_SHOT_DIR"], "jobs-locked-390.png"))
+    phone.click("[aria-label='More for nightly-health']")
+    phone.click(".mg-menu [role=menuitem]:has-text('Unlock')")
+    phone.wait_for_selector(".jb-lock", state="detached")
+    assert not phone.errors, phone.errors

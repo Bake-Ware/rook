@@ -107,6 +107,7 @@ class StepContext:
     attempt: int = 1
     records: dict = field(default_factory=dict)   # step id -> record so far (read-only use)
     used: dict = field(default_factory=dict)      # secret name -> value used by this step
+    notices: Any = None              # .notices.Notices: no repeated messages (None: no dedupe)
 
     def template_scope(self) -> dict:
         from .cron import iso

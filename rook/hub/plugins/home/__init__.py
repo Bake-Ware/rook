@@ -1016,7 +1016,7 @@ class HomeAgent(Plugin):
             if name == "finish":
                 verdict = str(args.get("verdict") or "").lower()
                 state["finish"] = (verdict if verdict in job_agent.VERDICTS else "failed",
-                                   str(args.get("text") or "")[:2000])
+                                   str(args.get("text") or "")[:2000], args.get("complete") is True)
                 return json.dumps({"ok": True, "note": "Finished. Stop here; reply with one "
                                                        "short line."})
             if state["calls"] >= limit:
@@ -1037,13 +1037,14 @@ class HomeAgent(Plugin):
         cfg = {**cfg, "agent_timeout_s": 1800.0}
         res = await self.agents.run(cfg, msgs[:-1] + [first], tools=tools, handler=handler,
                                     via="job", max_tool_calls=limit + 2)
+        complete = False
         if state["finish"] is not None:
-            verdict, text = state["finish"]
+            verdict, text, complete = state["finish"]
         else:
             verdict, text = job_agent.parse_verdict(res["content"])
         return {"verdict": verdict, "text": text, "calls": state["calls"],
                 "tools_used": state["used"], "model": res["model"], "rounds": 1,
-                "worker": res.get("worker")}
+                "worker": res.get("worker"), "complete": complete}
 
     # -- caps ----------------------------------------------------------------
     @capability("ask", risk="write", timeout=None)

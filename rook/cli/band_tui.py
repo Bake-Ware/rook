@@ -11,7 +11,7 @@ journals the call. So it sees the full roster regardless of how each worker is
 connected, and keeps working when workers enforce permissions. Shows a
 live view and lets you run capabilities, enable/disable plugins, define custom
 command-caps, message chat-capable workers, deauth/ban, and work the hub's
-scheduled jobs (``J``: list, runs, run now, enable/disable, view JSON) — the terminal
+scheduled jobs (``J``: list, runs, run now, enable/disable, lock/unlock, view JSON) — the terminal
 counterpart to the web dashboard. Curses only — no third-party deps.
 
 Connection: ``--url`` (default http://127.0.0.1:7005) + ``--user``/``--pass``
@@ -891,7 +891,8 @@ class UI:
 
     def act_jobs(self, scr) -> None:
         """The hub's scheduled jobs: list, then per job its runs, run now,
-        enable/disable and its JSON."""
+        enable/disable, lock/unlock and its JSON. The panel signs in as a
+        dashboard person, so it may lock and unlock (agents may not)."""
         while True:
             self.status = "loading jobs…"
             self.draw(scr)
@@ -913,7 +914,8 @@ class UI:
     def job_menu(self, scr, job: dict) -> None:
         while True:
             toggle = "disable" if job.get("enabled") else "enable"
-            items = ["runs", "run now", toggle, "view JSON"]
+            lock = "unlock" if job.get("locked") else "lock"
+            items = ["runs", "run now", toggle, lock, "view JSON"]
             idx = self.picker(scr, job.get("name") or job.get("id"), items)
             if idx is None:
                 return
@@ -930,6 +932,13 @@ class UI:
                 out = self._jobs(scr, choice, choice, job["id"])
                 if out is not None:
                     job = out
+            elif choice in ("lock", "unlock"):
+                out = self._jobs(scr, choice, choice, job["id"])
+                if out is not None:
+                    job = out
+                    self.popup(scr, choice, f"{job.get('name')} is {'locked' if job.get('locked') else 'unlocked'}"
+                               + ("" if not job.get("locked") else
+                                  ": agents can no longer change, switch off or delete it."))
             elif choice == "view JSON":
                 full = self._jobs(scr, "job", "get", job["id"])
                 if full is not None:
@@ -1036,7 +1045,8 @@ def _job_line(j: dict) -> str:
     trig = " · ".join(j.get("triggers") or []) or "manual"
     flag = "x" if j.get("enabled") else " "
     paused = f"  paused: {j['paused_reason']}" if j.get("paused_reason") else ""
-    return (f"[{flag}] {j.get('name', '')[:28]:<28} next {_short_time(j.get('next')):<17} "
+    lock = "L" if j.get("locked") else " "
+    return (f"[{flag}]{lock}{j.get('name', '')[:28]:<28} next {_short_time(j.get('next')):<17} "
             f"{last:<11} {trig}{paused}")
 
 

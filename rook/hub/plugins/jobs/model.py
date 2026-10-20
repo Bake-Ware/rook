@@ -32,8 +32,16 @@ AFTER_ON = ("success", "finish", "failure")
 OVERLAP_MODES = ("queue", "skip", "parallel")
 MISSED_MODES = ("run_once", "skip", "all")
 TOP_KEYS = ("id", "name", "description", "enabled", "owner", "identity", "triggers", "overlap",
-            "missed", "retention_days", "access", "guardrails", "alerts", "entry", "steps", "vars")
-STEP_KEYS = ("kind", "timeout", "on", "success", "retry", "allow_failure", "description")
+            "missed", "retention_days", "access", "guardrails", "alerts", "limits", "entry", "steps", "vars")
+STEP_KEYS = ("kind", "timeout", "on", "success", "retry", "allow_failure", "complete", "description")
+#: ``limits`` (docs/design/jobs.md 4.1): when a job switches itself off.
+LIMIT_KEYS = ("max_runs", "until", "max_failures", "notify_window", "complete_on")
+COMPLETE_ON = ("success", "failure", "finish")
+#: A step's ``complete``: the outcome that ends the job for good. ``agent``:
+#: the agent step's own ``finish(complete=true)`` decides.
+STEP_COMPLETE = ("success", "failure", "finish", "agent")
+MAX_RUNS = 100000
+MAX_NOTIFY_WINDOW = 30 * 86400
 
 
 class ValidationError(ValueError):
@@ -69,6 +77,10 @@ def normalize(doc: dict) -> dict:
         gr.setdefault("allow", [])
         gr.setdefault("deny", [])
     job.setdefault("alerts", {"on_failure": [], "on_success": []})
+    lim = job.setdefault("limits", {})
+    if isinstance(lim, dict):
+        for k in LIMIT_KEYS:
+            lim.setdefault(k, None)
     job.setdefault("vars", {})
     steps = job.get("steps")
     if isinstance(steps, dict):
@@ -81,6 +93,8 @@ def normalize(doc: dict) -> dict:
                 step["on"] = {}
             elif isinstance(on, dict):
                 step["on"] = {k: ([v] if isinstance(v, str) else v) for k, v in on.items()}
+            if step.get("complete") is True:
+                step["complete"] = "success"
             if isinstance(step.get("retry"), dict):
                 step["retry"].setdefault("max", 0)
                 step["retry"].setdefault("delay", "0s")
@@ -156,6 +170,45 @@ def check_access(access: Any) -> list[str]:
         if not (isinstance(v, str) or (isinstance(v, list) and all(isinstance(x, str) for x in v))):
             errs.append(f"access.{op}: a principal pattern string or a list of them")
     return errs
+
+
+def complete_matches(rule: Any, state: str) -> bool:
+    """Whether a finished step or run ``state`` meets a ``complete`` /
+    ``complete_on`` rule (``failure`` covers hang and blocked)."""
+    if rule == "finish":
+        return True
+    if rule == "success":
+        return state == "success"
+    if rule == "failure":
+        return state in ("failure", "hang", "blocked")
+    return False
+
+
+def check_limits(lim: Any, errs: list, warns: list, now: float | None) -> None:
+    if not isinstance(lim, dict):
+        errs.append("limits: an object {max_runs, until, max_failures, notify_window, complete_on}")
+        return
+    for k in lim:
+        if k not in LIMIT_KEYS:
+            errs.append(f"limits.{k}: unknown field (use {', '.join(LIMIT_KEYS)})")
+    mr = lim.get("max_runs")
+    if mr is not None and (not isinstance(mr, int) or isinstance(mr, bool) or not 1 <= mr <= MAX_RUNS):
+        errs.append(f"limits.max_runs: null (no limit) or 1-{MAX_RUNS}")
+    mf = lim.get("max_failures")
+    if mf is not None and (not isinstance(mf, int) or isinstance(mf, bool) or not 0 <= mf <= 1000):
+        errs.append("limits.max_failures: null (the hub setting job.max_failures), 0 (never) or 1-1000")
+    if lim.get("until") is not None:
+        try:
+            when = parse_instant(lim["until"])
+            if now is not None and when <= now:
+                warns.append("limits.until: in the past; the job will switch itself off")
+        except ValueError as e:
+            errs.append(f"limits.until: {e}")
+    if lim.get("notify_window") is not None:
+        _duration(lim["notify_window"], "limits.notify_window", errs, maximum=MAX_NOTIFY_WINDOW)
+    co = lim.get("complete_on")
+    if co is not None and co not in COMPLETE_ON:
+        errs.append(f"limits.complete_on: null or one of {', '.join(COMPLETE_ON)}")
 
 
 def _policy_blocks(job: dict, errs: list) -> None:
@@ -247,6 +300,12 @@ def _step(sid: str, step: Any, ids: set, errs: list) -> None:
             _duration(retry.get("delay", "0s"), f"{p}.retry.delay", errs, maximum=86400)
     if "allow_failure" in step and not isinstance(step["allow_failure"], bool):
         errs.append(f"{p}.allow_failure: true or false")
+    comp = step.get("complete")
+    if comp is not None:
+        if comp not in STEP_COMPLETE:
+            errs.append(f"{p}.complete: one of {', '.join(STEP_COMPLETE)} (or true = success)")
+        elif comp == "agent" and kind != "agent":
+            errs.append(f'{p}.complete: "agent" is for agent steps (the agent decides with finish)')
     if k is not None and k.validate is not None:
         errs.extend(f"{p}: {e}" for e in k.validate(step))
     if kind == "wait" and "for" in step:
@@ -346,6 +405,8 @@ def validate(doc: dict, *, now: float | None = None) -> tuple[list[str], list[st
         errs.append("enabled: true or false")
     _triggers(doc, errs, warns, now)
     _policy_blocks(doc, errs)
+    if "limits" in doc:
+        check_limits(doc["limits"], errs, warns, now)
     _graph(doc, errs)
     return errs, warns
 
@@ -421,6 +482,23 @@ def schema() -> dict:
             "alerts": {"type": "object", "properties": {
                 "on_failure": {"type": "array", "items": {"$ref": "#/$defs/notify"}},
                 "on_success": {"type": "array", "items": {"$ref": "#/$defs/notify"}}}},
+            "limits": {"type": "object", "description": "when the job switches itself off (enabled: false, "
+                                                        "paused_reason completed, max_runs, expired or "
+                                                        "max_failures); enabling it again starts the counts over",
+                       "properties": {
+                "max_runs": {"type": ["integer", "null"], "minimum": 1, "maximum": MAX_RUNS, "default": None,
+                             "description": "switch off after this many finished runs"},
+                "until": {"type": ["string", "null"], "default": None,
+                          "description": "ISO 8601 with offset: no runs after this; the job switches off"},
+                "max_failures": {"type": ["integer", "null"], "minimum": 0, "maximum": 1000, "default": None,
+                                 "description": "switch off after this many failed runs in a row; null = the hub "
+                                                "setting job.max_failures (not applied to locked jobs), 0 = never"},
+                "notify_window": {"oneOf": [{"$ref": "#/$defs/duration"}, {"type": "null"}], "default": None,
+                                  "description": "the same voice/notify/telegram text goes to the same target at "
+                                                 "most once per window; null = the hub setting "
+                                                 "job.notify_window, 0 = off"},
+                "complete_on": {"enum": [*COMPLETE_ON, None], "default": None,
+                                "description": "switch off for good after the first run that ends this way"}}},
             "entry": {"type": "string", "description": "id of the first step"},
             "steps": {"type": "object", "propertyNames": {"pattern": STEP_ID.pattern},
                       "additionalProperties": {"$ref": "#/$defs/step"}},
@@ -457,7 +535,12 @@ def schema() -> dict:
                     "max": {"type": "integer", "minimum": 0, "maximum": MAX_RETRIES},
                     "delay": {"$ref": "#/$defs/duration"}}},
                 "allow_failure": {"type": "boolean", "default": False,
-                                  "description": "this step failing does not fail the run"}}},
+                                  "description": "this step failing does not fail the run"},
+                "complete": {"enum": [*STEP_COMPLETE, True],
+                             "description": "this step ending this way ends the job for good once the run "
+                                            "finishes (success, failure, finish = either); agent: an agent "
+                                            "step's finish(complete=true) decides (on unlocked jobs it always "
+                                            "may)"}}},
             "kinds": kinds,
         },
         "x-variables": ["{{run.id}}", "{{run.started}}", "{{run.missed}}", "{{job.name}}", "{{job.id}}",

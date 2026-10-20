@@ -72,6 +72,8 @@ each one can be changed on the dashboard.
   "access": {"read": "*", "edit": "*", "run": "*"},
   "guardrails": {"inherit": true, "allow": [], "deny": []},
   "alerts": {"on_failure": [], "on_success": []},
+  "limits": {"max_runs": null, "until": null, "max_failures": null,
+             "notify_window": null, "complete_on": null},
   "entry": "check",
   "steps": { "<step id>": { … see section 5 … } },
   "vars": {}
@@ -103,6 +105,59 @@ each one can be changed on the dashboard.
     always runs.
 - **Retention:** run history older than `retention_days` (default 30, a
   setting with a per-job override) is pruned by the scheduler loop.
+
+### 4.1 Jobs that end themselves
+
+Watcher and one-off jobs must stop on their own. Before this, agents were
+told to "disable this job" from inside the run with `rook_jobs`. On
+2026-10-20 three watchers kept running for hours: their condition could not
+be checked from an agent step (the console tools are MCP-client tools, not
+hub tools), every run failed, nothing stopped a failing job, and the agent
+messaged the person about the failure on most runs. One run spoke, ran out of
+tool calls before it disabled the job, and spoke again on the next run. The
+hub now ends jobs itself:
+
+- **A step's `complete`**: `success` (or `true`), `failure` (covers hang and
+  blocked) or `finish` (either). When the step ends that way, the job
+  switches off for good once the run finishes. Typical watcher: a cheap check
+  step, then on success a `notify` step with `complete: "success"`.
+- **An agent's `finish(verdict, text, complete: true)`**: the house agent
+  asks the hub to end the job. It needs no `job.write` and no tool calls left
+  (finish is always offered). On a locked job (7.1) this counts only when the
+  step says `complete: "agent"`, which only a person could have saved.
+- **`limits`** (all optional):
+  - `complete_on`: `success` / `failure` / `finish`: the first run that ends
+    that way ends the job.
+  - `max_runs`: switch off after this many finished runs (cancelled, dropped
+    and interrupted runs do not count).
+  - `until`: an ISO 8601 instant. After it the job switches off before its
+    next run; a run that was already due is cancelled. `run` and `enable`
+    refuse an expired job.
+  - `max_failures`: switch off after this many failed runs in a row
+    (failure, hang, blocked; a success resets the count). `null` uses the hub
+    setting `job.max_failures` (10); `0` never. A locked job ignores the hub
+    setting and uses only its own value.
+- Switching off sets `enabled: false` with `paused_reason` `completed`,
+  `max_runs`, `expired` or `max_failures`, cancels the job's queued and due
+  runs, and writes a history row by `system:jobs` naming the rule and the
+  run. Enabling the job again (or changing its `limits`) starts the counts
+  from zero.
+
+### 4.2 Repeated messages
+
+A job sends the same text to the same target at most once per
+`limits.notify_window` (default: the hub setting `job.notify_window`, `6h`;
+`0` turns it off). This covers every way a run reaches a person: `notify`
+and `ask` steps, alerts, `cap` and `fanout` steps on `voice.speak`,
+`notify.post` or `notify.send`, and an agent step's `notify_bake`,
+`ask_bake`, `rook_call` and `rook_tool`. The target is the cap plus the
+worker it ran on (Telegram: the hub plus the channel). Texts are compared
+loosely: case, spacing, punctuation and numbers are ignored, so "failed 68
+times" and "failed 69 times" are the same message. The store keeps a digest
+of the text, never the text. A held-back message is not an error: the step
+(or the agent) gets `{"suppressed": true, "sent_at": …}`. A held-back
+question fails, since nobody was asked. A send that failed is not
+remembered, so it can be retried.
 
 ## 5. Steps and the graph
 
@@ -526,6 +581,31 @@ Built in J2 (`identity.py`, `principals.py`, `guardrails.py`, `service.py`).
   overview counts these jobs as blocked.
 - Saving or validating a job whose step would be blocked now is a
   warning (`warnings`), not an error.
+
+### 7.1 Locked jobs
+
+A person can **lock** a job (`lock` / `unlock` on `job.write`, the 🔒 on
+the Jobs page, or the `rook band` jobs panel). Only a person may lock or
+unlock: a verified `human` principal acting for nobody else. That means a
+dashboard sign-in, or the panel that the dashboard admitted (which forwards
+the person). Agents, every token (the static and operator tokens too), job
+runs (their chain names the job, even when the job runs as a person), the
+house agent and in-process hub code are refused.
+
+While a job is locked, nobody but a person may `update`, `enable`, `disable`,
+`delete` it, change its guardrails or `cancel` its runs. They get
+`PermissionError` with a message starting `locked:` that says to ask a
+person. `run` stays open to whoever has run access. `locked` is not part of
+the definition: `create` and `update` refuse it. Views show `locked`,
+`locked_by`, `locked_at` and `can.lock`, and `can.edit` is false for agents.
+
+Locking does not switch off the job's own ending rules. The `limits`, step
+`complete` rules and `complete_on` that are in the job when a person locks it
+are taken as theirs, and the lock's history row records them. The hub's
+default `job.max_failures` does not apply to a locked job. An agent's
+`finish(complete=true)` counts only on a step with `complete: "agent"`. The
+history rows `lock` and `unlock` (actor, note, the limits, who held the lock
+before) are the audit record, and the revision goes up.
 
 ## 8. Interfaces
 

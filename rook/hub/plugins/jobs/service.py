@@ -19,6 +19,12 @@ Times go out as zone-aware ISO strings in the hub zone (setting
 ``job.timezone``); ``next`` also gives each fire in the trigger's own zone.
 Run output is masked again on read, so a secret added after a run was stored
 is masked when shown.
+
+Locks (jobs.md 7.1): ``lock`` / ``unlock`` are for persons only
+(:func:`.identity.person`). A locked job cannot be updated, enabled,
+disabled, deleted, its guardrails changed or its runs cancelled by any agent
+or token, the operator's included; ``run`` stays open to whoever may run it.
+The history rows ``lock`` / ``unlock`` are the audit record.
 """
 from __future__ import annotations
 
@@ -26,6 +32,7 @@ import asyncio
 import copy
 import fnmatch
 import json
+import logging
 import time
 from typing import Any, Callable
 
@@ -33,16 +40,19 @@ from ....band_mcp import secret_mask
 from .cron import DEFAULT_TZ, Cron, describe, iso, valid_zone
 from .guardrails import (DEFAULT_GUARDRAILS, Guardrails, check_defaults, check_job_block,
                          normalize_defaults)
-from .identity import authorize, caller, is_admin, parse_spec
+from .identity import authorize, caller, is_admin, parse_spec, person
 from .kinds import run_notify
 from .model import ACCESS_OPS, ValidationError, access_patterns, check, check_access, schema
 from .principals import Directory
+from .scheduler import Scheduler
 from .steps import StepContext
 from .store import JobStore
 
 READS = ("list", "get", "runs", "run_get", "next", "validate", "guardrails_preview", "describe_schema")
-WRITES = ("create", "update", "delete", "enable", "disable", "run", "cancel", "set_guardrails", "settings")
+WRITES = ("create", "update", "delete", "enable", "disable", "run", "cancel", "set_guardrails", "settings",
+          "lock", "unlock")
 ERRORS = (ValueError, KeyError, TypeError, PermissionError, LookupError)
+log = logging.getLogger("rook.hub.plugins.jobs.service")
 ALERT_TIMEOUT = 30.0
 DEFAULT_ACCESS = {"read": "*", "edit": "*", "run": "*"}
 
@@ -142,6 +152,14 @@ class JobService:
             raise PermissionError(f"denied: {who.get('id')} may not {op} job {row['name']!r} "
                                   f"(access.{op} of the job)")
 
+    def need_unlocked(self, row: dict, what: str) -> None:
+        """A locked job changes only by a person's hand."""
+        if row.get("locked") and person() is None:
+            by = row.get("locked_by") or "a person"
+            raise PermissionError(f"locked: job {row['name']!r} was locked by {by}, so agents and tokens "
+                                  f"cannot {what} it. Ask a person to change it on the dashboard's Jobs "
+                                  f"page (or to unlock it).")
+
     def default_access(self) -> dict:
         v = self.settings("default_access")
         if not isinstance(v, dict) or check_access(v):
@@ -168,6 +186,10 @@ class JobService:
                "updated": iso(row["updated"], tz)}
         if row.get("paused_reason"):
             out["paused_reason"] = row["paused_reason"]
+        out["locked"] = bool(row.get("locked"))
+        if out["locked"]:
+            out["locked_by"] = row.get("locked_by")
+            out["locked_at"] = iso(row.get("locked_at"), tz)
         ident = d.get("identity") or {}
         out["identity"] = ident.get("mode") or "creator"
         blocks = self.guardrails.scan(d, roster=roster)
@@ -175,8 +197,12 @@ class JobService:
         if blocks:
             out["guardrail_blocks"] = blocks
         who = who or caller()
-        out["can"] = {op: self.can(row, op, who) for op in ("edit", "run")}
+        human = person() is not None
+        edit = self.can(row, "edit", who)
+        out["can"] = {"edit": edit and (human or not out["locked"]), "run": self.can(row, "run", who),
+                      "lock": edit and human}
         if full:
+            out["limits_state"] = {"runs": row.get("run_count", 0), "failed_in_a_row": row.get("fail_streak", 0)}
             out["created"] = iso(row["created"], tz)
             out["updated_by"] = row.get("updated_by")
             out["counts"] = self.store.counts(row["id"])
@@ -432,6 +458,7 @@ class JobService:
         if rid:
             if not isinstance(data.get("guardrails"), dict):
                 raise ValueError("data.guardrails is required: {inherit, deny, allow}")
+            self.need_unlocked(self._job(rid), "change the guardrails of")
             patch = {"guardrails": data["guardrails"]}
             if data.get("revision") is not None:
                 patch["revision"] = data["revision"]
@@ -482,6 +509,8 @@ class JobService:
     def a_create(self, rid, query, data) -> dict:
         who = caller()
         doc = self._clean(data)
+        if "locked" in doc:
+            raise ValueError("locked is not part of the job: a person locks a saved job (the lock action)")
         if "access" not in doc:
             doc["access"] = self.default_access()
         job, warns = check(doc, now=self.clock())
@@ -503,6 +532,9 @@ class JobService:
         who = caller()
         row = self._job(rid)
         self.need(row, "edit", who)
+        self.need_unlocked(row, "edit")
+        if "locked" in data:
+            raise ValueError("locked is not part of the job: use the lock / unlock actions")
         expect = data.get("revision")
         patch = self._clean(data)
         old = row["definition"]
@@ -540,6 +572,7 @@ class JobService:
     def a_delete(self, rid, query, data) -> dict:
         row = self._job(rid)
         self.need(row, "edit")
+        self.need_unlocked(row, "delete")
         for run in self.store.runs(row["id"], ["running"], 500):
             self.scheduler.cancel_local(run["id"])
         return self.store.delete_job(row["id"])
@@ -548,6 +581,11 @@ class JobService:
         who = caller()
         row = self._job(rid)
         self.need(row, "edit", who)
+        self.need_unlocked(row, "enable")
+        until = Scheduler.expired(row["definition"], self.clock())
+        if until is not None:
+            raise ValueError(f"job {row['name']!r} expired (limits.until is in the past); "
+                             "update limits.until first")
         if not self._takeover(row, who):
             return self.job_view(self.store.set_enabled(row["id"], True, who["id"], self.clock(), self.tz()),
                                  who=who)
@@ -564,6 +602,7 @@ class JobService:
         who = caller()
         row = self._job(rid)
         self.need(row, "edit", who)
+        self.need_unlocked(row, "disable or pause")
         reason = str(data.get("reason") or "disabled")[:200]
         return self.job_view(self.store.set_enabled(row["id"], False, who["id"], self.clock(), self.tz(),
                                                     reason=reason), who=who)
@@ -573,6 +612,8 @@ class JobService:
         self.need(row, "run")
         if not row["enabled"]:
             raise ValueError(f"job {row['name']!r} is disabled; enable it first")
+        if Scheduler.expired(row["definition"], self.clock()) is not None:
+            raise ValueError(f"job {row['name']!r} expired (limits.until is in the past)")
         vars_ = data.get("vars") or {}
         if not isinstance(vars_, dict):
             raise TypeError("data.vars must be an object")
@@ -587,10 +628,14 @@ class JobService:
         run = self.store.get_run(rid)
         if run is not None:
             self._need_run_job(run, "run")
+            owner = self.store.get_job(run["job_id"])
+            if owner is not None:
+                self.need_unlocked(owner, "cancel runs of")
             targets = [rid]
         else:
             row = self._job(rid)
             self.need(row, "run")
+            self.need_unlocked(row, "cancel runs of")
             targets = [r["id"] for r in self.store.runs(row["id"], ["queued", "due", "running"], 500)]
         out = []
         for r in targets:
@@ -599,6 +644,36 @@ class JobService:
                 self.scheduler.cancel_local(r)
             out.append({"id": r, "state": run["state"], "cancel_requested": run["state"] == "running"})
         return {"cancelled": out}
+
+    def _set_lock(self, rid, data, locked: bool) -> dict:
+        who = person()
+        verb = "lock" if locked else "unlock"
+        if who is None:
+            raise PermissionError(f"denied: only a person signed in to the dashboard (or the rook band "
+                                  f"panel) may {verb} a job; agents and tokens cannot")
+        row = self._job(rid)
+        self.need(row, "edit", who)
+        if bool(row.get("locked")) == locked:
+            return self.job_view(row, full=True, who=who)
+        d = row["definition"]
+        detail = {"limits": {k: v for k, v in (d.get("limits") or {}).items() if v is not None},
+                  "enabled": row["enabled"]}
+        if data.get("note"):
+            detail["note"] = str(data["note"])[:200]
+        if not locked:
+            detail["was_locked_by"] = row.get("locked_by")
+        row = self.store.set_locked(row["id"], locked, who["id"], self.clock(), detail)
+        log.info("jobs: %s %sed by %s", row["name"], verb, who["id"])
+        return self.job_view(row, full=True, who=who)
+
+    def a_lock(self, rid, query, data) -> dict:
+        """Lock a job (persons only): from now on only a person may change,
+        switch, delete or cancel it. Its own limits keep applying; the hub's
+        default max_failures does not."""
+        return self._set_lock(rid, data, True)
+
+    def a_unlock(self, rid, query, data) -> dict:
+        return self._set_lock(rid, data, False)
 
     def a_settings(self, rid, query, data) -> dict:
         if data:
@@ -640,7 +715,7 @@ class JobService:
         for spec in specs:
             ctx = StepContext(job=job, run={**run, "state": state}, step_id=f"alert:{key}", identity=identity,
                               runtime=self.scheduler.executor.runtime, settings=self.settings,
-                              timeout=ALERT_TIMEOUT)
+                              timeout=ALERT_TIMEOUT, notices=getattr(self.scheduler.executor, "notices", None))
             try:
                 res = await asyncio.wait_for(run_notify(ctx, spec), ALERT_TIMEOUT)
                 out.append({"via": spec.get("via", "notify"), "state": res.state,
