@@ -244,9 +244,20 @@ export class Kit {
 
   // ---------------------------------------------------------------- camera rig
   // keys: [{t, pos:[x,y,z], look:[x,y,z], fov, e:'io'|'out'|'in'|'lin'|'cut'}]
+  // or {t, frame: {on: [objects | points], yaw, pitch, fill, fov, look: [dx,dy,dz]}, e} to aim at things.
+  // Keys saved from the director page (clips/cN.keys.json) replace these.
   camPath(keys) {
-    const K = keys.map(k => ({ ...k, pos: V(...k.pos), look: V(...k.look), fov: k.fov ?? 36 }));
+    const saved = window.CAMKEYS && window.CAMKEYS.length ? window.CAMKEYS : null;
+    this.camKeysSrc = keys;
+    let K = null;
+    const resolve = () => (saved ?? keys).map(k => {
+      if (k.frame) { const f = this.frame(k.frame.on, k.frame); return { ...k, pos: f.pos, look: f.look, fov: f.fov }; }
+      return { ...k, pos: V(...k.pos), look: V(...k.look), fov: k.fov ?? 36 };
+    });
+    this.camKeys = () => K ?? (K = resolve());
     this.updaters.push(t => {
+      if (this.freeCam) return;
+      const K = this.camKeys();
       let a = K[0], b = K[0], p = 0;
       if (t >= K[K.length - 1].t) { a = b = K[K.length - 1]; }
       else for (let i = 1; i < K.length; i++) if (t < K[i].t) {
@@ -258,10 +269,40 @@ export class Kit {
       if (t < K[0].t) a = b = K[0];
       this.camera.position.copy(a.pos).lerp(b.pos, p);
       const look = a.look.clone().lerp(b.look, p);
+      this.camLook = look;
       this.camera.fov = lerp(a.fov, b.fov, p);
       this.camera.lookAt(look);
       this.camera.updateProjectionMatrix();
     });
+  }
+
+  // Aim at things: fit the bounding box of `on` (objects or points) seen from yaw/pitch (degrees;
+  // yaw 0 looks from +z toward -z, pitch is the elevation), filling `fill` of the shorter side.
+  frame(on, { yaw = 0, pitch = 20, fill = .7, fov = 36, look = [0, 0, 0], dist = null } = {}) {
+    const box = new THREE.Box3();
+    for (const o of [].concat(on)) {
+      if (o?.isObject3D) { o.updateMatrixWorld(true); box.expandByObject(o); }
+      else if (Array.isArray(o)) box.expandByPoint(V(...o));
+      else if (o?.isVector3) box.expandByPoint(o);
+      else if (o?.isBox3) box.union(o);
+    }
+    const c = box.getCenter(V(0, 0, 0)), r = Math.max(.05, box.getSize(V(0, 0, 0)).length() / 2);
+    const vf = fov * Math.PI / 180, hf = 2 * Math.atan(Math.tan(vf / 2) * W / H);
+    const d = dist ?? r / Math.tan(Math.min(vf, hf) / 2) / fill;
+    const y = yaw * Math.PI / 180, pt = pitch * Math.PI / 180;
+    const dir = V(Math.sin(y) * Math.cos(pt), Math.sin(pt), Math.cos(y) * Math.cos(pt));
+    const L = c.clone().add(V(...look));
+    return { pos: L.clone().addScaledVector(dir, d), look: L, fov };
+  }
+
+  // A Board piece: any model normalised to a token that fits a square (size in metres).
+  piece(name, at, { size = .72, rot = 0, parent = null, ...opts } = {}) {
+    const obj = this.make(name, { ...opts, at, rot, parent });
+    obj.updateMatrixWorld(true);
+    const s = new THREE.Box3().setFromObject(obj).getSize(V(0, 0, 0));
+    const k = size / Math.max(s.x, s.z, s.y * .85);
+    obj.scale.multiplyScalar(k);
+    return obj;
   }
 
   // ---------------------------------------------------------------- DOM overlays

@@ -59,6 +59,7 @@ import { Kit, STING, ENDCARD, bookends, clamp } from './kit.js';
 const q = new URLSearchParams(location.search);
 const n = q.get('clip') || '1';
 try { window.VOICE_DUR = await (await fetch('voices/durations.json')).json(); } catch (e) { window.VOICE_DUR = {}; }
+try { const r = await fetch(`clips/c${n}.keys.json`, { cache: 'no-store' }); window.CAMKEYS = r.ok ? await r.json() : null; } catch (e) { window.CAMKEYS = null; }
 const mod = await import(`./clips/c${n}.js`);
 const clip = mod.default;
 const kit = new Kit(document.getElementById('stage'));
@@ -92,4 +93,5 @@ window.CLIP = { T: clip.T, title: clip.title, mood: clip.mood || {}, events: kit
   voice: kit.voice.map(v => ({ ...v, t: v.t + STING })) };
 window.kit = kit;
 window.ready = true;
+if (q.get('director')) import('./director.js').then(m => m.director(kit, clip));
 </script></body></html>

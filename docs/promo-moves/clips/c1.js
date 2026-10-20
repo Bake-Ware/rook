@@ -22,12 +22,12 @@ export default {
     let boardView = bcam;
     kit.board({ scene: bw, cam: () => boardView });
     const rook = goldRook(kit, V(0, 0, 0), .5, -.4); bw.add(rook.obj);
-    const cal = kit.make('calendar', { at: V(3, 0, -2), parent: bw, scale: 1.2, rot: -.3 });
-    const mail = kit.make('mail', { at: V(-3, 0, -2), parent: bw, scale: 1.2, rot: .3 });
-    kit.make('car', { at: V(-3, 0, 3), parent: bw, scale: .8, rot: .5 });
-    kit.make('laptop', { at: V(3, 0, 3), parent: bw, rot: -.5 });
-    kit.make('phone', { at: V(0, 0, 4), parent: bw, scale: 1.4 });
-    kit.make('nas', { at: V(-5, 0, 0), parent: bw });
+    const cal = kit.piece('calendar', V(3, 0, -2), { parent: bw, rot: -.3, size: .8 });
+    const mail = kit.piece('mail', V(-3, 0, -2), { parent: bw, rot: .3, size: .8 });
+    kit.piece('car', V(-3, 0, 3), { parent: bw, rot: .5, size: .9 });
+    kit.piece('laptop', V(3, 0, 3), { parent: bw, rot: -.5 });
+    kit.piece('phone', V(0, 0, 4), { parent: bw, size: .6 });
+    kit.piece('nas', V(-5, 0, 0), { parent: bw });
 
     const rt = new THREE.WebGLRenderTarget(1024, 2176, { samples: 4 });
     rt.texture.colorSpace = THREE.SRGBColorSpace;
@@ -37,11 +37,11 @@ export default {
     const scr = kit.meshesOf(phone, 'screen')[0];
     scr.material = new THREE.MeshBasicMaterial({ map: rt.texture }); kit.planarUV(scr, { u: 'x', v: 'z', flipV: false });
     // flip uv so the board reads upright from the camera side
-    const holo = holoRook(kit, .05); holo.obj.position.set(0, .05, 0);
-    const beam = new THREE.Mesh(new THREE.CylinderGeometry(.09, .06, .26, 24, 1, true),
+    const holo = holoRook(kit, .033); holo.obj.position.set(0, .012, 0);
+    const beam = new THREE.Mesh(new THREE.CylinderGeometry(.06, .035, .16, 24, 1, true),
       new THREE.MeshBasicMaterial({ color: 0xf0c98c, transparent: true, opacity: .07, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
-    beam.position.y = .14; S.add(beam);
-    const warm = new THREE.PointLight(0xffc98a, .5, 2.5, 2); warm.position.set(0, .4, 0); S.add(warm);
+    beam.position.y = .09; S.add(beam);
+    const warm = new THREE.PointLight(0xffc98a, .04, .9, 2); warm.position.set(0, .25, 0); S.add(warm);
 
     // ---------------------------------------------------------- the four rooms
     const rooms = {};
@@ -60,9 +60,11 @@ export default {
       const g = new THREE.Group(); S.add(g); rooms.bath = g;
       const c = kit.make('counter', { parent: g, at: V(-.2, -.9, -.15) });
       kit.node(c, 'mirror').visible = false; kit.node(c, 'mirror_frame').visible = false;
-      wall(g, 0x36403a, -3.0);
-      const f = figure(kit, V(-.95, -.9, -2.7), .25); g.add(f.obj); g.userData.fig = f;
-      const brush = new THREE.Mesh(new THREE.BoxGeometry(.02, .02, .18), kit.toon(0xd8ad6d)); f.foreR.add(brush); brush.position.set(0, .02, -.36);
+      wall(g, 0x36403a, -2.9);
+      const mir = new THREE.Mesh(new THREE.BoxGeometry(.62, .8, .03), kit.toon(0x8fa4a6)); mir.position.set(-.52, .72, -2.87); g.add(mir);
+      const sink2 = kit.make('counter', { parent: g, at: V(-.5, -.9, -2.55) }); kit.node(sink2, 'mirror').visible = false; kit.node(sink2, 'mirror_frame').visible = false;
+      const f = figure(kit, V(-.5, -.9, -2.2), Math.PI + .1); g.add(f.obj); g.userData.fig = f;
+      const brush = new THREE.Mesh(new THREE.BoxGeometry(.02, .02, .18), kit.toon(0xd8ad6d)); f.foreR.add(brush); brush.position.set(0, -.34, .07);
     }
     { // car at a red light
       const g = new THREE.Group(); S.add(g); rooms.car = g;
@@ -79,14 +81,15 @@ export default {
     }
     { // work desk
       const g = new THREE.Group(); S.add(g); rooms.desk = g;
-      kit.make('workstation', { parent: g, at: V(-.55, -.77, -.25), rot: -Math.PI / 2 });
-      kit.make('coffee', { parent: g, at: V(-.45, 0, -.35) });
-      const ch = kit.make('chair', { parent: g, at: V(-1.25, -.77, -.4), rot: -Math.PI / 2 });
-      const f = figure(kit, V(-.2, -1.27, -1.25), 0); g.add(f.obj); g.userData.fig = f;
+      const ws = kit.make('workstation', { parent: g, at: V(-.25, -.74, -.25) });
+      for (const n of ['monitor', 'kb', 'foot', 'neck', 'tower', 'tower_led']) { const o = kit.node(ws, n); if (o) o.visible = false; }
+      kit.make('laptop', { parent: g, at: V(-.3, 0, -.38), rot: Math.PI + .15 });
+      kit.make('coffee', { parent: g, at: V(.22, 0, -.3) });
+      kit.make('chair', { parent: g, at: V(-.3, -.74, -1.05) });
+      const f = figure(kit, V(-.3, -1.21, -.92), 0); g.add(f.obj); g.userData.fig = f;
       f.legL.rotation.x = f.legR.rotation.x = -1.45;
       f.armL.rotation.x = f.armR.rotation.x = -.9;
-      kit.make('chair', { parent: g, at: V(-.2, -.77, -1.45), rot: Math.PI });
-      wall(g, 0x2f3330, -1.9);
+      wall(g, 0x2f3330, -1.4);
     }
     function rnd2(i) { return ((Math.sin(i * 91.7) * 43758.5453) % 1 + 1) % 1; }
 
@@ -122,7 +125,7 @@ export default {
       { t: 5.2, type: 'shimmer' });
 
     // ---------------------------------------------------------- per frame
-    const camLock = { pos: V(.75, .42, 1.05), look: V(-.12, .12, -.2) };
+    const camLock = kit.frame([V(0, 0, 0)], { yaw: 36, pitch: 10, dist: 1.0, look: [-.14, .2, -.12] });
     return tau => {
       // which room, and the slide between rooms
       let idx = 0, slide = 0;
@@ -140,20 +143,20 @@ export default {
       // dawn window warms up
       rooms.bed.userData.win.material.color.setHSL(.08, .6, lerp(.18, .42, inv(0, 9, tau)));
       // figures move
-      const fb = rooms.bath.userData.fig; fb.rest(); fb.armR.rotation.x = -2.3; fb.armR.rotation.z = .35; fb.foreR.rotation.x = -.9 + Math.sin(tau * 14) * .18;
-      fb.head.rotation.x = .1;
+      const fb = rooms.bath.userData.fig; fb.rest(); fb.armR.rotation.x = -.7; fb.armR.rotation.z = -.2; fb.foreR.rotation.x = -2.0 + Math.sin(tau * 14) * .1;
+      fb.head.rotation.x = .1; fb.torso.rotation.x = .28;
       rooms.car.userData.lights.forEach((l, i) => { l.position.x = ((-3 + i * .75 - tau * .25) % 7 + 7) % 7 - 3.5; });
       const fd = rooms.desk.userData.fig;
       fd.head.rotation.y = tau > 25.6 ? lerp(0, -.7, inv(25.6, 26.4, tau)) : 0;
 
       // hologram: rises at 5-6.5, turns toward the figure at 26-29
       const rise = ease.out(inv(5.0, 6.6, tau));
-      holo.obj.scale.setScalar(Math.max(.0001, .05 * rise));
-      holo.obj.position.y = lerp(0, .05, rise) + Math.sin(tau * 1.6) * .006;
+      holo.obj.scale.setScalar(Math.max(.0001, .033 * rise));
+      holo.obj.position.y = lerp(0, .02, rise) + Math.sin(tau * 1.6) * .003;
       holo.obj.rotation.y = tau * .35 + (tau > 26 ? lerp(0, -.9, ease.io(inv(26, 27.4, tau))) : 0);
       holo.mat.opacity = .22 * rise; holo.ink.opacity = .9 * rise * (.85 + .15 * Math.sin(tau * 7));
       beam.material.opacity = .07 * rise; beam.scale.y = Math.max(.001, rise);
-      warm.intensity = .25 + .5 * rise;
+      warm.intensity = .02 + .05 * rise;
 
       // ---- cameras
       const cam = kit.camera;
@@ -161,22 +164,26 @@ export default {
         const p = ease.io(inv(.8, 5, tau));
         const q = ease.inE(inv(.8, 5, tau)) * .6 + p * .4;
         const ph = phone.rotation.y;
-        const start = V(0, .5, 0), end = camLock.pos;
+        const start = V(0, .17, 0), end = camLock.pos;
         cam.position.copy(start.clone().lerp(end, q));
         cam.up.set(Math.cos(ph), 0, -Math.sin(ph)).lerp(V(0, 1, 0), clamp(q * 1.6)).normalize();
         cam.fov = lerp(36, 36, q);
         cam.lookAt(V(0, 0, 0).lerp(camLock.look, q));
         cam.up.set(0, 1, 0);
       } else if (tau < 29 || (tau >= 37)) {
-        cam.position.copy(camLock.pos); cam.fov = 36; cam.lookAt(camLock.look);
+        // per-room framing: wider and a little higher where a person stands or sits behind the phone
+        const adj = [[0, 0], [12, .06], [0, 0], [12, .1]];
+        const a = adj[roomIdx], b = adj[Math.max(0, roomIdx - 1)], w = (idx > 0 && tau < 29) ? ease.io(u) : 1;
+        const fovA = lerp(b[0], a[0], w), lookA = lerp(b[1], a[1], w);
+        cam.position.copy(camLock.pos); cam.fov = 36 + fovA; cam.lookAt(camLock.look.clone().add(V(0, lookA, 0)));
         if (tau >= 37) {                                 // pulled back out of the hologram
           const p = ease.outE(inv(37, 38.4, tau));
-          cam.position.copy(V(0, .16, .05).lerp(camLock.pos, p)); cam.lookAt(V(0, .13, 0).lerp(camLock.look, p));
+          cam.position.copy(V(0, .085, .03).lerp(camLock.pos, p)); cam.lookAt(V(0, .075, 0).lerp(camLock.look.clone().add(V(0, lookA, 0)), p)); cam.fov = lerp(70, 36 + fovA, p);
         }
       } else if (tau < 30) {                           // rush into the hologram
         const p = ease.inE(inv(29, 30, tau));
-        cam.position.copy(camLock.pos.clone().lerp(V(0, .16, .02), p)); cam.lookAt(camLock.look.clone().lerp(V(0, .13, 0), p));
-        cam.fov = lerp(36, 70, p);
+        cam.position.copy(camLock.pos.clone().lerp(V(0, .085, .025), p)); cam.lookAt(camLock.look.clone().add(V(0, .1, 0)).lerp(V(0, .075, 0), p));
+        cam.fov = lerp(48, 70, p);
       }
       cam.updateProjectionMatrix();
 

@@ -125,10 +125,11 @@ def sphere(name, r, loc, m, parent=None, segs=10, rings=6, scale=(1, 1, 1)):
     return mesh(name, v, f, m, parent, loc)
 
 
-def export(name):
-    for ob in bpy.context.scene.objects:
-        for md in ob.modifiers:
-            pass
+def export(name, scale=1.0):
+    """scale brings the model to real size in metres (the root node carries it)."""
+    roots = [o for o in bpy.context.scene.objects if o.parent is None]
+    for r in roots:
+        r.scale = (scale, scale, scale)
     path = os.path.join(OUT, name + '.glb')
     bpy.ops.export_scene.gltf(filepath=path, export_format='GLB', export_apply=True, export_yup=True,
                               export_materials='EXPORT', export_extras=True)
@@ -225,7 +226,7 @@ def build_phone():
     box('body', (.36, .74, .045), (0, 0, .0225), 'dark', root, bevel=.02)
     box('screen', (.32, .68, .004), (0, 0, .047), 'screen', root)
     box('cam', (.08, .08, .01), (-.09, .26, -.002), 'metal', root)
-    export('phone')
+    export('phone', 0.21)
 
 
 def build_laptop():
@@ -238,29 +239,30 @@ def build_laptop():
     lid.rotation_euler.x = math.radians(-12)        # tilt back (open ~102 degrees)
     box('lidb', (.86, .03, .56), (0, .015, .28), 'body', lid)
     box('screen', (.8, .004, .5), (0, -.002, .29), 'screen', lid)
-    export('laptop')
+    export('laptop', 0.4)
 
 
 def build_workstation():
+    """A real-size desk (1.5 x 0.7 m, 0.74 m high) with a 27" monitor, keyboard, tower and lamp."""
     reset()
     root = empty('workstation')
-    box('desk', (2.2, .9, .06), (0, 0, .74), 'wood', root)
-    for x in (-1.0, 1.0):
-        for y in (-.36, .36):
-            box('leg', (.06, .06, .74), (x, y, .37), 'dark', root)
-    box('foot', (.36, .22, .02), (0, .2, .78), 'dark', root)
-    box('neck', (.06, .04, .3), (0, .26, .93), 'dark', root)
-    mon = empty('monitor', (0, .24, 1.25), root)
-    box('frame', (1.12, .05, .66), (0, 0, 0), 'dark', mon)
-    box('screen', (1.04, .004, .58), (0, -.028, 0), 'screen', mon)
-    box('kb', (.6, .2, .025), (0, -.18, .79), 'body', root)
-    box('tower', (.26, .55, .55), (.8, .1, 1.05), 'body', root)
-    box('tower_led', (.03, .005, .03), (.75, -.177, 1.25), 'light', root)
-    cyl('lampbase', .1, .03, (-.85, .25, .785), 'dark', root)
-    lamp = empty('lamp', (-.85, .25, .8), root)
-    cyl('arm1', .015, .5, (0, 0, .25), 'metal', lamp)
-    cyl('shade', .09, .14, (0, -.12, .5), 'metal', lamp, r2=.03)
-    sphere('bulb', .05, (0, -.12, .45), 'light', lamp)
+    box('desk', (1.5, .7, .04), (0, 0, .72), 'wood', root)
+    for x in (-.7, .7):
+        for y in (-.3, .3):
+            box('leg', (.04, .04, .7), (x, y, .35), 'dark', root)
+    box('foot', (.24, .16, .015), (0, .16, .7475), 'dark', root)
+    box('neck', (.04, .03, .2), (0, .2, .85), 'dark', root)
+    mon = empty('monitor', (0, .18, 1.06), root)
+    box('frame', (.62, .03, .38), (0, 0, 0), 'dark', mon)
+    box('screen', (.58, .004, .34), (0, -.017, 0), 'screen', mon)
+    box('kb', (.44, .14, .02), (0, -.14, .75), 'body', root)
+    box('tower', (.2, .42, .44), (.6, .08, .96), 'body', root)
+    box('tower_led', (.02, .004, .02), (.55, -.131, 1.1), 'light', root)
+    cyl('lampbase', .07, .02, (-.6, .2, .75), 'dark', root)
+    lamp = empty('lamp', (-.6, .2, .76), root)
+    cyl('arm1', .01, .38, (0, 0, .19), 'metal', lamp)
+    cyl('shade', .07, .1, (0, -.08, .38), 'metal', lamp, r2=.025)
+    sphere('bulb', .035, (0, -.08, .34), 'light', lamp)
     export('workstation')
 
 
@@ -276,7 +278,7 @@ def build_gpurig():
         box('gpu%d' % i, (.44, .6, .08), (-.06, .02, .45 + i * .2), 'dark', root)
         box('gpuglow%d' % i, (.006, .5, .02), (-.285, .02, .45 + i * .2), 'light', root)
     box('led', (.03, .005, .03), (.2, -.452, .9), 'light', root)
-    export('gpurig')
+    export('gpurig', 0.5)
 
 
 def build_printer():
@@ -299,7 +301,7 @@ def build_printer():
     box('ams', (.9, .4, .2), (0, 0, H + .1), 'body', root)
     for i in range(4):
         cyl('spool%d' % i, .07, .12, (-.32 + i * .21, -.05, H + .12), 'accent', root, axis='X', segs=12)
-    export('printer')
+    export('printer', 0.45)
 
 
 def build_car():
@@ -318,7 +320,7 @@ def build_car():
             cyl('wheel', .17, .12, (x, y, .17), 'dark', root, axis='Y', segs=10)
     for y in (-.3, .3):
         box('lamp', (.02, .14, .06), (1.19, y, .38), 'light', root)
-    export('car')
+    export('car', 1.85)
 
 
 def build_tablet():
@@ -329,7 +331,7 @@ def build_tablet():
     box('body', (.8, .03, .56), (0, 0, .28), 'dark', stand, bevel=.015)
     box('screen', (.74, .004, .5), (0, -.017, .28), 'screen', stand)
     box('stand', (.6, .3, .04), (0, .15, .02), 'body', root)
-    export('tablet')
+    export('tablet', 0.31)
 
 
 def build_nas():
@@ -339,7 +341,7 @@ def build_nas():
     for i in range(4):
         box('bay%d' % i, (.42, .02, .1), (-.03, -.305, .12 + i * .13), 'metal', root)
         box('led%d' % i, (.03, .01, .03), (.22, -.31, .12 + i * .13), 'light', root)
-    export('nas')
+    export('nas', 0.38)
 
 
 def build_icons():
@@ -393,7 +395,7 @@ def build_folio():
     cyl('tip', .035, .1, (0, -L * .54 - .05, 0), 'metal', pen, segs=10, axis='Y', r2=.005)
     cyl('cap', .04, .06, (0, L * .54 + .03, 0), 'dark', pen, segs=10, axis='Y')
     box('clip', (.012, .3, .02), (0, L * .4, .045), 'metal', pen)
-    export('folio')
+    export('folio', 0.12)
 
 
 # ===================================================================== figures and props
@@ -436,7 +438,7 @@ def build_props():
     root = empty('counter')
     box('cab', (2.0, .6, .85), (0, 0, .425), 'wood', root)
     box('top', (2.1, .65, .05), (0, 0, .875), 'stone', root)
-    cyl('sink', .2, .02, (0, -.02, .902), 'light', root, segs=14)
+    cyl('sink', .2, .02, (0, -.02, .902), 'metal', root, segs=14)
     cyl('tap', .02, .25, (0, .2, 1.0), 'metal', root, segs=8)
     box('mirror', (1.2, .03, .9), (0, .3, 1.55), 'glass', root)
     box('mirror_frame', (1.28, .02, .98), (0, .32, 1.55), 'wood2', root)
@@ -487,7 +489,7 @@ def build_props():
     root = empty('coffee')
     cyl('mug', .07, .12, (0, 0, .06), 'accent', root, segs=10)
     cyl('coffee', .062, .005, (0, 0, .115), 'dark', root, segs=10)
-    export('coffee')
+    export('coffee', 0.6)
 
 
 if __name__ == '__main__':
