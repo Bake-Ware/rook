@@ -36,11 +36,11 @@ the **Voice address** to give your devices, and **Where speech runs**:
   little while to load after a start; until then voice answers "starting".
 - **On another machine**: the hub passes everything on to a voice server on a
   machine with more power, such as one with a graphics card. Enter its
-  **Voice server address** (without a user name or password in it) and use
-  **Check connection**. Voice keys are then that server's own; its key page
+  **Voice server** address (without a user name or password in it) and use
+  **Check**. Voice keys are then that server's own; its key page
   still works through the hub at `/voice/admin`.
 
-The **Microphone check** records a few seconds in your browser and shows what
+The **Mic check** records a few seconds in your browser and shows what
 the hub heard. The recording goes to the hub once and is not kept. Your
 browser needs a secure (https) connection to use the microphone.
 

@@ -46,7 +46,7 @@ the same as the dashboard.
 The quick-ask box talks to your hub's home agent; if the home agent is off,
 the box says so. Your questions and its answers go to a private chat room
 called **Quick ask (desktop)**, so you can scroll back through them on the
-dashboard's Huddles page (under **Old chat rooms**); **Open in Chat** under an
+dashboard's Huddles page (under **Old chats**); **Open in Chat** under an
 answer takes you there.
 
 To change the shortcut, open Settings > Quick ask, click **Change** and press

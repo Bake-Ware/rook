@@ -4,7 +4,7 @@
 // only; rook/hub/plugins_web.py). Stored text is rendered as text.
 // Versioned like this module (?v=...), so a stale edge cache cannot pair it
 // with an old manage.js.
-const {h, useCss, btn, chips, dialog} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
+const {h, useCss, btn, chips, dialog, info, seg} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
 
 const API='/account/plugins/api';
 const RISK_NOTE={read:'reads only',write:'changes data',exec:'runs code or controls the machine',admin:'administers the band'};
@@ -61,7 +61,14 @@ const CSS=`
 .pl>.mg-status{position:sticky;top:0;z-index:3;background:var(--bg);padding:6px 0}
 .pl-caps span.doc{grid-column:1/-1;color:var(--dim)}
 .pl-banner{padding:10px 14px;border:1px solid var(--accent-dim);background:var(--banner-bg);font-size:13px;line-height:1.5}
-@media(max-width:760px){.pl-grid .pl-r{grid-template-columns:minmax(0,1fr) 120px}.pl-grid .pl-r>div.pl-c{display:none}.pl-grid .pl-r>div.pl-sum{display:flex}.pl-grid>div{min-width:0}}
+.pl-bar{display:flex;align-items:flex-end;gap:8px;border-bottom:1px solid var(--line)}
+.pl-bar .mg-tabs{border-bottom:0;padding:0;flex:1 1 auto;min-width:0}
+.pl-intro{display:flex;gap:8px;align-items:flex-start}
+@media(max-width:760px){.pl-grid .pl-r{grid-template-columns:minmax(0,1fr) 112px}.pl-grid .pl-r>div.pl-c{display:none}.pl-grid .pl-r>div.pl-sum{display:flex;text-align:right;justify-content:flex-end;padding-right:12px}.pl-grid>div{min-width:0}
+ .pl-name small{display:none}.pl-r>div{padding:6px}.pl-r>div:first-child{padding-left:12px}
+ .pl-filters .mg-chip{flex:1 1 0}.pl-filters input[type=search]{flex:1 1 100%}
+ .pp-list{grid-template-columns:1fr}.pl-cards{grid-template-columns:1fr}
+ .pl-where{grid-template-columns:minmax(0,1fr) auto}.pl-where>span:empty{display:none}}
 .pp{display:flex;flex-direction:column;gap:10px}
 .pp-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:8px}
 .pp-item{display:grid;grid-template-columns:20px minmax(0,1fr);gap:4px 10px;align-items:start;padding:10px 12px;border:1px solid var(--line);background:var(--panel);cursor:pointer;font-size:13px}
@@ -139,8 +146,8 @@ export function presetPicker(opts={}){
       finally{apply.disabled=false;}
     });
     const bar=h('div',{class:'mg-actions'},(data.bands||[]).length>1?band:null,apply,opts.skip||null);
-    node.replaceChildren(...[opts.intro?h('p',{class:'mg-sub',text:opts.intro}):null,list,
-      h('p',{class:'mg-sub',text:'Only the groups you change are saved: ticking one turns its plugins on, unticking one turns them off on new workers (and on the hub). Red tags mark plugins that can run code, control input or capture the screen.'}),bar,status].filter(Boolean));
+    const help='Only the groups you change are saved: ticking one turns its plugins on, unticking one turns them off on new workers (and on the hub). Red tags mark plugins that can run code, control input or capture the screen.';
+    node.replaceChildren(...[h('div',{class:'pl-intro'},opts.intro?h('p',{class:'mg-sub',text:opts.intro}):null,info(help,'About presets')),list,bar,status].filter(Boolean));
   }
   refresh();
   return {node,refresh};
@@ -262,13 +269,13 @@ export async function mountPlugins(root){
       h('dt',{text:'settings'}),h('dd',null,r.settings_link?h('a',{href:'#'+r.settings_link,text:r.settings+' setting'+(r.settings===1?'':'s')+' →',onclick:e=>{e.preventDefault();d.close();history.pushState(null,'','#'+r.settings_link);window.showView?.('settings');}}):h('span',{text:'none'})));
     const bulk=h('div',{class:'mg-actions'});
     if(r.side==='worker'&&!r.protected){
-      const all=on=>btn(on?'On for every eligible worker':'Off on every worker',on?'soft':'danger',async()=>{
+      const all=on=>btn(on?'All on':'All off',on?'soft':'danger',async()=>{
         if(!on&&!confirm('Turn '+r.module+' off on every online worker that has it?'))return;
         d.close();say((on?'Turning on ':'Turning off ')+r.module+' everywhere…');
         try{const x=await post({action:'toggle_all',module:r.module,enable:on});await load(true);render();
           const bad=(x.results||[]).filter(y=>!y.ok);
           say(x.note||(((x.results||[]).length-bad.length)+' worker(s) switched'+(bad.length?'; failed: '+bad.map(y=>y.target+' ('+y.error+')').join('; '):'.')),!!bad.length);}
-        catch(e){say(e.message,true);}});
+        catch(e){say(e.message,true);}},{title:on?'On for every eligible worker':'Off on every worker'});
       bulk.append(all(true),all(false));
     }
     const d=dialog(r.title,h('div',{class:'pl-detail mg'},
@@ -294,14 +301,14 @@ export async function mountPlugins(root){
   async function marketplace(){
     if(!catalog)catalog=await get({view:'catalog'});
     const box=h('div',{class:'mg',style:'gap:12px'});
-    box.append(h('div',{class:'pl-banner'},h('strong',{text:'Preview. '}),h('span',{text:'Installing from a catalog is coming soon. Today a third-party plugin is a Python package with a "rook.plugins" entry point: pip install it into the hub\'s or a worker\'s environment and restart it; it then shows up under Installed.'})));
-    if(!catalog.configured.length)box.append(h('p',{class:'mg-sub',text:'No catalog configured (core.plugins.catalogs in Settings > Hub). Showing the bundled example catalog: its entries are fictional.'}));
+    box.append(h('div',{class:'pl-banner pl-intro'},h('span',null,h('strong',{text:'Preview: '}),h('span',{text:'catalog installs coming soon.'+(catalog.configured.length?'':' Examples only (no catalog configured).')})),
+      info('Today a third-party plugin is a Python package with a "rook.plugins" entry point: pip install it into the hub\'s or a worker\'s environment and restart it; it then shows up under Installed.'+(catalog.configured.length?'':' No catalog is configured (core.plugins.catalogs in Settings > Hub), so the bundled example catalog is shown: its entries are fictional.'),'About the marketplace')));
     for(const cat of catalog.catalogs){
       box.append(h('h2',{class:'mg-label',text:cat.name+(cat.example?' · examples':'')}));
       for(const err of cat.errors||[])box.append(h('p',{class:'mg-error',text:err}));
       const cards=h('div',{class:'pl-cards'});
       for(const e of cat.plugins){
-        const install=btn('Coming soon','',null,{disabled:true,title:catalog.install_note});
+        const install=btn('Soon','',null,{disabled:true,title:catalog.install_note});
         cards.append(h('div',{class:'pl-card'},
           h('h3',null,h('span',{text:e.name}),h('small',{text:'v'+e.version})),
           h('small',{text:[e.author,e.license,e.namespace+'.*',(e.compatible?'':'needs core_api '+e.min_core_api)].filter(Boolean).join(' · ')}),
@@ -339,23 +346,22 @@ export async function mountPlugins(root){
   }
 
   async function render(){
-    const bar=h('div',{class:'mg-bar'},h('h1',{text:'Plugins'}));
     const tabs=h('div',{class:'mg-tabs',role:'tablist'});
     for(const [id,label] of [['installed','Installed'],['presets','Presets'],['marketplace','Marketplace']]){
       tabs.append(h('button',{type:'button',class:id===tab?'on':'',text:label,role:'tab','aria-selected':String(id===tab),onclick:()=>{tab=id;say('');render().catch(e=>say(e.message,true));}}));
     }
-    const refresh=btn('Refresh','',async()=>{refresh.disabled=true;try{if(tab==='marketplace'){catalog=await get({view:'catalog',refresh:'1'});}else await load(true);await render();say('Refreshed.');}catch(e){say(e.message,true);}finally{refresh.disabled=false;}});
-    bar.append(h('span',{class:'mg-grow'}),refresh);
+    const refresh=btn('↻','icon',async()=>{refresh.disabled=true;try{if(tab==='marketplace'){catalog=await get({view:'catalog',refresh:'1'});}else await load(true);await render();say('Refreshed.');}catch(e){say(e.message,true);}finally{refresh.disabled=false;}},{'aria-label':'Refresh',title:'Refresh'});
+    const bar=h('div',{class:'pl-bar'},tabs,refresh);
     const body=h('div',{class:'mg',style:'gap:12px'});
-    page.replaceChildren(bar,tabs,status,body);
+    page.replaceChildren(bar,status,body);
     if(tab==='installed'){
       if(!m)await load(false);
       const online=m.columns.length-1;
-      body.append(h('p',{class:'mg-sub',text:'Click a cell to turn a plugin on or off there: it loads or unloads live and stays that way across restarts. '+online+' worker'+(online===1?'':'s')+' online; offline workers are not shown. "New workers" is what a worker enrolled on '+(((m.bands||[]).find(b=>b.id===m.band)||{}).name||'this band')+' gets on its first start.'}));
+      body.append(h('div',{class:'pl-intro'},h('p',{class:'mg-sub',text:online+' worker'+(online===1?'':'s')+' online'}),info('Click a cell to turn a plugin on or off there: it loads or unloads live and stays that way across restarts. Offline workers are not shown. "New workers" is what a worker enrolled on '+(((m.bands||[]).find(b=>b.id===m.band)||{}).name||'this band')+' gets on its first start. On a phone, tap a plugin to switch it per machine.','About this grid')));
       for(const s of m.synced||[])if(s&&!s.ok)body.append(h('p',{class:'mg-error',text:'Applying a stored hub switch for '+s.module+' failed: '+s.error}));
       body.append(filters(),grid());
     }else if(tab==='presets'){
-      body.append(presetPicker({band:filter.band||(m&&m.band)||'',intro:'Pick what Rook should do. This switches the hub\'s plugins now and sets what new workers on the band turn on; workers already on the band keep their plugins (switch them under Installed).',onApplied:async()=>{m=null;}}).node);
+      body.append(presetPicker({band:filter.band||(m&&m.band)||'',intro:'Switches the hub now and sets what new workers turn on. Workers already on the band keep theirs.',onApplied:async()=>{m=null;}}).node);
     }else{
       body.append(h('p',{class:'mg-sub',text:'Loading catalogs…'}));
       try{const mk=await marketplace();body.replaceChildren(mk);}catch(e){body.replaceChildren(h('p',{class:'mg-error',text:e.message}));}
@@ -369,7 +375,7 @@ export async function mountPlugins(root){
   return {
     async activate(){
       try{await load(false);await render();}
-      catch(e){page.replaceChildren(h('h1',{text:'Plugins'}),h('p',{class:'mg-error',text:e.message}));}
+      catch(e){page.replaceChildren(h('p',{class:'mg-error',text:e.message}));}
       clearInterval(timer);timer=setInterval(tick,20000);
     },
     deactivate(){clearInterval(timer);timer=null;},

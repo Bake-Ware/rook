@@ -55,8 +55,8 @@ from chat, turn off **Remember what people tell it** (`memory.auto_remember`).
 
 Every 30 minutes Rook tidies up: it summarises finished conversations, rolls
 old ones up by week, merges duplicates, lets unused memories fade and keeps
-each kind within a size budget. **Tidy up now** on the Memory page runs it at
-once.
+each kind within a size budget. **Tidy up now** (in the **⋯** menu on the Memory
+page) runs it at once.
 
 ## Privacy
 
@@ -81,9 +81,9 @@ Open **Manage > Memory** (operator account). Filter by kind (about a person,
 fact, conversation, skill), search, and pick a memory to see where it came
 from, the versions it replaced and its history. You can:
 
-- **Add a memory**: write one plain statement and choose its kind.
+- **Add a memory** (**+ Add**): write one plain statement and choose its kind.
 - **Correct** it: change the text and **Save**. The old version is kept.
-- **Keep** it: tick "Keep: never let it fade".
+- **Keep** it: tick **Keep** so it never fades.
 - **Approve** a learned skill, or **Withdraw approval**. A skill marked
   "needs your approval" is never read into any prompt until you approve it,
   because skills steer which tools the agent uses. A learned skill keeps the

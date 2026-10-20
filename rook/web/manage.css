@@ -111,3 +111,71 @@ dialog.mg-dialog:not([open]){display:none}
 .pairing-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 8px;align-items:start}
 .pairing-row .mg-label,.pairing-row .pairing-note{grid-column:1/-1}
 .pairing-row .mg-btn{min-height:32px}
+/* == mobile pass: group B (huddles, roles, home agent, memory, voice, models) == */
+/* A field label with its help behind an (i). */
+.mg-flabel{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.mg-flabel .mg-info[open]{flex:1 1 100%}
+.mg-flabel .mg-info[open]>summary{display:inline-grid}
+/* Save stays in reach at the end of a long form. */
+.mg .mg-actions.rl-save{position:sticky;bottom:0;z-index:2;margin:0 -18px;padding:10px 18px;background:var(--panel);border-top:1px solid var(--line)}
+.mg-panel-head .more-btn{min-width:40px}
+#view-memory .mem-kinds{max-width:100%}
+#view-memory .mem-foot{font:11px var(--mono);color:var(--dim2);margin:0;flex:1 1 200px}
+#view-memory .mem-footrow{flex-wrap:wrap;align-items:flex-start}
+@media(max-width:900px){#view-memory .mem-panel-idle{display:none}}
+@media(max-width:800px){
+ .mg .mg-actions.rl-save{bottom:calc(56px + env(safe-area-inset-bottom));margin:0 -12px;padding:8px 12px}
+ .mg-panel-head{padding:10px 12px}
+ .mg-panel-head h2{font-size:16px}
+ .mg .mg-btn.icon{min-width:44px}
+}
+/* Phones: the dense tables become cards (first cell on its own line). */
+@media(max-width:640px){
+ #view-home .mg-table>div,#view-models .mg-table>div{min-width:0!important}
+ #view-home .mg-head,#view-models .mg-head{display:none}
+ #view-home .mg-row,#view-models .mg-row{display:flex!important;flex-wrap:wrap;align-items:baseline;gap:2px 12px;padding:10px 12px;min-height:0}
+ #view-home .mg-row>*:first-child,#view-models .mg-row>*:first-child{flex:1 1 100%}
+ #view-home .mg-row>*,#view-models .mg-row>*{min-width:0;font-size:12px}
+ #view-memory .mg-bar>select{flex:1 1 0;min-width:0}
+ #view-memory .mg-bar>.mg-btn{flex:0 0 auto}
+ #view-memory .mg-bar>input[type=search]{flex:1 1 100%;order:-1}
+ #view-voice .mg-label{flex-basis:100%!important}
+}
+/* == end group B == */
+/* == mobile pass: group C (jobs, sessions, approvals, Claude Code) == */
+.ap h2{margin:0;font:500 18px var(--sans)}
+.ap-h{display:inline-flex;align-items:center;gap:4px}
+.ap .mg-info{align-self:center}
+.ap-recent{margin-top:8px}
+.ap-acts{justify-content:flex-end}
+@media(max-width:640px){
+ .ap .mg-table>div{min-width:0}
+ .ap .mg-head{display:none}
+ .ap .mg-row.ap-row{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"call when" "out by";gap:2px 10px;padding:8px 12px}
+ .ap-row>:nth-child(1){grid-area:call}.ap-row>:nth-child(2){grid-area:out;font-size:12px}
+ .ap-row>:nth-child(3){grid-area:by;justify-self:end;font-size:12px}.ap-row>:nth-child(4){grid-area:when;justify-self:end;font-size:12px}
+ .ap-acts .mg-btn{flex:1 1 auto}
+}
+/* == end group C == */
+/* == mobile pass: group D (settings, plugins, updates, account, tokens, instructions, secrets, bands, help) == */
+/* Grid tables that become cards on phones instead of scrolling sideways. */
+.sm-only{display:none}
+@media(max-width:640px){
+ .mg-cards-sm .mg-table{overflow:visible}
+ .mg-cards-sm .mg-table>div{min-width:0!important}
+ .mg-cards-sm .mg-head{display:none}
+ .mg-cards-sm .mg-row{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:10px 12px;min-height:0}
+ .mg-cards-sm .mg-row>.mg-two{flex:1 1 55%;min-width:0}
+ .mg-cards-sm .mg-row>*{min-width:0;max-width:100%}
+ .mg-cards-sm .mg-row>.mg-actions,.mg-cards-sm .mg-row>.mg-row-acts{margin-left:auto}
+ .mg-cards-sm .mg-row:has(>.mg-btn.icon:last-child){position:relative;padding-right:60px}
+ .mg-cards-sm .mg-row>.mg-btn.icon:last-child{position:absolute;right:8px;top:6px}
+ .mg-cards-sm .sm-only{display:inline}
+ .mg-bar>.mg-grow{flex-basis:0}
+ .mg .mg-tabs{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;padding:0 6px}
+ .mg .mg-tabs::-webkit-scrollbar{display:none}
+ .mg .mg-tabs button{flex:0 0 auto}
+ .mg-panel-head{padding:12px}
+ dialog.mg-dialog .mg-actions.end .mg-btn{flex:1 1 0}
+}
+/* == end group D == */

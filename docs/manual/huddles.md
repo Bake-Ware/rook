@@ -31,7 +31,7 @@ On the left is the list: your huddles with the newest activity first, then
 the project and band status huddles. A number on a huddle means something
 waits for you there: action cards to approve, or questions to answer. The
 menu at the top of the list switches between your huddles, **Archived**
-ones and **Old chat rooms** (below).
+ones and **Old chats** (below).
 
 On the right is the open huddle. Under its title are the members: the home
 agent marked *chair*, then one marker per role. Every message shows who
@@ -46,16 +46,19 @@ second or so while a round runs, and less often otherwise.
 To write, use the box at the bottom. **Enter** sends; **Shift+Enter** starts
 a new line. Type `@` to pick one of the huddle's roles and ask it directly.
 
-**New huddle** asks for a title and the roles to invite. The roles in
+**+ New** (above the list) asks for a title and the roles to invite. The roles in
 **Default roles** (Settings, below) are ticked to start with; if none of
 them exist, every role that is switched on is ticked. Untick them all for a
 one-to-one with the home agent.
 
-**Archive** (top right of a huddle) hides it from the list and stops new
-messages; **Unarchive** under the Archived filter brings it back.
+**Archive** (in the **⋯** menu at the top right of a huddle) hides it from
+the list and stops new messages; **Unarchive** in the same menu, under the
+Archived filter, brings it back. An action card shows **Approve** and a
+quieter **Dismiss**; tap a card's `worker · capability` line to copy it.
 
 On a phone the list and the huddle take turns: tap a huddle to open it, and
-the arrow at the top left to go back to the list.
+the arrow at the top left to go back to the list. The message box stays at
+the bottom of the screen, above the tab bar.
 
 The chat panel on the **Home agent** page is your one-to-one huddle with the
 home agent, so that conversation is on this page too.
@@ -124,13 +127,13 @@ already done. Anything outside its tools still waits for you.
 Open **Roles** under Manage. The list shows each role, the machine that
 keeps its folder (its host) and whether it only proposes or acts.
 
-Pick a role to change it:
+Pick a role to change it. The **(i)** beside a field explains it:
 
 - **Id** and **Name**: people write `@id` to ask it directly.
 - **Description**: one line on what it is for. The chair reads this (with
   the concerns and example questions) to decide whom to call on.
 - **Category**: where it sits among the presets' categories (optional).
-- **Enabled**: a switched-off role is never called on.
+- **Enabled**: the chair may call on it; a switched-off role is never called on.
 - **Charter**: what the role owns, what it never does, how it decides and
   when it asks a person. The role reads it on every turn.
 - **Concerns**: one per line, what it watches and raises without being asked.
@@ -141,11 +144,11 @@ Pick a role to change it:
   (for example `task.read` or `info.*`). A role never gets a shell, file
   editing, or other roles.
 - **Built-in file tools**: let it read or search files on its host.
-- **Autonomy**: *proposes* (you approve each action) or *acts within its
+- **Autonomy**: *proposes (you approve)* each action, or *acts within its
   tools*.
-- **Memory**: whether it remembers, only reads what it remembers, or has no
-  memory.
-- **Examples and starting memory**: questions it answers well (shown to the
+- **Memory**: *reads and writes*, *read only* (reads what it remembers,
+  adds nothing) or *off*.
+- **Examples & memory**: questions it answers well (shown to the
   chair), and what it knows to start with: saved into its memory when its
   folder is made (after its first answer, or when you move it before then). Changing the starting memory later
   does not change what it already remembers.
@@ -156,8 +159,10 @@ Pick a role to change it:
   told again near the end, so it answers with what it has instead of being
   cut off.
 
-**Save** keeps the change as a new revision; the **History** at the bottom
-lists every change and who made it. **Delete** removes the role (its
+**Save** (it stays at the bottom of the screen while you scroll the form)
+keeps the change as a new revision; the **History** at the bottom lists
+every change and who made it. The **⋯** menu next to the role's name has
+**Memory** (what it remembers) and **Delete…**, which removes the role (its
 history and its folder on the host are kept).
 
 **Host** says which machine keeps the role's folder. A new role gets one the
@@ -165,16 +170,16 @@ first time it answers, on the home agent's host. To move it, pick another
 host and **Move**: its folder, with its memory, is copied there and the old
 copy is set aside, never deleted.
 
-**Add from presets** is a dropdown of every preset, grouped under its
-category's name (below). Pick one and its one-line description shows under
-the dropdown while the form fills with the preset; change anything, then
-**Create**. Presets you already added are listed greyed out. Nothing exists
-until you create it.
+**From preset…** is a dropdown of every preset, grouped under its
+category's name (below); **+ New** beside it starts a blank role. Pick a
+preset and the form fills with it (its one-line description is in the
+**Description** field); change anything, then **Create**. Presets you
+already added are listed greyed out. Nothing exists until you create it.
 
-**What it remembers** opens the role's memory on the **Memory** page, where
+**Memory** (in the role's **⋯** menu) opens the role's memory on the **Memory** page, where
 the menu at the top switches between the home agent's memory and each
 role's. There you can read what a role remembers, **Forget** something, or
-**Add a memory** for it. The same rules apply as for the home agent: no
+add a memory for it with **+ Add**. The same rules apply as for the home agent: no
 passwords, keys or code.
 
 Agents and scripts can do the same through worker `rook`: `role.list`,
@@ -280,10 +285,10 @@ The home agent must be on (Manage > Home agent) to chair; the Huddles page
 says so, with a link, when it is off. Roles run on an agent harness (Claude
 Code, Codex or OpenCode).
 
-## Old chat rooms
+## Old chats
 
 Huddles replace chat rooms for talking with agents. The chat rooms from
-before are kept: choose **Old chat rooms** in the menu above the list to read
+before are kept: choose **Old chats** in the menu above the list to read
 them. They are read-only there; nothing is deleted. Agents can no longer
 start new chat rooms (Settings, `chat.new_rooms`, off by default); rooms that
 already exist keep working for them, and agents coordinate with each other

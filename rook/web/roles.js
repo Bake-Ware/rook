@@ -7,13 +7,13 @@
 // role.* caps through /account/huddle/api (operator account), so every change
 // is a new revision with you as its author.
 const search=new URL(import.meta.url).search;
-const {h,ago,useCss,btn,table,two}=await import('/account/bands/assets/manage.js'+search);
+const {h,ago,useCss,btn,table,two,info,more}=await import('/account/bands/assets/manage.js'+search);
 const {hapi}=await import('/account/huddle/assets/huddles.js'+search);
 
 const BACKENDS=[['','The house agent\'s'],['claude-code','Claude Code'],['codex','Codex'],['opencode','OpenCode']];
 const EFFORTS=['','low','medium','high','xhigh','max'];
-const AUTONOMY={propose:'Proposes: you approve each action',act:'Acts within its tools'};
-const MEMORY={write:'Remembers (reads and writes)',read:'Reads what it remembers, adds nothing',off:'No memory'};
+const AUTONOMY={propose:'Proposes (you approve)',act:'Acts within its tools'};
+const MEMORY={write:'Reads and writes',read:'Read only',off:'Off'};
 const MODELS=['haiku','sonnet','opus'];
 const lines=t=>t.split('\n').map(x=>x.trim()).filter(Boolean);
 // Phone width: the table keeps the name and state only.
@@ -22,16 +22,17 @@ const CSS='@media(max-width:700px){#view-roles .rl-tbl .mg-table>div{min-width:0
   +'#view-roles .rl-tbl .rl-c,#view-roles .rl-tbl .mg-head div:nth-child(2),#view-roles .rl-tbl .mg-head div:nth-child(3){display:none}}'
   +'#view-roles .rl-src{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,.8fr) minmax(0,1.4fr) 40px;gap:6px}'
   +'@media(max-width:700px){#view-roles .rl-src{grid-template-columns:minmax(0,1fr) minmax(0,1fr) 40px}#view-roles .rl-src .rl-args{grid-column:1/3}}'
-  +'#view-roles .rl-pick{display:flex;flex-direction:column;gap:4px;min-width:0;flex:0 1 320px}#view-roles .rl-pick select{width:100%}'
-  +'#view-roles .rl-pick small{white-space:normal}#view-roles .mg-bar{flex-wrap:wrap}'
-  +'@media(max-width:700px){#view-roles .rl-pick{flex:1 1 100%}}';
+  +'#view-roles .rl-pick{min-width:0;flex:1 1 220px;max-width:340px}#view-roles .rl-pick select{width:100%}'
+  +'#view-roles .mg-bar{flex-wrap:nowrap}#view-roles .rl-idle{display:flex;align-items:center;gap:8px}'
+  +'@media(max-width:900px){#view-roles .rl-panel-idle{display:none}}'
+  +'@media(max-width:700px){#view-roles .rl-pick{max-width:none}}';
 
 // The preset dropdown: one <select>, its options grouped under their category's
 // name (optgroup headings are not selectable), in the categories' and presets'
 // sort order. Presets already saved stay listed, greyed, so a category reads whole.
 export function presetSelect(groups,picked){
   return h('select',{'aria-label':'Add from presets'},
-    h('option',{value:'',text:'Add from presets…',selected:!picked}),
+    h('option',{value:'',text:'From preset…',selected:!picked}),
     (groups||[]).map(c=>h('optgroup',{label:c.name},(c.presets||[]).map(p=>
       h('option',{value:p.id,text:p.name+(p.saved?' (added)':''),disabled:!!p.saved,selected:p.id===picked,title:p.description||''})))));
 }
@@ -44,9 +45,9 @@ export async function mountRoles(root){
   useCss();
   if(!document.getElementById('roles-css'))document.head.append(h('style',{id:'roles-css',text:CSS}));
   let d=null,sel=null,hist=[],busy=false,picked='';
-  const status=h('p',{class:'mg-status',role:'status'}),summary=h('p',{class:'mg-sub'});
+  const status=h('p',{class:'mg-status',role:'status'});
   const bar=h('div',{class:'mg-bar'}),list=h('div'),panel=h('div',{class:'mg-box strong mg-side'});
-  root.replaceChildren(h('div',{class:'mg'},summary,status,h('div',{class:'mg-split'},h('div',{class:'mg-main'},bar,list),panel)));
+  root.replaceChildren(h('div',{class:'mg'},status,h('div',{class:'mg-split'},h('div',{class:'mg-main'},bar,list),panel)));
 
   async function refresh(keep){
     d=await hapi('role_list');
@@ -56,16 +57,13 @@ export async function mountRoles(root){
     try{await work();}catch(e){status.textContent=e.message;status.classList.add('bad');}finally{busy=false;if(b)b.disabled=false;}}
 
   function drawList(){
-    summary.textContent='Roles are the team members the house agent calls on in huddles. Each has its own concerns, tools and memory, kept in its own folder on its agent host.';
-    const add=btn('Add a role','primary',()=>{picked='';sel={new:true,doc:{id:'',name:'',description:'',category:'',charter:'',concerns:[],checklist:[],examples:[],seed_memory:[],sources:[],tools:{allow:['knowledge.read'],deny:[]},builtin:[],autonomy:'propose',memory:'write',backend:'',model:'',effort:'',persona:'',enabled:true}};hist=[];drawList();drawPanel();});
+    const add=btn('+ New','primary',()=>{picked='';sel={new:true,doc:{id:'',name:'',description:'',category:'',charter:'',concerns:[],checklist:[],examples:[],seed_memory:[],sources:[],tools:{allow:['knowledge.read'],deny:[]},builtin:[],autonomy:'propose',memory:'write',backend:'',model:'',effort:'',persona:'',enabled:true}};hist=[];drawList();drawPanel();},{'aria-label':'New role',title:'New blank role'});
     const groups=d.preset_categories||[];
     const pick=presetSelect(groups,picked);
     pick.onchange=()=>{const id=pick.value;if(!id)return;
       run(pick,async()=>{const r=await hapi('role_presets',{id});picked=id;sel={new:true,doc:r.preset};hist=[];drawList();drawPanel();
         if(innerWidth<900)panel.scrollIntoView({behavior:'smooth',block:'start'});});};
-    const about=presetDescription(groups,picked);
-    bar.replaceChildren(h('span',{class:'mg-grow'}),
-      groups.length?h('div',{class:'rl-pick'},pick,about?h('small',{class:'mg-sub',text:about}):null):null,add);
+    bar.replaceChildren(groups.length?h('div',{class:'rl-pick'},pick):h('span',{class:'mg-grow'}),add);
     const rows=(d.roles||[]).map(r=>{
       const row=h('div',{class:'mg-row pick'+(sel&&!sel.new&&sel.id===r.id?' sel':''),tabindex:'0',role:'button'},
         two(r.name||r.id,'@'+r.id),
@@ -75,7 +73,7 @@ export async function mountRoles(root){
       const open=()=>run(null,()=>show(r.id));row.onclick=open;row.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();open();}};
       return row;});
     list.replaceChildren(h('div',{class:'mg-box rl-tbl'},table('minmax(0,1fr) 130px 100px 70px',['Role','Host','Autonomy','State'],
-      rows.length?rows:[h('div',{class:'mg-empty',text:'No roles yet. Add one, or start from a preset in the dropdown above.'})],480)));
+      rows.length?rows:[h('div',{class:'mg-empty',text:'No roles yet.'})],480)));
   }
   async function show(id){
     const [r,hh]=await Promise.all([hapi('role_get',{id}),hapi('role_history',{id})]);
@@ -83,12 +81,14 @@ export async function mountRoles(root){
     if(innerWidth<900)panel.scrollIntoView({behavior:'smooth',block:'start'});
   }
 
-  function field(label,ctl,note){return h('label',{class:'mg-field'},label,ctl,note?h('small',{class:'mg-sub',style:'white-space:normal',text:note}):null);}
+  function field(label,ctl,note){return h('label',{class:'mg-field'},note?h('span',{class:'mg-flabel'},label,info(note,'About '+label)):label,ctl);}
   function select(options,value){return h('select',null,options.map(([v,t])=>h('option',{value:v,text:t,selected:v===(value||'')})));}
   function area(value,rows,ph){const t=h('textarea',{rows:String(rows),placeholder:ph||''});t.value=value;return t;}
 
   function drawPanel(){
-    if(!sel){panel.replaceChildren(h('div',{class:'mg-pad'},h('p',{class:'mg-sub',style:'white-space:normal',text:'Pick a role to change it, or add one. A role that only proposes reads with its tools and suggests actions; you approve each one in the huddle.'})));return;}
+    panel.classList.toggle('rl-panel-idle',!sel);
+    if(!sel){panel.replaceChildren(h('div',{class:'mg-pad'},h('div',{class:'rl-idle'},h('span',{class:'mg-sub',text:'Pick a role.'}),
+      info('A role that proposes reads with its tools and suggests actions; you approve each one in the huddle.','About roles'))));return;}
     const doc=sel.doc,isNew=!!sel.new,err=h('small',{class:'mg-error',role:'alert'});
     const mono={autocomplete:'off',spellcheck:'false',style:'font-family:var(--mono)'};
     const id=h('input',{...mono,value:doc.id||'',placeholder:'qa',disabled:!isNew});
@@ -111,8 +111,8 @@ export async function mountRoles(root){
       const row=h('div',{class:'rl-src'},cap,worker,args,btn('×','icon',()=>row.remove(),{'aria-label':'Remove this source'}));
       srcRows.append(row);};
     (doc.sources||[]).forEach(addSrc);
-    const sources=h('div',{class:'mg-field'},'Sources',srcRows,h('div',null,btn('Add a source','',()=>addSrc({}))),
-      h('small',{class:'mg-sub',style:'white-space:normal',text:'Where it looks before answering, as caps it calls (arguments as JSON). They must be within its tools.'}));
+    const sources=h('div',{class:'mg-field'},h('span',{class:'mg-flabel'},'Sources',info('Where it looks before answering, as caps it calls (arguments as JSON). They must be within its tools.','About sources')),
+      srcRows,h('div',null,btn('+ Source','',()=>addSrc({}),{title:'Add a source'})));
     const allow=area(((doc.tools||{}).allow||[]).join('\n'),3,'knowledge.read');
     const deny=area(((doc.tools||{}).deny||[]).join('\n'),2,'');
     const builtin=['read','search'].map(b=>h('input',{type:'checkbox',value:b,checked:(doc.builtin||[]).includes(b)}));
@@ -142,8 +142,9 @@ export async function mountRoles(root){
         status.textContent=r.unchanged?'No changes.':(isNew?'Created @'+r.id+'.':'Saved (revision '+r.rev+').');
         sel={id:r.id};await refresh(true);}
       catch(e){err.textContent=e.message;}}));
-    const del=isNew?null:btn('Delete','danger',()=>{if(!confirm('Delete role @'+doc.id+'? Its history stays, and its home folder on '+(doc.host||'its host')+' is left in place.'))return;
-      run(del,async()=>{await hapi('role_delete',{id:doc.id});status.textContent='Deleted @'+doc.id+'.';sel=null;await refresh();});});
+    const del=()=>{if(!confirm('Delete role @'+doc.id+'? Its history stays, and its home folder on '+(doc.host||'its host')+' is left in place.'))return;
+      run(null,async()=>{await hapi('role_delete',{id:doc.id});status.textContent='Deleted @'+doc.id+'.';sel=null;await refresh();});};
+    const acts=isNew?null:more([{label:'Memory',href:'#memory?role='+encodeURIComponent(doc.id)},{label:'Delete…',danger:true,run:del}],'Role actions');
     const close=btn('×','icon',()=>{sel=null;picked='';drawList();drawPanel();},{'aria-label':'Close'});
 
     // Host: where its home folder is. Changed only by moving the folder.
@@ -153,31 +154,30 @@ export async function mountRoles(root){
     const move=btn('Move','',()=>{if(!target.value)return;if(!confirm('Move @'+doc.id+' to '+target.value+'? Its home folder (memory and settings) is copied there and the old copy is set aside.'))return;
       run(move,async()=>{const r=await hapi('role_move',{id:doc.id,host:target.value});status.textContent=r.moved===false?'Already there.':'Moved to '+r.host+'.'+(r.warning?' '+r.warning:'');await refresh(true);});});
     const hostBox=isNew?null:h('div',{class:'mg-field'},'Host',
-      h('div',{class:'mg-actions'},h('span',{class:'mg-mono',text:doc.host||'none yet: its first answer creates its home on the house agent\'s host'}),
+      h('div',{class:'mg-actions'},h('span',{class:'mg-mono',text:doc.host||'none yet',title:doc.host?'':'Its first answer creates its home on the house agent\'s host'}),
         doc.host&&!hosts.some(x=>x.name===doc.host)?h('small',{class:'mg-bad',text:'not on the band now'}):null),
       hosts.filter(x=>x.name!==doc.host).length?h('div',{class:'mg-actions',style:'flex-wrap:nowrap'},target,move):null);
 
     panel.replaceChildren(
       h('div',{class:'mg-panel-head'},h('div',{class:'mg-two'},h('h2',{text:isNew?'New role':(doc.name||doc.id)}),
-        h('small',{text:isNew?'Saved as a role on the hub':'@'+doc.id+' · revision '+doc.rev})),close),
+        h('small',{text:isNew?'New':'@'+doc.id+' · rev '+doc.rev})),h('div',{class:'mg-actions',style:'flex-wrap:nowrap;gap:6px'},acts,close)),
       h('div',{class:'mg-pad'},
-        h('div',{class:'mg-actions',style:'flex-wrap:wrap;gap:12px'},h('label',{class:'mg-field',style:'flex:1 1 120px'},'Id (people write @id)',id),h('label',{class:'mg-field',style:'flex:2 1 180px'},'Name',name)),
+        h('div',{class:'mg-actions',style:'flex-wrap:wrap;gap:12px'},h('label',{class:'mg-field',style:'flex:1 1 120px'},'Id (@id)',id),h('label',{class:'mg-field',style:'flex:2 1 180px'},'Name',name)),
         field('Description',description),field('Category',category),
-        h('label',{class:'mg-actions'},enabled,'Enabled: the chair may call on it'),
+        h('label',{class:'mg-actions',title:'The chair may call on it'},enabled,'Enabled'),
         field('Charter',charter),field('Concerns',concerns),field('Checklist',checklist),sources,
         field('Tools it may call',allow,'One cap or pattern per line (task.read, info.*). It never gets shell, file editing or other roles.'),
         field('Never',deny,'Patterns refused even when allowed above.'),
         h('div',{class:'mg-field'},'Built-in file tools',h('div',{class:'mg-actions'},
           h('label',{class:'mg-actions'},builtin[0],'Read files'),h('label',{class:'mg-actions'},builtin[1],'Search files'))),
         field('Autonomy',autonomy),field('Memory',memory),
-        h('details',null,h('summary',{text:'Examples and starting memory'}),h('div',{class:'mg-pad',style:'padding-left:0;padding-right:0'},
+        h('details',null,h('summary',{text:'Examples & memory'}),h('div',{class:'mg-pad',style:'padding-left:0;padding-right:0'},
           field('Example questions',examples,'Shown to the chair, so it knows when to call on this role.'),
           field('Starting memory',seed,'Saved into its memory when its home is created (its first answer). Never passwords, keys or code.'))),
         h('details',null,h('summary',{text:'Model'}),h('div',{class:'mg-pad',style:'padding-left:0;padding-right:0'},
           field('Runs on',backend),field('Model',model),h('datalist',{id:'role-models'},MODELS.map(m=>h('option',{value:m}))),field('Effort',effort),field('Tool calls per turn',calls,'Blank: its category\'s (engineering 30, operations 24), else Tool calls per role turn in Settings.'),field('Persona (how it talks)',persona))),
         hostBox,
-        isNew?null:h('div',{class:'mg-actions'},h('a',{href:'#memory?role='+encodeURIComponent(doc.id),text:'What it remembers'})),
-        h('div',{class:'mg-actions end'},err,del,save),
+        h('div',{class:'mg-actions end rl-save'},err,save),
         isNew?null:h('div',null,h('div',{class:'mg-label',style:'margin-bottom:8px',text:'History'}),
           hist.length?hist.slice(0,15).map(e=>h('div',{class:'mg-log'},h('span',{class:'mg-mono',text:e.doc?'rev '+e.rev:'deleted'}),
             h('span',{text:(e.note?e.note+' · ':'')+(e.actor||''),title:e.note||''}),h('span',{class:'mg-sub',style:'font-size:12px',text:ago(e.ts)}))):h('p',{class:'mg-sub',text:'No changes yet.'}))));

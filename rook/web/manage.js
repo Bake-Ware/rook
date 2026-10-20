@@ -49,6 +49,27 @@ export function menu(anchor,items){
   setTimeout(()=>{document.addEventListener('pointerdown',away,true);document.addEventListener('keydown',key,true);});
   (box.querySelector('button,a')||box).focus();
 }
+// Compact controls shared by every page (mobile.css styles them).
+// info(text): a small (i) that shows help text on tap, instead of a paragraph in the flow.
+export function info(text,label='About this',cls){
+  const body=typeof text==='string'?h('p',{text}):text;
+  return h('details',{class:'mg-info'+(cls?' '+cls:'')},h('summary',{'aria-label':label,title:label,text:'i'}),body);
+}
+// more(items): a ⋯ button that opens menu(items) (secondary actions of one item).
+export function more(items,label='More actions',cls){
+  const b=h('button',{type:'button',class:'mg-btn icon more-btn'+(cls?' '+cls:''),text:'⋯','aria-label':label,title:label,'aria-haspopup':'menu'});
+  b.onclick=e=>{e.stopPropagation();const list=typeof items==='function'?items():items;menu(b,list);};
+  return b;
+}
+// copyChip(value, shown): a one-line id or path; tap copies the full value.
+export function copyChip(value,shown,cls){
+  const v=String(value??'');
+  return h('span',{class:'copy-chip'+(cls?' '+cls:''),text:shown??v,title:v+' (tap to copy)','data-copy':v,role:'button',tabindex:'0','aria-label':'Copy '+v});
+}
+// seg(items, current, pick): a segmented control; items are [id, label, title?].
+export function seg(items,current,pick,label){
+  return h('div',{class:'seg',role:'group','aria-label':label||null},items.map(([id,text,title])=>h('button',{type:'button',text,title:title||null,'aria-pressed':String(id===current),onclick:()=>pick(id)})));
+}
 // A modal that removes its content (and any secret in it) when it closes.
 export function dialog(title,...body){
   const d=h('dialog',{class:'mg mg-dialog','aria-label':title},h('div',{class:'mg-bar',style:'justify-content:space-between'},h('h2',{text:title}),btn('×','icon',()=>d.close(),{'aria-label':'Close','data-close':''})),body);

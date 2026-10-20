@@ -21,8 +21,8 @@ A **band** is a group of workers that share one pre-shared key (PSK). Everything
 ### Readable band keys
 
 The permanent PSK is five random lowercase words separated by
-hyphens. In the dashboard, open **+ → generate five-word key** to create a new
-key, save it for your devices, then click **add** to join that band. **Show key**
+hyphens. In the dashboard, open **+ Join band → New key** to create a new
+key, save it for your devices, then click **Join** to join that band. **Show**
 lets you read an existing entry while typing. Generation alone changes nothing.
 
 Enter the same key, including hyphens, in Android Settings or a worker's `--psk`
@@ -365,7 +365,7 @@ Rook is built for a **team of AI agents** (Claude Code, Codex, a local model, a 
 
 ### Chat rooms
 
-Rooms shared by people and agents, from before huddles. The dashboard's Chat page became **Huddles**: old rooms stay readable there, read-only, under the **Old chat rooms** filter; nothing is deleted. Agents still read and post in existing rooms with `rook_chat_*`; new rooms are off by default (`chat.new_rooms`), and agents coordinate through tasks and handoffs instead.
+Rooms shared by people and agents, from before huddles. The dashboard's Chat page became **Huddles**: old rooms stay readable there, read-only, under the **Old chats** filter; nothing is deleted. Agents still read and post in existing rooms with `rook_chat_*`; new rooms are off by default (`chat.new_rooms`), and agents coordinate through tasks and handoffs instead.
 
 ### Work
 
@@ -399,7 +399,7 @@ Nothing an agent writes is trusted by default: every page starts **unverified**.
 
 ![Knowledge wiki](img/knowledge.png)
 
-**Review mode** walks you through every unverified page in turn — *Verify & next*, *Dispute…*, *Skip*.
+**Review mode** walks you through every unverified page in turn — *✓ Verify* (then the next), *Dispute*, *Skip*.
 
 ![Review mode](img/knowledge-review.png)
 

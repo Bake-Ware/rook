@@ -140,7 +140,7 @@ class UiWeb(KnowledgeWeb):
     knowledge half of the Overview to the operator account."""
     PATH = '/account/ui'
     UPSTREAM = ('ROOK_UI_ADMIN_URL', 'http://127.0.0.1:8765/ui/account-api')
-    ASSETS = ('overview.js', 'startpage.js', 'widgets.js', 'themes.js', 'theme-boot.js', 'ui.css')
+    ASSETS = ('overview.js', 'startpage.js', 'widgets.js', 'themes.js', 'theme-boot.js', 'ui.css', 'mobile.css')
     UNAVAILABLE = 'The dashboard service is unavailable (is the MCP server running?).'
     ADMIN_ONLY = False
     TIMEOUT = 40   # a start page feed may take the hub's feed time limit, and redirects

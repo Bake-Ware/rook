@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#101310">
 <title>♖ ROOK</title>
 <style>
   *{box-sizing:border-box}
@@ -237,6 +238,7 @@
 <link rel="stylesheet" href="/account/bands/assets/rook-art.css">
 <link rel="stylesheet" href="/account/bands/assets/manage.css">
 <link rel="stylesheet" href="/account/ui/assets/ui.css">
+<link rel="stylesheet" href="/account/ui/assets/mobile.css">
 <script src="/account/ui/assets/theme-boot.js"></script>
 </head>
 <body>
@@ -259,7 +261,7 @@
     <span class="plate-number">FIG. 01 / CASTELLUM</span>
     <span class="plate-caption"><b>ROOK / YOUR MACHINES, YOUR MOVE</b><br>ENCRYPTED · AGENT MESH · POWERFUL</span>
   </div>
-  <aside class="app-sidebar" aria-label="Application navigation">
+  <aside class="app-sidebar" id="app-sidebar" aria-label="Application navigation">
     <a class="brand" href="#overview" onclick="showView('overview');return false">♜ ROOK</a>
     <div class="sidebar-nav">
     <div class="nav-group" data-nav-group="workspace">
@@ -302,20 +304,31 @@
     </div>
     <div class="sidebar-footer"><button class="art-toggle" id="art-toggle" type="button" hidden>Pause artwork</button><span class="live"><span class="dot" id="dot"></span><span id="count">Connecting…</span></span><a class="signout" href="/logout">Sign out</a></div>
   </aside>
+  <div class="nav-backdrop" id="nav-backdrop" hidden onclick="closeNav()"></div>
+  <nav class="tabbar" aria-label="Main">
+    <a href="#overview" data-tab="overview" onclick="showView('overview');return false"><span class="tb-ico" aria-hidden="true">◉</span><span>Home</span></a>
+    <a href="#huddles" data-tab="huddles" onclick="showView('huddles');return false"><span class="tb-ico" aria-hidden="true">✦</span><span>Huddles</span></a>
+    <a href="#work" data-tab="work" onclick="showView('work');return false"><span class="tb-ico" aria-hidden="true">▤</span><span>Work</span></a>
+    <a href="#sessions" data-tab="sessions" onclick="showView('sessions');return false"><span class="tb-ico" aria-hidden="true">›_</span><span>Sessions</span></a>
+    <button type="button" data-tab="more" onclick="toggleNav()" aria-controls="app-sidebar" aria-label="More pages"><span class="tb-ico" aria-hidden="true">☰</span><span>More</span><span class="nav-badge" id="approvals-badge-more" hidden></span></button>
+  </nav>
   <header class="topbar">
-    <div class="app-heading"><h1 id="view-title">Workers</h1><p id="view-description">Your connected machines, across every band.</p></div>
+    <button type="button" class="nav-toggle" id="nav-toggle" aria-label="Menu" aria-controls="app-sidebar" aria-expanded="false" onclick="toggleNav()"><span aria-hidden="true">☰</span></button>
+    <div class="app-heading"><div class="app-title"><h1 id="view-title">Workers</h1><button type="button" class="info-toggle" id="view-info" aria-label="About this page" title="About this page" aria-expanded="false" aria-controls="view-description" onclick="toggleViewInfo()">i</button></div><p id="view-description" hidden>Your connected machines, across every band.</p></div>
+    <span class="live top-live" aria-hidden="true"><span class="dot" id="dot-top"></span></span>
     <div class="worker-controls" id="worker-controls">
     <select id="bandsel" onchange="onBandChange()"><option value="">All bands</option></select>
-    <button class="iconbtn" title="Join an existing band using its key" onclick="toggleAddBand()">Join with key</button>
+    <button class="iconbtn join-band" title="Join a band with its key" aria-label="Join a band with its key" onclick="toggleAddBand()">+<span class="lbl"> Join band</span></button>
     <button class="iconbtn" id="rmband-btn" title="remove band" hidden onclick="removeBand()">−</button>
-    <input class="filter" id="filter" name="rook-filter-box" type="search" placeholder="filter…"
+    <input class="filter" id="filter" name="rook-filter-box" type="search" placeholder="Filter" aria-label="Filter workers"
            autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
            data-1p-ignore data-lpignore="true" data-form-type="other"
            readonly onfocus="this.removeAttribute('readonly')" oninput="applyFilter()">
-      <div class="inventory-controls">
-        <label>Group by <select id="worker-group" onchange="dirty=true;reconcile()"><option value="os">Operating system</option><option value="band">Band</option><option value="none">No grouping</option></select></label>
-        <label>Sort <select id="worker-sort" onchange="dirty=true;reconcile()"><option value="name">Name</option><option value="os">Operating system</option><option value="band">Band</option><option value="status">Online first</option></select></label>
-        <div class="view-toggle" role="group" aria-label="Worker view"><button type="button" data-layout="list" aria-pressed="true" onclick="setWorkerLayout('list')">☰ List</button><button type="button" data-layout="grid" aria-pressed="false" onclick="setWorkerLayout('grid')">▦ Grid</button><button type="button" data-layout="scene" aria-pressed="false" onclick="setWorkerLayout('scene')">♜ 3D</button></div>
+    <button type="button" class="iconbtn worker-opts" id="worker-opts" aria-label="View options" title="View options" aria-expanded="false" aria-controls="inventory-controls" onclick="toggleWorkerOpts()">⇅</button>
+      <div class="inventory-controls" id="inventory-controls">
+        <label><span class="lbl">Group</span> <select aria-label="Group by" id="worker-group" onchange="dirty=true;reconcile()"><option value="os">Operating system</option><option value="band">Band</option><option value="none">No grouping</option></select></label>
+        <label><span class="lbl">Sort</span> <select aria-label="Sort" id="worker-sort" onchange="dirty=true;reconcile()"><option value="name">Name</option><option value="os">Operating system</option><option value="band">Band</option><option value="status">Online first</option></select></label>
+        <div class="view-toggle" role="group" aria-label="Worker view"><button type="button" data-layout="list" aria-pressed="true" aria-label="List" title="List" onclick="setWorkerLayout('list')">☰<span class="lbl"> List</span></button><button type="button" data-layout="grid" aria-pressed="false" aria-label="Grid" title="Grid" onclick="setWorkerLayout('grid')">▦<span class="lbl"> Grid</span></button><button type="button" data-layout="scene" aria-pressed="false" aria-label="3D" title="3D" onclick="setWorkerLayout('scene')">♜<span class="lbl"> 3D</span></button></div>
       </div>
     </div>
       <section class="stats" id="worker-stats">
@@ -323,12 +336,12 @@
         <div class="tile mini online"><div class="k" id="k-online">0</div><div class="l">online</div></div>
         <div class="tile mini stale"><div class="k" id="k-stale">0</div><div class="l">stale</div></div>
         <div class="tile ver">
-          <div class="l">version spread</div>
+          <div class="l">versions</div>
           <div class="verbar" id="verbar"></div>
           <div class="verleg" id="verleg"></div>
         </div>
         <div class="tile hb">
-          <div class="l"><span>heartbeats · live</span><span class="hint">hover a bar → find its worker</span></div>
+          <div class="l"><span>heartbeats</span></div>
           <div class="bars" id="bars"></div>
         </div>
       </section>
@@ -336,11 +349,9 @@
   </header>
 
   <div class="addform" id="addband-form" hidden>
-    <div style="color:var(--dim);font-size:.72rem">Join a band with its PSK, or generate a key for a new band</div>
-    <input id="ab-name" placeholder="name (optional)">
-    <input id="ab-psk" type="password" placeholder="band PSK" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
-    <div class="r"><button class="iconbtn" id="ab-generate" onclick="generateBandPsk()">generate five-word key</button><button class="iconbtn" id="ab-show" onclick="toggleBandPsk()">show key</button></div>
-    <div class="r"><button class="iconbtn" onclick="addBand()">add</button><button class="iconbtn" onclick="toggleAddBand()">close</button></div>
+    <input id="ab-name" placeholder="Name (optional)" aria-label="Band name">
+    <input id="ab-psk" type="password" placeholder="Band key (PSK)" aria-label="Band key" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <div class="r"><button class="iconbtn" id="ab-generate" title="Generate a five-word key for a new band" onclick="generateBandPsk()">New key</button><button class="iconbtn" id="ab-show" onclick="toggleBandPsk()">Show</button><span class="spacer"></span><button class="iconbtn" onclick="toggleAddBand()">Cancel</button><button class="iconbtn primary" onclick="addBand()">Join</button></div>
     <div class="msg" id="ab-msg"></div>
   </div>
 
@@ -357,8 +368,8 @@
       <div class="empty" id="empty" style="display:none"></div>
       <div class="first-worker" id="first-worker" hidden>
         <h2>Add your first worker</h2>
-        <p>Only the hub is on this band so far. Choose what Rook may do, then get a pairing code and run one command on the machine you want to add.</p>
-        <details class="pair-presets" id="first-worker-presets" open ontoggle="window.loadPresetStep&&loadPresetStep(this)"><summary>1. What do you want Rook to do?</summary><div class="preset-host"></div></details>
+        <p>Pick what Rook may do, get a code, run one command on the new machine.</p>
+        <details class="pair-presets" id="first-worker-presets" open ontoggle="window.loadPresetStep&&loadPresetStep(this)"><summary>1. What Rook may do</summary><div class="preset-host"></div></details>
         <div class="pair-start"><span class="pair-step">2.</span><button class="iconbtn" id="first-worker-pairing-btn" onclick="startPairing('first-worker-pairing',this)">Get a pairing code</button><span class="pair-msg" id="first-worker-pairing-msg" role="status"></span></div>
         <div class="mg pairing-host" id="first-worker-pairing"></div>
         <a href="#install">More ways to install</a>
@@ -394,12 +405,12 @@
     <div id="view-install" hidden>
       <div class="install">
         <h2>Add a worker</h2>
-        <p>Get a pairing code, then run the command for the new machine's system. A code lasts five minutes and renews itself while this page is open.</p>
-        <details class="pair-presets" id="install-presets" ontoggle="window.loadPresetStep&&loadPresetStep(this)"><summary>1. What should new workers do? (optional: your band's defaults apply otherwise)</summary><div class="preset-host"></div></details>
+        <p>Get a code, then run the command on the new machine. Codes renew while this page is open.</p>
+        <details class="pair-presets" id="install-presets" ontoggle="window.loadPresetStep&&loadPresetStep(this)"><summary>1. What new workers do (optional)</summary><div class="preset-host"></div></details>
         <div class="pair-start"><span class="pair-step">2.</span><button class="iconbtn" id="install-pairing-btn" onclick="startPairing('install-pairing',this)">Get a pairing code</button><span class="pair-msg" id="install-pairing-msg" role="status"></span></div>
         <div class="mg pairing-host" id="install-pairing"></div>
-        <p class="install-after">Once it has joined, run <code>rook status</code> on that machine to see how it is doing, or <code>rook doctor</code> if it doesn't show up under Workers.</p>
-        <details class="pair-manual"><summary>Commands with a placeholder code</summary>
+        <p class="install-after">Joined? <code>rook status</code> on that machine; missing? <code>rook doctor</code>.</p>
+        <details class="pair-manual"><summary>Manual commands</summary>
         <div class="cmd"><span class="lbl">Linux / macOS</span><span id="cmd-unix"></span></div>
         <div class="cmd"><span class="lbl">Windows (PowerShell)</span><span id="cmd-win"></span></div>
         <div class="cmd"><span class="lbl">Termux / Android</span><span id="cmd-termux"></span></div>
@@ -628,7 +639,7 @@ function bandName(label){return label==='*'?'All bands':bands.find(b=>b.id===lab
 /* ---- workers ---- */
 function shown(){ let l=curBand?workers.filter(w=>w.band===curBand||w.band==='*'):workers;
   if(filterStr) l=l.filter(w=>((w.name||w.worker_id)+' '+(w.description||'')).toLowerCase().includes(filterStr)); return l; }
-function setStatus(ok,txt){ $('#dot').className='dot'+(ok?'':' off'); $('#count').textContent=txt; }
+function setStatus(ok,txt){ $('#dot').className='dot'+(ok?'':' off'); $('#count').textContent=txt; const t=$('#dot-top');t.className='dot'+(ok?'':' off');t.parentNode.title=txt; }
 
 async function loadWorkers(){
   try{
@@ -694,6 +705,7 @@ function updateMeta(m,w){
     button.setAttribute('aria-label','Actions for '+(w.name||w.worker_id));button.setAttribute('aria-haspopup','menu');
     button.onclick=e=>{e.stopPropagation();openWorkerMenu(button,w.worker_id);};m.acts.append(button);
   }
+  m.acts.firstChild.hidden=!workerActions(w).length;   // nothing to offer (e.g. the hub): no empty menu
   // caps groups (rebuild only if changed)
   const sig=caps.join(','); if(sig!==m.capsSig){ m.capsSig=sig;
     m.meta.textContent=`worker_id ${w.worker_id}`;
@@ -1061,6 +1073,7 @@ async function ensureApprovals(){
 function showApprovalCount(n){
  const b=$('#approvals-badge');if(!b)return;
  b.textContent=n>99?'99+':String(n);b.hidden=!n;
+ const more=$('#approvals-badge-more');if(more){more.textContent=b.textContent;more.hidden=!n;}
  $('#tab-approvals').setAttribute('aria-label',n?'Approvals, '+n+' waiting':'Approvals');
 }
 async function pollApprovals(){
@@ -1250,13 +1263,14 @@ function showView(v,updateHistory=true){
  if(activeView==='updates')updatesUI?.deactivate();
  if(activeView==='overview')overviewUI?.deactivate();
  if(activeView==='start')startUI?.deactivate();
- activeView=v;document.body.dataset.view=v;
+ activeView=v;document.body.dataset.view=v;closeNav();
+ for(const t of document.querySelectorAll('.tabbar [data-tab]'))t.classList.toggle('active',t.dataset.tab===v);
  for(const n of Object.keys(viewInfo)){
   $('#view-'+n).hidden=v!==n; const tab=$('#tab-'+n);tab.classList.toggle('active',v===n);
   if(v===n)tab.setAttribute('aria-current','page');else tab.removeAttribute('aria-current');
  }
  revealNavTab($('#tab-'+v));
- $('#view-title').textContent=viewInfo[v][0];$('#view-description').textContent=viewInfo[v][1];
+ $('#view-title').textContent=viewInfo[v][0];$('#view-description').textContent=viewInfo[v][1];setViewInfo(false);
  document.title=viewInfo[v][0]+' · Rook';$('#worker-controls').hidden=v!=='workers';$('#worker-stats').hidden=v!=='workers';$('#addband-form').hidden=true;
  if(v==='huddles')ensureHuddles().then(ui=>{if(activeView==='huddles')return ui.activate(hashQuery('huddles'));}).catch(e=>{$('#view-huddles').textContent=e.message;});
  if(v==='roles')ensureRoles().then(ui=>{if(activeView==='roles')return ui.activate();}).catch(e=>{$('#view-roles').textContent=e.message;});
@@ -1295,6 +1309,7 @@ function routeFromHash(){
 window.addEventListener('hashchange',routeFromHash);
 window.addEventListener('popstate',routeFromHash);
 
+function toggleWorkerOpts(){const c=$('#worker-controls'),open=!c.classList.contains('opts-open');c.classList.toggle('opts-open',open);$('#worker-opts').setAttribute('aria-expanded',String(open));}
 function applyFilter(){ filterStr=$('#filter').value.toLowerCase().trim(); dirty=true; reconcile(); }
 function setCmd(id,text){ const el=document.getElementById(id); if(!el)return; el.textContent=text;
   const b=document.createElement('button'); b.className='cp'; b.textContent='copy';
@@ -1347,7 +1362,26 @@ function wireLinks(){
   setCmd('cmd-termux',"pkg install -y curl && curl -fsSL '"+origin+"/worker?band=CODE' | bash");
 }
 
-document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeModal();closeNav();}});
+/* Phones: the sidebar is a drawer (☰ in the header, More in the tab bar). */
+function toggleNav(){document.body.classList.contains('nav-open')?closeNav():openNav();}
+function openNav(){document.body.classList.add('nav-open');$('#nav-backdrop').hidden=false;$('#nav-toggle').setAttribute('aria-expanded','true');revealNavTab($('.app-sidebar nav a.active'));}
+function closeNav(){if(!document.body.classList.contains('nav-open'))return;document.body.classList.remove('nav-open');$('#nav-backdrop').hidden=true;$('#nav-toggle').setAttribute('aria-expanded','false');}
+/* The page description sits behind the (i) next to the title. */
+function setViewInfo(open){$('#view-description').hidden=!open;$('#view-info').setAttribute('aria-expanded',String(open));}
+function toggleViewInfo(){setViewInfo($('#view-description').hidden);}
+/* Long ids and paths: anything with data-copy copies its value on tap. */
+function toast(text){let t=$('#toast');if(!t){t=document.createElement('div');t.id='toast';t.setAttribute('role','status');document.body.append(t);}
+  t.textContent=text;t.classList.add('show');clearTimeout(toast.timer);toast.timer=setTimeout(()=>t.classList.remove('show'),1400);}
+window.rookToast=toast;
+document.addEventListener('click',e=>{const c=e.target.closest('[data-copy]:not([data-copy=""])');if(!c||e.defaultPrevented)return;e.preventDefault();e.stopPropagation();
+  navigator.clipboard.writeText(c.dataset.copy).then(()=>toast('Copied'),()=>toast('Copy failed'));},true);
+/* Tables stack into labelled rows on phones (mobile.css): each cell learns its column name. */
+function labelTables(root){for(const t of root.querySelectorAll('table:not([data-labelled])')){const head=[...t.querySelectorAll('thead th, tr:first-child th')].map(th=>th.textContent.trim());
+  if(!head.length)continue;t.dataset.labelled='1';for(const tr of t.querySelectorAll('tbody tr, tr'))[...tr.children].forEach((td,i)=>{if(td.tagName==='TD'&&head[i]&&!td.dataset.label)td.dataset.label=head[i];});}}
+let labelQueued=false;
+new MutationObserver(()=>{if(labelQueued)return;labelQueued=true;requestAnimationFrame(()=>{labelQueued=false;for(const t of document.querySelectorAll('.wrap table[data-labelled]'))if(t.querySelector('td:not([data-label])'))delete t.dataset.labelled;labelTables(document.querySelector('.wrap'));});})
+  .observe(document.querySelector('.wrap'),{childList:true,subtree:true});
 wireLinks(); routeFromHash(); loadBands(); loadWorkers(); checkManual();
 setInterval(loadWorkers,3000); setInterval(loadBands,20000);
 </script>

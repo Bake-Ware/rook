@@ -34,3 +34,16 @@
 .settings-workspace input[type=file]::file-selector-button{background:var(--panel);border:1px solid var(--line2);color:var(--fg);font:10px var(--mono);padding:7px 10px;margin-right:10px;cursor:pointer}
 @media(max-width:900px){.settings-workspace .account-content,.settings-workspace .profile-picture{grid-template-columns:1fr}.settings-workspace .profile-picture form+form{margin-top:20px}}
 .standalone-account main.narrow{max-width:520px}
+/* Standalone pages (sign-in, setup, account, permissions) on phones: safe areas, 16px inputs (no iOS zoom), 44px targets. */
+.standalone-account main{padding-left:max(24px,env(safe-area-inset-left));padding-right:max(24px,env(safe-area-inset-right))}
+.standalone-account .login-help{margin:16px 0 0;padding-top:0;border-top:0}.standalone-account .login-help p{margin:8px 0 0}
+@media(max-width:600px){
+ .standalone-account main{padding:calc(16px + env(safe-area-inset-top)) max(14px,env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) max(14px,env(safe-area-inset-left))}
+ .standalone-account h1{font-size:24px;margin:16px 0 20px}
+ .standalone-account nav{flex-wrap:wrap;gap:0 18px;padding-bottom:8px}
+ .standalone-account nav a{display:inline-flex;align-items:center;min-height:44px}
+ .standalone-account input,.standalone-account select,.standalone-account textarea{font-size:16px!important}
+ .standalone-account button,.standalone-account summary{min-height:44px}
+ .standalone-account input[type=checkbox]{width:20px;height:20px}
+ .standalone-account .settings-workspace section,.standalone-account section{padding:16px}
+}

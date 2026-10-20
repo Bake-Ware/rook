@@ -134,14 +134,23 @@ window.addEventListener('hashchange',show);await show();window.ready=true;
     print('knowledge + work views OK' + (f'; screenshots in {shots}' if shots else ''))
 
 
+async def open_side(page, view='#view-knowledge'):
+    # Phones fold the page tree / project list behind a toggle.
+    toggle = page.locator(view + ' .kn-side-toggle')
+    if await toggle.is_visible() and await toggle.get_attribute('aria-expanded') != 'true':
+        await toggle.click()
+
+
 async def run_checks(page, base, shot):
     await page.goto(base + '#knowledge'); await page.wait_for_function('window.ready===true')
-    await page.wait_for_selector('text=Recently updated')
+    await page.wait_for_selector('h2:has-text("Recent")')
+    await open_side(page)
     await page.evaluate("localStorage.removeItem('kn-open')")
     assert await page.locator('.kn-tree-item').count() == 2   # Hosts (folded) + the top-level page
     assert await page.locator('.kn-sections .kn-card:has-text("Hosts")').count() == 1
     await shot('wiki-home')
     await page.click('.kn-tog[aria-label="Expand Hosts"]')
+    await open_side(page)
     await page.click('.kn-tree-item:has-text("Agent host")')
     await page.wait_for_selector('h1:has-text("Agent host")')
     assert await page.locator('.kn-crumbs button:has-text("Hosts")').count() == 1
@@ -152,25 +161,26 @@ async def run_checks(page, base, shot):
     await page.click('.kn-ref:has-text("hermes-mcp-empty-responses")')
     await page.wait_for_selector('h1:has-text("MCP tool calls return empty")')
     assert await page.locator('.kn-md pre').count() == 1
-    assert await page.locator('h2:has-text("Sources and evidence")').count() == 1
+    assert await page.locator('h2:has-text("Sources")').count() == 1
     # Move the Hermes page into Hosts with the Move dialog.
-    await page.click('.kn-page button:has-text("Move")')
+    await page.click('.kn-page .more-btn'); await page.click('.mg-menu button:has-text("Move")')
     await page.select_option('.kn-dialog select[name=parent]', label='Hosts')
     await page.click('.kn-dialog button:has-text("Save")')
     await page.wait_for_selector('.kn-crumbs button:has-text("Hosts")')
+    await open_side(page)
     assert await page.locator('.kn-tree-row').count() == 3 and await page.locator('.kn-tree-item').first.inner_text() == 'Hosts\n2'
     await page.click('.kn-crumbs button:has-text("Hosts")'); await page.wait_for_selector('h1:has-text("Hosts")')
-    assert await page.locator('h2:has-text("Pages in here") + ul li').count() == 2
+    assert await page.locator('h2:has-text("Subpages") + ul li').count() == 2
     await shot('wiki-section')
     await page.go_back(); await page.wait_for_selector('h1:has-text("MCP tool calls return empty")')
-    await page.click('.kn-page button:has-text("Move")')   # and back to the top level
+    await page.click('.kn-page .more-btn'); await page.click('.mg-menu button:has-text("Move")')   # and back to the top level
     await page.select_option('.kn-dialog select[name=parent]', value='')
     await page.click('.kn-dialog button:has-text("Save")')
     await page.wait_for_function("!document.querySelector('.kn-crumbs button:nth-of-type(2)')")
     await page.go_back(); await page.go_back(); await page.wait_for_selector('h1:has-text("Agent host")')
     # Verify from the page, then walk the rest in review mode.
     await page.click('.kn-review button:has-text("Verify")')
-    await page.wait_for_selector('.kn-review-verified:has-text("Verified by Operator")')
+    await page.wait_for_selector('.kn-review-verified:has-text("Verified · Operator")')
     assert await page.locator('.kn-current .kn-dot-verified').count() == 1
     await page.click('.kn-review-btn'); await page.wait_for_selector('.kn-reviewbar')
     await shot('review-mode')
@@ -180,28 +190,30 @@ async def run_checks(page, base, shot):
     await page.click('.kn-dialog button:has-text("Save")')
     await page.wait_for_function(f"document.querySelector('.kn-page h1')?.textContent!=={first!r}")
     second = await page.locator('.kn-page h1').inner_text()
-    await page.click('.kn-reviewbar button:has-text("Verify & next")')
-    await page.wait_for_selector('text=Review done')
+    await page.click('.kn-reviewbar button:has-text("Verify")')
+    await page.wait_for_selector('text=All verified')
+    await open_side(page)
     await page.locator('.kn-tree-item span', has_text=first).first.click()
     await page.wait_for_selector('.kn-review-disputed:has-text("Wrong restart command")')
     await page.click('.kn-review-disputed button:has-text("Clear")')
     await page.wait_for_selector('.kn-review-unverified')
     for title in (second, 'Agent host'):   # leave the data as found for the next viewport
-        await page.locator('.kn-tree-item span', has_text=title).first.click()
+        await open_side(page); await page.locator('.kn-tree-item span', has_text=title).first.click()
         await page.wait_for_selector(f'h1:has-text({title!r})')
         await page.click('.kn-review button:has-text("Unverify")'); await page.wait_for_selector('.kn-review-unverified')
     assert await page.locator('.kn-md strong:has-text("Hermes")').count() == 1
-    await page.fill('.kn-side input[type=search]', 'stale'); await page.press('.kn-side input[type=search]', 'Enter')
+    await open_side(page); await page.fill('.kn-side input[type=search]', 'stale'); await page.press('.kn-side input[type=search]', 'Enter')
     await page.wait_for_function("document.querySelectorAll('#view-knowledge .kn-index-item').length===1")
-    await page.goto(base + '#work'); await page.wait_for_selector('#view-work h1:has-text("Work")')
+    await page.goto(base + '#work'); await page.wait_for_selector('#view-work .kn-section')
     assert await page.locator('#view-work .kn-section h3:has-text("In progress")').count() == 1
     assert await page.locator('#view-work .kn-side h3:has-text("Agent work system")').count() == 1
     await shot('work-overview')
-    await page.click('#view-work .kn-index-item:has-text("Agent work system rollout")')
+    await open_side(page, '#view-work'); await page.click('#view-work .kn-index-item:has-text("Agent work system rollout")')
     await page.wait_for_selector('#view-work h1:has-text("Agent work system rollout")')
-    for label in ('Blocked', 'In progress', 'Up next', 'Recent activity', 'Rooms', 'Knowledge'):
+    for label in ('Blocked', 'In progress', 'Up next', 'Activity', 'Rooms', 'Knowledge'):
         assert await page.locator(f'#view-work .wv-psec h2:has-text("{label}")').count() == 1, label
-    assert await page.locator('#view-work .wv-progress-label').inner_text() == '1 of 4 tasks finished · 25%'
+    assert await page.locator('#view-work .wv-stat.wv-st-ok b').inner_text() == '1/4'
+    assert await page.locator('#view-work .wv-pct').inner_text() == '25%'
     await shot('work-project')
     # Board: drag "Import Claude memory" to Blocked; the dialog asks what it waits on.
     await page.goto(base + '#work?v=board'); await page.wait_for_selector('#view-work .wv-card')
@@ -224,7 +236,7 @@ async def run_checks(page, base, shot):
     await page.goto(base + '#work?v=timeline'); await page.wait_for_selector('#view-work .wv-timeline')
     await page.wait_for_selector('#view-work .wv-unscheduled')   # seeded tasks have no dates
     await page.goto(base + '#work?p=rollout&b=b1'); await page.wait_for_selector('#view-work h1:has-text("Agent work system rollout")')
-    await page.click('#view-work summary:has-text("Finished recently")')
+    await page.click('#view-work summary:has-text("Finished")')
     await page.click('#view-work .wv-card:has-text("Deploy e6aaa2b") .wv-card-title')
     await page.wait_for_selector('#view-work h1:has-text("Deploy e6aaa2b")')
     assert await page.locator('.kn-callout:has-text("Live; 38/38 tests.")').count() == 1

@@ -77,15 +77,18 @@ It applies to agents (API tokens), integrations such as Telegram, and the home
 agent. You and other people are never held.
 
 A held call waits up to 45 seconds. The **Approvals** page (under Workspace)
-lists what is waiting: who asked, the call, the machine, its arguments and why
-it was held. The number next to **Approvals** in the sidebar counts them.
+lists what is waiting under **Waiting**: who asked, the call, the machine, its
+arguments (**Args**) and why it was held; **Recent** lists past decisions. The
+number next to **Approvals** in the sidebar counts them. The **i** next to
+**Waiting** explains how long calls wait and how long an approval lasts.
 
 - **Approve**: the waiting call runs. If the agent already gave up waiting, it
   was told to ask you and try again: one approval covers the same call (same
   capability, machine and arguments) once, for 10 minutes.
 - **Deny**: the agent is told that a person said no.
 - For a call held for reaching too many machines you can also choose
-  **Approve, and let it reach more machines for 15 min**.
+  **Approve + 15 min spread**: approve it and let that agent reach more
+  machines for 15 minutes.
 
 Only the operator or a band owner can approve. Agents have no way to approve
 anything, and secret values are never shown on the page.

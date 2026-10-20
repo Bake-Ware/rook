@@ -25,14 +25,14 @@ is, its release notes, and a history of every update.
 
 The hub checks Rook's releases on GitHub every few hours and tells you when a
 new one comes out, on this page and in chat (Telegram or Discord, when set
-up). **Check now** looks straight away.
+up). **Check** looks straight away; **⚙** opens the update settings.
 
 ### Updating the hub
 
 A new release shows two steps: update the hub first, then your workers
 (workers get their updates from the hub).
 
-- **Update the hub to …** downloads the release, checks it, and installs it
+- **Update hub** downloads the release, checks it, and installs it
   the way your hub was installed. A hub set up with `rook hub deploy` or with
   the one-command installer (per-user) can do this itself; if the new
   version does not start healthy, `rook hub deploy` puts the old one back.
@@ -40,7 +40,7 @@ A new release shows two steps: update the hub first, then your workers
   Docker or a source checkout) and shows the command to run instead.
 - A hub set up with `rook hub deploy` whose services run as system services
   under their own user cannot restart them itself (on purpose: the hub never
-  gets administrator rights). It shows **Prepare the hub update to …**
+  gets administrator rights). It shows **Prepare update**
   instead: the hub downloads and checks the release the same way, asks you to
   acknowledge a breaking update first, and leaves a signed copy ready on the
   hub machine. The page then shows one `sudo … rook hub … deploy … --yes`
@@ -49,7 +49,7 @@ A new release shows two steps: update the hub first, then your workers
   release does not come up healthy. History records the update once the hub
   is back on the new release.
 - The hub restarts, so the page reconnects after a minute. History records
-  whether the update landed, and has a **Roll back** button.
+  whether the update landed, and has a **Roll back hub** button.
 
 ### Breaking updates
 
@@ -73,15 +73,15 @@ update) does not reach your workers until you roll it out:
 
 1. Pick workers: all of them, one band, one kind of computer (Linux, Windows,
    macOS), or one by one. Optionally choose the test worker.
-2. **Update.** The test worker updates first. The hub waits for it to come
+2. **Update N** (or **Release to all** after a partial rollout went well). The test worker updates first. The hub waits for it to come
    back on the new version, answer, and stay on it.
 3. The rest follow a few at a time. The first worker that does not come back
    healthy stops the rollout before anyone else is touched.
 4. A rollout to all workers releases the version, so workers that were off
    get it when they come back.
 
-The **Phones and apps** tab can publish a release's Android app through your
-hub and ask phones that are behind to update ([[manual-phones-and-tablets]]);
+The **Apps** tab can publish a release's Android app through your
+hub and ask phones (**Notify phones**) that are behind to update ([[manual-phones-and-tablets]]);
 the **Firmware** tab shows firmware versions (flashing stays by hand).
 
 You are told in chat when a new worker version is waiting. If you switch the
@@ -90,7 +90,7 @@ the hub goes back to offering its newest version to every worker.
 
 ### Settings
 
-Under **Settings** on the Updates page (also Settings > Plugins > Updates):
+Under **⚙** (Update settings) on the Updates page (also Settings > Plugins > Updates):
 
 - **Updates** (`updates.mode`): *off* never checks; *notify* (the default)
   checks and tells you; *auto* also installs updates by itself during the

@@ -6,7 +6,7 @@
 // "set" action the Settings area uses.
 // Versioned like this module (?v=...), so a stale edge cache cannot pair it
 // with an old manage.js.
-const {h, ago, useCss, btn, copy} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
+const {h, ago, useCss, btn, copy, info} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
 
 const API='/account/settings/api';
 const RATE=16000, RECORD_S=4;
@@ -15,13 +15,11 @@ export async function mountVoice(root){
   useCss();
   let csrf='',d=null,busy=false,rec=null;
   const status=h('p',{class:'mg-status',role:'status'});
-  const summary=h('p',{class:'mg-sub',style:'max-width:860px;line-height:1.6',
-    text:'Voice lets phones, the desktop app and a browser talk to your agents through this hub. Speech recognition and the spoken replies run either here, on the hub, or on another machine with more power (a computer with a graphics card), which the hub forwards to.'});
   const stateBox=h('section',{class:'mg-box strong','aria-label':'Voice status'});
   const connectBox=h('section',{class:'mg-box','aria-label':'Connect a device'});
   const micBox=h('section',{class:'mg-box','aria-label':'Microphone check'});
   const panel=h('section',{class:'mg-box strong mg-side','aria-label':'Where speech runs'});
-  root.replaceChildren(h('div',{class:'mg'},summary,status,
+  root.replaceChildren(h('div',{class:'mg'},status,
     h('div',{class:'mg-split'},h('div',{class:'mg-main'},stateBox,micBox,connectBox),panel)));
 
   async function get(){const r=await fetch(API+'?view=voice');const j=await r.json().catch(()=>({error:'Bad response'}));if(j.csrf)csrf=j.csrf;if(!r.ok||j.error)throw Error(j.error||'Sign in with your operator account to set up voice.');return j;}
@@ -47,23 +45,23 @@ export async function mountVoice(root){
   }
   const hostOf=u=>{try{return new URL(u).host;}catch{return u||'';}};
   // Label beside the value, or above it on a phone.
-  const row=(label,...value)=>h('div',{style:'display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;padding:9px 0;border-top:1px solid #20261d;font-size:13px'},h('span',{class:'mg-label',style:'flex:0 0 150px',text:label}),h('span',{style:'flex:1 1 220px;min-width:0;white-space:normal'},...value));
+  const row=(label,...value)=>h('div',{style:'display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;padding:9px 0;border-top:1px solid var(--line-soft);font-size:13px'},h('span',{class:'mg-label',style:'flex:0 0 130px',text:label}),h('span',{style:'flex:1 1 220px;min-width:0;white-space:normal'},...value));
 
   function draw(){drawState();drawMic();drawConnect();drawPanel();}
 
   function drawState(){
     const s=d.status,req=d.requirements,[label,cls]=state(),err=h('small',{class:'mg-error',role:'alert'});
-    const check=btn('Check connection','soft',()=>run(check,async()=>{
+    const check=btn('Check','soft',()=>run(check,async()=>{
       const r=await post({action:'voice_check'});d.status=r.status;d.status.last_check=r.check;drawState();
       status.textContent=r.check.ok?'Voice answered'+(r.check.latency_ms!=null?' in '+r.check.latency_ms+' ms':'')+'.':'No answer: '+(r.check.error||r.check.state);},err));
-    check.disabled=!s.loaded;
+    check.disabled=!s.loaded;check.title='Check the connection';
     const body=[row('State',h('b',{class:cls,text:label})),row('Speech runs',where())];
     if(s.loaded)body.push(row('Served at',h('span',{class:'mg-mono',text:(s.paths||[]).map(p=>p==='/voice'?'/voice/…':p).join('  ')})));
     if(s.last_check)body.push(row('Last check',ago(s.last_check.checked_at)+(s.last_check.version?' · voice server '+s.last_check.version:'')+(s.last_check.error?' · '+s.last_check.error:'')));
     if(s.error)body.push(row('Error',h('span',{class:'mg-bad',text:s.error})));
     const why=!s.loaded?(s.reason||req.reason):'';
     stateBox.replaceChildren(
-      h('div',{class:'mg-panel-head'},h('div',{class:'mg-two'},h('h2',{text:'Voice'}),h('small',{text:'The voice plugin on worker rook'})),h('div',{class:'mg-actions'},err,check)),
+      h('div',{class:'mg-panel-head'},h('div',{class:'mg-two'},h('h2',{text:'Voice'}),h('small',{text:'Plugin on worker rook'})),h('div',{class:'mg-actions'},err,check)),
       h('div',{class:'mg-pad',style:'gap:0'},...body),
       ...(why?[h('div',{class:'mg-pad',style:'border-top:1px solid var(--line)'},needs(why,req))]:[]));
   }
@@ -73,7 +71,7 @@ export async function mountVoice(root){
     if(req.extras_missing&&req.extras_missing.length){
       const cmd=d.extras_hint,b=btn('Copy','',()=>copy(cmd,b));
       out.push(h('div',null,h('div',{class:'mg-label',style:'margin-bottom:6px',text:'Install on the hub, then restart it'}),h('div',{class:'mg-actions',style:'flex-wrap:nowrap'},h('code',{class:'mg-code',text:cmd}),b)),
-        h('p',{class:'mg-sub',style:'white-space:normal;line-height:1.6',text:'This adds speech recognition and voices to the hub (about a gigabyte). A small hub does better forwarding voice to another machine: choose "On another machine" on the right.'}));
+        h('div',{class:'mg-actions'},h('span',{class:'mg-sub',text:'About 1 GB.'}),info('This adds speech recognition and voices to the hub. A small hub does better forwarding voice to another machine: choose "On another machine".','About the extras')));
     }
     if(req.models_missing&&req.models_missing.length)
       out.push(h('p',{class:'mg-sub',style:'white-space:normal;line-height:1.6'},'Put these files in ',h('span',{class:'mg-mono',text:req.model_dir}),': ',h('span',{class:'mg-mono',text:req.models_missing.join(', ')}),'.'));
@@ -84,12 +82,12 @@ export async function mountVoice(root){
     const origin=location.origin,ws=origin.replace(/^http/,'ws')+d.prefix+'/ws';
     const line=(label,text,href)=>{const b=btn('Copy','',()=>copy(text,b));return row(label,h('span',{class:'mg-actions',style:'flex-wrap:nowrap'},href?h('a',{class:'mg-code',href,target:'_blank',rel:'noopener',text}):h('code',{class:'mg-code',text}),b));};
     connectBox.replaceChildren(
-      h('div',{class:'mg-panel-head'},h('div',{class:'mg-two'},h('h2',{text:'Connect a device'}),h('small',{text:'Phones, the desktop app and browsers use this hub\'s address'}))),
+      h('div',{class:'mg-panel-head'},h('div',{class:'mg-two'},h('h2',{text:'Connect'}),h('small',{text:'Phones, desktop app, browsers'})),
+        info('In the Rook app, set the voice server to the voice address and paste a voice key. Keys are made on the voice keys page'+(d.status.engine==='remote'?', which belongs to the voice server this hub forwards to.':'.'),'How to connect')),
       h('div',{class:'mg-pad',style:'gap:0'},
         line('Voice address',ws),
         line('In a browser',origin+d.prefix+'/',d.status.loaded?d.prefix+'/':null),
-        line('Voice keys',origin+d.prefix+'/admin',d.status.loaded?d.prefix+'/admin':null),
-        h('p',{class:'mg-sub',style:'white-space:normal;line-height:1.6;padding-top:10px',text:'In the Rook app, set the voice server to the voice address and paste a voice key. Keys are made on the voice keys page'+(d.status.engine==='remote'?', which belongs to the voice server this hub forwards to.':'.')})));
+        line('Voice keys',origin+d.prefix+'/admin',d.status.loaded?d.prefix+'/admin':null)));
   }
 
   // -- microphone check ------------------------------------------------------
@@ -97,7 +95,7 @@ export async function mountVoice(root){
     const ready=d.status.loaded&&d.status.state==='ready';
     const meter=h('div',{class:'mg-meter',style:'max-width:none'},h('i',{style:'width:0'}));
     const said=h('pre',{hidden:true}),err=h('small',{class:'mg-error',role:'alert'}),note=h('span',{class:'mg-sub'});
-    const go=btn('Record '+RECORD_S+' seconds','primary',()=>rec?rec.stop():start());
+    const go=btn('Record '+RECORD_S+' s','primary',()=>rec?rec.stop():start());
     go.disabled=!ready;
     async function start(){
       err.textContent='';said.hidden=true;
@@ -105,7 +103,7 @@ export async function mountVoice(root){
       try{rec=await record(RECORD_S,level=>{meter.firstChild.style.width=Math.min(100,level*400)+'%';},left=>{note.textContent='Listening… '+left+' s';});}
       catch(e){err.textContent=e.name==='NotAllowedError'?'The browser did not allow the microphone.':'Could not start recording: '+e.message;rec=null;return;}
       go.textContent='Stop';
-      const pcm=await rec.done;rec=null;go.textContent='Record '+RECORD_S+' seconds';meter.firstChild.style.width='0';
+      const pcm=await rec.done;rec=null;go.textContent='Record '+RECORD_S+' s';meter.firstChild.style.width='0';
       note.textContent='Transcribing…';
       await run(go,async()=>{
         const r=await post({action:'voice_transcribe',pcm:b64(pcm)});
@@ -115,11 +113,11 @@ export async function mountVoice(root){
       if(err.textContent)note.textContent='';
     }
     micBox.replaceChildren(
-      h('div',{class:'mg-panel-head'},h('div',{class:'mg-two'},h('h2',{text:'Microphone check'}),h('small',{text:'Say something; the hub writes down what it heard'}))),
+      h('div',{class:'mg-panel-head'},h('div',{class:'mg-two'},h('h2',{text:'Mic check'}),h('small',{text:'Say something; see what it heard'})),
+        info('The recording goes to the hub once, for this check, and is not kept.','About the mic check')),
       h('div',{class:'mg-pad'},
-        ready?null:h('p',{class:'mg-sub',text:'Available once voice is ready.'}),
-        h('div',{class:'mg-actions',style:'flex-wrap:nowrap'},go,meter),note,said,err,
-        h('p',{class:'mg-sub',style:'white-space:normal;line-height:1.6',text:'The recording goes to the hub once, for this check, and is not kept.'})));
+        ready?null:h('p',{class:'mg-sub',text:'Needs voice ready.'}),
+        h('div',{class:'mg-actions',style:'flex-wrap:nowrap'},go,meter),note,said,err));
   }
 
   // -- where speech runs ------------------------------------------------------
@@ -129,12 +127,13 @@ export async function mountVoice(root){
     const choice=(v,title,text)=>h('label',{class:'mg-box',style:'display:flex;gap:12px;padding:12px 14px;cursor:pointer;align-items:flex-start'},
       h('input',{type:'radio',name:'voice-engine',value:v,checked:engine===v,disabled:locked('engine'),style:'margin-top:2px;accent-color:var(--accent);width:18px;height:18px;min-height:0'}),
       h('span',{class:'mg-two',style:'gap:4px'},h('b',{text:title,style:'white-space:normal'}),h('small',{text,style:'white-space:normal;line-height:1.5'})));
-    const here=choice('here','On this hub','Uses the hub\'s own processor. Needs the voice extras and the speech model files. Best on a home server.');
-    const remote=choice('remote','On another machine','Forwards to a voice server on a computer with more power. The hub stays small; devices still use the hub\'s address.');
+    const here=choice('here','On this hub','Hub processor; needs the voice extras and model files.');
+    const remote=choice('remote','On another machine','Forwards to a voice server; devices still use the hub\'s address.');
     const url=h('input',{value:val('remote_url')||'',placeholder:'https://gpu.example.com:8900',autocomplete:'off',spellcheck:'false',style:'font-family:var(--mono)',disabled:locked('remote_url')});
     const tls=h('input',{type:'checkbox',checked:val('remote_verify_tls')!==false,disabled:locked('remote_verify_tls')});
-    const urlField=h('label',{class:'mg-field'},'Voice server address',url,h('small',{class:'mg-sub',style:'white-space:normal',text:locked('remote_url')?'Set by '+d.settings.remote_url.env+' in the hub\'s environment.':'Where the standalone voice server listens (python -m services.voice.server).'}));
-    const tlsField=h('label',{class:'mg-actions',style:'font-size:13px;color:var(--dim);flex-wrap:nowrap'},tls,'Check its certificate (turn off only for a self-signed one on your network)');
+    const urlField=h('label',{class:'mg-field'},h('span',{class:'mg-flabel'},'Voice server',info('Where the standalone voice server listens (python -m services.voice.server).','About the voice server')),url,
+      locked('remote_url')?h('small',{class:'mg-sub mg-warn',style:'white-space:normal',text:'Set by '+d.settings.remote_url.env+' in the hub\'s environment.'}):null);
+    const tlsField=h('label',{class:'mg-actions',style:'font-size:13px;color:var(--dim);flex-wrap:nowrap',title:'Turn off only for a self-signed certificate on your network'},tls,'Verify TLS');
     const pick=()=>root.querySelector('input[name=voice-engine]:checked')?.value||engine;
     const sync=()=>{const r=pick()==='remote';urlField.hidden=tlsField.hidden=!r;};
     for(const c of [here,remote])c.querySelector('input').addEventListener('change',sync);
@@ -149,9 +148,9 @@ export async function mountVoice(root){
     },err));
     const lockNote=locked('engine')?h('p',{class:'mg-sub mg-warn',style:'white-space:normal',text:'Set by '+d.settings.engine.env+' in the hub\'s environment; change it there.'}):null;
     panel.replaceChildren(
-      h('div',{class:'mg-panel-head'},h('div',{class:'mg-two'},h('h2',{text:'Where speech runs'}),h('small',{text:'Stored as voice.engine in Settings · hub-wide'}))),
+      h('div',{class:'mg-panel-head'},h('div',{class:'mg-two'},h('h2',{text:'Where speech runs'}),h('small',{text:'voice.engine · hub-wide'}))),
       h('div',{class:'mg-pad'},here,remote,lockNote,urlField,tlsField,h('div',{class:'mg-actions end'},err,save),
-        h('p',{class:'mg-sub',style:'white-space:normal;line-height:1.6'},'Voices, recognition and the assistant\'s name are in ',h('a',{href:'#settings?view=plugin&target=voice',text:'all voice settings'}),'.')));
+        h('a',{href:'#settings?view=plugin&target=voice',text:'All voice settings',title:'Voices, recognition and the assistant\'s name'})));
     sync();
   }
 

@@ -5,7 +5,7 @@
 // replaces it and the old one stays in its history, as the agent does itself.
 // Versioned like this module (?v=...), so a stale edge cache cannot pair it
 // with an old manage.js.
-const {h, ago, useCss, btn, table, two, chips} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
+const {h, ago, useCss, btn, table, two, info, more: moreBtn, seg} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
 
 const API='/account/settings/api';
 const STATES=[['active','In use'],['superseded','Replaced'],['archived','Archived'],['forgotten','Forgotten'],['all','All']];
@@ -23,16 +23,16 @@ export async function mountMemory(root){
   if(!document.getElementById('memory-css'))document.head.append(h('style',{id:'memory-css',text:CSS}));
   let csrf='',d=null,items=[],total=0,sel=null,busy=false;
   const f={kind:'',state:'active',query:''};
-  const status=h('p',{class:'mg-status',role:'status'}),summary=h('p',{class:'mg-sub'});
-  const note=h('div'),bar=h('div',{class:'mg-bar'}),kinds=h('div',{class:'mg-actions'});
-  const list=h('div'),more=h('div',{class:'mg-actions'}),foot=h('p',{class:'mg-sub',style:'white-space:normal'});
+  const status=h('p',{class:'mg-status',role:'status'}),summary=h('span',{class:'mem-help'});
+  const note=h('div'),bar=h('div',{class:'mg-bar'}),kinds=h('div',{class:'mem-kinds'});
+  const list=h('div'),more=h('div',{class:'mg-actions'}),foot=h('p',{class:'mg-sub mem-foot',style:'white-space:normal'});
   const panel=h('div',{class:'mg-box strong mg-side'});
-  const search=h('input',{type:'search',placeholder:'Search what it remembers',autocomplete:'off','aria-label':'Search memories',class:'mg-grow'});
+  const search=h('input',{type:'search',placeholder:'Search',autocomplete:'off','aria-label':'Search memories',class:'mg-grow'});
   const state=h('select',{'aria-label':'Show'},STATES.map(([v,l])=>h('option',{value:v,text:l})));
   let timer=null;
   search.oninput=()=>{clearTimeout(timer);timer=setTimeout(()=>{f.query=search.value.trim();role?roleLoad():load();},250);};
   state.onchange=()=>{f.state=state.value;load();};
-  const add=btn('Add a memory','primary',()=>{sel={new:true};drawList();drawPanel();});
+  const add=btn('+ Add','primary',()=>{sel={new:true};drawList();drawPanel();if(innerWidth<900)panel.scrollIntoView({behavior:'smooth',block:'start'});},{'aria-label':'Add a memory',title:'Add a memory'});
   // Whose memory: the home agent's (the memory plugin), or a huddle role's
   // (kept in the role's home on its agent host; role.memory / role.memory_edit
   // through the huddle API). Shown only when there are roles.
@@ -47,17 +47,18 @@ export async function mountMemory(root){
     if(role&&!roles.some(r=>r.id===role))whose.append(h('option',{value:role,text:'@'+role}));
     whose.value=role;whose.hidden=!roles.length&&!role;
   }
-  const tidy=btn('Tidy up now','',()=>run(tidy,async()=>{
+  const tidyNow=()=>run(null,async()=>{
     const r=await post({action:'memory_consolidate'});
     const s=r.stats;status.textContent='Tidied up: '+[s.episodes&&s.episodes+' conversation'+(s.episodes>1?'s':'')+' summarised',s.rolled_up&&s.rolled_up+' rolled up by week',s.merged&&s.merged+' duplicate'+(s.merged>1?'s':'')+' merged',s.faded&&s.faded+' faded',s.indexed&&s.indexed+' indexed'].filter(Boolean).join(', ')||'Tidied up: nothing to do.';
-    await reload();}));
+    await reload();});
+  const tidy=moreBtn([{label:'Tidy up now',run:tidyNow}],'More');
   bar.append(whose,search,state,tidy,add);
-  const main=h('div',{class:'mg-main'},kinds,bar,list,more,foot);
-  root.replaceChildren(h('div',{class:'mg'},summary,note,status,h('div',{class:'mg-split'},main,panel)));
+  const main=h('div',{class:'mg-main'},kinds,bar,list,more,h('div',{class:'mg-actions mem-footrow'},summary,foot));
+  root.replaceChildren(h('div',{class:'mg'},note,status,h('div',{class:'mg-split'},main,panel)));
 
   async function get(){const r=await fetch(API+'?view=memory');const j=await r.json().catch(()=>({error:'Bad response'}));if(j.csrf)csrf=j.csrf;if(!r.ok||j.error)throw Error(j.error||'Sign in with your operator account to see what the home agent remembers.');return j;}
   async function post(body){const r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({csrf,...body})});const j=await r.json().catch(()=>({error:'Bad response'}));if(!r.ok||j.error||j.ok===false)throw Error(j.error||'Request failed');return j;}
-  async function run(b,work){if(busy)return;busy=true;b.disabled=true;status.classList.remove('bad');try{await work();}catch(e){status.textContent=e.message;status.classList.add('bad');}finally{busy=false;b.disabled=false;}}
+  async function run(b,work){if(busy)return;busy=true;if(b)b.disabled=true;status.classList.remove('bad');try{await work();}catch(e){status.textContent=e.message;status.classList.add('bad');}finally{busy=false;if(b)b.disabled=false;}}
   async function refresh(){
     const want=new URLSearchParams(location.hash.split('?')[1]||'').get('role')||'';
     if(want!==role){role=want;sel=null;items=[];total=0;}
@@ -74,7 +75,7 @@ export async function mountMemory(root){
   const roleDoc=()=>roles.find(r=>r.id===role)||{id:role,name:role};
   async function roleLoad(){
     const r=roleDoc();
-    summary.textContent='What '+(r.name||role)+' (@'+role+') remembers. It is kept in the role\'s own folder on its agent host and read before each of its answers. Forget anything here, or add something it should know.';
+    summary.replaceChildren(info('What '+(r.name||role)+' (@'+role+') remembers. It is kept in the role\'s own folder on its agent host and read before each of its answers. Forget anything here, or add something it should know.','About this memory'));
     note.replaceChildren();kinds.replaceChildren();foot.textContent='';
     try{const res=await hapi('role_memory',{id:role,query:f.query,limit:200});items=res.memories||[];total=items.length;
       if(sel&&!sel.new)sel=items.find(m=>m.id===sel.id)||null;}
@@ -95,8 +96,8 @@ export async function mountMemory(root){
     more.replaceChildren(h('span',{class:'mg-sub',text:total?total+' shown':''}));
   }
   function rolePanel(){
-    if(!sel){panel.replaceChildren(h('div',{class:'mg-pad'},h('p',{class:'mg-sub',style:'white-space:normal',text:'Pick a memory to forget it, or add one. The same rules as the home agent\'s memory apply: no passwords, keys or code.'}),
-      h('a',{href:'#roles',text:'Manage roles'})));return;}
+    if(!sel){panel.replaceChildren(h('div',{class:'mg-pad'},h('div',{class:'mg-actions'},h('span',{class:'mg-sub',text:'Pick a memory.'}),info('No passwords, keys or code: the same rules as the home agent\'s memory.','About')),
+      h('a',{href:'#roles',text:'Roles'})));return;}
     const err=h('small',{class:'mg-error',role:'alert'}),close=btn('×','icon',()=>{sel=null;drawList();drawPanel();},{'aria-label':'Close'});
     const act=(b,body,done)=>run(b,async()=>{err.textContent='';try{await hapi('role_memory_edit',{id:role,...body});status.textContent=done;sel=null;await roleLoad();}catch(e){err.textContent=e.message;throw e;}});
     if(sel.new){
@@ -118,15 +119,16 @@ export async function mountMemory(root){
 
   function drawTop(){
     const s=d.status||{active:{}},counts=s.active||{},n=Object.values(counts).reduce((a,b)=>a+b,0);
-    summary.textContent='What the home agent remembers. It reads the relevant parts before it answers and adds to them afterwards. Correct anything here, or make it forget. Passwords, codes and keys are never kept: those belong in Secrets.';
+    summary.replaceChildren(info('It reads the relevant parts before it answers and adds to them afterwards. Correct anything here, or make it forget. Passwords, codes and keys are never kept: those belong in Secrets.','About memory'));
     note.replaceChildren();
-    if(!d.enabled){note.append(h('div',{class:'mg-banner'},h('span',{text:'Memory is off on this hub. Turn on the memory plugin under Plugins (Home & voice agent) and restart.'})));}
-    else if(!d.home.enabled){note.append(h('div',{class:'mg-banner'},h('span',{text:'The home agent is off, so nothing new is being remembered. You can still add memories here.'}),h('a',{href:'#home',text:'Set up the home agent'})));}
-    else if(d.settings.auto_remember===false){note.append(h('div',{class:'mg-banner'},h('span',{text:'"Remember what people tell it" is off: only memories added here, by agents or by its own tools are kept.'})));}
-    kinds.replaceChildren(...chips([['','All · '+n],...d.kinds.map(k=>[k.id,k.label+' · '+(counts[k.id]||0)])],f.kind,id=>{f.kind=id;drawTop();load();}));
+    if(!d.enabled){note.append(h('div',{class:'mg-banner'},h('span',{text:'Memory is off: turn on the memory plugin, then restart.'}),h('a',{href:'#plugins',text:'Plugins'})));}
+    else if(!d.home.enabled){note.append(h('div',{class:'mg-banner'},h('span',{text:'Home agent off: nothing new is remembered.'}),h('a',{href:'#home',text:'Set up'})));}
+    else if(d.settings.auto_remember===false){note.append(h('div',{class:'mg-banner'},h('span',{text:'Auto-remember is off.',title:'Only memories added here, by agents or by its own tools are kept.'})));}
+    kinds.replaceChildren(seg([['','All · '+n],...d.kinds.map(k=>[k.id,k.label+' · '+(counts[k.id]||0)])],f.kind,id=>{f.kind=id;drawTop();load();},'Kind'));
     const e=s.embeddings||{},last=s.last_consolidation;
-    foot.textContent=(e.model?'Meaning-based search is on ('+e.model+').':e.sources&&e.sources.length?(e.last_error?'Meaning-based search: '+e.sources[0]+' is not answering; keyword search meanwhile.':'Meaning-based search via '+e.sources[0]+' (it starts with the next question).'):'Keyword search only (set an embedding model in Settings > Memory for meaning-based search).')
-      +' Last tidy-up: '+(last?ago(last.ts):'not yet')+'.'+(s.waiting_turns?' '+s.waiting_turns+' message'+(s.waiting_turns>1?'s':'')+' waiting to be summarised.':'');
+    foot.textContent=(e.model?'Search: meaning ('+e.model+')':e.sources&&e.sources.length?(e.last_error?'Search: keyword ('+e.sources[0]+' not answering)':'Search: meaning via '+e.sources[0]):'Search: keyword')
+      +' · tidied '+(last?ago(last.ts):'never')+(s.waiting_turns?' · '+s.waiting_turns+' to summarise':'');
+    foot.title=e.model||e.sources&&e.sources.length?'':'Set an embedding model in Settings > Memory for meaning-based search.';
   }
   function drawList(){
     if(role)return roleList();
@@ -140,7 +142,7 @@ export async function mountMemory(root){
         h('span',{class:'mg-sub mem-c',text:ago(m.updated)}));
       const open=()=>show(m.id);r.onclick=open;r.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();open();}};
       return r;});
-    const empty=f.query?'Nothing matches "'+f.query+'".':f.state!=='active'?'Nothing here.':'Nothing remembered yet. Chat with the home agent, or add a memory.';
+    const empty=f.query?'Nothing matches "'+f.query+'".':f.state!=='active'?'Nothing here.':'Nothing remembered yet.';
     list.replaceChildren(h('div',{class:'mg-box mem-tbl'},table('minmax(0,1fr) 130px 110px 90px',['What it remembers','Kind','About','Updated'],rows.length?rows:[h('div',{class:'mg-empty',text:empty})],520)));
     more.replaceChildren(items.length<total?btn('Show more ('+(total-items.length)+')','',()=>load(items.length)):h('span',{class:'mg-sub',text:total?total+' shown':''}));
   }
@@ -150,10 +152,10 @@ export async function mountMemory(root){
     catch(e){status.textContent=e.message;status.classList.add('bad');}
   }
   function drawPanel(){
+    panel.classList.toggle('mem-panel-idle',!sel);
     if(role)return rolePanel();
-    if(!sel){panel.replaceChildren(h('div',{class:'mg-pad'},h('p',{class:'mg-sub',text:'Pick a memory to see where it came from, correct it or forget it.'}),
-      h('div',null,h('div',{class:'mg-label',style:'margin-bottom:8px',text:'How it remembers'}),
-        h('p',{class:'mg-sub',style:'white-space:normal;line-height:1.6',text:'About people: names and preferences people tell it. Facts: things about your home and setup. Conversations: short summaries, rolled up by week. Skills: ways of doing things that worked. Memories it does not use fade over time; keep one to stop that.'}))));return;}
+    if(!sel){panel.replaceChildren(h('div',{class:'mg-pad'},h('div',{class:'mg-actions'},h('span',{class:'mg-sub',text:'Pick a memory.'}),
+      info('About people: names and preferences people tell it. Facts: things about your home and setup. Conversations: short summaries, rolled up by week. Skills: ways of doing things that worked. Memories it does not use fade over time; keep one to stop that.','How it remembers'))));return;}
     const isNew=!!sel.new,live=isNew||sel.state==='active';
     const err=h('small',{class:'mg-error',role:'alert'});
     const text=h('textarea',{rows:'4',disabled:!live,'aria-label':'Memory text'});text.value=isNew?'':sel.text;
@@ -183,11 +185,11 @@ export async function mountMemory(root){
       h('div',null,h('div',{class:'mg-label',style:'margin:6px 0 8px',text:'History'}),
         (sel.history||[]).slice(0,12).map(e=>h('div',{class:'mg-log'},h('span',{class:'mg-mono',text:e.action}),h('span',{text:e.actor}),h('span',{class:'mg-sub',style:'font-size:12px',text:ago(e.ts)})))));
     panel.replaceChildren(
-      h('div',{class:'mg-panel-head'},h('div',{class:'mg-two'},h('h2',{text:isNew?'Add a memory':KIND_ONE[sel.kind]||sel.kind}),h('small',{text:isNew?'Write it as one plain statement':'About '+who(sel.scope)})),close),
+      h('div',{class:'mg-panel-head'},h('div',{class:'mg-two'},h('h2',{text:isNew?'Add a memory':KIND_ONE[sel.kind]||sel.kind}),h('small',{text:isNew?'One plain statement':'About '+who(sel.scope)})),close),
       h('div',{class:'mg-pad'},
         h('label',{class:'mg-field'},'What it remembers',text,live?null:h('small',{class:'mg-sub',text:'Only memories in use can be changed.'})),
         h('div',{class:'mg-actions',style:'flex-wrap:wrap;gap:12px'},h('label',{class:'mg-field',style:'flex:1 1 150px'},'Kind',kind),h('label',{class:'mg-field',style:'flex:1 1 180px'},'About (a person, or "shared")',about)),
-        h('label',{class:'mg-actions'},pinned,'Keep: never let it fade'),
+        h('label',{class:'mg-actions',title:'Never let it fade'},pinned,'Keep'),
         skill?h('p',{class:sel.approved||sel.pinned?'mg-sub':'mg-sub mg-warn',style:'white-space:normal',text:sel.approved||sel.pinned?'Approved: the agent reads this skill when it is relevant.':'Learned, not yet approved: the agent will not use this skill until you approve it.'}):null,
         live?h('div',{class:'mg-actions end'},err,isNew?null:erase,isNew?null:forget,approve,save):h('div',{class:'mg-actions end'},err,sel.state!=='forgotten'||sel.text!=='[forgotten]'?erase:null)),
       facts);

@@ -4,7 +4,7 @@
 // how a change takes effect. Secret values are write-only.
 // Versioned like this module (?v=...), so a stale edge cache cannot pair it
 // with an old manage.js.
-const {el, ago} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
+const {el, ago, info, copyChip, seg} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
 const show=v=>v===null||v===undefined||v===''?'—':typeof v==='object'?JSON.stringify(v):String(v);
 const API='/account/settings/api';
 const CSS=`
@@ -33,7 +33,25 @@ const CSS=`
 .st-group details>summary{padding:10px 18px}
 .st-side details>summary{padding:10px 16px;font:500 10px var(--mono);letter-spacing:1px;text-transform:uppercase}
 .st-side input[type=search]{width:100%;border-width:0 0 1px}
-@media(max-width:800px){.st-group{--cols:minmax(0,1fr) 110px}.st-group>.mg-head{display:none}.st-row .st-label,.st-row .st-ctl{grid-column:1/-1}}
+.st-side .st-picker>summary{display:none}
+.st-page .st-banner>summary{cursor:pointer;color:var(--accent);font-weight:500;font-size:13px;min-height:0}
+.st-banner{padding:8px 14px}
+.st-banner ul{margin:8px 0 0;padding-left:18px}
+.st-page .mg-bar h1+.mg-info{margin-right:4px}
+.st-processes td .copy-chip{max-width:34ch}
+@media(max-width:640px){.st-processes td .copy-chip{max-width:58vw}}
+.st-foot{justify-content:space-between}
+@media(max-width:800px){
+ .st-group{--cols:minmax(0,1fr) 110px}.st-group>.mg-head{display:none}.st-row .st-label,.st-row .st-ctl{grid-column:1/-1}.st-row{padding:8px 12px}
+ .st-side{flex:1 1 100%!important}
+ .st-side .st-picker>summary{display:flex;justify-content:space-between;align-items:center;padding:0 14px;min-height:48px;font:500 15px var(--sans);letter-spacing:0;text-transform:none;color:var(--accent);list-style:none;cursor:pointer}
+ .st-picker>summary::-webkit-details-marker{display:none}
+ .st-picker>summary::after{content:'▾';color:var(--dim)}.st-picker[open]>summary::after{content:'▴'}
+ .st-picker>summary small{margin-left:auto;margin-right:10px;font:10px var(--mono);letter-spacing:1px;text-transform:uppercase;color:var(--dim)}
+ .st-page h1{font-size:18px}
+ .st-page .seg{width:100%}.st-page .seg>*{flex:1 1 auto;justify-content:center}
+ .mg-navitem{min-height:44px}
+}
 `;
 
 export async function mountSettings(root){
@@ -44,7 +62,7 @@ export async function mountSettings(root){
   const layout=el('div',undefined,'mg-split');const side=el('aside',undefined,'mg-box mg-nav st-side');side.style.flex='0 1 240px';const page=el('section',undefined,'mg-main st-page');
   const shell=el('div',undefined,'mg');shell.append(layout);layout.append(side,page);root.replaceChildren(shell);
   const status=el('p','','mg-status');status.setAttribute('role','status');
-  const FILTERS=[['all','All'],['here','Changed here'],['out','Set outside'],['restart','Needs restart']];
+  const FILTERS=[['all','All','Every setting'],['here','Changed','Changed here'],['out','Outside','Set outside: env, flag or setup.json'],['restart','Restart','Needs a restart to apply']];
   function updateSave(){if(!saveButton)return;const n=pending.filter(x=>x.dirty()).length;saveButton.textContent='Save '+n+' change'+(n===1?'':'s');saveButton.disabled=!n;}
   async function saveAll(){
     const todo=pending.filter(x=>x.dirty());if(!todo.length)return;saveButton.disabled=true;let ok=0;const notes=[];
@@ -58,17 +76,17 @@ export async function mountSettings(root){
     pending=[];saveButton=null;page.dataset.filter='all';
     const bar=el('div',undefined,'mg-bar');bar.append(el('h1',title));
     const chipHost=el('span',undefined,'mg-actions st-filters');bar.append(chipHost);
-    const pick=id=>{page.dataset.filter=id;if(id!=='all')page.querySelectorAll('.st-group details').forEach(d=>{d.open=true;});chipHost.replaceChildren(...FILTERS.map(([f,label])=>{const c=el('button',label,'mg-chip'+(f===id?' on':''));c.type='button';c.setAttribute('aria-pressed',String(f===id));c.onclick=()=>pick(f);return c;}));};
+    const pick=id=>{page.dataset.filter=id;if(id!=='all')page.querySelectorAll('.st-group details').forEach(d=>{d.open=true;});chipHost.replaceChildren(seg(FILTERS,id,pick,'Show'));};
     pick('all');
+    if(intro)bar.insertBefore(info(intro,'About '+title),chipHost);
     page.replaceChildren(bar);
     if(meta)page.append(el('p',meta,'mg-sub mg-mono'));
-    if(intro)page.append(el('p',intro,'mg-sub'));
     page.append(status);
   }
   function finish(items){
     const hist=historyTable(items);hist.hidden=true;
-    const foot=el('div',undefined,'mg-bar');foot.style.justifyContent='space-between';
-    foot.append(el('span',pending.length?'Values set by env or a flag are locked here. Click a setting’s name for its help.':'','mg-sub'));
+    const foot=el('div',undefined,'mg-bar st-foot');
+    foot.append(pending.length?info('Values set by env or a flag are locked here. Tap a setting’s name for its help.','About editing'):el('span'));
     const acts=el('div',undefined,'mg-actions');const hb=el('button','History','mg-btn');hb.type='button';hb.onclick=()=>{hist.hidden=!hist.hidden;if(!hist.hidden)hist.scrollIntoView({block:'nearest'});};acts.append(hb);
     if(pending.length){saveButton=el('button','','mg-btn primary');saveButton.type='button';saveButton.onclick=()=>saveAll().catch(e=>{status.textContent=e.message;});acts.append(saveButton);updateSave();}
     else page.querySelector('.st-filters').hidden=true;
@@ -78,10 +96,14 @@ export async function mountSettings(root){
   async function get(params){const r=await fetch(API+'?'+new URLSearchParams(params));const d=await r.json().catch(()=>({error:'Bad response'}));if(d.csrf)csrf=d.csrf;if(d.admin!==undefined)admin=d.admin;if(!r.ok||d.error)throw Error(d.error||'Request failed');return d;}
   async function post(body){const r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({csrf,...body})});const d=await r.json().catch(()=>({error:'Bad response'}));if(!r.ok||d.error)throw Error(d.error||'Request failed');return d;}
 
-  function go(view,target){state={view,target:target||''};const q=new URLSearchParams({view});if(target)q.set('target',target);history.replaceState(null,'','#settings?'+q);render().catch(e=>{page.replaceChildren(el('p',e.message,'kn-error'));});}
+  function go(view,target){state={view,target:target||''};pickerOpen=false;const q=new URLSearchParams({view});if(target)q.set('target',target);history.replaceState(null,'','#settings?'+q);render().catch(e=>{page.replaceChildren(el('p',e.message,'kn-error'));});}
   function navItem(text,sub,view,target){const b=el('button',undefined,'mg-navitem');b.type='button';b.append(el('span',text));if(sub){b.append(el('small',sub));b.title=text+' · '+sub;}if(state.view===view&&(state.target||'')===(target||''))b.classList.add('on');b.onclick=()=>go(view,target);return b;}
   function link(text,hash){const a=el('a',text);a.href='#'+hash;a.className='kn-linkish';a.onclick=e=>{e.preventDefault();window.showView&&window.showView(hash);};return a;}
 
+  // Phones: the section list folds into a picker that names the current section.
+  const wide=matchMedia('(min-width:801px)');
+  let picker=null,pickerOpen=false;
+  wide.addEventListener('change',()=>{if(picker)picker.open=wide.matches||pickerOpen;});
   function renderSide(){
     side.replaceChildren();
     const search=el('input');search.type='search';search.placeholder='Search every setting, e.g. ROOK_PORT';search.setAttribute('aria-label','Search settings');
@@ -96,6 +118,13 @@ export async function mountSettings(root){
       fold('Workers','worker',overview.workers.map(x=>navItem(x.name,x.typed_settings?'':'older build','worker',x.name)),'No workers online.');
       fold('Plugins & services','plugin',overview.plugins.map(x=>navItem(x.title,String(x.count),'plugin',x.namespace)),'None.');
     }
+    // Wrap everything in the picker (open on desktop; on phones it shows the current section).
+    const on=side.querySelector('.mg-navitem.on');
+    const label=on?on.querySelector('span').textContent:({overview:'Overview',hub:'Hub',persona:'Persona',user:'My preferences',band:'Band',worker:'Worker',plugin:'Plugin'}[state.view]||'Sections');
+    picker=el('details',undefined,'st-picker');picker.open=wide.matches||pickerOpen;
+    const sum=el('summary');sum.append(el('span',label),el('small','Sections'));picker.append(sum,...side.childNodes);
+    picker.addEventListener('toggle',()=>{if(!wide.matches)pickerOpen=picker.open;});
+    side.append(picker);
   }
 
   function badge(text,cls,title){const b=el('span',text,'st-src'+(cls?' '+cls:''));if(title)b.title=title;return b;}
@@ -167,8 +196,9 @@ export async function mountSettings(root){
     const s=el('div',undefined,'kn-scroll');s.append(t);wrap.append(s);return wrap;
   }
 
+  function pathCell(v){const td=el('td');if(v)td.append(copyChip(v));else td.textContent='—';return td;}
   function conflictsBanner(list){
-    if(!list||!list.length)return null;const b=el('div',undefined,'st-banner');b.append(el('strong',list.length+' setting'+(list.length>1?'s are':' is')+' overridden by the environment'));
+    if(!list||!list.length)return null;const b=el('details',undefined,'st-banner');b.append(el('summary',list.length+' env override'+(list.length>1?'s':'')));
     const ul=el('ul');for(const c of list){ul.append(el('li',(c.label||c.key||'')+' ('+(c.owner||'')+'): '+c.note));}b.append(ul);return b;
   }
 
@@ -177,30 +207,30 @@ export async function mountSettings(root){
     renderSide();
     const {view,target}=state;let d;
     if(view==='overview'){d=await get({view});overview=d;renderSide();
-      compose('Overview','','Every setting in one place, with where each value comes from. The environment wins over this page, and says so.');
+      compose('Overview','','Every setting in one place, with where each value comes from. The environment wins over this page, and says so. The relay has its own environment (HUB_*): shown on its page, not managed here.');
       const c=conflictsBanner(d.conflicts);if(c)page.append(c);
       const rl=d.relay||{};page.append(el('h2','Relay'));
-      const rp=el('p','',rl.reachable===false?'st-conflict':'kn-dim');rp.textContent='The MCP dials '+(rl.mcp||'?')+(rl.dashboard?', the dashboard '+rl.dashboard:'')+'. '+(rl.reachable===true?'Reachable: '+rl.peers+' peer(s) seen.':rl.reachable===false?'No peers seen through it yet: check the relay and its address.':'')+' The relay has its own environment (HUB_*): shown on its page, not managed here.';page.append(rp);
+      const rp=el('p','',rl.reachable===false?'st-conflict':'kn-dim');rp.textContent='MCP → '+(rl.mcp||'?')+(rl.dashboard?' · dashboard → '+rl.dashboard:'')+(rl.reachable===true?' · '+rl.peers+' peer'+(rl.peers===1?'':'s'):rl.reachable===false?' · no peers seen: check the relay and its address':'');page.append(rp);
       if(rl.note)page.append(el('p',rl.note,'st-conflict'));
-      page.append(el('h2','Hub processes'));const t=el('table',undefined,'kn-table');const hr=el('tr');for(const x of ['Process','Started','Reported','Chat database','Settings file'])hr.append(el('th',x));t.append(hr);
-      for(const [name,rep] of Object.entries(d.runtime||{})){if(name.startsWith('worker:'))continue;const tr=el('tr');tr.append(el('td',name),el('td',rep.started_at?ago(rep.started_at):'—'),el('td',ago(rep.updated_at)),el('td',(rep.stores||{}).chat_db||'—'),el('td',(rep.stores||{}).settings_db||'—'));t.append(tr);}
+      page.append(el('h2','Hub processes'));const t=el('table',undefined,'kn-table st-processes');const hr=el('tr');for(const x of ['Process','Started','Reported','Chat database','Settings file'])hr.append(el('th',x));t.append(hr);
+      for(const [name,rep] of Object.entries(d.runtime||{})){if(name.startsWith('worker:'))continue;const tr=el('tr');tr.append(el('td',name),el('td',rep.started_at?ago(rep.started_at):'—'),el('td',ago(rep.updated_at)),pathCell((rep.stores||{}).chat_db),pathCell((rep.stores||{}).settings_db));t.append(tr);}
       page.append(t);const mc=(d.runtime||{}).mcp,dc=(d.runtime||{}).dashboard;
       if(mc&&dc&&(mc.stores||{}).chat_db&&(dc.stores||{}).chat_db&&mc.stores.chat_db!==dc.stores.chat_db)page.append(el('p','⚠ The dashboard and the MCP use different chat databases; set ROOK_CHAT_DB (or ROOK_DATA_DIR) the same for both.','st-conflict'));
-      if(!mc)page.append(el('p','The MCP server has not reported yet.','kn-dim'));if(!dc)page.append(el('p','The dashboard has not reported yet (restart it to record its environment).','kn-dim'));
+      if(!mc)page.append(el('p','MCP: not reported yet.','kn-dim'));if(!dc)page.append(el('p','Dashboard: not reported yet (restart it to record its environment).','kn-dim'));
       page.append(el('h2','Plugins & services'));const pl=el('div',undefined,'kn-sections');for(const p of d.plugins){const b=el('button',undefined,'kn-card');b.type='button';b.append(el('strong',p.title),el('small',p.count+' settings · runs in '+p.owner));b.onclick=()=>go('plugin',p.namespace);pl.append(b);}page.append(pl);
       finish(d.history);return;}
     if(view==='hub'){d=await get({view});compose('Hub');page.append(...groups(d,{scope:'hub',target:'',onSaved:render}));finish(d.history);return;}
-    if(view==='band'){d=await get({view,target});const b=d.band;compose('Band: '+b.name,b.label+' · key version '+b.epoch+(b.primary?' · primary':'')+(b.active?'':' · revoked'),'Worker defaults apply to every worker on this band unless a worker overrides them. Apply them from each worker page.');page.append(...groups(d,{scope:'band',target,onSaved:render}));finish(d.history);return;}
+    if(view==='band'){d=await get({view,target});const b=d.band;compose('Band: '+b.name,b.label+' · key v'+b.epoch+(b.primary?' · primary':'')+(b.active?'':' · revoked'),'Worker defaults apply to every worker on this band unless a worker overrides them. Apply them from each worker page.');page.append(...groups(d,{scope:'band',target,onSaved:render}));finish(d.history);return;}
     if(view==='plugin'){d=await get({view,target});compose(d.title,'runs in '+d.owner+' · '+d.origin.replace('-',' '));
       if(d.owner.startsWith('service:')){const c=el('div',undefined,'kn-callout');c.append(el('strong','Separate service'),el('span','It reads these with settings.fetch("'+d.namespace+'") on worker rook, using a token listed in core.settings.service_readers.'+d.namespace+'. Readers now: '+(d.service_readers.length?d.service_readers.join(', '):'none')+'. Its own environment still wins.'));page.append(c);}
-      if(d.origin==='worker-plugin')page.append(el('p','Per-worker settings: set them on each worker page (Workers in the sidebar).','kn-dim'));
+      if(d.origin==='worker-plugin')page.append(el('p','Per-worker: set on each worker page.','kn-dim'));
       page.append(...groups(d,{scope:'hub',target:'',onSaved:render}));
       if(d.scoped&&d.scoped.length){page.append(el('h2','Set per band, worker or user'));const t=el('table',undefined,'kn-table');const h=el('tr');for(const c of ['Setting','Home scope','Overrides'])h.append(el('th',c));t.append(h);for(const s of d.scoped){const tr=el('tr');tr.append(el('td',s.label+' ('+s.key+')'),el('td',s.scope),el('td',Object.entries(s.overrides).map(([k,v])=>v+' '+k).join(', ')||'—'));t.append(tr);}page.append(t);}
       finish(d.history);return;}
     if(view==='user'){d=await get({view:'user'});compose('My preferences','','Yours on every device that signs in with this account. A device can still keep its own value.');const look=el('div','','st-theme');page.append(look);import('/account/ui/assets/themes.js'+new URL(import.meta.url).search).then(m=>m.mountThemePicker(look)).catch(()=>look.remove());page.append(...groups(d,{scope:'user',target:d.user,onSaved:render}));finish(d.history);return;}
     if(view==='worker'){d=await get({view,target});const live=d.live||{};
       compose('Worker: '+d.title,(live.online?'● online':'○ offline')+(live.version?' · '+live.version:'')+(live.band?' · band '+live.band:''));
-      if(live.online&&!live.typed_settings)page.append(el('div','This worker runs an older build: it takes plain settings, but secrets are not pushed to it (they would land on its disk). Update it to push secrets, which it then fetches at use.','st-banner'));
+      if(live.online&&!live.typed_settings){const b=el('div',undefined,'st-banner');b.append(el('span','Older build: secrets are not pushed. '),info('This worker runs an older build: it takes plain settings, but secrets are not pushed to it (they would land on its disk). Update it to push secrets, which it then fetches at use.','Why'));page.append(b);}
       // plugins
       page.append(el('h2','Plugins'));
       const plist=(live.plugins||{}).plugins||[];
@@ -212,15 +242,14 @@ export async function mountSettings(root){
           tr.append(el('td',p.module),el('td',st),el('td',p.loaded?'':(p.reason||''),'kn-dim'),act);t.append(tr);}
         const s=el('div',undefined,'kn-scroll');s.append(t);page.append(s);}
       const ps=Object.entries(d.plugin_settings||{});
-      if(ps.length){page.append(el('h2','Plugin settings'),el('p','Per-worker values for plugins that read settings. A plugin that is off because a setting is blank turns on once it is set and applied.','kn-dim'));
+      if(ps.length){const h2=el('h2','Plugin settings ');h2.append(info('Per-worker values for plugins that read settings. A plugin that is off because a setting is blank turns on once it is set and applied.','About plugin settings'));page.append(h2);
         for(const [m,rows] of ps){const p=plist.find(x=>x.module===m);const box=el('section',undefined,'st-group');const head=el('div',undefined,'mg-head');for(const c of [m+(p?(p.loaded?' · on':' · not loaded'):' · not reported by the worker'),'Value','Comes from','Applies'])head.append(el('div',c));box.append(head);for(const r of rows)box.append(row(r,{scope:'worker',target:d.worker,onSaved:render}));page.append(box);}}
       page.append(el('h2','Worker'),...groups(d,{scope:'worker',target:d.worker,onSaved:render}));
       // delivery
-      const dl=el('section',undefined,'kn-callout');dl.append(el('strong','Apply to this worker'));
-      dl.append(el('span','Stored worker settings are pushed as one config (commit-confirmed: the worker restarts and reverts on its own unless it comes back). Secrets go as {{secret:…}} references that it fetches from the hub at use.'));
+      const dl=el('section',undefined,'kn-callout');const dh=el('strong','Apply to this worker ');dh.append(info('Stored worker settings are pushed as one config (commit-confirmed: the worker restarts and reverts on its own unless it comes back). Secrets go as {{secret:…}} references that it fetches from the hub at use.','How apply works'));dl.append(dh);
       if(d.delivered)dl.append(el('span','Last applied '+ago(d.delivered.updated_at)+' by '+(d.delivered.by||'?')+(d.delivered.epoch?' · epoch '+d.delivered.epoch:''),'kn-dim'));
       if(d.job)dl.append(el('span','Latest apply: '+d.job.state+(d.job.result&&d.job.result.error?' · '+d.job.result.error:''),d.job.state==='failed'?'kn-error':'kn-dim'));
-      const ab=el('button','Apply and restart worker','kn-primary');ab.type='button';ab.disabled=!live.online;ab.onclick=async()=>{ab.disabled=true;try{const r=await post({action:'apply_worker',worker:d.worker});status.textContent=r.note||('Applying to '+d.worker+'… it restarts and is confirmed when it returns.');setTimeout(()=>render().catch(()=>{}),8000);}catch(e){status.textContent=e.message;ab.disabled=false;}};
+      const ab=el('button','Apply & restart','kn-primary');ab.title='Apply and restart worker';ab.type='button';ab.disabled=!live.online;ab.onclick=async()=>{ab.disabled=true;try{const r=await post({action:'apply_worker',worker:d.worker});status.textContent=r.note||('Applying to '+d.worker+'… it restarts and is confirmed when it returns.');setTimeout(()=>render().catch(()=>{}),8000);}catch(e){status.textContent=e.message;ab.disabled=false;}};
       const row2=el('div',undefined,'kn-row');row2.append(ab);dl.append(row2);page.append(dl);
       if(live.config&&live.config.config){page.append(el('h2','Active overrides on the worker'));const pre=el('pre',JSON.stringify(live.config.config,null,2));pre.className='kn-md';page.append(pre);}
       const rep=live.report;if(rep&&rep.secret_refs&&Object.keys(rep.secret_refs).length){page.append(el('h2','Secrets fetched at use'));const ul=el('ul',undefined,'kn-list');for(const [v,s] of Object.entries(rep.secret_refs))ul.append(el('li',v+' ← vault:'+s.vault+(s.resolved?' (fetched)':' (not fetched yet)')));page.append(ul);}
@@ -231,7 +260,7 @@ export async function mountSettings(root){
 
   // Persona (hub plugin "persona"): profiles, scoped assignments, history.
   function renderPersona(d,target){
-    pending=[];saveButton=null;page.replaceChildren(el('h1','Persona'),el('p','One persona for every agent that uses Rook: it rides in the MCP instructions (trimmed to '+d.mcp_budget+' characters), in work launches, in the skill\'s site notes, in harness files written by persona.apply, and gives the voice assistant its name. The most specific assignment wins: user, then family, then band, then default.','kn-dim'),status);
+    pending=[];saveButton=null;const ph=el('div',undefined,'mg-bar');ph.append(el('h1','Persona'),info('One persona for every agent that uses Rook: it rides in the MCP instructions (trimmed to '+d.mcp_budget+' characters), in work launches, in the skill\'s site notes, in harness files written by persona.apply, and gives the voice assistant its name. The most specific assignment wins: user, then family, then band, then default.','About personas'));page.replaceChildren(ph,status);
     // assignments
     page.append(el('h2','Assignments'));
     const at=el('table',undefined,'kn-table');const ah=el('tr');for(const c of ['Scope','Target','Profile','Set by',''])ah.append(el('th',c));at.append(ah);
@@ -239,7 +268,7 @@ export async function mountSettings(root){
     if(!d.assignments.length){const tr=el('tr');const td=el('td','Nothing assigned: agents get no persona.','kn-dim');td.colSpan=5;tr.append(td);at.append(tr);}
     page.append(at);
     const af=el('div',undefined,'kn-row');const sc=el('select');for(const s of d.scopes){const o=el('option',s);o.value=s;sc.append(o);}sc.value='default';
-    const tg=el('input');tg.type='text';tg.placeholder='target: band id, family ('+d.families.join(', ')+') or user id';tg.style.minWidth='320px';
+    const tg=el('input');tg.type='text';tg.placeholder='Target: band, family or user';tg.title='Band id, family ('+d.families.join(', ')+') or user id';tg.setAttribute('aria-label','Target');tg.style.minWidth='min(320px,100%)';
     const pf=el('select');for(const p of d.profiles){const o=el('option',p.id+(p.name?' ('+p.name+')':''));o.value=p.id;pf.append(o);}
     const ab=el('button','Assign','kn-primary');ab.type='button';ab.disabled=!d.profiles.length;
     ab.onclick=async()=>{try{await post({action:'persona_assign',scope:sc.value,target:tg.value,profile:pf.value});status.textContent='Assigned '+pf.value+' at '+sc.value+(tg.value?':'+tg.value:'')+'.';await render();}catch(e){status.textContent=e.message;}};

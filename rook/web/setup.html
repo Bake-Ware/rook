@@ -1,30 +1,30 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Setup · Rook</title>
 <link rel="stylesheet" href="/account/bands/assets/settings.css">
 <link rel="stylesheet" href="/account/bands/assets/theme.css">
 <script src="/account/ui/assets/theme-boot.js"></script>
 <style>.presets input{accent-color:var(--accent)}.presets{display:flex;flex-direction:column;gap:10px;border:1px solid var(--line2);padding:12px 14px;margin:0 0 16px}.presets legend{padding:0 6px}.presets .preset{display:block;font-weight:400}.presets .preset small{display:block;margin:2px 0 0 26px}.presets .risk-high{display:inline-block;margin:4px 0 0 26px;padding:1px 6px;border:1px solid var(--bad);color:var(--bad);font-size:11px}</style>
 </head><body class="standalone-account"><main class="settings-workspace narrow">
-<h1>♖ Rook: first-run setup</h1>
+<h1>♖ Rook setup</h1>
 <section>
-<p class="muted">A <b>band</b> is your group of computers that Rook connects. Name it and check the two addresses; the values filled in from this page's address usually work as they are.</p>
+<p class="muted">Name your <b>band</b> (your group of computers) and check the two addresses; the filled-in values usually work.</p>
 {{error|raw}}
 <form method="POST" action="/setup">
 <input type="hidden" name="csrf" value="{{csrf}}">
 <label>Band name
 <input name="band_name" value="{{band_name}}" placeholder="home" autofocus>
-<small>What to call this group of computers. Shown in the dashboard and when a computer joins.</small></label>
+<small>Shown in the dashboard and when a computer joins.</small></label>
 <label>Address your computers connect to
 <input name="hub_public" value="{{hub_public}}" placeholder="192.168.1.10:7005 or hub.example.com:443" required>
-<small>This hub's address and port as your other computers can reach it: a home address like <code>192.168.1.10:7005</code>, or your domain and <code>:443</code> when it is behind HTTPS.</small></label>
+<small>As your other computers reach this hub: <code>192.168.1.10:7005</code>, or your domain and <code>:443</code> behind HTTPS.</small></label>
 <label>Address for install commands
 <input name="pyz_domain" value="{{pyz_domain}}" placeholder="http://192.168.1.10:7005" required>
-<small>Where the install command on a new computer downloads Rook from: usually the address you opened this page at.</small></label>
+<small>Where new computers download Rook from: usually this page's address.</small></label>
 <label>Band key
 <input name="band_psk" value="{{band_psk}}" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" required>
-<small>A secret every computer in the band shares; one was made for you. Keep it private, and type it exactly (with its hyphens) if you change it. To replace it later, use Tokens.</small></label>
+<small>A shared secret, made for you. Keep it private; type it exactly (with hyphens) if you change it.</small></label>
 {{presets|raw}}
 <button type="submit">Save and start</button>
 </form>

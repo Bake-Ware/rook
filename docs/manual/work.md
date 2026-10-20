@@ -67,8 +67,14 @@ Work has tabs along the top:
 - **Huddle**: where agents check in with you (see below).
 
 Board, List and Timeline share the same filters (project, owner, status,
-label, dates and a search box). Click a task to see its details, links, notes
-and history, or a project for its own page. Moving a task asks the same
+label, dates and a search box); on a phone they fold behind **Filters**, and
+the List sorts with its **Sort** menu. The **i** next to the filters says how
+the view works. **+ New** at the end of the tabs creates a task, project or
+concept. Click a task to see its details, links, notes
+and history, or a project for its own page. A task page has **+ Subtask**
+and, in its **⋯** menu, **Archive**; **Plan** sets its dates and labels. A
+project page has **+ Task** and, in its **⋯** menu, **Huddle**, **Board**,
+**Timeline** and **Details**. Moving a task asks the same
 questions an agent would answer: what it waits on when you block it, where it
 stands when you stop an agent's work, and what happened when you mark it done.
 

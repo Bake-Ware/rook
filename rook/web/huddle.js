@@ -36,7 +36,7 @@ export async function mountHuddle(root,{onPins}={}){
   const strip=el('div',undefined,'hd-strip');strip.setAttribute('aria-label','Agent status');
   const pins=el('section',undefined,'hd-pins');const log=el('div',undefined,'hd-log');log.setAttribute('role','log');log.setAttribute('aria-live','polite');
   const head=el('header',undefined,'hd-head');
-  const compose=el('form',undefined,'hd-compose');const box=el('input');box.placeholder='Message the huddle… (@name to address an agent)';box.setAttribute('aria-label','Message');
+  const compose=el('form',undefined,'hd-compose');const box=el('input');box.placeholder='Message… (@name for one)';box.setAttribute('aria-label','Message');
   const send=el('button','Send','hd-send');send.type='submit';compose.append(box,send);
   const err=el('p','','kn-error hd-err');
 
@@ -49,8 +49,8 @@ export async function mountHuddle(root,{onPins}={}){
       a.append(top,el('small',(x.scope==='project'?'Project':'Band')+' · '+(x.agents||0)+' agent'+(x.agents===1?'':'s')+(x.last?' · '+ago(x.last.ts,''):''),'kn-dim'));
       if(x.last)a.append(el('span',name(x.last.sender)+': '+x.last.text,'hd-item-last'));
       list.append(a);}
-    if(!huddles.some(x=>x.scope==='band')){const b=button('Open the band huddle',()=>{location.hash='#work?v=huddle&hb=_';},'kn-linkish hd-start');list.append(b);}
-    list.append(el('p','Each project gets a huddle when an agent first reports in, or when you open it from the project page.','kn-dim hd-note'));}
+    if(!huddles.some(x=>x.scope==='band')){const b=button('Band huddle',()=>{location.hash='#work?v=huddle&hb=_';},'kn-linkish hd-start');list.append(b);}
+    list.append(el('p','A project gets one when an agent reports in.','kn-dim hd-note'));}
 
   function drawHead(){head.replaceChildren();const t=el('div');t.append(el('h1',view.title.replace(/^Huddle: /,'')));
     const sub=el('p',undefined,'kn-meta');sub.append(document.createTextNode((view.scope==='project'?'Project huddle':'Band huddle')+' · '+view.participants.filter(p=>p!==YOU).length+' agents · '));
@@ -58,7 +58,7 @@ export async function mountHuddle(root,{onPins}={}){
     const c=el('a','Open in Huddles');c.href='#huddles?room='+encodeURIComponent(view.room);sub.append(c);t.append(sub);head.append(t);}
 
   function drawStrip(){strip.replaceChildren();
-    if(!view.statuses.length){strip.append(el('p','No agent has reported in yet. Agents post here with rook_huddle when they start, get stuck or finish.','kn-dim hd-empty'));return;}
+    if(!view.statuses.length){strip.append(el('p','No agent has reported in yet.','kn-dim hd-empty'));return;}
     const now=Date.now()/1000;
     for(const s of view.statuses){const quiet=now-s.ts>QUIET&&!['done','idle'].includes(s.state);
       const c=el('article',undefined,'hd-agent hd-st-'+s.state+(quiet?' hd-quiet':''));
@@ -140,7 +140,7 @@ export async function mountHuddle(root,{onPins}={}){
       const want={room:where.room||undefined,project:where.project||undefined,band:where.band&&where.band!=='_'?where.band:undefined};
       if(!want.room&&!want.project&&!where.band){await drawList();
         const first=huddles.slice().sort((a,b)=>(b.open_questions-a.open_questions)||((b.last?.ts||0)-(a.last?.ts||0)))[0];
-        if(first)want.room=first.room;else{main.replaceChildren(el('h1','Huddle'),el('p','A huddle is where your agents check in: what each is working on, what is blocking it, and questions only you can answer. None has started yet. Open a project and choose Huddle, or start the band huddle.','kn-dim'));clearInterval(timer);return;}}
+        if(first)want.room=first.room;else{main.replaceChildren(el('h1','Huddle'),el('p','No huddle yet: open one from a project, or the band huddle.','kn-dim'));clearInterval(timer);return;}}
       try{const v=await api('view',{...want,limit:120});cur={room:v.room};view=null;lastSeq=0;layoutMain();await refresh(true);}
       catch(e){main.replaceChildren(el('p',e.message,'kn-error'));}
       clearInterval(timer);

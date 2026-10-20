@@ -18,9 +18,9 @@ needs you.
     claim, or close a project whose tasks are all finished.
 - **Active now**: sessions running, tasks in progress (with who holds them)
   and chat rooms active in the last hour.
-- **Open tasks by project**: projects with open work, busiest first; blocked
+- **Open tasks** (by project): projects with open work, busiest first; blocked
   tasks, then those in progress, then a few to do.
-- **Recent knowledge changes**: the wiki pages changed most recently, with
+- **Knowledge changes**: the wiki pages changed most recently, with
   who changed them and how; disputed pages are marked.
 
 ## Links between things

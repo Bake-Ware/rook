@@ -1,0 +1,161 @@
+/* Phone-first shell and shared compact controls. Loaded last by index.html, so
+   it wins over shell.css/theme.css at equal specificity. Theme tokens only.
+   Breakpoints: <=800px phone/tablet shell (drawer + tab bar), <=640px stacked tables. */
+
+/* -- everywhere: title row with an (i) for the page description ----------------- */
+.app-title{display:flex;align-items:center;gap:8px;min-width:0}
+.app-title h1{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.info-toggle{flex:0 0 auto;width:22px;height:22px;display:inline-grid;place-items:center;padding:0;border:1px solid var(--line2);border-radius:50%;background:transparent;color:var(--dim);font:italic 600 12px/1 Georgia,serif;cursor:pointer}
+.info-toggle:hover,.info-toggle[aria-expanded=true]{color:var(--accent);border-color:var(--accent-line)}
+.app-heading p#view-description{max-width:72ch}
+.topbar{padding-top:14px;padding-bottom:12px}
+.nav-toggle,.tabbar,.top-live,.nav-backdrop,.worker-opts{display:none}
+.iconbtn.primary{color:var(--on-accent);background:var(--accent);border-color:var(--accent)}
+.addform .r{align-items:center}.addform .spacer{flex:1}
+
+/* A shared "i" disclosure for help text inside pages (manage.js info()). */
+.mg-info{display:inline-block;position:relative}
+.mg-info>summary{list-style:none;cursor:pointer;width:22px;height:22px;display:inline-grid;place-items:center;border:1px solid var(--line2);border-radius:50%;color:var(--dim);font:italic 600 12px/1 Georgia,serif}
+.mg-info>summary::-webkit-details-marker{display:none}
+.mg-info[open]>summary,.mg-info>summary:hover{color:var(--accent);border-color:var(--accent-line)}
+.mg-info>p,.mg-info>div{margin:8px 0 0;color:var(--dim);font-size:12px;line-height:1.55;max-width:72ch}
+.mg-info.block{display:block}
+
+/* Long ids and paths: one line, ellipsis, tap copies (index.html handles [data-copy]). */
+.copy-chip,[data-copy]{cursor:copy}
+.copy-chip{display:inline-block;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom;font-family:var(--mono);font-size:11px;color:var(--dim)}
+.copy-chip:hover{color:var(--accent)}
+
+/* Segmented control: one row of mutually exclusive choices. */
+.seg{display:inline-flex;max-width:100%;overflow-x:auto;scrollbar-width:none;border:1px solid var(--line2)}
+.seg::-webkit-scrollbar{display:none}
+.seg>*{flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;min-height:34px;padding:0 12px;background:transparent;border:0;border-right:1px solid var(--line);color:var(--dim);font:500 11px var(--mono);text-decoration:none;cursor:pointer;white-space:nowrap}
+.seg>*:last-child{border-right:0}
+.seg>[aria-pressed=true],.seg>[aria-current=page],.seg>.on{background:var(--accent-bg);color:var(--accent)}
+
+/* The overflow (more) button. */
+.more-btn{min-width:34px;font-size:18px!important;line-height:1!important;letter-spacing:1px}
+
+#toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translate(-50%,20px);opacity:0;pointer-events:none;z-index:200;padding:9px 14px;background:var(--panel);border:1px solid var(--accent-line);color:var(--fg);font:12px var(--mono);transition:opacity .15s,transform .15s}
+#toast.show{opacity:1;transform:translate(-50%,0)}
+
+/* -- phones and narrow tablets ---------------------------------------------------- */
+@media(max-width:800px){
+ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+ body{padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}
+ /* no iOS zoom on focus */
+ input,select,textarea{font-size:16px!important}
+ input[type=checkbox],input[type=radio]{width:20px;height:20px}
+
+ /* drawer */
+ .app-sidebar{position:fixed!important;inset:0 auto 0 0!important;width:min(86vw,320px)!important;display:flex!important;flex-direction:column;
+   padding:calc(16px + env(safe-area-inset-top)) 14px calc(14px + env(safe-area-inset-bottom))!important;border-right:1px solid var(--line2)!important;border-bottom:0!important;
+   transform:translateX(-102%);transition:transform .2s ease;z-index:70;overflow:hidden;box-shadow:0 0 50px var(--shadow)}
+ body.nav-open .app-sidebar{transform:none}
+ .nav-backdrop{display:block;position:fixed;inset:0;z-index:65;background:var(--backdrop)}
+ .nav-backdrop[hidden]{display:none}
+ .app-sidebar .brand{padding:0 8px 10px!important}
+ .nav-label{display:flex!important;padding:14px 10px 6px!important}
+ .sidebar-nav{display:flex!important;flex-direction:column;overflow-y:auto!important;margin:0 -6px!important;padding:0 6px 12px!important}
+ .nav-group{display:flex!important}
+ .nav-group.collapsed nav a:not(.active){display:none}
+ .app-sidebar nav{flex-direction:column!important;overflow:visible!important;white-space:normal!important;gap:2px!important}
+ .app-sidebar nav a{min-height:44px;padding:0 12px!important;font-size:15px!important}
+ .app-sidebar nav[aria-label="Management"],.app-sidebar nav.nav-help{margin-top:0!important}
+ .app-sidebar nav.nav-help{margin-top:10px!important;padding-top:10px!important;border-top:1px solid var(--line)!important}
+ .sidebar-footer{position:static!important;flex-direction:row!important;flex-wrap:wrap;align-items:center;gap:8px 16px!important;padding:12px 8px 0!important;border-top:1px solid var(--line)!important;margin-top:auto!important}
+ .sidebar-footer .art-toggle{position:static!important;display:inline-block;min-height:44px;padding:0!important;background:none!important;border:0!important;font-size:11px!important}
+ .sidebar-footer .signout{min-height:44px;display:inline-flex;align-items:center;font-size:12px!important}
+ .sidebar-footer .live{font-size:12px!important}
+
+ /* compact sticky header */
+ .topbar{position:sticky!important;top:0;z-index:40;margin-left:0!important;display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px!important;
+   padding:calc(6px + env(safe-area-inset-top)) 12px 6px!important;background:var(--bg)!important;border-bottom:1px solid var(--line)}
+ .nav-toggle{display:inline-grid;place-items:center;flex:0 0 44px;width:44px;height:44px;margin-left:-8px;padding:0;background:none;border:0;color:var(--fg);font-size:20px;cursor:pointer}
+ .app-heading{flex:1 1 0!important;min-width:0!important}
+ .app-heading h1{font-size:19px!important;letter-spacing:-.3px!important;line-height:1.2}
+ .app-heading p#view-description:not([hidden]){display:block;margin:4px 0 2px!important;font-size:12px!important}
+ .info-toggle{width:26px;height:26px;min-height:0!important;position:relative}
+ .info-toggle::after{content:'';position:absolute;inset:-8px}
+ .top-live{display:inline-flex;align-items:center;justify-content:center;width:28px;height:44px}
+ .top-live .dot{width:8px;height:8px}
+
+ /* bottom tab bar */
+ .tabbar{display:grid;grid-template-columns:repeat(5,1fr);position:fixed;left:0;right:0;bottom:0;z-index:45;background:var(--sidebar);border-top:1px solid var(--line2);
+   padding:0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+ .tabbar>a,.tabbar>button{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-height:56px;padding:4px 2px;background:none;border:0;
+   color:var(--dim);font:500 10px var(--mono);letter-spacing:.3px;text-decoration:none;cursor:pointer;-webkit-tap-highlight-color:transparent}
+ .tabbar .tb-ico{font:18px/1 var(--mono);height:22px;display:flex;align-items:center}
+ .tabbar>a,.tabbar>button{border-radius:0!important}
+ .tabbar>a.active{color:var(--accent);background:none!important;box-shadow:inset 0 2px 0 var(--accent)}
+ body.nav-open .tabbar>[data-tab=more]{color:var(--accent)}
+ .tabbar .nav-badge{position:absolute;top:5px;left:calc(50% + 6px);margin:0;min-width:16px;line-height:16px;font-size:9px}
+
+ .wrap{margin-left:0!important;padding:12px 12px calc(76px + env(safe-area-inset-bottom))!important;overflow-wrap:anywhere}
+ .addform{position:fixed!important;top:calc(60px + env(safe-area-inset-top))!important;left:12px!important;right:12px!important;width:auto!important;z-index:50}
+
+ /* tap targets */
+ button,select,.iconbtn,.mg .mg-btn,.mg .mg-chip,.seg>*,input[type=text],input[type=search],input[type=password],input[type=email],input[type=number],input[type=url],input:not([type]){min-height:44px}
+ summary{min-height:44px;display:flex;align-items:center;gap:6px}
+ .mg-info>summary{min-height:28px;width:28px;height:28px;display:inline-grid}
+ .more-btn{min-width:44px}
+
+ /* workers header */
+ .worker-controls:not([hidden]){display:grid!important;grid-template-columns:minmax(0,1fr) 44px;gap:6px!important;width:100%}
+ .worker-controls #bandsel{grid-column:1;min-width:0;width:100%}
+ .worker-controls .join-band{grid-column:2;padding:0!important;font-size:18px!important}
+ .worker-controls .join-band .lbl,.view-toggle .lbl,.inventory-controls .lbl{display:none}
+ .worker-controls input.filter{grid-column:1;width:100%!important}
+ .worker-controls .worker-opts{display:inline-grid!important;place-items:center;grid-column:2;padding:0!important;font-size:18px!important}
+ .worker-controls:not(.opts-open) .inventory-controls{display:none!important}
+ .inventory-controls:not([hidden]){grid-column:1/-1;display:grid!important;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:6px!important}
+ .inventory-controls label{min-width:0}.inventory-controls select{width:100%;min-width:0}
+ .view-toggle button{min-width:44px;font-size:15px!important}
+ #worker-stats{grid-template-columns:repeat(3,minmax(0,1fr)) minmax(0,1.6fr)!important;gap:6px!important}
+ #worker-stats .tile.hb{display:none}
+ #worker-stats .tile{padding:6px 8px!important}
+ #worker-stats .verleg{max-height:2.6em;overflow:hidden}
+ .row .acts .worker-menu-button,.worker-menu-button{width:44px!important;min-height:44px}
+ .row .caret{min-width:28px;min-height:44px}
+ #worker-menu button,.mg-menu button,.mg-menu a{min-height:44px;font-size:15px!important}
+
+ /* the classic modal becomes a full-screen sheet */
+ .overlay{padding:0!important;align-items:stretch!important}
+ .overlay .modal{max-width:none!important;width:100%;max-height:none!important;height:100%;border-radius:0!important;border:0!important;
+   padding-bottom:env(safe-area-inset-bottom)}
+ .modal .mh{padding:calc(8px + env(safe-area-inset-top)) 12px 8px!important;min-height:52px}
+ .modal .mh .x{display:inline-grid;place-items:center;width:44px;height:44px;margin-right:-8px}
+ .term{height:calc(100dvh - 220px)!important}
+
+ /* every <dialog> is a sheet */
+ dialog[open]{width:100vw!important;max-width:100vw!important;height:100dvh!important;max-height:100dvh!important;margin:0!important;inset:0!important;border:0!important;border-radius:0!important;
+   padding:calc(16px + env(safe-area-inset-top)) 14px calc(16px + env(safe-area-inset-bottom))!important;overflow:auto}
+ dialog#worker-menu[open],dialog.popover[open]{width:auto!important;height:auto!important;max-height:80dvh!important;inset:auto!important;padding:6px!important;border:1px solid var(--line2)!important}
+
+ .stats{margin-bottom:12px!important}
+ .first-worker{padding:14px!important}
+ .install p{margin-bottom:10px}
+ .ilinks{flex-wrap:wrap}
+ .ilinks a{min-height:44px;display:inline-flex;align-items:center}
+ .cmd{padding-right:64px}
+ .cp{min-height:36px;min-width:52px}
+ pre,code{overflow-wrap:anywhere;white-space:pre-wrap}
+
+ /* artwork: quieter behind content */
+ .rook-art{opacity:.12!important}
+}
+
+/* Tables stack into labelled rows (index.html labels each cell with its column). */
+@media(max-width:640px){
+ .wrap table:not(.no-stack){display:block;width:100%!important;min-width:0!important;border:0}
+ .wrap table:not(.no-stack) thead{display:none}
+ .wrap table:not(.no-stack) tbody{display:block}
+ .wrap table:not(.no-stack) tr{display:block;padding:8px 0;border-bottom:1px solid var(--line)}
+ .wrap table:not(.no-stack) tr:has(>th){display:none}
+ .wrap table:not(.no-stack) td{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:3px 2px!important;border:0!important;text-align:right;min-width:0;max-width:100%;overflow-wrap:anywhere}
+ .wrap table:not(.no-stack) td::before{content:attr(data-label);flex:0 0 auto;max-width:45%;color:var(--dim);font:500 10px var(--mono);letter-spacing:.6px;text-transform:uppercase;text-align:left}
+ .wrap table:not(.no-stack) td:not([data-label])::before,.wrap table:not(.no-stack) td[data-label=""]::before{display:none}
+ .wrap table:not(.no-stack) td:not([data-label]){text-align:left}
+}
+
+@media(prefers-reduced-motion:reduce){.app-sidebar{transition:none!important}#toast{transition:none}}

@@ -64,10 +64,54 @@
 .kn-fields label{display:flex;flex-direction:column;gap:6px;font-size:13px}
 .kn-fields input,.kn-fields select,.kn-fields textarea{padding:9px;background:var(--panel2);color:var(--fg);border:1px solid var(--line2);font:inherit}
 .kn-fields textarea{min-height:180px;font-family:var(--mono);font-size:12px}
+/* compact controls (mobile pass) */
+.kn-tools{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+@media(min-width:801px){.kn-tools input[type=search]{flex-basis:100%}.kn-tools .kn-review-btn{margin-left:0;flex:1}}
+.kn-tools input[type=search]{flex:1 1 auto;min-width:0}
+.kn-side-body{display:flex;flex-direction:column;gap:8px;min-width:0}
+.kn-side-toggle{display:none}
+.kn-side-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.kn-side-head h3{margin-bottom:0}
+.kn-old-toggle{display:inline-flex;align-items:center;gap:4px;font-size:11px;cursor:pointer}
+.kn-acts,.kn-tools,.kn-review,.kn-reviewbar,.kn-row{--kn-btn:1}
+.kn-acts button,.kn-tools button,.kn-review button,.kn-reviewbar button,.kn-row button{font:11px var(--mono);letter-spacing:.03em;padding:7px 12px;min-height:34px;border:1px solid var(--line2);background:var(--panel2);color:var(--fg);cursor:pointer;border-radius:0;white-space:nowrap}
+.kn-acts button:hover,.kn-tools button:hover,.kn-review button:hover,.kn-reviewbar button:hover,.kn-row button:hover{border-color:var(--accent-dim);color:var(--accent)}
+.kn-acts .kn-primary,.kn-tools .kn-primary,.kn-row .kn-primary{background:var(--accent-bg-strong);color:var(--accent);border-color:var(--accent-dim)!important}
+.kn-add{width:36px;padding:0!important;font-size:18px!important;line-height:1}
+.kn-icon{width:34px;padding:0!important}
+.more-btn{min-width:34px;padding:0 8px!important;font-size:18px!important;line-height:1!important}
+.kn-titlerow{display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap}
+.kn-titlerow h1{flex:1 1 260px;min-width:0}
+.kn-acts{display:flex;gap:6px;align-items:center;flex:0 0 auto;margin-top:6px}
+.kn-crumbs{display:flex;align-items:center;gap:6px;min-width:0;white-space:nowrap;overflow:hidden}
+.kn-crumbs .kn-crumb{flex:0 1 auto;min-width:0;max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap!important;text-decoration:none}
+.kn-crumbs a.kn-crumb,.kn-crumbs button.kn-crumb{color:var(--accent)!important;flex-shrink:0;max-width:30%}
+.kn-crumbs .kn-here{color:var(--dim)}
+.kn-crumbs .kn-here:last-child{flex:1 1 auto;max-width:none}
+.kn-sep{color:var(--dim2);flex:0 0 auto}
+.kn-crumbs a{padding:0!important;background:none!important}
+.kn-meta .copy-chip{max-width:min(320px,60vw)}
+.kn-excerpt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media(max-width:800px){
-  .kn-layout{grid-template-columns:1fr}
-  .kn-side{border-right:0;border-bottom:1px solid var(--line);max-height:42vh;overflow:auto}
-  .kn-page{padding:16px}
+  .kn-layout{grid-template-columns:1fr;min-height:0}
+  .kn-side{border-right:0;border-bottom:1px solid var(--line);padding:10px 12px;gap:8px}
+  .kn-side-toggle{display:flex;align-items:center;justify-content:space-between;width:100%;min-height:44px;padding:0 4px!important;background:none!important;border:0!important;color:var(--fg);font:500 11px var(--mono);letter-spacing:.06em;text-transform:uppercase;cursor:pointer}
+  .kn-side-toggle:after{content:'▸';color:var(--dim);transition:transform .15s}
+  .kn-side.kn-open .kn-side-toggle:after{transform:rotate(90deg)}
+  .kn-tools{flex-wrap:nowrap}
+  .kn-excerpt{display:none}
+  .kn-side-body{display:none}
+  .kn-side.kn-open .kn-side-body{display:flex;max-height:60vh;overflow:auto}
+  .kn-tools button,.kn-acts button,.kn-review button,.kn-reviewbar button,.kn-row button{min-height:44px}
+  .kn-add,.kn-icon,.more-btn{min-width:44px}
+  .kn-tree-item,.kn-index-item{min-height:44px}
+  .kn-tog{flex-basis:28px;width:28px;min-height:44px}
+  .kn-page{padding:14px 12px}
+  .kn-page h1{font-size:21px}
+  .kn-acts{margin-top:0}
+  .kn-crumbs{min-height:32px}.kn-crumbs .kn-linkish{min-height:32px}
+  .kn-reviewbar{margin:-4px -4px 12px}
+  .kn-dialog .kn-row{position:sticky;bottom:-16px;background:var(--panel);padding:10px 0;margin-bottom:0;justify-content:flex-end}
 }
 /* verification */
 .kn-dot{flex:0 0 7px;width:7px;height:7px;border-radius:50%;border:1px solid var(--line2);margin-right:2px}
