@@ -1,0 +1,184 @@
+// 2. Build it, paint it, don't wait up — "Make ideas, not time."
+// Late night: the folio from yesterday's review floats over the workstation. The agent
+// applies the changes you asked for (hinge stops at flat, the pen is the pin, corner lips),
+// you say print it and leave; it slices, prints, checks the first layer, and leaves you a
+// voice message by morning.
+import { THREE, V, COL, clamp, lerp, inv, ease, fade, pane, chip, goldRook, agent, figure } from '../kit.js';
+
+export default {
+  title: 'Build it, paint it, don’t wait up', tagline: 'Make ideas,<br>not time.', body: 58,
+  mood: { key: 'A', bpm: 88, minor: true, energy: .6 },
+  assets: ['rook', 'agent', 'workstation', 'printer', 'folio', 'figure', 'nightstand', 'phone', 'chair', 'bed'],
+  async build(kit) {
+    const S = kit.scene;
+    kit.board({ size: 60 });
+    S.fog = new THREE.Fog(COL.page, 9, 26);
+    kit.hemi.intensity = 1.0; kit.key.intensity = 1.2;
+
+    // ---------------------------------------------------------- the workshop corner
+    const desk = kit.make('workstation', { at: V(0, 0, 0) });
+    const scr = kit.meshesOf(desk, 'screen')[0];
+    const printer = kit.make('printer', { at: V(2.7, 0, -.1), rot: -.35 });
+    const bed = kit.node(printer, 'bed'), head = kit.node(printer, 'head');
+    const chairO = kit.make('chair', { at: V(-.1, 0, 1.0), rot: Math.PI });
+    const lampL = new THREE.PointLight(0xffc27a, 0, 7, 1.4); lampL.position.set(-.85, 1.45, .3); S.add(lampL);
+    const dawn = new THREE.DirectionalLight(0xffc996, 0); dawn.position.set(8, 3, 6); S.add(dawn);
+    const hub = goldRook(kit, V(-7, 0, -8), .55, .6);
+    const ag = agent(kit, 'claude code', COL.teal, V(1.4, 0, 1.8), { scale: .26 });
+
+    // the folio, floating over the desk
+    const holder = new THREE.Group(); holder.position.set(0, 1.85, 0); S.add(holder);
+    const folio = kit.make('folio', { parent: holder, scale: .5 });
+    folio.rotation.x = .55;
+    const front = kit.node(folio, 'front'), pen = kit.node(folio, 'pen'), lips = kit.node(folio, 'lips'), pad = kit.node(folio, 'notepad');
+    // the old design: a snap latch and an elastic band, which fade out in the rebuild
+    const oldMat = kit.toon(0x9a4a3a);
+    const elastic = new THREE.Mesh(new THREE.BoxGeometry(.05, .02, 1.42), oldMat); elastic.position.set(.75, -.045, 0); folio.add(elastic);
+    const snap = new THREE.Mesh(new THREE.BoxGeometry(.12, .08, .16), oldMat); snap.position.set(.97, .03, 0); folio.add(snap);
+    for (const m of [elastic, snap]) m.add(new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry), kit.inkMat));
+    const stop = new THREE.Mesh(new THREE.BoxGeometry(.1, .06, 1.2), kit.toon(COL.goldHi)); stop.position.set(0, .07, 0); folio.add(stop);
+    stop.add(new THREE.LineSegments(new THREE.EdgesGeometry(stop.geometry), kit.inkMat));
+    const ghostMat = new THREE.MeshBasicMaterial({ color: 0x79d2c8, transparent: true, opacity: .0, depthWrite: false, blending: THREE.AdditiveBlending });
+
+    // the printed parts on the bed: two covers rising layer by layer
+    const prints = [];
+    for (const x of [-.17, .17]) {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(.3, 1, .44), kit.toon(0xd8ad6d));
+      m.add(new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry), kit.inkMat));
+      m.position.set(x, .01, 0); bed.add(m); prints.push(m);
+    }
+    const chamber = new THREE.PointLight(0xfff0d0, 0, 1.6, 1.5); chamber.position.set(0, .9, 0); printer.add(chamber);
+    const done = kit.make('folio', { parent: bed, scale: .3 }); done.position.set(0, .05, 0); done.rotation.y = .3;
+    kit.node(done, 'front').rotation.z = -Math.PI; done.visible = false;
+    // the person
+    const fig = figure(kit, V(-.1, 0, 1.45), Math.PI);
+    // the nightstand and phone, across the board, for the morning
+    const ns = kit.make('nightstand', { at: V(-3.6, 0, 3.4), rot: .4 });
+    kit.make('bed', { at: V(-5.1, 0, 3.0), rot: .4 + Math.PI / 2 });
+    const phone = kit.make('phone', { at: V(-3.55, .645, 3.4), rot: .6 });
+    const pscr = kit.meshesOf(phone, 'screen')[0]; pscr.material = new THREE.MeshBasicMaterial({ color: 0x1a2520 });
+
+    // ---------------------------------------------------------- overlays
+    kit.caption('11:48 PM', .3, 6, 'stamp');
+    kit.caption('6:51 AM', 45.8, 52.6, 'stamp');
+    kit.caption('Hinge stops at flat · Pen is the pin · Corner lips', 21.5, 28, 'label');
+    kit.caption('Sliced · First layer checked', 41.8, 45.6, 'label');
+    kit.say(7.0, 'you', 'Limit the hinge to flat. Use the pen as the latching pin. Add a lip in each corner for the notepad.', 'a');
+    const yEnd = kit.say(28.6, 'you', 'I dig it. Print it. Send me a voice message when it’s done. I’m meeting Tom for drinks.', 'b');
+    kit.say(Math.max(34.2, yEnd + .3), 'rook', 'Sure thing, have fun. I’ll keep an eye on the print.', 'c');
+    kit.say(47.6, 'rook', 'Folio’s done and on the bed. Hinge stops at flat, and the pen locks it shut.', 'd');
+    const review = pane(kit, { title: '<b>review</b> · folio v6 · yesterday 6:12 PM', w: 470, body: `
+      <div class="dim">hinge</div><div class="sl"><i></i></div><div class="ang hi">0°</div>` });
+    const changes = pane(kit, { title: '<b>claude code</b> → folio v7', w: 520, body: `
+      <div class="c1">› hinge: stop at 180°</div><div class="c2">› pen: latching pin through the loops</div>
+      <div class="c3">› lips: 2 mm L in each corner</div><div class="c4 dim">› snap latch, elastic: removed</div>` });
+    const slicer = pane(kit, { title: '<b>slicer</b> · folio_v7.3mf → X1C', w: 470, body: `
+      <div>1 h 52 m · <span class="hi">79 g PLA</span></div><div class="dim">0.2 mm layers · 0.4 nozzle</div><div class="lay">layer 1 / 61</div>` });
+    const camp = pane(kit, { title: '<b>camera</b> · first layer', w: 300, body: `<div class="camimg"></div><div class="ok">✓ adhesion good</div>` });
+    const note = pane(kit, { title: '<b>rook</b> · voice message', w: 360, body: `<div>▶ 0:06 · folio done</div>` });
+    const st = document.createElement('style'); st.textContent = `
+      .sl{height:10px;border-radius:5px;background:#20261d;margin:10px 0;position:relative}
+      .sl i{position:absolute;top:-6px;width:22px;height:22px;border-radius:50%;background:#f0c98c;left:0}
+      .camimg{height:120px;border-radius:6px;margin-bottom:8px;background:repeating-linear-gradient(90deg,#3a3524 0 6px,#d8ad6d 6px 9px);opacity:.85}
+      .c1,.c2,.c3,.c4{opacity:0}`;
+    document.head.appendChild(st);
+    const knob = review.el.querySelector('.sl i'), angEl = review.el.querySelector('.ang'), lay = slicer.el.querySelector('.lay');
+    const cl = [1, 2, 3, 4].map(i => changes.el.querySelector('.c' + i));
+
+    // pulses: hub -> workstation (the agent works), workstation -> printer (print)
+    kit.pulse(V(-7, 0, -8), V(0, 0, 1), 14.6, 1.6);
+    kit.pulse(V(0, 0, 1), V(3, 0, 0), 37.0, 1.3);
+    kit.pulse(V(3, 0, 0), V(-4, 0, 3), 45.6, 1.6, { zFirst: true });
+    kit.events.push({ t: 16.2, type: 'shimmer' }, { t: 39.5, type: 'print', dur: 6 }, { t: 47.2, type: 'buzz' }, { t: 33.2, type: 'tap' },
+      { t: 6, type: 'whoosh' }, { t: 45.6, type: 'whoosh' });
+
+    kit.camPath([
+      { t: 0, pos: [5.2, 3.6, 7.2], look: [.9, 1.0, 0] },
+      { t: 6, pos: [4.4, 3.2, 6.0], look: [.9, 1.2, 0], e: 'lin' },
+      { t: 8.5, pos: [1.3, 2.55, 2.4], look: [0, 1.75, 0], e: 'io' },
+      { t: 16, pos: [1.2, 2.5, 2.2], look: [0, 1.78, 0], e: 'lin' },
+      { t: 19, pos: [2.2, 2.7, .4], look: [0, 1.8, 0] },
+      { t: 23, pos: [.5, 3.1, -2.0], look: [0, 1.8, 0] },
+      { t: 27.6, pos: [-2.0, 2.6, .6], look: [0, 1.8, 0] },
+      { t: 28.2, pos: [-.6, 2.1, 3.0], look: [0, 1.6, 0], e: 'cut' },
+      { t: 36.5, pos: [-.4, 2.3, 3.5], look: [.3, 1.4, 0], e: 'lin' },
+      { t: 38.5, pos: [4.2, 2.3, 2.6], look: [2.7, .9, -.1], e: 'io' },
+      { t: 45.2, pos: [3.9, 1.9, 1.9], look: [2.7, .75, -.1], e: 'lin' },
+      { t: 46.6, pos: [-1.6, 1.9, 6.4], look: [-3.6, .7, 3.4], e: 'io' },
+      { t: 52.6, pos: [-2.2, 1.6, 5.6], look: [-3.6, .75, 3.4], e: 'lin' },
+      { t: 53.3, pos: [2.95, .75, .9], look: [2.65, .45, -.1], e: 'cut' },
+      { t: 58, pos: [4.6, 2.4, 3.6], look: [2.6, .6, -.1], e: 'out' },
+    ]);
+
+    return tau => {
+      // ---- the folio: hinge sweep (old design) then rebuild
+      let ang;                                                         // pi = closed, 0 = open flat, < 0 = past flat
+      if (tau < 16) {
+        const sweep = .5 - .5 * Math.cos((tau - 6) / 10 * Math.PI * 3);
+        ang = tau < 6 ? Math.PI / 2 : lerp(Math.PI * .92, -.7, sweep);   // the old hinge swings past flat
+      } else if (tau < 19.5) {
+        ang = lerp(-.7, 0, ease.outE(inv(16, 17.6, tau))) + .05 * Math.sin(inv(16.8, 18, tau) * Math.PI * 3) * (1 - inv(16.8, 19, tau));
+      } else ang = tau < 29 ? 0 : lerp(0, Math.PI, ease.io(inv(30.5, 32.5, tau)));
+      front.rotation.z = -ang;
+      const repl = tau >= 6 && tau < 16;
+      const open = Math.PI - ang;
+      knob.style.left = (clamp(open / 3.84) * 400) + 'px';
+      angEl.textContent = Math.round(open * 180 / Math.PI) + '°';
+      stop.scale.set(1, Math.max(.001, ease.out(inv(16, 17, tau))), 1); stop.visible = tau >= 16;
+      pen.position.z = lerp(1.5, 0, ease.io(inv(19.5, 21.5, tau))); pen.visible = tau > 19.4;
+      lips.scale.y = Math.max(.001, ease.out(inv(21.5, 23, tau))); lips.visible = tau >= 21.5;
+      pad.position.y = lerp(.9, 0, ease.in(inv(23, 24.2, tau))) + .045; pad.visible = tau > 22.9;
+      const gone = 1 - inv(24.5, 26, tau);
+      elastic.scale.setScalar(Math.max(.001, gone)); snap.scale.setScalar(Math.max(.001, gone));
+      elastic.visible = snap.visible = gone > .01;
+      holder.rotation.y = tau < 28 ? tau * .12 : lerp(28 * .12, 28 * .12 + 1.2, ease.io(inv(29, 33, tau)));
+      holder.position.y = 1.85 + Math.sin(tau * .9) * .03;
+      holder.visible = tau < 37.5;
+      // ---- the person: works, turns the model, nods, walks off
+      fig.rest();
+      if (tau < 33.5) {
+        fig.obj.position.set(-.1, 0, 1.45); fig.obj.rotation.y = Math.PI;
+        fig.armR.rotation.x = tau > 28.8 && tau < 33 ? -1.3 + Math.sin(tau * 2) * .1 : 0;
+        fig.head.rotation.x = tau > 32.4 && tau < 33.2 ? Math.sin((tau - 32.4) * 12) * .18 : -.15;
+      } else {
+        const w = tau - 33.5;
+        fig.obj.rotation.y = lerp(Math.PI, Math.PI / 2, ease.out(clamp(w / .6)));
+        fig.obj.position.set(-.1 + Math.max(0, w - .3) * 1.1, 0, 1.45 + Math.max(0, w - .3) * .3);
+        fig.walk(w * 7);
+      }
+      fig.obj.visible = tau < 38;
+      // ---- light: the lamp goes out at 33.4; dawn from 45.6
+      lampL.intensity = tau < 33.4 ? 2.2 : 2.2 * (1 - inv(33.4, 33.6, tau));
+      dawn.intensity = 1.6 * inv(45.6, 48, tau);
+      kit.hemi.intensity = tau < 45.6 ? (tau < 33.5 ? 1.0 : .7) : lerp(.7, 1.4, inv(45.6, 48, tau));
+      scr.material.color.setHex(tau < 33.4 ? 0x2d4a40 : 0x1a2520);
+      // ---- the agent glows while it works
+      ag.mat.emissiveIntensity = .28 + .5 * fade(tau, 15.8, 16.4, 27, 28) + .4 * fade(tau, 38, 38.4, 45, 45.6);
+      // ---- printing (time-lapse 39.5-45.5)
+      const pr = inv(39.6, 45.4, tau);
+      chamber.intensity = tau > 38 ? 1.6 : 0;
+      done.visible = tau > 53;
+      prints.forEach(m => { if (tau > 53) { m.visible = false; return; } m.scale.y = Math.max(.0001, .035 * pr); m.position.y = .01 + .035 * pr / 2; m.visible = pr > 0; });
+      bed.position.y = lerp(.4, .4, pr);
+      head.position.x = pr > 0 && pr < 1 ? Math.sin(tau * 22) * .3 : 0;
+      head.position.z = pr > 0 && pr < 1 ? Math.sin(tau * 7.3) * .2 : 0;
+      lay.textContent = `layer ${Math.max(1, Math.round(pr * 61))} / 61`;
+      // ---- phone buzz
+      const bz = tau > 47.2 && tau < 48.2 ? Math.sin(tau * 120) * .006 : 0;
+      phone.position.x = -3.55 + bz;
+      pscr.material.color.setHex(tau > 47.2 && tau < 53 ? 0x6a8a78 : 0x1a2520);
+      // ---- squares
+      kit.glowSquare(0, 1, .5 * fade(tau, 16.4, 17, 27, 28));
+      kit.glowSquare(3, 0, .6 * fade(tau, 38.3, 38.8, 52, 53));
+      kit.glowSquare(-4, 3, .6 * fade(tau, 47.2, 47.6, 52.4, 53));
+      // ---- panes
+      review.fixed(90, 150, repl ? fade(tau, 6.4, 6.8, 15.4, 15.9) : 0);
+      changes.fixed(1310, 150, fade(tau, 16.4, 16.8, 27.4, 27.9));
+      cl.forEach((el, i) => { el.style.opacity = inv([16.6, 19.6, 21.6, 24.6][i], [16.9, 19.9, 21.9, 24.9][i], tau); });
+      slicer.place(V(2.7, 1.55, -.1), fade(tau, 38.5, 38.9, 45.2, 45.6), { ax: 1.08, ay: .2 });
+      camp.place(V(2.7, 1.55, -.1), fade(tau, 41.4, 41.7, 45.2, 45.6), { ax: -.1, ay: .2 });
+      note.place(V(-3.55, .9, 3.4), fade(tau, 47.4, 47.8, 52.4, 52.8), { ay: 1, dy: -20 });
+      ag.chip.place(ag.top(), fade(tau, 14.8, 15.2, 46, 46.4));
+    };
+  },
+};

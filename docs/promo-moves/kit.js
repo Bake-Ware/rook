@@ -274,6 +274,7 @@ export class Kit {
   // px position of a world point
   project(p) {
     const c = this.projCam ?? this.camera;
+    c.updateMatrixWorld();
     const v = p.clone().project(c);
     return { x: (v.x + 1) / 2 * W, y: (1 - v.y) / 2 * H, front: v.z < 1, dist: p.distanceTo(c.position) };
   }
