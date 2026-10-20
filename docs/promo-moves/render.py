@@ -24,6 +24,8 @@ async def serve():
 
 
 def gl_args():
+    if os.environ.get('GLARGS'):
+        return os.environ['GLARGS'].split()
     if os.environ.get('GL') == 'gpu':
         return ['--use-angle=vulkan', '--enable-features=Vulkan,VulkanFromANGLE', '--ignore-gpu-blocklist', '--enable-gpu-rasterization']
     return ['--use-angle=swiftshader', '--enable-unsafe-swiftshader']
