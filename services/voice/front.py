@@ -31,6 +31,7 @@ RULES = (
     '"Let me check." or "On it.") and stop there. Do not guess the result and do not promise a time; the '
     'result comes to you separately and you will tell the user then.\n'
     'If Known facts already answer the request, answer directly from them.\n'
+    'Call a task, room, job or other record by its three-word name (say "brave otter lamp"), never by its id.\n'
 )
 
 

@@ -8,14 +8,15 @@ sits in the band call path or can deny a call. See
 docs/DESIGN-agent-work-system.md.
 
 Bands are the operator's existing enrollment bands. Records are addressed by
-id or slug; ids are global, so most calls need no ``band``. The deck covers
-all bands.
+id or slug, and tasks and projects also by their speakable name (rook.core.names:
+reads may take a single clear near miss, writes need the exact name); ids are
+global, so most calls need no ``band``. The deck covers all bands.
 """
 import asyncio
 import logging
 import time
 from ....band_mcp.secret_mask import scrub
-from .store import KnowledgeStore
+from .store import KnowledgeStore, Unresolved
 from .search import RELATED_MAX, Search
 
 log = logging.getLogger(__name__)
@@ -29,8 +30,8 @@ CLOSED_TASK = ('done', 'closed', 'cancelled', 'archived')
 # every character. ``data.limit`` and ``data.fields`` override them.
 MCP_SEARCH_LIMIT = 5
 MCP_LIST_LIMIT = 20
-MCP_SEARCH_FIELDS = ('id', 'slug', 'kind', 'title', 'state', 'score', 'section', 'excerpt')
-MCP_LIST_FIELDS = ('id', 'slug', 'kind', 'title', 'state', 'parent', 'excerpt')
+MCP_SEARCH_FIELDS = ('id', 'name', 'slug', 'kind', 'title', 'state', 'score', 'section', 'excerpt')
+MCP_LIST_FIELDS = ('id', 'name', 'slug', 'kind', 'title', 'state', 'parent', 'excerpt')
 EXCERPT = 240
 MCP_GET_EVENTS = 10
 # A lean get lists a page's neighbours as stubs ({slug, title, gist}, a few
@@ -136,9 +137,26 @@ class KnowledgeService:
         return match[0]['id']
 
     def _band_for(self, band, rid):
-        if band:
-            return self.band(band)
-        return self.store.locate(rid, [b['id'] for b in self.bands()])
+        return self.resolve(band, rid, write=True)[0]
+
+    def resolve(self, band, rid, write=False):
+        """``(band, id, resolved)`` for a record id, slug or task/project
+        name (KnowledgeStore.resolve) in ``band``, or in any band when
+        omitted. ``resolved`` is set when a read took a near-miss name."""
+        bands = [self.band(band)] if band else [b['id'] for b in self.bands()]
+        return self.store.resolve(rid, bands, write=write)
+
+    def _project_ref(self, band, ref):
+        """``(project id, resolved)`` for a deck or board filter; a ref that
+        is no record is left for the filter to report."""
+        if not ref:
+            return ref, None
+        try:
+            return self.resolve(band, ref)[1:]
+        except Unresolved:
+            raise
+        except ValueError:
+            return ref, None
 
     def _inline_handoff(self, band, actor, rid, data):
         """Save data.handoff via the handoff store and link it to the task."""
@@ -169,7 +187,7 @@ class KnowledgeService:
         limit (1..DECK_LIMIT), handoffs, outcome}."""
         bands = [b['id'] for b in self.bands()] if not band else [self.band(band)]
         full = data.get('outcome') == 'full'
-        project = rid or data.get('project')
+        project, resolved = self._project_ref(band, rid or data.get('project'))
         done_days = data.get('done_days', 7)
         offset = max(0, int(data.get('offset') or 0))
         limit = None if data.get('limit') is None else max(1, min(int(data['limit']), DECK_LIMIT))
@@ -201,7 +219,8 @@ class KnowledgeService:
                'loose_tasks': got.get('loose_tasks', 0),
                'filters': filters, 'offset': offset, 'limit': limit,
                'next_offset': offset + limit if limit and offset + limit < total else None,
-               'deck': deck, **({'loose': loose} if loose else {})}
+               'deck': deck, **({'loose': loose} if loose else {}),
+               **({'resolved': resolved} if resolved else {})}
         flags = self._hook('flags', bands) or {}
         if flags:
             for entry in deck + ([loose] if loose else []):
@@ -227,6 +246,7 @@ class KnowledgeService:
         30; null = all), archived}."""
         bands = [b['id'] for b in self.bands()] if not band else [self.band(band)]
         done_days = data.get('done_days', 30)
+        rid, resolved = self._project_ref(band, rid)
         # Off the event loop: a big tree is a few thousand rows to walk.
         out = await asyncio.to_thread(self.store.board, bands, project=rid, archived=bool(data.get('archived')),
                                       done_days=None if done_days is None else float(done_days))
@@ -239,6 +259,8 @@ class KnowledgeService:
             for t in out['tasks']:
                 if t['id'] in flags:
                     t['hygiene'] = flags[t['id']]
+            if resolved:
+                out['resolved'] = resolved
         return out
 
     def _related(self, band, got, linked, limit):
@@ -294,7 +316,9 @@ class KnowledgeService:
             except (ValueError, KeyError, TypeError, PermissionError) as error:
                 results.append({'ok': False, 'error': str(error), 'code': type(error).__name__,
                                 **({'current_revision': error.revision}
-                                   if getattr(error, 'revision', None) is not None else {})})
+                                   if getattr(error, 'revision', None) is not None else {}),
+                                **({'candidates': error.payload()['candidates']}
+                                   if getattr(error, 'candidates', None) else {})})
         return {'results': results, 'failed': sum(1 for r in results if not r['ok'])}
 
     async def dispatch(self, action, band=None, kind=None, rid=None, query='', data=None,
@@ -325,8 +349,7 @@ class KnowledgeService:
             bands = [self.band(band)] if band else [b['id'] for b in self.bands()]
             records = None
             if rid:
-                b = self._band_for(band, rid)
-                records = [self.store.get(b, rid, events=0)['id']]
+                records = [self.resolve(band, rid)[1]]
             return {'findings': self.hygiene.open(records, who, data.get('limit', 50), bands=bands)}
         if action == 'review' and (actor or {}).get('kind') != 'human':
             raise PermissionError('review is for people, from the Knowledge page')
@@ -335,10 +358,14 @@ class KnowledgeService:
             return await self._batch(band, kind, data, request_id, actor, lean)
         if action in ('get', 'update', 'link', 'retract', 'claim', 'release', 'review', 'note') and not rid:
             raise ValueError(f'{action} needs id (a record id or slug; for retract, the link id)')
+        resolved = None
         if action == 'retract':
             b = self.store.link_band(rid)
+        elif rid:
+            # Names resolve here, once: a write needs the exact name.
+            b, rid, resolved = self.resolve(band, rid, write=action in WRITES)
         else:
-            b = self._band_for(band, rid) if rid else self.band(band)
+            b = self.band(band)
         if action == 'list':
             if lean:
                 data.setdefault('limit', MCP_LIST_LIMIT)
@@ -361,10 +388,16 @@ class KnowledgeService:
             found = self._hook('open', [got['id']])
             if found:
                 got['hygiene'] = [{k: f[k] for k in ('kind', 'actor', 'text', 'created')} for f in found]
+            if resolved:
+                got['resolved'] = resolved
             return got
         if action == 'search':
             found = await self.search.query(b, query, kind, data.get('worker'),
                                             int(data.get('limit', MCP_SEARCH_LIMIT if lean else 20)))
+            named = self.store.names_for(r['id'] for r in found['results'] if r.get('kind') in ('task', 'project'))
+            for r in found['results']:
+                if r['id'] in named:
+                    r['name'] = named[r['id']]
             if lean or fields:
                 found['results'] = project(found['results'], fields, MCP_SEARCH_FIELDS if lean else ('all',))
             if lean:
@@ -401,7 +434,8 @@ class KnowledgeService:
         self._after_write(action, actor, data, result, record if action in ('update', 'release') else None)
         if action == 'create':
             result = {**result, 'comparable': [
-                {'id': r['id'], 'slug': r['slug'], 'title': r['title'], 'kind': r['kind']}
+                {'id': r['id'], 'slug': r['slug'], 'title': r['title'], 'kind': r['kind'],
+                 **({'name': r['name']} if r.get('name') else {})}
                 for r in self.store.lexical(b, result['title'], 5) if r['id'] != result['id']]}
         return result
 

@@ -6,6 +6,8 @@ and CSRF checks as Knowledge (rook/remote/account_api.py). GET returns the
 CSRF token; every POST is ``{csrf, action, ...}``:
 
 * ``list``: every huddle, with open question counts.
+Rooms, cards and projects are named by id or speakable name.
+
 * ``view`` {room | project | band, since_seq?}: the status strip, questions
   and messages; opening a project's or band's huddle makes it.
 * ``send`` {room, text, mention?}: a plain message from the person.
@@ -174,6 +176,8 @@ def routes(get_node: Callable[[], Any], accounts):
                 mention = data.get("mention") or []
                 if isinstance(mention, str):
                     mention = [m.strip() for m in mention.split(",") if m.strip()]
+                if where["room"]:
+                    where["room"] = svc.room_id(where["room"])[0]
                 if where["room"] and svc.store.chaired(where["room"]):
                     result = await svc.post(PERSON, where["room"], str(data.get("text") or ""),
                                             mention)
@@ -188,6 +192,8 @@ def routes(get_node: Callable[[], Any], accounts):
         except PermissionError as error:
             return json_error(str(error), 403)
         except (ValueError, KeyError, TypeError) as error:
+            if getattr(error, "candidates", None):   # a name that was not exactly one record's
+                return json_reply(error.payload(), 400)
             return json_error(str(error), 400)
         return json_reply({"ok": True, "result": result})
 

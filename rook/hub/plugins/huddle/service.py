@@ -25,6 +25,7 @@ from typing import Any, Callable
 
 from ....band_mcp.chat_wake import wake, worker_for_host
 from ....band_mcp.secret_mask import scrub
+from ....core import names
 from ....core.db import open_db
 
 log = logging.getLogger("rook.hub.plugins.huddle")
@@ -54,14 +55,60 @@ def _text(value, what, limit=TEXT_MAX, required=False) -> str:
     return value
 
 
+class Unresolved(names.NameError_, ValueError):
+    """A huddle or card name that is not exactly one record's: carries the
+    ``(id, name)`` candidates (``payload()``). A ValueError, so every caller
+    reports it as one."""
+
+
 class HuddleStore:
     """The huddle tables in chat.db. One connection, serialised by a lock
-    (the chat store does the same with its own)."""
+    (the chat store does the same with its own).
+
+    Speakable names (rook.core.names) live in chat.db's ``record_names``:
+    a huddle has its chat room's name (kind ``room``), a card its own
+    (kind ``card``). Rounds have none."""
 
     def __init__(self, path: str) -> None:
         self.path = path
         self._lock = threading.Lock()
         self._db = open_db(path, migrations=MIGRATIONS, ns=NAMESPACE, mkdir=False)
+        with self._lock:
+            names.ensure_table(self._db)
+            for kind, table, col in (("room", "huddles", "room"), ("card", "huddle_cards", "id")):
+                names.backfill(self._db, kind, [r[0] for r in self._db.execute(
+                    f"SELECT {col} FROM {table} WHERE {col} NOT IN "
+                    f"(SELECT id FROM {names.TABLE} WHERE kind=?)", (kind,))])
+            self._db.commit()
+
+    # names
+    def name(self, kind: str, rid: str) -> str | None:
+        with self._lock:
+            return names.name_of(self._db, kind, rid)
+
+    def names(self, kind: str, ids) -> dict[str, str]:
+        with self._lock:
+            return names.names_of(self._db, kind, list(ids))
+
+    def assign(self, kind: str, rid: str) -> str:
+        """The record's name, given one if it has none (idempotent)."""
+        with self._lock:
+            name = names.assign(self._db, kind, rid)
+            self._db.commit()
+            return name
+
+    def resolve(self, kind: str, ref: str, exists, write: bool) -> names.Resolved:
+        """An id (``exists(ref)``) or a name of ``kind``; see names.resolve."""
+        known = bool(ref) and bool(exists(ref))   # outside the lock: exists reads the store
+        try:
+            with self._lock:
+                return names.resolve(self._db, kind, ref, exists=lambda _: known, write=write,
+                                     noun="huddle" if kind == "room" else kind)
+        except names.NameError_ as e:
+            msg = str(e)
+            if e.candidates and "did you mean" not in msg:   # the text is all a band caller sees
+                msg += ": " + ", ".join(names.label(n, i) for i, n in e.candidates)
+            raise Unresolved(msg, e.candidates, e.ambiguous) from None
 
     def close(self) -> None:
         try:
@@ -172,12 +219,15 @@ class HuddleStore:
             "SELECT * FROM huddle_rounds WHERE state NOT IN ('done','failed')")]
 
     def card_add(self, card: dict) -> None:
-        self._x("INSERT INTO huddle_cards(id,room,round,seq,kind,by,summary,call,state,result,created)"
-                " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                (card["id"], card["room"], card.get("round"), card.get("seq"), card["kind"],
-                 card["by"], card["summary"], json.dumps(card["call"]) if card.get("call") else None,
-                 card["state"], json.dumps(card["result"]) if card.get("result") is not None else None,
-                 time.time()))
+        with self._lock:
+            self._db.execute("INSERT INTO huddle_cards(id,room,round,seq,kind,by,summary,call,state,result,created)"
+                             " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                             (card["id"], card["room"], card.get("round"), card.get("seq"), card["kind"],
+                              card["by"], card["summary"], json.dumps(card["call"]) if card.get("call") else None,
+                              card["state"], json.dumps(card["result"]) if card.get("result") is not None else None,
+                              time.time()))
+            card["name"] = names.assign(self._db, "card", card["id"])
+            self._db.commit()
 
     def card_set(self, cid: str, *, expect: tuple[str, ...] | None = None, **fields) -> bool:
         sets, args = [], []
@@ -205,7 +255,7 @@ class HuddleStore:
 
     def card(self, cid: str) -> dict | None:
         rows = self._q("SELECT * FROM huddle_cards WHERE id=?", (cid,))
-        return self._card(rows[0]) if rows else None
+        return names.with_name(self._card(rows[0]), self.name("card", cid)) if rows else None
 
     def cards(self, room: str, round: str | None = None) -> list[dict]:
         if round:
@@ -213,11 +263,14 @@ class HuddleStore:
                            (room, round))
         else:
             rows = self._q("SELECT * FROM huddle_cards WHERE room=? ORDER BY created", (room,))
-        return [self._card(r) for r in rows]
+        named = self.names("card", [r["id"] for r in rows])
+        return [names.with_name(self._card(r), named.get(r["id"])) for r in rows]
 
     def drop(self, room: str) -> None:
         """Forget a huddle whose chat room was deleted."""
         with self._lock:
+            self._db.execute(f"DELETE FROM {names.TABLE} WHERE kind='card' AND id IN "
+                             "(SELECT id FROM huddle_cards WHERE room=?)", (room,))
             for table in ("huddles", "huddle_posts", "huddle_status", "huddle_questions",
                           "huddle_rounds", "huddle_cards"):
                 self._db.execute(f"DELETE FROM {table} WHERE room=?", (room,))
@@ -323,18 +376,44 @@ class HuddleService:
             return None
         return h
 
+    def room_id(self, ref: str, write: bool = True) -> tuple[str, dict | None]:
+        """``(room id, resolved)`` for a huddle's room id or its name (any
+        case, spaces or hyphens). A read (``write`` False) may take a single
+        clear near miss: ``resolved`` is then ``{from, via: 'fuzzy'}``.
+        Otherwise a name that is not exactly one room's raises
+        :class:`Unresolved` with the candidates."""
+        ref = str(ref or "").strip()
+        got = self.store.resolve("room", ref, lambda r: self.store.get(r) is not None or self.chat.exists(r),
+                                 write)
+        return got.id, ({"from": ref, "via": "fuzzy"} if got.via == "fuzzy" else None)
+
+    def card_id(self, ref: str) -> str:
+        """A card's id from its id or exact name (deciding a card is a write)."""
+        ref = str(ref or "").strip()
+        return self.store.resolve("card", ref, lambda c: self.store.card(c) is not None, True).id
+
+    def _named(self, out: dict, room: str) -> dict:
+        """``out`` with the huddle's speakable name beside its room id."""
+        return names.with_name(out, self.store.name("room", room))
+
     async def resolve(self, identity: str, room: str | None = None, project: str | None = None,
-                      band: str | None = None, create: bool = True) -> dict:
-        """The huddle a call means: ``room`` (an existing huddle), else the
-        ``project``'s, else the ``band``'s (default: the primary band).
-        ``create``: made on first use and ``identity`` joins it; reads pass
-        False and change nothing."""
+                      band: str | None = None, create: bool = True, write: bool | None = None) -> dict:
+        """The huddle a call means: ``room`` (an existing huddle, by id or
+        name), else the ``project``'s (id, slug or name), else the
+        ``band``'s (default: the primary band). ``create``: made on first
+        use and ``identity`` joins it; reads pass False and change nothing.
+        ``write`` (default: ``create``): names must be exact; a read may
+        take a near miss, noted as ``resolved`` on the huddle."""
+        write = create if write is None else write
+        resolved = None
         if room:
+            room, resolved = self.room_id(room, write)
             h = self._live(self.store.get(room))
             if h is None:
                 raise ValueError(f"{room!r} is not a huddle; open one with project= or band=")
         elif project:
-            p = self._project(project)
+            p = self._project(project, write=write)
+            resolved = p.pop("resolved", None) if p else None
             if p is None:
                 raise ValueError("project huddles need the knowledge plugin; use band=")
             h = self._live(self.store.by_scope("project", p["id"])) or (
@@ -349,6 +428,8 @@ class HuddleService:
             raise ValueError("no huddle there yet: post a status or ask to start it")
         if create and identity and identity != PERSON:
             self.chat.join(h["room"], [identity])
+        if resolved:
+            h = {**h, "resolved": resolved}
         return h
 
     async def _create(self, scope: str, ref: str, band: str | None, title: str, identity: str,
@@ -358,6 +439,7 @@ class HuddleService:
             raise ValueError(started.get("error") or "could not start the huddle room")
         try:
             self.store.add(started["room"], scope, ref, band, title, identity or PERSON)
+            self.store.assign("room", started["room"])
         except Exception:
             # Two callers raced to open the same huddle: keep the first.
             self.chat.delete(started["room"], None)
@@ -408,7 +490,7 @@ class HuddleService:
         body = scrub(body)
         self.store.post(sent["seq"], h["room"], identity, "status", {"state": state, **body})
         self.store.set_status(h["room"], identity, state, body, sent["seq"])
-        out = {"room": h["room"], "seq": sent["seq"], "state": state}
+        out = self._named({"room": h["room"], "seq": sent["seq"], "state": state}, h["room"])
         if decision:
             self.store.ask(sent["seq"], h["room"], identity, scrub(decision),
                            {**self._question_data(data, task), **self._asked_from()})
@@ -463,12 +545,12 @@ class HuddleService:
                           + (" (options: " + " / ".join(opts) + ")" if opts else ""), [PERSON], True)
         self.store.post(sent["seq"], h["room"], identity, "question", extra)
         self.store.ask(sent["seq"], h["room"], identity, question, {**extra, **self._asked_from()})
-        return {"room": h["room"], "question": sent["seq"], "state": "open"}
+        return self._named({"room": h["room"], "question": sent["seq"], "state": "open"}, h["room"])
 
     async def say(self, identity: str, text: str, mention=None, **where) -> dict:
         h = await self.resolve(identity, **where)
         sent = self._send(h["room"], identity, _text(text, "text", 8000, required=True), mention or [])
-        return {"room": h["room"], "seq": sent["seq"], "offline": sent.get("offline", [])}
+        return self._named({"room": h["room"], "seq": sent["seq"], "offline": sent.get("offline", [])}, h["room"])
 
     def withdraw(self, identity: str, question: int) -> dict:
         if not self.store.withdraw(question, identity):
@@ -506,9 +588,11 @@ class HuddleService:
         room = started["room"]
         self.store.add(room, "talk", room, b["id"], title, identity or PERSON)
         self.store.set_roles(room, roles)
-        return {"room": room, "title": title, "roles": roles}
+        return {"room": room, "name": self.store.assign("room", room), "title": title, "roles": roles}
 
     def _chaired(self, room: str) -> dict:
+        """The chaired huddle ``room`` (its id or exact name) names."""
+        room = self.room_id(room)[0] if room else room
         h = self._live(self.store.get(room)) if room else None
         if h is None:
             raise ValueError(f"{room!r} is not a huddle")
@@ -522,19 +606,21 @@ class HuddleService:
         round: the chair routes it, roles answer. ``@<role>`` calls that
         role directly."""
         h = self._chaired(room)
+        room = h["room"]
         if h.get("archived"):
             raise ValueError("that huddle is archived; unarchive it to post")
         text = _text(text, "text", 8000, required=True)
         sent = self._send(room, identity, text, mention or [])
         rid = self._chair().on_post(h, sent["seq"], identity, text)
-        return {"room": room, "seq": sent["seq"], "round": rid}
+        return self._named({"room": room, "seq": sent["seq"], "round": rid}, room)
 
     def archive(self, room: str, archived: bool = True) -> dict:
+        room = self.room_id(room)[0] if room else room
         h = self._live(self.store.get(room)) if room else None
         if h is None:
             raise ValueError(f"{room!r} is not a huddle")
         self.store.set_archived(room, bool(archived))
-        return {"room": room, "archived": bool(archived)}
+        return self._named({"room": room, "archived": bool(archived)}, room)
 
     async def card(self, room: str, card: str, action: str, by: str, principal=None,
                    data: dict | None = None) -> dict:
@@ -544,10 +630,12 @@ class HuddleService:
         h = self._chaired(room)
         if action == "propose":
             return await chair._propose(None, h["room"], by, data or {})
+        card = self.card_id(card)
         c = self.store.card(card)
         if c is None or c["room"] != h["room"]:
             raise ValueError("no such card in that huddle")
-        return await chair.decide(card, action, by, principal)
+        out = await chair.decide(card, action, by, principal)
+        return names.with_name(out, c.get("name")) if isinstance(out, dict) else out
 
     # -- reading -----------------------------------------------------------
     async def view(self, reader: str, since_seq: int = 0, limit: int = 50, mark: bool = True,
@@ -556,7 +644,7 @@ class HuddleService:
         ``since_seq`` (the last ``limit`` when since_seq is 0). ``create``
         (the dashboard): open the huddle if there is none yet. ``targets``:
         say on each open question which worker an answer would wake."""
-        h = await self.resolve(reader, create=create, **where)
+        h = await self.resolve(reader, create=create, write=False, **where)
         room = h["room"]
         if not since_seq:
             since_seq = max(0, self.chat.last_seq(room) - max(1, int(limit)))
@@ -573,9 +661,11 @@ class HuddleService:
             for q in questions:
                 if q["state"] == "open":
                     q["wake_target"] = self.wake_target(q["id"])
-        out = {"room": room, "title": h["title"], "scope": h["scope"], "ref": h["ref"], "band": h["band"],
+        out = {"room": room, **({"name": n} if (n := self.store.name("room", room)) else {}),
+               "title": h["title"], "scope": h["scope"], "ref": h["ref"], "band": h["band"],
                "participants": read["participants"], "statuses": self.store.statuses(room),
-               "questions": questions, "messages": msgs, "last_seq": read["last_seq"]}
+               "questions": questions, "messages": msgs, "last_seq": read["last_seq"],
+               **({"resolved": h["resolved"]} if h.get("resolved") else {})}
         if h.get("roles") is not None:
             out.update(roles=json.loads(h["roles"]), archived=h.get("archived"),
                        chair=self.chair.chair_identity() if self.chair is not None else None,
@@ -586,13 +676,16 @@ class HuddleService:
         """Every huddle (archived ones only with ``archived``), newest
         activity first for chaired ones."""
         out = []
-        for h in self.store.all():
+        rows = self.store.all()
+        named = self.store.names("room", [h["room"] for h in rows])
+        for h in rows:
             if self._live(h) is None:
                 continue
             if h.get("archived") and not archived:
                 continue
             last = self.chat.tail(h["room"], 1)
-            row = {**h, "last": last[0] if last else None,
+            row = {**h, **({"name": named[h["room"]]} if h["room"] in named else {}),
+                   "last": last[0] if last else None,
                    "agents": len(self.store.statuses(h["room"]))}
             row["roles"] = json.loads(h["roles"]) if h.get("roles") is not None else None
             row["chaired"] = h.get("roles") is not None

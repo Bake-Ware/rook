@@ -40,6 +40,7 @@ import threading
 import time
 import uuid
 
+from ..core import names
 from ..core.db import add_columns, open_db
 from .secret_mask import STUB as _STUB, scrub, stream as _secret_stream
 
@@ -110,6 +111,15 @@ def _redact(text: str) -> str:
     return text
 
 
+def _name_query(text) -> str | None:
+    """``'Otter Lamp'`` -> ``'otter-lamp'``: a query as part of a speakable
+    name, or None when it can't be one (anything but one to three words)."""
+    parts = [p for p in re.split(r"[\s_\-.]+", str(text or "").strip().lower()) if p]
+    if not 1 <= len(parts) <= 3 or not all(p.isascii() and p.isalpha() for p in parts):
+        return None
+    return "-".join(parts)
+
+
 class ConsoleStore:
     def __init__(self, path: str) -> None:
         self.path = path
@@ -161,6 +171,12 @@ class ConsoleStore:
             # carried them, and on workers without it; 'term' (a Rook
             # terminal, work.stream.read; handle is the terminal id).
             add_columns(self._db, "rooms", {"transport": "TEXT DEFAULT 'proc'"})
+            # Speakable names (rook.core.names): rooms opened by an older
+            # release get theirs here.
+            names.ensure_table(self._db)
+            names.backfill(self._db, "console", [r[0] for r in self._db.execute(
+                "SELECT id FROM rooms WHERE id NOT IN "
+                "(SELECT id FROM record_names WHERE kind='console')")])
             self._db.commit()
         except Exception:
             log.exception("console store init failed; console rooms disabled")
@@ -169,6 +185,45 @@ class ConsoleStore:
     @property
     def enabled(self) -> bool:
         return self._db is not None
+
+    # -- names ---------------------------------------------------------------
+
+    def name_of(self, rid: str) -> str | None:
+        if self._db is None or not rid:
+            return None
+        with self._lock:
+            return names.name_of(self._db, "console", rid)
+
+    def names_of(self, ids) -> dict:
+        if self._db is None:
+            return {}
+        with self._lock:
+            return names.names_of(self._db, "console", ids)
+
+    def _exists(self, rid: str) -> bool:
+        return self._db.execute("SELECT 1 FROM rooms WHERE id=?", (rid,)).fetchone() is not None
+
+    def resolve_ref(self, ref, *, write: bool) -> names.Resolved:
+        """A room id, or its speakable name (any case and separators), as
+        the room id. A read takes one clear near miss; a write needs the
+        exact name. Raises names.NameError_ with candidates."""
+        if self._db is None:
+            return names.Resolved(id=str(ref or "").strip())
+        with self._lock:
+            return names.resolve(self._db, "console", ref, exists=self._exists,
+                                 write=write, noun="console room")
+
+    def _named_by(self, query: str, limit: int) -> list[str]:
+        """Room ids whose name contains the query's words (from a word
+        start), newest first."""
+        q = _name_query(query)
+        if not q:
+            return []
+        with self._lock:
+            return [r[0] for r in self._db.execute(
+                "SELECT n.id FROM record_names n JOIN rooms r ON r.id=n.id "
+                "WHERE n.kind='console' AND ('-'||n.name) LIKE ? "
+                "ORDER BY r.last_activity DESC LIMIT ?", (f"%-{q}%", limit))]
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -206,10 +261,11 @@ class ConsoleStore:
             self._db.execute(
                 "INSERT INTO search (text,room_id,seq) VALUES (?,?,0)",
                 (f"{title}\n{worker_name}\n{cmd}", rid))
+            name = names.assign(self._db, "console", rid)
             self._db.commit()
         log.info("console room opened: %s %r on %s", rid, title, worker_name)
-        return {"ok": True, "room": rid, "title": title, "worker": worker_name,
-                "handle": handle, "state": "live"}
+        return {"ok": True, "room": rid, "name": name, "title": title,
+                "worker": worker_name, "handle": handle, "state": "live"}
 
     def remember_typed(self, rid: str, values: dict) -> None:
         """Values (by vault name) typed into this room: masked in its
@@ -323,8 +379,8 @@ class ConsoleStore:
         if room is None:
             return {"ok": False, "error": f"no such console room: {rid}"}
         if room["state"] == "frozen" and not summary:
-            return {"ok": True, "room": rid, "state": "frozen",
-                    "note": "already frozen"}
+            return names.with_name({"ok": True, "room": rid, "state": "frozen",
+                                    "note": "already frozen"}, room.get("name"))
         summary = scrub((summary or "").strip())[:4000] or None
         with self._lock:
             self._db.execute(
@@ -338,8 +394,9 @@ class ConsoleStore:
         if summary:
             self.append(rid, f"— summary ({by or 'agent'}): {summary}", stream="sys")
         self.evict()
-        return {"ok": True, "room": rid, "state": "frozen",
-                "summary": summary, "exit_code": room.get("exit_code")}
+        return names.with_name({"ok": True, "room": rid, "state": "frozen",
+                                "summary": summary, "exit_code": room.get("exit_code")},
+                               room.get("name"))
 
     def sweep_closing(self) -> int:
         """Freeze 'closing' rooms nobody came back to summarize. An agent that
@@ -373,6 +430,9 @@ class ConsoleStore:
                "created": r[10], "last_activity": r[11], "ended": r[12],
                "exit_code": r[13], "bytes": r[14], "cursor": r[15],
                "summary": r[16], "transport": r[17] or "proc"}
+        with self._lock:
+            name = names.name_of(self._db, "console", r[0])
+        names.with_name(out, name)
         if out["transport"] == "term":
             out["terminal"] = out["handle"]   # its Rook terminal (Sessions page)
         return out
@@ -426,9 +486,11 @@ class ConsoleStore:
         params.append(max(1, min(int(limit), 200)))
         with self._lock:
             rows = self._db.execute(sql, params).fetchall()
+            named = names.names_of(self._db, "console", [r[0] for r in rows])
         now = time.time()
         return {"ok": True, "count": len(rows), "rooms": [
-            {"room": r[0], "title": r[1], "worker": r[2], "state": r[3],
+            {"room": r[0], **({"name": named[r[0]]} if r[0] in named else {}),
+             "title": r[1], "worker": r[2], "state": r[3],
              "age_secs": round(now - r[4], 1),
              "last_activity_age_secs": round(now - r[5], 1),
              "exit_code": r[6], "bytes": r[7],
@@ -491,6 +553,29 @@ class ConsoleStore:
         q = str(query or "").strip()
         if not q:
             return {"ok": False, "error": "query required"}
+        limit = max(1, min(int(limit), 200))
+        grouped: dict[str, dict] = {}
+
+        def add(rid, seq, snip, score) -> bool:
+            room = self.get(rid)
+            if room is None:
+                return False
+            if worker and worker not in (room["worker"], room["worker_name"]):
+                return False
+            g = grouped.setdefault(rid, names.with_name({
+                "room": rid, "title": room["title"], "worker": room["worker_name"],
+                "state": room["state"], "exit_code": room["exit_code"],
+                "summary": room["summary"], "cmd": room["cmd"],
+                "age_secs": round(time.time() - room["created"], 1),
+                "score": score, "hits": []}, room.get("name")))
+            if seq is not None and len(g["hits"]) < per_room:
+                g["hits"].append({"seq": seq, "snippet": snip})
+            return True
+
+        # A room's speakable name (or part of it) finds the room itself;
+        # those rank first.
+        for rid in self._named_by(q, limit):
+            add(rid, None, None, float("-inf"))
         # Bare words are ANDed as a phrase-ish query; anything with FTS
         # operators is passed through untouched.
         if not re.search(r'["*:()]|\bOR\b|\bAND\b|\bNOT\b', q):
@@ -501,28 +586,20 @@ class ConsoleStore:
                 rows = self._db.execute(
                     "SELECT s.room_id, s.seq, snippet(search,0,'«','»','…',16), rank "
                     "FROM search s WHERE search MATCH ? ORDER BY rank LIMIT ?",
-                    (q, max(1, min(int(limit), 200)) * 8)).fetchall()
+                    (q, limit * 8)).fetchall()
         except sqlite3.OperationalError as e:
-            return {"ok": False, "error": f"bad search query: {e}"}
+            if not grouped:
+                return {"ok": False, "error": f"bad search query: {e}"}
+            rows = []
 
-        grouped: dict[str, dict] = {}
         for (rid, seq, snip, rank) in rows:
-            room = self.get(rid)
-            if room is None:
-                continue
-            if worker and worker not in (room["worker"], room["worker_name"]):
-                continue
-            g = grouped.setdefault(rid, {
-                "room": rid, "title": room["title"], "worker": room["worker_name"],
-                "state": room["state"], "exit_code": room["exit_code"],
-                "summary": room["summary"], "cmd": room["cmd"],
-                "age_secs": round(time.time() - room["created"], 1),
-                "score": rank, "hits": []})
-            if len(g["hits"]) < per_room:
-                g["hits"].append({"seq": seq, "snippet": snip})
             if len(grouped) >= limit and rid not in grouped:
                 break
+            add(rid, seq, snip, rank)
         out = sorted(grouped.values(), key=lambda g: g["score"])[:limit]
+        for g in out:
+            if g["score"] == float("-inf"):
+                g["score"] = None
         return {"ok": True, "query": query, "count": len(out), "results": scrub(out)}
 
     # -- retention ---------------------------------------------------------
@@ -574,7 +651,8 @@ class ConsoleStore:
             self._db.execute("DELETE FROM search WHERE room_id=?", (rid,))
             self._db.execute("DELETE FROM rooms WHERE id=?", (rid,))
             self._db.commit()
-        return {"ok": True, "room": rid, "title": room["title"]}
+        return names.with_name({"ok": True, "room": rid, "title": room["title"]},
+                               room.get("name"))
 
     def close(self) -> None:
         if self._db is not None:

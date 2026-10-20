@@ -26,6 +26,7 @@ from typing import Any, Callable
 
 from starlette.routing import Route
 
+from ....core import names
 from ....remote.account_api import FORM_EXPIRED, NOT_JSON, json_reply, read_object
 from ....remote.accounts import csrf_ok
 from ...authz import current_principal, principal_for_user
@@ -48,7 +49,7 @@ def _status(error: Exception) -> int:
         return 501
     if isinstance(error, PermissionError):
         return 403
-    if isinstance(error, KeyError):
+    if isinstance(error, (KeyError, names.NameError_)):
         return 404
     if isinstance(error, LookupError):
         return 503

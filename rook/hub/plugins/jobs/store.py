@@ -23,6 +23,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+from ....core import names
 from ....core.db import open_db
 from .cron import Cron, parse_duration, parse_instant
 
@@ -72,6 +73,45 @@ class JobStore:
         # Autocommit: _tx issues BEGIN IMMEDIATE/COMMIT itself.
         self._db = open_db(self.path, isolation_level=None, timeout=10.0,
                            migrations=MIGRATIONS, ns=NAMESPACE)
+        self._name_records()
+
+    def _name_records(self) -> None:
+        """Speakable names (:mod:`rook.core.names`) for jobs and runs that
+        have none yet: an additive table, so older releases ignore it."""
+        with self._tx() as db:
+            names.ensure_table(db)
+            for kind, table in (("job", "jobs"), ("run", "runs")):
+                rows = [r[0] for r in db.execute(
+                    f"SELECT id FROM {table} WHERE id NOT IN"
+                    f" (SELECT id FROM {names.TABLE} WHERE kind=?) ORDER BY rowid", (kind,))]
+                names.backfill(db, kind, rows)
+
+    # -- speakable names ---------------------------------------------------------
+    def name_of(self, kind: str, rid: str | None) -> str | None:
+        """``kind`` is ``job`` or ``run``."""
+        if not rid:
+            return None
+        with self._lock:
+            return names.name_of(self._db, kind, rid)
+
+    def names_of(self, kind: str, ids) -> dict[str, str]:
+        with self._lock:
+            return names.names_of(self._db, kind, ids)
+
+    def resolve(self, kind: str, ref: str | None, *, write: bool = False) -> names.Resolved:
+        """A job ref (id, ``name`` or speakable name) or run ref (id or
+        speakable name) to the record's id. An id (or a job's own ``name``)
+        always wins; a write needs the exact speakable name. Raises
+        :class:`names.NameError_` (with candidates) for a name that matches
+        nothing exactly; any other unknown ref comes back unchanged."""
+        if kind == "job":
+            def exists(r: str) -> bool:
+                return self._one("SELECT 1 AS x FROM jobs WHERE id=? OR name=?", (r, r)) is not None
+        else:
+            def exists(r: str) -> bool:
+                return self._one("SELECT 1 AS x FROM runs WHERE id=?", (r,)) is not None
+        with self._lock:
+            return names.resolve(self._db, kind, ref, exists=exists, write=write)
 
     def close(self) -> None:
         with self._lock:
@@ -121,6 +161,7 @@ class JobStore:
                         _dumps(job), now, now, owner_info["id"]))
             self._rebuild_triggers(db, job, now, tz)
             self._history(db, jid, 1, now, owner_info["id"], "create", {})
+            names.assign(db, "job", jid)
         return self.get_job(jid)
 
     def update_job(self, jid: str, job: dict, actor: str, now: float, tz: str,
@@ -363,6 +404,7 @@ class JobStore:
                    " created, finished, vars, error) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                    (rid, job["id"], job["name"], job.get("revision"), trigger, int(bool(missed)), state,
                     scheduled, now, finished, _dumps(vars or {}), error))
+        names.assign(db, "run", rid)
         return _row(db.execute("SELECT * FROM runs WHERE id=?", (rid,)).fetchone())
 
     # -- runs: lifecycle ---------------------------------------------------------------

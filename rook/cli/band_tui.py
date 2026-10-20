@@ -182,11 +182,11 @@ class BandHTTP:
         try:
             reply = self._req("/api/band/jobs", "POST", body, timeout=30)
         except urllib.error.HTTPError as e:
-            if e.code == 404:
-                return {"ok": False, "error": "this hub has no jobs API (update the hub)"}
-            try:
+            try:  # a 404 with a JSON body is the jobs API's own "no such job"
                 reply = json.loads(e.read())
             except Exception:
+                if e.code == 404:
+                    return {"ok": False, "error": "this hub has no jobs API (update the hub)"}
                 reply = {"ok": False, "error": f"HTTP {e.code}: {e.reason}"}
         except Exception as e:
             reply = {"ok": False, "error": f"{type(e).__name__}: {e}"}
@@ -885,7 +885,9 @@ class UI:
         r = self.band.jobs(action, id, data)
         if not r.get("ok"):
             self.popup(scr, title, str(r.get("error") or _fmt(r)) +
-                       ("\n\n" + "\n".join(r["errors"]) if r.get("errors") else ""))
+                       ("\n\n" + "\n".join(r["errors"]) if r.get("errors") else "") +
+                       ("\n\n" + "\n".join(f"{c.get('name')}  {c.get('id')}" for c in r["candidates"])
+                        if r.get("candidates") else ""))
             return None
         return r.get("result")
 
@@ -925,7 +927,7 @@ class UI:
             elif choice == "run now":
                 run = self._jobs(scr, "run now", "run", job["id"])
                 if run is not None:
-                    self.popup(scr, "run now", f"queued run {run.get('id')} ({run.get('state')})")
+                    self.popup(scr, "run now", f"queued run {_run_label(run)} ({run.get('state')})")
             elif choice in ("enable", "disable"):
                 if choice == "disable" and self.picker(scr, f"disable {job.get('name')}?", ["no", "yes"]) != 1:
                     continue
@@ -957,7 +959,7 @@ class UI:
             idx = self.picker(scr, f"runs of {job.get('name')}", [_run_line(r) for r in runs])
             if idx is None:
                 return
-            self.popup(scr, f"run {runs[idx].get('id')}", _run_text(runs[idx]))
+            self.popup(scr, f"run {_run_label(runs[idx])}", _run_text(runs[idx]))
 
     # -- main loop -----------------------------------------------------------
 
@@ -1057,6 +1059,11 @@ def _duration(a, b) -> str:
     except (TypeError, ValueError):
         return "—"
     return f"{s}s" if s < 60 else f"{s // 60}m{s % 60:02d}s" if s < 3600 else f"{s // 3600}h{s % 3600 // 60:02d}m"
+
+
+def _run_label(r: dict) -> str:
+    """``brave-otter-lamp (r_…)``: the run's speakable name and id."""
+    return f"{r['spoken']} ({r.get('id')})" if r.get("spoken") else str(r.get("id"))
 
 
 def _run_line(r: dict) -> str:

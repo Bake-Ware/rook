@@ -33,10 +33,12 @@ import copy
 import fnmatch
 import json
 import logging
+import re
 import time
 from typing import Any, Callable
 
 from ....band_mcp import secret_mask
+from ....core import names
 from .cron import DEFAULT_TZ, Cron, describe, iso, valid_zone
 from .guardrails import (DEFAULT_GUARDRAILS, Guardrails, check_defaults, check_job_block,
                          normalize_defaults)
@@ -55,6 +57,9 @@ ERRORS = (ValueError, KeyError, TypeError, PermissionError, LookupError)
 log = logging.getLogger("rook.hub.plugins.jobs.service")
 ALERT_TIMEOUT = 30.0
 DEFAULT_ACCESS = {"read": "*", "edit": "*", "run": "*"}
+#: Actions whose ``id`` is not a job: no ref, or a run (``cancel``: a run, else a job).
+NO_REF = ("list", "validate", "describe_schema", "settings")
+RUN_REF = ("run_get",)
 
 
 class NotAvailable(ValueError):
@@ -70,6 +75,8 @@ def error_reply(error: Exception) -> str:
                  "code": type(error).__name__}
     if isinstance(error, ValidationError):
         out["errors"] = error.errors
+    if isinstance(error, names.NameError_):
+        out.update({k: v for k, v in error.payload().items() if k != "error"})
     return json.dumps(out, separators=(",", ":"), ensure_ascii=False, default=str)
 
 
@@ -123,10 +130,28 @@ class JobService:
         if data is not None and not isinstance(data, dict):
             raise TypeError("data must be an object")
         fn = getattr(self, "a_" + action)
+        ref, resolved = rid, self._resolve(action, rid, write)
+        if resolved is not None:
+            rid = resolved.id
         out = fn(rid, query or "", data or {})
         if asyncio.iscoroutine(out):
             out = await out
+        if resolved is not None and resolved.via == "fuzzy" and isinstance(out, dict):
+            out["resolved"] = {"from": ref, "via": "fuzzy"}
         return out
+
+    def _resolve(self, action: str, rid, write: bool) -> names.Resolved | None:
+        """The ``id`` argument as a canonical id when it is a speakable name
+        (``brave-otter-lamp``, any case or separators). Reads take one clear
+        near miss; writes need the exact name."""
+        if not rid or not isinstance(rid, str) or action in NO_REF:
+            return None
+        if action == "cancel":
+            try:
+                return self.store.resolve("run", rid, write=True)
+            except names.NameError_:
+                return self.store.resolve("job", rid, write=True)
+        return self.store.resolve("run" if action in RUN_REF else "job", rid, write=write)
 
     def _job(self, ref: str | None) -> dict:
         if not ref:
@@ -177,11 +202,13 @@ class JobService:
         trigs = self.store.triggers(row["id"])
         upcoming = [t["next_at"] for t in trigs if t["next_at"] is not None and not t["done"]]
         last = self.store.runs(row["id"], limit=1)
-        out = {"id": row["id"], "name": row["name"], "description": d.get("description", ""),
+        out = {"id": row["id"], "spoken": self.store.name_of("job", row["id"]), "name": row["name"],
+               "description": d.get("description", ""),
                "enabled": row["enabled"], "owner": row["owner"], "revision": row["revision"],
                "triggers": [self._trigger_label(t) for t in d.get("triggers") or []],
                "next": iso(min(upcoming), tz) if upcoming and row["enabled"] else None,
-               "last_run": ({"id": last[0]["id"], "state": last[0]["state"],
+               "last_run": ({"id": last[0]["id"], "spoken": self.store.name_of("run", last[0]["id"]),
+                             "state": last[0]["state"],
                              "finished": iso(last[0]["finished"], tz)} if last else None),
                "updated": iso(row["updated"], tz)}
         if row.get("paused_reason"):
@@ -221,9 +248,9 @@ class JobService:
             return f"after {t.get('every')} on {t.get('on', 'success')}"
         return str(k)
 
-    def run_view(self, run: dict, steps: bool = True) -> dict:
+    def run_view(self, run: dict, steps: bool = True, spoken: str | None = None) -> dict:
         tz = self.tz()
-        out = {"id": run["id"], "job_id": run["job_id"], "job": run["job_name"], "trigger": run["trigger"],
+        out = {"id": run["id"], "spoken": spoken or self.store.name_of("run", run["id"]), "job_id": run["job_id"], "job": run["job_name"], "trigger": run["trigger"],
                "missed": run["missed"], "state": run["state"]}
         for k in ("scheduled", "created", "started", "finished"):
             if run.get(k) is not None:
@@ -261,7 +288,10 @@ class JobService:
         rows = self._readable(who)
         q = (query or data.get("query") or "").lower()
         if q:
-            rows = [r for r in rows if q in r["name"].lower() or q in (r["definition"].get("description") or "").lower()]
+            spoken = self.store.names_of("job", [r["id"] for r in rows])
+            qn = re.sub(r"[\s_.-]+", "-", q.strip())
+            rows = [r for r in rows if q in r["name"].lower() or q in (r["definition"].get("description") or "").lower()
+                    or (qn and qn in spoken.get(r["id"], ""))]
         if "enabled" in data:
             rows = [r for r in rows if r["enabled"] == bool(data["enabled"])]
         roster = self._roster()
@@ -298,7 +328,9 @@ class JobService:
             runs = runs[:max(1, min(limit, 500))]
         else:
             runs = self.store.runs(jid, states, limit, since, missed)
-        return {"runs": [self.run_view(r, steps=bool(data.get("steps"))) for r in runs]}
+        spoken = self.store.names_of("run", [r["id"] for r in runs])
+        return {"runs": [self.run_view(r, steps=bool(data.get("steps")), spoken=spoken.get(r["id"]))
+                         for r in runs]}
 
     def a_run_get(self, rid, query, data) -> dict:
         if not rid:
@@ -329,8 +361,9 @@ class JobService:
             readable = {r["id"]: r["name"] for r in self._readable(who)}
             rows = [t for t in self.store.triggers() if t["next_at"] is not None and not t["done"]
                     and t["job_id"] in readable]
-            out = [{"job_id": t["job_id"], "job": readable[t["job_id"]], "kind": t["kind"],
-                    "at": iso(t["next_at"], tz)} for t in rows[: max(count, 20)]]
+            spoken = self.store.names_of("job", readable)
+            out = [{"job_id": t["job_id"], "job": readable[t["job_id"]], "spoken": spoken.get(t["job_id"]),
+                    "kind": t["kind"], "at": iso(t["next_at"], tz)} for t in rows[: max(count, 20)]]
             return {"upcoming": out, "timezone": tz}
         row = self._job(rid)
         self.need(row, "read")
@@ -356,7 +389,8 @@ class JobService:
             item["zone"] = ttz
             item["next"] = [{"local": iso(t, ttz), "hub": iso(t, tz)} for t in times]
             out.append(item)
-        return {"id": row["id"], "name": row["name"], "enabled": row["enabled"], "triggers": out,
+        return {"id": row["id"], "spoken": self.store.name_of("job", row["id"]), "name": row["name"],
+                "enabled": row["enabled"], "triggers": out,
                 "timezone": tz}
 
     def _next_draft(self, spec: dict, count: int, now: float, tz: str) -> dict:
@@ -642,7 +676,8 @@ class JobService:
             run = self.store.cancel(r, self.clock())
             if run["state"] == "running":
                 self.scheduler.cancel_local(r)
-            out.append({"id": r, "state": run["state"], "cancel_requested": run["state"] == "running"})
+            out.append({"id": r, "spoken": self.store.name_of("run", r), "state": run["state"],
+                        "cancel_requested": run["state"] == "running"})
         return {"cancelled": out}
 
     def _set_lock(self, rid, data, locked: bool) -> dict:

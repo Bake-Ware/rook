@@ -49,6 +49,7 @@ from difflib import SequenceMatcher
 from typing import Any, Callable
 
 from ....band_mcp.secret_mask import scrub
+from ....core import names
 from ....core.text import clip
 
 log = logging.getLogger("rook.hub.plugins.huddle.chair")
@@ -564,7 +565,8 @@ class Chair:
                        "already waiting" if out.get("duplicate") else
                        {"proposed": "waiting for your approval", "done": "done",
                         "failed": "failed"}.get(c.get("state") or out.get("state"), "proposed"))
-                lines.append(f"- Card {out['card']} ({c.get('kind') or args.get('kind')}, {how}): "
+                kind = c.get("kind") or args.get("kind")
+                lines.append(f"- {_card_label({'id': out['card'], **c}, f'{kind}, {how}')}: "
                              f"{c.get('summary') or what}")
             else:
                 lines.append(f"- Not proposed ({args.get('kind') or 'card'}: {what}): "
@@ -744,7 +746,8 @@ class Chair:
         waiting = [c for c in self.store.cards(room) if c["state"] == "proposed"]
         target = str(raw.get("revise") or "").strip()
         if target:
-            old = next((c for c in waiting if c["id"] == target), None)
+            old = next((c for c in waiting if target in (c["id"], c.get("name"))
+                        or c.get("name") == names.normalize(target)), None)
             if old is None:
                 return {"ok": False, "error": f"no waiting card {target} in this huddle (only "
                                               "proposed cards can be revised)"}
@@ -775,7 +778,7 @@ class Chair:
         self.store.card_add(card)
         if card["state"] == "failed":
             self._report_failure(card)
-        return {"ok": True, "card": card["id"], "state": card["state"]}
+        return {"ok": True, "card": card["id"], "name": card.get("name"), "state": card["state"]}
 
     def _revise(self, old: dict, card: dict) -> dict:
         """The proposer's newer version of a card still waiting: one card,
@@ -801,7 +804,7 @@ class Chair:
         call = card.get("call") or {}
         with contextlib.suppress(Exception):
             self.svc._send(card["room"], self.chair_identity(),
-                           f"Card {card['id']} ({card['kind']}: {card['summary'][:120]}) failed: "
+                           f"{_card_label(card, card['kind'] + ': ' + card['summary'][:120])} failed: "
                            f"{why}" + (f" [{call.get('cap')} on {call.get('worker')}]"
                                        if call else ""))
 
@@ -874,6 +877,14 @@ class Chair:
         self.journal("huddle.card", args, {"ok": reply.get("ok", True), "result": _short(reply)},
                      card["room"], by)
         return reply
+
+
+def _card_label(card: dict, detail: str) -> str:
+    """``Card brave-otter-lamp (c_1a2b…, detail)``: the card's speakable name
+    first, its id beside it (``Card c_1a2b… (detail)`` when unnamed)."""
+    if card.get("name"):
+        return f"Card {card['name']} ({card['id']}, {detail})"
+    return f"Card {card['id']} ({detail})"
 
 
 def _short(reply: dict) -> dict:

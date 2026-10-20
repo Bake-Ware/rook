@@ -6,7 +6,7 @@ The worker bundle's ``rook`` launcher (rook.worker.desktop) and the package's
     rook status                 this worker, its band and hub, plugins, last update
     rook ask "<question>"       ask the home agent; rook chat for a conversation
     rook tasks [query]          the band's task deck, or a task search
-    rook rooms [room]           chat rooms, or recent messages in one
+    rook rooms [room]           chat rooms, or recent messages in one (name or id)
     rook knowledge search <q>   search the knowledge pages; knowledge get <slug>
     rook plugins [list|enable|disable <module>]
     rook logs [-f] [--audit]    this worker's recent log lines (or its call audit)
@@ -426,7 +426,7 @@ def cmd_tasks(args) -> int:
         if not rows:
             _out("No tasks match.")
         for r in rows:
-            _out(f"  [{r.get('state', '?')}] {r.get('title', '')}  ({r.get('slug') or r.get('id')})")
+            _out(f"  [{r.get('state', '?')}] {r.get('title', '')}  ({r.get('name') or r.get('slug') or r.get('id')})")
         return 0
     reply, _ = hub_call("task.read", {"action": "deck"}, via=args.via)
     result = _result(reply) or {}
@@ -439,7 +439,7 @@ def cmd_tasks(args) -> int:
         rows = []
         for key, label in STATE_LABEL.items():
             for t in group.get(key) or []:
-                rows.append(f"    {label:<8} {t.get('title', '')}  ({t.get('slug') or t.get('id')})")
+                rows.append(f"    {label:<8} {t.get('title', '')}  ({t.get('name') or t.get('slug') or t.get('id')})")
         if not rows:
             continue
         project = group.get("project") or {}
@@ -454,14 +454,28 @@ def cmd_tasks(args) -> int:
     return 0
 
 
+def _refused(result: dict) -> None:
+    """Raise a cap's ``ok: false`` result (an unknown room name), listing
+    the names it may have meant."""
+    if result.get("ok") is False:
+        msg = str(result.get("error") or "the call failed")
+        for c in result.get("candidates") or []:
+            msg += f"\n  {c.get('name')}  ({c.get('id')})"
+        raise CliError(msg)
+
+
 def cmd_rooms(args) -> int:
-    if args.room:
-        reply, _ = hub_call("chat.read", {"action": "read", "room": args.room, "mark": False,
+    room = " ".join(args.room or []).strip()
+    if room:
+        reply, _ = hub_call("chat.read", {"action": "read", "room": room, "mark": False,
                                            "limit": args.limit}, via=args.via)
         result = _result(reply) or {}
         if args.json:
             _out(json.dumps(result, indent=2))
             return 0
+        _refused(result)
+        if result.get("resolved"):
+            _out(f"  ({room!r} taken as {result.get('name')})")
         msgs = result.get("messages") or []
         if not msgs:
             _out("No messages.")
@@ -480,7 +494,8 @@ def cmd_rooms(args) -> int:
     for r in rooms:
         unread = f"  {r['unread']} new" if r.get("unread") else ""
         last = r.get("last_text") or ""
-        _out(f"  {r.get('title') or r.get('room')}{unread}  ({r.get('room')})")
+        _out(f"  {r.get('title') or r.get('name') or r.get('room')}{unread}  "
+             f"({r.get('name') or r.get('room')})")
         if last:
             _out(f"      {r.get('last_sender', '?')}: {last[:90]}")
     return 0
@@ -494,6 +509,9 @@ def cmd_knowledge(args) -> int:
             _out(json.dumps(result, indent=2))
             return 0
         _out(result.get("title") or args.text)
+        if result.get("name"):
+            _out(result["name"] + ("  (closest match for " + repr(args.text) + ")"
+                                   if result.get("resolved") else ""))
         _out()
         _out(str(result.get("body") or ""))
         return 0
@@ -1155,7 +1173,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = add("tasks"); p.add_argument("query", nargs="*", help="search instead of the deck")
     p.add_argument("--limit", type=int, default=8); p.add_argument("--json", action="store_true")
     via(p); p.set_defaults(fn=cmd_tasks)
-    p = add("rooms"); p.add_argument("room", nargs="?", help="a room id: show its latest messages")
+    p = add("rooms"); p.add_argument("room", nargs="*", help="a room name or id: show its latest messages")
     p.add_argument("--limit", type=int, default=20); p.add_argument("--json", action="store_true")
     via(p); p.set_defaults(fn=cmd_rooms)
     p = add("knowledge"); p.add_argument("action", choices=["search", "get"])

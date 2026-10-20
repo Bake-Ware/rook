@@ -170,7 +170,7 @@ register('rooms', {
     const list = (rooms.value || []).slice().sort((x, y) => (y.unread || 0) - (x.unread || 0) || x.last_activity_age_secs - y.last_activity_age_secs);
     if (!list.length) return body.append(empty('No rooms yet.'));
     body.append(h('ul', {class: 'w-rows'}, list.slice(0, limitOf(w)).map(r => h('li', null,
-      a(link.room(r.room), r.title || r.room), r.unread ? h('span', {class: 'w-badge', text: String(r.unread)}) : null,
+      a(link.room(r.room), r.title || r.name || r.room), r.unread ? h('span', {class: 'w-badge', text: String(r.unread)}) : null,
       h('small', {text: (r.last_sender ? shortName(r.last_sender) + ' · ' : '') + ago(Date.now() / 1000 - r.last_activity_age_secs)})))));
     body.append(a('#huddles', 'Open huddles', 'w-more'));
   },

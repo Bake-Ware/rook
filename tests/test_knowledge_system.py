@@ -284,7 +284,7 @@ def test_deck_rows_serve_grooming(work):
     row = lambda deck, title: next(i for d in deck for k in d if isinstance(d[k], list) for i in d[k] if i['title'] == title)
     first = row(w.s.deck(['default']), 'Waiting')
     assert first['revision'] == 1 and first['unblocked'] is False
-    assert first['dependencies'] == [{'id': dep['id'], 'slug': dep['slug'], 'state': 'todo'}]
+    assert first['dependencies'] == [{'id': dep['id'], 'slug': dep['slug'], 'name': dep['name'], 'state': 'todo'}]
     link(w, dep, 'commit', 'abc123')
     update(w, dep, state='done', attrs={'outcome': 'x' * 500})
     deck = w.s.deck(['default'], outcome_chars=240)
@@ -300,7 +300,7 @@ def test_deck_rows_serve_grooming(work):
     assert row(w.s.deck(['default']), w.task['title'])['latest_handoff']['ref'] == 'thread-wrong'
     w.s.mutate('default', AGENT, rid(), 'retract', {'link': wrong['id']})
     assert row(w.s.deck(['default']), w.task['title'])['latest_handoff']['ref'] == 'thread-good'
-    assert w.s.handoff_tasks(['default']) == {'thread-good': [{'id': w.task['id'], 'slug': w.task['slug'], 'state': 'in_progress'}]}
+    assert w.s.handoff_tasks(['default']) == {'thread-good': [{'id': w.task['id'], 'slug': w.task['slug'], 'name': w.task['name'], 'state': 'in_progress'}]}
     assert good['id']
 
 

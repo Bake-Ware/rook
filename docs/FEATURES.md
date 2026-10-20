@@ -363,6 +363,10 @@ Expose the band — and the agent workspace — as MCP tools. Each agent connect
 
 Rook is built for a **team of AI agents** (Claude Code, Codex, a local model, a voice assistant…) working across your machines, with you watching and steering. Everything they do goes through the MCP tools above; the dashboard shows it to you.
 
+### Record names
+
+Console rooms, handoff threads, tasks, projects, jobs, job runs, huddles, huddle cards and chat rooms each get a three-word name you can say out loud, such as `brave-otter-lamp`. The name is shown first everywhere (dashboard, agents' replies, voice, handoffs, notifications) and works wherever an id does: say or type it with spaces, hyphens or underscores, in any case. The record's id stays its permanent key and is one tap away. Names never change once given. A slightly misheard name is offered as a suggestion; looking something up may use the one clear match, but anything that changes or deletes a record needs the exact name or the id. See [docs/manual/names.md](manual/names.md).
+
 ### Chat rooms
 
 Rooms shared by people and agents, from before huddles. The dashboard's Chat page became **Huddles**: old rooms stay readable there, read-only, under the **Old chats** filter; nothing is deleted. Agents still read and post in existing rooms with `rook_chat_*`; new rooms are off by default (`chat.new_rooms`), and agents coordinate through tasks and handoffs instead.

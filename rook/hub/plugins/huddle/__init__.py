@@ -191,17 +191,20 @@ class Huddle(Plugin):
         kb = self._node.plugin("knowledge") if self._node is not None else None
         return getattr(kb, "service", None)
 
-    def _project(self, ref: str):
+    def _project(self, ref: str, write: bool = True):
+        """The project ``ref`` (id, slug or speakable name) names; a read
+        (``write`` False) may take a near-miss name (``resolved``)."""
         svc = self._knowledge()
         if svc is None:
             return None
         store = svc.store
-        band = store.locate(ref, [b["id"] for b in svc.bands()])
+        band, rid, resolved = store.resolve(ref, [b["id"] for b in svc.bands()], write=write)
         with store.db(False) as db:
-            r = store._get(db, band, ref)
+            r = store._get(db, band, rid)
         if r["kind"] != "project":
             raise ValueError(f"{ref!r} is a {r['kind']}, not a project")
-        return {"id": r["id"], "slug": r["slug"], "title": r["title"], "band": r["band"]}
+        return {"id": r["id"], "slug": r["slug"], "title": r["title"], "band": r["band"],
+                **({"resolved": resolved} if resolved else {})}
 
     def _bands(self):
         svc = self._knowledge()
@@ -309,8 +312,8 @@ class Huddle(Plugin):
         if wait and out.get("round"):
             r = await svc.chair.wait(out["round"], 600.0)
             out["state"] = r.get("state")
-            out["messages"] = [m for m in svc.chat.tail(huddle, 30) if m["seq"] > out["seq"]]
-            out["cards"] = svc.store.cards(huddle, out["round"])
+            out["messages"] = [m for m in svc.chat.tail(out["room"], 30) if m["seq"] > out["seq"]]
+            out["cards"] = svc.store.cards(out["room"], out["round"])
         return out
 
     @capability("card", risk="write")
@@ -340,6 +343,12 @@ class Huddle(Plugin):
             data.room), mine, list. Chaired (person, house agent, roles): start data {title,
             roles}; post text data {room}; card data {room, card, action}; archive data {room}."""
             d = dict(data or {})
+
+            def failed(error):
+                out = {"ok": False, "error": str(error), "code": type(error).__name__}
+                if getattr(error, "candidates", None):   # a name that was not exactly one record's
+                    out.update({k: v for k, v in error.payload().items() if k != "error"})
+                return json.dumps(out, separators=(",", ":"))
             if action in CHAIRED:
                 room = d.pop("room", None)
                 if action == "start":
@@ -360,8 +369,7 @@ class Huddle(Plugin):
                     return json.dumps({"ok": True, "result": result}, separators=(",", ":"),
                                       ensure_ascii=False)
                 except ERRORS as error:
-                    return json.dumps({"ok": False, "error": str(error), "code": type(error).__name__},
-                                      separators=(",", ":"))
+                    return failed(error)
             where = {"room": d.pop("room", None), "project": project, "band": d.pop("band", None)}
             if action in READS:
                 cap, args = "huddle.read", {"action": action, **where, "since_seq": d.get("since_seq")}
@@ -374,8 +382,7 @@ class Huddle(Plugin):
                     result = lean_view(result)
                 return json.dumps({"ok": True, "result": result}, separators=(",", ":"), ensure_ascii=False)
             except ERRORS as error:
-                return json.dumps({"ok": False, "error": str(error), "code": type(error).__name__},
-                                  separators=(",", ":"))
+                return failed(error)
         return [rook_huddle]
 
 
@@ -386,9 +393,10 @@ def lean_view(view: dict) -> dict:
     extra = {}
     if view.get("roles") is not None:
         extra = {"roles": view["roles"],
-                 "cards": [{k: c[k] for k in ("id", "kind", "by", "summary", "state", "seq", "error")
+                 "cards": [{k: c[k] for k in ("id", "name", "kind", "by", "summary", "state", "seq", "error")
                             if c.get(k) is not None} for c in view.get("cards") or []]}
-    return {"room": view["room"], "title": view["title"], **extra,
+    named = {k: view[k] for k in ("name", "resolved") if view.get(k)}
+    return {"room": view["room"], **named, "title": view["title"], **extra,
             "statuses": [{k: s[k] for k in ("identity", "state", "working_on", "blocked_on", "needs_decision",
                                             "task", "ts") if s.get(k)} for s in view["statuses"]],
             "questions": [{k: q[k] for k in ("id", "asker", "text", "state", "options", "answer", "answered_by")

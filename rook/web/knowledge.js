@@ -98,7 +98,7 @@ export async function mountKnowledge(root){
   const go=(slug,band,review=reviewing)=>{fold.close();setHash('knowledge',{p:slug,b:band,r:review&&slug?'1':''});route();};
   const ref=(slug,band)=>{const hit=pages.find(p=>p.slug===slug&&(!band||p.band===band));if(hit||!slug)return go(slug,band);
     // [[slug]] may name a task/project: send it to Work.
-    c.api('get',{id:slug,...(band?{band}:{})}).then(r=>{if(r.kind==='knowledge')go(slug,r.band);else jump('work',{t:r.slug,b:r.band});}).catch(()=>go(slug,band));};
+    c.api('get',{id:slug,...(band?{band}:{})}).then(r=>{if(r.kind==='knowledge')go(slug,r.band);else jump('work',{t:r.name||r.slug,b:r.band});}).catch(()=>go(slug,band));};
   async function loadIndex(){pages=await c.listAll('knowledge');if(!searching)drawTree();
     const n=queue().length;reviewBtn.textContent=n?'Review '+n:'Review';reviewBtn.title=n?n+' pages nobody has verified yet':'Everything is verified';
     fold.tog.textContent='Pages · '+pages.filter(visible).length;}
@@ -223,7 +223,7 @@ export async function mountTasks(root){
   function drawTabs(current){tabs.replaceChildren();for(const [v,label] of WORK_TABS){const a=el('a',label);a.href='#work'+(v?'?v='+v:'');
       if(v===current)a.setAttribute('aria-current','page');if(v==='huddle'&&pins){const b=el('span',String(pins),'wv-pin');b.title=pins+' question'+(pins>1?'s':'')+' waiting for you';a.append(b);}tabs.append(a);}}
   function show(which){layout.hidden=which!=='layout';full.hidden=which!=='full';}
-  function taskCard(t,band){const b=btn('',()=>go({t:t.slug,b:band}),'kn-card');const top=el('div',undefined,'kn-card-top');top.append(badge(STATE_LABEL[t.state]||t.state,t.state),el('strong',t.title));b.append(top);
+  function taskCard(t,band){const b=btn('',()=>go({t:wv.ref(t),b:band}),'kn-card');const top=el('div',undefined,'kn-card-top');top.append(badge(STATE_LABEL[t.state]||t.state,t.state),el('strong',t.title));b.append(top);
     if(t.claimants&&t.claimants.length)b.append(el('small','On it: '+t.claimants.map(x=>x.actor+' ('+ago(x.last_active)+')').join(', ')));
     if(t.needs_hygiene)b.append(el('small','Idle, work unrecorded','kn-warn'));
     if(t.blocked_reason)b.append(el('small','Blocked: '+t.blocked_reason));
@@ -237,7 +237,7 @@ export async function mountTasks(root){
   function drawSide(){const wasOpen=side.classList.contains('kn-open');side.replaceChildren();const body=[];
     const byConcept={};for(const p of deck){const k=p.project.parent||'';(byConcept[k]=byConcept[k]||[]).push(p);}
     const cname=id=>(concepts.find(x=>x.id===id)||{}).title||'Other projects';
-    for(const [cid,ps] of Object.entries(byConcept)){body.push(el('h3',cname(cid)));for(const p of ps){const n=p.in_progress.length,b2=p.blocked.length,t=p.todo.length;const a=btn('',()=>go({p:p.project.slug,b:p.band}),'kn-index-item');a.append(el('span',p.project.title),el('small',[n&&n+' active',b2&&b2+' blocked',t&&t+' to do'].filter(Boolean).join(' · ')||'nothing open'));body.push(a);}}
+    for(const [cid,ps] of Object.entries(byConcept)){body.push(el('h3',cname(cid)));for(const p of ps){const n=p.in_progress.length,b2=p.blocked.length,t=p.todo.length;const a=btn('',()=>go({p:wv.ref(p.project),b:p.band}),'kn-index-item');a.append(el('span',p.project.title),el('small',[n&&n+' active',b2&&b2+' blocked',t&&t+' to do'].filter(Boolean).join(' · ')||'nothing open'));body.push(a);}}
     if(!deck.length)body.push(el('p','No projects yet.','kn-dim'));
     foldSide(side,'Projects · '+deck.length,body);if(wasOpen){side.classList.add('kn-open');side.querySelector('.kn-side-toggle').setAttribute('aria-expanded','true');}}
   function drawOverview(){main.replaceChildren();
@@ -272,12 +272,12 @@ export async function mountTasks(root){
     await huddleUI.open({room:p.get('h'),project:p.get('hp'),band:p.get('hb')});}
   async function drawTask(slug,band){const r=await c.api('get',{id:slug,...(band?{band}:{})});main.replaceChildren();
     const proj=deck.find(p=>p.band===r.band&&(p.project.id===r.parent||p.project.id===r.id||[...p.in_progress,...p.blocked,...p.paused,...p.todo,...p.recently_done].some(t=>t.id===r.id)));
-    const parts=[['Work',()=>go({})]];if(proj&&proj.project.id!==r.id)parts.push([proj.project.title,()=>go({p:proj.project.slug,b:proj.band})]);parts.push(r.title);
+    const parts=[['Work',()=>go({})]];if(proj&&proj.project.id!==r.id)parts.push([proj.project.title,()=>go({p:wv.ref(proj.project),b:proj.band})]);parts.push(r.title);
     const titleRow=el('div',undefined,'kn-titlerow');titleRow.append(el('h1',r.title));
     const acts=el('div',undefined,'kn-acts');acts.append(btn('+ Subtask',()=>create({parent:r.slug,band:r.band,kind:'task'})));
     if(r.state!=='archived')acts.append(more([{label:'Archive',danger:true,run:async()=>{await c.api('update',{id:r.id,band:r.band,request_id:crypto.randomUUID(),data:{revision:r.revision,patch:{state:'archived'}}});await load();go({});}}],'More actions for this task'));
     titleRow.append(acts);main.append(crumbsNav(parts),titleRow);
-    const meta=el('p',undefined,'kn-meta');meta.append(badge(STATE_LABEL[r.state]||r.state,r.state),el('span',r.kind),copyChip('[['+r.slug+']]'),el('span',c.bandName(r.band)+' · by '+r.creator+' · '+ago(r.updated)));main.append(meta);
+    const meta=el('p',undefined,'kn-meta');meta.append(badge(STATE_LABEL[r.state]||r.state,r.state),el('span',r.kind),...(r.kind==='task'||r.kind==='project'?wv.nameChips(r):[]),copyChip('[['+r.slug+']]'),el('span',c.bandName(r.band)+' · by '+r.creator+' · '+ago(r.updated)));main.append(meta);
     if(r.kind==='task'||r.kind==='project'){const plan=el('div',undefined,'wv-taskplan');
       // Only real YYYY-MM-DD dates: older records may hold free text there.
       const day=v=>/^\d{4}-\d{2}-\d{2}$/.test(v||'')?v:'';const a={...r.attrs,start:day(r.attrs.start),due:day(r.attrs.due)};
@@ -298,11 +298,11 @@ export async function mountTasks(root){
     if(r.claims.length>live.length){const d=el('details');d.append(el('summary','Past claims'));for(const x of r.claims.filter(x=>x.released))d.append(el('div',x.actor+' · '+date(x.started)+' → '+date(x.released),'kn-dim'));main.append(d);}
     if(r.backlinks.length){main.append(el('h2','Referenced by'));const ul=el('ul',undefined,'kn-list');for(const b of r.backlinks){const li=el('li');const a=el('a',b.title);a.href='#';a.onclick=e=>{e.preventDefault();refOpen(b.slug,r.band);};li.append(a,el('span',' · '+b.kind,'kn-dim'));ul.append(li);}main.append(ul);}
     main.append(historyBlock(r.events));}
-  function refOpen(slug,band){c.api('get',{id:slug,...(band?{band}:{})}).then(r=>{if(r.kind==='knowledge')jump('knowledge',{p:r.slug,b:r.band});else if(r.kind==='project')go({p:r.slug,b:r.band});else go({t:r.slug,b:r.band});}).catch(()=>{});}
+  function refOpen(slug,band){c.api('get',{id:slug,...(band?{band}:{})}).then(r=>{if(r.kind==='knowledge')jump('knowledge',{p:r.slug,b:r.band});else if(r.kind==='project')go({p:wv.ref(r),b:r.band});else go({t:wv.ref(r),b:r.band});}).catch(()=>{});}
   function create(opts={}){form('New '+(opts.kind||'record'),f=>{const k=f('kind','Type',opts.kind||'task','select');for(const x of ['task','project','concept']){const o=el('option',x);o.value=x;k.append(o);}k.value=opts.kind||'task';
       f('title','Title');f('body','Details (markdown, [[slug]] links)','','textarea');f('parent','Parent slug (concept for a project, project or task for a task)',opts.parent||'');
       const b=f('band','Band','','select');for(const x of c.bands()){const o=el('option',x.name);o.value=x.id;if(opts.band?x.id===opts.band:x.primary)o.selected=true;b.append(o);}},
-    async d=>{const n=await c.api('create',{kind:d.get('kind'),band:d.get('band'),request_id:crypto.randomUUID(),data:{title:d.get('title'),body:d.get('body'),...(d.get('parent')?{parent:d.get('parent')}:{})}});await load();go(d.get('kind')==='project'?{p:n.slug,b:n.band}:{t:n.slug,b:n.band});});}
+    async d=>{const n=await c.api('create',{kind:d.get('kind'),band:d.get('band'),request_id:crypto.randomUUID(),data:{title:d.get('title'),body:d.get('body'),...(d.get('parent')?{parent:d.get('parent')}:{})}});await load();go(d.get('kind')==='project'?{p:wv.ref(n),b:n.band}:{t:wv.ref(n),b:n.band});});}
   function currentTab(p){if(!p)return '';const v=p.get('v');return v||(p.get('t')||p.get('p')?null:'');}
   async function route(){const p=hashParams('work');if(!p)return;const v=p.get('v');drawTabs(currentTab(p));
     if(v!=='huddle')huddleUI?.deactivate();

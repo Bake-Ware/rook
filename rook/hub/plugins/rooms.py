@@ -13,6 +13,11 @@ written in any language can take part without an MCP client
 * ``chat.delete`` (risk ``write``, destructive): participants only.
 * ``chat.presence`` (risk ``read``): who has been seen recently.
 
+``room`` is the room id or its speakable name (``brave-otter-lamp``, any
+case or separators). A read takes one clear near miss and says so
+(``resolved``); a write needs the exact name. An unknown name returns
+``ok: false`` with ``candidates``.
+
 Names follow the permissions tier table (Appendix A.2), which already reserves
 them for the hub. Worker chat caps (``chat.open``/``send``/``rooms``/``poll``,
 the local-human transcript plugin) share the namespace but no names, so a
@@ -32,6 +37,7 @@ from __future__ import annotations
 import logging
 import os
 
+from ...core import names
 from ...core.context import current_identity
 from ...core.plugin import Plugin, capability, place, setting
 
@@ -122,6 +128,17 @@ class ChatRooms(Plugin):
         return self._store
 
     @staticmethod
+    def _room(store, room, *, write: bool):
+        """``(id, extra, None)`` for a room id or name, or ``(None, None,
+        error reply)`` carrying the candidates."""
+        try:
+            got = store.resolve_room(room, write=write)
+        except names.NameError_ as e:
+            return None, None, {"ok": False, **e.payload()}
+        return got.id, ({"resolved": {"from": room, "via": "fuzzy"}}
+                        if got.via == "fuzzy" else {}), None
+
+    @staticmethod
     def _checked(reply: dict) -> dict:
         if not reply.get("ok", True):
             raise ValueError(reply.get("error") or "chat operation failed")
@@ -142,8 +159,11 @@ class ChatRooms(Plugin):
             if not room:
                 raise ValueError("read needs room")
             store.touch(me)
-            return self._checked(store.read(room, me, since_seq=int(since_seq),
-                                            mark=bool(mark), limit=int(limit)))
+            rid, extra, err = self._room(store, room, write=False)
+            if err:
+                return err
+            return {**self._checked(store.read(rid, me, since_seq=int(since_seq),
+                                               mark=bool(mark), limit=int(limit))), **extra}
         raise ValueError("action must be rooms or read")
 
     @capability("write", risk="write")
@@ -163,7 +183,10 @@ class ChatRooms(Plugin):
         if action == "send":
             if not room:
                 raise ValueError("send needs room")
-            return self._checked(store.send(room, me, text or "", _names(mentions),
+            rid, _, err = self._room(store, room, write=True)
+            if err:
+                return err
+            return self._checked(store.send(rid, me, text or "", _names(mentions),
                                             bool(expects_reply)))
         raise ValueError("action must be start or send")
 
@@ -171,7 +194,10 @@ class ChatRooms(Plugin):
     def delete(self, room: str) -> dict:
         """Delete a room and all its messages (participants only; final)."""
         store, me = self._chat(), caller()
-        return self._checked(store.delete(room, me))
+        rid, _, err = self._room(store, room, write=True)
+        if err:
+            return err
+        return self._checked(store.delete(rid, me))
 
     @capability("presence", risk="read")
     def presence(self) -> dict:

@@ -32,6 +32,7 @@ import threading
 import time
 import uuid
 
+from ..core import names
 from ..core.db import add_columns, open_db
 from ..core.text import clip, marker
 from .secret_mask import scrub
@@ -86,6 +87,12 @@ class ChatStore:
             # status lines). Additive, so an older release still reads and
             # writes the table (its inserts name their columns).
             add_columns(self._db, "messages", {"quiet": "INTEGER"})
+            # Speakable names (rook.core.names; a huddle uses its room's):
+            # rooms started by an older release get theirs here.
+            names.ensure_table(self._db)
+            names.backfill(self._db, "room", [r[0] for r in self._db.execute(
+                "SELECT id FROM rooms WHERE id NOT IN "
+                "(SELECT id FROM record_names WHERE kind='room')")])
             self._db.commit()
         except Exception:
             log.exception("chat store init failed; chat disabled")
@@ -94,6 +101,33 @@ class ChatStore:
     @property
     def enabled(self) -> bool:
         return self._db is not None
+
+    # -- names ---------------------------------------------------------------
+
+    def name_of(self, room_id: str) -> str | None:
+        if self._db is None or not room_id:
+            return None
+        with self._lock:
+            return names.name_of(self._db, "room", room_id)
+
+    def names_of(self, ids) -> dict:
+        if self._db is None:
+            return {}
+        with self._lock:
+            return names.names_of(self._db, "room", ids)
+
+    def resolve_room(self, ref, *, write: bool) -> names.Resolved:
+        """A room id, or its speakable name (any case and separators), as
+        the room id. A read takes one clear near miss; a write needs the
+        exact name. Raises names.NameError_ with candidates."""
+        if self._db is None:
+            return names.Resolved(id=str(ref or "").strip())
+        def exists(rid):
+            return self._db.execute("SELECT 1 FROM rooms WHERE id=?", (rid,)).fetchone() is not None
+        with self._lock:
+            return names.resolve(self._db, "room", ref, exists=exists, write=write, noun="room")
+
+    resolve_ref = resolve_room
 
     # -- presence ------------------------------------------------------------
 
@@ -148,10 +182,11 @@ class ChatStore:
                     "INSERT INTO rooms (id,title,created,last_activity,participants) "
                     "VALUES (?,?,?,?,?)",
                     (rid, str(title or "chat")[:200], now, now, json.dumps(parts)))
+                name = names.assign(self._db, "room", rid)
                 self._db.commit()
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
-        return {"ok": True, "room": rid, "title": title, "participants": parts}
+        return {"ok": True, "room": rid, "name": name, "title": title, "participants": parts}
 
     def delete(self, rid: str, identity: str | None) -> dict:
         """Delete a room and everything in it. ``identity`` must be a
@@ -174,7 +209,8 @@ class ChatStore:
                 self._db.commit()
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
-        return {"ok": True, "room": rid, "title": room["title"], "messages_deleted": n}
+        return names.with_name({"ok": True, "room": rid, "title": room["title"],
+                                "messages_deleted": n}, room.get("name"))
 
     # -- avatars -------------------------------------------------------------
     # Small images keyed by identity ("agent:<token name>", "user:operator").
@@ -234,10 +270,12 @@ class ChatStore:
             r = self._db.execute(
                 "SELECT id,title,created,last_activity,participants FROM rooms "
                 "WHERE id=?", (rid,)).fetchone()
+            name = names.name_of(self._db, "room", r[0]) if r else None
         if not r:
             return None
-        return {"id": r[0], "title": r[1], "created": r[2],
-                "last_activity": r[3], "participants": json.loads(r[4] or "[]")}
+        return names.with_name({"id": r[0], "title": r[1], "created": r[2],
+                                "last_activity": r[3], "participants": json.loads(r[4] or "[]")},
+                               name)
 
     def exists(self, rid: str) -> bool:
         return self._db is not None and self._room(rid) is not None
@@ -261,7 +299,8 @@ class ChatStore:
             with self._lock:
                 self._set_participants(rid, parts + added)
                 self._db.commit()
-        return {"ok": True, "room": rid, "participants": parts + added, "added": added}
+        return names.with_name({"ok": True, "room": rid, "participants": parts + added,
+                                "added": added}, room.get("name"))
 
     def _set_participants(self, rid: str, parts: list[str]) -> None:
         self._db.execute("UPDATE rooms SET participants=? WHERE id=?",
@@ -311,8 +350,9 @@ class ChatStore:
         implicit = [p for p in parts if p != sender] if len(parts) == 2 else []
         addressed = ment or implicit
         offline = [a for a in addressed if not self.is_online(a)]
-        return {"ok": True, "room": rid, "seq": seq, "participants": parts,
-                "mentioned": ment, "addressed": addressed, "offline": offline}
+        return names.with_name({"ok": True, "room": rid, "seq": seq, "participants": parts,
+                                "mentioned": ment, "addressed": addressed, "offline": offline},
+                               room.get("name"))
 
     def read(self, rid: str, reader: str | None, since_seq: int = 0,
              mark: bool = True, limit: int = 200) -> dict:
@@ -338,9 +378,10 @@ class ChatStore:
         # Masked on read too: messages stored before a secret entered the
         # vault (and the dashboard, which reads this store directly).
         msgs = scrub(msgs)
-        return {"ok": True, "room": rid, "title": scrub(room["title"]),
-                "participants": room["participants"], "messages": msgs,
-                "last_seq": msgs[-1]["seq"] if msgs else int(since_seq)}
+        return names.with_name({"ok": True, "room": rid, "title": scrub(room["title"]),
+                                "participants": room["participants"], "messages": msgs,
+                                "last_seq": msgs[-1]["seq"] if msgs else int(since_seq)},
+                               room.get("name"))
 
     def last_seq(self, rid: str) -> int:
         """Highest message seq in a room (0 if empty or unknown) - where a
@@ -395,6 +436,7 @@ class ChatStore:
             rows = self._db.execute(
                 "SELECT id,title,last_activity,participants FROM rooms "
                 "ORDER BY last_activity DESC").fetchall()
+            named = names.names_of(self._db, "room", [r[0] for r in rows])
             out = []
             for (rid, title, la, parts) in rows:
                 plist = json.loads(parts or "[]")
@@ -414,7 +456,8 @@ class ChatStore:
                 last = self._db.execute(
                     "SELECT sender,text FROM messages WHERE room_id=? ORDER BY seq DESC LIMIT 1",
                     (rid,)).fetchone()
-                out.append({"room": rid, "title": scrub(title),
+                out.append({"room": rid, **({"name": named[rid]} if rid in named else {}),
+                            "title": scrub(title),
                             "last_activity_age_secs": round(time.time() - la, 1),
                             "participants": plist, "member": member,
                             "unread": cnt,
@@ -431,8 +474,8 @@ class ChatStore:
         if self._db is None or not identity or identity == "anonymous":
             return []
         r = self.rooms_for(identity)
-        return [{"room": x["room"], "title": x["title"], "unread": x["unread"],
-                 "from": x["last_sender"]}
+        return [names.with_name({"room": x["room"], "title": x["title"], "unread": x["unread"],
+                                 "from": x["last_sender"]}, x.get("name"))
                 for x in r.get("rooms", []) if x["unread"] > 0]
 
     def close(self) -> None:

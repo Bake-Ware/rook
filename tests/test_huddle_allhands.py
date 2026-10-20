@@ -231,7 +231,7 @@ async def test_a_failed_card_says_why_on_the_card_and_in_the_room(hub):
                                            "action": "approve"})
     assert res["state"] == "failed" and res["error"] == "the boom went off"
     sender, text = _texts(hub, h["room"])[-1]
-    assert sender == "agent:home" and f"Card {out['card']}" in text \
+    assert sender == "agent:home" and f"Card {out['name']} ({out['card']}, job.run: Set it off)" in text \
         and "failed: the boom went off" in text
     view = await _call(hub, "huddle.read", {"room": h["room"]})
     assert view["cards"][0]["error"] == "the boom went off"
@@ -436,7 +436,7 @@ async def test_the_chairs_message_lists_the_cards_it_actually_made(hub):
     card, = hub.svc.store.cards(h["room"])
     sender, text = _texts(hub, h["room"])[-1]
     assert sender == "agent:home" and text.startswith("Here is where we are.")
-    assert f"- Card {card['id']} (note, waiting for your approval): Decision: page the deck" in text
+    assert f"- Card {card['name']} ({card['id']}, note, waiting for your approval): Decision: page the deck" in text
     assert "- Not proposed (job.run: Run a cap box lacks): not proposed: box has no cap" in text
     assert card["seq"] == hub.svc.chat.tail(h["room"], 1)[0]["seq"]
     chair = _turns(hub, "huddle-chair")[0]

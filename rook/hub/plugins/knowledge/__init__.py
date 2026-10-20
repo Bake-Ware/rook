@@ -50,6 +50,9 @@ def error_reply(error: Exception) -> str:
     out = {'ok': False, 'error': str(error), 'code': type(error).__name__}
     if getattr(error, 'revision', None) is not None:
         out['current_revision'] = error.revision
+    if getattr(error, 'candidates', None):
+        # A name that was not exactly one record's (rook.core.names).
+        out.update({k: v for k, v in error.payload().items() if k != 'error'})
     return json.dumps(out, separators=(',', ':'), ensure_ascii=False)
 
 

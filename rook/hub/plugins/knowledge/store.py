@@ -28,11 +28,14 @@ import time
 import uuid
 
 from ....band_mcp.secret_mask import scrub
-from ....core import migrations
+from ....core import migrations, names
 from ....core.db import open_db, transaction
 from . import chunk
 
 KINDS = ('concept', 'project', 'task', 'knowledge')
+# Kinds with a speakable name (rook.core.names), kept beside the record in
+# the record_names table; concepts and wiki pages have slugs.
+NAMED = ('task', 'project')
 STATES = {
     'task': ('todo', 'in_progress', 'blocked', 'paused', 'done', 'closed', 'cancelled', 'archived'),
     'project': ('active', 'paused', 'done', 'archived'),
@@ -81,6 +84,16 @@ class Conflict(ValueError):
     def __init__(self, message, revision=None):
         super().__init__(message)
         self.revision = revision
+
+
+class Unresolved(names.NameError_, ValueError):
+    """A name that is not exactly one record's (a near miss, or the same
+    name in several bands). ``candidates`` are ``(id, name)``; ``payload()``
+    is the error reply. A ValueError, so every caller reports it as one."""
+
+
+def _marks(values):
+    return ','.join('?' * len(values))
 
 
 def packed(value):
@@ -141,6 +154,13 @@ class KnowledgeStore:
             if any(v == 1 for v, _ in migrations.pending(db, MIGRATIONS, NAMESPACE)):
                 self._upgrade_legacy(db, version)
             migrations.apply(db, MIGRATIONS, NAMESPACE)
+            # Speakable names for tasks and projects: an additive table that
+            # an older release ignores, so the layout pin below stays at 2.
+            names.ensure_table(db)
+            for kind in NAMED:
+                names.backfill(db, kind, db.execute(
+                    f'SELECT id, band FROM records WHERE kind=? AND id NOT IN '
+                    f'(SELECT id FROM {names.TABLE} WHERE kind=?)', (kind, kind)).fetchall())
             # Kept at layout 2 so an older release (rollback) can still open
             # the file; a later migration that changes the layout bumps it.
             db.execute(f'PRAGMA user_version={SCHEMA}')
@@ -195,23 +215,111 @@ class KnowledgeStore:
     # -- lookup ---------------------------------------------------------------
 
     def _get(self, db, band, rid):
+        """Record ``rid`` (id, slug, or a task's or project's exact name) in
+        ``band``, with its ``name`` when it has one. A near-miss name raises
+        :class:`Unresolved` with the candidates, never a guess."""
         row = db.execute('SELECT * FROM records WHERE band=? AND (id=? OR slug=?)', (band, rid, rid)).fetchone()
+        if row is None and names.looks_like_name(rid):
+            hits = self._named(db, rid, [band])
+            if len(hits) > 1:
+                raise Unresolved(f'{names.normalize(rid)!r} names a task and a project; use the id',
+                                 [(h['id'], h['name']) for h in hits], ambiguous=True)
+            if hits:
+                row = db.execute('SELECT * FROM records WHERE id=?', (hits[0]['id'],)).fetchone()
+            else:
+                near = self._near(db, rid, [band])
+                if near:
+                    raise Unresolved(f'Record {rid!r} not found in this band; a write needs the exact name or id '
+                                     '(did you mean ' + ', '.join(repr(n) for _, n in near) + '?)', near)
         if row is None:
             raise ValueError(f'Record {rid!r} not found in this band')
-        return self.record(row)
+        r = self.record(row)
+        if r['kind'] in NAMED:
+            names.with_name(r, names.name_of(db, r['kind'], r['id']))
+        return r
+
+    @staticmethod
+    def _named(db, ref, bands):
+        """``{id, band, kind, name}`` of the tasks and projects in ``bands``
+        named exactly ``ref`` (any case and separators)."""
+        n = names.normalize(ref)
+        if not n:
+            return []
+        return [dict(r) for r in db.execute(
+            f'SELECT r.id, r.band, r.kind, n.name FROM {names.TABLE} n JOIN records r ON r.id=n.id '
+            f'WHERE n.kind IN ({_marks(NAMED)}) AND n.name=? AND r.band IN ({_marks(bands)})',
+            (*NAMED, n, *bands))]
+
+    @staticmethod
+    def _near(db, ref, bands, limit=5):
+        """``(id, name)`` of tasks and projects in ``bands`` whose names are
+        near misses for ``ref`` (names.suggest)."""
+        out = []
+        for kind in NAMED:
+            near = names.suggest(db, kind, ref, band=bands[0] if len(bands) == 1 else None, limit=limit * 2)
+            if near and len(bands) > 1:
+                ids = [i for i, _ in near]
+                inside = {r[0] for r in db.execute(
+                    f'SELECT id FROM records WHERE id IN ({_marks(ids)}) AND band IN ({_marks(bands)})',
+                    (*ids, *bands))}
+                near = [(i, n) for i, n in near if i in inside]
+            out += near
+        return out[:limit]
+
+    @staticmethod
+    def _names(db, ids):
+        """id -> name for those of ``ids`` that are named tasks or projects."""
+        out = {}
+        for kind in NAMED:
+            out |= names.names_of(db, kind, ids)
+        return out
+
+    def names_for(self, ids):
+        with self.db(False) as db:
+            return self._names(db, list(ids))
+
+    def resolve(self, rid, bands, write=False):
+        """``(band, id, resolved)`` of the record ``rid`` names among
+        ``bands``: an id (ids are global), a slug, or a task's or project's
+        name in any case with spaces, hyphens or underscores. A slug or name
+        used in several bands needs an explicit band. A read (``write``
+        False) may take a single clear near-miss name; then ``resolved`` is
+        ``{from, via: 'fuzzy'}`` for the reply (else None). Writes need the
+        exact name: otherwise :class:`Unresolved` with the candidates."""
+        with self.db(False) as db:
+            rows = db.execute(f'SELECT id, band FROM records WHERE (id=? OR slug=?) AND band IN ({_marks(bands)})',
+                              (rid, rid, *bands)).fetchall()
+            if len(rows) > 1:
+                raise ValueError(f'{rid!r} exists in several bands; pass band=')
+            if rows:
+                return rows[0]['band'], rows[0]['id'], None
+            if not names.looks_like_name(rid):
+                raise ValueError(f'Record {rid!r} not found')
+            hits = self._named(db, rid, bands)
+            if len(hits) > 1:
+                raise Unresolved(f'{names.normalize(rid)!r} names {len(hits)} records (in several bands, or a task '
+                                 'and a project); use the id or pass band=: ' + ', '.join(h['id'] for h in hits),
+                                 [(h['id'], h['name']) for h in hits], ambiguous=True)
+            if hits:
+                return hits[0]['band'], hits[0]['id'], None
+            near = self._near(db, rid, bands)
+            if near and not write and len(near) == 1:
+                band = db.execute('SELECT band FROM records WHERE id=?', (near[0][0],)).fetchone()['band']
+                return band, near[0][0], {'from': str(rid), 'via': 'fuzzy'}
+        what = names.normalize(rid)
+        if not near:
+            raise Unresolved(f'Record {rid!r} not found: no task or project is named {what!r}')
+        if write:
+            raise Unresolved(f'No task or project is named {what!r}; a write needs the exact name or id '
+                             '(did you mean ' + ', '.join(repr(n) for _, n in near) + '?)', near)
+        raise Unresolved(f'No task or project is named {what!r}; several are close, pick one: '
+                         + ', '.join(repr(n) for _, n in near), near, ambiguous=True)
 
     def locate(self, rid, bands):
-        """The band holding record id/slug ``rid`` among ``bands``. IDs are
-        global; a slug used in several bands needs an explicit band."""
-        with self.db(False) as db:
-            marks = ','.join('?' * len(bands))
-            rows = db.execute(f'SELECT band FROM records WHERE (id=? OR slug=?) AND band IN ({marks})',
-                              (rid, rid, *bands)).fetchall()
-        if not rows:
-            raise ValueError(f'Record {rid!r} not found')
-        if len(rows) > 1:
-            raise ValueError(f'{rid!r} exists in several bands; pass band=')
-        return rows[0]['band']
+        """The band holding record id/slug/exact name ``rid`` among
+        ``bands``. IDs are global; a slug or name used in several bands
+        needs an explicit band."""
+        return self.resolve(rid, bands, write=True)[0]
 
     def link_band(self, link_id):
         with self.db(False) as db:
@@ -354,6 +462,8 @@ class KnowledgeStore:
         db.execute('INSERT INTO records(id,band,kind,parent,title,body,state,attrs,created,updated,creator,slug) '
                    'VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
                    (rid, band, kind, parent, title, body, INITIAL[kind], packed(attrs), now, now, actor_id(actor), slug))
+        if kind in NAMED:
+            names.assign(db, kind, rid, band=band)
         for old_id in attrs['supersedes']:
             old = self._get(db, band, old_id)
             if kind != 'knowledge' or old['kind'] != 'knowledge':
@@ -637,7 +747,7 @@ class KnowledgeStore:
 
     def auto_link(self, actor, kind, ref, relation='touched', note='', task=None, band=None):
         """Attach an artifact to the actor's most recently claimed open task,
-        or to ``task`` (id or slug) when the caller names one. A claim idle
+        or to ``task`` (id, slug or exact name) when the caller names one. A claim idle
         longer than STALE_CLAIM_SECS is skipped: the actor has moved on, and
         its later work belongs to something else. ``band`` limits the claim
         lookup to one band. Called by the hub on the actor's behalf; returns
@@ -648,9 +758,16 @@ class KnowledgeStore:
         ref, note = scrub(str(ref)), scrub(note)
         with self.db() as db:
             if task:
-                row = db.execute("SELECT * FROM records WHERE (id=? OR slug=?) AND kind='task'", (task, task)).fetchall()
+                row = db.execute(f"SELECT * FROM records WHERE kind='task' AND (id=? OR slug=? OR id IN "
+                                 f"(SELECT id FROM {names.TABLE} WHERE kind='task' AND name=?))",
+                                 (task, task, names.normalize(task) or '')).fetchall()
+                if not row and names.looks_like_name(task):
+                    near = names.suggest(db, 'task', task)
+                    if near:
+                        raise Unresolved(f'task {task!r} not found; did you mean '
+                                         + ', '.join(repr(n) for _, n in near) + '?', near)
                 if len(row) != 1:
-                    raise ValueError(f'task {task!r} not found' if not row else f'task slug {task!r} is in several bands; use its id')
+                    raise ValueError(f'task {task!r} not found' if not row else f'task {task!r} is in several bands; use its id')
                 self._link(db, row[0]['band'], row[0]['id'], actor, kind, str(ref)[:500], relation, note, auto=True)
                 db.execute('UPDATE claims SET last_active=?,dirty=NULL WHERE task=? AND actor=? AND released IS NULL',
                            (time.time(), row[0]['id'], aid))
@@ -688,8 +805,11 @@ class KnowledgeStore:
         """A task's dependencies with their states, and whether all are done."""
         deps = []  # only done counts: closed on someone's word is not proof the work exists
         for dep in attrs.get('dependencies') or []:
-            d = db.execute('SELECT id,slug,state FROM records WHERE band=? AND (id=? OR slug=?)', (band, dep, dep)).fetchone()
-            deps.append(dict(d) if d else {'id': dep, 'slug': None, 'state': 'missing'})
+            d = db.execute(f"SELECT r.id,r.slug,r.state,n.name FROM records r LEFT JOIN {names.TABLE} n "
+                           f"ON n.kind='task' AND n.id=r.id WHERE r.band=? AND (r.id=? OR r.slug=? OR n.name=?)",
+                           (band, dep, dep, names.normalize(dep) or '')).fetchone()
+            deps.append({k: v for k, v in dict(d).items() if k != 'name' or v} if d
+                        else {'id': dep, 'slug': None, 'state': 'missing'})
         return deps, all(d['state'] == 'done' for d in deps)
 
     def get(self, band, rid, auto_links=True, events=100, stubs=0):
@@ -704,8 +824,8 @@ class KnowledgeStore:
             r['events'] = [{**dict(e), 'data': json.loads(e['data'])} for e in db.execute(
                 'SELECT seq,actor,action,ts,data FROM events WHERE band=? AND record=? ORDER BY seq DESC LIMIT ?',
                 (band, rid, max(0, min(int(events), 1000))))]
-            r['children'] = [self.brief(self.record(e)) for e in db.execute(
-                'SELECT * FROM records WHERE band=? AND parent=? ORDER BY created LIMIT 200', (band, rid))]
+            r['children'] = [self.brief(e) for e in self._with_names(db, [self.record(e) for e in db.execute(
+                'SELECT * FROM records WHERE band=? AND parent=? ORDER BY created LIMIT 200', (band, rid))])]
             r['links'] = self._live_links(db, rid)
             if not auto_links:
                 counts = {}
@@ -725,7 +845,7 @@ class KnowledgeStore:
                 self._structural(db, band, r, back, stubs)
             else:
                 r['mentions'] = sorted(set(WIKI.findall(r['body'])))
-                r['backlinks'] = [self.brief(self.record(b)) for b in back]
+                r['backlinks'] = [self.brief(b) for b in self._with_names(db, [self.record(b) for b in back])]
             if r['state'] == 'superseded':
                 sup = db.execute("SELECT r.id,r.slug,r.title FROM links l JOIN records r ON r.id=l.record "
                                  "WHERE l.kind='record' AND l.relation='supersedes' AND l.ref=?", (rid,)).fetchone()
@@ -783,9 +903,18 @@ class KnowledgeStore:
         # ``related`` can leave them out: they are already a hop away.
         r['_linked'] = {row['id'] for row in out} | {row['id'] for row in back}
 
+    @classmethod
+    def _with_names(cls, db, recs):
+        """``recs`` (record dicts) with ``name`` set on the named ones."""
+        found = cls._names(db, [r['id'] for r in recs if r.get('kind') in NAMED])
+        for r in recs:
+            names.with_name(r, found.get(r['id']))
+        return recs
+
     @staticmethod
     def brief(r):
         return {k: r.get(k) for k in ('id', 'slug', 'kind', 'title', 'state', 'revision', 'updated', 'creator', 'parent', 'band')} | {
+            **({'name': r['name']} if r.get('name') else {}),
             'excerpt': r['body'][:240],
             **({'verification': r['attrs'].get('verification', 'unverified')} if r['kind'] == 'knowledge' else {})}
 
@@ -799,15 +928,26 @@ class KnowledgeStore:
         if worker:
             clauses.append("EXISTS(SELECT 1 FROM json_each(records.attrs,'$.workers') WHERE value=?)"); params.append(worker)
         with self.db(False) as db:
-            return [self.record(r) for r in db.execute('SELECT * FROM records WHERE ' + ' AND '.join(clauses) + ' ORDER BY updated DESC LIMIT ? OFFSET ?', params + [max(1, min(int(limit), 200)), max(0, int(offset))])]
+            return self._with_names(db, [self.record(r) for r in db.execute('SELECT * FROM records WHERE ' + ' AND '.join(clauses) + ' ORDER BY updated DESC LIMIT ? OFFSET ?', params + [max(1, min(int(limit), 200)), max(0, int(offset))])])
 
     def lexical(self, band, query, limit=30):
+        """Full-text matches, led by the tasks and projects whose speakable
+        name holds the query (``otter lamp`` finds ``brave-otter-lamp``)."""
         terms = re.findall(r'\w+', text(query, 1000))[:20]
         if not terms:
             return self.list(band, limit=limit)
         match = ' OR '.join('"' + t + '"' for t in terms)
+        key = '-'.join(re.findall(r'[a-z]+', query.lower()))
         with self.db(False) as db:
-            return [self.record(r) for r in db.execute("SELECT r.* FROM records_fts f JOIN records r ON r.id=f.id WHERE records_fts MATCH ? AND r.band=? AND r.state NOT IN ('archived','superseded') ORDER BY bm25(records_fts) LIMIT ?", (match, band, min(limit, 100)))]
+            named = [] if len(key) < 3 else db.execute(
+                f"SELECT r.* FROM {names.TABLE} n JOIN records r ON r.id=n.id WHERE n.kind IN ({_marks(NAMED)}) "
+                "AND n.name LIKE ? AND r.band=? AND r.state NOT IN ('archived','superseded') "
+                "ORDER BY n.name<>?, r.updated DESC LIMIT ?",
+                (*NAMED, '%' + key + '%', band, key, min(limit, 100))).fetchall()
+            found = named + db.execute("SELECT r.* FROM records_fts f JOIN records r ON r.id=f.id WHERE records_fts MATCH ? AND r.band=? AND r.state NOT IN ('archived','superseded') ORDER BY bm25(records_fts) LIMIT ?", (match, band, min(limit, 100))).fetchall()
+            seen = set()
+            return self._with_names(db, [self.record(r) for r in found
+                                         if not (r['id'] in seen or seen.add(r['id']))][:min(limit, 100)])
 
     def context(self, band, worker=None):
         with self.db(False) as db:
@@ -817,10 +957,17 @@ class KnowledgeStore:
                 params.append(worker)
             tasks = [self.record(r) for r in db.execute("SELECT * FROM records WHERE " + where + " AND kind='task' AND state IN ('in_progress','blocked','paused','todo') ORDER BY CASE state WHEN 'in_progress' THEN 0 WHEN 'blocked' THEN 1 WHEN 'paused' THEN 2 ELSE 3 END,updated DESC LIMIT 5", params)]
             recent = [self.record(r) for r in db.execute("SELECT * FROM records WHERE " + where + " AND kind='knowledge' AND state='active' ORDER BY updated DESC LIMIT 5", params)]
+            self._with_names(db, tasks)
         return {'band': band, 'worker': worker, 'open_tasks': [self.brief(r) for r in tasks],
                 'recent_knowledge': [self.brief(r) for r in recent], 'generated_at': time.time()}
 
     DECK_LISTS = ('in_progress', 'blocked', 'paused', 'todo', 'recently_done')
+    # A project filter (deck, board): its id, slug or exact name.
+    _PROJECT_REF = f" AND (id=? OR slug=? OR id IN (SELECT id FROM {names.TABLE} WHERE kind='project' AND name=?))"
+
+    @staticmethod
+    def _project_ref(project):
+        return project, project, names.normalize(project) or ''
 
     def deck(self, bands, project=None, done_days=7, states=None, outcome_chars=None):
         """What's on deck, per project, across ``bands``: in progress (with
@@ -856,8 +1003,8 @@ class KnowledgeStore:
         with self.db(False) as db:
             marks = ','.join('?' * len(bands))
             projects = db.execute(f"SELECT * FROM records WHERE kind='project' AND band IN ({marks}) AND state<>'archived'"
-                                  + (' AND (id=? OR slug=?)' if project else '') + ' ORDER BY updated DESC',
-                                  (*bands, *((project, project) if project else ()))).fetchall()
+                                  + (self._PROJECT_REF if project else '') + ' ORDER BY updated DESC',
+                                  (*bands, *(self._project_ref(project) if project else ()))).fetchall()
             tasks = db.execute(f"SELECT id,parent,state,updated FROM records WHERE kind='task' AND band IN ({marks})",
                                tuple(bands)).fetchall()
             children = {}
@@ -888,6 +1035,7 @@ class KnowledgeStore:
                 out['total_tasks'] += len(stray)
             page = per[offset:] if limit is None else per[offset:offset + limit]
             ids = [t['id'] for _, ts in page for t in ts] + ([t['id'] for t in stray] if offset == 0 else [])
+            named = self._names(db, ids + [p['id'] for p, _ in page])
             full = {}
             for n in range(0, len(ids), 500):  # under SQLite's parameter limit
                 part = ids[n:n + 500]
@@ -897,17 +1045,18 @@ class KnowledgeStore:
             def entry(ts):
                 e = {k: [] for k in lists if wanted is None or k in wanted}
                 for t in sorted(ts, key=lambda t: -t['updated']):
-                    e[listed(t)].append(self._deck_item(db, full[t['id']], outcome_chars))
+                    e[listed(t)].append(self._deck_item(db, full[t['id']], outcome_chars, named.get(t['id'])))
                 return e
 
-            out['deck'] = [{'band': p['band'], 'project': self.brief(self.record(p)), **entry(ts)} for p, ts in page]
+            out['deck'] = [{'band': p['band'], 'project': self.brief(names.with_name(self.record(p), named.get(p['id']))),
+                            **entry(ts)} for p, ts in page]
             if stray and offset == 0:
                 out['loose'] = entry(stray)
         return out
 
-    def _deck_item(self, db, t, outcome_chars):
+    def _deck_item(self, db, t, outcome_chars, name=None):
         """One task row on the deck: its brief plus what the deck shows for its state."""
-        rec = self.record(t)
+        rec = names.with_name(self.record(t), name)
         item = self.brief(rec)
         if t['state'] == 'in_progress':
             item['claimants'] = [dict(c) for c in db.execute(
@@ -935,12 +1084,13 @@ class KnowledgeStore:
         return item
 
     def handoff_tasks(self, bands):
-        """Handoff thread id -> the open tasks linked to it (id, slug, state)."""
+        """Handoff thread id -> the open tasks linked to it (id, slug, name, state)."""
         out = {}
         with self.db(False) as db:
             marks = ','.join('?' * len(bands))
-            rows = db.execute(f"SELECT l.id lid,l.ref,l.retracts,r.id,r.slug,r.state FROM links l JOIN records r "
-                              f"ON r.id=l.record WHERE l.kind='handoff' AND r.kind='task' AND r.band IN ({marks})",
+            rows = db.execute(f"SELECT l.id lid,l.ref,l.retracts,r.id,r.slug,r.state,n.name FROM links l JOIN records r "
+                              f"ON r.id=l.record LEFT JOIN {names.TABLE} n ON n.kind='task' AND n.id=r.id "
+                              f"WHERE l.kind='handoff' AND r.kind='task' AND r.band IN ({marks})",
                               tuple(bands)).fetchall()
             gone = {r['retracts'] for r in rows if r['retracts']}
             for r in rows:
@@ -948,7 +1098,8 @@ class KnowledgeStore:
                     continue
                 tasks = out.setdefault(r['ref'], [])
                 if all(t['id'] != r['id'] for t in tasks):
-                    tasks.append({'id': r['id'], 'slug': r['slug'], 'state': r['state']})
+                    tasks.append({'id': r['id'], 'slug': r['slug'], **({'name': r['name']} if r['name'] else {}),
+                                  'state': r['state']})
         return out
 
     # -- Work views (board, list, timeline, project page) ------------------------
@@ -977,8 +1128,11 @@ class KnowledgeStore:
             marks = ','.join('?' * len(bands))
             rows = db.execute(f"SELECT * FROM records WHERE kind='project' AND band IN ({marks})"
                               + ('' if archived else " AND state<>'archived'")
-                              + (' AND (id=? OR slug=?)' if project else '') + ' ORDER BY updated DESC',
-                              (*bands, *((project, project) if project else ()))).fetchall()
+                              + (self._PROJECT_REF if project else '') + ' ORDER BY updated DESC',
+                              (*bands, *(self._project_ref(project) if project else ()))).fetchall()
+            named = {r['id']: r['name'] for r in db.execute(
+                f"SELECT id,name FROM {names.TABLE} WHERE kind IN ({_marks(NAMED)}) AND band IN ({marks})",
+                (*NAMED, *bands))}
             concepts = {r['id']: r['title'] for r in db.execute(
                 f"SELECT id,title FROM records WHERE kind='concept' AND band IN ({marks})", tuple(bands))}
             all_tasks = [self.record(t) for t in db.execute(
@@ -995,6 +1149,8 @@ class KnowledgeStore:
         for t in all_tasks:
             children.setdefault(t['parent'], []).append(t)
             by_ref[(t['band'], t['id'])] = by_ref[(t['band'], t['slug'])] = t
+            if t['id'] in named:
+                by_ref[(t['band'], named[t['id']])] = t
         projects, candidates = [], []
         for p in rows:
             prec = self.record(p)
@@ -1013,6 +1169,7 @@ class KnowledgeStore:
             finished = counts['done'] + counts['closed']
             projects.append({**{k: prec[k] for k in ('id', 'slug', 'title', 'state', 'band', 'parent',
                                                       'revision', 'updated', 'creator')},
+                             **({'name': named[p['id']]} if p['id'] in named else {}),
                              'concept': concepts.get(prec['parent']), 'excerpt': prec['body'][:EXCERPT_CHARS],
                              'tags': prec['attrs'].get('tags') or [],
                              **{k: valid_day(prec['attrs'].get(k)) for k in DATE_ATTRS
@@ -1029,6 +1186,7 @@ class KnowledgeStore:
             claims = live.get(t['id'], [])
             item = {k: t[k] for k in ('id', 'slug', 'title', 'state', 'band', 'parent', 'revision',
                                       'created', 'updated', 'creator')}
+            names.with_name(item, named.get(t['id']))
             item.update(project=pid, excerpt=t['body'][:EXCERPT_CHARS], tags=a.get('tags') or [],
                         claimants=[{k: c[k] for k in ('actor', 'started', 'last_active')} for c in claims],
                         needs_hygiene=any(c['dirty'] for c in claims),
@@ -1043,8 +1201,9 @@ class KnowledgeStore:
             if a.get('dependencies'):
                 deps = []
                 for ref in a['dependencies']:
-                    d = by_ref.get((t['band'], ref))
-                    deps.append({'id': d['id'], 'slug': d['slug'], 'state': d['state']} if d
+                    d = by_ref.get((t['band'], ref)) or by_ref.get((t['band'], names.normalize(ref)))
+                    deps.append(names.with_name({'id': d['id'], 'slug': d['slug'], 'state': d['state']},
+                                                named.get(d['id'])) if d
                                 else {'id': ref, 'slug': None, 'state': 'missing'})
                 item['dependencies'], item['unblocked'] = deps, all(d['state'] == 'done' for d in deps)
             tasks.append(item)
@@ -1059,12 +1218,13 @@ class KnowledgeStore:
             p = self._get(db, band, rid)
             if p['kind'] != 'project':
                 raise ValueError(f"{rid!r} is a {p['kind']}, not a project")
-            tasks = [self.record(t) for t in self._project_tasks(db, band, p['id'])]
+            tasks = self._with_names(db, [self.record(t) for t in self._project_tasks(db, band, p['id'])])
             ids = [p['id']] + [t['id'] for t in tasks]
-            titles = {r['id']: (r['slug'], r['title']) for r in [p, *tasks]}
+            titles = {r['id']: (r['slug'], r['title'], r.get('name')) for r in [p, *tasks]}
             marks = ','.join('?' * len(ids))
             events = [{**dict(e), 'data': json.loads(e['data']), 'slug': titles[e['record']][0],
-                       'title': titles[e['record']][1]} for e in db.execute(
+                       'title': titles[e['record']][1],
+                       **({'name': titles[e['record']][2]} if titles[e['record']][2] else {})} for e in db.execute(
                 f'SELECT seq,record,actor,action,ts,data FROM events WHERE band=? AND record IN ({marks}) '
                 'ORDER BY seq DESC LIMIT ?', (band, *ids, max(1, min(int(activity), 200))))]
             rooms, record_refs = {}, set()

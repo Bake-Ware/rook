@@ -3065,6 +3065,18 @@ class CombinedServer:
 
     _OPERATOR = "user:operator"   # dashboard identity for chat attribution
 
+    def _chat_room(self, room, *, write: bool):
+        """``(id, extra, None)`` for a room id or its speakable name, or
+        ``(None, None, response)``: an unknown or near-miss name, with its
+        candidates (a read takes one clear near miss, marked ``resolved``)."""
+        from ..core import names
+        try:
+            got = self._chat.resolve_room(room, write=write)
+        except names.NameError_ as e:
+            return None, None, web.json_response({"ok": False, **e.payload()})
+        return got.id, ({"resolved": {"from": room, "via": "fuzzy"}}
+                        if got.via == "fuzzy" else {}), None
+
     async def _api_chat_rooms(self, request: web.Request) -> web.Response:
         if self._chat is None:
             return web.json_response({"error": "chat unavailable"}, status=503)
@@ -3074,13 +3086,15 @@ class CombinedServer:
     async def _api_chat_read(self, request: web.Request) -> web.Response:
         if self._chat is None:
             return web.json_response({"error": "chat unavailable"}, status=503)
-        room = request.query.get("room", "")
+        room, extra, err = self._chat_room(request.query.get("room", ""), write=False)
+        if err:
+            return err
         try:
             since = int(request.query.get("since", "0"))
         except ValueError:
             since = 0
         return web.json_response(await self._bridge_mask(
-            self._chat.read(room, self._OPERATOR, since_seq=since)))
+            {**self._chat.read(room, self._OPERATOR, since_seq=since), **extra}))
 
     async def _api_chat_send(self, request: web.Request) -> web.Response:
         if self._chat is None:
@@ -3089,7 +3103,9 @@ class CombinedServer:
             data = await request.json()
         except Exception:
             return web.json_response({"error": "invalid json body"}, status=400)
-        room = str(data.get("room") or "").strip()
+        room, _, err = self._chat_room(str(data.get("room") or "").strip(), write=True)
+        if err:
+            return err
         text = str(data.get("text") or "")
         mention = data.get("mention") or []
         if isinstance(mention, str):
@@ -3127,6 +3143,9 @@ class CombinedServer:
         room = str(data.get("room") or "").strip()
         if not room:
             return web.json_response({"error": "room required"}, status=400)
+        room, _, err = self._chat_room(room, write=True)
+        if err:
+            return err
         return web.json_response(self._chat.delete(room, None))
 
     async def _api_avatars(self, request: web.Request) -> web.Response:
@@ -3220,6 +3239,9 @@ class CombinedServer:
         worker = str(data.get("worker") or "").strip()
         if not room or not worker:
             return web.json_response({"error": "room and worker required"}, status=400)
+        room, _, err = self._chat_room(room, write=True)
+        if err:
+            return err
         # Resolve the worker + its caps from the live roster (name or id).
         roster = self._band.workers
         wid = None

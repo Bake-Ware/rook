@@ -56,6 +56,7 @@ import shlex
 import time
 import uuid
 
+from ....core import names
 from .store import STALE_CLAIM_SECS, packed
 
 log = logging.getLogger("rook.hub.plugins.knowledge.hygiene")
@@ -100,8 +101,9 @@ FINISHED = ('done', 'closed', 'cancelled', 'archived')
 # ``[main 1a2b3c4] subject`` / ``[main (root-commit) 1a2b3c4] subject``
 COMMIT_LINE = re.compile(r'^\[([^\s\]]+)(?: \(root-commit\))? ([0-9a-f]{7,40})\] ?(.*)$', re.M)
 PR_URL = re.compile(r'https://github\.com/[\w.-]+/[\w.-]+/pull/\d+')
-# ``rook: t_<hex>`` or ``rook: <slug>`` in a commit message names the task.
-TASK_REF = re.compile(r'\brook:\s*(t_[0-9a-f]{32}|[a-z0-9][a-z0-9-]{2,79})\b')
+# ``rook: t_<hex>``, ``rook: <slug>`` or ``rook: <name>`` (``brave-otter-lamp``,
+# ``Brave Otter Lamp``) in a commit message names the task.
+TASK_REF = re.compile(r'\brook:\s*(t_[0-9a-f]{32}|[A-Za-z]+(?:[ _-][A-Za-z]+){2}(?![\w-])|[a-z0-9][a-z0-9-]{2,79})\b')
 BARE_TASK_ID = re.compile(r'\b(t_[0-9a-f]{32})\b')
 # ``git commit`` / ``git -C dir commit`` in a shell command.
 GIT_COMMIT = re.compile(r'\bgit\s+(?:[^\s;&|]+\s+){0,4}?commit\b')
@@ -270,13 +272,15 @@ class HygieneEngine:
         marks = ','.join('?' * len(repeat))
         with self.store.db(False) as db:
             due = db.execute(
-                'SELECT h.*, r.slug FROM hygiene h LEFT JOIN records r ON r.id=h.record '
+                'SELECT h.*, r.slug, n.name FROM hygiene h LEFT JOIN records r ON r.id=h.record '
+                f'LEFT JOIN {names.TABLE} n ON n.id=h.record AND n.kind=r.kind '
                 f'WHERE h.actor=? AND h.resolved IS NULL AND (h.delivered IS NULL OR '
                 f'(h.kind IN ({marks}) AND h.delivered<?)) ORDER BY h.created LIMIT ?',
                 (actor, *repeat, again, limit)).fetchall()
         out = []
         for r in due:
-            hint = {'kind': r['kind'], 'id': r['slug'] or r['record'], 'say': r['text'], '_id': r['id']}
+            hint = {'kind': r['kind'], 'id': r['slug'] or r['record'], **({'name': r['name']} if r['name'] else {}),
+                    'say': r['text'], '_id': r['id']}
             data = json.loads(r['data'] or '{}')
             if data.get('suggest'):
                 hint['suggest'] = data['suggest']
@@ -312,7 +316,8 @@ class HygieneEngine:
 
     def open(self, records=None, actor=None, limit=50, bands=None) -> list[dict]:
         """Open findings, newest first; ``bands`` limits them to those bands."""
-        sql, params = ('SELECT h.*, r.slug FROM hygiene h LEFT JOIN records r ON r.id=h.record '
+        sql, params = ('SELECT h.*, r.slug, n.name FROM hygiene h LEFT JOIN records r ON r.id=h.record '
+                       f'LEFT JOIN {names.TABLE} n ON n.id=h.record AND n.kind=r.kind '
                        'WHERE h.resolved IS NULL'), []
         if records:
             sql += ' AND h.record IN (' + ','.join('?' * len(records)) + ')'
@@ -324,7 +329,8 @@ class HygieneEngine:
         sql += more + ' ORDER BY h.created DESC LIMIT ?'
         params += extra + [max(1, min(int(limit), 500))]
         with self.store.db(False) as db:
-            return [self._row(r) | {'slug': r['slug'], 'band': r['band']} for r in db.execute(sql, params)]
+            return [self._row(r) | {'slug': r['slug'], 'band': r['band'], **({'name': r['name']} if r['name'] else {})}
+                    for r in db.execute(sql, params)]
 
     def flags(self, bands=None) -> dict:
         """record id -> sorted open finding kinds (for the deck)."""
@@ -391,11 +397,12 @@ class HygieneEngine:
         return []
 
     def _claimed(self, actor_id, name, band=None):
-        """The task id named ``name`` (id or slug) that ``actor_id`` holds a
-        live claim on (in ``band`` when given), or None."""
+        """The task id named ``name`` (id, slug or exact name) that
+        ``actor_id`` holds a live claim on (in ``band`` when given), or None."""
         sql = ("SELECT DISTINCT r.id FROM claims c JOIN records r ON r.id=c.task WHERE c.actor=? "
-               "AND c.released IS NULL AND c.last_active>=? AND r.kind='task' AND (r.id=? OR r.slug=?)")
-        params = [actor_id, time.time() - STALE_CLAIM_SECS, name, name]
+               "AND c.released IS NULL AND c.last_active>=? AND r.kind='task' AND (r.id=? OR r.slug=? OR r.id IN "
+               f"(SELECT id FROM {names.TABLE} WHERE kind='task' AND name=?))")
+        params = [actor_id, time.time() - STALE_CLAIM_SECS, name, name, names.normalize(name) or '']
         if band:
             sql += ' AND r.band=?'
             params.append(band)
