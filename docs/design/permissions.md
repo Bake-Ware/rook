@@ -822,7 +822,9 @@ answer?}` (write tier; MCP `rook_approvals approve|deny`). Refused unless all
 of:
 
 1. the caller is a verified agent principal (not a person, band caller or
-   unverified) listed in `approvals.db` `relayers`. Only the dashboard's
+   unverified) with no on-behalf-of chain (a job run never relays or lists,
+   even under an enabled token's identity), listed in `approvals.db`
+   `relayers`. Only the dashboard's
    Tokens page writes that table (operator account, CSRF, and never for a
    weak sign-in, as for approving holds); no cap, tool or setting does.
    Revoking a client's last token removes it. Every change is in the
@@ -844,8 +846,15 @@ A relayed hold decision is `Approvals.decide(..., relay=)`: `decided_by` is
 `"<who> via <relayer label>"`, a deny's reason is the hold's `note`, and the
 `relays` row is written in the same transaction. A spread hold is approved
 for the call only (no spread grant). A relayed card runs its call as the
-person would from the dashboard (principal `human:relayed`, owner, labelled
-`<who> via <relayer>`); a dismissal's reason is posted in the room mentioning
+**relaying agent's own principal** (labelled `<who> via <relayer>`), never
+as a person: the policy, holds and admin gates (job guardrail allowances,
+job locks, `require_hub_admin`) apply as to any call that agent makes, so a
+card cannot carry the floor away (a `job.create` card whose job would read
+secrets is still the agent's job). A card whose call goes to a worker on the
+hub's machine (`approvals.hub_host_workers`) at exec tier or above counts as
+`hold:hub-host`; a card's tier is the worker's declared tier for the cap
+(floor: the built-in table). The audit row is written before the card runs
+or the answer is posted. A dismissal's reason is posted in the room mentioning
 the proposer and shown to the chair as "dismissed, with their reason". A
 relayed answer to a question is posted with the attribution and wakes the
 asker as a dashboard answer does.
@@ -861,15 +870,17 @@ card or answer.
 
 **The requester.** A denied hold's reply now carries the person's note
 (`Decision.note`: "Their reason: ..."), and an identical repeat within
-`approval_secs` (at least 10 minutes) gets that denial at once instead of a
-new hold (a denial is final, so the agent hears why).
+the shorter of `approval_secs` and 5 minutes gets that denial at once
+instead of a new hold (a denial is final, so the agent hears why).
 
 **The chair.** When anything is waiting, the chair's turn offers `waiting`
 (the list) with a rule to answer "what's waiting?" from it, tersely. When the
 house agent's identity is an enabled relayer and a person started the round,
 it also offers `relay {item, decision, quote, reason?, answer?}`: the hub
-checks the quote is in that person's message, `who` is the sender, `session`
-is the huddle and round. A guest agent's post never gets `relay`.
+checks the quote is in that person's message and clearly says that decision
+(the voice-approval verdict: a yes with no negation for approve, a no for
+deny), `who` is the sender, `session` is the huddle and round. A round a
+guest agent started gets neither tool (the list is the person's).
 
 **Limits.** An MCP client's quote cannot be verified: enabling a client
 trusts it to pass on the person's words faithfully, and the record makes a

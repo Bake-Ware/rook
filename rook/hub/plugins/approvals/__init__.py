@@ -80,6 +80,8 @@ class Approvals(Plugin):
     def list_(self, kind: str | None = None, summary_only: bool = False) -> dict:
         """What is waiting on the person: held calls, held job calls, huddle cards and pinned questions (kind: hold|job|card|ask; summary_only: just the spoken line)."""
         p = _caller()
+        if p is not None and tuple(p.via or ()):
+            p = None                      # a job run never reads the person's queue
         if not self._may_see(p):
             raise PermissionError(NOT_ENABLED.format(who=getattr(p, "label", "") or
                                                      getattr(p, "id", "this caller")))
@@ -103,6 +105,11 @@ class Approvals(Plugin):
         if p is None or p.kind in ("human", "system"):
             raise PermissionError("approvals.relay is for an agent the person enabled; people "
                                   "decide on the dashboard's Approvals page")
+        if tuple(p.via or ()):
+            # A job (or anything acting on someone's behalf) never relays: only
+            # the client in conversation with the person hears their words.
+            raise PermissionError("approvals.relay is refused on behalf of " + ", ".join(
+                str(v) for v in p.via) + ": only a client talking with the person relays")
         try:
             return await self.relay.decide(item, decision, relayed_by, relayer=p.id,
                                            relayer_label=p.label or p.id, reason=reason,

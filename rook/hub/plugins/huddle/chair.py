@@ -596,13 +596,15 @@ class Chair:
     def _waiting_tools(self, relay: Any, asker: str | None) -> tuple[list[dict], str]:
         """``waiting`` when anything is waiting; ``relay`` too when the house
         agent may relay and a person started this round."""
+        if not _is_person(asker):
+            return [], ""                 # the list is the person's, not a guest's
         try:
             if not relay.items():
                 return [], ""
         except Exception:  # noqa: BLE001 - the list failing never sinks a round
             log.exception("huddle: listing what is waiting failed")
             return [], ""
-        if _is_person(asker) and relay.may_relay(self.chair_identity()):
+        if relay.may_relay(self.chair_identity()):
             return [WAITING, RELAY], WAITING_RULES + RELAY_RULES
         return [WAITING], WAITING_RULES
 
@@ -619,10 +621,16 @@ class Chair:
         if not quote or quote.lower() not in " ".join(str(said or "").split()).lower():
             return json.dumps({"ok": False, "error": "quote must be the person's exact words from "
                                                      "their newest message"})
+        from ...approval_contact import voice_verdict
+        decision = str(args.get("decision") or "")
+        if voice_verdict(quote) != decision:
+            return json.dumps({"ok": False, "error": f"the quoted words must clearly say "
+                                                     f"{decision} (yes/approve/go ahead, or "
+                                                     "no/deny); otherwise ask the person"})
         who = str(asker).split(":", 1)[-1]
         try:
             out = await relay.decide(
-                str(args.get("item") or ""), str(args.get("decision") or ""),
+                str(args.get("item") or ""), decision,
                 {"who": who, "quote": quote, "session": f"huddle {room} round {rid}"},
                 relayer=self.chair_identity(), relayer_label="the house agent (chair)",
                 reason=str(args.get("reason") or ""), answer=str(args.get("answer") or ""))
@@ -896,7 +904,7 @@ class Chair:
         card = self.store.card(cid)
         if card is None:
             raise ValueError("no such card")
-        if not _is_person(by) or (relay is None and str(by).startswith("human:relayed")):
+        if relay is None and not _is_person(by):
             raise PermissionError("only a person approves or dismisses action cards")
         reason = str(reason or (relay or {}).get("reason") or "").strip()[:500]
         decided_by = relay["label"] if relay else by

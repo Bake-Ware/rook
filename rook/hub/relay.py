@@ -307,15 +307,41 @@ class Relay:
                 "hold_kind": h.get("kind"), "worker": worker})
         return out
 
+    def _roster(self) -> dict:
+        node = self._node()
+        with contextlib.suppress(Exception):
+            return dict(getattr(getattr(node, "client", None), "workers", {}) or {})
+        return {}
+
+    def _hub_hosts(self) -> set:
+        """Names and ids of workers on the hub's own machine (they can edit
+        approvals.db): a card's call there is treated like a hub-host hold."""
+        ap = self.approvals()
+        if ap is None:
+            return set()
+        with contextlib.suppress(Exception):
+            got = ap.hub_host_workers(ap.config())
+            return {str(x).lower() for w in got.get("workers") or []
+                    for x in (w.get("worker"), w.get("id")) if x}
+        return set()
+
     def _cards(self, svc: Any, titles: dict) -> list[dict]:
         now = self.clock()
         out = []
+        roster = self._roster()
+        by_name = {str(w.get("name") or wid).lower(): w for wid, w in roster.items()}
+        hosts = self._hub_hosts()
         for c in svc.store.pending_cards():
             h = titles.get(c["room"]) or {}
             call = c.get("call") or {}
             cap = str(call.get("cap") or "")
             args = call.get("args") or {}
-            tier = core_authz.effective_tier(cap) if cap else "write"
+            worker = str(call.get("worker") or "")
+            entry = roster.get(worker) or by_name.get(worker.lower()) or {}
+            declared = (entry.get("tiers") or {}).get(cap)
+            tier = core_authz.effective_tier(cap, declared) if cap else "write"
+            hub_host = bool(cap) and worker.lower() in hosts \
+                and core_authz.tier_rank(tier) >= core_authz.tier_rank("exec")
             if cap:
                 what = _sentence(f"{c['summary'].rstrip('.')}: runs {cap} on {call.get('worker')}"
                                  + (":" if _args_text(cap, args) else ""), _args_text(cap, args))
@@ -331,7 +357,8 @@ class Relay:
                 "age": _age(now - c["created"]), "room": c["room"],
                 "cap": cap, "action": args.get("action") if isinstance(args, dict) else None,
                 "tier": tier, "tags": list(core_authz.builtin_tags(cap)) if cap else [],
-                "hub": self._hub_worker(call.get("worker")), "card_kind": c["kind"],
+                "hub": self._hub_worker(call.get("worker")) or hub_host, "card_kind": c["kind"],
+                "hold_kind": "hub-host" if hub_host else None,
                 "worker": call.get("worker")})
         return out
 
@@ -417,14 +444,15 @@ class Relay:
             svc = self.huddles()
             if ap is None:
                 raise RelayError("relaying needs the approval queue (approvals.db)")
-            from .policy import Principal
-            # The card's call runs as the person, as a dashboard approval would.
-            person = Principal("human:relayed", "human", "owner", ("human:owner",),
-                               label=by)
-            res = await svc.card(it["room"], it["id"], "approve" if decision == "approve"
-                                 else "dismiss", "human:relayed", person,
-                                 relay={**rel, "label": by, "text": text})
+            # The card's call runs as the relaying agent, never as a person:
+            # the band's policy, its holds and the hub's admin gates apply to
+            # it as to any call that agent makes. The person's word only
+            # replaces the click on the card. Recorded before it runs.
+            runner = self._runner(principal, relayer, by)
             ap.queue.relay_add({**rel, "kind": "card", "item": it["id"], "decision": decision})
+            res = await svc.card(it["room"], it["id"], "approve" if decision == "approve"
+                                 else "dismiss", relayer, runner,
+                                 relay={**rel, "label": by, "text": text})
             out = {"state": res.get("state"), **({"error": res["error"]} if res.get("error")
                                                  else {})}
         else:
@@ -436,12 +464,24 @@ class Relay:
                 words = "Yes" if decision == "approve" else "No"
                 if reason:
                     words += f": {reason}"
-            res = await svc.answer(it["question"], words, f"relay:{relayer}", by, relayed=text)
             ap.queue.relay_add({**rel, "kind": "ask", "item": it["id"], "decision": decision})
+            res = await svc.answer(it["question"], words, f"relay:{relayer}", by, relayed=text)
             out = {"state": "answered", "answer": words, "wake": res.get("wake")}
         self._journal(it, decision, rel, out)
         return {"item": it["id"], "name": it.get("name"), "kind": it["kind"],
                 "decision": decision, **out, "recorded": text}
+
+    @staticmethod
+    def _runner(principal: Any, relayer: str, label: str) -> Any:
+        """The principal a relayed card's call runs as: the relaying agent's
+        own (verified) principal, else one built for it as an agent."""
+        from dataclasses import replace
+        from .policy import Principal
+        if principal is not None and getattr(principal, "id", None) == relayer:
+            return replace(principal, label=label)
+        kind = relayer.split(":", 1)[0] if ":" in relayer else "agent"
+        return Principal(relayer, kind if kind in ("token", "agent") else "agent", "agent",
+                         label=label)
 
     def _journal(self, it: dict, decision: str, rel: dict, out: dict) -> None:
         node = self._node()

@@ -8,6 +8,7 @@ features:
   - settings/core/approvals
   - settings/core/identity
   - plugin/hub/policy
+  - plugin/hub/approvals
 since: 0.1.0
 deprecated: false
 ---

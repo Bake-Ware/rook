@@ -422,7 +422,7 @@ CREATE TRIGGER IF NOT EXISTS relayer_log_no_delete BEFORE DELETE ON relayer_log
 
 #: How long a person's denial answers an identical repeat of the call at once
 #: (the agent hears the denial and the reason instead of a new hold).
-DENIAL_ECHO_SECS = 600.0
+DENIAL_ECHO_SECS = 300.0
 RELAY_FIELDS = ("who", "quote", "session")
 
 
@@ -509,7 +509,9 @@ class ApprovalQueue:
                            "ORDER BY created LIMIT 1",
                            (principal, cap, target_id, args_hash, now)).fetchone()
             if r is not None:
-                return _row(r), False
+                found = _row(r)
+                found["name"] = names.name_of(db, "hold", found["id"])
+                return found, False
             hid = "h" + secrets.token_hex(12)
             db.execute(
                 "INSERT INTO holds(id, state, kind, principal, principal_label, via_json, cap, "
@@ -942,7 +944,7 @@ class Approvals:
         if hit is not None:
             return self._approved(d, hit)
         denied = await asyncio.to_thread(self.queue.recent_denial, d.principal, d.cap, d.target,
-                                         digest, max(cfg.approval_secs, DENIAL_ECHO_SECS))
+                                         digest, min(cfg.approval_secs, DENIAL_ECHO_SECS))
         if denied is not None:
             return self._denied(d, denied)
         hold, created = await asyncio.to_thread(

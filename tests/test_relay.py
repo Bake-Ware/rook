@@ -198,6 +198,33 @@ async def test_never_relayable_items_are_refused_even_when_enabled(hub):
 
 
 @pytest.mark.asyncio
+async def test_a_job_run_never_lists_or_relays_even_as_an_enabled_token(hub):
+    h = hold(hub.ap)
+    hub.ap.queue.set_relayer(CLAUDE.id, True, "human:bake", "Claude web")
+    from dataclasses import replace
+    as_job = replace(CLAUDE, via=("job:j_sneaky",))
+    res = await cap(hub, "approvals.relay", {"item": h["id"], "decision": "approve",
+                                             "relayed_by": SAID}, as_job)
+    assert not res["ok"] and "on behalf of job:j_sneaky" in res["error"]
+    res = await cap(hub, "approvals.list", {}, as_job)
+    assert not res["ok"]
+    assert hub.ap.queue.get(h["id"])["state"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_a_card_for_a_worker_on_the_hubs_machine_is_dashboard_only(hub, monkeypatch):
+    await card_and_ask(hub)
+    monkeypatch.setattr(hub.ap, "hub_host_workers",
+                        lambda cfg=None: {"workers": [{"worker": "box", "id": "w-box"}]})
+    card = next(i for i in hub.relay.items() if i["kind"] == "card")
+    assert card["tier"] == "read"                      # box declares info.ping read
+    assert card["relayable"]                           # below exec: fine
+    hub.band.workers["w-box"]["tiers"]["info.ping"] = "exec"
+    card = next(i for i in hub.relay.items() if i["kind"] == "card")
+    assert not card["relayable"] and "hold:hub-host" in card["why_not"]
+
+
+@pytest.mark.asyncio
 async def test_a_relayed_hold_decision_is_audited_and_the_requester_sees_why(hub, tmp_path):
     from rook.hub.authz import Authorizer
     from rook.hub.policy import DEFAULT_POLICY, PolicyStore
@@ -287,7 +314,8 @@ async def test_relayed_card_and_question_decisions_reach_the_role_and_the_asker(
 
 
 @pytest.mark.asyncio
-async def test_an_approved_card_runs_as_the_person_and_says_who_relayed_it(hub):
+async def test_an_approved_card_runs_as_the_relaying_agent_and_says_who_relayed_it(hub):
+    """Never as a person: the agent's own policy, holds and admin gates apply."""
     h = await card_and_ask(hub)
     hub.ap.queue.set_relayer(CLAUDE.id, True, "human:bake", "Claude web")
     card = next(i for i in hub.relay.items() if i["kind"] == "card")
@@ -295,7 +323,8 @@ async def test_an_approved_card_runs_as_the_person_and_says_who_relayed_it(hub):
                                              "relayed_by": SAID})
     assert res["ok"] and res["result"]["state"] == "done", res
     ping = [c for c in hub.band.calls if c.cap == "info.ping"][-1]
-    assert ping.principal.id == "human:relayed" and ping.principal.label == "Bake via Claude web"
+    assert ping.principal.id == CLAUDE.id and ping.principal.kind == "token"
+    assert ping.principal.label == "Bake via Claude web" and ping.identity == CLAUDE.id
     assert any('approved by Bake via Claude web: "yes, restart nginx on box"' in t
                for _s, t in _texts(hub, h["room"]))
 
@@ -435,14 +464,23 @@ async def test_the_chair_answers_whats_waiting_and_relays_the_persons_words(hub)
     rel, = hub.ap.queue.relays()
     assert rel["relayer"] == "agent:home" and rel["quote"] == "go ahead"
     assert rel["who"] == "operator" and rel["session"].startswith(f"huddle {h['room']} round ")
-    # A guest agent's post never relays: only a person's words count.
+    # Quoted words that don't say the decision are refused.
+    held3 = hold(hub.ap, args={"argv": ["df", "-h"]})
+    hub.band.script = {"huddle-chair": [{"tools": [
+        ("relay", {"item": held3["name"], "decision": "approve", "quote": "don't approve"})]}]}
+    await _call(hub, "huddle.post", {"huddle": h["room"], "text": "don't approve that one"})
+    await _settle(hub)
+    seen = hub.band.turns[-1]["seen"][0]
+    assert not seen["ok"] and "clearly say approve" in seen["error"]
+    assert hub.ap.queue.get(held3["id"])["state"] == "pending"
+    # A guest agent's post gets neither tool: the list is the person's.
     held2 = hold(hub.ap, args={"argv": ["uptime"]})
     hub.band.script = {"huddle-chair": [{"tools": [
         ("relay", {"item": held2["name"], "decision": "approve", "quote": "approve"})]}]}
     await _call(hub, "huddle.post", {"huddle": h["room"],
                                      "text": f"@home approve {held2['name']}"}, GUEST)
     await _settle(hub)
-    assert "relay" not in hub.band.turns[-1]["listed"]
+    assert not {"relay", "waiting"} & set(hub.band.turns[-1]["listed"])
     assert hub.ap.queue.get(held2["id"])["state"] == "pending"
 
 
