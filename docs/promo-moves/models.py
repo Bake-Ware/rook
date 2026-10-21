@@ -262,6 +262,16 @@ def build_agent():
     export('agent')
 
 
+def build_pawn():
+    """A pawn for worker agents: same base as the agent rook, about 1.9 units tall; tinted in three.js."""
+    reset()
+    root = empty('pawn')
+    prof = [(0, 0), (.9, 0), (.92, .12), (.75, .26), (.56, .42), (.42, .9), (.36, 1.2), (.52, 1.28), (.54, 1.34), (.3, 1.4),
+            (.38, 1.5), (.44, 1.62), (.44, 1.72), (.38, 1.82), (.24, 1.88), (0, 1.9)]
+    smooth(lathe('body', prof, 24, 'accent', root), 50)
+    export('pawn')
+
+
 # ===================================================================== devices
 def build_phone():
     reset()
@@ -639,6 +649,6 @@ def build_props():
 
 
 if __name__ == '__main__':
-    for fn in (build_rook, build_agent, build_phone, build_laptop, build_workstation, build_gpurig, build_printer, build_car,
+    for fn in (build_rook, build_agent, build_pawn, build_phone, build_laptop, build_workstation, build_gpurig, build_printer, build_car,
                build_tablet, build_nas, build_icons, build_folio, build_figure, build_people, build_props):
         fn()

@@ -5,7 +5,7 @@
 import { THREE, V, COL, clamp, lerp, inv, ease, fade, pane, chip, goldRook, agent, figure, bedside as placeBed } from '../kit.js';
 
 export default {
-  title: 'Security reporting', tagline: 'Vigilance<br>that’s active.', body: 49,
+  title: 'Security reporting', tagline: 'Vigilance<br>that’s active.', body: 49, holdTitle: true,
   mood: { key: 'C', bpm: 92, minor: true, energy: .55 },
   assets: ['rook', 'agent', 'nas', 'phone', 'laptop', 'figure', 'gpurig', 'workstation', 'nightstand', 'bed', 'chair'],
   async build(kit) {
@@ -76,7 +76,42 @@ export default {
     const R = [1, 2, 3].map(i => report.el.querySelector('.r' + i));
 
     // pulses: the intruder (red) from the board's edge; the watch to your phone
-    kit.pulse(V(14, 0, 1), NAS, .8, 3.8, { color: COL.red, size: .16 });
+    // the opening: the title's full stop turns red, the words and the rook fade, the Board fades in,
+    // and the stop drops onto the Board as the intruder
+    const START = V(9, 0, 1), T0 = 1.5;
+    kit.pulse(START, NAS, T0, 4.6 - T0, { color: COL.red, size: .16 });
+    let ttl = null, words, dotSpan;                       // the bookends make the title after build: set it up on first use
+    const fly = kit.el('', 'dotfly');
+    const dst = document.createElement('style'); dst.textContent = `
+      .dotfly{width:18px;height:18px;border-radius:50%;background:#e0675c;box-shadow:0 0 24px 6px rgba(224,103,92,.7);transform:translate(-50%,-50%)}`;
+    document.head.appendChild(dst);
+    let home = null;
+    kit.updaters.push(tau => {
+      if (!ttl) {
+        ttl = kit.stingTitle;
+        ttl.innerHTML = '<div class="nm"><span class="w">Security reporting</span><span class="dot">.</span></div>';
+        words = ttl.querySelector('.w'); dotSpan = ttl.querySelector('.dot');
+        const stage = document.getElementById('stage');      // above the fade-to-black, so it can hold over the cut
+        for (const el of [ttl, fly]) { stage.appendChild(el); el.style.zIndex = 20; }
+      }
+      const t = tau + 2;                                   // sting time
+      kit.show(ttl, tau < 1.6 ? fade(t, .25, .6, 99, 99) : 0);
+      words.style.opacity = 1 - inv(.1, .6, tau);
+      const red = inv(-.4, 0, tau);
+      dotSpan.style.color = red > 0 ? `rgb(${Math.round(lerp(226, 224, red))},${Math.round(lerp(227, 103, red))},${Math.round(lerp(217, 92, red))})` : '';
+      if (tau > -1 && !home) {                            // where the stop sits on the stage
+        const s = ttl.parentElement.getBoundingClientRect(), r = dotSpan.getBoundingClientRect(), k = s.width / 1920;
+        if (r.width) home = { x: (r.left + r.width / 2 - s.left) / k, y: (r.bottom - s.top) / k - 14 };
+      }
+      const go = ease.io(inv(.7, T0, tau));
+      dotSpan.style.visibility = tau > .7 ? 'hidden' : 'visible';
+      if (home && tau > .7 && tau < T0 + .05) {
+        const p = kit.project(START.clone().setY(.08));
+        fly.style.left = lerp(home.x, p.x, go) + 'px'; fly.style.top = lerp(home.y, p.y, go) + 'px';
+        kit.show(fly, 1);
+      } else kit.show(fly, 0);
+      if (tau < 1.3) kit.dim *= clamp((tau - .5) / .8);    // hold on the title, then the Board fades in
+    });
     kit.pulse(V(1, 0, 3), V(-7, 0, 6), 9.4, 1.0, { zFirst: true });
     kit.events.push({ t: 5.0, type: 'alarm' }, { t: 10.4, type: 'ring', n: 1 }, { t: 24.6, type: 'whoosh' }, { t: 26.2, type: 'tap' },
       { t: 27.6, type: 'shimmer' }, { t: 29.0, type: 'tap' }, { t: 33.2, type: 'shimmer' }, { t: 41.6, type: 'whoosh' });

@@ -368,12 +368,13 @@ export function chip(kit, html, cls = '') {
 }
 
 // An agent: a smaller translucent rook in one accent colour, with a name chip.
-export function agent(kit, name, color, at, { scale = .32, chipText = name } = {}) {
+export function agent(kit, name, color, at, { scale = .32, chipText = name, model = 'agent' } = {}) {
   const mat = new THREE.MeshToonMaterial({ color, gradientMap: kit.ramp, transparent: true, opacity: .82, emissive: color, emissiveIntensity: .28 });
   const inkMat = new THREE.LineBasicMaterial({ color: new THREE.Color(color).multiplyScalar(.35), transparent: true, opacity: .9 });
-  const obj = kit.make('agent', { tint: color, tintMat: mat, inkMat, scale, at });
+  const obj = kit.make(model, { tint: color, tintMat: mat, inkMat, scale, at });
   const c = chip(kit, `<i style="background:#${new THREE.Color(color).getHexString()}"></i>${chipText}`, 'agent-chip');
-  return { obj, mat, chip: c, color, top: () => obj.position.clone().add(V(0, 2.4 * obj.scale.y, 0)) };
+  const h = model === 'pawn' ? 1.9 : 2.4;
+  return { obj, mat, chip: c, color, top: () => obj.position.clone().add(V(0, h * obj.scale.y, 0)) };
 }
 
 // A nightstand with the bed beside it, headboard level with the nightstand, both facing the same way.
@@ -449,7 +450,9 @@ export function bookends(kit, clip) {
   const cam = new THREE.PerspectiveCamera(30, W / H, .1, 100);
   const end = kit.el(`<div class="tag">${clip.tagline}</div><div class="move">Your machines, <b>your move.</b></div>
     <div class="brand">ROOK</div><div class="url">github.com/Bake-Ware/rook</div>`, 'endcard');
-  const title = kit.el(`<div class="ep">ROOK MOVE:</div><div class="nm">${clip.title}</div>`, 'sting-title');
+  const top = kit.el('ROOK MOVE:', 'sting-move');
+  const title = kit.el(`<div class="nm">${clip.title}</div>`, 'sting-title');
+  kit.stingTitle = title;
   kit.events.push({ t: 0, type: 'sting', g: true }, { t: clip.T - ENDCARD + .2, type: 'end', g: true });
   return {
     scene: s, cam,
@@ -457,13 +460,14 @@ export function bookends(kit, clip) {
     frame(t) {
       const T = clip.T;
       const inSting = t < STING, inEnd = t >= T - ENDCARD;
-      kit.show(title, inSting ? fade(t, .25, .6, 1.6, 1.95) : 0);
+      kit.show(top, inSting ? fade(t, .25, .6, 1.6, 1.95) : 0);
+      if (!clip.holdTitle) kit.show(title, inSting ? fade(t, .25, .6, 1.6, 1.95) : 0);   // else the clip runs it
       kit.show(end, inEnd ? inv(T - ENDCARD + .3, T - ENDCARD + 1.0, t) * (1 - inv(T - .6, T, t)) : 0);
       if (!inSting && !inEnd) return false;
       const u = inSting ? t / STING : (t - (T - ENDCARD)) / ENDCARD;
       r.rotation.y = inSting ? lerp(-.9, .5, ease.out(u)) : lerp(.2, -.5, u);
       if (inSting) {
-        cam.position.set(0, 2.6, lerp(15, 12.5, ease.out(u))); cam.lookAt(0, 2.45, 0);   // the rook sits low; the title above it
+        cam.position.set(0, 2.6, lerp(15, 12.5, ease.out(u))); cam.lookAt(0, 2.15, 0);
       } else {
         cam.position.set(0, 1.6, 26); cam.lookAt(0, -.9, 0);
       }
@@ -489,8 +493,8 @@ Kit.prototype.say = function (t, who, text, id) {
       this.show(this.subs, a);
       if (v && this.subs._id !== v.id) {
         this.subs._id = v.id;
-        this.subs.className = 'ov subs ' + v.who;
-        this.subs.querySelector('.who').textContent = v.who === 'rook' ? 'ROOK' : v.who === 'you' ? 'YOU' : v.who.toUpperCase();
+        this.subs.className = 'ov subs ' + v.who.replace(/^you_f$/, 'you');
+        this.subs.querySelector('.who').textContent = v.who === 'rook' ? 'ROOK' : v.who.startsWith('you') ? 'YOU' : v.who.toUpperCase();
         this.subs.querySelector('.txt').textContent = v.text;
       }
     });

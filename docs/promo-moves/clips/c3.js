@@ -1,12 +1,12 @@
 // 3. Team huddle — "Focus on the results, not the work."
 // One request goes into a room of expert agents. They split it, claim owners, send worker
 // agents out to your machines, review each other, and report back with one question.
-import { THREE, V, COL, clamp, lerp, inv, ease, fade, pane, chip, goldRook, agent, figure } from '../kit.js';
+import { THREE, V, COL, clamp, lerp, inv, ease, fade, pane, chip, goldRook, agent, figure, holoRook } from '../kit.js';
 
 export default {
   title: 'Team huddle', tagline: 'Focus on the results,<br>not the work.', body: 58,
   mood: { key: 'E', bpm: 104, minor: true, energy: .8 },
-  assets: ['rook', 'agent', 'table', 'gpurig', 'workstation', 'nas', 'phone', 'figure'],
+  assets: ['rook', 'agent', 'pawn', 'table', 'gpurig', 'workstation', 'nas', 'phone', 'figure'],
   async build(kit) {
     const S = kit.scene;
     kit.board({ size: 70 });
@@ -22,11 +22,15 @@ export default {
       { name: 'workstation', obj: kit.make('workstation', { at: V(-4.1, 0, -2.2), rot: .7 }), at: V(-4, 0, -2) },
       { name: 'build box', obj: kit.make('nas', { at: V(4, 0, 3), rot: -.4 }), at: V(4, 0, 3) },
     ];
-    const workers = machines.map((m, i) => agent(kit, 'worker', [COL.green, COL.green, COL.green][i], m.at.clone().add(V(-.8, 0, .5)), { scale: .2, chipText: 'worker · builder' }));
+    const workers = machines.map((m, i) => agent(kit, 'worker', [COL.green, COL.green, COL.green][i], m.at.clone().add(V(-.8, 0, .5)), { scale: .24, chipText: 'worker · builder', model: 'pawn' }));
     const fig = figure(kit, V(-3, 0, 3), Math.PI * .8);
     // the phone, real size, in the left hand
     const phone = kit.make('phone', { parent: fig.foreL, at: V(0, -.33, .04) }); phone.rotation.set(-Math.PI / 2 + .3, 0, 0);
     const pscr = kit.meshesOf(phone, 'screen')[0]; pscr.material = new THREE.MeshBasicMaterial({ color: 0x1a2520 });
+    // Rook as a small hologram over the phone while you talk to it
+    const holo = holoRook(kit, .034); S.add(holo.obj);
+    const beam = new THREE.Mesh(new THREE.CylinderGeometry(.04, .025, .1, 16, 1, true), new THREE.MeshBasicMaterial({ color: 0xf0c98c, transparent: true, opacity: .07, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+    S.add(beam);
 
     // ---------------------------------------------------------- overlays
     kit.caption('<b>HUDDLE</b>', .5, 5.8, 'title');
@@ -134,7 +138,7 @@ export default {
       machines.forEach((m, i) => {
         const t0 = 24.2 + i * .6;
         const s = ease.outE(inv(t0, t0 + .5, tau)) * (1 - inv(42, 43, tau));
-        workers[i].obj.scale.setScalar(Math.max(.001, .2 * s));
+        workers[i].obj.scale.setScalar(Math.max(.001, .24 * s));
         workers[i].chip.place(workers[i].top(), s * (tau < 34 ? 1 : 0));
         kit.glowSquare(Math.round(m.at.x), Math.round(m.at.z), .7 * s);
         const cp = consoles[i];
@@ -154,6 +158,14 @@ export default {
       fig.armL.rotation.x = -.45; fig.armL.rotation.z = .25; fig.foreL.rotation.x = -1.25;          // holding the phone up
       fig.armR.rotation.x = tau > 51.4 && tau < 53.2 ? -.5 : 0; fig.foreR.rotation.x = tau > 51.4 && tau < 53.2 ? -1.1 - .12 * Math.sin((tau - 51.4) * 6) : 0;
       fig.head.rotation.x = .4;
+      // the hologram rides on the phone (in the hand), up while you ask and while Rook reports
+      const hv = fade(tau, 6.4, 7.0, 13.6, 14.2) + fade(tau, 44.8, 45.4, 53.2, 53.8);
+      fig.obj.updateMatrixWorld(true);
+      const pp = phone.getWorldPosition(V(0, 0, 0));
+      holo.obj.position.copy(pp).add(V(0, .015 + .01 * hv + Math.sin(tau * 1.6) * .002, 0)); holo.obj.rotation.y = tau * .4;
+      holo.obj.scale.setScalar(Math.max(.0001, .034 * ease.out(hv))); holo.obj.visible = hv > .01;
+      holo.mat.opacity = .22 * hv; holo.ink.opacity = .9 * hv;
+      beam.position.copy(pp).add(V(0, .055, 0)); beam.material.opacity = .07 * hv; beam.visible = hv > .01;
       kit.glowSquare(0, 0, .25 + .35 * fade(tau, 12, 12.5, 22, 23));
     };
   },

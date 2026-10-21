@@ -24,7 +24,7 @@ export default {
     const K = V(-12, 0, 0);
     const ktab = kit.make('table', { at: K }); ktab.scale.set(.45, 1, .45);       // a 1.2 m kitchen table
     kit.make('chair', { at: K.clone().add(V(0, 0, .78)), rot: Math.PI });
-    const f1 = figure(kit, K.clone().add(V(0, -.47, .74)), Math.PI);
+    const f1 = figure(kit, K.clone().add(V(0, -.47, .74)), Math.PI, 1, { f: true });
     f1.legL.rotation.x = f1.legR.rotation.x = -1.5; f1.armL.rotation.x = f1.armR.rotation.x = -1.0; f1.foreL.rotation.x = f1.foreR.rotation.x = -.4;
     kit.make('tablet', { at: K.clone().add(V(.05, .79, .2)), rot: Math.PI });
     kit.make('coffee', { at: K.clone().add(V(-.32, .79, .22)) });
@@ -41,7 +41,7 @@ export default {
     for (const o of [pole, head]) o.add(new THREE.LineSegments(new THREE.EdgesGeometry(o.geometry), kit.inkMat));
     // the backyard and a shed in wireframe, real size: 10 x 12 ft = 3.05 x 3.66 m
     const B = V(12, 0, 0);
-    const f3 = figure(kit, B.clone().add(V(-2.3, 0, 2.5)), -2.3);
+    const f3 = figure(kit, B.clone().add(V(-2.3, 0, 2.5)), -2.3, 1, { f: true });
     const tape = new THREE.Mesh(new THREE.BoxGeometry(.12, .12, .06), kit.toon(0xe8c840)); f3.foreR.add(tape); tape.position.set(0, -.34, 0);
     const W_ = 3.05, D_ = 3.66, H_ = 2.1, R_ = .76;
     const c = (x, y, z) => B.clone().add(V(x - W_ / 2, y, z - D_ / 2));
@@ -68,11 +68,11 @@ export default {
     for (let i = 0; i < 16; i++) notes.push({ el: kit.el(i % 3 ? '♪' : '♫', 'note'), i });
 
     // ---------------------------------------------------------- overlays
-    kit.say(.3, 'you', 'Make me a comic about my cat stealing socks.', 'a');
+    kit.say(.3, 'you_f', 'Make me a comic about my cat stealing socks.', 'a');
     kit.caption('Comic, rough draft. Mittens on the counter, as usual.', 7.4, 10.8, 'label');
     kit.say(11.6, 'you', 'Hum me a birthday tune for my sister. Celtic vibe, but piano.', 'b');
     kit.caption('Celtic piano, 8 bars', 17.4, 21.6, 'label');
-    kit.say(21.9, 'you', 'I’ve got ten by twelve feet back here. The door has to be on the short side, though.', 'c');
+    kit.say(21.9, 'you_f', 'I’ve got ten by twelve feet back here. The door has to be on the short side, though.', 'c');
     kit.caption('3D model with dimensions', 28.5, 32.6, 'label');
     kit.caption('Agents that help <b>where you are.</b>', 33.4, 38, 'big low');
     const panels = PANELS.map(([t, svg]) => pane(kit, { title: t, w: 300, body: `<div class="art">${svg}</div>`, cls: 'comic' }));
