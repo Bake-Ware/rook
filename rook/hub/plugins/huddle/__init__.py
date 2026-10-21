@@ -92,6 +92,11 @@ class Huddle(Plugin):
                 label="Default roles",
                 help="Roles a new huddle starts with when none are named (only those that "
                      "exist on the Roles tab)."),
+        setting("speak_devices", list, [], label="Play on devices",
+                help="Workers a message's Speak menu may play on (voice.speak, e.g. your "
+                     "phone). Blank: every online worker with voice.speak except the "
+                     "protected devices (role.protected_workers), and none when no devices are "
+                     "marked protected. Protected devices are never offered."),
     )
     GUIDANCE = {
         "tool:rook_huddle": "",

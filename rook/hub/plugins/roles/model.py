@@ -19,7 +19,8 @@ A role is what an agent is responsible for (a persona is how it talks)::
      "backend": "", "model": "", "effort": "",   # blank: the house agent's
      "max_tool_calls": 30,          # optional: tool calls per turn (else the category's, else role.max_tool_calls)
      "host": "",                    # agent host keeping its home; blank: home.agent_host
-     "persona": "", "enabled": true}
+     "persona": "", "enabled": true,
+     "voice": ""}                   # optional: the voice its messages are read in (blank: the band's)
 
 Roles are versioned like persona profiles: every change bumps ``rev`` and
 lands in the history with its actor.
@@ -46,6 +47,8 @@ from ....core.db import open_db
 ID = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 PATTERN = re.compile(r"^[A-Za-z0-9_.*?:\[\]-]{1,80}$")
 MODEL = re.compile(r"^[A-Za-z0-9_.:/\[\]-]{0,120}$")
+#: A voice engine's voice id: ``af_heart``, ``sojourn``, ``kokoro:af_heart``.
+VOICE = re.compile(r"^[A-Za-z0-9_.:-]{0,64}$")
 BACKENDS = ("", "claude-code", "codex", "opencode")
 AUTONOMY = ("propose", "act")
 MEMORY = ("write", "read", "off")
@@ -114,7 +117,7 @@ def validate(doc: Any) -> dict:
     known = {"id", "name", "description", "category", "charter", "concerns", "checklist",
              "examples", "seed_memory", "sources", "tools", "builtin", "autonomy", "memory",
              "backend", "model", "effort", "max_tool_calls", "host", "persona", "enabled",
-             "rev"}
+             "voice", "rev"}
     extra = sorted(set(doc) - known)
     if extra:
         raise RoleError(f"unknown field {extra[0]!r}")
@@ -176,6 +179,11 @@ def validate(doc: Any) -> dict:
     calls = _tool_calls(doc.get("max_tool_calls"), "max_tool_calls")
     if calls:                          # blank or 0: the category's, else the setting
         out["max_tool_calls"] = calls
+    voice = doc.get("voice") or ""
+    if not isinstance(voice, str) or not VOICE.match(voice.strip()):
+        raise RoleError("voice: a voice id such as af_heart (blank: the band's default voice)")
+    if voice.strip():                  # blank: the band's default
+        out["voice"] = voice.strip()
     out["host"] = _text(doc, "host")
     out["persona"] = _text(doc, "persona")
     enabled = doc.get("enabled", True)

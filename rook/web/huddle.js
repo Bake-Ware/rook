@@ -7,6 +7,7 @@
 const search=new URL(import.meta.url).search;
 const {h,el,ago}=await import('/account/bands/assets/manage.js'+search);
 const {avatar,who}=await import('/account/knowledge/assets/workviews.js'+search);
+const {speakButton,stopSpeaking}=await import('/account/huddle/assets/huddles.js'+search);
 
 const API='/account/huddle/api';
 const YOU='user:operator';
@@ -104,7 +105,7 @@ export async function mountHuddle(root,{onPins}={}){
     row.append(mine?el('span','YOU','wv-av sm hd-you'):avatar(m.sender,'sm'));const body=el('div',undefined,'hd-bubble');const top=el('div',undefined,'hd-by');
     top.append(el('b',name(m.sender)));if(m.kind==='question'){const q=view.questions.find(x=>x.id===m.seq);top.append(el('span',q&&q.state==='answered'?'Question · answered':'Question','hd-tag'));}
     if(m.kind==='answer')top.append(el('span','Answer','hd-tag hd-tag-a'));
-    top.append(el('time',ago(m.ts,''),'hd-time'));body.append(top);
+    top.append(el('time',ago(m.ts,''),'hd-time'));if(cur&&String(m.text||'').trim())top.append(speakButton(cur.room,{seq:m.seq}));body.append(top);
     // The stored text carries a prefix (and options) for plain chat clients; the tag and the pinned card say it here.
     let text=m.text;if(m.kind==='question')text=text.replace(/^Question: /,'').replace(/ \(options: [^)]*\)$/,'');
     if(m.kind==='answer')text=text.replace(/^Answer for \S+: /,'');
@@ -146,5 +147,5 @@ export async function mountHuddle(root,{onPins}={}){
       catch(e){main.replaceChildren(el('p',e.message,'kn-error'));}
       clearInterval(timer);
       timer=setInterval(()=>{if(active&&!document.hidden)refresh(false);},4000);},
-    deactivate(){active=false;clearInterval(timer);}};
+    deactivate(){active=false;clearInterval(timer);stopSpeaking();}};
 }
