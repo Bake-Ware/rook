@@ -49,7 +49,7 @@ export default {
     // the front cover pivots higher as it closes, so it lands on the notepad instead of through it
     // the front cover hinges on a raised spine (a gusset as deep as the notepad), so it opens flat a little above the
     // back cover and closes onto the pad; the loops on the back cover are raised to the same axis, so they all line up
-    const AXIS = .1;
+    const AXIS = .13;
     const alignHinge = (obj, frontNode) => {
       frontNode.position.y = AXIS;
       obj.traverse(o => { if (/^loop\d/.test(o.name) && !frontNode.getObjectById(o.id)) o.position.y = AXIS; });
@@ -77,7 +77,7 @@ export default {
     done.position.set(-.133 * Math.cos(.3), .05, .133 * Math.sin(.3));     // centred on the plate (the model's origin is its spine)
     { const df = kit.node(done, 'front'); df.rotation.z = -Math.PI;
       latch(done.children[0], df, kit.toon(COL.goldHi)); kit.node(done, 'pen').position.set(1.0, .1, 0);
-      kit.node(done, 'lips').visible = true; alignHinge(done, df); }
+      const dl = kit.node(done, 'lips'); dl.visible = true; dl.scale.y = .6; kit.node(done, 'notepad').scale.y = .6; alignHinge(done, df); }
     done.visible = false;
     // the person
     const fig = figure(kit, V(0, 0, .72), Math.PI, 1, { f: true });
@@ -107,7 +107,7 @@ export default {
     kit.caption('Hinge stops at flat · Pen is the pin · Corner lips', 21.5, 28, 'label');
     kit.caption('Sliced · First layer checked', 41.8, 45.6, 'label');
     kit.say(7.0, 'you_f', 'Limit the hinge to flat. Use the pen as the latching pin. Add a lip in each corner for the notepad.', 'a');
-    const yEnd = kit.say(28.6, 'you_f', 'I dig it. Print it. Send me a voice message when it’s done. I’m meeting Tom for drinks.', 'b');
+    const yEnd = kit.say(28.6, 'you_f', 'Nice. Print it. Send me a voice message when it’s done. I’m meeting Tom for drinks.', 'b');
     kit.say(Math.max(34.2, yEnd + .3), 'rook', 'Sure thing, have fun. I’ll keep an eye on the print.', 'c');
     kit.say(47.6, 'rook', 'Folio’s done and on the bed. Hinge stops at flat, and the pen locks it shut.', 'd');
     const review = pane(kit, { title: '<b>review</b> · folio v6 · yesterday 6:12 PM', w: 470, body: `
@@ -171,9 +171,9 @@ export default {
       angEl.textContent = Math.round(open * 180 / Math.PI) + '°';
       stop.scale.set(1, Math.max(.001, ease.out(inv(16, 17, tau))), 1); stop.visible = tau >= 16;
       pen.position.z = lerp(1.5, 0, ease.io(inv(19.5, 21.5, tau))); pen.visible = tau > 19.4;
-      lips.scale.y = Math.max(.001, ease.out(inv(21.5, 23, tau))); lips.visible = tau >= 21.5;
+      lips.scale.y = Math.max(.001, .6 * ease.out(inv(21.5, 23, tau))); lips.visible = tau >= 21.5;
       const lp = ease.out(inv(17.2, 18.2, tau)); loops.forEach(m => { m.scale.setScalar(Math.max(.001, lp)); m.visible = lp > .01; });
-      pad.position.y = lerp(.9, 0, ease.in(inv(23, 24.2, tau))) + .05; pad.visible = tau > 22.9;
+      pad.position.y = lerp(.9, 0, ease.in(inv(23, 24.2, tau))) + .05; pad.scale.y = .6;   // a slim pad, under the closed cover pad.visible = tau > 22.9;
       const gone = 1 - inv(16.8, 17.4, tau);                   // the red snap clasp and elastic go as the latch loops arrive
       elastic.scale.setScalar(Math.max(.001, gone)); snap.scale.setScalar(Math.max(.001, gone));
       elastic.visible = snap.visible = gone > .01;

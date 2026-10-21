@@ -102,7 +102,7 @@ export default {
     // ---------------------------------------------------------- overlays
     kit.say(.3, 'you_f', 'Make me a comic about my cat stealing socks.', 'a');
     kit.caption('Comic, rough draft. Mittens on the counter, as usual.', 7.4, 10.8, 'label');
-    kit.say(11.6, 'you', 'Hum me a birthday tune for my sister. Celtic vibe, but piano.', 'b');
+    kit.say(11.6, 'you', 'Help me with a birthday tune for my sister. Celtic vibe, but piano.', 'b');
     kit.caption('Celtic piano, 8 bars', 17.4, 21.6, 'label');
     kit.say(21.9, 'you_f', 'I’ve got ten by twelve feet back here. The door has to be on the short side, though.', 'c');
     kit.caption('3D model with dimensions', 28.5, 32.6, 'label');
@@ -134,8 +134,8 @@ export default {
       { t: 0, pos: [-12 + 4, 6.5, 9], look: [-12, .8, 0], fov: 38 },
       { t: 2.6, frame: { on: kit3, yaw: 205, pitch: 18, fill: .62, look: [.7, 0, -.3] }, e: 'outE' },
       { t: 10.9, frame: { on: kit3, yaw: 198, pitch: 18, fill: .68, look: [.7, 0, -.28] }, e: 'lin' },
-      { t: 11.6, pos: [.1, 1.34, 1.12], look: [-.32, 1.1, -.7], fov: 50, e: 'cut' },
-      { t: 21.3, pos: [.04, 1.32, 1.02], look: [-.34, 1.1, -.7], fov: 50, e: 'lin' },
+      { t: 11.6, pos: [.46, 1.62, .78], look: [-.3, 1.08, -.55], fov: 52, e: 'cut' },          // from over the passenger seat
+      { t: 21.3, pos: [.42, 1.6, .7], look: [-.32, 1.08, -.55], fov: 52, e: 'lin' },
       { t: 21.6, frame: { on: yard, yaw: 20, pitch: 10, fill: .55 }, e: 'cut' },
       { t: 25.6, frame: { on: yard, yaw: 12, pitch: 10, fill: .6 }, e: 'lin' },
       { t: 28.5, frame: { on: shedB, yaw: 58, pitch: 20, fill: .78 }, e: 'io' },
