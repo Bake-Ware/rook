@@ -245,6 +245,52 @@ def build_laptop():
     export('laptop', 0.4)
 
 
+def build_people():
+    """The person, turned like the chess pieces (lathe limbs with beads at the joints), facing -Y, 1.75 m.
+    person_m wears the king's cross; person_f the queen's crown and a bust. Same rig as 'figure':
+    hips > legL/legR, torso > head, armL/armR > fore."""
+    for name, female in (('person_m', False), ('person_f', True)):
+        reset()
+        root = empty(name)
+        hips = empty('hips', (0, 0, .92), root)
+        for s, leg_name in ((-1, 'legL'), (1, 'legR')):
+            leg = empty(leg_name, (s * .095, 0, 0), hips)
+            lathe('leg', [(0, 0), (.085, 0), (.088, -.04), (.072, -.2), (.062, -.4), (.074, -.45), (.06, -.5),
+                          (.05, -.76), (.056, -.82), (0, -.82)], 20, 'cloth2', leg)
+            box('shoe', (.1, .22, .07), (0, -.05, -.875), 'dark', leg, bevel=.02)
+        torso = empty('torso', (0, 0, 0), hips)
+        prof = ([(0, -.04), (.2, -.04), (.21, .04), (.15, .24), (.17, .42), (.19, .52), (.17, .56), (.11, .6), (0, .6)] if female else
+                [(0, -.02), (.16, -.02), (.18, .06), (.16, .25), (.19, .42), (.22, .52), (.2, .56), (.12, .6), (0, .6)])
+        lathe('chest', prof, 28, 'cloth', torso)
+        if female:
+            for sx in (-1, 1):
+                sphere('bust', .075, (sx * .075, -.115, .41), 'cloth', torso, segs=16, rings=10, scale=(1, .8, .9))
+        cyl('collar', .13, .04, (0, 0, .64), 'paper', torso, segs=24)
+        head = empty('head', (0, 0, .7), torso)
+        cyl('neck', .05, .08, (0, 0, -.01), 'skin', head, segs=16)
+        lathe('skull', [(0, .03), (.09, .03), (.13, .1), (.135, .2), (.145, .26), (0, .26)], 24, 'skin', head)
+        if female:   # the queen's crown, kept simple: five balls on the rim and one on top
+            for i in range(5):
+                a = i * 2 * math.pi / 5 + math.pi / 2
+                sphere('pt%d' % i, .03, (.12 * math.cos(a), .12 * math.sin(a), .29), 'paper', head, segs=14, rings=9)
+            sphere('top', .038, (0, 0, .3), 'paper', head, segs=14, rings=9)
+        else:        # the king's cross
+            box('crossv', (.035, .035, .14), (0, 0, .33), 'paper', head)
+            box('crossh', (.11, .035, .035), (0, 0, .35), 'paper', head)
+        for s, arm_name in ((-1, 'armL'), (1, 'armR')):
+            arm = empty(arm_name, (s * .26, 0, .52), torso)
+            lathe('upper', [(0, .04), (.05, .04), (.065, 0), (.05, -.05), (.044, -.15), (.05, -.25), (.058, -.29), (0, -.3)], 16, 'cloth', arm)
+            fore = empty('fore', (0, 0, -.3), arm)
+            lathe('lower', [(0, 0), (.046, 0), (.04, -.08), (.044, -.2), (.034, -.26), (0, -.26)], 16, 'skin', fore)
+            sphere('hand', .05, (0, 0, -.31), 'skin', fore, segs=14, rings=9)
+        for ob in bpy.data.objects:          # turned wood reads smooth; the ink still draws the profile
+            if ob.type == 'MESH' and ob.name.split('.')[0] not in ('shoe', 'crossv', 'crossh', 'collar'):
+                for poly in ob.data.polygons:
+                    poly.use_smooth = True
+                ob.data.set_sharp_from_angle(angle=math.radians(40))   # keep rims and caps crisp
+        export(name)
+
+
 def build_workstation():
     """A real-size desk (1.5 x 0.7 m, 0.74 m high) with a 27" monitor, keyboard, tower and lamp."""
     reset()
@@ -497,5 +543,5 @@ def build_props():
 
 if __name__ == '__main__':
     for fn in (build_rook, build_agent, build_phone, build_laptop, build_workstation, build_gpurig, build_printer, build_car,
-               build_tablet, build_nas, build_icons, build_folio, build_figure, build_props):
+               build_tablet, build_nas, build_icons, build_folio, build_figure, build_people, build_props):
         fn()

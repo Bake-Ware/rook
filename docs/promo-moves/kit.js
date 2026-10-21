@@ -88,6 +88,7 @@ export class Kit {
   // ---------------------------------------------------------------- assets
   async load(names) {
     const loader = new GLTFLoader();
+    if (names.includes('figure')) names = [...names, 'person_m', 'person_f'];     // the people come with the figure
     await Promise.all(names.map(n => loader.loadAsync(`assets/${n}.glb`).then(g => { this.templates[n] = g.scene; })));
   }
 
@@ -373,9 +374,9 @@ export function agent(kit, name, color, at, { scale = .32, chipText = name } = {
   return { obj, mat, chip: c, color, top: () => obj.position.clone().add(V(0, 2.4 * obj.scale.y, 0)) };
 }
 
-// A stylized faceless figure; pose(t-free) helpers.
-export function figure(kit, at, rot = 0, scale = 1) {
-  const obj = kit.make('figure', { at, rot, scale });
+// A person (you): turned like the pieces; a man with the king's cross, or a woman (f: true) with the queen's crown.
+export function figure(kit, at, rot = 0, scale = 1, { f = false } = {}) {
+  const obj = kit.make(f ? 'person_f' : 'person_m', { at, rot, scale });
   const n = k => kit.node(obj, k);
   return {
     obj, head: n('head'), torso: n('torso'), armL: n('armL'), armR: n('armR'), legL: n('legL'), legR: n('legR'), hips: n('hips'),
