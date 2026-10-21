@@ -191,7 +191,7 @@ def main():
         underscore(music, T, mood)
     for e in meta['events']:
         cue(fx, e)
-    duck = np.ones(music.n)
+    duck = np.ones(music.n); speech = np.zeros(music.n, bool)
     for v in meta['voice']:
         p = HERE / 'voices' / f"{v['id']}.wav"
         if p.exists():
@@ -202,10 +202,11 @@ def main():
         else:
             d = v.get('dur', 2)
         a, b = int(v['t'] * SR), int((v['t'] + d) * SR)
+        speech[a:b] = True
         duck[max(0, a - int(.15 * SR)):b + int(.3 * SR)] = .38 if mood.get('theme') != 'mountainking' else .6
     duck = lp_fast(duck, 3.0)
     # levels: the music under speech should sit well below the voice (report it for checking)
-    sp = duck < .5
+    sp = speech
     if sp.any():
         rv = np.sqrt(np.mean(vox.L[sp] ** 2)); rm = np.sqrt(np.mean((music.L * duck)[sp] ** 2)); ro = np.sqrt(np.mean((music.L * duck)[~sp] ** 2))
         print(f'levels: voice {20*np.log10(rv+1e-9):.1f} dB, music under voice {20*np.log10(rm+1e-9):.1f} dB, music alone {20*np.log10(ro+1e-9):.1f} dB')
