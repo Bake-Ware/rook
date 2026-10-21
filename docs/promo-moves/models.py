@@ -133,13 +133,13 @@ def smooth(ob, angle=40):
     return ob
 
 
-def torus(name, R, r, loc, m, parent=None, segs=24, tsegs=10, rot=(0, 0, 0), arc=2 * math.pi):
+def torus(name, R, r, loc, m, parent=None, segs=24, tsegs=10, rot=(0, 0, 0), arc=2 * math.pi, a0=0.0):
     """A ring in the XZ plane (or part of one: arc), tube radius r."""
     closed = arc >= 2 * math.pi - 1e-6
     n = segs if closed else segs + 1
     v, f = [], []
     for i in range(n):
-        a = arc * i / segs
+        a = a0 + arc * i / segs
         cx, cz = R * math.cos(a), R * math.sin(a)
         for j in range(tsegs):
             b = 2 * math.pi * j / tsegs
@@ -579,13 +579,13 @@ def build_props():
     box('mirror', (.84, .02, .74), (0, .285, 1.6), 'mirror', root)
     box('light', (.6, .06, .06), (0, .25, 2.05), 'light', root)
     # soap pump and a cup with two toothbrushes, to the right of the basin
-    smooth(lathe('soap', [(0, .86), (.035, .86), (.038, .9), (.035, 1.02), (.02, 1.04), (0, 1.04)], 20, 'porcelain', root, loc=(.08, .12, 0)))
-    smooth(tube('pump', (.08, .12, 1.04), (.08, .12, 1.08), .008, 'chrome', root, segs=8))
-    smooth(tube('nozzle', (.08, .12, 1.08), (.08, .07, 1.08), .006, 'chrome', root, segs=8))
     smooth(lathe('cup', [(0, .86), (.032, .86), (.04, .97), (.036, .97), (.028, .87), (0, .87)], 20, 'tile', root, loc=(.2, .14, 0)))
-    for k, (dx, c_) in enumerate(((-.012, 'accent'), (.012, 'agentblue'))):
-        smooth(tube('brush%d' % k, (.2 + dx, .14, .9), (.2 + dx * 3, .14 + .01, 1.06), .006, c_, root, segs=8))
-        box('bristle%d' % k, (.014, .01, .03), (.2 + dx * 3.2, .14 + .012, 1.07), 'paper', root)
+    for k, (dx, col) in enumerate(((-.012, 'accent'), (.012, 'agentblue'))):
+        base, tip = (.2 + dx, .14, .88), (.2 + dx * 2.5, .14 + .008, 1.05)          # leaning out of the cup
+        smooth(tube('brush%d' % k, base, (tip[0], tip[1], tip[2] - .03), .0055, col, root, segs=10))        # handle
+        smooth(tube('neck%d' % k, (tip[0], tip[1], tip[2] - .03), tip, .0035, col, root, segs=8))            # slim neck
+        box('head%d' % k, (.012, .006, .028), (tip[0], tip[1] - .002, tip[2] + .012), col, root, bevel=.002)  # head
+        box('bristle%d' % k, (.011, .012, .022), (tip[0], tip[1] - .01, tip[2] + .012), 'paper', root)       # bristles, facing out
     export('counter')
     reset()
     root = empty('dash')
@@ -648,7 +648,7 @@ def build_props():
     smooth(lathe('mug', [(0, .006), (.038, .006), (.041, .012), (.042, .09), (.044, .096), (.039, .096), (.037, .02), (0, .02)],
                  36, 'accent', root), 50)
     cyl('coffee', .037, .002, (0, 0, .082), 'dark', root, segs=36)
-    smooth(torus('handle', .026, .007, (.046, 0, .052), 'accent', root, segs=16, tsegs=8, rot=(math.pi / 2, 0, 0), arc=math.pi), 50)
+    smooth(torus('handle', .025, .007, (.04, 0, .052), 'accent', root, segs=16, tsegs=8, arc=math.pi, a0=-math.pi / 2), 50)
     smooth(cyl('coaster', .052, .006, (0, 0, .003), 'wood2', root, segs=32))
     export('coffee')
 

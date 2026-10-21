@@ -111,7 +111,7 @@ export default {
     const mailPane = pane(kit, { title: '<b>mail</b> · to 4 attendees', w: 520, body: `
       <div class="dim">Subject:</div><div>Vendor sync moved to tomorrow, 2:00 PM</div><div class="ok sent">✓ sent</div>` });
     const st = document.createElement('style'); st.textContent = `
-      .calg{display:flex;gap:16px;height:150px}.calg .col{flex:1;border:1px solid #2b322a;border-radius:8px;padding:8px}
+      .calg{display:flex;gap:16px;height:178px}.calg .col{flex:1;border:1px solid #2b322a;border-radius:8px;padding:8px}
       .calg .dh{font-size:16px;color:#92998c;letter-spacing:.2em}
       .ev{position:absolute;width:236px;font-size:16px;white-space:nowrap;padding:6px 10px;border-radius:6px;background:#20261d;border-left:4px solid #8fc79a;color:#e2e3d9}
       .ev.e1{left:28px;top:118px}.ev.e2{left:28px;top:166px;border-left-color:#f0c98c}.ev.e3{left:296px;top:118px}`;
@@ -155,8 +155,9 @@ export default {
       holo.obj.scale.setScalar(Math.max(.0001, .033 * rise));
       holo.obj.position.y = lerp(0, .02, rise) + Math.sin(tau * 1.6) * .003;
       holo.obj.rotation.y = tau * .35 + (tau > 26 ? lerp(0, -.9, ease.io(inv(26, 27.4, tau))) : 0);
-      holo.mat.opacity = .22 * rise; holo.ink.opacity = .9 * rise * (.85 + .15 * Math.sin(tau * 7));
-      beam.material.opacity = .07 * rise; beam.scale.y = Math.max(.001, rise);
+      const away = 1 - fade(tau, 28.5, 29.1, 38.2, 38.9);   // out of the way of the screen for the dive
+      holo.mat.opacity = .22 * rise * away; holo.ink.opacity = .9 * rise * away * (.85 + .15 * Math.sin(tau * 7));
+      beam.material.opacity = .07 * rise * away; beam.scale.y = Math.max(.001, rise);
       warm.intensity = .02 + .05 * rise;
 
       // ---- cameras
@@ -171,23 +172,33 @@ export default {
         cam.fov = lerp(36, 36, q);
         cam.lookAt(V(0, 0, 0).lerp(camLock.look, q));
         cam.up.set(0, 1, 0);
-      } else if (tau < 29 || (tau >= 37)) {
+      } else if (tau < 28.3 || (tau >= 37)) {
         // per-room framing: wider and a little higher where a person stands or sits behind the phone
-        const adj = [[0, 0], [6, .05], [0, 0], [12, .1]];
+        const adj = [[0, 0], [0, 0], [0, 0], [0, 0]];       // the camera keeps the same place relative to the phone in every room
         const a = adj[roomIdx], b = adj[Math.max(0, roomIdx - 1)], w = (idx > 0 && tau < 29) ? ease.io(u) : 1;
         const fovA = lerp(b[0], a[0], w), lookA = lerp(b[1], a[1], w);
         cam.position.copy(camLock.pos); cam.fov = 36 + fovA; cam.lookAt(camLock.look.clone().add(V(0, lookA, 0)));
-        if (roomIdx === 2 && tau < 29) {                 // in the car: the driver's eyes, the phone on the dash, the road
+        if (roomIdx === 2 && tau < 28.3) {               // in the car: the driver's eyes, the phone on the dash, the road
           cam.position.set(-.36, .26, .95); cam.fov = 52; cam.lookAt(-.05, .02, -1.4);
         }
-        if (tau >= 37) {                                 // pulled back out of the hologram
-          const p = ease.outE(inv(37, 38.4, tau));
-          cam.position.copy(V(0, .085, .03).lerp(camLock.pos, p)); cam.lookAt(V(0, .075, 0).lerp(camLock.look.clone().add(V(0, lookA, 0)), p)); cam.fov = lerp(70, 36 + fovA, p);
+        if (tau >= 37) {                                 // back out of the phone: the opening move in reverse
+          const q = ease.outE(inv(37, 38.8, tau)), ph = phone.rotation.y;
+          cam.position.copy(V(0, .17, .0001).lerp(camLock.pos, q));
+          cam.up.set(Math.cos(ph), 0, -Math.sin(ph)).lerp(V(0, 1, 0), clamp(q * 1.6)).normalize();
+          cam.fov = 36; cam.lookAt(V(0, 0, 0).lerp(camLock.look, q)); cam.up.set(0, 1, 0);
         }
-      } else if (tau < 30) {                           // rush into the hologram
-        const p = ease.inE(inv(29, 30, tau));
-        cam.position.copy(camLock.pos.clone().lerp(V(0, .085, .025), p)); cam.lookAt(camLock.look.clone().add(V(0, .1, 0)).lerp(V(0, .075, 0), p));
-        cam.fov = lerp(48, 70, p);
+      } else {                                         // up over the phone, top down, then straight down into its screen
+        const ph = phone.rotation.y, up = V(Math.cos(ph), 0, -Math.sin(ph));
+        if (tau < 29.3) {
+          const p = ease.io(inv(28.3, 29.3, tau));
+          cam.position.copy(camLock.pos.clone().lerp(V(0, .3, .0001), p));
+          cam.up.copy(V(0, 1, 0).lerp(up, p).normalize()); cam.fov = 36;
+          cam.lookAt(camLock.look.clone().lerp(V(0, 0, 0), p));
+        } else {
+          const q = ease.inE(inv(29.3, 29.9, tau));
+          cam.position.set(0, lerp(.3, .02, q), .0001); cam.up.copy(up); cam.fov = 36; cam.lookAt(0, 0, 0);
+        }
+        cam.up.set(0, 1, 0);
       }
       cam.updateProjectionMatrix();
 
@@ -226,7 +237,7 @@ export default {
       calPane.fixed(1250, 330, dive ? fade(tau, 31.6, 32.0, 36.4, 36.9) : 0);
       mailPane.fixed(110, 330, dive ? fade(tau, 33.6, 34.0, 36.4, 36.9) : 0);
       const mv = ease.io(inv(32.1, 32.9, tau));
-      e2.style.transform = `translate(${mv * 268}px, ${mv * 14}px)`;
+      e2.style.transform = `translate(${mv * 268}px, ${-mv * 6}px)`;
       sent.style.opacity = inv(34.6, 34.8, tau);
     };
   },
