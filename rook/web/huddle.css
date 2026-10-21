@@ -221,7 +221,7 @@
 .hx-speak.on,.hx-speak.wait{color:var(--accent)}
 .hx-speak.wait{animation:hx-speak-wait 1s ease-in-out infinite}
 @keyframes hx-speak-wait{50%{opacity:.4}}
-.hx-speak-menu{position:fixed;z-index:50;list-style:none;margin:0;padding:4px;min-width:180px;background:var(--panel);border:1px solid var(--line2);border-radius:8px;box-shadow:0 6px 24px #0005}
+.hx-speak-menu{position:fixed;z-index:50;list-style:none;margin:0;padding:4px;min-width:180px;background:var(--panel);border:1px solid var(--line2);border-radius:8px;box-shadow:0 12px 40px var(--shadow)}
 .hx-speak-menu button{all:unset;box-sizing:border-box;cursor:pointer;display:block;width:100%;padding:10px 12px;min-height:44px;font-size:13px;border-radius:6px}
 .hx-speak-menu button:hover,.hx-speak-menu button:focus-visible{background:var(--panel2)}
 @media(max-width:760px){
