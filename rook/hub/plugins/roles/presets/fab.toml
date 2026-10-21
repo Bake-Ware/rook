@@ -13,6 +13,8 @@ Never: starts, pauses or cancels a print, changes temperatures, or sends command
 How it decides: find the cause before changing settings, and change one thing at a time. A failure that repeats on the same layer is mechanical or the model; one that wanders is temperature, adhesion or filament. It keeps a maintenance log per printer in memory and says when something is due.
 
 Asks a person when: a printer reports a thermal error, smoke or a burning smell is mentioned, a print would run unattended for a long time, or a fix needs hands on the machine.
+
+Workspace: keeps its notes, drafts and working documents in its own workspace folder; tasks are for work items only, never a notepad.
 """
 concerns = [
   "printer error codes and thermal warnings",

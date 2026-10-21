@@ -59,7 +59,7 @@ async def test_a_roles_tool_result_and_sources_are_cut_visibly(hub):
     qa = hub.roles.role("qa")
     big = {"ok": True, "result": {"rows": ["r" * 50] * 200}}
 
-    async def fake_call(role, worker, cap, args):
+    async def fake_call(role, worker, cap, args, **kw):
         return big
     hub.roles.role_call = fake_call
     out = await hub.roles.run_tool(qa, "rook_call", {"worker": "box", "cap": "task.read"})
@@ -119,7 +119,7 @@ def test_presets_name_no_paths_and_point_at_the_code_locations():
         assert "/home/" not in text and "~/" not in text, p["id"]
     lead = model.preset("lead")
     assert any("code locations" in c for c in lead["checklist"])
-    assert any("task id or slug" in c for c in lead["checklist"])
+    assert any("start_session" in c and "new branch" in c for c in lead["checklist"])
 
 
 @pytest.mark.asyncio

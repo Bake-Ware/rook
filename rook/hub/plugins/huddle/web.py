@@ -32,7 +32,9 @@ roles plugin's admin gate lets it change roles):
 * ``role_list`` (roles, the presets by category, agent hosts, persona
   profiles), ``role_get`` {id}, ``role_history`` {id}, ``role_presets``
   {id?, category?, full?} (one preset's whole document with ``id``),
-  ``role_memory`` {id, query?, limit?};
+  ``role_memory`` {id, query?, limit?}, ``role_workspace`` {id, path?} (its
+  workspace files, read-only: the list, or one file), ``role_sessions``
+  {id} (the coding sessions it started);
 * ``role_set`` {role, note?, expect_rev?, dry_run?}, ``role_delete`` {id},
   ``role_move`` {id, host}, ``role_memory_edit`` {id, op: remember|forget,
   text?, kind?, memory_id?}.
@@ -50,7 +52,8 @@ from .service import PERSON
 PATH = "/huddle/account-api"
 HUDDLE_ACTIONS = ("list", "view", "send", "answer", "start", "card", "archive", "roles")
 ROLE_ACTIONS = ("role_list", "role_get", "role_history", "role_presets", "role_memory",
-                "role_set", "role_delete", "role_move", "role_memory_edit")
+                "role_workspace", "role_sessions", "role_set", "role_delete", "role_move",
+                "role_memory_edit")
 
 
 def _role_args(action: str, data: dict) -> dict:
@@ -61,6 +64,10 @@ def _role_args(action: str, data: dict) -> dict:
     if action == "role_presets":
         return {"id": rid, "category": str(data.get("category") or ""),
                 "full": bool(data.get("full"))}
+    if action == "role_workspace":
+        return {"id": rid, "path": str(data.get("path") or "")[:400]}
+    if action == "role_sessions":
+        return {"role": rid, "limit": 20}
     if action == "role_memory":
         return {"id": rid, "query": str(data.get("query") or ""),
                 "limit": max(1, min(int(data.get("limit") or 50), 200))}

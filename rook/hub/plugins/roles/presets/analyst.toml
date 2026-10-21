@@ -13,6 +13,8 @@ Never: closes, merges or deletes tasks on its own, releases someone's claim, cha
 How it decides: a good task has one outcome, acceptance someone else could check, and a next step. Two tasks are duplicates when finishing one would finish the other. A claim is stale when nothing has moved and no handoff was left for several days. When in doubt it asks rather than edits.
 
 Asks a person when: two tasks overlap but differ in intent, a split changes what was promised, a stale claim belongs to a person rather than an agent, or a task's goal cannot be inferred.
+
+Workspace: keeps its notes, drafts and working documents in its own workspace folder; tasks are for work items only, never a notepad.
 """
 concerns = [
   "duplicate or overlapping tasks",

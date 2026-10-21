@@ -209,7 +209,8 @@ class Harness:
         raise NotImplementedError
 
     def prepare_role(self, tmp: Path, home: Path, *, model: str, system: str,
-                     effort: str | None, builtin: list[str]) -> tuple[list[str], dict]:
+                     effort: str | None, builtin: list[str],
+                     workspace: bool = False) -> tuple[list[str], dict]:
         """argv and environment for a role turn in ``home``, whose config files
         (rolehome.render) declare the tools."""
         raise NotImplementedError
@@ -247,11 +248,11 @@ class ClaudeHarness(Harness):
             argv += ["--effort", effort]
         return argv, {"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1", "DISABLE_AUTOUPDATER": "1"}
 
-    def prepare_role(self, tmp, home, *, model, system, effort, builtin):
+    def prepare_role(self, tmp, home, *, model, system, effort, builtin, workspace=False):
         # The home's settings file as flag settings: Claude Code ignores
         # permissions.allow from an untrusted project folder, and trusting it
         # would mean editing the host's ~/.claude.json.
-        native = [t for b in builtin for t in rolehome.BUILTIN[b]["claude"]]
+        native = rolehome.claude_tools(builtin, workspace)
         argv = [self.exe(), "-p", "--output-format", "stream-json", "--verbose",
                 "--model", model or "haiku", "--system-prompt", system,
                 "--tools", ",".join(native),
@@ -329,7 +330,7 @@ class CodexHarness(Harness):
             argv += ["-c", f'model_reasoning_effort="{effort}"']
         return argv + ["-"], {}
 
-    def prepare_role(self, tmp, home, *, model, system, effort, builtin):
+    def prepare_role(self, tmp, home, *, model, system, effort, builtin, workspace=False):
         # The home's .codex/config.toml is project config, which Codex loads
         # for a trusted project; the trust is given here, not in the host's
         # own config (which is not loaded at all). Sign-in stays in CODEX_HOME.
@@ -429,7 +430,7 @@ class OpenCodeHarness(Harness):
         (d / "opencode.json").write_text(json.dumps(cfg), encoding="utf-8")
         return tmp / "config"
 
-    def prepare_role(self, tmp, home, *, model, system, effort, builtin):
+    def prepare_role(self, tmp, home, *, model, system, effort, builtin, workspace=False):
         # The home's .config/opencode/opencode.json, as OpenCode's custom config
         # (over a global config dir holding only this host's providers); its
         # agent reads the turn's system prompt from the home's scratch dir.
@@ -581,7 +582,11 @@ class AgentHost(Plugin):
     def heartbeat(self) -> dict | None:
         # hb.agenthost: what the hub's host picker shows (Manage > Home agent).
         return {"harnesses": self._found or {n: {} for n in self.installed()},
-                "running": len(self._running), "max_parallel": MAX_PARALLEL}
+                "running": len(self._running), "max_parallel": MAX_PARALLEL,
+                # Role workspaces run natively here (Claude Code's file tools,
+                # workspace/ the only writable root); the hub stops serving its
+                # workspace tools to Claude Code roles on this host.
+                "workspace": "native"}
 
     @capability("status", risk="read")
     async def _status(self) -> dict:
@@ -607,7 +612,7 @@ class AgentHost(Plugin):
                     effort: str | None = None, oauth_token: str | None = None,
                     role: str | None = None, role_name: str = "", role_rev: int = 0,
                     tools: list | None = None, builtin: list | None = None,
-                    memory: str = "write") -> dict:
+                    memory: str = "write", workspace: bool = False) -> dict:
         """Run one house agent turn with a local harness; returns its reply.
 
         ``harness``: claude, codex or opencode. ``prompt`` (stdin) and ``system``
@@ -622,7 +627,8 @@ class AgentHost(Plugin):
         (created on first use), whose harness config is rendered from
         ``tools`` (the hub tool names the turn may call), ``builtin`` (read,
         search) and ``memory`` (write, read, off), and the role's memory digest
-        is added to ``system``.
+        is added to ``system``. ``workspace`` (claude only): its file tools
+        work in the home, with ``workspace/`` the only writable folder.
 
         Returns {ok, text, model, tools_used, num_turns, usage, cost_usd,
         api_ms, latency_ms, harness, role?, home?} or {ok: false, error}."""
@@ -654,7 +660,8 @@ class AgentHost(Plugin):
                         f"memory: one of {', '.join(rolehome.MEMORY_MODES)}")
                 spec = {"role": role, "name": str(role_name or role)[:80],
                         "rev": int(role_rev or 0), "tools": list(tools or []),
-                        "builtin": list(builtin or []), "memory": memory}
+                        "builtin": list(builtin or []), "memory": memory,
+                        "workspace": bool(workspace) and h.name == "claude"}
                 rolehome.files(Path("/nonexistent"), mcp_url=mcp_url,
                                **{k: v for k, v in spec.items() if k != "role"}, role=role)
             except (rolehome.RoleHomeError, TypeError, ValueError) as e:
@@ -700,13 +707,14 @@ class AgentHost(Plugin):
                 cwd = rolehome.ensure(self.roles_base, spec["role"])
                 rolehome.render(cwd, role=spec["role"], name=spec["name"], rev=spec["rev"],
                                 mcp_url=mcp_url, tools=spec["tools"], builtin=spec["builtin"],
-                                memory=spec["memory"])
+                                memory=spec["memory"], workspace=spec["workspace"])
                 if spec["memory"] != "off":
                     digest = rolemem.MemoryDir(cwd, spec["role"]).digest(prompt)
                     if digest:
                         system = f"{system}\n\n{digest}"
                 argv, extra = h.prepare_role(tmp, cwd, model=model, system=system,
-                                             effort=effort, builtin=spec["builtin"])
+                                             effort=effort, builtin=spec["builtin"],
+                                             workspace=spec["workspace"])
             else:
                 cwd.mkdir(parents=True, exist_ok=True)
                 argv, extra = h.prepare(tmp, str(cwd), model=model, system=system,

@@ -9,6 +9,20 @@ version was `0.1.0`.
 ## Unreleased
 
 ### Added
+- Roles act inside their own space. Every role has a **workspace** (`workspace/` in its home) for
+  drafts, notes and working files, which it reads, writes, searches and deletes with no card
+  (Claude Code's own file tools where the agent host supports it, else hub tools for every
+  harness), shown read-only on the role's page. An interim **action tier**, kept by the hub per
+  cap whatever the policy mode: reads in scope and the workspace always run; a role with the new
+  autonomy `routine` (the architect and lead presets) starts a Claude Code session on its own
+  branch in a code location (`start_session`), which may open a pull request and never merge;
+  everything else (merges, deploys, deletes and writes outside the workspace, settings, jobs,
+  protected devices, unknown caps) becomes an action card by itself, and secrets always do.
+  Sessions **report back** on their own: progress in the huddle, then DONE, BLOCKED or anything
+  unexpected wakes the role through the chair, with no watcher job. New caps `role.workspace`,
+  `role.sessions`, `role.session_start`, `role.session_send`, `role.session_stop`; card kind
+  `call`; settings `role.protected_workers`, `role.session_model`, `role.session_stall_minutes`,
+  `role.session_max_minutes`, `role.sessions_per_role`. (manual: role-agency, huddles)
 - Device workers. A worker can be the *delegate* for things that run no worker of their
   own, such as TVs and later light switches and thermostats. Each one joins the band as a
   worker in its own right, with its own name, caps and live heartbeat, plus `delegate`

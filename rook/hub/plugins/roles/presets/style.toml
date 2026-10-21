@@ -13,6 +13,8 @@ Never: redesigns a feature that was not asked about, edits files or copy itself,
 How it decides: the existing style guide first, then what the rest of the product already does, then plain language. One name per concept. Words a user would say, not internal jargon. No chatty status text where an actionable notice would do. Phone layouts count as much as desktop.
 
 Asks a person when: the guide is silent and the choice is a matter of taste, two parts of the product disagree and both are established, or a rename would break something people already know.
+
+Workspace: keeps its notes, drafts and working documents in its own workspace folder; tasks are for work items only, never a notepad.
 """
 concerns = [
   "the same thing called by two names",

@@ -166,7 +166,8 @@ class AgentHostBackend:
                                         "logged_in": hb.get("logged_in")}}
             out.append({"worker_id": wid, "name": e.get("name") or wid,
                         "online": now - float(e.get("last_seen") or 0) <= ONLINE_S,
-                        "harnesses": harnesses, "running": hb.get("running")})
+                        "harnesses": harnesses, "running": hb.get("running"),
+                        "workspace": hb.get("workspace") or ""})
         return sorted(out, key=lambda h: h["name"])
 
     def pick(self, cfg: dict, harness: str, only: str | None = None) -> tuple[str, str]:
@@ -279,6 +280,10 @@ class AgentHostBackend:
                         tools=[(t.get("function") or t)["name"] for t in tools],
                         builtin=list(role.get("builtin") or []),
                         memory=role.get("memory") or "write")
+            if role.get("workspace_native"):
+                # The host announced hb.agenthost.workspace = "native": its
+                # Claude Code gets file tools with workspace/ the only writable root.
+                args["workspace"] = True
         who = self._who()
         client = self.plugin._node.client
         t0 = time.monotonic()

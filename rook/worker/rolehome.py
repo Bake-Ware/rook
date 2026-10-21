@@ -5,6 +5,7 @@ Every role has a home directory, like a user's home::
     <roles dir>/<id>/            mode 0700
       role.json                  what the files below were rendered from
       memory/                    the role's memory (rook.worker.rolemem)
+      workspace/                 its drafts, notes and working files (the only writable root)
       .mcp.json                  Claude Code: MCP servers
       .claude/settings.json      Claude Code: permissions, auto-memory off
       .codex/config.toml         Codex: MCP servers and tool allowlists
@@ -44,6 +45,10 @@ HUB = "rook"
 MEMORY = "memory"
 TOKEN_ENV = "ROOK_TURN_TOKEN"
 SCRATCH = ".rook"
+WORKSPACE = "workspace"
+#: Claude Code's file tools for a role's workspace (``workspace`` on a turn):
+#: Read, Glob and Grep anywhere in its home, Write and Edit only in workspace/.
+WORKSPACE_CLAUDE = ("Read", "Write", "Edit", "Glob", "Grep")
 MEMORY_MODES = ("write", "read", "off")
 MEMORY_TOOLS = {"write": ("memory_recall", "memory_remember", "memory_forget"),
                 "read": ("memory_recall",), "off": ()}
@@ -88,7 +93,7 @@ def home_of(base: str | os.PathLike, role: str) -> Path:
 def ensure(base: str | os.PathLike, role: str) -> Path:
     """The role's home, created with its layout if missing."""
     home = home_of(base, role)
-    for d in (home, home / "memory", home / SCRATCH):
+    for d in (home, home / "memory", home / WORKSPACE, home / SCRATCH):
         d.mkdir(parents=True, exist_ok=True)
     os.chmod(home, 0o700)
     return home
@@ -115,9 +120,20 @@ def memory_server(home: Path, mode: str) -> tuple[str, list[str], dict]:
     return sys.executable, args, {"PYTHONPATH": root}
 
 
+def claude_tools(builtin: list[str], workspace: bool = False) -> list[str]:
+    """Claude Code's ``--tools`` for a role turn."""
+    out = [t for b in sorted(set(builtin or [])) for t in BUILTIN[b]["claude"]]
+    if workspace:
+        out += [t for t in WORKSPACE_CLAUDE if t not in out]
+    return out
+
+
 def files(home: Path, *, role: str, name: str = "", rev: int = 0, mcp_url: str,
-          tools: list[str], builtin: list[str], memory: str = "write") -> dict[str, str]:
-    """Every config file of the home, by relative path, as text."""
+          tools: list[str], builtin: list[str], memory: str = "write",
+          workspace: bool = False) -> dict[str, str]:
+    """Every config file of the home, by relative path, as text. With
+    ``workspace`` (Claude Code only), its file tools work in the home, and
+    ``workspace/`` is the only folder it may write."""
     if memory not in MEMORY_MODES:
         raise RoleHomeError(f"memory: one of {', '.join(MEMORY_MODES)}")
     tools = sorted({str(t) for t in tools or []})
@@ -141,8 +157,17 @@ def files(home: Path, *, role: str, name: str = "", rev: int = 0, mcp_url: str,
         servers[MEMORY] = {"type": "stdio", "command": cmd, "args": cmd_args, "env": cmd_env}
     allow = ([f"mcp__{HUB}__{t}" for t in tools] + [f"mcp__{MEMORY}__{t}" for t in mem_tools]
              + native("claude"))
+    deny = list(CLAUDE_DENY)
+    if workspace:
+        # "//" is an absolute path in Claude Code's rules; dontAsk refuses
+        # anything not allowed, so writes anywhere else are refused.
+        for root in dict.fromkeys((str(Path(home).absolute()), str(Path(home).resolve()))):
+            ws = f"{root}/{WORKSPACE}"
+            allow += [f"Read(/{root}/**)", f"Glob(/{root}/**)", f"Grep(/{root}/**)",
+                      f"Write(/{ws}/**)", f"Edit(/{ws}/**)"]
+        deny = [d for d in deny if d not in ("Edit", "Write", "MultiEdit")]
     claude_settings = {
-        "permissions": {"allow": allow, "deny": list(CLAUDE_DENY), "defaultMode": "dontAsk"},
+        "permissions": {"allow": allow, "deny": deny, "defaultMode": "dontAsk"},
         "enableAllProjectMcpServers": False,
         "enabledMcpjsonServers": sorted(servers),
         "autoMemoryEnabled": False,
@@ -189,7 +214,7 @@ def files(home: Path, *, role: str, name: str = "", rev: int = 0, mcp_url: str,
     }
 
     spec = {"id": role, "name": name or role, "rev": int(rev or 0), "tools": tools,
-            "builtin": builtin, "memory": memory}
+            "builtin": builtin, "memory": memory, "workspace": bool(workspace)}
     return {
         "role.json": json.dumps(spec, indent=2, sort_keys=True) + "\n",
         ".mcp.json": json.dumps({"mcpServers": servers}, indent=2) + "\n",

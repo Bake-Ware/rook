@@ -2,7 +2,10 @@
 
 Status: H1 (section 3, the agent host) is built; H2 (roles, role homes and
 role memory: 3.3, 4) is built as decided here; H3 (chaired huddles: 5, 7), H4
-(the web: 8) and H5 (jobs and the lead developer: 6, 4.2) are built.
+(the web: 8) and H5 (jobs and the lead developer: 6, 4.2) are built. Role
+agency (2026-10-21: each role's workspace, the interim action tier the hub
+keeps per cap, and sessions that report back by themselves: 4.5, 5.5) is
+built; it is the precursor of H6's tiers.
 Built choices where this document left room: a round starts on a person's or
 a job's post, or a guest agent's that names the chair or a role; the chair
 closes every round it routed (and a direct one where a role failed or two
@@ -64,6 +67,8 @@ its voice; it never replaces one.
 | Role home | The role's own directory on its agent host: memory and harness config (4.4). |
 | Huddle | A thread with Bake, the chair and one or more roles. |
 | Action card | A concrete proposal from a huddle (task, job, session) that Bake approves. |
+| Workspace | `workspace/` in a role's home: its drafts and notes, writable with no card (4.5). |
+| Action tier | What a role may do without a person, decided by the hub per cap: free, routine or approval (4.5). |
 
 ## 3. Claude Code as a house agent backend
 
@@ -148,8 +153,8 @@ Rules:
   and memory MCP tools only. A role that needs to read files can be given
   `builtin: ["read", "search"]` (Claude Code `Read`, `Grep`, `Glob`; OpenCode
   `read`, `grep`, `glob`, `list`; Codex has no file tools without its shell,
-  which stays off, so it gets none). Shell, edit and write tools are never
-  offered to a role.
+  which stays off, so it gets none). Shell tools are never offered to a
+  role, and edit and write tools only inside its workspace (4.5).
 - **Everything is journaled** as the house agent (`agent:home`, auth kind
   `home`) or, for a role turn, `agent:home/role:<id>`, with the agent host and
   turn id. The MCP calls the turn makes are journaled by the hub as usual under
@@ -241,7 +246,7 @@ One document per role:
 | `seed_memory` | List: what it knows to start with. In the system prompt until its home exists, then written into its memory once (`agenthost.role_memory_edit`, by `system:roles`) right after the first turn (or by `role.move` when a role is moved before it has a home). |
 | `sources` | What it reads before answering (deck, jobs runs, journal, sessions, knowledge folders), as Rook caps with args. In H2 they are listed in its system prompt and it reads them with `rook_call`; H3 may pre-read them. |
 | `tools` | Cap scope, the Jobs format (`allow`/`deny` patterns). Default `knowledge.read` only. `role.ask`, `role.move`, `role.memory_edit` and `agenthost.*` are never callable by a role. |
-| `autonomy` | `propose` (default: only action cards) or `act` (may call `tools` directly). |
+| `autonomy` | `propose` (default: reads and its workspace on its own, everything else a card), `routine` (also coding sessions on a branch, 4.5) or `act` (for now the same as `routine`; H6 gives it its tiers). The hub's tier decides, never the role. |
 | `builtin` | Harness built-in tools: none (default), `read`, `search` (3.1). |
 | `memory` | `write` (default), `read` or `off` (3.3). |
 | `backend`, `model`, `effort` | Blank: the house agent's. Otherwise per-role override (the lead developer on Sonnet). Roles run on an agent harness (`claude-code`, `codex`, `opencode`); with the house agent on `openai`, a role names its own. |
@@ -256,7 +261,10 @@ with revisions and an attributed history like persona profiles.
 ### 4.2 Starting roster (editable presets, by category)
 
 Offered by `role.presets` (and on the Roles tab in H4); nothing exists until
-someone saves one with `role.set`. As shipped, every preset only proposes.
+someone saves one with `role.set`. As shipped, the architect and the lead
+developer do routine work (4.5); every other preset only proposes. Every
+charter says to keep notes and drafts in the workspace, and that tasks are
+for work items, never a notepad.
 
 **Presets are data.** `rook/hub/plugins/roles/presets/` holds
 `categories.toml` (`[[category]]`: stable `id`, display `name`, sort
@@ -334,8 +342,9 @@ directory avoids that, and Codex and OpenCode stay supported the same way.
 
 ```
 <roles dir>/<id>/           mode 0700. Roles dir: agenthost.roles_dir, default <agenthost data>/roles
-  role.json                 what the files below were rendered from (id, name, rev, tools, memory)
+  role.json                 what the files below were rendered from (id, name, rev, tools, memory, workspace)
   memory/                   the role's memory, scope role:<id> (3.3)
+  workspace/                its drafts, notes and working files: the only folder it writes (4.5)
   .mcp.json                 Claude Code: the rook and memory MCP servers
   .claude/settings.json     Claude Code: permissions allow exactly the role's tools; deny shell/edit/web; auto-memory off
   .codex/config.toml        Codex: the two servers with enabled_tools, built-in tool features off, approvals never
@@ -385,6 +394,94 @@ directory avoids that, and Codex and OpenCode stay supported the same way.
   `agenthost.role_import` and `agenthost.role_set_aside` (admin). The hub calls
   them as system code; people use the `role.*` caps on worker `rook`.
 
+### 4.5 Agency inside its own space (built 2026-10-21; interim, before H6)
+
+Bake (2026-10-21): roles had too much approval friction. The H6 design run
+(huddle husky-stairwell-hive) showed it: the architect could not write a
+draft anywhere, so it put the outline in a `task.create` card and planned a
+`session.start` card after it, both waiting on Bake. A role now has real
+agency inside its own space, and the hub, not the role, decides what that
+covers.
+
+**The workspace.** `workspace/` in the role's home (4.4) holds its drafts,
+notes, scratch files and working documents. The role reads, writes, lists,
+searches and deletes there with no card; nothing outside it is writable
+this way. Two ways in, one folder:
+
+- *Native*, on an agent host whose heartbeat says `hb.agenthost.workspace =
+  "native"` and a Claude Code role: its `--tools` add `Read`, `Write`,
+  `Edit`, `Glob` and `Grep`, and the home's settings allow `Read`, `Glob`
+  and `Grep` under the home and `Write` and `Edit` only under
+  `//<home>/workspace/**` (in `dontAsk` mode anything not allowed is
+  refused; `Bash` and the web stay denied). Checked with Claude Code 2.1.306
+  headless: a write outside the allowed root, `ls /tmp` and a push to master
+  were refused, the allowed ones ran.
+- *Hub tools*, for Codex and OpenCode (Codex has no file tools without its
+  shell; OpenCode's path-scoped permissions are not relied on) and for any
+  host that does not announce it: `workspace_list`, `workspace_read`,
+  `workspace_write`, `workspace_edit`, `workspace_search` and
+  `workspace_delete`, served by the per-turn tool server. The hub checks the
+  path (relative, no `..`, no absolute or home paths, no link anywhere on the
+  way) and runs the host's own `file.*` caps (`shell.exec rm` for a delete)
+  as hub system code, journaled as the role (`role.workspace`).
+
+People see the workspace read-only on the role's page (Manage > Roles,
+**Workspace**: the file list, then one file's text; `role.workspace`).
+
+**The interim action tier** (`rook/hub/plugins/roles/tiers.py`), kept by the
+hub per cap and per argument, whatever the band's policy mode (the live
+policy is in audit mode; switching it to enforce is H6's):
+
+| Tier | What | Who |
+|---|---|---|
+| free | Reads in the role's `tools` (the cap's effective tier is `read`), its workspace, `session_status` | every role |
+| routine | `start_session` (a Claude Code session on a branch, below), `session_send` (more work for its own stopped session) | autonomy `routine` or `act`; for `propose` it is an approval |
+| approval | Everything else: any cap above `read` (merges, deploys, deletes and writes outside the workspace, settings, jobs, shell), any call on a worker in `role.protected_workers` (family devices: reads too), anything the hub does not know (`exec` by default) | an action card, always |
+
+Secrets (`*secret*`, `vault.*`, `settings.worker_secret`, `*token*`,
+`*password*`, `*credential*`, `auth.*`, `enroll*.*`) are approval for every
+role and every autonomy; no setting lowers them. A role that calls an
+approval-tier cap with `rook_call` in a huddle gets a `call` card made for
+it (its `why` is the summary) and is told not to retry; outside a huddle the
+call is refused with the reason. Policy is still checked after the tier.
+Roles never call `role.ask`, `role.move`, `role.memory_edit` or
+`agenthost.*` (unchanged).
+
+**Coding sessions a role starts** (`rook/hub/plugins/roles/sessions.py`).
+`start_session(location, branch, instructions, title?)`:
+
+- *Where:* one of `role.code_locations` (parsed: the name first, `worker
+  <name>`, the main checkout (first absolute path), "worktrees go under
+  <folder>" (default `<checkout>/.claude/worktrees`), the base
+  `origin/<branch>`). The session runs in a worktree under the worktrees
+  folder, made (or reused) for the branch; never in the main checkout.
+- *Which branch:* a valid name that is not the base branch, `master`,
+  `main`, `HEAD`, `trunk`, `production` or `release`. The worktree must be
+  on it.
+- *How:* `work.stream.open` on the location's worker, `harness: shell`, a
+  fixed launcher (argv, no shell parsing of any value) that makes the
+  worktree and runs `claude -p --output-format stream-json --verbose
+  --setting-sources "" --strict-mcp-config --permission-mode dontAsk
+  --settings <json>` with the prompt on stdin: none of the host's own
+  settings, plugins or MCP servers, and an allowlist only: edits and reads
+  in the worktree, reading the role's workspace, git for its own work,
+  pushing only its branch, `gh pr create/view/list/diff/checks/comment`,
+  `rook-pytest`. Denied: `gh pr merge`, `gh api`, `gh repo`, force pushes,
+  `git reset --hard`, `sudo`, `ssh`, `curl`, the web. So it can open a pull
+  request and can never merge one.
+- *Limits:* `role.sessions_per_role` (2) running per role, one session per
+  worktree, `role.session_max_minutes` (180) per run, then it is stopped.
+- The prompt tells it to print `ROOK-STATUS: WORKING|DONE|BLOCKED <text>`
+  lines (DONE with the pull request URL).
+- A role that only proposes is not offered the tool; a `role.session_start`
+  card (worker `rook`) does the same thing on approval, as the person.
+
+Gaps, recorded as findings rather than fixed here: the in-session rules are
+Claude Code permission rules on Bake's own account, so branch protection on
+the repository is what really stops a merge; Rook has no notion of a
+"family device" beyond the `role.protected_workers` list; `act` has no
+meaning of its own until H6.
+
 ## 5. Huddles
 
 Hub plugin `huddle` (namespace `huddle`, runs in rook-band-mcp, store
@@ -412,7 +509,9 @@ Hub plugin `huddle` (namespace `huddle`, runs in rook-band-mcp, store
    and nothing is posted. It closes every round it routed; a direct
    `@role` round only when a role failed or two answered. Roles do not talk
    among themselves (no loops; at most `huddle.max_role_turns` (6) roles per
-   pass).
+   pass). A session's report (5.5) starts a round too: the chair calls on
+   the role that started it, always, and on roles the thread asked to
+   review its result.
 5. After a round each role may write to its own memory (3.3). The huddle's
    decisions are recorded on the huddle.
 
@@ -425,8 +524,13 @@ one of `task.create`, `task.update`, `job.run`, `job.create`, `session.send`,
 `session.start`, `note`, `ask_bake`. State: `proposed` → `approved` /
 `dismissed` → `done` / `failed`. Approving runs the call under Bake's identity
 (the approver), journaled with the card and huddle ids. A role with
-`autonomy: act` runs calls within its tools directly and posts the card
-already `done`. Guardrails (jobs.md 7) apply to both.
+`routine` or `act` autonomy whose card's call is in the free tier (4.5) has
+it run at once and the card posted `done`; a role that only proposes always
+waits. Kind `call` (added 2026-10-21) is any other cap a person approves:
+the hub makes one when a role calls an approval-tier cap (4.5). A
+`session.start` card may run `role.session_start` (worker `rook`, args
+`{role, branch, instructions, location?}`) instead of `work.stream.open`.
+Guardrails (jobs.md 7) apply to all.
 
 As amended 2026-10-19, after the first all-hands huddle's three approved
 cards all failed (two `task.create` cards called a cap that does not exist,
@@ -465,7 +569,10 @@ or slug)"), and its house agent proposed two versions of each task card:
 On worker `rook`: `huddle.list`, `huddle.read`, `huddle.start(title, roles)`,
 `huddle.post(huddle, text, mention?)`, `huddle.card(huddle, card, action)`,
 `huddle.archive`; the role caps from H2: `role.list/get/history/presets`,
-`role.set/delete/move/memory_edit` (admin), `role.ask`, `role.memory`. One MCP tool,
+`role.set/delete/move/memory_edit` (admin), `role.ask`, `role.memory`;
+from 4.5, `role.workspace` and `role.sessions` (read),
+`role.session_start`, `role.session_send` and `role.session_stop` (write).
+One MCP tool,
 `rook_huddle`, action-style like `rook_jobs`. External agents (Claude Code,
 Claude web) can read a huddle and post into it as guests, but are never
 called on.
@@ -476,7 +583,36 @@ called on.
 (default 90), `huddle.default_roles` (`["pm","qa","lead"]`),
 `huddle.role_retries` (1), `huddle.max_followups` (2). On the roles plugin:
 `role.max_tool_calls` (12), `role.tool_result_chars` (12000),
-`role.code_locations` (`[]`).
+`role.code_locations` (`[]`), and from 4.5 `role.protected_workers` (`[]`),
+`role.session_model` (`""`), `role.session_stall_minutes` (20),
+`role.session_max_minutes` (180), `role.sessions_per_role` (2).
+
+### 5.5 Report-back (built 2026-10-21)
+
+A session a role started reports to that role and to the huddle it was
+started from, with no watcher job: the hub follows it. The roles plugin
+keeps a record per session (`role_sessions` in roles.db: role, huddle,
+worker, terminal, Claude Code session id, branch, worktree, state, newest
+status, pull request, read cursor) and one follower task per running
+session, which long-polls `work.stream.read` (20 s) and folds the
+stream-json (`Follow`):
+
+- `ROOK-STATUS: WORKING` lines update the record and are posted quietly in
+  the huddle (at most 4 a run), sender `session:<speakable name>`.
+- When the run ends it sends **one** report: its DONE, BLOCKED or QUESTION
+  line, with anything unexpected added (Claude Code's error, a non-zero
+  exit, tool calls it was refused); UNEXPECTED when it said neither.
+- Also UNEXPECTED, at once: no output for `role.session_stall_minutes`
+  (once a run), its terminal vanishing (its host restarted), still running
+  after `role.session_max_minutes` (then it is stopped).
+- A report is posted in the huddle and starts a round (5.1) in which the
+  chair wakes the role. Without a huddle the role gets one turn with the
+  report. Each report goes out once per run.
+
+The follower resumes from the stored cursor when the hub restarts.
+`session_send` resumes a stopped session (`claude -p --resume`, same
+branch and worktree) with more work. `role.session_stop` closes a running
+one.
 
 ## 6. Jobs
 

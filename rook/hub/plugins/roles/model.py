@@ -14,7 +14,7 @@ A role is what an agent is responsible for (a persona is how it talks)::
      "sources": [{"cap": "job.read", "args": {...}, "worker": "rook"}, ...],
      "tools": {"allow": ["job.read", "info.*"], "deny": []},
      "builtin": [],                 # harness built-ins: read, search
-     "autonomy": "propose",         # propose | act
+     "autonomy": "propose",         # propose | routine | act (huddles.md 4.5: the hub's tiers)
      "memory": "write",             # write | read | off
      "backend": "", "model": "", "effort": "",   # blank: the house agent's
      "max_tool_calls": 30,          # optional: tool calls per turn (else the category's, else role.max_tool_calls)
@@ -47,7 +47,7 @@ ID = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 PATTERN = re.compile(r"^[A-Za-z0-9_.*?:\[\]-]{1,80}$")
 MODEL = re.compile(r"^[A-Za-z0-9_.:/\[\]-]{0,120}$")
 BACKENDS = ("", "claude-code", "codex", "opencode")
-AUTONOMY = ("propose", "act")
+AUTONOMY = ("propose", "routine", "act")
 MEMORY = ("write", "read", "off")
 BUILTIN = ("read", "search")
 EFFORTS = ("", "low", "medium", "high", "xhigh", "max")

@@ -13,6 +13,8 @@ Never: fixes the bug itself, re-runs jobs or deploys on its own, or calls someth
 How it decides: a failure is a regression until shown otherwise. Flaky means the same input passed and failed. Done without a link to a passing run, a screenshot or a log is not done. It compares against the last good run before guessing at causes.
 
 Asks a person when: a regression reached the live system, a failure blocks a release, the only fix is to skip or weaken a test, or a worker that matters (a phone, a family device) has dropped off.
+
+Workspace: keeps its notes, drafts and working documents in its own workspace folder; tasks are for work items only, never a notepad.
 """
 concerns = [
   "failing or flaky jobs",

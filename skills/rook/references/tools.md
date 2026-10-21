@@ -140,7 +140,12 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `role.memory_edit` | id, action, text='', kind='fact', memory_id='' | admin | Change a role's memory on its host: `action` remember (`text`, `kind` fact, procedure or episode) or forget (… |
 | `role.move` | id, host, note='' | admin | Move a role to another agent host: its home directory (memory and config) is packed on the old host, unpacked… |
 | `role.presets` | id='', category='', full=false | read | The starting roles, grouped by category (product and planning, software engineering, operations, ...): `categ… |
+| `role.session_send` | id, text | write | More work for a stopped role session (it resumes on its branch). |
+| `role.session_start` | role, branch, instructions, location='', title='', room='' | write | Start a coding session for a role (on a branch, in a worktree of a code location; it may open a pull request,… |
+| `role.session_stop` | id | write | Stop a role's running coding session (its terminal is closed; its worktree and branch stay). |
+| `role.sessions` | role='', id='', live=false, limit=20 | read | The coding sessions roles started: state, newest status, branch, worktree, pull request (`role` narrows, `liv… |
 | `role.set` | role, note='', dry_run=false, expect_rev? | admin | Create or replace a role (band owners and operator tokens). |
+| `role.workspace` | id, path='' | read | A role's workspace, read-only (its drafts, notes and working documents, in its home on its agent host): the f… |
 | `serves.clear` | worker | write | Remove a worker's hosting entry. |
 | `serves.list` | worker='' | read | What workers host: `{worker: {sites, services, updated, by}}`. |
 | `serves.set` | worker, sites?, services?, by='' | write | Write what a worker hosts. |
@@ -266,7 +271,7 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 | `agenthost.role_set_aside` | role | Move a role's home out of the way on this host (after a move to another host); it is renamed, never deleted. |
 | `agenthost.roles` | — | The role homes on this host: {ok, base, roles: [{role, path, rev, tools, memory_mode, memories, bytes}]}. |
 | `agenthost.status` | — | The agent harnesses on this host (claude, codex, opencode): version and login, re-read now; and the running t… |
-| `agenthost.turn` | turn_id, prompt, system, mcp_url, mcp_token, harness='claude', model='', timeout_s=180.0, max_tool_calls=20, effort?, oauth_token?, role?, role_name='', role_rev=0, tools?, builtin?, memory='write' | Run one house agent turn with a local harness; returns its reply. |
+| `agenthost.turn` | turn_id, prompt, system, mcp_url, mcp_token, harness='claude', model='', timeout_s=180.0, max_tool_calls=20, effort?, oauth_token?, role?, role_name='', role_rev=0, tools?, builtin?, memory='write', workspace=false | Run one house agent turn with a local harness; returns its reply. |
 
 **battery**
 
