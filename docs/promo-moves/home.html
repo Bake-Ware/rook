@@ -158,6 +158,16 @@ fetch('out/music/index.json').then(r => r.ok ? r.json() : null).then(v => {
       <td class="lic">${esc(x.clip)}</td><td><button class="play" data-src="${x.file}?v=${Date.now()}">▶ play</button></td></tr>`).join('')}
     </table></div>`;
 });
+// AI covers (ACE-Step 1.5 on kaiju) of a timed score
+fetch('out/music/ace/index.json').then(r => r.ok ? r.json() : null).then(v => {
+  if (!v) return;
+  const box = document.createElement('section'); box.className = 'voices';
+  box.innerHTML = `<h2>AI covers · clip 4</h2><p class="lead">ACE-Step 1.5 (MIT, on kaiju) re-rendering our Mountain King score in other styles. Strength = how closely it follows the source.</p>
+    <div class="vwrap"><table class="vt"><tr><th>STYLE</th><th>SETTING</th><th></th></tr>
+    ${v.map(x => `<tr><td><div class="nm">${esc(x.title)}</div></td><td class="lic">${esc(x.note)}</td><td><button class="play" data-src="${x.file}?v=${Date.now()}">▶ play</button></td></tr>`).join('')}
+    </table></div>`;
+  $('#tab-music').appendChild(box);
+});
 // voice audition: the same lines in each candidate voice
 let audio = null, cur = null;
 fetch('out/voicesamples/index.json').then(r => r.ok ? r.json() : null).then(v => {
