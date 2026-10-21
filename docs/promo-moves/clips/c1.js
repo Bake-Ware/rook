@@ -56,28 +56,33 @@ export default {
       for (const x of [-1.4]) { const bar = new THREE.Mesh(new THREE.BoxGeometry(.04, 1.1, .02), kit.toon(0x2a2e26)); bar.position.set(x, 1.0, -1.57); g.add(bar);
         const bar2 = new THREE.Mesh(new THREE.BoxGeometry(1.3, .04, .02), kit.toon(0x2a2e26)); bar2.position.set(x, 1.0, -1.57); g.add(bar2); }
     }
-    { // bathroom
+    { // bathroom: the phone on the vanity beside the basin (no one in shot)
       const g = new THREE.Group(); S.add(g); rooms.bath = g;
-      const c = kit.make('counter', { parent: g, at: V(-.2, -.9, -.15) });
-      kit.node(c, 'mirror').visible = false; kit.node(c, 'mirror_frame').visible = false;
-      wall(g, 0x36403a, -2.9);
-      const mir = new THREE.Mesh(new THREE.BoxGeometry(.62, .8, .03), kit.toon(0x8fa4a6)); mir.position.set(-.52, .72, -2.87); g.add(mir);
-      const sink2 = kit.make('counter', { parent: g, at: V(-.5, -.9, -2.55) }); kit.node(sink2, 'mirror').visible = false; kit.node(sink2, 'mirror_frame').visible = false;
-      const f = figure(kit, V(-.5, -.9, -2.2), Math.PI + .1); g.add(f.obj); g.userData.fig = f;
-      const brush = new THREE.Mesh(new THREE.BoxGeometry(.02, .02, .18), kit.toon(0xd8ad6d)); f.foreR.add(brush); brush.position.set(0, -.34, .07);
+      kit.make('counter', { parent: g, at: V(-.2, -.86, -.05) });
+      wall(g, 0x36403a, -.37);
     }
-    { // car at a red light
+    { // car at a red light, from the driver's seat: the phone on the dash, the road ahead
       const g = new THREE.Group(); S.add(g); rooms.car = g;
-      const d = kit.make('dash', { parent: g, at: V(-.95, -1.025, .05), rot: Math.PI });
-      kit.node(d, 'glass').visible = false; kit.node(d, 'hood').visible = false;
-      const f = figure(kit, V(-.45, -1.45, -.95), 0); g.add(f.obj); g.userData.fig = f;
-      f.legL.rotation.x = f.legR.rotation.x = -1.45;
-      f.armL.rotation.x = f.armR.rotation.x = -1.15;
-      const night = new THREE.Mesh(new THREE.PlaneGeometry(9, 5), kit.toon(0x161a20)); night.position.set(0, .6, -2.4); g.add(night);
+      const d = kit.make('dash', { parent: g, at: V(-.02, -1.048, .14) });
+      kit.node(d, 'glass').visible = false;
+      const ground = -1.35;
+      const road = new THREE.Mesh(new THREE.PlaneGeometry(14, 60), kit.toon(0x23251f)); road.rotation.x = -Math.PI / 2; road.position.set(0, ground, -30); g.add(road);
+      for (let k = 0; k < 12; k++) { const m = new THREE.Mesh(new THREE.PlaneGeometry(.12, 1.6), new THREE.MeshBasicMaterial({ color: 0x8a8670 }));
+        m.rotation.x = -Math.PI / 2; m.position.set(1.7, ground + .01, -3 - k * 4.5); g.add(m); }
+      const sky = new THREE.Mesh(new THREE.PlaneGeometry(80, 30), kit.toon(0x151922)); sky.position.set(0, 6, -55); g.add(sky);
       const lights = [];
-      for (let i = 0; i < 9; i++) { const l = new THREE.Mesh(new THREE.CircleGeometry(.02 + rnd2(i) * .025, 12), new THREE.MeshBasicMaterial({ color: i % 3 ? 0xffd08a : 0xe0675c }));
-        l.position.set(-3 + i * .75, .2 + rnd2(i + 9) * .7, -2.35); g.add(l); lights.push(l); }
+      for (let i = 0; i < 26; i++) { const l = new THREE.Mesh(new THREE.CircleGeometry(.12 + rnd2(i) * .2, 12), new THREE.MeshBasicMaterial({ color: i % 4 ? 0xffd08a : 0xe0675c }));
+        l.position.set(-30 + i * 2.4 + rnd2(i + 3) * 1.5, ground + 1 + rnd2(i + 9) * 5, -54); g.add(l); lights.push(l); }
       g.userData.lights = lights;
+      // the car ahead (tail lights) and the light over the junction
+      const ahead = kit.make('car', { parent: g, at: V(-.3, ground, -9.5), rot: Math.PI / 2, tint: 0x5b4740 });
+      for (const sx of [-.55, .55]) { const t = new THREE.Mesh(new THREE.PlaneGeometry(.22, .1), new THREE.MeshBasicMaterial({ color: 0xff4a3a }));
+        t.position.set(-.3 + sx, ground + .72, -7.35); g.add(t); }
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(5, .12, .12), kit.toon(0x3a3c32)); arm.position.set(1.0, ground + 3.9, -12); g.add(arm);
+      const head = new THREE.Mesh(new THREE.BoxGeometry(.36, .95, .3), kit.toon(0x24261f)); head.position.set(-.4, ground + 3.3, -12); g.add(head);
+      ['#ff5a48', '#3a2a1a', '#1d3a26'].forEach((col, k) => { const l = new THREE.Mesh(new THREE.CircleGeometry(.11, 16), new THREE.MeshBasicMaterial({ color: col }));
+        l.position.set(-.4, ground + 3.6 - k * .3, -11.84); g.add(l); });
+      const red = new THREE.PointLight(0xff5a48, 1.5, 9, 1.6); red.position.set(-.4, ground + 3.3, -11); g.add(red);
     }
     { // work desk
       const g = new THREE.Group(); S.add(g); rooms.desk = g;
@@ -88,7 +93,7 @@ export default {
       kit.make('chair', { parent: g, at: V(-.3, -.74, -1.05) });
       const f = figure(kit, V(-.3, -1.21, -.92), 0); g.add(f.obj); g.userData.fig = f;
       f.legL.rotation.x = f.legR.rotation.x = -1.45;
-      f.armL.rotation.x = f.armR.rotation.x = -.9;
+      f.armL.rotation.x = f.armR.rotation.x = -.9; f.foreL.rotation.x = f.foreR.rotation.x = -.7;   // hands on the laptop
       wall(g, 0x2f3330, -1.4);
     }
     function rnd2(i) { return ((Math.sin(i * 91.7) * 43758.5453) % 1 + 1) % 1; }
@@ -110,7 +115,7 @@ export default {
     const st = document.createElement('style'); st.textContent = `
       .calg{display:flex;gap:16px;height:150px}.calg .col{flex:1;border:1px solid #2b322a;border-radius:8px;padding:8px}
       .calg .dh{font-size:16px;color:#92998c;letter-spacing:.2em}
-      .ev{position:absolute;width:226px;font-size:18px;padding:6px 10px;border-radius:6px;background:#20261d;border-left:4px solid #8fc79a;color:#e2e3d9}
+      .ev{position:absolute;width:236px;font-size:16px;white-space:nowrap;padding:6px 10px;border-radius:6px;background:#20261d;border-left:4px solid #8fc79a;color:#e2e3d9}
       .ev.e1{left:28px;top:118px}.ev.e2{left:28px;top:166px;border-left-color:#f0c98c}.ev.e3{left:296px;top:118px}`;
     document.head.appendChild(st);
     const e2 = calPane.el.querySelector('.e2'), sent = mailPane.el.querySelector('.sent');
@@ -143,9 +148,7 @@ export default {
       // dawn window warms up
       rooms.bed.userData.win.material.color.setHSL(.08, .6, lerp(.18, .42, inv(0, 9, tau)));
       // figures move
-      const fb = rooms.bath.userData.fig; fb.rest(); fb.armR.rotation.x = -.7; fb.armR.rotation.z = -.2; fb.foreR.rotation.x = -2.0 + Math.sin(tau * 14) * .1;
-      fb.head.rotation.x = .1; fb.torso.rotation.x = .28;
-      rooms.car.userData.lights.forEach((l, i) => { l.position.x = ((-3 + i * .75 - tau * .25) % 7 + 7) % 7 - 3.5; });
+      rooms.car.userData.lights.forEach((l, i) => { l.material.opacity = 1; l.scale.setScalar(.85 + .15 * Math.sin(tau * 3 + i)); });
       const fd = rooms.desk.userData.fig;
       fd.head.rotation.y = tau > 25.6 ? lerp(0, -.7, inv(25.6, 26.4, tau)) : 0;
 
@@ -172,10 +175,13 @@ export default {
         cam.up.set(0, 1, 0);
       } else if (tau < 29 || (tau >= 37)) {
         // per-room framing: wider and a little higher where a person stands or sits behind the phone
-        const adj = [[0, 0], [12, .06], [0, 0], [12, .1]];
+        const adj = [[0, 0], [6, .05], [0, 0], [12, .1]];
         const a = adj[roomIdx], b = adj[Math.max(0, roomIdx - 1)], w = (idx > 0 && tau < 29) ? ease.io(u) : 1;
         const fovA = lerp(b[0], a[0], w), lookA = lerp(b[1], a[1], w);
         cam.position.copy(camLock.pos); cam.fov = 36 + fovA; cam.lookAt(camLock.look.clone().add(V(0, lookA, 0)));
+        if (roomIdx === 2 && tau < 29) {                 // in the car: the driver's eyes, the phone on the dash, the road
+          cam.position.set(-.36, .26, .95); cam.fov = 52; cam.lookAt(-.05, .02, -1.4);
+        }
         if (tau >= 37) {                                 // pulled back out of the hologram
           const p = ease.outE(inv(37, 38.4, tau));
           cam.position.copy(V(0, .085, .03).lerp(camLock.pos, p)); cam.lookAt(V(0, .075, 0).lerp(camLock.look.clone().add(V(0, lookA, 0)), p)); cam.fov = lerp(70, 36 + fovA, p);
@@ -222,7 +228,7 @@ export default {
       calPane.fixed(1250, 330, dive ? fade(tau, 31.6, 32.0, 36.4, 36.9) : 0);
       mailPane.fixed(110, 330, dive ? fade(tau, 33.6, 34.0, 36.4, 36.9) : 0);
       const mv = ease.io(inv(32.1, 32.9, tau));
-      e2.style.transform = `translate(${mv * 268}px, ${-mv * 48}px)`;
+      e2.style.transform = `translate(${mv * 268}px, ${mv * 14}px)`;
       sent.style.opacity = inv(34.6, 34.8, tau);
     };
   },

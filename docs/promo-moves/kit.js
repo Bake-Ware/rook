@@ -22,7 +22,8 @@ export const COL = {
 const PALETTE = {
   gold: 0xc9a868, body: 0xaaa17d, dark: 0x3a3c32, dark2: 0x24261f, metal: 0x8c8a7a, wood: 0x8a6c42, wood2: 0x5e4a2e,
   stone: 0x9d9473, iron: 0x2d2a22, accent: 0xd8ad6d, paper: 0xe6dcc0, skin: 0xc79f7c, cloth: 0x6d7a63, cloth2: 0x3b4232,
-  cloth3: 0x8f8a76,
+  cloth3: 0x8f8a76, porcelain: 0xe9e6dc, chrome: 0xb7bab0, tile: 0x7d8a84, mirror: 0x8fa4a6, agentblue: 0x7aa7d8,
+  gauge: 0x2a3b36, gaugered: 0xe0675c,
 };
 
 // ------------------------------------------------------------------ easing + time helpers
@@ -105,6 +106,7 @@ export class Kit {
     const base = name.replace(/\.\d+$/, '');
     if (base === 'screen') return new THREE.MeshBasicMaterial({ color: 0x1a2520 });
     if (base === 'light') return new THREE.MeshBasicMaterial({ color: 0xffe2a8 });
+    if (base === 'gauge') return new THREE.MeshBasicMaterial({ color: 0x3d6a5c });
     if (base === 'glass') return new THREE.MeshToonMaterial({ color: 0x9fb8b2, gradientMap: this.ramp, transparent: true, opacity: .18, depthWrite: false });
     return this.toon(PALETTE[base] ?? 0xaaa17d);
   }
@@ -434,7 +436,7 @@ export function bookends(kit, clip) {
   const cam = new THREE.PerspectiveCamera(30, W / H, .1, 100);
   const end = kit.el(`<div class="tag">${clip.tagline}</div><div class="move">Your machines, <b>your move.</b></div>
     <div class="brand">ROOK</div><div class="url">github.com/Bake-Ware/rook</div>`, 'endcard');
-  const title = kit.el(`<div class="ep">ROOK MOVES · ${clip.num}</div><div class="nm">${clip.title}</div>`, 'sting-title');
+  const title = kit.el(`<div class="ep">ROOK MOVE:</div><div class="nm">${clip.title}</div>`, 'sting-title');
   kit.events.push({ t: 0, type: 'sting', g: true }, { t: clip.T - ENDCARD + .2, type: 'end', g: true });
   return {
     scene: s, cam,

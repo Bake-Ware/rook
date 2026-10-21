@@ -125,6 +125,46 @@ def sphere(name, r, loc, m, parent=None, segs=10, rings=6, scale=(1, 1, 1)):
     return mesh(name, v, f, m, parent, loc)
 
 
+def smooth(ob, angle=40):
+    """Smooth shading with crisp edges past angle (degrees)."""
+    for poly in ob.data.polygons:
+        poly.use_smooth = True
+    ob.data.set_sharp_from_angle(angle=math.radians(angle))
+    return ob
+
+
+def torus(name, R, r, loc, m, parent=None, segs=24, tsegs=10, rot=(0, 0, 0), arc=2 * math.pi):
+    """A ring in the XZ plane (or part of one: arc), tube radius r."""
+    closed = arc >= 2 * math.pi - 1e-6
+    n = segs if closed else segs + 1
+    v, f = [], []
+    for i in range(n):
+        a = arc * i / segs
+        cx, cz = R * math.cos(a), R * math.sin(a)
+        for j in range(tsegs):
+            b = 2 * math.pi * j / tsegs
+            d = R + r * math.cos(b)
+            v.append((d * math.cos(a), r * math.sin(b), d * math.sin(a)))
+    for i in range(segs):
+        i2 = (i + 1) % n if closed else i + 1
+        for j in range(tsegs):
+            j2 = (j + 1) % tsegs
+            f.append((i * tsegs + j, i2 * tsegs + j, i2 * tsegs + j2, i * tsegs + j2))
+    ob = mesh(name, v, f, m, parent, loc)
+    ob.rotation_euler = rot
+    return ob
+
+
+def tube(name, a, b, r, m, parent=None, segs=10):
+    """A cylinder from point a to point b."""
+    import mathutils
+    a, b = mathutils.Vector(a), mathutils.Vector(b)
+    d = b - a
+    ob = cyl(name, r, d.length, tuple((a + b) / 2), m, parent, segs=segs)
+    ob.rotation_euler = d.to_track_quat('Z', 'Y').to_euler()
+    return ob
+
+
 def export(name, scale=1.0):
     """scale brings the model to real size in metres (the root node carries it)."""
     roots = [o for o in bpy.context.scene.objects if o.parent is None]
@@ -485,32 +525,72 @@ def build_props():
     export('nightstand')
     reset()
     root = empty('counter')
-    box('cab', (2.0, .6, .85), (0, 0, .425), 'wood', root)
-    box('top', (2.1, .65, .05), (0, 0, .875), 'stone', root)
-    cyl('sink', .2, .02, (0, -.02, .902), 'metal', root, segs=14)
-    cyl('tap', .02, .25, (0, .2, 1.0), 'metal', root, segs=8)
-    box('mirror', (1.2, .03, .9), (0, .3, 1.55), 'glass', root)
-    box('mirror_frame', (1.28, .02, .98), (0, .32, 1.55), 'wood2', root)
+    # a bathroom vanity, 1.2 m: cabinet with two doors, stone top, a porcelain basin set in, a chrome
+    # gooseneck tap, tiled splashback, a mirror on the wall, soap pump and a cup with toothbrushes
+    box('cab', (1.2, .55, .82), (0, 0, .41), 'wood', root, bevel=.01)
+    for sx in (-1, 1):
+        box('door', (.56, .01, .66), (sx * .29, -.28, .44), 'wood2', root, bevel=.005)
+        box('pull', (.015, .02, .12), (sx * .04, -.295, .62), 'chrome', root)
+    box('top', (1.26, .6, .04), (0, 0, .84), 'stone', root, bevel=.008)
+    bx, by = -.25, -.02                                   # basin centre
+    smooth(lathe('basin', [(0, .66), (.12, .67), (.17, .72), (.2, .8), (.215, .862), (.24, .866), (.24, .874), (.2, .874),
+                           (.19, .82), (.16, .76), (.11, .72), (0, .71)], 32, 'porcelain', root, loc=(bx, by, 0)), 50)
+    cyl('drain', .022, .004, (bx, by, .712), 'chrome', root, segs=16)
+    tx, ty = bx, by + .25                                 # the tap behind the basin
+    smooth(cyl('tapbase', .028, .02, (tx, ty, .87), 'chrome', root, segs=20))
+    smooth(tube('tapcol', (tx, ty, .87), (tx, ty, 1.08), .016, 'chrome', root, segs=16))
+    smooth(torus('tapneck', .08, .016, (tx, ty - .08, 1.08), 'chrome', root, segs=14, tsegs=10, rot=(0, 0, math.pi / 2), arc=math.pi))
+    smooth(tube('spout', (tx, ty - .16, 1.08), (tx, ty - .16, 1.04), .016, 'chrome', root, segs=16))
+    smooth(tube('lever', (tx, ty, 1.03), (tx + .07, ty + .02, 1.07), .009, 'chrome', root, segs=10))
+    # splashback tiles and the mirror
+    box('splash', (1.26, .02, .3), (0, .29, 1.01), 'tile', root)
+    for k in range(1, 6):
+        box('grout', (.004, .021, .3), (-.63 + k * .21, .29, 1.01), 'dark', root)
+    box('grout', (1.26, .021, .004), (0, .29, 1.01), 'dark', root)
+    box('mirror_frame', (.9, .03, .8), (0, .3, 1.6), 'wood2', root, bevel=.005)
+    box('mirror', (.84, .02, .74), (0, .285, 1.6), 'mirror', root)
+    box('light', (.6, .06, .06), (0, .25, 2.05), 'light', root)
+    # soap pump and a cup with two toothbrushes, to the right of the basin
+    smooth(lathe('soap', [(0, .86), (.035, .86), (.038, .9), (.035, 1.02), (.02, 1.04), (0, 1.04)], 20, 'porcelain', root, loc=(.08, .12, 0)))
+    smooth(tube('pump', (.08, .12, 1.04), (.08, .12, 1.08), .008, 'chrome', root, segs=8))
+    smooth(tube('nozzle', (.08, .12, 1.08), (.08, .07, 1.08), .006, 'chrome', root, segs=8))
+    smooth(lathe('cup', [(0, .86), (.032, .86), (.04, .97), (.036, .97), (.028, .87), (0, .87)], 20, 'tile', root, loc=(.2, .14, 0)))
+    for k, (dx, c_) in enumerate(((-.012, 'accent'), (.012, 'agentblue'))):
+        smooth(tube('brush%d' % k, (.2 + dx, .14, .9), (.2 + dx * 3, .14 + .01, 1.06), .006, c_, root, segs=8))
+        box('bristle%d' % k, (.014, .01, .03), (.2 + dx * 3.2, .14 + .012, 1.07), 'paper', root)
     export('counter')
     reset()
     root = empty('dash')
-    box('dash', (2.4, .7, .25), (0, 0, .9), 'dark', root)
-    box('hood', (2.6, 1.6, .05), (0, .95, .78), 'body', root)
-    wheel = empty('wheel', (-.5, -.35, 1.05), root)
-    wheel.rotation_euler.x = math.radians(65)
-    v, f = [], []
-    for i in range(24):
-        a = 2 * math.pi * i / 24
-        v += [(.26 * math.cos(a), .26 * math.sin(a), -.02), (.21 * math.cos(a), .21 * math.sin(a), -.02),
-              (.26 * math.cos(a), .26 * math.sin(a), .02), (.21 * math.cos(a), .21 * math.sin(a), .02)]
-    for i in range(24):
-        j = (i + 1) % 24
-        a, b = 4 * i, 4 * j
-        f += [(a, b, b + 2, a + 2), (a + 1, a + 3, b + 3, b + 1), (a, a + 1, b + 1, b), (a + 2, b + 2, b + 3, a + 3)]
-    mesh('rim', v, f, 'dark2', wheel)
-    box('spoke', (.42, .04, .02), (0, 0, 0), 'dark2', wheel)
-    box('mount', (.08, .06, .12), (.25, -.3, 1.08), 'dark2', root)
-    box('glass', (2.4, .02, .9), (0, .4, 1.5), 'glass', root)
+    # a car interior seen from the driver's seat (left-hand drive, forward is +Y): dash with a
+    # cluster, gauges, a centre screen and vents, a steering wheel on its column, A-pillars, the
+    # roof header, the rear-view mirror, the bonnet ahead and a phone mat on the dash top
+    box('dash', (1.7, .55, .3), (0, .1, .85), 'dark', root, bevel=.02)
+    box('dashtop', (1.7, .4, .05), (0, .22, 1.02), 'dark2', root, bevel=.01)
+    box('cluster', (.46, .16, .1), (-.42, -.1, 1.05), 'dark2', root, bevel=.02)
+    for gx in (-.53, -.31):
+        smooth(cyl('gauge', .07, .01, (gx, -.18, .99), 'gauge', root, segs=24, axis='Y'))
+        box('needle', (.006, .004, .06), (gx + .01, -.19, 1.0), 'gaugered', root, rot=(0, -.6, 0))
+    box('screen', (.26, .02, .16), (.02, -.17, .93), 'screen', root, rot=(-.35, 0, 0))
+    for vx in (-.75, -.12, .16, .75):
+        box('vent', (.14, .02, .05), (vx, -.18, .97 if abs(vx) < .5 else .95), 'iron', root)
+    box('console', (.3, .5, .35), (.02, -.35, .62), 'dark', root, bevel=.02)
+    box('phonemat', (.2, .14, .006), (.02, .14, 1.048), 'iron', root)
+    wheel = empty('wheel', (-.42, -.38, .98), root)
+    wheel.rotation_euler.x = math.radians(68)
+    smooth(torus('rim', .18, .022, (0, 0, 0), 'dark2', wheel, segs=36, tsegs=10, rot=(math.pi / 2, 0, 0)))
+    smooth(cyl('hub', .06, .05, (0, 0, 0), 'dark', wheel, segs=20))
+    for k in range(3):
+        a = math.radians(-90 + k * 120)
+        smooth(tube('spoke%d' % k, (.05 * math.cos(a), .05 * math.sin(a), 0), (.17 * math.cos(a), .17 * math.sin(a), 0), .016, 'dark', wheel, segs=10))
+    smooth(tube('column', (-.42, -.38, .98), (-.42, -.05, .9), .035, 'dark2', root, segs=14))
+    for sx in (-1, 1):
+        tube('pillar', (sx * .85, .38, 1.02), (sx * .74, -.4, 1.55), .045, 'dark2', root, segs=8)
+    box('header', (1.6, .14, .06), (0, -.42, 1.56), 'dark2', root)
+    box('mirror', (.24, .04, .07), (.02, -.3, 1.44), 'iron', root, bevel=.01)
+    tube('mirrorstem', (.02, -.32, 1.48), (.02, -.36, 1.55), .01, 'iron', root)
+    box('glass', (1.6, .02, .9), (0, 0, 1.29), 'glass', root, rot=(math.radians(-52), 0, 0))
+    box('hood', (1.75, 1.7, .05), (0, 1.25, .86), 'cloth2', root, rot=(math.radians(-4), 0, 0))
+    box('doorL', (.06, 1.2, .55), (-.88, -.3, .8), 'dark', root)
     export('dash')
     reset()
     root = empty('table')
@@ -536,9 +616,13 @@ def build_props():
     export('bed')
     reset()
     root = empty('coffee')
-    cyl('mug', .07, .12, (0, 0, .06), 'accent', root, segs=10)
-    cyl('coffee', .062, .005, (0, 0, .115), 'dark', root, segs=10)
-    export('coffee', 0.6)
+    # a mug, real size (9 cm tall), with a handle, on a coaster
+    smooth(lathe('mug', [(0, .006), (.038, .006), (.041, .012), (.042, .09), (.044, .096), (.039, .096), (.037, .02), (0, .02)],
+                 36, 'accent', root), 50)
+    cyl('coffee', .037, .002, (0, 0, .082), 'dark', root, segs=36)
+    smooth(torus('handle', .026, .007, (.046, 0, .052), 'accent', root, segs=16, tsegs=8, rot=(math.pi / 2, 0, 0), arc=math.pi), 50)
+    smooth(cyl('coaster', .052, .006, (0, 0, .003), 'wood2', root, segs=32))
+    export('coffee')
 
 
 if __name__ == '__main__':
