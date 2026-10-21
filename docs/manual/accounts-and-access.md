@@ -159,6 +159,10 @@ in huddles. Each item has a three-word name you can say.
   Bake via Claude web: ..."), under **Relayed for you**, and a huddle shows
   it on the card or the answer. The agent that asked sees the same line; a
   denial carries your reason, so a role can adjust instead of asking again.
+- **In a huddle**, ask the chair "what's waiting?" and it answers from the
+  same list. If the house agent may relay, it can also pass on a decision
+  you state in your message; it has to quote you. Dismissing a card with a
+  reason (on the dashboard too) tells the role that proposed it why.
 
 **Exceptions.** To let one agent do one thing without asking, add an `allow`
 rule to the policy that names the agent, the capability and the machine, for

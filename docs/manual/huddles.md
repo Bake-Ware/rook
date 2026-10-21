@@ -108,7 +108,7 @@ call on which machine. It waits for you:
   call journal with the card and the huddle. The card then shows the result,
   or, if it failed, **Failed:** and the reason, and the chair says so in
   the huddle.
-- **Dismiss** drops it; a reason you give goes back to the proposer.
+- **Dismiss** drops it.
 
 Rook checks a card when it is proposed: the machine must be on the band
 and have the capability, a task card must name the project it goes under,
@@ -118,12 +118,11 @@ told why and can fix it. A card that says the same as one still waiting
 is not added twice: the one who proposed it updates theirs instead. The
 chair's message lists the cards it actually made, by id.
 
-Only people approve or dismiss cards, here or through a client you let
-relay your approvals ([[manual-accounts-and-access]]). Ask the chair
-"what's waiting?" for everything waiting on you. A role that does routine
-work (autonomy *routine* or *act*) runs reads in its tools directly, and a
-card it proposes for one shows up already done. Everything Rook keeps for
-you (merges, deploys, deletes, settings, secrets, jobs, protected devices,
+Only people approve or dismiss cards (or a client relaying your words,
+[[manual-accounts-and-access]]). A role that does routine work (autonomy
+*routine* or *act*) runs reads in its tools directly, and a card it
+proposes for one shows up already done. Everything Rook keeps for you
+(merges, deploys, deletes, settings, secrets, jobs, protected devices,
 anything unknown) still waits for you, whatever the role's autonomy: see
 **What roles do on their own**.
 
