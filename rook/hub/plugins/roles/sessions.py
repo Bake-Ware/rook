@@ -161,7 +161,7 @@ def worktree_path(loc: dict, branch: str) -> str:
 GIT_OK = ("status", "diff", "log", "show", "add", "commit", "fetch", "rev-parse", "branch",
           "restore", "rm", "mv", "ls-files", "grep", "stash", "rebase", "merge-base",
           "blame", "switch -c", "checkout -b")
-GH_OK = ("pr create", "pr view", "pr list", "pr diff", "pr checks", "pr comment",
+GH_OK = ("pr create", "pr view", "pr list", "pr diff", "pr checks", "pr comment", "pr edit",
          "issue view", "issue list")
 #: Shell commands besides git and gh: only ones that cannot write a file
 #: (the Read, Glob and Grep tools do the rest).
@@ -181,6 +181,11 @@ def session_settings(worktree: str, branch: str, workspace: str = "") -> dict:
     if workspace:
         allow.append(f"Read(/{workspace}/**)")
     allow += [f"Bash(git {c}:*)" for c in GIT_OK]
+    # The forms sessions reach for first (proving run, 2026-10-21): a cd into
+    # the worktree before a command, and git -C <worktree>. Each part of a
+    # compound command is checked on its own, so cd itself must be allowed.
+    allow += [f"Bash(cd {worktree}:*)"]
+    allow += [f"Bash(git -C {worktree} {c}:*)" for c in GIT_OK]
     for how in ("git push origin {b}", "git push -u origin {b}", "git push --set-upstream origin {b}",
                 "git push origin HEAD:{b}", "git push -u origin HEAD:{b}"):
         allow.append(f"Bash({how.format(b=branch)})")
@@ -208,6 +213,11 @@ def session_prompt(role: dict, loc: dict, branch: str, worktree: str, instructio
         "  ROOK-STATUS: DONE <one-line summary, with the pull request URL>",
         "  ROOK-STATUS: BLOCKED <why, and what you need> (when you cannot finish)",
         "  End with exactly one DONE or BLOCKED line.",
+        "- Read and search files with the Read, Glob and Grep tools, and change them with Edit and "
+        "Write; the shell is only for git, gh and the test runner (rook-pytest). Other shell "
+        "commands are refused. Your working folder is already the worktree: run git and gh "
+        "commands bare, one per call (git add ..., then git commit ...), without cd or git -C. "
+        "Update the pull request's description with gh pr edit <n> --body-file <file>.",
         "- When a command you need is refused, say BLOCKED with the command instead of working "
         "around it.",
     ]
@@ -362,7 +372,7 @@ class Follow:
             problems.append(f"{len(self.denied)} tool call(s) were refused: "
                             + "; ".join(self.denied[:5]))
         if self.final:
-            text = self.final_text or "(no summary)"
+            text = (self.final_text or "(no summary)").rstrip(" .")
             if problems:
                 text += ". Unexpected: " + "; ".join(problems)
             return self.final, text

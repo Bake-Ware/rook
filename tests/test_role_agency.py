@@ -243,6 +243,10 @@ async def test_a_role_starts_a_branch_session_with_no_card_and_it_reports_back(h
     assert "Bash(git push -u origin design-h6)" in settings["allow"]
     assert "Bash(gh pr create:*)" in settings["allow"]
     assert "Bash(gh pr merge:*)" in settings["deny"]
+    # The forms sessions reach for first: cd into the worktree, git -C, gh pr edit.
+    assert "Bash(cd /srv/wt/design-h6:*)" in settings["allow"]
+    assert "Bash(git -C /srv/wt/design-h6 commit:*)" in settings["allow"]
+    assert "Bash(gh pr edit:*)" in settings["allow"]
     assert not any("push" in x and "main" in x for x in settings["allow"])
     assert f"Read(/{ROOTS}/architect/workspace/**)" in settings["allow"]
     prompt = a["env"]["ROOK_SESSION_PROMPT"]
@@ -407,3 +411,22 @@ def test_a_native_workspace_makes_workspace_the_only_writable_root(tmp_path):
                                                      effort=None, builtin=[], workspace=True)
     assert argv[argv.index("--tools") + 1] == "Read,Write,Edit,Glob,Grep"
     assert agenthost.AgentHost().heartbeat()["workspace"] == "native"
+
+
+@pytest.mark.asyncio
+async def test_a_report_the_role_already_answered_after_is_skipped(hub, host):  # noqa: F811
+    """A report round queued behind another round, where the role already
+    spoke after the report: it saw it in the thread; no second turn."""
+    await _role(hub)
+    h = await _call(hub, "huddle.start", {"title": "D", "roles": ["architect"]})
+    room = h["room"]
+    hb = hub.svc.store.get(room)
+    lock = hub.svc.chair._locks.setdefault(room, asyncio.Lock())
+    await lock.acquire()                                   # another round is running
+    hub.svc.chair.on_report(hb, room, "architect", "session:x", "@architect DONE: PR 7", "DONE")
+    hub.svc._send(room, "role:architect", "I checked PR 7 already.")
+    lock.release()
+    await _settle(hub)
+    assert not [t for t in hub.band.turns if t["kind"] in ("huddle-architect", "huddle-chair")]
+    r = hub.svc.store.rounds(room)[0]
+    assert r["state"] == "done" and "skipped" in (r.get("error") or "")

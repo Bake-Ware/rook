@@ -46,5 +46,5 @@ cap = "sessions.list"
 args = { live_only = true, limit = 15 }
 
 [tools]
-allow = ["sessions.list", "sessions.follow", "task.read", "knowledge.read"]
+allow = ["sessions.list", "sessions.follow", "task.read", "knowledge.read", "huddle.read"]
 deny = []

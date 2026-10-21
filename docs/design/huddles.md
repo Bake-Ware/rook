@@ -464,8 +464,9 @@ Roles never call `role.ask`, `role.move`, `role.memory_edit` or
   --setting-sources "" --strict-mcp-config --permission-mode dontAsk
   --settings <json>` with the prompt on stdin: none of the host's own
   settings, plugins or MCP servers, and an allowlist only: edits and reads
-  in the worktree, reading the role's workspace, git for its own work,
-  pushing only its branch, `gh pr create/view/list/diff/checks/comment`,
+  in the worktree, reading the role's workspace, git for its own work
+  (bare, after a `cd` into the worktree, or as `git -C <worktree>`), pushing
+  only its branch, `gh pr create/view/list/diff/checks/comment/edit`,
   `rook-pytest`. Denied: `gh pr merge`, `gh api`, `gh repo`, force pushes,
   `git reset --hard`, `sudo`, `ssh`, `curl`, the web. So it can open a pull
   request and can never merge one.
@@ -606,7 +607,8 @@ stream-json (`Follow`):
   (once a run), its terminal vanishing (its host restarted), still running
   after `role.session_max_minutes` (then it is stopped).
 - A report is posted in the huddle and starts a round (5.1) in which the
-  chair wakes the role. Without a huddle the role gets one turn with the
+  chair wakes the role. A report round that waited behind another round is
+  skipped when the role has spoken since the report was posted (it saw it). Without a huddle the role gets one turn with the
   report. Each report goes out once per run.
 
 The follower resumes from the stored cursor when the hub restarts.

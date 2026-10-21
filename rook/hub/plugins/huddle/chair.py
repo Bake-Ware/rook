@@ -441,6 +441,12 @@ class Chair:
         plan: dict = {"direct": bool(direct), "calls": [], "answered": False}
         if direct:
             plan["calls"] = [{"role": r, "ask": text} for r in direct[:max_turns]]
+        elif owner and self._report_seen(room, owner, rid):
+            # The role already spoke after this report was posted (a round
+            # queued behind another one): it saw the report; skip the round.
+            self.store.round_set(rid, state="done", ended=time.time(),
+                                 error="skipped: the role already answered after this report")
+            return
         elif owner:
             try:
                 plan.update(await self._chair_turn(rid, room, h, roster, text,
@@ -490,6 +496,14 @@ class Chair:
             calls = [c for c in verdict.get("calls") or [] if c["role"] in by_id][:max_turns] \
                 if left > 0 else []
         self.store.round_set(rid, state="done", ended=time.time())
+
+    def _report_seen(self, room: str, owner: str, rid: str) -> bool:
+        r = self.store.round(rid) or {}
+        after = int(r.get("trigger_seq") or 0)
+        if not after:
+            return False
+        return any(int(m.get("seq") or 0) > after and m.get("sender") == f"role:{owner}"
+                   for m in self.svc.chat.tail(room, CONTEXT_MESSAGES))
 
     def _chair_messages(self, home: Any, cfg: dict, roster: list[dict], room: str,
                         rules: str, extra: str = "", memory: str = "") -> list[dict]:
