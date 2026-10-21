@@ -2,7 +2,7 @@
 // The Board is a phone's screen on a nightstand; a hologram rook briefs you as the
 // background swaps from bedroom to bathroom, car and desk; you ask it to move a
 // meeting, we dive into the Board, a pulse moves the 2 PM card and emails the room.
-import { THREE, V, COL, clamp, lerp, inv, ease, fade, pane, chip, goldRook, holoRook, figure } from '../kit.js';
+import { THREE, V, COL, clamp, lerp, inv, ease, fade, pane, chip, goldRook, holoRook, figure, bedside } from '../kit.js';
 
 export default {
   title: 'Secretary', tagline: 'The best secretary<br>you’ve never had.', body: 41,
@@ -48,13 +48,12 @@ export default {
     const wall = (g, c, z = -1.6, h = 4) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(9, h), kit.toon(c)); m.position.set(0, h / 2 - 1.2, z); g.add(m); return m; };
     { // bedroom at dawn
       const g = new THREE.Group(); S.add(g); rooms.bed = g;
-      const ns = kit.make('nightstand', { parent: g, at: V(.12, -.645, -.05) });
-      kit.make('bed', { parent: g, at: V(1.45, -.645, -.6), rot: Math.PI / 2 });
-      wall(g, 0x2a2e26);
+      bedside(kit, V(.12, -.645, -.05), { side: 1, parent: g });      // the bed to the left, headboard on the wall
+      wall(g, 0x2a2e26, -.45);
       const win = new THREE.Mesh(new THREE.PlaneGeometry(1.3, 1.1), new THREE.MeshBasicMaterial({ color: 0xffc98a }));
-      win.position.set(-1.4, 1.0, -1.58); g.add(win); g.userData.win = win;
-      for (const x of [-1.4]) { const bar = new THREE.Mesh(new THREE.BoxGeometry(.04, 1.1, .02), kit.toon(0x2a2e26)); bar.position.set(x, 1.0, -1.57); g.add(bar);
-        const bar2 = new THREE.Mesh(new THREE.BoxGeometry(1.3, .04, .02), kit.toon(0x2a2e26)); bar2.position.set(x, 1.0, -1.57); g.add(bar2); }
+      win.position.set(.9, 1.0, -.44); g.add(win); g.userData.win = win;
+      for (const x of [.9]) { const bar = new THREE.Mesh(new THREE.BoxGeometry(.04, 1.1, .02), kit.toon(0x2a2e26)); bar.position.set(x, 1.0, -.43); g.add(bar);
+        const bar2 = new THREE.Mesh(new THREE.BoxGeometry(1.3, .04, .02), kit.toon(0x2a2e26)); bar2.position.set(x, 1.0, -.43); g.add(bar2); }
     }
     { // bathroom: the phone on the vanity beside the basin (no one in shot)
       const g = new THREE.Group(); S.add(g); rooms.bath = g;

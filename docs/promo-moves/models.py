@@ -299,12 +299,25 @@ def build_people():
                           (.05, -.76), (.056, -.82), (0, -.82)], 20, 'cloth2', leg)
             box('shoe', (.1, .22, .07), (0, -.05, -.875), 'dark', leg, bevel=.02)
         torso = empty('torso', (0, 0, 0), hips)
-        prof = ([(0, -.04), (.2, -.04), (.21, .04), (.15, .24), (.17, .42), (.19, .52), (.17, .56), (.11, .6), (0, .6)] if female else
-                [(0, -.02), (.16, -.02), (.18, .06), (.16, .25), (.19, .42), (.22, .52), (.2, .56), (.12, .6), (0, .6)])
-        lathe('chest', prof, 28, 'cloth', torso)
-        if female:
-            for sx in (-1, 1):
-                sphere('bust', .075, (sx * .075, -.115, .41), 'cloth', torso, segs=16, rings=10, scale=(1, .8, .9))
+        if female:   # finer rings through the chest so the bust can be sculpted into the shirt
+            prof = [(0, -.04), (.2, -.04), (.21, .04), (.15, .24)] + \
+                   [(.15 + (.17 - .15) * (z - .24) / .18 if z <= .42 else .17 + (.19 - .17) * (z - .42) / .1, z) for z in [.27 + .0125 * k for k in range(20)]] + \
+                   [(.19, .52), (.17, .56), (.11, .6), (0, .6)]
+        else:
+            prof = [(0, -.02), (.16, -.02), (.18, .06), (.16, .25), (.19, .42), (.22, .52), (.2, .56), (.12, .6), (0, .6)]
+        chest = lathe('chest', prof, 64 if female else 28, 'cloth', torso)
+        if female:   # a soft bust pushed out of the front of the shirt: two lobes, no seams
+            for v in chest.data.vertices:
+                x, y, z = v.co
+                if y >= 0:
+                    continue
+                r = math.hypot(x, y) or 1
+                lobe = max(math.exp(-((x - s * .072) ** 2) / (2 * .045 ** 2)) for s in (-1, 1))
+                d = .1 * lobe * math.exp(-((z - .405) ** 2) / (2 * .045 ** 2)) * max(0, -y / r) ** 1.5
+                v.co.y -= d
+            smooth(chest, 89)
+        else:
+            smooth(chest, 40)
         cyl('collar', .13, .04, (0, 0, .64), 'paper', torso, segs=24)
         head = empty('head', (0, 0, .7), torso)
         cyl('neck', .05, .08, (0, 0, -.01), 'skin', head, segs=16)
@@ -324,7 +337,7 @@ def build_people():
             lathe('lower', [(0, 0), (.046, 0), (.04, -.08), (.044, -.2), (.034, -.26), (0, -.26)], 16, 'skin', fore)
             sphere('hand', .05, (0, 0, -.31), 'skin', fore, segs=14, rings=9)
         for ob in bpy.data.objects:          # turned wood reads smooth; the ink still draws the profile
-            if ob.type == 'MESH' and ob.name.split('.')[0] not in ('shoe', 'crossv', 'crossh', 'collar'):
+            if ob.type == 'MESH' and ob.name.split('.')[0] not in ('shoe', 'crossv', 'crossh', 'collar', 'chest'):
                 for poly in ob.data.polygons:
                     poly.use_smooth = True
                 ob.data.set_sharp_from_angle(angle=math.radians(40))   # keep rims and caps crisp
@@ -470,8 +483,8 @@ def build_folio():
     for sx in (0, 1):
         for sy in (-1, 1):
             x = .05 + (W - .03 if sx else .03) ; y = sy * (L / 2 - .03)
-            box('lipA', (.18, .03, .03), (x + (-.09 if sx else .09), y, T + .1), 'accent', lips)
-            box('lipB', (.03, .18, .03), (x, y - sy * .09, T + .1), 'accent', lips)
+            box('lipA', (.18, .03, .09), (x + (-.09 if sx else .09), y, T + .045), 'accent', lips)   # on the backing,
+            box('lipB', (.03, .18, .09), (x, y - sy * .09, T + .045), 'accent', lips)                # as tall as the pad
     front = empty('front', (0, 0, T / 2), root)       # rotates about the spine (Y axis)
     box('cover', (W, L, T), (-W / 2 - .05, 0, 0), 'body', front)
     n = 7

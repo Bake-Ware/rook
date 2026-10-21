@@ -2,7 +2,7 @@
 // 2 AM: a red pulse gets into the NAS. A security-watch job wakes an agent, which blocks
 // and isolates it, calls your phone, rotates keys, restores from last night's snapshot,
 // and leaves a report for the morning. Concept: the details shown are demo data.
-import { THREE, V, COL, clamp, lerp, inv, ease, fade, pane, chip, goldRook, agent, figure } from '../kit.js';
+import { THREE, V, COL, clamp, lerp, inv, ease, fade, pane, chip, goldRook, agent, figure, bedside as placeBed } from '../kit.js';
 
 export default {
   title: 'Security reporting', tagline: 'Vigilance<br>that’s active.', body: 49,
@@ -26,9 +26,8 @@ export default {
     ];
     AG[0].chip.el.classList.add('job');
     // the dark bedroom at the board's edge
-    kit.make('nightstand', { at: V(-7, 0, 6), rot: .3 });
-    kit.make('bed', { at: V(-8.6, 0, 5.4), rot: .3 + Math.PI / 2 });
-    const phone = kit.make('phone', { at: V(-6.95, .645, 6), rot: .5 });
+    placeBed(kit, V(-7, 0, 6), { rot: .3, side: 1 });
+    const phone = kit.make('phone', { at: V(-6.95, .645, 6.05), rot: .5 });
     const pscr = kit.meshesOf(phone, 'screen')[0]; pscr.material = new THREE.MeshBasicMaterial({ color: 0x1a2520 });
     const phoneL = new THREE.PointLight(0xbfe8ff, 0, 5, 1.4); phoneL.position.set(-6.95, 1.0, 6); S.add(phoneL);
     // the morning: someone at the workstation, report on screen

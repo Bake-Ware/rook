@@ -1,12 +1,12 @@
-// 2. Build it, paint it, don't wait up — "Make ideas, not time."
+// 2. Build it, don't wait up — "Make ideas, not time."
 // Late night: the folio from yesterday's review floats over the workstation. The agent
 // applies the changes you asked for (hinge stops at flat, the pen is the pin, corner lips),
 // you say print it and leave; it slices, prints, checks the first layer, and leaves you a
 // voice message by morning.
-import { THREE, V, COL, clamp, lerp, inv, ease, fade, pane, chip, goldRook, agent, figure } from '../kit.js';
+import { THREE, V, COL, clamp, lerp, inv, ease, fade, pane, chip, goldRook, agent, figure, bedside } from '../kit.js';
 
 export default {
-  title: 'Build it, paint it, don’t wait up', tagline: 'Make ideas,<br>not time.', body: 58,
+  title: 'Build it, don’t wait up', tagline: 'Make ideas,<br>not time.', body: 58,
   mood: { key: 'A', bpm: 88, minor: true, energy: .6 },
   assets: ['rook', 'agent', 'workstation', 'printer', 'folio', 'figure', 'nightstand', 'phone', 'chair', 'bed'],
   async build(kit) {
@@ -35,6 +35,19 @@ export default {
     folio.rotation.x = .85;
     const fr = folio.children[0];                                   // the model's own root (its units)
     const front = kit.node(folio, 'front'), pen = kit.node(folio, 'pen'), lips = kit.node(folio, 'lips'), pad = kit.node(folio, 'notepad');
+    // the latch: loops on the opening edge of both covers; the pen slides through them and locks it shut
+    // (it replaces the red snap clasp). Model units: covers 0.9 x 1.3, the opening edge at x = 1.0.
+    function latch(fr, frontNode, mat) {
+      const loops = [];
+      const ring = () => { const m = new THREE.Mesh(new THREE.TorusGeometry(.045, .013, 8, 20), mat); m.add(new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry, 25), kit.inkMat)); return m; };
+      for (const z of [-.5, 0, .5]) { const m = ring(); m.position.set(1.0, .1, z); fr.add(m); loops.push(m); }
+      for (const z of [-.25, .25]) { const m = ring(); m.position.set(-1.0, .055, z); frontNode.add(m); loops.push(m); }
+      return loops;
+    }
+    const loops = latch(fr, front, kit.toon(COL.goldHi));
+    pen.position.set(1.0, .1, 0);
+    // the front cover pivots higher as it closes, so it lands on the notepad instead of through it
+    const frontLift = ang => .025 + .13 * (1 - Math.cos(ang)) / 2;
     // the old design: a snap latch and an elastic band, which fade out in the rebuild
     const oldMat = kit.toon(0x9a4a3a);
     const elastic = new THREE.Mesh(new THREE.BoxGeometry(.05, .02, 1.42), oldMat); elastic.position.set(.75, -.045, 0); fr.add(elastic);
@@ -53,13 +66,15 @@ export default {
     }
     const chamber = new THREE.PointLight(0xfff0d0, 0, 1.6, 1.5); chamber.position.set(0, .9, 0); printer.add(chamber);
     const done = kit.make('folio', { parent: bed, scale: 1 / .45 }); done.position.set(0, .05, 0); done.rotation.y = .3;
-    kit.node(done, 'front').rotation.z = -Math.PI; done.visible = false;
+    { const df = kit.node(done, 'front'); df.rotation.z = -Math.PI; df.position.y = .155;
+      latch(done.children[0], df, kit.toon(COL.goldHi)); kit.node(done, 'pen').position.set(1.0, .1, 0);
+      kit.node(done, 'lips').visible = true; }
+    done.visible = false;
     // the person
     const fig = figure(kit, V(0, 0, .72), Math.PI);
     // the nightstand and phone, across the board, for the morning
-    const ns = kit.make('nightstand', { at: V(-3.6, 0, 3.4), rot: .4 });
-    kit.make('bed', { at: V(-5.1, 0, 3.0), rot: .4 + Math.PI / 2 });
-    const phone = kit.make('phone', { at: V(-3.55, .645, 3.4), rot: .6 });
+    const { ns } = bedside(kit, V(-3.6, 0, 3.4), { rot: .4, side: 1 });
+    const phone = kit.make('phone', { at: V(-3.55, .645, 3.45), rot: .6 });
     const pscr = kit.meshesOf(phone, 'screen')[0]; pscr.material = new THREE.MeshBasicMaterial({ color: 0x1a2520 });
 
     // ---------------------------------------------------------- overlays
@@ -125,7 +140,7 @@ export default {
       } else if (tau < 19.5) {
         ang = lerp(-.7, 0, ease.outE(inv(16, 17.6, tau))) + .05 * Math.sin(inv(16.8, 18, tau) * Math.PI * 3) * (1 - inv(16.8, 19, tau));
       } else ang = tau < 29 ? 0 : lerp(0, Math.PI, ease.io(inv(30.5, 32.5, tau)));
-      front.rotation.z = -ang;
+      front.rotation.z = -ang; front.position.y = frontLift(Math.max(0, ang));
       const repl = tau >= 6 && tau < 16;
       const open = Math.PI - ang;
       knob.style.left = (clamp(open / 3.84) * 400) + 'px';
@@ -133,8 +148,9 @@ export default {
       stop.scale.set(1, Math.max(.001, ease.out(inv(16, 17, tau))), 1); stop.visible = tau >= 16;
       pen.position.z = lerp(1.5, 0, ease.io(inv(19.5, 21.5, tau))); pen.visible = tau > 19.4;
       lips.scale.y = Math.max(.001, ease.out(inv(21.5, 23, tau))); lips.visible = tau >= 21.5;
-      pad.position.y = lerp(.9, 0, ease.in(inv(23, 24.2, tau))) + .045; pad.visible = tau > 22.9;
-      const gone = 1 - inv(24.5, 26, tau);
+      const lp = ease.out(inv(17.2, 18.2, tau)); loops.forEach(m => { m.scale.setScalar(Math.max(.001, lp)); m.visible = lp > .01; });
+      pad.position.y = lerp(.9, 0, ease.in(inv(23, 24.2, tau))) + .05; pad.visible = tau > 22.9;
+      const gone = 1 - inv(16.8, 17.4, tau);                   // the red snap clasp and elastic go as the latch loops arrive
       elastic.scale.setScalar(Math.max(.001, gone)); snap.scale.setScalar(Math.max(.001, gone));
       elastic.visible = snap.visible = gone > .01;
       const sw = t => .3 * Math.sin(t * .3);
@@ -183,7 +199,7 @@ export default {
       // ---- panes
       review.fixed(90, 150, repl ? fade(tau, 6.4, 6.8, 15.4, 15.9) : 0);
       changes.fixed(1310, 150, fade(tau, 16.4, 16.8, 27.4, 27.9));
-      cl.forEach((el, i) => { el.style.opacity = inv([16.6, 19.6, 21.6, 24.6][i], [16.9, 19.9, 21.9, 24.9][i], tau); });
+      cl.forEach((el, i) => { el.style.opacity = inv([16.6, 19.6, 21.6, 17.0][i], [16.9, 19.9, 21.9, 17.3][i], tau); });
       slicer.place(V(2, 1.25, -.05), fade(tau, 38.5, 38.9, 45.2, 45.6), { ax: 1.08, ay: .2 });
       camp.place(V(2, 1.25, -.05), fade(tau, 41.4, 41.7, 45.2, 45.6), { ax: -.1, ay: .2 });
       note.place(V(-3.55, .9, 3.4), fade(tau, 47.4, 47.8, 52.4, 52.8), { ay: 1, dy: -20 });

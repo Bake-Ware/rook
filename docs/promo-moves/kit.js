@@ -376,9 +376,22 @@ export function agent(kit, name, color, at, { scale = .32, chipText = name } = {
   return { obj, mat, chip: c, color, top: () => obj.position.clone().add(V(0, 2.4 * obj.scale.y, 0)) };
 }
 
+// A nightstand with the bed beside it, headboard level with the nightstand, both facing the same way.
+// side: 1 puts the bed on the nightstand's left (seen from the front), -1 on its right.
+export function bedside(kit, at, { rot = 0, side = 1, parent = null } = {}) {
+  const ns = kit.make('nightstand', { at, rot, parent });
+  const head = V(-Math.sin(rot), 0, -Math.cos(rot)), right = V(Math.cos(rot), 0, -Math.sin(rot));
+  const bedAt = at.clone().addScaledVector(head, -.72).addScaledVector(right, -1.27 * side);
+  const bed = kit.make('bed', { at: bedAt, rot, parent });
+  return { ns, bed };
+}
+
 // A person (you): turned like the pieces; a man with the king's cross, or a woman (f: true) with the queen's crown.
 export function figure(kit, at, rot = 0, scale = 1, { f = false } = {}) {
   const obj = kit.make(f ? 'person_f' : 'person_m', { at, rot, scale });
+  obj.traverse(o => {                       // the sculpted chest: ink only real creases, not the soft curves
+    if (o.isMesh && o.name.startsWith('chest') && o.userData.ink) { o.userData.ink.geometry.dispose(); o.userData.ink.geometry = new THREE.EdgesGeometry(o.geometry, 60); }
+  });
   const n = k => kit.node(obj, k);
   return {
     obj, head: n('head'), torso: n('torso'), armL: n('armL'), armR: n('armR'), legL: n('legL'), legR: n('legR'), hips: n('hips'),
@@ -450,7 +463,7 @@ export function bookends(kit, clip) {
       const u = inSting ? t / STING : (t - (T - ENDCARD)) / ENDCARD;
       r.rotation.y = inSting ? lerp(-.9, .5, ease.out(u)) : lerp(.2, -.5, u);
       if (inSting) {
-        cam.position.set(0, 2.6, lerp(15, 12.5, ease.out(u))); cam.lookAt(0, 2.05, 0);
+        cam.position.set(0, 2.6, lerp(15, 12.5, ease.out(u))); cam.lookAt(0, 2.45, 0);   // the rook sits low; the title above it
       } else {
         cam.position.set(0, 1.6, 26); cam.lookAt(0, -.9, 0);
       }
