@@ -182,7 +182,13 @@ def main():
     meta = json.loads((HERE / 'out' / f'c{n}.json').read_text())
     T = meta['T']
     music, fx, vox = Mix(T), Mix(T), Mix(T)
-    underscore(music, T, meta.get('mood', {}))
+    mood = meta.get('mood', {})
+    if mood.get('theme') == 'mountainking':                   # clip 4: our Mountain King remix, cut to the picture
+        import score_mk
+        b = score_mk.bed(T)[:music.n]
+        music.L[:len(b)] += b * .55; music.R[:len(b)] += b * .55
+    else:
+        underscore(music, T, mood)
     for e in meta['events']:
         cue(fx, e)
     duck = np.ones(music.n)
@@ -196,8 +202,13 @@ def main():
         else:
             d = v.get('dur', 2)
         a, b = int(v['t'] * SR), int((v['t'] + d) * SR)
-        duck[max(0, a - int(.15 * SR)):b + int(.3 * SR)] = .38
+        duck[max(0, a - int(.15 * SR)):b + int(.3 * SR)] = .38 if mood.get('theme') != 'mountainking' else .3
     duck = lp_fast(duck, 3.0)
+    # levels: the music under speech should sit well below the voice (report it for checking)
+    sp = duck < .5
+    if sp.any():
+        rv = np.sqrt(np.mean(vox.L[sp] ** 2)); rm = np.sqrt(np.mean((music.L * duck)[sp] ** 2)); ro = np.sqrt(np.mean((music.L * duck)[~sp] ** 2))
+        print(f'levels: voice {20*np.log10(rv+1e-9):.1f} dB, music under voice {20*np.log10(rm+1e-9):.1f} dB, music alone {20*np.log10(ro+1e-9):.1f} dB')
     L = music.L * duck + fx.L + vox.L
     R = music.R * duck + fx.R + vox.R
     # fade the tail, soft clip
