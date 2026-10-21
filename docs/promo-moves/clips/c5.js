@@ -16,21 +16,48 @@ export default {
     const NW = V(-24, 2.3, 0);
     const net = new THREE.Group(); net.position.copy(NW); S.add(net);
     const layers = [4, 6, 7, 6, 3], nodes = [];
-    const nodeGeo = new THREE.IcosahedronGeometry(.13, 0);
+    const nodeGeo = new THREE.IcosahedronGeometry(.13, 2);
     layers.forEach((n, li) => {
       for (let i = 0; i < n; i++) {
         const m = new THREE.Mesh(nodeGeo, new THREE.MeshToonMaterial({ color: 0x79d2c8, gradientMap: kit.ramp, emissive: 0x79d2c8, emissiveIntensity: .35 }));
         m.position.set((li - 2) * 1.0, (i - (n - 1) / 2) * .48, Math.sin(i * 1.7 + li) * .35);
-        m.add(new THREE.LineSegments(new THREE.EdgesGeometry(nodeGeo), kit.inkMat));
         net.add(m); nodes.push({ m, li });
       }
     });
     const pts = [];
     for (const a of nodes) for (const b of nodes) if (b.li === a.li + 1 && rnd(nodes.indexOf(a) * 31 + nodes.indexOf(b)) < .62) pts.push(a.m.position, b.m.position);
     const edges = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts),
-      new THREE.LineBasicMaterial({ color: 0x79d2c8, transparent: true, opacity: .35, blending: THREE.AdditiveBlending, depthWrite: false }));
+      new THREE.LineBasicMaterial({ color: 0x79d2c8, transparent: true, opacity: .28, blending: THREE.AdditiveBlending, depthWrite: false }));
     net.add(edges);
     const target = nodes.find(n => n.li === 2 && Math.abs(n.m.position.y) < .3).m;
+    // motion: signals run layer to layer along the edges in waves; nodes flare as a wave reaches them
+    const glowTex = (() => { const cv = document.createElement('canvas'); cv.width = cv.height = 64; const x = cv.getContext('2d');
+      const gr = x.createRadialGradient(32, 32, 0, 32, 32, 32); gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(.35, 'rgba(255,255,255,.6)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+      x.fillStyle = gr; x.fillRect(0, 0, 64, 64); const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; return t; })();
+    const edgeList = [];
+    for (let k = 0; k < pts.length; k += 2) edgeList.push({ a: pts[k], b: pts[k + 1], li: nodes.find(n => n.m.position === pts[k]).li, ph: rnd(k * 7.3) });
+    const sigPos = new Float32Array(edgeList.length * 3);
+    const sigGeo = new THREE.BufferGeometry(); sigGeo.setAttribute('position', new THREE.BufferAttribute(sigPos, 3));
+    const sigs = new THREE.Points(sigGeo, new THREE.PointsMaterial({ map: glowTex, color: 0xf0c98c, size: .34, transparent: true, opacity: .95,
+      blending: THREE.AdditiveBlending, depthWrite: false }));
+    net.add(sigs);
+    const halos = nodes.map(({ m }) => { const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0x79d2c8, transparent: true, opacity: .35,
+      blending: THREE.AdditiveBlending, depthWrite: false })); s.scale.setScalar(.6); s.position.copy(m.position); net.add(s); return s; });
+    const WAVE = 1.6;                                      // seconds for a wave to cross one layer
+    function netMotion(tau) {
+      edgeList.forEach((e, k) => {
+        const f = ((tau / WAVE - e.li - e.ph * .35) % 1 + 1) % 1;   // where this edge's signal is along it
+        const p = e.a.clone().lerp(e.b, ease.io(f));
+        sigPos[k * 3] = p.x; sigPos[k * 3 + 1] = p.y; sigPos[k * 3 + 2] = p.z;
+      });
+      sigGeo.attributes.position.needsUpdate = true;
+      nodes.forEach(({ m, li }, i) => {
+        const hit = ((tau / WAVE - li + 1) % 1 + 1) % 1;            // just after a signal arrives
+        const flare = Math.exp(-hit * 6);
+        m.material.emissiveIntensity = .3 + .9 * flare;
+        halos[i].material.opacity = .18 + .5 * flare; halos[i].scale.setScalar(.45 + .35 * flare);
+      });
+    }
     const fig = figure(kit, NW.clone().add(V(.4, -2.3, 3.2)), Math.PI);
 
     // ---------------------------------------------------------- inside the node: the team on the Board
@@ -144,8 +171,8 @@ export default {
     return tau => {
       { const m = document.querySelector('.more'); if (m) { const a = inv(61.4, 62.0, tau); m.style.opacity = a; m.style.display = 'inline-block'; m.style.transform = `translateY(${(1 - ease.out(a)) * 24}px)`; } }
       // the network breathes; the asked node swells as we push in, lights gold at the end
-      net.rotation.y = Math.sin(tau * .2) * .15;
-      nodes.forEach(({ m }, i) => { m.material.emissiveIntensity = .3 + .2 * Math.sin(tau * 2 + i); });
+      net.rotation.y = Math.sin(tau * .25) * .35; net.rotation.x = Math.sin(tau * .17) * .06;
+      netMotion(tau);
       const swell = ease.in(inv(3.8, 6, tau));
       target.scale.setScalar(1 + swell * 6);
       const done = inv(55, 56, tau);
