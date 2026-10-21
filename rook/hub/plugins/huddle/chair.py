@@ -122,6 +122,25 @@ KNOWLEDGE = _fn("knowledge_search", "Search the band's shared knowledge wiki (ex
                 {"query": {"type": "string"}}, ["query"])
 ANSWER = _fn("answer", "Answer the person yourself (when no role is needed).",
              {"text": {"type": "string"}}, ["text"])
+WAITING = _fn("waiting", "What is waiting on the person across the band: held calls, held job "
+              "calls, huddle cards and pinned questions, each with its name, who asked, what "
+              "would happen, risk and age.", {})
+RELAY = _fn(
+    "relay",
+    "Pass on the person's own decision about one waiting item: approve or deny it as they said "
+    "in their newest message. quote is their exact words from that message (the hub checks); "
+    "reason is theirs, for a deny; answer is their reply to a question. Never decide yourself.",
+    {"item": {"type": "string", "description": "the item's name or id (from waiting)"},
+     "decision": {"type": "string", "enum": ["approve", "deny"]},
+     "quote": {"type": "string"}, "reason": {"type": "string"}, "answer": {"type": "string"}},
+    ["item", "decision", "quote"])
+WAITING_RULES = (
+    "When the person asks what is waiting (for them, for approval), call waiting and answer from "
+    "it tersely: the count, then each item's name and one line. Never invent items.")
+RELAY_RULES = (
+    " When the person's newest message decides waiting items (\"approve the first\", \"deny "
+    "brave-otter-lamp, wrong box\"), call relay once per item they decided, quoting their exact "
+    "words. Relay only what they said; if it is unclear which item they mean, ask them.")
 
 CHAIR_WHERE = ("You chair a huddle: a group thread with the person and the roles listed below "
                "(each an agent with its own concerns, tools and memory).")
@@ -543,14 +562,23 @@ class Chair:
         """The cards still waiting in this huddle, for the chair: it revises
         its own instead of proposing another version."""
         mine = self.chair_identity()
-        rows = [c for c in self.store.cards(room) if c["state"] == "proposed"]
-        if not rows:
-            return ""
-        lines = ["Cards waiting for the person in this huddle (revise yours with propose "
-                 "revise=<id>; do not propose another version):"]
-        for c in rows[-12:]:
-            who = "yours" if c["by"] == mine else c["by"]
-            lines.append(f"- {c['id']} [{c['kind']}, {who}] {c['summary']}")
+        cards = self.store.cards(room)
+        rows = [c for c in cards if c["state"] == "proposed"]
+        dismissed = [c for c in cards if c["state"] == "dismissed"
+                     and (c.get("result") or {}).get("dismissed")]
+        lines = []
+        if rows:
+            lines.append("Cards waiting for the person in this huddle (revise yours with propose "
+                         "revise=<id>; do not propose another version):")
+            for c in rows[-12:]:
+                who = "yours" if c["by"] == mine else c["by"]
+                lines.append(f"- {c['id']} [{c['kind']}, {who}] {c['summary']}")
+        if dismissed:
+            lines.append("Cards the person dismissed, with their reason (adapt; do not propose "
+                         "them again unchanged):")
+            for c in dismissed[-6:]:
+                lines.append(f"- {c['id']} [{c['kind']}] {c['summary']}: "
+                             f"{c['result']['dismissed']}")
         return "\n".join(lines)
 
     def _call_on(self, state: dict, ids: set, max_turns: int, args: dict) -> str:
@@ -593,13 +621,20 @@ class Chair:
                 return json.dumps(out)
             if name == "knowledge_search":
                 return await home._run_tool(name, args, room)
+            if name in ("waiting", "relay") and relay is not None:
+                return await self._relay_tool(relay, name, args, rid, room, asker, text)
             return json.dumps({"ok": False, "error": f"unknown tool {name!r}"})
 
         tools = ([CALL_ON] if roster else []) + [ANSWER, PROPOSE]
+        asker = (self.store.round(rid) or {}).get("asker")
+        extra_rules = ""
+        relay = self._relay()
+        if relay is not None:
+            waiting_tools, extra_rules = self._waiting_tools(relay, asker)
+            tools += waiting_tools
         # The chair is the house agent: what it remembers about the asker and
         # the shared facts, and (with home.tools) the knowledge search, as in
         # its chat replies.
-        asker = (self.store.round(rid) or {}).get("asker")
         memory = ""
         with contextlib.suppress(Exception):
             if home.may_use_memory(home.chat_principal(asker)):
@@ -608,7 +643,8 @@ class Chair:
             home.may_read_knowledge(home.chat_principal(asker))
         if search:
             tools.append(KNOWLEDGE)
-        msgs = self._chair_messages(home, cfg, roster, room, CHAIR_RULES,
+        msgs = self._chair_messages(home, cfg, roster, room,
+                                    CHAIR_RULES + (" " + extra_rules if extra_rules else ""),
                                     extra or "Respond to the newest message.", memory)
         res = await home.tool_turn(msgs, cfg, tools, handler, via="huddle-chair", max_calls=6)
         self.journal("huddle.chair", {"round": rid}, {"ok": True, "result": {
@@ -621,6 +657,56 @@ class Chair:
             sent = self.svc._send(room, home.identity, body)
             self._attach(rid, home.identity, sent["seq"])
         return {"calls": state["calls"], "answered": bool(answer), "model": res.get("model")}
+
+    # -- what is waiting, and relaying the person's decisions (rook/hub/relay.py) ----
+    def _relay(self):
+        ap = self._plugin("approvals")
+        return getattr(ap, "relay", None)
+
+    def _waiting_tools(self, relay: Any, asker: str | None) -> tuple[list[dict], str]:
+        """``waiting`` when anything is waiting; ``relay`` too when the house
+        agent may relay and a person started this round."""
+        if not _is_person(asker):
+            return [], ""                 # the list is the person's, not a guest's
+        try:
+            if not relay.items():
+                return [], ""
+        except Exception:  # noqa: BLE001 - the list failing never sinks a round
+            log.exception("huddle: listing what is waiting failed")
+            return [], ""
+        if relay.may_relay(self.chair_identity()):
+            return [WAITING, RELAY], WAITING_RULES + RELAY_RULES
+        return [WAITING], WAITING_RULES
+
+    async def _relay_tool(self, relay: Any, name: str, args: dict, rid: str, room: str,
+                          asker: str | None, said: str) -> str:
+        from ...relay import Relay, summary
+        if name == "waiting":
+            items = relay.items()
+            return json.dumps({"ok": True, "count": len(items), "summary": summary(items),
+                               "items": [Relay.public(i) for i in items]})
+        if not _is_person(asker):
+            return json.dumps({"ok": False, "error": "only a person's own words are relayed"})
+        quote = " ".join(str(args.get("quote") or "").split())
+        if not quote or quote.lower() not in " ".join(str(said or "").split()).lower():
+            return json.dumps({"ok": False, "error": "quote must be the person's exact words from "
+                                                     "their newest message"})
+        from ...approval_contact import voice_verdict
+        decision = str(args.get("decision") or "")
+        if voice_verdict(quote) != decision:
+            return json.dumps({"ok": False, "error": f"the quoted words must clearly say "
+                                                     f"{decision} (yes/approve/go ahead, or "
+                                                     "no/deny); otherwise ask the person"})
+        who = str(asker).split(":", 1)[-1]
+        try:
+            out = await relay.decide(
+                str(args.get("item") or ""), decision,
+                {"who": who, "quote": quote, "session": f"huddle {room} round {rid}"},
+                relayer=self.chair_identity(), relayer_label="the house agent (chair)",
+                reason=str(args.get("reason") or ""), answer=str(args.get("answer") or ""))
+        except (ValueError, PermissionError, KeyError) as e:
+            return json.dumps({"ok": False, "error": str(e)})
+        return json.dumps({"ok": True, **out}, default=str)
 
     def _cards_footer(self, proposed: list[tuple[dict, dict]]) -> str:
         """What the chair's propose calls actually did, from their results:
@@ -906,25 +992,37 @@ class Chair:
                            f"{why}" + (f" [{call.get('cap')} on {call.get('worker')}]"
                                        if call else ""))
 
-    async def decide(self, cid: str, action: str, by: str, principal: Any = None) -> dict:
+    async def decide(self, cid: str, action: str, by: str, principal: Any = None,
+                     reason: str = "", relay: dict | None = None) -> dict:
         """A person approves or dismisses a card. Approving runs its call as
         ``by`` (``principal`` for the policy), journaled with the card and
-        huddle ids."""
+        huddle ids. ``relay``: an agent the person enabled relays their
+        decision (rook/hub/relay.py checked it); the card records who said so.
+        A dismissal's ``reason`` goes back to the proposer in the room."""
         card = self.store.card(cid)
         if card is None:
             raise ValueError("no such card")
-        if not _is_person(by):
+        if relay is None and not _is_person(by):
             raise PermissionError("only a person approves or dismisses action cards")
+        reason = str(reason or (relay or {}).get("reason") or "").strip()[:500]
+        decided_by = relay["label"] if relay else by
         if action == "dismiss":
             if not self.store.card_set(cid, expect=("proposed",), state="dismissed",
-                                       decided_by=by, decided=time.time()):
+                                       decided_by=decided_by, decided=time.time(),
+                                       **({"result": {"dismissed": reason}} if reason else {})):
                 raise ValueError(f"that card is already {card['state']}")
-            return {"card": cid, "state": "dismissed"}
+            self._report_dismissal(card, decided_by, reason, relay)
+            return {"card": cid, "state": "dismissed", **({"reason": reason} if reason else {})}
         if action != "approve":
             raise ValueError("action: approve or dismiss")
-        if not self.store.card_set(cid, expect=("proposed",), state="approved", decided_by=by,
-                                   decided=time.time()):
+        if not self.store.card_set(cid, expect=("proposed",), state="approved",
+                                   decided_by=decided_by, decided=time.time()):
             raise ValueError(f"that card is already {card['state']}")
+        if relay is not None:
+            with contextlib.suppress(Exception):
+                self.svc._send(card["room"], self.chair_identity(),
+                               f"{_card_label(card, card['kind'])} {relay['text']}",
+                               [card["by"]] if card.get("by") else [], quiet=True)
         if not card.get("call"):              # a note or a question: approving acknowledges it
             self.store.card_set(cid, state="done", result={"ok": True})
             return {"card": cid, "state": "done"}
@@ -940,6 +1038,19 @@ class Chair:
             out["error"] = card_error(failed)
             self._report_failure(failed)
         return out
+
+    def _report_dismissal(self, card: dict, by: str, reason: str, relay: dict | None) -> None:
+        """A dismissed card tells its proposer, with the person's reason, so
+        it can adapt instead of proposing it again."""
+        if not reason and relay is None:
+            return
+        who = relay["text"] if relay else f"dismissed by {by}"
+        line = f"{_card_label(card, card['kind'] + ': ' + card['summary'][:120])} {who}"
+        if reason:
+            line += f". Reason: {reason}"
+        with contextlib.suppress(Exception):
+            self.svc._send(card["room"], self.chair_identity(), line,
+                           [card["by"]] if card.get("by") else [], quiet=True)
 
     async def _run_call(self, card: dict, by: str, principal: Any) -> dict:
         node = self._node()

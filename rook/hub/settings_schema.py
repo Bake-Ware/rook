@@ -205,6 +205,17 @@ _CORE: list[tuple[Setting, str, dict]] = [
         help="A worker on the hub's machine can edit the hub's files, so its exec and admin "
              "calls are held. 'auto' detects them by machine id, or list worker names, or "
              "'off'. The Approvals page shows which workers it matched."), "mcp", {}),
+    (_s("approvals.relay_dashboard_only", list,
+        ["tier:admin", "hold:hub-host", "tag:physical", "worker.*", "band.*", "hub.plugin.*",
+         "customcap.*", "role.set", "role.delete", "role.move", "job.write:delete"],
+        label="Never relayed: dashboard only", group="Approvals", order=14,
+        help="Waiting items an agent may not approve or deny for you, even one you let relay "
+             "your approvals (Tokens page): they wait for you here. Cap names or globs "
+             "(worker.*, job.write:delete for one action), tier:<tier> (that tier and above), "
+             "tag:<tag>, hub:<tier> (calls to the hub itself), hold:<spread|hub-host|rule>, "
+             "card:<kind>, kind:<hold|job|card|ask>. Secrets, the vault, tokens, policy, "
+             "settings, approvals and job locks are never relayed whatever this says."),
+     "mcp", {}),
     (_s("auth.google_client_file", "path", "", env="ROOK_GOOGLE_CLIENT_FILE", bootstrap=True,
         apply="restart", label="Google OAuth client file", group="Sign-in", advanced=True),
      "dashboard", {}),

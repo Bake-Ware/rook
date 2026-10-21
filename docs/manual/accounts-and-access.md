@@ -8,6 +8,7 @@ features:
   - settings/core/approvals
   - settings/core/identity
   - plugin/hub/policy
+  - plugin/hub/approvals
 since: 0.1.0
 deprecated: false
 ---
@@ -90,8 +91,9 @@ number next to **Approvals** in the sidebar counts them. The **i** next to
   **Approve + 15 min spread**: approve it and let that agent reach more
   machines for 15 minutes.
 
-Only the operator or a band owner can approve. Agents have no way to approve
-anything, and secret values are never shown on the page.
+Only the operator or a band owner can approve here, and secret values are
+never shown on the page. Agents can't approve anything on their own; the one
+exception is passing on your own decision when you let them (below).
 
 Two things are held that agents can do on their own, so the approvals can't be
 worked around:
@@ -125,6 +127,38 @@ tries the next channel, for example `ask, telegram`. Anyone near the phone can
 answer, so voice is off unless you pick it; *Highest tier a spoken yes may
 approve* limits it further, and changes to the hub itself (policy, settings,
 tokens, secrets) always need the dashboard.
+
+**Deciding through an agent you trust (relaying).** You can let a client
+such as Claude on claude.ai, or your voice assistant, check in with you about
+what is waiting and pass on your answer: "3 waiting: brave-otter-lamp, Claude
+web wants to run shell.exec on box: `systemctl restart nginx`; ...", you say
+"approve the first, deny the rest, wrong box", and it approves or denies on
+your behalf. What it can see and decide is the same list everywhere: held
+calls, held calls from jobs, huddle action cards and questions agents pinned
+in huddles. Each item has a three-word name you can say.
+
+- **Turning it on.** On the **Tokens** page each client has a **Relays**
+  switch (*May relay my approvals*). It is off for everyone until you turn it
+  on, and only you can, signed in to the dashboard with a password agents
+  can't read. The house agent (which chairs huddles) has its own row there.
+  Revoking a client's last token turns it off.
+- **Your words are the decision.** A client has to send who decided, your
+  own words and the conversation it heard them in. It is told to pass on
+  only what you said, never its own judgement, and to leave alone anything
+  you didn't name.
+- **Some things always wait for you here.** Secrets and the vault, tokens,
+  the policy, settings, the approvals themselves and locking or unlocking
+  jobs are never relayed. *Never relayed: dashboard only* (Settings > Hub >
+  Approvals) adds more; by default admin-tier calls, commands on a worker
+  on the hub's own machine, physical actions (phones, keyboards), machine
+  updates, band changes, plugins, custom commands, role changes and
+  deleting jobs. The list marks these items as dashboard only.
+- **Everything is recorded.** Each relayed decision is kept for good (it
+  can't be edited or deleted) with the client, your name, your words and the
+  conversation. The Approvals page shows it next to the call ("approved by
+  Bake via Claude web: ..."), under **Relayed for you**, and a huddle shows
+  it on the card or the answer. The agent that asked sees the same line; a
+  denial carries your reason, so a role can adjust instead of asking again.
 
 **Exceptions.** To let one agent do one thing without asking, add an `allow`
 rule to the policy that names the agent, the capability and the machine, for

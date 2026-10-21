@@ -23,6 +23,25 @@ version was `0.1.0`.
   `role.sessions`, `role.session_start`, `role.session_send`, `role.session_stop`; card kind
   `call`; settings `role.protected_workers`, `role.session_model`, `role.session_stall_minutes`,
   `role.session_max_minutes`, `role.sessions_per_role`. (manual: role-agency, huddles)
+- Relayed approvals. One list of everything waiting on a person: held calls, held job
+  calls, huddle action cards (every huddle) and pinned huddle questions, each with a
+  three-word name, who asked, what exactly would happen, the risk tier, where it came from
+  and its age (`approvals.list`, MCP `rook_approvals` `summary`/`list`, with a line short
+  enough to speak). A client the person enables on the Tokens page (*Relays*, "May relay
+  my approvals"; off for everyone, only a person signed in to the dashboard turns it on)
+  may approve or deny an item with `relayed_by {who, quote, session}`: the person's own
+  words. Secrets and the vault, tokens, policy, settings, approvals and job locks are never
+  relayed, nor anything on the new setting `approvals.relay_dashboard_only` (conservative
+  by default: admin tier, commands on the hub's machine, physical actions, worker and band
+  changes, plugins, custom commands, roles, deleting jobs). Every relayed decision is kept
+  append-only with the relaying identity, the person, the quote and the session, and shows
+  beside the hold, card or answer ("approved by Bake via Claude web: ..."). A deny's reason
+  goes back to the requester: a denied call's reply carries it (and an identical repeat
+  gets the denial at once), a dismissed card's proposer is told in the room and the chair
+  sees it. The huddle chair answers "what's waiting?" from the list and, if the house agent
+  is enabled, relays a decision the person states in their message, quoting it. Holds and
+  huddle questions now have speakable names. Permissions 3.12. (manual:
+  accounts-and-access, huddles, agents-and-mcp, security)
 - Device workers. A worker can be the *delegate* for things that run no worker of their
   own, such as TVs and later light switches and thermostats. Each one joins the band as a
   worker in its own right, with its own name, caps and live heartbeat, plus `delegate`

@@ -140,6 +140,11 @@ class Huddle(Plugin):
                                      origin=self._origin,
                                      wake_on_answer=lambda: bool(self.settings.get("wake_on_answer", False)))
         self.service.chair = Chair(self.service, lambda: self._node, self._chair_settings)
+        self.service.relayed = self._relayed
+
+    def _relayed(self, kind: str, ids: list) -> dict:
+        ap = self._node.plugin("approvals") if self._node is not None else None
+        return ap.relay.relayed(kind, ids) if ap is not None else {}
 
     def _chair_settings(self) -> dict:
         return {k: self.settings.get(k) for k in ("reply_chars", "max_role_turns", "retention_days",

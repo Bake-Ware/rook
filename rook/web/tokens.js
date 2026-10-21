@@ -53,13 +53,15 @@ export async function mountTokens(root){
   function draw(){
     const now=Date.now()/1000;
     const rows=data.tokens.map(t=>({token:t,id:'agent:'+(t.name||t.id),label:t.name||t.id,soon:!!t.expires_at&&t.expires_at-now<SOON,idle:!t.last_used_at||now-t.last_used_at>IDLE}));
+    const house=data.relay&&data.relay.house;
+    if(house)rows.unshift({id:house.identity,label:house.label,house,soon:false,idle:false});
     const taken=new Set(rows.map(r=>r.id));
     for(const id of new Set(['user:operator','agent:static',...Object.keys(data.avatars)]))if(!taken.has(id))rows.push({id,label:id.split(':').pop(),soon:false,idle:false});
     const tokens=rows.filter(r=>r.token);
     chipHost.replaceChildren(...chips([['all','All '+tokens.length],['soon','Expiring '+tokens.filter(r=>r.soon).length],['idle','Unused '+tokens.filter(r=>r.idle).length]],filter,id=>{filter=id;draw();}));
     const shown=rows.filter(r=>(filter==='all'||(r.token&&r[filter]))&&(!query||(r.label+' '+r.id).toLowerCase().includes(query)));
     const expires=t=>{if(!t.expires_at)return 'never';const d=Math.ceil((t.expires_at-now)/86400);return d<=0?'expired':d===1?'in 1 day':'in '+d+' days';};
-    list.replaceChildren(table('44px minmax(0,1.5fr) 100px 110px 110px 44px',['','Label · identity','Created','Expires','Last used',''],shown.length?shown.map(r=>{
+    list.replaceChildren(table('44px minmax(0,1.5fr) 100px 110px 110px 96px 44px',['','Label · identity','Created','Expires','Last used',h('span',null,'Relays',info('May relay my approvals: this client may approve or deny waiting items for you when you tell it your decision (your own words are recorded). Secrets, tokens, policy, settings, job locks and the dashboard-only list always need you here. Off for everyone until you turn it on.','About relaying')),''],shown.length?shown.map(r=>{
       const t=r.token,more=btn('⋯','icon',()=>menu(more,[
         {label:(data.avatars[r.id]?'Change':'Set')+' picture',run:()=>{identity=r.id;file.click();}},
         data.avatars[r.id]&&{label:'Clear picture',run:()=>perform(async()=>{await api({op:'avatar_clear',identity:r.id});await refresh();})},
@@ -68,9 +70,24 @@ export async function mountTokens(root){
         two(r.label,t?r.id+' · '+t.preview:r.id+' · no token'),
         h('span',{class:'mg-dimtext'},t?h('span',{class:'sm-only',text:'created '}):null,t?day(t.created_at):'—'),
         h('span',{class:'mg-mono '+(t&&r.soon?'mg-warn':'mg-dimtext')},t?h('span',{class:'sm-only',text:'expires '}):null,t?expires(t):'—'),
-        h('span',{class:t&&!t.last_used_at?'mg-warn':'mg-dimtext'},t?h('span',{class:'sm-only',text:'used '}):null,t?ago(t.last_used_at):'—'),more);
-    }):[h('div',{class:'mg-empty',text:tokens.length?'Nothing matches.':'No tokens yet.'})],680));
+        h('span',{class:t&&!t.last_used_at?'mg-warn':'mg-dimtext'},t?h('span',{class:'sm-only',text:'used '}):null,t?ago(t.last_used_at):'—'),
+        relaySwitch(r),more);
+    }):[h('div',{class:'mg-empty',text:tokens.length?'Nothing matches.':'No tokens yet.'})],760));
     summary.textContent=shown.filter(r=>r.token).length+' of '+tokens.length+' tokens';
+  }
+  function relaySwitch(r){
+    const who=r.token||r.house;
+    if(!who||!(data.relay&&data.relay.available))return h('span',{class:'mg-dimtext',text:'—'});
+    const box=h('input',{type:'checkbox','data-relay':r.token?r.token.id:'house','aria-label':'May relay my approvals: '+r.label,title:who.relay?'Relays your approvals'+(who.relay_by?' (turned on by '+who.relay_by+')':''):'May relay my approvals'});
+    box.checked=!!who.relay;
+    const set=on=>perform(async()=>{await api({op:'relay',id:r.token?r.token.id:'house',enabled:on});await refresh();status.textContent=on?r.label+' may relay your approvals.':r.label+' no longer relays your approvals.';});
+    box.onchange=()=>{const on=box.checked;box.checked=!on;if(!on){set(false);return;}
+      const err=h('small',{class:'mg-error dialog-error',role:'alert'});
+      const d=dialog('May relay my approvals',h('form',{onsubmit:e=>{e.preventDefault();perform(async()=>{await api({op:'relay',id:r.token?r.token.id:'house',enabled:true});d.close();await refresh();status.textContent=r.label+' may relay your approvals.';},err);}},
+        h('p',null,h('strong',{text:r.label}),' may approve or deny waiting items (held calls, huddle cards, questions) when you tell it your decision. Each one records your words and shows them beside the item.'),
+        h('p',{class:'mg-dimtext',text:'Secrets, tokens, policy, settings, job locks and the dashboard-only list (Settings > Approvals) still need you here.'}),
+        err,h('div',{class:'mg-actions end'},h('button',{class:'mg-btn primary',text:'Allow relaying'}))));};
+    return h('label',{class:'mg-dimtext token-relay'},box,h('span',{class:'sm-only',text:' relays approvals'}));
   }
   function revoke(t){
     const err=h('small',{class:'mg-error dialog-error',role:'alert'});

@@ -418,11 +418,16 @@ def test_the_band_tui_explains_a_held_reply():
 
 # -- agents cannot approve ------------------------------------------------------------------
 
-def test_no_agent_surface_can_approve():
+def test_the_only_agent_approval_surface_is_the_relay():
+    """Agents decide nothing on their own: the one surface is relaying a
+    person's words (approvals.relay / rook_approvals, rook/hub/relay.py),
+    which tests/test_relay.py covers. No other cap or tool approves."""
     from rook.core import authz as core_authz
     from rook.hub.authz import _TOOL_CAPS, hub_cap_for_tool
     caps = set(core_authz.builtin_table())
-    assert not [c for c in caps if "approv" in c or c.startswith("hold")]
+    assert sorted(c for c in caps if "approv" in c or c.startswith("hold")) == \
+        ["approvals.list", "approvals.relay"]
+    assert core_authz.builtin_tier("approvals.relay") == "write"
     assert not [t for t in _TOOL_CAPS if "approv" in t]
     assert hub_cap_for_tool("rook_approvals", {}) is None
     import rook.band_mcp.server as srv
@@ -432,7 +437,7 @@ def test_no_agent_surface_can_approve():
 
 
 @pytest.mark.asyncio
-async def test_mcp_tools_list_has_no_approval_tool(tmp_path):
+async def test_mcp_tools_list_has_no_approval_tool_but_the_relay(tmp_path):
     from test_permissions_mcp import mcp
     from test_audit_attribution import Session, STATIC
     async with mcp(tmp_path) as env:
@@ -443,7 +448,8 @@ async def test_mcp_tools_list_has_no_approval_tool(tmp_path):
         body = r.json() if r.headers["content-type"].startswith("application/json") else \
             json.loads(next(l[5:] for l in r.text.splitlines() if l.startswith("data:")))
         names = [t["name"] for t in body["result"]["tools"]]
-        assert names and not [n for n in names if "approv" in n or "hold" in n]
+        assert names and [n for n in names if "approv" in n or "hold" in n] in \
+            ([], ["rook_approvals"])
 
 
 @pytest.mark.asyncio
