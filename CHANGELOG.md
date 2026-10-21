@@ -62,6 +62,15 @@ version was `0.1.0`.
   person signed in to the dashboard may lock or unlock, and each change is a history row.
   A locked job keeps its own limits; the hub's default `max_failures` doesn't apply to it, and
   an agent can complete it only from a step with `complete: "agent"`. (manual: jobs)
+- Speak button on huddle messages. Every message and action card in a huddle (Huddles and
+  the Work huddle board) has a compact Speak button: the hub reads the message aloud in the
+  browser, in the speaking role's voice (new role field `voice`, picked on the Roles page from
+  the voice engine's voices), else the band's default voice, with markdown, code blocks and
+  links left out and record ids read by their three-word names. With no voice engine the hub
+  can reach, the browser's own speech reads it and the tooltip says so. Tap again to stop; one
+  message at a time. A long press offers "Play on <device>" (`voice.speak`) for devices that
+  are not protected (`role.protected_workers`), narrowed by the new setting
+  `huddle.speak_devices`. (manual: voice)
 
 ### Changed
 - The dashboard works on a phone. At 800px wide or less the sidebar becomes a drawer (☰, or

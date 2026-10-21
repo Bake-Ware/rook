@@ -484,6 +484,43 @@ class Voice(Plugin):
         return {"ok": True, "text": text, "seconds": round(len(pcm) / 32000, 2),
                 "latency_ms": round((time.monotonic() - t0) * 1000)}
 
+    # -- speech for the dashboard (huddle Speak buttons) ------------------------------------
+    def speech_unavailable(self) -> str:
+        """Why this hub cannot speak text now ("" when it can)."""
+        e = self.engine
+        if e is None:
+            return "voice is off on this hub"
+        if getattr(e, "state", "") != "ready":
+            return "the voice engine is " + (getattr(e, "state", "") or "stopped")
+        return ""
+
+    async def voices(self) -> dict:
+        """The engine's voices ``{voices, default, catalog?}``, kept a minute."""
+        why = self.speech_unavailable()
+        if why:
+            raise RuntimeError(why)
+        cached = getattr(self, "_voices", None)
+        if cached and time.monotonic() - cached[0] < 60:
+            return cached[1]
+        res = self.engine.voices()
+        if hasattr(res, "__await__"):
+            res = await res
+        out = {"voices": [str(v) for v in res.get("voices") or []],
+               "default": str(res.get("default") or ""),
+               "catalog": [{"id": str(c.get("id")), "label": str(c.get("label") or c.get("id")),
+                            "engine": str(c.get("engine") or "")}
+                           for c in res.get("catalog") or [] if isinstance(c, dict) and c.get("id")]}
+        self._voices = (time.monotonic(), out)
+        return out
+
+    async def synthesize(self, text: str, voice: str = "") -> bytes:
+        """``text`` (at most 700 characters) as WAV in ``voice`` (blank: the
+        engine's default), from this hub's engine or its voice server."""
+        why = self.speech_unavailable()
+        if why:
+            raise RuntimeError(why)
+        return await self.engine.synthesize(text, voice)
+
     # -- Manage > Voice ------------------------------------------------------------------
     def page(self, svc) -> dict:
         return page_data(svc, self._node, self)
