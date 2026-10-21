@@ -160,7 +160,7 @@ def worktree_path(loc: dict, branch: str) -> str:
 
 GIT_OK = ("status", "diff", "log", "show", "add", "commit", "fetch", "rev-parse", "branch",
           "restore", "rm", "mv", "ls-files", "grep", "stash", "rebase", "merge-base",
-          "blame", "switch -c", "checkout -b")
+          "blame", "switch -c", "checkout -b", "clean")
 GH_OK = ("pr create", "pr view", "pr list", "pr diff", "pr checks", "pr comment", "pr edit",
          "issue view", "issue list")
 #: Shell commands besides git and gh: only ones that cannot write a file
@@ -217,7 +217,8 @@ def session_prompt(role: dict, loc: dict, branch: str, worktree: str, instructio
         "Write; the shell is only for git, gh and the test runner (rook-pytest). Other shell "
         "commands are refused. Your working folder is already the worktree: run git and gh "
         "commands bare, one per call (git add ..., then git commit ...), without cd or git -C. "
-        "Update the pull request's description with gh pr edit <n> --body-file <file>.",
+        "Update the pull request's description with gh pr edit <n> --body-file <file>; delete a "
+        "scratch file you made with git clean -f <file> (git rm for a tracked one).",
         "- When a command you need is refused, say BLOCKED with the command instead of working "
         "around it.",
     ]

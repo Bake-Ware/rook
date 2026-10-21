@@ -444,6 +444,8 @@ role and every autonomy; no setting lowers them. A role that calls an
 approval-tier cap with `rook_call` in a huddle gets a `call` card made for
 it (its `why` is the summary) and is told not to retry; outside a huddle the
 call is refused with the reason. Policy is still checked after the tier.
+A call that fails on its arguments comes back with the cap's parameters
+(`<cap> takes: ...`), since a role sees cap names but not their arguments.
 Roles never call `role.ask`, `role.move`, `role.memory_edit` or
 `agenthost.*` (unchanged).
 
@@ -466,8 +468,8 @@ Roles never call `role.ask`, `role.move`, `role.memory_edit` or
   settings, plugins or MCP servers, and an allowlist only: edits and reads
   in the worktree, reading the role's workspace, git for its own work
   (bare, after a `cd` into the worktree, or as `git -C <worktree>`), pushing
-  only its branch, `gh pr create/view/list/diff/checks/comment/edit`,
-  `rook-pytest`. Denied: `gh pr merge`, `gh api`, `gh repo`, force pushes,
+  only its branch, `git clean` (its own untracked scratch files),
+  `gh pr create/view/list/diff/checks/comment/edit`, `rook-pytest`. Denied: `gh pr merge`, `gh api`, `gh repo`, force pushes,
   `git reset --hard`, `sudo`, `ssh`, `curl`, the web. So it can open a pull
   request and can never merge one.
 - *Limits:* `role.sessions_per_role` (2) running per role, one session per

@@ -406,7 +406,34 @@ class RolesPlugin(Plugin):
             reply = {"ok": False, "error": f"{type(e).__name__}: {e}"[:300]}
         reply = _mask(reply if isinstance(reply, dict) else {"ok": True, "result": reply})
         self.journal(role, cap, name, args, reply)
+        err = str(reply.get("error") or "")
+        if not reply.get("ok", True) and ("bad args" in err or "unexpected keyword" in err
+                                          or "missing" in err and "argument" in err):
+            # A role cannot see a cap's arguments (proving run: the architect
+            # guessed `seq` and `after` for huddle.read): say what it takes.
+            usage = await self._usage(cap, wid, hub_id)
+            if usage:
+                reply = {**reply, "error": f"{err}. {cap} takes: {usage}"}
         return reply
+
+    async def _usage(self, cap: str, wid: str, hub_id: Any) -> str:
+        """``name (required), name=default, ...`` for a cap, or ""."""
+        try:
+            if wid == hub_id:
+                desc = self._node.host.registry.describe(cap)
+            else:
+                got = await self._node.client.call(cap="caps.describe", args={"prefix": cap},
+                                                   target=wid, timeout=15.0,
+                                                   **self._home().agents._who())
+                desc = got.get("result") if isinstance(got.get("result"), dict) else {}
+                desc = desc.get("caps", desc)
+            info = (desc or {}).get(cap) or {}
+            parts = [p["name"] + (" (required)" if p.get("required") else
+                                  f"={json.dumps(p.get('default'))}")
+                     for p in info.get("params") or []]
+            return ", ".join(parts)
+        except Exception:  # noqa: BLE001 - only a hint
+            return ""
 
     def _policy(self, role: dict, cap: str, wid: str, entry: dict | None) -> str:
         authz = getattr(getattr(self._node, "client", None), "authz", None)

@@ -430,3 +430,12 @@ async def test_a_report_the_role_already_answered_after_is_skipped(hub, host):  
     assert not [t for t in hub.band.turns if t["kind"] in ("huddle-architect", "huddle-chair")]
     r = hub.svc.store.rounds(room)[0]
     assert r["state"] == "done" and "skipped" in (r.get("error") or "")
+
+
+@pytest.mark.asyncio
+async def test_a_bad_argument_tells_the_role_what_the_cap_takes(hub, host):  # noqa: F811
+    await _role(hub, tools={"allow": ["huddle.read"]})
+    role = hub.roles.role("architect")
+    out = await hub.roles.role_call(role, "rook", "huddle.read", {"action": "read", "seq": 148})
+    assert not out["ok"] and "huddle.read takes:" in out["error"]
+    assert "since_seq=0" in out["error"] and "limit=30" in out["error"]
