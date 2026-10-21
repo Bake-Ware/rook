@@ -20,6 +20,8 @@ VOICES = [
     ('jenny', 'Jenny (Dioco) · Rook', 'Chatterbox', True, 'Jenny TTS dataset: commercial use permitted; apps that speak in her voice must credit “Jenny (Dioco)”. Rendered clips need no credit.'),
     ('ljspeech', 'LJ Speech', 'Chatterbox', True, 'LibriVox reading, public domain.'),
     ('default', 'Chatterbox built-in · women', 'Chatterbox', True, 'The model’s own voice (MIT).'),
+    ('m_hifi6097', 'Hi-Fi TTS 6097 (man)', 'Chatterbox', True, 'Real man’s voice: LibriVox reader (public domain) via NVIDIA Hi-Fi TTS, CC BY 4.0 — credit “Hi-Fi TTS (NVIDIA)” where credits run.'),
+    ('m_hifi9017', 'Hi-Fi TTS 9017 (man)', 'Chatterbox', True, 'Real man’s voice: LibriVox reader (public domain) via NVIDIA Hi-Fi TTS, CC BY 4.0 — credit “Hi-Fi TTS (NVIDIA)” where credits run.'),
     ('m_michael', 'Michael (Chatterbox)', 'Chatterbox', True, 'Chatterbox from a Kokoro am_michael reference (Apache 2.0): rights-clean.'),
     ('m_onyx', 'Onyx (Chatterbox)', 'Chatterbox', True, 'Chatterbox from a Kokoro am_onyx reference (Apache 2.0): rights-clean.'),
     ('m_eric', 'Eric (Chatterbox)', 'Chatterbox', True, 'Chatterbox from a Kokoro am_eric reference (Apache 2.0): rights-clean.'),
