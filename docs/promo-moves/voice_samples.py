@@ -17,9 +17,13 @@ LINES = [
     'Push the two o’clock to tomorrow.',
 ]
 VOICES = [
-    ('jenny', 'Jenny (Dioco)', 'Chatterbox', True, 'Jenny TTS dataset: commercial use permitted; apps that speak in her voice must credit “Jenny (Dioco)”. Rendered clips need no credit.'),
+    ('jenny', 'Jenny (Dioco) · Rook', 'Chatterbox', True, 'Jenny TTS dataset: commercial use permitted; apps that speak in her voice must credit “Jenny (Dioco)”. Rendered clips need no credit.'),
     ('ljspeech', 'LJ Speech', 'Chatterbox', True, 'LibriVox reading, public domain.'),
-    ('default', 'Chatterbox built-in', 'Chatterbox', True, 'The model’s own voice (MIT).'),
+    ('default', 'Chatterbox built-in · women', 'Chatterbox', True, 'The model’s own voice (MIT).'),
+    ('m_michael', 'Michael (Chatterbox)', 'Chatterbox', True, 'Chatterbox from a Kokoro am_michael reference (Apache 2.0): rights-clean.'),
+    ('m_onyx', 'Onyx (Chatterbox)', 'Chatterbox', True, 'Chatterbox from a Kokoro am_onyx reference (Apache 2.0): rights-clean.'),
+    ('m_eric', 'Eric (Chatterbox)', 'Chatterbox', True, 'Chatterbox from a Kokoro am_eric reference (Apache 2.0): rights-clean.'),
+    ('m_liam', 'Liam (Chatterbox)', 'Chatterbox', True, 'Chatterbox from a Kokoro am_liam reference (Apache 2.0): rights-clean.'),
     ('am_michael', 'Michael (US)', 'Kokoro', True, 'Kokoro voice, Apache 2.0. The person in the current films.'),
     ('af_heart', 'Heart (US)', 'Kokoro', True, 'Kokoro voice, Apache 2.0.'),
     ('bm_george', 'George (UK)', 'Kokoro', True, 'Kokoro voice, Apache 2.0. The reviewer in clip 3.'),

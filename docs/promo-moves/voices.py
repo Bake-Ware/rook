@@ -1,7 +1,7 @@
 """Speak a clip's lines with Rook's voice server -> voices/<id>.wav and voices/durations.json.
 
     VOICE_URL=https://kaiju:8900 VOICE_KEY=... python voices.py N [N...]
-Rook speaks in the server's default voice; 'you' (the person) uses a Kokoro voice.
+Voices are chosen per speaker in VOICES below.
 """
 import json, os, ssl, sys, urllib.request, wave
 from pathlib import Path
@@ -9,7 +9,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 URL = os.environ.get('VOICE_URL', 'https://192.168.1.64:8900') + '/api/voice'
 KEY = os.environ.get('VOICE_KEY', '')
-VOICES = {'rook': None, 'you': 'am_michael', 'reviewer': 'bm_george'}
+# Rook speaks as Jenny (Dioco, commercial use OK); 'you' is a man unless a clip says 'you_f' (Chatterbox's own voice).
+VOICES = {'rook': 'jenny', 'you': 'am_michael', 'you_f': 'default', 'reviewer': 'bm_george'}
 ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
 (HERE / 'voices').mkdir(exist_ok=True)
 dpath = HERE / 'voices' / 'durations.json'
