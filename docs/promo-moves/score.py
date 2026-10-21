@@ -223,6 +223,17 @@ def main():
     with wave.open(str(out), 'wb') as w:
         w.setnchannels(2); w.setsampwidth(2); w.setframerate(SR); w.writeframes(pcm.tobytes())
     print('wrote', out, f'{T:.1f}s')
+    # stems for the director page: voice + effects, and the score (un-ducked; the page ducks it under the lines)
+    g = .89 / max(1e-9, np.abs(st).max())
+    import subprocess
+    for name, (a, b) in {'vox': (fx.L + vox.L, fx.R + vox.R), 'music': (music.L, music.R)}.items():
+        s = np.stack([a[:nT] * f, b[:nT] * f], axis=1)
+        s = (np.clip(np.tanh(s * 1.2) / 1.2 * g, -1, 1) * 32767).astype(np.int16)
+        tmp = HERE / 'out' / f'c{n}_{name}.wav'
+        with wave.open(str(tmp), 'wb') as w:
+            w.setnchannels(2); w.setsampwidth(2); w.setframerate(SR); w.writeframes(s.tobytes())
+        subprocess.run(['ffmpeg', '-v', 'error', '-y', '-i', str(tmp), '-b:a', '160k', str(tmp.with_suffix('.mp3'))], check=False)
+        tmp.unlink(missing_ok=True)
 
 
 if __name__ == '__main__':

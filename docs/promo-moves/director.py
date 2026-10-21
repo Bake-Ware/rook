@@ -101,7 +101,22 @@ app.router.add_route('POST', '/save/{n}', save)
 app.router.add_route('DELETE', '/save/{n}', save)
 app.router.add_route('GET', '/notes/{n}', notes)
 app.router.add_route('POST', '/notes/{n}', notes)
+async def scores(req):
+    """Scores the director page can play under a clip: its own, the tune samples, the AI covers."""
+    n = req.match_info['n']; out = []
+    if (HERE / 'out' / f'c{n}_music.mp3').exists():
+        out.append({'id': 'own', 'label': 'This clip’s score', 'url': f'out/c{n}_music.mp3'})
+    for idx, pre in ((HERE / 'out' / 'music' / 'index.json', 'Tune · '), (HERE / 'out' / 'music' / 'ace' / 'index.json', 'AI cover · ')):
+        if idx.exists():
+            for x in json.loads(idx.read_text()):
+                lab = x.get('title', '') + (f" ({x['note']})" if x.get('note') else '')
+                out.append({'id': x['file'], 'label': pre + lab, 'url': x['file']})
+    vox = f'out/c{n}_vox.mp3' if (HERE / 'out' / f'c{n}_vox.mp3').exists() else None
+    return web.json_response({'scores': out, 'vox': vox})
+
+
 app.router.add_get('/clips', clips)
+app.router.add_get('/scores/{n}', scores)
 app.router.add_get('/video/{n}', video)
 app.router.add_get('/thumb/{n}', thumb)
 app.router.add_get('/', lambda r: web.FileResponse(HERE / 'home.html'))

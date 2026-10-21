@@ -13,6 +13,7 @@ export function director(kit, clip) {
     <style>
       #dir{position:fixed;left:0;right:0;bottom:0;background:rgba(9,12,9,.94);border-top:1px solid #514b35;font:14px 'DejaVu Sans Mono',monospace;color:#cfd3bd;padding:10px 16px;z-index:99}
       #dir input[type=range]{width:100%}#dir button{font:inherit;background:#20261d;color:#e2e3d9;border:1px solid #514b35;border-radius:6px;padding:4px 10px;margin-right:6px;cursor:pointer}
+      #dir select{font:inherit;background:#20261d;color:#e2e3d9;border:1px solid #514b35;border-radius:6px;padding:4px 6px;max-width:320px}#dir label{display:inline-flex;gap:4px;align-items:center;margin-right:6px}
       #dir button.on{border-color:#8fc79a;color:#8fc79a}#dir .row{display:flex;gap:10px;align-items:center;margin-top:6px;flex-wrap:wrap}
       #dir textarea{width:100%;min-height:54px;font:inherit;background:#141812;color:#e2e3d9;border:1px solid #514b35;border-radius:6px;padding:6px 8px;resize:vertical}
       #dir .k.n{border-style:dashed}#dir .k.hasn::after{content:' ✎';color:#f0c98c}
@@ -22,7 +23,7 @@ export function director(kit, clip) {
     </style>
     <div id="dir"><input id="scrub" type="range" min="0" max="${T}" step="0.0333" value="0">
       <div class="row"><b id="tt"></b>
-        <a href="/" style="color:#f0c98c;text-decoration:none;margin-right:6px">← clips</a><button id="play">▶ play</button><button id="free">free camera</button><button id="key">＋ key at this time</button>
+        <a href="/" style="color:#f0c98c;text-decoration:none;margin-right:6px">← clips</a><button id="play">▶ play</button><select id="score" title="Score to play under the clip"><option value="">no music</option></select><label title="Score volume">♪ <input id="svol" type="range" min="0" max="1" step="0.05" value="0.6" style="width:80px"></label><label><input id="vox" type="checkbox" checked> voice</label><button id="free">free camera</button><button id="key">＋ key at this time</button>
         <button id="del">delete key</button><button id="cut">toggle cut</button><button id="save">save keys</button><button id="reset">use the clip's own keys</button><button id="note">✎ note at this time</button>
         <span id="msg"></span></div>
       <div class="row" id="list"></div>
@@ -103,8 +104,30 @@ export function director(kit, clip) {
       openNote(tau, sel >= 0); draw();             // clicking a key opens (or starts) its note
     });
   };
-  $('scrub').oninput = e => { t = +e.target.value; draw(); };
-  $('play').onclick = () => { playing = !playing; $('play').textContent = playing ? '❚❚ pause' : '▶ play'; last = performance.now(); };
+  // ---- sound: a chosen score under the clip, plus its voice and effects, kept in sync with t
+  const music = new Audio(), voice = new Audio(); music.preload = voice.preload = 'auto';
+  let voiceUrl = null;
+  fetch(`scores/${clip.num}`).then(r => r.json()).then(d => {
+    for (const s of d.scores) { const o = document.createElement('option'); o.value = s.url; o.textContent = s.label; $('score').appendChild(o); }
+    voiceUrl = d.vox; if (voiceUrl) voice.src = voiceUrl;
+    let pick = ''; try { pick = localStorage.getItem('score.' + clip.num) ?? ''; } catch {}
+    if (pick === '' && d.scores.length) pick = d.scores[0].url;
+    if ([...$('score').options].some(o => o.value === pick)) { $('score').value = pick; music.src = pick; }
+  }).catch(() => {});
+  $('score').onchange = () => { music.src = $('score').value; try { localStorage.setItem('score.' + clip.num, $('score').value); } catch {} syncAudio(true); };
+  const speaking = tt => (window.CLIP?.voice || []).some(v => tt >= v.t - .15 && tt < v.t + v.dur + .3);
+  function syncAudio(force) {
+    for (const [a, on] of [[music, !!$('score').value], [voice, $('vox').checked && !!voiceUrl]]) {
+      if (!on || !a.src) { a.pause(); continue; }
+      if (force || Math.abs(a.currentTime - t) > .12) { try { a.currentTime = Math.min(t, (a.duration || 1e9) - .01); } catch {} }
+      if (playing && a.paused) a.play().catch(() => {});
+      if (!playing && !a.paused) a.pause();
+    }
+    music.volume = +$('svol').value * (speaking(t) ? .45 : 1);                       // duck the score under the lines
+  }
+  $('svol').oninput = () => syncAudio(false); $('vox').onchange = () => syncAudio(true);
+  $('scrub').oninput = e => { t = +e.target.value; draw(); syncAudio(true); };
+  $('play').onclick = () => { playing = !playing; $('play').textContent = playing ? '❚❚ pause' : '▶ play'; last = performance.now(); syncAudio(true); };
   $('free').onclick = () => {
     if (!kit.freeCam) {                      // start from wherever the clip's camera is now
       frame(); controls.target.copy(kit.camLook ?? new THREE.Vector3(0, 0, -1).applyQuaternion(kit.camera.quaternion).add(kit.camera.position));
@@ -138,7 +161,12 @@ export function director(kit, clip) {
     kit.camKeys = () => K;
   }
   const loop = now => {
-    if (playing) { t = Math.min(T, t + (now - last) / 1000); $('scrub').value = t; if (t >= T) playing = false; draw(); }
+    if (playing) {
+      // follow the music clock when there is one, so picture and sound stay locked
+      const clock = !music.paused && music.src ? music : !voice.paused && voice.src ? voice : null;
+      t = Math.min(T, clock ? clock.currentTime : t + (now - last) / 1000); $('scrub').value = t;
+      if (t >= T) { playing = false; $('play').textContent = '▶ play'; } draw(); syncAudio(false);
+    }
     else if (kit.freeCam) { controls.update(); frame(); }
     last = now; requestAnimationFrame(loop);
   };
