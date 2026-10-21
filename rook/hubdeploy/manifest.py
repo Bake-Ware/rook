@@ -179,6 +179,9 @@ def build_release(repo: Path, out_dir: Path, ref: str = "HEAD",
     Only committed content goes in: a dirty working tree cannot leak into a
     release. Returns (tarball, manifest_path, manifest)."""
     from rook.remote.build_band_worker import build_name
+    # git archive -o is resolved against -C: relative paths would land inside
+    # the repository (and fail when that folder is missing).
+    repo, out_dir = Path(repo).resolve(), Path(out_dir).resolve()
     if signing_key is None:
         from rook.remote.update_keys import key_path, load_signing_key
         signing_key = load_signing_key()
