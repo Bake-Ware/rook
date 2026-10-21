@@ -67,11 +67,12 @@ textarea:focus{outline:none;border-color:var(--hi)}
 </style></head>
 <body><main>
 <header><h1>Rook <b>Moves</b></h1><span class="sum" id="sum"></span></header>
-<nav class="tabs" role="tablist"><a href="#clips" role="tab" data-tab="clips">Clips</a><a href="#voices" role="tab" data-tab="voices">Voices</a></nav>
+<nav class="tabs" role="tablist"><a href="#clips" role="tab" data-tab="clips">Clips</a><a href="#voices" role="tab" data-tab="voices">Voices</a><a href="#music" role="tab" data-tab="music">Music</a></nav>
 <div id="tab-clips">
 <p class="sub">Your notes here and in the director page go to Claude. Clip notes cover the whole clip; timed notes link into the director at that moment.</p>
 <div id="list"></div>
 </div>
+<div id="tab-music" hidden><section class="voices" id="music"><p class="empty">No music samples yet.</p></section></div>
 <div id="tab-voices" hidden><section class="voices" id="voices"><p class="empty">No voice samples yet.</p></section></div>
 </main>
 <script>
@@ -148,6 +149,15 @@ document.addEventListener('input', e => {
     setTimeout(() => { const el = $('#saved' + n); if (el) el.textContent = ''; }, 1500);
   }, 600);
 });
+// music audition: our own arrangements of public-domain tunes
+fetch('out/music/index.json').then(r => r.ok ? r.json() : null).then(v => {
+  if (!v) return;
+  $('#music').innerHTML = `<h2>Music</h2><p class="lead">Our own chiptune arrangements of public-domain tunes (only the melodies are borrowed), one suggested per clip.</p>
+    <div class="vwrap"><table class="vt"><tr><th>TUNE</th><th>FROM</th><th>SUGGESTED FOR</th><th></th></tr>
+    ${v.map(x => `<tr><td><div class="nm">${esc(x.title)}</div><div class="eng">${x.secs} s</div></td><td class="lic">${esc(x.origin)}</td>
+      <td class="lic">${esc(x.clip)}</td><td><button class="play" data-src="${x.file}?v=${Date.now()}">▶ play</button></td></tr>`).join('')}
+    </table></div>`;
+});
 // voice audition: the same lines in each candidate voice
 let audio = null, cur = null;
 fetch('out/voicesamples/index.json').then(r => r.ok ? r.json() : null).then(v => {
@@ -174,10 +184,10 @@ document.addEventListener('click', e => {
 });;
 // tabs: #clips (default) and #voices; the address keeps the tab on reload
 function tab() {
-  const t = location.hash === '#voices' ? 'voices' : 'clips';
-  for (const k of ['clips', 'voices']) $('#tab-' + k).hidden = k !== t;
+  const t = ['#voices', '#music'].includes(location.hash) ? location.hash.slice(1) : 'clips';
+  for (const k of ['clips', 'voices', 'music']) $('#tab-' + k).hidden = k !== t;
   document.querySelectorAll('.tabs a').forEach(a => { a.classList.toggle('on', a.dataset.tab === t); a.setAttribute('aria-selected', a.dataset.tab === t); });
-  if (t !== 'voices' && audio) { audio.pause(); audio = null; if (cur) { cur.classList.remove('on'); cur.textContent = '▶ play'; cur = null; } }
+  if (t === 'clips' && audio) { audio.pause(); audio = null; if (cur) { cur.classList.remove('on'); cur.textContent = '▶ play'; cur = null; } }
 }
 addEventListener('hashchange', tab); tab();
 load();
