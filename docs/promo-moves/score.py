@@ -202,7 +202,7 @@ def main():
         else:
             d = v.get('dur', 2)
         a, b = int(v['t'] * SR), int((v['t'] + d) * SR)
-        duck[max(0, a - int(.15 * SR)):b + int(.3 * SR)] = .38 if mood.get('theme') != 'mountainking' else .3
+        duck[max(0, a - int(.15 * SR)):b + int(.3 * SR)] = .38 if mood.get('theme') != 'mountainking' else .6
     duck = lp_fast(duck, 3.0)
     # levels: the music under speech should sit well below the voice (report it for checking)
     sp = duck < .5

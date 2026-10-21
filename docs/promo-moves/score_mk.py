@@ -4,7 +4,7 @@ cut to the picture. score.py calls bed(T) when the clip's mood says theme: 'moun
   2.0-3.9   the title: one low note, a held breath
   3.9-6.6   the intruder creeps: pizzicato theme, low and slow
   6.6-12.4  it lands: the theme on a pulse lead, alarm pulse underneath
-  12.4-27   the call (under the voice): bass ostinato only, ticking, tension
+  12.4-27   the call (under the voice): the tune plucked low, bass ostinato, ticking
   27-36     the fix: full chiptune, accelerating 120 -> 176 bpm, lands on a hit at 36
   36-43.6   the report: a quiet tick and the bass
   43.6-51   morning: the theme turned to B major, soft bells
@@ -107,8 +107,10 @@ def bed(T):
     # 12.4-27: under the voice - bass ostinato, ticking
     g = beats(12.4, 26.6, 100)
     for j, t in enumerate(g[::2]): bass.add(t, tri(BASS[j % 8] - 12, .28), .45)
-    for t in g[1::2]: perc.add(t, hiss(.03, .008), .07)
-    air.add(12.4, pad([47, 54, 59], 14.6), .14)
+    for t in g[1::2]: perc.add(t, hiss(.03, .008), .1)
+    for j, t in enumerate(g[::8]): perc.add(t, kick(), .25)                   # a slow pulse
+    play_mel(lead, g, pizz, .4, -12)                                          # the tune, plucked low, under the voice
+    air.add(12.4, pad([47, 54, 59], 14.6), .22)
     # 26.6-36: the fix, accelerating, full
     g = beats(26.6, 36.0, 120, 176)
     play_mel(lead, g, lambda m, d: pulse(m, d, .25), .3, 12)
