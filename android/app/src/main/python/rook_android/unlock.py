@@ -30,6 +30,40 @@ def _keypad(w: int, h: int) -> tuple[list[int], list[int]]:
             [round(0.641 * h), round(0.718 * h), round(0.795 * h), round(0.872 * h)])
 
 
+def _center(b) -> tuple[int, int]:
+    return (int(b[0]) + int(b[2])) // 2, (int(b[1]) + int(b[3])) // 2
+
+
+def _live_keypad(Hid) -> tuple[list[int], list[int]] | None:
+    """Keypad from the bouncer's own key nodes (…:id/key0-9), which One UI moves
+    around (centered vs. bottom); None when the pad isn't on screen."""
+    try:
+        nodes = json.loads(str(Hid.screenNodes(True, 3000) or "[]"))
+    except Exception:
+        return None
+    keys = {}
+    for n in nodes:
+        nid = str(n.get("id", ""))
+        tail = nid.rsplit("/", 1)[-1]
+        if len(tail) == 4 and tail.startswith("key") and tail[3].isdigit() and n.get("bounds"):
+            keys[tail[3]] = _center(n["bounds"])
+    if not all(str(d) in keys for d in range(10)):
+        return None
+    return ([keys["1"][0], keys["2"][0], keys["3"][0]],
+            [keys["1"][1], keys["4"][1], keys["7"][1], keys["0"][1]])
+
+
+def _press_ok(Hid) -> bool:
+    """Tap the bouncer's OK key (PINs without auto-confirm need it)."""
+    try:
+        for n in json.loads(str(Hid.screenNodes(True, 3000) or "[]")):
+            if str(n.get("id", "")).endswith(":id/key_enter_text") and n.get("bounds"):
+                return bool(Hid.tap(*_center(n["bounds"])))
+    except Exception:
+        pass
+    return False
+
+
 def pin_set() -> bool:
     ctx = app_context()
     try:
@@ -69,26 +103,31 @@ async def unlock(pin: str | None = None, hold_ms: int = 9000, pre_swipe: bool = 
         wm.getDefaultDisplay().getRealMetrics(m)
         w, h = int(m.widthPixels), int(m.heightPixels)
 
-        # Wake + surface the PIN bouncer (requestDismissKeyguard).
+        # Wake the screen only. The wake window shows over the keyguard, so while it
+        # is up it covers the PIN pad (and hides it from the node tree): keep it short
+        # and let it close before surfacing the pad.
         Intent = jclass("android.content.Intent")
         ComponentName = jclass("android.content.ComponentName")
         i = Intent()
         i.setComponent(ComponentName(ctx, "systems.bake.rook.WakeActivity"))
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        i.putExtra("dismiss", True)
-        i.putExtra("hold_ms", int(hold_ms))
+        i.putExtra("dismiss", False)
+        i.putExtra("hold_ms", 300)
         ctx.startActivity(i)
-        await asyncio.sleep(1.3)  # let the screen wake + bouncer come up
+        await asyncio.sleep(1.0)
 
-        # A nudge swipe helps on setups that show the clock before the pad.
-        if pre_swipe:
+        # Swipe up to bring the pad over the clock; retry once if it isn't there.
+        live = _live_keypad(Hid)
+        for _ in range(2 if pre_swipe else 0):
+            if live:
+                break
             try:
-                Hid.swipe(int(w * 0.5), int(h * 0.85), int(w * 0.5), int(h * 0.2), 200)
-                await asyncio.sleep(0.5)
+                Hid.swipe(int(w * 0.5), int(h * 0.85), int(w * 0.5), int(h * 0.3), 250)
             except Exception:
                 pass
-
-        colx, rowy = _keypad(w, h)
+            await asyncio.sleep(0.8)
+            live = _live_keypad(Hid)
+        colx, rowy = live or _keypad(w, h)
         if stored:
             typed = json.loads(str(await asyncio.to_thread(
                 UnlockPin.tapStored, ctx, *colx, *rowy, 280)))
@@ -107,9 +146,14 @@ async def unlock(pin: str | None = None, hold_ms: int = 9000, pre_swipe: bool = 
                 await asyncio.sleep(0.28)
             out = {"ok": True, "screen": {"w": w, "h": h}, "digits": len(pin), "taps": taps}
 
+        out["keypad"] = "live" if live else "model"
         await asyncio.sleep(1.5)  # 4/6-digit PINs auto-submit
         KeepAwake = _cls("KeepAwake")
         unlocked = not bool(KeepAwake.keyguardLocked(ctx))
+        if not unlocked and _press_ok(Hid):
+            await asyncio.sleep(1.5)
+            unlocked = not bool(KeepAwake.keyguardLocked(ctx))
+            out["pressed_ok"] = True
         out["unlocked"] = unlocked
         if stored:
             UnlockPin.noteUnlockResult(ctx, bool(automatic), unlocked)
