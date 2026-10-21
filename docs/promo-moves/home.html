@@ -57,12 +57,19 @@ textarea:focus{outline:none;border-color:var(--hi)}
 .play.on{border-color:var(--hi);color:var(--hi)}
 .lines{color:var(--dim);font-size:13.5px;margin:0 0 6px 18px}
 .vwrap{overflow-x:auto}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin:4px 0 24px}
+.tabs a{font:400 15px var(--mono);color:var(--dim);text-decoration:none;padding:10px 16px;border:1px solid transparent;border-bottom:0;border-radius:10px 10px 0 0;margin-bottom:-1px}
+.tabs a:hover{color:var(--fg)}
+.tabs a.on{color:var(--hi);background:var(--panel);border-color:var(--line)}
 </style></head>
 <body><main>
 <header><h1>Rook <b>Moves</b></h1><span class="sum" id="sum"></span></header>
+<nav class="tabs" role="tablist"><a href="#clips" role="tab" data-tab="clips">Clips</a><a href="#voices" role="tab" data-tab="voices">Voices</a></nav>
+<div id="tab-clips">
 <p class="sub">Your notes here and in the director page go to Claude. Clip notes cover the whole clip; timed notes link into the director at that moment.</p>
-<section class="voices" id="voices" hidden></section>
 <div id="list"></div>
+</div>
+<div id="tab-voices" hidden><section class="voices" id="voices"><p class="empty">No voice samples yet.</p></section></div>
 </main>
 <script>
 const $ = s => document.querySelector(s);
@@ -141,7 +148,7 @@ document.addEventListener('input', e => {
 let audio = null, cur = null;
 fetch('out/voicesamples/index.json').then(r => r.ok ? r.json() : null).then(v => {
   if (!v) return;
-  const box = $('#voices'); box.hidden = false;
+  const box = $('#voices');
   box.innerHTML = `<h2>Voices</h2><p class="lead">The same lines in each candidate voice. Green = cleared for the published films.</p>
     <ol class="lines">${v.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ol>
     <div class="vwrap"><table class="vt"><tr><th>VOICE</th><th>LICENCE</th>${v.lines.map((_, i) => `<th>LINE ${i + 1}</th>`).join('')}</tr>
@@ -160,6 +167,14 @@ document.addEventListener('click', e => {
   const a = new Audio(b.dataset.src); audio = a; cur = b; b.classList.add('on'); b.textContent = '■ stop';
   a.onended = a.onerror = () => { if (cur === b) { b.classList.remove('on'); b.textContent = '▶ play'; cur = null; audio = null; } };
   a.play().catch(() => a.onended());
-});
+});;
+// tabs: #clips (default) and #voices; the address keeps the tab on reload
+function tab() {
+  const t = location.hash === '#voices' ? 'voices' : 'clips';
+  for (const k of ['clips', 'voices']) $('#tab-' + k).hidden = k !== t;
+  document.querySelectorAll('.tabs a').forEach(a => { a.classList.toggle('on', a.dataset.tab === t); a.setAttribute('aria-selected', a.dataset.tab === t); });
+  if (t !== 'voices' && audio) { audio.pause(); audio = null; if (cur) { cur.classList.remove('on'); cur.textContent = '▶ play'; cur = null; } }
+}
+addEventListener('hashchange', tab); tab();
 load();
 </script></body></html>
