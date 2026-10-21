@@ -422,14 +422,29 @@ async def test_a_report_the_role_already_answered_after_is_skipped(hub, host):  
     room = h["room"]
     hb = hub.svc.store.get(room)
     lock = hub.svc.chair._locks.setdefault(room, asyncio.Lock())
+    # 1. The role's turn was already running when the report came: it did
+    # not see it, so the report round still wakes it.
     await lock.acquire()                                   # another round is running
     hub.svc.chair.on_report(hb, room, "architect", "session:x", "@architect DONE: PR 7", "DONE")
-    hub.svc._send(room, "role:architect", "I checked PR 7 already.")
+    hub.svc._send(room, "role:architect", "Waiting for my session's report.")
     lock.release()
     await _settle(hub)
-    assert not [t for t in hub.band.turns if t["kind"] in ("huddle-architect", "huddle-chair")]
-    r = hub.svc.store.rounds(room)[0]
-    assert r["state"] == "done" and "skipped" in (r.get("error") or "")
+    woke = [t for t in hub.band.turns if t["kind"] == "huddle-architect"]
+    assert len(woke) == 1 and "DONE: PR 7" in woke[0]["args"]["prompt"]
+    # 2. A report that a later turn of the role was shown (a follow-up pass
+    # of the round that was running when it came): skipped.
+    await lock.acquire()
+    rid = hub.svc.chair.on_report(hb, room, "architect", "session:x", "@architect DONE: PR 8",
+                                  "DONE")
+    seq = hub.svc.store.round(rid)["trigger_seq"]
+    hub.svc.store.round_add("r_running", room, seq - 1, PERSON, {})
+    hub.svc.store.round_set("r_running", state="done", replies=[
+        {"role": "architect", "ask": "follow-up", "state": "done", "seen": seq}])
+    lock.release()
+    await _settle(hub)
+    assert len([t for t in hub.band.turns if t["kind"] == "huddle-architect"]) == 1
+    skipped = [r for r in hub.svc.store.rounds(room) if "skipped" in (r.get("error") or "")]
+    assert len(skipped) == 1
 
 
 @pytest.mark.asyncio

@@ -473,9 +473,10 @@ class Chair:
                 self.svc._send(room, self.chair_identity(), "\n".join(lines),
                                [f"role:{c['role']}" for c in calls], quiet=True)
             routed = True                    # follow-ups are always the chair's routing
+            seen = self.svc.chat.last_seq(room)          # what these turns are shown
             transcript = self._transcript(room)
             start = len(replies)
-            replies += [{"role": c["role"], "ask": c["ask"], "state": "running",
+            replies += [{"role": c["role"], "ask": c["ask"], "state": "running", "seen": seen,
                          **({"followup": passes} if passes else {})} for c in calls]
             self.store.round_set(rid, replies=replies)
             results = await asyncio.gather(*(
@@ -498,12 +499,21 @@ class Chair:
         self.store.round_set(rid, state="done", ended=time.time())
 
     def _report_seen(self, room: str, owner: str, rid: str) -> bool:
+        """The owner already answered in a turn that was shown this report
+        (its turn started after the report was posted). A turn that was
+        already running when the report arrived did not see it."""
         r = self.store.round(rid) or {}
         after = int(r.get("trigger_seq") or 0)
         if not after:
             return False
-        return any(int(m.get("seq") or 0) > after and m.get("sender") == f"role:{owner}"
-                   for m in self.svc.chat.tail(room, CONTEXT_MESSAGES))
+        for other in self.store.rounds(room, 10):
+            if other["id"] == rid:
+                continue
+            for rep in other.get("replies") or []:
+                if rep.get("role") == owner and rep.get("state") == "done" \
+                        and int(rep.get("seen") or 0) >= after:
+                    return True
+        return False
 
     def _chair_messages(self, home: Any, cfg: dict, roster: list[dict], room: str,
                         rules: str, extra: str = "", memory: str = "") -> list[dict]:
